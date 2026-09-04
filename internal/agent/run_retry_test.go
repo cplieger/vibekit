@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/vibekit/internal/workflow"
 )
 
 // retryReply builds `_kiro/workflow/retry`'s own reply shape:
@@ -71,6 +72,21 @@ func seedChatParentedRun(t *testing.T, openChat bool, nodes ...string) (*Runtime
 		}
 	}
 	return h, br
+}
+
+// gateAnswer resolves the affordance the retry ROUTE's gate hands the verb.
+//
+// Resolved for real rather than hand-built, because it is the thread the verb
+// depends on: a stand-in carrying `ParentChat: "c1"` would keep passing after the
+// affordance stopped travelling with the parent, and then the verb would re-host a
+// run whose own process is alive — the defect below.
+func gateAnswer(t *testing.T, h *Runtime, workflowID string) runAffordance {
+	t.Helper()
+	aff := h.runs.affordance(t.Context(), workflowID, "aborted")
+	if aff.ParentChat != "c1" {
+		t.Fatalf("Setup: the gate resolved parent %q, want the launching chat c1", aff.ParentChat)
+	}
+	return aff
 }
 
 // TestHandleRetry_AnswersTheOutcomeRatherThanOk is RC3, the defect that made a
@@ -132,7 +148,7 @@ func TestHandleRetry_AnswersTheOutcomeRatherThanOk(t *testing.T) {
 func TestRetry_AddressesTheRunsRealHost(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
 
-	out, err := h.runs.Retry(t.Context(), "wf_1")
+	out, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1"))
 	if err != nil {
 		t.Fatalf("Retry on a chat-parented run = %v, want nil", err)
 	}
@@ -167,7 +183,7 @@ func TestRetry_LoadsBeforeItRetriesAReHostedRun(t *testing.T) {
 	// which is retry's own legality window.
 	h, br := seedChatParentedRun(t, false, "phase-c-loop")
 
-	if _, err := h.runs.Retry(t.Context(), "wf_1"); err != nil {
+	if _, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1")); err != nil {
 		t.Fatalf("Retry on a run nothing hosts = %v, want nil", err)
 	}
 	calls := br.callLog()
@@ -191,7 +207,7 @@ func TestRetry_AFailedLoadLeavesNothingBehind(t *testing.T) {
 	br.setCallRPCErr(methodKiroWorkflowLoad,
 		&vibekit.RPCError{Code: -32603, Message: "Workflow wf_1 not found on disk"})
 
-	if _, err := h.runs.Retry(t.Context(), "wf_1"); err == nil {
+	if _, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1")); err == nil {
 		t.Fatal("Retry = nil after the load failed; nothing was registered, so nothing can run")
 	}
 	if slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
@@ -219,7 +235,7 @@ func TestRetry_AnInBandRefusalIsAFailure(t *testing.T) {
 	br.setCallRPCErr(methodKiroWorkflowRetry,
 		&vibekit.RPCError{Code: -32603, Message: "Cannot retry a completed workflow"})
 
-	out, err := h.runs.Retry(t.Context(), "wf_1")
+	out, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1"))
 	if err == nil {
 		t.Fatalf("Retry = (%+v, nil) for a refusal KAS answered in band; the run was not "+
 			"re-driven and its previous terminal reason is still the truth about it", out)
@@ -347,7 +363,10 @@ func TestHandleRetry_RefusesWhatTheAffordanceRefuses(t *testing.T) {
 		}
 	})
 
-	t.Run("an unknown run is a 404", func(t *testing.T) {
+	// The two arms of a status the gate cannot use, which are DIFFERENT answers.
+	// One subtest used to claim the 404 and drive the 500's arm, leaving the 404
+	// uncovered on this route under a name saying it was covered.
+	t.Run("a status read that FAILS is a 500", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
 		br.setCallErr(methodKiroWorkflowInspect, errors.New("no such workflow"))
 		rec := httptest.NewRecorder()
@@ -356,6 +375,146 @@ func TestHandleRetry_RefusesWhatTheAffordanceRefuses(t *testing.T) {
 			t.Errorf("an unreadable status = %d, want %d", rec.Code, http.StatusInternalServerError)
 		}
 	})
+
+	t.Run("a run KAS does not know is a 404", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true)
+		// The engine answers, and has no workflow verb: rr.status reports "" rather
+		// than an error, which means "no status to gate on" and not a fault.
+		br.setCallErr(methodKiroWorkflowInspect, workflow.ErrUnknownMethod)
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("retry on an unknown run = %d, want %d: %s",
+				rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+		if slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
+			t.Error("the verb was issued for a run that has no status")
+		}
+	})
+}
+
+// TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry: the mirror of the
+// in-band refusal above, and the one failure that happens AFTER the work may have
+// started.
+//
+// KAS accepted the verb; only its report is unusable. Reporting that as an ordinary
+// retry failure told the reader to try again — asking for work that may already be
+// running — while the re-host branch released the lease and closed the bridge that
+// had just begun executing the run. So the class is its own, and both branches keep
+// what they started and re-arm the run.
+func TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry(t *testing.T) {
+	// One reply per shape KAS could answer that carries no usable outcome. All three
+	// mean the same thing to the reader and must not mean "nothing happened".
+	unreadable := map[string]json.RawMessage{
+		"a reply that is not an object": json.RawMessage(`"retried"`),
+		"a reply with no outcome":       json.RawMessage(``),
+		"a reply about another run":     retryReply(t, "wf_other", "running", "plan"),
+	}
+
+	for name, reply := range unreadable {
+		t.Run(name+", on the run's own host", func(t *testing.T) {
+			// One fake bridge serves the whole runtime, so this is the chat's bridge:
+			// the process that holds the run.
+			h, br := seedChatParentedRun(t, true)
+			h.runs.claimTermination("wf_1")
+			h.runs.recordEnd("wf_1", runEndOverran)
+			br.setCallResult(methodKiroWorkflowRetry, reply)
+
+			_, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1"))
+			if !errors.Is(err, errRetryOutcomeUnreadable) {
+				t.Fatalf("Retry = %v, want errRetryOutcomeUnreadable: the verb LANDED, so "+
+					"telling the reader to retry would ask for the work twice", err)
+			}
+			// Re-armed like a retry that reported properly, because the run may be
+			// executing: leaving the recorded termination would keep the page saying
+			// aborted while the run advanced.
+			if got := h.runs.endReason("wf_1"); got != "" {
+				t.Errorf("the run still reads %q, so its row renders as aborted while it may "+
+					"be running", got)
+			}
+			if !h.runs.bounded("wf_1") {
+				t.Error("the run carries no deadline, so nothing bounds work that may be running")
+			}
+		})
+
+		t.Run(name+", on a re-hosted run", func(t *testing.T) {
+			h, br := seedChatParentedRun(t, false)
+			br.setCallResult(methodKiroWorkflowRetry, reply)
+
+			_, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1"))
+			if !errors.Is(err, errRetryOutcomeUnreadable) {
+				t.Fatalf("Retry = %v, want errRetryOutcomeUnreadable", err)
+			}
+			if h.bridge.mgr.get(runChatID("wf_1")) == nil {
+				t.Error("the bridge that just started re-driving the run was closed because its " +
+					"reply could not be parsed")
+			}
+			if _, held := h.runs.lease("wf_1"); !held {
+				t.Error("the lease was released for a run that may be executing, so the wall " +
+					"clock no longer bounds it and its recipe reads as free")
+			}
+		})
+	}
+}
+
+// TestHandleRetry_AnUnreadableOutcomeTellsTheReaderToRefresh is the route half:
+// the answer must not be the 500 that says "this failed, try again".
+func TestHandleRetry_AnUnreadableOutcomeTellsTheReaderToRefresh(t *testing.T) {
+	h, br := seedChatParentedRun(t, true)
+	br.setCallResult(methodKiroWorkflowRetry, json.RawMessage(`"retried"`))
+
+	rec := httptest.NewRecorder()
+	h.runRoutes.handleRetry(rec, retryReq("wf_1"))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("an unreadable outcome = %d, want %d: %s",
+			rec.Code, http.StatusBadGateway, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "refresh") {
+		t.Errorf("the body = %s, want the remedy that is actually the reader's; a retry that "+
+			"landed must not be reported as one to repeat", body)
+	}
+	if strings.Contains(body, "internal error") {
+		t.Errorf("the body = %s, want the diagnostic rather than the constant", body)
+	}
+}
+
+// TestRetry_ReadsTheParentTheGateResolved: the gate and the verb asked the same
+// question independently.
+//
+// `permits` resolves the affordance — one `workflow/list` round trip plus a full
+// chat-directory scan — and the verb then resolved the host all over again, a second
+// of each, on top of the recipe read. Three uncached lists per click, every one
+// spent before the engine starts and inside a budget narrower than the request's.
+//
+// Asserted as a MECHANISM rather than a call count, and deliberately: the runtime
+// lists in the background too, so counting round trips answers differently under
+// `-race` than without it. What is deterministic is that the two reads can DISAGREE,
+// which is the sharper reason not to make them twice: the inventory here loses the
+// run's parent session between the gate and the verb, so a verb that re-asks
+// concludes nothing hosts the run and re-hosts one whose own process is alive.
+func TestRetry_ReadsTheParentTheGateResolved(t *testing.T) {
+	h, br := seedChatParentedRun(t, true, "final-verify")
+	// The gate's answer, resolved for real while the inventory still carries the
+	// parent session — the state every request starts from.
+	aff := gateAnswer(t, h, "wf_1")
+	// The inventory a LATER read gets: the same run, no parent session.
+	br.setCallResult(methodKiroWorkflowList, kasRuns(t, map[string]any{
+		"workflowId": "wf_1", "name": "publish", "status": "aborted",
+	}))
+
+	if _, err := h.runs.Retry(t.Context(), "wf_1", aff); err != nil {
+		t.Fatalf("Retry = %v, want nil", err)
+	}
+	if slices.Contains(br.callLog(), methodKiroWorkflowLoad) {
+		t.Errorf("the run was re-hosted although the gate had already resolved its live host; "+
+			"the verb re-asked and got a different answer. Calls were %v", br.callLog())
+	}
+	if sb := h.bridge.mgr.get(runChatID("wf_1")); sb != nil {
+		t.Error("a second engine was registered under the run's synthetic id for a run its " +
+			"launching chat already hosts")
+	}
 }
 
 func TestHandleRetry_RejectsNonPOSTAndAMissingID(t *testing.T) {

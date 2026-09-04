@@ -152,12 +152,17 @@ describe("retrying a run", () => {
 
   // A 2xx whose body is not an outcome must fail at the boundary rather than
   // reaching the notification as `undefined` and reporting "Retrying NaN steps".
-  it("rejects a 2xx body that is not an outcome", async () => {
+  it("rejects a 2xx body that is not an outcome, and still says something", async () => {
     m.result.current = { ok: true };
     const res = await retryRun.dispatch("wf_1");
 
     expect(res).toBeNull();
     expect(vi.mocked(toastSuccess)).not.toHaveBeenCalled();
     expect(m.invalidated).toEqual([]);
+    // The negatives alone would leave this path indistinguishable from the second
+    // unacceptable failure mode — a refusal the reader never sees — on the one path
+    // where the HTTP reply is well-formed and its CONTENT is not. A decode failure
+    // carries no server sentence, so the fallback has to name the verb.
+    expect(vi.mocked(toastError)).toHaveBeenCalledWith("Couldn't retry the run");
   });
 });

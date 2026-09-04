@@ -266,10 +266,13 @@ func (rr *runRoutes) handleRetry(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
-	if !rr.permits(w, r, verbRetry, id) {
+	aff, ok := rr.permits(w, r, verbRetry, id)
+	if !ok {
 		return
 	}
-	out, err := rr.runs.Retry(r.Context(), id)
+	// The gate's own answer, forwarded: it carries the run's parent chat, which is
+	// what the verb needs to find the process that holds the run.
+	out, err := rr.runs.Retry(r.Context(), id, aff)
 	if err != nil {
 		rr.writeControlErr(w, verbRetry, id, err)
 		return
@@ -423,34 +426,38 @@ var (
 // it there would put a verb in the row's vocabulary that the row must not draw.
 const verbDelete = "delete"
 
-// permits gates one verb on the run's affordance, writing the refusal itself.
+// permits gates one verb on the run's affordance, writing the refusal itself,
+// and hands the affordance back so the verb can act on the ANSWER rather than
+// resolving the same facts a second time.
 //
 // The refusal carries the affordance's own sentence when it has one — which is
 // how a pause on a run whose launching chat is closed says which chat to open —
 // and falls back to naming the status when the status alone is the reason.
-func (rr *runRoutes) permits(w http.ResponseWriter, r *http.Request, verb, id string) bool {
+func (rr *runRoutes) permits(
+	w http.ResponseWriter, r *http.Request, verb, id string,
+) (runAffordance, bool) {
 	status, err := rr.status(r.Context(), id)
 	if err != nil {
 		slog.Warn("run control: status read failed",
 			"verb", verb, "workflow_id", id, "error", err, "detail", rpcerr.Details(err))
 		httpreply.InternalError(w, errors.New(verb+" failed"))
-		return false
+		return runAffordance{}, false
 	}
 	if status == "" {
 		httpreply.NotFound(w, "run not found")
-		return false
+		return runAffordance{}, false
 	}
 	aff := rr.runs.affordance(r.Context(), id, status)
 	if aff.permits(verb) {
-		return true
+		return aff, true
 	}
 	slog.Info("run control refused", "verb", verb, "workflow_id", id, "status", status)
 	if sentence := aff.refusal(verb); sentence != "" {
 		httpreply.Conflict(w, sentence)
-		return false
+		return aff, false
 	}
 	httpreply.Conflict(w, verb+" is not available for a "+status+" run")
-	return false
+	return aff, false
 }
 
 // writeControlErr answers a verb that reached KAS and failed.
@@ -473,6 +480,16 @@ func (rr *runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err
 	case errors.Is(err, errRetryEngineSlow):
 		slog.Warn("run control timed out starting an engine", "verb", verb, "workflow_id", id)
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+	case errors.Is(err, errRetryOutcomeUnreadable):
+		// The engine ACCEPTED the verb and only its report is unusable, so this is
+		// neither a refusal nor this side's fault: 502 says the upstream answer was,
+		// and the sentence sends the reader to a refresh rather than to a second
+		// retry of work that may already be running. The detail stays in the log,
+		// where the wrapped decode error names what was unreadable.
+		slog.Warn("run control landed but its report could not be read",
+			"verb", verb, "workflow_id", id, "error", err)
+		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
+			httpreply.ErrorJSON(errRetryOutcomeUnreadable.Error()))
 	case isRPCRefusal(err):
 		// KAS declined. Its sentence names the reason and the fix is frequently
 		// the reader's, so it is forwarded rather than replaced by a sentinel.
@@ -504,8 +521,10 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
-	if verb.gated && !rr.permits(w, r, verb.name, id) {
-		return
+	if verb.gated {
+		if _, ok := rr.permits(w, r, verb.name, id); !ok {
+			return
+		}
 	}
 	if err := verb.issue(rr.runs, r.Context(), id); err != nil {
 		rr.writeControlErr(w, verb.name, id, err)

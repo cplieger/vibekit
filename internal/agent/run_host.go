@@ -325,6 +325,19 @@ var errRetryEngineSlow = errors.New(
 	"the run's engine did not start in time, so nothing was retried; try again",
 )
 
+// errRetryOutcomeUnreadable reports that KAS ACCEPTED the retry and its report
+// could not be read.
+//
+// Its own class because the remedy inverts. Every other retry failure means
+// nothing was re-driven, so the reader may try again and this process may tear
+// down what it started; here the run may be executing, so retrying would ask for
+// the work twice and killing the bridge would kill it mid-node. What the reader
+// can act on is refreshing, and the sentence says so.
+var errRetryOutcomeUnreadable = errors.New(
+	"the retry was accepted but its report could not be read, so which steps it reset " +
+		"is unknown; refresh the run to see where it is",
+)
+
 // kasRetryOutcome is `_kiro/workflow/retry`'s reply, in KAS's own spelling. The
 // decode target only; the verb answers vibekit.RunRetriedResponse, which is the
 // shape the route forwards and the client decodes.
@@ -350,8 +363,9 @@ type kasRetryOutcome struct {
 // THE HOST IS RESOLVED, not assumed. Keying on `run:<id>` alone meant a
 // chat-parented run always took the re-host branch, so vibekit spawned a second
 // engine for a run whose parent session lives in a process that is frequently
-// still alive — the same defect SetStepStatus was fixed for. hostBridgeChat
-// answers "who holds this run", the launching chat included.
+// still alive — the same defect SetStepStatus was fixed for. The affordance
+// carries the launching chat the route's gate already resolved, so hostBridgeFor
+// answers who holds the run without asking KAS again.
 //
 // AND THE RE-HOST BRANCH LOADS FIRST. `_kiro/workflow/retry` against a process
 // that has never seen the run fails with "not registered. Load or create it
@@ -360,7 +374,7 @@ type kasRetryOutcome struct {
 // the load this branch could only ever have worked for a run that was somehow
 // still registered, which is the one case it is not for.
 func (rs *Runs) Retry(
-	ctx context.Context, workflowID string,
+	ctx context.Context, workflowID string, aff runAffordance,
 ) (vibekit.RunRetriedResponse, error) {
 	if workflowID == "" {
 		return vibekit.RunRetriedResponse{}, errors.New("missing workflow id")
@@ -371,10 +385,16 @@ func (rs *Runs) Retry(
 	// The run's real host, whichever process that is: its own bridge for a run
 	// vibekit launched, the LAUNCHING CHAT's for an agent-launched one. Already
 	// registered there, so no load is needed and no second engine is started.
-	if _, sb := rs.hostBridgeChat(cctx, workflowID); sb != nil {
+	if _, sb := rs.hostBridgeFor(workflowID, aff.ParentChat); sb != nil {
 		recipe := rs.recipeOf(cctx, workflowID)
 		out, err := rs.retryCall(cctx, sb.bridge, workflowID)
 		if err != nil {
+			// The verb LANDED and only its report is unusable, so the run may be
+			// executing: re-arm it as a retried run rather than leaving the page
+			// showing a termination that is no longer a fact about it.
+			if errors.Is(err, errRetryOutcomeUnreadable) {
+				rs.rearmRetried(cctx, workflowID, recipe)
+			}
 			return vibekit.RunRetriedResponse{}, err
 		}
 		// Only on success: a retry KAS refused re-drove nothing, so the
@@ -425,6 +445,14 @@ func (rs *Runs) retryRehosted(
 	}
 
 	out, err := rs.loadThenRetry(ctx, bridge, workflowID)
+	if errors.Is(err, errRetryOutcomeUnreadable) {
+		// KAS ACCEPTED the retry, so the run may be re-driving inside the bridge
+		// this call just started: it keeps its process and its lease, and only the
+		// report is lost. Tearing it down here would kill the work mid-node
+		// because a reply could not be parsed.
+		rs.rearmRetried(ctx, workflowID, recipe)
+		return vibekit.RunRetriedResponse{}, err
+	}
 	if err != nil {
 		// Nothing is executing: tear the bridge down rather than leaving a
 		// process hosting a run it failed to restart, and give back a lease this
@@ -477,19 +505,23 @@ func (rs *Runs) retryCall(
 	if cErr := runCallErr(resp, err); cErr != nil {
 		return none, fmt.Errorf("workflow retry: %w", rs.retryDeadlineErr(ctx, cErr))
 	}
+	// Past this point KAS has ACCEPTED the verb, so every failure below is a lost
+	// REPORT rather than a retry that did not happen — errRetryOutcomeUnreadable
+	// first, and the detail behind it for the log.
 	if resp == nil || len(resp.Result) == 0 {
-		return none, errors.New("workflow retry: reply carried no outcome")
+		return none, fmt.Errorf("%w: the reply carried no outcome", errRetryOutcomeUnreadable)
 	}
 	var out kasRetryOutcome
 	if uErr := json.Unmarshal(resp.Result, &out); uErr != nil {
-		return none, fmt.Errorf("workflow retry: undecodable outcome: %w", uErr)
+		return none, fmt.Errorf("%w: undecodable outcome: %w", errRetryOutcomeUnreadable, uErr)
 	}
 	// The reply must be ABOUT the run that was asked for. The orphan predicate
 	// applies the same rule to `inspect` and for the same reason: a reply carrying
 	// one run's outcome while naming another would be reported to the reader as
 	// theirs.
 	if out.WorkflowID != "" && out.WorkflowID != workflowID {
-		return none, fmt.Errorf("workflow retry: reply names run %q, not %q", out.WorkflowID, workflowID)
+		return none, fmt.Errorf("%w: the reply names run %q, not %q",
+			errRetryOutcomeUnreadable, out.WorkflowID, workflowID)
 	}
 	// Never nil on the wire, so a caller reporting the count does not have to
 	// distinguish "none" from "absent".
@@ -748,18 +780,33 @@ func (rs *Runs) hostBridgeChat(
 		return runChatID(workflowID), sb
 	}
 	// One resolution for both questions vibekit asks about a run's parent, in
-	// run_affordance.go: which chat owns it, and — here — whether that chat is a
-	// live carrier. Only a LIVE bridge answers this one, because a chat with no
-	// bridge is no carrier and handing a verb one would be worse than refusing.
+	// run_affordance.go: which chat owns it, and — below — whether that chat is a
+	// live carrier.
 	chatID, _ := rs.chatForSession(ctx, rs.parentSession(ctx, workflowID))
-	if chatID == "" {
+	return rs.hostBridgeFor(workflowID, chatID)
+}
+
+// hostBridgeFor is hostBridgeChat for a caller that ALREADY KNOWS the run's parent
+// chat: no RPC, no chat-store read, and only a LIVE bridge answers.
+//
+// The resolution above costs a `workflow/list` round trip plus a full chat-directory
+// scan, and a route whose affordance gate resolved the same parent one step earlier
+// would spend both twice per click, before the engine starts. Two reads can also
+// DISAGREE, and then the verb acts on a different answer than the gate approved.
+func (rs *Runs) hostBridgeFor(
+	workflowID string, parentChat vibekit.ChatID,
+) (vibekit.ChatID, *sharedBridge) {
+	if sb := rs.bridges.get(runChatID(workflowID)); sb != nil {
+		return runChatID(workflowID), sb
+	}
+	if parentChat == "" {
 		return "", nil
 	}
-	sb := rs.bridges.get(chatID)
+	sb := rs.bridges.get(parentChat)
 	if sb == nil {
 		return "", nil
 	}
-	return chatID, sb
+	return parentChat, sb
 }
 
 // parentSession reports the KAS session that launched a run, or "" when the

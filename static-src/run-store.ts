@@ -342,6 +342,7 @@ export function forgetRun(workflowID: string): void {
   plans.delete(workflowID);
   controlCells.delete(workflowID);
   controlsInFlight.delete(workflowID);
+  controlsStale.delete(workflowID);
   launchedBy.delete(workflowID);
 }
 
@@ -363,6 +364,7 @@ export function forgetRun(workflowID: string): void {
 
 const controlCells = new Map<string, Signal<RunControlsResponse | undefined>>();
 const controlsInFlight = new Set<string>();
+const controlsStale = new Set<string>();
 
 function controlCell(workflowID: string): Signal<RunControlsResponse | undefined> {
   let c = controlCells.get(workflowID);
@@ -381,26 +383,31 @@ export function runControls(workflowID: string): RunControlsResponse | undefined
   return controlCell(workflowID).value;
 }
 
-/** Re-read what a run offers.
+/** Re-read what a run offers: one request per tab open plus one per that run's
+ *  `run_finished`, never one per repaint.
  *
- *  Called when a page points at a run and again on that run's `run_finished` —
- *  one request per tab open plus one per ending, never one per repaint. The
- *  in-flight guard has no trailing refetch, unlike the state cell's: nothing
- *  bursts these, so a second call while one is open would be answering the same
- *  question twice.
+ *  Coalesced with a TRAILING refetch, the state cell's discipline: the two triggers
+ *  CAN coincide, and a run ending inside the tab-open read's window is the one moment
+ *  the answer changes, so dropping it would leave a pre-terminal verb row with
+ *  nothing left to re-ask.
  *
- *  A failed fetch leaves the previous answer standing. Degrading to the last
- *  known row beats blanking the controls under a reader who is about to use
- *  them. */
+ *  A failed fetch leaves the previous answer standing, which beats blanking the
+ *  controls under a reader about to use them. */
 export function invalidateRunControls(workflowID: string): void {
-  if (workflowID === "" || controlsInFlight.has(workflowID)) {
+  if (workflowID === "") {
     return;
   }
-  controlsInFlight.add(workflowID);
+  if (controlsInFlight.has(workflowID)) {
+    controlsStale.add(workflowID);
+    return;
+  }
   void fetchRunControls(workflowID);
 }
 
 async function fetchRunControls(workflowID: string): Promise<void> {
+  // Claimed HERE rather than by the caller, so the trailing call below re-arms the
+  // guard with no window a coincident invalidation could slip a third request into.
+  controlsInFlight.add(workflowID);
   try {
     const d = await apiGetTyped(
       `/api/runs/${encodeURIComponent(workflowID)}/controls`,
@@ -411,6 +418,9 @@ async function fetchRunControls(workflowID: string): Promise<void> {
     }
   } finally {
     controlsInFlight.delete(workflowID);
+  }
+  if (controlsStale.delete(workflowID)) {
+    await fetchRunControls(workflowID);
   }
 }
 
