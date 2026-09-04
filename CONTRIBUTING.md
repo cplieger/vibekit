@@ -289,9 +289,9 @@ The browser bundle is **produced during the Docker build, not committed**. The
 builder stage runs `tsc` (the TS7 native compiler) with `--noEmit` as the type
 gate over `static-src/tsconfig.build.json` and `tsconfig.sw.json`, then runs
 `go run ./cmd/bundle` (esbuild via its Go API; no Node, no bundler binary),
-which bundles `static-src/app.ts` into `static/app.js` plus hashed lazy chunks
-under `static/chunks/` (the dynamic `import()` sites), bundles `sw.ts` into
-`static/sw.js`, and concatenates the CSS manifests
+which bundles `static-src/app.ts` into `static/app.js` plus hashed chunks under
+`static/chunks/` (the dynamic `import()` sites and the code they share with the
+entry), bundles `sw.ts` into `static/sw.js`, and concatenates the CSS manifests
 (`@cplieger/web-terminal-ui`'s `MANIFEST.touch`, then `static-src/css/MANIFEST`)
 into `static/style.css`. Serving compression is the server's job: it gzips
 assets at startup, so the bundle writes no precompressed `.gz` siblings. The
