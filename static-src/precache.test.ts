@@ -11,19 +11,49 @@ import { isShellPath, parseManifest } from "./precache.js";
 import bundleGo from "../cmd/bundle/main.go?raw";
 
 describe("isShellPath", () => {
-  it("admits every shape the build emits, read off the Go writer", () => {
-    // precacheAssets seeds the two stable names and appends "chunks/"+name for
-    // each .js it finds. A rename on that side must show up here as a miss.
-    const seed = /assets := \[\]string\{([^}]*)\}/.exec(bundleGo);
-    expect(seed, "precacheAssets' seed list not found in cmd/bundle/main.go").not.toBeNull();
-    const names = [...(seed?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    expect(names).toHaveLength(2);
-    for (const name of names) {
-      expect(isShellPath(`/${String(name)}`), `${String(name)} is not admitted`).toBe(true);
-    }
+  it("admits a name built from the Go side's own chunk template", () => {
+    // The gate's whole claim is that an admitted name pins its own bytes, so the
+    // template that MAKES those names is the literal to read: a build reconfigured
+    // to `chunks/[name]` would leave this case red rather than quietly handing the
+    // cache a name a release can replace.
+    const tmpl = /ChunkNames:\s+"([^"]+)"/.exec(bundleGo);
+    expect(tmpl, "ChunkNames not found in cmd/bundle/main.go").not.toBeNull();
+    const name = String(tmpl?.[1]).replace("[name]", "api-client").replace("[hash]", "4K73XYBF");
+    expect(isShellPath(`/${name}.js`), `${name}.js is not admitted`).toBe(true);
+    // And the prefix the manifest writer builds each entry with is that same
+    // directory, so the two sides cannot drift apart silently.
     const prefix = /assets = append\(assets, "([^"]+)"\+e\.Name\(\)\)/.exec(bundleGo);
     expect(prefix, "the chunk prefix not found in cmd/bundle/main.go").not.toBeNull();
-    expect(isShellPath(`/${String(prefix?.[1])}abc123.js`)).toBe(true);
+    expect(name.startsWith(String(prefix?.[1]))).toBe(true);
+  });
+
+  it("refuses a chunk name that pins nothing", () => {
+    // The degrade-safely half: a chunk whose name carries no content hash can have
+    // its bytes replaced under it, exactly like the two stable names below, so the
+    // cache must leave it to the network's revalidation.
+    expect(isShellPath("/chunks/editor.js")).toBe(false);
+    expect(isShellPath("/chunks/editor-4k73xybf.js"), "lowercase is not the hash").toBe(false);
+    expect(isShellPath("/chunks/editor-4K73XYB.js"), "seven characters is not the hash").toBe(
+      false,
+    );
+    expect(isShellPath("/chunks/editor-4K73XYBF.js.map"), "a sourcemap is not for running").toBe(
+      false,
+    );
+  });
+
+  it("refuses the two stable names, and the build stops offering them", () => {
+    // The server marks these `no-cache` because a release replaces their bytes
+    // under the same name, so a cache-first answer here pairs a fresh index.html
+    // with the previous build's bundle — whose lazy imports name chunk hashes the
+    // new server no longer serves. Both halves have to agree, so the Go writer's
+    // asset list is read for their absence rather than trusted.
+    expect(isShellPath("/app.js")).toBe(false);
+    expect(isShellPath("/style.css")).toBe(false);
+    const body = /func precacheAssets\(\)[\s\S]*?\n}\n/.exec(bundleGo);
+    expect(body, "precacheAssets not found in cmd/bundle/main.go").not.toBeNull();
+    for (const name of ["app.js", "style.css"]) {
+      expect(body?.[0], `precacheAssets still lists ${name}`).not.toContain(`"${name}"`);
+    }
   });
 
   it("refuses the API surface and the SSE stream", () => {
@@ -50,8 +80,14 @@ describe("isShellPath", () => {
 
 describe("parseManifest", () => {
   it("accepts the document the build writes, and roots each asset", () => {
-    const m = parseManifest({ stamp: "0a1b2c3d4e5f6071", assets: ["app.js", "chunks/a1.js"] });
-    expect(m).toEqual({ stamp: "0a1b2c3d4e5f6071", assets: ["/app.js", "/chunks/a1.js"] });
+    const m = parseManifest({
+      stamp: "0a1b2c3d4e5f6071",
+      assets: ["chunks/editor-AAAA1111.js", "chunks/history-BBBB2222.js"],
+    });
+    expect(m).toEqual({
+      stamp: "0a1b2c3d4e5f6071",
+      assets: ["/chunks/editor-AAAA1111.js", "/chunks/history-BBBB2222.js"],
+    });
   });
 
   it("accepts an empty asset list", () => {

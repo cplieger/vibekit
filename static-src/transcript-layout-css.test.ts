@@ -161,14 +161,14 @@ describe("against real layout", () => {
   }
 
   it("the live-edge marker sits ON the SCROLLER's content bottom", () => {
-    // THE WHOLE POINT OF THE MARKER'S TOP MARGIN, and the scroller is the box that
-    // decides it: scroll.ts roots the observer on `#messages-wrap` with a
-    // `rootMargin` of BOTTOM_TOLERANCE_PX, and `isAtBottom` compares against that
-    // element's `scrollHeight`, so the two agree only at zero offset from ITS
-    // content bottom. Measured against `scrollHeight` rather than the view's own
-    // rect because the offset is the sum of every box in between: block padding on
-    // `.transcript-view`, on `#messages` or on `#messages-wrap` each restores the
-    // 16px disagreement, and only the scroller sees all three.
+    // THE WHOLE POINT OF THE MARKER'S TOP MARGIN, against the box that decides it:
+    // scroll.ts roots the observer on `#messages-wrap` with a `rootMargin` of
+    // BOTTOM_TOLERANCE_PX and `isAtBottom` reads that element's `scrollHeight`, so
+    // the two agree only at zero offset from ITS content bottom. What reopens the
+    // 16px is `.transcript-view`'s own `padding-block-end` and, measured one ancestor
+    // at a time in this Chromium, nothing else: padding on `#messages`, on the
+    // scroller or on `#messages-wrap-outer` each moves the marker and the content
+    // bottom together. The scroller-relative form earns its place on the case below.
     const { scrollEl, edge } = scroller(3);
     expect(offsetFromContentBottom(scrollEl, edge)).toBe(0);
   });

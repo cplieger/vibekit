@@ -15,25 +15,24 @@ export interface PrecacheManifest {
   readonly assets: readonly string[];
 }
 
-/** The two stable names the build emits. Content-hashed chunks are the third
- *  shape and are matched by prefix, since their names are unguessable by
- *  construction. Both halves of this contract are in different languages, so a
- *  test reads the Go writer's own literals against them. */
-const STABLE_ASSETS: ReadonlySet<string> = new Set(["/app.js", "/style.css"]);
-const CHUNK_PREFIX = "/chunks/";
+/** The one name shape whose bytes its own name pins: esbuild's
+ *  `chunks/[name]-[hash]`, the hash 8 uppercase base32 characters.
+ *  `contentHashedAsset` (internal/server/server_static.go) is the same regex for
+ *  the same reason, and a test reads cmd/bundle's template — a looser test would
+ *  admit a name a release replaces, and this one degrades to the network if that
+ *  template ever changes. */
+const CONTENT_HASHED_CHUNK = /^\/chunks\/[^/]+-[A-Z0-9]{8}\.js$/u;
 
-/** Whether the shell cache may answer `pathname` at all.
+/** Whether the shell cache may answer `pathname`.
  *
- *  A SYNCHRONOUS GATE, and that is the whole point: the worker has to decide
- *  whether to call `respondWith` before it can await anything, so asking the cache
- *  instead meant taking over every same-origin GET — `/api/*` reads and the
- *  `/api/events` stream included — to reach the answer. The cache still decides the
- *  RESPONSE, so a path this admits but the manifest never listed simply misses and
- *  goes to the network. */
+ *  Content-hashed names only: the server marks `/app.js` and `/style.css`
+ *  `no-cache` because a release replaces their bytes under those names, so a
+ *  cache-first answer for either pairs a fresh index.html with the previous
+ *  build's bundle. And SYNCHRONOUS, because `respondWith` has to be decided before
+ *  anything can be awaited — asking the cache instead meant taking over every
+ *  same-origin GET, `/api/events` included. */
 export function isShellPath(pathname: string): boolean {
-  return (
-    STABLE_ASSETS.has(pathname) || (pathname.startsWith(CHUNK_PREFIX) && pathname.endsWith(".js"))
-  );
+  return CONTENT_HASHED_CHUNK.test(pathname);
 }
 
 /** The manifest a document just served, or null when it is unusable.
