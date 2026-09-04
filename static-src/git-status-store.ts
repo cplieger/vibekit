@@ -57,12 +57,12 @@ const refreshAction = defineAction<void, StatusAllResponse>({
   success: false,
 });
 
-/** The current repos array. A signal so consumers re-render on every poll
+/** The current repos array. A signal so consumers re-render on every read
  *  without each holding its own copy. */
 const repos = signal<readonly GitRepoStatus[]>([]);
 
 /** Lookup index: "<repo>\u0000<repo-relative path>" → status letter. Rebuilt on
- *  every poll. A map rather than a scan per row because the docs page asks ~200
+ *  every read. A map rather than a scan per row because the docs page asks ~200
  *  times per paint. */
 let index = new Map<string, string>();
 
@@ -70,7 +70,7 @@ let index = new Map<string, string>();
  *
  *  The file browser has absolute paths and no idea which repo a path belongs to,
  *  and making it resolve that itself would put a second copy of the repo-split
- *  rule beside the docs page's. One more map off the SAME poll costs nothing.
+ *  rule beside the docs page's. One more map off the SAME read costs nothing.
  *
  *  The keys are genuinely absolute now. They used to be composed as
  *  "<repoName>/<relPath>" — which is workspace-RELATIVE, because `repo` is a bare
@@ -164,12 +164,12 @@ function rebuildIndex(list: readonly GitRepoStatus[]): void {
   dirIndex = nextDir;
 }
 
-// The handshake that states the workspace root and the first status poll race,
-// with no ordering between them: pollAction fires its first tick synchronously
-// when the store starts, while the root arrives on an SSE frame. A poll that wins
-// that race built an index with no absolute keys at all, and the browser's status
-// letters would have stayed blank until the next poll 15s later. Rebuilding when
-// the root lands removes the ordering question; republishing is what repaints the
+// The handshake that states the workspace root and the store's first read race,
+// with no ordering between them: the read is fired by whichever surface starts
+// the store, while the root arrives on an SSE frame. A read that wins that race
+// builds an index with no absolute keys at all, and the browser's status letters
+// would stay blank — indefinitely now that no timer follows. Rebuilding when the
+// root lands removes the ordering question; republishing is what repaints the
 // rows that were painted letter-less in the meantime.
 onWorkspaceRoot(() => {
   const list = repos.peek();
@@ -238,7 +238,7 @@ function normalizeAbs(p: string): string {
   return p.length > 1 && p.endsWith("/") ? p.slice(0, -1) : p;
 }
 
-/** Subscribe to poll results. Fires immediately with the current value. */
+/** Subscribe to the repos array. Fires immediately with the current value. */
 export function onGitStatusChange(fn: () => void): () => void {
   return subscribe(repos, fn);
 }
