@@ -54,6 +54,26 @@
       }
     },
     {
+      "name": "output CLEARED: output_replace with no delta, because output_delta is omitempty",
+      "before": {
+        "id": "c1",
+        "title": "Running",
+        "kind": "execute",
+        "status": "in_progress",
+        "output": "partial frag",
+        "ts": 1
+      },
+      "delta": { "message_id": "m1", "tool_call_id": "c1", "output_replace": true },
+      "after": {
+        "id": "c1",
+        "title": "Running",
+        "kind": "execute",
+        "status": "in_progress",
+        "output": "",
+        "ts": 1
+      }
+    },
+    {
       "name": "diffs append, so an earlier write's hunks never go on the wire twice",
       "before": {
         "id": "c1",

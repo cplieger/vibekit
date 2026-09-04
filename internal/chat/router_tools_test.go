@@ -2,8 +2,11 @@ package chat
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -205,6 +208,86 @@ func TestTranscript_InputKeepsItsSmallMembers(t *testing.T) {
 	}
 	if _, ok := kept["text"]; ok {
 		t.Error("the oversized `text` member survived the preview")
+	}
+}
+
+// The per-member cap does not bound the OBJECT, so there is a second one.
+//
+// An input over budget only in aggregate used to pass through whole: forty members
+// of 3 KiB each is 120 KiB with nothing over the 4 KiB member cap, and `has_full`
+// would say the transcript carried the input entire — so the bound `ToolCall.HasFull`
+// documents was a bound on the shape of the bulk rather than on its size. The
+// largest members go first, so the small ones the claim line reads survive.
+func TestTranscript_AWideInputIsBoundedInAggregate(t *testing.T) {
+	members := map[string]any{
+		"path":    "internal/app/main.go",
+		"command": "go build ./...",
+	}
+	// Each member fits the per-member cap; together they are far over the object's.
+	for i := range 40 {
+		members["blob"+strconv.Itoa(i)] = strings.Repeat("B", 3_000)
+	}
+	in, err := json.Marshal(members)
+	if err != nil {
+		t.Fatalf("Setup: marshal input: %v", err)
+	}
+	if len(in) <= toolPreviewInputTotalBytes {
+		t.Fatalf("Setup: fixture is %d bytes, needs to exceed the %d-byte object budget "+
+			"or this test asserts nothing", len(in), toolPreviewInputTotalBytes)
+	}
+
+	got := windowedCall(t, []vibekit.Message{callMessage(vibekit.ToolCall{
+		ID: "tc1", Title: "Write", Kind: vibekit.ToolKindWrite,
+		Status: vibekit.ToolCompleted, Input: in,
+	})})
+
+	if !got.HasFull {
+		t.Fatal("has_full = false for an input the transcript did not carry whole")
+	}
+	if len(got.Input) > toolPreviewInputTotalBytes*2 {
+		t.Errorf("preview input is %d bytes, want it bounded near the %d-byte budget",
+			len(got.Input), toolPreviewInputTotalBytes)
+	}
+	var kept map[string]any
+	if err := json.Unmarshal(got.Input, &kept); err != nil {
+		t.Fatalf("preview input is not an object: %s", got.Input)
+	}
+	// The claim line's members are the smallest, so they are the last to go.
+	if kept["path"] != "internal/app/main.go" {
+		t.Errorf("path = %v, want it kept: the aggregate cut took a claim-line member "+
+			"before the blobs", kept["path"])
+	}
+	if kept["command"] != "go build ./..." {
+		t.Errorf("command = %v, want it kept", kept["command"])
+	}
+}
+
+// The cut is DETERMINISTIC, or a card gains and loses fields between reloads.
+//
+// Map iteration order is randomised, so without an explicit tie-break the members
+// dropped from an over-budget object would differ per request for the same input —
+// two reads of one transcript disagreeing about what a tool call's input was.
+func TestTranscript_TheAggregateCutIsTheSameEveryTime(t *testing.T) {
+	members := make(map[string]json.RawMessage, 40)
+	for i := range 40 {
+		// Same size, so only the tie-break can order them.
+		members["m"+strconv.Itoa(i)] = json.RawMessage(`"` + strings.Repeat("B", 3_000) + `"`)
+	}
+	first := ""
+	for range 8 {
+		kept := maps.Clone(members)
+		if !trimInputToTotal(kept, 40*3_010) {
+			t.Fatal("Setup: the fixture did not exceed the object budget")
+		}
+		names := slices.Sorted(maps.Keys(kept))
+		joined := strings.Join(names, ",")
+		if first == "" {
+			first = joined
+		}
+		if joined != first {
+			t.Fatalf("kept %v, want the same members as the first pass (%v): the cut "+
+				"depends on map iteration order", names, first)
+		}
 	}
 }
 

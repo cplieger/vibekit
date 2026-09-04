@@ -13,9 +13,13 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 import { setSessions, get, liveTurnMessage, tabStatusFor } from "../store.js";
 import type { Session, Message } from "../types.js";
 
+// Arguments are FORWARDED, not discarded: the paths a completed call reports are
+// what scope the rescan to the owning repositories, and a scope derived from the
+// wrong fields sends the server looking at the wrong repo while the right one stays
+// stale — with nothing red and nothing on screen to say so.
 const mockMarkGitDirty = vi.fn();
 vi.mock("../git.js", () => ({
-  markGitDirty: () => mockMarkGitDirty(),
+  markGitDirty: (paths?: readonly string[]) => mockMarkGitDirty(paths),
 }));
 
 const mockIsRepoMutatingKind = vi.fn(() => false);
@@ -293,6 +297,53 @@ describe("tool_call_update", () => {
     // The create's title survives a delta that did not carry one.
     expect(heldCall()?.title).toBe("write");
     expect(mockMarkGitDirty).toHaveBeenCalled();
+  });
+
+  // The scope comes off the ACCUMULATED call, not off the frame: the completion
+  // frame normally carries a status and nothing else, while the paths arrived on
+  // the create and on earlier deltas. Reading the frame would send an empty scope
+  // and cost a whole-tree scan on every completion.
+  it("scopes the rescan to the paths the accumulated call reports", () => {
+    mockIsRepoMutatingKind.mockReturnValue(true);
+    fireSSE("tool_call", "chat-1", {
+      message_id: "m1",
+      tool_call: {
+        id: "tc1",
+        title: "write",
+        kind: "edit",
+        status: "pending",
+        ts: 0,
+        locations: [{ path: "subflux/main.go", line: 1 }],
+      },
+      block_index: 0,
+    });
+    fireSSE("tool_call_update", "chat-1", {
+      message_id: "m1",
+      tool_call_id: "tc1",
+      diffs_appended: [{ path: "vibekit/app.ts", new_text: "x" }],
+    });
+    fireSSE("tool_call_update", "chat-1", {
+      message_id: "m1",
+      tool_call_id: "tc1",
+      status: "completed",
+    });
+    // Both sources, because neither is complete on its own: `locations` is what a
+    // read or a command reports and `diffs[].path` is what a write carries.
+    expect(mockMarkGitDirty).toHaveBeenLastCalledWith(["subflux/main.go", "vibekit/app.ts"]);
+  });
+
+  // A call that names nothing must ask for the WHOLE tree. An empty scope would be
+  // read by the server as "no repository owns these", which it answers from its
+  // snapshot without scanning — so the change would never reach the badge.
+  it("names no paths when the call reports none, which asks for a full rescan", () => {
+    mockIsRepoMutatingKind.mockReturnValue(true);
+    createCall("execute");
+    fireSSE("tool_call_update", "chat-1", {
+      message_id: "m1",
+      tool_call_id: "tc1",
+      status: "completed",
+    });
+    expect(mockMarkGitDirty).toHaveBeenLastCalledWith([]);
   });
 
   it("appends output rather than replacing it", () => {

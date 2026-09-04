@@ -1,7 +1,9 @@
 package chat
 
 import (
+	"cmp"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -36,6 +38,12 @@ const (
 	// is built from the small members (`path`, `command`, `query`), and the bulk
 	// is a file's whole `text` or an edit's `oldStr`/`newStr`.
 	toolPreviewInputBytes = 4 << 10
+	// toolPreviewInputTotalBytes bounds the object as a WHOLE, because the
+	// per-member cap does not: a hundred members of 3 KiB each is 300 KiB with
+	// nothing over budget, so `has_full` would say the transcript carried the
+	// input entire and the bound would be a bound on nothing. Four members'
+	// worth, which is more than any claim line reads.
+	toolPreviewInputTotalBytes = 4 * toolPreviewInputBytes
 )
 
 // handleToolCall serves GET /api/chats/{id}/tools/{toolCallID}: the whole of one
@@ -254,17 +262,15 @@ func previewDiffs(diffs []vibekit.ToolDiff) ([]vibekit.ToolDiff, bool) {
 	return nil, false
 }
 
-// previewInput drops the members of an input object that are over budget,
-// keeping every small one.
+// previewInput drops the members of an input object that are over budget, keeping
+// every small one, then drops the largest of what is left until the object fits.
 //
-// Per MEMBER rather than per object, because the claim line is built from the
-// small members — `pickFilePath` reads `path`/`targetFile`/`sourcePath`,
-// `extractSubtitle` reads `command`/`query`/`url` — while the bulk is one
-// member: a write's whole `text`, or an edit's `oldStr`/`newStr`. Dropping the
-// object wholesale would blank the claim line to save the same bytes.
+// Per MEMBER rather than per object, because the claim line is built from the small
+// members — `pickFilePath` reads `path`/`targetFile`/`sourcePath` — while the bulk
+// is one member: a write's whole `text`, or an edit's `oldStr`/`newStr`. Dropping
+// the object wholesale would blank the claim line to save the same bytes.
 //
-// A non-object input (KAS sends an object today, and this is agent-adjacent
-// data) is kept or dropped whole on the same budget.
+// A non-object input is kept or dropped whole on the same budget.
 func previewInput(raw json.RawMessage) (json.RawMessage, bool) {
 	if len(raw) <= toolPreviewInputBytes {
 		return nil, false
@@ -277,17 +283,20 @@ func previewInput(raw json.RawMessage) (json.RawMessage, bool) {
 	}
 	kept := make(map[string]json.RawMessage, len(obj))
 	cut := false
+	spent := 0
 	for k, v := range obj {
 		if len(v) > toolPreviewInputBytes {
 			cut = true
 			continue
 		}
 		kept[k] = v
+		spent += len(k) + len(v)
+	}
+	if trimInputToTotal(kept, spent) {
+		cut = true
 	}
 	if !cut {
-		// Every member fits and the object is over budget only in aggregate.
-		// Keeping it whole is right: the members ARE the claim line, and a
-		// wide-but-shallow input is not the population this bounds.
+		// Nothing was over either budget, so the object goes through as it is.
 		return nil, false
 	}
 	out, err := json.Marshal(kept)
@@ -297,4 +306,33 @@ func previewInput(raw json.RawMessage) (json.RawMessage, bool) {
 		return json.RawMessage("null"), true
 	}
 	return out, true
+}
+
+// trimInputToTotal drops members of kept, largest first, until their combined
+// size fits the aggregate budget. Reports whether it dropped any.
+//
+// Largest first so the members the claim line reads are the ones that survive: a
+// `path` is tens of bytes and whatever pushed the object over is not. The name
+// breaks a size tie, so two requests over one input cut the same members —
+// otherwise map iteration order would decide, and a card would gain and lose
+// fields between reloads.
+func trimInputToTotal(kept map[string]json.RawMessage, spent int) bool {
+	if spent <= toolPreviewInputTotalBytes {
+		return false
+	}
+	keys := slices.Collect(maps.Keys(kept))
+	slices.SortFunc(keys, func(a, b string) int {
+		return cmp.Or(
+			cmp.Compare(len(b)+len(kept[b]), len(a)+len(kept[a])),
+			cmp.Compare(a, b),
+		)
+	})
+	for _, k := range keys {
+		if spent <= toolPreviewInputTotalBytes {
+			break
+		}
+		spent -= len(k) + len(kept[k])
+		delete(kept, k)
+	}
+	return true
 }

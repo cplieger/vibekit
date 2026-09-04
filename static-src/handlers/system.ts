@@ -28,6 +28,7 @@ import { clearTurnState } from "../turn-teardown.js";
 import { refreshTurnRail } from "../turn-rail.js";
 import { refreshRetention } from "../retention.js";
 import { invalidateCachedRuns, rebuildLiveRuns } from "../run-store.js";
+import { fetchCatalog } from "../session-catalog.js";
 
 // The handshake states the workspace root — the only way the client learns
 // where the workspace is, needed to make relative agent paths openable.
@@ -102,6 +103,19 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   // frames lost in the outage leave a stale tree with nothing to notice it. This
   // is the one moment the client knows it missed some.
   invalidateCachedRuns();
+  // The mode/model catalog is a workspace fact the server holds in memory and
+  // announces on no frame, so a `config_option_update` during the outage — or a
+  // server restart, which empties the holder until a bridge respawns — leaves the
+  // picker on whatever boot answered. A gap is the one signal this client gets
+  // that either happened.
+  //
+  // FRESHNESS, recorded because it is a decision rather than an oversight: a
+  // model set that changes while the page is open and the connection is healthy
+  // still needs this gap or a reload. That is bounded by what the set IS — the
+  // models the account is served, an account fact rather than a session one —
+  // whereas the model a chat is ON is per-chat state, rides the chat record, and
+  // reaches the picker on its own broadcast (v3_updates.go's `applyTo`).
+  void fetchCatalog();
   const id = getActiveId();
   if (id !== "") {
     void loadMessages(id);

@@ -9,11 +9,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/workspace"
@@ -31,27 +33,34 @@ type allRepoStatus struct {
 // Scan budgets. statusScanBudget bounds one full scan; perRepoBudget bounds each
 // repo inside it so a single wedged repo degrades to a partial row instead of
 // stalling the whole dashboard. statusMaxAge is how old a snapshot may be before
-// a read refreshes behind its answer — under the client's 15s poll, so an idle
-// poll finds a snapshot it can answer from AND leaves a fresh one behind.
-// statusColdWait bounds the one read that has nothing to answer with.
+// a read refreshes behind its answer.
+//
+// statusColdWait is the WHOLE scan budget, not the per-repo one: a cold wait that
+// expires first answers `{repos: []}`, which renders as "no repositories" — a claim
+// about the tree rather than about the read.
 const (
 	statusScanBudget = 30 * time.Second
 	perRepoBudget    = 10 * time.Second
 	statusMaxAge     = 10 * time.Second
-	statusColdWait   = perRepoBudget
+	statusColdWait   = statusScanBudget
 	// scanConcurrency caps repos scanned in parallel. Each is two short-lived git
 	// subprocesses, so this bounds fork+exec pressure rather than CPU.
 	scanConcurrency = 8
+	// statusPathsMax caps how many paths one scoped read may name. A scoped
+	// refresh exists to scan FEWER repos than a full one, so a caller naming more
+	// paths than the workspace has repositories is asking for the full scan by a
+	// longer route; the excess is dropped rather than resolved.
+	statusPathsMax = 64
 )
 
 // handleStatusAll answers the multi-repo dashboard from the newest completed scan
 // plus its age, and refreshes behind the answer (status_cache.go says why).
 //
 // Two callers still wait, and only they: the FIRST read of a process, which has
-// nothing to answer with, and `?fetch=1`, the "Refresh all" gesture whose whole
-// point is fresh data. The plain poll skips the network fetch deliberately — N
-// parallel fetches every 15 seconds is too aggressive for slow forges — and every
-// scan is detached from the request, so an abandoned poll still leaves a snapshot.
+// nothing to answer with, and `?fetch=1`, whose whole point is fresh data.
+//
+// `?paths=` narrows the refresh to the repositories owning those paths, resolved by
+// ownerOf because the repo inventory is the server's.
 func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 	doFetch := r.URL.Query().Get("fetch") == "1"
 	key := statusKeyPoll
@@ -59,7 +68,15 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 		key = statusKeyFetch
 	}
 	snap, running := h.statusCache.read(key)
-	if doFetch || snap.stale(statusMaxAge) {
+	scoped, only := h.statusScope(r, snap)
+	switch {
+	case scoped && len(only) == 0:
+		// The caller named paths and no repository owns any of them. Rescanning
+		// everything would be the opposite of what it asked for, so this answers
+		// from the snapshot unchanged.
+	case scoped:
+		running = h.refreshStatusScoped(r, key, doFetch, only)
+	case doFetch || snap.stale(statusMaxAge):
 		running = h.refreshStatusAll(r, key, doFetch)
 	}
 	if wait := h.coldWait(snap, doFetch); wait > 0 {
@@ -71,6 +88,43 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 		AgeMS:    snap.age().Milliseconds(),
 		Scanning: running != nil,
 	})
+}
+
+// statusScope resolves `?paths=` into the repository names owning those paths.
+// scoped reports whether this read is a scoped one at all.
+//
+// A cold read carrying paths is deliberately NOT scoped: publishing a two-repo
+// result into no snapshot is a partial scan later reads cannot tell from a whole
+// one. A path no repository owns is dropped rather than refused — the client sends
+// a turn's changed files, some of which are outside every worktree.
+func (h *Handler) statusScope(r *http.Request, snap *statusSnapshot) (scoped bool, only map[string]struct{}) {
+	raw := r.URL.Query().Get("paths")
+	if raw == "" || snap == nil {
+		return false, nil
+	}
+	only = make(map[string]struct{}, 4)
+	seen := 0
+	for p := range strings.SplitSeq(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		seen++
+		if seen > statusPathsMax {
+			break
+		}
+		// A path that escapes the workspace is owned by nothing here. Checked
+		// before ownerOf because the workspace-root repo (".") owns every path no
+		// subdirectory repo claims, so `../elsewhere` would otherwise resolve to
+		// it and scope the refresh to the root repo for a file outside the tree.
+		if pathinside.RelEscapes(p) {
+			continue
+		}
+		if repo, _, ok := h.ownerOf(r.Context(), p); ok {
+			only[repo] = struct{}{}
+		}
+	}
+	return true, only
 }
 
 // statusAllResp is the dashboard's answer: the newest completed scan, how old it
@@ -116,7 +170,32 @@ func (h *Handler) refreshStatusAll(r *http.Request, key string, doFetch bool) ch
 		// Publishes unconditionally, including an empty result: the claim is
 		// released here and nowhere else, so a scan that returns nothing must still
 		// hand the slot back or this variant never refreshes again.
-		h.statusCache.publish(key, h.scanRepos(ctx, doFetch))
+		h.statusCache.publish(key, h.scanRepos(ctx, doFetch, nil))
+	}()
+	return done
+}
+
+// refreshStatusScoped rescans only the repositories in `only` and merges the
+// result into the snapshot, leaving every other row as it was.
+//
+// It shares the variant's one refresh slot, so a burst of edits costs one scan at a
+// time. A read that finds a scan running leaves its repositories in the slot's
+// pending set instead of starting a second scan, and this LOOP drains that set —
+// without it the joining read's rows go unscanned whenever the scan it joined was
+// scoped elsewhere. The chain ends when a pass finds nothing accumulated.
+func (h *Handler) refreshStatusScoped(r *http.Request, key string, doFetch bool, only map[string]struct{}) chan struct{} {
+	done, started := h.statusCache.claimScoped(key, only)
+	if !started {
+		return done
+	}
+	parent := context.WithoutCancel(r.Context())
+	go func() {
+		for scope := only; len(scope) > 0; {
+			ctx, cancel := context.WithTimeout(parent, statusScanBudget)
+			rows := h.scanRepos(ctx, doFetch, scope)
+			cancel()
+			scope = h.statusCache.mergeScoped(key, rows)
+		}
 	}()
 	return done
 }
@@ -142,8 +221,17 @@ func (h *Handler) awaitStatusAll(r *http.Request, key string, running chan struc
 // scanRepos collects the status of every cloned repo under workDir (plus workDir
 // itself if it is a repo), bounded per repo so one wedged repository degrades to a
 // partial row.
-func (h *Handler) scanRepos(ctx context.Context, doFetch bool) []allRepoStatus {
+//
+// A non-nil `only` narrows it to those repository names, and the result is then a
+// PARTIAL scan its caller must merge rather than publish.
+func (h *Handler) scanRepos(ctx context.Context, doFetch bool, only map[string]struct{}) []allRepoStatus {
 	repos := h.cachedDiscoverRepos(ctx)
+	if only != nil {
+		repos = slices.DeleteFunc(slices.Clone(repos), func(e repoEntry) bool {
+			_, want := only[e.Name]
+			return !want
+		})
+	}
 	results := make([]allRepoStatus, len(repos))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(scanConcurrency)

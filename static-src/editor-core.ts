@@ -30,6 +30,8 @@ import {
   gitDiffSource,
 } from "./editor-types.js";
 import type { FileState } from "./editor-types.js";
+import { markGitDirty } from "./git.js";
+import { relToWorkspace } from "./workspace.js";
 
 // --- Re-exports for backward compatibility ---
 // Consumers that import from editor-core.ts continue to work.
@@ -223,6 +225,13 @@ function saveFile(): void {
       // (dirty flips to false once original === current, unless the user
       // edited during the save), so no manual write here.
       $.editorError.classList.add("hidden");
+      // A save is a write to the worktree, so the badge, the file-browser
+      // decorations and the docs page are stale from here. The agent's own writes
+      // announce themselves through `tool_call_update`; the user's own editor is
+      // the second writer and had no announcement at all, which left every one of
+      // those surfaces stale indefinitely. Scoped to the one file, so it costs the
+      // owning repository's two git subprocesses.
+      markGitDirty([relToWorkspace(state.path)]);
       if (getActiveFilePath() === state.path) {
         const m = state.mode.value;
         if (m.kind === "conflict" && m.conflict.hunks.length === 0) {

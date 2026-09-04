@@ -1941,11 +1941,18 @@ export function foldToolCallDelta(prev: ToolCall, d: ToolCallUpdatePayload): Too
   // `output_replace` is the terminal's full stream winning over the ACP
   // fragments at completion (adoptTerminalOutput server-side). It is the only
   // case where the accumulated output legitimately shrinks or is rewritten.
+  //
+  // The flag is read FIRST and is authoritative on its own, because
+  // `output_delta` is `omitempty` on the Go side: a replace-to-empty travels as
+  // `{output_replace: true}` with no delta at all. Reading the delta's presence
+  // first made that frame mean "unchanged" here and `""` to the server's own
+  // spec, which is the two folds disagreeing on the one transition this contract
+  // exists to keep aligned.
   const output =
-    d.output_delta === undefined
-      ? prev.output
-      : d.output_replace === true
-        ? d.output_delta
+    d.output_replace === true
+      ? (d.output_delta ?? "")
+      : d.output_delta === undefined
+        ? prev.output
         : (prev.output ?? "") + d.output_delta;
   const diffs =
     d.diffs_appended === undefined ? prev.diffs : [...(prev.diffs ?? []), ...d.diffs_appended];

@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/vibekit/internal/chat/archive"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -125,6 +127,97 @@ func TestLoadRetentionHeader_AnExplicitEmptyDraftDefendsNothing(t *testing.T) {
 	}
 	if h.Drafting {
 		t.Error("Drafting = true for a draft key holding the empty string")
+	}
+}
+
+// The projection matches keys the way encoding/json does, CASE-INSENSITIVELY, and
+// the draft row is the one that loses data when it does not.
+//
+// encoding/json is the other reader of this same file — the store's full load — so a
+// key whose case differs from the struct tag is one the two readers disagree about,
+// silently. A missed `updated_at` falls back to the file mtime, which the purge
+// already documents as its unreadable-file path, and a missed `acp_session_id`
+// leaves a KAS session directory unreaped; a missed `draft` returns Drafting =
+// false, and the reaper then UNLINKS a chat with unsent words in it.
+//
+// vibekit writes the lower-case tag, so nothing in the fleet produces this today.
+// It is worth pinning anyway because this projection already reasons about foreign
+// files: the sibling test above hand-writes its fixture precisely because a chat
+// written by another build or edited by hand can carry the key.
+func TestLoadRetentionHeader_MatchesKeysTheWayEncodingJSONDoes(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want archive.RetentionHeader
+	}{
+		{
+			name: "a capitalised draft still defends the chat",
+			body: `{"id":"c1","Draft":"unsent words","messages":[]}`,
+			want: archive.RetentionHeader{Drafting: true},
+		},
+		{
+			name: "a screaming draft too, since Unmarshal folds the whole key",
+			body: `{"id":"c1","DRAFT":"unsent words","messages":[]}`,
+			want: archive.RetentionHeader{Drafting: true},
+		},
+		{
+			name: "a capitalised stamp is read rather than falling back to the mtime",
+			body: `{"id":"c1","Updated_At":1730000000000,"messages":[]}`,
+			want: archive.RetentionHeader{UpdatedAt: 1730000000000},
+		},
+		{
+			name: "a capitalised session id reaches the reap set",
+			body: `{"id":"c1","ACP_Session_ID":"sess_new","messages":[]}`,
+			want: archive.RetentionHeader{SessionChain: []string{"sess_new"}},
+		},
+		{
+			name: "and the prior-session list, which is what unreaps a whole history",
+			body: `{"id":"c1","Prior_ACP_Session_IDs":["sess_old"],"messages":[]}`,
+			want: archive.RetentionHeader{SessionChain: []string{"sess_old"}},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, _ := newTestStore(t)
+			path := filepath.Join(s.dir, "c1"+chatFileSuffix)
+			if err := os.WriteFile(path, []byte(c.body), 0o600); err != nil {
+				t.Fatalf("Setup: write chat: %v", err)
+			}
+			h, err := s.LoadRetentionHeader("c1")
+			if err != nil {
+				t.Fatalf("LoadRetentionHeader: %v", err)
+			}
+			if h.Drafting != c.want.Drafting {
+				t.Errorf("Drafting = %v, want %v for %s", h.Drafting, c.want.Drafting, c.body)
+			}
+			if h.UpdatedAt != c.want.UpdatedAt {
+				t.Errorf("UpdatedAt = %d, want %d for %s", h.UpdatedAt, c.want.UpdatedAt, c.body)
+			}
+			if !slices.Equal(h.SessionChain, c.want.SessionChain) {
+				t.Errorf("SessionChain = %v, want %v for %s", h.SessionChain, c.want.SessionChain, c.body)
+			}
+		})
+	}
+}
+
+// The premise the test above rests on, asserted rather than assumed: encoding/json
+// really does fold these keys. Without it, "the two readers disagree" is a claim
+// about the standard library that nothing here checks, and a Go release that
+// tightened field matching would make the folding above wrong rather than red.
+func TestUnmarshalFoldsAChatsFieldNames(t *testing.T) {
+	var c vibekit.Chat
+	body := `{"Draft":"unsent words","Updated_At":1730000000000,"ACP_Session_ID":"sess_new"}`
+	if err := json.Unmarshal([]byte(body), &c); err != nil {
+		t.Fatalf("Setup: unmarshal: %v", err)
+	}
+	if c.Draft != "unsent words" {
+		t.Errorf(`Chat.Draft = %q for "Draft", want the value; the projection's EqualFold would be over-matching`, c.Draft)
+	}
+	if c.UpdatedAt != 1730000000000 {
+		t.Errorf("Chat.UpdatedAt = %d for \"Updated_At\", want 1730000000000", c.UpdatedAt)
+	}
+	if c.ACPSessionID != "sess_new" {
+		t.Errorf("Chat.ACPSessionID = %q for \"ACP_Session_ID\", want sess_new", c.ACPSessionID)
 	}
 }
 

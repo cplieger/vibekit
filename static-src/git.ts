@@ -177,14 +177,24 @@ export function refreshGitBadge(): void {
 
 /** Mark git state as dirty so every git surface refetches.
  *
- *  The one automatic refresh of the status store, and the reason it holds no timer
- *  any more: a repo-mutating tool call completing is the FACT that the tree
- *  changed, where a 15-second poll and a `turn_ended` nudge were both guesses. Its
- *  caller is `handlers/messages.ts`, which sees each completion.
+ *  The automatic refresh of the status store, and the reason it holds no timer any
+ *  more: something actually writing to the tree is the FACT that it changed, where
+ *  a 15-second poll and a `turn_ended` nudge were both guesses.
+ *
+ *  `paths` are the WORKSPACE-RELATIVE paths the caller knows changed, and passing
+ *  them narrows the scan to the repositories that own them — one repo's two git
+ *  subprocesses instead of the whole tree's hundred-odd, which is what makes a
+ *  trigger per edit affordable. Omit them only when the caller genuinely cannot
+ *  name what moved (a shell command); a wrong path is worse than none, because it
+ *  scopes the scan away from the repo that actually changed.
+ *
+ *  Callers, and between them every writer: `handlers/messages.ts` (an agent's
+ *  repo-mutating tool call completing), the editor's save, the file browser's
+ *  actions, and the shell panel closing.
  *
  *  The legacy name comes from when the badge had its own dirty flag. */
-export function markGitDirty(): void {
-  void refreshGitStatus();
+export function markGitDirty(paths?: readonly string[]): void {
+  void refreshGitStatus(paths);
   void refreshChanges();
   void refreshBadgeImpl();
 }

@@ -72,14 +72,18 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 			},
 		},
 		{
-			name: "watch_poll names its node and asserts no status, because a poll changes none",
+			// A poll re-states `running` and stamps no clock. It carries the status
+			// rather than nothing: a frame that states nothing is a frame the
+			// client cannot apply, so it spent a tree rebuild and a re-render
+			// arriving at a value the node already held.
+			name: "watch_poll names its node and re-states running, stamping neither end",
 			kind: vibekit.RunProgressWatchPoll,
 			frame: kasRunNode{
 				WorkflowID: "wf1", NodeID: "watch", NodePath: []string{"watch"},
 			},
 			want: vibekit.RunProgressPayload{
 				WorkflowID: "wf1", NodeID: "watch", NodePath: "watch",
-				Kind: vibekit.RunProgressWatchPoll,
+				Status: "running", Kind: vibekit.RunProgressWatchPoll,
 			},
 		},
 	}
