@@ -482,10 +482,15 @@ func TestAwaitTerminalExit_ForceClosesTheReaderWhenAGrandchildHoldsThePipe(t *te
 	waitClosed(t, term.done, "terminal exit")
 	elapsed := time.Since(start)
 
-	// Bounded by the grace, not by the grandchild's lifetime.
-	if elapsed > terminalDrainGrace+3*time.Second {
-		t.Errorf("exit took %v, want it bounded near the %v grace:"+
-			" the reader was never force-closed", elapsed, terminalDrainGrace)
+	// Bounded by ONE grace, not by the grandchild's lifetime and not by the sum of
+	// the two waits. This fixture is the only one where both are live — the group
+	// wait and the drain bound the same grandchild — so it is where a regression to
+	// sequencing shows up. Measured: 2.05s overlapped against 4.04s sequenced, so
+	// the bound sits between them with a second of headroom.
+	if elapsed > terminalDrainGrace+time.Second {
+		t.Errorf("exit took %v, want it bounded near ONE %v grace: either the reader was "+
+			"never force-closed, or the group wait and the drain were sequenced rather "+
+			"than overlapped and a backgrounded daemon now pays both", elapsed, terminalDrainGrace)
 	}
 	if !strings.Contains(logs.String(), "output still open after exit") {
 		t.Errorf("no line about the forced release\nlogs: %s", logs.String())
@@ -493,6 +498,51 @@ func TestAwaitTerminalExit_ForceClosesTheReaderWhenAGrandchildHoldsThePipe(t *te
 	// The head's own line still had to reach the wire before the exit.
 	if got := term.rawOutput(); !strings.Contains(got, "head done") {
 		t.Errorf("ring = %q, want the head's line: the drain dropped it", got)
+	}
+}
+
+// A5's wait, from the ordinary-exit side: the command's own process group must be
+// observed empty before the agent is told the command finished, so "the command is
+// gone" is a fact rather than a signal that was sent.
+//
+// The fixture is the one that USED to escape: a grandchild in the group holding
+// nothing (its file descriptors closed), so the drain reaches EOF at once and only
+// the group wait can delay the exit. Without that wait the exit is immediate and the
+// grandchild reparents to PID 1.
+//
+// The line is DEBUG — a daemon left running on purpose reaches it on every exit, and
+// nobody acts on it. That the group wait OVERLAPS the drain rather than preceding it
+// is pinned by the sibling above, whose fixture is the one where both waits are live.
+func TestAwaitTerminalExit_WaitsForTheCommandsProcessGroupToEmpty(t *testing.T) {
+	logs := captureLogs(t) // not parallel: swaps the slog default
+	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
+	// `sleep` joins the head's group and outlives it, with its inherited pipe ends
+	// closed so the drain cannot be what delays the exit.
+	h.translateACPEvent("c1", termCreateMsgArgs(t, 1,
+		`sleep 30 >/dev/null 2>&1 </dev/null & printf 'head done\n'`, nil))
+	term := singleTerm(t, h)
+
+	start := time.Now()
+	waitClosed(t, term.done, "terminal exit")
+	elapsed := time.Since(start)
+
+	if elapsed < terminalGroupGrace {
+		t.Errorf("exit took %v, want at least the %v group grace: awaitExit published "+
+			"terminal_exited while the command's group still had a live member, so the "+
+			"agent reads a file a grandchild is still writing", elapsed, terminalGroupGrace)
+	}
+	// One grace, not two. Sequenced with the drain this would be ~4s.
+	if elapsed > terminalGroupGrace+3*time.Second {
+		t.Errorf("exit took %v, want it bounded near ONE %v grace: the group wait and the "+
+			"drain were sequenced rather than overlapped", elapsed, terminalGroupGrace)
+	}
+	const msg = "the command exited but its process group did not empty"
+	if !strings.Contains(logs.String(), msg) {
+		t.Errorf("no line about the group still being alive\nlogs: %s", logs.String())
+	}
+	if strings.Contains(logs.String(), `"level":"WARN","msg":"agent terminal: `+msg) {
+		t.Errorf("the group line is a WARN; a command that backgrounds a daemon on purpose "+
+			"logs it on every exit and nobody acts on it\nlogs: %s", logs.String())
 	}
 }
 

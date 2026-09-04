@@ -283,14 +283,17 @@ func previewInput(raw json.RawMessage) (json.RawMessage, bool) {
 	}
 	kept := make(map[string]json.RawMessage, len(obj))
 	cut := false
-	spent := 0
+	// The enclosing braces, less the comma inputMemberBytes charges to the last
+	// member. Both halves are what make `spent` the MARSHALLED size rather than a
+	// sum of contents, so the budget bounds the bytes that go on the wire.
+	spent := len("{}") - len(",")
 	for k, v := range obj {
 		if len(v) > toolPreviewInputBytes {
 			cut = true
 			continue
 		}
 		kept[k] = v
-		spent += len(k) + len(v)
+		spent += inputMemberBytes(k, v)
 	}
 	if trimInputToTotal(kept, spent) {
 		cut = true
@@ -308,8 +311,30 @@ func previewInput(raw json.RawMessage) (json.RawMessage, bool) {
 	return out, true
 }
 
-// trimInputToTotal drops members of kept, largest first, until their combined
-// size fits the aggregate budget. Reports whether it dropped any.
+// inputMemberBytes is what one member costs in the MARSHALLED object: its key as
+// JSON, the colon, the value, and the comma before the next member.
+//
+// Charging a comma to every member over-states the object by one byte once the two
+// braces are added, which is the direction a bound has to err in. Without this
+// accounting `toolPreviewInputTotalBytes` bounded the sum of the CONTENTS, and the
+// object json.Marshal produced from them exceeded it by every quote, colon and
+// comma — four bytes a member, so a wide input beat the budget by the shape of JSON
+// rather than by its own size.
+//
+// The key is marshalled rather than measured, because one needing an escape is
+// longer quoted than raw. The value is measured, because encoding/json COMPACTS a
+// RawMessage on the way out, so its raw length is already an upper bound.
+func inputMemberBytes(k string, v json.RawMessage) int {
+	key, err := json.Marshal(k)
+	if err != nil {
+		// A Go string cannot fail to marshal; charge the unescaped spelling.
+		return len(k) + len(`"":,`) + len(v)
+	}
+	return len(key) + len(":,") + len(v)
+}
+
+// trimInputToTotal drops members of kept, largest first, until the object they
+// marshal to fits the aggregate budget. Reports whether it dropped any.
 //
 // Largest first so the members the claim line reads are the ones that survive: a
 // `path` is tens of bytes and whatever pushed the object over is not. The name
@@ -323,7 +348,7 @@ func trimInputToTotal(kept map[string]json.RawMessage, spent int) bool {
 	keys := slices.Collect(maps.Keys(kept))
 	slices.SortFunc(keys, func(a, b string) int {
 		return cmp.Or(
-			cmp.Compare(len(b)+len(kept[b]), len(a)+len(kept[a])),
+			cmp.Compare(inputMemberBytes(b, kept[b]), inputMemberBytes(a, kept[a])),
 			cmp.Compare(a, b),
 		)
 	})
@@ -331,7 +356,7 @@ func trimInputToTotal(kept map[string]json.RawMessage, spent int) bool {
 		if spent <= toolPreviewInputTotalBytes {
 			break
 		}
-		spent -= len(k) + len(kept[k])
+		spent -= inputMemberBytes(k, kept[k])
 		delete(kept, k)
 	}
 	return true

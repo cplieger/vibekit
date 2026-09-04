@@ -178,11 +178,11 @@ func TestHandleStatusAll_TheFetchVariantHasItsOwnSnapshot(t *testing.T) {
 func TestHandleStatusAll_ReportsAScanInFlight(t *testing.T) {
 	h := NewHandler(t.TempDir())
 	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{}, time.Now().Add(-statusMaxAge-time.Second))
-	done, started := h.statusCache.claim(statusKeyPoll)
+	done, started := h.statusCache.claim(statusKeyPoll, nil)
 	if !started {
 		t.Fatal("claim on a fresh cache did not start")
 	}
-	t.Cleanup(func() { h.statusCache.publish(statusKeyPoll, nil) })
+	t.Cleanup(func() { h.statusCache.finish(statusKeyPoll, nil) })
 
 	if got := getStatusAll(t, h, ""); !got.Scanning {
 		t.Error("scanning = false while a refresh is in flight")
@@ -206,11 +206,11 @@ func TestHandleStatusAll_ReportsAScanInFlight(t *testing.T) {
 func TestStatusCache_AdmitsOneRefreshAtATime(t *testing.T) {
 	var c statusCache
 
-	first, started := c.claim(statusKeyPoll)
+	first, started := c.claim(statusKeyPoll, nil)
 	if !started {
 		t.Fatal("the first claim did not start a refresh")
 	}
-	second, started := c.claim(statusKeyPoll)
+	second, started := c.claim(statusKeyPoll, nil)
 	if started {
 		t.Error("a second claim started a refresh while one was in flight")
 	}
@@ -218,12 +218,12 @@ func TestStatusCache_AdmitsOneRefreshAtATime(t *testing.T) {
 		t.Error("the second caller got a different channel; it would wait for a refresh nobody runs")
 	}
 	// A different variant is not blocked by it.
-	if _, startedFetch := c.claim(statusKeyFetch); !startedFetch {
+	if _, startedFetch := c.claim(statusKeyFetch, nil); !startedFetch {
 		t.Error("the fetch variant could not claim while the poll variant was in flight")
 	}
 
 	rows := []allRepoStatus{{Repo: "one"}}
-	c.publish(statusKeyPoll, rows)
+	c.finish(statusKeyPoll, rows)
 	select {
 	case <-first:
 	default:
@@ -237,7 +237,7 @@ func TestStatusCache_AdmitsOneRefreshAtATime(t *testing.T) {
 		t.Error("the slot is still marked in flight after publish")
 	}
 	// And the slot is claimable again, or the variant would never refresh once more.
-	if _, again := c.claim(statusKeyPoll); !again {
+	if _, again := c.claim(statusKeyPoll, nil); !again {
 		t.Error("the slot stayed claimed after publish")
 	}
 }
@@ -247,10 +247,10 @@ func TestStatusCache_AdmitsOneRefreshAtATime(t *testing.T) {
 // a refresh that already ended, and the snapshot would never move again.
 func TestStatusCache_AnEmptyScanStillReleasesTheSlot(t *testing.T) {
 	var c statusCache
-	if _, started := c.claim(statusKeyPoll); !started {
+	if _, started := c.claim(statusKeyPoll, nil); !started {
 		t.Fatal("claim did not start")
 	}
-	c.publish(statusKeyPoll, nil)
+	c.finish(statusKeyPoll, nil)
 
 	snap, running := c.read(statusKeyPoll)
 	if running != nil {
