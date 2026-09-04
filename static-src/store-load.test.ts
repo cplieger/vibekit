@@ -232,11 +232,11 @@ describe("loadMessages pagination dedupe", () => {
     expect(ids).toEqual(["a", "b"]);
   });
 
-  it("keeps a scrolled-up window in order rather than re-appending it", async () => {
-    // The local array holds an older page ahead of the newest one. Neither older
-    // message is the in-flight turn and both were present before the request, so
-    // they are dropped with the replace — which is what keeps the order right,
-    // and what pagination re-fetches.
+  it("keeps a scrolled-up window in order, ahead of the page", async () => {
+    // The local array holds an older page ahead of the newest one. Both older
+    // messages sit BEFORE the page's oldest, so the page says nothing about them
+    // and they stay where they are — this used to drop them, which was lossless
+    // only while a page was every real conversation whole.
     seedSession("c1", [msg("old1", 1), msg("old2", 2), msg("c", 3)]);
     mockApiGetTyped.mockResolvedValue({
       chat: { message_count: 1 },
@@ -246,7 +246,7 @@ describe("loadMessages pagination dedupe", () => {
 
     await loadMessages("c1");
     const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
-    expect(ids).toEqual(["c"]);
+    expect(ids).toEqual(["old1", "old2", "c"]);
   });
 });
 
@@ -451,5 +451,96 @@ describe("loadMessages outcome relatch", () => {
 
     await loadMessages("c1");
     expect(mockRelatch).not.toHaveBeenCalled();
+  });
+});
+
+describe("the no-cursor reload keeps the older pages already resident", () => {
+  // The byte budget changed what a newest page IS. While `limit = 50` messages
+  // returned every real conversation whole, "replace with the window" was
+  // lossless. Under the budget the newest page is frequently ONE message, and the
+  // reachable caller with no cursor is the gap heal — so a blind replace threw a
+  // paged-up reader's history away, and their scroll position with it.
+  it("re-adopts the messages older than the page's oldest", async () => {
+    seedSession("c1", [msg("m1", 1), msg("m2", 2), msg("m3", 3), msg("m4", 4)]);
+    // The page is the newest two, which is what a 1 MiB budget answers for a chat
+    // whose recent messages are large.
+    mockApiGetTyped.mockResolvedValue({
+      chat: { id: "c1", message_count: 4 },
+      messages: [msg("m3", 3), msg("m4", 4)],
+      has_more: true,
+      draft: "",
+    });
+
+    await loadMessages("c1");
+
+    expect(sessions.get("c1")?.messages.map((m) => m.id)).toEqual(["m1", "m2", "m3", "m4"]);
+  });
+
+  // `has_more` answers "is there anything older than the OLDEST MESSAGE HELD".
+  // Re-adopting does not move that, so the page's own answer — which is about the
+  // PAGE's start — must not overwrite it.
+  it("leaves has_more alone when it re-adopted, because the client's oldest did not move", async () => {
+    seedSession("c1", [msg("m1", 1), msg("m2", 2), msg("m3", 3)]);
+    sessions.get("c1")!.has_more = false;
+    mockApiGetTyped.mockResolvedValue({
+      chat: { id: "c1", message_count: 3 },
+      messages: [msg("m3", 3)],
+      has_more: true,
+      draft: "",
+    });
+
+    await loadMessages("c1");
+
+    expect(sessions.get("c1")?.has_more).toBe(false);
+  });
+
+  it("adopts the page's has_more when nothing was re-adopted", async () => {
+    seedSession("c1", [msg("m3", 3)]);
+    sessions.get("c1")!.has_more = false;
+    mockApiGetTyped.mockResolvedValue({
+      chat: { id: "c1", message_count: 9 },
+      messages: [msg("m3", 3)],
+      has_more: true,
+      draft: "",
+    });
+
+    await loadMessages("c1");
+
+    expect(sessions.get("c1")?.has_more).toBe(true);
+  });
+
+  // No overlap means the window moved out from under what is held, so the page
+  // replaces. Anchoring on the page's oldest id is what makes that decidable
+  // without a count or a timestamp.
+  it("replaces when the page shares no message with what is held", async () => {
+    seedSession("c1", [msg("old1", 1), msg("old2", 2)]);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { id: "c1", message_count: 2 },
+      messages: [msg("new1", 8), msg("new2", 9)],
+      has_more: true,
+      draft: "",
+    });
+
+    await loadMessages("c1");
+
+    expect(sessions.get("c1")?.messages.map((m) => m.id)).toEqual(["new1", "new2"]);
+  });
+
+  // The in-flight turn still has to survive, and it still goes at the END: the
+  // server accumulates it in memory and appends it to the chat file once, at
+  // turn_ended, so no page can carry it.
+  it("keeps the in-flight turn at the end while re-adopting the older pages", async () => {
+    seedSession("c1", [msg("m1", 1), msg("m2", 2), msg("live", 3)]);
+    liveIDs.set("c1", "live");
+    mockApiGetTyped.mockResolvedValue({
+      chat: { id: "c1", message_count: 2 },
+      messages: [msg("m2", 2)],
+      has_more: true,
+      draft: "",
+    });
+
+    await loadMessages("c1");
+
+    expect(sessions.get("c1")?.messages.map((m) => m.id)).toEqual(["m1", "m2", "live"]);
   });
 });

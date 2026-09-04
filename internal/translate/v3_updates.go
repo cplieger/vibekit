@@ -651,18 +651,3 @@ func choiceEffort(meta json.RawMessage) choiceEffortMeta {
 		Default:   m.Kiro.DefaultEffortLevel,
 	}
 }
-
-// sameModelIDs reports whether two model catalogs carry the same ids in
-// the same order — a cheap change-detector so a repeated config catalog
-// doesn't churn the chat file.
-func sameModelIDs(a, b []vibekit.SessionModel) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].ID != b[i].ID {
-			return false
-		}
-	}
-	return true
-}

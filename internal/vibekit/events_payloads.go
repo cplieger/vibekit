@@ -500,8 +500,13 @@ type ToolCallPayload struct {
 // Every field is omitempty and means "unchanged" when absent. The one field that
 // is not a plain value is OutputDelta, whose meaning depends on OutputReplace.
 type ToolCallUpdatePayload struct {
-	MessageID  string `json:"message_id"`
-	ToolCallID string `json:"tool_call_id"`
+	// The three metadata blocks, each sent whole when it changed. All three are
+	// small and none accumulates.
+	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`
+	Disclosed  *ToolDisclosed  `json:"disclosed,omitempty"`
+	Denial     *ToolDenial     `json:"denial,omitempty"`
+	MessageID  string          `json:"message_id"`
+	ToolCallID string          `json:"tool_call_id"`
 	// Title and Kind: KAS sends them nullish on most updates and refines them on
 	// some, so an absent value is "keep", never "clear".
 	Title  string     `json:"title,omitempty"`
@@ -515,8 +520,13 @@ type ToolCallUpdatePayload struct {
 	// (adoptTerminalOutput), so that one frame legitimately shortens or rewrites
 	// what came before. A pure-append wire cannot express it, and dropping it
 	// would leave a command's output as whatever fragments happened to arrive.
-	OutputDelta   string `json:"output_delta,omitempty"`
-	OutputReplace bool   `json:"output_replace,omitempty"`
+	OutputDelta string `json:"output_delta,omitempty"`
+	// The four late identity attachments. Each is adopted once and never
+	// overwritten, so each appears on at most one frame per call.
+	TerminalID     string `json:"terminal_id,omitempty"`
+	SubSessionID   string `json:"sub_session_id,omitempty"`
+	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
+	WorkflowID     string `json:"workflow_id,omitempty"`
 	// OutputSpans style the WHOLE output at absolute offsets, so they are sent
 	// entire whenever they change. Empty for the ~99.75% of real command outputs
 	// that carry no escape sequence.
@@ -527,19 +537,12 @@ type ToolCallUpdatePayload struct {
 	DiffsAppended []ToolDiff `json:"diffs_appended,omitempty"`
 	// Locations are REPLACED wholesale when present, which is what the fold does
 	// with them. Small: a path list, not content.
-	Locations  []ToolLocation `json:"locations,omitempty"`
-	DurationMs int            `json:"duration_ms,omitempty"`
-	// The four late identity attachments. Each is adopted once and never
-	// overwritten, so each appears on at most one frame per call.
-	TerminalID     string `json:"terminal_id,omitempty"`
-	SubSessionID   string `json:"sub_session_id,omitempty"`
-	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
-	WorkflowID     string `json:"workflow_id,omitempty"`
-	// The three metadata blocks, each sent whole when it changed. All three are
-	// small and none accumulates.
-	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`
-	Disclosed  *ToolDisclosed  `json:"disclosed,omitempty"`
-	Denial     *ToolDenial     `json:"denial,omitempty"`
+	Locations []ToolLocation `json:"locations,omitempty"`
+	// The two non-pointer scalars last, so the GC scan region stops above them
+	// (govet fieldalignment, ordered by betteralign). OutputReplace's meaning is
+	// on OutputDelta.
+	DurationMs    int  `json:"duration_ms,omitempty"`
+	OutputReplace bool `json:"output_replace,omitempty"`
 }
 
 // TerminalOutputPayload is the payload for type="terminal_output".

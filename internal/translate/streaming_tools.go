@@ -170,7 +170,18 @@ func toolCallDelta(messageID string, before, after *vibekit.ToolCall) vibekit.To
 	if after.Status != before.Status {
 		d.Status = after.Status
 	}
+	if after.DurationMs != before.DurationMs {
+		d.DurationMs = after.DurationMs
+	}
 	d.OutputDelta, d.OutputReplace = outputDelta(before.Output, after.Output)
+	deltaContent(&d, before, after)
+	deltaAttachments(&d, before, after)
+	return d
+}
+
+// deltaContent carries the three collections. Only Diffs accumulates; the other
+// two are absolute and go entire whenever they change.
+func deltaContent(d *vibekit.ToolCallUpdatePayload, before, after *vibekit.ToolCall) {
 	if !slices.Equal(after.OutputSpans, before.OutputSpans) {
 		d.OutputSpans = after.OutputSpans
 	}
@@ -183,9 +194,13 @@ func toolCallDelta(messageID string, before, after *vibekit.ToolCall) vibekit.To
 	if !slices.Equal(after.Locations, before.Locations) {
 		d.Locations = after.Locations
 	}
-	if after.DurationMs != before.DurationMs {
-		d.DurationMs = after.DurationMs
-	}
+}
+
+// deltaAttachments carries the four late identity ids and the three metadata
+// blocks. Every one is adopted once and never overwritten, so each appears on at
+// most one frame per call — which is what makes a set-if-present fold on the
+// other side correct.
+func deltaAttachments(d *vibekit.ToolCallUpdatePayload, before, after *vibekit.ToolCall) {
 	if after.TerminalID != before.TerminalID {
 		d.TerminalID = after.TerminalID
 	}
@@ -207,7 +222,6 @@ func toolCallDelta(messageID string, before, after *vibekit.ToolCall) vibekit.To
 	if before.Denial == nil && after.Denial != nil {
 		d.Denial = after.Denial
 	}
-	return d
 }
 
 // outputDelta describes the change from one accumulated output to the next: the
