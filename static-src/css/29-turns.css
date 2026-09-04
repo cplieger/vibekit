@@ -861,15 +861,14 @@
 
   position: absolute;
 
-  /* Starts BELOW the chat toolbar, not at the top of the transcript. The
-   * toolbar is anchored to the same corner with z-index 10 against this rail's
-   * 4, so a rail beginning at `--sp-3` put its first two markers underneath it:
-   * measured at 1440 wide, marker #1 (y 12..36) sat inside the toolbar's
-   * 12..54 band and was invisible and unclickable. `--below-chat-toolbar` is the
-   * shared derivation from the toolbar's own metrics (12-chat.css). This line
-   * used to inline a byte-identical copy of that calc under a comment saying the
-   * offsets could not drift apart, which a copy is precisely how they could. */
-  inset-block: var(--below-chat-toolbar) var(--sp-3);
+  /* One `--sp-3`, top and bottom. The rail lives in `#messages-wrap-outer`,
+   * which is inside the view and so already below the title bar, leaving nothing
+   * here to clear. It read `--below-chat-toolbar` while that bar was a floating
+   * pill at z-index 10 anchored to this same corner, which put the first two
+   * markers underneath it — measured at 1440 wide, marker #1 (y 12..36) inside
+   * the bar's 12..54 band, invisible and unclickable. The bar is in flow now, so
+   * that clearance is 60px of dead offset instead. */
+  inset-block: var(--sp-3);
 
   /* STUCK TO THE TURN CARDS' EDGE, not to the window's. `50% - --content-max-w /
    * 2` is the distance from this wrapper's inline-end to the column's right
