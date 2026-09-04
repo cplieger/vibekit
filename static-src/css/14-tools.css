@@ -28,11 +28,16 @@
  * them fully in layout against a handful of contained rows.
  *
  * `auto`, not `hidden`: these are visible cards, so the skip has to be keyed on
- * viewport relevancy. Two costs come with that keying, both already paid by
- * `.msg-row` and neither new here — an off-screen card is invisible to
- * find-in-chat's walker (which prunes at `checkVisibility({contentVisibilityAuto:
- * true})`, and the server pre-pass in chat-search.ts is what covers it), and the
- * scroller's `scrollHeight` moves as first-render replaces each estimate.
+ * viewport relevancy. Two costs come with that keying, and the first one WIDENS
+ * here even though its mechanism is `.msg-row`'s already: an off-screen card is
+ * invisible to find-in-chat's walker (which prunes at
+ * `checkVisibility({contentVisibilityAuto: true})`), and tool output, plan entries
+ * and run-step text are the bulk of what a reader searches for — so the walker's
+ * blind spot goes from prose bubbles to most of the transcript. The COUNT is
+ * unaffected, because chat-search.ts enumerates server-side; the MARKS are covered
+ * by hit navigation walking again once its scroll has rendered the card
+ * (find-in-chat.ts). The second cost is `.msg-row`'s unchanged: the scroller's
+ * `scrollHeight` moves as first-render replaces each estimate.
  *
  * The fallback size is only ever used BEFORE a card has rendered once —
  * `contain-intrinsic-size: auto` remembers the real size afterwards — so it is

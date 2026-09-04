@@ -687,6 +687,64 @@ describe("the cold build", () => {
     expect(rowsIn("u1")).toBe(1);
     expect(rowsIn("u3")).toBe(1);
   });
+
+  it("stops taking slices on the frame once the pass has spent its block allowance", async () => {
+    const id = chatID();
+    // Twelve turns the reader opened by hand. Pins are exempt from the residency
+    // budget, so all twelve mount — and without a pass-wide allowance all twelve
+    // would take a slice in the paint frame.
+    for (let n = 1; n <= 12; n++) {
+      setTurnOpen(id, `h${String(n)}`, true);
+    }
+    const messages: Msg[] = [];
+    for (let n = 1; n <= 12; n++) {
+      messages.push(...heavyTurn(`h${String(n)}`, 40));
+    }
+    activate(id, messages);
+
+    // A slice is 32 blocks (4 of these 8-block rows) and the pass may mount 320,
+    // so exactly ten bodies get one; the last two are born empty.
+    const started = [];
+    for (let n = 1; n <= 12; n++) {
+      const rows = rowsIn(`h${String(n)}`);
+      expect(hasBody(`h${String(n)}`), `h${String(n)} resident`).toBe(true);
+      expect([0, 4]).toContain(rows);
+      if (rows > 0) {
+        started.push(n);
+      }
+    }
+    expect(started).toHaveLength(10);
+
+    // Nothing is lost: the drain finishes all twelve off the frame.
+    await vi.waitFor(() => {
+      for (let n = 1; n <= 12; n++) {
+        expect(rowsIn(`h${String(n)}`), `h${String(n)} complete`).toBe(5);
+      }
+    });
+  });
+
+  it("takes an evicted turn's owed slices with it instead of rebuilding the body", async () => {
+    const id = chatID();
+    // Resident by the reader's own hand and far past one slice, so the paint owes
+    // a cold build; the newest turn has already spent the budget, so that pin is
+    // the only thing keeping this turn mounted.
+    setTurnOpen(id, "u-heavy", true);
+    activate(id, [...heavyTurn("u-heavy", 320), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
+    const started = rowsIn("u-heavy");
+    expect(started).toBeGreaterThan(0);
+    expect(started).toBeLessThan(40);
+
+    // The reader folds it again. The pin goes with the fold, so the fold pass
+    // unmounts the body — and it calls the drain on the line after.
+    setTurnOpen(id, "u-heavy", false);
+    bumpMessages(id, "shape");
+    expect(hasBody("u-heavy")).toBe(false);
+
+    // The owed build must not come back and rebuild 40 rows under a folded card,
+    // which is the work residency exists to refuse.
+    await new Promise((r) => setTimeout(r, 60));
+    expect(hasBody("u-heavy")).toBe(false);
+  });
 });
 
 // --- Navigation surfaces --------------------------------------------------------
@@ -713,6 +771,33 @@ describe("navigation onto a stub", () => {
     // folded turn does.
     expect(isFolded("u1")).toBe(true);
     expect(scrollMock.jumpTo).toHaveBeenCalled();
+  });
+
+  it("keeps the jumped-to turn resident across the next paint", async () => {
+    // The jump records no fold and no reveal, so nothing in `fold-state.ts` speaks
+    // for it — and the budget is already spent by the newest turn. Without a pin
+    // the next paint evicts the body the jump just built, which is both a wasted
+    // build and a turn the reader was sent to going hollow under them.
+    const id = chatID();
+    // Tool-bearing turns, so a fold HIDES something: this case reads the fold
+    // state after a repaint, and a prose-only turn legitimately re-opens there.
+    activate(id, [...toolTurns(2), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
+    railTurns.turns = Array.from({ length: 2 }, (_, i) => ({
+      id: `u${String(i + 1)}`,
+      n: i + 1,
+      outcome: "completed",
+      ts: (i + 1) * 60_000,
+    }));
+    await loadTurnRail(id);
+    document.querySelector<HTMLButtonElement>(".turn-rail .rail-marker")?.click();
+    await vi.waitFor(() => {
+      expect(hasBody("u1")).toBe(true);
+    });
+
+    bumpMessages(id, "shape");
+    expect(hasBody("u1")).toBe(true);
+    // The pin is residency only: the jump still leaves the turn folded.
+    expect(isFolded("u1")).toBe(true);
   });
 });
 

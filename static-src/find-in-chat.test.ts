@@ -777,7 +777,7 @@ describe("server-hit navigation", () => {
     vi.mocked(chatSearch.revealHitTurn).mockResolvedValue(undefined);
   }
 
-  /** A production-shaped turn card. `bodyHTML === null` builds a tier-3 STUB:
+  /** A production-shaped turn card. `bodyHTML === null` builds a STUB:
    *  header only, no `.turn-body` — what pagination prepends and what the
    *  reveal has to build before anything inside it can be marked. */
   function mountTurnCard(turnID: string, bodyHTML: string | null): HTMLElement {
@@ -936,6 +936,66 @@ describe("server-hit navigation", () => {
     expect(countText()).toBe("1 of 1 in chat \u00b7 not in rendered text");
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(bubble, expect.anything());
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
+  });
+
+  it("walks again once the jump has rendered a skipped card, rather than reporting a miss", async () => {
+    // The transcript's cards carry `content-visibility: auto` (css/14-tools.css),
+    // so an OFF-SCREEN card holds no walkable text at all — the walker prunes at
+    // `checkVisibility({contentVisibilityAuto: true})`. Stepping onto a hit inside
+    // one therefore finds nothing on the first walk, and the thing that renders
+    // the card is the navigation itself.
+    //
+    // Real containment and a real off-screen box: Chromium decides relevancy from
+    // the viewport, which is what makes the first walk genuinely blind here.
+    stageChat([
+      { id: "u1", role: "user", content: "q" },
+      {
+        id: "a1",
+        role: "assistant",
+        blocks: [{ type: "text", text: "see the retry backoff here" }],
+      },
+    ]);
+    const wrap = document.getElementById("messages-wrap") as HTMLElement;
+    wrap.style.cssText = "height: 400px; overflow-y: auto";
+    const spacer = document.createElement("div");
+    spacer.style.height = "6000px";
+    document.getElementById("messages")?.appendChild(spacer);
+    mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row" style="content-visibility: auto; contain-intrinsic-size: auto 2.5rem">
+         <div class="assistant-blocks">
+           <div class="message assistant">see the retry backoff here</div>
+         </div>
+       </div>`,
+    );
+    stageHits([
+      serverHit({
+        excerpt: "see the retry backoff here",
+        block_index: 0,
+        offset: 8,
+        segment_len: 26,
+      }),
+    ]);
+    // The premise, and it is the platform's answer rather than the harness's:
+    // relevancy is decided in a rendering update, so it holds once the browser has
+    // laid this fixture out.
+    await vi.waitFor(() => {
+      const blocks = document.querySelector<HTMLElement>(".assistant-blocks");
+      expect(blocks?.checkVisibility({ contentVisibilityAuto: true })).toBe(false);
+    });
+    // The platform's half of the contract: a jump scrolls its target into view.
+    vi.mocked(scroll.jumpTo).mockImplementation((el: Element) => {
+      el.scrollIntoView();
+    });
+
+    await openAndSearch("retry");
+    typeAndEnter("retry");
+
+    await vi.waitFor(() => {
+      expect(document.querySelector(".message.assistant mark.find-hit-current")).not.toBeNull();
+    });
+    // Not the miss notice: the text was there, it just had not rendered yet.
+    expect(countText()).toBe("1 of 1");
   });
 
   it("navigates a message hit to the message container (scroll + brief highlight)", async () => {

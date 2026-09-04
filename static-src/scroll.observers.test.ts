@@ -86,11 +86,49 @@ class FakeResizeObserver {
   }
 }
 
+/** The live-edge publisher's trigger.
+ *
+ *  Faked for the same reason the ResizeObserver is: the real one reports a
+ *  THRESHOLD CROSSING computed from real boxes, and this harness has no overflow
+ *  and no layout, so the platform would never deliver an entry for the sentinel.
+ *  Only `isIntersecting` is modelled, because that is the whole of what the
+ *  callback reads. */
+class FakeIntersectionObserver {
+  static instances: FakeIntersectionObserver[] = [];
+  readonly targets = new Set<Element>();
+  readonly options: IntersectionObserverInit | undefined;
+  private readonly cb: IntersectionObserverCallback;
+  constructor(cb: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+    this.cb = cb;
+    this.options = options;
+    FakeIntersectionObserver.instances.push(this);
+  }
+  observe(el: Element): void {
+    this.targets.add(el);
+  }
+  unobserve(el: Element): void {
+    this.targets.delete(el);
+  }
+  disconnect(): void {
+    this.targets.clear();
+  }
+  /** Deliver a batch, the way the platform coalesces several crossings into one
+   *  callback. */
+  fire(entries: readonly { isIntersecting: boolean }[]): void {
+    this.cb(
+      entries as unknown as IntersectionObserverEntry[],
+      this as unknown as IntersectionObserver,
+    );
+  }
+}
+
 /** Inside the test body, never at module scope: `unstubGlobals` is on, so a
  *  stub installed at collection time is restored before the first test runs. */
 function stubResizeObserver(): void {
   FakeResizeObserver.instances.length = 0;
+  FakeIntersectionObserver.instances.length = 0;
   vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+  vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
 }
 
 /** The scroller's boxes are faked with writable properties — the same level
@@ -163,6 +201,8 @@ async function settleFrames(): Promise<void> {
 interface Harness {
   scroll: typeof ScrollModule;
   ro: FakeResizeObserver;
+  /** The live-edge publisher, whose entries the mutation path consumes. */
+  io: FakeIntersectionObserver;
   messagesEl: HTMLElement;
   scrollEl: HTMLElement;
   /** Every `addEventListener` on the scroller since just before the module was
@@ -200,10 +240,15 @@ async function freshModule(opts: { withExistingRow?: boolean } = {}): Promise<Ha
     /* @vite-ignore */ `./scroll.ts?boot=${bootSeq}`
   )) as typeof ScrollModule;
   const scrollEl = scroll.getScrollEl();
-  expect([FakeResizeObserver.instances.length, scrollEl]).toEqual([1, wrap]);
+  expect([
+    FakeResizeObserver.instances.length,
+    FakeIntersectionObserver.instances.length,
+    scrollEl,
+  ]).toEqual([1, 1, wrap]);
   return {
     scroll,
     ro: FakeResizeObserver.instances[0]!,
+    io: FakeIntersectionObserver.instances[0]!,
     messagesEl: messages,
     scrollEl,
     listeners,
@@ -471,9 +516,8 @@ describe("what the mutation callback may read", () => {
 
   it("still promotes to Following when the observer publishes the edge", async () => {
     // The other half of the same contract: giving up the read may not give up the
-    // release. The IntersectionObserver is the publisher here, and a real one
-    // cannot see a harness whose boxes are faked — so the case drives the
-    // published value the way the platform does, through the scroll listener.
+    // release. Driven through the ResizeObserver, which measures directly — the
+    // publisher's own path is the describe block below.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
@@ -485,6 +529,93 @@ describe("what the mutation callback may read", () => {
     g.scrollHeight = 1500;
     now.mockReturnValue(1200);
     h.ro.fire();
+    expect(h.scroll.readingState()).toBe("following");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The live-edge PUBLISHER: the IntersectionObserver over the `.transcript-edge`
+// marker.
+//
+// Its callback is delivered after layout, so the geometry it carries is free —
+// and it is the only trigger for a shrink that brings the edge back into view
+// without a mutation or a gesture behind it. What the cases below drive is the
+// callback itself: which entry it believes, what it publishes, and the fact that
+// the mutation path then consumes that value instead of measuring.
+// ---------------------------------------------------------------------------
+describe("the live-edge publisher", () => {
+  it("watches a zero-height marker at the end of the attached view", async () => {
+    // A marker rather than the view itself: an IntersectionObserver reports a
+    // threshold crossing, and a view many viewports tall crosses nothing.
+    const h = await freshModule();
+    const marker = h.messagesEl.querySelector(".transcript-edge");
+    expect(marker).not.toBeNull();
+    expect(h.io.targets.has(marker!)).toBe(true);
+    // Rooted on the scroller, with the same slack `isAtBottom` allows expressed
+    // as room BELOW the scrollport.
+    expect([h.io.options?.root, h.io.options?.rootMargin]).toEqual([
+      h.scrollEl,
+      "0px 0px 100px 0px",
+    ]);
+  });
+
+  it("releases Reading when it publishes the edge, with no gesture and no mutation", async () => {
+    // A card collapsing above the reader: the document now ends where they
+    // already are. Nothing scrolls, and the marker re-entering the scrollport is
+    // the only signal that says so.
+    const h = await freshModule();
+    fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    h.scrollEl.dispatchEvent(new Event("scroll"));
+    expect(h.scroll.readingState()).toBe("reading");
+
+    now.mockReturnValue(2000); // past the gesture window
+    h.io.fire([{ isIntersecting: true }]);
+    expect(h.scroll.readingState()).toBe("following");
+  });
+
+  it("believes the LAST entry of a batch", async () => {
+    // The platform coalesces crossings, so a batch is a history and only its
+    // final state is the answer. Reading entries[0] would promote on the first
+    // half of this case and be wrong twice.
+    const h = await freshModule();
+    fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    h.scrollEl.dispatchEvent(new Event("scroll"));
+    now.mockReturnValue(2000);
+
+    // Reached the edge and left it again: the reader is away.
+    h.io.fire([{ isIntersecting: true }, { isIntersecting: false }]);
+    expect(h.scroll.readingState()).toBe("reading");
+    // Left it and came back: the reader is at the edge.
+    h.io.fire([{ isIntersecting: false }, { isIntersecting: true }]);
+    expect(h.scroll.readingState()).toBe("following");
+  });
+
+  it("keeps a publish the gesture window blocked, for the next mutation to use", async () => {
+    // The published value is STATE, not an event: a publish that arrives while
+    // the reader's own gesture still outranks the layout may not be lost, and the
+    // mutation that follows has to act on it rather than measure. The geometry
+    // here still says NOT at the edge, so a mutation path that measured would
+    // stay Reading.
+    const h = await freshModule();
+    fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
+    const row = document.createElement("div");
+    h.messagesEl.appendChild(row);
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    h.scrollEl.dispatchEvent(new Event("scroll"));
+    await settle();
+    expect(h.scroll.readingState()).toBe("reading");
+
+    // Inside the 150ms debounce: published, but not acted on.
+    now.mockReturnValue(1100);
+    h.io.fire([{ isIntersecting: true }]);
+    expect(h.scroll.readingState()).toBe("reading");
+
+    // The window closes and a chunk lands.
+    now.mockReturnValue(5000);
+    row.appendChild(document.createTextNode("a chunk"));
+    await settle();
     expect(h.scroll.readingState()).toBe("following");
   });
 });
