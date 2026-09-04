@@ -1,17 +1,17 @@
 // ---------------------------------------------------------------------------
-// The boot: settings, identity, chats and retention are read in the FIRST FRAME,
-// and each answer is adopted in its own region as it lands. Nothing here is a
-// chain, because none of those four reads consumes another's answer.
+// The boot: settings, identity, chats, retention and the local snapshot are read
+// in the FIRST FRAME, and each answer is adopted in its own region as it lands.
+// Nothing here is a chain, and nothing waits on the identity verdict — not even an
+// empty workspace, whose starter chat is the identity region's own (adoptIdentity).
 //
-// TWO ORDERINGS ARE REAL. The tab set is adopted after the chat fold: a chat
-// tab's row is named from the chat store (tab-materialize.ts `chatName`), and
-// activating one whose chat the store lacks paints an error row and fires a
-// second /api/chats (chat.ts `activateChatView`). And retention is awaited before
-// the tab set, because closing a tab has to know whether the record is kept.
+// TWO ORDERINGS ARE REAL. The tab set is adopted after the chat fold: a chat tab's
+// row is named from the chat store (tab-materialize.ts `chatName`), and activating
+// one whose chat the store lacks paints an error row and fires a second /api/chats
+// (chat.ts `activateChatView`). Retention is awaited before the tab set, because
+// closing a tab has to know whether the record is kept.
 //
-// `applyRoute` is INJECTED, not imported: it reaches most of the app's surfaces,
-// so it stays in the composition root, and importing it would close the cycle
-// app.ts → boot.ts → app.ts.
+// `applyRoute` is INJECTED: it reaches most of the app, so it stays in the
+// composition root — importing it would close a cycle.
 // ---------------------------------------------------------------------------
 
 import { loadList } from "./store-load.js";
@@ -22,6 +22,13 @@ import {
   registerEvictionExemption,
   startEvictionSweep,
 } from "./store.js";
+import {
+  clearBootSnapshot,
+  paintBootSnapshot,
+  readBootSnapshot,
+  startBootSnapshot,
+} from "./boot-snapshot.js";
+import type { BootSnapshot } from "./boot-snapshot.js";
 import {
   adoptThemeFromSettings,
   initPostAuthUI,
@@ -65,23 +72,24 @@ let deps: BootDeps | null = null;
 export async function startBoot(d: BootDeps): Promise<void> {
   deps = d;
 
-  // FOUR READS, ONE FRAME. Nothing below waits for a request it does not need.
-  // `identity` is consumed twice and needs no rejection handler: every failure IS
-  // its `unavailable` arm (identity.ts).
+  // FIVE READS, ONE FRAME. Nothing below waits for a request it does not need.
+  // `identity` needs no rejection handler: every failure IS its `unavailable` arm
+  // (identity.ts). Nor does `snapshotRead`, which resolves null for every failure.
   const settingsRead = loadSettings();
   const identity = resolveIdentity();
   const chatsRead = loadList();
   const retentionRead = refreshRetention();
+  const snapshotRead = readBootSnapshot();
 
   // The workspace region owns every view the boot swaps, so it is what the
   // animation flag waits on — a slow whoami must not hold the first tab switch's
   // transition back, and the identity region paints no view.
-  const workspace = restoreWorkspace(chatsRead, retentionRead, identity).finally(() => {
+  const workspace = restoreWorkspace(chatsRead, retentionRead, snapshotRead).finally(() => {
     markBootDone();
   });
   await Promise.allSettled([
     settingsRead.then(adoptSettings),
-    identity.then(adoptIdentity),
+    identity.then((v) => adoptIdentity(v, workspace)),
     workspace,
   ]);
 }
@@ -111,19 +119,23 @@ function adoptSettings(settings: EffectiveSettings | null): void {
   suppressPush(false);
 }
 
-/** The identity answer: one sidebar row, and the post-auth fan-out.
+/** The identity answer: one sidebar row, the post-auth fan-out, and the two things
+ *  that genuinely need a verdict.
  *
  *  `signed_out` raises the login modal over an already-painted shell and holds the
  *  post-auth fetches back, so the login screen makes no API calls. `unavailable`
- *  means vibekit could not ASK, so it comes up working with a re-read offered —
- *  never a sign-in prompt. */
-function adoptIdentity(v: IdentityVerdict): void {
+ *  means vibekit could not ASK, so it comes up working with a re-read offered.
+ *  `workspace` is awaited because "is there anything to show" needs the chats, the
+ *  tab set and any share to have landed; that region has painted by then. */
+async function adoptIdentity(v: IdentityVerdict, workspace: Promise<boolean>): Promise<void> {
   renderIdentity(v);
   if (v.state === "signed_out") {
     // Nothing will hydrate the store behind a login modal, so release the held
     // frames rather than leaving the stream stalled until the watchdog fires.
     // Their consumers no-op on a store with no chats, which is correct here.
     transport.markHydrated();
+    // And the next boot must not paint this workspace at a login screen.
+    void clearBootSnapshot();
     showLoginModal();
     return;
   }
@@ -131,26 +143,47 @@ function adoptIdentity(v: IdentityVerdict): void {
     toastError(`Couldn't confirm who is signed in: ${v.reason}`, {
       label: "Retry",
       onClick: () => {
-        void resolveIdentity().then(adoptIdentity);
+        void resolveIdentity().then((next) => adoptIdentity(next, workspace));
       },
     });
   }
   initPostAuth();
+
+  // A rejected region is the same answer as `false`: the chats are not in the
+  // store.
+  const chatsOK = await workspace.catch(() => false);
+  if (!chatsOK) {
+    // Before the fallback below, so a fresh chat does not read as the user's.
+    toastError("Couldn't load your chats.", { label: "Reload", onClick: reload });
+  }
+  if (getSessions().length === 0) {
+    // NOTHING TO SHOW, and the chat STORE is the test rather than `chatsOK`: a
+    // failed fetch over a painted snapshot has rows on screen already, and a share
+    // has already created its chat inside the region — hence no flag for either.
+    await createSession();
+  }
 }
 
-/** The chats answer, then the tab set, then the route.
+/** The local snapshot, then the chats answer, then the tab set, then the route.
+ *  Resolves whether the chat list was READ, which is the identity region's cue.
  *
- *  One region because the three are genuinely ordered (see the header): the store
+ *  One region because these are genuinely ordered (see the header): the store
  *  names the strip's rows, and the strip is what the URL is resolved against. */
 async function restoreWorkspace(
   chatsRead: Promise<boolean>,
   retentionRead: Promise<void>,
-  identity: Promise<IdentityVerdict>,
-): Promise<void> {
-  // If share-target intends to create a session (e.g. ?agent=planner),
-  // skip the default empty-state createSession so we don't end up with
-  // an unused "New conversation" tab next to the planner.
-  const shareWillCreate = new URLSearchParams(location.search).get("agent") === "planner";
+  snapshotRead: Promise<BootSnapshot | null>,
+): Promise<boolean> {
+  // THE SNAPSHOT PAINT, before any answer lands: an IndexedDB read is a millisecond
+  // against a request's hundred, so awaiting it costs the requests in flight nothing
+  // and puts a populated strip on screen in their place. Superseded below.
+  const resumed = paintSnapshot(await snapshotRead);
+  if (resumed) {
+    clearTabStripSkeleton();
+    // The activation the tab set would otherwise run, brought forward: this is what
+    // paints the transcript. Its window is stale, so `loadMessages` still refetches.
+    activateRestoredTab();
+  }
 
   // A rejected read is the same answer as `false` — the chats are not in the
   // store — so the boot has one failure path rather than two.
@@ -162,22 +195,6 @@ async function restoreWorkspace(
 
   suppressPush(true);
   try {
-    const starterWanted = (!chatsOK || getSessions().length === 0) && !shareWillCreate;
-    if (!chatsOK || starterWanted) {
-      // The ONLY place the verdict is consulted, and both uses are uncommon: a
-      // boot whose chats loaded never waits for whoami. Behind a login modal there
-      // is no chat-load complaint to make and no starter chat to mint —
-      // `onLoginSuccess` does that once the identity is real.
-      const signedOut = (await identity).state === "signed_out";
-      if (!chatsOK && !signedOut) {
-        // Before the fallback below, so the fresh chat does not read as the user's.
-        toastError("Couldn't load your chats.", { label: "Reload", onClick: reload });
-      }
-      if (starterWanted && !signedOut) {
-        // AWAITED: applyInitialRoute resolves against the strip further down.
-        await createSession();
-      }
-    }
     // THE TAB SET is the entire boot restore, and it runs on every path: a chat
     // list and a tab set are different collections, and only the first can be
     // empty here without the second being meaningless.
@@ -193,12 +210,27 @@ async function restoreWorkspace(
       toastError("Couldn't restore your tabs.", { label: "Reload", onClick: reload });
     }
     clearTabStripSkeleton();
-    activateRestoredTab();
+    if (!resumed) {
+      activateRestoredTab();
+    }
     await applyShareTarget();
     applyInitialRoute();
   } finally {
     // A throw above must not leave the placeholder shimmering forever.
     clearTabStripSkeleton();
+    suppressPush(false);
+  }
+  return chatsOK;
+}
+
+/** Paint the snapshot inside its OWN suppression window, which is what stops the
+ *  activation it runs from pushing a URL. Widening the boot's own window back over
+ *  the chats fetch instead would swallow a real click from the painted shell. */
+function paintSnapshot(snap: BootSnapshot | null): boolean {
+  suppressPush(true);
+  try {
+    return paintBootSnapshot(snap);
+  } finally {
     suppressPush(false);
   }
 }
@@ -256,6 +288,10 @@ export function initPostAuth(): void {
   registerEvictionExemption(hasLiveRunForChat);
   registerEvictionExemption(subagentTabProjectsChat);
   startEvictionSweep();
+  // The debounced capture that feeds the next boot's first frame. Here rather
+  // than in the boot body for the same reason everything else here is: there is
+  // nothing worth remembering about a login screen.
+  startBootSnapshot();
 }
 
 function applyInitialRoute(): void {

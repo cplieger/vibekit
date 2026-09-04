@@ -1317,6 +1317,27 @@ export function openChatRefs(): string[] {
   return refs;
 }
 
+/** The open tab set, in projection order, for `boot-snapshot.ts` to persist.
+ *
+ *  The SUBJECTS, which is all a snapshot may hold: they are server-minted, so a
+ *  restored one resolves against the collection the server still owns, while a
+ *  row's spec and dot are this device's own derivations and are rebuilt from it. */
+export function openTabSubjects(): TabSubject[] {
+  return state.tabs.map((t) => t.subject);
+}
+
+/** Paint a PROVISIONAL tab set: `boot-snapshot.ts`'s paint-time hint, not an
+ *  authoritative list.
+ *
+ *  It runs the same reset an authoritative snapshot runs — so the active tab is
+ *  chosen the same way and a later reset reconciles by id — and deliberately
+ *  advances NO version: `tabs-sync.ts` stays where it was, so the boot's own
+ *  `listTabs()` answer is adopted over this and every row it does not name is torn
+ *  down. */
+export function paintProvisionalTabs(subjects: readonly TabSubject[]): void {
+  reset(subjects);
+}
+
 /** The chat tabs and their current dot states, for the out-of-page attention
  *  fold (attention.ts). A pure projection read: the dot state is parked on the
  *  row, so nothing here reads the DOM and a row whose element has not been built
