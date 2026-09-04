@@ -34,7 +34,7 @@ import { iconEl } from "./icon-el.js";
 import { ICON_EDIT, ICON_TRASH } from "./icons.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { deleteDoc } from "./actions/docs.js";
-import { initGitStatusStore, onGitStatusChange, statusFor } from "./git-status-store.js";
+import { onGitStatusChange, statusFor } from "./git-status-store.js";
 import { describeStatus } from "./git-types.js";
 import { openFile } from "./editor-openers.js";
 import { reconcile } from "./reconcile.js";
@@ -447,11 +447,9 @@ function initDocsView(): void {
     renderActive();
   });
 
-  // Git letters ride the shared status poll: no new server call and no second
-  // timer, which is the whole reason the store exists. Started here as well as
-  // from the badge, because the page must not depend on which surface the user
-  // opened first (both calls are idempotent).
-  initGitStatusStore();
+  // Git letters ride the shared status store: no new server call and no timer,
+  // which is the whole reason the store exists. Subscribing is what starts it, so
+  // the page does not depend on which surface the user opened first.
   registerCleanup(
     onGitStatusChange(() => {
       renderActive();

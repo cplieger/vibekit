@@ -19,6 +19,7 @@ import type { ThemeChoice } from "./device-view.js";
 import { applyThemeChoice, initThemeToggle } from "./theme.js";
 import type { ThemeStorage } from "@cplieger/ui-primitives/theme";
 import { initSettingsTabs } from "./settings-tabs.js";
+import type { IdentityVerdict } from "./identity.js";
 import { initPermissionsUI, initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
 import { initMCP } from "./mcp-ui.js";
 import { initKnowledge, loadKnowledge } from "./knowledge.js";
@@ -347,6 +348,18 @@ function loadInstructionsPanel(): void {
   loadKnowledge();
 }
 
+/** Read what the General panel's controls display. Fired once, on the panel's
+ *  first activation, via the settings-tabs loader map.
+ *
+ *  The experimental toggles are the reason there is a loader here at all: each
+ *  one is a `GET /api/kiro-settings`, and each of those is a `kiro-cli settings`
+ *  SPAWN with its own 3 s budget on the server. Three of them fired from
+ *  `initUI()` at boot, concurrent with the boot's own reads, to fill checkboxes
+ *  in a panel nobody had opened. */
+function loadGeneralPanel(): void {
+  initExperimentalToggles();
+}
+
 export function initUI(): void {
   initThemeToggle(themeStorage);
 
@@ -359,9 +372,12 @@ export function initUI(): void {
     void toggleSettingsView("general");
   });
 
-  // Per-tab lazy data loaders: fired by settings-tabs on the first
-  // activation of each tab. General has no loader (static panel).
+  // Per-tab lazy data loaders: fired by settings-tabs on the first ACTIVATION of
+  // each tab, never on the subscribe-time paint that shows the default panel.
+  // Every tab has one now — General's is what took its three kiro-cli spawns off
+  // the boot path.
   initSettingsTabs({
+    general: loadGeneralPanel,
     tools: loadToolsList,
     permissions: loadNativePolicy,
     instructions: loadInstructionsPanel,
@@ -370,7 +386,6 @@ export function initUI(): void {
   initLogoutButton();
   initNotificationToggles();
   initDiagnostics();
-  initExperimentalToggles();
 
   initTools();
   initMCP();
@@ -629,16 +644,24 @@ export function initDiagnostics(): void {
   });
 }
 
-// (loadIdentity was removed: it duplicated the /api/whoami fetch that
-// checkAuthAndStart / onLoginSuccess in app.ts already perform — both call
-// setUserEmail with their result, so the sidebar label needs no second
-// fetch at boot.)
-
 // --- User display ---
 
-export function setUserEmail(email: string): void {
-  $.userEmail.textContent = email;
-  $.stAuth.textContent = email !== "" ? "signed in" : "not signed in";
+/** The status card's auth line, one phrase per arm. `unavailable` gets its own:
+ *  reading "not signed in" for it is the mistake the third arm exists to remove. */
+const AUTH_LINE: Readonly<Record<IdentityVerdict["state"], string>> = {
+  signed_in: "signed in",
+  signed_out: "not signed in",
+  unavailable: "unknown",
+};
+
+/** Paint the sidebar identity row and the status card's auth line.
+ *
+ *  Takes the VERDICT rather than an email because three answers reach it and only
+ *  one carries an address. Writing `textContent` also drops the authored pending
+ *  shimmer (index.html #user-email), so every arm resolves the region. */
+export function renderIdentity(v: IdentityVerdict): void {
+  $.userEmail.textContent = v.state === "signed_in" ? v.email : "";
+  $.stAuth.textContent = AUTH_LINE[v.state];
 }
 
 // --- Experimental flag toggles (Settings → General) ---

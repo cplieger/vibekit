@@ -179,12 +179,13 @@ onWorkspaceRoot(() => {
   repos.value = [...list];
 });
 
-/** Read the tree once, so a surface that just opened has something to show.
+/** Read the tree once, on the FIRST SUBSCRIBER, and never for nobody.
  *
- *  Idempotent — safe to call from several init paths, and it is the ONLY read
- *  this module makes on its own. Everything after it is `refreshGitStatus`,
- *  driven by the client learning that a repo changed. */
-export function initGitStatusStore(): void {
+ *  There is no init call: one belonged to whichever module happened to construct
+ *  first, which was `initFileBrowser` at boot, so a scan of every worktree ran for
+ *  a browser nobody had opened. This is the module's ONLY unprompted read —
+ *  everything after it is `refreshGitStatus`, driven by a repo actually moving. */
+function startOnFirstSubscriber(): void {
   if (started) {
     return;
   }
@@ -238,9 +239,14 @@ function normalizeAbs(p: string): string {
   return p.length > 1 && p.endsWith("/") ? p.slice(0, -1) : p;
 }
 
-/** Subscribe to the repos array. Fires immediately with the current value. */
+/** Subscribe to the repos array. Fires immediately with the current value, and
+ *  the FIRST subscriber is what starts the store's one read — so a surface that
+ *  just opened gets data by watching for it, with no separate init call to forget
+ *  or to fire too early. */
 export function onGitStatusChange(fn: () => void): () => void {
-  return subscribe(repos, fn);
+  const off = subscribe(repos, fn);
+  startOnFirstSubscriber();
+  return off;
 }
 
 /** The current repos array, for consumers deriving aggregates (the badge). */

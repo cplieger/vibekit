@@ -435,8 +435,22 @@ class TransportController {
     });
   }
 
+  /** Whether the stream needs help coming back.
+   *
+   *  The source's own `readyState`, not the phase: `onerror` demotes the phase only
+   *  on CLOSED, so the browser's internal retry — what the kick pre-empts — leaves
+   *  it at `connected`. Mid-handshake is ALIVE, which is why `connecting` gets its
+   *  own arm: `pageshow` fires on every cold load after `init` opened the source, so
+   *  a bare `!== OPEN` would tear that stream down and reopen it every load. */
   private sseIsDead(): boolean {
-    return this.conn.phase !== "connected" && this.conn.phase !== "connecting";
+    switch (this.conn.phase) {
+      case "connected":
+        return this.conn.source.readyState !== EventSource.OPEN;
+      case "connecting":
+        return this.conn.source.readyState === EventSource.CLOSED;
+      default:
+        return true;
+    }
   }
 
   // --- SSE ---
@@ -542,9 +556,11 @@ class TransportController {
   }
 
   private scheduleReconnect(info: { delay: number }): void {
-    if (this.conn.phase === "reconnecting") {
-      clearTimeout(this.conn.timer);
-    }
+    // Close what is live, not just a pending timer: the kick fires while a source
+    // can still be OPEN or mid-retry, and an unclosed one keeps its `onmessage`
+    // bound — it would deliver frames beside its own replacement and move the
+    // cursor.
+    this.teardown();
     const timer = setTimeout(() => {
       this.connectSSE();
     }, info.delay);
