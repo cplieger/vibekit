@@ -37,10 +37,22 @@ interface OpenedTab {
   opts?: { parent?: string; owns?: boolean; activate?: boolean } | undefined;
 }
 
+/** What `GET /api/runs/{id}/controls` answers. The SERVER decides the row now, so
+ *  this is the fixture that used to be a local `parentless` boolean plus a status
+ *  table — and the swap is the fix: parentage came from an SSE-fed map that is
+ *  empty after any reload, so a reloaded client read every chat-parented run as
+ *  parentless. */
+interface ControlsReply {
+  verbs: string[];
+  refused?: Record<string, string>;
+  parent_chat_id: string;
+}
+
 // Hoisted with the vi.mock factories below, which run before ordinary top-level
 // initialisers and would otherwise read these in their TDZ.
 const m = vi.hoisted(() => ({
   reply: { current: undefined as unknown },
+  controls: { current: undefined as unknown },
   opened: [] as {
     id: string;
     opts?: { parent?: string; owns?: boolean; activate?: boolean } | undefined;
@@ -48,11 +60,13 @@ const m = vi.hoisted(() => ({
   dispatched: [] as string[],
 }));
 
+// `mockReset: true` wipes every implementation between tests, so these are ARMED
+// in beforeEach rather than only here. The suite used to get away with a
+// factory-only implementation because the run store's cache outlived each test and
+// answered paints 2..N with the previous test's state — which also meant a case
+// could pass on a stale fixture. Each test now genuinely fetches.
 vi.mock("./api-client.js", () => ({
-  apiGet: vi.fn(() => Promise.resolve(m.reply.current)),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
+  apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
 }));
 
@@ -98,6 +112,9 @@ vi.mock("./decision-dock.js", () => ({
 
 vi.mock("./actions/runs.js", () => {
   const stub = (verb: string) => ({
+    // `name` is read by the pending binding on each button, so the stub carries
+    // the real action name rather than only a dispatch.
+    name: `runs.${verb}`,
     dispatch: vi.fn((id: string) => {
       m.dispatched.push(`${verb}:${id}`);
       return Promise.resolve();
@@ -115,6 +132,21 @@ vi.mock("./actions/runs.js", () => {
 // (registered by the composition root), so it is the seam this suite paints
 // through — a door no longer carries an `onShow` of its own.
 import { openRunView, showRun } from "./run-view.js";
+import { apiGet, apiGetTyped } from "./api-client.js";
+
+/** The row a status used to imply, now stated as a server answer.
+ *
+ *  Kept as a helper rather than inlined per case so a case reads as "this run
+ *  offers these verbs" — but it is a FIXTURE of the server's answer, not a
+ *  reimplementation of its table: the table itself is pinned in Go, over all three
+ *  of its inputs. */
+const CONTROLS_FOR: Record<string, ControlsReply> = {
+  running: { verbs: ["pause", "cancel"], parent_chat_id: "" },
+  paused: { verbs: ["resume", "cancel"], parent_chat_id: "" },
+  completed: { verbs: [], parent_chat_id: "" },
+  failed: { verbs: ["retry"], parent_chat_id: "" },
+  aborted: { verbs: ["retry"], parent_chat_id: "" },
+};
 
 /** Open a run through one of the two doors and let its first paint settle.
  *  Returns the control labels on screen, in order. */
@@ -123,16 +155,25 @@ async function paint(
   status: string,
   capturedOutputs?: Record<string, string>,
   opts: {
-    parentless?: boolean;
+    controls?: ControlsReply;
+    /** Answer the affordance fetch with nothing, which is what a failed fetch and
+     *  the moment before the first one resolves both look like to the store. */
+    noControls?: boolean;
+    /** The run id to paint. Defaults to `wf_1`; a case that needs a run this
+     *  client holds NOTHING for names its own, because the store's caches live for
+     *  the module's lifetime and there is no reset that a subscribed view survives
+     *  (forgetting a run drops the very signal the view's effect is watching). */
+    id?: string;
     root?: unknown;
     inputs?: Record<string, string>;
     nodePlan?: unknown;
   } = {},
-): Promise<{ labels: string[]; tab: OpenedTab; body: HTMLElement }> {
+): Promise<{ labels: string[]; refusals: string[]; tab: OpenedTab; body: HTMLElement }> {
+  const id = opts.id ?? "wf_1";
   const reply: RunInspectReply = {
-    workflowId: "wf_1",
+    workflowId: id,
     state: {
-      workflowId: "wf_1",
+      workflowId: id,
       status,
       ...(capturedOutputs === undefined ? {} : { capturedOutputs }),
       ...(opts.root === undefined ? {} : { root: opts.root }),
@@ -143,6 +184,10 @@ async function paint(
     ...(opts.nodePlan === undefined ? {} : { nodePlan: opts.nodePlan }),
   };
   m.reply.current = reply;
+  m.controls.current =
+    opts.noControls === true
+      ? undefined
+      : (opts.controls ?? CONTROLS_FOR[status] ?? { verbs: [], parent_chat_id: "" });
 
   document.body.replaceChildren();
   const body = document.createElement("div");
@@ -151,72 +196,116 @@ async function paint(
   dock.id = "run-dock";
   document.body.append(body, dock);
 
-  door("wf_1", "nightly");
+  door(id, "nightly");
   const tab = m.opened.at(-1);
   if (tab === undefined) {
     throw new Error("the opener did not open a tab");
   }
-  // The activation hook, driven the way the composition root wires it. `parentless`
-  // is the RUN's own fact and the only authority input left.
-  showRun(tab.id, opts.parentless ?? true);
-  // load() awaits one apiGet before painting; drain enough microtasks for the
-  // promise chain to settle without reaching for fake timers.
-  for (let i = 0; i < 5; i++) {
+  // The activation hook, driven the way the composition root wires it. ONE argument:
+  // it used to take a `parentless` flag the caller derived from an event-fed cache,
+  // and the server answers that now.
+  showRun(tab.id);
+  // Two fetches settle before the row is right — the state and the affordance — so
+  // drain enough microtasks for both promise chains without reaching for fake timers.
+  for (let i = 0; i < 12; i++) {
     await Promise.resolve();
   }
 
   const labels = [...body.querySelectorAll(".run-controls button")].map((b) =>
     (b.textContent ?? "").trim(),
   );
-  return { labels, tab, body };
+  const refusals = [...body.querySelectorAll(".run-control-refusal")].map((n) =>
+    (n.textContent ?? "").trim(),
+  );
+  return { labels, refusals, tab, body };
 }
 
 beforeEach(() => {
   m.opened.length = 0;
   m.dispatched.length = 0;
+  m.controls.current = undefined;
+  vi.mocked(apiGet).mockImplementation(() => Promise.resolve(m.reply.current));
+  // The affordance endpoint, the only typed GET this graph makes. Decoded FOR REAL
+  // by the caller's own generated decoder, so a fixture with the wrong shape fails
+  // here rather than reaching the row. `null` is what a failed fetch produces.
+  vi.mocked(apiGetTyped).mockImplementation((_path, decode) =>
+    Promise.resolve(m.controls.current === undefined ? null : decode(m.controls.current)),
+  );
 });
 
 describe("run view controls", () => {
-  // The verbs a status accepts are `run-controls.ts`'s pure table; what these pin is
-  // that the row is offered at all, from every door, for a run vibekit hosts.
-  it("offers the status's verbs on a parentless run, whatever the door", async () => {
+  // The page renders what the server hands it and decides nothing. These cases drive
+  // the affordance answer rather than a status, because the status is no longer the
+  // input: the exec view's own state word is deliberately not consulted, or the
+  // drifting copy of the rule would be back.
+  it("renders the verbs the server offers, in the server's order", async () => {
     expect((await paint(openRunView, "running")).labels).toEqual(["Pause", "Cancel"]);
     expect((await paint(openRunView, "paused")).labels).toEqual(["Resume", "Cancel"]);
   });
 
-  // The one gate left. An agent-parented run is the agent's to drive on a bridge it
-  // holds, so the page offers nothing rather than a button that fights it.
-  it("offers nothing on an agent-parented run", async () => {
-    for (const status of ["running", "paused", "failed"]) {
-      expect((await paint(openRunView, status, undefined, { parentless: false })).labels).toEqual(
-        [],
-      );
-    }
+  // THE DEFECT, at the surface it was reported on. A chat-parented aborted run used
+  // to be denied every verb here, on the premise that an agent recovers its own
+  // runs — false for exactly this status, so the run had no recovery path and no
+  // door in either product. The server now offers retry and the page draws it.
+  it("offers retry on an aborted CHAT-PARENTED run", async () => {
+    const painted = await paint(openRunView, "aborted", undefined, {
+      controls: { verbs: ["retry"], parent_chat_id: "c-launcher" },
+    });
+    expect(painted.labels).toEqual(["Retry failed steps"]);
   });
 
-  // A COMPLETED run offers nothing: there is no failed work to reset and nothing to
-  // stop. The gate subtracts and must never be the thing that ADDS a verb a terminal
-  // status does not accept.
-  it("offers no controls on a completed run", async () => {
-    expect((await paint(openRunView, "completed")).labels).toEqual([]);
+  // A COMPLETED run offers nothing and says nothing: its state word in the header
+  // already says why, so a sentence there would be noise.
+  it("renders no row at all for a run with no verbs and no refusal", async () => {
+    const painted = await paint(openRunView, "completed");
+    expect(painted.labels).toEqual([]);
+    expect(painted.refusals).toEqual([]);
   });
 
-  // Retry acts on a FINISHED run, which is why History carrying it matters: that is
-  // where a failed run is found.
-  it("offers retry on a failed run", async () => {
-    for (const status of ["failed", "aborted"]) {
-      expect((await paint(openRunView, status)).labels).toContain("Retry failed steps");
-    }
+  // The other half of the fix, and it is new behaviour rather than a restored one:
+  // the row used to return null whenever the verbs were gated away, so a reader was
+  // never told WHY a run offered nothing. A refusal renders in the place they are
+  // already looking for the control.
+  it("shows the server's sentence where the buttons would have been", async () => {
+    const painted = await paint(openRunView, "running", undefined, {
+      controls: {
+        verbs: ["cancel"],
+        refused: { pause: 'This run is driven by an agent in "Findings cleanup"' },
+        parent_chat_id: "c-launcher",
+      },
+    });
+    // A partly-refused row keeps its buttons: the sentence is for a row with none.
+    expect(painted.labels).toEqual(["Cancel"]);
+
+    const stuck = await paint(openRunView, "running", undefined, {
+      controls: {
+        verbs: [],
+        refused: { pause: "This run has no live engine on this server." },
+        parent_chat_id: "",
+      },
+    });
+    expect(stuck.labels).toEqual([]);
+    expect(stuck.refusals).toEqual(["This run has no live engine on this server."]);
   });
 
-  // The view is shared — one DOM element serves every run tab — so switching from a
-  // parentless run to an agent-parented one must repaint the row away. A stale row
-  // would be the failure mode of the shared-element design.
-  it("repaints the row away when the shown run changes authority", async () => {
+  // Before the answer lands there is nothing to render. Not an empty row and not a
+  // guess: the same degradation the old table gave an unknown status, now covering
+  // the moment between the tab opening and the fetch resolving.
+  it("renders nothing while the affordance is still in flight", async () => {
+    const painted = await paint(openRunView, "running", undefined, {
+      noControls: true,
+      id: "wf_never_fetched",
+    });
+    expect(painted.labels).toEqual([]);
+    expect(painted.refusals).toEqual([]);
+  });
+
+  // The view is shared — one DOM element serves every run tab — so switching to a
+  // run with a different answer must repaint the row. A stale row would be the
+  // failure mode of the shared-element design.
+  it("repaints the row when the shown run's answer differs", async () => {
     expect((await paint(openRunView, "running")).labels).toEqual(["Pause", "Cancel"]);
-    expect((await paint(openRunView, "running", undefined, { parentless: false })).labels).toEqual(
-      [],
-    );
+    expect((await paint(openRunView, "completed")).labels).toEqual([]);
   });
 
   // A run tab is a VIEW: every door opens it with `owns: false`, so its × closes a
@@ -225,6 +314,15 @@ describe("run view controls", () => {
   it("opens as a view from every door", async () => {
     const review = await paint(openRunView, "running");
     expect(review.tab.opts?.owns).toBe(false);
+  });
+
+  it("dispatches the verb the button carries", async () => {
+    const painted = await paint(openRunView, "aborted");
+    const retry = [
+      ...painted.body.querySelectorAll<HTMLButtonElement>(".run-controls button"),
+    ].find((b) => (b.textContent ?? "").includes("Retry"));
+    retry?.click();
+    expect(m.dispatched).toEqual(["retry:wf_1"]);
   });
 });
 
@@ -411,24 +509,31 @@ describe("run view empty step notes", () => {
     children: [{ nodeId: "coder", type: "step", status: "running", children: [] }],
   };
 
-  async function note(status: string, parentless: boolean): Promise<string> {
-    const { body } = await paint(openRunView, status, undefined, { parentless, root });
+  /** Paint one step and read its note. `parentChat` is the SERVER's answer, which
+   *  is the change: the note used to branch on a local flag fed by SSE frames, so
+   *  a reloaded reader of a chat-parented run took the parentless arm and was
+   *  promised a transcript that could never arrive here. */
+  async function note(status: string, parentChat: string): Promise<string> {
+    const { body } = await paint(openRunView, status, undefined, {
+      root,
+      controls: { verbs: [], parent_chat_id: parentChat },
+    });
     return body.querySelector(".ev-d-empty")?.textContent ?? "";
   }
 
   it("points a chat-parented run's reader at the launching chat", async () => {
-    expect(await note("running", false)).toContain("streams into that chat's transcript");
+    expect(await note("running", "c-launcher")).toContain("streams into that chat's transcript");
   });
 
   it("says a live parentless step has not spoken yet", async () => {
-    expect(await note("running", true)).toContain("Waiting for this step");
+    expect(await note("running", "")).toContain("Waiting for this step");
   });
 
   // The ordinary case for a finished run, and the one most likely to be read as a
   // bug: the content was live-only, so there is nothing to show and never will be.
   it("says a finished step's transcript is gone rather than pending", async () => {
     const { body } = await paint(openRunView, "completed", undefined, {
-      parentless: true,
+      controls: { verbs: [], parent_chat_id: "" },
       root: {
         ...root,
         children: [{ nodeId: "coder", type: "step", status: "completed", children: [] }],

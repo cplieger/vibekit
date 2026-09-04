@@ -27,6 +27,7 @@ import { info, success, error } from "../toast.js";
 import {
   applyRunProgress,
   invalidateRun,
+  invalidateRunControls,
   noteRunChat,
   noteRunLive,
   noteRunSettled,
@@ -111,6 +112,10 @@ onSSE("run_finished", (chatID, p) => {
   // Deliberately NOT opened: a run that finished before anyone looked has
   // nothing live to watch. History is the door to a finished run.
   invalidateRun(p.workflow_id);
+  // An ending is the one moment the verb set changes: a live run's Pause/Cancel
+  // becomes a failed run's Retry, or a completed run's nothing. Fetched here
+  // rather than on every frame, so a progressing run costs no extra round trip.
+  invalidateRunControls(p.workflow_id);
   emitBus(BUS_RUNS_CHANGED);
   announcedStarts.delete(p.workflow_id);
   toastCompletion(p.status, p.name);

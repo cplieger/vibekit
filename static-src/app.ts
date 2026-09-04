@@ -51,7 +51,6 @@ import { openFile, activateFile, closeEditorFile } from "./editor-openers.js";
 import { registerTabOpeners } from "./tab-materialize.js";
 import { showRun } from "./run-view.js";
 import { showSubagent } from "./subagent-view.js";
-import { runChatID } from "./run-store.js";
 import { openAtLine } from "./navigate.js";
 import { initAttachmentPillCallbacks } from "./attachment-pill.js";
 import { initFileBrowser, restoreFileBrowser } from "./files.js";
@@ -131,15 +130,17 @@ function init(): void {
     chat: { show: activateChatView, close: closeChatTab, dot: chatTabDot },
     editor: { show: activateFile, close: closeEditorFile },
     run: {
-      // `parentless` is the run's own fact, not the tab strip's, so it comes from the
-      // run store's record of which chat launched this run — the same fallback
-      // openRunView already uses to find a parent. A subject cannot answer it: see
-      // tab-materialize.ts's header.
+      // The id and nothing else. This used to pass a `parentless` flag derived from
+      // the run store's record of which chat launched the run, and that record is
+      // written only by SSE frames — so a client that had reloaded answered
+      // "parentless" for every run and the page drew the wrong control row. The
+      // server answers it now, from the chat store, on the run's own affordance
+      // endpoint.
       //
       // No `cancel` half any more, and none is reachable: a run tab is a VIEW, so its
       // × stops nothing. Cancelling is the control row's verb.
       show: (workflowID) => {
-        showRun(workflowID, runChatID(workflowID) === "");
+        showRun(workflowID);
       },
     },
     // No close half for the same reason: a subagent page is a projection of blocks the

@@ -15,11 +15,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/vibekit/internal/workflow"
 )
 
 // TestHandleRun_RejectsNonGET pins that the surface is read-only at the method
@@ -217,6 +219,98 @@ func TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat(t *testing.T) {
 		t.Errorf("chat_id = %q for a pre-upgrade row, want empty (no chat to exempt)",
 			out.Runs[0].ChatID)
 	}
+}
+
+// TestHandleControls serves the affordance route and pins its envelope.
+//
+// The endpoint exists because the CLIENT cannot answer the question it replaces:
+// it was deciding the control row from a status table plus a map of which chat
+// launched which run, and that map is written only by SSE frames — so every client
+// that had reloaded found no entry, read a chat-parented run as parentless, and
+// drew the parentless row for it.
+func TestHandleControls(t *testing.T) {
+	controlsReq := func(id string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/api/runs/"+id+"/controls", nil)
+		req.SetPathValue("id", id)
+		return req
+	}
+
+	t.Run("it refuses a non-GET", func(t *testing.T) {
+		h, _ := seedChatParentedRun(t, true)
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleControls(rec, httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/controls", nil))
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("POST = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+		}
+	})
+
+	t.Run("it refuses a missing id", func(t *testing.T) {
+		h, _ := seedChatParentedRun(t, true)
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleControls(rec, httptest.NewRequest(http.MethodGet, "/api/runs//controls", nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("no id = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+	})
+
+	// The whole answer for the reported run: aborted, chat-parented, its chat open.
+	// Retry is offered — that is the ruling — and the parent chat travels with it,
+	// because the run page's step-transcript note asks the same question and used to
+	// answer it from the same empty cache.
+	t.Run("an aborted chat-parented run offers retry and names its parent chat", func(t *testing.T) {
+		h, _ := seedChatParentedRun(t, true)
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleControls(rec, controlsReq("wf_1"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET controls = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		var got vibekit.RunControlsResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decoding the controls reply: %s", err)
+		}
+		if !slices.Contains(got.Verbs, "retry") {
+			t.Errorf("verbs = %v, want retry offered", got.Verbs)
+		}
+		if got.ParentChatID != "c1" {
+			t.Errorf("parent_chat_id = %q, want c1; the run page reads it to say where a step's "+
+				"live transcript went", got.ParentChatID)
+		}
+	})
+
+	t.Run("a live run whose engine is gone carries the refusal sentence", func(t *testing.T) {
+		// Chat closed, so nothing in this process holds the run.
+		h, br := seedChatParentedRun(t, false)
+		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleControls(rec, controlsReq("wf_1"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET controls = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		var got vibekit.RunControlsResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decoding the controls reply: %s", err)
+		}
+		if slices.Contains(got.Verbs, "pause") {
+			t.Errorf("verbs = %v, want pause withheld from a run nothing hosts", got.Verbs)
+		}
+		if !strings.Contains(got.Refused["pause"], "Findings cleanup") {
+			t.Errorf("refused[pause] = %q, want the sentence to name the chat to open",
+				got.Refused["pause"])
+		}
+	})
+
+	t.Run("an unreadable run is a 404 rather than an empty row", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true)
+		// An engine with no workflow verb: rr.status reports "" rather than an
+		// error, which means "no status to gate on".
+		br.setCallErr(methodKiroWorkflowInspect, workflow.ErrUnknownMethod)
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleControls(rec, controlsReq("wf_1"))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET controls for an unreadable run = %d, want %d: %s",
+				rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+	})
 }
 
 // answerReq builds a POST /api/runs/{id}/answer request with its path value set,

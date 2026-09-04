@@ -1044,6 +1044,27 @@ button.list-row-name:focus-visible {
   gap: var(--sp-2);
 }
 
+/* The row a run with NO verbs gets: the server's own sentence, in the place a
+   reader is already looking for the control. It used to render nothing at all, so
+   a run vibekit could not drive offered an empty header and no reason.
+
+   A COLUMN, because a refusal can name more than one verb and two sentences side
+   by side read as one run-on. Muted and unbounded in height: this is prose about
+   the run, not a control, so it must not compete with the buttons a sibling run
+   would show in the same slot. */
+.run-controls-refused {
+  flex-direction: column;
+  gap: var(--sp-1);
+  max-width: 60ch;
+}
+
+.run-control-refusal {
+  margin: 0;
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
 /* --- The run tab's own layout ---------------------------------------------- */
 
 /* A COLUMN, so the page-content grows and the bottom bar stays pinned. The

@@ -260,6 +260,37 @@ func (b *fakeBridge) setCallResult(method string, res json.RawMessage) {
 	b.callResults[method] = res
 }
 
+// setCallErr re-arms one method's TRANSPORT failure under the fake's own mutex,
+// and setCallRPCErr its in-band JSON-RPC refusal. Both exist for setCallResult's
+// reason and it applies to every one of these maps: Call reads all of them under
+// b.mu, so once a bridge is open an unguarded write from the test goroutine races
+// the resume sweep OpenBridge spawned. The detector reported exactly that.
+func (b *fakeBridge) setCallErr(method string, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.callErrs == nil {
+		b.callErrs = map[string]error{}
+	}
+	b.callErrs[method] = err
+}
+
+func (b *fakeBridge) setCallRPCErr(method string, err *vibekit.RPCError) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.callRPCErrs == nil {
+		b.callRPCErrs = map[string]*vibekit.RPCError{}
+	}
+	b.callRPCErrs[method] = err
+}
+
+// setStartGate parks every later Start until the returned channel is closed,
+// armed under the mutex for setCallResult's reason.
+func (b *fakeBridge) setStartGate(gate chan struct{}) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.startGate = gate
+}
+
 // lastCall is the most recent Call's method, or "".
 func (b *fakeBridge) lastCall() string {
 	b.mu.Lock()

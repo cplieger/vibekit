@@ -433,7 +433,7 @@ func TestRetryRun_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	h.runs.claimTermination(id)
 	h.runs.recordEnd(id, runEndOverran)
 
-	if err := h.runs.Retry(t.Context(), id); err != nil {
+	if _, err := h.runs.Retry(t.Context(), id); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
 	if got := h.runs.endReason(id); got != "" {
@@ -461,7 +461,7 @@ func TestRetryRun_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	h.runs.claimTermination(id)
 	h.runs.recordEnd(id, runEndOverran)
 
-	if err := h.runs.Retry(t.Context(), id); err == nil {
+	if _, err := h.runs.Retry(t.Context(), id); err == nil {
 		t.Fatal("a refused retry reported success")
 	}
 	if got := h.runs.endReason(id); got != runEndOverran {
@@ -500,7 +500,10 @@ func TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *tes
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 
 	done := make(chan error, 1)
-	go func() { done <- h.runs.Retry(t.Context(), id) }()
+	go func() {
+		_, rErr := h.runs.Retry(t.Context(), id)
+		done <- rErr
+	}()
 
 	// Wait until the retry is genuinely in flight, then deliver the frame the way
 	// dispatch does: a run bridge's workflow frames carry an EMPTY chat id.
@@ -563,7 +566,7 @@ func TestRetryRun_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 		t.Fatal("the fixture registered a bridge, so this exercises the wrong branch")
 	}
 
-	if err := h.runs.Retry(t.Context(), id); err != nil {
+	if _, err := h.runs.Retry(t.Context(), id); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
 	l, ok := h.runs.lease(id)
@@ -596,7 +599,7 @@ func TestRetryRun_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
 
-	if err := h.runs.Retry(t.Context(), id); err == nil {
+	if _, err := h.runs.Retry(t.Context(), id); err == nil {
 		t.Fatal("a refused retry reported success")
 	}
 	if _, ok := h.runs.lease(id); ok {

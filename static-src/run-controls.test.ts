@@ -1,74 +1,109 @@
+// ---------------------------------------------------------------------------
+// The run-control vocabulary's own rules.
+//
+// The status→verbs matrix these cases used to pin is GONE, and its absence is the
+// point. It was a copy of the server's own gates, twinned test for twinned test,
+// and the pair proved the copies agreed while neither could express the third
+// input the rule actually has — whether anything still hosts the run. So a run
+// could pass both suites and still be drawn a button whose only outcome was a 409.
+// `GET /api/runs/{id}/controls` answers all three inputs; what is left here is the
+// boundary narrow and the outcome sentences.
+// ---------------------------------------------------------------------------
+
 import { describe, it, expect } from "vitest";
-import { RUN_CONTROLS, CONTROL_LABEL, RUN_STATUSES } from "./run-controls.js";
+import {
+  CONTROL_LABEL,
+  asRunVerb,
+  offeredVerbs,
+  refusalSentences,
+  retryOutcomeNotice,
+} from "./run-controls.js";
 
-// KAS's WorkflowStatusSchema, exhaustively.
-
-describe("run control gating", () => {
-  // The client table must agree with the server's runVerb.from gates, which in
-  // turn mirror what KAS accepts. Two copies of one rule is a deliberate choice
-  // (the server is the authority; the client renders only buttons that can
-  // succeed) and this is what stops them drifting.
-  it("offers each verb only from the statuses that accept it", () => {
-    expect(RUN_CONTROLS["running"]).toEqual(["pause", "cancel"]);
-    expect(RUN_CONTROLS["paused"]).toEqual(["resume", "cancel"]);
-    expect(RUN_CONTROLS["completed"]).toEqual([]);
-    expect(RUN_CONTROLS["failed"]).toEqual(["retry"]);
-    expect(RUN_CONTROLS["aborted"]).toEqual(["retry"]);
-  });
-
-  // A terminal run must never offer cancel: there is nothing to stop, and the
-  // button would be the one control that does nothing.
-  it("never offers cancel on a terminal run", () => {
-    for (const status of ["completed", "failed", "aborted"] as const) {
-      expect(RUN_CONTROLS[status]).not.toContain("cancel");
+describe("narrowing a verb off the wire", () => {
+  it("accepts every verb this client has a button for", () => {
+    for (const verb of ["pause", "resume", "cancel", "retry"] as const) {
+      expect(asRunVerb(verb)).toBe(verb);
+      expect(CONTROL_LABEL[verb]).toBeTruthy();
     }
   });
 
-  // Retry IS offered, and only where KAS accepts it. The carrier objection that
-  // kept it out is answered by re-hosting: retry is legal exactly when a run's
-  // own bridge has been closed, so RetryRun starts one rather than requiring one.
-  // A `completed` run still offers nothing — KAS throws there.
-  it("offers retry only on the terminal statuses that accept it", () => {
-    expect(RUN_CONTROLS["failed"]).toContain("retry");
-    expect(RUN_CONTROLS["aborted"]).toContain("retry");
-    expect(RUN_CONTROLS["completed"] ?? []).not.toContain("retry");
-    // Never on a live run: retry resets failed work, and a running one has none
-    // to reset yet.
-    expect(RUN_CONTROLS["running"] ?? []).not.toContain("retry");
-    expect(RUN_CONTROLS["paused"] ?? []).not.toContain("retry");
-  });
-
-  // Pause and resume are opposites and must never both be on offer, or the row
-  // asks the reader to decide which of two contradictory states the run is in.
-  it("never offers pause and resume together", () => {
-    for (const status of RUN_STATUSES) {
-      const verbs = RUN_CONTROLS[status] ?? [];
-      expect(verbs.includes("pause") && verbs.includes("resume")).toBe(false);
+  // The label lookup is TOTAL over RunVerb, so a word the server grows before this
+  // client is taught it must be dropped at the boundary rather than reaching
+  // CONTROL_LABEL and rendering a button with no text. Prototype keys are the same
+  // hazard through a different door: `CONTROL_LABEL["toString"]` is truthy.
+  it("rejects a word it has no button for, prototype keys included", () => {
+    for (const name of ["", "delete", "some_future_verb", "toString", "constructor"]) {
+      expect(asRunVerb(name)).toBeUndefined();
     }
   });
 
-  // An unknown status renders NO controls rather than guessing. A future KAS
-  // status should degrade to a read-only view, not to a wrong button.
-  it("offers nothing for an unknown status", () => {
-    expect(RUN_CONTROLS["some_future_status"]).toBeUndefined();
-    expect(RUN_CONTROLS[""]).toBeUndefined();
+  it("drops the verbs it cannot name and keeps the server's row order", () => {
+    expect(offeredVerbs(["retry", "some_future_verb", "cancel"])).toEqual(["retry", "cancel"]);
+    // The server sends destructive last; re-sorting here would be this module
+    // deciding a thing it was just relieved of.
+    expect(offeredVerbs(["resume", "cancel"])).toEqual(["resume", "cancel"]);
+    expect(offeredVerbs([])).toEqual([]);
+  });
+});
+
+describe("the refusal sentences", () => {
+  it("orders them by verb so the list does not reshuffle between fetches", () => {
+    const refused = {
+      cancel: "cancel sentence",
+      retry: "retry sentence",
+      pause: "pause sentence",
+    };
+    expect(refusalSentences(refused)).toEqual([
+      "retry sentence",
+      "pause sentence",
+      "cancel sentence",
+    ]);
   });
 
-  // Every verb any status offers needs a label, or a button renders blank.
-  it("labels every offered verb", () => {
-    for (const status of RUN_STATUSES) {
-      for (const verb of RUN_CONTROLS[status] ?? []) {
-        expect(CONTROL_LABEL[verb]).toBeTruthy();
-      }
-    }
+  // A sentence for a verb this client cannot NAME is still shown: it is the
+  // server's prose about the RUN, not about a button, and dropping it would leave a
+  // reader with an empty row and no reason — which is the state the whole answer
+  // exists to end. Sorted last, behind the verbs a row would have drawn.
+  it("keeps a sentence for a verb it has no button for, last", () => {
+    expect(
+      refusalSentences({ some_future_verb: "future sentence", retry: "retry sentence" }),
+    ).toEqual(["retry sentence", "future sentence"]);
   });
 
-  // Every live status offers a way to stop. A running or paused run with no
-  // terminal control is a run the user cannot get rid of except by deleting the
-  // chat, which is the defect the whole control set exists to close.
-  it("always offers a way out of a live run", () => {
-    for (const status of ["running", "paused"] as const) {
-      expect(RUN_CONTROLS[status]).toContain("cancel");
-    }
+  it("has nothing to say for an absent or empty refusal map", () => {
+    expect(refusalSentences(undefined)).toEqual([]);
+    expect(refusalSentences({})).toEqual([]);
+    // An empty sentence is not a sentence: rendering it would produce a blank
+    // paragraph where the buttons were.
+    expect(refusalSentences({ pause: "" })).toEqual([]);
+  });
+});
+
+describe("reporting a retry's outcome", () => {
+  // The defect, stated as a rule. A retry that reset ZERO nodes is a first-class
+  // outcome upstream and a no-op from the reader's seat, and reporting it as a
+  // success is precisely what made "I pressed Retry and nothing happened" the
+  // design's expected appearance.
+  it("does NOT report a zero-node retry as a success", () => {
+    const notice = retryOutcomeNotice(0);
+    expect(notice.level).toBe("error");
+    expect(notice.text).toContain("Nothing to retry");
+  });
+
+  it("states how many steps a real retry reset", () => {
+    expect(retryOutcomeNotice(5)).toEqual({ level: "success", text: "Retrying 5 steps" });
+  });
+
+  // Singular, because "Retrying 1 steps" is the kind of line that makes a reader
+  // distrust the number beside it.
+  it("agrees with itself about one step", () => {
+    expect(retryOutcomeNotice(1)).toEqual({ level: "success", text: "Retrying 1 step" });
+  });
+
+  // A negative count cannot arrive from a decoded array length, but the guard is
+  // `<= 0` rather than `=== 0` so the no-op branch cannot be skipped by an
+  // impossible value that would otherwise read as a success.
+  it("treats a nonsensical count as nothing rather than as a success", () => {
+    expect(retryOutcomeNotice(-1).level).toBe("error");
   });
 });

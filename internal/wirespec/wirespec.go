@@ -132,6 +132,12 @@ var wireTypes = []wiregen.WireType{
 	// emits in slice order.
 	wiregen.TypeRef[vibekit.LiveRun](),
 	wiregen.TypeRef[vibekit.LiveRunsResponse](),
+	// GET /api/runs/{id}/controls and POST /api/runs/{id}/retry's replies. No
+	// `Payload` suffix, so TestRegistry_EveryRegisteredPayloadHasAnSSEBinding
+	// exempts them by construction — the slot LiveRunsResponse occupies as a
+	// REST response.
+	wiregen.TypeRef[vibekit.RunControlsResponse](),
+	wiregen.TypeRef[vibekit.RunRetriedResponse](),
 	wiregen.TypeRef[vibekit.RunLaunchRequest](),
 	wiregen.TypeRef[vibekit.RunLaunchedResponse](),
 	// POST /api/runs/{id}/answer's body, registered for RunLaunchRequest's

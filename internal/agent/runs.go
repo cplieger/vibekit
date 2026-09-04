@@ -55,12 +55,16 @@ type Runs struct {
 	mu     sync.Mutex
 }
 
-// runChatReader is the chat store as the run surface uses it: one method, to
-// resolve a chat's session chain. Read in both directions — from a chat to the
-// runs its sessions launched (cancel on close, resume on rehydrate), and from a
-// run's parent session back to the chat whose bridge hosts it (hostBridge).
+// runChatReader is the chat store as the run surface uses it: resolving a chat's
+// session chain, read in both directions — from a chat to the runs its sessions
+// launched (cancel on close, resume on rehydrate), and from a run's parent
+// session back to the chat that owns it (chatForSession).
+//
+// List is the second direction's, and it is why this is two methods rather than
+// one: Get needs the chat id, which is the answer that direction is looking for.
 type runChatReader interface {
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
+	List(ctx context.Context) []vibekit.ChatHeader
 }
 
 // runTranslator is the translator as the run surface uses it: the two

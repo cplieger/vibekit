@@ -15,6 +15,10 @@ vi.mock("../run-store.js", () => ({
   // refetches. A case that pins the APPLY path sets it true.
   applyRunProgress: vi.fn(() => false),
   invalidateRun: vi.fn(),
+  // The affordance refetch a run's ENDING triggers: the verb set changes at exactly
+  // that moment (a live run's Pause/Cancel becomes a failed run's Retry) and nothing
+  // else in the frame stream says so.
+  invalidateRunControls: vi.fn(),
   invalidateCachedRuns: vi.fn(),
   noteRunChat: vi.fn(),
   noteRunLive: vi.fn(),
@@ -52,6 +56,7 @@ import type { SSEPayloads } from "../bus.js";
 import {
   applyRunProgress,
   invalidateRun,
+  invalidateRunControls,
   noteRunChat,
   noteRunLive,
   noteRunSettled,
@@ -64,6 +69,7 @@ import { answerRunInput, continueRunStep } from "../actions/runs.js";
 import { notifyIfHidden } from "../notify.js";
 
 const invalidate = vi.mocked(invalidateRun);
+const invalidateControls = vi.mocked(invalidateRunControls);
 const applyProgress = vi.mocked(applyRunProgress);
 const noteChat = vi.mocked(noteRunChat);
 const noteLive = vi.mocked(noteRunLive);
@@ -97,6 +103,7 @@ onBus(BUS_RUNS_CHANGED, () => {
 
 beforeEach(() => {
   invalidate.mockClear();
+  invalidateControls.mockClear();
   noteChat.mockClear();
   noteLive.mockClear();
   noteSettled.mockClear();
@@ -148,6 +155,22 @@ describe("run SSE handlers", () => {
       expect(invalidate).toHaveBeenCalledTimes(i + 1);
       expect(invalidate).toHaveBeenLastCalledWith("wf_1");
     }
+  });
+
+  // The verb set turns over at exactly one moment in a run's life: its ending. A
+  // live run's Pause/Cancel becomes a failed run's Retry, or a completed run's
+  // nothing, and no other frame says so — so this is the affordance's second and
+  // last trigger, the first being a tab opening. Fetching it per frame instead
+  // would put a round trip on every node event, which is what the progress patch
+  // exists to avoid.
+  it("refetches the affordance when a run ENDS, and never mid-run", () => {
+    send("run_progress", { workflow_id: "wf_1", kind: "node_start", node_path: "seq/coder" });
+    send("run_started", { workflow_id: "wf_1", name: "x" });
+    expect(invalidateControls).not.toHaveBeenCalled();
+
+    send("run_finished", { workflow_id: "wf_1", status: "failed", name: "x" });
+    expect(invalidateControls).toHaveBeenCalledTimes(1);
+    expect(invalidateControls).toHaveBeenLastCalledWith("wf_1");
   });
 
   // A progress frame is APPLIED, and the refetch is what happens only when it
