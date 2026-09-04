@@ -151,13 +151,42 @@ func TestToolCallDelta_AnUnchangedFieldIsAbsent(t *testing.T) {
 	if len(deltas) != 1 {
 		t.Fatalf("got %d tool_call_update frames, want 1", len(deltas))
 	}
+	got := deltas[0]
+	// DurationMs is normalised out, and that is not a loosening: the completion
+	// fold COMPUTES it from wall clock (buf.ComputeDuration), so it is a field the
+	// fold changed and the frame is right to carry it. Asserting 0 asserted that
+	// the create and the completion landed in the same millisecond, which is true
+	// about 39 runs in 40 and made this test flaky from the day it was written.
+	// Whether a duration reaches the wire is TestToolCallDelta_SendsTheDuration's.
+	got.DurationMs = 0
 	want := vibekit.ToolCallUpdatePayload{
 		MessageID:  "tc-mid",
 		ToolCallID: "tc-1",
 		Status:     vibekit.ToolCompleted,
 	}
-	if !reflect.DeepEqual(deltas[0], want) {
-		t.Errorf("a status-only frame = %+v,\nwant exactly %+v", deltas[0], want)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("a status-only frame = %+v,\nwant exactly %+v", got, want)
+	}
+}
+
+// TestToolCallDelta_SendsTheDuration is the half the normalisation above gives
+// up, asserted where it can be: the completion fold computes a duration, so the
+// frame that completes a call must carry one.
+func TestToolCallDelta_SendsTheDuration(t *testing.T) {
+	before := vibekit.ToolCall{ID: "tc-1", Status: vibekit.ToolInProgress}
+	after := before
+	after.Status = vibekit.ToolCompleted
+	after.DurationMs = 1234
+
+	d := toolCallDelta("m1", &before, &after)
+	if d.DurationMs != 1234 {
+		t.Errorf("duration_ms = %d, want 1234 — a completed card shows it", d.DurationMs)
+	}
+	// And a frame that did not change it sends nothing, which is what stops every
+	// later frame for one call re-stating it.
+	after.DurationMs = before.DurationMs
+	if d2 := toolCallDelta("m1", &before, &after); d2.DurationMs != 0 {
+		t.Errorf("duration_ms = %d on an unchanged duration, want 0", d2.DurationMs)
 	}
 }
 
