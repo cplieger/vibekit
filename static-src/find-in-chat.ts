@@ -17,9 +17,10 @@
 //
 // The real blind spots are three, and they are why the enumeration moves
 // server-side rather than being patched in that walker: non-resident pages;
-// resident rows whose `content-visibility: auto` makes checkVisibility report
-// false while rendering is skipped; and hidden or collapsed subtrees, which
-// progressive collapse adds a third time.
+// resident content whose `content-visibility: auto` makes checkVisibility report
+// false while rendering is skipped — the prose rows AND the four cards that hold
+// a transcript's mass (css/14-tools.css), so most of it; and hidden or collapsed
+// subtrees, which progressive collapse adds a third time.
 //
 // Native-find override policy (researched against 2024-2026 a11y/UX guidance):
 //   - Overriding Ctrl-F is only acceptable because we provide an EQUIVALENT
@@ -537,10 +538,23 @@ async function navigateToHit(hit: SearchHit): Promise<void> {
   openDisclosureChain(row, target, hit);
   // Re-walk now that the chain is open: the marks inside it exist only after
   // the walker can see the text.
-  applyEngine(() => {
-    engine?.search(shell?.value ?? "", shell?.caseSensitive ?? false);
-  });
-  const chosen = pickNearestMark(target, hit);
+  let chosen = walkAndPick(target, hit);
+  if (chosen === -1) {
+    // A miss can mean the text is not THERE, or that it was not RENDERED when the
+    // walker ran. The four cards that carry a transcript's mass are
+    // `content-visibility: auto` (css/14-tools.css), so their content is skipped
+    // while off screen and the walker prunes it — and a hit the reader has not
+    // scrolled to yet is exactly that. Scrolling to it is what renders it, so
+    // navigate FIRST and ask once more before claiming the text is not there.
+    jumpTo(target, { block: "center", inline: "nearest", behavior: "auto" });
+    await nextRender();
+    // Closed, or the transcript repainted this element away, while the frame
+    // rendered. `shell` needs no re-check: it is assigned once at build.
+    if (!isOpen() || !target.isConnected) {
+      return;
+    }
+    chosen = walkAndPick(target, hit);
+  }
   if (chosen === -1) {
     // Syntax-only match (link target, emphasis marker, fence info) or a best
     // candidate below the similarity floor: select the block and say why.
@@ -553,6 +567,32 @@ async function navigateToHit(hit: SearchHit): Promise<void> {
   });
   updateCounter(shell.value);
   revealCurrent();
+}
+
+/** Walk the transcript again and pick the mark that is credibly THIS hit.
+ *
+ *  The walk is what makes marks exist inside content that has only just become
+ *  visible — a disclosure chain the navigation opened, or a card a scroll brought
+ *  on screen. -1 when nothing inside `target` is credibly the hit. */
+function walkAndPick(target: HTMLElement, hit: SearchHit): number {
+  applyEngine(() => {
+    engine?.search(shell?.value ?? "", shell?.caseSensitive ?? false);
+  });
+  return pickNearestMark(target, hit);
+}
+
+/** One RENDERED frame. `requestAnimationFrame` runs before layout, so the second
+ *  callback is the first point after the browser has laid the previous frame out
+ *  — which is when a `content-visibility: auto` card a scroll just reached has
+ *  rendered and holds walkable text. */
+function nextRender(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  });
 }
 
 /** Page older history in until the hit's message is resident. Bounded by the

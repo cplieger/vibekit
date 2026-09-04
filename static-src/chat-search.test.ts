@@ -159,7 +159,7 @@ describe("runServerSearch: the reveal", () => {
     expect([...searchHitTurns()]).toEqual([]);
     expect(searchHitCount(2)).toBe(0);
     expect(clearSearchOpened).toHaveBeenCalledWith("c1");
-    // The re-fold un-mounts what the reveal mounted past the warm window: a
+    // The re-fold un-mounts what the reveal pinned past the block budget: a
     // shape change, stated at the branch that knows.
     expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
   });

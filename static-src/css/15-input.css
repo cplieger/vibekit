@@ -2,9 +2,9 @@
    Input Bar (centered, same max-width as messages)
    ========================================================================== */
 
-/* THE COMPOSER DOES NOT SHARE A LAYOUT WITH THE TRANSCRIPT, and that is what
- * makes typing latency independent of transcript size by construction rather
- * than by keeping the transcript small.
+/* THE COMPOSER'S INTERNAL LAYOUT IS ITS OWN, which is what makes a keystroke's
+ * cost independent of transcript size rather than dependent on keeping the
+ * transcript small.
  *
  * `#prompt-input` carries `field-sizing: content`, so its intrinsic height is a
  * function of what is typed, and this bar is a flex sibling of the transcript's
@@ -14,6 +14,23 @@
  * height animation, the pill row, the attachment and steer stacks) cannot dirty
  * a box outside it, and a transcript mutation cannot drag this subtree through
  * its layout pass.
+ *
+ * WHAT IT DOES NOT COVER is this bar's OWN height, which is still content-derived
+ * — that is the same fact `size` containment is declined for below. So a keystroke
+ * that changes the wrapped line count resizes this box and the column relays out;
+ * every keystroke that does not is now independent of the transcript.
+ *
+ * TAKING THE BAR OUT OF THE COLUMN DOES NOT CLOSE THAT GAP, and that is why the
+ * out-of-flow shape is not here. `#messages-wrap` is `position: absolute; inset: 0`
+ * inside `#messages-wrap-outer` (13-messages.css), so with this bar out of flow
+ * nothing shortens the scroller and the newest turn sits behind it; giving that
+ * back needs the scroller's block-end inset to equal a height CSS cannot compute
+ * (a `field-sizing` textarea, plus the dock, plus the steer stack). This tree's
+ * own precedent for that number is `--chat-toolbar-w`, measured in
+ * chat-toolbar-metrics.ts and published as a custom property — so the alternative
+ * relocates the coupling into a measured JS write on the SCROLLER, fired by the
+ * same height changes. Grid rows and an `anchor()` inset land in the same place:
+ * the bar's height has to reach the transcript for its last turn to be reachable.
  *
  * NOT on the shared `.bottom-bar` (19-files.css): the editor, files and run bars
  * are the same class and none of them sits beside a live transcript.

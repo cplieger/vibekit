@@ -153,7 +153,7 @@ export async function runServerSearch(
   for (const id of revealTurns) {
     openForSearch(chatID, id);
   }
-  // A revealed turn may be a tier-3 stub whose body text the DOM walker cannot
+  // A revealed turn may be a STUB whose body text the DOM walker cannot
   // mark until it exists. Build each one through the transcript's on-demand
   // entry point BEFORE the repaint below — the builds land under still-folded
   // cards (invisible), yield between block batches, and must complete before
@@ -177,8 +177,9 @@ export function resetServerSearch(chatID: string): void {
   countsByTurn = new Map<number, number>();
   hitTotal = 0;
   if (chatID !== "" && clearSearchOpened(chatID)) {
-    // The re-fold is a shape change too: turns the reveal opened fold back,
-    // and the ones it mounted past the warm window unmount.
+    // The re-fold is a shape change too: turns the reveal opened fold back, and
+    // the ones it pinned resident past the paint's block budget unmount
+    // (`block-window.ts`).
     bumpMessages(chatID, "shape");
   }
 }

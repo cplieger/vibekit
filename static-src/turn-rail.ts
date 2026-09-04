@@ -725,13 +725,15 @@ export function initTurnRailCallbacks(cbs: {
  *  silently doing nothing, which is what a rail over a paginated store does if
  *  nobody thinks about it.
  *
- *  Either way the landing turn may be a tier-3 STUB (pagination lands stubs,
- *  and an old resident turn unmounts past the warm window), so the jump runs
- *  the same on-demand body build the fold toggle uses. AFTER the scroll: the
- *  build happens under a folded card, so it changes no height the jump could
- *  care about, and the jump itself stays instant. The turn is NOT opened —
- *  a jump onto a resident turn today lands on its folded row, and this keeps
- *  that exactly. */
+ *  Either way the landing turn may be a STUB (pagination lands stubs, and a turn
+ *  the paint's block budget cannot hold has no body — `block-window.ts`), so the
+ *  jump runs the same on-demand body build the fold toggle uses. AFTER the
+ *  scroll: the build happens under a folded card, so it changes no height the
+ *  jump could care about, and the jump itself stays instant. The turn is NOT
+ *  opened — a jump onto a resident turn today lands on its folded row, and this
+ *  keeps that exactly. Staying MOUNTED is a separate question, and the build
+ *  entry point answers it: `messages.ts mountTurnBody` pins the turn it builds,
+ *  so the next paint cannot evict the body this jump just landed on. */
 async function jumpToTurn(s: TurnSummary): Promise<void> {
   // A turn permalink is addressable, so a ledger row, a run's launch record and
   // a search hit can all link to a precise point.
