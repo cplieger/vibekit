@@ -500,8 +500,8 @@ describe("the no-cursor reload keeps the older pages already resident", () => {
   // paged-up reader's history away, and their scroll position with it.
   it("re-adopts the messages older than the page's oldest", async () => {
     seedSession("c1", [msg("m1", 1), msg("m2", 2), msg("m3", 3), msg("m4", 4)]);
-    // The page is the newest two, which is what a 1 MiB budget answers for a chat
-    // whose recent messages are large.
+    // The page is the newest two, which is what the byte budget answers for a
+    // chat whose recent messages are large.
     mockApiGetTyped.mockResolvedValue({
       chat: { id: "c1", message_count: 4 },
       messages: [msg("m3", 3), msg("m4", 4)],

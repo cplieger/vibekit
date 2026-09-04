@@ -51,17 +51,37 @@ const decodeChatGetResponseLocal: Decoder<{
 };
 
 /**
- * Byte budget for one transcript window, the second half of the pagination
- * request beside `limit`.
+ * What one transcript page may carry.
  *
- * A message COUNT was never a budget for this workload: the client asked for 50
- * while the five open chats held 2, 4, 10, 10 and 13 messages, so every real
- * conversation came back whole — and a six-message chat measured 13,010,641
- * bytes, because one assistant message can carry 580 blocks and 353 tool calls.
- * The server cuts at a message boundary and reports `has_more` against the
- * bytes, so paging up from here is what reaches the rest.
+ * THE CLIENT'S OWN UNIT IS BLOCKS. `block-window.ts` bounds a paint in blocks and
+ * tool cards, because that is what a paint costs; a message count is not a cost
+ * and never was one for this workload — the client asked for 50 while the five
+ * open chats held 2, 4, 10, 10 and 13 messages, so every real conversation came
+ * back whole, and a six-message chat measured 13,010,641 bytes because one
+ * assistant message can carry 580 blocks and 353 tool calls.
+ *
+ * The REQUEST cannot say "blocks": `/api/chats/{id}` takes a message cap and a
+ * byte budget, cuts at a message boundary and reports `has_more` against the
+ * bytes. So the page is stated in the closest unit the wire has, sized against
+ * the residency budget instead of against nothing.
+ *
+ * 256 KiB, down from the megabyte the byte budget arrived at: a megabyte of
+ * transcript JSON is several times the resident block budget, so the remainder
+ * was fetched, decoded and then stubbed on arrival. Nothing becomes unreachable —
+ * the server returns the newest message WHOLE however big it is (with its tool
+ * calls windowed behind their own resource), and `has_more` plus `before_id`
+ * reach everything older, which is the same path the reader's scroll already
+ * walks.
  */
-const DEFAULT_WINDOW_BYTES = 1 << 20;
+const PAGE_BUDGET_BYTES = 1 << 18;
+
+/**
+ * The server's cap on messages per page, and NOT this client's budget — it is a
+ * bound on the answer's shape, not on its size. It binds only where messages are
+ * small enough that 50 of them fit in the budget above, which on this workload is
+ * never: the budget is what cuts every real page.
+ */
+const PAGE_MESSAGE_CAP = 50;
 
 // --- Abort controllers ---
 let listController: AbortController | null = null;
@@ -169,18 +189,13 @@ export async function loadList(): Promise<boolean> {
   return true;
 }
 
-export async function loadMessages(
-  chatID: string,
-  beforeID?: string,
-  limit = 50,
-  maxBytes = DEFAULT_WINDOW_BYTES,
-): Promise<boolean> {
+export async function loadMessages(chatID: string, beforeID?: string): Promise<boolean> {
   msgControllers.get(chatID)?.abort();
   const controller = new AbortController();
   msgControllers.set(chatID, controller);
   const params = new URLSearchParams({
-    limit: String(limit),
-    max_bytes: String(maxBytes),
+    limit: String(PAGE_MESSAGE_CAP),
+    max_bytes: String(PAGE_BUDGET_BYTES),
   });
   if (beforeID !== undefined) {
     params.set("before_id", beforeID);
