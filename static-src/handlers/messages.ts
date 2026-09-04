@@ -23,6 +23,7 @@ import {
 import { markGitDirty } from "../git.js";
 import { isRepoMutatingKind } from "../tool-schema.js";
 import { isStepSubtask } from "../step-subtask.js";
+import type { ToolCall } from "../types.js";
 
 // Defensive `=== undefined` guards in this file look unnecessary to
 // the type checker — the wire decoder marks payloads non-nullable —
@@ -164,9 +165,37 @@ onSSE("tool_call_update", (chatID, p) => {
   // call through its own scan.
   const call = applyToolCallDelta(chatID, p);
   if (p.status === "completed" && call !== undefined && isRepoMutatingKind(call.kind)) {
-    // A repo-mutating call finishing is the FACT that the tree changed, and it is
-    // the only automatic git refresh there is — git-status-store.ts holds no
-    // timer, because a 15-second poll of 54 worktrees was a guess at this.
-    markGitDirty();
+    // A repo-mutating call finishing is the FACT that the tree changed, where a
+    // 15-second poll of 54 worktrees was a guess at it. The call also NAMES what
+    // it touched, so the rescan is scoped to the owning repositories: without the
+    // paths, a turn editing ten files in one repo pays ten whole-tree scans.
+    markGitDirty(mutatedPaths(call));
   }
 });
+
+/** The workspace-relative paths a completed tool call says it touched.
+ *
+ *  Two sources because neither is complete on its own: `locations` is what KAS
+ *  reports for a read or a command and `diffs[].path` is what a write carries, and
+ *  a call can have either, both, or neither. Both are already
+ *  workspace-relative — `translate.relPath` is the funnel every ACP path crosses —
+ *  which is the form `?paths=` resolution expects.
+ *
+ *  An empty result means "something changed and this call cannot say where", which
+ *  `markGitDirty` reads as a full rescan. That is the honest answer: a scope
+ *  derived from nothing would rescan the wrong repository and leave the right one
+ *  stale. */
+function mutatedPaths(call: ToolCall): string[] {
+  const paths: string[] = [];
+  for (const l of call.locations ?? []) {
+    if (l.path !== "") {
+      paths.push(l.path);
+    }
+  }
+  for (const d of call.diffs ?? []) {
+    if (d.path !== "") {
+      paths.push(d.path);
+    }
+  }
+  return paths;
+}

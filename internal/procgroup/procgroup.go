@@ -13,9 +13,13 @@
 package procgroup
 
 import (
+	"bytes"
 	"errors"
 	"os"
+	"strconv"
+	"strings"
 	"syscall"
+	"time"
 )
 
 // Kill signals p's whole process group, falling back to the head alone when p
@@ -52,6 +56,103 @@ func Kill(p *os.Process, sig syscall.Signal) error {
 	// group signal failed — fall back to the head, which is the behaviour every
 	// caller had before this package existed.
 	return p.Signal(sig)
+}
+
+// GroupOf reports the process group p leads, and false when it leads none —
+// Setpgid did not take, so the "group" is this process's own, or p is reaped.
+//
+// Exported because the pgid has to be read BEFORE the signal that empties the
+// group: the head can be reaped the instant it dies and getpgid(2) then answers
+// ESRCH, leaving nothing to wait on in exactly the case where teardown worked.
+func GroupOf(p *os.Process) (pgid int, ok bool) {
+	pgid, err := syscall.Getpgid(p.Pid)
+	if err != nil || !Owns(p.Pid, pgid) {
+		return 0, false
+	}
+	return pgid, true
+}
+
+// waitGonePoll is the retry interval WaitGone uses between /proc sweeps. Short
+// enough that an ordinary teardown returns in one or two sweeps, long enough that
+// a full-budget wait is a handful of sweeps rather than thousands.
+const waitGonePoll = 20 * time.Millisecond
+
+// WaitGone blocks until pgid's process group holds no LIVE member, bounded by
+// budget. A false return is worth a log line and nothing more — the signal has
+// already been sent.
+//
+// A ZOMBIE counts as gone, which is why this reads /proc instead of polling
+// kill(-pgid, 0): an unreaped member is still signallable, and vibekit is PID 1, so
+// that probe would burn the budget on every teardown that WORKED. Kill's own doc
+// covers why the head alone is not the group.
+func WaitGone(pgid int, budget time.Duration) bool {
+	deadline := time.Now().Add(budget)
+	for {
+		if !groupHasLiveMember(pgid) {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(waitGonePoll)
+	}
+}
+
+// groupHasLiveMember reports whether any process in pgid is in a state other than
+// zombie.
+//
+// A pgid at or below 1 answers false without walking anything: 0 means "the
+// caller's own group" to kill(2) and 1 is init's, so a caller that lost its pgid
+// would otherwise wait on the whole container.
+func groupHasLiveMember(pgid int) bool {
+	if pgid <= 1 {
+		return false
+	}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		// /proc unreadable: nothing here can answer, and reporting "still alive"
+		// would make every caller wait its whole budget for no information.
+		return false
+	}
+	for _, e := range entries {
+		pid, cerr := strconv.Atoi(e.Name())
+		if cerr != nil {
+			continue
+		}
+		gid, state, ok := statPgrpState(pid)
+		if ok && gid == pgid && state != 'Z' {
+			return true
+		}
+	}
+	return false
+}
+
+// statPgrpState reads pid's process-group id and state letter out of
+// /proc/<pid>/stat.
+//
+// Fields are counted from the LAST ')' because field 2 is the executable name in
+// parentheses and may itself contain spaces and parens, which a whitespace split
+// gets wrong. After that bracket the fields are state, ppid, pgrp.
+func statPgrpState(pid int) (pgrp int, state byte, ok bool) {
+	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		// The process exited between the directory read and this one, which is
+		// the commonest outcome during a teardown sweep.
+		return 0, 0, false
+	}
+	cut := bytes.LastIndexByte(raw, ')')
+	if cut < 0 {
+		return 0, 0, false
+	}
+	f := strings.Fields(string(raw[cut+1:]))
+	if len(f) < 3 || f[0] == "" {
+		return 0, 0, false
+	}
+	g, err := strconv.Atoi(f[2])
+	if err != nil {
+		return 0, 0, false
+	}
+	return g, f[0][0], true
 }
 
 // Owns reports whether pid is the leader of pgid, i.e. whether Setpgid took and

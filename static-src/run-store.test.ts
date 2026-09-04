@@ -633,6 +633,83 @@ describe("applyRunProgress writes the addressed node and issues no request", () 
     // Siblings are shared by reference: only the matched spine is rebuilt.
     expect(after?.root?.children?.[1]).toBe(untouchedSibling);
   });
+
+  // A frame that moves nothing must cost nothing. The store's value is what every
+  // reader watches and it dedups by IDENTITY, so handing back a new object for an
+  // unchanged tree wakes every subscriber to repaint the same pixels.
+  //
+  // `watch_poll` is the frame that made this reachable — it re-states `running` on a
+  // node already running, once per poll interval for the life of a watch — and a
+  // duplicate frame across a KAS resume is the other. Asserted through the state's
+  // identity rather than a render count, because identity is the thing the
+  // subscribers key on.
+  it("does not reassign the state for a frame that moves nothing", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: {
+        nodeId: "seq",
+        type: "sequence",
+        status: "running",
+        children: [{ nodeId: "w", type: "watch", status: "running", startedAt: "T0" }],
+      },
+    });
+    const before = store.peekRunState("r1");
+
+    // The watch_poll shape: the node's path and the status it already holds.
+    const landed = store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: "seq/w",
+      status: "running",
+    });
+
+    // LANDED, so the caller must not refetch — "nothing changed" is not "I could
+    // not apply this", and conflating them would put the HTTP round trip back on
+    // every poll.
+    expect(landed).toBe(true);
+    expect(store.peekRunState("r1")).toBe(before);
+  });
+
+  // The same claim one level up: an unchanged leaf must not rebuild the spine
+  // above it either, or the root identity changes and the saving is lost.
+  it("leaves the spine alone when the addressed leaf did not move", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: {
+        nodeId: "seq",
+        type: "sequence",
+        status: "running",
+        children: [{ nodeId: "w", type: "watch", status: "running" }, step("b")],
+      },
+    });
+    const root = store.peekRunState("r1")?.root;
+
+    store.applyRunProgress({ workflow_id: "r1", node_path: "seq/w", status: "running" });
+
+    expect(store.peekRunState("r1")?.root).toBe(root);
+  });
+
+  // And the guard must not swallow a real change. A frame carrying a field the node
+  // does not hold is a change, however small.
+  it("still reassigns when the frame moves one field", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "w", type: "watch", status: "running" },
+    });
+    const before = store.peekRunState("r1");
+
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: "w",
+      status: "running",
+      started_at: "T1",
+    });
+
+    expect(store.peekRunState("r1")).not.toBe(before);
+    expect(store.peekRunState("r1")?.root?.startedAt).toBe("T1");
+  });
 });
 
 describe("applyRunProgress refuses what it cannot express, so the caller refetches", () => {

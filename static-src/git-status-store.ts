@@ -12,17 +12,33 @@
 // `turn_ended`, and one scan is 270 git subprocesses across 54 worktrees, so the
 // steady-state cost of an idle page was a scan every 15 seconds for a tree
 // nothing had touched. A turn ending is a GUESS that the tree changed; the client
-// already holds the fact — `handlers/messages.ts` sees each repo-mutating tool
-// call complete — and was throwing it away. So the only automatic refresh is that
-// fact arriving, through `markGitDirty`.
+// already holds the fact and was throwing it away. So every automatic refresh is a
+// fact arriving, through `markGitDirty`, and each one NAMES the paths it knows
+// about so only the owning repositories are rescanned.
+//
+// The facts, and between them they cover every writer:
+//
+//   the agent      a repo-mutating tool call completing   handlers/messages.ts
+//   the editor     a save landing                         editor-core.ts
+//   the shell      the panel closing                      shell.ts
+//   anything else  the tab becoming visible again          below
+//
+// The first two NAME their paths and cost the owning repositories only. The last
+// two cannot: a terminal command writes wherever it likes, and the catch-all is by
+// definition about a writer this client cannot see — a command run by another tool,
+// a second window on the same workspace, the file browser's own create and delete.
+// Neither is a clock. The shell one fires on a gesture, and the catch-all fires
+// when a stale badge would be READ rather than on a schedule, so a page nobody is
+// looking at costs nothing; the server answers from its snapshot and rescans behind
+// the answer, so a burst costs one scan.
 //
 // A watcher was considered and rejected, and the reason is checkable in the tree:
-// vibekit IS the writer, so it holds a more precise fact than inotify does — it
-// can name the repos — while a recursive watch over 54 worktrees would need tens
-// of thousands of inotify watches against a host `fs.inotify.max_user_watches`
-// the container cannot raise, and a `.git/index`-only watch would miss the
-// commonest case, an unstaged agent write. No new SSE event either: the frames
-// that carry the fact already reach the client.
+// vibekit IS the writer for the agent's half, so it holds a more precise fact than
+// inotify does — it can name the repos — while a recursive watch over 54 worktrees
+// would need tens of thousands of inotify watches against a host
+// `fs.inotify.max_user_watches` the container cannot raise, and a `.git/index`-only
+// watch would miss the commonest case, an unstaged agent write. No new SSE event
+// either: the frames that carry the fact already reach the client.
 //
 // Scope note: git-changes-tab.ts deliberately keeps its own fetch. It needs the
 // `?fetch=1` forced-refresh variant (a real `git fetch`, the only way to learn
@@ -40,19 +56,47 @@ interface StatusAllResponse {
   repos?: GitRepoStatus[] | null;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void as a generic argument for an action taking no args
-const fetchStatusAll = apiAction<void, StatusAllResponse>({
+/** How many paths one scoped read may name. The server caps it too, and its cap is
+ *  the one that binds; this keeps a turn that touched hundreds of files from
+ *  building a URL only to have most of it dropped. */
+const SCOPE_PATHS_MAX = 64;
+
+/** A scoped read's `?paths=`, or "" for a full one.
+ *
+ *  The paths are workspace-RELATIVE, which is the language `ownerOf` speaks, and
+ *  the split from path to repository stays server-side: the one time this module
+ *  composed repo keys itself it got the rule wrong and every status letter was
+ *  silently empty. */
+function scopeQuery(paths: readonly string[] | undefined): string {
+  if (paths === undefined || paths.length === 0) {
+    return "";
+  }
+  const wanted = [...new Set(paths.filter((p) => p !== ""))].slice(0, SCOPE_PATHS_MAX);
+  if (wanted.length === 0) {
+    return "";
+  }
+  return `?paths=${encodeURIComponent(wanted.join(","))}`;
+}
+
+interface ScopeArgs {
+  paths?: readonly string[];
+}
+
+const fetchStatusAll = apiAction<ScopeArgs, StatusAllResponse>({
   name: "git-status.all",
-  request: () => ({ method: "GET", path: "/api/git/status-all" }),
+  request: ({ paths }) => ({ method: "GET", path: `/api/git/status-all${scopeQuery(paths)}` }),
   error: false,
   success: false,
 });
 
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void as a generic argument for an action taking no args
-const refreshAction = defineAction<void, StatusAllResponse>({
+const refreshAction = defineAction<ScopeArgs, StatusAllResponse>({
   name: "git-status.refresh",
-  dedupe: true,
-  run: async () => (await fetchStatusAll.dispatch(undefined)) ?? { repos: [] },
+  // Keyed on the SCOPE, not blanket-true. Two reads naming the same paths are one
+  // read; two naming different repositories are two, and collapsing them would
+  // leave the second repository's rows stale — which is the whole defect scoping
+  // is here to fix, reintroduced on the client side.
+  dedupe: (args) => `git-status.refresh${scopeQuery(args.paths)}`,
+  run: async (args) => (await fetchStatusAll.dispatch(args)) ?? { repos: [] },
   error: false,
   success: false,
 });
@@ -179,6 +223,22 @@ onWorkspaceRoot(() => {
   repos.value = [...list];
 });
 
+// The tab coming back is the catch-all for every writer this client cannot name:
+// a `git commit` typed in the shell, an edit made by a command, a change from
+// another window onto the same workspace. It is not a poll — a page nobody looks
+// at fires nothing, and coming back is exactly the moment a stale badge would be
+// READ — and it is unscoped because there is nothing to scope it to.
+//
+// Guarded on the store having started: registering this at module load and firing
+// it for a page whose file browser and git view were never opened would put a scan
+// of every worktree back on a surface with no subscriber, which is the cost
+// `startOnFirstSubscriber` exists to avoid.
+document.addEventListener("visibilitychange", () => {
+  if (started && !document.hidden) {
+    void refreshGitStatus();
+  }
+});
+
 /** Read the tree once, on the FIRST SUBSCRIBER, and never for nobody.
  *
  *  There is no init call: one belonged to whichever module happened to construct
@@ -193,21 +253,22 @@ function startOnFirstSubscriber(): void {
   void refreshGitStatus();
 }
 
-/** Re-read the tree. Deduped with any read already in flight.
+/** Re-read the tree, or only the repositories owning `paths`. Deduped per scope
+ *  with any read already in flight.
  *
- *  Exported because the trigger is no longer this module's: the fact that a repo
- *  moved arrives at `handlers/messages.ts` as a repo-mutating tool call
- *  completing, and travels here through `git.ts`'s markGitDirty. A user gesture in
- *  the Changes tab has its own forced-refresh path.
+ *  Exported because the trigger is not this module's: the facts that the tree moved
+ *  arrive at their own sites — a repo-mutating tool call completing
+ *  (`handlers/messages.ts`), an editor save, a file-browser action — and travel
+ *  here through `git.ts`'s markGitDirty. A user gesture in the Changes tab has its
+ *  own forced-refresh path.
  *
- *  DEFERRED, and it is the one half of this that is not client-side: the request
- *  is unscoped, so a single-file edit still costs a full 54-repo scan. Scoping it
- *  needs a `?paths=` form on `/api/git/status-all`, which is Phase A's file
- *  (`internal/git/` is A's entirely) and did not land with A2's snapshot cache.
- *  What HAS landed is the expensive half: the scan now happens when the tree
- *  actually moved rather than every 15 seconds and on every turn end. */
-export async function refreshGitStatus(): Promise<void> {
-  const d = await refreshAction.dispatch(undefined);
+ *  A scoped read costs the named repositories' two subprocesses each instead of the
+ *  whole tree's ~110, which is what makes a per-edit trigger affordable at all. The
+ *  answer is still the WHOLE repos array: the server merges a scoped scan into its
+ *  snapshot, so this never publishes a partial list and every index below is built
+ *  over the same complete set as before. */
+export async function refreshGitStatus(paths?: readonly string[]): Promise<void> {
+  const d = await refreshAction.dispatch(paths === undefined ? {} : { paths });
   const list = d?.repos ?? [];
   rebuildIndex(list);
   repos.value = list;

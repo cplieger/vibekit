@@ -174,6 +174,14 @@ export function applyRunProgress(p: RunProgressFrame): boolean {
   if (next === undefined) {
     return false;
   }
+  if (next === root) {
+    // The frame addressed a node this tree holds and moved nothing about it: a
+    // watch poll re-stating `running`, or a duplicate frame across a resume.
+    // Landed, so no refetch — and no assignment, because a new object identity
+    // for an unchanged tree wakes every subscriber for a repaint of the same
+    // pixels. `patchedLeaf` is where the sameness is decided.
+    return true;
+  }
   const state = c.peek();
   if (state === undefined) {
     return false;
@@ -219,6 +227,11 @@ function patchNode(
   }
   for (const [i, k] of kids.entries()) {
     const patched = patchNode(k, node, rest, p);
+    if (patched === k) {
+      // Found, and unchanged. Rebuilding the spine over an identical child would
+      // hand `applyRunProgress` a new root for a tree that did not move.
+      return node;
+    }
     if (patched !== undefined) {
       return { ...node, children: kids.with(i, patched) };
     }
@@ -226,24 +239,43 @@ function patchNode(
   return undefined;
 }
 
-/** The addressed node with the frame's fields written over it.
+/** The addressed node with the frame's fields written over it, or the SAME node
+ *  when the frame moves none of them.
  *
  *  Every field is set only when the frame carries it, because a frame states what
- *  changed: a `watch_poll` carries no status and must not blank the node's, and
- *  `node_complete` carries no `started_at` and must not lose the one node_start
- *  left. `exactOptionalPropertyTypes` is why each is a conditional spread rather
- *  than an assignment of a possibly-undefined value. */
+ *  changed: `node_complete` carries no `started_at` and must not lose the one
+ *  node_start left. `exactOptionalPropertyTypes` is why each is a conditional
+ *  spread rather than an assignment of a possibly-undefined value.
+ *
+ *  Returning the same reference for an unchanged node is what the callers above
+ *  read to leave the spine and the signal alone. */
 function patchedLeaf(node: RunNode, p: RunProgressFrame): RunNode {
   const status = nodeStatus(p.status);
+  const startedAt = nonEmpty(p.started_at);
+  const endedAt = nonEmpty(p.ended_at);
+  const failureReason = nonEmpty(p.failure_reason);
+  const moved =
+    (status !== undefined && status !== node.status) ||
+    (startedAt !== undefined && startedAt !== node.startedAt) ||
+    (endedAt !== undefined && endedAt !== node.endedAt) ||
+    (failureReason !== undefined && failureReason !== node.failureReason);
+  if (!moved) {
+    return node;
+  }
   return {
     ...node,
     ...(status === undefined ? {} : { status }),
-    ...(p.started_at !== undefined && p.started_at !== "" ? { startedAt: p.started_at } : {}),
-    ...(p.ended_at !== undefined && p.ended_at !== "" ? { endedAt: p.ended_at } : {}),
-    ...(p.failure_reason !== undefined && p.failure_reason !== ""
-      ? { failureReason: p.failure_reason }
-      : {}),
+    ...(startedAt === undefined ? {} : { startedAt }),
+    ...(endedAt === undefined ? {} : { endedAt }),
+    ...(failureReason === undefined ? {} : { failureReason }),
   };
+}
+
+/** The value, or `undefined` for absent and for the empty string — which is what
+ *  an omitted `omitempty` string field decodes to and means "unchanged", never
+ *  "clear this". */
+function nonEmpty(v: string | undefined): string | undefined {
+  return v === undefined || v === "" ? undefined : v;
 }
 
 /** KAS's NodeState status words, as the tree spells them. The frame carries the

@@ -2172,7 +2172,10 @@ export interface ToolCall {
  * It is what BOUNDS a single message. The byte budget on the transcript
  * window cuts at a message boundary and always lets the newest message
  * through whole, so without a bound inside the message the worst case is
- * still the whole of it.
+ * still the whole of it. All three fields are bounded, output and diffs by
+ * their own budgets and the input by a per-member cap AND an aggregate one —
+ * the per-member cap alone left a wide-but-shallow object unbounded, which
+ * made this claim true of the SHAPE of the bulk rather than of its size.
  */
   has_full?: boolean;
 }

@@ -40,6 +40,32 @@ const keySignal = "signal"
 // cmd.WaitDelay, which bounds the mirror case inside Wait.
 const terminalDrainGrace = 2 * time.Second
 
+// terminalGroupGrace bounds how long a teardown waits for the command's process
+// GROUP to empty after the kill. Same 2 seconds as the drain and as
+// cmd.WaitDelay, because it bounds the same population: a grandchild the head left
+// behind.
+const terminalGroupGrace = 2 * time.Second
+
+// killTerminalGroup signals term's whole process group and then waits, bounded, for
+// it to empty — so a caller that returns holds the FACT that the command is gone
+// rather than the knowledge that a signal was sent. Without the wait a grandchild
+// outlives the reaped head, reparents to PID 1, and becomes exactly the orphan the
+// group kill exists to prevent.
+//
+// Returns Kill's error for the caller's own already-gone/failed split; the group not
+// emptying is logged here, because that line is the same at every site.
+func killTerminalGroup(term *agentTerminal, termID string) error {
+	pgid, owns := procgroup.GroupOf(term.cmd.Process)
+	err := procgroup.Kill(term.cmd.Process, syscall.SIGKILL)
+	// Nothing to wait on when the command is not its own group leader: the group
+	// is vibekit's, and Kill fell back to the head alone.
+	if owns && !procgroup.WaitGone(pgid, terminalGroupGrace) {
+		slog.Warn("agent terminal: process group still had a live member after the kill",
+			"term_id", termID, "pgid", pgid, "grace", terminalGroupGrace)
+	}
+	return err
+}
+
 // agentTerminal is one headless subprocess spawned by kiro-cli.
 type agentTerminal struct {
 	exitErr error
@@ -320,7 +346,7 @@ func (at *agentTerminals) KillForTurn(chatID vibekit.ChatID) {
 	}
 	at.mu.Lock()
 	ids := at.byChatID[chatID]
-	var doomed []*agentTerminal
+	var doomed []doomedTerminal
 	kept := ids[:0]
 	for _, id := range ids {
 		term, ok := at.terms[id]
@@ -333,13 +359,13 @@ func (at *agentTerminals) KillForTurn(chatID vibekit.ChatID) {
 		}
 		at.retire(id, term)
 		delete(at.terms, id)
-		doomed = append(doomed, term)
+		doomed = append(doomed, doomedTerminal{id: id, term: term})
 	}
 	at.byChatID[chatID] = kept
 	at.mu.Unlock()
-	for _, term := range doomed {
-		if term.cmd.Process != nil {
-			if err := procgroup.Kill(term.cmd.Process, syscall.SIGKILL); err != nil {
+	for _, d := range doomed {
+		if d.term.cmd.Process != nil {
+			if err := killTerminalGroup(d.term, d.id); err != nil {
 				slog.Debug("agent: turn terminal kill failed", "chat_id", chatID, "error", err)
 			}
 		}
@@ -360,15 +386,12 @@ func (at *agentTerminals) KillForChat(chatID vibekit.ChatID) {
 	at.mu.Lock()
 	ids := at.byChatID[chatID]
 	delete(at.byChatID, chatID)
+	var doomed []doomedTerminal
 	for _, id := range ids {
 		term, ok := at.terms[id]
 		if ok {
 			delete(at.terms, id)
-			if term.cmd.Process != nil {
-				if err := procgroup.Kill(term.cmd.Process, syscall.SIGKILL); err != nil {
-					slog.Debug("agent: agent terminal kill failed", "id", id, "error", err)
-				}
-			}
+			doomed = append(doomed, doomedTerminal{id: id, term: term})
 		}
 	}
 	for id, rec := range at.retired {
@@ -377,6 +400,23 @@ func (at *agentTerminals) KillForChat(chatID vibekit.ChatID) {
 		}
 	}
 	at.mu.Unlock()
+	// OUTSIDE the lock, which KillForTurn already did and this did not: the kill
+	// now waits for the group to empty, and holding the registry mutex across N
+	// bounded waits would shut every other terminal operation for that long.
+	for _, d := range doomed {
+		if d.term.cmd.Process != nil {
+			if err := killTerminalGroup(d.term, d.id); err != nil {
+				slog.Debug("agent: agent terminal kill failed", "id", d.id, "error", err)
+			}
+		}
+	}
+}
+
+// doomedTerminal is one terminal a teardown removed from the registry, carried out
+// of the locked section so the kill and its group wait run unlocked.
+type doomedTerminal struct {
+	term *agentTerminal
+	id   string
 }
 
 // drainAll waits for all terminals to exit. Each terminal's context is
@@ -841,10 +881,24 @@ func (at *agentTerminals) awaitExit(
 	ctx, cancel := at.lifecycle.derivedContext()
 	defer cancel()
 
+	// Read the process group BEFORE Wait reaps the head, which is the only moment
+	// getpgid can answer (procgroup.GroupOf says why).
+	pgid, owns := procgroup.GroupOf(cmd.Process)
+
 	// Wait FIRST, then drain. Safe in that order only because the pipe is
 	// caller-owned (see create): os/exec closes the pipes IT hands out
 	// inside Wait, so with Cmd.StdoutPipe this order would truncate the pump.
 	err := cmd.Wait()
+
+	// The head is reaped; the GROUP may not be empty. The load-bearing wait of the
+	// four: everything below tells the agent the command finished (terminal_exited,
+	// term.done, the pending wait_for_exit), and the agent then reads a file the
+	// command's backgrounded grandchild is still writing. Not a kill — the point is
+	// to observe when the tree has stopped, and to SAY SO when it has not.
+	if owns && !procgroup.WaitGone(pgid, terminalGroupGrace) {
+		slog.Warn("agent terminal: the command exited but its process group did not empty",
+			"chat_id", chatID, "term_id", termID, "pgid", pgid, "grace", terminalGroupGrace)
+	}
 
 	// Bound the drain from the moment the process actually exited: EOF is not
 	// guaranteed, since a command that leaves a grandchild holding the write
@@ -936,7 +990,7 @@ func (at *agentTerminals) respondRelease(ctx context.Context, chatID vibekit.Cha
 		// anything. Debug rather than silence keeps the one thing worth knowing
 		// when someone is debugging teardown: whether the kill was a no-op or
 		// really signalled a live tree. Anything else is a genuine failure.
-		if err := procgroup.Kill(term.cmd.Process, syscall.SIGKILL); err != nil {
+		if err := killTerminalGroup(term, params.TerminalID); err != nil {
 			if procgroup.AlreadyGone(err) {
 				slog.Debug("terminal release: kill was a no-op, the process was already reaped",
 					"term_id", params.TerminalID, "error", err)
@@ -1008,7 +1062,7 @@ func (at *agentTerminals) respondKill(ctx context.Context, chatID vibekit.ChatID
 		// running and the kill succeeds — but it races the command's own exit,
 		// and losing that race is not a failure to warn about. See respondRelease
 		// for why an already-gone target lands at Debug.
-		if err := procgroup.Kill(term.cmd.Process, syscall.SIGKILL); err != nil {
+		if err := killTerminalGroup(term, params.TerminalID); err != nil {
 			if procgroup.AlreadyGone(err) {
 				slog.Debug("terminal kill was a no-op, the process was already reaped",
 					"term_id", params.TerminalID, "error", err)

@@ -36,6 +36,7 @@ import { setShellRunCallback } from "./code-blocks.js";
 import { shellHeight, setShellHeight, setShellOpen as recordShellOpen } from "./device-view.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { restartShell } from "./actions/shell.js";
+import { refreshGitStatus } from "./git-status-store.js";
 
 const SHELL_WS_PATH = "/api/shell/ws";
 // Awaited by the kernel before the first server resize so the PTY is sized
@@ -519,6 +520,14 @@ function setShellOpen(open: boolean, opts: { focus?: boolean } = {}): void {
     }
     $.shellPanel.classList.add("shell-closed");
     $.shellBtn.classList.remove("active");
+    // Whatever the user typed in here may have written to the tree — a `git
+    // commit`, a build, an editor invoked at the prompt — and this panel is the one
+    // writer that can name nothing about it. Closing is the gesture that says they
+    // are done, so it is where the badge, the file-browser decorations and the docs
+    // page get re-read; unscoped, because a terminal command writes wherever it
+    // likes. The status store answers from the server's snapshot, so this costs one
+    // scan and only when the shell was actually used.
+    void refreshGitStatus();
   }
   recordShellOpen(open);
 }

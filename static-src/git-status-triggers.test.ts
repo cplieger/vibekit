@@ -77,11 +77,37 @@ describe("the git-status store's triggers", () => {
     off3();
   });
 
-  it("reads when the fact arrives, which is the only automatic trigger left", async () => {
+  it("reads when a fact arrives, which is what replaced the timer", async () => {
     const before = observed.reads;
     await store.refreshGitStatus();
     expect(observed.reads).toBe(before + 1);
     await store.refreshGitStatus();
     expect(observed.reads).toBe(before + 2);
+  });
+});
+
+// The catch-all for every writer this client cannot see: a `git commit` typed in
+// the shell, an edit made by a command, another window on the same workspace. It
+// closes the hole the timer's removal left — without it, a change vibekit's agent
+// did not make never reached the badge, the file-browser decorations or the docs
+// page, indefinitely.
+//
+// These run after the block above on purpose: the handler is guarded on the store
+// having STARTED, and starting it is what the first test does.
+describe("the tab coming back", () => {
+  it("re-reads the tree, because that is when a stale badge would be read", () => {
+    const before = observed.reads;
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(observed.reads).toBe(before + 1);
+  });
+
+  // Going AWAY must cost nothing, or the handler is a scan per tab switch rather
+  // than a scan per return.
+  it("reads nothing on the way out", () => {
+    const spy = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    const before = observed.reads;
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(observed.reads).toBe(before);
+    spy.mockRestore();
   });
 });

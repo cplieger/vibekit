@@ -270,7 +270,9 @@ type ToolCall struct {
 	// It is what BOUNDS a single message. The byte budget on the transcript
 	// window cuts at a message boundary and always lets the newest message
 	// through whole, so without a bound inside the message the worst case is
-	// still the whole of it.
+	// still the whole of it. The input needs BOTH a per-member cap and an
+	// aggregate one: the per-member cap alone left a wide-but-shallow object
+	// unbounded, so the claim held of the bulk's shape rather than its size.
 	HasFull bool `json:"has_full,omitempty"`
 }
 

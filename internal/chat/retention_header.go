@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/jsoncap/v2"
@@ -76,14 +77,20 @@ func decodeRetentionHeader(r io.Reader) (archive.RetentionHeader, error) {
 	)
 	dec := jsoncap.NewDecoder(r, 0)
 	err := dec.Object(func(key string) error {
-		switch key {
-		case keyUpdatedAt:
+		// EqualFold, not ==, because encoding/json matches a field tag
+		// case-insensitively and encoding/json is the OTHER reader of this same
+		// file. A chat carrying "Draft" would read as draft-free here and be
+		// unlinked with unsent words in it, while the store's full load found the
+		// draft — two readers of one file disagreeing silently. jsoncap.Object's
+		// own doc comment asks for this predicate for exactly that reason.
+		switch {
+		case strings.EqualFold(key, keyUpdatedAt):
 			return dec.Decode(&h.UpdatedAt)
-		case keySessionID:
+		case strings.EqualFold(key, keySessionID):
 			return dec.Decode(&sessions.ACPSessionID)
-		case keyPriorSessions:
+		case strings.EqualFold(key, keyPriorSessions):
 			return dec.Decode(&sessions.PriorACPSessionIDs)
-		case keyDraft:
+		case strings.EqualFold(key, keyDraft):
 			// The draft's PRESENCE, not its text: keeping the words would put a
 			// draft-sized copy of every chat in memory to answer a boolean.
 			var draft string

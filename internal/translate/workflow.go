@@ -209,10 +209,13 @@ func runProgress(
 		out.NodePath = runNodePathOf(p, node)
 		out.Status = runNodeStatusPaused
 	case vibekit.RunProgressWatchPoll:
-		// A poll leaves the watch node running and says only that it looked, so
-		// the path travels with no status: the client re-stamps `running` and
-		// nothing else moves.
+		// A poll leaves the watch node running and says only that it looked, so it
+		// re-states `running` and nothing else. The status is carried rather than
+		// left off: a frame stating nothing is a frame the client cannot apply,
+		// and it used to spend a tree rebuild and a full re-render arriving at the
+		// value the node already held.
 		out.NodePath = runNodePathOf(p, node)
+		out.Status = runNodeStatusRunning
 	case vibekit.RunProgressLoopIteration, vibekit.RunProgressPaused, vibekit.RunProgressStepsQueued:
 	}
 	return out
