@@ -328,8 +328,8 @@ describe("history: chats already open in a tab here", () => {
 
 // ---------------------------------------------------------------------------
 // A run's outcome is a GLYPH, painted through tool-card.ts's applyOutcome (the
-// one writer of that vocabulary). Exhaustive over RUN_STATUSES, plus the two junk
-// values a `status?: string` wire field carries.
+// one writer of that vocabulary). Exhaustive over `run-store.ts RunState.status`,
+// plus the two junk values a `status?: string` wire field carries.
 // ---------------------------------------------------------------------------
 
 describe("history: a run's outcome is a glyph, not a word", () => {
@@ -808,7 +808,7 @@ describe("history: the per-row delete", () => {
     deleteRunDispatch.mockResolvedValue({ ok: true });
   });
 
-  it("gives every row a delete button, chats and runs alike", async () => {
+  it("gives every settled row a delete button, chats and runs alike", async () => {
     const c = await render({ sessions: [ownedRow], runs: [runRow] });
     for (const key of ["s:sess_owned", "r:wf_1"]) {
       const btn = c.querySelector(`[data-key="${key}"] [data-history-delete]`);
@@ -816,6 +816,46 @@ describe("history: the per-row delete", () => {
       // Named for the row, so a screen reader announces which thing it removes.
       expect(btn?.getAttribute("aria-label")).toMatch(/^Delete /);
     }
+  });
+
+  // The run delete dispatches `_kiro/workflow/delete`, which CANCELS a run that is
+  // still going before it removes the directory. So on a live row the trash is a
+  // stop control, and the confirm says "removed for good" and cannot say "and
+  // cancelled". A moving run gets no button; stopping one is the run page's job.
+  //
+  // Live rows reach this page at all only since the parentless-only filter came off
+  // the server, which is what made the reach worth closing: before that, no
+  // agent-launched run appeared here to be killed.
+  it("withholds the delete button from a run that is still moving", async () => {
+    const c = await render({
+      sessions: [],
+      runs: [
+        { ...runAt("running"), workflow_id: "wf_live" },
+        { ...runAt("paused"), workflow_id: "wf_held" },
+        { ...runAt("running"), workflow_id: "wf_agent", parent_chat_id: "c-launcher" },
+      ],
+    });
+
+    for (const key of ["r:wf_live", "r:wf_held", "r:wf_agent"]) {
+      const row = c.querySelector(`[data-key="${key}"]`);
+      expect(row, `${key} is not listed`).not.toBeNull();
+      expect(
+        row?.querySelector("[data-history-delete]"),
+        `${key} carries a delete button for a run that is still moving`,
+      ).toBeNull();
+    }
+  });
+
+  // A bound already stopped the run, so KAS still reporting `running` is a frame
+  // that has not landed rather than live work — the same precedence `runVerdict`
+  // gives the end reason. Withholding the button here would strand the row.
+  it("keeps the delete button on a run one of vibekit's bounds already stopped", async () => {
+    const c = await render({
+      sessions: [],
+      runs: [{ ...runAt("running"), end_reason: "overran" }],
+    });
+
+    expect(c.querySelector('[data-key="r:wf_1"] [data-history-delete]')).not.toBeNull();
   });
 
   it("keeps the delete button out of a control, so it is not nested in one", async () => {

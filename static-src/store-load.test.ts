@@ -154,11 +154,13 @@ describe("loadList pruning", () => {
 
 describe("the page budgets ride the request", () => {
   // The item: the page the server cuts and the window this client can hold are
-  // measured in the SAME unit. `block-window.ts` stubs every turn past
-  // RESIDENT_BLOCKS, so a page bounded only in bytes holds a chat-dependent
-  // number of blocks and the surplus is fetched, decoded and then thrown away.
-  it("asks for a block budget equal to what one paint can hold", async () => {
-    const { RESIDENT_BLOCKS } = await import("./block-window.js");
+  // measured in the SAME units. `block-window.ts` stubs every turn past
+  // RESIDENT_BLOCKS *or* RESIDENT_TOOL_CALLS, whichever runs out first, so a page
+  // bounded only in bytes holds a chat-dependent number of both and the surplus is
+  // fetched, decoded and then thrown away. Sending one and not the other leaves the
+  // unsent one free to overshoot.
+  it("asks for both residency budgets, equal to what one paint can hold", async () => {
+    const { RESIDENT_BLOCKS, RESIDENT_TOOL_CALLS } = await import("./block-window.js");
     seedSession("c1", []);
     mockApiGetTyped.mockResolvedValue({
       chat: { message_count: 0 },
@@ -170,8 +172,9 @@ describe("the page budgets ride the request", () => {
 
     const url = new URL(String(mockApiGetTyped.mock.calls[0]?.[0]), "http://localhost");
     expect(url.searchParams.get("blocks")).toBe(String(RESIDENT_BLOCKS));
+    expect(url.searchParams.get("tool_calls")).toBe(String(RESIDENT_TOOL_CALLS));
     // The byte budget stays: it is the bound on what the wire carries however the
-    // content is shaped, which a block count cannot express.
+    // content is shaped, which neither residency count can express.
     expect(url.searchParams.get("max_bytes")).toBe(String(1 << 18));
   });
 });

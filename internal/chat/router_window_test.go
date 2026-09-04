@@ -2,6 +2,7 @@ package chat
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -37,6 +38,30 @@ func blockyMessage(id string, blocks int) vibekit.Message {
 		bs[i] = vibekit.Block{Type: vibekit.BlockText, Text: "x"}
 	}
 	return vibekit.Message{ID: id, Role: vibekit.RoleAssistant, Ts: 100, Blocks: bs}
+}
+
+// toolyMessage builds the v3 shape of a tool-heavy assistant turn: one tool call
+// and its tool_use block per call, which is what `store.ts` holds. Its cost is
+// equal in both residency units, so it is the shape that shows the CLIENT'S two
+// budgets diverging — 320 blocks admits ~320 tool cards against a client that
+// mounts 96.
+func toolyMessage(id string, calls int) vibekit.Message {
+	m := vibekit.Message{
+		ID:        id,
+		Role:      vibekit.RoleAssistant,
+		Ts:        100,
+		ToolCalls: make([]vibekit.ToolCall, calls),
+		Blocks:    make([]vibekit.Block, calls),
+	}
+	for i := range calls {
+		tcID := fmt.Sprintf("%s-tc%d", id, i)
+		m.ToolCalls[i] = vibekit.ToolCall{
+			ID: tcID, Title: "Execute", Kind: vibekit.ToolKindExecute,
+			Status: vibekit.ToolCompleted, Output: "x",
+		}
+		m.Blocks[i] = vibekit.Block{Type: vibekit.BlockToolUse, ToolCallID: tcID}
+	}
+	return m
 }
 
 // serveOne runs GET /api/chats/c1<query> against a store holding msgs and
@@ -230,23 +255,86 @@ func TestHandleOne_HasMoreIsHonestAgainstTheBlocks(t *testing.T) {
 	}
 }
 
-// messageBlockCost mirrors `block-window.ts turnCost`, and it has to: a budget
+// The client's residency budget is a PAIR, so the page has to be measured in both
+// halves. `planResidency` stops on RESIDENT_BLOCKS *or* RESIDENT_TOOL_CALLS,
+// whichever runs out first, and 320 blocks admits on the order of 320 tool cards
+// against a client that mounts 96 — so a tool-heavy transcript cut on blocks alone
+// still overshoots by ~3x and the surplus is fetched, decoded and stubbed.
+//
+// The block and byte budgets are deliberately generous here, so neither could
+// produce this answer and the assertion is about the tool-call budget alone.
+func TestHandleOne_ToolCallBudgetCutsAtAMessageBoundary(t *testing.T) {
+	msgs := []vibekit.Message{
+		toolyMessage("a", 40), toolyMessage("b", 40),
+		toolyMessage("c", 40), toolyMessage("d", 40),
+	}
+
+	ids, hasMore, _ := serveOne(t, msgs, "?tool_calls=100&blocks=8192&max_bytes=8388608")
+
+	if want := []string{"c", "d"}; !slices.Equal(ids, want) {
+		t.Errorf("ids = %v, want %v — 80 tool calls fit a 100-call budget and 120 do not",
+			ids, want)
+	}
+	if !hasMore {
+		t.Error("has_more = false, want true: two older messages were not served")
+	}
+}
+
+// The same rule the other two budgets follow: the newest message goes through
+// whole however many tool calls it carries. One measured assistant message carries
+// 353 of them, so a budget that could answer nothing would make the newest message
+// of a tool-heavy chat unreachable.
+func TestHandleOne_ToolCallBudgetLetsOneOversizeMessageThroughWhole(t *testing.T) {
+	msgs := []vibekit.Message{toolyMessage("a", 2), toolyMessage("big", 400)}
+
+	ids, hasMore, _ := serveOne(t, msgs, "?tool_calls=96")
+
+	if want := []string{"big"}; !slices.Equal(ids, want) {
+		t.Errorf("ids = %v, want %v — the newest message goes through whole", ids, want)
+	}
+	if !hasMore {
+		t.Error("has_more = false, want true: the older message was not served")
+	}
+}
+
+// A caller that names a block budget and no tool-call budget gets the answer the
+// block budget alone gives, which is what the tool-call DEFAULT is chosen for: it
+// is the block default, and every tool call the client synthesizes a block for
+// costs a block too, so the default cannot cut a page the blocks admitted.
+func TestHandleOne_TheDefaultToolCallBudgetCutsNothingTheBlocksAllow(t *testing.T) {
+	msgs := make([]vibekit.Message, 6)
+	for i := range msgs {
+		msgs[i] = toolyMessage(string(rune('a'+i)), 40)
+	}
+
+	ids, hasMore, _ := serveOne(t, msgs, "?blocks=8192&max_bytes=8388608")
+
+	if len(ids) != 6 {
+		t.Errorf("served %d of 6 messages (240 tool calls), want all of them: %v", len(ids), ids)
+	}
+	if hasMore {
+		t.Error("has_more = true with every message served, want false")
+	}
+}
+
+// costOfMessage mirrors `block-window.ts turnCost`, and it has to: a budget
 // measured one way on the server and another on the client cuts a page the client
-// still stubs. The legacy row is the one that matters — a message persisted before
-// the blocks field carries none, and the client SYNTHESIZES them from the content,
-// the reasoning and one per tool call before it measures.
-func TestMessageBlockCost_MirrorsTheClientsAccounting(t *testing.T) {
+// still stubs. The legacy row is the one that matters for blocks — a message
+// persisted before the blocks field carries none, and the client SYNTHESIZES them
+// from the content, the reasoning and one per tool call before it measures — and
+// the synthesis is gated on the ASSISTANT role, which every other role misses.
+func TestCostOfMessage_MirrorsTheClientsAccounting(t *testing.T) {
 	tests := map[string]struct {
 		msg  vibekit.Message
-		want int
+		want messageCost
 	}{
 		"a message's own blocks are what it costs": {
 			msg:  blockyMessage("a", 7),
-			want: 7,
+			want: messageCost{Blocks: 7},
 		},
 		"an empty message still costs one row": {
 			msg:  vibekit.Message{ID: "a", Role: vibekit.RoleAssistant},
-			want: 1,
+			want: messageCost{Blocks: 1},
 		},
 		"a legacy message costs its synthesized blocks, not one": {
 			msg: vibekit.Message{
@@ -255,14 +343,14 @@ func TestMessageBlockCost_MirrorsTheClientsAccounting(t *testing.T) {
 				Reasoning: "thinking",
 				ToolCalls: []vibekit.ToolCall{{ID: "t1"}, {ID: "t2"}, {ID: "t3"}},
 			},
-			want: 5,
+			want: messageCost{Blocks: 5, ToolCalls: 3},
 		},
 		"a legacy tool-only message costs one per tool call": {
 			msg: vibekit.Message{
 				ID: "a", Role: vibekit.RoleAssistant,
 				ToolCalls: []vibekit.ToolCall{{ID: "t1"}, {ID: "t2"}},
 			},
-			want: 2,
+			want: messageCost{Blocks: 2, ToolCalls: 2},
 		},
 		"blocks present win over the synthesis": {
 			msg: vibekit.Message{
@@ -271,13 +359,25 @@ func TestMessageBlockCost_MirrorsTheClientsAccounting(t *testing.T) {
 				Blocks:    []vibekit.Block{{Type: vibekit.BlockText, Text: "hello"}},
 				ToolCalls: []vibekit.ToolCall{{ID: "t1"}, {ID: "t2"}},
 			},
-			want: 1,
+			want: messageCost{Blocks: 1, ToolCalls: 2},
+		},
+		"a blockless NON-assistant message costs one row whatever it carries": {
+			// normalizeMessage returns any non-assistant message untouched, so the
+			// client leaves its blocks array empty and turnCost charges max(1, 0).
+			// Synthesizing here would price it at 4 and cut a page the client holds.
+			msg: vibekit.Message{
+				ID: "a", Role: vibekit.RoleUser,
+				Content:   "hello",
+				Reasoning: "thinking",
+				ToolCalls: []vibekit.ToolCall{{ID: "t1"}, {ID: "t2"}},
+			},
+			want: messageCost{Blocks: 1, ToolCalls: 2},
 		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			if got := messageBlockCost(&tc.msg); got != tc.want {
-				t.Errorf("messageBlockCost(%+v) = %d, want %d", tc.msg, got, tc.want)
+			if got := costOfMessage(&tc.msg); got != tc.want {
+				t.Errorf("costOfMessage(%+v) = %+v, want %+v", tc.msg, got, tc.want)
 			}
 		})
 	}
@@ -303,6 +403,32 @@ func TestParseBlocksParam_HonoursTheInclusiveRange(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, "/api/chats/c1"+tc.query, nil)
 			if got := parseBlocksParam(r); got != tc.want {
 				t.Errorf("parseBlocksParam(%q) = %d, want %d", tc.query, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseToolCallsParam_HonoursTheInclusiveRange(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  int
+	}{
+		{name: "absent", query: "", want: defaultMaxBlocks},
+		// Zero is IN range, unlike the block floor: a page of pure prose costs no
+		// tool calls, so a client that mounts no tool cards can honestly ask for 0.
+		{name: "zero", query: "?tool_calls=0", want: 0},
+		{name: "the client's own residency budget", query: "?tool_calls=96", want: 96},
+		{name: "largest_accepted", query: "?tool_calls=8192", want: maxMaxBlocks},
+		{name: "one_past_the_largest", query: "?tool_calls=8193", want: defaultMaxBlocks},
+		{name: "negative", query: "?tool_calls=-1", want: defaultMaxBlocks},
+		{name: "not_a_number", query: "?tool_calls=lots", want: defaultMaxBlocks},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/api/chats/c1"+tc.query, nil)
+			if got := parseToolCallsParam(r); got != tc.want {
+				t.Errorf("parseToolCallsParam(%q) = %d, want %d", tc.query, got, tc.want)
 			}
 		})
 	}

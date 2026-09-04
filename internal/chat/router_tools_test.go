@@ -574,8 +574,10 @@ func TestPreviewInput_TheEarlyOutGateChargesWhatEscapingCosts(t *testing.T) {
 // caller hands over store-read values, and re-measuring them must not start
 // trimming inputs that were within budget.
 func TestPreviewInput_AnAlreadyEscapedInputWithinBudgetIsUntouched(t *testing.T) {
-	// 4,000 escaped `<` — 24,006 bytes RAW, so far over the gate, and its escapes
-	// must not be counted twice into something larger.
+	// 400 escaped `<`, about 2,411 wire bytes — deliberately UNDER the 4,096-byte
+	// gate, which is the only size that can exercise the pass-through and which the
+	// setup guard below enforces. The escapes must not be counted twice into
+	// something over it.
 	obj := map[string]string{"text": strings.Repeat("<", 400)}
 	wire, err := json.Marshal(obj)
 	if err != nil {

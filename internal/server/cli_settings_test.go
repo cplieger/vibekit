@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"slices"
 	"testing"
+	"time"
 )
 
 // settingsCLI answers the two settings reads separately, so a test can assert
@@ -25,12 +26,23 @@ type settingsCLI struct {
 
 	listCalls   int
 	perKeyCalls []string
+	// deadlines is the deadline every spawn of the request saw, in call order, so
+	// a test can assert the whole read shares one rather than minting one each.
+	deadlines []time.Time
 }
 
 var _ CLIRunner = (*settingsCLI)(nil)
 
-func (f *settingsCLI) Run(_ context.Context, args ...string) ([]byte, error) {
+// recordDeadline notes what the spawn's context bounds it to. A context with none
+// records the zero time, which no test expects, so an unbounded spawn is visible.
+func (f *settingsCLI) recordDeadline(ctx context.Context) {
+	dl, _ := ctx.Deadline()
+	f.deadlines = append(f.deadlines, dl)
+}
+
+func (f *settingsCLI) Run(ctx context.Context, args ...string) ([]byte, error) {
 	if len(args) == 2 && args[0] == "settings" {
+		f.recordDeadline(ctx)
 		f.perKeyCalls = append(f.perKeyCalls, args[1])
 		v, ok := f.perKey[args[1]]
 		if !ok {
@@ -41,10 +53,11 @@ func (f *settingsCLI) Run(_ context.Context, args ...string) ([]byte, error) {
 	return nil, fmt.Errorf("settingsCLI: unexpected Run args %v", args)
 }
 
-func (f *settingsCLI) RunStdoutCapped(_ context.Context, limit int, args ...string) ([]byte, bool, error) {
+func (f *settingsCLI) RunStdoutCapped(ctx context.Context, limit int, args ...string) ([]byte, bool, error) {
 	if !slices.Equal(args, settingsListArgs) {
 		return nil, false, fmt.Errorf("settingsCLI: unexpected RunStdoutCapped args %v", args)
 	}
+	f.recordDeadline(ctx)
 	f.listCalls++
 	if f.list == "" {
 		return nil, false, errors.New("settingsCLI: unknown subcommand")
@@ -116,8 +129,9 @@ func TestReadKiroSettings_OneSubprocessAnswersEveryKey(t *testing.T) {
 }
 
 // A build pinned to a kiro-cli without `settings list` must still fill the panel,
-// so a failed list read falls back to the per-key invocation — and only for the
-// keys the request named, which is why ?keys= exists.
+// so a failed list read falls back to the per-key invocation, for the keys the
+// request named and no others. What bounds its COST is the shared deadline, not the
+// selector — an absent ?keys= names the whole allowlist.
 func TestReadKiroSettings_FallsBackPerKeyWhenTheListReadFails(t *testing.T) {
 	f := &settingsCLI{
 		perKey: map[string]string{
@@ -141,8 +155,8 @@ func TestReadKiroSettings_FallsBackPerKeyWhenTheListReadFails(t *testing.T) {
 	asked := slices.Clone(f.perKeyCalls)
 	slices.Sort(asked)
 	if wantAsked := []string{"hooks.showStatus", "telemetry.enabled"}; !slices.Equal(asked, wantAsked) {
-		t.Errorf("per-key reads = %v, want %v (bounded by what the request asked for)",
-			asked, wantAsked)
+		t.Errorf("per-key reads = %v, want %v — the fallback reads what the request named "+
+			"and nothing else", asked, wantAsked)
 	}
 }
 
@@ -220,6 +234,70 @@ func TestReadKiroSettings_RefusesARequestNamingNothingAllowed(t *testing.T) {
 	}
 	if f.listCalls != 0 {
 		t.Errorf("settings list ran %d times for a refused request, want 0", f.listCalls)
+	}
+}
+
+// A parameter this endpoint does not read is refused, not ignored.
+//
+// Ignoring one fails OPEN, because "no selection" means the whole allowlist here:
+// the selector used to be spelled `key` and take a single name, so the old spelling
+// — and any typo of the new one — would answer all six keys while the caller
+// believed it had named one. A typo in a VALUE already refuses, so a typo in a NAME
+// has to as well.
+func TestReadKiroSettings_RefusesAQueryParameterItDoesNotRead(t *testing.T) {
+	for _, query := range []string{"?key=telemetry.enabled", "?keys=telemetry.enabled&kyes=x"} {
+		t.Run(query, func(t *testing.T) {
+			f := &settingsCLI{list: settingsListFixture}
+
+			code, _ := getKiroSettings(t, f, query)
+
+			if code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400: %q names no parameter this endpoint reads, "+
+					"and answering the whole allowlist for it fails open", code, query)
+			}
+			if f.listCalls != 0 {
+				t.Errorf("settings list ran %d times for a refused request, want 0", f.listCalls)
+			}
+		})
+	}
+}
+
+// ONE DEADLINE FOR THE WHOLE READ. The per-key fallback is sequential and an
+// absent ?keys= means the entire allowlist, so a budget minted per spawn made the
+// cost of a degraded read a multiple of the key count — six spawns at 3 s each is
+// 18 s of the client's 30 s API timeout for one panel.
+//
+// One shared deadline is an INSTANT every spawn reports identically, where a
+// per-spawn budget computes its own from its own time.Now() and no two agree —
+// which is what makes this observable without measuring elapsed time.
+func TestReadKiroSettings_TheWholeReadSharesOneDeadline(t *testing.T) {
+	// The list read fails, so every requested key takes the per-key door: four
+	// spawns for one request, which is the shape a per-spawn budget multiplied.
+	f := &settingsCLI{perKey: map[string]string{
+		"hooks.showStatus":    "true (global)",
+		"telemetry.enabled":   "false (global)",
+		"chat.enableSubagent": "true (global)",
+	}}
+
+	code, _ := getKiroSettings(t,
+		f, "?keys=hooks.showStatus,telemetry.enabled,chat.enableSubagent")
+
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	if len(f.deadlines) != 4 {
+		t.Fatalf("saw %d spawns, want 4 (one failed list read plus three per-key reads)",
+			len(f.deadlines))
+	}
+	for i, dl := range f.deadlines {
+		if dl.IsZero() {
+			t.Errorf("spawn %d ran with no deadline at all", i)
+			continue
+		}
+		if !dl.Equal(f.deadlines[0]) {
+			t.Errorf("spawn %d is bounded at %v, spawn 0 at %v: a per-spawn budget makes a "+
+				"degraded read cost N × cliTimeouts.Settings", i, dl, f.deadlines[0])
+		}
 	}
 }
 
