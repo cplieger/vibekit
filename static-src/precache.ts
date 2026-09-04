@@ -8,8 +8,8 @@
 // ---------------------------------------------------------------------------
 
 /** The build-emitted asset list (cmd/bundle writePrecacheManifest). `stamp` moves
- *  when any listed asset's bytes or name move; `assets` are root-relative URL
- *  paths, each already carrying its leading slash. */
+ *  when the set of names moves, and each name carries its own content hash;
+ *  `assets` are root-relative paths, each already carrying its leading slash. */
 export interface PrecacheManifest {
   readonly stamp: string;
   readonly assets: readonly string[];
