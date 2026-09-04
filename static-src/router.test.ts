@@ -1,6 +1,15 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import * as fc from "fast-check";
-import { parseRoute, buildPath, type Route, type SettingsTab, type DocsTab } from "./router";
+import {
+  parseRoute,
+  buildPath,
+  pushRoute,
+  replaceRoute,
+  suppressPush,
+  type Route,
+  type SettingsTab,
+  type DocsTab,
+} from "./router";
 
 // ---------------------------------------------------------------------------
 // Proposal tarch-b14-p2: Table-driven test for parseRoute
@@ -294,6 +303,86 @@ function canonicalize(route: Route): Route {
       return route;
   }
 }
+
+// ---------------------------------------------------------------------------
+// suppressPush: the re-entrant window every boot-time restore writes through
+// ---------------------------------------------------------------------------
+
+/** Spy on both history writers, so a case reads whether the router ISSUED a write
+ *  without moving the test runner's own iframe URL. `restoreMocks` puts them back. */
+function spyHistory() {
+  return {
+    pushState: vi.spyOn(History.prototype, "pushState").mockImplementation(() => undefined),
+    replaceState: vi.spyOn(History.prototype, "replaceState").mockImplementation(() => undefined),
+  };
+}
+
+// The depth is module state, so every case below CLOSES the window it opened. A
+// shared drain in an `afterEach` cannot: without the clamp under test it would
+// itself drive the depth negative, and one clamp regression would fail every case
+// in the block instead of the one that names it.
+describe("suppressPush", () => {
+  it("lets both writers through while nothing is suppressing", () => {
+    const spy = spyHistory();
+
+    pushRoute({ kind: "git", tab: "changes" });
+    replaceRoute({ kind: "settings", tab: "tools" });
+
+    expect(spy.pushState).toHaveBeenCalledWith(null, "", "/git");
+    expect(spy.replaceState).toHaveBeenCalledWith(null, "", "/settings/tools");
+  });
+
+  it("drops a push made inside the window", () => {
+    const spy = spyHistory();
+
+    suppressPush(true);
+    pushRoute({ kind: "git", tab: "changes" });
+    suppressPush(false);
+
+    expect(spy.pushState).not.toHaveBeenCalled();
+  });
+
+  it("drops a replace made inside the window", () => {
+    const spy = spyHistory();
+
+    suppressPush(true);
+    replaceRoute({ kind: "settings", tab: "tools" });
+    suppressPush(false);
+
+    expect(spy.replaceState).not.toHaveBeenCalled();
+  });
+
+  it("stays suppressed until the LAST caller closes its window", () => {
+    // A COUNT rather than a flag, because the boot's regions run concurrently: with a
+    // boolean, whichever region closed first un-suppressed the other's window and its
+    // restore pushed a URL.
+    const spy = spyHistory();
+
+    suppressPush(true);
+    suppressPush(true);
+    suppressPush(false);
+    pushRoute({ kind: "git", tab: "changes" });
+    expect(spy.pushState).not.toHaveBeenCalled();
+
+    suppressPush(false);
+    pushRoute({ kind: "git", tab: "changes" });
+    expect(spy.pushState).toHaveBeenCalledTimes(1);
+  });
+
+  it("cannot be driven below zero by an unbalanced close", () => {
+    // The clamp. Without it this close takes the depth to -1, and the window opened
+    // next sits at 0 — so the app is left permanently un-suppressible by one stray
+    // `false`.
+    const spy = spyHistory();
+
+    suppressPush(false);
+    suppressPush(true);
+    pushRoute({ kind: "git", tab: "changes" });
+    suppressPush(false);
+
+    expect(spy.pushState).not.toHaveBeenCalled();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Adversarial percent-encoding property test (tarch-b15-c7-p5)
