@@ -108,7 +108,7 @@ func writePrecacheManifest() error {
 }
 
 // precacheAssets lists the content-hashed chunks, sorted, as URL paths relative to
-// the site root. Eligibility is by NAME, so most of these load on first paint.
+// the site root. Eligibility is by NAME. Most of these load on first paint.
 //
 // THE HASHED NAMES ARE THE WHOLE LIST, because a name is cacheable without
 // revalidation exactly when its bytes cannot change under it — the rule

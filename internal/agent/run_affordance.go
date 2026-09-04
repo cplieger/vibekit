@@ -111,9 +111,10 @@ func (a runAffordance) refusal(verb string) string {
 	return a.Refused[verb]
 }
 
-// runFacts is what an affordance is decided from. All three are available
-// without a KAS call beyond the one status read the caller already made:
-// parentage comes from the chat store and hosting from the bridge map.
+// runFacts is what an affordance is decided from: the status the caller read, the
+// recipe and parent session off KAS's run inventory, the chat owning that session
+// off the chat store, and hosting off the bridge map. affordance owns what
+// gathering them costs.
 type runFacts struct {
 	// status is the run's own status, as `inspect` reports it.
 	status string
@@ -123,7 +124,7 @@ type runFacts struct {
 	// for an unnamed chat, which the sentence then omits rather than quoting
 	// nothing.
 	parentName string
-	// recipe is the run's recipe name, read off the same inventory as parentChat.
+	// recipe is the run's recipe name, off the same read as the parent session.
 	recipe string
 	// hosted reports whether some live bridge in this process holds the run's
 	// registry entry.
@@ -201,7 +202,7 @@ func pastTense(verb string) string {
 	return verb
 }
 
-// affordance resolves the three facts and answers what may be done to the run.
+// affordance resolves the facts and answers what may be done to the run.
 //
 // status is passed in rather than read here: every caller has already made that
 // `inspect` call, and one decision must rest on one status read, not two that can
