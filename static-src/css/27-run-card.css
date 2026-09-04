@@ -21,6 +21,10 @@
    ========================================================================== */
 
 .run-card {
+  /* Containment: the reasoning is at `.tool-call` (14-tools.css). The fallback is
+     the header plus one step row, which is the smallest real run card. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 4rem;
   background: var(--c-bg-secondary);
 
   /* No leading rail. The box, its tinted border and the header glyph already say

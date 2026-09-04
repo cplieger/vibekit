@@ -19,6 +19,24 @@
  * column. There is no avatar: `.msg-avatar` exists in neither the CSS nor the
  * TS. So it was 32px of blank gutter that put evidence on a second left edge,
  * 32px right of the prose and of the header band above it. One edge now. */
+/* CONTAINMENT BELONGS ON THE CARDS, NOT ONLY ON `.msg-row`. This is the one copy
+ * of the reasoning; `.subagent-block` and `.plan-message` below and `.run-card`
+ * (27-run-card.css) carry the same pair and point here.
+ *
+ * `.msg-row` (13-messages.css) is one row per prose BUBBLE, and the bulk of a
+ * transcript is these four: one open turn measured 353 tool cards, every one of
+ * them fully in layout against a handful of contained rows.
+ *
+ * `auto`, not `hidden`: these are visible cards, so the skip has to be keyed on
+ * viewport relevancy. Two costs come with that keying, both already paid by
+ * `.msg-row` and neither new here — an off-screen card is invisible to
+ * find-in-chat's walker (which prunes at `checkVisibility({contentVisibilityAuto:
+ * true})`, and the server pre-pass in chat-search.ts is what covers it), and the
+ * scroller's `scrollHeight` moves as first-render replaces each estimate.
+ *
+ * The fallback size is only ever used BEFORE a card has rendered once —
+ * `contain-intrinsic-size: auto` remembers the real size afterwards — so it is
+ * the collapsed claim line: `--btn-h` of header plus the 1px borders. */
 .tool-call {
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
@@ -27,6 +45,8 @@
   overflow: hidden;
   flex-shrink: 0;
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 2.5rem;
 }
 
 /* A claim-only card (read, delete, hook, think, switch_mode) has no depth 1, and
@@ -571,6 +591,12 @@
   overflow: hidden;
   flex-shrink: 0;
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
+
+  /* Containment: see `.tool-call`. Collapsed by default, so the fallback is the
+     header alone. The collapsed-body rule below is a different element and a
+     different keying (`hidden`, on `.subagent-body`); both apply. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 2.5rem;
 }
 
 /* Same floor as `.tool-header` and `.tool-group-header`, and for the same
@@ -974,6 +1000,11 @@
   font-size: var(--fs-base);
   flex-shrink: 0;
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
+
+  /* Containment: see `.tool-call`. The fallback is the header row plus this
+     block padding — a plan always has at least one entry under it. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 4rem;
 }
 
 .plan-header {
