@@ -625,9 +625,19 @@ export function renderIdentity(v: IdentityVerdict): void {
 // experimentalFlags registry below for the full set). Vibekit seeds them at
 // container boot (entrypoint.sh); this UI lets the user flip each one.
 
-interface KiroSettingPayload {
-  key?: string;
-  value?: string;
+/** What GET /api/kiro-settings answers: the requested keys and their values, as
+ *  one document.
+ *
+ *  ONE REQUEST FOR EVERY FLAG, because the server reads them all in one
+ *  `kiro-cli settings list` subprocess. This used to be one request per key
+ *  returning `{key, value}`, and each one cost its own spawn with its own 3 s
+ *  budget — three of them, concurrently, every time this panel opened.
+ *
+ *  Values stay STRINGS, so the reading below is unchanged: an absent key and an
+ *  unreadable one both read as "", which the unset-means-on rule renders as the
+ *  control's default. */
+interface KiroSettingsPayload {
+  settings?: Record<string, string>;
 }
 
 // experimentalFlags is the single source of truth for which kiro-cli
@@ -672,22 +682,23 @@ export function initExperimentalToggles(): void {
   const inputs = experimentalFlags.map(
     (flag) => document.getElementById(flag.inputID) as HTMLInputElement | null,
   );
-  void Promise.all(
-    experimentalFlags.map((flag) =>
-      apiGet<KiroSettingPayload>(`/api/kiro-settings?key=${encodeURIComponent(flag.key)}`),
-    ),
-  ).then((results) => {
-    for (let i = 0; i < experimentalFlags.length; i++) {
-      const input = inputs[i] ?? null;
-      if (input === null) {
-        continue;
+  const wanted = experimentalFlags.map((flag) => flag.key).join(",");
+  void apiGet<KiroSettingsPayload>(`/api/kiro-settings?keys=${encodeURIComponent(wanted)}`).then(
+    (payload) => {
+      const values = payload?.settings ?? {};
+      for (let i = 0; i < experimentalFlags.length; i++) {
+        const input = inputs[i] ?? null;
+        if (input === null) {
+          continue;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        const flag = experimentalFlags[i]!;
+        const v = values[flag.key] ?? "";
+        const isOn = v === "" || v === "true";
+        input.checked = flag.inverted ? !isOn : isOn;
       }
-      const v = results[i]?.value ?? "";
-      const isOn = v === "" || v === "true";
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      input.checked = experimentalFlags[i]!.inverted ? !isOn : isOn;
-    }
-  });
+    },
+  );
   for (let i = 0; i < experimentalFlags.length; i++) {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const flag = experimentalFlags[i]!;

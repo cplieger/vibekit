@@ -182,15 +182,22 @@ func WithStaticFS(staticFS fs.FS) Option {
 	return func(s *Server) { s.staticFS = staticFS }
 }
 
-// WithCLIPath sets the RESOLVER for the kiro-cli binary used by the CLI
-// sub-operations (/api/version, /api/diagnostics, /api/kiro-settings).
+// WithKiroCLI sets the RESOLVERS for the kiro-cli binary and its environment,
+// used by the CLI sub-operations (/api/version, /api/diagnostics,
+// /api/kiro-settings).
 //
-// A resolver rather than a string because the install manager selects the
-// active version AFTER the listener binds and can switch it later: a path
-// captured at construction would pin every shell-out to whatever was installed
-// first, which on a first boot is nothing at all.
-func WithCLIPath(resolve func() string) Option {
-	return func(s *Server) { s.cliRunner = &execCLIRunner{cliPath: resolve} }
+// Resolvers rather than values because the install manager selects the active
+// version AFTER the listener binds and can switch it later: a path or an
+// environment captured at construction would pin every shell-out to whatever was
+// installed first, which on a first boot is nothing at all.
+//
+// Both are needed, not just the path: `settings` re-execs a sibling binary
+// resolved through PATH, so the overlay is what makes that search land inside
+// the verified install (execCLIRunner.env carries the measurement).
+func WithKiroCLI(resolvePath func() string, resolveEnv func() []string) Option {
+	return func(s *Server) {
+		s.cliRunner = &execCLIRunner{cliPath: resolvePath, env: resolveEnv}
+	}
 }
 
 // WithKiroReady sets the kiro-cli readiness verdict /api/health reports. Unset

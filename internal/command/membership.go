@@ -136,6 +136,11 @@ type Membership struct {
 	closeChat  chatCloser
 	deleteChat chatDeleter
 	retention  retentionRead
+	// retentionWake asks the purge scheduler to run a pass now. OPTIONAL: nil
+	// leaves the scheduler on its own timer, which is what a build with no
+	// scheduler wired wants — see SetRetentionWake for why closing a tab is the
+	// event that owes it.
+	retentionWake func()
 	// ops is the create ledger: op_id -> chat id, so a retry resolves to the chat
 	// its first attempt made. It lives HERE rather than in the handlers because
 	// resolving an op and reserving a tab slot have to happen in the same
@@ -367,10 +372,12 @@ func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []vi
 	// record is gone), close grade for every other chat tab. A doomed chat
 	// whose record delete failed is demoted to the close grade.
 	dispatched := make(map[vibekit.ChatID]bool, len(deleted))
+	chatTabClosed := false
 	for _, t := range closed {
 		if t.Kind != vibekit.TabKindChat {
 			continue
 		}
+		chatTabClosed = true
 		chatID := vibekit.ChatID(t.Ref)
 		if chain, isDoomed := deleted[chatID]; isDoomed {
 			if !dispatched[chatID] {
@@ -382,6 +389,17 @@ func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []vi
 		if m.closeChat != nil {
 			m.closeChat(rollCtx, chatID)
 		}
+	}
+	if chatTabClosed {
+		// The tab that just closed may have been the last thing holding an expired
+		// chat outside retention's age test, so ask the purge to reconsider now
+		// instead of at the end of an idle back-off that doubles to an hour
+		// (SetRetentionWake carries the measurement). Unconditional on the chats'
+		// ages: which chats are expired is the purge's own question, and answering
+		// it here would be a second copy of it.
+		//
+		// After the lock, because the wake reads a field guarded by it.
+		m.wakeRetention()
 	}
 	return closed, version, nil
 }
@@ -562,6 +580,42 @@ func (m *Membership) RetentionClose(ctx context.Context, chatID vibekit.ChatID) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.closeTabsFor(ctx, chatID, "")
+}
+
+// SetRetentionWake registers the callback that asks the retention purge to run a
+// pass now. Called once by the composition root, which owns both ends.
+//
+// A SETTER rather than a constructor field because the coordinator is built
+// during Runtime construction and the purge scheduler is built after it, from the
+// same chat store — the same reason forgesHTTP.SetOnChange is a setter.
+//
+// CLOSING A TAB IS THE EVENT THAT OWES THIS. HasOpenTab pins an expired chat
+// outside the age test for as long as its tab is open, and an exempt chat
+// contributes no wake-up deadline (archive.PurgeResult says why: its age is
+// already past the cutoff, so a timer aimed at it fires immediately, purges
+// nothing and re-arms forever). So a pass that saw only exempt chats backs off,
+// doubling to a one-hour ceiling, and Trigger had exactly one production caller
+// (Start) — closing the last tab of a month-old chat woke nothing and the chat
+// could outlive its window by up to that hour. The clearing path is what knows
+// the exemption is gone.
+//
+// It does not wake for the DRAFT exemption, and does not need to: clearing a
+// draft either sends it, which stamps the chat's activity and starts a fresh
+// window, or leaves the chat with a tab still open and therefore still exempt.
+func (m *Membership) SetRetentionWake(wake func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.retentionWake = wake
+}
+
+// wakeRetention asks the purge to reconsider, if a scheduler is wired.
+func (m *Membership) wakeRetention() {
+	m.mu.Lock()
+	wake := m.retentionWake
+	m.mu.Unlock()
+	if wake != nil {
+		wake()
+	}
 }
 
 // HasOpenTab reports whether any tab shows this chat — retention's second

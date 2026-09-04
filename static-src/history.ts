@@ -241,12 +241,15 @@ function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): Histor
     });
   }
   for (const r of runs) {
-    // A run's OUTCOME is stated only for a parentless (manually launched) run,
-    // because that is the only kind whose recovery is the user's: a failed one
-    // is a row to open and retry. An agent-parented run's failure is the
-    // agent's to handle, and labelling it here would invite an action this
-    // page deliberately does not offer.
-    const parentless = (r.parent_chat_id ?? "") === "";
+    // A run's OUTCOME is stated whatever launched it. It used to be withheld from
+    // an agent-parented run, because "an agent-parented run's failure is the
+    // agent's to handle, and labelling it here would invite an action this page
+    // deliberately does not offer" — and both halves are now false. Retry is
+    // offered for a chat-parented run (the server's affordance table retired the
+    // same parentless-only rule), and the server lists these rows precisely
+    // because a closed or evicted transcript leaves them no other door. A row
+    // whose outcome is blank gives the reader no reason to open the one door
+    // there is.
     const endReason = r.end_reason ?? "";
     rows.push({
       key: `r:${r.workflow_id}`,
@@ -259,7 +262,7 @@ function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): Histor
       // hide the app's own action from the only reader who can see it.
       detail: END_REASON_TEXT[endReason] ?? "",
       status: r.status ?? "",
-      outcome: parentless ? runVerdict(r.status ?? "", endReason) : null,
+      outcome: runVerdict(r.status ?? "", endReason),
       facts: runFacts(r),
       run: r,
     });

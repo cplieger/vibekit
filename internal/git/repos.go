@@ -16,6 +16,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// gitDirName is the entry that marks a working tree: a DIRECTORY in an ordinary
+// clone and a regular FILE holding a `gitdir:` pointer in a linked worktree or a
+// submodule. Both readers of that fact key on this name (IsRepo and headBranch).
+const gitDirName = ".git"
+
 // IsRepo reports whether dir contains a .git entry (directory for
 // regular repos, regular file for worktrees and submodules, or a
 // symlink to either — os.Stat follows symlinks).
@@ -28,7 +33,7 @@ func IsRepo(ctx context.Context, dir string) bool {
 	if ctx.Err() != nil {
 		return false
 	}
-	_, err := os.Stat(filepath.Join(dir, ".git")) // #nosec G703 -- handlers resolve dir through repoDir, which refuses ".." and absolute paths; reads no content
+	_, err := os.Stat(filepath.Join(dir, gitDirName)) // #nosec G703 -- handlers resolve dir through repoDir, which refuses ".." and absolute paths; reads no content
 	return err == nil
 }
 

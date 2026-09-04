@@ -271,6 +271,21 @@ func previewDiffs(diffs []vibekit.ToolDiff) ([]vibekit.ToolDiff, bool) {
 // the object wholesale would blank the claim line to save the same bytes. A
 // non-object input is kept or dropped whole on the same budget.
 func previewInput(raw json.RawMessage) (json.RawMessage, bool) {
+	// Measured as the ENCODER will write it, the same way the two budgets below
+	// are. A raw length bounds neither direction: encoding/json COMPACTS a
+	// RawMessage on the way out and HTML-ESCAPES it, so whitespace makes the raw
+	// form longer and an unescaped `<` makes it six times shorter. Gating on the
+	// raw bytes therefore let a 4,010-byte object of `<` through at roughly 24 KiB
+	// on the wire, over both budgets, with the object never reaching them.
+	//
+	// Not a live bug: the single production caller reads values out of the store,
+	// which persisted them through encoding/json, so they arrive already escaped
+	// and the two lengths agree. This is the two budgets measuring one thing.
+	//
+	// The conversion is idempotent, so the members unmarshalled out of it below
+	// are already in the form inputWireBytes would produce and one Marshal serves
+	// both the gate and the walk.
+	raw = inputWireBytes(raw)
 	if len(raw) <= toolPreviewInputBytes {
 		return nil, false
 	}

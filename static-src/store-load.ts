@@ -9,6 +9,7 @@ import { apiGetTyped } from "./api-client.js";
 import { asObject, decodeArray, reqBool, type Decoder } from "./validators.js";
 import { decodeChatHeader, decodeMessage } from "./wire/decoders.gen.js";
 import { registerCleanup } from "./actions/index.js";
+import { RESIDENT_BLOCKS } from "./block-window.js";
 import {
   setSessions,
   get,
@@ -51,29 +52,33 @@ const decodeChatGetResponseLocal: Decoder<{
 };
 
 /**
- * What one transcript page may carry.
+ * The BYTE bound on one transcript page: what the wire may carry however the
+ * content is shaped, and what a reader is waiting on.
  *
- * THE CLIENT'S OWN UNIT IS BLOCKS. `block-window.ts` bounds a paint in blocks and
- * tool cards, because that is what a paint costs; a message count is not a cost
- * and never was one for this workload — the client asked for 50 while the five
- * open chats held 2, 4, 10, 10 and 13 messages, so every real conversation came
- * back whole, and a six-message chat measured 13,010,641 bytes because one
- * assistant message can carry 580 blocks and 353 tool calls.
- *
- * The REQUEST cannot say "blocks": `/api/chats/{id}` takes a message cap and a
- * byte budget, cuts at a message boundary and reports `has_more` against the
- * bytes. So the page is stated in the closest unit the wire has, sized against
- * the residency budget instead of against nothing.
- *
- * 256 KiB, down from the megabyte the byte budget arrived at: a megabyte of
- * transcript JSON is several times the resident block budget, so the remainder
- * was fetched, decoded and then stubbed on arrival. Nothing becomes unreachable —
- * the server returns the newest message WHOLE however big it is (with its tool
- * calls windowed behind their own resource), and `has_more` plus `before_id`
- * reach everything older, which is the same path the reader's scroll already
- * walks.
+ * 256 KiB, down from the megabyte it arrived at: a megabyte of transcript JSON is
+ * several times the resident block budget, so the remainder was fetched, decoded
+ * and then stubbed on arrival. Nothing becomes unreachable — the server returns
+ * the newest message WHOLE however big it is (with its tool calls windowed behind
+ * their own resource), and `has_more` plus `before_id` reach everything older,
+ * which is the same path the reader's scroll already walks.
  */
 const PAGE_BUDGET_BYTES = 1 << 18;
+
+/**
+ * The BLOCK bound on one transcript page, and the client's own residency unit.
+ *
+ * `block-window.ts` bounds a paint in blocks because that is what a paint costs,
+ * and stubs every turn past `RESIDENT_BLOCKS`. So a page cut on bytes alone holds
+ * a chat-dependent number of blocks: one assistant message can carry 580 blocks
+ * and 353 tool calls, so 256 KiB can overshoot residency and the surplus is
+ * decoded and then thrown away.
+ *
+ * Asking for exactly what one paint can hold is what makes the server's cut and
+ * this client's window the SAME unit. It is not a second message cap: the server
+ * still cuts at a message boundary and still sends the newest message whole, and
+ * `has_more` still reports honestly against whichever budget cut the page.
+ */
+const PAGE_BUDGET_BLOCKS = RESIDENT_BLOCKS;
 
 /**
  * The server's cap on messages per page, and NOT this client's budget — it is a
@@ -195,6 +200,7 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
   const params = new URLSearchParams({
     limit: String(PAGE_MESSAGE_CAP),
     max_bytes: String(PAGE_BUDGET_BYTES),
+    blocks: String(PAGE_BUDGET_BLOCKS),
   });
   if (beforeID !== undefined) {
     params.set("before_id", beforeID);

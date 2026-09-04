@@ -92,7 +92,7 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	if beforeID := r.URL.Query().Get("before_id"); beforeID != "" {
 		end = indexOfMessage(msgs, beforeID)
 	}
-	window, start := messageWindow(msgs[:end], parseLimitParam(r), parseMaxBytesParam(r))
+	window, start := messageWindow(msgs[:end], parseWindowBudget(r))
 
 	// `draft` rides here as its own field, keeping the composer autosave
 	// off the SSE fan-out and off the list response.
@@ -104,14 +104,36 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	})
 }
 
-// messageWindow returns the newest messages of msgs that fit BOTH budgets, plus
+// windowBudget is what one transcript page may carry. A struct rather than three
+// int parameters: they are interchangeable at a call site and a transposition
+// would silently serve a 50-byte page or a million-message one.
+type windowBudget struct {
+	// Messages caps the page's LENGTH. A bound on the answer's shape rather than
+	// on its size — see parseLimitParam.
+	Messages int
+	// Bytes is the hostile-input bound: what the wire may carry however the
+	// content is shaped.
+	Bytes int
+	// Blocks is the CLIENT'S OWN residency unit, so the page the server cuts and
+	// the window the client can hold are measured in the same thing.
+	Blocks int
+}
+
+// messageWindow returns the newest messages of msgs that fit EVERY budget, plus
 // the index the window starts at — so a caller can answer has_more honestly.
 //
 // A message count alone is not a budget. It defaulted to 50 while the five live
 // chats held 2, 4, 10, 10 and 13 messages, so the "paginated window" was every
 // real conversation whole, and a SIX-message chat answered 13,010,641 bytes: one
-// assistant message can carry 580 blocks and 353 tool calls. Bytes are what the
-// client is actually waiting for, so bytes are what the window is measured in.
+// assistant message can carry 580 blocks and 353 tool calls.
+//
+// BYTES AND BLOCKS ARE DIFFERENT QUESTIONS, which is why both are here. Bytes
+// bound what the wire carries whatever the content is — the hostile-input bound,
+// and what a reader waits on. Blocks are what the CLIENT can hold: `block-window.ts`
+// bounds residency at RESIDENT_BLOCKS and stubs everything past it, so a page cut
+// on bytes alone holds a chat-dependent number of blocks and can overshoot that
+// budget — fetched, decoded, and then thrown away on arrival. Measuring the page
+// in the client's own unit is what closes that.
 //
 // The messages are marshalled HERE, once, and returned as raw JSON. Measuring
 // one encoding and shipping another would be a second implementation of "how
@@ -124,14 +146,14 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 // unreachable. What bounds the message ITSELF is previewMessage, which windows
 // each of its tool calls and points the card at GET /api/chats/{id}/tools/{id}
 // for the rest; without it "whole, however big" was the whole worst case.
-func messageWindow(msgs []vibekit.Message, limit, maxBytes int) (window []json.RawMessage, start int) {
+func messageWindow(msgs []vibekit.Message, budget windowBudget) (window []json.RawMessage, start int) {
 	// Non-nil: a nil slice marshals as `null` and the generated decoder rejects
 	// `null` for an array. Same guard as the one the make+copy here replaced.
-	window = make([]json.RawMessage, 0, min(limit, len(msgs)))
-	spent := 0
+	window = make([]json.RawMessage, 0, min(budget.Messages, len(msgs)))
+	spentBytes, spentBlocks := 0, 0
 	start = len(msgs)
 	for i := range slices.Backward(msgs) {
-		if len(window) == limit {
+		if len(window) == budget.Messages {
 			break
 		}
 		raw, err := json.Marshal(previewMessage(&msgs[i]))
@@ -142,15 +164,44 @@ func messageWindow(msgs []vibekit.Message, limit, maxBytes int) (window []json.R
 				"message_id", msgs[i].ID, "error", err)
 			break
 		}
-		if len(window) > 0 && spent+len(raw) > maxBytes {
+		blocks := messageBlockCost(&msgs[i])
+		if len(window) > 0 &&
+			(spentBytes+len(raw) > budget.Bytes || spentBlocks+blocks > budget.Blocks) {
 			break
 		}
-		spent += len(raw)
+		spentBytes += len(raw)
+		spentBlocks += blocks
 		window = append(window, raw)
 		start = i
 	}
 	slices.Reverse(window)
 	return window, start
+}
+
+// messageBlockCost is what one message costs the client's residency budget.
+//
+// It mirrors `block-window.ts turnCost` exactly, and has to: a budget measured
+// one way here and another way there would cut a page the client still stubs. A
+// message with no blocks costs ONE, because the reconcile unit is the message row
+// and an empty one is still a row.
+//
+// The synthesis is `store.ts normalizeMessage`'s: a message persisted before the
+// blocks field carries none, and the client builds one thinking block, one text
+// block and one per tool call before it measures. Counting the wire's empty
+// `blocks` array as one row instead would price a legacy 353-tool-call message at
+// a single block.
+func messageBlockCost(m *vibekit.Message) int {
+	if n := len(m.Blocks); n > 0 {
+		return n
+	}
+	n := len(m.ToolCalls)
+	if m.Reasoning != "" {
+		n++
+	}
+	if m.Content != "" {
+		n++
+	}
+	return max(1, n)
 }
 
 // handleTurns serves GET /api/chats/{id}/turns: the chat's session-wide turn
@@ -228,6 +279,35 @@ const (
 // under it is indistinguishable from zero and only hides a client bug.
 func parseMaxBytesParam(r *http.Request) int {
 	return clampedQueryInt(r, "max_bytes", defaultMaxBytes, 1<<10, maxMaxBytes)
+}
+
+// Block-count bounds for the transcript window. The default is generous — a few
+// of the client's own residency budgets — because a caller that names no block
+// budget is asking for the byte-bounded answer this endpoint served before the
+// parameter existed. The ceiling is 8× the default, as the byte budget's is.
+const (
+	defaultMaxBlocks = 1024
+	maxMaxBlocks     = 8 * defaultMaxBlocks
+)
+
+// parseBlocksParam returns the validated ?blocks= budget for the transcript
+// window, defaulting to defaultMaxBlocks and honouring the inclusive
+// 1..maxMaxBlocks range.
+//
+// The floor is 1 because that is the smallest a message can cost: below it the
+// budget would select exactly one message whatever it was set to, which is
+// indistinguishable from 1 and only hides a client bug.
+func parseBlocksParam(r *http.Request) int {
+	return clampedQueryInt(r, "blocks", defaultMaxBlocks, 1, maxMaxBlocks)
+}
+
+// parseWindowBudget reads the three page budgets off the query.
+func parseWindowBudget(r *http.Request) windowBudget {
+	return windowBudget{
+		Messages: parseLimitParam(r),
+		Bytes:    parseMaxBytesParam(r),
+		Blocks:   parseBlocksParam(r),
+	}
 }
 
 // clampedQueryInt returns the named query parameter when it parses as an

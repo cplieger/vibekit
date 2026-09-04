@@ -11,7 +11,10 @@ package git
 
 import (
 	"context"
+	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -49,6 +52,13 @@ type porcelainStatus struct {
 // failure: the dashboard degrades to a row with empty counts, a discard refuses to
 // act on a status it does not have, and pull-all must treat an unreadable tree as
 // unsafe rather than clean.
+//
+// A FAILED read still answers the branch, read off .git/HEAD rather than from a
+// second spawn. Collapsing five invocations into two made the branch a casualty of
+// a failed status: `branch --show-current` used to be its own process and could
+// succeed where `status` failed, so the dashboard row for a wedged repository lost
+// its one piece of orientation along with its counts. The file read costs no
+// process at all, which is cheaper than what it replaces.
 func readStatus(ctx context.Context, dir string) (porcelainStatus, error) {
 	raw, err := gitExec(ctx, dir, statusArgs...).CombinedOutput()
 	if err != nil {
@@ -57,13 +67,91 @@ func readStatus(ctx context.Context, dir string) (porcelainStatus, error) {
 		// errors only so a busy dashboard doesn't flood the log with kill noise.
 		if ctx.Err() != nil {
 			slog.Debug("git status canceled", "repo", logsafe.Field(dir), "cause", ctx.Err())
-			return porcelainStatus{}, err
+			return porcelainStatus{Branch: headBranch(dir)}, err
 		}
 		slog.Warn("git status failed", "repo", logsafe.Field(dir),
 			"error", logsafe.Field(err.Error()), "out", scrubAuth(string(raw)))
-		return porcelainStatus{}, err
+		return porcelainStatus{Branch: headBranch(dir)}, err
 	}
 	return parsePorcelainV2(raw), nil
+}
+
+// headRefPrefix is what .git/HEAD holds for a checked-out branch. Anything else
+// is a detached HEAD (a bare object id) or not a HEAD document at all.
+const headRefPrefix = "ref: refs/heads/"
+
+// headDocMaxBytes bounds the HEAD and .git reads. A HEAD document is one line and
+// a .git file is one `gitdir:` line, so this is the hostile-content bound. The
+// entry's own name is gitDirName (repos.go).
+const headDocMaxBytes = 4 << 10
+
+// headBranch reads the checked-out branch straight off .git/HEAD, with no
+// subprocess. Empty for a detached HEAD — which is what `branch --show-current`
+// answered too — and empty for anything it cannot read or does not recognise.
+func headBranch(dir string) string {
+	gitPath := filepath.Join(dir, gitDirName)
+	info, err := os.Stat(gitPath) // #nosec G703 -- dir is resolved through repoDir, which refuses ".." and absolute paths
+	if err != nil {
+		return ""
+	}
+	if !info.IsDir() {
+		// A linked worktree or a submodule: .git is a FILE naming the real git
+		// directory, and HEAD lives there rather than beside this file.
+		gitPath = resolveGitDirFile(dir, gitPath)
+		if gitPath == "" {
+			return ""
+		}
+	}
+	return parseHeadRef(readSmallFile(filepath.Join(gitPath, "HEAD")))
+}
+
+// resolveGitDirFile reads a `.git` FILE and returns the git directory it names,
+// resolving a relative pointer against the directory holding the file (git's own
+// rule). Empty when the file is not a gitdir pointer.
+func resolveGitDirFile(dir, gitFile string) string {
+	target, ok := strings.CutPrefix(strings.TrimSpace(readSmallFile(gitFile)), "gitdir:")
+	if !ok {
+		return ""
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return ""
+	}
+	if filepath.IsAbs(target) {
+		return target
+	}
+	return filepath.Join(dir, target)
+}
+
+// readSmallFile reads at most headDocMaxBytes of path, answering "" for anything
+// it cannot read. Capped rather than os.ReadFile so a file that is not the
+// one-liner this expects cannot be pulled into memory whole.
+func readSmallFile(path string) string {
+	f, err := os.Open(path) // #nosec G703 -- see headBranch; the value is only used when it parses as a HEAD document
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(f, headDocMaxBytes))
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// parseHeadRef extracts the branch name from a .git/HEAD document.
+//
+// Empty for a detached HEAD (a bare object id) and for anything that is neither
+// form. The ref-name check is what makes the recovery safe on a repository this
+// server did not write: a `.git` file can point its `gitdir:` anywhere, so
+// requiring the exact prefix plus a valid ref name means an unrelated file's first
+// line answers nothing rather than reaching the dashboard as a branch.
+func parseHeadRef(doc string) string {
+	name, ok := strings.CutPrefix(strings.TrimSpace(doc), headRefPrefix)
+	if !ok || !isValidGitRef(name) {
+		return ""
+	}
+	return name
 }
 
 // Field counts of the three entry records, from gitstatus(1): the path is the last

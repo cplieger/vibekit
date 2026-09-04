@@ -122,7 +122,7 @@ const runRow = {
   updated_at: 2500,
 };
 
-/** A parentless run at the given status; parentless is what scopes the glyph. */
+/** A parentless run at the given status. */
 const runAt = (status: string) => ({ ...runRow, status });
 
 /** A row's accessible name, which lives on its open BUTTON. The row itself is a
@@ -327,9 +327,9 @@ describe("history: chats already open in a tab here", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A parentless run's outcome is a GLYPH, painted through tool-card.ts's
-// applyOutcome (the one writer of that vocabulary). Exhaustive over
-// RUN_STATUSES, plus the two junk values a `status?: string` wire field carries.
+// A run's outcome is a GLYPH, painted through tool-card.ts's applyOutcome (the
+// one writer of that vocabulary). Exhaustive over RUN_STATUSES, plus the two junk
+// values a `status?: string` wire field carries.
 // ---------------------------------------------------------------------------
 
 describe("history: a run's outcome is a glyph, not a word", () => {
@@ -400,16 +400,22 @@ describe("history: a run's outcome is a glyph, not a word", () => {
     expect(row.querySelector(".history-status")).toBeNull();
   });
 
-  it("scopes the glyph to a PARENTLESS run", async () => {
-    // An agent-parented run's outcome is the agent's to handle, so this page
-    // states no verdict on it — the same scoping the word had.
+  // OVERTURNED. This used to assert the glyph was scoped to a PARENTLESS run, on
+  // "an agent-parented run's outcome is the agent's to handle". The server lists
+  // these rows now precisely because that is false once the launching chat's
+  // transcript is closed or evicted — retry is offered for them, and this page is
+  // the only door left — so a blank outcome would leave the reader no reason to
+  // open the one door there is.
+  it("states the verdict on an agent-parented run too", async () => {
     const c = await render({
       sessions: [],
-      runs: [{ ...runRow, parent_chat_id: "c-owner" }],
+      runs: [{ ...runRow, status: "aborted", parent_chat_id: "c-owner" }],
     });
     const row = c.querySelector('[data-key="r:wf_1"]')!;
-    expect(row.querySelector(".tool-icon")).toBeNull();
-    expect(row.querySelector(".history-status")?.textContent).toBe("completed");
+    expect(row.querySelector(".tool-icon")).not.toBeNull();
+    // A verdict takes the status slot's place, as it does for a parentless row.
+    expect(row.querySelector(".history-status")).toBeNull();
+    expect(openName(row)).toBe("Open feature-pipeline, aborted");
   });
 
   it("gives a chat row no outcome glyph", async () => {
@@ -491,15 +497,15 @@ describe("history: an overrun reads differently from a cancel", () => {
   });
 
   it("states the reason on an agent-parented run too", async () => {
-    // The verdict is withheld from an agent-parented row (its recovery is the
-    // agent's), but this sentence reports what VIBEKIT did to the run, and hiding
-    // the app's own action from the only reader who can see it would be worse.
+    // This sentence reports what VIBEKIT did to the run, so it was always stated
+    // whatever launched it. The glyph now is too (see "states the verdict on an
+    // agent-parented run too"), so the row carries both.
     const c = await render({
       sessions: [],
       runs: [{ ...runRow, status: "aborted", parent_chat_id: "c-owner", end_reason: "overran" }],
     });
     const row = c.querySelector('[data-key="r:wf_1"]')!;
-    expect(row.querySelector(".tool-icon")).toBeNull();
+    expect(row.querySelector(".tool-icon")).not.toBeNull();
     expect(row.textContent).toContain("ran past its time limit");
   });
 

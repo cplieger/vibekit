@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -795,5 +796,65 @@ func TestPurge_TheOpenTabAndDraftExemptionsAreIndependent(t *testing.T) {
 	}
 	if got := rec.sorted(); len(got) != 0 {
 		t.Errorf("onPurge fired for %v, want nothing", got)
+	}
+}
+
+// THE IDLE BACK-OFF'S END, which nothing could reach until the exemption-clearing
+// path gained a Trigger.
+//
+// A pass that keeps every chat on an exemption reports no deadline (an exempt
+// chat's age is already past the cutoff, so a timer aimed at it would fire
+// immediately, purge nothing and re-arm forever — see PurgeResult), so the loop
+// lands on the doubling idle wait, whose ceiling is an hour. Nothing shortens that
+// but a Trigger, and Trigger used to have exactly one production caller, Start. So
+// closing the last tab of a month-old chat woke nothing and the chat could outlive
+// its window by up to that hour; command.Membership.CloseTab now wakes it, and this
+// is the scheduler half of that sequence.
+//
+// How long the wait actually is stays pinned by
+// TestPurgeScheduler_APassWithNothingToPurgeBacksOff; reading idleWait from here
+// would race the loop goroutine that owns it.
+func TestPurgeScheduler_ATriggerEndsTheIdleBackOff(t *testing.T) {
+	var exempt atomic.Bool
+	exempt.Store(true)
+	// One buffered slot per predicate call the test waits on, so a send can never
+	// block the pass it is observing.
+	passes := make(chan struct{}, 64)
+	purged := make(chan vibekit.ChatID, 8)
+	svc, _, dir := newPurgeTestService(t,
+		WithOnPurge(func(id vibekit.ChatID, _ []string) { purged <- id }),
+		WithOpenTabs(func(vibekit.ChatID) bool {
+			select {
+			case passes <- struct{}{}:
+			default:
+			}
+			return exempt.Load()
+		}))
+	chat := writeAgedChat(t, dir, "pinned", 500*time.Hour)
+
+	sched := NewPurgeScheduler(svc, func() time.Duration { return time.Hour })
+	sched.Start(t.Context())
+	defer sched.Stop()
+
+	// The predicate answering is the handshake for "the first pass reached this
+	// chat"; a sleep here would pass whether or not the pass had run.
+	select {
+	case <-passes:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the first pass never consulted the open-tab predicate")
+	}
+	if !exists(t, chat) {
+		t.Fatal("Setup: the exempt chat was purged on the first pass, so there is no " +
+			"back-off to end")
+	}
+
+	// The exemption clears — the reader closed the tab — and the clearing path
+	// wakes the scheduler.
+	exempt.Store(false)
+	sched.Trigger()
+
+	if got := recvWithin(t, purged, 3*time.Second); got != "pinned" {
+		t.Errorf("the pass a Trigger ran purged %q, want pinned: a cleared exemption has "+
+			"to be noticed on the wake rather than at the end of an hour-long back-off", got)
 	}
 }

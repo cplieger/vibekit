@@ -356,23 +356,30 @@ func wfRun(id, name, status, parentSession, updated string) kasWorkflowRun {
 	}
 }
 
-// A run a CHAT launched is that conversation's work, not a history entry of its
-// own: it renders in the chat's transcript, its outcome is the agent's to handle,
-// and its recovery is the agent's job. Listing it put a second door on something
-// the user reaches by opening the chat, and buried the runs a user can act on —
-// all six runs in the live workspace were agent-launched `/goal` runs off three
-// chats, so the page was six duplicates and nothing else.
+// OVERTURNED, deliberately. This test used to assert the opposite — that a
+// chat-launched run is dropped — on the premise that "it renders in the chat's
+// transcript, its outcome is the agent's to handle, and its recovery is the
+// agent's job". Every clause of that is conditional on the transcript being open
+// and resident, and none of it survives the tab closing or the window being
+// evicted: retry is legal only from `failed` and `aborted`, kiro-cli's own restore
+// pass considers neither, and run_affordance.go retired the same parentless-only
+// rule for exactly that reason. So an aborted agent-launched run had no door
+// anywhere in the product, and this page was the one that could offer it.
 //
-// A manual or scheduled run is the opposite case and must survive: nothing pushes
-// on a finished run, so this page is the only place its outcome is ever read.
-func TestToWorkflowRuns_KeepsOnlyParentlessRuns(t *testing.T) {
+// The duplication the old rule was written against is real but smaller than the
+// hole it left: a run whose chat IS open is reachable two ways, and the row's own
+// door nests the run's tab under that chat rather than adding a second top-level
+// one (history.ts openRow).
+//
+// Attribution is still asserted, because it is what the nesting reads: the chain
+// claim resolves a run launched from a session the chat has since retired, where
+// matching the current session id alone would report it as parentless.
+func TestToWorkflowRuns_ListsEveryRunAndAttributesTheChatLaunchedOnes(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"sess_retired", "sess_now"}})
 	got := h.runs.toWire(h.claimedSessions(t.Context()), []kasWorkflowRun{
 		wfRun("wf_manual", "nightly", "completed", "", "2026-08-02T12:00:00.000Z"),
 		wfRun("wf_agent", "goal", "completed", "sess_now", "2026-08-02T11:00:00.000Z"),
-		// Launched from a session the chat has since RETIRED. The chain claim is
-		// what catches this one; matching the current id alone would read it as
-		// parentless and list it.
+		// Launched from a session the chat has since RETIRED.
 		wfRun("wf_agent_retired", "goal", "aborted", "sess_retired", "2026-08-02T10:00:00.000Z"),
 		wfRun("wf_scheduled", "backup", "failed", "", "2026-08-02T09:00:00.000Z"),
 	})
@@ -381,14 +388,20 @@ func TestToWorkflowRuns_KeepsOnlyParentlessRuns(t *testing.T) {
 	for i := range got {
 		ids = append(ids, got[i].WorkflowID)
 	}
-	want := []string{"wf_manual", "wf_scheduled"}
+	want := []string{"wf_manual", "wf_agent", "wf_agent_retired", "wf_scheduled"}
 	if !slices.Equal(ids, want) {
-		t.Fatalf("runs = %v, want %v (parentless only, newest first)", ids, want)
+		t.Fatalf("runs = %v, want %v (every run, newest first)", ids, want)
+	}
+	wantParents := map[string]string{
+		"wf_manual":        "",
+		"wf_agent":         "c1",
+		"wf_agent_retired": "c1",
+		"wf_scheduled":     "",
 	}
 	for i := range got {
-		if got[i].ParentChatID != "" {
-			t.Errorf("%s carries parent_chat_id %q: every surviving run is parentless",
-				got[i].WorkflowID, got[i].ParentChatID)
+		if want := wantParents[got[i].WorkflowID]; got[i].ParentChatID != want {
+			t.Errorf("%s carries parent_chat_id %q, want %q", got[i].WorkflowID,
+				got[i].ParentChatID, want)
 		}
 	}
 }

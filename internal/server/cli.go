@@ -2,8 +2,12 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"maps"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,6 +30,11 @@ const (
 	// logged for diagnosis, never returned to the client, so a modest tail
 	// is enough and a hostile subprocess can't OOM the container.
 	cliStderrCap = 32 * 1024 // 32 KiB
+
+	// settingsListMaxBytes caps the `settings list` document. The whole object
+	// is a few hundred bytes on 2.20.2 (eleven keys of scalars), so this is the
+	// hostile-output bound rather than a working budget.
+	settingsListMaxBytes = 64 * 1024 // 64 KiB
 )
 
 // CLIRunner abstracts subprocess execution for kiro-cli commands,
@@ -50,16 +59,43 @@ type CLIRunner interface {
 // and on a first boot that is the empty string.
 type execCLIRunner struct {
 	cliPath func() string
+	// env is the environment overlay for a kiro-cli spawn — pinstall's
+	// Manager.PathEnv, which leads PATH with the active version directory.
+	//
+	// Load-bearing rather than symmetric with cliPath. kiro-cli is a multi-call
+	// binary and `settings` re-execs a SIBLING (kiro-cli-chat) resolved by a
+	// plain PATH search, so the absolute path alone does not reach it: measured
+	// on the installed 2.20.2, `<version-dir>/kiro-cli settings list --format
+	// json` exits 1 with "No such file or directory (os error 2)" when the
+	// version directory does not lead PATH and exits 0 with the whole object
+	// when it does. `--version` and `diagnostic` are answered by the main binary
+	// and read the same either way.
+	//
+	// OPTIONAL: nil means inherit the parent environment implicitly, which is
+	// what a test driving this runner at /bin/sh wants.
+	env func() []string
+}
+
+// command builds the spawn both methods run.
+func (r *execCLIRunner) command(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, r.cliPath(), args...) //nolint:gosec // G204: binary path from the install manager, never user input
+	if r.env != nil {
+		// The overlay lands LAST: os/exec keeps the last value for a repeated
+		// key, so the container's own PATH would otherwise win the search that
+		// has to land inside the verified install.
+		cmd.Env = append(os.Environ(), r.env()...)
+	}
+	return cmd
 }
 
 func (r *execCLIRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, r.cliPath(), args...).CombinedOutput() //nolint:gosec // G204: binary path from the install manager, never user input
+	return r.command(ctx, args...).CombinedOutput()
 }
 
 func (r *execCLIRunner) RunStdoutCapped(ctx context.Context, limit int, args ...string) (out []byte, truncated bool, err error) {
 	stdout := procout.NewBuffer(limit)
 	stderr := procout.NewBuffer(cliStderrCap)
-	cmd := exec.CommandContext(ctx, r.cliPath(), args...) //nolint:gosec // G204: binary path from the install manager, never user input
+	cmd := r.command(ctx, args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	err = cmd.Run()
@@ -191,4 +227,72 @@ func parseKiroSettingOutput(s string) string {
 		s = strings.TrimSpace(before)
 	}
 	return s
+}
+
+// settingsListArgs reads EVERY kiro-cli setting in ONE invocation.
+//
+// Measured on the installed 2.20.2 with the version directory leading PATH:
+// exits 0 and writes one flat JSON object of every key — dotted names, native
+// JSON types:
+//
+//	{"app.disableAutoupdates":true,"chat.enableKnowledge":true,
+//	 "cleanup.periodDays":0,"telemetry.enabled":false, …}
+//
+// So the whole allowlist costs one spawn, where the per-key form cost one spawn
+// per key and the Settings → General panel opened three of them concurrently,
+// each with its own 3 s budget.
+var settingsListArgs = []string{"settings", "list", "--format", "json"}
+
+// parseKiroSettingsList maps the settings-list document to the string values the
+// per-key form answers, keeping only the allowlisted keys.
+//
+// One spelling for two doors: values are native JSON here and a scope-suffixed
+// string in the per-key form ("false (global)"), and the client compares against
+// "true"/"false" without knowing which door answered.
+func parseKiroSettingsList(raw []byte) (map[string]string, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(allowedKiroSettings))
+	for k, v := range obj {
+		if safeKiroSetting(k) == "" {
+			continue
+		}
+		out[k] = kiroSettingValueText(v)
+	}
+	return out, nil
+}
+
+// kiroSettingValueText renders one JSON setting value as the string the wire
+// carries: a JSON string is unquoted, a bool or number is its own literal.
+func kiroSettingValueText(v json.RawMessage) string {
+	var s string
+	if err := json.Unmarshal(v, &s); err == nil {
+		return s
+	}
+	return strings.TrimSpace(string(v))
+}
+
+// requestedKiroSettings resolves the ?keys= parameter to the allowlisted keys to
+// answer, sorted so one request over one set always answers the same document.
+//
+// An absent parameter means every allowlisted key: a settings read with no
+// selection is the whole document, and the one spawn behind it costs the same
+// either way. Unknown names are dropped rather than answered, so a caller that
+// names nothing allowed gets the same refusal a typo used to get.
+func requestedKiroSettings(spec string) []string {
+	if strings.TrimSpace(spec) == "" {
+		return slices.Sorted(maps.Keys(allowedKiroSettings))
+	}
+	var out []string
+	for name := range strings.SplitSeq(spec, ",") {
+		key := safeKiroSetting(strings.TrimSpace(name))
+		if key == "" || slices.Contains(out, key) {
+			continue
+		}
+		out = append(out, key)
+	}
+	slices.Sort(out)
+	return out
 }
