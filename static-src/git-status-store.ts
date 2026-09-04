@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// One shared owner of the /api/git/status-all poll, with a per-path lookup.
+// One shared owner of /api/git/status-all, with a per-path lookup.
 //
 // Before this, two modules fetched that endpoint independently and neither kept
 // anything a third could read: git-badge.ts reduced the response to two counters
@@ -8,26 +8,33 @@
 // the git view — which is why the file browser and the docs page could not
 // decorate a row.
 //
-// This store owns the timer and the data; consumers subscribe. It adds NO new
-// server call and NO second timer: the badge now derives its counters from here
-// instead of issuing its own status fetch.
+// IT HOLDS NO TIMER. It polled every 15 s and fired an extra FULL scan on every
+// `turn_ended`, and one scan is 270 git subprocesses across 54 worktrees, so the
+// steady-state cost of an idle page was a scan every 15 seconds for a tree
+// nothing had touched. A turn ending is a GUESS that the tree changed; the client
+// already holds the fact — `handlers/messages.ts` sees each repo-mutating tool
+// call complete — and was throwing it away. So the only automatic refresh is that
+// fact arriving, through `markGitDirty`.
+//
+// A watcher was considered and rejected, and the reason is checkable in the tree:
+// vibekit IS the writer, so it holds a more precise fact than inotify does — it
+// can name the repos — while a recursive watch over 54 worktrees would need tens
+// of thousands of inotify watches against a host `fs.inotify.max_user_watches`
+// the container cannot raise, and a `.git/index`-only watch would miss the
+// commonest case, an unstaged agent write. No new SSE event either: the frames
+// that carry the fact already reach the client.
 //
 // Scope note: git-changes-tab.ts deliberately keeps its own fetch. It needs the
-// `?fetch=1` forced-refresh variant and re-reads on user gestures, which is a
-// different lifecycle from a background poll — folding it in would mean the poll
-// serving a forced refresh, or the tab waiting up to 15s for one.
+// `?fetch=1` forced-refresh variant (a real `git fetch`, the only way to learn
+// remote state) and re-reads on user gestures, which is a different lifecycle
+// from this one.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, pollAction } from "./actions/index.js";
-import { onSSE } from "./bus.js";
+import { apiAction, defineAction } from "./actions/index.js";
 import { signal, subscribe } from "@cplieger/reactive";
 import { absPath, onWorkspaceRoot, workspaceRoot } from "./workspace.js";
 import type { GitRepoStatus } from "./git-types.js";
 import { statusLetter } from "./git-types.js";
-
-/** Poll cadence, unchanged from the badge's own (pollAction pauses while the
- *  document is hidden and refreshes on focus, so this is a ceiling not a floor). */
-const POLL_INTERVAL_MS = 15_000;
 
 interface StatusAllResponse {
   repos?: GitRepoStatus[] | null;
@@ -172,31 +179,33 @@ onWorkspaceRoot(() => {
   repos.value = [...list];
 });
 
-/** Start the poll. Idempotent — safe to call from several init paths. */
+/** Read the tree once, so a surface that just opened has something to show.
+ *
+ *  Idempotent — safe to call from several init paths, and it is the ONLY read
+ *  this module makes on its own. Everything after it is `refreshGitStatus`,
+ *  driven by the client learning that a repo changed. */
 export function initGitStatusStore(): void {
   if (started) {
     return;
   }
   started = true;
-  const apply = (d: StatusAllResponse | null): void => {
-    const list = d?.repos ?? [];
-    rebuildIndex(list);
-    repos.value = list;
-  };
-  // A finished turn is the most likely moment for the tree to have changed.
-  onSSE("turn_ended", () => {
-    void refresh();
-  });
-  pollAction(refreshAction, undefined, {
-    interval: POLL_INTERVAL_MS,
-    onSuccess: apply,
-  });
+  void refreshGitStatus();
 }
 
-/** Force a refresh now. Deduped with any in-flight poll. Internal: consumers
- *  subscribe rather than pull, and the poll plus the turn_ended nudge below
- *  cover every moment the tree plausibly changed. */
-async function refresh(): Promise<void> {
+/** Re-read the tree. Deduped with any read already in flight.
+ *
+ *  Exported because the trigger is no longer this module's: the fact that a repo
+ *  moved arrives at `handlers/messages.ts` as a repo-mutating tool call
+ *  completing, and travels here through `git.ts`'s markGitDirty. A user gesture in
+ *  the Changes tab has its own forced-refresh path.
+ *
+ *  DEFERRED, and it is the one half of this that is not client-side: the request
+ *  is unscoped, so a single-file edit still costs a full 54-repo scan. Scoping it
+ *  needs a `?paths=` form on `/api/git/status-all`, which is Phase A's file
+ *  (`internal/git/` is A's entirely) and did not land with A2's snapshot cache.
+ *  What HAS landed is the expensive half: the scan now happens when the tree
+ *  actually moved rather than every 15 seconds and on every turn end. */
+export async function refreshGitStatus(): Promise<void> {
   const d = await refreshAction.dispatch(undefined);
   const list = d?.repos ?? [];
   rebuildIndex(list);

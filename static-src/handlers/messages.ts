@@ -20,7 +20,6 @@ import {
   noteLiveTurnMessage,
   get,
 } from "../store.js";
-import type { ToolCallUpdatePayload, ToolKind } from "../wire/types.gen.js";
 import { markGitDirty } from "../git.js";
 import { isRepoMutatingKind } from "../tool-schema.js";
 import { isStepSubtask } from "../step-subtask.js";
@@ -157,23 +156,17 @@ onSSE("tool_call_update", (chatID, p) => {
   }
   // A DELTA addressed by id, so the fold is the store's and the frame carries no
   // block_index: by definition the card is already mounted, and only the first
-  // `tool_call` event drives block placement.
-  applyToolCallDelta(chatID, p);
-  // `kind` is on the delta only when this frame CHANGED it, so the completed
-  // call's kind is read off the store rather than off the frame — the frame that
-  // completes a write usually carries a status and nothing else.
-  const kind = toolCallKind(chatID, p);
-  if (p.status === "completed" && kind !== undefined && isRepoMutatingKind(kind)) {
+  // `tool_call` event drives block placement. It returns the FOLDED call —
+  // `kind` rides a delta only when that frame changed it, and the frame that
+  // completes a write normally carries a status and nothing else, so the kind has
+  // to come from the accumulated value. Off the return rather than a second
+  // lookup: the fold already found the message through the store's index and the
+  // call through its own scan.
+  const call = applyToolCallDelta(chatID, p);
+  if (p.status === "completed" && call !== undefined && isRepoMutatingKind(call.kind)) {
+    // A repo-mutating call finishing is the FACT that the tree changed, and it is
+    // the only automatic git refresh there is — git-status-store.ts holds no
+    // timer, because a 15-second poll of 54 worktrees was a guess at this.
     markGitDirty();
   }
 });
-
-/** The kind of the tool call a delta addresses, from the store.
- *
- *  Not from the frame: `kind` rides a delta only when that frame changed it, and
- *  the frame that completes a call normally changes the status alone. Reading it
- *  off the frame made every completed edit look like a non-mutating tool. */
-function toolCallKind(chatID: string, d: ToolCallUpdatePayload): ToolKind | undefined {
-  const msg = get(chatID)?.messages.find((m) => m.id === d.message_id);
-  return msg?.tool_calls?.find((tc) => tc.id === d.tool_call_id)?.kind;
-}

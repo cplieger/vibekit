@@ -1875,21 +1875,28 @@ export function upsertToolCall(
  *
  *  A call this client does not hold is DROPPED, not created: a delta has nothing
  *  to apply to, and the channel for a client that missed the beginning is
- *  `turn_state`, which still carries whole objects. */
-export function applyToolCallDelta(chatID: string, d: ToolCallUpdatePayload): void {
+ *  `turn_state`, which still carries whole objects. `undefined` reports that
+ *  drop.
+ *
+ *  RETURNS the folded call, because the handler needs a field off it (the
+ *  completed call's `kind`, to decide whether a repo moved) and this function has
+ *  just done both lookups — the message through the store's index and the call
+ *  through its own scan. Answering from the return value is what stops the
+ *  handler walking the same two collections again. */
+export function applyToolCallDelta(chatID: string, d: ToolCallUpdatePayload): ToolCall | undefined {
   const s = get(chatID);
   if (s === undefined) {
-    return;
+    return undefined;
   }
   const idx = getMsgIndex(chatID, s.messages).get(d.message_id) ?? -1;
   const msg = idx !== -1 ? s.messages[idx] : undefined;
   const tcIdx = msg?.tool_calls?.findIndex((tc) => tc.id === d.tool_call_id) ?? -1;
   if (msg?.tool_calls === undefined || tcIdx === -1) {
-    return;
+    return undefined;
   }
   const prev = msg.tool_calls[tcIdx];
   if (prev === undefined) {
-    return;
+    return undefined;
   }
   const next = foldToolCallDelta(prev, d);
   msg.tool_calls[tcIdx] = next;
@@ -1912,6 +1919,7 @@ export function applyToolCallDelta(chatID: string, d: ToolCallUpdatePayload): vo
     scheduleMessages(chatID, "fact");
   }
   republishToolCall(chatID, d.message_id, next);
+  return next;
 }
 
 /** Fold one delta onto a held tool call, returning the new value.
@@ -1921,8 +1929,15 @@ export function applyToolCallDelta(chatID: string, d: ToolCallUpdatePayload): vo
  *  the frame budget this shape exists to buy.
  *
  *  Fields are spread conditionally rather than assigned undefined — the client
- *  compiles under exactOptionalPropertyTypes. */
-function foldToolCallDelta(prev: ToolCall, d: ToolCallUpdatePayload): ToolCall {
+ *  compiles under exactOptionalPropertyTypes.
+ *
+ *  EXPORTED for the cross-language contract test, and that is the only reason:
+ *  `tool-call-delta.node.test.ts` drives this against the same fixture
+ *  `internal/translate/streaming_tools_roundtrip_test.go` drives the BUILDER
+ *  against, so the two halves cannot drift on a transition either side's own
+ *  table happens not to cover. Every production caller reaches it through
+ *  `applyToolCallDelta`. */
+export function foldToolCallDelta(prev: ToolCall, d: ToolCallUpdatePayload): ToolCall {
   // `output_replace` is the terminal's full stream winning over the ACP
   // fragments at completion (adoptTerminalOutput server-side). It is the only
   // case where the accumulated output legitimately shrinks or is rewritten.

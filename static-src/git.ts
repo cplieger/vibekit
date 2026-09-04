@@ -28,6 +28,7 @@ import { refreshPRs } from "./actions/git-prs.js";
 import { initSourcesTab, refreshSources } from "./git-sources-tab.js";
 import { initStatusBanner } from "./git-status-banner.js";
 import { initGitBadge, refreshGitBadge as refreshBadgeImpl } from "./git-badge.js";
+import { refreshGitStatus } from "./git-status-store.js";
 import { registerFind } from "./find-registry.js";
 import type { PageFind } from "./find-registry.js";
 import type { SearchPopup } from "./search-popup.js";
@@ -174,10 +175,16 @@ export function refreshGitBadge(): void {
   void refreshBadgeImpl();
 }
 
-/** Mark git state as dirty so the changes view refetches. The legacy
- *  name comes from when the badge had its own dirty flag; today it
- *  triggers both the tab refresh and the sidebar badge re-derivation. */
+/** Mark git state as dirty so every git surface refetches.
+ *
+ *  The one automatic refresh of the status store, and the reason it holds no timer
+ *  any more: a repo-mutating tool call completing is the FACT that the tree
+ *  changed, where a 15-second poll and a `turn_ended` nudge were both guesses. Its
+ *  caller is `handlers/messages.ts`, which sees each completion.
+ *
+ *  The legacy name comes from when the badge had its own dirty flag. */
 export function markGitDirty(): void {
+  void refreshGitStatus();
   void refreshChanges();
   void refreshBadgeImpl();
 }
