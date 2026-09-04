@@ -122,6 +122,25 @@
   justify-content: flex-end;
 }
 
+/* THE LIVE EDGE, as an element an IntersectionObserver can watch (scroll.ts).
+ *
+ * `order: 1` is what puts it last, and it is load-bearing rather than tidy: the
+ * marker is unkeyed furniture inside the view, and `reconcile` seats unkeyed
+ * children BEFORE the keyed turn cards, so its DOM position drifts above them on
+ * every paint. Flex order is decided by this property, not by the DOM, and every
+ * card sits at the default `order: 0`.
+ *
+ * The negative margin cancels the column's `gap`, which is drawn between items
+ * whatever their size — so a zero-height last item would otherwise add
+ * `--sp-3` under the final turn and, with `justify-content: flex-end`, lift the
+ * whole transcript by it. Same mechanism as the collapsing toolbar button
+ * (12-chat.css). */
+.transcript-edge {
+  order: 1;
+  block-size: 0;
+  margin-block-start: calc(-1 * var(--sp-3));
+}
+
 /* Parked views keep their DOM and rendering state but cost the page nothing:
  * content-visibility skips layout and paint of the subtree while preserving
  * its state (the whole point over display:none), and the box's own metrics are
