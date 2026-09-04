@@ -28,35 +28,76 @@ function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
   return { promise, resolve };
 }
 
-const m = vi.hoisted(() => ({
-  loadList: vi.fn(),
-  loadSettings: vi.fn(),
-  resolveIdentity: vi.fn(),
-  refreshRetention: vi.fn(),
-  listTabs: vi.fn(),
-  renderIdentity: vi.fn(),
-  restoreAll: vi.fn(),
-  adoptThemeFromSettings: vi.fn(),
-  initPostAuthUI: vi.fn(),
-  showLoginModal: vi.fn(),
-  createSession: vi.fn(),
-  activateRestoredTab: vi.fn(),
-  markHydrated: vi.fn(),
-  markBootDone: vi.fn(),
-  applyShareTarget: vi.fn(),
-  toastError: vi.fn(),
-  getSessions: vi.fn(),
-  setStatus: vi.fn(),
-  applyRoute: vi.fn(),
-  readBootSnapshot: vi.fn(),
-  paintBootSnapshot: vi.fn(),
-  clearBootSnapshot: vi.fn(),
-  // Typed, because the cases below read the registered listener back OFF the mock
-  // and call it: an inferred zero-arg signature makes `mock.calls` an empty tuple.
-  subscribeByName: vi.fn<
-    (name: string, fn: (inst: { readonly status: string }) => void) => () => void
-  >(() => () => undefined),
-}));
+const m = vi.hoisted(() => {
+  // The router's suppression COUNT, modelled rather than left an unrelated spy.
+  // `pushRoute` and `replaceRoute` return early while the depth is above zero
+  // (router.ts, where the count's own semantics are pinned), so the depth a URL
+  // write is made AT is the whole question at each of the boot's two window
+  // boundaries — and while this was a bare `vi.fn()` both boundaries were wrong
+  // and the suite was green.
+  const suppression = { depth: 0 };
+  /** The depth each URL-writing call was made at, in order. */
+  const depths = {
+    activate: [] as number[],
+    replaceRoute: [] as number[],
+    share: [] as number[],
+  };
+  return {
+    suppression,
+    depths,
+    resetDepths: (): void => {
+      suppression.depth = 0;
+      depths.activate.length = 0;
+      depths.replaceRoute.length = 0;
+      depths.share.length = 0;
+    },
+    loadList: vi.fn(),
+    loadSettings: vi.fn(),
+    resolveIdentity: vi.fn(),
+    refreshRetention: vi.fn(),
+    listTabs: vi.fn(),
+    renderIdentity: vi.fn(),
+    restoreAll: vi.fn(),
+    adoptThemeFromSettings: vi.fn(),
+    initPostAuthUI: vi.fn(),
+    showLoginModal: vi.fn(),
+    createSession: vi.fn(),
+    // Records the depth because `activateTab`'s onShow ends in `pushRoute`
+    // (tabs.ts): what this call does to the URL is decided by the window it is
+    // made inside.
+    activateRestoredTab: vi.fn(() => {
+      depths.activate.push(suppression.depth);
+    }),
+    markHydrated: vi.fn(),
+    markBootDone: vi.fn(),
+    applyShareTarget: vi.fn(() => {
+      depths.share.push(suppression.depth);
+      return Promise.resolve();
+    }),
+    toastError: vi.fn(),
+    getSessions: vi.fn(),
+    getActive: vi.fn(),
+    getActiveId: vi.fn(),
+    getActiveTabRoute: vi.fn(),
+    setStatus: vi.fn(),
+    applyRoute: vi.fn(),
+    readBootSnapshot: vi.fn(),
+    paintBootSnapshot: vi.fn(),
+    clearBootSnapshot: vi.fn(),
+    parseRoute: vi.fn(() => ({ kind: "chat", id: "" })),
+    replaceRoute: vi.fn(() => {
+      depths.replaceRoute.push(suppression.depth);
+    }),
+    suppressPush: vi.fn((v: boolean) => {
+      suppression.depth = v ? suppression.depth + 1 : Math.max(0, suppression.depth - 1);
+    }),
+    // Typed, because the cases below read the registered listener back OFF the mock
+    // and call it: an inferred zero-arg signature makes `mock.calls` an empty tuple.
+    subscribeByName: vi.fn<
+      (name: string, fn: (inst: { readonly status: string }) => void) => () => void
+    >(() => () => undefined),
+  };
+});
 
 vi.mock("./actions/index.js", () => ({ subscribeByName: m.subscribeByName }));
 // Only the action's NAME is read here (boot.ts subscribes by it rather than by a
@@ -65,8 +106,8 @@ vi.mock("./actions/settings.js", () => ({ logout: { name: "settings.logout" } })
 vi.mock("./store-load.js", () => ({ loadList: m.loadList }));
 vi.mock("./persist.js", () => ({}));
 vi.mock("./store.js", () => ({
-  getActive: () => undefined,
-  getActiveId: () => "",
+  getActive: m.getActive,
+  getActiveId: m.getActiveId,
   getSessions: m.getSessions,
   registerEvictionExemption: vi.fn(),
   startEvictionSweep: vi.fn(),
@@ -88,13 +129,13 @@ vi.mock("./transport.js", () => ({ markHydrated: m.markHydrated }));
 vi.mock("./modals.js", () => ({ showLoginModal: m.showLoginModal }));
 vi.mock("./tabs.js", () => ({
   activateRestoredTab: m.activateRestoredTab,
-  getActiveTabRoute: () => null,
+  getActiveTabRoute: m.getActiveTabRoute,
 }));
 vi.mock("./tabs-sync.js", () => ({ listTabs: m.listTabs }));
 vi.mock("./router.js", () => ({
-  parseRoute: () => ({ kind: "chat", id: "" }),
-  replaceRoute: vi.fn(),
-  suppressPush: vi.fn(),
+  parseRoute: m.parseRoute,
+  replaceRoute: m.replaceRoute,
+  suppressPush: m.suppressPush,
 }));
 vi.mock("./chat.js", () => ({ createSession: m.createSession }));
 vi.mock("./governance.js", () => ({ initGovernance: vi.fn() }));
@@ -146,9 +187,13 @@ function arrangeHappy(settings: EffectiveSettings = settingsPayload()): void {
   m.loadList.mockResolvedValue(true);
   m.refreshRetention.mockResolvedValue(undefined);
   m.listTabs.mockResolvedValue(true);
-  m.applyShareTarget.mockResolvedValue(undefined);
   m.createSession.mockResolvedValue(undefined);
   m.getSessions.mockReturnValue([{ id: "c1" }]);
+  // No chat and no restored non-chat tab, so the default "/" boot canonicalizes
+  // nothing until a case says otherwise.
+  m.getActive.mockReturnValue(undefined);
+  m.getActiveId.mockReturnValue("");
+  m.getActiveTabRoute.mockReturnValue(null);
   m.readBootSnapshot.mockResolvedValue(null);
   m.paintBootSnapshot.mockReturnValue(false);
   m.clearBootSnapshot.mockResolvedValue(undefined);
@@ -156,6 +201,9 @@ function arrangeHappy(settings: EffectiveSettings = settingsPayload()): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Neither the depth nor the recorded call sites are mock state, so
+  // `clearAllMocks` does not reach them.
+  m.resetDepths();
   arrangeHappy();
 });
 
@@ -342,6 +390,75 @@ describe("the chat list is read once per cold boot", () => {
 
     expect(m.loadList).toHaveBeenCalledTimes(2);
   });
+
+  it("reads it on the FIRST connect when the boot's own read failed", async () => {
+    // An offline boot: every read fails and the EventSource never opens. The link
+    // comes up seconds later and the stream connects for the first time, carrying no
+    // Last-Event-ID — so nothing declares a gap, and the boot's own read answered
+    // nothing. This is the one connect that has to fetch, and a latch on "a
+    // connection happened" swallowed it, leaving the store empty behind a toast.
+    m.loadList.mockResolvedValue(false);
+    m.getSessions.mockReturnValue([]);
+
+    const { startBoot, onTransportStatus } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+    expect(m.loadList).toHaveBeenCalledTimes(1);
+
+    onTransportStatus("connected");
+
+    expect(m.loadList).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Two windows, and every boot-time URL write falls on one side or the other.
+// `pushRoute`/`replaceRoute` return early while the depth is above zero, so the
+// depth a call is made at IS whether it lands: the activation must not write, and
+// the canonicalization must.
+describe("the push-suppression window", () => {
+  it("covers the resumed activation, so a deep-linked launch survives to be read", async () => {
+    // `activateRestoredTab` ends in `pushRoute` (tabs.ts). Unsuppressed it adds a
+    // history entry Back walks into, and rewrites location.pathname before
+    // `applyInitialRoute` parses it — resolving a launch at /chat/{id} to whatever
+    // tab the snapshot was last on.
+    m.paintBootSnapshot.mockReturnValue(true);
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.depths.activate).toEqual([1]);
+  });
+
+  it("covers the tab set's own activation when there was nothing to resume", async () => {
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.depths.activate).toEqual([1]);
+  });
+
+  it("is CLOSED before the URL is canonicalized", async () => {
+    // A boot at "/" with a chat on screen. `applyInitialRoute`'s `replaceRoute` is
+    // the one write that makes the address bar agree with what is visible, and the
+    // restored tab's own boot-time push was suppressed — so suppressing this too
+    // leaves the URL naming nothing.
+    m.getActiveId.mockReturnValue("c1");
+    m.getActive.mockReturnValue({ id: "c1" });
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.replaceRoute).toHaveBeenCalledWith({ kind: "chat", id: "c1" });
+    expect(m.depths.replaceRoute).toEqual([0]);
+  });
+
+  it("is CLOSED before a share is delivered", async () => {
+    // A `?agent=planner` launch creates a chat and activates it; inside the window
+    // that activation's push AND the canonicalization that would name it are both
+    // no-ops, so the launch ends on a URL naming nothing.
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.depths.share).toEqual([0]);
+  });
 });
 
 // A resume paints what this screen was showing before the network answers. The
@@ -370,6 +487,30 @@ describe("the local snapshot", () => {
     // The record arrived, and was never painted.
     expect(m.paintBootSnapshot).toHaveBeenCalledTimes(1);
     expect(m.paintBootSnapshot).toHaveBeenCalledWith(null);
+  });
+
+  it("paints the hint when the chat list FAILS to answer", async () => {
+    // The resume the snapshot exists for: an unreachable server. `loadList` resolves
+    // FALSE rather than rejecting and retries nothing, so it settles well ahead of a
+    // cold IndexedDB open — and counting that as an answer discarded the hint on the
+    // one boot with nothing else to show, then minted a starter chat over the empty
+    // store.
+    const snapshot = deferred<BootSnapshot | null>();
+    m.loadList.mockResolvedValue(false);
+    m.readBootSnapshot.mockReturnValue(snapshot.promise);
+    m.paintBootSnapshot.mockReturnValue(true);
+
+    const { startBoot } = await freshBoot();
+    // A macrotask out, which is what makes the failed fetch the first to settle.
+    // Armed AFTER the import: the import spans macrotasks of its own, so a timer
+    // set before it fires inside it and both arms are already settled by the time
+    // the race is built — which is not the interleaving under test.
+    setTimeout(() => {
+      snapshot.resolve(SNAPSHOT);
+    }, 0);
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.paintBootSnapshot).toHaveBeenCalledWith(SNAPSHOT);
   });
 
   it("finishes the workspace when the hint's paint throws", async () => {

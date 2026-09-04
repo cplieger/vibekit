@@ -176,33 +176,28 @@ async function restoreWorkspace(
   retentionRead: Promise<void>,
   snapshotRead: Promise<BootSnapshot | null>,
 ): Promise<boolean> {
-  // THE SNAPSHOT PAINT, before any answer lands: an IndexedDB read is a millisecond
-  // against a request's hundred, so it costs the in-flight requests nothing.
-  //
   // RACED against the chat list because the paint REPLACES the chat store, so it may
   // only run BEFORE the answer that supersedes it. Store emptiness is not the test:
   // an empty list is an ANSWER, and painting over one resurrects every deleted chat.
   // Neither arm has settled yet (same turn as the reads), so arrival decides.
+  //
+  // Only a read that SUCCEEDED is an answer. `loadList` resolves false on a network
+  // failure without retrying, so it frequently settles first — and counting that as
+  // an answer discarded the hint on the one resume it exists for, an offline one.
   const hint = await Promise.race([
     snapshotRead,
     chatsRead.then(
-      () => null,
-      () => null,
+      (ok) => (ok ? null : snapshotRead),
+      () => snapshotRead,
     ),
   ]);
 
-  // BEST-EFFORT, like `adoptSettings`'s restore: everything below is the
-  // authoritative restore, and a hint must not cost the reader that. `resumed`
-  // latches after the activation, so a half-painted resume falls through to it.
+  // BEST-EFFORT, like `adoptSettings`'s restore: everything below is the authoritative
+  // restore, and a hint must not cost the reader that. A throw leaves `resumed` false,
+  // so a half-painted resume falls through to the tab set's own activation.
   let resumed = false;
   try {
-    if (paintSnapshot(hint)) {
-      clearTabStripSkeleton();
-      // The activation the tab set would otherwise run, brought forward: this paints
-      // the transcript. Its window is stale, so `loadMessages` still refetches.
-      activateRestoredTab();
-      resumed = true;
-    }
+    resumed = resumeSnapshot(hint);
   } catch {
     /* best-effort */
   }
@@ -210,6 +205,8 @@ async function restoreWorkspace(
   // A rejected read is the same answer as `false` — the chats are not in the
   // store — so the boot has one failure path rather than two.
   const chatsOK = await chatsRead.catch(() => false);
+  // Which connection the transport hook may skip; the rule is at `bootChatsRead`.
+  bootChatsRead = chatsOK;
   // Release the frames held since the connection opened: they need a chat ROW to
   // land on and nothing more, so waiting for the tabs would delay the busy dot for
   // no gain. Idempotent. See transport.ts holdUntilHydrated.
@@ -235,23 +232,39 @@ async function restoreWorkspace(
     if (!resumed) {
       activateRestoredTab();
     }
-    await applyShareTarget();
-    applyInitialRoute();
   } finally {
     // A throw above must not leave the placeholder shimmering forever.
     clearTabStripSkeleton();
     suppressPush(false);
   }
+
+  // OUTSIDE the window: both of these WRITE the URL and a suppressed write is a no-op
+  // — `applyInitialRoute`'s `replaceRoute` is what makes the address bar agree with the
+  // screen, and a `?agent=planner` launch needs the chat the share created named.
+  await applyShareTarget();
+  applyInitialRoute();
   return chatsOK;
 }
 
-/** Paint the snapshot inside its OWN suppression window, which is what stops the
- *  activation it runs from pushing a URL. Widening the boot's own window back over
- *  the chats fetch instead would swallow a real click from the painted shell. */
-function paintSnapshot(snap: BootSnapshot | null): boolean {
+/** Paint the snapshot AND run the activation it enables, in ONE window with every
+ *  push suppressed. Reports whether the resume COMPLETED.
+ *
+ *  The activation is what needs it: `activateRestoredTab` ends in `pushRoute` (tabs.ts
+ *  `activateTab`), which here would add a history entry Back walks into and rewrite
+ *  `location.pathname` before `applyInitialRoute` parses it, losing a launch at
+ *  /chat/{id} to whatever tab the snapshot was last on. Its OWN window rather than the
+ *  boot's widened, which would swallow a real click from the painted shell. */
+function resumeSnapshot(snap: BootSnapshot | null): boolean {
   suppressPush(true);
   try {
-    return paintBootSnapshot(snap);
+    if (!paintBootSnapshot(snap)) {
+      return false;
+    }
+    clearTabStripSkeleton();
+    // The activation the tab set would otherwise run, brought forward: this paints
+    // the transcript. Its window is stale, so `loadMessages` still refetches.
+    activateRestoredTab();
+    return true;
   } finally {
     suppressPush(false);
   }
@@ -355,24 +368,27 @@ function applyInitialRoute(): void {
   }
 }
 
-/** Whether the transport has ever reported a connection. The boot's own read
- *  covers the first one; see `onTransportStatus`. */
-let sawConnected = false;
+/** The outcome of the boot's OWN chat-list read, or undefined while it is still
+ *  out. Three states rather than "a connection happened", because those are three
+ *  different answers to whether a `connected` needs to fetch: the connection the
+ *  boot rides arrives while the read is in flight and is covered by it, a later one
+ *  missed frames, and a boot whose read FAILED is covered by nothing at all. */
+let bootChatsRead: boolean | undefined;
 
-/** The transport's status callback: paint the indicator, and reload the chat list
- *  on a RE-connect.
+/** The transport's status callback: paint the indicator, and load the chat list on
+ *  every connection the boot's own read does not already cover.
  *
- *  Only on a re-connect. This fired on the FIRST connect too, and since the
- *  EventSource is opened before the boot runs, every cold boot fetched the whole
- *  chat list twice — the connect hook's copy and the boot's own. A reconnect is
- *  the case the reload is for: frames were missed while the stream was down. */
+ *  `app.ts` opens the EventSource before the boot, so a cold boot's first `connected`
+ *  lands while that read is in flight — fetching there is what made every cold boot
+ *  read the whole list twice. Once it has settled EVERY connection fetches: a
+ *  reconnect missed frames, and an offline boot that reaches the server minutes later
+ *  has no list and no gap to declare, so nothing else would ever load it. */
 export function onTransportStatus(status: ConnectionStatus): void {
   setStatus(status);
   if (status !== "connected") {
     return;
   }
-  if (!sawConnected) {
-    sawConnected = true;
+  if (bootChatsRead === undefined) {
     return;
   }
   void loadList();

@@ -2,8 +2,8 @@
 // The boot snapshot: a bounded projection of what THIS SCREEN was showing, held
 // in IndexedDB so a resume paints before the network answers. A PAINT-TIME HINT
 // with the standing the theme's localStorage cache has: it advances no tab-set
-// version, and `boot.ts` paints it only while its own chat read is still out, so
-// the server's answer always wins.
+// version, and `boot.ts` paints it only while its own chat read has yet to ANSWER,
+// so the server's answer always wins.
 // ---------------------------------------------------------------------------
 
 import { effect } from "@cplieger/reactive";
