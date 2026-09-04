@@ -17,10 +17,12 @@ export interface PrecacheManifest {
 
 /** The one name shape whose bytes its own name pins: esbuild's
  *  `chunks/[name]-[hash]`, the hash 8 uppercase base32 characters.
- *  `contentHashedAsset` (internal/server/server_static.go) is the same regex for
- *  the same reason, and a test reads cmd/bundle's template — a looser test would
- *  admit a name a release replaces, and this one degrades to the network if that
- *  template ever changes. */
+ *  `contentHashedAsset` (internal/server/server_static.go) matches the same shape
+ *  for the same reason and is one arm wider — it also admits the `.map` sibling,
+ *  because an immutable sourcemap is still worth serving immutably while a precache
+ *  is for RUNNING. A test reads cmd/bundle's template rather than the emitted names:
+ *  a looser test would admit a name a release replaces, and this one degrades to the
+ *  network if that template ever changes. */
 const CONTENT_HASHED_CHUNK = /^\/chunks\/[^/]+-[A-Z0-9]{8}\.js$/u;
 
 /** Whether the shell cache may answer `pathname`.

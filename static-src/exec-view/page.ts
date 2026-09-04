@@ -31,8 +31,10 @@ export interface ExecPageOpts {
   /** What a node with a transcript host but no content yet should say; the
    *  consumer's call (a workflow run has three reasons, a subagent tab its own). */
   emptyNote: EmptyNote;
-  /** The execution's controls, rebuilt per state. Returns null for a state with no
-   *  verbs, so the row disappears rather than rendering empty. */
+  /** The execution's controls. Returns null for a state with no verbs, so the row
+   *  disappears rather than rendering empty, and may return the SAME element it
+   *  returned last time to say nothing changed — the page then leaves it in place
+   *  rather than re-inserting it. */
   controls?: (run: ExecRun) => HTMLElement | null;
   /** The header's identity glyph. Defaults to the workflow one; a subagent page
    *  passes the agent hexagon. */
@@ -282,8 +284,15 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
         alert.textContent = run.alert.text;
       }
 
+      // Re-inserted only when it is a DIFFERENT row. `replaceChildren` with a node
+      // that is already the host's only child still removes and re-adds it, which
+      // blurs whatever is focused inside — and this runs once per progress frame.
       const row = opts.controls?.(run) ?? null;
-      controlsHost.replaceChildren(...(row === null ? [] : [row]));
+      if (row === null) {
+        controlsHost.replaceChildren();
+      } else if (controlsHost.firstChild !== row || controlsHost.childNodes.length !== 1) {
+        controlsHost.replaceChildren(row);
+      }
 
       renderResults(run);
 

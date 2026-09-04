@@ -81,8 +81,8 @@ const precacheName = "precache.json"
 
 // writePrecacheManifest enumerates the shell's cacheable assets and stamps them.
 //
-// THE LIST IS BUILT, not written by hand: the lazy chunks are content-hashed, so
-// the worker has no way to guess their names.
+// THE LIST IS BUILT, not written by hand: the chunks are content-hashed, so the
+// worker has no way to guess their names.
 //
 // THE STAMP IS OVER THE NAMES, which is honest only because of what the list
 // holds: every entry carries esbuild's content hash in its own name, so bytes that
@@ -107,8 +107,9 @@ func writePrecacheManifest() error {
 	return os.WriteFile(filepath.Join(outDir, precacheName), doc, 0o600)
 }
 
-// precacheAssets lists the content-hashed lazy chunks, sorted, as URL paths
-// relative to the site root.
+// precacheAssets lists the content-hashed chunks, sorted, as URL paths relative to
+// the site root. Most of them are on the first-paint path rather than lazy — the
+// eligibility rule is about the NAME, not about how the chunk is reached.
 //
 // THE HASHED NAMES ARE THE WHOLE LIST, because a name is cacheable without
 // revalidation exactly when its bytes cannot change under it — the rule

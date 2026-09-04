@@ -133,8 +133,8 @@ func (c *statusCache) claim(key string, only map[string]struct{}) (done chan str
 // nothing, or the slot stays claimed and the variant never refreshes again.
 //
 // A full pass REPLACES the snapshot and moves `at`; a scoped one merges and leaves
-// `at` alone. Either way the old channel's waiters are woken. A recorded full intent
-// wins over a recorded scope, which it subsumes.
+// `at` alone. Either way the old channel's waiters are woken, and a recorded full
+// intent wins over a recorded scope — the arm below says why it may.
 func (c *statusCache) finish(key string, rows []allRepoStatus) (next map[string]struct{}, run bool) {
 	c.mu.Lock()
 	slot := c.slot(key)
@@ -145,6 +145,11 @@ func (c *statusCache) finish(key string, rows []allRepoStatus) (next map[string]
 	}
 	switch {
 	case slot.pendingFull:
+		// Subsumes any recorded scope — the coverage-as-answer reasoning `claim`
+		// refutes above, correct HERE because the subsuming scan has not STARTED.
+		// Both intents were recorded inside the window that just closed, so this pass
+		// reads every repository after both of them; claim's full scan is already in
+		// flight and may be past the one its joining read cares about.
 		slot.full, run = true, true
 	case len(slot.pending) > 0:
 		slot.full, next, run = false, slot.pending, true

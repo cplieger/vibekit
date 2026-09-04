@@ -89,6 +89,13 @@ type runAffordance struct {
 	// to say where a step's live transcript went. Resolving it twice would pay for
 	// the run inventory twice.
 	ParentChat vibekit.ChatID
+	// Recipe is the run's recipe name off KAS's inventory, "" when unknown.
+	//
+	// Here for ParentChat's reason and off the same read: retry needs it for the
+	// lease it re-arms, and the inventory that carries the parent session carries
+	// the name one field away. Not part of the wire answer — handleControls maps
+	// the three fields the client asked for, and this is not one of them.
+	Recipe string
 	// Verbs are the offered controls, in the order a row presents them.
 	Verbs []string
 }
@@ -116,6 +123,8 @@ type runFacts struct {
 	// for an unnamed chat, which the sentence then omits rather than quoting
 	// nothing.
 	parentName string
+	// recipe is the run's recipe name, read off the same inventory as parentChat.
+	recipe string
 	// hosted reports whether some live bridge in this process holds the run's
 	// registry entry.
 	hosted bool
@@ -128,9 +137,13 @@ func affordanceOf(f runFacts) runAffordance {
 	if !known {
 		// An unrecognised status degrades to a read-only view. The parent chat still
 		// travels: the page's step-transcript note needs it whatever the status is.
-		return runAffordance{ParentChat: f.parentChat}
+		return runAffordance{ParentChat: f.parentChat, Recipe: f.recipe}
 	}
-	out := runAffordance{ParentChat: f.parentChat, Verbs: make([]string, 0, len(byStatus))}
+	out := runAffordance{
+		ParentChat: f.parentChat,
+		Recipe:     f.recipe,
+		Verbs:      make([]string, 0, len(byStatus)),
+	}
 	for _, verb := range byStatus {
 		if slices.Contains(hostedOnlyVerbs, verb) && !f.hosted {
 			if out.Refused == nil {
@@ -194,11 +207,14 @@ func pastTense(verb string) string {
 // `inspect` call, and a control decision must be made against one status read
 // rather than two that can disagree.
 //
-// Costs at most one `workflow/list` round trip (parentSession's), and none of
-// the chat-store or bridge-map reads leaves this process.
+// Costs at most ONE `workflow/list` round trip (listedRun's), and none of the
+// chat-store or bridge-map reads leaves this process. The parent session and the
+// recipe come off that single read, so a verb acting on this answer spends no
+// further list.
 func (rs *Runs) affordance(ctx context.Context, workflowID, status string) runAffordance {
-	f := runFacts{status: status}
-	f.parentChat, f.parentName = rs.chatForSession(ctx, rs.parentSession(ctx, workflowID))
+	listed := rs.listedRun(ctx, workflowID)
+	f := runFacts{status: status, recipe: listed.Name}
+	f.parentChat, f.parentName = rs.chatForSession(ctx, listed.ParentSessionID)
 	f.hosted = rs.bridges.get(runChatID(workflowID)) != nil ||
 		(f.parentChat != "" && rs.bridges.get(f.parentChat) != nil)
 	return affordanceOf(f)

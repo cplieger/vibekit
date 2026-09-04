@@ -502,10 +502,17 @@ func TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *tes
 	held := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: held}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	// The route's gate, resolved for real: it is the affordance that now carries the
+	// recipe off KAS's run list, so a hand-built stand-in would keep this green after
+	// the thread broke and the lease went back to being nameless.
+	aff := h.runs.affordance(t.Context(), id, "aborted")
+	if aff.Recipe != "nightly" {
+		t.Fatalf("Setup: the gate resolved recipe %q, want nightly off KAS's run list", aff.Recipe)
+	}
 
 	done := make(chan error, 1)
 	go func() {
-		_, rErr := h.runs.Retry(t.Context(), id, runAffordance{})
+		_, rErr := h.runs.Retry(t.Context(), id, aff)
 		done <- rErr
 	}()
 
@@ -569,8 +576,13 @@ func TestRetryRun_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	if h.bridge.mgr.get(runChatID(id)) != nil {
 		t.Fatal("the fixture registered a bridge, so this exercises the wrong branch")
 	}
+	// The gate's own answer, which is what carries the name to the lease.
+	aff := h.runs.affordance(t.Context(), id, "aborted")
+	if aff.Recipe != "nightly" {
+		t.Fatalf("Setup: the gate resolved recipe %q, want nightly off KAS's run list", aff.Recipe)
+	}
 
-	if _, err := h.runs.Retry(t.Context(), id, runAffordance{}); err != nil {
+	if _, err := h.runs.Retry(t.Context(), id, aff); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
 	l, ok := h.runs.lease(id)

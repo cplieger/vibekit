@@ -2,12 +2,12 @@
 // The control row's IN-FLIGHT state, and what happens to it when the row is
 // rebuilt.
 //
-// Two properties, and neither had a test anywhere in this suite. A retry starts a
-// process and can legitimately take tens of seconds, so an unbound button looks
-// dead for the whole handshake and can be clicked again meanwhile — that is what
-// the pending binding is for. And the row is rebuilt on every render, one per
-// `run_progress` frame, so a binding that outlives its button accumulates one live
-// effect per frame for the tab's lifetime.
+// Three properties. A retry starts a process and can legitimately take tens of
+// seconds, so an unbound button looks dead for the whole handshake and can be
+// clicked again meanwhile — that is what the pending binding is for. The row is
+// rebuilt only when the server's AFFORDANCE moved, not once per `run_progress`
+// frame. And when it IS rebuilt the previous row's bindings go with it, or each one
+// leaves a live effect following an action for a button nothing can see.
 //
 // Its own file because it needs REAL actions: pending state lives in the actions
 // registry, so a plain `vi.fn()` dispatch cannot produce it, and run-view.test.ts's
@@ -79,7 +79,7 @@ vi.mock("./actions/runs.js", async () => {
 
 import { openRunView, showRun } from "./run-view.js";
 import { apiGet, apiGetTyped } from "./api-client.js";
-import { invalidateRun } from "./run-store.js";
+import { invalidateRun, invalidateRunControls } from "./run-store.js";
 
 /** Drain enough microtasks for the store's two fetches and the render they wake. */
 async function drain(): Promise<void> {
@@ -101,6 +101,15 @@ function abortedState(): unknown {
 
 const RETRY_ONLY = { verbs: ["retry"], refused: {}, parent_chat_id: "" };
 
+/** The same verb, a different ANSWER: the server has added the sentence explaining
+ *  why pause is not on offer. Retry still renders, so a case can watch the
+ *  REPLACEMENT button while keeping the verb under test the same one. */
+const RETRY_PLUS_REFUSAL = {
+  verbs: ["retry"],
+  refused: { pause: "This run has no live engine on this server." },
+  parent_chat_id: "",
+};
+
 /** Open the run, whose only verb is retry, and let its first paint settle. */
 async function paintRetryRow(): Promise<HTMLElement> {
   m.reply.current = abortedState();
@@ -120,10 +129,20 @@ async function paintRetryRow(): Promise<HTMLElement> {
 }
 
 /** Repaint the run the way a `run_progress` frame does: a fresh state lands in the
- *  store and the view's one effect renders it, rebuilding the control row. */
+ *  store and the view's one effect renders it. The affordance is untouched, which is
+ *  what makes this the case that must NOT rebuild the row. */
 async function repaint(): Promise<void> {
   m.reply.current = abortedState();
   invalidateRun(RUN);
+  await drain();
+}
+
+/** Move the AFFORDANCE, which is the one thing that replaces the row: the store's
+ *  controls cell is read inside the render pass, so a new answer wakes the same
+ *  effect a state change does. */
+async function affordanceMoves(next: unknown): Promise<void> {
+  m.controls.current = next;
+  invalidateRunControls(RUN);
   await drain();
 }
 
@@ -188,16 +207,47 @@ describe("the control row's in-flight state", () => {
     expect(btn.hasAttribute("aria-busy")).toBe(false);
   });
 
+  // The row is a function of the affordance and the pending signals, and a
+  // `run_progress` frame moves neither — it moved the run's STATE. Rebuilding here
+  // threw away a live button and its binding several times a minute on a busy run,
+  // and a reader mid-click lost the element under the pointer.
+  it("keeps the row it has when a progress frame moves only the run's state", async () => {
+    const body = await paintRetryRow();
+    const before = retryButton(body);
+
+    await repaint();
+
+    expect(retryButton(body)).toBe(before);
+    expect(before.isConnected).toBe(true);
+  });
+
+  // The host's half of the same rule, and FOCUS is what it protects. Chromium blurs
+  // a node on any re-seat, including `replaceChildren` with the host's own only
+  // child, so a host that re-inserted an unchanged row would take focus off the
+  // button a keyboard reader is sitting on once per progress frame.
+  it("leaves focus on the button when a progress frame repaints the row", async () => {
+    const body = await paintRetryRow();
+    const btn = retryButton(body);
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+
+    await repaint();
+
+    expect(document.activeElement).toBe(btn);
+  });
+
   // THE LEAK. `bindLoadingState` disposes itself only for an element that was
   // ATTACHED the last time its effect ran, and the row is built before the page
   // appends it — so a button replaced before its first pending flip never armed
   // that path and stayed subscribed. A detached button still following the action
-  // is the observable half of one live effect per repaint, for the tab's lifetime.
+  // is the observable half of one live effect per replacement, for the tab's
+  // lifetime. Driven by an affordance change, because that is now the only thing
+  // that replaces the row.
   it("stops following the verb once the row that carried the button is replaced", async () => {
     const body = await paintRetryRow();
     const stale = retryButton(body);
 
-    await repaint();
+    await affordanceMoves(RETRY_PLUS_REFUSAL);
     const live = retryButton(body);
     expect(stale.isConnected).toBe(false);
     expect(live).not.toBe(stale);
@@ -210,17 +260,45 @@ describe("the control row's in-flight state", () => {
     expect(stale.hasAttribute("aria-busy")).toBe(false);
   });
 
-  // The other direction, and the reason the drain cannot simply dispose every
-  // binding it finds: a verb in flight across a repaint must keep the NEW button
-  // disabled, because the work is still running and the row is the same row.
-  it("keeps the replacement button disabled while the verb it carries is still in flight", async () => {
+  // The page's disposal is the SECOND moment the row stops being current, and the
+  // one nothing used to cover: `buildRunControls` drains on its next call, so a row
+  // whose page was thrown away kept its bindings until some later build — and, once
+  // the rebuild became conditional, the stale row would have been handed to the new
+  // page's host instead of a fresh one.
+  it("stops following the verb once the page the row lived in is disposed", async () => {
     const body = await paintRetryRow();
-    retryButton(body).click();
-    await drain();
+    const stale = retryButton(body);
 
+    // What a caller replacing `#run-body`'s children does: the page this module
+    // cached is no longer mounted in it, so the next paint mounts a new one.
+    body.replaceChildren();
     await repaint();
     const live = retryButton(body);
+    expect(live).not.toBe(stale);
 
+    live.click();
+    await drain();
+
+    expect(live.disabled).toBe(true);
+    expect(stale.disabled).toBe(false);
+    expect(stale.hasAttribute("aria-busy")).toBe(false);
+  });
+
+  // The other direction, and the reason the drain cannot simply dispose every
+  // binding it finds: a verb in flight across a replacement must keep the NEW
+  // button disabled, because the work is still running and the verb is the same
+  // verb.
+  it("keeps the replacement button disabled while the verb it carries is still in flight", async () => {
+    const body = await paintRetryRow();
+    const clicked = retryButton(body);
+    clicked.click();
+    await drain();
+
+    await affordanceMoves(RETRY_PLUS_REFUSAL);
+    const live = retryButton(body);
+    // The premise: this is genuinely a NEW button. Without it the assertion below is
+    // satisfied by the disabled button the click already left behind.
+    expect(live).not.toBe(clicked);
     expect(live.disabled).toBe(true);
     expect(live.getAttribute("aria-busy")).toBe("true");
   });

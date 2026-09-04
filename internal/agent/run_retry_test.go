@@ -76,15 +76,18 @@ func seedChatParentedRun(t *testing.T, openChat bool, nodes ...string) (*Runtime
 
 // gateAnswer resolves the affordance the retry ROUTE's gate hands the verb.
 //
-// Resolved for real rather than hand-built, because it is the thread the verb
-// depends on: a stand-in carrying `ParentChat: "c1"` would keep passing after the
-// affordance stopped travelling with the parent, and then the verb would re-host a
-// run whose own process is alive — the defect below.
+// Resolved for real rather than hand-built, and BOTH threaded facts checked here: a
+// stand-in carrying `ParentChat: "c1"` and `Recipe: "publish"` would keep passing
+// after the affordance stopped travelling with either, and the verb would then
+// re-host a run whose own process is alive, or re-arm a nameless lease.
 func gateAnswer(t *testing.T, h *Runtime, workflowID string) runAffordance {
 	t.Helper()
 	aff := h.runs.affordance(t.Context(), workflowID, "aborted")
 	if aff.ParentChat != "c1" {
 		t.Fatalf("Setup: the gate resolved parent %q, want the launching chat c1", aff.ParentChat)
+	}
+	if aff.Recipe != "publish" {
+		t.Fatalf("Setup: the gate resolved recipe %q, want publish off KAS's run list", aff.Recipe)
 	}
 	return aff
 }

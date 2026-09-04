@@ -363,9 +363,9 @@ type kasRetryOutcome struct {
 // THE HOST IS RESOLVED, not assumed. Keying on `run:<id>` alone meant a
 // chat-parented run always took the re-host branch, so vibekit spawned a second
 // engine for a run whose parent session lives in a process that is frequently
-// still alive — the same defect SetStepStatus was fixed for. The affordance
-// carries the launching chat the route's gate already resolved, so hostBridgeFor
-// answers who holds the run without asking KAS again.
+// still alive — the same defect SetStepStatus was fixed for. The affordance carries
+// the launching chat AND the recipe the route's gate already read, so neither the
+// host nor the lease this verb re-arms costs an inventory read here.
 //
 // AND THE RE-HOST BRANCH LOADS FIRST. `_kiro/workflow/retry` against a process
 // that has never seen the run fails with "not registered. Load or create it
@@ -386,7 +386,7 @@ func (rs *Runs) Retry(
 	// vibekit launched, the LAUNCHING CHAT's for an agent-launched one. Already
 	// registered there, so no load is needed and no second engine is started.
 	if _, sb := rs.hostBridgeFor(workflowID, aff.ParentChat); sb != nil {
-		recipe := rs.recipeOf(cctx, workflowID)
+		recipe := aff.Recipe
 		out, err := rs.retryCall(cctx, sb.bridge, workflowID)
 		if err != nil {
 			// The verb LANDED and only its report is unusable, so the run may be
@@ -405,19 +405,19 @@ func (rs *Runs) Retry(
 			"retried_nodes", len(out.RetriedNodeIDs), "status", out.Status)
 		return out, nil
 	}
-	return rs.retryRehosted(cctx, workflowID)
+	return rs.retryRehosted(cctx, workflowID, aff.Recipe)
 }
 
 // retryRehosted retries a run NOTHING in this process holds: start a bridge,
 // load the run into it, then retry.
+//
+// recipe is the name the gate's inventory read carried, "" when it carried none.
+// It is threaded rather than re-read because nothing here can learn it once the
+// run is re-driving, and the gate already paid for the list that holds it.
 func (rs *Runs) retryRehosted(
-	ctx context.Context, workflowID string,
+	ctx context.Context, workflowID, recipe string,
 ) (vibekit.RunRetriedResponse, error) {
 	chatID := runChatID(workflowID)
-	// The recipe name, read off KAS's run list BEFORE anything is re-driven —
-	// the only place a re-hosted run's recipe is available to this process.
-	recipe := rs.recipeOf(ctx, workflowID)
-
 	bridge := rs.bridges.factory()
 	if err := bridge.Start(ctx, &vibekit.StartOpts{
 		Lifetime:    rs.lifecycle.shutdownCtx,
@@ -549,26 +549,6 @@ func (rs *Runs) retryDeadlineErr(ctx context.Context, err error) error {
 		return errRetryEngineSlow
 	}
 	return err
-}
-
-// recipeOf reads a run's recipe NAME off KAS's own run list — the only place
-// this process can learn the recipe of a run it did not launch.
-//
-// Best-effort — "" when the list cannot be read or does not carry the run —
-// because a retry must not fail over a name.
-func (rs *Runs) recipeOf(ctx context.Context, workflowID string) string {
-	runs, err := rs.listRaw(ctx)
-	if err != nil {
-		slog.Warn("could not read a retried run's recipe, so its lease carries none",
-			"workflow_id", workflowID, "error", err)
-		return ""
-	}
-	for i := range runs {
-		if runs[i].WorkflowID == workflowID {
-			return runs[i].Name
-		}
-	}
-	return ""
 }
 
 // SetStepStatus marks an in-flight step completed, failed, or running so a
@@ -782,7 +762,7 @@ func (rs *Runs) hostBridgeChat(
 	// One resolution for both questions vibekit asks about a run's parent, in
 	// run_affordance.go: which chat owns it, and — below — whether that chat is a
 	// live carrier.
-	chatID, _ := rs.chatForSession(ctx, rs.parentSession(ctx, workflowID))
+	chatID, _ := rs.chatForSession(ctx, rs.listedRun(ctx, workflowID).ParentSessionID)
 	return rs.hostBridgeFor(workflowID, chatID)
 }
 
@@ -809,27 +789,30 @@ func (rs *Runs) hostBridgeFor(
 	return parentChat, sb
 }
 
-// parentSession reports the KAS session that launched a run, or "" when the
-// run is parentless, unknown, or the inventory cannot be read.
+// listedRun finds one run in KAS's own inventory, the only place this process can
+// read a run it did not launch. `workflow/list` is the only source for either field
+// its callers want: `inspect` carries neither the parent session nor the recipe.
 //
-// `workflow/list` is the only source: `inspect` does not carry the field, and
-// the notification that does arrives once at run_start and is not retained.
-func (rs *Runs) parentSession(ctx context.Context, workflowID string) string {
+// The ZERO VALUE is the answer for a missing run, an empty field and an unreadable
+// inventory alike, because none of the three may fail a control read or a retry —
+// a parentless run has no session and an unnamed one no recipe. The read failure is
+// logged here, where it happens.
+func (rs *Runs) listedRun(ctx context.Context, workflowID string) kasWorkflowRun {
 	if workflowID == "" {
-		return ""
+		return kasWorkflowRun{}
 	}
 	runs, err := rs.listRaw(ctx)
 	if err != nil {
-		slog.Warn("could not read the run inventory, so a run's parent chat is unknown",
+		slog.Warn("could not read the run inventory, so a run's parent chat and recipe are unknown",
 			"workflow_id", workflowID, "error", err)
-		return ""
+		return kasWorkflowRun{}
 	}
 	for i := range runs {
 		if runs[i].WorkflowID == workflowID {
-			return runs[i].ParentSessionID
+			return runs[i]
 		}
 	}
-	return ""
+	return kasWorkflowRun{}
 }
 
 // control issues a verb that is safe on either connection, preferring the
