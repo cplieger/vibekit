@@ -157,15 +157,9 @@ RUN mkdir -p static-src/node_modules/@cplieger/keyenc && \
 # Step 1: tsc --noEmit is the TYPE gate over the app + service-worker
 # configs (esbuild transpiles without typechecking, so tsc keeps failing
 # the build on type errors exactly as before).
-# Step 2: cmd/bundle (esbuild via its Go API — a Go library, no Node, no
-# npm) bundles static-src/app.ts into /app.js + hashed chunks under
-# /chunks/ (the dynamic import() sites and the code they share with the
-# entry), bundles sw.ts into /sw.js, and assembles static/style.css from
-# the two CSS manifests (@cplieger/web-terminal-ui's MANIFEST.touch first
-# — library-before-consumer source order is the override mechanism — then
-# static-src/css/MANIFEST). The @cplieger/* library sources fetched above
-# are bundled in at build time, so nothing is served from /vendor/ and the
-# page needs no importmap.
+# Step 2: cmd/bundle runs esbuild through its Go API, a Go library, which
+# is why this stage installs no Node and no npm. What it emits and how the
+# CSS manifests compose: CONTRIBUTING.md, frontend assets.
 ARG BUILD_VERSION=dev
 # Wire-floor gate (cross-language compatibility): go.mod's engine module and
 # the ARG-pinned npm client version move INDEPENDENTLY (Renovate bumps them in
