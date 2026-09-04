@@ -399,6 +399,97 @@ describe("the transcript's mutation observer", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The mutation path's LICENCE TO MEASURE, which it does not have.
+//
+// A MutationObserver callback runs mid-task with the DOM already dirty, so every
+// scroll-metric read in it forces a synchronous layout of the whole transcript —
+// and `reveal.ts` drives one per animation frame while a turn streams, over a
+// subtree measured at 353 tool cards. The reader's own state is derived from a
+// value PUBLISHED by the IntersectionObserver and the scroll listener instead.
+//
+// The observable is the read itself, counted through the same faked accessors the
+// rest of this file installs. Asserting a state transition could not see the
+// defect: the answer is the same either way, and what changed is who paid for it.
+// ---------------------------------------------------------------------------
+describe("what the mutation callback may read", () => {
+  /** Count reads of the scroller's three layout metrics while `run` executes. */
+  function countMetricReads(el: HTMLElement): { reads: () => number; stop: () => void } {
+    let n = 0;
+    const own = ["scrollHeight", "clientHeight", "scrollTop"] as const;
+    const saved = own.map((k) => Object.getOwnPropertyDescriptor(el, k));
+    for (const key of own) {
+      const desc = Object.getOwnPropertyDescriptor(el, key);
+      const get = desc?.get;
+      if (desc === undefined || get === undefined) {
+        throw new Error(`fakeGeometry must have installed a ${key} getter first`);
+      }
+      const set = desc.set;
+      Object.defineProperty(el, key, {
+        configurable: true,
+        get: () => {
+          n++;
+          return get.call(el);
+        },
+        ...(set === undefined ? {} : { set: set.bind(el) }),
+      });
+    }
+    return {
+      reads: () => n,
+      stop: () => {
+        for (const [i, key] of own.entries()) {
+          const desc = saved[i];
+          if (desc !== undefined) {
+            Object.defineProperty(el, key, desc);
+          }
+        }
+      },
+    };
+  }
+
+  it("reads no scroll metric while the reader is Reading", async () => {
+    const h = await freshModule();
+    const row = document.createElement("div");
+    h.messagesEl.appendChild(row);
+    const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+    // A real gesture parks the reader — and publishes the edge state, which is
+    // what the callback below is entitled to consume.
+    h.scrollEl.dispatchEvent(new Event("scroll"));
+    expect(h.scroll.readingState()).toBe("reading");
+    await settle();
+
+    const counter = countMetricReads(h.scrollEl);
+    // The streaming shape: a chunk extends a text node inside a resident row.
+    row.appendChild(document.createTextNode("a chunk"));
+    await settle();
+    const reads = counter.reads();
+    counter.stop();
+    expect(reads).toBe(0);
+    // Still Reading, so the published value was consumed rather than ignored.
+    expect([h.scroll.readingState(), g.scrollTop]).toEqual(["reading", 1000]);
+  });
+
+  it("still promotes to Following when the observer publishes the edge", async () => {
+    // The other half of the same contract: giving up the read may not give up the
+    // release. The IntersectionObserver is the publisher here, and a real one
+    // cannot see a harness whose boxes are faked — so the case drives the
+    // published value the way the platform does, through the scroll listener.
+    const h = await freshModule();
+    const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    h.scrollEl.dispatchEvent(new Event("scroll"));
+    expect(h.scroll.readingState()).toBe("reading");
+
+    // The content shrinks to where the reader already is, and a gesture-free
+    // publish says the edge is in view again.
+    g.scrollHeight = 1500;
+    now.mockReturnValue(1200);
+    h.ro.fire();
+    expect(h.scroll.readingState()).toBe("following");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The per-child observers. A child is watched because a code block expanding or
 // an image loading changes ITS box without changing the scroller's, and the
 // bookkeeping is what stops the registration set drifting from the transcript.

@@ -176,6 +176,36 @@ class ScrollController {
   private resizeObserver: ResizeObserver | null = null;
   private observedChildren = new Set<Element>();
 
+  /** The live edge's own element: a zero-height marker at the end of the
+   *  transcript's flow, watched by `edgeObserver`. Moves with the attached view.
+   *
+   *  A marker rather than a measurement of the view itself, because an
+   *  IntersectionObserver reports a THRESHOLD CROSSING and the view is many
+   *  viewports tall — its ratio changes continuously and crosses nothing. A
+   *  zero-height element at the end enters and leaves the scrollport exactly when
+   *  the reader reaches or leaves the bottom, which is the question being asked. */
+  private edgeSentinel: HTMLElement | null = null;
+  private edgeObserver: IntersectionObserver | null = null;
+
+  /** Whether the live edge is in view, as last PUBLISHED rather than measured.
+   *
+   *  THE MUTATION PATH HAS NO LICENCE TO MEASURE. `revalidateReadingState` used
+   *  to answer this with `isAtBottom()` — three forced-layout reads — on every
+   *  mutation batch, and `reveal.ts` emits once per animation frame while a turn
+   *  streams, so a several-hundred-card transcript was laid out synchronously up
+   *  to 60x/s and a keystroke queued behind it.
+   *
+   *  Two publishers, both free. The IntersectionObserver below runs after layout,
+   *  off the critical path. The scroll listener writes it from its own read,
+   *  which costs nothing in a scroll handler and closes the window the observer's
+   *  asynchrony leaves: a gesture that parks the reader is a fact the very next
+   *  mutation must already know.
+   *
+   *  Starts true because a fresh view is at its own bottom, and the state it has
+   *  to agree with (`following`) makes the value unobservable until something
+   *  publishes a real one. */
+  private atLiveEdge = true;
+
   constructor(messagesEl: HTMLElement, scrollEl: HTMLElement) {
     this.scrollEl = scrollEl;
     this.viewEl = messagesEl;
@@ -209,7 +239,11 @@ class ScrollController {
           return;
         }
         this.userScrollingUntil = Date.now() + USER_SCROLL_DEBOUNCE_MS;
-        this.setState(this.isAtBottom() ? "following" : "reading");
+        // Published as well as consumed: this read is free (a scroll event is
+        // delivered after layout), and it is the gesture's own answer, which the
+        // observer would not deliver until the next frame.
+        this.atLiveEdge = this.isAtBottom();
+        this.setState(this.atLiveEdge ? "following" : "reading");
         this.maybeLoadMore();
       },
       { passive: true },
@@ -234,8 +268,12 @@ class ScrollController {
       }
     });
 
+    // NOTICES change; measures nothing. It consumes the published edge state and
+    // hands the one write it still owes to an animation frame
+    // (`autoScrollIfAnchored`), so a streamed delta costs this callback no layout
+    // over a subtree that can hold several hundred cards.
     const mutationObserver = new MutationObserver(() => {
-      this.revalidateReadingState();
+      this.revalidateReadingState(this.atLiveEdge);
       this.autoScrollIfAnchored();
       for (const cb of this.mutateListeners) {
         cb();
@@ -243,6 +281,38 @@ class ScrollController {
     });
     this.contentObserver = mutationObserver;
 
+    // The publisher. Its callback runs after layout, so the geometry it carries
+    // costs nothing — and it is also the TRIGGER for a re-derivation, because a
+    // shrink that brings the edge back into view makes no mutation and no
+    // gesture, so nothing else would re-ask the question.
+    this.edgeSentinel = el("div", {
+      className: "transcript-edge",
+      "aria-hidden": "true",
+    });
+    this.edgeObserver = new IntersectionObserver(
+      (entries) => {
+        const last = entries[entries.length - 1];
+        if (last === undefined) {
+          return;
+        }
+        this.atLiveEdge = last.isIntersecting;
+        this.revalidateReadingState(this.atLiveEdge);
+      },
+      {
+        root: this.scrollEl,
+        // The same tolerance `isAtBottom` applies, expressed as room BELOW the
+        // scrollport: the sentinel counts as reached while it is within it.
+        rootMargin: `0px 0px ${String(BOTTOM_TOLERANCE_PX)}px 0px`,
+        threshold: 0,
+      },
+    );
+    this.edgeObserver.observe(this.edgeSentinel);
+
+    // A ResizeObserver callback is delivered AFTER layout, so its reads force
+    // nothing and it keeps measuring directly — the mutation path is what had to
+    // stop. It is also the one observer that sees a box change with no DOM
+    // mutation behind it (browser zoom, a scrollbar swap, a code block
+    // expanding).
     const resizeObserver = new ResizeObserver(() => {
       // Re-measured here rather than on `window.resize`: this fires AFTER layout
       // and only when the scroller's content box actually moved, which is exactly
@@ -252,7 +322,7 @@ class ScrollController {
       // strip that no longer existed. `stable` means overflow alone never resizes
       // this box, so streaming costs no extra writes.
       this.publishScrollbarWidth();
-      this.revalidateReadingState();
+      this.revalidateReadingState(this.isAtBottom());
       this.autoScrollIfAnchored();
     });
     resizeObserver.observe(this.scrollEl);
@@ -268,16 +338,24 @@ class ScrollController {
    *  itself (the view's children = the turn cards, as before the multiplexer).
    *  `attach` calls this with the incoming view; `detach` disconnects without
    *  re-rooting, which is what makes a parked view observer-silent. */
-  private observeView(el: HTMLElement): void {
-    this.viewEl = el;
+  private observeView(view: HTMLElement): void {
+    this.viewEl = view;
+    // The edge marker follows the attached view, so one observer serves every
+    // chat: a parked view's own bottom is not a live edge. Appended rather than
+    // ordered in the DOM — `reconcile` seats unkeyed furniture BEFORE the keyed
+    // cards, so `.transcript-edge` earns its last position in the flex order
+    // instead (css/13-messages.css).
+    if (this.edgeSentinel !== null) {
+      view.appendChild(this.edgeSentinel);
+    }
     this.contentObserver?.disconnect();
-    this.contentObserver?.observe(el, {
+    this.contentObserver?.observe(view, {
       childList: true,
       subtree: true,
       characterData: true,
     });
     this.childObserver?.disconnect();
-    this.childObserver?.observe(el, { childList: true });
+    this.childObserver?.observe(view, { childList: true });
     this.reobserveChildren();
   }
 
@@ -295,7 +373,16 @@ class ScrollController {
     if (observer === null) {
       return;
     }
-    const current = new Set<Element>(this.viewEl.children);
+    // The edge marker is not a child worth watching: its box is zero and never
+    // changes, and `observe()` DELIVERS an entry for a new target — so watching
+    // it would fire a resize callback (and with it an auto-scroll) on every
+    // attach, dragging the incoming view to its own bottom.
+    const current = new Set<Element>();
+    for (const child of this.viewEl.children) {
+      if (child !== this.edgeSentinel) {
+        current.add(child);
+      }
+    }
     for (const child of this.observedChildren) {
       if (!current.has(child)) {
         observer.unobserve(child);
@@ -675,6 +762,15 @@ class ScrollController {
       return;
     }
     this.state = next;
+    if (next === "reading") {
+      // The third publisher, and the one that makes the other two sufficient:
+      // Reading MEANS the reader is away from the live edge (a gesture landing
+      // inside the tolerance keeps Following), so entering it settles the
+      // question without a read. Without this, a park that never went through
+      // the scroll listener — `setUserScrolledUp`, a `jumpTo` landing — would
+      // leave a stale `true` published for the next mutation to promote on.
+      this.atLiveEdge = false;
+    }
     // The single owner of the resume control's visibility: visible ⇔ Reading.
     // Nothing else writes this class, so a caller that has just moved the
     // scroller does not need to hide the control itself.
@@ -732,17 +828,21 @@ class ScrollController {
    * whose intermediate scroll events refresh the window all the way to the
    * landing.
    *
-   * Cheap on the hot path by construction: a streaming turn holds Following, so
-   * the per-chunk call ends at the first field compare and reads no layout.
+   * THE ANSWER IS PASSED IN, and which caller may measure is the point. A
+   * ResizeObserver and a scroll event are both delivered after layout, so they
+   * read `isAtBottom()` directly and it costs nothing. The MUTATION path may not:
+   * it runs mid-task with the DOM dirty, so a read there forces a synchronous
+   * layout of the whole transcript, up to once per animation frame while a turn
+   * streams. It consumes `atLiveEdge` instead.
    */
-  private revalidateReadingState(): void {
+  private revalidateReadingState(atBottom: boolean): void {
     if (this.state !== "reading") {
       return;
     }
     if (Date.now() < this.userScrollingUntil) {
       return;
     }
-    if (this.isAtBottom()) {
+    if (atBottom) {
       this.setState("following");
     }
   }
