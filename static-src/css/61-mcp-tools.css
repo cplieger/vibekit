@@ -528,11 +528,6 @@
   background: color-mix(in srgb, var(--c-red) 12%, transparent);
 }
 
-.diff-hunk-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
 /* --- Specificity-sensitive overrides (must come after base declarations) --- */
 
 [id="settings-btn"] svg {

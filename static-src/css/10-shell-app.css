@@ -662,11 +662,6 @@
     background var(--dur-micro),
     color var(--dur-micro) var(--ease-standard);
 
-  &:where(:disabled) {
-    opacity: 0.3;
-    cursor: default;
-  }
-
   &:where(:disabled:hover) {
     background: none;
   }

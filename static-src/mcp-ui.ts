@@ -11,7 +11,7 @@
 
 import { el, bindList, effect } from "@cplieger/reactive";
 
-import { $ } from "./dom.js";
+import { $, setControlBusy } from "./dom.js";
 import { isSafeURL } from "./url-safety.js";
 import { onSSE } from "./bus.js";
 import { onGovernanceChange } from "./governance.js";
@@ -577,7 +577,7 @@ export function renderOAuthRelay(serverName: string): HTMLDetailsElement {
       setNote("Paste the address from the page that failed to load.", "err");
       return;
     }
-    submit.disabled = true;
+    setControlBusy(submit, true);
     setNote("Delivering…", "");
     void relayOAuthCallback
       .dispatch(
@@ -601,7 +601,7 @@ export function renderOAuthRelay(serverName: string): HTMLDetailsElement {
         },
       )
       .finally(() => {
-        submit.disabled = false;
+        setControlBusy(submit, false);
       });
   });
 
@@ -681,8 +681,7 @@ function renderReconnectBtn(id: string, initial: Server): HTMLButtonElement {
       return;
     }
     const cur = servers.signalFor(id)?.value ?? initial;
-    btn.disabled = true;
-    btn.setAttribute("aria-busy", "true");
+    setControlBusy(btn, true);
     btn.innerHTML = ICON_SPINNER;
     void reconnectServer
       .dispatch(
@@ -699,8 +698,7 @@ function renderReconnectBtn(id: string, initial: Server): HTMLButtonElement {
         },
       )
       .finally(() => {
-        btn.disabled = false;
-        btn.removeAttribute("aria-busy");
+        setControlBusy(btn, false);
         btn.innerHTML = ICON_REFRESH;
       });
   });
@@ -860,7 +858,7 @@ async function insertPrompt(
   args: Record<string, string>,
   btn: HTMLButtonElement,
 ): Promise<void> {
-  btn.disabled = true;
+  setControlBusy(btn, true);
   try {
     const res = await getPromptContent.dispatch({
       server: serverName,
@@ -878,7 +876,7 @@ async function insertPrompt(
     insertIntoPrompt(text);
     showToast(`Inserted "${orFallback(p.name, p.prompt_name)}" into the prompt.`, "success");
   } finally {
-    btn.disabled = false;
+    setControlBusy(btn, false);
   }
 }
 
@@ -887,7 +885,7 @@ async function insertResource(
   res: MCPResourceInfo,
   btn: HTMLButtonElement,
 ): Promise<void> {
-  btn.disabled = true;
+  setControlBusy(btn, true);
   try {
     const result = await getResourceContent.dispatch({ server: serverName, uri: res.uri });
     if (result === null) {
@@ -902,7 +900,7 @@ async function insertResource(
     insertIntoPrompt(`# ${heading}\n\n${text}`);
     showToast(`Inserted "${heading}" into the prompt.`, "success");
   } finally {
-    btn.disabled = false;
+    setControlBusy(btn, false);
   }
 }
 

@@ -324,11 +324,6 @@
   background: var(--c-bg-tertiary);
 }
 
-.conflict-btn:disabled {
-  opacity: 0.6;
-  cursor: wait;
-}
-
 .conflict-btn-suggest {
   border-color: var(--c-accent);
   color: var(--c-accent);
@@ -1003,11 +998,6 @@
 
 /* The reconnect icon-btn reuses .icon-btn; its spinning state swaps in
  * ICON_SPINNER (.icon-spinner animates via vk-spin). Hidden when idle. */
-.mcp-row-actions .icon-btn[aria-busy="true"] {
-  pointer-events: none;
-  opacity: 0.7;
-}
-
 .mcp-discovery {
   margin-block-start: 0.25rem;
 }
@@ -1102,11 +1092,6 @@
 .mcp-disc-insert:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
-}
-
-.mcp-disc-insert:disabled {
-  opacity: 0.6;
-  cursor: wait;
 }
 
 .mcp-disc-prompt-wrap {

@@ -21,7 +21,16 @@ vi.mock("./toast.js", () => ({
 // mcp-ui.ts reaches the DOM registry and the action framework at module scope
 // through its imports; the two helpers under test are pure, so the heavy
 // siblings are stubbed rather than staged.
-vi.mock("./dom.js", () => ({ $: {}, byId: () => document.createElement("div") }));
+// Every name `mcp-ui.js`'s graph reaches has to exist here, including ones this
+// file never calls: Browser Mode links ESM for real rather than reading a
+// namespace object, so a missing export fails the whole file at link time.
+vi.mock("./dom.js", () => ({
+  $: {},
+  byId: () => document.createElement("div"),
+  maybeEl: () => null,
+  setBusy: () => undefined,
+  setControlBusy: () => undefined,
+}));
 
 const { announceMCPFailure, mcpFailureText } = await import("./mcp-ui.js");
 

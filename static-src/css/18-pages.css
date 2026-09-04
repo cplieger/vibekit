@@ -623,11 +623,6 @@
     background: var(--c-bg-tertiary);
   }
 
-  &:disabled {
-    opacity: 0.3;
-    cursor: default;
-  }
-
   &:disabled:hover {
     background: none;
     color: var(--c-text-tertiary);

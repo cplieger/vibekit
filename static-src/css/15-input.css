@@ -1045,11 +1045,6 @@
    * its chat holds a conversation to branch. Kept visible (not hidden) so the
    * card does not reflow the moment the first message lands, and the row's own
    * hint says what to do next. */
-  &:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
   &:disabled:hover,
   &:disabled:active {
     background: none;
@@ -1238,8 +1233,16 @@
     }
   }
 
+  /* Opts out of the unavailable face (40-a11y.css). Nothing disables the
+   * composer — `prompt-input.ts` only ever writes `disabled = false`, and a
+   * failed send keeps this control live because the next click is the retry — so
+   * a dimmed, refused send button would advertise a state the app does not
+   * enter. The declaration stays as the floor's opt-out rather than being
+   * deleted, so a future writer who does disable it gets a readable control
+   * instead of a faded one. */
   &:disabled {
     cursor: default;
+    opacity: 1;
   }
 }
 

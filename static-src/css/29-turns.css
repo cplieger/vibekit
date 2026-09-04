@@ -283,11 +283,6 @@
 /* Disabled while the agent runs: KAS refuses a revert on a live session, so the
    control is unavailable rather than offering an error. Kept visible (not
    hidden) so the row does not reflow when a turn starts and ends. */
-.turn-rewind:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 .turn-rewind:disabled:hover {
   background: none;
   border-color: var(--c-border);
@@ -636,8 +631,15 @@
   }
 }
 
+/* DISABLED HERE MEANS "READOUT", NOT "REFUSED", so it opts out of the
+ * unavailable face (40-a11y.css). This aggregate is a disclosure button only
+ * when the turn changed files; with none to list it is a plain readout, and the
+ * `disabled` attribute is how it stops being a control. Taking the floor's dim
+ * and its `not-allowed` would fade the outcome a reader is meant to read and
+ * claim they were refused something they never asked for. */
 .turn-ledger-summary:disabled {
   cursor: default;
+  opacity: 1;
 }
 
 .turn-ledger-summary:not(:disabled):hover {

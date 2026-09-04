@@ -1013,11 +1013,6 @@
     background: var(--c-bg-tertiary);
   }
 
-  &:disabled {
-    opacity: 0.3;
-    cursor: default;
-  }
-
   &:disabled:hover {
     background: none;
     color: var(--c-text-secondary);
@@ -1088,11 +1083,6 @@
   &:hover {
     background: var(--c-bg-tertiary);
     color: var(--c-text-primary);
-  }
-
-  &:disabled {
-    opacity: 0.3;
-    cursor: default;
   }
 
   &:disabled:hover {
@@ -1206,11 +1196,13 @@
   min-width: var(--btn-h);
 }
 
-/* Loading button: spinner before label, pointer-events disabled */
+/* A loading button's SPINNER. The dim and the `pointer-events: none` that used to
+ * sit here are gone: `bindLoadingState` sets `disabled` at every site that adds
+ * this class, and a disabled button already ignores the pointer, while the busy
+ * face in 40-a11y.css owns how a working control looks. What is left is the mark
+ * itself, which is this class's whole reason to exist. */
 .btn-loading {
   position: relative;
-  pointer-events: none;
-  opacity: 0.7;
 }
 
 .btn-loading::before {

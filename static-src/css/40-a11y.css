@@ -76,6 +76,57 @@
   outline-offset: var(--focus-offset);
 }
 
+/* THE UNAVAILABLE FACE, over every disabled control rather than per component.
+ *
+ * Nine families each spelled it themselves and no two agreed: opacity came out
+ * as 0.3 (four rules), 0.4 (three), 0.55 and 0.6, and the cursor as `default`
+ * (eight), `not-allowed` (three) or `wait` (two) — while `--opacity-disabled`
+ * sat declared and read by nobody. Every one of those rules held ONLY these two
+ * declarations, so all nine are deletable rather than in conflict.
+ *
+ * `not-allowed` over the majority's `default`, because it is the one value that
+ * says something: the cursor is a hover-only channel, so its whole job is
+ * telling a reader their click will not land. `default` withholds that and
+ * `wait` claims the app is blocked.
+ *
+ * `:where()` scores ZERO, so this is a floor and not a mandate — the two states
+ * that are NOT "unavailable" opt out on their own specificity and say why at
+ * their own rule:
+ *   - a disabled control that is BUSY (`.conflict-btn`, `.mcp-disc-insert`) dims
+ *     less and takes `cursor: progress`, because it is coming back;
+ *   - a control disabled because it is a READOUT rather than a refusal
+ *     (`.turn-ledger-summary` with no files to list, `.send-btn`) declares
+ *     `opacity: 1`, or this rule would dim information nobody is being refused.
+ *
+ * `aria-disabled` is deliberately NOT matched: nothing in the app sets it, and a
+ * selector for a state that cannot occur is a claim no reader can check. */
+:where(button, input, select, textarea):disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+/* THE BUSY FACE: a control disabled because its own work is in flight, which is
+ * a different state from unavailable and now says so in one place. It was three
+ * spellings — `.btn-loading` (0.7 plus a `pointer-events: none` that `disabled`
+ * already provides), `.conflict-btn` and `.mcp-disc-insert` (0.6 and
+ * `cursor: wait`), and the reconnect button (0.7, keyed on the attribute) — and
+ * every one of them DIMMED it.
+ *
+ * Dimming is what this removes rather than re-numbers. A busy control is
+ * communicating: it grows a spinner and its label becomes "Suggesting…",
+ * "Delivering…", "Cancel". Fading the very words that report the work is the
+ * defect the three opacities were arguing about, so the answer is `opacity: 1`
+ * and no second token.
+ *
+ * `progress`, not `wait`: `wait` says the whole application is blocked, and it is
+ * not — every other control on the page stays live. Keyed on `aria-busy`, which
+ * `bindLoadingState` already sets at every site it drives, so the attribute a
+ * screen reader reads is the same one the paint reads. */
+:where(button, input, select, textarea):disabled[aria-busy="true"] {
+  opacity: 1;
+  cursor: progress;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* stylelint-disable declaration-no-important, time-min-milliseconds -- intentionally near-zero for a11y */
   *,
