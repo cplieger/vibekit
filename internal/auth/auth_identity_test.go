@@ -152,7 +152,8 @@ func TestIdentityCache_PublishOverwritesWithoutReading(t *testing.T) {
 	// call count.
 	c.invalidate()
 
-	c.publish(signedOutIdentity())
+	signedOut := signedOutIdentity()
+	c.publish(&signedOut)
 
 	if got := c.snapshot(); got.State != WhoamiSignedOut {
 		t.Fatalf("State = %q, want %q", got.State, WhoamiSignedOut)
@@ -230,5 +231,101 @@ func TestUnavailableIdentity_SanitizesTheReason(t *testing.T) {
 	}
 	if got.State != WhoamiUnavailable {
 		t.Errorf("State = %q, want %q", got.State, WhoamiUnavailable)
+	}
+}
+
+// TestIdentityCache_PublishWinsAgainstAnInFlightRead is the ordering that made
+// a logout look like it never happened.
+//
+// The TTL is 60 s and a stale read kicks a refresh, so a page load one second
+// before a logout is enough to have a kiro-cli fork running. Without the
+// generation fence that fork's pre-logout `signed_in` is written on top of the
+// published `signed_out`, and the sidebar keeps the old identity until the next
+// tick — up to a minute of showing a signed-out user as signed in.
+func TestIdentityCache_PublishWinsAgainstAnInFlightRead(t *testing.T) {
+	block := make(chan struct{})
+	r := &countingReader{resp: signedIn("u@example.com"), block: block}
+	c := newIdentityCache(r.read, time.Hour)
+
+	// A page load kicks a refresh; the reader is held open inside it, which is
+	// the window the logout lands in.
+	c.snapshot()
+	waitForCalls(t, r, 1)
+
+	// The logout: vibekit knows the outcome, so it publishes rather than forking.
+	signedOut := signedOutIdentity()
+	c.publish(&signedOut)
+	if got := c.snapshot(); got.State != WhoamiSignedOut {
+		t.Fatalf("State right after publish = %q, want %q", got.State, WhoamiSignedOut)
+	}
+
+	// Now let the pre-logout read finish. It describes the world BEFORE the
+	// publish, so it must be discarded.
+	close(block)
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if got := c.snapshot(); got.State != WhoamiSignedOut {
+			t.Fatalf("State became %q after the in-flight read landed, want the published %q to stand",
+				got.State, WhoamiSignedOut)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestIdentityCache_RebuildStillClearsBusyWhenItsAnswerIsDiscarded: the fence
+// must drop the VALUE, not the claim. A rebuild that returned early without
+// releasing busy would leave the cache unable to refresh for the rest of the
+// process's life.
+func TestIdentityCache_RebuildStillClearsBusyWhenItsAnswerIsDiscarded(t *testing.T) {
+	block := make(chan struct{})
+	r := &countingReader{resp: signedIn("first@example.com"), block: block}
+	c := newIdentityCache(r.read, time.Hour)
+
+	c.snapshot()
+	waitForCalls(t, r, 1)
+	signedOut := signedOutIdentity()
+	c.publish(&signedOut)
+	close(block)
+	waitForIdle(t, c)
+
+	// The discarded rebuild has to release the claim, or this second read never
+	// forks again.
+	r.mu.Lock()
+	r.block = nil
+	r.resp = signedIn("second@example.com")
+	r.mu.Unlock()
+	c.invalidate()
+	c.snapshot()
+	waitForCalls(t, r, 2)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if got := c.snapshot(); got.State == WhoamiSignedIn && got.Email == "second@example.com" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("snapshot = %+v, want the second read's identity — busy was never released", c.snapshot())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// waitForIdle polls until no read is in flight, failing with a diagnostic at the
+// deadline. A poll rather than a join: the refresh goroutine is the cache's own
+// and there is no handle to wait on — which is the same reason the busy flag
+// exists.
+func waitForIdle(t *testing.T, c *identityCache) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		c.mu.Lock()
+		busy := c.busy
+		c.mu.Unlock()
+		if !busy {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("a read was still in flight after 2s; rebuild never released busy")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

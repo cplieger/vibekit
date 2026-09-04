@@ -41,7 +41,20 @@ var compressSkipPaths = []string{"/api/events", "/api/shell/ws"}
 // they arrive carrying their own Content-Encoding, which gzipCandidate refuses.
 func compressJSON(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !acceptsGzip(r.Header.Get("Accept-Encoding")) || isCompressSkipped(r.URL.Path) {
+		if isCompressSkipped(r.URL.Path) {
+			// Not negotiated at all, so its representation does not vary and it
+			// gets no Vary either.
+			next.ServeHTTP(w, r)
+			return
+		}
+		// Announced for every response this middleware negotiates, decided
+		// BEFORE the outcome is known — a below-threshold body and a `gzip;q=0`
+		// refusal were both selected on Accept-Encoding just as much as a
+		// compressed one was, and a shared cache cannot see that from the body.
+		// Announcing it only from startGzip described the outcome instead of the
+		// negotiation.
+		w.Header().Add("Vary", "Accept-Encoding")
+		if !acceptsGzip(r.Header.Get("Accept-Encoding")) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -72,16 +85,16 @@ func acceptsGzip(header string) bool {
 	for part := range strings.SplitSeq(header, ",") {
 		token, params, _ := strings.Cut(strings.TrimSpace(part), ";")
 		name := strings.ToLower(strings.TrimSpace(token))
-		if name != "gzip" && name != "*" {
+		if name != encodingGzip && name != "*" {
 			continue
 		}
 		if qZero(params) {
-			if name == "gzip" {
+			if name == encodingGzip {
 				return false
 			}
 			continue
 		}
-		if name == "gzip" {
+		if name == encodingGzip {
 			return true
 		}
 		wildcard = true
@@ -178,6 +191,9 @@ func (cw *compressWriter) WriteHeader(code int) {
 	}
 }
 
+// encodingGzip is the content-coding token, on the wire and in Accept-Encoding.
+const encodingGzip = "gzip"
+
 // gzipCandidate reports whether a response with this status and these headers
 // could carry a gzip body.
 func (cw *compressWriter) gzipCandidate(code int) bool {
@@ -245,8 +261,7 @@ func (cw *compressWriter) startGzip() {
 		cw.passThrough()
 		return
 	}
-	h.Set("Content-Encoding", "gzip")
-	h.Add("Vary", "Accept-Encoding")
+	h.Set("Content-Encoding", encodingGzip)
 	h.Del("Content-Length")
 	cw.mode = modeGzip
 	cw.gz = gz

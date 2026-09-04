@@ -69,12 +69,18 @@ type identityCache struct {
 	// read performs one identity read. A field rather than a direct call so a
 	// test can drive the cache's staleness and coalescing rules without a
 	// subprocess, and so the production reader stays one function.
-	read   func(context.Context) WhoamiResponse
-	resp   WhoamiResponse
-	at     time.Time
+	read func(context.Context) WhoamiResponse
+	at   time.Time
+	resp WhoamiResponse
+	// budget is the wall clock one read gets. Placed after the strings so the GC
+	// scan region stops at them (govet fieldalignment).
 	budget time.Duration
-	mu     sync.Mutex
-	busy   bool
+	// gen counts published identities. A rebuild captures it before forking and
+	// discards its answer if it changed, which is what stops a read that started
+	// before a logout from republishing the pre-logout identity over it.
+	gen  uint64
+	mu   sync.Mutex
+	busy bool
 }
 
 // newIdentityCache returns a cache seeded with the `unavailable` arm, which is
@@ -102,15 +108,25 @@ func (c *identityCache) snapshot() WhoamiResponse {
 
 // publish records an identity vibekit itself decided, and marks the entry
 // fresh. Used by the logout path, which knows the outcome without asking.
-func (c *identityCache) publish(resp WhoamiResponse) {
+//
+// The generation bump is what makes it WIN against a read already in flight.
+// The TTL is 60 s and a stale read kicks a refresh, so a page load one second
+// before a logout is enough to have a fork running; without the bump that
+// fork's pre-logout `signed_in` lands on top of this `signed_out` and the
+// sidebar keeps the old identity until the next tick.
+func (c *identityCache) publish(resp *WhoamiResponse) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.resp = resp
+	c.resp = *resp
 	c.at = time.Now()
+	c.gen++
 }
 
 // invalidate marks the entry stale without discarding it, so the next read
 // revalidates while still answering with the last known identity.
+//
+// No generation bump: invalidate asks for a fresh read rather than asserting an
+// answer, so an in-flight read is exactly what it wants to land.
 //
 // This is what makes the login window converge. The browser polls /api/whoami
 // every 3 s while the device flow is open, and a fresh 60-second entry would
@@ -145,15 +161,30 @@ func (c *identityCache) refresh() {
 // would end up waiting for it after all. WhoamiTimeout bounds it, and
 // boundChild kills the process group at the deadline, so the goroutine's exit
 // is guaranteed by the budget rather than by a cancel nobody holds.
+//
+// The generation check is the fence against a publish that landed while the
+// fork was running: this read describes the world BEFORE that publish, so it is
+// discarded rather than written. busy is still cleared, or the cache would
+// never refresh again.
 func (c *identityCache) rebuild() {
-	ctx, cancel := context.WithTimeout(context.Background(), c.budget)
-	defer cancel()
-	resp := c.read(ctx)
 	c.mu.Lock()
+	gen := c.gen
+	budget := c.budget
+	read := c.read
+	c.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	resp := read(ctx)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.busy = false
+	if c.gen != gen {
+		return
+	}
 	c.resp = resp
 	c.at = time.Now()
-	c.busy = false
-	c.mu.Unlock()
 }
 
 // Run keeps the cached identity warm until ctx is done: one read now, then one
