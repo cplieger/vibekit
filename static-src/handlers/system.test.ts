@@ -94,8 +94,12 @@ vi.mock("../retention.js", () => ({ refreshRetention: vi.fn() }));
 
 // The live-runs inventory rebuild: the gap handler re-reads the server's
 // presence projection because the events feeding the inventory were lost.
+const mockInvalidateCachedRuns = vi.fn();
 const mockRebuildLiveRuns = vi.fn(() => Promise.resolve());
-vi.mock("../run-store.js", () => ({ rebuildLiveRuns: mockRebuildLiveRuns }));
+vi.mock("../run-store.js", () => ({
+  rebuildLiveRuns: mockRebuildLiveRuns,
+  invalidateCachedRuns: mockInvalidateCachedRuns,
+}));
 
 // The shared turn teardown (turn-teardown.ts) reaches these three, and each is a
 // boundary this test has no business driving: the rail FETCHES the session-wide
@@ -237,6 +241,16 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     setSessions([makeSession("a")]);
     fireGap();
     expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
+  });
+
+  // A run's node state is APPLIED from `run_progress` rather than refetched, so
+  // frames lost in the outage leave a stale tree with nothing to notice it — a
+  // node that completed during the gap keeps reading `running` and its clock keeps
+  // ticking. A gap is the one moment the client knows it missed frames.
+  it("re-reads every cached run, because the progress frames it missed were applied ones", () => {
+    setSessions([makeSession("a")]);
+    fireGap();
+    expect(mockInvalidateCachedRuns).toHaveBeenCalledTimes(1);
   });
 
   // THE TAB RECONCILE IS GONE, and its absence is what this pins.
