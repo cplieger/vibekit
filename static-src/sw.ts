@@ -9,6 +9,8 @@
 // eslint-disable-next-line @typescript-eslint/triple-slash-reference
 /// <reference path="sw-env.d.ts" />
 
+import { type PrecacheManifest, isShellPath, parseManifest } from "./precache.js";
+
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
 // ---------------------------------------------------------------------------
@@ -31,42 +33,17 @@ const SHELL_CACHE = "vibekit-shell";
 /** Where the build's asset list lives (cmd/bundle writes it). */
 const PRECACHE_URL = "/precache.json";
 
-/** The build-emitted asset list. `stamp` moves when any listed asset's bytes or
- *  name move; `assets` are root-relative URL paths. */
-interface PrecacheManifest {
-  stamp?: string;
-  assets?: string[];
-}
-
 /** Read the manifest a document just served, or null when it is unusable.
  *
- *  `no-store` so this one request is never the thing serving a stale answer, and
- *  every field is checked rather than cast — a half-written or foreign document
- *  must leave the existing cache alone rather than emptying it. */
+ *  `no-store` so this one request is never the thing serving a stale answer;
+ *  `parseManifest` owns what counts as usable. */
 async function fetchManifest(): Promise<PrecacheManifest | null> {
   try {
     const r = await fetch(PRECACHE_URL, { cache: "no-store" });
     if (!r.ok) {
       return null;
     }
-    const d = (await r.json()) as unknown;
-    if (typeof d !== "object" || d === null) {
-      return null;
-    }
-    const rec = d as Record<string, unknown>;
-    const stamp = rec["stamp"];
-    const assets = rec["assets"];
-    if (typeof stamp !== "string" || stamp === "" || !Array.isArray(assets)) {
-      return null;
-    }
-    const paths: string[] = [];
-    for (const a of assets as unknown[]) {
-      if (typeof a !== "string" || a === "" || a.startsWith("/") || a.includes("..")) {
-        return null;
-      }
-      paths.push(`/${a}`);
-    }
-    return { stamp, assets: paths };
+    return parseManifest(await r.json());
   } catch {
     // Offline. The cache already holds whatever the last successful sync put
     // there, which is the state this whole mechanism exists to serve.
@@ -74,26 +51,48 @@ async function fetchManifest(): Promise<PrecacheManifest | null> {
   }
 }
 
+/** The sync in flight, if any. */
+let syncing: Promise<boolean> | null = null;
+
 /** Bring the cache in line with the current build, and report whether it moved.
+ *
+ *  ONE SYNC AT A TIME, because two straddling a deploy corrupt each other: A reads
+ *  manifest X, B fills and stamps Y, then A's prune — its `wanted` built from X —
+ *  deletes Y's content-hashed chunks. The cache then holds stamp Y with Y's assets
+ *  missing, and `fillPrecache`'s stamp-equality early return blocks the repair
+ *  until the next deploy moves the stamp again. A second caller joins the first
+ *  and takes its answer, which is the answer for the manifest state it arrived in. */
+function syncPrecache(): Promise<boolean> {
+  if (syncing !== null) {
+    return syncing;
+  }
+  const run = fillPrecache();
+  syncing = run.finally(() => {
+    syncing = null;
+  });
+  return syncing;
+}
+
+/** One sync pass. Call `syncPrecache`, never this.
  *
  *  ORDER IS LOAD-BEARING: fill first, then record the stamp, then prune. A stamp
  *  written before its assets are in would make a crashed sync look complete
  *  forever, and pruning before the fill would blank the cache for a document
  *  loading right now. */
-async function syncPrecache(): Promise<boolean> {
+async function fillPrecache(): Promise<boolean> {
   const next = await fetchManifest();
-  if (next?.assets === undefined || next.stamp === undefined) {
+  if (next === null) {
     return false;
   }
   const cache = await caches.open(SHELL_CACHE);
   const held = await cache.match(PRECACHE_URL);
   if (held !== undefined) {
-    const heldDoc = (await held.json().catch(() => null)) as PrecacheManifest | null;
+    const heldDoc = parseManifest(await held.json().catch(() => null));
     if (heldDoc?.stamp === next.stamp) {
       return false;
     }
   }
-  await cache.addAll(next.assets);
+  await cache.addAll([...next.assets]);
   await cache.put(PRECACHE_URL, new Response(JSON.stringify(next)));
   const wanted = new Set([...next.assets, PRECACHE_URL]);
   for (const req of await cache.keys()) {
@@ -138,10 +137,10 @@ sw.addEventListener("activate", ((event: ExtendableEvent) => {
 
 // Three arms, and the handler's mere presence is also what satisfies the PWA install
 // criterion. A NAVIGATION goes to the network — the shell must stay fresh — and
-// doubles as the deploy check. A precached asset is answered from the cache, decided
-// by ASKING the cache rather than by matching the URL, so the eligible set is exactly
-// what the manifest listed. Everything else (/api/*, SSE, the shell WebSocket) falls
-// through to the browser's default handling.
+// doubles as the deploy check. A SHELL PATH is answered from the cache. Everything
+// else, `/api/*` reads and the `/api/events` stream included, is never handed to
+// `respondWith` at all: `isShellPath` is a synchronous gate for exactly that reason,
+// because a handler that asks the cache first has already taken the request over.
 sw.addEventListener("fetch", ((event: FetchEvent) => {
   if (event.request.mode === "navigate") {
     event.respondWith(fetch(event.request));
@@ -153,7 +152,11 @@ sw.addEventListener("fetch", ((event: FetchEvent) => {
     );
     return;
   }
-  if (event.request.method !== "GET" || new URL(event.request.url).origin !== location.origin) {
+  if (event.request.method !== "GET") {
+    return;
+  }
+  const url = new URL(event.request.url);
+  if (url.origin !== location.origin || !isShellPath(url.pathname)) {
     return;
   }
   event.respondWith(
@@ -199,9 +202,10 @@ const PR_SUBJECT_PREFIX = "pr:";
 
 /** Where to open when NO page is up at all — the one path that needs a URL.
  *  A focus lands on an existing page, which routes itself from the posted subject.
- *  The worker compiles standalone as a classic script and cannot import router.ts
- *  (the same constraint that duplicates urlBase64ToUint8Array below), so these two
- *  literals live here. */
+ *  These two literals are spelled here rather than imported from router.ts because
+ *  that module is DOM-bound — it registers a `popstate` listener on `window` at
+ *  module scope and drives `history` — and this file builds under
+ *  `lib: [ESNext, WebWorker]` (tsconfig.sw.json). */
 function subjectPath(data: { chatId: string; subject: string }): string {
   if (data.subject.startsWith(PR_SUBJECT_PREFIX)) {
     return "/git";
@@ -379,10 +383,10 @@ async function resolveSubscribeOptions(
   return { userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(d.publicKey) };
 }
 
-/** Base64url → Uint8Array for the VAPID applicationServerKey. Local copy
- *  of push-util.ts's helper: the service worker compiles standalone
- *  (tsconfig.sw.json includes only sw.ts) and registers as a classic
- *  script, so it cannot import modules. */
+/** Base64url → Uint8Array for the VAPID applicationServerKey. Near-copy of
+ *  push-util.ts's helper, and the difference is the reason it is one: that
+ *  version's return type leaves the buffer backing implicit, which
+ *  `applicationServerKey` rejects (see below). */
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");

@@ -311,7 +311,8 @@ class ScrollController {
         threshold: 0,
       },
     );
-    this.edgeObserver.observe(this.edgeSentinel);
+    // Not observed here: `observeView` below is the single owner, because the
+    // sentinel is in no view yet and `detach` unobserves it.
 
     // A ResizeObserver callback is delivered AFTER layout, so its reads force
     // nothing and it keeps measuring directly — the mutation path is what had to

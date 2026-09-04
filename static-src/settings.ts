@@ -31,15 +31,11 @@ import { $ } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { initNotificationToggles } from "./settings-notifications.js";
 
-import { showSaving, showSaved, showError, STEERING_SAVE_KEY } from "./save-indicator.js";
-import { saveSteering, logout, setKiroSetting } from "./actions/settings.js";
+import { showSaving, showSaved, showError } from "./save-indicator.js";
+import { logout, setKiroSetting } from "./actions/settings.js";
 import { runDiagnostics } from "./actions/tools.js";
-import {
-  bindLoadingState,
-  registerCleanup,
-  debouncedDispatch,
-  subscribeByName,
-} from "./actions/index.js";
+import { bindLoadingState } from "./actions/index.js";
+import { initSteeringEditor, loadSteeringDoc } from "./settings-steering.js";
 
 // Per-key write generation for the kiro-cli settings endpoint; same rule as
 // persist.ts's `keyGen`, which explains it. Separate because the key namespaces
@@ -417,59 +413,6 @@ export function initUI(): void {
 export function initPostAuthUI(): void {
   void loadAbout();
   initGitBadge();
-}
-
-// --- Steering (auto-save with debounce) ---
-
-/** Read the global-instructions document into its textarea. Fired once, on the
- *  Instructions panel's first activation, via the settings-tabs loader map.
- *
- *  Split out of `initSteeringEditor` because the two have different lifetimes: the
- *  listeners must exist before the panel can be typed into, the READ must not.
- *  `initUI` runs on the boot path, so this fetch was a file read the server served
- *  concurrently with the boot's own five for a panel nobody had opened — the same
- *  defect class as the General panel's three `kiro-cli settings` spawns. */
-function loadSteeringDoc(): void {
-  const textarea = $.steeringInput;
-  void apiGet<{ content?: string }>("/api/steering").then((d) => {
-    if (d?.content !== undefined) {
-      textarea.value = d.content;
-    }
-  });
-}
-
-function initSteeringEditor(): void {
-  const textarea = $.steeringInput;
-  // debouncedDispatch coalesces rapid keystrokes into a single trailing
-  // dispatch after the quiet window (replaces the manual clearTimeout +
-  // setTimeout(600) + saveGen pattern). saveGen is no longer needed: the
-  // action has scope:"settings", so dispatches serialize (ordered
-  // resolution), and the indicator is driven by the action's own
-  // lifecycle events below rather than a per-dispatch .then().
-  const debouncedSave = debouncedDispatch(saveSteering, { wait: 600 });
-
-  const unsub = subscribeByName("settings.save_steering", (inst) => {
-    if (inst.status === "success") {
-      showSaved(STEERING_SAVE_KEY);
-    } else if (inst.status === "error") {
-      showError(STEERING_SAVE_KEY);
-    }
-  });
-
-  textarea.addEventListener("input", () => {
-    showSaving(STEERING_SAVE_KEY);
-    debouncedSave({ content: textarea.value });
-  });
-
-  registerCleanup(() => {
-    // Stop touching the indicator (mirrors the original cleanup, which
-    // flushed without updating it), then flush any pending edit so an
-    // unsaved change still persists on teardown.
-    unsub();
-    if (debouncedSave.isPending()) {
-      void debouncedSave.flush({ content: textarea.value });
-    }
-  });
 }
 
 // --- Logout ---
