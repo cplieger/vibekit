@@ -10,6 +10,12 @@
 // for the turn unit: a resident page of ~23 older turns becomes ~23 one-line
 // rows, which is the difference between a transcript and an archive.
 //
+// DISCLOSURE ONLY. Whether a turn's body is MOUNTED is `block-window.ts`'s
+// question, decided on a block and tool-card budget; this module decides whether
+// a mounted body is shown. A turn residency excluded renders folded whatever the
+// rule here says, because it has no body to open — and `isTurnRevealed` is how
+// the reader's own request pins it back into residency.
+//
 // THREE THINGS NEVER AUTO-FOLD, and the first is the important one:
 //
 //   - A turn that FAILED or was INTERRUPTED. Errors are the last thing that
@@ -30,13 +36,9 @@ import type { Turn } from "./turns.js";
  *  auto-collapses when the next turn starts, and not before. */
 const OPEN_TAIL = 1;
 
-/** How many trailing turns keep their body DOM mounted while closed — the
- *  renderer's tier-2 "warm" window (`mounted = foldOpen || distance <
- *  TURNS_WARM`). Beside OPEN_TAIL because the two constants describe the same
- *  tail in the same frame (the projected window, newest last), but this one is
- *  about MOUNTEDNESS and decides nothing about openness: the fold rule above
- *  stays the single authority for open/closed. */
-export const TURNS_WARM = 5;
+// There is no TURNS_WARM. It was a second trailing-turn count answering
+// MOUNTEDNESS, and a turn count is not a paint cost — `block-window.ts` owns
+// residency now, in blocks and tool cards. This module answers disclosure only.
 
 /** Per-chat, per-turn overrides: `true` = the user opened it, `false` = the user
  *  folded it. Absent = follow the automatic rule.
@@ -155,6 +157,19 @@ export function setTurnOpen(chatID: string, turnID: string, open: boolean): void
 // hand-opened turn surviving a search close while a search-opened one re-folds —
 // is already structural: isTurnOpen consults the persisted overrides BEFORE the
 // search set, so an explicit choice outranks a reveal without anyone asking.
+
+/** Whether the reader ASKED for this turn's body — by opening it, or by landing a
+ *  search on it.
+ *
+ *  A different question from `isTurnOpen`, which also answers true for the newest
+ *  turn and a running one by rule. This one is only ever the reader's own request,
+ *  which is what makes it the right pin for residency (`block-window.ts`): a
+ *  budget may fold a turn nobody asked for, and may not take back one somebody
+ *  did. A recorded FOLD reads false, like no record at all. */
+export function isTurnRevealed(chatID: string, turnID: string): boolean {
+  load();
+  return overrides.get(chatID)?.[turnID] === true || searchOpened.get(chatID)?.has(turnID) === true;
+}
 
 /** Open a turn because a search hit is inside it. */
 export function openForSearch(chatID: string, turnID: string): void {
