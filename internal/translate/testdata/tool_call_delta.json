@@ -1,0 +1,216 @@
+{
+  "_comment": "The cross-language tool_call_update contract. Read by internal/translate/streaming_tools_roundtrip_test.go (Go: toolCallDelta, the BUILDER) and static-src/tool-call-delta.node.test.ts (TypeScript: foldToolCallDelta, the APPLIER). Each case says: given a call in state `before` and a fold that produced `after`, the server sends exactly `delta`, and applying `delta` to `before` must yield `after`. The two folds live in different languages, so a case added to one side's own table only would let them diverge on exactly that transition. Add a case HERE.",
+  "cases": [
+    {
+      "name": "status only, the commonest frame",
+      "before": { "id": "c1", "title": "Reading", "kind": "read", "status": "pending", "ts": 1 },
+      "delta": { "message_id": "m1", "tool_call_id": "c1", "status": "in_progress" },
+      "after": { "id": "c1", "title": "Reading", "kind": "read", "status": "in_progress", "ts": 1 }
+    },
+    {
+      "name": "output appends, and only the tail is on the wire",
+      "before": {
+        "id": "c1",
+        "title": "Running",
+        "kind": "execute",
+        "status": "in_progress",
+        "output": "line one\n",
+        "ts": 1
+      },
+      "delta": { "message_id": "m1", "tool_call_id": "c1", "output_delta": "line two\n" },
+      "after": {
+        "id": "c1",
+        "title": "Running",
+        "kind": "execute",
+        "status": "in_progress",
+        "output": "line one\nline two\n",
+        "ts": 1
+      }
+    },
+    {
+      "name": "output REPLACED at completion, the terminal's full stream winning over the ACP fragments",
+      "before": {
+        "id": "c1",
+        "title": "Running",
+        "kind": "execute",
+        "status": "in_progress",
+        "output": "partial frag",
+        "ts": 1
+      },
+      "delta": {
+        "message_id": "m1",
+        "tool_call_id": "c1",
+        "status": "completed",
+        "output_delta": "the whole stream\n",
+        "output_replace": true
+      },
+      "after": {
+        "id": "c1",
+        "title": "Running",
+        "kind": "execute",
+        "status": "completed",
+        "output": "the whole stream\n",
+        "ts": 1
+      }
+    },
+    {
+      "name": "diffs append, so an earlier write's hunks never go on the wire twice",
+      "before": {
+        "id": "c1",
+        "title": "Editing",
+        "kind": "edit",
+        "status": "in_progress",
+        "diffs": [{ "path": "a.go", "new_text": "one" }],
+        "ts": 1
+      },
+      "delta": {
+        "message_id": "m1",
+        "tool_call_id": "c1",
+        "diffs_appended": [{ "path": "b.go", "new_text": "two" }]
+      },
+      "after": {
+        "id": "c1",
+        "title": "Editing",
+        "kind": "edit",
+        "status": "in_progress",
+        "diffs": [
+          { "path": "a.go", "new_text": "one" },
+          { "path": "b.go", "new_text": "two" }
+        ],
+        "ts": 1
+      }
+    },
+    {
+      "name": "locations are replaced wholesale, not appended",
+      "before": {
+        "id": "c1",
+        "title": "Editing",
+        "kind": "edit",
+        "status": "in_progress",
+        "locations": [{ "path": "a.go", "line": 1 }],
+        "ts": 1
+      },
+      "delta": {
+        "message_id": "m1",
+        "tool_call_id": "c1",
+        "locations": [{ "path": "b.go", "line": 9 }]
+      },
+      "after": {
+        "id": "c1",
+        "title": "Editing",
+        "kind": "edit",
+        "status": "in_progress",
+        "locations": [{ "path": "b.go", "line": 9 }],
+        "ts": 1
+      }
+    },
+    {
+      "name": "output spans are sent entire, because their offsets are absolute",
+      "before": {
+        "id": "c1",
+        "title": "Running",
+        "kind": "execute",
+        "status": "in_progress",
+        "output": "red",
+        "ts": 1
+      },
+      "delta": {
+        "message_id": "m1",
+        "tool_call_id": "c1",
+        "output_delta": "der",
+        "output_spans": [{ "start": 0, "end": 6, "attrs": 1 }]
+      },
+      "after": {
+        "id": "c1",
+        "title": "Running",
+        "kind": "execute",
+        "status": "in_progress",
+        "output": "redder",
+        "output_spans": [{ "start": 0, "end": 6, "attrs": 1 }],
+        "ts": 1
+      }
+    },
+    {
+      "name": "a late terminal id attaches once",
+      "before": {
+        "id": "c1",
+        "title": "Running",
+        "kind": "execute",
+        "status": "in_progress",
+        "ts": 1
+      },
+      "delta": { "message_id": "m1", "tool_call_id": "c1", "terminal_id": "term-7" },
+      "after": {
+        "id": "c1",
+        "title": "Running",
+        "kind": "execute",
+        "status": "in_progress",
+        "terminal_id": "term-7",
+        "ts": 1
+      }
+    },
+    {
+      "name": "a checkpoint arrives whole with the completion",
+      "before": {
+        "id": "c1",
+        "title": "Editing",
+        "kind": "edit",
+        "status": "in_progress",
+        "ts": 1
+      },
+      "delta": {
+        "message_id": "m1",
+        "tool_call_id": "c1",
+        "status": "completed",
+        "duration_ms": 42,
+        "checkpoint": { "original": "/tmp/a.orig", "modified": "/tmp/a.new" }
+      },
+      "after": {
+        "id": "c1",
+        "title": "Editing",
+        "kind": "edit",
+        "status": "completed",
+        "checkpoint": { "original": "/tmp/a.orig", "modified": "/tmp/a.new" },
+        "duration_ms": 42,
+        "ts": 1
+      }
+    },
+    {
+      "name": "a title and kind refinement, which KAS sends on some updates and not others",
+      "before": { "id": "c1", "title": "Running: x", "kind": "other", "status": "pending", "ts": 1 },
+      "delta": {
+        "message_id": "m1",
+        "tool_call_id": "c1",
+        "title": "Reading file",
+        "kind": "read"
+      },
+      "after": {
+        "id": "c1",
+        "title": "Reading file",
+        "kind": "read",
+        "status": "pending",
+        "ts": 1
+      }
+    },
+    {
+      "name": "a frame that changed nothing carries nothing but the address",
+      "before": {
+        "id": "c1",
+        "title": "Reading",
+        "kind": "read",
+        "status": "completed",
+        "output": "same",
+        "ts": 1
+      },
+      "delta": { "message_id": "m1", "tool_call_id": "c1" },
+      "after": {
+        "id": "c1",
+        "title": "Reading",
+        "kind": "read",
+        "status": "completed",
+        "output": "same",
+        "ts": 1
+      }
+    }
+  ]
+}

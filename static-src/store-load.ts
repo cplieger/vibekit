@@ -210,6 +210,11 @@ export async function loadMessages(
     msgControllers.delete(chatID);
     return false;
   }
+  // Whether this load left the client's OLDEST message where it was, in which
+  // case the answer's `has_more` describes a different question than the one the
+  // session's flag answers. Only the no-cursor re-adopt below can cause it: a
+  // `before_id` page becomes the new oldest, so its `has_more` is exactly right.
+  let keepHasMore = false;
   if (beforeID !== undefined) {
     // Prepend older-page messages, deduped by id. The cursor is a message ID and
     // the server treats it as exclusive, so a boundary message cannot come back
@@ -245,18 +250,44 @@ export async function loadMessages(
     //    than the answer being applied.
     //
     // Both go at the END, which is where the server puts the finished turn too:
-    // persistTurn appends it after anything persisted during it. Everything else
-    // the page omits is the page's own business — older history it deliberately
-    // left out, which re-appending would reorder.
+    // persistTurn appends it after anything persisted during it.
     const fetchedIDs = new Set(fetched.map((m) => m.id));
     const liveID = liveTurnMessage(chatID);
-    const kept = session.messages.filter(
-      (m) => !fetchedIDs.has(m.id) && (m.id === liveID || !knownBefore.has(m.id)),
-    );
-    session.messages = kept.length === 0 ? fetched : [...fetched, ...kept];
+    // And the RESIDENT OLDER PAGES go back in front. The old rule said
+    // "everything else the page omits is the page's own business", which was true
+    // while `limit = 50` messages returned every real conversation whole — the
+    // page WAS the chat. Under the byte budget the newest page is frequently one
+    // message, so a no-cursor reload of a paged-up transcript threw the reader's
+    // history away and their scroll position with it: `fillViewport` pages it
+    // back over a fresh chain of round trips, but the position is gone. The
+    // reachable path is the gap heal, which calls this with no cursor.
+    //
+    // The page is a CONTIGUOUS newest window, so the held messages BEFORE its
+    // oldest one are pages this client already fetched and the answer says nothing
+    // about. Anchored on that oldest id rather than on a count or a timestamp: no
+    // overlap means the window moved out from under what is held, and then the
+    // page replaces, which is the honest answer.
+    const oldest = fetched[0]?.id;
+    const anchor = oldest === undefined ? -1 : session.messages.findIndex((m) => m.id === oldest);
+    const older =
+      anchor > 0 ? session.messages.slice(0, anchor).filter((m) => !fetchedIDs.has(m.id)) : [];
+    const kept = session.messages
+      .slice(anchor > 0 ? anchor : 0)
+      .filter((m) => !fetchedIDs.has(m.id) && (m.id === liveID || !knownBefore.has(m.id)));
+    session.messages = [...older, ...fetched, ...kept];
+    // `has_more` describes what is older than the OLDEST MESSAGE HELD, and
+    // re-adopting older pages does not move that — the client's oldest is
+    // unchanged, so its previous answer still stands. `d.has_more` describes what
+    // is older than the PAGE, which is only the same question when the page starts
+    // the window.
+    if (older.length > 0) {
+      keepHasMore = true;
+    }
   }
   session.message_count = d.chat.message_count;
-  session.has_more = d.has_more;
+  if (!keepHasMore) {
+    session.has_more = d.has_more;
+  }
   rebuildMsgIndex(chatID, session.messages);
   msgControllers.delete(chatID);
   // Park the server's draft on the session so the composer can adopt it. Only on
