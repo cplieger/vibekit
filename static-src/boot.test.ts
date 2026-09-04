@@ -47,6 +47,9 @@ const m = vi.hoisted(() => ({
   getSessions: vi.fn(),
   setStatus: vi.fn(),
   applyRoute: vi.fn(),
+  readBootSnapshot: vi.fn(),
+  paintBootSnapshot: vi.fn(),
+  clearBootSnapshot: vi.fn(),
 }));
 
 vi.mock("./store-load.js", () => ({ loadList: m.loadList }));
@@ -97,6 +100,12 @@ vi.mock("./subagent-view.js", () => ({ subagentTabProjectsChat: vi.fn() }));
 vi.mock("./view-swap.js", () => ({ markBootDone: m.markBootDone }));
 vi.mock("./share-target.js", () => ({ applyShareTarget: m.applyShareTarget }));
 vi.mock("./toast.js", () => ({ error: m.toastError }));
+vi.mock("./boot-snapshot.js", () => ({
+  readBootSnapshot: m.readBootSnapshot,
+  paintBootSnapshot: m.paintBootSnapshot,
+  clearBootSnapshot: m.clearBootSnapshot,
+  startBootSnapshot: vi.fn(),
+}));
 
 /** A fresh module per test: `postAuthInitDone` and the connected latch are module
  *  state, and `vi.resetModules()` does not re-evaluate a module in Browser Mode —
@@ -110,7 +119,8 @@ async function freshBoot(): Promise<typeof BootModule> {
 
 const SIGNED_IN: IdentityVerdict = { state: "signed_in", email: "someone@example.test" };
 
-/** The default happy answers: settings load, one chat, the tab set adopts. */
+/** The default happy answers: settings load, one chat, the tab set adopts, and no
+ *  snapshot — a first-ever boot on this screen. */
 function arrangeHappy(settings: EffectiveSettings = settingsPayload()): void {
   m.loadSettings.mockResolvedValue(settings);
   m.resolveIdentity.mockResolvedValue(SIGNED_IN);
@@ -120,6 +130,9 @@ function arrangeHappy(settings: EffectiveSettings = settingsPayload()): void {
   m.applyShareTarget.mockResolvedValue(undefined);
   m.createSession.mockResolvedValue(undefined);
   m.getSessions.mockReturnValue([{ id: "c1" }]);
+  m.readBootSnapshot.mockResolvedValue(null);
+  m.paintBootSnapshot.mockReturnValue(false);
+  m.clearBootSnapshot.mockResolvedValue(undefined);
 }
 
 beforeEach(() => {
@@ -128,9 +141,9 @@ beforeEach(() => {
 });
 
 describe("the boot issues its reads together", () => {
-  it("has all four in flight before any of them answers", async () => {
-    // Held open, all four, so the only way a call can be recorded below is if the
-    // boot issued it WITHOUT waiting for the others.
+  it("has all five in flight before any of them answers", async () => {
+    // Held open, all of them, so the only way a call can be recorded below is if
+    // the boot issued it WITHOUT waiting for the others.
     const settings = deferred<EffectiveSettings>();
     const identity = deferred<IdentityVerdict>();
     const chats = deferred<boolean>();
@@ -147,6 +160,7 @@ describe("the boot issues its reads together", () => {
     expect(m.resolveIdentity).toHaveBeenCalledTimes(1);
     expect(m.loadList).toHaveBeenCalledTimes(1);
     expect(m.refreshRetention).toHaveBeenCalledTimes(1);
+    expect(m.readBootSnapshot).toHaveBeenCalledTimes(1);
     // And nothing has been adopted, because nothing has answered.
     expect(m.renderIdentity).not.toHaveBeenCalled();
     expect(m.restoreAll).not.toHaveBeenCalled();
@@ -218,6 +232,29 @@ describe("the identity verdict gates one row", () => {
     );
   });
 
+  it("paints an EMPTY workspace's strip while whoami is still pending", async () => {
+    // The one boot that used to wait: a first run has no chats, and the starter
+    // chat needs the verdict — so the whole strip sat behind a read measured at a
+    // 5-second timeout.
+    const identity = deferred<IdentityVerdict>();
+    m.resolveIdentity.mockReturnValue(identity.promise);
+    m.getSessions.mockReturnValue([]);
+
+    const { startBoot } = await freshBoot();
+    const booted = startBoot({ applyRoute: m.applyRoute });
+
+    await vi.waitFor(() => {
+      expect(m.listTabs).toHaveBeenCalledTimes(1);
+      expect(m.activateRestoredTab).toHaveBeenCalledTimes(1);
+    });
+    expect(m.createSession).not.toHaveBeenCalled();
+
+    identity.resolve(SIGNED_IN);
+    await booted;
+    // And the chat still arrives, once the verdict says it may.
+    expect(m.createSession).toHaveBeenCalledTimes(1);
+  });
+
   it("raises the login modal on a sign-out and mints no chat behind it", async () => {
     m.resolveIdentity.mockResolvedValue({ state: "signed_out" });
     m.getSessions.mockReturnValue([]);
@@ -226,6 +263,8 @@ describe("the identity verdict gates one row", () => {
     await startBoot({ applyRoute: m.applyRoute });
 
     expect(m.showLoginModal).toHaveBeenCalledTimes(1);
+    // And the next boot must not paint this workspace at a login screen.
+    expect(m.clearBootSnapshot).toHaveBeenCalledTimes(1);
     // A starter chat is `onLoginSuccess`'s to create, once the identity is real.
     expect(m.createSession).not.toHaveBeenCalled();
     // No post-auth fetches on the login screen.
@@ -283,6 +322,71 @@ describe("the chat list is read once per cold boot", () => {
     onTransportStatus("connected");
 
     expect(m.loadList).toHaveBeenCalledTimes(2);
+  });
+});
+
+// A resume paints what this screen was showing before the network answers. The
+// ordering is the whole property: the paint happens ahead of the chat fold, and
+// the boot's own activation is not run a second time over it.
+describe("the local snapshot", () => {
+  it("paints the strip and activates it before the chat list answers", async () => {
+    const chats = deferred<boolean>();
+    m.loadList.mockReturnValue(chats.promise);
+    m.paintBootSnapshot.mockReturnValue(true);
+    const skeleton = document.createElement("div");
+    skeleton.id = "tab-strip-skeleton";
+    document.body.appendChild(skeleton);
+
+    const { startBoot } = await freshBoot();
+    const booted = startBoot({ applyRoute: m.applyRoute });
+
+    await vi.waitFor(() => {
+      expect(m.activateRestoredTab).toHaveBeenCalledTimes(1);
+    });
+    // The placeholder is gone because real rows replaced it, not because an answer
+    // landed — none has.
+    expect(document.getElementById("tab-strip-skeleton")).toBeNull();
+    expect(m.listTabs).not.toHaveBeenCalled();
+
+    chats.resolve(true);
+    await booted;
+  });
+
+  it("activates ONCE when it painted, so the transcript is fetched once", async () => {
+    m.paintBootSnapshot.mockReturnValue(true);
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    // The tab set still lands and still reconciles; what it must not do is re-run
+    // the activation, whose onShow is a second /api/chats/{id}.
+    expect(m.listTabs).toHaveBeenCalledTimes(1);
+    expect(m.activateRestoredTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("activates after the tab set when there was nothing to resume", async () => {
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.paintBootSnapshot).toHaveBeenCalledWith(null);
+    expect(m.activateRestoredTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("mints no starter chat over rows a snapshot painted", async () => {
+    // The chat list could not be read, but the screen is not blank: the snapshot's
+    // rows are in the store, so there is nothing for a fallback chat to fix.
+    m.loadList.mockResolvedValue(false);
+    m.paintBootSnapshot.mockReturnValue(true);
+    m.getSessions.mockReturnValue([{ id: "c1" }]);
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.toastError).toHaveBeenCalledWith(
+      "Couldn't load your chats.",
+      expect.objectContaining({ label: "Reload" }),
+    );
+    expect(m.createSession).not.toHaveBeenCalled();
   });
 });
 

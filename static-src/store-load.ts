@@ -130,9 +130,9 @@ export async function loadList(): Promise<boolean> {
       // Every CLIENT-ONLY projection carries over, not just steers. This list is
       // the header endpoint's blind spot: the server sends none of these fields,
       // so rebuilding a Session from a header alone silently resets them — and
-      // `loadList` runs on EVERY `connected`, reconnects included, so an ordinary
-      // network recovery repainted a failed tab as idle and dropped the agent's
-      // declared status with it. The reconcile that IS entitled to drop them is
+      // `loadList` runs on every RE-connect, so an ordinary network recovery
+      // repainted a failed tab as idle and dropped the agent's declared status
+      // with it. The reconcile that IS entitled to drop them is
       // `transport:gap`, which clears them explicitly and runs first, so there is
       // nothing left here to preserve after a real replay gap.
       ...(existing?.turn_failed === true && { turn_failed: true as const }),

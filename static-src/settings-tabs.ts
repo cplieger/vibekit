@@ -161,10 +161,12 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
     if (title !== null) {
       title.textContent = TAB_LABELS[tab];
     }
-    // Lazy panel data, on a tab's first ACTIVATION. NOT on the first call, which
-    // is `subscribe` painting the default panel at boot with Settings off screen —
-    // a loader there is what put General's three `kiro-cli settings` spawns on the
-    // boot path. Every real door lands here again with the panel shown.
+    // Lazy panel data, on a tab SWITCH. NOT on the first call, which is
+    // `subscribe` painting the default panel at boot with Settings off screen — a
+    // loader there is what put General's three `kiro-cli settings` spawns on the
+    // boot path. Not the only door either, and not the DEFAULT tab's: `activeTab`
+    // is deduped, so re-selecting "general" notifies nobody, and what loads it is
+    // the tab factory's `onShow` calling `loadSettingsTabData` (tab-materialize.ts).
     if (painted) {
       loadSettingsTabData(tab);
     }
