@@ -14,6 +14,8 @@
 // composition root — importing it would close a cycle.
 // ---------------------------------------------------------------------------
 
+import { subscribeByName } from "./actions/index.js";
+import { logout } from "./actions/settings.js";
 import { loadList } from "./store-load.js";
 import {
   getActive,
@@ -175,14 +177,34 @@ async function restoreWorkspace(
   snapshotRead: Promise<BootSnapshot | null>,
 ): Promise<boolean> {
   // THE SNAPSHOT PAINT, before any answer lands: an IndexedDB read is a millisecond
-  // against a request's hundred, so awaiting it costs the requests in flight nothing
-  // and puts a populated strip on screen in their place. Superseded below.
-  const resumed = paintSnapshot(await snapshotRead);
-  if (resumed) {
-    clearTabStripSkeleton();
-    // The activation the tab set would otherwise run, brought forward: this is what
-    // paints the transcript. Its window is stale, so `loadMessages` still refetches.
-    activateRestoredTab();
+  // against a request's hundred, so it costs the in-flight requests nothing.
+  //
+  // RACED against the chat list because the paint REPLACES the chat store, so it may
+  // only run BEFORE the answer that supersedes it. Store emptiness is not the test:
+  // an empty list is an ANSWER, and painting over one resurrects every deleted chat.
+  // Neither arm has settled yet (same turn as the reads), so arrival decides.
+  const hint = await Promise.race([
+    snapshotRead,
+    chatsRead.then(
+      () => null,
+      () => null,
+    ),
+  ]);
+
+  // BEST-EFFORT, like `adoptSettings`'s restore: everything below is the
+  // authoritative restore, and a hint must not cost the reader that. `resumed`
+  // latches after the activation, so a half-painted resume falls through to it.
+  let resumed = false;
+  try {
+    if (paintSnapshot(hint)) {
+      clearTabStripSkeleton();
+      // The activation the tab set would otherwise run, brought forward: this paints
+      // the transcript. Its window is stale, so `loadMessages` still refetches.
+      activateRestoredTab();
+      resumed = true;
+    }
+  } catch {
+    /* best-effort */
   }
 
   // A rejected read is the same answer as `false` — the chats are not in the
@@ -292,6 +314,15 @@ export function initPostAuth(): void {
   // than in the boot body for the same reason everything else here is: there is
   // nothing worth remembering about a login screen.
   startBootSnapshot();
+  // And its other end, here because the capture's lifetime is owned here: the logout
+  // button leaves the page running, so without this the debounce keeps writing a
+  // signed-out user's workspace to disk. Watches the ACTION, so every logout door is
+  // covered, and `logout.name` so a rename cannot silently unwire it.
+  subscribeByName(logout.name, (inst) => {
+    if (inst.status === "success") {
+      void clearBootSnapshot();
+    }
+  });
 }
 
 function applyInitialRoute(): void {

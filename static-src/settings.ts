@@ -408,11 +408,14 @@ export function initUI(): void {
   });
 }
 
-/** Post-auth UI init: fetches that must not fire on the login screen (B2).
- *  loadAbout hits /api/version; initGitPanel starts the git-badge poll
- *  (/api/git/status-all + /api/forges every 15s). Called once by app.ts
- *  after whoami succeeds — at boot when already authenticated, or after
- *  the first successful login. */
+/** Post-auth UI init: the reads that must not fire on a login screen.
+ *
+ *  `loadAbout` reads the shared version pair (versions.ts owns GET /api/version).
+ *  `initGitPanel` wires the git view and its sidebar badge, whose subscription starts
+ *  git-status-store.ts's ONE status-all scan and forge-store.ts's 15s forges poll.
+ *
+ *  Called once, through `boot.ts`'s `initPostAuth` — on the `signed_in` AND
+ *  `unavailable` verdicts at boot, and from `onLoginSuccess` after a first login. */
 export function initPostAuthUI(): void {
   void loadAbout();
   initGitPanel();

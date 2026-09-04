@@ -237,6 +237,79 @@ describe("the capture", () => {
     expect(await readBootSnapshot()).toBeNull();
   });
 
+  it("does not resurrect the record when the page hides after a sign-out", async () => {
+    m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
+    setSessions([session("c1", "One")]);
+    startBootSnapshot();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await clearBootSnapshot();
+    // The last event a backgrounded PWA gets. It flushes the projection, which is
+    // exactly what must NOT happen once the user has signed out: the rows are still
+    // in the store, so a live listener would write the record straight back.
+    dispatchEvent(new Event("pagehide"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(await readBootSnapshot()).toBeNull();
+  });
+
+  it("cuts a turn's OLDEST rows rather than its trigger when one turn is over budget", () => {
+    m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
+    setSessions([session("c1", "One")]);
+    setActive("c1");
+    // One user prompt and 60 tool rows: past the 40-message cap inside a single
+    // turn, which is the case the cap exists for.
+    upsertMessage("c1", { id: "u1", role: "user", ts: 10, content: "ask" });
+    for (let i = 0; i < 60; i++) {
+      upsertMessage("c1", { id: `t${String(i)}`, role: "assistant", ts: 11 + i, content: "step" });
+    }
+
+    const ids = captureBootSnapshot().messages.map((msg) => msg.id);
+
+    expect(ids).toHaveLength(40);
+    // The trigger survives: a body with no trigger renders as a card with no
+    // header, which is what the turn bound exists to prevent.
+    expect(ids[0]).toBe("u1");
+    // And what went is the OLD end of the body.
+    expect(ids[1]).toBe("t21");
+    expect(ids.at(-1)).toBe("t59");
+  });
+
+  it("drops WHOLE turns when the newest three do not fit", () => {
+    m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
+    setSessions([session("c1", "One")]);
+    setActive("c1");
+    // 30 + 15 + 10 = 55 messages against a 40-message cap. The two newest turns fit
+    // (25); adding the oldest would not, so all 30 of it go. The sizes are uneven on
+    // purpose: with three equal turns a tail slice of the flattened list happens to
+    // land on a turn boundary and both rules agree.
+    for (const [n, size] of [
+      [1, 30],
+      [2, 15],
+      [3, 10],
+    ] as const) {
+      upsertMessage("c1", { id: `u${String(n)}`, role: "user", ts: n * 1000, content: "ask" });
+      for (let i = 0; i < size - 1; i++) {
+        upsertMessage("c1", {
+          id: `a${String(n)}-${String(i)}`,
+          role: "assistant",
+          ts: n * 1000 + 1 + i,
+          content: "step",
+        });
+      }
+    }
+
+    const ids = captureBootSnapshot().messages.map((msg) => msg.id);
+
+    // Two whole turns, not a 40-message tail: a tail slice would have kept 40, the
+    // oldest 15 of them a headerless fragment of turn 1.
+    expect(ids).toHaveLength(25);
+    expect(ids[0]).toBe("u2");
+    expect(ids).not.toContain("u1");
+    // Turn 1 went WHOLE — its newest body row is as gone as its trigger.
+    expect(ids).not.toContain("a1-28");
+  });
+
   it("carries only the chats a tab names", () => {
     m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
     // c2 is a closed chat whose row the store still holds. It is not what this

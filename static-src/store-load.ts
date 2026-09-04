@@ -151,12 +151,16 @@ export async function loadList(): Promise<boolean> {
     };
     next.push(session);
   }
-  // Preserve sessions added by SSE (upsertHeader) during the await.
+  // Preserve sessions added by SSE (upsertHeader) during the await — but NOT the
+  // boot snapshot's provisional rows, which satisfy the same "unknown before,
+  // unnamed by the server" test and mean the opposite thing: a hint for a chat the
+  // server no longer holds, which would otherwise outlive the answer that omitted
+  // it. See types.ts `Session.provisional`.
   const currentSessions = getSessions();
   const currentIndex = new Map(currentSessions.map((s) => [s.id, s]));
   const nextIds = new Set(next.map((s) => s.id));
   for (const [id, s] of currentIndex) {
-    if (!knownBefore.has(id) && !nextIds.has(id)) {
+    if (!knownBefore.has(id) && !nextIds.has(id) && s.provisional !== true) {
       next.push(s);
     }
   }
