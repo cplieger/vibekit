@@ -74,6 +74,11 @@ vi.mock("./decision-dock.js", () => ({
 
 vi.mock("./run-store.js", () => ({
   invalidateRun: vi.fn(),
+  // The affordance fetch, which showRun triggers alongside the state one. Inert
+  // here: this suite pins the sub-tab's open/close rules, and `runControls`
+  // answering undefined renders no control row at all.
+  invalidateRunControls: vi.fn(),
+  runControls: vi.fn(() => undefined),
   runState: vi.fn(() => undefined),
   runChatID: vi.fn((id: string) => m.launchedBy.get(id) ?? ""),
   // The rest are the run CARD's, which the tab renders now instead of hand-rolling

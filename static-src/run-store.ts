@@ -29,7 +29,8 @@
 
 import { signal, type Signal } from "@cplieger/reactive";
 import { apiGet, apiGetTyped } from "./api-client.js";
-import { decodeLiveRunsResponse } from "./wire/decoders.gen.js";
+import { decodeLiveRunsResponse, decodeRunControlsResponse } from "./wire/decoders.gen.js";
+import type { RunControlsResponse } from "./wire/types.gen.js";
 
 /** One node of KAS's execution tree, from `state.root`.
  *
@@ -339,7 +340,78 @@ export function forgetRun(workflowID: string): void {
   cells.delete(workflowID);
   stale.delete(workflowID);
   plans.delete(workflowID);
+  controlCells.delete(workflowID);
+  controlsInFlight.delete(workflowID);
   launchedBy.delete(workflowID);
+}
+
+// ---------------------------------------------------------------------------
+// What may be done to a run: `GET /api/runs/{id}/controls`.
+//
+// A SECOND cell rather than a field on the state above, because it is a second
+// fetch on its own clock: the state is re-read on every gap and shape change,
+// while the answer here turns over only when the run reaches a terminal status.
+// Signal-backed for the state cell's reason — the run page repaints from it, and
+// the answer arrives after the first paint.
+//
+// It is the server's answer verbatim, and nothing here re-derives any part of
+// it. The rule needs the run's status, its parentage and whether anything hosts
+// it, and this process can see only the first; the previous client-side copy read
+// parentage off an event-fed map that is empty after a reload, so a chat-parented
+// run was classified parentless and drew a row it should not have had.
+// ---------------------------------------------------------------------------
+
+const controlCells = new Map<string, Signal<RunControlsResponse | undefined>>();
+const controlsInFlight = new Set<string>();
+
+function controlCell(workflowID: string): Signal<RunControlsResponse | undefined> {
+  let c = controlCells.get(workflowID);
+  if (c === undefined) {
+    c = signal<RunControlsResponse | undefined>(undefined);
+    controlCells.set(workflowID, c);
+  }
+  return c;
+}
+
+/** Subscribe to what a run offers. `undefined` until the first fetch resolves,
+ *  which renders no row rather than guessing one — the same rule the old table
+ *  applied to an unknown status, now covering the moment before the answer
+ *  lands. */
+export function runControls(workflowID: string): RunControlsResponse | undefined {
+  return controlCell(workflowID).value;
+}
+
+/** Re-read what a run offers.
+ *
+ *  Called when a page points at a run and again on that run's `run_finished` —
+ *  one request per tab open plus one per ending, never one per repaint. The
+ *  in-flight guard has no trailing refetch, unlike the state cell's: nothing
+ *  bursts these, so a second call while one is open would be answering the same
+ *  question twice.
+ *
+ *  A failed fetch leaves the previous answer standing. Degrading to the last
+ *  known row beats blanking the controls under a reader who is about to use
+ *  them. */
+export function invalidateRunControls(workflowID: string): void {
+  if (workflowID === "" || controlsInFlight.has(workflowID)) {
+    return;
+  }
+  controlsInFlight.add(workflowID);
+  void fetchRunControls(workflowID);
+}
+
+async function fetchRunControls(workflowID: string): Promise<void> {
+  try {
+    const d = await apiGetTyped(
+      `/api/runs/${encodeURIComponent(workflowID)}/controls`,
+      decodeRunControlsResponse,
+    );
+    if (d !== null) {
+      controlCell(workflowID).value = d;
+    }
+  } finally {
+    controlsInFlight.delete(workflowID);
+  }
 }
 
 /** A run's node plan, read WITHOUT subscribing.

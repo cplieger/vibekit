@@ -22,6 +22,7 @@ type runRoutes struct{ runs *Runs }
 // register mounts every run and schedule endpoint.
 func (rr *runRoutes) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/runs/{id}", rr.handleRun)
+	mux.HandleFunc("GET /api/runs/{id}/controls", rr.handleControls)
 	mux.HandleFunc("GET /api/runs/live", rr.handleLiveRuns)
 	mux.HandleFunc("POST /api/runs", rr.handleLaunch)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", rr.handleCancel)

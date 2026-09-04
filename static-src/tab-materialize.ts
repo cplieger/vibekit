@@ -26,13 +26,13 @@
 //      cannot see (KAS's session-row title, a `run_started` payload's name, a
 //      recipe's name). The factory falls back to a placeholder; a caller holding
 //      a better name overrides the one field.
-//   2. A run's PARENTLESSNESS. `showRun`'s third argument gates the retry
-//      control, and it asks whether the RUN has a parent agent session — not
-//      whether this tab nests under an open one. `TabSubject.Parent` answers the
-//      second question only: a chat-parented run reviewed while its chat's tab is
-//      closed has an empty Parent and is not parentless. So the injected opener
-//      takes `(workflowID, owns)` and the wiring resolves parentlessness from the
-//      run's own record.
+//      A run's PARENTLESSNESS used to be the second item here: `showRun` took a
+//      flag for it, and the wiring answered from the run store's record of which
+//      chat launched the run. That record is written only by SSE frames, so a
+//      client that had reloaded answered "parentless" for every run and the page
+//      drew the wrong control row. The SERVER answers it now, on the run's own
+//      affordance endpoint, so `showRun` takes the id alone and nothing here has
+//      to reason about it.
 //
 // INJECTION, not import, for chat / editor / run. Those three behaviours live in
 // modules that will themselves call this factory, so a static import of chat.ts

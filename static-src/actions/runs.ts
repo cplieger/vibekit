@@ -7,6 +7,11 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { retryOutcomeNotice } from "../run-controls.js";
+import { invalidateRun, invalidateRunControls } from "../run-store.js";
+import { error as toastError, success as toastSuccess } from "../toast.js";
+import { decodeRunRetriedResponse } from "../wire/decoders.gen.js";
+import type { RunRetriedResponse } from "../wire/types.gen.js";
 import type {
   RecipesResponse,
   RunAnswerRequest,
@@ -93,11 +98,48 @@ export const pauseRun = runControl("pause", "Couldn't pause the run");
 /** Reset a failed run's failed and aborted steps (plus their ancestors) and
  *  re-drive it, keeping every completed step.
  *
- *  Unlike the other controls this one needs no live bridge: the server RE-HOSTS
- *  the run, because retry is legal exactly when the run's own bridge has already
- *  been closed. Offered only on a parentless run — an agent-parented run's
- *  recovery is the agent's. */
-export const retryRun = runControl("retry", "Couldn't retry the run");
+ *  NOT a `runControl`, and the difference is the whole point: its reply carries
+ *  the OUTCOME — which nodes were reset — where the other three genuinely have
+ *  nothing to report. It used to be built by that factory and answered
+ *  `{ok:true}`, so a retry that reset five nodes and one that reset none were the
+ *  same result here, with no notification and no refetch on either. "Nothing
+ *  happened" was what a no-op retry was designed to look like.
+ *
+ *  Three things it now does that the factory cannot:
+ *
+ *   - DECODES the reply at the boundary, so a malformed outcome fails here rather
+ *     than reaching the notification as `undefined`.
+ *   - REPORTS what happened, through the channel the outcome deserves: a reset of
+ *     zero nodes is a no-op the reader must be told about, not a success.
+ *   - REFETCHES the run and its affordance. Repainting was left to a
+ *     `run_progress` frame, which a no-op retry never produces — so on exactly
+ *     the outcome the reader most needs to see, the page never moved.
+ *
+ *  Its refusals reach the reader as the SERVER's sentence, `answerRunInput`'s
+ *  rule: the server classifies a KAS refusal as a 409 naming the reason, and a
+ *  static prefix in front of that contradicts it. */
+export const retryRun = apiAction<string, RunRetriedResponse>({
+  name: "runs.retry",
+  request: (workflowID) => ({
+    method: "POST",
+    path: `/api/runs/${encodeURIComponent(workflowID)}/retry`,
+  }),
+  decode: (data) => decodeRunRetriedResponse(data),
+  error: (_args, err) => serverSentence(err) ?? "Couldn't retry the run",
+  onSuccess: (res, workflowID) => {
+    const notice = retryOutcomeNotice(res.retried_node_ids.length);
+    if (notice.level === "success") {
+      toastSuccess(notice.text);
+    } else {
+      toastError(notice.text);
+    }
+    // BOTH, and even on the zero-node outcome: the run's status can have moved
+    // (KAS reports it in the same reply) and the verbs it offers move with it, so
+    // a row left showing Retry after one would invite the same dead click again.
+    invalidateRun(workflowID);
+    invalidateRunControls(workflowID);
+  },
+});
 
 /** Re-drive a paused run. Works even when the launching process is gone — KAS
  *  reloads the run from disk — which is why the button is offered on any paused

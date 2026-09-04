@@ -10,57 +10,31 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// TestRunVerbGates pins which statuses each run-control verb is legal from.
-//
-// The table is not arbitrary: it mirrors what KAS itself accepts, read off the
-// handler bodies. `_kiro/workflow/retry` throws for a running run and throws
-// again for any non-terminal status, naming completed/failed/aborted. `pause`
-// sets a flag on a live run and means nothing once one has stopped. `resume`
-// re-drives a paused one.
-//
-// Cancel is deliberately UNRESTRICTED, and that asymmetry is the part worth
-// pinning. Cancel doubles as the tab-close gesture, so it must never be the verb
-// that fails; KAS is idempotent on an already-terminal run, answering ok with the
-// previous status. Gating it would turn closing a tab whose run just finished
-// into an error toast.
-func TestRunVerbGates(t *testing.T) {
-	// KAS's WorkflowStatusSchema, exhaustively.
-	all := []string{"running", "paused", "completed", "failed", "aborted"}
+// WHICH statuses a verb is legal from is no longer pinned here: run_affordance.go
+// holds the one table and run_affordance_test.go covers it over all three inputs.
+// A `from` list on each runVerb was half of the twinned matrix whose two tests
+// proved the copies agreed while neither could express the third input.
 
-	cases := map[string]struct {
-		verb  runVerb
-		legal []string
-	}{
-		"pause is live-only":     {runVerbPause, []string{"running"}},
-		"resume is paused-only":  {runVerbResume, []string{"paused"}},
-		"cancel is unrestricted": {runVerbCancel, all},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			for _, status := range all {
-				want := slices.Contains(tc.legal, status)
-				// An empty `from` means unrestricted, which the handler treats as
-				// "skip the pre-check entirely".
-				got := len(tc.verb.from) == 0 || slices.Contains(tc.verb.from, status)
-				if got != want {
-					t.Errorf("%s from %q: got legal=%v, want %v", tc.verb.name, status, got, want)
-				}
-			}
-		})
-	}
-}
-
-// TestRunVerbsAreWired guards the two halves that can silently drift apart: a
-// verb with no issuer would 200 without doing anything, and a verb with no name
-// would log and error as the empty string.
+// TestRunVerbsAreWired guards the halves that can silently drift apart: a verb
+// with no issuer would 200 without doing anything, a verb with no name would log
+// and error as the empty string, and cancel losing its unrestricted status would
+// turn closing a tab whose run just finished into an error toast.
 func TestRunVerbsAreWired(t *testing.T) {
-	for _, verb := range []runVerb{runVerbCancel, runVerbPause, runVerbResume} {
+	for _, verb := range []runVerb{runVerbCancel, runVerbPause, runVerbResume, runVerbDelete} {
 		if verb.name == "" {
 			t.Error("a run verb has no name; its 409 and its log line would both be blank")
 		}
 		if verb.issue == nil {
 			t.Errorf("run verb %q has no issuer: the route would answer ok without calling KAS", verb.name)
+		}
+	}
+	// Cancel and delete must never consult the affordance. Cancel is the
+	// tab-close gesture and must never be the verb that fails (KAS is idempotent
+	// on an already-terminal run); delete is the only way a row leaves History,
+	// so it has to work from any status.
+	for _, verb := range []runVerb{runVerbCancel, runVerbDelete} {
+		if verb.gated {
+			t.Errorf("run verb %q is gated; it must reach a run from any status", verb.name)
 		}
 	}
 }

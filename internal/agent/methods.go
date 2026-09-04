@@ -192,9 +192,21 @@ const (
 
 	// methodKiroWorkflowRetry resets a finished run's FAILED and aborted nodes
 	// plus their ancestors, leaving completed work alone. Legal only from
-	// `failed`/`aborted`, and it rehydrates the run from disk, which is what
-	// lets vibekit re-host a run whose bridge was closed at terminal status.
+	// `failed`/`aborted`.
+	//
+	// It does NOT rehydrate the run: it requires the run in the calling process's
+	// live registry and refuses otherwise ("not registered. Load or create it
+	// first."), so a re-hosting caller must `load` first. The reply is an outcome
+	// report — `{workflowId, status, retriedNodeIds[]}` — and resetting ZERO nodes
+	// is a first-class answer, not an error, which is why the reply is the only
+	// thing that can tell a real retry from a no-op.
 	methodKiroWorkflowRetry = "_kiro/workflow/retry"
+
+	// methodKiroWorkflowLoad registers an existing run from disk into the calling
+	// process, taking `{workflowId, workspacePaths[]}`. The prerequisite for every
+	// verb that reaches a run this process has never seen; kiro-cli's own client
+	// issues it before touching a run it does not hold.
+	methodKiroWorkflowLoad = "_kiro/workflow/load"
 
 	// methodKiroWorkflowUpdate mutates a live run. vibekit narrows it to
 	// `set_step_status` (mark an in-flight step completed/failed so the run

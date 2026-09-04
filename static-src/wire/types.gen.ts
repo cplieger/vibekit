@@ -1294,6 +1294,44 @@ export interface RunAnswerRequest {
 }
 
 /**
+ * RunControlsResponse is GET /api/runs/{id}/controls's reply: what may be done
+ * to one run, and why not for the rest.
+ * //
+ * Its own route rather than a field spliced into GET /api/runs/{id}, which is a
+ * verbatim KAS passthrough. The client used to decide this itself from a
+ * status table plus a cache of which chat launched the run, and that cache is
+ * fed only by SSE frames — so any reloaded client read a chat-parented run as
+ * parentless and drew the wrong row. Only the server sees all three inputs.
+ * Field order is fieldalignment's, not the JSON's: the slice goes LAST because its
+ * len/cap words end the GC scan region, where a trailing string would extend it
+ * (Recipe.Plan carries the same note).
+ */
+export interface RunControlsResponse {
+  /**
+ * Refused maps a verb this run does not offer to the one sentence a reader
+ * needs. It carries only a verb whose absence would otherwise be
+ * unexplained: a status that plainly excludes a verb already says so through
+ * the state word beside the row.
+ */
+  refused?: Record<string, string>;
+  /**
+ * ParentChatID names the chat whose agent launched the run, empty for a
+ * parentless one. Carried because the run page states where a step's live
+ * transcript went, and that answer is this same fact — read from the chat
+ * store here rather than from an event-fed client cache that is empty after
+ * a reload.
+ */
+  parent_chat_id: string;
+  /**
+ * Verbs are the offered controls, in row order. Spelled as strings rather
+ * than a registered enum because the client's own label table is the
+ * narrowing point: a verb it has no label for is dropped, so a future verb
+ * added here degrades to a missing button rather than a blank one.
+ */
+  verbs: string[];
+}
+
+/**
  * RunFinishedPayload is the payload for type="run_finished": terminal. Status is
  * KAS's own run-level status (completed / failed / aborted / paused — a policy
  * pause at `onMaxIterations` reports through here too, since KAS emits
@@ -1477,6 +1515,21 @@ export interface RunProgressPayload {
  */
   failure_reason?: string;
   kind: RunProgressKind;
+}
+
+/**
+ * RunRetriedResponse is POST /api/runs/{id}/retry's reply: KAS's own outcome
+ * report, forwarded rather than collapsed to `{"ok":true}`.
+ * //
+ * RetriedNodeIDs is the field the whole route exists to carry. A retry that
+ * resets five nodes and one that resets none are the same HTTP result
+ * otherwise, and the second is what "I pressed Retry and nothing happened"
+ * looks like from the outside.
+ */
+export interface RunRetriedResponse {
+  /** Status is the run's status after the reset, as KAS reports it. */
+  status: string;
+  retried_node_ids: string[];
 }
 
 /**
