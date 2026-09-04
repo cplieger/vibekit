@@ -135,6 +135,45 @@ describe("settings-tabs forceSettingsTab dedup", () => {
     expect(swapViewsSpy).not.toHaveBeenCalled();
   });
 
+  it("fires no panel loader on the subscribe-time paint, and each one on its first activation", async () => {
+    const { initSettingsTabs, forceSettingsTab } = (await import(
+      /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
+    )) as typeof ModSettingsTabs;
+    const general = vi.fn();
+    const tools = vi.fn();
+
+    // initUI runs at BOOT, with Settings not on screen. The immediate subscribe
+    // fire paints the default panel — a DOM sync, not an activation — and firing a
+    // loader there is what put General's three `kiro-cli settings` SPAWNS on the
+    // boot path, concurrent with the boot's own reads.
+    initSettingsTabs({ general, tools });
+    expect(general).not.toHaveBeenCalled();
+    expect(tools).not.toHaveBeenCalled();
+
+    // A real activation loads, once.
+    forceSettingsTab("tools");
+    expect(tools).toHaveBeenCalledTimes(1);
+    forceSettingsTab("general");
+    expect(general).toHaveBeenCalledTimes(1);
+    forceSettingsTab("tools");
+    forceSettingsTab("general");
+    expect(tools).toHaveBeenCalledTimes(1);
+    expect(general).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads the General panel through the door the tab factory uses", async () => {
+    const { initSettingsTabs, loadSettingsTabData } = (await import(
+      /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
+    )) as typeof ModSettingsTabs;
+    const general = vi.fn();
+    initSettingsTabs({ general });
+
+    // What a materialized settings tab's `onShow` calls: the gear, a path link and
+    // a restored tab all arrive here, with the panel actually shown.
+    loadSettingsTabData("general");
+    expect(general).toHaveBeenCalledTimes(1);
+  });
+
   it("two consecutive forceSettingsTab(tools) swap once", async () => {
     const { initSettingsTabs, forceSettingsTab } = (await import(
       /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`

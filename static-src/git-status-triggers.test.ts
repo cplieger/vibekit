@@ -45,10 +45,17 @@ const store = await import("./git-status-store.js");
 
 describe("the git-status store's triggers", () => {
   // ONE test, because `started` is module state: the store can only be observed
-  // STARTING once per module instance, and the two absence claims are meaningful
-  // only after the call that could have made either false.
-  it("reads once on start and schedules nothing", async () => {
-    store.initGitStatusStore();
+  // STARTING once per module instance, and the absence claims are meaningful only
+  // after the call that could have made each of them false.
+  it("reads nothing until a surface subscribes, then reads once and schedules nothing", async () => {
+    // IMPORTING IS NOT A REASON TO SCAN. The read used to ride
+    // `initGitStatusStore()`, which `initFileBrowser` called at boot, so one scan
+    // of every worktree in the workspace fired during the boot chain for a file
+    // browser nobody had opened.
+    await Promise.resolve();
+    expect(observed.reads).toBe(0);
+
+    const off = store.onGitStatusChange(() => undefined);
     await Promise.resolve();
     expect(observed.reads).toBe(1);
 
@@ -58,11 +65,16 @@ describe("the git-status store's triggers", () => {
     // guessing at now arrives per completed tool call through markGitDirty.
     expect(observed.sseSubs).toBe(0);
 
-    // Three surfaces start it (the badge, the file browser, the docs page).
-    store.initGitStatusStore();
-    store.initGitStatusStore();
+    // Three surfaces subscribe (the badge, the file browser, the docs page) and
+    // the read belongs to the store, so it happens once for all of them.
+    const off2 = store.onGitStatusChange(() => undefined);
+    const off3 = store.onGitStatusChange(() => undefined);
     await Promise.resolve();
     expect(observed.reads).toBe(1);
+
+    off();
+    off2();
+    off3();
   });
 
   it("reads when the fact arrives, which is the only automatic trigger left", async () => {

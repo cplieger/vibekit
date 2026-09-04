@@ -49,14 +49,14 @@ vi.mock("./bus.js", () => ({
   onBus: undefined,
   onSSE: vi.fn(() => () => undefined),
 }));
-// Only the POLL is replaced. initGitStatusStore starts one that reaches
-// /api/git/status-all through the actions transport — which the api-client mock
-// above does not cover — so the first request outlived the window teardown and
+// Only the SUBSCRIPTION is replaced, because subscribing is what makes the store
+// read /api/git/status-all through the actions transport — which the api-client
+// mock above does not cover — so the request outlived the window teardown and
 // printed an unhandled AbortError. The store itself stays real: these tests seed
 // it with _setReposForTest and assert on the letter statusFor derives.
 vi.mock("./git-status-store.js", async (importOriginal) => ({
   ...(await importOriginal<GitStatusStoreModule>()),
-  initGitStatusStore: vi.fn(),
+  onGitStatusChange: vi.fn(() => () => undefined),
 }));
 vi.mock("./actions/hooks.js", () => ({ setHookEnabled: { dispatch: vi.fn() } }));
 

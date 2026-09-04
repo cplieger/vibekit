@@ -1,25 +1,19 @@
 // ---------------------------------------------------------------------------
-// The boot sequence: settings, identity, chats, tabs, route, splash.
+// The boot: settings, identity, chats and retention are read in the FIRST FRAME,
+// and each answer is adopted in its own region as it lands. Nothing here is a
+// chain, because none of those four reads consumes another's answer.
 //
-// Moved out of `app.ts` unchanged. The composition root is wiring — it
-// constructs modules and injects what they may not import — and a five-`await`
-// serial chain that decides whether the app is usable at all is not wiring; it
-// is a job with its own order, its own failure branches and its own reasons for
-// each. Keeping it in `app.ts` meant a 1,026-line file doing three of them.
+// TWO ORDERINGS ARE REAL. The tab set is adopted after the chat fold: a chat
+// tab's row is named from the chat store (tab-materialize.ts `chatName`), and
+// activating one whose chat the store lacks paints an error row and fires a
+// second /api/chats (chat.ts `activateChatView`). And retention is awaited before
+// the tab set, because closing a tab has to know whether the record is kept.
 //
-// What lands here is exactly what was there, in the same order: `startBoot` is
-// the old `checkAuthAndStart`, plus `initPostAuth`, `applyInitialRoute` and
-// `dismissLoadingScreen`. No await was reordered and no branch was rewritten —
-// this move is the precondition for that work, not the work.
-//
-// `applyRoute` is INJECTED rather than imported. It is a switch over every route
-// kind that reaches most of the app's surfaces, so it stays in the composition
-// root; importing it here would close the cycle `app.ts` → `boot.ts` →
-// `app.ts`. Same shape as the other seams the root wires (`initToolCallbacks`,
-// `initAttachmentPillCallbacks`).
+// `applyRoute` is INJECTED, not imported: it reaches most of the app's surfaces,
+// so it stays in the composition root, and importing it would close the cycle
+// app.ts → boot.ts → app.ts.
 // ---------------------------------------------------------------------------
 
-import { $ } from "./dom.js";
 import { loadList } from "./store-load.js";
 import {
   getActive,
@@ -32,11 +26,13 @@ import {
   adoptThemeFromSettings,
   initPostAuthUI,
   loadSettings,
+  renderIdentity,
   restoreAll,
-  setUserEmail,
 } from "./settings.js";
+import type { EffectiveSettings } from "./persist.js";
 import { restoreLastEffort, restoreLastModel } from "./session-context.js";
-import { resolveIdentity, emailOf } from "./identity.js";
+import { resolveIdentity } from "./identity.js";
+import type { IdentityVerdict } from "./identity.js";
 import { fetchCatalog } from "./session-catalog.js";
 import * as transport from "./transport.js";
 import { showLoginModal } from "./modals.js";
@@ -66,46 +62,64 @@ export interface BootDeps {
 
 let deps: BootDeps | null = null;
 
-export function dismissLoadingScreen(): void {
-  document.getElementById("app-loading")?.remove();
-  $.appRoot.classList.remove("app-hidden");
-}
-
 export async function startBoot(d: BootDeps): Promise<void> {
   deps = d;
-  // Null means the settings fetch failed, which is NOT the same as "the settings
-  // are the defaults". Nothing is restored on that path: the theme keeps the
-  // pre-paint cache the inline snippet already applied, the model and effort
-  // seeds stay unset (a new chat opens on the model's own default), and boot
-  // continues so the app is usable and the failure is recoverable by a reload.
-  // Inventing values here is what the client-side default mirrors used to do.
-  const settings = await loadSettings();
-  if (settings !== null) {
-    restoreLastModel(settings.last_model);
-    restoreLastEffort(settings.last_effort, settings.last_effort_model);
-    // The theme, from the payload already in hand. The toggle was constructed
-    // during initUI against the pre-paint cache, so this is where the server's
-    // choice replaces that hint — and where the cache is carried across once if
-    // the server has none, which is the only value the retired arrangement
-    // document hands over (see settings.ts).
-    adoptThemeFromSettings(settings);
 
-    suppressPush(true);
-    try {
-      restoreAll(settings);
-    } catch {
-      /* best-effort */
-    }
-    suppressPush(false);
+  // FOUR READS, ONE FRAME. Nothing below waits for a request it does not need.
+  // `identity` is consumed twice and needs no rejection handler: every failure IS
+  // its `unavailable` arm (identity.ts).
+  const settingsRead = loadSettings();
+  const identity = resolveIdentity();
+  const chatsRead = loadList();
+  const retentionRead = refreshRetention();
+
+  // The workspace region owns every view the boot swaps, so it is what the
+  // animation flag waits on — a slow whoami must not hold the first tab switch's
+  // transition back, and the identity region paints no view.
+  const workspace = restoreWorkspace(chatsRead, retentionRead, identity).finally(() => {
+    markBootDone();
+  });
+  await Promise.allSettled([
+    settingsRead.then(adoptSettings),
+    identity.then(adoptIdentity),
+    workspace,
+  ]);
+}
+
+/** The settings answer: theme, the model and effort seeds, the UI-state restore.
+ *
+ *  Null means the fetch FAILED, which is not "the settings are the defaults", so
+ *  nothing is restored and boot continues: the theme keeps the pre-paint cache and
+ *  the seeds stay unset. Inventing a value here would persist it on the next
+ *  write. */
+function adoptSettings(settings: EffectiveSettings | null): void {
+  if (settings === null) {
+    return;
   }
+  restoreLastModel(settings.last_model);
+  restoreLastEffort(settings.last_effort, settings.last_effort_model);
+  // Where the server's choice replaces the pre-paint cache the inline snippet
+  // applied, and where that cache is carried across if the server has none.
+  adoptThemeFromSettings(settings);
 
-  // `unavailable` is NOT a sign-out, and reading it as one is the defect the
-  // three-state answer exists to remove — `identity.ts` owns that mapping and a
-  // failed request lands in the same arm. Rendering a retry affordance for it is
-  // D3's; coming up anyway is this line's.
-  const verdict = await resolveIdentity();
-  if (verdict.state === "signed_out") {
-    setUserEmail("");
+  suppressPush(true);
+  try {
+    restoreAll(settings);
+  } catch {
+    /* best-effort */
+  }
+  suppressPush(false);
+}
+
+/** The identity answer: one sidebar row, and the post-auth fan-out.
+ *
+ *  `signed_out` raises the login modal over an already-painted shell and holds the
+ *  post-auth fetches back, so the login screen makes no API calls. `unavailable`
+ *  means vibekit could not ASK, so it comes up working with a re-read offered —
+ *  never a sign-in prompt. */
+function adoptIdentity(v: IdentityVerdict): void {
+  renderIdentity(v);
+  if (v.state === "signed_out") {
     // Nothing will hydrate the store behind a login modal, so release the held
     // frames rather than leaving the stream stalled until the watchdog fires.
     // Their consumers no-op on a store with no chats, which is correct here.
@@ -113,132 +127,102 @@ export async function startBoot(d: BootDeps): Promise<void> {
     showLoginModal();
     return;
   }
-  setUserEmail(emailOf(verdict));
-
+  if (v.state === "unavailable") {
+    toastError(`Couldn't confirm who is signed in: ${v.reason}`, {
+      label: "Retry",
+      onClick: () => {
+        void resolveIdentity().then(adoptIdentity);
+      },
+    });
+  }
   initPostAuth();
+}
 
-  // Degraded-runtime probe (kiro-cli missing → app-global banner);
-  // re-checks on every transport gap so recovery self-heals.
-  initRuntimeHealth();
-
-  // The vibekit + kiro-cli build pair, for the status card's two lines and
-  // Settings → About. Fire-and-forget: one read per page load, and the lines
-  // repaint through a signal when it lands, so nothing waits on the `--version`
-  // subprocess the server spawns to answer it.
-  initStatusVersions();
-  void loadVersions();
-
-  // The workspace mode/model/effort catalog, so the pickers have content before
-  // the first chat's session/new lands.
-  void fetchCatalog();
-  // Read the retention setting so a tab close knows whether the chat record is
-  // kept or deleted. Kept concurrent with the two boot reads below and awaited
-  // before the tab list is adopted: serialising it would add a round trip to
-  // every boot, while not awaiting it at all leaves a close reading the default
-  // (enabled) whenever /api/settings is the slower of them.
-  const retentionReady = refreshRetention();
-
-  suppressPush(true);
+/** The chats answer, then the tab set, then the route.
+ *
+ *  One region because the three are genuinely ordered (see the header): the store
+ *  names the strip's rows, and the strip is what the URL is resolved against. */
+async function restoreWorkspace(
+  chatsRead: Promise<boolean>,
+  retentionRead: Promise<void>,
+  identity: Promise<IdentityVerdict>,
+): Promise<void> {
   // If share-target intends to create a session (e.g. ?agent=planner),
   // skip the default empty-state createSession so we don't end up with
   // an unused "New conversation" tab next to the planner.
-  const wantsAgent = new URLSearchParams(location.search).get("agent");
-  const shareWillCreate = wantsAgent === "planner";
+  const shareWillCreate = new URLSearchParams(location.search).get("agent") === "planner";
+
+  // A rejected read is the same answer as `false` — the chats are not in the
+  // store — so the boot has one failure path rather than two.
+  const chatsOK = await chatsRead.catch(() => false);
+  // Release the frames held since the connection opened: they need a chat ROW to
+  // land on and nothing more, so waiting for the tabs would delay the busy dot for
+  // no gain. Idempotent. See transport.ts holdUntilHydrated.
+  transport.markHydrated();
+
+  suppressPush(true);
   try {
-    const ok = await loadList();
-    // The chat store is populated (or provably unreachable), so the SSE frames
-    // held since the connection opened can be released — chief among them the
-    // one `turn_state` per busy chat, which is the ONLY channel carrying an
-    // in-flight turn to a new client and is never re-broadcast. Released here
-    // rather than after the tabs open, because the frames only need a chat ROW
-    // to land on, and holding them longer would delay the busy dot for no gain.
-    // See transport.ts holdUntilHydrated.
-    transport.markHydrated();
-    if (!ok || getSessions().length === 0) {
-      if (!ok) {
-        // Surface the boot failure BEFORE falling back to the empty state, so the
-        // fresh "New conversation" reads as a fallback rather than silently
-        // impersonating the user's (unreachable) chats.
-        toastError("Couldn't load your chats.", {
-          label: "Reload",
-          onClick: () => {
-            location.reload();
-          },
-        });
+    const starterWanted = (!chatsOK || getSessions().length === 0) && !shareWillCreate;
+    if (!chatsOK || starterWanted) {
+      // The ONLY place the verdict is consulted, and both uses are uncommon: a
+      // boot whose chats loaded never waits for whoami. Behind a login modal there
+      // is no chat-load complaint to make and no starter chat to mint —
+      // `onLoginSuccess` does that once the identity is real.
+      const signedOut = (await identity).state === "signed_out";
+      if (!chatsOK && !signedOut) {
+        // Before the fallback below, so the fresh chat does not read as the user's.
+        toastError("Couldn't load your chats.", { label: "Reload", onClick: reload });
       }
-      if (!shareWillCreate) {
-        // AWAITED: boot continues into applyInitialRoute() below, which resolves
-        // the URL against the strip. Detaching would let the route apply against
-        // an empty strip and then have a tab appear underneath it.
+      if (starterWanted && !signedOut) {
+        // AWAITED: applyInitialRoute resolves against the strip further down.
         await createSession();
       }
     }
-    // THE TAB SET, read whole from the server. This is the entire boot restore:
-    // no per-kind reopen switch, no editor-file list, no singleton availability
-    // filter and no saved order to re-apply, because a tab the collection holds is
-    // open and the slice position IS the order. `listTabs` adopts the snapshot
-    // through the projection's `reset`, which materializes every row from its
-    // subject and points the strip at the tab this SCREEN was last on.
-    //
-    // It runs on EVERY path, chats or no chats: a chat list and a tab set are
-    // different collections, and only the first of them can be empty here without
-    // the second being meaningless.
-    //
-    // The FIRST boot after the cutover opens nothing, because tabs.json starts
-    // empty and nothing is migrated from the retired arrangement document. That is
-    // accepted rather than papered over — the app is alpha, and an arrangement is
-    // re-derivable by opening the tabs again.
-    await retentionReady;
+    // THE TAB SET is the entire boot restore, and it runs on every path: a chat
+    // list and a tab set are different collections, and only the first can be
+    // empty here without the second being meaningless.
+    try {
+      await retentionRead;
+    } catch {
+      /* the close path reads the default */
+    }
     if (!(await listTabs())) {
-      // The strip is empty at this point, so an unadopted read leaves the reader
-      // with no tabs at all and nothing saying why — the same silent dead end the
-      // chats half above already refuses. Nothing retries on its own: there is no
-      // gap to detect on a boot connection, and a timer here would re-list against
-      // a strip the reader may have started using.
-      toastError("Couldn't restore your tabs.", {
-        label: "Reload",
-        onClick: () => {
-          location.reload();
-        },
-      });
+      // Nothing retries on its own: there is no gap to detect on a boot
+      // connection, and a timer would re-list under a reader already using the
+      // strip.
+      toastError("Couldn't restore your tabs.", { label: "Reload", onClick: reload });
     }
+    clearTabStripSkeleton();
     activateRestoredTab();
-  } catch {
-    transport.markHydrated();
-    toastError("Couldn't load your chats.", {
-      label: "Reload",
-      onClick: () => {
-        location.reload();
-      },
-    });
-    if (!shareWillCreate) {
-      // AWAITED for the same reason as the branch above: applyInitialRoute() runs
-      // after this block and reads the strip.
-      await createSession();
-    }
+    await applyShareTarget();
+    applyInitialRoute();
+  } finally {
+    // A throw above must not leave the placeholder shimmering forever.
+    clearTabStripSkeleton();
+    suppressPush(false);
   }
-  suppressPush(false);
-
-  await applyShareTarget();
-  applyInitialRoute();
-  // The splash comes down only now, with the restored tab's content already
-  // painted underneath it (the app root is visibility:hidden, which preserves
-  // layout, so activation and scroll measurement ran normally behind it).
-  // Dropping it at auth-resolved left the transcript container covering the
-  // chat-list load with a top-aligned boot skeleton — the one transcript
-  // occupant that predated any view. That skeleton is deleted with this
-  // ordering; the per-view skeleton still covers any message fetch that
-  // outlives the splash.
-  dismissLoadingScreen();
-  // Boot restores are done — view swaps animate from here on (B3).
-  markBootDone();
 }
 
-// One-time post-auth initialization: fetches gated behind a successful
-// whoami so the login screen doesn't fan out API calls — the governance
-// snapshot, /api/version, and the git-badge poll (/api/git/status-all +
-// /api/forges every 15s) all used to fire before auth resolved (B2).
-// Runs on boot when already authenticated, or after the first login.
+function reload(): void {
+  location.reload();
+}
+
+/** Drop the tab strip's authored placeholder (index.html #tab-strip-skeleton).
+ *
+ *  Removed by id rather than by clearing the container: `tabs.ts` owns the rows
+ *  and reconciles them by `data-tab-id`, so the two never contend. Idempotent. */
+function clearTabStripSkeleton(): void {
+  document.getElementById("tab-strip-skeleton")?.remove();
+}
+
+// One-time post-auth initialization: everything that must not fire on the login
+// screen. The governance snapshot, /api/version, the git-badge read and the
+// workspace catalog all used to fire before auth resolved.
+//
+// ONE door, guarded once, so a boot that is already signed in and a first login
+// reach the same set. They did not: the four reads at the end of this function
+// ran on the boot path only, so after a login the status card's version lines
+// stayed "-" and the runtime probe never ran until the next reload.
 let postAuthInitDone = false;
 export function initPostAuth(): void {
   if (postAuthInitDone) {
@@ -249,8 +233,20 @@ export function initPostAuth(): void {
   // (Settings → Tools), renders the read-only Organization-policy
   // disclosure (Settings → General), and gates the code-reference chip.
   initGovernance();
-  // Version info (Settings → About) + git panel wiring incl. badge poll.
+  // Version info (Settings → About) + git panel wiring incl. the badge.
   initPostAuthUI();
+  // Degraded-runtime probe (kiro-cli missing → app-global banner);
+  // re-checks on every transport gap so recovery self-heals.
+  initRuntimeHealth();
+  // The vibekit + kiro-cli build pair, for the status card's two lines and
+  // Settings → About. Fire-and-forget: one read per page load, and the lines
+  // repaint through a signal when it lands, so nothing waits on the `--version`
+  // subprocess the server spawns to answer it.
+  initStatusVersions();
+  void loadVersions();
+  // The workspace mode/model/effort catalog, so the pickers have content before
+  // the first chat's session/new lands.
+  void fetchCatalog();
   // The live-runs inventory: boot is one of its two rebuild triggers (the
   // other is transport:gap, wired in handlers/system.ts). It feeds the
   // eviction sweep's live-run exemption, registered here beside the
@@ -292,14 +288,25 @@ function applyInitialRoute(): void {
   }
 }
 
-/** The transport's status callback: paint the indicator, and reload the chat
- *  list on connect.
+/** Whether the transport has ever reported a connection. The boot's own read
+ *  covers the first one; see `onTransportStatus`. */
+let sawConnected = false;
+
+/** The transport's status callback: paint the indicator, and reload the chat list
+ *  on a RE-connect.
  *
- *  Lives here because the reload is a boot concern — it is the same `loadList`
- *  the chain above runs, fired again when the stream comes back. */
+ *  Only on a re-connect. This fired on the FIRST connect too, and since the
+ *  EventSource is opened before the boot runs, every cold boot fetched the whole
+ *  chat list twice — the connect hook's copy and the boot's own. A reconnect is
+ *  the case the reload is for: frames were missed while the stream was down. */
 export function onTransportStatus(status: ConnectionStatus): void {
   setStatus(status);
-  if (status === "connected") {
-    void loadList();
+  if (status !== "connected") {
+    return;
   }
+  if (!sawConnected) {
+    sawConnected = true;
+    return;
+  }
+  void loadList();
 }

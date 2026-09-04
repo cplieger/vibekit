@@ -53,22 +53,6 @@ export async function resolveIdentity(): Promise<IdentityVerdict> {
   }
 }
 
-/** The email a verdict names, or "" for the two arms that name nobody.
- *
- *  `unavailable` returning "" is what an initial read wants — there is no
- *  identity to show yet — and is why the login path does NOT use this: a login
- *  that just succeeded followed by an `unavailable` must leave the row it filled
- *  in alone rather than blanking it. See `emailToAdopt`. */
-export function emailOf(v: IdentityVerdict): string {
-  return v.state === "signed_in" ? v.email : "";
-}
-
-/** The email to write after a login, or `null` for "leave the row alone".
- *
- *  Only the `signed_in` arm carries one, and the other two must not blank a value
- *  the successful login already put on screen: a page that signs in and then hits
- *  a 5 s whoami timeout would otherwise clear the sidebar's email and read as a
- *  sign-out one frame after signing in. */
-export function emailToAdopt(v: IdentityVerdict): string | null {
-  return v.state === "signed_in" ? v.email : null;
-}
+// No email accessor: a caller hands the whole VERDICT to `renderIdentity`, so the
+// row can say "unknown" for `unavailable` rather than inferring a state from an
+// empty string.

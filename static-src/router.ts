@@ -291,13 +291,21 @@ function encodePath(path: string): string {
 
 // --- Push or replace the URL without triggering popstate ---
 
-let suppressed = false;
+/** How many callers are currently suppressing pushes.
+ *
+ *  A COUNT, not a flag, because the boot's regions run concurrently now: the
+ *  settings restore and the tab restore each open a window, and with a boolean
+ *  whichever closed first un-suppressed the other's — so a restore's own
+ *  activation pushed a URL. Clamped at zero so an unbalanced `false` cannot leave
+ *  the app permanently suppressed. */
+let suppressDepth = 0;
+
 export function suppressPush(v: boolean): void {
-  suppressed = v;
+  suppressDepth = v ? suppressDepth + 1 : Math.max(0, suppressDepth - 1);
 }
 
 export function pushRoute(route: Route): void {
-  if (suppressed) {
+  if (suppressDepth > 0) {
     return;
   }
   const target = buildPath(route);
@@ -308,7 +316,7 @@ export function pushRoute(route: Route): void {
 }
 
 export function replaceRoute(route: Route): void {
-  if (suppressed) {
+  if (suppressDepth > 0) {
     return;
   }
   const target = buildPath(route);

@@ -24,10 +24,9 @@ import { $, byId } from "./dom.js";
 import { guardDuplicateActivation, initSidebarSwipe } from "./platform.js";
 import { initRolePicker } from "./role-picker.js";
 import * as transport from "./transport.js";
-import { initUI, setUserEmail } from "./settings.js";
-import { dismissLoadingScreen, initPostAuth, onTransportStatus, startBoot } from "./boot.js";
-import { emailToAdopt, resolveIdentity } from "./identity.js";
-import { fetchCatalog } from "./session-catalog.js";
+import { initUI, renderIdentity } from "./settings.js";
+import { initPostAuth, onTransportStatus, startBoot } from "./boot.js";
+import { resolveIdentity } from "./identity.js";
 import {
   setOnEmpty,
   getActiveTabRoute,
@@ -104,6 +103,7 @@ import "./handlers/run.js";
 import { installRunDotSubscriber } from "./run-dots.js";
 import "./handlers/steer.js";
 import { initPushMessages } from "./handlers/push-message.js";
+import { initLaunchQueue } from "./share-target.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
@@ -373,26 +373,30 @@ function init(): void {
   // notification click and to toast a push that arrived while this page was
   // focused (where it shows no OS notification at all).
   initPushMessages();
+  // A relaunch FOCUSES this window rather than navigating it (manifest
+  // launch_handler), so a shortcut's or a share's URL arrives in the launch queue
+  // and nowhere else. Registered before the boot, because the queue delivers what
+  // it buffered as soon as a consumer exists.
+  initLaunchQueue();
 
   void startBoot({ applyRoute });
 }
 
 function onLoginSuccess(): void {
   hideLoginModal();
-  dismissLoadingScreen();
+  // The post-auth fan-out the signed-out boot held back: governance, the version
+  // pair, the git badge and the workspace catalog. Guarded, so a login after an
+  // `unavailable` boot that already ran it is a no-op.
   initPostAuth();
   void resolveIdentity().then((v) => {
-    // `null` means "leave the row alone": only the signed_in arm carries an
-    // email, and the other two must not blank a row the login that just
-    // succeeded filled in.
-    const email = emailToAdopt(v);
-    if (email !== null) {
-      setUserEmail(email);
+    // Only the signed_in arm may write the row. The other two must not blank a
+    // value the login that just succeeded put on screen: a page that signs in and
+    // then meets a whoami timeout would otherwise clear the sidebar's email and
+    // read as a sign-out one frame after signing in.
+    if (v.state === "signed_in") {
+      renderIdentity(v);
     }
   });
-  // Fetch the workspace catalog so the pickers are populated before the first
-  // chat's session/new arrives.
-  void fetchCatalog();
   if (getSessions().length === 0) {
     // DETACHED: this is the post-login starter chat, and nothing below reads it.
     // `markBootDone()` must not wait on a round trip — it only flips the flag that
