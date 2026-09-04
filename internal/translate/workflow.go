@@ -22,6 +22,8 @@ import (
 	"cmp"
 	"context"
 	"log/slog"
+	"strings"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -48,11 +50,21 @@ type kasRunStart struct {
 // kasRunNode is the shape shared by the seven progress frames. Every field is
 // optional across the set: `paused` carries only the workflow id, and
 // `loop_iteration` names its node in `loopId` rather than `nodeId`.
+//
+// NodePath is decoded on all seven even though only the four node frames send
+// it, because the absence is what tells the emit side a frame is run-level.
+// Status is node_complete's own terminal word, and FailureReason its reason for
+// the failed case. `node_paused` spells its explanation `reason`, not
+// `pauseReason` — the two frames disagree upstream, so both are decoded and
+// neither is renamed.
 type kasRunNode struct {
-	WorkflowID string `json:"workflowId"`
-	NodeID     string `json:"nodeId"`
-	LoopID     string `json:"loopId"`
-	SessionID  string `json:"sessionId"`
+	WorkflowID string   `json:"workflowId"`
+	NodeID     string   `json:"nodeId"`
+	LoopID     string   `json:"loopId"`
+	SessionID  string   `json:"sessionId"`
+	Status     string   `json:"status"`
+	Reason     string   `json:"reason"`
+	NodePath   []string `json:"nodePath"`
 }
 
 // kasRunComplete mirrors _kiro/workflow/run_complete. `finalState` is the whole
@@ -149,8 +161,7 @@ func (t *Translator) HandleRunComplete(ctx context.Context, chatID vibekit.ChatI
 // RunProgressHandler returns the handler for one of the seven progress kinds.
 //
 // One function rather than seven near-identical ones: they share a payload
-// shape, and the only difference is the kind stamped on the event — which the
-// client uses to decide how eagerly to refetch, not to reconstruct state.
+// shape, and the kind decides which of the fields below the frame can fill.
 func (t *Translator) RunProgressHandler(kind vibekit.RunProgressKind) func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {
 	return func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 		p, ok := unmarshalParams[kasRunNode](msg, "workflow/"+string(kind))
@@ -163,10 +174,65 @@ func (t *Translator) RunProgressHandler(kind vibekit.RunProgressKind) func(conte
 		if kind == vibekit.RunProgressNodeStart && p.SessionID != "" {
 			t.steps.record(p.SessionID, p.WorkflowID, node)
 		}
-		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunProgress, chatID, vibekit.RunProgressPayload{
-			WorkflowID: p.WorkflowID,
-			NodeID:     node,
-			Kind:       kind,
-		}))
+		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunProgress, chatID,
+			runProgress(kind, node, &p, time.Now())))
 	}
+}
+
+// runProgress builds the frame for one progress kind: the node's state where the
+// kind describes a node, and an empty node path where it does not.
+//
+// The empty path is the signal, not a gap. A client applies a frame that names a
+// node and refetches one that does not, so the three kinds that cannot be
+// expressed as a node patch — `loop_iteration` and `steps_queued` change the
+// tree's shape, `paused` is run-level — keep the invalidation contract they
+// always had, and only they pay for it.
+func runProgress(
+	kind vibekit.RunProgressKind, node string, p *kasRunNode, at time.Time,
+) vibekit.RunProgressPayload {
+	out := vibekit.RunProgressPayload{WorkflowID: p.WorkflowID, NodeID: node, Kind: kind}
+	stamp := at.UTC().Format(time.RFC3339Nano)
+	switch kind {
+	case vibekit.RunProgressNodeStart:
+		out.NodePath = runNodePathOf(p, node)
+		out.Status = runNodeStatusRunning
+		out.StartedAt = stamp
+	case vibekit.RunProgressNodeComplete:
+		out.NodePath = runNodePathOf(p, node)
+		// KAS's own word, forwarded rather than mapped: `completed`, `failed` and
+		// `skipped` are already the NodeState vocabulary the client's tree holds,
+		// and translating them here would be a second enumeration of it.
+		out.Status = p.Status
+		out.EndedAt = stamp
+		out.FailureReason = p.Reason
+	case vibekit.RunProgressNodePaused:
+		out.NodePath = runNodePathOf(p, node)
+		out.Status = runNodeStatusPaused
+	case vibekit.RunProgressWatchPoll:
+		// A poll leaves the watch node running and says only that it looked, so
+		// the path travels with no status: the client re-stamps `running` and
+		// nothing else moves.
+		out.NodePath = runNodePathOf(p, node)
+	case vibekit.RunProgressLoopIteration, vibekit.RunProgressPaused, vibekit.RunProgressStepsQueued:
+	}
+	return out
+}
+
+// KAS NodeState status words this translator asserts on its own, as opposed to
+// forwarding. Only the two a lifecycle frame implies without stating.
+const (
+	runNodeStatusRunning = "running"
+	runNodeStatusPaused  = "paused"
+)
+
+// runNodePathOf joins the frame's node path, falling back to the node id.
+//
+// The fallback is runNodePath's: a row in the wrong place beats content that
+// vanishes. It matters more here, because an empty path means "refetch" — so a
+// node frame that arrived without one would silently join the run-level kinds.
+func runNodePathOf(p *kasRunNode, node string) string {
+	if len(p.NodePath) > 0 {
+		return strings.Join(p.NodePath, "/")
+	}
+	return node
 }

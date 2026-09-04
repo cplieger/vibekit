@@ -465,3 +465,205 @@ describe("the live-runs inventory", () => {
     expect(store.hasLiveRunForChat("chat-kept")).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// `run_progress` is APPLIED, not answered with a fetch. That is what removes up
+// to five concurrent `GET /api/runs/{id}` round trips per burst of node events,
+// each one a JSON-RPC call to KAS returning the whole state tree.
+//
+// The property that makes it safe is addressability: a frame names ONE execution
+// by node PATH, and a repeat's iterations have distinct paths where they share a
+// node id. Every write is an assignment, so KAS's duplicate frames across a
+// resume cost nothing.
+// ---------------------------------------------------------------------------
+
+/** Seed a run's cached state without a fetch, by resolving one. */
+async function seedRun(id: string, state: RunState): Promise<void> {
+  responses = [state];
+  store.invalidateRun(id);
+  await settle();
+  fetches.length = 0;
+}
+
+describe("applyRunProgress writes the addressed node and issues no request", () => {
+  it("applies a node_start to the leaf its path names", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "seq", type: "sequence", status: "running", children: [step("coder")] },
+    });
+
+    const landed = store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: "seq/coder",
+      status: "running",
+      started_at: "2026-03-04T05:06:07Z",
+    });
+
+    expect(landed).toBe(true);
+    expect(fetches).toHaveLength(0);
+    const leaf = store.peekRunState("r1")?.root?.children?.[0];
+    expect(leaf?.status).toBe("running");
+    expect(leaf?.startedAt).toBe("2026-03-04T05:06:07Z");
+  });
+
+  it("finds an iteration container by its FRAME spelling, not the tree's", async () => {
+    // KAS spells a repeat's per-iteration container `<repeatId>#<n>` in the state
+    // tree and `iter-<n>` in a node path, so the client translates. Without that
+    // a step inside a loop is unaddressable and every frame for it refetches.
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: {
+        nodeId: "loop",
+        type: "repeat",
+        status: "running",
+        children: [
+          {
+            nodeId: "loop#0",
+            type: "sequence",
+            status: "completed",
+            iteration: 0,
+            children: [step("body", { status: "completed" })],
+          },
+          {
+            nodeId: "loop#1",
+            type: "sequence",
+            status: "running",
+            iteration: 1,
+            children: [step("body")],
+          },
+        ],
+      },
+    });
+
+    expect(
+      store.applyRunProgress({
+        workflow_id: "r1",
+        node_path: "loop/iter-1/body",
+        status: "running",
+      }),
+    ).toBe(true);
+    const iters = store.peekRunState("r1")?.root?.children ?? [];
+    expect(iters[1]?.children?.[0]?.status).toBe("running");
+    // The first pass of the loop must be untouched — the whole point of the path.
+    expect(iters[0]?.children?.[0]?.status).toBe("completed");
+  });
+
+  it("is idempotent, because KAS duplicates progress frames across a resume", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "coder", type: "step", status: "pending" },
+    });
+    const frame = { workflow_id: "r1", node_path: "coder", status: "completed", ended_at: "T1" };
+    store.applyRunProgress(frame);
+    const once = store.peekRunState("r1")?.root;
+    store.applyRunProgress(frame);
+    expect(store.peekRunState("r1")?.root).toEqual(once);
+  });
+
+  it("keeps the fields the frame does NOT carry", async () => {
+    // A `watch_poll` carries a path and no status, and a `node_complete` carries
+    // no `started_at`. A frame states what changed, so an absent field must not
+    // blank what node_start already left.
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "w", type: "watch", status: "running", startedAt: "T0" },
+    });
+
+    store.applyRunProgress({ workflow_id: "r1", node_path: "w" });
+    expect(store.peekRunState("r1")?.root?.status).toBe("running");
+    expect(store.peekRunState("r1")?.root?.startedAt).toBe("T0");
+
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: "w",
+      status: "completed",
+      ended_at: "T9",
+    });
+    expect(store.peekRunState("r1")?.root?.startedAt).toBe("T0");
+    expect(store.peekRunState("r1")?.root?.endedAt).toBe("T9");
+  });
+
+  it("drops a status word it does not know rather than writing it into the union", async () => {
+    // The frame forwards KAS's own word as a plain string. Every renderer switches
+    // on the node's status, so a new upstream word landing in the field would
+    // reach those switches with no case; the next refetch carries the truth.
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "coder", type: "step", status: "running" },
+    });
+    store.applyRunProgress({ workflow_id: "r1", node_path: "coder", status: "quantum" });
+    expect(store.peekRunState("r1")?.root?.status).toBe("running");
+  });
+
+  it("copies the spine rather than mutating it, so a reader's held value is stable", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: {
+        nodeId: "seq",
+        type: "sequence",
+        status: "running",
+        children: [step("a"), step("b")],
+      },
+    });
+    const before = store.peekRunState("r1");
+    const untouchedSibling = before?.root?.children?.[1];
+
+    store.applyRunProgress({ workflow_id: "r1", node_path: "seq/a", status: "running" });
+
+    const after = store.peekRunState("r1");
+    expect(after).not.toBe(before);
+    expect(before?.root?.children?.[0]?.status).toBe("pending");
+    // Siblings are shared by reference: only the matched spine is rebuilt.
+    expect(after?.root?.children?.[1]).toBe(untouchedSibling);
+  });
+});
+
+describe("applyRunProgress refuses what it cannot express, so the caller refetches", () => {
+  it("refuses a frame with no node path (loop_iteration, steps_queued, paused)", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "coder", type: "step", status: "running" },
+    });
+    expect(store.applyRunProgress({ workflow_id: "r1" })).toBe(false);
+    expect(store.applyRunProgress({ workflow_id: "r1", node_path: "" })).toBe(false);
+  });
+
+  it("refuses a run it holds no state for", () => {
+    expect(store.applyRunProgress({ workflow_id: "r4", node_path: "coder" })).toBe(false);
+  });
+
+  it("refuses a path this tree does not hold, which is a freshly-created container", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "seq", type: "sequence", status: "running", children: [step("a")] },
+    });
+    expect(store.applyRunProgress({ workflow_id: "r1", node_path: "seq/b" })).toBe(false);
+    expect(store.applyRunProgress({ workflow_id: "r1", node_path: "other/a" })).toBe(false);
+  });
+});
+
+describe("invalidateCachedRuns is the gap-recovery half of the push contract", () => {
+  it("re-reads every run it holds, and nothing it does not", async () => {
+    await seedRun("r1", { workflowId: "r1", status: "running" });
+    await seedRun("r2", { workflowId: "r2", status: "running" });
+
+    responses = [
+      { workflowId: "r1", status: "completed" },
+      { workflowId: "r2", status: "completed" },
+    ];
+    store.invalidateCachedRuns();
+    await settle();
+
+    expect(fetches).toHaveLength(2);
+    expect(fetches.some((p) => p.includes("r1"))).toBe(true);
+    expect(fetches.some((p) => p.includes("r2"))).toBe(true);
+  });
+});

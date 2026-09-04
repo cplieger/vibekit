@@ -1,13 +1,22 @@
 // ---------------------------------------------------------------------------
 // The one owner of a workflow run's state.
 //
-// `GET /api/runs/{id}` is a passthrough of KAS's `_kiro/workflow/inspect`, and it
-// is the ONLY honest source for a run: the three run SSE events are deliberately
-// too thin to reconstruct one from (`run_start` re-fires on every resume, and
-// `node_complete` carries neither `iteration` nor `branchId`, so two passes of one
-// loop are indistinguishable on the wire). The contract is therefore
-// invalidate-and-refetch, and this module is where that happens once instead of
-// once per surface.
+// `GET /api/runs/{id}` is a passthrough of KAS's `_kiro/workflow/inspect` and is
+// the SOURCE of a run's state: the tree is fetched, never assembled. What has
+// changed is that it is no longer fetched per frame. `run_progress` names one
+// node by PATH and states what happened to it, so `applyRunProgress` writes that
+// node and the fetch survives for the cases a per-node patch cannot express — a
+// shape change (`loop_iteration`, `steps_queued`), a run-level pause, a run this
+// client holds nothing for, and a transport gap.
+//
+// The refetch could not be avoided before because the frames were too thin to
+// address one execution: `run_start` re-fires on every resume and `node_complete`
+// carries neither `iteration` nor `branchId`, so (nodeId) alone could not tell two
+// passes of a loop body apart. The node path can, and every write through it is an
+// idempotent assignment, so KAS's duplicate frames cost nothing.
+//
+// It is still NOT a second model of a run: every derived question (which leaves,
+// how many done, how long) stays a function over the cached value.
 //
 // THREE readers, which is why it exists: the transcript's run card, the
 // `/run/{id}` view, and the tab dot for a parentless run. Before it, the view
@@ -16,10 +25,6 @@
 // `git-status-store.ts` is the precedent — one owner of a poll, signal-backed,
 // several lookups off one rebuild.
 //
-// It is NOT a second model of a run. It caches what the endpoint returned,
-// verbatim, and every derived question (which leaves, how many done, how long) is
-// a function over that value rather than an accumulation. Nothing here reads an
-// SSE payload for content; `handlers/run.ts` only says "this run changed".
 // ---------------------------------------------------------------------------
 
 import { signal, type Signal } from "@cplieger/reactive";
@@ -137,6 +142,133 @@ export function peekRunState(workflowID: string): RunState | undefined {
   return cells.get(workflowID)?.peek();
 }
 
+/** Apply a `run_progress` frame to the cached tree, and report whether it landed.
+ *
+ *  `false` means the caller must refetch, and there are exactly three reasons for
+ *  it: the frame names no node (`loop_iteration` and `steps_queued` change the
+ *  tree's SHAPE, `paused` is run-level with its reason on `inspect` alone), the
+ *  run is not cached at all (nothing to patch — a client that missed the start),
+ *  or the path addresses a node this tree does not hold yet (a step inside a
+ *  freshly-created iteration container). So the refetch survives as the
+ *  gap-recovery path it always should have been, and a progressing run costs no
+ *  HTTP round trips.
+ *
+ *  Idempotent, which is what makes it safe against KAS's duplicate frames across
+ *  a resume: every write is an assignment addressed by path, never an increment.
+ *
+ *  The tree is copied down the matched path rather than mutated in place. The
+ *  signal's value is what readers hold, and a reader that keeps the previous
+ *  value to compare against — the exec view does — must not find it rewritten
+ *  underneath. Siblings are shared by reference: only the spine changes. */
+export function applyRunProgress(p: RunProgressFrame): boolean {
+  if (p.workflow_id === "" || p.node_path === undefined || p.node_path === "") {
+    return false;
+  }
+  const c = cells.get(p.workflow_id);
+  const root = c?.peek()?.root;
+  if (c === undefined || root === undefined) {
+    return false;
+  }
+  const next = patchNode(root, undefined, p.node_path.split("/"), p);
+  if (next === undefined) {
+    return false;
+  }
+  const state = c.peek();
+  if (state === undefined) {
+    return false;
+  }
+  c.value = { ...state, root: next };
+  return true;
+}
+
+/** The fields of a `run_progress` payload this store reads. Declared here rather
+ *  than imported from the generated type so the store's contract is the four
+ *  fields it applies, and a test can hand it a literal. */
+export interface RunProgressFrame {
+  workflow_id: string;
+  node_path?: string;
+  status?: string;
+  started_at?: string;
+  ended_at?: string;
+  failure_reason?: string;
+}
+
+/** Rebuild `node`'s subtree with the addressed descendant patched, or `undefined`
+ *  when this tree does not hold it.
+ *
+ *  `trail` is the path still to walk. Matching uses `nodePathSegment`, the same
+ *  translation `nodePathOf` uses in the other direction, so a repeat's
+ *  `iter-<n>` frame segment finds the `<repeatId>#<n>` container it names. */
+function patchNode(
+  node: RunNode,
+  parent: RunNode | undefined,
+  trail: string[],
+  p: RunProgressFrame,
+): RunNode | undefined {
+  const [head, ...rest] = trail;
+  if (head === undefined || nodePathSegment(node, parent) !== head) {
+    return undefined;
+  }
+  if (rest.length === 0) {
+    return patchedLeaf(node, p);
+  }
+  const kids = node.children;
+  if (kids === undefined) {
+    return undefined;
+  }
+  for (const [i, k] of kids.entries()) {
+    const patched = patchNode(k, node, rest, p);
+    if (patched !== undefined) {
+      return { ...node, children: kids.with(i, patched) };
+    }
+  }
+  return undefined;
+}
+
+/** The addressed node with the frame's fields written over it.
+ *
+ *  Every field is set only when the frame carries it, because a frame states what
+ *  changed: a `watch_poll` carries no status and must not blank the node's, and
+ *  `node_complete` carries no `started_at` and must not lose the one node_start
+ *  left. `exactOptionalPropertyTypes` is why each is a conditional spread rather
+ *  than an assignment of a possibly-undefined value. */
+function patchedLeaf(node: RunNode, p: RunProgressFrame): RunNode {
+  const status = nodeStatus(p.status);
+  return {
+    ...node,
+    ...(status === undefined ? {} : { status }),
+    ...(p.started_at !== undefined && p.started_at !== "" ? { startedAt: p.started_at } : {}),
+    ...(p.ended_at !== undefined && p.ended_at !== "" ? { endedAt: p.ended_at } : {}),
+    ...(p.failure_reason !== undefined && p.failure_reason !== ""
+      ? { failureReason: p.failure_reason }
+      : {}),
+  };
+}
+
+/** KAS's NodeState status words, as the tree spells them. The frame carries the
+ *  status as a plain string — it is forwarded from KAS rather than enumerated
+ *  server-side — so this is where it is narrowed. */
+const NODE_STATUSES = [
+  "pending",
+  "running",
+  "paused",
+  "completed",
+  "failed",
+  "aborted",
+  "skipped",
+] as const;
+
+/** The frame's status, or `undefined` for absent, empty, or a word this client
+ *  does not know.
+ *
+ *  An unrecognised status is DROPPED rather than written: the field is a typed
+ *  union every renderer switches on, so a new upstream word landing in it would
+ *  reach those switches with no case. Dropping leaves the node's previous status
+ *  and the next refetch carries the truth. */
+function nodeStatus(v: string | undefined): RunNode["status"] | undefined {
+  return NODE_STATUSES.find((s) => s === v);
+}
+
 /** Re-read a run from the server. Safe to call on every SSE frame: a second call
  *  while a fetch is in flight sets a flag rather than issuing a request, and one
  *  trailing fetch runs when the first settles. */
@@ -149,6 +281,23 @@ export function invalidateRun(workflowID: string): void {
     return;
   }
   void fetchRun(workflowID);
+}
+
+/** Re-read every run this client holds state for. The gap-recovery half of the
+ *  push contract.
+ *
+ *  `run_progress` frames are applied rather than refetched, so an outage that
+ *  swallows them leaves the cached tree stale with nothing to notice it — a node
+ *  that completed during the gap keeps reading `running` and its clock keeps
+ *  ticking. A gap is the one moment the client knows it missed frames, so it is
+ *  where the refetch belongs.
+ *
+ *  Bounded by the cache: at most one request per run already on screen, collapsed
+ *  by `invalidateRun`'s in-flight guard. */
+export function invalidateCachedRuns(): void {
+  for (const id of cells.keys()) {
+    invalidateRun(id);
+  }
 }
 
 async function fetchRun(workflowID: string): Promise<void> {

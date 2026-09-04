@@ -84,23 +84,58 @@ type RunStartedPayload struct {
 	Scheduled  bool   `json:"scheduled,omitempty"`
 }
 
-// RunProgressPayload is the payload for type="run_progress": an INVALIDATION
-// signal. The client refetches `GET /api/runs/{id}`; it never reconstructs run
-// state from these events, and the payload is deliberately too thin to let it.
+// RunProgressPayload is the payload for type="run_progress": what happened to
+// ONE node of a run, addressed by its path.
 //
-// That thinness is load-bearing rather than minimalist. `run_start` re-fires on
-// every resume and progress frames duplicate across a resume (probe 6 saw three
-// `run_start` frames for one run), so a client accumulating them would render a
-// garbled tree. `node_complete` also cannot be joined by (nodeId, iteration,
-// branchId) — it carries none of the last two — so an accumulating client could
-// not even tell two repeat iterations apart.
+// It used to be a pure invalidation, and the client answered every frame with a
+// `GET /api/runs/{id}` — a JSON-RPC round trip to KAS returning the whole state
+// tree, up to five of them concurrently per burst of node events. The server
+// already holds the fact the client was refetching to learn, so it sends it.
 //
-// NodeID is absent on `paused` (a run-level frame) and holds the loop id on
+// The thinness that argument rested on was real but is not the payload's: KAS
+// re-fires `run_start` on every resume and duplicates progress frames across
+// one (probe 6 saw three `run_start` frames for one run), and `node_complete`
+// carries neither `iteration` nor `branchId`, so a client accumulating a tree
+// from (nodeId) alone could not tell two passes of a loop body apart. NodePath
+// is what closes that: KAS stamps the whole path on every node frame, a repeat's
+// iteration container is a segment of it, and an idempotent write addressed by
+// path is safe to replay any number of times.
+//
+// Two kinds still carry no node state, and both are honest refetches rather than
+// an omission: `loop_iteration` and `steps_queued` change the tree's SHAPE (a
+// new iteration container, newly queued steps), which no per-node patch can
+// express, and `paused` is run-level with its explanation (`pauseReason`) on
+// `inspect` alone.
+//
+// NodeID stays for the surfaces that join on it (an ask marks the row whose node
+// id it names). It is absent on `paused` and holds the loop id on
 // `loop_iteration`, which is the node the frame is about in both cases.
 type RunProgressPayload struct {
-	WorkflowID string          `json:"workflow_id"`
-	NodeID     string          `json:"node_id,omitempty"`
-	Kind       RunProgressKind `json:"kind"`
+	WorkflowID string `json:"workflow_id"`
+	NodeID     string `json:"node_id,omitempty"`
+	// NodePath addresses ONE execution of a node, joined with "/" — the same
+	// spelling RunStepPayload.NodePath uses, so both frames of a run reach a row
+	// the same way and the client keeps one translation
+	// (`static-src/run-store.ts`'s nodePathSegment). Empty on the run-level and
+	// shape-changing kinds, which is what tells the client to refetch instead.
+	NodePath string `json:"node_path,omitempty"`
+	// Status is the node's status after this frame, in KAS's own NodeState
+	// vocabulary so it drops straight onto the cached tree: `running` from
+	// node_start, `paused` from node_paused, and node_complete's own terminal
+	// word (completed / failed / skipped) forwarded rather than guessed.
+	Status string `json:"status,omitempty"`
+	// StartedAt and EndedAt are RFC 3339, stamped by the SERVER at frame arrival.
+	// KAS puts no timestamp on either lifecycle frame — only `inspect`'s tree
+	// carries the node's own — so this is vibekit's observation of when the frame
+	// reached it, which is within one bridge hop of the fact and is what a live
+	// elapsed clock needs. A later refetch overwrites both with KAS's values.
+	StartedAt string `json:"started_at,omitempty"`
+	EndedAt   string `json:"ended_at,omitempty"`
+	// FailureReason is KAS's own explanation for a node that failed, forwarded so
+	// a failed row reads as a failure with a cause rather than needing a refetch
+	// to say why. Empty on every other outcome.
+	FailureReason string          `json:"failure_reason,omitempty"`
+	Kind          RunProgressKind `json:"kind"`
 }
 
 // RunFinishedPayload is the payload for type="run_finished": terminal. Status is

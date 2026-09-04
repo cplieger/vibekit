@@ -27,7 +27,7 @@ import { loadList, loadMessages } from "../store-load.js";
 import { clearTurnState } from "../turn-teardown.js";
 import { refreshTurnRail } from "../turn-rail.js";
 import { refreshRetention } from "../retention.js";
-import { rebuildLiveRuns } from "../run-store.js";
+import { invalidateCachedRuns, rebuildLiveRuns } from "../run-store.js";
 
 // The handshake states the workspace root — the only way the client learns
 // where the workspace is, needed to make relative agent paths openable.
@@ -98,6 +98,10 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   // run that started or settled during the outage; re-read the server's
   // presence-based projection.
   void rebuildLiveRuns();
+  // A run's node state is APPLIED from `run_progress` rather than refetched, so
+  // frames lost in the outage leave a stale tree with nothing to notice it. This
+  // is the one moment the client knows it missed some.
+  invalidateCachedRuns();
   const id = getActiveId();
   if (id !== "") {
     void loadMessages(id);

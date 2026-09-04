@@ -11,7 +11,11 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("../run-store.js", () => ({
+  // `false` by default: the frame did not land, which is the arm that still
+  // refetches. A case that pins the APPLY path sets it true.
+  applyRunProgress: vi.fn(() => false),
   invalidateRun: vi.fn(),
+  invalidateCachedRuns: vi.fn(),
   noteRunChat: vi.fn(),
   noteRunLive: vi.fn(),
   noteRunSettled: vi.fn(),
@@ -45,7 +49,13 @@ vi.mock("../notify.js", () => ({ notifyIfHidden: vi.fn(), NOTIFY_TITLE: "Vibekit
 import "./run.js";
 import { dispatch, onBus, BUS_RUNS_CHANGED } from "../bus.js";
 import type { SSEPayloads } from "../bus.js";
-import { invalidateRun, noteRunChat, noteRunLive, noteRunSettled } from "../run-store.js";
+import {
+  applyRunProgress,
+  invalidateRun,
+  noteRunChat,
+  noteRunLive,
+  noteRunSettled,
+} from "../run-store.js";
 import { trackRun } from "../run-dots.js";
 import { openRunSubTab, autoCloseRunSubTab, applyRunStep } from "../run-view.js";
 import { info, success, error } from "../toast.js";
@@ -54,6 +64,7 @@ import { answerRunInput, continueRunStep } from "../actions/runs.js";
 import { notifyIfHidden } from "../notify.js";
 
 const invalidate = vi.mocked(invalidateRun);
+const applyProgress = vi.mocked(applyRunProgress);
 const noteChat = vi.mocked(noteRunChat);
 const noteLive = vi.mocked(noteRunLive);
 const noteSettled = vi.mocked(noteRunSettled);
@@ -130,13 +141,38 @@ const _keys: readonly (keyof SSEPayloads)[] = [
 void _keys;
 
 describe("run SSE handlers", () => {
-  it("invalidates the run store on every one of the three events", () => {
-    const order: RunEvent[] = ["run_started", "run_progress", "run_finished"];
+  it("invalidates the run store at both ENDS of a run", () => {
+    const order: RunEvent[] = ["run_started", "run_finished"];
     for (const [i, type] of order.entries()) {
-      send(type, { workflow_id: "wf_1", kind: "node_start", status: "completed", name: "x" });
+      send(type, { workflow_id: "wf_1", status: "completed", name: "x" });
       expect(invalidate).toHaveBeenCalledTimes(i + 1);
       expect(invalidate).toHaveBeenLastCalledWith("wf_1");
     }
+  });
+
+  // A progress frame is APPLIED, and the refetch is what happens only when it
+  // cannot be. That is the whole of B7: a burst of node events used to cost one
+  // `GET /api/runs/{id}` each — a JSON-RPC round trip to KAS for the whole state
+  // tree — and up to five runs do it concurrently.
+  it("applies a progress frame and does NOT refetch when it landed", () => {
+    applyProgress.mockReturnValue(true);
+    send("run_progress", {
+      workflow_id: "wf_1",
+      kind: "node_start",
+      node_path: "seq/coder",
+      status: "running",
+    });
+    expect(applyProgress).toHaveBeenCalledTimes(1);
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  // The store refuses a frame it cannot express — a shape change, a run-level
+  // pause, a run it holds nothing for — and the refetch is the recovery.
+  it("refetches when the frame could not be applied", () => {
+    applyProgress.mockReturnValue(false);
+    send("run_progress", { workflow_id: "wf_1", kind: "loop_iteration" });
+    expect(applyProgress).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith("wf_1");
   });
 
   // Every run's tab carries a dot now, agent-launched included, so every event
