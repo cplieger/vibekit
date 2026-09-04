@@ -5,9 +5,10 @@
 //
 // THE DOM_MESSAGE_CAP CLAIM THIS COMMENT USED TO MAKE WAS FALSE. It said the
 // list is "DOM-capped at 50 nodes (see scroll.ts DOM_MESSAGE_CAP)"; no such
-// constant has ever existed and scroll.ts never trims the DOM. The 50 was
-// store-load.ts's PAGE SIZE — pagination, not eviction — and the wrong
-// provenance propagated out of here into a design document before it was caught.
+// constant has ever existed and scroll.ts never trims the DOM. The 50 was a
+// message CAP on one page — pagination, not eviction, and not even the budget
+// that cuts a page (store-load.ts's is in bytes) — and the wrong provenance
+// propagated out of here into a design document before it was caught.
 //
 // The WALKER itself is find-engine.ts now, shared with the editor's find over a
 // diff pane or rendered markdown — the same problem, one implementation. What
