@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Service worker for Web Push notifications, PWA installability, and the shell
 // precache. Handles push events, notification clicks, subscription recovery, and
-// a fetch handler that serves the build's script graph and stylesheet cache-first
-// (see "The shell precache" below).
+// a fetch handler that serves the build's lazy chunks cache-first (see "The shell
+// precache" below).
 // Compiled to static/sw.js by tsconfig.sw.json.
 // ---------------------------------------------------------------------------
 
