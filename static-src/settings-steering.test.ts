@@ -1,22 +1,24 @@
 // The Instructions panel's two writers on one textarea, and the ordering between
-// them. `loadSteeringDoc` is fired by the same tab activation that makes the
-// textarea typeable, so the GET is in flight while the box is already accepting
-// keystrokes — and every keystroke is already in a debounced save. The read
-// therefore has to lose that race.
+// them. A save carries the box as the WHOLE document (and an empty one DELETES
+// the file, per handleSteeringPut), so the box must not be typeable before the
+// read lands — `loadSteeringDoc` is fired by the same tab activation that reveals
+// the panel, so the window is real. The read is what unlocks the box.
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+import { userEvent } from "@vitest/browser/context";
 
 const H = vi.hoisted(() => ({
   apiGet: vi.fn(),
   save: vi.fn(),
   flush: vi.fn(),
   pending: vi.fn(() => false),
+  showError: vi.fn(),
 }));
 
 vi.mock("./api-client.js", () => ({ apiGet: H.apiGet }));
 vi.mock("./save-indicator.js", () => ({
   showSaving: vi.fn(),
   showSaved: vi.fn(),
-  showError: vi.fn(),
+  showError: H.showError,
   STEERING_SAVE_KEY: "steering",
 }));
 vi.mock("./actions/settings.js", () => ({ saveSteering: {} }));
@@ -42,13 +44,24 @@ function mount(): HTMLTextAreaElement {
   return ta;
 }
 
-/** A keystroke, as the browser delivers one: the value moves, then `input` fires. */
-function type(ta: HTMLTextAreaElement, text: string): void {
-  ta.value = text;
-  ta.dispatchEvent(new Event("input"));
+/** A read left open, with its resolver. */
+function openRead(): (d: { content: string } | null) => void {
+  let land = (_: { content: string } | null): void => undefined;
+  H.apiGet.mockReturnValue(
+    new Promise<{ content: string } | null>((resolve) => {
+      land = resolve;
+    }),
+  );
+  return land;
 }
 
-describe("the steering document's read against the keystrokes it races", () => {
+/** Two microtask hops: the promise's own, then the `.then` body's. */
+async function settle(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+describe("the steering document's read, and the box it unlocks", () => {
   let ta: HTMLTextAreaElement;
 
   beforeEach(() => {
@@ -63,57 +76,84 @@ describe("the steering document's read against the keystrokes it races", () => {
     ta.remove();
   });
 
-  it("fills the textarea when the reader has typed nothing", async () => {
+  it("locks the box at init and opens it when the document lands", async () => {
+    expect(ta.readOnly, "the box is not typeable before the read").toBe(true);
     H.apiGet.mockResolvedValue({ content: "# on the server" });
     loadSteeringDoc();
     await vi.waitFor(() => {
       expect(ta.value).toBe("# on the server");
     });
+    expect(ta.readOnly).toBe(false);
   });
 
-  it("leaves what the reader typed while the read was in flight", async () => {
-    // The GET is deliberately still open when the keystroke lands, which is the
-    // window the panel-activation placement opens.
-    let land = (_: { content: string }): void => undefined;
-    H.apiGet.mockReturnValue(
-      new Promise<{ content: string }>((resolve) => {
-        land = resolve;
-      }),
-    );
+  it("takes no keystroke while the read is in flight", async () => {
+    // A real keystroke through the browser, because `readOnly` is a claim about
+    // what the ENGINE does with one: assigning `.value` in a test would sail past
+    // the very thing being pinned.
+    const land = openRead();
     loadSteeringDoc();
 
-    type(ta, "half a sentence the reader is still writing");
-    land({ content: "# on the server" });
-    // Two microtask hops: the promise's own, then the `.then` body's.
-    await Promise.resolve();
-    await Promise.resolve();
+    ta.focus();
+    await userEvent.keyboard("half a sentence");
 
-    expect(ta.value).toBe("half a sentence the reader is still writing");
-    // And the save that is already queued carries the same text, so the editor
-    // and the file agree about what the next keystroke will dispatch.
-    expect(H.save).toHaveBeenLastCalledWith({
-      content: "half a sentence the reader is still writing",
+    expect(ta.value, "the keystrokes did not reach a locked box").toBe("");
+    expect(H.save, "and nothing was queued to overwrite the document").not.toHaveBeenCalled();
+
+    land({ content: "# on the server" });
+    await settle();
+    expect(ta.value).toBe("# on the server");
+    expect(ta.readOnly).toBe(false);
+  });
+
+  it("saves what the reader types once the document is in the box", async () => {
+    H.apiGet.mockResolvedValue({ content: "# on the server" });
+    loadSteeringDoc();
+    await vi.waitFor(() => {
+      expect(ta.readOnly).toBe(false);
     });
+
+    ta.focus();
+    await userEvent.keyboard("!");
+
+    expect(ta.value).toBe("# on the server!");
+    expect(H.save).toHaveBeenLastCalledWith({ content: "# on the server!" });
   });
 
-  it("leaves an emptied textarea alone once it has been typed into", async () => {
-    // Selecting all and deleting is a real edit, and the queued save carries the
-    // empty document. A read that refilled the box here would show content the
-    // save is about to remove.
-    let land = (_: { content: string }): void => undefined;
-    H.apiGet.mockReturnValue(
-      new Promise<{ content: string }>((resolve) => {
-        land = resolve;
-      }),
-    );
+  it("keeps the box locked when the read fails, and retries on focus", async () => {
+    // apiGet collapses every failure to null. An empty box is not an empty
+    // document, so opening it here would let the first keystroke delete the file.
+    H.apiGet.mockResolvedValueOnce(null);
     loadSteeringDoc();
+    await settle();
 
-    type(ta, "x");
-    type(ta, "");
-    land({ content: "# on the server" });
-    await Promise.resolve();
-    await Promise.resolve();
+    expect(ta.readOnly).toBe(true);
+    expect(H.showError).toHaveBeenCalledWith("steering");
 
-    expect(ta.value).toBe("");
+    H.apiGet.mockResolvedValueOnce({ content: "# on the server" });
+    ta.focus();
+    await vi.waitFor(() => {
+      expect(ta.value).toBe("# on the server");
+    });
+    expect(ta.readOnly).toBe(false);
+  });
+
+  it("issues one read while one is in flight", () => {
+    openRead();
+    loadSteeringDoc();
+    loadSteeringDoc();
+    ta.focus();
+    expect(H.apiGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not read again once the document is in", async () => {
+    H.apiGet.mockResolvedValue({ content: "# on the server" });
+    loadSteeringDoc();
+    await vi.waitFor(() => {
+      expect(ta.readOnly).toBe(false);
+    });
+    ta.blur();
+    ta.focus();
+    loadSteeringDoc();
+    expect(H.apiGet).toHaveBeenCalledTimes(1);
   });
 });

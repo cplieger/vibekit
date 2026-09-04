@@ -61,12 +61,14 @@ func run() error {
 	return writePrecacheManifest()
 }
 
-// precacheManifest is what static/precache.json holds: the shell's asset list and
-// a stamp over their bytes.
+// precacheManifest is what static/precache.json holds: the cacheable asset list
+// and a stamp over their names. Field names are the wire contract with
+// static-src/sw.ts.
 //
-// The worker cannot import anything (it compiles standalone as a classic script),
-// so this travels as a fetched document rather than a generated module. Field names
-// are the wire contract with static-src/sw.ts.
+// FETCHED rather than generated into the worker, because a worker's own bytes are
+// its update signal: an inlined list would reach a client only through a worker
+// update, and this worker never calls skipWaiting, so the previous one stays in
+// control until its clients are gone.
 type precacheManifest struct {
 	Stamp  string   `json:"stamp"`
 	Assets []string `json:"assets"`
@@ -77,14 +79,14 @@ type precacheManifest struct {
 // worker's fetch.
 const precacheName = "precache.json"
 
-// writePrecacheManifest enumerates the shell's assets and stamps their content.
+// writePrecacheManifest enumerates the shell's cacheable assets and stamps them.
 //
 // THE LIST IS BUILT, not written by hand: the lazy chunks are content-hashed, so
 // the worker has no way to guess their names.
 //
-// THE STAMP IS OVER THE BYTES, not the names: a release replaces app.js and
-// style.css under the same name, so a stamp over names would tell the worker
-// nothing had changed. Sourcemaps are excluded: a precache is for running.
+// THE STAMP IS OVER THE NAMES, which is honest only because of what the list
+// holds: every entry carries esbuild's content hash in its own name, so bytes that
+// move move a name. Sourcemaps are excluded: a precache is for running.
 func writePrecacheManifest() error {
 	assets, err := precacheAssets()
 	if err != nil {
@@ -92,14 +94,8 @@ func writePrecacheManifest() error {
 	}
 	sum := sha256.New()
 	for _, name := range assets {
-		body, err := os.ReadFile(filepath.Join(outDir, name)) //nolint:gosec // G304: name is walked out of the bundler's own output directory
-		if err != nil {
-			return fmt.Errorf("precache stamp: %w", err)
-		}
-		// The NAME goes into the hash beside its bytes, so a rename with identical
-		// content (a chunk split moving code between files) still moves the stamp.
-		sum.Write([]byte(name))
-		sum.Write(body)
+		// Separated, or two adjacent names could be re-cut into the same stream.
+		sum.Write([]byte(name + "\n"))
 	}
 	doc, err := json.Marshal(precacheManifest{
 		Stamp:  hex.EncodeToString(sum.Sum(nil))[:16],
@@ -111,22 +107,24 @@ func writePrecacheManifest() error {
 	return os.WriteFile(filepath.Join(outDir, precacheName), doc, 0o600)
 }
 
-// precacheAssets lists the shell's runtime assets, sorted, as URL paths relative
-// to the site root.
+// precacheAssets lists the content-hashed lazy chunks, sorted, as URL paths
+// relative to the site root.
 //
-// sw.js is deliberately NOT in it: a service worker caching itself is how a
-// broken worker becomes permanent, and the browser fetches it through its own
-// update check rather than through the fetch handler. index.html is not either —
-// it stays `no-store` (internal/server/server_static.go), which is what makes a
-// release's new script graph take effect on the next load.
+// THE HASHED NAMES ARE THE WHOLE LIST, because a name is cacheable without
+// revalidation exactly when its bytes cannot change under it — the rule
+// static-src/precache.ts states for the worker's fetch arm, and why assetCachePolicy
+// marks app.js and style.css `no-cache`. sw.js is out for its own reason (a worker
+// that caches itself makes a broken worker permanent), index.html for its `no-store`.
 func precacheAssets() ([]string, error) {
-	assets := []string{"app.js", "style.css"}
+	// Non-nil even when empty: a nil slice marshals to JSON `null`, and
+	// parseManifest reads that as an unusable document rather than as no assets.
+	assets := []string{}
 	entries, err := os.ReadDir(filepath.Join(outDir, "chunks"))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			// A build that produced no lazy chunk at all. Not reachable from this
-			// entrypoint today, and not an error: the manifest is still valid.
-			slices.Sort(assets)
+			// entrypoint today, and not an error: an empty list is a valid document,
+			// and the worker treats it as one.
 			return assets, nil
 		}
 		return nil, fmt.Errorf("precache chunks: %w", err)

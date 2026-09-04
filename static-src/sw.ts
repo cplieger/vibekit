@@ -14,20 +14,21 @@ import { type PrecacheManifest, isShellPath, parseManifest } from "./precache.js
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
 // ---------------------------------------------------------------------------
-// The shell precache: the script graph and the stylesheet, never the HTML.
+// The shell precache: the content-hashed lazy chunks, never a stable name and
+// never the HTML (precache.ts's `isShellPath` owns that rule and the reason).
 //
 // A resume used to spend ~50 revalidation round trips before first paint, every one
 // a 304 — the bytes were already local and the app waited for the network to say so.
 // ---------------------------------------------------------------------------
 
-/** Cache holding the precached shell. One name, and the manifest is stored INSIDE it
- *  under its own path, so the stamp travels with the assets it describes.
+/** Cache holding the precached chunks. One name, and the manifest is stored INSIDE
+ *  it under its own path, so the stamp travels with the assets it describes.
  *
- *  A DEPLOY IS NEVER MASKED, which is a claim about the SHELL rather than about
- *  caching: index.html stays `no-store`, so every load fetches the current HTML and
- *  therefore the current graph. Chunks are content-hashed; app.js and style.css are
- *  the two stable names, and `syncPrecache` covers them off every navigation, because
- *  a deploy that leaves sw.js byte-identical fires no `install` at all. */
+ *  A DEPLOY IS NEVER MASKED: index.html stays `no-store`, so every load fetches
+ *  the current HTML, therefore the current app.js and style.css (both left to the
+ *  network), therefore the current chunk names. `syncPrecache` runs off every
+ *  navigation rather than off `install`, because a deploy that leaves sw.js
+ *  byte-identical fires no `install` at all. */
 const SHELL_CACHE = "vibekit-shell";
 
 /** Where the build's asset list lives (cmd/bundle writes it). */
@@ -137,10 +138,11 @@ sw.addEventListener("activate", ((event: ExtendableEvent) => {
 
 // Three arms, and the handler's mere presence is also what satisfies the PWA install
 // criterion. A NAVIGATION goes to the network — the shell must stay fresh — and
-// doubles as the deploy check. A SHELL PATH is answered from the cache. Everything
-// else, `/api/*` reads and the `/api/events` stream included, is never handed to
-// `respondWith` at all: `isShellPath` is a synchronous gate for exactly that reason,
-// because a handler that asks the cache first has already taken the request over.
+// doubles as the deploy check. A CONTENT-HASHED CHUNK is answered from the cache.
+// Everything else, `/api/*` reads and the `/api/events` stream included, is never
+// handed to `respondWith` at all: `isShellPath` is a synchronous gate for exactly
+// that reason, because a handler that asks the cache first has already taken the
+// request over.
 sw.addEventListener("fetch", ((event: FetchEvent) => {
   if (event.request.mode === "navigate") {
     event.respondWith(fetch(event.request));

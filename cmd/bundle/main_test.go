@@ -187,11 +187,14 @@ func stampOf(t *testing.T, files map[string]string) precacheManifest {
 	return got
 }
 
-// TestWritePrecacheManifest_ListsTheRuntimeAssets: the worker cannot guess the
-// hashed chunk names, so the list has to be built from what landed. What it must
-// NOT list is anything the app does not need to run, and sw.js above all — a
-// worker that caches itself makes a broken worker permanent.
-func TestWritePrecacheManifest_ListsTheRuntimeAssets(t *testing.T) {
+// TestWritePrecacheManifest_ListsOnlyTheHashedChunks: the worker cannot guess the
+// hashed chunk names, so the list has to be built from what landed — and it holds
+// NOTHING ELSE. app.js and style.css are served `no-cache` because a release
+// replaces their bytes under those names, so a cache that answered them would pair
+// a fresh index.html with the previous build's bundle; sw.js is excluded for its
+// own reason (a worker that caches itself makes a broken worker permanent), and
+// index.html stays out because it is `no-store`.
+func TestWritePrecacheManifest_ListsOnlyTheHashedChunks(t *testing.T) {
 	got := stampOf(t, map[string]string{
 		"app.js":                        "entry\n",
 		"app.js.map":                    "map\n",
@@ -203,65 +206,77 @@ func TestWritePrecacheManifest_ListsTheRuntimeAssets(t *testing.T) {
 		"index.html":                    "<!doctype html>\n",
 		"manifest.json":                 "{}\n",
 	})
-	want := []string{"app.js", "chunks/editor-AAAA1111.js", "chunks/history-BBBB2222.js", "style.css"}
+	want := []string{"chunks/editor-AAAA1111.js", "chunks/history-BBBB2222.js"}
 	if !slices.Equal(got.Assets, want) {
 		t.Errorf("assets = %v, want %v", got.Assets, want)
 	}
 	if got.Stamp == "" {
-		t.Error("stamp is empty, want a content stamp")
+		t.Error("stamp is empty, want a stamp over the names")
 	}
 }
 
-// TestWritePrecacheManifest_StampTracksContentUnderAStableName is the whole
-// reason the stamp is over bytes rather than names. A release replaces app.js and
-// style.css under the same name, and it frequently leaves sw.js byte-identical —
-// in which case the browser runs no worker update at all, so the manifest's stamp
-// is the ONLY thing that can tell the cache a deploy happened.
-func TestWritePrecacheManifest_StampTracksContentUnderAStableName(t *testing.T) {
-	before := stampOf(t, map[string]string{
-		"app.js":    "entry v1\n",
-		"style.css": "css\n",
-	})
-	after := stampOf(t, map[string]string{
-		"app.js":    "entry v2\n",
-		"style.css": "css\n",
-	})
-	if !slices.Equal(before.Assets, after.Assets) {
-		t.Fatalf("asset list moved: %v then %v", before.Assets, after.Assets)
-	}
-	if before.Stamp == after.Stamp {
-		t.Errorf("stamp %q survived a content change under a stable name", after.Stamp)
-	}
-}
-
-// TestWritePrecacheManifest_StampTracksARename: a chunk split can move code
-// between files without changing any one file's bytes, so the name goes into the
-// hash beside its content.
-func TestWritePrecacheManifest_StampTracksARename(t *testing.T) {
+// TestWritePrecacheManifest_StampTracksTheChunkSet: a deploy frequently leaves
+// sw.js byte-identical, in which case the browser runs no worker update at all and
+// the manifest's stamp is the ONLY thing that can tell the cache the build moved.
+// Any change to what the list holds has to move it, and a chunk carries its
+// content hash in its own name, so a rename IS a content change.
+func TestWritePrecacheManifest_StampTracksTheChunkSet(t *testing.T) {
 	before := stampOf(t, map[string]string{
 		"app.js":                    "entry\n",
-		"style.css":                 "css\n",
+		"chunks/editor-AAAA1111.js": "chunk\n",
+	})
+	renamed := stampOf(t, map[string]string{
+		"app.js":                    "entry\n",
+		"chunks/editor-CCCC3333.js": "chunk\n",
+	})
+	if before.Stamp == renamed.Stamp {
+		t.Errorf("stamp %q survived a chunk rename", renamed.Stamp)
+	}
+	added := stampOf(t, map[string]string{
+		"app.js":                     "entry\n",
+		"chunks/editor-AAAA1111.js":  "chunk\n",
+		"chunks/history-BBBB2222.js": "chunk\n",
+	})
+	if before.Stamp == added.Stamp {
+		t.Errorf("stamp %q survived a second chunk arriving", added.Stamp)
+	}
+}
+
+// TestWritePrecacheManifest_StampIgnoresAStableName: the other half of the same
+// contract. Nothing the worker caches changed when only app.js did, so the stamp
+// must not move and make the worker re-fetch and re-prune a cache that is already
+// correct.
+func TestWritePrecacheManifest_StampIgnoresAStableName(t *testing.T) {
+	before := stampOf(t, map[string]string{
+		"app.js":                    "entry v1\n",
 		"chunks/editor-AAAA1111.js": "chunk\n",
 	})
 	after := stampOf(t, map[string]string{
-		"app.js":                    "entry\n",
-		"style.css":                 "css\n",
-		"chunks/editor-CCCC3333.js": "chunk\n",
+		"app.js":                    "entry v2\n",
+		"chunks/editor-AAAA1111.js": "chunk\n",
 	})
-	if before.Stamp == after.Stamp {
-		t.Errorf("stamp %q survived a chunk rename with identical content", after.Stamp)
+	if before.Stamp != after.Stamp {
+		t.Errorf("stamp moved from %q to %q for a name the cache never holds", before.Stamp, after.Stamp)
 	}
 }
 
 // TestWritePrecacheManifest_NoChunksDirectory: a build that split nothing is not
-// an error, and the manifest is still valid.
+// an error, and the manifest is still valid — an EMPTY list rather than a JSON
+// null, which is what parseManifest reads as an unusable document.
 func TestWritePrecacheManifest_NoChunksDirectory(t *testing.T) {
-	got := stampOf(t, map[string]string{
+	dir := stageOut(t, map[string]string{
 		"app.js":    "entry\n",
 		"style.css": "css\n",
 	})
-	if !slices.Equal(got.Assets, []string{"app.js", "style.css"}) {
-		t.Errorf("assets = %v, want the two entry points", got.Assets)
+	if err := writePrecacheManifest(); err != nil {
+		t.Fatalf("writePrecacheManifest() = %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, outDir, precacheName))
+	if err != nil {
+		t.Fatalf("read %s: %v", precacheName, err)
+	}
+	if !strings.Contains(string(body), `"assets":[]`) {
+		t.Errorf("manifest = %s, want an empty assets list", body)
 	}
 }
 
