@@ -50,18 +50,13 @@ type statusSlot struct {
 	// rather than one a later refresh replaced.
 	done chan struct{}
 	// pending and pendingFull are what reads asked for while the refresh in flight
-	// was running, and they are what stop the one-at-a-time rule LOSING work rather
-	// than merely delaying it. Both kinds of read can join both kinds of scan:
+	// was running, and they stop the one-at-a-time rule LOSING work rather than
+	// merely delaying it. `finish` drains them. One row per join direction:
 	//
-	//	scoped joins scoped	pending      - the scan running may cover another repo
-	//	scoped joins full	(nothing)    - answered: a full scan covers every repo
-	//	full   joins scoped	pendingFull  - NOT answered: a scoped scan leaves `at`
-	//	                                       fixed, so the whole-tree read is served
-	//	                                       a snapshot that stays stale and the
-	//	                                       scan it asked for never happens
-	//	full   joins full	(nothing)    - answered by the scan already running
-	//
-	// The refresh in flight drains both and keeps going.
+	//	scoped joins scoped	pending
+	//	scoped joins full	pending      coverage is not timing: the scan may be past it
+	//	full   joins scoped	pendingFull  a scoped pass leaves `at` fixed
+	//	full   joins full	(nothing)    claim's own case says why
 	pending     map[string]struct{}
 	pendingFull bool
 	// full says the refresh in flight covers every repository, which is what decides
@@ -101,23 +96,29 @@ func (c *statusCache) read(key string) (snap *statusSnapshot, running chan struc
 // when that refresh publishes.
 //
 // A joining read's intent is RECORDED for the refresh in flight to drain, so the
-// one-at-a-time rule delays work instead of dropping it. Nothing is recorded
-// against a full scan, which answers every read by covering every repository; the
-// statusSlot comment carries all four directions.
+// one-at-a-time rule delays work instead of dropping it. The statusSlot comment
+// maps all four join directions.
 func (c *statusCache) claim(key string, only map[string]struct{}) (done chan struct{}, started bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	slot := c.slot(key)
 	if slot.done != nil {
 		switch {
-		case slot.full:
-		case only == nil:
-			slot.pendingFull = true
-		default:
+		case only != nil:
+			// Recorded whatever kind of scan is running: coverage is not timing, and
+			// the scan in flight may have read this repository before the write that
+			// triggered this read landed.
 			if slot.pending == nil {
 				slot.pending = make(map[string]struct{}, len(only))
 			}
 			maps.Copy(slot.pending, only)
+		case slot.full:
+			// Nothing, on purpose: this read wants the sweep already running, and
+			// chaining a second one costs the ~275 subprocesses the holder exists to
+			// pay once. The residue is one window's staleness, with `age_ms` as its
+			// signal and the next recorded intent as its close.
+		default:
+			slot.pendingFull = true
 		}
 		return slot.done, false
 	}
@@ -132,17 +133,13 @@ func (c *statusCache) claim(key string, only map[string]struct{}) (done chan str
 // nothing, or the slot stays claimed and the variant never refreshes again.
 //
 // A full pass REPLACES the snapshot and moves `at`; a scoped one merges and leaves
-// `at` alone. Either way the old channel's waiters are woken, because the snapshot
-// they were waiting on moved. A recorded full intent wins over a recorded scope,
-// which it subsumes.
+// `at` alone. Either way the old channel's waiters are woken. A recorded full intent
+// wins over a recorded scope, which it subsumes.
 func (c *statusCache) finish(key string, rows []allRepoStatus) (next map[string]struct{}, run bool) {
 	c.mu.Lock()
 	slot := c.slot(key)
 	if slot.full {
 		slot.snap = &statusSnapshot{at: time.Now(), repos: rows}
-		// A full scan looked at every repository, so anything a read asked for while
-		// it ran is already answered.
-		slot.pending, slot.pendingFull = nil, false
 	} else {
 		slot.mergeRows(rows)
 	}

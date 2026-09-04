@@ -2,6 +2,7 @@ package chat
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -422,6 +423,125 @@ func TestToolBulk_RejectsNonGet(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("POST = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 	}
+}
+
+// escapedValue is a JSON string value whose bytes are n copies of c, unescaped.
+//
+// Built by hand rather than with json.Marshal, because Marshal is what escapes: a
+// fixture routed through it — or through the chat store, which writes with
+// MarshalIndent — arrives already expanded and cannot see an accounting that measures
+// the raw bytes. That is also why the shipped budget held by accident: the only
+// caller reads values the store escaped on the way to disk, the same shape as the
+// retention header's key folding.
+func escapedValue(c byte, n int) json.RawMessage {
+	return json.RawMessage(`"` + strings.Repeat(string(c), n) + `"`)
+}
+
+// The aggregate budget charges what ESCAPING costs, not what the raw bytes measure.
+//
+// encoding/json expands `<`, `>` and `&` to a six-byte `\u00xx` escape on the way
+// out, so an object whose raw members sum to a third of the budget marshals to twice
+// it. The reachable shapes are ordinary: a write tool's HTML or JSX content, a bash
+// command carrying `&&`. The two fixtures above cannot see this — theirs are built
+// from `strings.Repeat("B", …)` and small integers, neither of which escapes.
+func TestPreviewInput_TheAggregateBudgetChargesWhatEscapingCosts(t *testing.T) {
+	// Each member fits the per-member cap escaped (3,602 of 4,096) and the ten of
+	// them fit the object budget RAW (6 KiB of 16 KiB) while marshalling to 36 KiB.
+	obj := map[string]json.RawMessage{"path": json.RawMessage(`"internal/app/page.tsx"`)}
+	for i := range 10 {
+		obj["chunk"+strconv.Itoa(i)] = escapedValue('<', 600)
+	}
+	raw, err := json.Marshal(obj)
+	if err != nil {
+		t.Fatalf("Setup: marshal input: %v", err)
+	}
+	// json.Marshal escaped the fixture on the way in, so hand the function the
+	// unescaped spelling a writer other than encoding/json would produce.
+	unescaped := unescapeUnicode(t, raw)
+	if len(unescaped) <= toolPreviewInputBytes {
+		t.Fatalf("Setup: fixture is %d bytes, needs to exceed %d or previewInput returns "+
+			"early and this test asserts nothing", len(unescaped), toolPreviewInputBytes)
+	}
+	if len(unescaped) > toolPreviewInputTotalBytes {
+		t.Fatalf("Setup: fixture is %d raw bytes, over the %d-byte object budget already, "+
+			"so a raw accounting would trim it too", len(unescaped), toolPreviewInputTotalBytes)
+	}
+
+	got, cut := previewInput(unescaped)
+	if !cut {
+		t.Fatal("cut = false for an input that marshals to over twice the object budget")
+	}
+	if len(got) > toolPreviewInputTotalBytes {
+		t.Errorf("preview input marshals to %d bytes, over the %d-byte budget by %d: the "+
+			"aggregate cut charged the values' raw bytes and not the escapes encoding/json "+
+			"writes for them", len(got), toolPreviewInputTotalBytes,
+			len(got)-toolPreviewInputTotalBytes)
+	}
+	var kept map[string]any
+	if err := json.Unmarshal(got, &kept); err != nil {
+		t.Fatalf("preview input is not an object: %s", got)
+	}
+	if kept["path"] != "internal/app/page.tsx" {
+		t.Errorf("path = %v, want it kept: the aggregate cut took a claim-line member "+
+			"before the chunks", kept["path"])
+	}
+}
+
+// The per-MEMBER cap charges escaping too, and it is the half that decides whether
+// one member can blow the budget on its own.
+//
+// Measured against a member of the same raw size that does NOT escape, so the cap is
+// shown to key on what the value costs marshalled rather than on its length.
+func TestPreviewInput_TheMemberCapChargesWhatEscapingCosts(t *testing.T) {
+	obj := map[string]json.RawMessage{
+		"path": json.RawMessage(`"internal/app/page.tsx"`),
+		// 1,002 raw bytes, 6,002 marshalled: over the 4 KiB member cap.
+		"escaped": escapedValue('&', 1_000),
+		// 3,102 either way: under it, and larger raw than the member above.
+		"plain": escapedValue('x', 3_100),
+	}
+	raw, err := json.Marshal(obj)
+	if err != nil {
+		t.Fatalf("Setup: marshal input: %v", err)
+	}
+	unescaped := unescapeUnicode(t, raw)
+	if len(unescaped) <= toolPreviewInputBytes {
+		t.Fatalf("Setup: fixture is %d bytes, needs to exceed %d or previewInput returns "+
+			"early", len(unescaped), toolPreviewInputBytes)
+	}
+
+	got, cut := previewInput(unescaped)
+	if !cut {
+		t.Fatal("cut = false for an object holding a member that marshals to 6 KiB")
+	}
+	var kept map[string]any
+	if err := json.Unmarshal(got, &kept); err != nil {
+		t.Fatalf("preview input is not an object: %s", got)
+	}
+	if _, ok := kept["escaped"]; ok {
+		t.Errorf("the `escaped` member survived: it is 1,002 raw bytes and 6,002 "+
+			"marshalled, so the cap measured the wrong one and one member alone can "+
+			"marshal to %d bytes", 6*toolPreviewInputBytes)
+	}
+	if kept["plain"] != strings.Repeat("x", 3_100) {
+		t.Error("the `plain` member was dropped: it is LARGER raw than the escaped one " +
+			"and under the cap marshalled, so the cap is cutting on the wrong measure")
+	}
+}
+
+// unescapeUnicode turns the `\u00xx` escapes json.Marshal wrote back into their one
+// raw byte, so a fixture can carry the unescaped spelling of `<`, `>` and `&`.
+func unescapeUnicode(t *testing.T, raw json.RawMessage) json.RawMessage {
+	t.Helper()
+	s := string(raw)
+	for _, c := range []byte{'<', '>', '&'} {
+		s = strings.ReplaceAll(s, fmt.Sprintf(`\u%04x`, c), string(c))
+	}
+	out := json.RawMessage(s)
+	if !json.Valid(out) {
+		t.Fatalf("Setup: unescaping produced invalid JSON: %s", out)
+	}
+	return out
 }
 
 // TestPreviewMessage_LeavesASmallMessageAlone pins the copy-on-write: the
