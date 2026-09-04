@@ -1416,23 +1416,66 @@ export interface RunLaunchedResponse {
 }
 
 /**
- * RunProgressPayload is the payload for type="run_progress": an INVALIDATION
- * signal. The client refetches `GET /api/runs/{id}`; it never reconstructs run
- * state from these events, and the payload is deliberately too thin to let it.
+ * RunProgressPayload is the payload for type="run_progress": what happened to
+ * ONE node of a run, addressed by its path.
  * //
- * That thinness is load-bearing rather than minimalist. `run_start` re-fires on
- * every resume and progress frames duplicate across a resume (probe 6 saw three
- * `run_start` frames for one run), so a client accumulating them would render a
- * garbled tree. `node_complete` also cannot be joined by (nodeId, iteration,
- * branchId) — it carries none of the last two — so an accumulating client could
- * not even tell two repeat iterations apart.
+ * It used to be a pure invalidation, and the client answered every frame with a
+ * `GET /api/runs/{id}` — a JSON-RPC round trip to KAS returning the whole state
+ * tree, up to five of them concurrently per burst of node events. The server
+ * already holds the fact the client was refetching to learn, so it sends it.
  * //
- * NodeID is absent on `paused` (a run-level frame) and holds the loop id on
+ * The thinness that argument rested on was real but is not the payload's: KAS
+ * re-fires `run_start` on every resume and duplicates progress frames across
+ * one (probe 6 saw three `run_start` frames for one run), and `node_complete`
+ * carries neither `iteration` nor `branchId`, so a client accumulating a tree
+ * from (nodeId) alone could not tell two passes of a loop body apart. NodePath
+ * is what closes that: KAS stamps the whole path on every node frame, a repeat's
+ * iteration container is a segment of it, and an idempotent write addressed by
+ * path is safe to replay any number of times.
+ * //
+ * Two kinds still carry no node state, and both are honest refetches rather than
+ * an omission: `loop_iteration` and `steps_queued` change the tree's SHAPE (a
+ * new iteration container, newly queued steps), which no per-node patch can
+ * express, and `paused` is run-level with its explanation (`pauseReason`) on
+ * `inspect` alone.
+ * //
+ * NodeID stays for the surfaces that join on it (an ask marks the row whose node
+ * id it names). It is absent on `paused` and holds the loop id on
  * `loop_iteration`, which is the node the frame is about in both cases.
  */
 export interface RunProgressPayload {
   workflow_id: string;
   node_id?: string;
+  /**
+ * NodePath addresses ONE execution of a node, joined with "/" — the same
+ * spelling RunStepPayload.NodePath uses, so both frames of a run reach a row
+ * the same way and the client keeps one translation
+ * (`static-src/run-store.ts`'s nodePathSegment). Empty on the run-level and
+ * shape-changing kinds, which is what tells the client to refetch instead.
+ */
+  node_path?: string;
+  /**
+ * Status is the node's status after this frame, in KAS's own NodeState
+ * vocabulary so it drops straight onto the cached tree: `running` from
+ * node_start, `paused` from node_paused, and node_complete's own terminal
+ * word (completed / failed / skipped) forwarded rather than guessed.
+ */
+  status?: string;
+  /**
+ * StartedAt and EndedAt are RFC 3339, stamped by the SERVER at frame arrival.
+ * KAS puts no timestamp on either lifecycle frame — only `inspect`'s tree
+ * carries the node's own — so this is vibekit's observation of when the frame
+ * reached it, which is within one bridge hop of the fact and is what a live
+ * elapsed clock needs. A later refetch overwrites both with KAS's values.
+ */
+  started_at?: string;
+  ended_at?: string;
+  /**
+ * FailureReason is KAS's own explanation for a node that failed, forwarded so
+ * a failed row reads as a failure with a cause rather than needing a refetch
+ * to say why. Empty on every other outcome.
+ */
+  failure_reason?: string;
   kind: RunProgressKind;
 }
 
@@ -2052,8 +2095,58 @@ export interface ToolCall {
  * Empty for the ~99.75% of real command outputs that carry no escape.
  */
   output_spans?: TextSpan[];
-  duration_ms?: number;
   ts: number;
+  duration_ms?: number;
+  /**
+ * OutputBytes is the FULL output's length in bytes, and DiffCount the full
+ * number of diffs — what the reader cannot see, stated so the card can offer
+ * the rest without first fetching it. Both are set ONLY alongside HasFull:
+ * where the value is whole, its own length is already the answer and a second
+ * copy of it would be one more thing that can disagree.
+ */
+  output_bytes?: number;
+  diff_count?: number;
+  /**
+ * HasFull says Input, Output and Diffs here are a PREVIEW, and the whole of
+ * them is at GET /api/chats/{id}/tools/{id}.
+ * //
+ * Set by the transcript read path and by nothing else. A live card is built
+ * from the stream, which carries every byte exactly once, so it holds the
+ * whole call already; only a card built from a page load or a scroll-up reads
+ * a preview, and that is where the bulk was measured (one chat's 465 calls
+ * carry 12.17 MB, and one message 9.1 MB on its own).
+ * //
+ * It is what BOUNDS a single message. The byte budget on the transcript
+ * window cuts at a message boundary and always lets the newest message
+ * through whole, so without a bound inside the message the worst case is
+ * still the whole of it.
+ */
+  has_full?: boolean;
+}
+
+/**
+ * ToolCallBulk is GET /api/chats/{id}/tools/{toolCallID}: the whole of one tool
+ * call's content, for a card whose preview said HasFull.
+ * //
+ * The three fields the transcript previews and nothing else. Status, title, kind
+ * and the metadata blocks are on the card already — re-sending them would invite
+ * a second reconcile path for facts the stream owns, and this resource has no
+ * business being an alternative source of a tool call's STATE.
+ * //
+ * Read out of the persisted chat, so it answers for a finished call. An in-flight
+ * one is not previewed at all: its content is arriving on the stream.
+ */
+export interface ToolCallBulk {
+  /**
+ * Strings before slices, and no field order here carries meaning: this is
+ * betteralign's answer for the smallest GC scan region (govet
+ * fieldalignment).
+ */
+  output?: string;
+  id: string;
+  diffs?: ToolDiff[];
+  output_spans?: TextSpan[];
+  input?: unknown;
 }
 
 /**
@@ -2089,6 +2182,13 @@ export interface ToolCallPayload {
  * is not a plain value is OutputDelta, whose meaning depends on OutputReplace.
  */
 export interface ToolCallUpdatePayload {
+  /**
+ * The three metadata blocks, each sent whole when it changed. All three are
+ * small and none accumulates.
+ */
+  checkpoint?: ToolCheckpoint;
+  disclosed?: ToolDisclosed;
+  denial?: ToolDenial;
   message_id: string;
   tool_call_id: string;
   /**
@@ -2109,7 +2209,14 @@ export interface ToolCallUpdatePayload {
  * would leave a command's output as whatever fragments happened to arrive.
  */
   output_delta?: string;
-  output_replace?: boolean;
+  /**
+ * The four late identity attachments. Each is adopted once and never
+ * overwritten, so each appears on at most one frame per call.
+ */
+  terminal_id?: string;
+  sub_session_id?: string;
+  agent_subtask_id?: string;
+  workflow_id?: string;
   /**
  * OutputSpans style the WHOLE output at absolute offsets, so they are sent
  * entire whenever they change. Empty for the ~99.75% of real command outputs
@@ -2127,22 +2234,13 @@ export interface ToolCallUpdatePayload {
  * with them. Small: a path list, not content.
  */
   locations?: ToolLocation[];
+  /**
+ * The two non-pointer scalars last, so the GC scan region stops above them
+ * (govet fieldalignment, ordered by betteralign). OutputReplace's meaning is
+ * on OutputDelta.
+ */
   duration_ms?: number;
-  /**
- * The four late identity attachments. Each is adopted once and never
- * overwritten, so each appears on at most one frame per call.
- */
-  terminal_id?: string;
-  sub_session_id?: string;
-  agent_subtask_id?: string;
-  workflow_id?: string;
-  /**
- * The three metadata blocks, each sent whole when it changed. All three are
- * small and none accumulates.
- */
-  checkpoint?: ToolCheckpoint;
-  disclosed?: ToolDisclosed;
-  denial?: ToolDenial;
+  output_replace?: boolean;
 }
 
 /**

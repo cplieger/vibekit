@@ -521,7 +521,9 @@ export function initToolCallbacks(cbs: {
  *  disposal (`disposeToolSlot` against its render lifetime); the view-level
  *  sweep is the belt behind it. */
 export function mountToolCallCard(chatID: string, tc: ToolCall): HTMLDivElement {
-  const opts = toolCardOptsFor(tc, true);
+  // The chat travels into the card because a previewed call's bulk is addressed
+  // by (chat, call): `GET /api/chats/{id}/tools/{toolCallID}`.
+  const opts = toolCardOptsFor(tc, true, chatID);
   const card = buildToolCard(opts);
   const key = toolCallSigKey(chatID, tc.id);
   const slots = toolSlots.get(key) ?? [];

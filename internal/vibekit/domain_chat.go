@@ -249,8 +249,50 @@ type ToolCall struct {
 	// paints spans without ever building HTML from agent-controlled bytes.
 	// Empty for the ~99.75% of real command outputs that carry no escape.
 	OutputSpans []TextSpan `json:"output_spans,omitempty"`
-	DurationMs  int        `json:"duration_ms,omitempty"`
 	Ts          int64      `json:"ts"`
+	DurationMs  int        `json:"duration_ms,omitempty"`
+	// OutputBytes is the FULL output's length in bytes, and DiffCount the full
+	// number of diffs — what the reader cannot see, stated so the card can offer
+	// the rest without first fetching it. Both are set ONLY alongside HasFull:
+	// where the value is whole, its own length is already the answer and a second
+	// copy of it would be one more thing that can disagree.
+	OutputBytes int `json:"output_bytes,omitempty"`
+	DiffCount   int `json:"diff_count,omitempty"`
+	// HasFull says Input, Output and Diffs here are a PREVIEW, and the whole of
+	// them is at GET /api/chats/{id}/tools/{id}.
+	//
+	// Set by the transcript read path and by nothing else. A live card is built
+	// from the stream, which carries every byte exactly once, so it holds the
+	// whole call already; only a card built from a page load or a scroll-up reads
+	// a preview, and that is where the bulk was measured (one chat's 465 calls
+	// carry 12.17 MB, and one message 9.1 MB on its own).
+	//
+	// It is what BOUNDS a single message. The byte budget on the transcript
+	// window cuts at a message boundary and always lets the newest message
+	// through whole, so without a bound inside the message the worst case is
+	// still the whole of it.
+	HasFull bool `json:"has_full,omitempty"`
+}
+
+// ToolCallBulk is GET /api/chats/{id}/tools/{toolCallID}: the whole of one tool
+// call's content, for a card whose preview said HasFull.
+//
+// The three fields the transcript previews and nothing else. Status, title, kind
+// and the metadata blocks are on the card already — re-sending them would invite
+// a second reconcile path for facts the stream owns, and this resource has no
+// business being an alternative source of a tool call's STATE.
+//
+// Read out of the persisted chat, so it answers for a finished call. An in-flight
+// one is not previewed at all: its content is arriving on the stream.
+type ToolCallBulk struct {
+	// Strings before slices, and no field order here carries meaning: this is
+	// betteralign's answer for the smallest GC scan region (govet
+	// fieldalignment).
+	Output      string          `json:"output,omitempty"`
+	ID          string          `json:"id"`
+	Diffs       []ToolDiff      `json:"diffs,omitempty"`
+	OutputSpans []TextSpan      `json:"output_spans,omitempty"`
+	Input       json.RawMessage `json:"input,omitempty"`
 }
 
 // TextSpan styles the half-open range [Start,End) of a sibling text field.
