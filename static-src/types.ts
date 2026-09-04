@@ -391,6 +391,15 @@ export interface Session {
    *  `syncEpoch()`; a fetch that raced a transport gap therefore stores a
    *  number that already reads stale. See store.ts transcriptStale. */
   loadedEpoch?: number;
+  /** This row is the boot snapshot's paint-time hint, not the server's answer:
+   *  `boot-snapshot.ts` sets it and nothing else ever does.
+   *
+   *  It exists because `loadList` PRESERVES rows the server did not name — the
+   *  rule that keeps a chat SSE created while the request was in flight — and a
+   *  hinted row for a chat deleted since the capture satisfies that rule
+   *  identically. The mark is what tells the two apart, so the hint does not
+   *  outlive the answer that omitted it. */
+  provisional?: true;
 }
 
 /** One resumable KAS session, from GET /api/sessions. Mirrors

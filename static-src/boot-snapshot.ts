@@ -1,10 +1,9 @@
 // ---------------------------------------------------------------------------
 // The boot snapshot: a bounded projection of what THIS SCREEN was showing, held
 // in IndexedDB so a resume paints before the network answers. A PAINT-TIME HINT
-// with the standing the theme's localStorage cache has — every row it paints is
-// replaced by the boot's own reads, and it advances no tab-set version, so the
-// server's list wins. It does not hold the active tab: `device-view.ts` persists
-// that per screen and `tabs.ts`'s reset reads it.
+// with the standing the theme's localStorage cache has: it advances no tab-set
+// version, and `boot.ts` paints it only while its own chat read is still out, so
+// the server's answer always wins.
 // ---------------------------------------------------------------------------
 
 import { effect } from "@cplieger/reactive";
@@ -55,7 +54,8 @@ interface SnapshotChat {
   readonly usage: Usage;
 }
 
-/** What one screen was showing. */
+/** What one screen was showing. No active tab: `device-view.ts` persists that per
+ *  screen already, and `tabs.ts`'s reset reads it. */
 export interface BootSnapshot {
   readonly tabs: readonly TabSubject[];
   readonly chats: readonly SnapshotChat[];
@@ -73,15 +73,19 @@ export async function readBootSnapshot(): Promise<BootSnapshot | null> {
 
 /** Forget what this screen was showing, and stop capturing.
  *
- *  Called on a sign-out: a login screen must not hand the next boot someone else's
- *  strip. It does NOT un-paint the current frame — the modal is over it, and those
- *  rows are the ones this device already had on screen — so what it buys is that the
- *  NEXT boot paints nothing. */
+ *  Both sign-out doors reach it and `boot.ts` owns both. It does NOT un-paint the
+ *  current frame — those rows are the ones this device already had on screen — so
+ *  what it buys is that the NEXT boot paints nothing.
+ *
+ *  Every writer stops, the `pagehide` listener included: a page transition after
+ *  this would otherwise re-write the record it just deleted. */
 export async function clearBootSnapshot(): Promise<void> {
   clearTimeout(pending);
   pending = undefined;
   disposeCapture?.();
   disposeCapture = undefined;
+  captureAbort?.abort();
+  captureAbort = undefined;
   await deleteRecord();
 }
 
@@ -90,9 +94,9 @@ export async function clearBootSnapshot(): Promise<void> {
  *  ORDERED: the chat rows go in first because a chat tab's label is read from the
  *  store while its row is built (`tab-materialize.ts` `chatName`).
  *
- *  `setSessions` REPLACES the store, which is safe here and only here: the boot
- *  paints before its own `loadList` lands, and the transport holds every SSE frame
- *  until `markHydrated`, so nothing else has written a row yet. */
+ *  `setSessions` REPLACES the store, so this may only run BEFORE the boot's own chat
+ *  list lands; `boot.ts`'s `restoreWorkspace` owns that ordering. The transport holds
+ *  every SSE frame until `markHydrated`, so there is no other writer to lose to. */
 export function paintBootSnapshot(snap: BootSnapshot | null): boolean {
   if (snap === null || snap.tabs.length === 0) {
     return false;
@@ -105,11 +109,13 @@ export function paintBootSnapshot(snap: BootSnapshot | null): boolean {
   return true;
 }
 
-/** A chat row with no transcript claim.
+/** A chat row with no transcript claim, marked as the hint it is.
  *
  *  `residency` is left unset deliberately: `transcriptStale` then reads true, so the
- *  activation this paint enables refetches the window rather than trusting a hint.
- *  That is what makes the server's answer overwrite this and not the reverse. */
+ *  activation this paint enables refetches the window rather than trusting a hint —
+ *  which is what makes the server's answer overwrite this and not the reverse.
+ *  `provisional` covers the rows that answer does not name; its rule is at `types.ts`
+ *  `Session.provisional`. */
 function toProvisionalSession(c: SnapshotChat): Session {
   return {
     id: c.id,
@@ -123,13 +129,16 @@ function toProvisionalSession(c: SnapshotChat): Session {
     has_more: c.message_count > 0,
     thinking: false,
     working_label: "Thinking",
+    provisional: true,
   };
 }
 
 let pending: ReturnType<typeof setTimeout> | undefined;
-/** The capture's effect, or undefined while nothing is capturing. Production never
- *  disposes it; a test that drives two boots does. */
+/** The capture's effect, or undefined while nothing is capturing. Production
+ *  disposes it on a sign-out; a test that drives two boots does too. */
 let disposeCapture: (() => void) | undefined;
+/** Lifetime of the capture's DOM listener, so `clearBootSnapshot` can revoke it. */
+let captureAbort: AbortController | undefined;
 
 /** Start persisting the projection. Called once, from the post-auth door: there
  *  is nothing worth remembering about a login screen. */
@@ -137,6 +146,7 @@ export function startBootSnapshot(): void {
   if (disposeCapture !== undefined) {
     return;
   }
+  captureAbort = new AbortController();
   disposeCapture = effect(() => {
     // The three reads that move the projection: the tab set (which a rename also
     // bumps, via `renameTab`), which chat is active, and that chat's transcript.
@@ -148,11 +158,15 @@ export function startBootSnapshot(): void {
     }
     schedule();
   });
-  // `pagehide` is the last event a backgrounded PWA reliably gets, and the debounce
-  // is usually still pending when it fires. Best-effort: the write may not land.
-  addEventListener("pagehide", () => {
-    flush();
-  });
+  // Best-effort, on the last event a backgrounded PWA reliably gets: the debounce is
+  // usually still pending, and the write may not land.
+  addEventListener(
+    "pagehide",
+    () => {
+      flush();
+    },
+    { signal: captureAbort.signal },
+  );
 }
 
 function schedule(): void {
@@ -171,8 +185,7 @@ function flush(): void {
 export function captureBootSnapshot(): BootSnapshot {
   const active = getActiveId();
   const tabs = openTabSubjects();
-  // Only the chats a tab names: the store also holds rows for chats this screen
-  // has closed, and they are not what it was showing.
+  // Only the chats a tab names: the store also holds closed ones, not what was on screen.
   const open = new Set(tabs.filter((t) => t.kind === "chat").map((t) => t.ref));
   return {
     tabs,
@@ -198,7 +211,10 @@ function projectChat(s: Session): SnapshotChat {
 /** The active chat's newest turns, flattened back to messages and capped.
  *
  *  `projectTurns` is the app's own segmentation, so this cuts on the boundary the
- *  transcript renders and there is no second turn rule to drift from it. */
+ *  transcript renders and there is no second turn rule to drift from it. BOTH bounds
+ *  cut there: walking newest-first is what makes the message cap drop whole turns
+ *  instead of slicing the flattened tail, which would keep a body whose trigger is
+ *  gone — the headerless card SNAPSHOT_TURNS exists to prevent. */
 function newestTurns(chatID: string): Message[] {
   if (chatID === "") {
     return [];
@@ -206,13 +222,26 @@ function newestTurns(chatID: string): Message[] {
   const messages = get(chatID)?.messages ?? [];
   const turns = projectTurns(messages, false).slice(-SNAPSHOT_TURNS);
   const out: Message[] = [];
-  for (const t of turns) {
-    if (t.trigger !== undefined) {
-      out.push(t.trigger);
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const t = turns[i];
+    if (t === undefined) {
+      continue;
     }
-    out.push(...t.body);
+    const trigger = t.trigger;
+    const flat = trigger === undefined ? t.body : [trigger, ...t.body];
+    if (out.length + flat.length <= SNAPSHOT_MAX_MESSAGES) {
+      out.unshift(...flat);
+      continue;
+    }
+    if (out.length === 0) {
+      // The newest turn alone over budget is the case the cap exists for, and dropping
+      // it would resume with no transcript. Trimmed from its OLD end, trigger first.
+      const head = trigger === undefined ? [] : [trigger];
+      out.push(...head, ...t.body.slice(-(SNAPSHOT_MAX_MESSAGES - head.length)));
+    }
+    break;
   }
-  return out.slice(-SNAPSHOT_MAX_MESSAGES);
+  return out;
 }
 
 /** Narrow a persisted record: `unknown` in, every ELEMENT validated through the
@@ -362,5 +391,7 @@ export function _resetForTest(): void {
   pending = undefined;
   disposeCapture?.();
   disposeCapture = undefined;
+  captureAbort?.abort();
+  captureAbort = undefined;
   dbHandle = undefined;
 }

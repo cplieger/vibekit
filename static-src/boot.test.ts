@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type * as BootModule from "./boot.js";
+import type { BootSnapshot } from "./boot-snapshot.js";
 import type { IdentityVerdict } from "./identity.js";
 import type { EffectiveSettings } from "./persist.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
@@ -50,8 +51,17 @@ const m = vi.hoisted(() => ({
   readBootSnapshot: vi.fn(),
   paintBootSnapshot: vi.fn(),
   clearBootSnapshot: vi.fn(),
+  // Typed, because the cases below read the registered listener back OFF the mock
+  // and call it: an inferred zero-arg signature makes `mock.calls` an empty tuple.
+  subscribeByName: vi.fn<
+    (name: string, fn: (inst: { readonly status: string }) => void) => () => void
+  >(() => () => undefined),
 }));
 
+vi.mock("./actions/index.js", () => ({ subscribeByName: m.subscribeByName }));
+// Only the action's NAME is read here (boot.ts subscribes by it rather than by a
+// literal), so the definition itself needs no behaviour.
+vi.mock("./actions/settings.js", () => ({ logout: { name: "settings.logout" } }));
 vi.mock("./store-load.js", () => ({ loadList: m.loadList }));
 vi.mock("./persist.js", () => ({}));
 vi.mock("./store.js", () => ({
@@ -118,6 +128,15 @@ async function freshBoot(): Promise<typeof BootModule> {
 }
 
 const SIGNED_IN: IdentityVerdict = { state: "signed_in", email: "someone@example.test" };
+
+/** A record with something in it, so a paint that DID happen is distinguishable
+ *  from the empty default. */
+const SNAPSHOT: BootSnapshot = {
+  tabs: [{ id: "t1", kind: "chat", ref: "c1", parent: "", pinned: false, owns: true }],
+  chats: [],
+  transcript_chat_id: "",
+  messages: [],
+};
 
 /** The default happy answers: settings load, one chat, the tab set adopts, and no
  *  snapshot — a first-ever boot on this screen. */
@@ -329,6 +348,92 @@ describe("the chat list is read once per cold boot", () => {
 // ordering is the whole property: the paint happens ahead of the chat fold, and
 // the boot's own activation is not run a second time over it.
 describe("the local snapshot", () => {
+  it("drops the hint when the chat list answers first", async () => {
+    // The interleaving a resume produces: a warm server against a cold IndexedDB
+    // open. `paintBootSnapshot` REPLACES the chat store, so painting here would
+    // substitute the hint for the answer it was supposed to be superseded by — and
+    // nothing on the boot path reads the list again.
+    const snapshot = deferred<BootSnapshot | null>();
+    m.readBootSnapshot.mockReturnValue(snapshot.promise);
+
+    const { startBoot } = await freshBoot();
+    const booted = startBoot({ applyRoute: m.applyRoute });
+
+    // The chat list landed, and the boot moved on rather than waiting on the hint.
+    await vi.waitFor(() => {
+      expect(m.listTabs).toHaveBeenCalledTimes(1);
+    });
+
+    snapshot.resolve(SNAPSHOT);
+    await booted;
+
+    // The record arrived, and was never painted.
+    expect(m.paintBootSnapshot).toHaveBeenCalledTimes(1);
+    expect(m.paintBootSnapshot).toHaveBeenCalledWith(null);
+  });
+
+  it("finishes the workspace when the hint's paint throws", async () => {
+    // A hint is best-effort: everything below it in `restoreWorkspace` is the
+    // authoritative restore, and a throw here used to skip the lot — no
+    // `markHydrated` (so every held SSE frame waits out the 20s timeout), no tab
+    // set, no route, and a tab strip shimmering forever.
+    m.paintBootSnapshot.mockImplementation(() => {
+      throw new Error("a row would not build");
+    });
+    const skeleton = document.createElement("div");
+    skeleton.id = "tab-strip-skeleton";
+    document.body.appendChild(skeleton);
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.markHydrated).toHaveBeenCalled();
+    expect(m.listTabs).toHaveBeenCalledTimes(1);
+    expect(m.activateRestoredTab).toHaveBeenCalledTimes(1);
+    expect(document.getElementById("tab-strip-skeleton")).toBeNull();
+  });
+
+  it("falls back to the tab set's activation when the resumed one throws", async () => {
+    // A resume that got as far as its activation and failed there has NOT restored
+    // the workspace, so the tab set's own activation must still run — which is why
+    // `resumed` is only true once the whole hint path completed.
+    m.paintBootSnapshot.mockReturnValue(true);
+    m.activateRestoredTab.mockImplementationOnce(() => {
+      throw new Error("onShow rejected");
+    });
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.activateRestoredTab).toHaveBeenCalledTimes(2);
+    expect(m.listTabs).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops capturing and drops the record when the user logs out", async () => {
+    // The door with a button. The page keeps running after a logout, so a live
+    // capture goes on writing a signed-out user's workspace to disk and the next
+    // boot paints it before whoami can say `signed_out`.
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+    expect(m.clearBootSnapshot).not.toHaveBeenCalled();
+
+    const listener = m.subscribeByName.mock.calls.find(([name]) => name === "settings.logout")?.[1];
+    expect(listener).toBeDefined();
+    listener?.({ status: "success" });
+
+    expect(m.clearBootSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps capturing when a logout FAILS, because the user is still signed in", async () => {
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    const listener = m.subscribeByName.mock.calls.find(([name]) => name === "settings.logout")?.[1];
+    listener?.({ status: "error" });
+
+    expect(m.clearBootSnapshot).not.toHaveBeenCalled();
+  });
+
   it("paints the strip and activates it before the chat list answers", async () => {
     const chats = deferred<boolean>();
     m.loadList.mockReturnValue(chats.promise);

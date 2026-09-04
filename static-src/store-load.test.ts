@@ -112,6 +112,44 @@ describe("loadList pruning", () => {
     const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
     expect(passed.map((s) => s.id)).toEqual(["kept"]);
   });
+
+  it("keeps a chat that arrived while the request was in flight", async () => {
+    // `upsertHeader` builds that row from an SSE frame, so the answer being applied
+    // predates it and is not entitled to drop it.
+    mockApiGetTyped.mockImplementation(() => {
+      sessions.set("c-sse", { id: "c-sse", messages: [], message_count: 0 } as unknown as Session);
+      return Promise.resolve({
+        chats: [{ id: "kept", name: "Kept", message_count: 0, usage: {} }],
+      });
+    });
+
+    await loadList();
+    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
+    expect(passed.map((s) => s.id)).toEqual(["kept", "c-sse"]);
+  });
+
+  it("drops a provisional row the server did not name", async () => {
+    // Identical on every axis the rule above tests — unknown before the request,
+    // unnamed by the answer — and the opposite meaning: the boot snapshot painted
+    // it, so the chat may have been deleted since that capture and there is nothing
+    // to preserve. Without the mark, a deleted chat outlives the answer that
+    // omitted it and every reader counting rows sees a phantom.
+    mockApiGetTyped.mockImplementation(() => {
+      sessions.set("c-hint", {
+        id: "c-hint",
+        messages: [],
+        message_count: 0,
+        provisional: true,
+      } as unknown as Session);
+      return Promise.resolve({
+        chats: [{ id: "kept", name: "Kept", message_count: 0, usage: {} }],
+      });
+    });
+
+    await loadList();
+    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
+    expect(passed.map((s) => s.id)).toEqual(["kept"]);
+  });
 });
 
 describe("loadMessages pagination dedupe", () => {
