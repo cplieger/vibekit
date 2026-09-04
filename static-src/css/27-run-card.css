@@ -370,7 +370,7 @@
 
 .run-step[data-status="running"] .run-step-glyph::before {
   border-top-color: transparent;
-  animation: vk-spin 0.6s linear infinite;
+  animation: vk-spin var(--spin-dur) linear infinite;
 }
 
 .run-step[data-status="waiting"] .run-step-glyph::before {

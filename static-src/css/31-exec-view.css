@@ -556,7 +556,7 @@
 
 .ev-row[data-state="running"] > .ev-row-main > .ev-state::before {
   border-top-color: transparent;
-  animation: vk-spin 0.6s linear infinite;
+  animation: vk-spin var(--spin-dur) linear infinite;
 }
 
 .ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before {

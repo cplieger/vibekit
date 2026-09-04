@@ -793,6 +793,21 @@
     --dot-size: 0.5rem;
     --dot-size-sm: 0.375rem;
     --dot-beat-dur: 2.4s;
+    /* ---- Spinners ----------------------------------------------------------
+     *
+     * ONE period for every rotating ring, the other half of the dot block above
+     * — which consolidated the pulses and named "the run card's spinners" among
+     * the periods it did not reach. Nine rules spun `vk-spin` at 0.6s, 0.8s and
+     * 0.9s, and the period tracked nothing: 12px rings ran at both 0.6s and
+     * 0.8s, 16px rings at both, so two rings of one size sat side by side
+     * visibly drifting apart.
+     *
+     * 0.6s rather than the slow ambient period a dot takes, because the two
+     * answer different questions. A dot is ambient and reports work the reader
+     * cannot see; a spinner marks the one control or row they are waiting on, so
+     * it may read as responsive. It is also the value the newest surfaces
+     * already chose — the run card, the exec tree and the delegate card. */
+    --spin-dur: 0.6s;
     --icon-stroke-inline: 1;
     --icon-stroke-ui: 1;
     --icon-stroke-lg: 2;

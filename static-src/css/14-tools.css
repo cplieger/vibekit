@@ -340,7 +340,7 @@
   border: 2px solid var(--c-border);
   border-top-color: var(--c-accent);
   border-radius: 50%;
-  animation: vk-spin 0.8s linear infinite;
+  animation: vk-spin var(--spin-dur) linear infinite;
 }
 
 /* No .tool-status rules: the status word they styled is deleted. A finished card
@@ -622,7 +622,7 @@
   border: 0.125rem solid var(--c-accent);
   border-top-color: transparent;
   border-radius: 50%;
-  animation: vk-spin 0.6s linear infinite;
+  animation: vk-spin var(--spin-dur) linear infinite;
 }
 
 .subagent-name {
@@ -1222,7 +1222,7 @@
   border: 2px solid var(--c-border);
   border-top-color: var(--c-accent);
   border-radius: 50%;
-  animation: vk-spin 0.6s linear infinite;
+  animation: vk-spin var(--spin-dur) linear infinite;
   vertical-align: middle;
 }
 

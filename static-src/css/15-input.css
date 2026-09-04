@@ -429,7 +429,7 @@
     border: 0.125rem solid currentcolor;
     border-top-color: transparent;
     border-radius: 50%;
-    animation: vk-spin 0.6s linear infinite;
+    animation: vk-spin var(--spin-dur) linear infinite;
   }
 
   &.pending {
@@ -1324,7 +1324,7 @@
  * an arc (3/4 circle); we spin the whole SVG. Avoids needing a
  * dedicated keyframe; reuses the existing vk-spin rotation. */
 .icon-spinner {
-  animation: vk-spin 0.9s linear infinite;
+  animation: vk-spin var(--spin-dur) linear infinite;
   transform-origin: center;
 }
 
@@ -1338,7 +1338,7 @@
   border: 0.125rem solid var(--c-border);
   border-top-color: var(--c-text-primary);
   border-radius: 50%;
-  animation: vk-spin 0.8s linear infinite;
+  animation: vk-spin var(--spin-dur) linear infinite;
 }
 
 .spinner-sm {
@@ -1347,5 +1347,5 @@
   border: 0.125rem solid var(--c-border);
   border-top-color: var(--c-text-primary);
   border-radius: 50%;
-  animation: vk-spin 0.8s linear infinite;
+  animation: vk-spin var(--spin-dur) linear infinite;
 }
