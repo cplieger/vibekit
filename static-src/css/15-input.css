@@ -2,9 +2,35 @@
    Input Bar (centered, same max-width as messages)
    ========================================================================== */
 
+/* THE COMPOSER DOES NOT SHARE A LAYOUT WITH THE TRANSCRIPT, and that is what
+ * makes typing latency independent of transcript size by construction rather
+ * than by keeping the transcript small.
+ *
+ * `#prompt-input` carries `field-sizing: content`, so its intrinsic height is a
+ * function of what is typed, and this bar is a flex sibling of the transcript's
+ * scroller — one flex column, one layout. A keystroke therefore landed in the
+ * same layout pass a streaming transcript was already forcing up to 60x/s.
+ * `contain: layout` cuts both directions of that: the bar's internals (the dock's
+ * height animation, the pill row, the attachment and steer stacks) cannot dirty
+ * a box outside it, and a transcript mutation cannot drag this subtree through
+ * its layout pass.
+ *
+ * NOT on the shared `.bottom-bar` (19-files.css): the editor, files and run bars
+ * are the same class and none of them sits beside a live transcript.
+ *
+ * `position: relative; z-index` is REQUIRED BY the containment, not decoration.
+ * Layout containment makes this element a stacking context, and a non-positioned
+ * stacking context paints with the in-flow content — below `.chat-toolbar`
+ * (z-index 10, 12-chat.css). The pill cards open UPWARD out of this box (up to
+ * `min(26rem, 55dvh)`), so on a short viewport they would then be painted under
+ * that bar. Matching its z-index restores the previous order, which was a
+ * DOM-order tie between two z-index-10 elements. */
 [id="prompt-form"] {
   display: flex;
   flex-direction: column;
+  contain: layout;
+  position: relative;
+  z-index: 10;
 }
 
 .prompt-box {
