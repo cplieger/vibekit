@@ -433,7 +433,11 @@ func TestRetryRun_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	h.runs.claimTermination(id)
 	h.runs.recordEnd(id, runEndOverran)
 
-	if _, err := h.runs.Retry(t.Context(), id); err != nil {
+	// The zero affordance is what the route's gate resolves for a PARENTLESS run,
+	// which is what every fixture in this file stages: no launching chat to thread,
+	// so the verb finds its host through the run's own bridge. A chat-parented run
+	// threading its real parent is run_retry_test.go's subject.
+	if _, err := h.runs.Retry(t.Context(), id, runAffordance{}); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
 	if got := h.runs.endReason(id); got != "" {
@@ -461,7 +465,7 @@ func TestRetryRun_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	h.runs.claimTermination(id)
 	h.runs.recordEnd(id, runEndOverran)
 
-	if _, err := h.runs.Retry(t.Context(), id); err == nil {
+	if _, err := h.runs.Retry(t.Context(), id, runAffordance{}); err == nil {
 		t.Fatal("a refused retry reported success")
 	}
 	if got := h.runs.endReason(id); got != runEndOverran {
@@ -501,7 +505,7 @@ func TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *tes
 
 	done := make(chan error, 1)
 	go func() {
-		_, rErr := h.runs.Retry(t.Context(), id)
+		_, rErr := h.runs.Retry(t.Context(), id, runAffordance{})
 		done <- rErr
 	}()
 
@@ -566,7 +570,7 @@ func TestRetryRun_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 		t.Fatal("the fixture registered a bridge, so this exercises the wrong branch")
 	}
 
-	if _, err := h.runs.Retry(t.Context(), id); err != nil {
+	if _, err := h.runs.Retry(t.Context(), id, runAffordance{}); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
 	l, ok := h.runs.lease(id)
@@ -599,7 +603,7 @@ func TestRetryRun_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
 
-	if _, err := h.runs.Retry(t.Context(), id); err == nil {
+	if _, err := h.runs.Retry(t.Context(), id, runAffordance{}); err == nil {
 		t.Fatal("a refused retry reported success")
 	}
 	if _, ok := h.runs.lease(id); ok {

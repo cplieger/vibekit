@@ -102,6 +102,15 @@ const RUN_ACTION: Record<
  *  a closed tab simply stops matching, because the next open reassigns it. */
 let shownRun = "";
 
+/** The pending bindings on the control row's buttons, dropped when the row that
+ *  carries them is replaced.
+ *
+ *  `bindLoadingState` self-disposes only for an element that was ATTACHED the last
+ *  time its effect ran, and this row is built before the caller appends it — so a
+ *  button replaced before its first pending flip never reaches that path, and the
+ *  row is rebuilt once per `run_progress` frame. */
+let controlBindings: (() => void)[] = [];
+
 /** Point the run view at one run and mount its dock.
  *
  *  Exported for the tab factory (tab-materialize.ts): this is a run tab's `onShow`,
@@ -491,6 +500,12 @@ function paint(workflowID: string, state: RunState | undefined): void {
  *  completed run (its state word says it) and for the moment before the first
  *  fetch resolves. */
 function buildRunControls(workflowID: string): HTMLElement | null {
+  // Whatever this call answers, the caller replaces the host's children with it, so
+  // the row built by the previous call is on its way out and its bindings go now.
+  for (const dispose of controlBindings) {
+    dispose();
+  }
+  controlBindings = [];
   const answer = runControls(workflowID);
   if (answer === undefined) {
     return null;
@@ -521,9 +536,9 @@ function buildRunControls(workflowID: string): HTMLElement | null {
     ) as HTMLButtonElement;
     // A retry starts a process and can legitimately take tens of seconds, so an
     // unbound button looks dead for the whole handshake and can be clicked again
-    // meanwhile. The binding self-disposes when the element detaches, which is
-    // what makes it safe on a row this function rebuilds per render.
-    bindLoadingState(action.name, btn);
+    // meanwhile. Its disposer is held rather than left to the binding's own
+    // detach detection, which cannot arm on a button bound before it is attached.
+    controlBindings.push(bindLoadingState(action.name, btn));
     row.appendChild(btn);
   }
   return row;

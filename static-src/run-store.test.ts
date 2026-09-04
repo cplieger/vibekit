@@ -11,11 +11,13 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { RunNode, RunState } from "./run-store.js";
+import type { RunControlsResponse } from "./wire/types.gen.js";
 
 const fetches: string[] = [];
 let responses: (RunState | undefined)[] = [];
 let resolvers: (() => void)[] = [];
 let liveRunsReply: { runs: { workflow_id: string; chat_id: string }[] } | null = null;
+let controlsReplies: RunControlsResponse[] = [];
 
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(async (path: string) => {
@@ -26,12 +28,20 @@ vi.mock("./api-client.js", () => ({
     const state = responses.shift();
     return state === undefined ? null : { workflowId: state.workflowId, state };
   }),
-  // The live-runs rebuild goes through the typed GET; the decoder is the
-  // generated one and is not under test here, so the mock answers typed values
-  // directly (null is the degrade arm: non-2xx / network / decode failure).
-  apiGetTyped: vi.fn((path: string) => {
+  // The live-runs rebuild and the affordance both go through the typed GET; the
+  // decoder is the generated one and is not under test here, so the mock answers
+  // typed values directly (null is the degrade arm: non-2xx / network / decode
+  // failure).
+  apiGetTyped: vi.fn(async (path: string) => {
     fetches.push(path);
-    return Promise.resolve(liveRunsReply);
+    if (!path.endsWith("/controls")) {
+      return liveRunsReply;
+    }
+    // Deferred like the state fetch above, so a test can invalidate the
+    // affordance again WHILE one read is open — the run that ends inside the
+    // tab-open read's window, which is the one moment its answer changes.
+    await new Promise<void>((r) => resolvers.push(r));
+    return controlsReplies.shift() ?? null;
   }),
 }));
 
@@ -56,6 +66,7 @@ beforeEach(() => {
   responses = [];
   resolvers = [];
   liveRunsReply = null;
+  controlsReplies = [];
   for (const id of ["r1", "r2", "r3", "r4"]) {
     store.forgetRun(id);
   }
@@ -647,6 +658,79 @@ describe("applyRunProgress refuses what it cannot express, so the caller refetch
     });
     expect(store.applyRunProgress({ workflow_id: "r1", node_path: "seq/b" })).toBe(false);
     expect(store.applyRunProgress({ workflow_id: "r1", node_path: "other/a" })).toBe(false);
+  });
+});
+
+// The affordance is a SECOND cell on its own clock: the state is re-read on every
+// gap and shape change, while what a run offers turns over only when it reaches a
+// terminal status. Two triggers ask for it — a tab opening and that run's own
+// `run_finished` — and they can land together, which is the whole subject here.
+describe("the affordance cell coalesces like the state cell, trailing fetch included", () => {
+  const live: RunControlsResponse = {
+    verbs: ["pause", "cancel"],
+    refused: {},
+    parent_chat_id: "",
+  };
+  const ended: RunControlsResponse = { verbs: ["retry"], refused: {}, parent_chat_id: "" };
+
+  /** The controls requests issued so far. `fetches` also holds state reads. */
+  function controlsFetches(): string[] {
+    return fetches.filter((p) => p.endsWith("/controls"));
+  }
+
+  // THE DEFECT. The in-flight guard dropped a coincident call and scheduled
+  // nothing, so a run that ENDED inside the tab-open read's window kept the
+  // pre-terminal row — Pause and Cancel on a run that had already aborted — with
+  // no trigger left to re-ask for the tab's lifetime.
+  it("re-asks for a run that ended while the tab-open read was still open", async () => {
+    controlsReplies = [live, ended];
+    store.invalidateRunControls("r1"); // the tab opening
+    store.invalidateRunControls("r1"); // run_finished, inside that read's window
+    expect(controlsFetches()).toHaveLength(1);
+
+    await settle();
+    expect(controlsFetches()).toHaveLength(2);
+    await settle();
+    expect(store.runControls("r1")?.verbs).toEqual(["retry"]);
+  });
+
+  it("asks once when nothing coincided, rather than answering the same question twice", async () => {
+    controlsReplies = [live];
+    store.invalidateRunControls("r1");
+    await settle();
+    await settle();
+
+    expect(controlsFetches()).toHaveLength(1);
+    expect(store.runControls("r1")?.verbs).toEqual(["pause", "cancel"]);
+  });
+
+  it("does not conflate two runs", async () => {
+    controlsReplies = [live, ended];
+    store.invalidateRunControls("r1");
+    store.invalidateRunControls("r2");
+    expect(controlsFetches()).toHaveLength(2);
+    await settle();
+
+    expect(store.runControls("r1")?.verbs).toEqual(["pause", "cancel"]);
+    expect(store.runControls("r2")?.verbs).toEqual(["retry"]);
+  });
+
+  // A failed read leaves the previous answer standing: degrading to the last known
+  // row beats blanking the controls under a reader about to use them.
+  it("keeps the last good answer when a read comes back empty", async () => {
+    controlsReplies = [live];
+    store.invalidateRunControls("r1");
+    await settle();
+    await settle();
+
+    store.invalidateRunControls("r1"); // nothing left in the queue, so null
+    await settle();
+    expect(store.runControls("r1")?.verbs).toEqual(["pause", "cancel"]);
+  });
+
+  it("ignores an empty id rather than fetching /api/runs//controls", () => {
+    store.invalidateRunControls("");
+    expect(controlsFetches()).toEqual([]);
   });
 });
 
