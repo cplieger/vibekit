@@ -529,6 +529,69 @@ func TestPreviewInput_TheMemberCapChargesWhatEscapingCosts(t *testing.T) {
 	}
 }
 
+// The EARLY-OUT gate charges escaping as well, which is what makes the three
+// measures one measure.
+//
+// The gate ran on `len(raw)` while both budgets below it ran on what encoding/json
+// writes, so an object under the per-member cap RAW returned before either budget
+// saw it and shipped at six times its measured size. A 4,010-byte object of
+// unescaped `<` marshals to roughly 24 KiB, over the per-member cap and over the
+// object budget, and used to go through whole.
+//
+// UNREACHABLE through the one production caller, which reads values the store
+// persisted through encoding/json and therefore already escaped: this is the
+// budgets agreeing on a measure, not a live leak.
+func TestPreviewInput_TheEarlyOutGateChargesWhatEscapingCosts(t *testing.T) {
+	// One member of 4,000 unescaped `<`: 24,006 bytes marshalled, well over both
+	// budgets, and 4,010 bytes raw — inside the 4,096-byte per-member cap, so the
+	// gate is what decides whether anything is measured at all.
+	unescaped := json.RawMessage(`{"text":"` + strings.Repeat("<", 4_000) + `"}`)
+	if len(unescaped) > toolPreviewInputBytes {
+		t.Fatalf("Setup: fixture is %d raw bytes, over the %d-byte cap already, so the "+
+			"raw gate would have cut it and this test asserts nothing",
+			len(unescaped), toolPreviewInputBytes)
+	}
+	wire := inputWireBytes(unescaped)
+	if len(wire) <= toolPreviewInputTotalBytes {
+		t.Fatalf("Setup: fixture marshals to %d bytes, inside the %d-byte object budget, "+
+			"so nothing is over budget", len(wire), toolPreviewInputTotalBytes)
+	}
+
+	got, cut := previewInput(unescaped)
+	if !cut {
+		t.Fatalf("cut = false for an input that marshals to %d bytes: the gate measured "+
+			"the %d raw bytes and returned before either budget ran",
+			len(wire), len(unescaped))
+	}
+	if len(got) > toolPreviewInputTotalBytes {
+		t.Errorf("preview input marshals to %d bytes, over the %d-byte budget",
+			len(got), toolPreviewInputTotalBytes)
+	}
+}
+
+// An input already in its wire form must go through unchanged, which is the
+// property that lets the gate convert before it measures: the single production
+// caller hands over store-read values, and re-measuring them must not start
+// trimming inputs that were within budget.
+func TestPreviewInput_AnAlreadyEscapedInputWithinBudgetIsUntouched(t *testing.T) {
+	// 4,000 escaped `<` — 24,006 bytes RAW, so far over the gate, and its escapes
+	// must not be counted twice into something larger.
+	obj := map[string]string{"text": strings.Repeat("<", 400)}
+	wire, err := json.Marshal(obj)
+	if err != nil {
+		t.Fatalf("Setup: marshal: %v", err)
+	}
+	if len(wire) > toolPreviewInputBytes {
+		t.Fatalf("Setup: fixture is %d wire bytes, over the %d-byte gate, so it cannot "+
+			"exercise the pass-through", len(wire), toolPreviewInputBytes)
+	}
+
+	if got, cut := previewInput(wire); cut || got != nil {
+		t.Errorf("previewInput cut an input of %d wire bytes (got %q): a value already in "+
+			"its wire form is idempotent under the conversion", len(wire), got)
+	}
+}
+
 // unescapeUnicode turns the `\u00xx` escapes json.Marshal wrote back into their one
 // raw byte, so a fixture can carry the unescaped spelling of `<`, `>` and `&`.
 func unescapeUnicode(t *testing.T, raw json.RawMessage) json.RawMessage {

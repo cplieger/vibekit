@@ -346,6 +346,110 @@ func TestReadStatus_ReportsAFailureOnANonRepo(t *testing.T) {
 	}
 }
 
+// A failed status still answers the BRANCH. Collapsing five invocations into two
+// took `branch --show-current` with it, and that spawn could succeed where
+// `status` failed — so a wedged repository's dashboard row lost its counts AND its
+// branch, where before it lost only the counts.
+//
+// The failure is induced by corrupting the index, which is a real shape (a wedged
+// repository) and leaves .git/HEAD intact. Corruption rather than a mode change:
+// root reads a 0000 file, so a permission-based injection would skip here and only
+// ever run on the unprivileged CI runner.
+func TestReadStatus_AFailedReadStillAnswersTheBranch(t *testing.T) {
+	skipNoGit(t)
+	dir := t.TempDir()
+	initFixtureRepo(t, dir) // commits README.md on main
+	index := filepath.Join(dir, gitDirName, "index")
+	if err := os.WriteFile(index, []byte("not an index"), 0o600); err != nil {
+		t.Fatalf("Setup: corrupt the index: %v", err)
+	}
+
+	got, err := readStatus(t.Context(), dir)
+	if err == nil {
+		t.Fatal("Setup: the status read succeeded with an unreadable index, so this test " +
+			"asserts nothing")
+	}
+	if got.Branch != "main" {
+		t.Errorf("Branch = %q after a failed status read, want %q from .git/HEAD",
+			got.Branch, "main")
+	}
+}
+
+// headBranch reads the branch with NO subprocess, in an ordinary clone and in a
+// linked worktree, whose .git is a FILE pointing at the real git directory.
+func TestHeadBranch(t *testing.T) {
+	skipNoGit(t)
+	dir := t.TempDir()
+	initFixtureRepo(t, dir)
+
+	t.Run("an ordinary clone", func(t *testing.T) {
+		if got := headBranch(dir); got != "main" {
+			t.Errorf("headBranch = %q, want %q", got, "main")
+		}
+	})
+
+	t.Run("a linked worktree, whose .git is a pointer file", func(t *testing.T) {
+		linked := filepath.Join(t.TempDir(), "wt")
+		runGit(t, dir, "worktree", "add", "-b", "side", linked)
+		info, err := os.Stat(filepath.Join(linked, gitDirName))
+		if err != nil {
+			t.Fatalf("Setup: stat the worktree's .git: %v", err)
+		}
+		if info.IsDir() {
+			t.Fatal("Setup: the worktree's .git is a directory, so the pointer arm is " +
+				"not exercised")
+		}
+		if got := headBranch(linked); got != "side" {
+			t.Errorf("headBranch of a linked worktree = %q, want %q", got, "side")
+		}
+	})
+
+	t.Run("a detached HEAD answers nothing, as branch --show-current did", func(t *testing.T) {
+		detached := t.TempDir()
+		initFixtureRepo(t, detached)
+		runGit(t, detached, "checkout", "--detach")
+		if got := headBranch(detached); got != "" {
+			t.Errorf("headBranch on a detached HEAD = %q, want empty", got)
+		}
+	})
+
+	t.Run("a directory that is not a repository", func(t *testing.T) {
+		if got := headBranch(t.TempDir()); got != "" {
+			t.Errorf("headBranch = %q, want empty", got)
+		}
+	})
+}
+
+// The ref-name check is what makes the file read safe on a repository this server
+// did not write: a `.git` file may point its `gitdir:` anywhere, so a document that
+// is not a HEAD must answer nothing rather than putting an unrelated file's first
+// line on the dashboard as a branch name.
+func TestParseHeadRef(t *testing.T) {
+	tests := map[string]struct {
+		doc  string
+		want string
+	}{
+		"a branch":                       {doc: "ref: refs/heads/main\n", want: "main"},
+		"a slashed branch":               {doc: "ref: refs/heads/perf/overhaul\n", want: "perf/overhaul"},
+		"no trailing newline":            {doc: "ref: refs/heads/main", want: "main"},
+		"a detached HEAD":                {doc: "9f2c1a0e5b7d3f8a1c4e6b9d2f5a8c1e4b7d0f3a\n", want: ""},
+		"a tag ref is not a branch":      {doc: "ref: refs/tags/v1.0.0\n", want: ""},
+		"a remote ref is not a branch":   {doc: "ref: refs/remotes/origin/main\n", want: ""},
+		"the prefix with no name":        {doc: "ref: refs/heads/\n", want: ""},
+		"an unrelated file's first line": {doc: "root:x:0:0:root:/root:/bin/sh\n", want: ""},
+		"an empty document":              {doc: "", want: ""},
+		"a ref name git itself refuses":  {doc: "ref: refs/heads/bad^name\n", want: ""},
+		"a ref name carrying a space":    {doc: "ref: refs/heads/two words\n", want: ""},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := parseHeadRef(tc.doc); got != tc.want {
+				t.Errorf("parseHeadRef(%q) = %q, want %q", tc.doc, got, tc.want)
+			}
+		})
+	}
+}
+
 func FuzzParsePorcelainV2(f *testing.F) {
 	// Seeds are the table's own records plus the degenerate shapes: a rename whose
 	// origin record is missing, a header with no value, and NUL-only input.

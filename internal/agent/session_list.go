@@ -280,6 +280,18 @@ func (rs *Runs) list(ctx context.Context, claimed map[string]vibekit.ChatID) ([]
 // that do not belong in a history list. Split out of list for the reason
 // toResumable is split out of resumableSessions: the filtering is the part worth
 // testing and the RPC is not.
+//
+// THE PARENTLESS-ONLY FILTER IS GONE, and it went for the reason that retired the
+// same rule from run_affordance.go. It rested on "a chat-launched run already
+// renders in that chat's transcript", which is true only while that transcript is
+// open and resident: a chat's tab closes, its window is evicted, and the run card
+// goes with it. Retry is legal only from `failed` and `aborted`, kiro-cli's own
+// restore pass reaches neither, and this page was the last door — so an aborted
+// agent-launched run had no door anywhere in the product, which is exactly the
+// state that affordance change made actionable. A run row opens the run's own tab
+// (history.ts openRow, which nests it under the launching chat when that chat has
+// a tab and top-level when it does not), so the door the row offers reaches it in
+// both states.
 func (rs *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun) []vibekit.WorkflowRun {
 	out := make([]vibekit.WorkflowRun, 0, len(runs))
 	for i := range runs {
@@ -290,11 +302,6 @@ func (rs *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun)
 		// Attributed through the launching session's chain, so a run launched by
 		// a chat that has since changed session still resolves.
 		parentChatID := string(claimed[r.ParentSessionID])
-		// PARENTLESS runs only: a chat-launched run already renders in that
-		// chat's transcript, and a manual/scheduled run has no other home.
-		if parentChatID != "" {
-			continue
-		}
 		out = append(out, vibekit.WorkflowRun{
 			WorkflowID: r.WorkflowID,
 			Name:       r.Name,
@@ -302,9 +309,10 @@ func (rs *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun)
 			CreatedAt:  parseKASTime(r.CreatedAt),
 			UpdatedAt:  parseKASTime(r.UpdatedAt),
 			StartedAt:  parseKASTime(r.StartedAt),
-			// Always empty here (parentless-only), kept explicit on the wire
-			// rather than inferred from row presence: the client reads it for
-			// the outcome glyph and the Retry affordance.
+			// The launching chat, empty for a manual or scheduled run. The client
+			// reads it to nest the run's tab under that chat's own tab when one is
+			// open, which is what puts a run reached from History beside its
+			// conversation rather than at the end of the strip.
 			ParentChatID: parentChatID,
 			// KAS has no end-reason field; both run bounds stop a run via the
 			// same cancel a person does, so the reason must come from the

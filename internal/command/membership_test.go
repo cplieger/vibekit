@@ -436,6 +436,58 @@ func TestCloseTab_AChatTabRunsTheTeardownAndKeepsTheRecord(t *testing.T) {
 	}
 }
 
+// Closing a chat tab WAKES RETENTION, because the tab was the exemption.
+//
+// A chat with an open tab is pinned outside the purge's age test, and an exempt
+// chat contributes no wake-up deadline — so a pass that saw only exempt chats lands
+// on a back-off doubling to an hour, and archive.PurgeScheduler.Trigger had exactly
+// one production caller (Start). Closing the last tab of a month-old chat therefore
+// woke nothing, and the chat could outlive its window by up to that hour.
+//
+// Wired as a setter and read per call, so a build with no scheduler is a nil wake
+// rather than a panic — asserted below, because that is the shape every test in
+// this package other than this one runs in.
+func TestCloseTab_AChatTabCloseWakesRetention(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	st, err := tabs.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("open tab store: %v", err)
+	}
+	mem := NewMembership(&MembershipDeps{Chats: store, Tabs: st, Bus: &tabBus{}})
+	wakes := 0
+	mem.SetRetentionWake(func() { wakes++ })
+	opened := createChat(t, mem, "op-a")
+
+	if _, _, err := mem.CloseTab(t.Context(), opened.Subject.ID, "op-close"); err != nil {
+		t.Fatalf("CloseTab = %v", err)
+	}
+	if wakes != 1 {
+		t.Errorf("retention was woken %d times by a chat-tab close, want 1: the tab was "+
+			"the exemption, and nothing else asks the purge to look again", wakes)
+	}
+
+	// A close that committed nothing has cleared no exemption, so it must not wake.
+	if _, _, err := mem.CloseTab(t.Context(), "not-open", "op-close-2"); err != nil {
+		t.Fatalf("CloseTab of an unopened id = %v", err)
+	}
+	if wakes != 1 {
+		t.Errorf("retention was woken %d times, want 1: a close that committed nothing "+
+			"cleared no exemption", wakes)
+	}
+}
+
+// No scheduler wired is the shape every other test in this package runs in, and it
+// must be a no-op rather than a nil call.
+func TestCloseTab_AChatTabCloseWithNoSchedulerWiredIsSafe(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	mem, _, _ := newTabbedMembership(t, store)
+	opened := createChat(t, mem, "op-a")
+
+	if _, _, err := mem.CloseTab(t.Context(), opened.Subject.ID, "op-close"); err != nil {
+		t.Fatalf("CloseTab = %v", err)
+	}
+}
+
 // TestDeleteChatAndCloseTabs_TheRecordLeads is the delete half of the gate.
 //
 // The observation happens INSIDE the coordinator's critical section, via the

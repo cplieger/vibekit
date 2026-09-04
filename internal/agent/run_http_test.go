@@ -129,11 +129,19 @@ func TestHandleLiveRuns_ATerminalRunLeavesTheProjection(t *testing.T) {
 	}
 }
 
-// TestHandleLiveRuns_HistoryStaysParentlessOnly pins that the projection is a
-// NEW surface, not a change to History: the same chat-parented run appears in
-// /api/runs/live (it is live, its chat is exempt) while History's toWire drops
-// it (that conversation's work already renders in the chat's transcript).
-func TestHandleLiveRuns_HistoryStaysParentlessOnly(t *testing.T) {
+// OVERTURNED with History's parentless-only filter. This used to assert that the
+// live-runs projection had NOT widened History — that a chat-parented run appears
+// in /api/runs/live and is dropped by toWire — on the premise that "that
+// conversation's work already renders in the chat's transcript". That premise
+// holds only while the transcript is open and resident (session_list.go's toWire
+// carries the reasoning), so History lists the run now too.
+//
+// What still separates the two surfaces is worth pinning, and it is the answer
+// each one is FOR: /api/runs/live projects the run with the chat it belongs to,
+// because its consumer is the chat's own eviction exemption, while History
+// attributes the run to that chat so the row's door can nest the run's tab under
+// it. Same run, two answers, neither of which is a copy of the other.
+func TestHandleLiveRuns_AndHistoryBothCarryAChatParentedRun(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_agent", "workflowName": "publish",
@@ -150,14 +158,20 @@ func TestHandleLiveRuns_HistoryStaysParentlessOnly(t *testing.T) {
 			{WorkflowID: "wf_manual", Name: "nightly", Status: "completed"},
 		},
 	)
-	for i := range rows {
-		if rows[i].WorkflowID == "wf_agent" {
-			t.Errorf("History listed a chat-parented run; the live-runs projection must not "+
-				"have widened it: %+v", rows[i])
-		}
+	if len(rows) != 2 {
+		t.Fatalf("History listed %d rows, want both runs: %+v", len(rows), rows)
 	}
-	if len(rows) != 1 || rows[0].WorkflowID != "wf_manual" {
-		t.Errorf("History dropped the parentless run it exists to list: %+v", rows)
+	byID := map[string]string{}
+	for i := range rows {
+		byID[rows[i].WorkflowID] = rows[i].ParentChatID
+	}
+	if got, ok := byID["wf_agent"]; !ok || got != "c-live" {
+		t.Errorf("History's chat-parented row carries parent_chat_id %q (present=%v), want %q: "+
+			"the row's door nests the run's tab under that chat", got, ok, "c-live")
+	}
+	if got, ok := byID["wf_manual"]; !ok || got != "" {
+		t.Errorf("History's parentless row carries parent_chat_id %q (present=%v), want empty",
+			got, ok)
 	}
 }
 

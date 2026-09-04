@@ -57,55 +57,124 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		key := safeKiroSetting(r.URL.Query().Get("key"))
-		if key == "" {
-			httpreply.BadRequest(w, "unknown setting key")
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), s.cliTimeouts.Settings)
-		defer cancel()
-		out, err := s.cliRunner.Run(ctx, "settings", key)
-		if err != nil {
-			out = nil
-		}
-		webhttp.WriteJSON(w, map[string]string{"key": key, "value": parseKiroSettingOutput(string(out))})
+		s.readKiroSettings(w, r)
 	case http.MethodPut:
-		webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
-		var body struct {
-			Key   string `json:"key"`
-			Value string `json:"value"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			httpreply.BadRequest(w, "bad request")
-			return
-		}
-		key := safeKiroSetting(body.Key)
-		if key == "" {
-			httpreply.BadRequest(w, "unknown setting key")
-			return
-		}
-		meta := allowedKiroSettings[body.Key]
-		value := safeKiroSettingValueFor(body.Value, meta.Kind)
-		if value == "" {
-			httpreply.BadRequest(w, "invalid setting value")
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), s.cliTimeouts.Settings)
-		defer cancel()
-		out, err := s.cliRunner.Run(ctx, "settings", key, value)
-		if err != nil {
-			// 502, not 200-with-an-error-body. The client's action framework
-			// classifies by STATUS, so answering a refused write with 200 made
-			// every failure read as success: the toggle stayed flipped, no toast
-			// fired, and the setting was not written. kiro-cli is the upstream
-			// here and it declined, which is what Bad Gateway means.
-			slog.Warn("kiro-cli settings write refused", "key", logsafe.Field(key), "error", logsafe.Field(err.Error()))
-			webhttp.WriteJSONStatus(w, http.StatusBadGateway,
-				httpreply.ErrorJSON(strings.TrimSpace(string(out))))
-			return
-		}
-		webhttp.Ok(w)
+		s.writeKiroSetting(w, r)
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}
+}
+
+// readKiroSettings answers GET /api/kiro-settings?keys=a,b,c — or every
+// allowlisted key when the parameter is absent — as {"settings": {key: value}}.
+//
+// ONE SUBPROCESS FOR THE WHOLE ANSWER. It used to read one key per request off
+// `kiro-cli settings <key>`, so the Settings → General panel opened three
+// concurrent requests and three spawns of a 3 s budget each; `settings list`
+// answers every key at once (see settingsListArgs for the measurement).
+//
+// A key the list read does not answer falls back to the per-key invocation
+// rather than reporting no value: `settings list` is what the installed 2.20.2
+// serves, and a build pinned to something older must still fill the panel. The
+// fallback is bounded by what the request asked for, which is why ?keys= exists
+// at all.
+func (s *Server) readKiroSettings(w http.ResponseWriter, r *http.Request) {
+	keys := requestedKiroSettings(r.URL.Query().Get("keys"))
+	if len(keys) == 0 {
+		httpreply.BadRequest(w, "unknown setting key")
+		return
+	}
+	listed := s.readKiroSettingsList(r.Context())
+	out := make(map[string]string, len(keys))
+	for _, key := range keys {
+		value, ok := listed[key]
+		if !ok {
+			value = s.readOneKiroSetting(r.Context(), key)
+		}
+		out[key] = value
+	}
+	webhttp.WriteJSON(w, map[string]any{"settings": out})
+}
+
+// readKiroSettingsList reads the whole settings document in one spawn, or nil
+// when kiro-cli cannot answer it.
+//
+// STDOUT only (RunStdoutCapped, not Run): the document is parsed as JSON, and
+// CombinedOutput would fold any stderr line kiro-cli writes into the bytes
+// json.Unmarshal reads.
+func (s *Server) readKiroSettingsList(ctx context.Context) map[string]string {
+	cctx, cancel := context.WithTimeout(ctx, s.cliTimeouts.Settings)
+	defer cancel()
+	out, truncated, err := s.cliRunner.RunStdoutCapped(cctx, settingsListMaxBytes, settingsListArgs...)
+	if err != nil {
+		slog.Debug("kiro-cli settings list failed; reading the requested keys one at a time",
+			"error", logsafe.Field(err.Error()))
+		return nil
+	}
+	if truncated {
+		// A truncated document is not JSON, so parsing it would fail anyway;
+		// say which of the two things went wrong.
+		slog.Warn("kiro-cli settings list exceeded its cap", "cap", settingsListMaxBytes)
+		return nil
+	}
+	listed, err := parseKiroSettingsList(out)
+	if err != nil {
+		slog.Debug("kiro-cli settings list is not a JSON object; reading the requested keys one at a time",
+			"error", logsafe.Field(err.Error()))
+		return nil
+	}
+	return listed
+}
+
+// readOneKiroSetting reads a single setting with the per-key invocation,
+// answering "" when kiro-cli declines. An empty value is what the client reads
+// as "unset", which renders the control's default rather than failing the panel.
+func (s *Server) readOneKiroSetting(ctx context.Context, key string) string {
+	cctx, cancel := context.WithTimeout(ctx, s.cliTimeouts.Settings)
+	defer cancel()
+	out, err := s.cliRunner.Run(cctx, "settings", key)
+	if err != nil {
+		return ""
+	}
+	return parseKiroSettingOutput(string(out))
+}
+
+// writeKiroSetting serves PUT /api/kiro-settings: one allowlisted key, one
+// validated value.
+func (s *Server) writeKiroSetting(w http.ResponseWriter, r *http.Request) {
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	var body struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpreply.BadRequest(w, "bad request")
+		return
+	}
+	key := safeKiroSetting(body.Key)
+	if key == "" {
+		httpreply.BadRequest(w, "unknown setting key")
+		return
+	}
+	meta := allowedKiroSettings[body.Key]
+	value := safeKiroSettingValueFor(body.Value, meta.Kind)
+	if value == "" {
+		httpreply.BadRequest(w, "invalid setting value")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.cliTimeouts.Settings)
+	defer cancel()
+	out, err := s.cliRunner.Run(ctx, "settings", key, value)
+	if err != nil {
+		// 502, not 200-with-an-error-body. The client's action framework
+		// classifies by STATUS, so answering a refused write with 200 made
+		// every failure read as success: the toggle stayed flipped, no toast
+		// fired, and the setting was not written. kiro-cli is the upstream
+		// here and it declined, which is what Bad Gateway means.
+		slog.Warn("kiro-cli settings write refused", "key", logsafe.Field(key), "error", logsafe.Field(err.Error()))
+		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
+			httpreply.ErrorJSON(strings.TrimSpace(string(out))))
+		return
+	}
+	webhttp.Ok(w)
 }

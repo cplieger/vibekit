@@ -280,6 +280,10 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		// released, which is what keeps the coordinator's lock order acyclic.
 		h.Membership().RetentionClose(appCtx, id)
 	})(chatStore)
+	// The other end of the open-tab exemption: closing a chat's tab clears it, and
+	// an exempt chat contributes no wake-up deadline, so without this the purge
+	// noticed up to an hour later (see Membership.SetRetentionWake).
+	h.Membership().SetRetentionWake(purgeScheduler.Trigger)
 	purgeScheduler.Start(appCtx)
 
 	srv := server.New(
@@ -303,7 +307,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		// describing the profile that was in force before the change.
 		server.WithPolicyReload(h),
 		server.WithStaticFS(static),
-		server.WithCLIPath(kiro.cliPath),
+		server.WithKiroCLI(kiro.cliPath, kiro.env),
 		server.WithKiroReady(kiro.ready),
 		server.WithKiroRescan(kiro.rescan),
 		server.WithAuthUnavailable(h.AuthTokenUnavailable),

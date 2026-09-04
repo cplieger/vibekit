@@ -38,7 +38,13 @@ vi.mock("./actions/settings.js", () => ({
   logout: {},
   setKiroSetting: { dispatch: (...a: unknown[]) => H.mockKiroDispatch(...a) },
 }));
-vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
+// apiGet resolves rather than returning undefined: the flag read awaits it
+// directly now (one request for every flag), where it used to be one of several
+// inside a Promise.all, which resolves a non-promise silently.
+vi.mock("./api-client.js", () => ({
+  apiGet: vi.fn(() => Promise.resolve(undefined)),
+  apiGetTyped: vi.fn(),
+}));
 vi.mock("./wire/decoders.gen.js", () => ({ decodeWhoamiResponse: vi.fn() }));
 vi.mock("./save-indicator.js", () => ({
   showSaving: vi.fn(),
@@ -608,6 +614,44 @@ describe("initExperimentalToggles", () => {
     await vi.waitFor(() => {
       expect(showError).toHaveBeenCalledExactlyOnceWith("chat.disableInheritingDefaultResources");
     });
+  });
+
+  // ONE request for every flag, naming them all. It used to be one request per
+  // flag, and each one cost the server a `kiro-cli settings` SUBPROCESS with its
+  // own 3 s budget — three of them, concurrently, every time this panel opened.
+  it("reads every flag in one request", async () => {
+    const { apiGet } = await import("./api-client.js");
+    await initFlags();
+
+    expect(apiGet).toHaveBeenCalledTimes(1);
+    const url = vi.mocked(apiGet).mock.calls[0]?.[0] ?? "";
+    const asked = new URL(url, "http://localhost").searchParams.get("keys")?.split(",") ?? [];
+    expect(asked).toEqual([
+      "hooks.showStatus",
+      "telemetry.enabled",
+      "chat.disableInheritingDefaultResources",
+    ]);
+  });
+
+  // The answer is read BY KEY, not by position: the server sorts the document it
+  // returns, so a reader that trusted request order would flip two checkboxes.
+  it("adopts each flag's value by key rather than by response order", async () => {
+    const { apiGet } = await import("./api-client.js");
+    vi.mocked(apiGet).mockResolvedValueOnce({
+      settings: {
+        "chat.disableInheritingDefaultResources": "true",
+        "hooks.showStatus": "false",
+        "telemetry.enabled": "false",
+      },
+    });
+
+    initExperimentalToggles();
+
+    await vi.waitFor(() => {
+      expect(box("flag-hooks-status").checked).toBe(false);
+    });
+    expect(box("flag-telemetry").checked).toBe(false);
+    expect(box("flag-disable-inherit-resources").checked).toBe(true);
   });
 });
 

@@ -28,6 +28,17 @@ func fatMessage(id string, outputBytes int) vibekit.Message {
 	}
 }
 
+// blockyMessage builds an assistant message carrying blocks blocks and nothing
+// else large — the shape a BYTE budget cannot see, since a text block of a few
+// words costs the wire almost nothing and the client's paint one whole row.
+func blockyMessage(id string, blocks int) vibekit.Message {
+	bs := make([]vibekit.Block, blocks)
+	for i := range bs {
+		bs[i] = vibekit.Block{Type: vibekit.BlockText, Text: "x"}
+	}
+	return vibekit.Message{ID: id, Role: vibekit.RoleAssistant, Ts: 100, Blocks: bs}
+}
+
 // serveOne runs GET /api/chats/c1<query> against a store holding msgs and
 // returns the decoded window plus the raw body length.
 func serveOne(t *testing.T, msgs []vibekit.Message, query string) (ids []string, hasMore bool, bodyLen int) {
@@ -155,6 +166,145 @@ func TestHandleOne_EmptyWindowIsAnArrayNotNull(t *testing.T) {
 
 	if !strings.Contains(rec.Body.String(), `"messages":[]`) {
 		t.Errorf("body does not carry `\"messages\":[]`: %s", rec.Body.String())
+	}
+}
+
+// The item: the page the server cuts and the window the client can hold are the
+// same unit. `block-window.ts` bounds residency in BLOCKS, so a page bounded only
+// in bytes holds a chat-dependent number of them and the surplus is fetched,
+// decoded and then stubbed on arrival.
+//
+// The byte budget is deliberately generous here, so a byte-only cut cannot
+// produce this answer and the assertion is about the block budget alone.
+func TestHandleOne_BlockBudgetCutsAtAMessageBoundary(t *testing.T) {
+	msgs := []vibekit.Message{
+		blockyMessage("a", 40), blockyMessage("b", 40),
+		blockyMessage("c", 40), blockyMessage("d", 40),
+	}
+
+	ids, hasMore, _ := serveOne(t, msgs, "?blocks=100&max_bytes=8388608")
+
+	if want := []string{"c", "d"}; !slices.Equal(ids, want) {
+		t.Errorf("ids = %v, want %v — 80 blocks fit a 100-block budget and 120 do not", ids, want)
+	}
+	if !hasMore {
+		t.Error("has_more = false, want true: two older messages were not served")
+	}
+}
+
+// The same rule the byte budget follows: the newest message goes through whole
+// however many blocks it carries, or the newest message of a block-heavy chat
+// would be unreachable. One measured assistant message carries 580 blocks.
+func TestHandleOne_BlockBudgetLetsOneOversizeMessageThroughWhole(t *testing.T) {
+	msgs := []vibekit.Message{blockyMessage("a", 2), blockyMessage("big", 600)}
+
+	ids, hasMore, _ := serveOne(t, msgs, "?blocks=100")
+
+	if want := []string{"big"}; !slices.Equal(ids, want) {
+		t.Errorf("ids = %v, want %v — the newest message goes through whole", ids, want)
+	}
+	if !hasMore {
+		t.Error("has_more = false, want true: the older message was not served")
+	}
+}
+
+// has_more answers against whichever budget cut the page, so a client that reads
+// it can still reach everything the block budget held back.
+func TestHandleOne_HasMoreIsHonestAgainstTheBlocks(t *testing.T) {
+	msgs := make([]vibekit.Message, 6)
+	for i := range msgs {
+		msgs[i] = blockyMessage(string(rune('a'+i)), 40)
+	}
+
+	all, allMore, _ := serveOne(t, msgs, "?blocks=8192&max_bytes=8388608")
+	if len(all) != 6 {
+		t.Errorf("a 8192-block budget served %d of 6 messages, want all of them", len(all))
+	}
+	if allMore {
+		t.Error("has_more = true with every message served, want false")
+	}
+
+	_, someMore, _ := serveOne(t, msgs, "?blocks=100&max_bytes=8388608")
+	if !someMore {
+		t.Error("has_more = false with a 100-block budget over 240 blocks, want true")
+	}
+}
+
+// messageBlockCost mirrors `block-window.ts turnCost`, and it has to: a budget
+// measured one way on the server and another on the client cuts a page the client
+// still stubs. The legacy row is the one that matters — a message persisted before
+// the blocks field carries none, and the client SYNTHESIZES them from the content,
+// the reasoning and one per tool call before it measures.
+func TestMessageBlockCost_MirrorsTheClientsAccounting(t *testing.T) {
+	tests := map[string]struct {
+		msg  vibekit.Message
+		want int
+	}{
+		"a message's own blocks are what it costs": {
+			msg:  blockyMessage("a", 7),
+			want: 7,
+		},
+		"an empty message still costs one row": {
+			msg:  vibekit.Message{ID: "a", Role: vibekit.RoleAssistant},
+			want: 1,
+		},
+		"a legacy message costs its synthesized blocks, not one": {
+			msg: vibekit.Message{
+				ID: "a", Role: vibekit.RoleAssistant,
+				Content:   "hello",
+				Reasoning: "thinking",
+				ToolCalls: []vibekit.ToolCall{{ID: "t1"}, {ID: "t2"}, {ID: "t3"}},
+			},
+			want: 5,
+		},
+		"a legacy tool-only message costs one per tool call": {
+			msg: vibekit.Message{
+				ID: "a", Role: vibekit.RoleAssistant,
+				ToolCalls: []vibekit.ToolCall{{ID: "t1"}, {ID: "t2"}},
+			},
+			want: 2,
+		},
+		"blocks present win over the synthesis": {
+			msg: vibekit.Message{
+				ID: "a", Role: vibekit.RoleAssistant,
+				Content:   "hello",
+				Blocks:    []vibekit.Block{{Type: vibekit.BlockText, Text: "hello"}},
+				ToolCalls: []vibekit.ToolCall{{ID: "t1"}, {ID: "t2"}},
+			},
+			want: 1,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := messageBlockCost(&tc.msg); got != tc.want {
+				t.Errorf("messageBlockCost(%+v) = %d, want %d", tc.msg, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseBlocksParam_HonoursTheInclusiveRange(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  int
+	}{
+		{name: "absent", query: "", want: defaultMaxBlocks},
+		{name: "smallest_accepted", query: "?blocks=1", want: 1},
+		{name: "the client's own residency budget", query: "?blocks=320", want: 320},
+		{name: "largest_accepted", query: "?blocks=8192", want: maxMaxBlocks},
+		{name: "one_past_the_largest", query: "?blocks=8193", want: defaultMaxBlocks},
+		{name: "zero", query: "?blocks=0", want: defaultMaxBlocks},
+		{name: "negative", query: "?blocks=-1", want: defaultMaxBlocks},
+		{name: "not_a_number", query: "?blocks=lots", want: defaultMaxBlocks},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/api/chats/c1"+tc.query, nil)
+			if got := parseBlocksParam(r); got != tc.want {
+				t.Errorf("parseBlocksParam(%q) = %d, want %d", tc.query, got, tc.want)
+			}
+		})
 	}
 }
 

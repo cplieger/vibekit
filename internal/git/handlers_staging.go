@@ -43,8 +43,10 @@ func collectStatus(ctx context.Context, dir string, timeouts gitTimeouts, fetchF
 	if doFetch {
 		fetchStatus(ctx, dir, timeouts.Fetch, fetchFlight)
 	}
-	// A failed status leaves the zero values: the row still says the repo exists,
-	// which is what keeps one wedged repository from blanking the dashboard.
+	// A failed status leaves the zero counts: the row still says the repo exists,
+	// which is what keeps one wedged repository from blanking the dashboard. The
+	// BRANCH survives a failure too, read off .git/HEAD rather than from the spawn
+	// the collapse removed — see readStatus.
 	ps, _ := readStatus(ctx, dir)
 	st.Branch = ps.Branch
 	st.Ahead = ps.Ahead
