@@ -97,10 +97,11 @@ describe("against real layout", () => {
     stage.remove();
   });
 
-  /** A transcript view holding two 100px turns, optionally with the live-edge
+  /** A transcript view holding `n` 100px turns, optionally with the live-edge
    *  marker scroll.ts appends — placed FIRST, which is where reconcile leaves
-   *  unkeyed furniture, so the flex order is what has to put it last. */
-  function view(withEdge: boolean): HTMLElement {
+   *  unkeyed furniture, so the flex order is what has to put it last. Parented by
+   *  the caller. */
+  function view(withEdge: boolean, n = 2): HTMLElement {
     const v = document.createElement("div");
     v.className = "transcript-view is-active";
     if (withEdge) {
@@ -108,28 +109,79 @@ describe("against real layout", () => {
       edge.className = "transcript-edge";
       v.appendChild(edge);
     }
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < n; i++) {
       const turn = document.createElement("div");
       turn.className = "turn";
       turn.style.blockSize = "100px";
       v.appendChild(turn);
     }
-    stage.appendChild(v);
     return v;
   }
 
-  it("the live-edge marker sits ON the view's content bottom", () => {
-    // THE WHOLE POINT OF THE MARKER'S TOP MARGIN. scroll.ts roots an
-    // IntersectionObserver on this element with a `rootMargin` of
-    // BOTTOM_TOLERANCE_PX and calls the answer "the same tolerance `isAtBottom`
-    // applies" — true only at zero offset from the scroller's content bottom. Put
-    // the air back on `.transcript-view` as `padding-block` and this reads 16px,
-    // which is the two paths disagreeing by that much.
-    const v = view(true);
+  /** The multiplexer inside the REAL ancestor chain index.html declares, sized so
+   *  the transcript overflows: `#messages-wrap` is the element scroll.ts scrolls,
+   *  measures and roots the observer on, so every box between it and the marker is
+   *  part of the geometry. `parked` adds the second view a chat switch leaves
+   *  behind. `#messages-wrap-outer` takes an explicit height because production
+   *  gets its own from `flex: 1` in the chat view. */
+  function scroller(n: number, parked = 0): { scrollEl: HTMLElement; edge: HTMLElement } {
+    const outer = document.createElement("div");
+    outer.id = "messages-wrap-outer";
+    outer.style.blockSize = "200px";
+    const wrap = document.createElement("div");
+    wrap.id = "messages-wrap";
+    const messages = document.createElement("div");
+    messages.id = "messages";
+    const v = view(true, n);
+    messages.appendChild(v);
+    for (let i = 0; i < parked; i++) {
+      const p = view(true, n);
+      p.classList.remove("is-active");
+      messages.appendChild(p);
+    }
+    wrap.appendChild(messages);
+    outer.appendChild(wrap);
+    stage.appendChild(outer);
     const edge = v.querySelector<HTMLElement>(".transcript-edge");
-    const offsetFromBottom =
-      v.getBoundingClientRect().bottom - edge!.getBoundingClientRect().bottom;
-    expect(offsetFromBottom).toBe(0);
+    expect(edge, "the fixture mounted the marker").not.toBeNull();
+    expect(wrap.scrollHeight, "the fixture overflows its scroller").toBeGreaterThan(
+      wrap.clientHeight,
+    );
+    return { scrollEl: wrap, edge: edge as HTMLElement };
+  }
+
+  /** How far the marker's bottom sits above the scroller's content bottom, which is
+   *  the figure `isAtBottom()` and the edge observer have to agree on. */
+  function offsetFromContentBottom(scrollEl: HTMLElement, edge: HTMLElement): number {
+    const markerBottom =
+      edge.getBoundingClientRect().bottom -
+      scrollEl.getBoundingClientRect().top +
+      scrollEl.scrollTop;
+    return scrollEl.scrollHeight - markerBottom;
+  }
+
+  it("the live-edge marker sits ON the SCROLLER's content bottom", () => {
+    // THE WHOLE POINT OF THE MARKER'S TOP MARGIN, and the scroller is the box that
+    // decides it: scroll.ts roots the observer on `#messages-wrap` with a
+    // `rootMargin` of BOTTOM_TOLERANCE_PX, and `isAtBottom` compares against that
+    // element's `scrollHeight`, so the two agree only at zero offset from ITS
+    // content bottom. Measured against `scrollHeight` rather than the view's own
+    // rect because the offset is the sum of every box in between: block padding on
+    // `.transcript-view`, on `#messages` or on `#messages-wrap` each restores the
+    // 16px disagreement, and only the scroller sees all three.
+    const { scrollEl, edge } = scroller(3);
+    expect(offsetFromContentBottom(scrollEl, edge)).toBe(0);
+  });
+
+  it("a parked view adds nothing below the marker", () => {
+    // The other half of the same geometry, and it is only visible from the
+    // scroller: the views share one scroll box, so a parked one contributing
+    // height stacks it UNDER the active view's marker. `content-visibility: hidden`
+    // skips only the contents, so the zeroed `min-height` and `padding-block` are
+    // what keep the marker on the content bottom — without them the observer
+    // answers about a position the reader can never reach.
+    const { scrollEl, edge } = scroller(3, 1);
+    expect(offsetFromContentBottom(scrollEl, edge)).toBe(0);
   });
 
   it("the marker's margin carries the block-end air and adds nothing of its own", () => {
@@ -144,6 +196,7 @@ describe("against real layout", () => {
     // above the first turn. That total is what it was while the view carried
     // symmetric padding and the margin was negative.
     const v = view(true);
+    stage.appendChild(v);
     const edge = v.querySelector<HTMLElement>(".transcript-edge");
     const turns = v.querySelectorAll<HTMLElement>(".turn");
     const last = turns[turns.length - 1];

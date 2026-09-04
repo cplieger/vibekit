@@ -1537,16 +1537,13 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
 // --- The turn card ---
 
 /** Build one turn: tinted header (the trigger), plain body (the work), tinted
- *  footer (the outcome ledger). One card type for every turn — a one-word
- *  answer and a forty-tool-call refactor are the same object, differing only
- *  in how much body they have. Density comes from type scale, not from
- *  structural variation.
+ *  footer (the outcome ledger). One card type for every turn, so a one-word answer
+ *  and a forty-tool-call refactor differ only in how much body they have.
  *
  *  A card is born in the residency the current pass planned for it: a non-resident
  *  turn mounts as a header/footer STUB — no `.turn-body`, no inner reconcile, no
  *  per-block effects — and folds at birth. A resident body is built through the SAME
- *  batched builder the on-demand reveal uses: one slice here, the rest yielded, with
- *  `PAINT_SYNC_BLOCKS` bounding what the pass spends on the frame. */
+ *  batched builder the on-demand reveal uses: one slice here, the rest yielded. */
 function buildTurn(t: Turn): HTMLElement {
   const card = el("div", { className: "turn" });
   // No `data-outcome` on the CARD: the leading-edge hairline that was this
@@ -1695,14 +1692,14 @@ function unmountTurnBody(card: HTMLElement): void {
  *  mounts atomically. */
 const BUILD_BATCH_BLOCKS = 32;
 
-/** Blocks one full pass may mount ON THE FRAME across every body it starts,
+/** Blocks one full pass may mount SYNCHRONOUSLY across every body it starts,
  *  refilled by `paint`.
  *
- *  A CAP ON WHAT A PAINT MAY HOLD, NOT A FRAME BUDGET: nothing here measures what a
- *  frame costs. It extends the residency budget over the PINS, the only way past it —
- *  `planResidency` caps an unpinned paint at `RESIDENT_BLOCKS` and exempts pins, so a
- *  dozen revealed heavy turns started a dozen bodies unbounded. An ordinary chat never
- *  reaches it, deliberately: a smaller allowance defers the turns being READ. */
+ *  A WORK CAP, NOT A FRAME BUDGET: nothing here measures what a frame costs. It
+ *  extends the RESIDENCY budget (`RESIDENT_BLOCKS`) over the PINS, the only way past
+ *  it — `planResidency` caps an unpinned paint at that budget and exempts pins, so a
+ *  dozen revealed heavy turns started a dozen bodies unbounded. An ordinary chat
+ *  never reaches it, deliberately: a smaller allowance defers the turns being READ. */
 const PAINT_SYNC_BLOCKS = RESIDENT_BLOCKS;
 let paintSyncBlocks = PAINT_SYNC_BLOCKS;
 

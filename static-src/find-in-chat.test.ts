@@ -1032,11 +1032,13 @@ describe("server-hit navigation", () => {
     vi.stubGlobal("requestAnimationFrame", () => 0);
     typeAndEnter("retry");
 
-    // The ceiling released the wait, the re-walk ran against a still-unrendered
-    // card, and the navigation reported its honest miss. Without it this promise
-    // never settles and the counter keeps its pre-navigation text.
+    // The ceiling released the wait, and the verdict says which kind of miss it
+    // is: nothing rendered, so the text may well be there. Without the ceiling
+    // this promise never settles and the counter keeps its pre-navigation text;
+    // with a ceiling that does not report how it settled, the notice reads
+    // "not in rendered text" — a definite absence the walk cannot have observed.
     await vi.waitFor(() => {
-      expect(countText()).toContain("not in rendered text");
+      expect(countText()).toBe("1 of 1 in chat \u00b7 not rendered yet");
     });
   });
 

@@ -602,7 +602,7 @@ describe("the replay cursor", () => {
     );
     const first = sources[0];
     expect(first).toBeDefined();
-    // Three frames delivered, so the cursor is at 7.
+    // Two frames delivered, so the cursor is at 7.
     first?.onmessage?.(frame(5, { type: "chat_updated", chat_id: "c1" }));
     first?.onmessage?.(frame(7, { type: "chat_updated", chat_id: "c2" }));
 

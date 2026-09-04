@@ -539,6 +539,9 @@ async function navigateToHit(hit: SearchHit): Promise<void> {
   // Re-walk now that the chain is open: the marks inside it exist only after
   // the walker can see the text.
   let chosen = walkAndPick(target, hit);
+  // Whether the second walk had a rendered frame to walk. A first-walk hit never
+  // asks, and never reaches the notice below either.
+  let rendered = true;
   if (chosen === -1) {
     // A miss can mean the text is not THERE, or that it was not RENDERED when the
     // walker ran. The four cards that carry a transcript's mass are
@@ -547,7 +550,7 @@ async function navigateToHit(hit: SearchHit): Promise<void> {
     // scrolled to yet is exactly that. Scrolling to it is what renders it, so
     // navigate FIRST and ask once more before claiming the text is not there.
     jumpTo(target, { block: "center", inline: "nearest", behavior: "auto" });
-    await nextRender();
+    rendered = await nextRender();
     // Closed, or the transcript repainted this element away, while the frame
     // rendered. `shell` needs no re-check: it is assigned once at build.
     if (!isOpen() || !target.isConnected) {
@@ -557,9 +560,13 @@ async function navigateToHit(hit: SearchHit): Promise<void> {
   }
   if (chosen === -1) {
     // Syntax-only match (link target, emphasis marker, fence info) or a best
-    // candidate below the similarity floor: select the block and say why.
+    // candidate below the similarity floor: select the block and say why. With no
+    // frame delivered the walk ran against content that may simply not be painted
+    // yet — a hidden tab, or a paint past the ceiling — so the notice claims
+    // "later", not "absent". Either way the block is selected, which is the part
+    // that is true in both.
     selectContainer(target);
-    showHitNotice("not in rendered text");
+    showHitNotice(rendered ? "not in rendered text" : "not rendered yet");
     return;
   }
   applyEngine(() => {
@@ -586,21 +593,23 @@ function walkAndPick(target: HTMLElement, hit: SearchHit): number {
  *  a stall the reader can feel. */
 const RENDER_WAIT_CEILING_MS = 64;
 
-/** One RENDERED frame, or the ceiling, whichever lands first.
+/** One RENDERED frame, or the ceiling, whichever lands first. `true` when a frame
+ *  was actually delivered, which is what makes a following miss CONCLUSIVE.
  *
  *  The second callback is the first point after the previous frame was laid out,
  *  which is when a `content-visibility: auto` card a scroll just reached holds
  *  walkable text. THE TIMEOUT IS NOT BELT-AND-BRACES: a hidden page gets no
- *  animation frames, so the bare pair never settles — and this is awaited inside
- *  `stepServerHit`'s `navBusy` latch, so backgrounding the tab left find's next/prev
- *  inert until it came forward. */
-function nextRender(): Promise<void> {
+ *  animation frames, so the bare pair never settled inside `stepServerHit`'s
+ *  `navBusy` latch, leaving find's next/prev inert until the tab came forward. */
+function nextRender(): Promise<boolean> {
   return new Promise((resolve) => {
-    const ceiling = setTimeout(resolve, RENDER_WAIT_CEILING_MS);
+    const ceiling = setTimeout(() => {
+      resolve(false);
+    }, RENDER_WAIT_CEILING_MS);
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         clearTimeout(ceiling);
-        resolve();
+        resolve(true);
       });
     });
   });

@@ -2,9 +2,9 @@
 //
 // Three things are pinned here, and the first is a CROSS-LANGUAGE contract with no
 // codegen behind it: the PR subject prefix is spelled in Go (vibekit.PRSubjectPrefix),
-// in the service worker (which compiles standalone and cannot import) and in the
-// page handler. Three copies of one literal is what the read below turns into a
-// test rather than a hope.
+// in the service worker and in the page handler — which is DOM-bound, so the worker
+// cannot take the prefix from it. Three copies of one literal is what the read below
+// turns into a test rather than a hope.
 import { describe, it, expect, beforeEach } from "vitest";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 import pushTypesGo from "../internal/vibekit/push_types.go?raw";

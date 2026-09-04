@@ -630,11 +630,10 @@ describe("initPostAuthUI", () => {
   });
 });
 
-// NOT TESTED, and the absence is deliberate rather than an oversight: that
-// `initUI` issues no `GET /api/steering` and the Instructions loader does. The read
-// moved from `initSteeringEditor` into `loadSteeringDoc`, reachable only through
-// the loader map `initUI` hands `initSettingsTabs` — and `initUI` cannot run in
-// this harness, because eight of the feature modules it calls are mocked
-// present-but-undefined for real-ESM linking. A test asserting it against
-// `initPostAuthUI` instead was written, passed, and was deleted: that door never
-// touched the steering editor, so the assertion held with the fix and without it.
+// NOT TESTED, and the absence is deliberate rather than an oversight: that `initUI`
+// issues no `GET /api/steering`. The read is `settings-steering.ts`'s
+// `loadSteeringDoc` (pinned in `settings-steering.test.ts`), reachable only through
+// the loader map `initUI` hands `initSettingsTabs` — and `initUI` cannot run here,
+// because eight of the feature modules it calls are mocked present-but-undefined
+// for real-ESM linking. A test asserting it against `initPostAuthUI` was written,
+// passed, and deleted: that door never touched the editor, so it held either way.
