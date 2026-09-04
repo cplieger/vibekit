@@ -6,7 +6,7 @@
 //
 // It replaces the previous tsc-emit pipeline (per-module JS served over an
 // importmap: ~260 uncached module fetches per page load) with three cacheable
-// artifacts: /app.js (+ hashed lazy chunks), /sw.js, /style.css, plus the
+// artifacts: /app.js (+ its hashed chunks), /sw.js, /style.css, plus the
 // /precache.json list the service worker reads to cache them. tsc remains the
 // TYPE gate (--noEmit in CI and the Docker build); esbuild does not typecheck.
 //
@@ -108,8 +108,7 @@ func writePrecacheManifest() error {
 }
 
 // precacheAssets lists the content-hashed chunks, sorted, as URL paths relative to
-// the site root. Most of them are on the first-paint path rather than lazy — the
-// eligibility rule is about the NAME, not about how the chunk is reached.
+// the site root. Eligibility is by NAME, so most of these load on first paint.
 //
 // THE HASHED NAMES ARE THE WHOLE LIST, because a name is cacheable without
 // revalidation exactly when its bytes cannot change under it — the rule
@@ -123,7 +122,7 @@ func precacheAssets() ([]string, error) {
 	entries, err := os.ReadDir(filepath.Join(outDir, "chunks"))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			// A build that produced no lazy chunk at all. Not reachable from this
+			// A build that produced no chunk at all. Not reachable from this
 			// entrypoint today, and not an error: an empty list is a valid document,
 			// and the worker treats it as one.
 			return assets, nil
@@ -230,11 +229,11 @@ func pruneEmptyDirs(dir string) error {
 	return nil
 }
 
-// bundleApp bundles the main client entry as ESM with code splitting:
-// the dynamic import() sites (history, conflicts, editor panes) become
-// hashed lazy chunks under /chunks/. The entry keeps its stable /app.js
-// name — the HTML never needs rewriting; cache correctness comes from the
-// server's ETag revalidation (assets are no-cache, HTML is no-store).
+// bundleApp bundles the main client entry as ESM with code splitting: the
+// dynamic import() sites (history, conflicts, editor panes) and the code they
+// share with the entry become hashed chunks under /chunks/. The entry keeps its
+// stable /app.js name — the HTML never needs rewriting; cache correctness comes
+// from the server's ETag revalidation (assets are no-cache, HTML is no-store).
 func bundleApp() error {
 	result := api.Build(api.BuildOptions{
 		EntryPoints:       []string{filepath.Join(srcDir, "app.ts")},

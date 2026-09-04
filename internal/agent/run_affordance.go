@@ -204,13 +204,11 @@ func pastTense(verb string) string {
 // affordance resolves the three facts and answers what may be done to the run.
 //
 // status is passed in rather than read here: every caller has already made that
-// `inspect` call, and a control decision must be made against one status read
-// rather than two that can disagree.
+// `inspect` call, and one decision must rest on one status read, not two that can
+// disagree.
 //
-// Costs at most ONE `workflow/list` round trip (listedRun's), and none of the
-// chat-store or bridge-map reads leaves this process. The parent session and the
-// recipe come off that single read, so a verb acting on this answer spends no
-// further list.
+// Costs ONE out-of-process read, listedRun's `workflow/list`, which carries both
+// the parent session and the recipe: a verb acting on this answer spends no list.
 func (rs *Runs) affordance(ctx context.Context, workflowID, status string) runAffordance {
 	listed := rs.listedRun(ctx, workflowID)
 	f := runFacts{status: status, recipe: listed.Name}

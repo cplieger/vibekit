@@ -44,9 +44,9 @@ const (
 )
 
 // contentHashedAsset matches the ONE naming shape whose bytes its name pins:
-// cmd/bundle emits lazy chunks as esbuild's `chunks/[name]-[hash]`, and that hash
-// is 8 uppercase base32 characters (`chunks/api-client-4K73XYBF.js`, plus a `.map`
-// sibling carrying the same hash).
+// cmd/bundle emits every split chunk as esbuild's `chunks/[name]-[hash]`, and that
+// hash is 8 uppercase base32 characters (`chunks/api-client-4K73XYBF.js`, plus a
+// `.map` sibling carrying the same hash).
 //
 // Anchored at both ends and pinned to the chunk directory on purpose: a looser rule
 // would eventually match a hand-authored asset and cache it for a year, and this

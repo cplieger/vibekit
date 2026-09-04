@@ -44,8 +44,8 @@ describe("isShellPath", () => {
   it("refuses the two stable names, and the build stops offering them", () => {
     // The server marks these `no-cache` because a release replaces their bytes
     // under the same name, so a cache-first answer here pairs a fresh index.html
-    // with the previous build's bundle — whose lazy imports name chunk hashes the
-    // new server no longer serves. Both halves have to agree, so the Go writer's
+    // with the previous build's bundle — whose imports name chunk hashes the new
+    // server no longer serves. Both halves have to agree, so the Go writer's
     // asset list is read for their absence rather than trusted.
     expect(isShellPath("/app.js")).toBe(false);
     expect(isShellPath("/style.css")).toBe(false);

@@ -148,8 +148,8 @@ func (c *statusCache) finish(key string, rows []allRepoStatus) (next map[string]
 		// Subsumes any recorded scope — the coverage-as-answer reasoning `claim`
 		// refutes above, correct HERE because the subsuming scan has not STARTED.
 		// Both intents were recorded inside the window that just closed, so this pass
-		// reads every repository after both of them; claim's full scan is already in
-		// flight and may be past the one its joining read cares about.
+		// reads every repository after both of them; the scan already in flight when
+		// claim records may be past the one its joining read cares about.
 		slot.full, run = true, true
 	case len(slot.pending) > 0:
 		slot.full, next, run = false, slot.pending, true
