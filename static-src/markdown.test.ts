@@ -1913,6 +1913,79 @@ describe("renderMarkdown GFM tables", () => {
         "<tbody><tr><td> 1 </td></tr>" +
         "<tr><td> 1 </td><td> 2 </td><td> 3 </td></tr></tbody></table>",
     },
+
+    // --- a row may end without a closing pipe ---
+    {
+      // GFM makes the closing pipe optional. Without a newline arm on the cell
+      // handler the last cell stayed open, the newline became a line break, and
+      // the delimiter row underneath was read as more header cells.
+      name: "a header row with no closing pipe",
+      input: "| a\n| - |\n| 1 |",
+      expected:
+        "<table><thead><tr><th> a</th></tr></thead>" +
+        "<tbody><tr><td> 1 </td></tr></tbody></table>",
+    },
+    {
+      name: "an escaped pipe closing a header row with no closing pipe",
+      input: "| a \\|\n| - |\n| 1 |",
+      expected:
+        "<table><thead><tr><th> a |</th></tr></thead>" +
+        "<tbody><tr><td> 1 </td></tr></tbody></table>",
+    },
+    {
+      name: "two header cells with no closing pipe",
+      input: "| a | b\n| - | - |\n| 1 | 2 |",
+      expected: "<table><thead><tr><th> a </th><th> b</th></tr></thead>" + BODY,
+    },
+    {
+      name: "three header cells with no closing pipe",
+      input: "| a | b | c\n| - | - | - |\n| 1 | 2 | 3 |",
+      expected:
+        "<table><thead><tr><th> a </th><th> b </th><th> c</th></tr></thead>" +
+        "<tbody><tr><td> 1 </td><td> 2 </td><td> 3 </td></tr></tbody></table>",
+    },
+    {
+      name: "no closing pipe on any row",
+      input: "| a\n| -\n| 1",
+      expected:
+        "<table><thead><tr><th> a</th></tr></thead>" +
+        "<tbody><tr><td> 1</td></tr></tbody></table>",
+    },
+
+    // --- a pipe inside a code span is not a cell boundary ---
+    {
+      // The cell walker keeps a code span intact, so the cell count the
+      // delimiter row is measured against has to keep it intact too. Splitting
+      // it there answered the delimiter-row test with a count the renderer would
+      // never produce: one `<th>` over two `<td>`.
+      name: "a code span holding a pipe is one header cell",
+      input: "| `a | b` |\n| - |\n| 1 |",
+      expected:
+        "<table><thead><tr><th> <code>a | b</code> </th></tr></thead>" +
+        "<tbody><tr><td> 1 </td></tr></tbody></table>",
+    },
+    {
+      name: "a two-column delimiter row does not match a code-span header",
+      input: "| `a | b` |\n| - | - |\n| 1 | 2 |",
+      expected: "<p>| <code>a | b</code> |<br>| - | - |<br>| 1 | 2 |</p>",
+    },
+    {
+      name: "a double-backtick span holding a pipe is one header cell",
+      input: "| ``a | b`` |\n| - |\n| 1 |",
+      expected:
+        "<table><thead><tr><th> <code>a | b</code> </th></tr></thead>" +
+        "<tbody><tr><td> 1 </td></tr></tbody></table>",
+    },
+    {
+      name: "an unclosed code span in a header opens no table",
+      input: "| `a | b |\n| - | - |\n| 1 | 2 |",
+      expected: "<p>| `a | b |<br>| - | - |<br>| 1 | 2 |</p>",
+    },
+    {
+      name: "a code span in a body cell is unchanged",
+      input: "| a | b |\n| - | - |\n| `1 | 2` | 3 |",
+      expected: HEAD + "<tbody><tr><td> <code>1 | 2</code> </td><td> 3 </td></tr></tbody></table>",
+    },
   ];
 
   it.each(cases)("$name", ({ input, expected }) => {
