@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { Message, ToolCall } from "./types.js";
+import type { Message, SteerMark, SteerOrigin, ToolCall } from "./types.js";
 
 // The dispatcher's import graph reaches the shared DOM registry, which throws on
 // a missing app root. These ids have to exist before the import is evaluated.
@@ -39,6 +39,8 @@ const {
   resetBlockRenders,
   buildDetachedBody,
   openContainerKeys,
+  blockElement,
+  mountedWindow,
 } = await import("./messages-blocks.js");
 const { blockKey, blockTextSigs, blockThinkingSigs, ensureBlockTextSig, clearAllBlockSigs } =
   await import("./store-signals.js");
@@ -101,6 +103,9 @@ function shape(wrap: HTMLElement): string[] {
     }
     if (e.classList.contains("tool-group")) {
       return `group(${String(e.querySelectorAll(".tool-call").length)})`;
+    }
+    if (e.classList.contains("steer-note")) {
+      return "note";
     }
     return `text(${String(e.textContent).trim().slice(0, 16)})`;
   });
@@ -1612,6 +1617,34 @@ describe("thinking blocks mount open per LANE and seal on the next sibling", () 
     expect(t?.open).toBe(false);
   });
 
+  it("leaves the trace open when the step's card belongs to another message", () => {
+    // The mirror of the case above: the launching message hosts the card, so this
+    // message's step block mounts nothing here and the trace it sits under is
+    // still this container's live tail.
+    const launch = {
+      id: "l-seal",
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      workflow_id: "wf_seal",
+    } as unknown as ToolCall;
+    buildAssistantBody(
+      document.createElement("div"),
+      liveMsg([toolUse("l-seal")], [launch]),
+      CHAT_ID,
+      false,
+    );
+    const wrap = document.createElement("div");
+    buildAssistantBody(
+      wrap,
+      liveMsg([thinking("still planning"), text("step prose", "wf:wf_seal:wf_seal/build")]),
+      CHAT_ID,
+      true,
+    );
+    const [t] = traces(wrap);
+    expect(t?.open).toBe(true);
+  });
+
   it("mounts a trace with a later same-lane sibling sealed", () => {
     // Both top-level: the text block after it is the lane's newer content, so
     // the trace is settled however live the message is.
@@ -1670,5 +1703,379 @@ describe("thinking blocks mount open per LANE and seal on the next sibling", () 
       expect(t.open).toBe(false);
       expect(labelOf(t)).toBe("Thinking completed");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A RANGE is what a body mounts, and the grouping is derived from the store.
+//
+// Which tool group is open in a container and whether a reasoning trace is sealed
+// used to live in mount ORDER, so the DOM depended on how the renderer got there.
+// Both are store predicates now, which lets a body mount blocks 4..6 without 0..3
+// and reach the same grouping. The steer-note case pins behaviour that held.
+// ---------------------------------------------------------------------------
+
+describe("a body mounts a block RANGE, and the grouping is derived", () => {
+  beforeEach(() => {
+    resetBlockRenders();
+  });
+
+  const cmd = (id: string): ToolCall => call(id, "Run Command");
+
+  function mark(id: string, msgID: string, blockIndex: number): SteerMark {
+    return {
+      id,
+      text: `steer ${id}`,
+      origin: "user" as SteerOrigin,
+      anchor: { msgID, blockIndex },
+    };
+  }
+
+  /** One render of `blocks`, optionally windowed and with steer marks. */
+  function renderRange(
+    blocks: Record<string, unknown>[],
+    toolCalls: ToolCall[],
+    opts: { id?: string; marks?: SteerMark[]; range?: { from: number; to: number } } = {},
+  ): { wrap: HTMLElement; m: Message } {
+    const wrap = document.createElement("div");
+    const m = {
+      id: opts.id ?? `m-${String(Math.random())}`,
+      role: "assistant",
+      content: "",
+      blocks,
+      tool_calls: toolCalls,
+    } as unknown as Message;
+    buildAssistantBody(wrap, m, CHAT_ID, false, opts.marks ?? [], opts.range);
+    return { wrap, m };
+  }
+
+  /** Markup with the two per-render volatile values masked: the owning message
+   *  id, and the disclosure primitive's global id counter. */
+  const mask = (html: string): string =>
+    html
+      .replaceAll(/data-block-msg="[^"]*"/g, 'data-block-msg="M"')
+      .replaceAll(/uip-disclosure-\d+/g, "uip-disclosure-N");
+
+  const blocksHTML = (wrap: HTMLElement): string =>
+    mask(wrap.querySelector(".assistant-blocks")?.innerHTML ?? "");
+
+  it("keeps a tool card that follows a steer note BELOW that note", () => {
+    // The note is posted into the container between two consecutive cards, so
+    // the second card may not join the group that opened above it.
+    const { wrap } = renderRange([toolUse("t1"), toolUse("t2")], [cmd("t1"), cmd("t2")], {
+      id: "m-note",
+      marks: [mark("s1", "m-note", 1)],
+    });
+    expect(shape(wrap)).toEqual(["group(1)", "note", "group(1)"]);
+  });
+
+  it("keeps a whole tool run in one group when the note sits above all of it", () => {
+    const { wrap } = renderRange([toolUse("t1"), toolUse("t2")], [cmd("t1"), cmd("t2")], {
+      id: "m-above",
+      marks: [mark("s1", "m-above", 0)],
+    });
+    expect(shape(wrap)).toEqual(["note", "group(2)"]);
+  });
+
+  it("keeps a tool card that follows a DELEGATE box below that box", () => {
+    // The box is posted into the top level, so a card after it may not join the
+    // group that opened above it — the same rule a steer note carries, for the
+    // one block that creates a container in someone else's container.
+    const { wrap } = renderRange(
+      [toolUse("t1"), toolUse("inv", "sub-D"), toolUse("t2")],
+      [cmd("t1"), call("inv", "Sub-agent: helper"), cmd("t2")],
+      { id: "m-box" },
+    );
+    expect(shape(wrap)).toEqual(["group(1)", "card(sub-D)", "group(1)"]);
+  });
+
+  it("keeps a tool card that follows a PIPELINE box below that box", () => {
+    const driver = {
+      id: "d-brk",
+      title: "Orchestrate Sub-agent",
+      kind: "other",
+      status: "completed",
+      input: { stages: [{}, {}] },
+    } as unknown as ToolCall;
+    const { wrap } = renderRange(
+      [toolUse("t1"), toolUse("d-brk"), toolUse("t2")],
+      [cmd("t1"), driver, cmd("t2")],
+      { id: "m-pipe" },
+    );
+    expect(shape(wrap)).toEqual(["group(1)", "pipeline(d-brk)", "group(1)"]);
+  });
+
+  it("keeps a tool card that follows a RUN CARD below that card", () => {
+    const wf = {
+      id: "l1",
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      workflow_id: "wf-brk",
+    } as unknown as ToolCall;
+    const { wrap } = renderRange(
+      [toolUse("t1"), toolUse("l1"), toolUse("t2")],
+      [cmd("t1"), wf, cmd("t2")],
+      { id: "m-run" },
+    );
+    // The run card is not in `shape`'s vocabulary, so read the order directly.
+    expect(
+      [...(wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) =>
+        e.classList.contains("run-card")
+          ? "run"
+          : `group(${String(e.querySelectorAll(".tool-call").length)})`,
+      ),
+    ).toEqual(["group(1)", "run", "group(1)"]);
+  });
+
+  it("keeps a run whole where the step block's card belongs to another message", () => {
+    // A run's later frames arrive as a NEW assistant message per turn-segment, so
+    // this step routes into the launching message's card and nothing lands here.
+    // The two cards are adjacent in THIS render, so a break between them would be
+    // one the reader has nothing to explain.
+    const wf = {
+      id: "l-seg",
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      workflow_id: "wf-seg",
+    } as unknown as ToolCall;
+    renderRange([toolUse("l-seg")], [wf], { id: "m-launch" });
+    const later = renderRange(
+      [toolUse("s1"), text("step work", "wf:wf-seg:wf-seg/build"), toolUse("s2")],
+      [cmd("s1"), cmd("s2")],
+      { id: "m-frame" },
+    );
+    expect(shape(later.wrap)).toEqual(["group(2)"]);
+  });
+
+  it("keeps a run whole around a pipeline box its own stage count no longer asks for", () => {
+    // The box is built for a driver that declared no stage; the first stage then
+    // makes the count 1, which is the ONE count that renders no container — and
+    // `stageHostFor` keeps putting the stage inside the box that already exists.
+    // So the break stays at the driver's block, where the box actually stands.
+    const driver = {
+      id: "d-live",
+      title: "Orchestrate Sub-agent",
+      kind: "other",
+      status: "completed",
+      input: {},
+    } as unknown as ToolCall;
+    const stage = {
+      id: "invoke_subagent_d-live_stage_plan",
+      title: "Sub-agent: plan",
+      kind: "other",
+      status: "completed",
+      agent_subtask_id: "u-live",
+    } as unknown as ToolCall;
+    const first = renderRange([toolUse("d-live"), toolUse("p1")], [driver, cmd("p1")], {
+      id: "m-outlived",
+    });
+    expect(shape(first.wrap)).toEqual(["pipeline(d-live)", "group(1)"]);
+
+    const grown = {
+      ...first.m,
+      blocks: [toolUse("d-live"), toolUse("p1"), text("planning", "u-live"), toolUse("p2")],
+      tool_calls: [driver, cmd("p1"), stage, cmd("p2")],
+    } as unknown as Message;
+    updateAssistantBody(first.wrap, grown, CHAT_ID, false);
+    expect(shape(first.wrap)).toEqual(["pipeline(d-live)", "group(2)"]);
+  });
+
+  /** Whether each top-level group in `wrap` is auto-collapsed, in document order. */
+  const collapsed = (wrap: HTMLElement): boolean[] =>
+    [...wrap.querySelectorAll(".assistant-blocks > .tool-group")].map((g) =>
+      g.classList.contains("tool-group-auto-collapsed"),
+    );
+
+  it("leaves a TRAILING run of tool cards open, however many cards it holds", () => {
+    // A run's own second and third cards post at their own indices, so asking
+    // whether the run's START is followed collapses the run the reader is
+    // watching. Nothing follows this one.
+    const { wrap } = renderRange(
+      [toolUse("t1"), toolUse("t2"), toolUse("t3")],
+      [cmd("t1"), cmd("t2"), cmd("t3")],
+      { id: "m-tail" },
+    );
+    expect(shape(wrap)).toEqual(["group(3)"]);
+    expect(collapsed(wrap)).toEqual([false]);
+  });
+
+  it("collapses a run the next block follows, and only that one", () => {
+    const { wrap } = renderRange(
+      [toolUse("t1"), toolUse("t2"), text("prose"), toolUse("t3"), toolUse("t4")],
+      [cmd("t1"), cmd("t2"), cmd("t3"), cmd("t4")],
+      { id: "m-mid" },
+    );
+    expect(shape(wrap)).toEqual(["group(2)", "text(prose)", "group(2)"]);
+    expect(collapsed(wrap)).toEqual([true, false]);
+  });
+
+  it("mounts a mid-message range with the grouping a whole mount gives it", () => {
+    const blocks = [
+      text("intro"),
+      toolUse("t1"),
+      toolUse("t2"),
+      text("mid"),
+      toolUse("t3"),
+      toolUse("t4"),
+    ];
+    const calls = [cmd("t1"), cmd("t2"), cmd("t3"), cmd("t4")];
+    const whole = renderRange(blocks, calls);
+    const tail = mask(
+      [...(whole.wrap.querySelector(".assistant-blocks")?.children ?? [])]
+        .slice(2)
+        .map((e) => e.outerHTML)
+        .join(""),
+    );
+
+    resetBlockRenders();
+    const partial = renderRange(blocks, calls, { range: { from: 3, to: 6 } });
+    expect(shape(partial.wrap)).toEqual(["text(mid)", "group(2)"]);
+    expect(blocksHTML(partial.wrap)).toBe(tail);
+  });
+
+  it("builds the same DOM whether the range arrived in one slice or two", () => {
+    const blocks = [toolUse("t1"), text("mid"), toolUse("t2"), toolUse("t3")];
+    const calls = [cmd("t1"), cmd("t2"), cmd("t3")];
+    // A steer note in the overlap, because the two flushes deliberately overlap:
+    // the second slice re-reads every mark, so a note must render exactly once.
+    const whole = renderRange(blocks, calls, { id: "m-one", marks: [mark("s", "m-one", 1)] });
+
+    resetBlockRenders();
+    const split = renderRange(blocks, calls, {
+      id: "m-two",
+      marks: [mark("s", "m-two", 1)],
+      range: { from: 0, to: 2 },
+    });
+    updateAssistantBody(split.wrap, split.m, CHAT_ID, false, [mark("s", "m-two", 1)], {
+      from: 0,
+      to: 4,
+    });
+    expect(blocksHTML(split.wrap)).toBe(blocksHTML(whole.wrap));
+  });
+
+  it("skips a steer mark anchored outside the range, at BOTH edges", () => {
+    const { wrap } = renderRange([toolUse("t1"), toolUse("t2"), toolUse("t3")], [cmd("t2")], {
+      id: "m-out",
+      marks: [mark("below", "m-out", 0), mark("above", "m-out", 3)],
+      range: { from: 1, to: 2 },
+    });
+    expect(wrap.querySelectorAll(".steer-note")).toHaveLength(0);
+    expect(shape(wrap)).toEqual(["group(1)"]);
+  });
+
+  it("mounts a steer mark anchored INSIDE the range", () => {
+    const { wrap } = renderRange([toolUse("t1"), toolUse("t2"), toolUse("t3")], [cmd("t2")], {
+      id: "m-in",
+      marks: [mark("inside", "m-in", 1)],
+      range: { from: 1, to: 2 },
+    });
+    expect(shape(wrap)).toEqual(["note", "group(1)"]);
+  });
+
+  it("reports the range it mounted, and grows it on a tail extension", () => {
+    const blocks = [text("a"), text("b"), text("c")];
+    const { wrap, m } = renderRange(blocks, [], { id: "m-win", range: { from: 1, to: 2 } });
+    expect(mountedWindow("m-win")).toEqual({ from: 1, to: 2 });
+
+    updateAssistantBody(wrap, m, CHAT_ID, false, [], { from: 1, to: 3 });
+    expect(mountedWindow("m-win")).toEqual({ from: 1, to: 3 });
+  });
+
+  it("has no mounted range for a message nothing rendered", () => {
+    expect(mountedWindow("m-never")).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A block's element is looked up per RENDER, never by a subtree query.
+//
+// A block index is NOT unique inside one keyed body row: `runCardFor` routes a
+// run's later frames into the FIRST message's card, so message B's step blocks
+// mount inside message A's own block region carrying B's numbering. A subtree
+// query for that index can return B's element and report success.
+// ---------------------------------------------------------------------------
+
+describe("blockElement resolves a block's own element", () => {
+  beforeEach(() => {
+    resetBlockRenders();
+  });
+
+  function build(id: string, blocks: Record<string, unknown>[], toolCalls: ToolCall[] = []): void {
+    const wrap = document.createElement("div");
+    buildAssistantBody(
+      wrap,
+      {
+        id,
+        role: "assistant",
+        content: "",
+        blocks,
+        tool_calls: toolCalls,
+      } as unknown as Message,
+      CHAT_ID,
+      false,
+    );
+    document.body.appendChild(wrap);
+  }
+
+  it("gives a top-level text block its ROW, which is what a drop removes", () => {
+    build("m-row", [text("hello")]);
+    const el = blockElement("m-row", 0);
+    expect(el?.classList.contains("message")).toBe(false);
+    expect(el?.querySelector(".message.assistant")).not.toBeNull();
+    expect(el?.dataset["blockIndex"]).toBe("0");
+    expect(el?.dataset["blockMsg"]).toBe("m-row");
+  });
+
+  it("gives a delegate-hosted text block the bubble, which is the drop there", () => {
+    build("m-sub", [text("delegate prose", "sub-Z")]);
+    expect(blockElement("m-sub", 0)?.classList.contains("message")).toBe(true);
+  });
+
+  it("gives a reasoning block its details element", () => {
+    build("m-trace", [{ type: "thinking", thinking: "pondering", agent_subtask_id: "" }]);
+    expect(blockElement("m-trace", 0)?.classList.contains("reasoning-block")).toBe(true);
+  });
+
+  it("gives a tool card the card itself", () => {
+    build("m-card", [toolUse("t1")], [call("t1", "Run Command")]);
+    expect(blockElement("m-card", 0)?.classList.contains("tool-call")).toBe(true);
+  });
+
+  it("answers undefined for an index this render never mounted", () => {
+    build("m-short", [text("only one")]);
+    expect(blockElement("m-short", 4)).toBeUndefined();
+  });
+
+  it("answers undefined for a message with no render at all", () => {
+    expect(blockElement("m-absent", 0)).toBeUndefined();
+  });
+
+  it("cannot cross a message boundary, even where the DOM does", () => {
+    const launch = {
+      id: "t-run",
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      workflow_id: "wf_x",
+    } as unknown as ToolCall;
+    // A hosts the run card, and a LATER message's step blocks mount inside it,
+    // so A's own block 1 sits BELOW a foreign block 1 in A's own subtree.
+    build("m-host", [toolUse("t-run"), text("after the run")], [launch]);
+    build("m-later", [
+      text("step one", "wf:wf_x:wf_x/build"),
+      text("step two", "wf:wf_x:wf_x/build"),
+    ]);
+
+    const own = blockElement("m-host", 1);
+    expect(own?.dataset["blockMsg"]).toBe("m-host");
+
+    // The defect a subtree query cannot avoid: document order inside A's own
+    // block region reaches the foreign element for that index first.
+    const region = own?.parentElement;
+    const firstInDom = region?.querySelector<HTMLElement>('[data-block-index="1"]');
+    expect(firstInDom?.dataset["blockMsg"]).toBe("m-later");
+    expect(firstInDom).not.toBe(own);
   });
 });

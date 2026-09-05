@@ -174,13 +174,16 @@ describe("paint branches on the flushed render cause", () => {
       kind: "execute",
       status: "in_progress",
     } as unknown as ToolCall;
+    // The tool-bearing message is in the NEWEST turn: the fold policy wants that
+    // turn open, so its card is mounted and its per-tool signal exists — which is
+    // what makes the cause `tool` rather than the signal-absent `shape` fallback.
     const kids = mount(
       chat,
       [
         user("ct-u1", "one"),
-        assistantWithTool("ct-a1", tc),
+        assistant("ct-a1", "done"),
         user("ct-u2", "two"),
-        assistant("ct-a2", "done"),
+        assistantWithTool("ct-a2", tc),
       ],
       false,
     );
@@ -188,14 +191,14 @@ describe("paint branches on the flushed render cause", () => {
     const before = seamCounts();
     const refreshBefore = vi.mocked(blocksMod.refreshMessageCard).mock.calls.length;
 
-    store.upsertToolCall(chat, "ct-a1", { ...tc, status: "completed" } as ToolCall, 0);
+    store.upsertToolCall(chat, "ct-a2", { ...tc, status: "completed" } as ToolCall, 0);
     await flushed();
 
-    expect(store.renderCauseOf(chat)).toEqual({ cause: "tool", msgID: "ct-a1" });
+    expect(store.renderCauseOf(chat)).toEqual({ cause: "tool", msgID: "ct-a2" });
     // The keyed update ran for the one owning message, and it found its render.
     const refreshCalls = vi.mocked(blocksMod.refreshMessageCard).mock;
     expect(refreshCalls.calls.length).toBe(refreshBefore + 1);
-    expect(refreshCalls.calls.at(-1)?.[0]).toBe("ct-a1");
+    expect(refreshCalls.calls.at(-1)?.[0]).toBe("ct-a2");
     expect(refreshCalls.results.at(-1)?.value).toBe(true);
     // No projection, no reconcile, no fold pass — and zero FULL-PATH body
     // updates: the spy sees only cross-module calls, so the keyed update's own

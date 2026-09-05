@@ -61,11 +61,12 @@ vi.mock("./api-client.js", async () => ({
   }),
 }));
 
-const { mountChatView, mountTurnBody, activeTranscriptView } = await import("./messages.js");
+const { mountChatView, mountTurnBody, mountTurnBodyForWalk, endWalkReveal, activeTranscriptView } =
+  await import("./messages.js");
 const { setSessions, setActive, bumpMessages } = await import("./store.js");
 const { setTurnOpen, openForSearch, clearSearchOpened, resetFoldState } =
   await import("./fold-state.js");
-const { RESIDENT_BLOCKS, RESIDENT_TOOL_CALLS } = await import("./block-window.js");
+const { OVERSCAN_BLOCKS, RESIDENT_BLOCKS, RESIDENT_TOOL_CALLS } = await import("./block-window.js");
 const { blockTextSigs, ensureBlockTextSig, blockKey } = await import("./store-signals.js");
 const { openContainerKeys } = await import("./messages-blocks.js");
 const { invalidateRun } = await import("./run-store.js");
@@ -147,6 +148,21 @@ function heavyTurn(id: string, blocks: number): Msg[] {
   return out;
 }
 
+/** One turn whose blocks are all unfilled PADS: real ordinals, zero estimated
+ *  height, which is what `padBlocks` leaves behind for a gap in the stream. */
+function padTurn(id: string, blocks: number): Msg[] {
+  return [
+    user(id, `prompt ${id}`),
+    {
+      id: `${id}-a`,
+      role: "assistant",
+      ts: 2,
+      content: "",
+      blocks: Array.from({ length: blocks }, () => ({ type: "text", text: "" })),
+    },
+  ];
+}
+
 /** One turn holding `tools` tool cards in a single message — cheap in BLOCKS
  *  relative to the block budget, expensive in cards. */
 function toolHeavyTurn(id: string, tools: number): Msg[] {
@@ -215,8 +231,17 @@ function isFolded(turnID: string): boolean {
   return card(turnID).hasAttribute("data-folded");
 }
 
+/** MESSAGE rows only. A body's keyed children also include the two spacers that
+ *  stand in for the ordinals outside the window, and those are not rows. */
 function rowsIn(turnID: string): number {
-  return card(turnID).querySelectorAll(`:scope > .turn-body > [${KEY_ATTR}]`).length;
+  return card(turnID).querySelectorAll(`:scope > .turn-body > .msg-wrap[${KEY_ATTR}]`).length;
+}
+
+/** The spacer sides a body carries, in document order. */
+function spacersIn(turnID: string): string[] {
+  return [...card(turnID).querySelectorAll(`:scope > .turn-body > [${KEY_ATTR}]`)]
+    .map((e) => e.getAttribute(KEY_ATTR) ?? "")
+    .filter((k) => k.startsWith("__space_"));
 }
 
 let seq = 0;
@@ -244,29 +269,74 @@ beforeEach(() => {
 describe("the mounted derivation", () => {
   it("mounts every turn of a cheap chat, however many there are", () => {
     const id = chatID();
-    activate(id, toolTurns(8));
-    // 8 turns is more than the old 5-turn window, and 8 tool-bearing turns cost
-    // 24 blocks against a 320-block budget. Distance is not a cost.
+    activate(id, plainTurns(8));
+    // 8 turns is more than the old 5-turn window, and 8 prose turns cost 16
+    // blocks against a 320-block budget. Distance is not a cost.
     for (let n = 1; n <= 8; n++) {
       expect(hasBody(`u${String(n)}`), `turn ${String(n)} body`).toBe(true);
     }
   });
 
-  it("stubs a SINGLE over-budget turn, which is the shape the turn count could not reach", () => {
+  it("stubs a FOLDED turn the window is not grown over, however cheap it is", () => {
+    const id = chatID();
+    activate(id, toolTurns(8));
+    // A folded body is `block-size: 0` + `content-visibility: hidden`, so its
+    // ordinals hold no height and the window is not grown over them: bodying one
+    // would spend the budget on content nobody can see. Only the newest turn is
+    // open, and it is the only one that gets a body.
+    for (let n = 1; n <= 7; n++) {
+      expect(hasBody(`u${String(n)}`), `turn ${String(n)} stub`).toBe(false);
+      expect(isFolded(`u${String(n)}`), `turn ${String(n)} folded`).toBe(true);
+    }
+    expect(hasBody("u8")).toBe(true);
+  });
+
+  it("windows a SINGLE over-budget turn instead of stubbing it", () => {
     const id = chatID();
     activate(id, heavyTurn("big", RESIDENT_BLOCKS + 64));
-    expect(hasBody("big")).toBe(false);
-    expect(isFolded("big")).toBe(true);
+    // The newest turn is what the reader is looking at, so it keeps a body — and
+    // the body holds the window rather than the turn: 48 of its 48 rows would be
+    // the whole turn, and a head spacer stands in for the ordinals above.
+    expect(hasBody("big")).toBe(true);
+    expect(isFolded("big")).toBe(false);
+    expect(rowsIn("big")).toBeLessThan(Math.ceil((RESIDENT_BLOCKS + 64) / 8));
+    expect(spacersIn("big")).toEqual(["__space_head__"]);
   });
 
   it("stubs the older turns behind an over-budget newest one, contiguously", () => {
     const id = chatID();
     activate(id, [...toolTurns(3), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
-    expect(hasBody("big")).toBe(false);
+    expect(hasBody("big")).toBe(true);
     for (const n of [1, 2, 3]) {
       expect(hasBody(`u${String(n)}`), `turn ${String(n)} stub`).toBe(false);
       expect(isFolded(`u${String(n)}`), `turn ${String(n)} born folded`).toBe(true);
     }
+  });
+
+  it("bodies a turn the fold policy wants OPEN even where the window cannot reach it", () => {
+    const id = chatID();
+    // The reader opened it, and the newest turn is over budget on its own, so the
+    // window sits entirely inside that turn. Presence is what keeps this one's
+    // height on the page: a body holding no row, and a spacer standing in for
+    // every ordinal it has.
+    setTurnOpen(id, "u1", true);
+    activate(id, [...toolTurns(1), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
+    expect(hasBody("u1")).toBe(true);
+    expect(isFolded("u1")).toBe(false);
+    expect(rowsIn("u1")).toBe(0);
+    expect(spacersIn("u1")).toEqual(["__space_tail__"]);
+  });
+
+  it("floors such a turn's spacer at 1px, so an all-empty body is not read as bodiless", () => {
+    const id = chatID();
+    // Every block is an unfilled PAD, which is priced at zero: the ordinals are
+    // real, the estimated height is not, and a 0px spacer would leave the body
+    // looking like the one shape `.is-bodyless` is for.
+    setTurnOpen(id, "pad", true);
+    activate(id, [...padTurn("pad", 64), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
+    const spacer = card("pad").querySelector<HTMLElement>(":scope > .turn-body > .turn-space");
+    expect(spacer?.style.blockSize).toBe("1px");
+    expect(card("pad").classList.contains("is-bodyless")).toBe(false);
   });
 
   it("bodies a turn holding NO block even behind the budget, because .is-bodyless needs a body", () => {
@@ -275,18 +345,19 @@ describe("the mounted derivation", () => {
     // bodyless marker is stamped on that body, so stubbing it buys no budget and
     // loses the mark. messages-paint-causes.test.ts owns what the mark then does.
     activate(id, [user("empty"), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
-    expect(hasBody("big"), "the fixture spends the budget").toBe(false);
+    expect(spacersIn("big"), "the fixture spends the budget").toEqual(["__space_head__"]);
     expect(hasBody("empty")).toBe(true);
     expect(rowsIn("empty")).toBe(0);
   });
 
-  it("stubs a turn the TOOL budget rejects and the block budget would not", () => {
+  it("cuts the window at the TOOL budget, which the block budget would not reach", () => {
     const id = chatID();
     // Its blocks are one per tool card, well inside the block budget; the cards
-    // are what a paint pays for.
+    // are what a paint pays for, so the window stops short of the turn's head.
     expect(RESIDENT_TOOL_CALLS + 1).toBeLessThan(RESIDENT_BLOCKS);
     activate(id, toolHeavyTurn("tools", RESIDENT_TOOL_CALLS + 1));
-    expect(hasBody("tools")).toBe(false);
+    expect(hasBody("tools")).toBe(true);
+    expect(spacersIn("tools")).toEqual(["__space_head__"]);
   });
 
   it("keeps the RUNNING turn resident whatever it costs", () => {
@@ -369,14 +440,27 @@ describe("the fold policy over residency", () => {
     expect(card("u3").hasAttribute("data-no-fold")).toBe(true);
   });
 
-  it("offers the toggle on EVERY stub, the newest included", () => {
+  it("offers the toggle on every stub, whatever the fold rules say", () => {
     const id = chatID();
-    activate(id, heavyTurn("big", RESIDENT_BLOCKS + 64));
-    // The newest turn normally offers no fold — there is nothing after it to get
-    // back to. On a stub the toggle is the only route to a body that does not
-    // exist yet, so residency outranks that rule; without this the reader would
+    // A PROSE-ONLY turn is the case that needs the rule: its fold hides nothing,
+    // so the ordinary answer is no toggle at all — and on a stub the toggle is the
+    // only route to a body that does not exist yet. Without this the reader would
     // be stranded looking at a claim line.
-    expect(card("big").hasAttribute("data-no-fold")).toBe(false);
+    activate(id, [...plainTurns(2), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
+    for (const n of [1, 2]) {
+      expect(hasBody(`u${String(n)}`), `turn ${String(n)} stub`).toBe(false);
+      expect(card(`u${String(n)}`).hasAttribute("data-no-fold")).toBe(false);
+    }
+  });
+
+  it("never stubs the NEWEST turn, so its missing toggle strands nobody", () => {
+    const id = chatID();
+    // The fold policy wants the newest turn open, and presence follows that
+    // answer rather than the budget — so the one turn that offers no toggle is
+    // also the one that can never need it.
+    activate(id, heavyTurn("big", RESIDENT_BLOCKS + 64));
+    expect(hasBody("big")).toBe(true);
+    expect(card("big").hasAttribute("data-no-fold")).toBe(true);
   });
 
   it("folds a turn holding a live workflow run — the face carries a duplicate card", async () => {
@@ -423,10 +507,11 @@ describe("the fold policy over residency", () => {
     expect(isFolded("u8")).toBe(false);
     expect(hasBody("u8")).toBe(true);
     expect(card("u8").hasAttribute("data-no-fold")).toBe(true);
-    // The same override applies once the turn stops being newest.
+    // The same override applies once the turn stops being newest — and a turn the
+    // reader folded is a stub, because the window is not grown over folded turns.
     activate(id, [...toolTurns(8), ...plainTurns(9).slice(16)]);
     expect(isFolded("u8")).toBe(true);
-    expect(hasBody("u8")).toBe(true);
+    expect(hasBody("u8")).toBe(false);
   });
 });
 
@@ -470,19 +555,13 @@ describe("the residency lifecycle", () => {
     (card("u1").querySelector(".subagent-header") as HTMLElement).click();
     expect(openContainerKeys().has("sub-leak")).toBe(true);
 
-    // Resident and folded: three more turns fold the target, and nothing about
-    // its body or its state changes.
+    // Resident → stub: three more turns fold the target, and the window is not
+    // grown over a folded turn, so the fold IS the unmount.
     activate(id, [user("u1"), target, ...plainTurns(4).slice(2)]);
-    expect(isFolded("u1")).toBe(true);
-    expect(hasBody("u1")).toBe(true);
-    expect(blockTextSigs.get(blockKey("a1", 0))).toBeDefined();
-    expect(openContainerKeys().has("sub-leak")).toBe(true);
-
-    // Resident → stub: a newest turn big enough to spend the whole budget.
-    activate(id, [user("u1"), target, ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
     await vi.waitFor(() => {
       expect(hasBody("u1")).toBe(false);
     });
+    expect(isFolded("u1")).toBe(true);
     expect(card("u1").querySelector(`[${KEY_ATTR}="a1"]`)).toBeNull();
     expect(blockTextSigs.get(blockKey("a1", 0))).toBeUndefined();
     expect(openContainerKeys().has("sub-leak")).toBe(false);
@@ -627,8 +706,12 @@ describe("expanding a stub", () => {
         .replaceAll(/uip-disclosure-\d+/g, "uip-disclosure-N")
         .replaceAll(chat, "CHAT");
     const warmChat = chatID();
+    // Opened by the reader, because the window is only grown over turns that
+    // render open: a folded turn behind the newest one is a stub, so "resident and
+    // folded" is not a state to compare against any more.
+    setTurnOpen(warmChat, "uv", true);
     activate(warmChat, [user("uv", "the prompt"), everyBlock("v"), ...plainTurns(4).slice(0, 4)]);
-    expect(isFolded("uv")).toBe(true);
+    expect(isFolded("uv")).toBe(false);
     const warmBody = card("uv").querySelector(":scope > .turn-body") as HTMLElement;
     for (const sel of [
       ".reasoning-block",
@@ -656,20 +739,27 @@ describe("expanding a stub", () => {
     expect(normalize(stubBody.innerHTML, stubChat)).toBe(wantHTML);
   });
 
-  it("yields between block batches on a heavy reveal and still lands complete", async () => {
+  it("yields between block batches on a heavy reveal and lands the GRANT complete", async () => {
     const id = chatID();
-    // 12 rows x 8 blocks = 96 blocks: several BUILD_BATCH_BLOCKS slices.
+    // 12 rows x 8 blocks = 96 blocks: several BUILD_BATCH_BLOCKS slices, and more
+    // than the grant. "Complete" is the range somebody asked for, not the turn:
+    // a reveal that mounted a 700-block turn whole is what this feature refuses.
     activate(id, [...heavyTurn("u-heavy", 96), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
     expect(hasBody("u-heavy")).toBe(false);
 
-    const build = mountTurnBody(id, "u-heavy");
+    // An INTERIOR ordinal, which is what a search hit forwards: the grant is one
+    // overscan each side of it, so 48 of the turn's 96 ordinals and a spacer at
+    // both ends.
+    const granted = (2 * OVERSCAN_BLOCKS) / 8;
+    const build = mountTurnBody(id, "u-heavy", 2 * OVERSCAN_BLOCKS);
     // The first batch lands synchronously in the interaction...
     const partial = rowsIn("u-heavy");
     expect(partial).toBeGreaterThan(0);
-    expect(partial).toBeLessThan(12);
-    // ...and the rest follow across yields.
+    expect(partial).toBeLessThan(granted);
+    // ...and the rest follow across yields, up to the grant and no further.
     await build;
-    expect(rowsIn("u-heavy")).toBe(12);
+    expect(rowsIn("u-heavy")).toBe(granted);
+    expect(spacersIn("u-heavy")).toEqual(["__space_head__", "__space_tail__"]);
   });
 });
 
@@ -701,18 +791,18 @@ describe("the cold build", () => {
 
   it("stops taking slices on the frame once the pass has spent its block allowance", async () => {
     const id = chatID();
-    // Twelve turns the reader opened by hand. Pins are exempt from the residency
-    // budget, so all twelve mount — and PINS ARE THE WHOLE POPULATION the allowance
-    // exists for: an unpinned paint is already capped at `RESIDENT_BLOCKS` by the
-    // plan, so this is the only shape that can exceed it. Without the pass-wide
-    // allowance all twelve would take a slice in the paint frame.
-    for (let n = 1; n <= 12; n++) {
-      setTurnOpen(id, `h${String(n)}`, true);
-    }
+    // Twelve WALK-granted turns, and a grant is the whole population the
+    // allowance exists for: the window's own bodies cannot sum past one window,
+    // while a grant is outside the budget. Granted before the chat is activated,
+    // so the paint that creates the cards is the paint that bodies them.
     const messages: Msg[] = [];
+    const grants: Promise<void>[] = [];
     for (let n = 1; n <= 12; n++) {
-      messages.push(...heavyTurn(`h${String(n)}`, 40));
+      const turnID = `h${String(n)}`;
+      grants.push(mountTurnBodyForWalk(id, turnID));
+      messages.push(...heavyTurn(turnID, 40));
     }
+    await Promise.all(grants);
     activate(id, messages);
 
     // A slice is 32 blocks (4 of these 8-block rows) and the pass may mount 320,
@@ -734,27 +824,73 @@ describe("the cold build", () => {
         expect(rowsIn(`h${String(n)}`), `h${String(n)} complete`).toBe(5);
       }
     });
+    endWalkReveal(id);
+  });
+
+  it("holds a walk-revealed turn across the repaint the reveal itself asks for", async () => {
+    const id = chatID();
+    activate(id, [...toolTurns(1), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
+    expect(hasBody("u1")).toBe(false);
+
+    // The search-wide loop builds every hit turn and THEN asks for a repaint, so a
+    // grant that did not survive that pass would leave the walker nothing to mark.
+    // One pin slot cannot serve the loop, which is why the walk has a scope of its
+    // own rather than a deadline.
+    await mountTurnBodyForWalk(id, "u1");
+    expect(hasBody("u1")).toBe(true);
+    bumpMessages(id, "shape");
+    expect(hasBody("u1")).toBe(true);
+
+    // And it ends with the reveal rather than with a clock.
+    endWalkReveal(id);
+    bumpMessages(id, "shape");
+    expect(hasBody("u1")).toBe(false);
+  });
+
+  it("clamps an ordinal past the turn's span into it, rather than granting nothing", async () => {
+    const id = chatID();
+    activate(id, [...heavyTurn("u-heavy", 96), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
+    expect(hasBody("u-heavy")).toBe(false);
+    // A forwarded ordinal outlives the block it named — a hit index after a rewind
+    // trims the turn — so an `at` past the span is the caller's, not a defect here.
+    await mountTurnBody(id, "u-heavy", 10_000);
+    // The last 25 of its 96 ordinals, which is four of its twelve rows.
+    expect(rowsIn("u-heavy")).toBe(4);
+    expect(spacersIn("u-heavy")).toEqual(["__space_head__"]);
+  });
+
+  it("gives the PIN's range to a turn the walk also named", async () => {
+    const id = chatID();
+    activate(id, [...heavyTurn("u-heavy", 96), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
+    // After any search-wide reveal EVERY hit turn is in the walk's set, so a
+    // navigation onto one of them is the common path rather than an edge. The pin
+    // names the ordinal the reader is being sent to; the walk asked for none, so
+    // its head range would leave that ordinal unmounted.
+    await mountTurnBodyForWalk(id, "u-heavy");
+    expect(spacersIn("u-heavy")).toEqual(["__space_tail__"]);
+
+    await mountTurnBody(id, "u-heavy", 2 * OVERSCAN_BLOCKS);
+    bumpMessages(id, "shape");
+    expect(spacersIn("u-heavy")).toContain("__space_head__");
+    endWalkReveal(id);
   });
 
   it("takes an evicted turn's owed slices with it instead of rebuilding the body", async () => {
     const id = chatID();
-    // Resident by the reader's own hand and far past one slice, so the paint owes
-    // a cold build; the newest turn has already spent the budget, so that pin is
-    // the only thing keeping this turn mounted.
-    setTurnOpen(id, "u-heavy", true);
-    activate(id, [...heavyTurn("u-heavy", 320), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
+    // The newest turn, over budget, so the window covers its tail and the paint
+    // owes the rest of that window as a cold build.
+    activate(id, heavyTurn("u-heavy", 320));
     const started = rowsIn("u-heavy");
     expect(started).toBeGreaterThan(0);
     expect(started).toBeLessThan(40);
 
-    // The reader folds it again. The pin goes with the fold, so the fold pass
-    // unmounts the body — and it calls the drain on the line after.
-    setTurnOpen(id, "u-heavy", false);
-    bumpMessages(id, "shape");
+    // A newer turn arrives and folds it, in the same task the drain is queued
+    // behind: the fold pass unmounts the body, and it calls the drain on the line
+    // after. The owed build must not come back and rebuild 40 rows under a folded
+    // card, which is the work residency exists to refuse.
+    activate(id, [...heavyTurn("u-heavy", 320), ...toolTurns(1)]);
     expect(hasBody("u-heavy")).toBe(false);
 
-    // The owed build must not come back and rebuild 40 rows under a folded card,
-    // which is the work residency exists to refuse.
     await new Promise((r) => setTimeout(r, 60));
     expect(hasBody("u-heavy")).toBe(false);
   });
@@ -821,7 +957,7 @@ describe("pagination prepends", () => {
     const id = chatID();
     const current = heavyTurn("big", RESIDENT_BLOCKS + 64);
     activate(id, current);
-    expect(hasBody("big")).toBe(false);
+    expect(hasBody("big")).toBe(true);
 
     // Reading: the fold pass would defer any state CHANGE — a born state is
     // not one, so the prepended stubs may not flash expanded first.
