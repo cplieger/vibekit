@@ -430,6 +430,14 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
     // The stack is at its cap, so nothing changed and re-feeding would re-enter
     // this function with identical state. Past the depth limit the line is text.
     p.textBuf += to_write;
+    if (to_write.endsWith("\n")) {
+      // The newline arm never ran for this newline, and it owns the two pieces
+      // of line-scoped state below. Left alone, `blockquote_idx` still names the
+      // blockquote the PREVIOUS line ended in, so the next line's `>` run
+      // searches above the stack and reads as literal text.
+      p.blockquote_idx = 0;
+      p.fence_start = 0;
+    }
     return true;
   }
   p.write(p, to_write);
