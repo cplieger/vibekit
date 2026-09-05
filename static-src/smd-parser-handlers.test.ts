@@ -12,6 +12,7 @@ import {
   PARAGRAPH,
   RAW_URL,
   STRONG_AST,
+  STRONG_UND,
 } from "./smd-parser-types.js";
 
 /** No-op renderer for structural testing. */
@@ -238,6 +239,25 @@ describe("intraword underscore lookbehind across writes", () => {
     // paragraph, which is why the lookbehind tracks COMMITTED text rather than
     // the previous input character.
     expect(trace("_em_").tokens).toEqual([PARAGRAPH, ITALIC_UND]);
+  });
+
+  it("survives a write boundary inside an open __ run", () => {
+    // Chunk 6 ends on the `_` of `__run_`, so handleStrong's nested-italic open
+    // has to answer the rule from the retained flag as well.
+    expect(trace("__run_progress__", 6).tokens).toEqual([PARAGRAPH, STRONG_UND]);
+  });
+
+  it("reads the last code point when a chunk splits a surrogate pair", () => {
+    // A symbol is punctuation for flanking, so the emphasis must open — and at
+    // chunk 1 the pair arrives one UTF-16 unit at a time, which is the case a
+    // charAt-based lookbehind gets wrong in both halves.
+    const input = "\u{1F389}_yay_";
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 8 }), (chunkLen) => {
+        expect(trace(input, chunkLen).tokens).toEqual([PARAGRAPH, ITALIC_UND]);
+      }),
+      { numRuns: 8 },
+    );
   });
 
   it("a soft break resets the lookbehind under chunking", () => {

@@ -10,10 +10,12 @@
 // in `<span data-vk-chunk-enter>` and CSS fades it in as it mounts. (The
 // upstream 0.2.15 Renderer interface could have been adapted to do the
 // same; the per-write callback alone would not justify a port.) Second, a
-// `_` run preceded by a word character does not open emphasis, so
-// `snake_case` stays literal (CommonMark 6.2 delimiter runs). `*` is
-// unchanged, and the closing half of that rule is not implemented: an
-// append-only parser cannot un-open a token. The standing justification for
+// `_` run preceded by a word character does not open emphasis at any of the
+// three sites one can open, nested runs included, so `snake_case` stays
+// literal (CommonMark 6.2 delimiter runs). `*` is unchanged, and the closing
+// half of that rule is not implemented: an append-only parser cannot un-open
+// a token, so a run that never closes still renders as emphasis where
+// CommonMark falls back to literal text. The standing justification for
 // carrying this fork in-tree is unilateral fixability — parser bugs get
 // fixed here under this repo's invariant tests without waiting on an
 // upstream release — at the cost of manually tracking upstream fixes. The
