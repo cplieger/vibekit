@@ -26,10 +26,11 @@
 // list live in `.kiro/steering/vibekit-ui.md`; this is the index.
 //
 // Fixed here, still open upstream: emphasis inside a word (#36, both the open
-// and the single-`_` close), a scheme check before an href is set (#45, in the
-// renderer), a bracketed run inside a link label (#39), column alignment from
-// the delimiter row (#44), the table section picked by child index (#43), a
-// fence closed by a mid-line backtick run (#34/#40), and a trailing space
+// and the single-`_` close), which is also #29's `[read_md.md](url)` losing its
+// label to an intraword `_`; a scheme check before an href is set (#45, in the
+// renderer); a bracketed run inside a link label (#39); column alignment from
+// the delimiter row (#44); the table section picked by child index (#43); a
+// fence closed by a mid-line backtick run (#34/#40); and a trailing space
 // breaking a table row (#30). Fixed with no upstream counterpart: unbounded
 // recursion once the token stack saturates, `<` `[` `\` and a backtick deleted at
 // the end of a line or of the input, an unclosed inline opener formatting the
@@ -38,15 +39,18 @@
 //
 // Deliberately not fixed. `__` cannot refuse a close the way `_` does: it
 // decides on the second character of the run, before the character after it has
-// arrived, so `__x_y_` keeps its literal reading. Raw HTML is emitted as text
-// rather than parsed, which is the security property the XSS tests pin. A soft
-// line break renders as `<br>` by product decision. Carried from upstream: a
-// nested blockquote escaping a list item (#41), `*` emphasis parsed inside a
-// link label (#29), and a block prefix in front of a table row (#42), which is
-// why a pipe line inside a blockquote is text. Absent from both: setext
-// headings, reference links, angle autolinks, link titles, entity references,
-// ATX closing sequences, `1)` ordered lists, `<p>` inside a loose list item, and
-// `***x***`'s nesting order.
+// arrived, so `__x_y_` keeps its literal reading. An image label's inline markup
+// survives literally in the alt text (`![a *b* c]` gives `alt="a *b* c"` where
+// CommonMark gives `a b c`): nothing is parsed inside an IMAGE, and an attribute
+// cannot hold the elements a parsed label would produce. Raw HTML is emitted as
+// text rather than parsed, which is the security property the XSS tests pin. A
+// soft line break renders as `<br>` by product decision. Carried from upstream:
+// a nested blockquote or table escaping a list item (#41), and a block prefix in
+// front of a table row (#42), which is why a pipe line inside a blockquote is
+// text. Absent from both: setext headings, reference links, angle autolinks,
+// link titles, entity references, ATX closing sequences, `1)` ordered lists,
+// `<p>` inside a loose list item, and the nesting of an emphasis run inside
+// another of the same character (`a *b *c* d* e`, `***x***`).
 // ---------------------------------------------------------------------------
 
 import {

@@ -85,9 +85,13 @@ function table_row_cells(row: string): string[] {
   return body === "" ? [] : body.split("|");
 }
 
-/** GFM's delimiter row: at least one pipe (a bare `---` is a thematic break, not
- *  a delimiter), a cell count matching the header's, and every cell a run of
- *  dashes with an optional colon on either side. */
+/** GFM's delimiter row: a cell count matching the header's, and every cell a run
+ *  of dashes with an optional colon on either side.
+ *
+ *  A pipe is deliberately NOT required, so a single-column header over a bare
+ *  `---` is a table. Requiring one would read that as a thematic break, where
+ *  the GFM reference reads a table; the multi-column case needs no rule of its
+ *  own, since a pipeless line cannot match a header of two cells or more. */
 function is_delimiter_row(cells: string[], header_cells: number): boolean {
   if (cells.length === 0 || cells.length !== header_cells) {
     return false;
