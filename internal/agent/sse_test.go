@@ -107,6 +107,32 @@ func TestHandleSSE_EmitsConnectedHandshake(t *testing.T) {
 	}
 }
 
+// TestHandleSSE_AdvertisesReconnectDelay pins that the hub is CONSTRUCTED with
+// the reconnect hint. Nothing else in the suite would notice its absence: the
+// field is not a frame, so it carries no type and no id to assert on.
+func TestHandleSSE_AdvertisesReconnectDelay(t *testing.T) {
+	h, _, _ := newTestHub()
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.handleSSE(rec, req)
+
+	body := rec.Body.String()
+	want := fmt.Sprintf("retry: %d\n\n", reconnectDelay.Milliseconds())
+	if n := strings.Count(body, "retry: "); n != 1 {
+		t.Fatalf("body carries %d retry: lines, want exactly 1 (a property of the connection, not of a frame): %q", n, body)
+	}
+	// Ahead of the replay and the handshake, so the delay is in effect before
+	// the connection can first drop.
+	if !strings.HasPrefix(body, want) {
+		t.Errorf("body does not open with %q: %q", want, body)
+	}
+}
+
 func TestReplayBounds_EmptyBuffer(t *testing.T) {
 	h, _, _ := newTestHub()
 	floor, head := h.bus.fanout.Bounds()
