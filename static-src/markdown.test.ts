@@ -75,19 +75,26 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
       "VBSCRIPT:MsgBox",
       "file:///etc/passwd",
     );
+    // The lead must not be all spaces: four of them would make the line indented
+    // code, and the property would then hold because nothing was parsed.
     const mdWithAutolink = fc
-      .tuple(fc.stringMatching(/^[a-zA-Z0-9 ]{0,20}$/), blocked)
+      .tuple(fc.stringMatching(/^[a-zA-Z0-9][a-zA-Z0-9 ]{0,19}$/), blocked)
       .map(([lead, url]) => `${lead}<${url}>`);
 
     fc.assert(
       fc.property(mdWithAutolink, (input) => {
         const html = renderMarkdown(input);
-        for (const attr of html.match(/(?:href|src)="([^"]*)"/g) ?? []) {
+        const attrMatches = html.match(/(?:href|src)="([^"]*)"/g) ?? [];
+        for (const attr of attrMatches) {
           const val = attr.replace(/^(?:href|src)="/, "").replace(/"$/, "");
           expect(val.toLowerCase().replace(/\s/g, "")).not.toMatch(
             /^(?:javascript|data|vbscript|file):/,
           );
         }
+        // Every one of these IS a well-formed autolink, so an href must have been
+        // emitted — without this the property would also hold if autolinks were
+        // recognised nowhere at all.
+        expect(attrMatches.length).toBeGreaterThan(0);
         expect(html.toLowerCase()).not.toContain("<script");
         expect(html).not.toMatch(/<[^>]+\son\w+\s*=/i);
       }),
@@ -1158,6 +1165,176 @@ describe("renderMarkdown end-of-input characters", () => {
     } else {
       expect(html).toMatch(expected);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Angle autolinks (CommonMark 6.5).
+//
+// This is a CARVE-OUT in the wholesale escaping of `<`, and the only one. An
+// absolute-URI autolink and an email autolink become links; every other
+// angle-bracket run — a tag, a comment, a generic type parameter — still renders
+// as the escaped text that was typed, which is what the XSS properties pin.
+// Both autolink forms go through the same scheme gate as every other href, so
+// `<javascript:alert(1)>` is as dead as `[a](javascript:alert(1))`.
+// ---------------------------------------------------------------------------
+
+describe("renderMarkdown angle autolinks", () => {
+  const A = '<a target="_blank" rel="noopener"';
+
+  const cases: { name: string; input: string; expected: string }[] = [
+    {
+      name: "an https autolink",
+      input: "<https://example.com>",
+      expected: `<p>${A} href="https://example.com">https://example.com</a></p>`,
+    },
+    {
+      name: "an autolink in prose",
+      input: "see <http://e.com> ok",
+      expected: `<p>see ${A} href="http://e.com">http://e.com</a> ok</p>`,
+    },
+    {
+      name: "an autolink followed immediately by text",
+      input: "<http://e.com>x",
+      expected: `<p>${A} href="http://e.com">http://e.com</a>x</p>`,
+    },
+    {
+      name: "an email autolink",
+      input: "<foo@bar.example.com>",
+      expected: `<p>${A} href="mailto:foo@bar.example.com">foo@bar.example.com</a></p>`,
+    },
+    {
+      name: "an explicit mailto autolink",
+      input: "<mailto:a@b.com>",
+      expected: `<p>${A} href="mailto:a@b.com">mailto:a@b.com</a></p>`,
+    },
+    {
+      name: "any scheme, not just http",
+      input: "<ftp://e.com/x>",
+      expected: `<p>${A} href="ftp://e.com/x">ftp://e.com/x</a></p>`,
+    },
+    {
+      name: "a scheme with digits, plus, dot and dash",
+      input: "<my-scheme+v1.0:x>",
+      expected: `<p>${A} href="my-scheme+v1.0:x">my-scheme+v1.0:x</a></p>`,
+    },
+    {
+      name: "an autolink in a heading",
+      input: "## <https://e.com>",
+      expected: `<h2>${A} href="https://e.com">https://e.com</a></h2>`,
+    },
+    {
+      name: "an autolink in a table cell",
+      input: "| <https://e.com> |\n| - |\n| x |",
+      expected:
+        `<table><thead><tr><th> ${A} href="https://e.com">https://e.com</a> </th></tr></thead>` +
+        "<tbody><tr><td> x </td></tr></tbody></table>",
+    },
+  ];
+
+  it.each(cases)("$name", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+
+  // The carve-out's boundary. Everything here is NOT a CommonMark 6.5 autolink,
+  // so it keeps the escaped-text reading the raw-HTML invariant guarantees.
+  const escaped: { name: string; input: string; expected: string }[] = [
+    {
+      name: "a Rust generic",
+      input: "Vec<String> in Rust",
+      expected: "<p>Vec&lt;String&gt; in Rust</p>",
+    },
+    { name: "a bare type parameter", input: "<String>", expected: "<p>&lt;String&gt;</p>" },
+    {
+      name: "an inline tag",
+      input: "use <b>bold</b> here",
+      expected: "<p>use &lt;b&gt;bold&lt;/b&gt; here</p>",
+    },
+    {
+      name: "a comment",
+      input: "text <!-- c --> more",
+      expected: "<p>text &lt;!-- c --&gt; more</p>",
+    },
+    { name: "a block tag", input: "<div>", expected: "<p>&lt;div&gt;</p>" },
+    { name: "a one-character scheme", input: "<a:b>", expected: "<p>&lt;a:b&gt;</p>" },
+    { name: "a scheme with no colon", input: "<https>", expected: "<p>&lt;https&gt;</p>" },
+    { name: "no scheme at all", input: "<foo>", expected: "<p>&lt;foo&gt;</p>" },
+    {
+      name: "a space inside the brackets",
+      input: "<http://e.com x>",
+      expected: "<p>&lt;http://e.com x&gt;</p>",
+    },
+    { name: "angle brackets in prose", input: "a < b > c", expected: "<p>a &lt; b &gt; c</p>" },
+    { name: "a less-than between numbers", input: "5 < 6", expected: "<p>5 &lt; 6</p>" },
+    { name: "a trailing less-than", input: "a<", expected: "<p>a&lt;</p>" },
+    { name: "an empty pair", input: "a<>", expected: "<p>a&lt;&gt;</p>" },
+    {
+      name: "a run broken by a newline",
+      input: "<http://e.com\nx>",
+      expected: "<p>&lt;http://e.com<br>x&gt;</p>",
+    },
+    {
+      // Nesting an anchor inside an anchor is invalid HTML, so the reference's
+      // own answer here is not available.
+      name: "an autolink inside a link label",
+      input: "[a <https://e.com> b](http://x.com)",
+      expected: `<p>${A} href="http://x.com">a &lt;https://e.com&gt; b</a></p>`,
+    },
+    {
+      name: "an autolink in a code span",
+      input: "`<https://e.com>`",
+      expected: "<p><code>&lt;https://e.com&gt;</code></p>",
+    },
+    {
+      name: "an autolink in a fenced block",
+      input: "```\n<https://e.com>\n```",
+      expected: '<pre class="code"><code>&lt;https://e.com&gt;</code></pre>',
+    },
+  ];
+
+  it.each(escaped)("leaves $name as escaped text", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+
+  // The `<br>` half of the same deferral, unchanged.
+  const lineBreaks: { name: string; input: string; expected: string }[] = [
+    { name: "<br>", input: "line<br>next", expected: "<p>line<br>next</p>" },
+    { name: "<br/>", input: "line<br/>next", expected: "<p>line<br>next</p>" },
+    { name: "<br />", input: "line<br />next", expected: "<p>line<br>next</p>" },
+    { name: "<br  >", input: "line<br  >next", expected: "<p>line<br>next</p>" },
+    { name: "<br / >", input: "line<br / >next", expected: "<p>line<br>next</p>" },
+    { name: "<brx>", input: "line<brx>next", expected: "<p>line&lt;brx&gt;next</p>" },
+    { name: "<br/x>", input: "line<br/x>next", expected: "<p>line&lt;br/x&gt;next</p>" },
+  ];
+
+  it.each(lineBreaks)("still reads $name as a line break or text", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+
+  // The scheme gate is the SAME one an inline link goes through, so an autolink
+  // cannot introduce a scheme a link destination could not.
+  const blocked: { name: string; input: string }[] = [
+    { name: "javascript", input: "<javascript:alert(1)>" },
+    { name: "javascript in mixed case", input: "<JavaScript:alert(1)>" },
+    { name: "javascript with an encoded colon", input: "<javascript&#58;alert(1)>" },
+    { name: "javascript with an encoded letter", input: "<java&#115;cript:alert(1)>" },
+    { name: "data", input: "<data:text/html,x>" },
+    { name: "vbscript", input: "<vbscript:msgbox>" },
+    { name: "file", input: "<file:///etc/passwd>" },
+  ];
+
+  it.each(blocked)("blocks a $name autolink", ({ input }) => {
+    const html = renderMarkdown(input);
+    // The anchor assertion is what keeps this honest: without it the case passes
+    // just as well when autolinks are recognised nowhere at all.
+    expect(html).toContain(`${A} href="#">`);
+    expect(html.toLowerCase()).not.toMatch(/href="(?:javascript|data|vbscript|file):/);
+  });
+
+  it("blocks a scheme split by a tab", () => {
+    // isSafeUrl strips internal whitespace before comparing, and a tab
+    // disqualifies the autolink candidate outright, so this is text either way.
+    expect(renderMarkdown("<java\tscript:alert(1)>")).toBe("<p>&lt;java\tscript:alert(1)&gt;</p>");
   });
 });
 

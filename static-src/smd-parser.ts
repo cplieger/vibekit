@@ -78,7 +78,7 @@ import {
   handleMaybeURL,
   handleLinkOrImage,
   handleRawURL,
-  handleMaybeBR,
+  handleMaybeAngle,
   handleMaybeEntity,
   handleCommon,
 } from "./smd-parser-handlers.js";
@@ -128,7 +128,7 @@ import {
   IMAGE,
   LINK,
   RAW_URL,
-  MAYBE_BR,
+  MAYBE_ANGLE,
   MAYBE_ENTITY,
   TOKEN_ARRAY_CAP,
   add_text,
@@ -313,8 +313,8 @@ const TOKEN_HANDLERS: Partial<Record<Token, TokenHandler>> = {
     handleRawURL(p, char, pending);
     return actionAlwaysContinue;
   },
-  [MAYBE_BR]: (p, char, pending) =>
-    handleMaybeBR(p, char, pending) ? actionContinue : actionBreak,
+  [MAYBE_ANGLE]: (p, char, pending) =>
+    handleMaybeAngle(p, char, pending) ? actionContinue : actionBreak,
   [MAYBE_ENTITY]: (p: Parser, char: string, pending: string) =>
     handleMaybeEntity(p, char, pending) ? actionContinue : actionBreak,
 };

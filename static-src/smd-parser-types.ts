@@ -47,7 +47,7 @@ const TOKENS = {
   EQUATION_BLOCK: 30,
   EQUATION_INLINE: 31,
   NEWLINE: 101,
-  MAYBE_BR: 104,
+  MAYBE_ANGLE: 104,
   MAYBE_EQ_BLOCK: 105,
 } as const satisfies Record<string, number>;
 
@@ -88,7 +88,7 @@ export const {
   EQUATION_BLOCK,
   EQUATION_INLINE,
   NEWLINE,
-  MAYBE_BR,
+  MAYBE_ANGLE,
   MAYBE_EQ_BLOCK,
 } = TOKENS;
 
