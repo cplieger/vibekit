@@ -288,7 +288,12 @@ export function has_token_room(len: number, n: number): boolean {
  *  TOKEN_ARRAY_CAP, in which case NOTHING changed — `p.token` and `p.pending`
  *  still describe the caller's state. A caller that then re-feeds the character
  *  it was handed re-enters itself with identical state and recurses without
- *  bound, so a caller that re-feeds must consume the text itself instead. */
+ *  bound, so a caller that re-feeds must consume the text itself instead.
+ *
+ *  Every caller must READ this, and none may emit an attribute for a token that
+ *  was refused: `set_attr` writes to whatever element is current, so a refused
+ *  push sends the value to an enclosing element the parser never created. Past
+ *  the cap the construct is text, and the syntax it consumed is part of it. */
 export function add_token(p: Parser, token: Token): boolean {
   if (
     (p.tokens[p.len] === LIST_ORDERED || p.tokens[p.len] === LIST_UNORDERED) &&
@@ -318,13 +323,19 @@ export function idx_of_token(p: Parser, token: Token, start_idx: number): number
 }
 
 export function end_tokens_to_len(p: Parser, len: number): void {
+  add_text(p);
   p.fence_start = 0;
   while (p.len > len) {
     end_token_or_unresolved(p);
   }
 }
 
+/** Both bulk closes flush `textBuf` first. The renderer appends to whatever
+ *  element is current, so text still buffered when a block closes — or when the
+ *  caller opens a new one right after — lands inside the wrong element. Reached
+ *  past the depth cap, where a line of text has no block of its own to sit in. */
 export function end_tokens_to_indent(p: Parser, indent: number): number {
+  add_text(p);
   let idx = 0;
   for (let i = 0; i <= p.len; i += 1) {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -347,7 +358,19 @@ export function end_tokens_to_indent(p: Parser, indent: number): number {
   return indent;
 }
 
-export function continue_or_add_list(p: Parser, list_token: Token): boolean {
+/** What `continue_or_add_list` did with the marker. `no_room` means it did
+ *  NOTHING — not even a close — so the caller must keep the marker as text. */
+export type ListOpen = "created" | "continued" | "no_room";
+
+/** Open or continue the list the marker belongs to, leaving `add_list_item` one
+ *  slot to push into.
+ *
+ *  Room for the WHOLE construct is reserved before anything is pushed: a list
+ *  whose item does not fit is created empty and its text lands directly inside
+ *  it, which is neither the list the input asked for nor the plain text the
+ *  depth limit promises. The check follows each branch's closes, since those
+ *  free the slots it is asking about. */
+export function continue_or_add_list(p: Parser, list_token: Token): ListOpen {
   let list_idx = -1;
   let item_idx = -1;
   for (let i = p.blockquote_idx + 1; i <= p.len; i += 1) {
@@ -364,18 +387,29 @@ export function continue_or_add_list(p: Parser, list_token: Token): boolean {
   }
   if (item_idx === -1) {
     if (list_idx === -1) {
+      if (!has_token_room(p.blockquote_idx, 2)) {
+        return "no_room";
+      }
       end_tokens_to_len(p, p.blockquote_idx);
       add_token(p, list_token);
-      return true;
+      return "created";
+    }
+    if (!has_token_room(list_idx, 1)) {
+      return "no_room";
     }
     end_tokens_to_len(p, list_idx);
-    return false;
+    return "continued";
+  }
+  if (!has_token_room(item_idx, 2)) {
+    return "no_room";
   }
   end_tokens_to_len(p, item_idx);
   add_token(p, list_token);
-  return true;
+  return "created";
 }
 
+/** Open the list item. Call only after `continue_or_add_list` returned anything
+ *  but `no_room`, which is what guarantees the push below fits. */
 export function add_list_item(p: Parser, prefix_length: number): void {
   add_token(p, LIST_ITEM);
   p.spaces[p.len] = p.indent_len + prefix_length;

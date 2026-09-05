@@ -6,6 +6,7 @@ import fc from "fast-check";
 import { parser, parser_write, parser_end, DOCUMENT } from "./smd-parser.js";
 import type { Parser } from "./smd-parser.js";
 import {
+  BLOCKQUOTE,
   HREF,
   ITALIC_UND,
   LINE_BREAK,
@@ -307,6 +308,69 @@ describe("token-stack saturation", () => {
 
   it("still keeps the text at saturating depth", () => {
     expect(trace(">".repeat(23) + " x").texts.join("")).toContain("x");
+  });
+
+  // Past the cap no block opens, so the whole line is text — including the
+  // markers a block would have consumed. Each of these was losing its own: the
+  // `##`, the fence delimiters and info string, the list marker, the `>`, the
+  // `$$`, the scheme, and the four columns that mark indented code.
+  const AT_CAP = ">".repeat(23) + " ";
+  const bodies = [
+    "## head",
+    "###### h6",
+    "```js\ncode\n```",
+    "```\ncode\n```",
+    "- item",
+    "* item",
+    "+ item",
+    "1. item",
+    "3. item",
+    "- [x] item",
+    "> deeper",
+    "$$\nx\n$$",
+    "http://example.com x",
+    "    indented",
+    "| a |\n| - |\n| 1 |",
+  ];
+
+  it.each(bodies)("keeps every character of %j as text at the cap", (body) => {
+    const t = trace(AT_CAP + body);
+    // The blockquote markers are the only syntax that was honoured, and their
+    // one separating space is what the leading space here is.
+    expect(t.texts.join("").replace(/\n+$/u, "")).toBe(" " + body);
+    // 23 blockquotes and nothing else: no element was created for any of it.
+    expect(t.tokens).toEqual(new Array<number>(23).fill(BLOCKQUOTE));
+    // An attribute for a token that was refused lands on the enclosing
+    // blockquote — `LANG` as its `class`, `START` as its `start`.
+    expect(t.attrs).toEqual([]);
+  });
+
+  it.each(bodies)("keeps that text at every chunk size for %j", (body) => {
+    const whole = trace(AT_CAP + body);
+    for (let chunkLen = 1; chunkLen <= 8; chunkLen += 1) {
+      const chunked = trace(AT_CAP + body, chunkLen);
+      expect(chunked.texts.join("")).toBe(whole.texts.join(""));
+      expect(chunked.tokens).toEqual(whole.tokens);
+      expect(chunked.attrs).toEqual(whole.attrs);
+    }
+  });
+
+  // One depth lower a paragraph still fits, so these are the pushes that fail
+  // with a block open above them rather than at the root.
+  it("keeps the whole expression when an equation block does not fit", () => {
+    const t = trace(">".repeat(22) + " $$\nx\n$$");
+    expect(t.texts.join("")).toContain("$$");
+    // The paragraph fits and the equation block does not, so the soft break
+    // inside the expression is the only other thing emitted.
+    expect(t.tokens).toEqual([...new Array<number>(22).fill(BLOCKQUOTE), PARAGRAPH, LINE_BREAK]);
+  });
+
+  it("keeps the scheme once when a raw URL does not fit", () => {
+    // The refused push left the scheme in `textBuf` AND in `pending`, so the
+    // re-feed emitted it twice.
+    const t = trace(">".repeat(22) + " see http://example.com x");
+    expect(t.texts.join("")).toBe("see http://example.com x");
+    expect(t.attrs).toEqual([]);
   });
 });
 
