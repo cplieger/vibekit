@@ -174,11 +174,14 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
         if (p.pending.length === p.fence_start) {
           p.pending = pending_with_char;
           p.fence_start = pending_with_char.length;
-        } else {
-          add_token(p, PARAGRAPH);
+        } else if (add_token(p, PARAGRAPH)) {
           clear_root_pending(p);
           p.fence_start = 0;
           p.write(p, pending_with_char);
+        } else {
+          p.textBuf += pending_with_char;
+          clear_root_pending(p);
+          p.fence_start = 0;
         }
         return true;
       }
@@ -239,6 +242,7 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
 
   // Fallthrough: promote pending to a paragraph or code block.
   let to_write = pending_with_char;
+  let pushed = true;
   if (p.token === LINE_BREAK) {
     p.token = p.tokens[p.len] as Token;
     emit_leaf(p, LINE_BREAK);
@@ -251,12 +255,18 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       }
     }
     to_write = p.indent.slice(code_start) + pending_with_char;
-    add_token(p, CODE_BLOCK);
+    pushed = add_token(p, CODE_BLOCK);
   } else {
-    add_token(p, PARAGRAPH);
+    pushed = add_token(p, PARAGRAPH);
   }
 
   clear_root_pending(p);
+  if (!pushed) {
+    // The stack is at its cap, so nothing changed and re-feeding would re-enter
+    // this function with identical state. Past the depth limit the line is text.
+    p.textBuf += to_write;
+    return true;
+  }
   p.write(p, to_write);
   return true;
 }

@@ -269,3 +269,39 @@ describe("intraword underscore lookbehind across writes", () => {
     expect(t.texts.join("")).toBe("a_breal");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Nesting past TOKEN_ARRAY_CAP.
+//
+// The cap is the intended depth limit. The defect was that the saturating
+// push left `p.token` and `p.pending` untouched, so handleRootContext's
+// fallthrough re-entered itself with byte-identical state.
+// ---------------------------------------------------------------------------
+
+describe("token-stack saturation", () => {
+  const shapes = [
+    ">".repeat(23) + " x",
+    ">".repeat(200) + " x",
+    ">".repeat(1000) + " x",
+    "> ".repeat(30) + "x",
+    ">".repeat(30) + " ```js`x",
+    ">".repeat(30) + " **x",
+    "- ".repeat(1024) + "x",
+    " ".repeat(1024) + "- x",
+    "*".repeat(1024),
+  ];
+
+  it.each(shapes)("leaves the stack sane for %j", (input) => {
+    const p = parser(nullRenderer() as any);
+    expect(() => {
+      parser_write(p, input);
+      parser_end(p);
+    }).not.toThrow();
+    expect(p.tokens[0]).toBe(DOCUMENT);
+    expect(p.len).toBeGreaterThanOrEqual(0);
+  });
+
+  it("still keeps the text at saturating depth", () => {
+    expect(trace(">".repeat(23) + " x").texts.join("")).toContain("x");
+  });
+});

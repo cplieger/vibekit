@@ -199,7 +199,12 @@ export function end_token(p: Parser): void {
   p.renderer.end_token(p.renderer.data);
 }
 
-export function add_token(p: Parser, token: Token): void {
+/** Push `token` and make it current. Returns false when the stack is already at
+ *  TOKEN_ARRAY_CAP, in which case NOTHING changed — `p.token` and `p.pending`
+ *  still describe the caller's state. A caller that then re-feeds the character
+ *  it was handed re-enters itself with identical state and recurses without
+ *  bound, so a caller that re-feeds must consume the text itself instead. */
+export function add_token(p: Parser, token: Token): boolean {
   p.prev_is_word = false;
   if (
     (p.tokens[p.len] === LIST_ORDERED || p.tokens[p.len] === LIST_UNORDERED) &&
@@ -208,12 +213,13 @@ export function add_token(p: Parser, token: Token): void {
     end_token(p);
   }
   if (p.len >= TOKEN_ARRAY_CAP - 1) {
-    return;
+    return false;
   } // saturate at max depth
   p.len += 1;
   p.tokens[p.len] = token;
   p.token = token;
   p.renderer.add_token(p.renderer.data, token);
+  return true;
 }
 
 export function idx_of_token(p: Parser, token: Token, start_idx: number): number {
