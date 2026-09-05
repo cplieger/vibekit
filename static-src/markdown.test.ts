@@ -1413,6 +1413,34 @@ describe("renderMarkdown GFM tables", () => {
         '<tbody><tr><td style="text-align:left"> 1 </td></tr></tbody></table>',
     },
     {
+      // A tab is whitespace inside a delimiter cell, so each of these is a table
+      // for the GFM reference too. The character gate that keeps a candidate
+      // alive has to admit every character the validity test accepts, or the
+      // whole table is lost rather than merely mis-aligned.
+      name: "tabs around a delimiter cell",
+      input: "| a |\n|\t-\t|\n| 1 |",
+      expected:
+        "<table><thead><tr><th> a </th></tr></thead>" +
+        "<tbody><tr><td> 1 </td></tr></tbody></table>",
+    },
+    {
+      name: "a tab inside a two-column delimiter row",
+      input: "| a | b |\n|\t- | - |\n| 1 | 2 |",
+      expected: HEAD + BODY,
+    },
+    {
+      name: "a trailing tab on the delimiter row",
+      input: "| a | b |\n| - | - |\t\n| 1 | 2 |",
+      expected: HEAD + BODY,
+    },
+    {
+      name: "a tab does not stop alignment being read",
+      input: "| a |\n| :-\t|\n| 1 |",
+      expected:
+        '<table><thead><tr><th style="text-align:left"> a </th></tr></thead>' +
+        '<tbody><tr><td style="text-align:left"> 1 </td></tr></tbody></table>',
+    },
+    {
       name: "a header-only table has no tbody",
       input: "| h |\n| - |",
       expected: "<table><thead><tr><th> h </th></tr></thead></table>",

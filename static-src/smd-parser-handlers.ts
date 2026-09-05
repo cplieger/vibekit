@@ -68,8 +68,10 @@ import {
 } from "./smd-parser-types.js";
 
 /** Everything a delimiter row may contain. One character outside this set rules
- *  the line out, which is what bounds the held candidate to two lines. */
-const DELIMITER_ROW_CHARS = new Set(["-", " ", "|", ":"]);
+ *  the line out, which is what bounds the held candidate to two lines. Must stay
+ *  a superset of what `is_delimiter_row` accepts, or a row the test would take
+ *  never reaches it and the whole table is lost. */
+const DELIMITER_ROW_CHARS = new Set(["-", " ", "\t", "|", ":"]);
 
 /** A table row's cells, split the way the row handlers split them: a leading `|`
  *  opens the row rather than a cell, and a trailing one closes the last cell
@@ -369,22 +371,18 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
 
 export function handleTable(p: Parser, char: string, pending_with_char: string): boolean {
   if (p.table_state === 1) {
-    switch (char) {
-      case "-":
-      case " ":
-      case "|":
-      case ":":
-        p.pending = pending_with_char;
-        return true;
-      case "\n":
-        p.table_state = 2;
-        p.pending = "";
-        return true;
-      default:
-        end_token(p);
-        p.table_state = 0;
-        return false;
+    if (char === "\n") {
+      p.table_state = 2;
+      p.pending = "";
+      return true;
     }
+    if (DELIMITER_ROW_CHARS.has(char)) {
+      p.pending = pending_with_char;
+      return true;
+    }
+    end_token(p);
+    p.table_state = 0;
+    return false;
   }
   switch (p.pending) {
     case "|":
