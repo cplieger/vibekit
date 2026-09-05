@@ -277,6 +277,13 @@ function end_token_or_unresolved(p: Parser): void {
   end_token(p);
 }
 
+/** Whether `n` more pushes fit above depth `len`. `add_token` saturates at
+ *  TOKEN_ARRAY_CAP - 1, so a construct that needs several nested tokens to be
+ *  well formed has to ask before it opens the outermost one. */
+export function has_token_room(len: number, n: number): boolean {
+  return len + n <= TOKEN_ARRAY_CAP - 1;
+}
+
 /** Push `token` and make it current. Returns false when the stack is already at
  *  TOKEN_ARRAY_CAP, in which case NOTHING changed — `p.token` and `p.pending`
  *  still describe the caller's state. A caller that then re-feeds the character

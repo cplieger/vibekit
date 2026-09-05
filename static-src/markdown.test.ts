@@ -955,6 +955,33 @@ describe("renderMarkdown deep nesting", () => {
     expect(() => renderMarkdown("*".repeat(1024))).not.toThrow();
     expect(() => renderMarkdown(">".repeat(30) + " ```js`x")).not.toThrow();
   });
+
+  it("does not throw on a table nested past the depth limit", () => {
+    const table = " | a | b |\n| - | - |\n| 1 | 2 |";
+    expect(() => renderMarkdown(">".repeat(21) + table)).not.toThrow();
+    expect(() => renderMarkdown(">".repeat(200) + table)).not.toThrow();
+    expect(() => renderMarkdown("> ".repeat(30) + table.slice(1))).not.toThrow();
+  });
+
+  it("renders a table nested 20 blockquotes deep, the last working depth", () => {
+    const html = renderMarkdown(">".repeat(20) + " | a | b |\n| - | - |\n| 1 | 2 |");
+    expect(html).toContain("<table><thead><tr><th> a </th><th> b </th></tr></thead>");
+    expect(html).toContain("<tbody><tr><td> 1 </td><td> 2 </td></tr></tbody>");
+  });
+
+  // A table needs three tokens. Where only some of them fit, the cells used to
+  // land as text nodes directly inside the `<table>` — invalid HTML — and one
+  // depth lower the row handler re-fed its character forever.
+  it.each([21, 22])(
+    "keeps every character as text when depth %i leaves no room for a table's row and cell",
+    (depth) => {
+      const html = renderMarkdown(">".repeat(depth) + " | a | b |\n| - | - |\n| 1 | 2 |");
+      expect(html).not.toContain("<table");
+      expect(html).toContain("| a | b |");
+      expect(html).toContain("| - | - |");
+      expect(html).toContain("| 1 | 2 |");
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------

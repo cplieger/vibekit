@@ -43,6 +43,7 @@ import {
   end_token,
   add_token,
   add_inline_token,
+  has_token_room,
   is_inline_token,
   idx_of_token,
   end_tokens_to_len,
@@ -296,10 +297,15 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
           break;
         }
         end_tokens_to_len(p, p.blockquote_idx);
-        if (!add_token(p, TABLE)) {
-          p.table_rejected = true;
+        // TABLE, TABLE_ROW and TABLE_CELL must ALL fit: a failed row or cell
+        // push leaves the cell text as a text node directly inside the
+        // `<table>`, and `handleTableRow`'s default arm re-feeds its character,
+        // so a failure there recurses without bound. Past the depth limit the
+        // held lines are text, as they are for a paragraph.
+        if (!has_token_room(p.len, 3)) {
           break;
         }
+        add_token(p, TABLE);
         const align = column_alignments(cells);
         if (align !== "") {
           p.renderer.set_attr(p.renderer.data, ALIGN, align);
@@ -402,6 +408,9 @@ function is_blank(s: string): boolean {
   return true;
 }
 
+/** The row and cell pushes here are unchecked because the `|` arm in
+ *  `handleRootContext` reserves room for all three table tokens before it opens
+ *  the table. */
 export function handleTableRow(p: Parser, char: string, _pending_with_char: string): boolean {
   switch (p.pending) {
     case "":
