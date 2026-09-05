@@ -66,13 +66,85 @@ import {
   START,
   ALIGN,
   TITLE,
+  MAYBE_ENTITY,
 } from "./smd-parser-types.js";
+import { NAMED_ENTITIES, MAX_ENTITY_NAME_LENGTH } from "./smd-entities.js";
 
 /** Everything a delimiter row may contain. One character outside this set rules
  *  the line out, which is what bounds the held candidate to two lines. Must stay
  *  a superset of what `is_delimiter_row` accepts, or a row the test would take
  *  never reaches it and the whole table is lost. */
 const DELIMITER_ROW_CHARS = new Set(["-", " ", "\t", "|", ":"]);
+
+function is_hex_digit(cc: number): boolean {
+  return is_digit(cc) || (cc >= 65 && cc <= 70) || (cc >= 97 && cc <= 102);
+}
+
+function is_ascii_alpha(cc: number): boolean {
+  return (cc >= 65 && cc <= 90) || (cc >= 97 && cc <= 122);
+}
+
+/** Whether `char` can extend the reference candidate held in `pending`, which
+ *  starts at the `&`. Returning false is what ends the hold: the run is flushed
+ *  verbatim and `char` is re-fed. */
+function can_continue_entity(pending: string, char: string): boolean {
+  const cc = char.charCodeAt(0);
+  if (pending === "&") {
+    return char === "#" || is_ascii_alpha(cc);
+  }
+  if (pending === "&#") {
+    return char === "x" || char === "X" || is_digit(cc);
+  }
+  if (pending.startsWith("&#x") || pending.startsWith("&#X")) {
+    return pending.length < 3 + 6 && is_hex_digit(cc);
+  }
+  if (pending.startsWith("&#")) {
+    return pending.length < 2 + 7 && is_digit(cc);
+  }
+  return pending.length < 1 + MAX_ENTITY_NAME_LENGTH && (is_ascii_alpha(cc) || is_digit(cc));
+}
+
+/** CommonMark 6.2: a code point that is not a valid Unicode scalar decodes to
+ *  U+FFFD rather than failing. */
+function scalar_or_replacement(cp: number): string {
+  if (cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
+    return "\ufffd";
+  }
+  return String.fromCodePoint(cp);
+}
+
+/** Decode one reference body — everything between the `&` and the `;` — or null
+ *  when it names nothing. A lookup miss is exactly the "an invalid reference
+ *  stays literal" rule, so no extra guard is needed for it. */
+function decode_entity(body: string): string | null {
+  if (body.startsWith("#x") || body.startsWith("#X")) {
+    const hex = body.slice(2);
+    return hex === "" ? null : scalar_or_replacement(parseInt(hex, 16));
+  }
+  if (body.startsWith("#")) {
+    const dec = body.slice(1);
+    return dec === "" ? null : scalar_or_replacement(parseInt(dec, 10));
+  }
+  return NAMED_ENTITIES[body] ?? null;
+}
+
+/** Every reference in a COMPLETE string, decoded. For a link destination and a
+ *  title, where the whole run has arrived by the time it is read, so there is no
+ *  streaming hold on this path.
+ *
+ *  A destination must be decoded BEFORE it reaches `isSafeUrl` (smd-renderer.ts)
+ *  and never after: `javascript&#58;alert(1)` does not START with `javascript:`,
+ *  so a gate handed the undecoded string passes it and the browser then decodes
+ *  a live scheme. */
+function decode_entities(s: string): string {
+  if (!s.includes("&")) {
+    return s;
+  }
+  return s.replace(
+    /&(#[Xx][0-9A-Fa-f]{1,6}|#[0-9]{1,7}|[A-Za-z][A-Za-z0-9]{1,30});/gu,
+    (whole, body: string) => decode_entity(body) ?? whole,
+  );
+}
 
 /** A table row's cells, split the way the row handlers split them: a leading `|`
  *  opens the row rather than a cell, a trailing one closes the last cell rather
@@ -1063,9 +1135,12 @@ export function handleLinkOrImage(p: Parser, char: string, pending_with_char: st
       return true;
     }
     const type = p.token === LINK ? HREF : SRC;
-    p.renderer.set_attr(p.renderer.data, type, dest.url);
+    // Decoded HERE and not in the renderer: this string is what reaches
+    // `isSafeUrl`, and a reference decoded after that gate walks straight past
+    // it. See `decode_entities`.
+    p.renderer.set_attr(p.renderer.data, type, decode_entities(dest.url));
     if (dest.title !== null) {
-      p.renderer.set_attr(p.renderer.data, TITLE, dest.title);
+      p.renderer.set_attr(p.renderer.data, TITLE, decode_entities(dest.title));
     }
     end_token(p);
     p.pending = "";
@@ -1184,6 +1259,39 @@ export function handleMaybeBR(p: Parser, char: string, pending_with_char: string
   return true;
 }
 
+/** Hold a candidate entity or numeric character reference from its `&` until a
+ *  `;` decodes it or a character rules it out.
+ *
+ *  The hold is bounded at 33 characters — `&`, the longest name, `;` — which is
+ *  SHORTER than `handleRawURL`'s, so the text lag this adds is already inside
+ *  what the streaming path carries.
+ *
+ *  A decoded character goes straight to `textBuf` and is NEVER re-fed through
+ *  `p.write`. That is a security rule, not a nicety: routed back into the state
+ *  machine, `&#42;x&#42;` would emphasise and `&#96;` would open a code span, so
+ *  a reference could synthesise markup the author never wrote. */
+export function handleMaybeEntity(p: Parser, char: string, pending_with_char: string): boolean {
+  if (char === ";") {
+    const decoded = decode_entity(p.pending.slice(1));
+    p.token = p.tokens[p.len] as Token;
+    p.textBuf += decoded ?? pending_with_char;
+    p.pending = "";
+    return true;
+  }
+  if (can_continue_entity(p.pending, char)) {
+    p.pending = pending_with_char;
+    return true;
+  }
+  // Not a reference after all, so the run is the text that was typed. Re-feed
+  // the disqualifying character rather than consuming it, the recovery shape
+  // handleMaybeURL already uses.
+  p.token = p.tokens[p.len] as Token;
+  p.textBuf += p.pending;
+  p.pending = "";
+  p.write(p, char);
+  return true;
+}
+
 export function handleCommon(p: Parser, char: string, pending_with_char: string): boolean {
   switch (p.pending[0]) {
     case "\\":
@@ -1248,6 +1356,22 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         add_text(p);
         p.pending = pending_with_char;
         p.token = MAYBE_BR;
+        return true;
+      }
+      break;
+    case "&":
+      // Not guarded on IMAGE the way the markdown delimiters are: a reference in
+      // an image label is TEXT, `add_text_dom` routes text inside an `<img>` to
+      // its alt, and CommonMark decodes there too. Guarded on the equation
+      // tokens, whose content is LaTeX source rather than markdown.
+      if (
+        p.token !== EQUATION_BLOCK &&
+        p.token !== EQUATION_INLINE &&
+        can_continue_entity(p.pending, char)
+      ) {
+        add_text(p);
+        p.pending = pending_with_char;
+        p.token = MAYBE_ENTITY;
         return true;
       }
       break;
