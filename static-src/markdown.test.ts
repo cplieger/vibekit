@@ -885,3 +885,36 @@ describe("markdown math rendering", () => {
     expect(el.textContent).toContain("$5");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Nesting past the token-stack cap.
+//
+// TOKEN_ARRAY_CAP is the intended depth limit. What is not intended is the
+// saturating path failing to consume the character it was handed, which used to
+// re-enter the same handler with byte-identical state until the JS stack blew.
+// ---------------------------------------------------------------------------
+
+describe("renderMarkdown deep nesting", () => {
+  it("renders 22 nested blockquotes, the last working depth", () => {
+    const html = renderMarkdown(">".repeat(22) + " x");
+    expect(html).toBe("<blockquote>".repeat(22) + "<p>x</p>" + "</blockquote>".repeat(22));
+  });
+
+  it("keeps the text when blockquote nesting saturates the token stack", () => {
+    const html = renderMarkdown(">".repeat(23) + " x");
+    expect(html).toContain("x");
+  });
+
+  it("does not throw on absurd blockquote nesting", () => {
+    expect(() => renderMarkdown(">".repeat(200) + " x")).not.toThrow();
+    expect(() => renderMarkdown("> ".repeat(30) + "x")).not.toThrow();
+    expect(() => renderMarkdown(">".repeat(1000) + " x")).not.toThrow();
+  });
+
+  it("does not throw on absurd list, indent or emphasis nesting", () => {
+    expect(() => renderMarkdown("- ".repeat(1024) + "x")).not.toThrow();
+    expect(() => renderMarkdown(" ".repeat(1024) + "- x")).not.toThrow();
+    expect(() => renderMarkdown("*".repeat(1024))).not.toThrow();
+    expect(() => renderMarkdown(">".repeat(30) + " ```js`x")).not.toThrow();
+  });
+});
