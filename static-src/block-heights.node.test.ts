@@ -16,7 +16,8 @@ import type { Message } from "./types.js";
 /** The row estimate `.msg-row` declares, and what an unmeasured text block costs. */
 const TEXT_PX = 48;
 
-/** `.turn-body`'s flex `gap` (`--sp-3`), which no row's own height carries. */
+/** The flex `gap` (`--sp-3`) `.turn-body` puts between rows and `.msg-wrap` puts
+ *  between one row's blocks, which no child's own height carries. */
 const GAP_PX = 12;
 
 function text(t: string): unknown {
@@ -50,9 +51,10 @@ describe("the per-outcome estimate", () => {
     expect(wholeTurn(turn([assistant("a", [text("hello")])]))).toBe(TEXT_PX);
   });
 
-  it("prices an EMPTY text block at nothing — a pad mounts a zero-height row", () => {
+  it("prices an EMPTY text block at nothing, GAP included — a pad is display:none", () => {
     // Both blocks are covered, so a non-zero answer for the pad would show up as
-    // double the real block's height.
+    // double the real block's height. It costs no gap either: `.msg-row.is-empty` is
+    // removed from the flex flow, and `gap` counts items rather than heights.
     expect(wholeTurn(turn([assistant("a", [text(""), text("hello")])]))).toBe(TEXT_PX);
   });
 
@@ -96,14 +98,17 @@ describe("the per-outcome estimate", () => {
     expect(wholeTurn(turn([bare]))).toBe(TEXT_PX);
   });
 
-  it("sums across every message the spacer covers, and the gap between them", () => {
+  it("sums across every message the spacer covers, and the gaps at BOTH levels", () => {
     const t = turn([
       assistant("a", [text("x"), text("y")]),
       assistant("b", [{ type: "thinking", thinking: "z" }]),
     ]);
-    // Two whole rows behind ONE spacer: the parent separated them with a gap that
-    // neither row's height includes, so the spacer is what has to carry it.
-    expect(spacerHeight(t, { from: 3, to: 3 }, "head")).toBe(TEXT_PX + TEXT_PX + 40 + GAP_PX);
+    // Two whole rows behind ONE spacer, three boxes in total: the parent separated
+    // the rows with a gap and `a`'s own two blocks with another, and no child's
+    // height includes either — so the spacer is what has to carry both.
+    expect(spacerHeight(t, { from: 3, to: 3 }, "head")).toBe(
+      TEXT_PX + GAP_PX + TEXT_PX + 40 + GAP_PX,
+    );
   });
 
   it("adds no gap for ONE row behind the spacer, whose own box replaces its gap", () => {
@@ -111,12 +116,13 @@ describe("the per-outcome estimate", () => {
     expect(spacerHeight(t, { from: 1, to: 2 }, "head")).toBe(TEXT_PX);
   });
 
-  it("charges no gap for a row the spacer only PARTLY covers", () => {
+  it("charges a row the spacer only PARTLY covers one row-level gap, not two", () => {
     // The windowed long message: one whole row above it and the head of the row
-    // the window cuts into. That row STAYS mounted, so the gap above it stays in
-    // the body and only the whole row's own gap leaves with it.
+    // the window cuts into. That row STAYS mounted, so its own gap to the spacer
+    // stays in the body — but the gap the dropped block held INSIDE it leaves, which
+    // is why the boundary row counts as a unit rather than as nothing.
     const t = turn([assistant("a", [text("x")]), assistant("b", [text("y"), text("z")])]);
-    expect(spacerHeight(t, { from: 2, to: 3 }, "head")).toBe(TEXT_PX + TEXT_PX);
+    expect(spacerHeight(t, { from: 2, to: 3 }, "head")).toBe(TEXT_PX + TEXT_PX + GAP_PX);
   });
 });
 
@@ -124,11 +130,11 @@ describe("which ordinals a spacer stands in for", () => {
   const four = (): Turn => turn([assistant("a", [text("w"), text("x"), text("y"), text("z")])]);
 
   it("prices the ordinals BEFORE the mounted range for the head spacer", () => {
-    expect(spacerHeight(four(), { from: 3, to: 4 }, "head")).toBe(3 * TEXT_PX);
+    expect(spacerHeight(four(), { from: 3, to: 4 }, "head")).toBe(3 * TEXT_PX + 2 * GAP_PX);
   });
 
   it("prices the ordinals AFTER the mounted range for the tail spacer", () => {
-    expect(spacerHeight(four(), { from: 0, to: 1 }, "tail")).toBe(3 * TEXT_PX);
+    expect(spacerHeight(four(), { from: 0, to: 1 }, "tail")).toBe(3 * TEXT_PX + 2 * GAP_PX);
   });
 
   it("stands in for nothing once the mounted range reaches the turn's own edge", () => {
@@ -141,26 +147,29 @@ describe("what a drop measured", () => {
   it("prefers a measured block height over that block's estimate", () => {
     recordBlockHeight("m-measured", 1, 300);
     const t = turn([assistant("m-measured", [text("x"), text("y")])]);
-    expect(wholeTurn(t)).toBe(TEXT_PX + 300);
+    expect(wholeTurn(t)).toBe(TEXT_PX + GAP_PX + 300);
   });
 
   it("prefers the whole-ROW measurement for a row entirely outside the window", () => {
-    recordRowHeight("m-row", 500);
+    // A row's own height already carries the gaps between its blocks, so nothing is
+    // added on top of a measurement that covers the range being priced.
+    recordRowHeight("m-row", { from: 0, to: 2 }, 500);
     const t = turn([assistant("m-row", [text("x"), text("y")])]);
     expect(wholeTurn(t)).toBe(500);
   });
 
-  it("falls back to per-block numbers when only PART of a row is outside the window", () => {
-    // The row number prices two blocks and one of them is still mounted, so using
-    // it here would count height the body is already holding.
-    recordRowHeight("m-part", 500);
+  it("refuses a row measurement taken over a DIFFERENT range than the one priced", () => {
+    // The row was dropped holding two blocks and only one is being priced, so its
+    // height answers for ordinals the body is still holding. Reachable whenever the
+    // window narrows a row before the row leaves whole.
+    recordRowHeight("m-part", { from: 0, to: 2 }, 500);
     recordBlockHeight("m-part", 1, 300);
     const t = turn([assistant("m-part", [text("x"), text("y")])]);
     expect(spacerHeight(t, { from: 0, to: 1 }, "tail")).toBe(300);
   });
 
   it("forgets a message's measurements, so the estimate answers again", () => {
-    recordRowHeight("m-forget", 500);
+    recordRowHeight("m-forget", { from: 0, to: 1 }, 500);
     recordBlockHeight("m-forget", 0, 300);
     const t = turn([assistant("m-forget", [text("x")])]);
     expect(wholeTurn(t)).toBe(500);

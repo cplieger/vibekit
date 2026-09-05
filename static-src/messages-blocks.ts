@@ -54,7 +54,9 @@ import {
   ensureToolCallSig,
   peekToolCallSig,
   clearToolCallSig,
+  clearBlockSig,
 } from "./store-signals.js";
+import { recordBlockHeight } from "./block-heights.js";
 import { lineDelta } from "./diff.js";
 import { isInternalToolTitle, isToolActive } from "./tool-schema.js";
 import type { TurnSummaryData } from "./fundamentals/turn-footer.js";
@@ -72,6 +74,7 @@ import {
 import { buildTodoList, updateTodoList, type TodoItem } from "./fundamentals/todo.js";
 import { buildSteerNote } from "./fundamentals/steer-note.js";
 import { mountToolCallCard, disposeToolSlot } from "./messages-tools.js";
+import { expandToolDetails } from "./tool-card.js";
 import { planElement, updatePlanElement } from "./messages-plan.js";
 import {
   buildToolGroupShell,
@@ -85,7 +88,7 @@ import {
 export { refreshGroupHeader };
 import { iconForSubagent, isSubagentInvocation, subagentLabel, subagentName } from "./roles.js";
 import { parseStepSubtask, type StepSubtask } from "./step-subtask.js";
-import { buildRunCard, type RunCardView } from "./fundamentals/run-card.js";
+import { buildRunCard, type RunCardView, type RunDisclosure } from "./fundamentals/run-card.js";
 import { invalidateRun, runState, forgetRun } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
 import { hasTab } from "./tabs.js";
@@ -99,6 +102,11 @@ import { buildPath } from "./router.js";
 interface BlockCbs {
   /** Register a cleanup disposed on turn finalize / message unmount. */
   pushStreamingEffect(msgId: string, cleanup: () => void): void;
+  /** Register a cleanup disposed when this BLOCK leaves the window. */
+  pushBlockEffect(msgId: string, blockIndex: number, cleanup: () => void): void;
+  /** Run the cleanups for the blocks a window drop removed: the drop's half of
+   *  `pushBlockEffect`'s contract. */
+  disposeBlockEffects(msgId: string, indices: Iterable<number>): void;
   /** Build an avatar row for a top-level assistant bubble. */
   makeRow(): HTMLDivElement;
   /** Put an undelivered steer's text back in the message box. Injected rather
@@ -109,6 +117,12 @@ interface BlockCbs {
 
 let cbs: BlockCbs = {
   pushStreamingEffect: () => {
+    /* until init */
+  },
+  pushBlockEffect: () => {
+    /* until init */
+  },
+  disposeBlockEffects: () => {
     /* until init */
   },
   makeRow: () => el("div") as HTMLDivElement,
@@ -189,39 +203,33 @@ function clearLiveAnchor(el: HTMLElement): void {
 }
 
 // ---------------------------------------------------------------------------
-// The open-container registry: which collapsible containers are open RIGHT NOW.
-//
-// Maintained where the disclosure state changes (the subagent block's toggle,
-// the run card's, the run-step row's), so the resume counter's reachability
-// test is a set read instead of two querySelectorAll passes per paint. ONE Set,
-// three key shapes:
-//
-//   sub:<subtaskID>            an open delegate box
-//   run:<workflowID>           an open run card (mounts open, so registered at build)
-//   step:<workflowID>:<path>   an open step row inside that card
-//
-// A step's blocks need BOTH of its containers open — the card and the row —
-// which is why the derived view below joins `step:` against `run:` instead of
-// exposing raw keys. DETACHED renders (the subagent page) register nothing:
-// reachability is a property of the transcript, and an open box on another tab
-// contributes no document height here.
+// The open-container registry: what the reader left each collapsible container
+// at, keyed by its own id under `sub:`, `pipe:`, `run:`, `step:` and `tool:`.
+// Read at MOUNT too — a window drop keeps these keys, so a creation site
+// restores the reader's choice, not its own default. A DETACHED render (the
+// subagent page) neither registers nor restores.
 // ---------------------------------------------------------------------------
 
-const openContainers = new Set<string>();
+const openContainers = new Map<string, boolean>();
 
 function setContainerOpen(key: string, open: boolean): void {
-  if (open) {
-    openContainers.add(key);
-  } else {
-    openContainers.delete(key);
-  }
+  openContainers.set(key, open);
+}
+
+/** What the reader last left `key` at, or undefined when nothing has recorded it
+ *  — which is NOT the same as closed. The creation site owns the default. */
+function containerOpen(key: string): boolean | undefined {
+  return openContainers.get(key);
 }
 
 /** The subtask ids whose container chain is open, in the id shape blocks carry:
  *  a delegate's uuid, or `wf:<workflowId>:<nodePath>` for a workflow step. */
 export function openContainerKeys(): ReadonlySet<string> {
   const out = new Set<string>();
-  for (const key of openContainers) {
+  for (const [key, open] of openContainers) {
+    if (!open) {
+      continue;
+    }
     if (key.startsWith("sub:")) {
       out.add(key.slice(4));
       continue;
@@ -229,7 +237,7 @@ export function openContainerKeys(): ReadonlySet<string> {
     if (key.startsWith("step:")) {
       const rest = key.slice(5);
       const sep = rest.indexOf(":");
-      if (sep > 0 && openContainers.has(`run:${rest.slice(0, sep)}`)) {
+      if (sep > 0 && runCardOpen(rest.slice(0, sep))) {
         out.add(`wf:${rest}`);
       }
     }
@@ -237,18 +245,44 @@ export function openContainerKeys(): ReadonlySet<string> {
   return out;
 }
 
+/** Whether `workflowID`'s card counts as open. The one container that mounts OPEN,
+ *  so an absent key means open here and only a reader who collapsed it says
+ *  otherwise — the rule both the step-row join above and the card's own re-mount
+ *  read. */
+function runCardOpen(workflowID: string): boolean {
+  return containerOpen(`run:${workflowID}`) !== false;
+}
+
+/** Carry a dropped tool card's own disclosure into the registry, so the re-mount
+ *  restores what the reader chose. `aria-expanded` on `.tool-disclosure` is the only
+ *  record a card's details were opened — the boxes above have keys, a card had
+ *  nothing. */
+function recordDisclosure(el: HTMLElement, block: Block | undefined): void {
+  const toolID = block?.type === "tool_use" ? (block.tool_call_id ?? "") : "";
+  const toggle = el.querySelector<HTMLElement>(".tool-disclosure");
+  if (toolID !== "" && toggle !== null) {
+    setContainerOpen(`tool:${toolID}`, toggle.getAttribute("aria-expanded") === "true");
+  }
+}
+
 /** Drop a render's container keys. `runs` prefix-deletes its step rows too. */
 function pruneContainers(st: MsgRender): void {
   if (st.detached) {
     return; // never registered
   }
+  for (const tc of st.tools) {
+    openContainers.delete(`tool:${tc.id}`);
+  }
   for (const subtask of st.subagents.keys()) {
     openContainers.delete(`sub:${subtask}`);
+  }
+  for (const pipelineID of st.pipelines.keys()) {
+    openContainers.delete(`pipe:${pipelineID}`);
   }
   for (const runID of st.runs.keys()) {
     openContainers.delete(`run:${runID}`);
     const prefix = `step:${runID}:`;
-    for (const key of openContainers) {
+    for (const key of openContainers.keys()) {
       if (key.startsWith(prefix)) {
         openContainers.delete(key);
       }
@@ -315,17 +349,12 @@ interface MsgRender {
    *  the card's final dispose, and resume has to re-arm exactly what pause
    *  stopped. */
   runEffects: Map<string, () => void>;
-  /** Cleanups that live as long as the MESSAGE, not as long as the turn.
-   *
-   *  Separate from `pushStreamingEffect` and that separation is load-bearing: that
-   *  one is disposed at TURN END as well as on unmount (its own comment says so),
-   *  which is correct for a caret or a tool-card status effect and exactly wrong
-   *  for a run card. `run_workflow` returns as soon as the run STARTS, so the
-   *  launching turn ends while the run carries on for minutes — releasing the
-   *  card's store subscription and its clock there would freeze it at the moment
-   *  it matters most. Disposed by `disposeAssistantBody` / `resetBlockRenders`,
-   *  the real unmount paths. */
-  disposers: (() => void)[];
+  /** Cleanups that outlive the TURN, bucketed by block index with `-1` for the
+   *  message's own: a window drop drains only the buckets it removed, `disposeAll`
+   *  drains them all. Separate from `pushStreamingEffect`, which is disposed at turn
+   *  end — right for a caret, wrong for a run card, whose run carries on for minutes
+   *  after `run_workflow` returns. */
+  disposers: Map<number, (() => void)[]>;
   /** subtask id → the tool-call ids routed into that box, for the footer's
    *  ledger (commands, reads, changed files). The INVOCATION call is not a
    *  member — it is the box itself. */
@@ -365,16 +394,38 @@ interface MsgRender {
    *  already has a successor for is sealed at its own mount, so head insertion
    *  never reaches this map. */
   openReasoning: Map<HTMLElement, ReasoningView>;
-  /** container key → its tool groups, keyed by the RUN each one opened at, so
+  /** container key → its tool groups, keyed by the STORE run each one opened at, so
    *  which group a card joins is a function of the store instead of mount order.
    *  Outer key is the container's KEY, a bijection with its element inside one
-   *  render, so the collapse sync needs no reverse lookup. */
+   *  render. */
   toolGroups: Map<string, Map<number, HTMLDivElement>>;
+  /** Container key (`sub:`/`pipe:`/`run:`) → the STORE index that ESTABLISHES it, which is
+   *  where its box belongs however far down the range first reached it. `indexGroups`
+   *  writes it, `placeContainer` reads it, and both mean the same index. */
+  containerAt: Map<string, number>;
   /** Steer-mark id → the block index it is anchored at and the note element.
    *  The anchor is what makes a note droppable, the element what makes it
    *  removable; the KEY is what makes `flushSteerNotes` idempotent across its
    *  two deliberately-overlapping call sites. */
   steerNotes: Map<string, { index: number; el: HTMLElement }>;
+  /** Where a block being INSERTED goes in its container: before this node. A Map
+   *  for the duration of a HEAD extension and null otherwise, so the append path
+   *  is byte-identical outside one. Null is also what tells `appendBlock` not to
+   *  seal: an inserted block is posted after nothing. */
+  insertBefore: Map<HTMLElement, HTMLElement | null> | null;
+  /** This render's own key in `renders`, which for a detached render is the
+   *  derived id rather than the bare message id. */
+  msgID: string;
+  /** This message's blocks and tool calls, as of the current pass. Held rather
+   *  than passed because the three LAZY container creators are reached from a
+   *  range that need not contain the invocation block, and each has to bind itself
+   *  from the call or the box renders with a generic header and no ledger. */
+  tools: readonly ToolCall[];
+  blocks: readonly Block[];
+  /** Invocation tool-call ids whose box is already bound. A box can be bound by
+   *  its own in-window invocation block OR lazily at creation from `tools`, so
+   *  this is what makes both paths idempotent. */
+  boundBoxes: Set<string>;
 }
 
 const renders = new Map<string, MsgRender>();
@@ -436,7 +487,7 @@ function buildBody(
     pipelineDeclared: new Map(),
     runs: new Map(),
     runEffects: new Map(),
-    disposers: [],
+    disposers: new Map(),
     subagentMembers: new Map(),
     detached,
     bubbles: [],
@@ -445,13 +496,19 @@ function buildBody(
     reasonings: [],
     openReasoning: new Map(),
     toolGroups: new Map(),
+    containerAt: new Map(),
     steerNotes: new Map(),
+    insertBefore: null,
+    msgID: m.id,
+    tools: m.tool_calls ?? [],
+    blocks: m.blocks ?? [],
+    boundBoxes: new Set(),
   };
   renders.set(m.id, st);
   indexPipelines(st, m);
   // ONE index per pass: the mount and the collapse sync ask it different
   // questions about the same run boundaries.
-  const idx = indexGroups(st, m, marks, live, st.window.from);
+  const idx = indexGroups(st, m, marks, live);
   renderRange(st, m, want.from, want.to, live, marks, idx);
   syncGroupCollapse(st, idx);
 }
@@ -469,12 +526,39 @@ function buildBody(
  *  block streamed. The page subscribes to the REAL keys instead and pushes the
  *  text in through `syncMountedText`, which is the same fallback a mis-judged
  *  live block already relies on. */
-function pushLifetimeEffect(st: MsgRender, msgId: string, cleanup: () => void): void {
+function pushLifetimeEffect(
+  st: MsgRender,
+  msgId: string,
+  blockIndex: number,
+  cleanup: () => void,
+): void {
   if (st.detached) {
-    st.disposers.push(cleanup);
+    pushDisposer(st, blockIndex, cleanup);
     return;
   }
-  cbs.pushStreamingEffect(msgId, cleanup);
+  cbs.pushBlockEffect(msgId, blockIndex, cleanup);
+}
+
+/** Add a cleanup to `blockIndex`'s bucket; `-1` is the message's own. */
+function pushDisposer(st: MsgRender, blockIndex: number, cleanup: () => void): void {
+  const arr = st.disposers.get(blockIndex);
+  if (arr === undefined) {
+    st.disposers.set(blockIndex, [cleanup]);
+  } else {
+    arr.push(cleanup);
+  }
+}
+
+/** Run and drop `blockIndex`'s bucket. */
+function runDisposers(st: MsgRender, blockIndex: number): void {
+  const arr = st.disposers.get(blockIndex);
+  if (arr === undefined) {
+    return;
+  }
+  st.disposers.delete(blockIndex);
+  for (const fn of arr) {
+    fn();
+  }
 }
 
 /** Clear a per-tool signal, unless this render shares it with the transcript. */
@@ -567,12 +651,14 @@ function updateBody(
     return;
   }
   const want = range ?? wholeOf(m);
+  st.tools = m.tool_calls ?? [];
+  st.blocks = m.blocks ?? [];
   // Ahead of the render, and on EVERY pass rather than only when blocks arrive: a
   // stage's blocks can reach the dispatcher before its own invocation tool call is
   // in the store (out-of-order SSE), and this index is the only thing that knows
   // which pipeline a stage belongs to.
   indexPipelines(st, m);
-  const idx = indexGroups(st, m, marks, streaming, st.window.from);
+  const idx = indexGroups(st, m, marks, streaming);
   if (want.to > st.window.to) {
     renderRange(st, m, st.window.to, want.to, streaming, marks, idx);
   }
@@ -754,8 +840,8 @@ export function disposeDetachedBody(messageID: string, subtask: string): void {
  *  throw. */
 function disposeAll(st: MsgRender): void {
   pruneContainers(st);
-  for (const fn of st.disposers.splice(0)) {
-    fn();
+  for (const key of [...st.disposers.keys()]) {
+    runDisposers(st, key);
   }
 }
 
@@ -798,6 +884,279 @@ function renderRange(
   // loop above can never reach it. Mounting it here is what puts it below
   // everything so far and above everything that arrives next.
   flushSteerNotes(st, marks, m.id, st.window.from, st.window.to);
+}
+
+// The window's two moving edges: ONE call per edge, never one for both. A
+// relocation retracts a row at both ends, and a single compensated call would
+// correct by a delta that includes the below-the-reader removal.
+
+/** Mount `keep`'s ordinals below the mounted head IN PLACE: the head extension.
+ *
+ *  Positional rather than a row rebuild, so nothing replays an animation, drops a
+ *  selection or forgets a reader-set disclosure — safe because grouping and sealing
+ *  are derived from the store. Bounded by `keep.to` too, or a move to a DISJOINT
+ *  range mounts everything between the two and the tail drop takes it straight
+ *  back. */
+export function mountHeadRange(
+  m: Message,
+  keep: BlockRange,
+  live: boolean,
+  marks: readonly SteerMark[],
+): void {
+  const st = renders.get(m.id);
+  const from = keep.from;
+  if (st === undefined || from >= st.window.from) {
+    return;
+  }
+  const to = Math.min(st.window.from, keep.to);
+  if (from >= to) {
+    return;
+  }
+  st.tools = m.tool_calls ?? [];
+  st.blocks = m.blocks ?? [];
+  indexPipelines(st, m);
+  const idx = indexGroups(st, m, marks, live);
+  st.insertBefore = new Map();
+  try {
+    renderRange(st, m, from, to, live, marks, idx);
+  } finally {
+    st.insertBefore = null;
+  }
+  syncGroupCollapse(st, idx);
+}
+
+/** Retract `m`'s mounted window at the HEAD to `keep.from`. Collected as a
+ *  head-side change: everything it removes is above the reader. */
+export function dropHead(m: Message, keep: BlockRange, marks: readonly SteerMark[]): void {
+  const st = renders.get(m.id);
+  if (st === undefined || keep.from <= st.window.from) {
+    return;
+  }
+  dropBlockRange(st, m, { from: keep.from, to: st.window.to }, marks);
+}
+
+/** Retract `m`'s mounted window at the TAIL to `keep.to`. Collected as a
+ *  tail-side change: it runs BARE, because its delta is below the reader and
+ *  compensating it would drag their view. */
+export function dropTail(m: Message, keep: BlockRange, marks: readonly SteerMark[]): void {
+  const st = renders.get(m.id);
+  if (st === undefined || keep.to >= st.window.to) {
+    return;
+  }
+  dropBlockRange(st, m, { from: st.window.from, to: keep.to }, marks);
+}
+
+/** Release everything the mounted indices OUTSIDE `keep` own, and leave no effect
+ *  subscribed to a detached node.
+ *
+ *  Reached only through `dropHead` and `dropTail`, never as one two-sided call.
+ *  `openContainers` keys deliberately SURVIVE: a drop is a window move, not a
+ *  render dispose, so a box the reader opened comes back open. */
+function dropBlockRange(
+  st: MsgRender,
+  m: Message,
+  keep: BlockRange,
+  marks: readonly SteerMark[],
+): void {
+  const removed: number[] = [];
+  for (let i = st.window.from; i < st.window.to; i++) {
+    if (i < keep.from || i >= keep.to) {
+      removed.push(i);
+    }
+  }
+  if (removed.length === 0) {
+    return;
+  }
+  const blocks = m.blocks ?? [];
+  for (const i of removed) {
+    dropBlock(st, m, blocks[i], i);
+  }
+  cbs.disposeBlockEffects(m.id, removed);
+  for (const [id, note] of [...st.steerNotes]) {
+    if (note.index < keep.from || note.index > keep.to) {
+      note.el.remove();
+      st.steerNotes.delete(id);
+    }
+  }
+  pruneEmptyContainers(st);
+  rebindSurvivingBoxes(st);
+  st.window = keep;
+  // The marks are re-flushed against the narrowed window, so a note whose anchor
+  // is still inside it survives a drop that removed its neighbour.
+  flushSteerNotes(st, marks, m.id, st.window.from, st.window.to);
+}
+
+/** Release one block: its measured height into the cache, its disclosure state, its
+ *  element, its text sink, its streaming signals and its block-lifetime cleanups. */
+function dropBlock(st: MsgRender, m: Message, block: Block | undefined, i: number): void {
+  const el = st.blockEls.get(i);
+  if (el !== undefined) {
+    // MEASURED on the way out, so the spacer replacing it holds the height it held, and
+    // only a REAL reading: a detached element answers 0 and a short spacer leaves the
+    // document shorter than the content it stands in for. The estimate over-prices.
+    if (el.offsetHeight > 0) {
+      recordBlockHeight(m.id, i, el.offsetHeight);
+    }
+    recordDisclosure(el, block);
+    st.bubbles = st.bubbles.filter((b) => {
+      if (b.root !== el && !el.contains(b.root)) {
+        return true;
+      }
+      // A reveal in flight holds a frame loop, and its DOM is about to go.
+      b.finishNow();
+      if (st.liveBubble === b) {
+        st.liveBubble = null;
+      }
+      return false;
+    });
+    st.reasonings = st.reasonings.filter((view) => {
+      if (view.root !== el && !el.contains(view.root)) {
+        return true;
+      }
+      for (const [container, open] of st.openReasoning) {
+        if (open === view) {
+          st.openReasoning.delete(container);
+        }
+      }
+      return false;
+    });
+    if (st.topLiveEl !== null && (st.topLiveEl === el || el.contains(st.topLiveEl))) {
+      clearLiveAnchor(st.topLiveEl);
+      st.topLiveEl = null;
+    }
+    el.remove();
+    st.blockEls.delete(i);
+  }
+  st.blockText.delete(i);
+  clearBlockSig(m.id, i);
+  runDisposers(st, i);
+  if (block?.type === "tool_use") {
+    const tc = st.tools.find((c) => c.id === block.tool_call_id);
+    const runID = tc === undefined ? "" : workflowInvocation(tc);
+    const card = runID === "" ? undefined : st.runs.get(runID);
+    if (runID !== "" && card !== undefined) {
+      const claim = liveRunClaimant(st, card);
+      if (claim === undefined) {
+        // Nothing mounted inside it, so the run's own state goes back — or `runCardFor`
+        // hands the next claimant a DETACHED node and re-homing never fires.
+        st.runs.delete(runID);
+        releaseRunCard(st, runID, card);
+        card.root.remove();
+      } else {
+        // RE-HOMED: the card is a CONTAINER, and removing it takes another render's
+        // mounted blocks out of the document while that render still counts them. One
+        // card per run, by the earliest in-window claimant once the launch is gone.
+        const seat = seatAbove(claim.host, claim.host.blocksEl, claim.at, card.root);
+        adoptRunCard(claim.host, st, runID, card, seat);
+      }
+    }
+  }
+}
+
+/** The render, other than `st`, holding mounted blocks INSIDE `card`, and the lowest
+ *  such ordinal. DOM order decides between several, which is what "earliest" means:
+ *  `renders` is keyed in BUILD order and a scroll up builds earlier messages last. */
+function liveRunClaimant(
+  st: MsgRender,
+  card: RunCardView,
+): { host: MsgRender; at: number } | undefined {
+  let out: { host: MsgRender; at: number } | undefined;
+  for (const other of renders.values()) {
+    if (other === st || other.detached || other.chatID !== st.chatID) {
+      continue;
+    }
+    for (let i = other.window.from; i < other.window.to; i++) {
+      const el = other.blockEls.get(i);
+      if (el === undefined || !card.root.contains(el)) {
+        continue;
+      }
+      const held = out?.host.blocksEl;
+      if (
+        held === undefined ||
+        (other.blocksEl.compareDocumentPosition(held) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+      ) {
+        out = { host: other, at: i };
+      }
+      break;
+    }
+  }
+  return out;
+}
+
+/** Where something the store places at `at` belongs in `host`: before the first child of
+ *  `host` holding a mounted ordinal ABOVE `at`, and the tail when there is none. `placed`
+ *  is the node being seated, excluded because its own members walk up to it. */
+function seatAbove(
+  st: MsgRender,
+  host: HTMLElement,
+  at: number,
+  placed: HTMLElement,
+): HTMLElement | null {
+  for (let i = at + 1; i < st.window.to; i++) {
+    let node = st.blockEls.get(i) ?? null;
+    while (node !== null && node.parentElement !== host) {
+      node = node.parentElement;
+    }
+    if (node !== null && node !== placed) {
+      return node;
+    }
+  }
+  return null;
+}
+
+/** Re-subscribe every box the drop left STANDING whose invocation block it took.
+ *  That block's cleanup released the binding, and no path re-binds an existing box —
+ *  so without this a delegate whose own blocks are still in window keeps a frozen
+ *  header, status and footer ledger until its invocation re-mounts.
+ *
+ *  `live` is `false` because it cannot be reached: every box here exists, so neither
+ *  binder passes it to a creation. */
+function rebindSurvivingBoxes(st: MsgRender): void {
+  for (const [subtask, sa] of st.subagents) {
+    const inv = st.tools.find(
+      (tc) => (tc.agent_subtask_id ?? "") === subtask && isSubagentInvocation(tc),
+    );
+    if (inv !== undefined && !st.boundBoxes.has(inv.id)) {
+      bindSubagent(st, subtask, st.msgID, sa, inv, invocationIndex(st, inv.id));
+    }
+  }
+  for (const pipelineID of st.pipelines.keys()) {
+    const inv = st.tools.find((tc) => tc.id === pipelineID && isPipelineInvocation(tc));
+    if (inv !== undefined && !st.boundBoxes.has(inv.id)) {
+      bindPipeline(st, st.msgID, inv, false, invocationIndex(st, inv.id));
+    }
+  }
+}
+
+/** Remove every container this drop left with nothing in it, and its render state
+ *  with it. Its `openContainers` key stays, per the disclosure rule. */
+function pruneEmptyContainers(st: MsgRender): void {
+  for (const [key, bucket] of st.toolGroups) {
+    for (const [runStart, group] of bucket) {
+      if (groupBody(group).firstElementChild === null) {
+        group.remove();
+        bucket.delete(runStart);
+      }
+    }
+    if (bucket.size === 0) {
+      st.toolGroups.delete(key);
+    }
+  }
+  for (const [subtask, sa] of st.subagents) {
+    if (sa.body.firstElementChild === null) {
+      st.openReasoning.delete(sa.body);
+      sa.root.remove();
+      st.subagents.delete(subtask);
+      st.subagentMembers.delete(subtask);
+    }
+  }
+  for (const [pipelineID, box] of st.pipelines) {
+    if (box.body.firstElementChild === null) {
+      st.openReasoning.delete(box.body);
+      box.root.remove();
+      st.pipelines.delete(pipelineID);
+    }
+  }
 }
 
 /** Whether block `i` is the one its stream is still writing.
@@ -904,6 +1263,7 @@ function containerFor(st: MsgRender, block: Block, live: boolean): HTMLElement {
       ...(st.detached
         ? {}
         : {
+            startOpen: containerOpen(`sub:${subtask}`) ?? false,
             onOpenChange: (open: boolean): void => {
               setContainerOpen(`sub:${subtask}`, open);
             },
@@ -911,11 +1271,18 @@ function containerFor(st: MsgRender, block: Block, live: boolean): HTMLElement {
     });
     sa.root.dataset["subtask"] = subtask;
     st.subagents.set(subtask, sa);
-    // The box lands in its HOST (top level or a pipeline body), so the seal
-    // belongs to the host: the delegate's card is the "something posted after"
-    // for whatever trace was open there. The run it interrupts is broken by
-    // `indexGroups`, which prices this creation as a post into the host.
-    appendBlock(st, stageHostFor(st, subtask, live), sa.root);
+    // The box lands in its HOST (top level or a pipeline body), at the store index that
+    // establishes it — the same index `indexGroups` prices its run break at.
+    const host = stageHostFor(st, subtask, live);
+    placeContainer(st, host, sa.root, st.containerAt.get(`sub:${subtask}`));
+    // The BINDING, not only the box: a box created for an out-of-window invocation
+    // would otherwise render the generic "Subagent" header with no footer ledger.
+    const inv = st.tools.find(
+      (tc) => (tc.agent_subtask_id ?? "") === subtask && isSubagentInvocation(tc),
+    );
+    if (inv !== undefined) {
+      bindSubagent(st, subtask, st.msgID, sa, inv, invocationIndex(st, inv.id));
+    }
   }
   return sa.body;
 }
@@ -1013,7 +1380,17 @@ function pipelineBoxFor(st: MsgRender, pipelineID: string, live: boolean): Subag
   const box = buildSubagentBlock(
     pipelineLabel(st, pipelineID),
     live ? "in_progress" : "completed",
-    { activity: "container" },
+    {
+      activity: "container",
+      ...(st.detached
+        ? {}
+        : {
+            startOpen: containerOpen(`pipe:${pipelineID}`) ?? false,
+            onOpenChange: (open: boolean): void => {
+              setContainerOpen(`pipe:${pipelineID}`, open);
+            },
+          }),
+    },
   );
   box.root.dataset["pipeline"] = pipelineID;
   st.pipelines.set(pipelineID, box);
@@ -1022,7 +1399,7 @@ function pipelineBoxFor(st: MsgRender, pipelineID: string, live: boolean): Subag
     .filter((v): v is SubagentView => v?.root.parentElement === st.blocksEl);
   const first = promoted[0];
   if (first === undefined) {
-    appendBlock(st, st.blocksEl, box.root);
+    placeContainer(st, st.blocksEl, box.root, st.containerAt.get(`pipe:${pipelineID}`));
   } else {
     // Lands where the first adopted stage sat, keeping transcript order, and not
     // through `appendBlock`: nothing is posted after an open trace by swapping a
@@ -1041,7 +1418,35 @@ function pipelineBoxFor(st: MsgRender, pipelineID: string, live: boolean): Subag
   if (driver !== undefined) {
     paintPipeline(st, box, driver);
   }
+  // And the BINDING, for the same reason the subagent box binds itself: a box the
+  // stage path built has no subscription and no ledger until its own invocation
+  // block mounts, which a window need never reach.
+  const inv = st.tools.find((tc) => tc.id === pipelineID && isPipelineInvocation(tc));
+  if (inv !== undefined) {
+    bindPipeline(st, st.msgID, inv, live, invocationIndex(st, inv.id));
+  }
   return box;
+}
+
+/** The block index `toolID`'s invocation sits at, or `-1` — the message-lifetime
+ *  bucket — when this message holds no block for it. */
+function invocationIndex(st: MsgRender, toolID: string): number {
+  return st.blocks.findIndex((b) => b.type === "tool_use" && b.tool_call_id === toolID);
+}
+
+/** The disclosure the transcript's cards read and write: the registry, keyed by
+ *  node path for a step row and by `null` for the card itself. */
+function runDisclosure(workflowID: string): RunDisclosure {
+  return {
+    wasOpen: (nodePath) =>
+      nodePath === null ? runCardOpen(workflowID) : containerOpen(`step:${workflowID}:${nodePath}`),
+    onOpenChange: (nodePath, open) => {
+      setContainerOpen(
+        nodePath === null ? `run:${workflowID}` : `step:${workflowID}:${nodePath}`,
+        open,
+      );
+    },
+  };
 }
 
 /** The step row inside the run card, creating the card when the invocation has
@@ -1060,11 +1465,17 @@ function runContainerFor(st: MsgRender, step: StepSubtask): HTMLElement {
  *  The subscription is the whole reason the card needs no event handling of its
  *  own: `run-store.ts` owns the fetch and holds a signal per run, so one effect
  *  per card re-renders it whenever that run changes and nothing else does. */
-function runCardFor(st: MsgRender, workflowID: string, name: string): RunCardView {
+function runCardFor(st: MsgRender, workflowID: string, name: string, owner = false): RunCardView {
   const existing = st.runs.get(workflowID);
   if (existing !== undefined) {
+    reseatInserted(st, st.blocksEl, existing.root);
     return existing;
   }
+  // The launch call is the card's only witness for its label and for a launch that
+  // FAILED, and a card created from a step whose launch block is out of window has
+  // to find it here — otherwise the card keeps the placeholder name and sits at
+  // "starting" forever.
+  const launch = st.tools.find((tc) => workflowInvocation(tc) === workflowID);
   if (!st.detached) {
     // ONE box per run per TRANSCRIPT, not per message. The server folds a run's
     // later frames into a NEW assistant message per turn-segment, so a
@@ -1072,8 +1483,12 @@ function runCardFor(st: MsgRender, workflowID: string, name: string): RunCardVie
     // launching turn, two more each later turn, all reading one store cell.
     // A later message routes into the first message's card instead; step rows
     // are keyed by node path, so cross-message routing lands in the right row.
-    const hosted = runCardHosts.get(st.chatID)?.get(workflowID)?.runs.get(workflowID);
-    if (hosted !== undefined) {
+    const host = runCardHosts.get(st.chatID)?.get(workflowID);
+    const hosted = host?.runs.get(workflowID);
+    if (hosted !== undefined && host !== undefined) {
+      if (owner) {
+        adoptRunCard(st, host, workflowID, hosted);
+      }
       return hosted;
     }
     let hosts = runCardHosts.get(st.chatID);
@@ -1088,7 +1503,7 @@ function runCardFor(st: MsgRender, workflowID: string, name: string): RunCardVie
   // `run-view.ts` reaches the whole run page and the transcript must not carry it.
   const card = buildRunCard(
     workflowID,
-    name,
+    launch === undefined ? name : recipeNameOf(launch),
     (id, label) => {
       void import("./run-view.js")
         .then(({ openRunView }) => {
@@ -1098,46 +1513,81 @@ function runCardFor(st: MsgRender, workflowID: string, name: string): RunCardVie
           /* noop: the link degrades to its href on the next click */
         });
     },
-    st.detached
-      ? undefined
-      : (nodePath, open) => {
-          setContainerOpen(
-            nodePath === null ? `run:${workflowID}` : `step:${workflowID}:${nodePath}`,
-            open,
-          );
-        },
+    st.detached ? undefined : runDisclosure(workflowID),
   );
   st.runs.set(workflowID, card);
-  if (!st.detached) {
-    // The card mounts OPEN and the disclosure reports only later flips.
-    openContainers.add(`run:${workflowID}`);
-  }
-  appendBlock(st, st.blocksEl, card.root);
-  st.disposers.push(() => {
-    disarmRunCard(st, workflowID, card);
-    // Release the host slot only when this render still holds it, so a card
-    // rebuilt under a new host survives its old host's late dispose.
-    const hosts = runCardHosts.get(st.chatID);
-    if (hosts?.get(workflowID) === st) {
-      hosts.delete(workflowID);
-      if (hosts.size === 0) {
-        runCardHosts.delete(st.chatID);
-      }
-    }
-    // The store's only bound, and this is the one place that can apply it: three
-    // surfaces read a run's cell and none of them is last on its own. A card
-    // unmounting (chat switch, or the reconcile dropping its row) with no run tab
-    // open IS last, and a later invalidate re-creates the cell, so forgetting early
-    // costs one fetch rather than a wrong answer. A tab still open keeps it.
-    if (!hasTab("run", workflowID)) {
-      forgetRun(workflowID);
-    }
+  placeContainer(st, st.blocksEl, card.root, st.containerAt.get(`run:${workflowID}`));
+  pushDisposer(st, -1, () => {
+    releaseRunCard(st, workflowID, card);
   });
   // The first read the card ever gets. Every later one arrives through the
   // armed effect, driven by the run SSE events.
   invalidateRun(workflowID);
   armRunCard(st, workflowID, card);
+  if (launch !== undefined) {
+    card.setLaunch(launch.status, launch.output);
+  }
   return card;
+}
+
+/** Give up this render's claim on `workflowID`'s card: its effect, its clock hold,
+ *  the host slot, and the store's cell.
+ *
+ *  Reached at MESSAGE lifetime by the render's own disposal and at BLOCK lifetime by
+ *  a window drop of the launch block, and idempotent either way — which is what lets
+ *  the two lifetimes share one function. */
+function releaseRunCard(st: MsgRender, workflowID: string, card: RunCardView): void {
+  disarmRunCard(st, workflowID, card);
+  // Slot and cell together, and only while this render holds the claim: a re-homed
+  // card outlives its old host's dispose, and its effect still reads that cell.
+  const hosts = runCardHosts.get(st.chatID);
+  if (hosts?.get(workflowID) !== st) {
+    return;
+  }
+  hosts.delete(workflowID);
+  if (hosts.size === 0) {
+    runCardHosts.delete(st.chatID);
+  }
+  // The claim-holding card unmounting with no run tab open is the store cache's one
+  // safe bound, and `forgetRun` states why it has to be exactly that.
+  if (!hasTab("run", workflowID)) {
+    forgetRun(workflowID);
+  }
+}
+
+/** Move `workflowID`'s card out of `host` and into `st`, claim and all; `seat` is the node
+ *  to place it before, absent meaning the mount position. Reached from both halves of one
+ *  rule — the owning message mounting its launch block, or its window DROPPING it and the
+ *  earliest render still holding blocks inside the card taking over. Moving the NODE keeps
+ *  the element, so no effect churns and no entry animation replays. */
+function adoptRunCard(
+  st: MsgRender,
+  host: MsgRender,
+  workflowID: string,
+  card: RunCardView,
+  seat?: HTMLElement | null,
+): void {
+  host.runs.delete(workflowID);
+  const stop = host.runEffects.get(workflowID);
+  if (stop !== undefined) {
+    host.runEffects.delete(workflowID);
+    st.runEffects.set(workflowID, stop);
+  }
+  st.runs.set(workflowID, card);
+  let hosts = runCardHosts.get(st.chatID);
+  if (hosts === undefined) {
+    hosts = new Map();
+    runCardHosts.set(st.chatID, hosts);
+  }
+  hosts.set(workflowID, st);
+  if (seat === undefined) {
+    placeInContainer(st, st.blocksEl, card.root);
+  } else {
+    st.blocksEl.insertBefore(card.root, seat);
+  }
+  pushDisposer(st, -1, () => {
+    releaseRunCard(st, workflowID, card);
+  });
 }
 
 /** Whether this render holds `workflowID`'s card, or will when the block that needs
@@ -1159,7 +1609,7 @@ function hostsRunCard(st: MsgRender, workflowID: string): boolean {
  *  and the card would sit at "starting" forever. The tool call is the only witness
  *  in that case, which is why its status is folded in here. */
 function bindRunCard(st: MsgRender, workflowID: string, tc: ToolCall): void {
-  const card = runCardFor(st, workflowID, recipeNameOf(tc));
+  const card = runCardFor(st, workflowID, recipeNameOf(tc), true);
   card.setLaunch(tc.status, tc.output);
 }
 
@@ -1331,12 +1781,10 @@ function placeBlock(
       if (isInternalToolTitle(tc.title)) {
         return;
       }
-      // A WORKFLOW LAUNCH becomes the run's card, not a tool row. The call sits
-      // in the parent agent's own block stream (it has no subtask of its own), so
-      // this branch is ahead of the subtask checks below rather than inside them.
-      //
-      // A card already built by a step whose frame arrived first is FOUND here
-      // rather than replaced, which is what keeps the two orders equivalent.
+      // A WORKFLOW LAUNCH becomes the run's card, not a tool row, and the call sits in
+      // the parent agent's own block stream — so this branch is ahead of the subtask
+      // checks below. A card a step's frame built first is MOVED here rather than
+      // rebuilt, which is what keeps the two arrival orders equivalent.
       const runID = workflowInvocation(tc);
       if (subtask === "" && runID !== "") {
         bindRunCard(st, runID, tc);
@@ -1348,14 +1796,14 @@ function placeBlock(
       // like it, a box already built by a stage whose frame arrived first is FOUND
       // rather than replaced.
       if (subtask === "" && isPipelineInvocation(tc)) {
-        bindPipeline(st, m.id, tc, live);
+        bindPipeline(st, m.id, tc, live, i);
         return;
       }
       // The subagent invocation becomes the SubagentBlock's header, not a card.
       if (subtask !== "" && isSubagentInvocation(tc)) {
         const sa = st.subagents.get(subtask);
         if (sa !== undefined) {
-          bindSubagent(st, subtask, m.id, sa, tc);
+          bindSubagent(st, subtask, m.id, sa, tc, i);
         }
         return;
       }
@@ -1462,7 +1910,7 @@ function mountText(
       }
       accepted = v.full.length;
     });
-    pushLifetimeEffect(st, msgId, cleanup);
+    pushLifetimeEffect(st, msgId, i, cleanup);
   }
 }
 
@@ -1504,7 +1952,7 @@ function mountThinking(
       // tail past its own rendered text, so full text is already self-healing.
       view.setText(sig.value.full);
     });
-    pushLifetimeEffect(st, msgId, cleanup);
+    pushLifetimeEffect(st, msgId, i, cleanup);
   }
 }
 
@@ -1523,14 +1971,17 @@ function mountToolCard(
   stampBlock(st, card, msgId, i);
   // Cards live in the group's body region (the disclosure-collapsible
   // container), not on the group root beside the header.
-  groupBody(group).appendChild(card);
+  placeInContainer(st, groupBody(group), card);
+  if (containerOpen(`tool:${tc.id}`) === true) {
+    expandToolDetails(card); // a drop took this card while the reader had it open
+  }
   refreshGroupHeader(group);
   // The slot is THIS render's, disposed with it: the transcript's card and the
   // subagent page's detached card for the same call come and go independently
   // (the slot registry is a multimap). st.disposers, not pushLifetimeEffect —
   // a transcript card outlives turn end, and park suspends it through the
   // registry rather than disposing it.
-  st.disposers.push(() => {
+  pushDisposer(st, i, () => {
     disposeToolSlot(st.chatID, tc.id, card);
   });
 }
@@ -1556,7 +2007,7 @@ function mountTodo(
     updateTodoList(list, parseTodoItems(next));
     last = next;
   });
-  pushLifetimeEffect(st, msgId, () => {
+  pushLifetimeEffect(st, msgId, i, () => {
     cleanup();
     releaseToolSig(st, tc.id);
   });
@@ -1570,7 +2021,17 @@ function mountTodo(
  *  owner, and the WHY for painting unconditionally is stated there. Not folded into
  *  `bindSubagent`: the label comes from the stage COUNT, and the ledger sums across
  *  stages rather than one subtask's members. */
-function bindPipeline(st: MsgRender, msgId: string, tc: ToolCall, live: boolean): void {
+function bindPipeline(
+  st: MsgRender,
+  msgId: string,
+  tc: ToolCall,
+  live: boolean,
+  blockIndex: number,
+): void {
+  if (st.boundBoxes.has(tc.id)) {
+    return;
+  }
+  st.boundBoxes.add(tc.id);
   const paint = (next: ToolCall): void => {
     if (!driverNeedsBox(st, next)) {
       return;
@@ -1588,7 +2049,8 @@ function bindPipeline(st: MsgRender, msgId: string, tc: ToolCall, live: boolean)
     paint(next);
     last = next;
   });
-  pushLifetimeEffect(st, msgId, () => {
+  pushLifetimeEffect(st, msgId, blockIndex, () => {
+    st.boundBoxes.delete(tc.id);
     cleanup();
     releaseToolSig(st, tc.id);
   });
@@ -1636,7 +2098,12 @@ function bindSubagent(
   msgId: string,
   sa: SubagentView,
   tc: ToolCall,
+  blockIndex: number,
 ): void {
+  if (st.boundBoxes.has(tc.id)) {
+    return;
+  }
+  st.boundBoxes.add(tc.id);
   sa.setName(subagentLabel(tc));
   sa.setIcon(iconForSubagent(subagentName(tc)));
   sa.setStatus(tc.status);
@@ -1663,7 +2130,8 @@ function bindSubagent(
     sa.setSummary(subagentSummary(st, subtask, next));
     last = next;
   });
-  pushLifetimeEffect(st, msgId, () => {
+  pushLifetimeEffect(st, msgId, blockIndex, () => {
+    st.boundBoxes.delete(tc.id);
     cleanup();
     releaseToolSig(st, tc.id);
   });
@@ -1736,8 +2204,85 @@ function sealReasoning(st: MsgRender, container: HTMLElement): void {
  *  the append keeps the rule total: a mounter added later cannot forget it,
  *  because it cannot reach the DOM without it. */
 function appendBlock(st: MsgRender, container: HTMLElement, el: HTMLElement): void {
-  sealReasoning(st, container);
-  container.appendChild(el);
+  if (st.insertBefore === null) {
+    // Only a TAIL append supersedes an open trace: an INSERTED block is posted
+    // after nothing, and the trace it would seal is BELOW it.
+    sealReasoning(st, container);
+  }
+  placeInContainer(st, container, el);
+}
+
+/** Place `el` in `container`: before the insertion reference while a head extension
+ *  is in flight, at the end otherwise. The reference is the container's first child
+ *  when the extension first touches it, captured HERE because every creation path
+ *  reaches a container through this one function. It does not move as the extension
+ *  proceeds, which is what keeps the inserted ordinals ascending. */
+function placeInContainer(st: MsgRender, container: HTMLElement, el: HTMLElement): void {
+  const refs = captureInsertRef(st, container);
+  if (refs === null) {
+    container.appendChild(el);
+    return;
+  }
+  container.insertBefore(el, refs.get(container) ?? null);
+}
+
+/** Record `container`'s insertion boundary on the extension's FIRST touch even when it is
+ *  null, and answer the reference map. `has` rather than `?? capture`: a container the
+ *  extension created is empty then, so a re-capture takes its own first member. */
+function captureInsertRef(
+  st: MsgRender,
+  container: HTMLElement,
+): Map<HTMLElement, HTMLElement | null> | null {
+  const refs = st.insertBefore;
+  if (refs !== null && !refs.has(container)) {
+    refs.set(container, container.firstElementChild as HTMLElement | null);
+  }
+  return refs;
+}
+
+/** Bring an ALREADY-MOUNTED node down to the ordinal being inserted, and step the
+ *  reference past it. The reference is the boundary between inserted and pre-existing
+ *  content, so only a node at or BELOW it moves: a card the insertion itself placed is
+ *  above it, and moving that one carries it past every ordinal mounted since. A step
+ *  card's launch is the reachable case, and the anchor ladder reads DOM order. */
+function reseatInserted(st: MsgRender, container: HTMLElement, el: HTMLElement): void {
+  const refs = captureInsertRef(st, container);
+  if (refs === null) {
+    return;
+  }
+  const ref = refs.get(container) ?? null;
+  if (ref !== el) {
+    if (
+      ref === null ||
+      (el.compareDocumentPosition(ref) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+    ) {
+      return;
+    }
+    container.insertBefore(el, ref);
+  }
+  refs.set(container, el.nextElementSibling as HTMLElement | null);
+}
+
+/** Place a lazily-created CONTAINER where the STORE puts it: above the first mounted
+ *  ordinal after `at`, the index establishing it. The mount position is the RANGE's and
+ *  nothing moves a box later, so a range reaching the container BELOW that index would
+ *  leave it under ordinals the store puts after it — one run split into two groups, and
+ *  one window reached two ways two documents. `at` absent appends. */
+function placeContainer(
+  st: MsgRender,
+  host: HTMLElement,
+  el: HTMLElement,
+  at: number | undefined,
+): void {
+  const seat = at === undefined ? null : seatAbove(st, host, at, el);
+  if (seat === null) {
+    appendBlock(st, host, el);
+    return;
+  }
+  // Not `appendBlock`: a box above mounted content supersedes no trace, and the reference
+  // must be captured before the insert moves the first child.
+  captureInsertRef(st, host);
+  host.insertBefore(el, seat);
 }
 
 /** The group a card at run `runStart` joins, built on first use. */
@@ -1772,9 +2317,9 @@ function toolGroupFor(
 interface GroupIndex {
   /** container key → ascending indices at which a new run may START: one past a
    *  block that closed the container, a steer note's own anchor, or one past the
-   *  block at which a nested container's box LANDS — which is the first of its
-   *  blocks the RANGE reaches, not the first the store names. Every position here
-   *  is a mounted one, which is what makes a group's place range-independent. */
+   *  block at which a nested container's box is ESTABLISHED. Every position is the
+   *  STORE's, so one block answers one run start under any range — which a group's key
+   *  needs, because the group outlives the pass that built it. */
   readonly starts: ReadonlyMap<string, number[]>;
   /** container key → the last block index that posts anything into it, in the
    *  STORE: a trace is finished by a successor the store holds, whether or not
@@ -1793,7 +2338,6 @@ function indexGroups(
   m: Message,
   marks: readonly SteerMark[],
   live: boolean,
-  mountedFrom: number,
 ): GroupIndex {
   const blocks = m.blocks ?? [];
   const lastIdx = blocks.length - 1;
@@ -1801,7 +2345,6 @@ function indexGroups(
   const starts = new Map<string, number[]>();
   const lastPost = new Map<string, number>();
   const built = new Set<string>();
-  const landed = new Set<string>();
   const startAt = (key: string, at: number): void => {
     const list = starts.get(key);
     if (list === undefined) {
@@ -1816,20 +2359,17 @@ function indexGroups(
       startAt(key, at + 1);
     }
   };
-  // A box lands in its host — which for a pipeline stage is the pipeline's own box,
-  // whose creation posts at the top level in turn — at the first of its blocks the
-  // RANGE reaches, because that is where `containerFor` builds it. So the POST is
-  // priced at the store's own index, which is what seals a trace open in the host,
-  // and the BREAK where the box lands.
+  // Priced at the STORE's index (for a stage the host is its pipeline's box, whose own
+  // creation posts at the top level), and RECORDED there for `placeContainer`: the run
+  // break and the box's own seat are one fact, so no floor can move either.
   const openBox = (id: string, host: string, at: number): void => {
-    if (!built.has(id)) {
-      built.add(id);
-      lastPost.set(host, at);
+    if (built.has(id)) {
+      return;
     }
-    if (!landed.has(id) && at >= mountedFrom) {
-      landed.add(id);
-      startAt(host, at + 1);
-    }
+    built.add(id);
+    st.containerAt.set(id, at);
+    lastPost.set(host, at);
+    startAt(host, at + 1);
   };
   for (const [i, block] of blocks.entries()) {
     const key = containerKeyOf(block);
@@ -1863,9 +2403,9 @@ function indexGroups(
         }
         const runID = key === "" ? workflowInvocation(tc) : "";
         if (runID !== "") {
-          if (hostsRunCard(st, runID)) {
-            openBox(`run:${runID}`, "", i);
-          }
+          // UNCONDITIONAL, unlike the step arm: `bindRunCard` re-homes the card into
+          // the render holding the LAUNCH, so this block always mounts one here.
+          openBox(`run:${runID}`, "", i);
         } else if (key === "" && isPipelineInvocation(tc)) {
           // Priced at the DRIVER's block, where the box stands: `driverNeedsBox`
           // stops asking for one at a count of 1, and the box outlives that.

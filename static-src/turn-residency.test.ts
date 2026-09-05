@@ -948,6 +948,27 @@ describe("navigation onto a stub", () => {
     // The pin is residency only: the jump still leaves the turn folded.
     expect(isFolded("u1")).toBe(true);
   });
+
+  it("bounds the jumped-to body to the grant, never the whole turn", async () => {
+    // The newest turn has already spent the budget, so the grant is the only thing
+    // holding this one — and what it holds is one overscan each side of the ordinal
+    // asked for, not the 200 ordinals a whole-turn exemption would have mounted.
+    const id = chatID();
+    activate(id, [...heavyTurn("u1", 200), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
+    expect(hasBody("u1")).toBe(false);
+
+    await mountTurnBody(id, "u1", 100);
+    bumpMessages(id, "shape");
+
+    expect(hasBody("u1")).toBe(true);
+    // 48 ordinals at 8 blocks per row, so seven rows at worst — against the 25 a
+    // whole-turn exemption would have mounted.
+    expect(rowsIn("u1")).toBeGreaterThan(0);
+    expect(rowsIn("u1")).toBeLessThanOrEqual(Math.ceil((2 * OVERSCAN_BLOCKS) / 8) + 1);
+    expect(rowsIn("u1")).toBeLessThan(200 / 8);
+    // And the ordinals on BOTH sides of the grant stand behind their own spacer.
+    expect(spacersIn("u1")).toEqual(["__space_head__", "__space_tail__"]);
+  });
 });
 
 // --- Pagination -------------------------------------------------------------------

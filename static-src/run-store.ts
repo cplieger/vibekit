@@ -356,18 +356,12 @@ async function fetchRun(workflowID: string): Promise<void> {
   }
 }
 
-/** Forget a run's cached state.
- *
- *  The cache's ONLY bound, and it has to be called by a reader that knows it was
- *  the last one: three surfaces read a cell (the transcript's run card, the run
- *  view, the tab dot) and none of them can drop it unilaterally. The transcript
- *  card's unmount plus "no run tab open" is the one condition that is both cheap to
- *  test and genuinely last, so `messages-blocks.ts` is the caller.
- *
- *  Without it a long-lived page accumulates one state object per run it ever saw,
- *  which a workspace with a scheduled workflow reaches in a day. A later
- *  `invalidateRun` re-creates the cell, so forgetting early costs one fetch and
- *  never a wrong answer. */
+/** Forget a run's cached state: the cache's ONLY bound, callable only by a reader that
+ *  knows it was the LAST. Three surfaces read a cell (the transcript's card, the run
+ *  view, the tab dot), so the condition is the claim-holding card unmounting with no
+ *  run tab open — and early is NOT recoverable, because `cell()` mints a replacement
+ *  on the next read and an effect still on the deleted signal never re-runs again.
+ *  Without the bound a long-lived page keeps one state object per run it ever saw. */
 export function forgetRun(workflowID: string): void {
   cells.delete(workflowID);
   stale.delete(workflowID);

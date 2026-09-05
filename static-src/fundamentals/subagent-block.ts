@@ -163,6 +163,9 @@ export interface SubagentOptions {
   /** Fired when the disclosure flips; composition keys its open-container
    *  bookkeeping on ids this view never learns. */
   onOpenChange?: (open: boolean) => void;
+  /** Where the disclosure starts. Default false — a box the READER opened is the
+   *  only reason to pass true, and only composition knows that. */
+  startOpen?: boolean;
 }
 
 /** The footer's link to this delegate's own page. A real anchor with a click
@@ -190,14 +193,16 @@ function buildOpenLink(opener: SubagentOpener): HTMLAnchorElement {
   return link;
 }
 
-/** Build a delegated-work card. Collapsed by default, always. */
+/** Build a delegated-work card. Collapsed unless `startOpen` says otherwise. */
 export function buildSubagentBlock(
   name: string,
   status: ToolStatus,
   opts: SubagentOptions = {},
 ): SubagentView {
   const isContainer = opts.activity === "container";
-  const root = el("div", { className: "subagent-block collapsed" }) as HTMLDivElement;
+  const startOpen = opts.startOpen ?? false;
+  const root = el("div", { className: "subagent-block" }) as HTMLDivElement;
+  root.classList.toggle("collapsed", !startOpen);
   if (isContainer) {
     root.classList.add("subagent-container");
   }
@@ -253,7 +258,7 @@ export function buildSubagentBlock(
   root.append(header, ...(tail === null ? [] : [tail]), body, foot);
 
   const ctl = createDisclosure(header, body, {
-    open: false,
+    open: startOpen,
     onToggle: (open) => {
       root.classList.toggle("collapsed", !open);
       opts.onOpenChange?.(open);

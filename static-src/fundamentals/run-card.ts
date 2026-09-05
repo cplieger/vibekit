@@ -145,23 +145,32 @@ interface StepRow {
   endedAt?: string;
 }
 
+/** Both halves of the disclosure bookkeeping this view delegates: what a row was
+ *  last left at, and where a flip goes. Keyed by node path, `null` for the card
+ *  itself. `wasOpen` returning undefined leaves the card's own default standing. */
+export interface RunDisclosure {
+  readonly wasOpen: (nodePath: string | null) => boolean | undefined;
+  readonly onOpenChange: (nodePath: string | null, open: boolean) => void;
+}
+
 /** Build a run card. `name` is the best label at creation (recipe name from
  *  the invocation, or generic); later renders prefer the run's own
- *  `runLabel`. `onOpen` (the footer link) and `onOpenChange` (disclosure
- *  flips, keyed by node path / null for the card) are injected so this
+ *  `runLabel`. `onOpen` (the footer link) and `disclosure` are injected so this
  *  `fundamentals/` view avoids importing the feature module that owns run
  *  tabs and its open-container bookkeeping. Card mounts open; rows closed. */
 export function buildRunCard(
   workflowID: string,
   name: string,
   onOpen: (id: string, label: string) => void,
-  onOpenChange?: (nodePath: string | null, open: boolean) => void,
+  disclosure?: RunDisclosure,
 ): RunCardView {
   const root = el("div", {
     className: "run-card",
     "data-run": workflowID,
     "data-status": "starting",
   }) as HTMLDivElement;
+  const cardOpen = disclosure?.wasOpen(null) ?? true;
+  root.classList.toggle("collapsed", !cardOpen);
 
   // --- head -----------------------------------------------------------------
   const icon = el("span", { className: "run-icon", "aria-hidden": "true" }, iconEl(ICON_TAB_RUN));
@@ -222,10 +231,10 @@ export function buildRunCard(
   root.append(head, alert, body, foot);
 
   createDisclosure(head, body, {
-    open: true,
+    open: cardOpen,
     onToggle: (isOpen) => {
       root.classList.toggle("collapsed", !isOpen);
-      onOpenChange?.(null, isOpen);
+      disclosure?.onOpenChange(null, isOpen);
     },
   });
 
@@ -263,17 +272,14 @@ export function buildRunCard(
       chev,
     );
     const rowBody = el("div", { className: "run-step-body" });
-    const rowRoot = el(
-      "div",
-      { className: "run-step collapsed", "data-node": nodePath },
-      rowHead,
-      rowBody,
-    );
+    const rowRoot = el("div", { className: "run-step", "data-node": nodePath }, rowHead, rowBody);
+    const rowOpen = disclosure?.wasOpen(nodePath) ?? false;
+    rowRoot.classList.toggle("collapsed", !rowOpen);
     createDisclosure(rowHead, rowBody, {
-      open: false,
+      open: rowOpen,
       onToggle: (isOpen) => {
         rowRoot.classList.toggle("collapsed", !isOpen);
-        onOpenChange?.(nodePath, isOpen);
+        disclosure?.onOpenChange(nodePath, isOpen);
       },
     });
     row = { root: rowRoot, head: rowHead, glyph, name: nameEl2, meta, dur, body: rowBody };
