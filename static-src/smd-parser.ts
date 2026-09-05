@@ -4,19 +4,22 @@
 // Port of streaming-markdown v0.2.15 (MIT, © 2024 Damian Tarnawski)
 // https://github.com/thetarnav/streaming-markdown
 //
-// Rewritten in TypeScript with one substantive change: `add_text` appends
-// text via the renderer's callback instead of the fixed `appendChild(text
-// node)` form, so our renderer wraps each new text chunk in
-// `<span data-vk-chunk-enter>` and CSS fades it in as it mounts. (The
+// Rewritten in TypeScript with two substantive changes. First, `add_text`
+// appends text via the renderer's callback instead of the fixed
+// `appendChild(text node)` form, so our renderer wraps each new text chunk
+// in `<span data-vk-chunk-enter>` and CSS fades it in as it mounts. (The
 // upstream 0.2.15 Renderer interface could have been adapted to do the
-// same; the per-write callback alone would not justify a port.) The
-// standing justification for carrying this fork in-tree is unilateral
-// fixability — parser bugs get fixed here under this repo's invariant
-// tests without waiting on an upstream release — at the cost of manually
-// tracking upstream fixes. The parser is append-only, so old content
-// stays stable across flushes.
+// same; the per-write callback alone would not justify a port.) Second, a
+// `_` run preceded by a word character does not open emphasis, so
+// `snake_case` stays literal (CommonMark 6.2 delimiter runs). `*` is
+// unchanged, and the closing half of that rule is not implemented: an
+// append-only parser cannot un-open a token. The standing justification for
+// carrying this fork in-tree is unilateral fixability — parser bugs get
+// fixed here under this repo's invariant tests without waiting on an
+// upstream release — at the cost of manually tracking upstream fixes. The
+// parser is append-only, so old content stays stable across flushes.
 //
-// Behaviour matches the reference implementation: paragraphs, headings
+// Construct coverage matches the reference implementation: paragraphs, headings
 // (1-6), blockquotes, ordered/unordered/task lists, code blocks/fences/
 // inline, bold/italic/strike, links/images/raw URLs, tables, line breaks,
 // horizontal rules. The equation tokens carry their expression as TEXT, and the
@@ -116,6 +119,7 @@ export function parser<T>(renderer: Renderer<T>): Parser {
     indent: "",
     indent_len: 0,
     table_state: 0,
+    prev_is_word: false,
     write: parser_write,
   };
 }

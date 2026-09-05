@@ -305,6 +305,289 @@ describe("renderMarkdown edge cases (table-driven)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Intraword underscores (CommonMark 6.2 delimiter runs)
+//
+// A `_` run preceded by a word character is both left- and right-flanking, so
+// it can neither open nor close emphasis: `snake_case` is literal text. `*` has
+// no such exclusion, which is why `foo*bar*baz` still emphasises.
+// ---------------------------------------------------------------------------
+
+describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
+  const cases: { name: string; input: string; expected: string | RegExp }[] = [
+    // --- The reported defect ---
+    {
+      name: "the reported string renders literally",
+      input: "run_progress shape, tool_call_update as a delta",
+      expected: "<p>run_progress shape, tool_call_update as a delta</p>",
+    },
+    { name: "snake_case renders literally", input: "snake_case", expected: "<p>snake_case</p>" },
+    { name: "a_b_c renders literally", input: "a_b_c", expected: "<p>a_b_c</p>" },
+    { name: "a__b renders literally", input: "a__b", expected: "<p>a__b</p>" },
+    {
+      name: "MAX_RETRIES and MIN_WAIT render literally",
+      input: "MAX_RETRIES and MIN_WAIT",
+      expected: "<p>MAX_RETRIES and MIN_WAIT</p>",
+    },
+
+    // --- What counts as a word character ---
+    {
+      name: "digits are word characters",
+      input: "5_000_000 rows",
+      expected: "<p>5_000_000 rows</p>",
+    },
+    {
+      name: "non-ASCII letters are word characters",
+      input: "über_wert und café_bar",
+      expected: "<p>über_wert und café_bar</p>",
+    },
+    {
+      name: "CJK characters are word characters",
+      input: "日本_語 test",
+      expected: "<p>日本_語 test</p>",
+    },
+
+    // --- Emphasis at a word boundary is untouched ---
+    {
+      name: "_emphasis_ at line start still emphasises",
+      input: "_emphasis_",
+      expected: "<p><em>emphasis</em></p>",
+    },
+    {
+      name: "_em_ after a space still emphasises",
+      input: "x _y_ z",
+      expected: "<p>x <em>y</em> z</p>",
+    },
+    {
+      name: "_em_ spanning words still emphasises",
+      input: "a _b c_ d",
+      expected: "<p>a <em>b c</em> d</p>",
+    },
+    {
+      name: "__strong__ still emphasises",
+      input: "__strong__",
+      expected: "<p><strong>strong</strong></p>",
+    },
+    {
+      name: "___tri___ still nests strong in em",
+      input: "___tri___",
+      expected: "<p><strong><em>tri</em></strong></p>",
+    },
+
+    // --- The asymmetry: `*` carries no both-flanking exclusion ---
+    {
+      name: "* is still allowed intraword",
+      input: "foo*bar*baz",
+      expected: "<p>foo<em>bar</em>baz</p>",
+    },
+    {
+      name: "*intraword* still emphasises",
+      input: "*intraword*",
+      expected: "<p><em>intraword</em></p>",
+    },
+
+    // --- Contexts where `_` was already inert ---
+    {
+      name: "_ inside an inline code span stays literal",
+      input: "`snake_case`",
+      expected: "<p><code>snake_case</code></p>",
+    },
+    {
+      name: "_ inside a fenced block stays literal",
+      input: "```\nsnake_case\n```",
+      expected: '<pre class="code"><code>snake_case</code></pre>',
+    },
+    {
+      // A PRE-EXISTING divergence from CommonMark, caused by handleCommon's
+      // STRONG_AST guard rather than by the delimiter rule. Characterization.
+      name: "_ inside ** is literal today (characterization)",
+      input: "**_both_**",
+      expected: "<p><strong>_both_</strong></p>",
+    },
+    {
+      name: "* inside __ still emphasises",
+      input: "__*both*__",
+      expected: "<p><strong><em>both</em></strong></p>",
+    },
+
+    // --- Underscores with no closer ---
+    {
+      name: "a lone trailing underscore stays literal",
+      input: "trailing_",
+      expected: "<p>trailing_</p>",
+    },
+    {
+      name: "an underscore before a space stays literal",
+      input: "text_ end",
+      expected: "<p>text_ end</p>",
+    },
+    {
+      name: "an escaped underscore stays literal",
+      input: "escaped \\_not em\\_ here",
+      expected: "<p>escaped _not em_ here</p>",
+    },
+
+    // --- The lookbehind is punctuation- and boundary-aware ---
+    {
+      name: "punctuation before the underscore still opens",
+      input: "(_em_)",
+      expected: "<p>(<em>em</em>)</p>",
+    },
+    {
+      name: "punctuation after the emphasis still closes",
+      input: "_em_.",
+      expected: "<p><em>em</em>.</p>",
+    },
+    {
+      name: "an underscore right after a closed strong token still opens",
+      input: "**bold**_it_",
+      expected: "<p><strong>bold</strong><em>it</em></p>",
+    },
+    {
+      name: "an underscore right after a closed code span still opens",
+      input: "`c`_x_",
+      expected: "<p><code>c</code><em>x</em></p>",
+    },
+
+    // --- Every block context reached the same defect ---
+    {
+      name: "snake_case in a link label keeps the href",
+      input: "[snake_case](https://e.com)",
+      expected: '<p><a target="_blank" rel="noopener" href="https://e.com">snake_case</a></p>',
+    },
+    {
+      name: "snake_case in a heading renders literally",
+      input: "# snake_case heading",
+      expected: "<h1>snake_case heading</h1>",
+    },
+    {
+      name: "snake_case in a list item renders literally",
+      input: "- item_name here",
+      expected: "<ul><li>item_name here</li></ul>",
+    },
+    {
+      name: "snake_case in an ordered list renders literally",
+      input: "1. num_one and _em_",
+      expected: "<ol><li>num_one and <em>em</em></li></ol>",
+    },
+    {
+      name: "snake_case in a blockquote renders literally",
+      input: "> quote_with_underscore",
+      expected: "<blockquote><p>quote_with_underscore</p></blockquote>",
+    },
+    {
+      // The `_` used to swallow the closing `|`, so the whole table collapsed
+      // into headings and a paragraph. Structure is part of the fix.
+      name: "snake_case in a table cell renders literally",
+      input: "\n| a_b | c |\n|---|---|\n| d_e | f |\n",
+      expected:
+        "<table><thead><tr><th> a_b </th><th> c </th></tr></thead>" +
+        "<tbody><tr><td> d_e </td><td> f </td></tr></tbody></table>",
+    },
+    {
+      name: "snake_case in a task list renders literally",
+      input: "- [x] task_name _em_",
+      expected:
+        '<ul><li><input type="checkbox" disabled="" aria-label="Task item" checked=""> ' +
+        "task_name <em>em</em></li></ul>",
+    },
+
+    // --- The lookbehind resets at every boundary the parser produces ---
+    {
+      name: "a soft line break resets the lookbehind",
+      input: "a_b\n_real_",
+      expected: "<p>a_b<br><em>real</em></p>",
+    },
+    { name: "a <br> resets the lookbehind", input: "a<br>_x_", expected: "<p>a<br><em>x</em></p>" },
+    {
+      name: "a paragraph break resets the lookbehind",
+      input: "a_b\n\n_real_",
+      expected: "<p>a_b</p><p><em>real</em></p>",
+    },
+    {
+      name: "an underscore after a horizontal rule still opens",
+      input: "---\n\n_em_ after rule",
+      expected: "<hr><p><em>em</em> after rule</p>",
+    },
+    {
+      name: "strikethrough closes over an intraword underscore",
+      input: "~~a_b~~",
+      expected: "<p><s>a_b</s></p>",
+    },
+    {
+      name: "an intraword underscore outside a code span stays literal",
+      input: "a_b `c_d` e_f",
+      expected: "<p>a_b <code>c_d</code> e_f</p>",
+    },
+
+    // --- Nesting inside an already-open `_` token is unchanged. These pin the
+    //     token stack: guarding the nested opens in handleItalic/handleStrong
+    //     instead of in handleCommon corrupted every one of them.
+    {
+      name: "nested __ inside _ is unchanged (characterization)",
+      input: "_a__b__c_",
+      expected: "<p><em>a<strong>b</strong>c</em></p>",
+    },
+    {
+      name: "nested _ inside __ is unchanged (characterization)",
+      input: "__a _b_ c__",
+      expected: "<p><strong>a <em>b</em> c</strong></p>",
+    },
+    {
+      name: "an unbalanced __ inside _ is unchanged (characterization)",
+      input: "_a__b_",
+      expected: "<p><em>a<strong>b<em></em></strong></em></p>",
+    },
+    {
+      name: "an intraword _ inside __ is unchanged (characterization)",
+      input: "__a_b_c__",
+      expected: "<p><strong>a<em>b</em>c</strong></p>",
+    },
+    {
+      name: "a trailing __ inside _ is unchanged (characterization)",
+      input: "_x__y__",
+      expected: "<p><em>x<strong>y</strong></em></p>",
+    },
+    {
+      name: "a trailing _ inside __ is unchanged (characterization)",
+      input: "__x_y_",
+      expected: "<p><strong>x<em>y</em></strong></p>",
+    },
+  ];
+
+  it.each(cases)("$name", ({ input, expected }) => {
+    const html = renderMarkdown(input);
+    if (typeof expected === "string") {
+      expect(html).toBe(expected);
+    } else {
+      expect(html).toMatch(expected);
+    }
+  });
+
+  // The close half of the CommonMark rule is deliberately not implemented: an
+  // append-only parser cannot un-open a token, so refusing the close would leave
+  // the emphasis running to the end of the line — louder than closing it early.
+  // CommonMark renders both of these literally.
+  it("_foo_bar closes early (known limitation)", () => {
+    expect(renderMarkdown("_foo_bar")).toBe("<p><em>foo</em>bar</p>");
+  });
+
+  it("_foo bar_baz closes early (known limitation)", () => {
+    expect(renderMarkdown("_foo bar_baz")).toBe("<p><em>foo bar</em>baz</p>");
+  });
+
+  // A run of three or more only goes literal for its first two characters. The
+  // rule is evaluated per delimiter, and the blocked pair lands in the text
+  // buffer, so the remainder of the run reads a `_` — punctuation — as what
+  // precedes it and may open after all. Closer to CommonMark (which renders the
+  // whole run literally) than the `a<strong><em>b` this used to produce, and the
+  // shortfall needs the same delimiter stack the close half does.
+  it("a run of three or more underscores goes partly literal (known limitation)", () => {
+    expect(renderMarkdown("a___b")).toBe("<p>a__<em>b</em></p>");
+    expect(renderMarkdown("a____b")).toBe("<p>a__<strong>b</strong></p>");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Property-based streaming invariant: MarkdownRenderer append-only contract
 // (tarch-b14-c4-p2)
 // ---------------------------------------------------------------------------

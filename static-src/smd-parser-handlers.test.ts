@@ -5,7 +5,14 @@ import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 import { parser, parser_write, parser_end, DOCUMENT } from "./smd-parser.js";
 import type { Parser } from "./smd-parser.js";
-import { HREF, PARAGRAPH, RAW_URL, STRONG_AST } from "./smd-parser-types.js";
+import {
+  HREF,
+  ITALIC_UND,
+  LINE_BREAK,
+  PARAGRAPH,
+  RAW_URL,
+  STRONG_AST,
+} from "./smd-parser-types.js";
 
 /** No-op renderer for structural testing. */
 function nullRenderer() {
@@ -197,5 +204,48 @@ describe("handleRawURL trailing boundary", () => {
       }),
       { numRuns: 8 },
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The intraword-underscore lookbehind, across write boundaries
+//
+// `parser_write` ends with `add_text`, which hands `textBuf` to the renderer and
+// clears it — so at a chunk boundary the character before the `_` is gone from
+// the buffer, and the rule has to be answered from retained state instead.
+// ---------------------------------------------------------------------------
+
+describe("intraword underscore lookbehind across writes", () => {
+  it("survives a write boundary that lands on the underscore", () => {
+    // Chunk 4 puts the boundary exactly after `run_`, so `textBuf` is empty when
+    // the rule is evaluated. A one-shot parse cannot reach this state.
+    expect(trace("run_progress", 4).tokens).not.toContain(ITALIC_UND);
+  });
+
+  it("is chunk-size invariant", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 8 }), (chunkLen) => {
+        const input = "run_progress shape, tool_call_update as a delta";
+        expect(trace(input, chunkLen).texts.join("")).toBe(trace(input).texts.join(""));
+        expect(trace(input, chunkLen).tokens).toEqual(trace(input).tokens);
+      }),
+      { numRuns: 8 },
+    );
+  });
+
+  it("a paragraph-initial underscore still opens after the promotion re-feed", () => {
+    // handleRootContext re-feeds `_e` when it promotes the pending text to a
+    // paragraph, which is why the lookbehind tracks COMMITTED text rather than
+    // the previous input character.
+    expect(trace("_em_").tokens).toEqual([PARAGRAPH, ITALIC_UND]);
+  });
+
+  it("a soft break resets the lookbehind under chunking", () => {
+    // The soft break emits LINE_BREAK straight to the renderer, bypassing the
+    // helpers that own the flag — so without a reset there the `a_b` verdict
+    // outlives the line and `_real_` never opens.
+    const t = trace("a_b\n_real_\n", 3);
+    expect(t.tokens).toEqual([PARAGRAPH, LINE_BREAK, ITALIC_UND]);
+    expect(t.texts.join("")).toBe("a_breal");
   });
 });

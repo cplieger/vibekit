@@ -138,26 +138,60 @@ export interface Parser {
   hr_char: string;
   hr_chars: number;
   table_state: number;
+  /** Whether the last COMMITTED character was a word character — the lookbehind
+   *  for CommonMark 6.2, where a `_` run preceded by one cannot open emphasis.
+   *  Reading `textBuf`'s last character alone is not enough: `parser_write` ends
+   *  with `add_text` (smd-parser.ts), which hands the buffer to the renderer and
+   *  clears it, so a chunk boundary landing between `run_` and `progress` would
+   *  otherwise lose the `n`. */
+  prev_is_word: boolean;
   write: (p: Parser, chunk: string) => void;
 }
 
 // --- Pure utility functions ---
 
+/** CommonMark's word character: neither Unicode whitespace nor Unicode
+ *  punctuation, which makes every letter and digit in every script one. */
+const NOT_WORD = /[\s\p{P}\p{S}]/u;
+
+function is_word_char(ch: string): boolean {
+  return ch !== "" && !NOT_WORD.test(ch);
+}
+
+export function prev_is_word_char(p: Parser): boolean {
+  return p.textBuf === "" ? p.prev_is_word : is_word_char(p.textBuf.charAt(p.textBuf.length - 1));
+}
+
+/** Emit a leaf token (rule, line break, checkbox) straight to the renderer.
+ *  Deliberately does NOT touch the token stack — a leaf has no content, so
+ *  nothing may nest inside it. */
+export function emit_leaf(p: Parser, token: Token, attr?: Attr): void {
+  p.prev_is_word = false;
+  p.renderer.add_token(p.renderer.data, token);
+  if (attr !== undefined) {
+    p.renderer.set_attr(p.renderer.data, attr, "");
+  }
+  p.renderer.end_token(p.renderer.data);
+}
+
 export function add_text(p: Parser): void {
   if (p.textBuf === "") {
     return;
   }
+  p.prev_is_word = is_word_char(p.textBuf.charAt(p.textBuf.length - 1));
   p.renderer.add_text(p.renderer.data, p.textBuf);
   p.textBuf = "";
 }
 
 export function end_token(p: Parser): void {
+  p.prev_is_word = false;
   p.len -= 1;
   p.token = p.tokens[p.len] as Token;
   p.renderer.end_token(p.renderer.data);
 }
 
 export function add_token(p: Parser, token: Token): void {
+  p.prev_is_word = false;
   if (
     (p.tokens[p.len] === LIST_ORDERED || p.tokens[p.len] === LIST_UNORDERED) &&
     token !== LIST_ITEM
@@ -256,6 +290,7 @@ export function clear_root_pending(p: Parser): void {
   p.indent = "";
   p.indent_len = 0;
   p.pending = "";
+  p.prev_is_word = false;
 }
 
 export function is_digit(cc: number): boolean {
