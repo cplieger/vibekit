@@ -76,22 +76,42 @@ const DELIMITER_ROW_CHARS = new Set(["-", " ", "\t", "|", ":"]);
 
 /** A table row's cells, split the way the row handlers split them: a leading `|`
  *  opens the row rather than a cell, a trailing one closes the last cell rather
- *  than opening another, and a backslash hides the character after it.
+ *  than opening another, and neither a backslash-escaped pipe nor one inside a
+ *  code span is a delimiter.
  *
- *  The escape is the half a plain `split("|")` gets wrong. `handleCommon`'s `\`
- *  arm consumes `\|` into the cell text, so the row handlers never see that pipe
- *  as a delimiter — and a header counted with it splits at a cell count the
- *  delimiter row underneath cannot match, which loses the whole table. */
+ *  Those two are the halves a plain `split("|")` gets wrong, and both matter for
+ *  the same reason: this count is what the delimiter row is measured against, so
+ *  a count the CELL WALKER would never produce loses the whole table or opens
+ *  one whose header and body disagree. `handleCommon`'s `\` arm consumes `\|`
+ *  into the cell text, and CODE_INLINE is dispatched with `actionAlwaysContinue`
+ *  so the `|` arm never runs inside a code span — which is why vibekit keeps
+ *  `` `a | b` `` as ONE cell where the GFM reference splits it into two, and why
+ *  the delimiter row has to agree with one cell rather than two. */
 function table_row_cells(row: string): string[] {
   const body = row.replace(/^[ \t]+/u, "").replace(/[ \t]+$/u, "");
   const cells: string[] = [];
   let cell = "";
+  let fence = 0;
   for (let i = body.startsWith("|") ? 1 : 0; i < body.length; i += 1) {
     const ch = body.charAt(i);
     if (ch === "\\" && i + 1 < body.length) {
       cell += ch + body.charAt(i + 1);
       i += 1;
-    } else if (ch === "|") {
+    } else if (ch === "`") {
+      // A run closes the span only at its own length, which is what makes
+      // ``` ``a | b`` ``` one cell as well.
+      let run = 1;
+      while (body.charAt(i + run) === "`") {
+        run += 1;
+      }
+      if (fence === 0) {
+        fence = run;
+      } else if (fence === run) {
+        fence = 0;
+      }
+      cell += "`".repeat(run);
+      i += run - 1;
+    } else if (ch === "|" && fence === 0) {
       cells.push(cell);
       cell = "";
     } else {
@@ -575,6 +595,18 @@ export function handleTableCell(p: Parser, char: string, _pending_with_char: str
     add_text(p);
     end_token(p);
     p.pending = "";
+    p.write(p, char);
+    return true;
+  }
+  if (p.pending === "\n") {
+    // GFM makes the trailing pipe optional, so a newline ends the last cell as
+    // well as the row. `handleTableRow` has always had this arm; without the
+    // cell's own the newline reached handleCommon and became a LINE BREAK, the
+    // row never terminated, and the delimiter row underneath was read as more
+    // header cells.
+    add_text(p);
+    end_token(p);
+    p.pending = "\n";
     p.write(p, char);
     return true;
   }
