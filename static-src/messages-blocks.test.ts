@@ -1576,6 +1576,25 @@ describe("thinking blocks mount open per LANE and seal on the next sibling", () 
     expect(labelOf(t)).not.toBe("Thinking…");
   });
 
+  it("seals the parent trace for a delegate box the RANGE never mounts", () => {
+    // The delegate's prose is above the range, so no append can seal the trace and
+    // the store is the only witness that it finished. The box's creation is priced
+    // into its host at the index the STORE gives it, which is what says so.
+    const wrap = document.createElement("div");
+    buildAssistantBody(
+      wrap,
+      liveMsg([thinking("parent trace"), text("delegate prose", "sub-B")]),
+      CHAT_ID,
+      true,
+      [],
+      { from: 0, to: 1 },
+    );
+    expect(traces(wrap)).toHaveLength(1);
+    const [t] = traces(wrap);
+    expect(t?.open).toBe(false);
+    expect(labelOf(t)).not.toBe("Thinking…");
+  });
+
   it("seals the trace and starts a NEW tool group below it when a tool call follows", () => {
     // The pileup fix: tool cards used to keep joining the group ABOVE the
     // trace, so a think→tool loop rendered as one stack of cards over a pile
@@ -1912,6 +1931,30 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
   });
 
   it("mounts a mid-message range with the grouping a whole mount gives it", () => {
+    // The DELEGATE's box is established at block 2, below the range, so this range
+    // builds it at block 4 — the first of its blocks the range holds. A break
+    // priced at block 2 instead puts both in-range cards in one group, and that
+    // group sits where its FIRST card mounted: above the box block 5's card
+    // follows. The whole mount's relative order is the property, over the three
+    // blocks this range holds.
+    const blocks = [
+      text("intro"),
+      toolUse("t1"),
+      toolUse("inv", "sub-D"),
+      toolUse("t2"),
+      text("delegate prose", "sub-D"),
+      toolUse("t3"),
+    ];
+    const calls = [cmd("t1"), call("inv", "Sub-agent: helper"), cmd("t2"), cmd("t3")];
+    const whole = renderRange(blocks, calls, { id: "m-eq-whole" });
+    expect(shape(whole.wrap)).toEqual(["text(intro)", "group(1)", "card(sub-D)", "group(2)"]);
+
+    resetBlockRenders();
+    const partial = renderRange(blocks, calls, { id: "m-eq-part", range: { from: 3, to: 6 } });
+    expect(shape(partial.wrap)).toEqual(["group(1)", "card(sub-D)", "group(1)"]);
+  });
+
+  it("mounts a container-free mid-message range as the whole mount's own markup", () => {
     const blocks = [
       text("intro"),
       toolUse("t1"),
@@ -1933,6 +1976,112 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
     const partial = renderRange(blocks, calls, { range: { from: 3, to: 6 } });
     expect(shape(partial.wrap)).toEqual(["text(mid)", "group(2)"]);
     expect(blocksHTML(partial.wrap)).toBe(tail);
+  });
+
+  it("keeps a mid-message range's cards around a RUN CARD the range builds", () => {
+    // The launch block is the establishing block here, and it is below the range:
+    // the card is built at the step block instead, so the break belongs there.
+    const wf = {
+      id: "l-win",
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      workflow_id: "wf-win",
+    } as unknown as ToolCall;
+    const blocks = [
+      text("intro"),
+      toolUse("t1"),
+      toolUse("l-win"),
+      toolUse("t2"),
+      text("step work", "wf:wf-win:wf-win/build"),
+      toolUse("t3"),
+    ];
+    const calls = [cmd("t1"), wf, cmd("t2"), cmd("t3")];
+    /** `shape` has no name for a run card, so substitute one positionally. */
+    const runShape = (wrap: HTMLElement): string[] => {
+      const named = shape(wrap);
+      return [...(wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e, i) =>
+        e.classList.contains("run-card") ? "run" : (named[i] ?? "?"),
+      );
+    };
+    const whole = renderRange(blocks, calls, { id: "m-rw" });
+    expect(runShape(whole.wrap)).toEqual(["text(intro)", "group(1)", "run", "group(2)"]);
+
+    resetBlockRenders();
+    const partial = renderRange(blocks, calls, { id: "m-rp", range: { from: 3, to: 6 } });
+    expect(runShape(partial.wrap)).toEqual(["group(1)", "run", "group(1)"]);
+  });
+
+  it("keeps a mid-message range's cards around a PIPELINE box the range builds", () => {
+    const driver = {
+      id: "d-win",
+      title: "Orchestrate Sub-agent",
+      kind: "other",
+      status: "completed",
+      input: { stages: [{}, {}] },
+    } as unknown as ToolCall;
+    const stage = {
+      id: "invoke_subagent_d-win_stage_plan",
+      title: "Sub-agent: plan",
+      kind: "other",
+      status: "completed",
+      agent_subtask_id: "u-win",
+    } as unknown as ToolCall;
+    const blocks = [
+      text("intro"),
+      toolUse("t1"),
+      toolUse("d-win"),
+      toolUse("t2"),
+      text("stage prose", "u-win"),
+      toolUse("t3"),
+    ];
+    const calls = [cmd("t1"), driver, cmd("t2"), cmd("t3"), stage];
+    const whole = renderRange(blocks, calls, { id: "m-pw2" });
+    expect(shape(whole.wrap)).toEqual(["text(intro)", "group(1)", "pipeline(d-win)", "group(2)"]);
+
+    resetBlockRenders();
+    const partial = renderRange(blocks, calls, { id: "m-pp", range: { from: 3, to: 6 } });
+    expect(shape(partial.wrap)).toEqual(["group(1)", "pipeline(d-win)", "group(1)"]);
+  });
+
+  it("keeps a tail extension's card below a box the earlier slice built", () => {
+    // The box's own first block is below the window, so the break belongs at the
+    // block that BUILT it — and the extension has to price it the same way, or its
+    // card joins the group that opened above the box.
+    const blocks = [
+      toolUse("t0"),
+      toolUse("inv", "sub-F"),
+      toolUse("t1"),
+      text("delegate prose", "sub-F"),
+      toolUse("t2"),
+    ];
+    const calls = [cmd("t0"), call("inv", "Sub-agent: helper"), cmd("t1"), cmd("t2")];
+    const first = renderRange(blocks, calls, { id: "m-ext", range: { from: 2, to: 4 } });
+    expect(shape(first.wrap)).toEqual(["group(1)", "card(sub-F)"]);
+
+    updateAssistantBody(first.wrap, first.m, CHAT_ID, false, [], { from: 2, to: 5 });
+    expect(shape(first.wrap)).toEqual(["group(1)", "card(sub-F)", "group(1)"]);
+  });
+
+  it("breaks the run at a box that lands on the range's own first block", () => {
+    // The delegate's first block IS the floor, so the box lands there and the two
+    // cards below it are one run. Priced at the container's NEXT block instead, a
+    // break appears between them that the whole mount does not have.
+    const blocks = [
+      text("intro"),
+      toolUse("t0"),
+      text("delegate a", "sub-E"),
+      toolUse("t1"),
+      text("delegate b", "sub-E"),
+      toolUse("t2"),
+    ];
+    const calls = [cmd("t0"), cmd("t1"), cmd("t2")];
+    const whole = renderRange(blocks, calls, { id: "m-fw" });
+    expect(shape(whole.wrap)).toEqual(["text(intro)", "group(1)", "card(sub-E)", "group(2)"]);
+
+    resetBlockRenders();
+    const partial = renderRange(blocks, calls, { id: "m-fp", range: { from: 2, to: 6 } });
+    expect(shape(partial.wrap)).toEqual(["card(sub-E)", "group(2)"]);
   });
 
   it("builds the same DOM whether the range arrived in one slice or two", () => {
