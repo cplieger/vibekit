@@ -41,6 +41,7 @@ import {
   add_text,
   emit_leaf,
   end_token,
+  end_token_unresolved,
   add_token,
   add_inline_token,
   has_token_room,
@@ -204,7 +205,13 @@ function table_row_cells(row: string): string[] {
  *  `---` is a table. Requiring one would read that as a thematic break, where
  *  the GFM reference reads a table; the multi-column case needs no rule of its
  *  own, since a pipeless line cannot match a header of two cells or more. */
-function is_delimiter_row(cells: string[], header_cells: number): boolean {
+function is_delimiter_row(row: string, cells: string[], header_cells: number): boolean {
+  // GFM reads a `-`, `*` or `+` followed by a space or tab at line start as a
+  // BULLET, and that outranks the delimiter row. The space is what keeps `-|-`
+  // a delimiter row; `- - -` is already ruled out by the per-cell test.
+  if (/^[ \t]*[-*+][ \t]/u.test(row)) {
+    return false;
+  }
   if (cells.length === 0 || cells.length !== header_cells) {
     return false;
   }
@@ -450,7 +457,7 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
         const header = p.pending.slice(0, nl);
         const delim = p.pending.slice(nl + 1);
         const cells = table_row_cells(delim);
-        if (!is_delimiter_row(cells, table_row_cells(header).length)) {
+        if (!is_delimiter_row(delim, cells, table_row_cells(header).length)) {
           break;
         }
         end_tokens_to_len(p, p.blockquote_idx);
@@ -1119,7 +1126,13 @@ export function handleLinkOrImage(p: Parser, char: string, pending_with_char: st
     if (char === "(") {
       p.pending = pending_with_char;
     } else {
-      end_token(p);
+      // No destination, so this was never a link: an anchor with no href is not
+      // focusable and not followable, and the transcript styles it as link text.
+      // The renderer unwraps it and restores the `[` or `![` it consumed; the
+      // `]` goes to the PARENT, after the close, since the element it would
+      // otherwise land in has just left the document.
+      end_token_unresolved(p);
+      p.textBuf += "]";
       p.pending = char;
     }
     return true;
