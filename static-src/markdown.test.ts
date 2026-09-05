@@ -1177,6 +1177,127 @@ describe("renderMarkdown brackets inside a link label", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A link or image destination and its optional title (CommonMark 6.3): the
+// title may be delimited by quotes or parentheses, the destination may be
+// wrapped in angle brackets, and a destination's parentheses may be balanced.
+// A run that has none of those shapes keeps the whole run as the href.
+// ---------------------------------------------------------------------------
+
+describe("renderMarkdown link destinations and titles", () => {
+  const A = '<a target="_blank" rel="noopener"';
+
+  const cases: { name: string; input: string; expected: string }[] = [
+    {
+      name: "a double-quoted title",
+      input: '[a](http://e.com "the title")',
+      expected: `<p>${A} href="http://e.com" title="the title">a</a></p>`,
+    },
+    {
+      name: "a single-quoted title",
+      input: "[a](http://e.com 'the title')",
+      expected: `<p>${A} href="http://e.com" title="the title">a</a></p>`,
+    },
+    {
+      name: "a parenthesised title",
+      input: "[a](http://e.com (the title))",
+      expected: `<p>${A} href="http://e.com" title="the title">a</a></p>`,
+    },
+    {
+      name: "a tab separating the title",
+      input: '[a](http://e.com\t"t")',
+      expected: `<p>${A} href="http://e.com" title="t">a</a></p>`,
+    },
+    {
+      name: "an image title",
+      input: '![a](http://e.com/i.png "t")',
+      expected: '<p><img alt="a" src="http://e.com/i.png" title="t"></p>',
+    },
+    {
+      name: "an escaped quote inside a title",
+      input: '[a](http://e.com "a \\" b")',
+      expected: `<p>${A} href="http://e.com" title="a &quot; b">a</a></p>`,
+    },
+    {
+      name: "an angle-bracketed destination",
+      input: "[a](<http://e.com>)",
+      expected: `<p>${A} href="http://e.com">a</a></p>`,
+    },
+    {
+      // A space inside the brackets is a legal destination character. The
+      // reference percent-encodes it; this parser never rewrites a URL.
+      name: "a space inside an angle-bracketed destination",
+      input: "[a](<http://e.com/a b>)",
+      expected: `<p>${A} href="http://e.com/a b">a</a></p>`,
+    },
+    {
+      name: "an angle-bracketed destination with a title",
+      input: '[a](<http://e.com> "t")',
+      expected: `<p>${A} href="http://e.com" title="t">a</a></p>`,
+    },
+    {
+      name: "balanced parentheses in a destination",
+      input: "[a](http://e.com/x(1))",
+      expected: `<p>${A} href="http://e.com/x(1)">a</a></p>`,
+    },
+    {
+      name: "parentheses nested two deep in a destination",
+      input: "[a](http://e.com/x(y(z)))",
+      expected: `<p>${A} href="http://e.com/x(y(z))">a</a></p>`,
+    },
+    {
+      // A DIVERGENCE, recorded: both references render this literally. Keeping
+      // the title is the reading that loses nothing.
+      name: "a title with no destination",
+      input: '[a]( "the title")',
+      expected: `<p>${A} href="" title="the title">a</a></p>`,
+    },
+    {
+      name: "the scheme gate still fires on a link that carries a title",
+      input: '[a](javascript:alert(1) "t")',
+      expected: `<p>${A} href="#" title="t">a</a></p>`,
+    },
+  ];
+
+  it.each(cases)("$name", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+
+  // A run that does not parse as `destination [whitespace title]` keeps the
+  // whole run as the href, which is what it did before titles were read.
+  const characterization: { name: string; input: string; expected: string }[] = [
+    {
+      name: "an unterminated title",
+      input: '[a](http://e.com "the title)',
+      expected: `<p>${A} href="http://e.com &quot;the title">a</a></p>`,
+    },
+    {
+      name: "a space in a destination",
+      input: "[a](http://e.com/a b)",
+      expected: `<p>${A} href="http://e.com/a b">a</a></p>`,
+    },
+    {
+      name: "text after a title",
+      input: '[a](http://e.com "t" x)',
+      expected: `<p>${A} href="http://e.com &quot;t&quot; x">a</a></p>`,
+    },
+    {
+      name: "an empty destination",
+      input: "[a]()",
+      expected: `<p>${A} href="">a</a></p>`,
+    },
+    {
+      name: "a plain link",
+      input: "[a](http://e.com)",
+      expected: `<p>${A} href="http://e.com">a</a></p>`,
+    },
+  ];
+
+  it.each(characterization)("keeps today's reading for $name", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A bare URL followed by CJK punctuation.
 //
 // A CJK punctuation character is not on its own evidence that a URL ended —

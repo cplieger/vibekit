@@ -109,12 +109,17 @@ const ATTRS = {
    *  row's colons. Not an HTML attribute either: the renderer applies it to each
    *  cell by position. Emitted on the TABLE token before its first row. */
   ALIGN: 64,
+  /** A link's or image's title (CommonMark 6.3). Always emitted AFTER the
+   *  HREF/SRC of the same token: `set_attr` may swap an `<img>` for a media
+   *  element built from its src and alt alone, which discards anything set
+   *  before it. */
+  TITLE: 128,
 } as const satisfies Record<string, number>;
 
 /** Attr type derived from the ATTRS constant object. */
 export type Attr = (typeof ATTRS)[keyof typeof ATTRS];
 
-export const { HREF, SRC, LANG, CHECKED, START, UNCLOSED, ALIGN } = ATTRS;
+export const { HREF, SRC, LANG, CHECKED, START, UNCLOSED, ALIGN, TITLE } = ATTRS;
 
 export const TOKEN_ARRAY_CAP = 24;
 
@@ -477,6 +482,7 @@ const ATTR_HTML_MAP: Readonly<Record<number, string>> = {
   [LANG as number]: "class",
   [CHECKED as number]: "checked",
   [START as number]: "start",
+  [TITLE as number]: "title",
 };
 
 export function attr_to_html_attr(type: Attr): string {

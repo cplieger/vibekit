@@ -65,6 +65,7 @@ import {
   CHECKED,
   START,
   ALIGN,
+  TITLE,
 } from "./smd-parser-types.js";
 
 /** Everything a delimiter row may contain. One character outside this set rules
@@ -819,6 +820,112 @@ function enclosing_idx(p: Parser, wanted: readonly Token[]): number {
 const LABEL_TOKENS: readonly Token[] = [LINK, IMAGE];
 const CELL_TOKENS: readonly Token[] = [TABLE_CELL];
 
+/** The closer for each title delimiter CommonMark 6.3 allows. */
+const TITLE_CLOSE: Readonly<Record<string, string>> = { '"': '"', "'": "'", "(": ")" };
+
+/** Whether a backslash before `ch` is an escape that consumes it. Mirrors
+ *  handleCommon's `\` arm, which keeps the backslash before an alphanumeric and
+ *  drops it before anything else. */
+function is_escaped_char(ch: string): boolean {
+  const cc = ch.charCodeAt(0);
+  return !(is_digit(cc) || (cc >= 65 && cc <= 90) || (cc >= 97 && cc <= 122));
+}
+
+interface Destination {
+  url: string;
+  title: string | null;
+  /** Whether a `)` belongs to the run rather than ending it: an unbalanced `(`
+   *  in the destination, or a `(…)` title whose closer it would be. The caller
+   *  keeps accumulating instead of closing the link. */
+  open: boolean;
+}
+
+/** Split the run between `](` and a candidate closing `)` into a destination and
+ *  a title.
+ *
+ *  A run that does not read as `destination [whitespace title] whitespace*`
+ *  keeps the whole run as the destination, which is what every link got before
+ *  titles were parsed — a destination containing a space is the common shape
+ *  that reaches it, and routing it to a literal instead would change every real
+ *  link written with an unencoded space. The backslash keeps its literal
+ *  reading in the destination for the same reason, and is unescaped only in the
+ *  title, which had no reading to preserve. */
+function scan_destination(run: string): Destination {
+  const whole: Destination = { url: run, title: null, open: false };
+  let i = 0;
+  let url = "";
+  if (run.startsWith("<")) {
+    for (i = 1; i < run.length && run.charAt(i) !== ">"; i += 1) {
+      if (run.charAt(i) === "\\" && i + 1 < run.length) {
+        url += run.charAt(i);
+        i += 1;
+      }
+      url += run.charAt(i);
+    }
+    if (i === run.length) {
+      return whole;
+    }
+    i += 1;
+  } else {
+    let depth = 0;
+    for (; i < run.length; i += 1) {
+      const ch = run.charAt(i);
+      if (ch === "\\" && i + 1 < run.length) {
+        url += ch + run.charAt(i + 1);
+        i += 1;
+        continue;
+      }
+      if (ch === " " || ch === "\t") {
+        break;
+      }
+      if (ch === "(") {
+        depth += 1;
+      } else if (ch === ")") {
+        depth -= 1;
+      }
+      url += ch;
+    }
+    if (depth > 0) {
+      return { url: run, title: null, open: true };
+    }
+  }
+  const gap_start = i;
+  while (run.charAt(i) === " " || run.charAt(i) === "\t") {
+    i += 1;
+  }
+  if (i === run.length) {
+    return { url, title: null, open: false };
+  }
+  const close = TITLE_CLOSE[run.charAt(i)];
+  if (close === undefined || i === gap_start) {
+    return whole;
+  }
+  let title = "";
+  for (i += 1; i < run.length; i += 1) {
+    const ch = run.charAt(i);
+    if (ch === "\\" && i + 1 < run.length) {
+      const next = run.charAt(i + 1);
+      title += is_escaped_char(next) ? next : ch + next;
+      i += 1;
+      continue;
+    }
+    if (ch === close) {
+      break;
+    }
+    title += ch;
+  }
+  if (i === run.length) {
+    // A `(…)` title is closed by the `)` the caller is holding, so keep
+    // accumulating. A quoted one cannot be, so the run is a destination.
+    return close === ")" ? { url: run, title: null, open: true } : whole;
+  }
+  i += 1;
+  while (run.charAt(i) === " " || run.charAt(i) === "\t") {
+    i += 1;
+  }
+  return i === run.length ? { url, title, open: false } : whole;
+}
+
 export function handleLinkOrImage(p: Parser, char: string, pending_with_char: string): boolean {
   // CommonMark 6.3 allows balanced brackets in a label, so the label ends at a
   // `]` only when no `[` is open. A counter rather than a re-scan: a label that
@@ -847,15 +954,22 @@ export function handleLinkOrImage(p: Parser, char: string, pending_with_char: st
     return true;
   }
   if (p.pending.startsWith("]") && p.pending[1] === "(") {
-    if (char === ")") {
-      const type = p.token === LINK ? HREF : SRC;
-      const url = p.pending.slice(2);
-      p.renderer.set_attr(p.renderer.data, type, url);
-      end_token(p);
-      p.pending = "";
-    } else {
+    if (char !== ")") {
       p.pending += char;
+      return true;
     }
+    const dest = scan_destination(p.pending.slice(2));
+    if (dest.open) {
+      p.pending += char;
+      return true;
+    }
+    const type = p.token === LINK ? HREF : SRC;
+    p.renderer.set_attr(p.renderer.data, type, dest.url);
+    if (dest.title !== null) {
+      p.renderer.set_attr(p.renderer.data, TITLE, dest.title);
+    }
+    end_token(p);
+    p.pending = "";
     return true;
   }
   return false;

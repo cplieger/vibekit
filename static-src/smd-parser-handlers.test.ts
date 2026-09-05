@@ -403,6 +403,11 @@ describe("chunk-boundary invariance", () => {
     // An escaped pipe reaches the header's cell count from the held line, which
     // is read one line before the row handlers replay it.
     "| a \\| b |\n| - |\n| 1 |",
+    // A title and a balanced-paren destination both decide on a `)` from the
+    // whole accumulated run, so a boundary inside the run is the case to pin.
+    '[a](http://e.com "t")',
+    "[a](http://e.com (t))",
+    "[a](http://e.com/x(1))",
   ];
 
   it.each(inputs)("produces one tree for %j at every chunk size", (input) => {
