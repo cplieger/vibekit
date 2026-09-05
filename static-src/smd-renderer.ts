@@ -53,6 +53,7 @@ import {
   TABLE_CELL,
   EQUATION_BLOCK,
   EQUATION_INLINE,
+  UNCLOSED,
   attr_to_html_attr,
 } from "./smd-parser-types.js";
 import type { Token, Attr, Renderer } from "./smd-parser-types.js";
@@ -76,6 +77,10 @@ export interface DomRendererData {
   /** The current `data-vk-caret` holder — the element the stream last wrote
    *  text into, where the CSS caret renders. See moveCaret. */
   caretEl?: Element | null;
+  /** Set by `set_attr(UNCLOSED, …)` and consumed by the `end_token` that must
+   *  immediately follow it: the literal to restore in place of an inline
+   *  element whose token never closed. */
+  unclosedDelim?: string | null;
 }
 
 function makeEl(tag: string): HTMLElement {
@@ -222,9 +227,52 @@ function add_token_dom(data: DomRendererData, type: Token): void {
   data.nodes[++data.index] = parent.appendChild(makeEl(tag));
 }
 
+/** Marks a per-chunk span whose fade has already played, so the CSS rule that
+ *  animates one on mount skips it. Set only by the unwrap below: MEASURED in
+ *  Chromium, re-inserting a node restarts its CSS animation, so re-parenting a
+ *  settled span would re-run the fade over text already on screen — the flash the
+ *  mount-once design exists to avoid. The marker survives, because the delegate
+ *  card's text walk reads it to tell a rendering artefact from a word boundary. */
+export const CHUNK_SETTLED_ATTR = "data-vk-chunk-settled";
+
+/** Replace an inline element whose token never closed with its own delimiter
+ *  followed by its children, which is what CommonMark renders for an unclosed
+ *  delimiter run. The parser is append-only and cannot un-open a token; the
+ *  renderer still holds the element at close time and can. */
+function unwrap_unclosed(data: DomRendererData, el: Element, delim: string): void {
+  const parent = el.parentElement;
+  if (parent === null) {
+    return;
+  }
+  // The caret may be sitting on the element about to leave the document.
+  if (data.caretEl === el) {
+    el.removeAttribute(CARET_ATTR);
+    data.caretEl = parent;
+    parent.setAttribute(CARET_ATTR, "");
+  }
+  for (const span of el.querySelectorAll(`[${CHUNK_ENTER_ATTR}]`)) {
+    span.setAttribute(CHUNK_SETTLED_ATTR, "");
+  }
+  // IMG is void: markdown's `![alt]` puts the swallowed text in `alt`, so the
+  // replacement is one text node rather than a delimiter plus children.
+  const head = el.tagName === "IMG" ? delim + (el.getAttribute("alt") ?? "") : delim;
+  el.replaceWith(document.createTextNode(head), ...el.childNodes);
+}
+
 function end_token_dom(data: DomRendererData): void {
   const closing = data.nodes[data.index];
   data.index -= 1;
+  const unclosed = data.unclosedDelim;
+  if (unclosed !== null && unclosed !== undefined) {
+    data.unclosedDelim = null;
+    if (closing !== null && closing !== undefined) {
+      // Ordered before finalizeMath: an equation host being unwrapped must not
+      // be converted, and an inline token never brings `index` to 0, so
+      // onBlockComplete is unreachable from here.
+      unwrap_unclosed(data, closing, unclosed);
+      return;
+    }
+  }
   if (closing?.hasAttribute(MATH_ATTR) === true) {
     finalizeMath(closing);
   }
@@ -304,6 +352,10 @@ function add_text_dom(data: DomRendererData, text: string): void {
 }
 
 function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
+  if (attr === UNCLOSED) {
+    data.unclosedDelim = value;
+    return;
+  }
   const node = data.nodes[data.index];
   if (node === null || node === undefined) {
     return;
