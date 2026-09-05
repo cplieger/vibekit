@@ -2370,6 +2370,14 @@ describe("renderMarkdown GFM tables", () => {
       expected: "<p>| a |</p><ul><li>| *</li></ul>",
     },
     {
+      // Both references read this as a SETEXT heading, which this parser does not
+      // have, so the divergence moves rather than resolving: an empty list item
+      // instead of a table. No text is lost either way.
+      name: "a single-cell header over a bare bullet (characterization)",
+      input: "| a |\n- ",
+      expected: "<p>| a |</p><ul><li></li></ul>",
+    },
+    {
       name: "a multi-dash delimiter row with no pipe is still a delimiter row",
       input: "| a | b |\n--- | ---\n| 1 | 2 |",
       expected: HEAD + BODY,
