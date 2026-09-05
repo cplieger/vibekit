@@ -269,6 +269,17 @@ describe("the mounted derivation", () => {
     }
   });
 
+  it("bodies a turn holding NO block even behind the budget, because .is-bodyless needs a body", () => {
+    const id = chatID();
+    // A prompt-only turn costs nothing to mount — its body holds no row — and the
+    // bodyless marker is stamped on that body, so stubbing it buys no budget and
+    // loses the mark. messages-paint-causes.test.ts owns what the mark then does.
+    activate(id, [user("empty"), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
+    expect(hasBody("big"), "the fixture spends the budget").toBe(false);
+    expect(hasBody("empty")).toBe(true);
+    expect(rowsIn("empty")).toBe(0);
+  });
+
   it("stubs a turn the TOOL budget rejects and the block budget would not", () => {
     const id = chatID();
     // Its blocks are one per tool card, well inside the block budget; the cards
