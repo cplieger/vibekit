@@ -33,10 +33,14 @@
 // fence closed by a mid-line backtick run (#34/#40); and a trailing space
 // breaking a table row (#30). Fixed with no upstream counterpart: unbounded
 // recursion once the token stack saturates, `<` `[` `\` and a backtick deleted at
-// the end of a line or of the input, an inline opener deleted at the depth cap,
-// an unclosed inline opener formatting the rest of its block, a table opening
-// without a delimiter row or losing one to a tab, and a bare URL swallowing the
-// backtick after a full-width comma.
+// the end of a line or of the input, an opener deleted at the depth cap — the
+// inline delimiters, and with them every block marker: a heading's `#`s, a fence
+// and its info string, a list marker, a `>`, `$$`, a URL's scheme (which was
+// emitted twice) — an attribute for a refused token landing on the enclosing
+// element, buffered text landing inside the block opened after it, an unclosed
+// inline opener formatting the rest of its block, a table opening without a
+// delimiter row or losing one to a tab or to an escaped pipe, and a bare URL
+// swallowing the backtick after a full-width comma.
 //
 // Deliberately not fixed. `__` cannot refuse a close the way `_` does: it
 // decides on the second character of the run, before the character after it has
