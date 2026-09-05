@@ -196,6 +196,12 @@ export function prev_is_word_char(p: Parser): boolean {
   return p.textBuf === "" ? p.prev_is_word : ends_with_word_char(p.textBuf);
 }
 
+/** Whether a single code point is a word character. The right neighbour of a
+ *  delimiter run, where `prev_is_word_char` gives the left one. */
+export function is_word_char(ch: string): boolean {
+  return ch !== "" && !NOT_WORD.test(ch);
+}
+
 /** Emit a leaf token (rule, line break, checkbox) straight to the renderer.
  *  Deliberately does NOT touch the token stack — a leaf has no content, so
  *  nothing may nest inside it. */

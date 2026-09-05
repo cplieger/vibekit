@@ -420,3 +420,54 @@ describe("unresolved inline tokens report their delimiter", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// The CLOSE half of CommonMark 6.2, and the stack it must not corrupt.
+//
+// Refusing a close leaves the token open, so the failure mode to guard against
+// is not a wrong tree but an unbalanced one: delegating the refusal to
+// handleCommon grew `pending` to `__` and fired two closes against one token.
+// ---------------------------------------------------------------------------
+
+describe("the refused underscore close leaves the stack balanced", () => {
+  const inputs = [
+    "_foo_bar",
+    "_foo bar_baz",
+    "_internal_state",
+    "_internal_state_here_",
+    "_a_b_c_d_e_",
+    "__x_y_",
+    "___tri___",
+    "_a__b_",
+  ];
+
+  it.each(inputs)("%j leaves only the paragraph open", (input) => {
+    // Everything but the streaming tail's own block must be closed exactly once.
+    // A refusal that fired an extra close would read as a negative here.
+    const t = trace(input);
+    expect(t.tokens.length - t.ends).toBe(1);
+  });
+
+  it.each(inputs)("%j gives the same tree at every chunk size", (input) => {
+    const whole = trace(input);
+    for (let chunkLen = 1; chunkLen <= 4; chunkLen += 1) {
+      const chunked = trace(input, chunkLen);
+      expect(chunked.tokens).toEqual(whole.tokens);
+      expect(chunked.attrs).toEqual(whole.attrs);
+      expect(chunked.texts.join("")).toBe(whole.texts.join(""));
+    }
+  });
+
+  it("splits _internal_state on each underscore without changing the tree", () => {
+    const p = parser(nullRenderer() as any);
+    for (const chunk of ["_internal", "_state"]) {
+      parser_write(p, chunk);
+    }
+    parser_end(p);
+    expect(p.tokens[0]).toBe(DOCUMENT);
+    expect(p.len).toBeGreaterThanOrEqual(0);
+    expect(trace("_internal_state", 9).texts.join("")).toBe(
+      trace("_internal_state").texts.join(""),
+    );
+  });
+});

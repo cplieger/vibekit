@@ -608,16 +608,51 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
     }
   });
 
-  // The close half of the CommonMark rule is deliberately not implemented: an
-  // append-only parser cannot un-open a token, so refusing the close would leave
-  // the emphasis running to the end of the line — louder than closing it early.
-  // CommonMark renders both of these literally.
-  it("_foo_bar closes early (known limitation)", () => {
-    expect(renderMarkdown("_foo_bar")).toBe("<p><em>foo</em>bar</p>");
-  });
+  // The close half of the rule: a `_` run with a word character on both sides
+  // cannot close either, so the run that opened stays open and is restored as
+  // literal text when the block ends.
+  const closeCases: { name: string; input: string; expected: string }[] = [
+    { name: "_foo_bar stays literal", input: "_foo_bar", expected: "<p>_foo_bar</p>" },
+    { name: "_foo bar_baz stays literal", input: "_foo bar_baz", expected: "<p>_foo bar_baz</p>" },
+    {
+      name: "_internal_state stays literal",
+      input: "_internal_state",
+      expected: "<p>_internal_state</p>",
+    },
+    {
+      name: "a run that does close later still emphasises",
+      input: "_internal_state_here_",
+      expected: "<p><em>internal_state_here</em></p>",
+    },
+    { name: "_foo_ still closes at end of input", input: "_foo_", expected: "<p><em>foo</em></p>" },
+    {
+      name: "_foo_. closes before punctuation",
+      input: "_foo_.",
+      expected: "<p><em>foo</em>.</p>",
+    },
+    {
+      name: "_foo_ bar closes before a space",
+      input: "_foo_ bar",
+      expected: "<p><em>foo</em> bar</p>",
+    },
+    { name: "a _b c_ d is unaffected", input: "a _b c_ d", expected: "<p>a <em>b c</em> d</p>" },
+    {
+      name: "* is exempt by design",
+      input: "*foo*bar",
+      expected: "<p><em>foo</em>bar</p>",
+    },
+    {
+      // The `__` close decides on the second `_` of the run, before the character
+      // after it exists, so gating it needs a character of right-context this
+      // does not have. Characterization.
+      name: "__x_y_ stays literal (the __ close is out of scope)",
+      input: "__x_y_",
+      expected: "<p>__x_y_</p>",
+    },
+  ];
 
-  it("_foo bar_baz closes early (known limitation)", () => {
-    expect(renderMarkdown("_foo bar_baz")).toBe("<p><em>foo bar</em>baz</p>");
+  it.each(closeCases)("$name", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
   });
 
   // A run of three or more opens for its tail, because the rule is evaluated per
