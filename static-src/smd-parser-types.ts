@@ -443,6 +443,9 @@ export function add_list_item(p: Parser, prefix_length: number): void {
 const MAYBE_TASK = 103 as Token;
 export { MAYBE_TASK };
 
+const MAYBE_ENTITY = 106 as Token;
+export { MAYBE_ENTITY };
+
 export function clear_root_pending(p: Parser): void {
   p.indent = "";
   p.indent_len = 0;

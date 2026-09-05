@@ -22,16 +22,29 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
     );
   });
 
+  // Every spelling of a blocked scheme this parser can now be handed. The
+  // entity-encoded ones exist because a reference is decoded on the way to the
+  // scheme gate, and the angle-bracket ones because an autolink is a second
+  // producer of hrefs. Both must arrive at the same gate as a plain destination.
+  const jsUrl = fc.constantFrom(
+    "javascript:alert(1)",
+    "JAVASCRIPT:alert(1)",
+    "javascript:void(0)",
+    "JavaScript:alert(document.cookie)",
+    "javascript&#58;alert(1)",
+    "java&#115;cript:alert(1)",
+    "&#x6a;avascript:alert(1)",
+    "&#106;avascript:alert(1)",
+    "JAVASCRIPT&#58;alert(1)",
+    "java&#115cript:alert(1)",
+    "java\tscript:alert(1)",
+    "&NewLine;javascript:alert(1)",
+  );
+
   it("never produces javascript: URIs in href/src attributes", () => {
     // Generate markdown with links that attempt javascript: injection.
     // Use alphanumeric text to avoid breaking markdown link syntax.
     const safeText = fc.stringMatching(/^[a-zA-Z0-9 ]{1,20}$/);
-    const jsUrl = fc.constantFrom(
-      "javascript:alert(1)",
-      "JAVASCRIPT:alert(1)",
-      "javascript:void(0)",
-      "JavaScript:alert(document.cookie)",
-    );
     const mdWithLink = fc.tuple(safeText, jsUrl).map(([text, url]) => `[${text}](${url})`);
 
     fc.assert(
@@ -44,6 +57,39 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
           expect(val).not.toMatch(/^javascript:/i);
         }
         expect(attrMatches.length).toBeGreaterThan(0);
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  it("never produces a blocked scheme from an angle autolink", () => {
+    const blocked = fc.constantFrom(
+      "javascript:alert(1)",
+      "JavaScript:alert(1)",
+      "javascript&#58;alert(1)",
+      "&#x6a;avascript:alert(1)",
+      "data:text/html,alert(1)",
+      "DATA:text/html,x",
+      "data&#58;text/html,x",
+      "vbscript:msgbox",
+      "VBSCRIPT:MsgBox",
+      "file:///etc/passwd",
+    );
+    const mdWithAutolink = fc
+      .tuple(fc.stringMatching(/^[a-zA-Z0-9 ]{0,20}$/), blocked)
+      .map(([lead, url]) => `${lead}<${url}>`);
+
+    fc.assert(
+      fc.property(mdWithAutolink, (input) => {
+        const html = renderMarkdown(input);
+        for (const attr of html.match(/(?:href|src)="([^"]*)"/g) ?? []) {
+          const val = attr.replace(/^(?:href|src)="/, "").replace(/"$/, "");
+          expect(val.toLowerCase().replace(/\s/g, "")).not.toMatch(
+            /^(?:javascript|data|vbscript|file):/,
+          );
+        }
+        expect(html.toLowerCase()).not.toContain("<script");
+        expect(html).not.toMatch(/<[^>]+\son\w+\s*=/i);
       }),
       { numRuns: 200 },
     );
@@ -73,6 +119,9 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
           "data:text/html,<script>alert(1)</script>",
           "data:image/svg+xml,<svg onload=alert(1)>",
           "DATA:text/html,test",
+          "data&#58;text/html,<script>alert(1)</script>",
+          "&#100;ata:text/html,x",
+          "&#x64;ata:image/svg+xml,<svg onload=alert(1)>",
         ),
       )
       .map(([text, url]) => `![${text}](${url})`);
@@ -95,7 +144,13 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
 
   it("never produces vbscript: URIs in href/src attributes", () => {
     const safeText = fc.stringMatching(/^[a-zA-Z0-9 ]{1,20}$/);
-    const vbUrl = fc.constantFrom("vbscript:msgbox", "VBSCRIPT:MsgBox", "vbscript:Execute");
+    const vbUrl = fc.constantFrom(
+      "vbscript:msgbox",
+      "VBSCRIPT:MsgBox",
+      "vbscript:Execute",
+      "vbscript&#58;msgbox",
+      "&#118;bscript:msgbox",
+    );
     const mdWithVbscript = fc.tuple(safeText, vbUrl).map(([text, url]) => `[${text}](${url})`);
 
     fc.assert(
@@ -1103,6 +1158,163 @@ describe("renderMarkdown end-of-input characters", () => {
     } else {
       expect(html).toMatch(expected);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Entity and numeric character references (CommonMark 6.2).
+//
+// Two rules here are security rules rather than conveniences. A decoded
+// character is written straight to the text buffer and never re-parsed, so no
+// reference can synthesise markup: `&#42;` is a literal asterisk, not an
+// emphasis delimiter. And a link destination is decoded BEFORE it reaches the
+// scheme gate, never after — `javascript&#58;` does not start with
+// `javascript:`, so decoding second would hand the gate a string it passes and
+// the browser a live scheme.
+// ---------------------------------------------------------------------------
+
+describe("renderMarkdown character references", () => {
+  const A = '<a target="_blank" rel="noopener"';
+
+  const cases: { name: string; input: string; expected: string }[] = [
+    {
+      name: "named references in prose",
+      input: "5 &lt; 6 &amp; 7 &copy;",
+      expected: "<p>5 &lt; 6 &amp; 7 ©</p>",
+    },
+    { name: "a decimal reference", input: "&#35; hash", expected: "<p># hash</p>" },
+    { name: "a hex reference", input: "&#x1F600; emoji", expected: "<p>😀 emoji</p>" },
+    {
+      name: "a hex reference with an uppercase X",
+      input: "&#X23; hash",
+      expected: "<p># hash</p>",
+    },
+    {
+      name: "the longest name in the table",
+      input: "&CounterClockwiseContourIntegral;",
+      expected: "<p>∳</p>",
+    },
+    {
+      name: "a name whose value is two code points",
+      input: "&NotEqualTilde;",
+      expected: "<p>≂̸</p>",
+    },
+    { name: "a no-break space", input: "a&nbsp;b", expected: "<p>a&nbsp;b</p>" },
+    { name: "a reference in a heading", input: "## &amp; head", expected: "<h2>&amp; head</h2>" },
+    {
+      name: "a reference in a link label",
+      input: "[&amp;](http://e.com)",
+      expected: `<p>${A} href="http://e.com">&amp;</a></p>`,
+    },
+    {
+      name: "a reference in a table cell",
+      input: "| &amp; |\n| - |\n| x |",
+      expected:
+        "<table><thead><tr><th> &amp; </th></tr></thead>" +
+        "<tbody><tr><td> x </td></tr></tbody></table>",
+    },
+    { name: "an ampersand ahead of a reference", input: "&&amp;", expected: "<p>&amp;&amp;</p>" },
+
+    // --- a decoded character is never re-parsed ---
+    {
+      name: "an encoded asterisk does not emphasise",
+      input: "&#42;not bold&#42;",
+      expected: "<p>*not bold*</p>",
+    },
+    {
+      name: "an encoded angle bracket opens no element",
+      input: "&#60;script&#62;",
+      expected: "<p>&lt;script&gt;</p>",
+    },
+    {
+      name: "an encoded backtick opens no code span",
+      input: "&#96;not code&#96;",
+      expected: "<p>`not code`</p>",
+    },
+
+    // --- an invalid reference stays literal ---
+    {
+      name: "an unknown name",
+      input: "&nosuchentity; text",
+      expected: "<p>&amp;nosuchentity; text</p>",
+    },
+    { name: "a name with no semicolon", input: "&amp x", expected: "<p>&amp;amp x</p>" },
+    { name: "a bare ampersand", input: "a & b", expected: "<p>a &amp; b</p>" },
+    { name: "a non-hex digit", input: "&#xZ;", expected: "<p>&amp;#xZ;</p>" },
+    { name: "an empty numeric reference", input: "&#;", expected: "<p>&amp;#;</p>" },
+    { name: "an ampersand before a newline", input: "a &\nb", expected: "<p>a &amp;<br>b</p>" },
+
+    // --- an out-of-range code point is the replacement character ---
+    { name: "code point zero", input: "&#0;", expected: "<p>\ufffd</p>" },
+    { name: "a code point past the last plane", input: "&#x110000;", expected: "<p>\ufffd</p>" },
+    { name: "a surrogate code point", input: "&#xD800;", expected: "<p>\ufffd</p>" },
+
+    // --- destinations are decoded before the scheme gate sees them ---
+    {
+      name: "a reference in a destination",
+      input: "[a](http://e.com/?a=1&amp;b=2)",
+      expected: `<p>${A} href="http://e.com/?a=1&amp;b=2">a</a></p>`,
+    },
+    {
+      name: "an encoded colon does not smuggle a javascript scheme",
+      input: "[a](javascript&#58;alert(1))",
+      expected: `<p>${A} href="#">a</a></p>`,
+    },
+    {
+      name: "an encoded letter does not smuggle a javascript scheme",
+      input: "[a](java&#115;cript:alert(1))",
+      expected: `<p>${A} href="#">a</a></p>`,
+    },
+    {
+      name: "a hex-encoded letter does not smuggle a javascript scheme",
+      input: "[a](&#x6a;avascript:alert(1))",
+      expected: `<p>${A} href="#">a</a></p>`,
+    },
+    {
+      name: "an encoded colon does not smuggle a data scheme",
+      input: "![a](data&#58;text/html,x)",
+      expected: '<p><img alt="a" src="#"></p>',
+    },
+    {
+      name: "an invalid reference in a destination stays literal",
+      input: "[a](http://e.com/?a=&nosuch;)",
+      expected: `<p>${A} href="http://e.com/?a=&amp;nosuch;">a</a></p>`,
+    },
+    {
+      name: "a reference in a title",
+      input: '[a](http://e.com "a &amp; b")',
+      expected: `<p>${A} href="http://e.com" title="a &amp; b">a</a></p>`,
+    },
+  ];
+
+  it.each(cases)("$name", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+
+  // Code is code: no reference is recognised inside a code span, a fence or an
+  // indented block. Those tokens never reach the inline checks at all, which is
+  // what this pins rather than assumes.
+  const code: { name: string; input: string; expected: string }[] = [
+    { name: "a code span", input: "`&amp;`", expected: "<p><code>&amp;amp;</code></p>" },
+    {
+      name: "a fenced block",
+      input: "```\n&amp;\n```",
+      expected: '<pre class="code"><code>&amp;amp;</code></pre>',
+    },
+    {
+      name: "an indented block",
+      input: "    &amp;",
+      expected: '<pre class="code"><code>&amp;amp;</code></pre>',
+    },
+    {
+      name: "a numeric reference in a code span",
+      input: "`&#42;`",
+      expected: "<p><code>&amp;#42;</code></p>",
+    },
+  ];
+
+  it.each(code)("leaves a reference in $name alone", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
   });
 });
 

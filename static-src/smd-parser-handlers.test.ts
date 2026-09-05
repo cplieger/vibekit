@@ -416,6 +416,11 @@ describe("chunk-boundary invariance", () => {
     // At the cap the promotion path consumes the newline, so which line-scoped
     // state the next line sees depends on where the boundary fell.
     `${">".repeat(23)} a\n${">".repeat(23)} b`,
+    // A character reference is held from its `&`, so a boundary inside the name
+    // is the case that proves the hold survives a flush.
+    "5 &lt; 6 &amp; 7 &copy;",
+    "a &nosuch; b",
+    "&#x1F600; emoji",
   ];
 
   it.each(inputs)("produces one tree for %j at every chunk size", (input) => {

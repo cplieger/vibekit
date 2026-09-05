@@ -116,6 +116,41 @@ const markdownLike = fc.oneof(
   fc.constant("see https://example.com here"),
   // Line breaks
   fc.constant("<br>\n"),
+  // Character references, valid and malformed. Both matter: a reference is HELD
+  // from its `&` until a `;` decodes it or a character rules it out, so a
+  // malformed one is what could wedge the hold.
+  fc
+    .tuple(
+      fc.constantFrom("&", "&#", "&#x", "&#X", "&amp", "&nosuch", "&#x11"),
+      fc.stringMatching(/^[A-Za-z0-9]{0,34}$/),
+      fc.constantFrom(";", "", " ", "\n", "&"),
+    )
+    .map(([head, body, tail]) => head + body + tail),
+  fc.constantFrom(
+    "5 &lt; 6 &amp; 7 &copy;",
+    "&#42;not bold&#42;",
+    "&#0;",
+    "&#x110000;",
+    "&NotEqualTilde;",
+    "[a](javascript&#58;alert(1))",
+    "&CounterClockwiseContourIntegral;",
+  ),
+  // Angle-bracket runs: an autolink, an email autolink, and the shapes that must
+  // stay escaped text. The hold runs to the closing `>` or to whitespace.
+  fc
+    .tuple(
+      fc.constantFrom("<", "<http", "<https://", "<mailto:", "<a@", "<div", "<br", "<!--", "<Vec"),
+      fc.stringMatching(/^[A-Za-z0-9:/.@ -]{0,20}$/),
+      fc.constantFrom(">", "", " ", "\n", "<"),
+    )
+    .map(([head, body, tail]) => head + body + tail),
+  fc.constantFrom(
+    "<https://example.com>",
+    "<foo@bar.example.com>",
+    "Vec<String> in Rust",
+    "<javascript:alert(1)>",
+    "a < b > c",
+  ),
   // Newlines
   fc.constantFrom("\n", "\n\n"),
 );

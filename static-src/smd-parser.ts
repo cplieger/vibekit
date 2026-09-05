@@ -79,6 +79,7 @@ import {
   handleLinkOrImage,
   handleRawURL,
   handleMaybeBR,
+  handleMaybeEntity,
   handleCommon,
 } from "./smd-parser-handlers.js";
 
@@ -128,6 +129,7 @@ import {
   LINK,
   RAW_URL,
   MAYBE_BR,
+  MAYBE_ENTITY,
   TOKEN_ARRAY_CAP,
   add_text,
   end_token,
@@ -313,6 +315,8 @@ const TOKEN_HANDLERS: Partial<Record<Token, TokenHandler>> = {
   },
   [MAYBE_BR]: (p, char, pending) =>
     handleMaybeBR(p, char, pending) ? actionContinue : actionBreak,
+  [MAYBE_ENTITY]: (p: Parser, char: string, pending: string) =>
+    handleMaybeEntity(p, char, pending) ? actionContinue : actionBreak,
 };
 
 export function parser_write(p: Parser, chunk: string): void {
