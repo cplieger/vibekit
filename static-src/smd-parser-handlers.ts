@@ -167,18 +167,28 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       p.pending = char;
       return true;
     case "#":
-      // Heading: #..###### + space
+      // Heading: #..###### + space, or a bare run, which CommonMark 4.2 reads
+      // as an empty heading.
       if (char === "#") {
         if (p.pending.length < 6) {
           p.pending = pending_with_char;
           return true;
         }
-      } else if (char === " ") {
+      } else if (char === " " || char === "\n") {
         end_tokens_to_indent(p, p.indent_len);
-        if (!add_token(p, heading_from_level(p.pending.length))) {
+        const opened = add_token(p, heading_from_level(p.pending.length));
+        if (!opened) {
           p.textBuf += p.indent + pending_with_char;
         }
         clear_root_pending(p);
+        if (opened) {
+          p.atx_close = true;
+          if (char === "\n") {
+            // Handed on rather than consumed, or the next line's text lands
+            // inside the heading this newline has to close.
+            p.pending = char;
+          }
+        }
         return true;
       }
       break;
@@ -234,7 +244,7 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       }
       // Unordered list: "* foo", "- foo", but not "_ foo"
       if (!p.pending.startsWith("_") && p.pending[1] === " ") {
-        if (continue_or_add_list(p, LIST_UNORDERED) === "no_room") {
+        if (continue_or_add_list(p, LIST_UNORDERED, "") === "no_room") {
           break;
         }
         add_list_item(p, 2);
@@ -293,7 +303,7 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       if (char !== " ") {
         break;
       }
-      if (continue_or_add_list(p, LIST_UNORDERED) === "no_room") {
+      if (continue_or_add_list(p, LIST_UNORDERED, "") === "no_room") {
         break;
       }
       add_list_item(p, 2);
@@ -308,22 +318,25 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
     case "7":
     case "8":
     case "9":
-      if (p.pending.endsWith(".")) {
+      if (p.pending.endsWith(".") || p.pending.endsWith(")")) {
         if (char !== " ") {
           break;
         }
-        const opened = continue_or_add_list(p, LIST_ORDERED);
+        const number = p.pending.slice(0, -1);
+        const opened = continue_or_add_list(p, LIST_ORDERED, p.pending.slice(-1));
         if (opened === "no_room") {
           break;
         }
-        if (opened === "created" && p.pending !== "1.") {
-          p.renderer.set_attr(p.renderer.data, START, p.pending.slice(0, -1));
+        if (opened === "created" && number !== "1") {
+          p.renderer.set_attr(p.renderer.data, START, number);
         }
         add_list_item(p, p.pending.length + 1);
         return true;
       } else {
         const cc = char.charCodeAt(0);
-        if (cc === 46 || is_digit(cc)) {
+        // CommonMark 5.2 bounds the marker at nine digits, so a longer run of
+        // them is prose — an order number, a phone number, a byte count.
+        if (cc === 46 || cc === 41 || (is_digit(cc) && p.pending.length < 9)) {
           p.pending = pending_with_char;
           return true;
         }
@@ -421,6 +434,52 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
   }
   p.write(p, to_write);
   return true;
+}
+
+/** The ATX closing sequence at the end of a held run: whitespace, an optional
+ *  run of `#`, then whitespace. Anchored at the end, so `" ## #"` loses only the
+ *  LAST run and keeps the first as content, which is CommonMark 4.2's reading. */
+const ATX_CLOSE_TAIL = /[ \t]*(?:#+[ \t]*)?$/u;
+
+/** Hold a candidate ATX closing sequence, so a `#` run that turns out to be
+ *  syntax never reaches the renderer as text.
+ *
+ *  The hold is at most one whitespace run plus a `#` run plus another
+ *  whitespace run, and it is released on the newline that ends the line — so a
+ *  heading's text lags by the length of its own trailing run and by nothing
+ *  else. Every other character falls through, which leaves `handleCommon`'s
+ *  consecutive-space trim and every inline construct inside a heading exactly as
+ *  they were. */
+export function handleHeading(p: Parser, char: string, pending_with_char: string): boolean {
+  if (char === "\n") {
+    // A whitespace-only hold is the line's trailing whitespace, which 4.2 strips
+    // from a heading's content whether or not a closing run follows it.
+    if (p.atx_close || /^[ \t]+$/u.test(p.pending)) {
+      p.textBuf += p.pending.replace(ATX_CLOSE_TAIL, "");
+      p.pending = "";
+      p.atx_close = false;
+    }
+    return false;
+  }
+  if (char === "#") {
+    // A closing run must be preceded by whitespace. `atx_close` covers the run
+    // that starts the content, whose whitespace was the opening sequence's own.
+    if (p.atx_close || /^[ \t]+$/u.test(p.pending)) {
+      p.pending = pending_with_char;
+      p.atx_close = true;
+      return true;
+    }
+    p.atx_close = false;
+    return false;
+  }
+  if ((char === " " || char === "\t") && p.atx_close && p.pending.includes("#")) {
+    p.pending = pending_with_char;
+    return true;
+  }
+  if (char !== " " && char !== "\t") {
+    p.atx_close = false;
+  }
+  return false;
 }
 
 export function handleTable(p: Parser, char: string, pending_with_char: string): boolean {

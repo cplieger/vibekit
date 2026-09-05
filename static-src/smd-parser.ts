@@ -64,6 +64,7 @@
 
 import {
   handleRootContext,
+  handleHeading,
   handleTable,
   handleTableRow,
   handleTableCell,
@@ -98,6 +99,12 @@ import type { Parser, Token, Renderer } from "./smd-parser-types.js";
 import {
   DOCUMENT,
   BLOCKQUOTE,
+  HEADING_1,
+  HEADING_2,
+  HEADING_3,
+  HEADING_4,
+  HEADING_5,
+  HEADING_6,
   LINE_BREAK,
   LIST_ORDERED,
   LIST_UNORDERED,
@@ -156,6 +163,7 @@ export function parser<T>(renderer: Renderer<T>): Parser {
     prev_is_word: false,
     link_depth: 0,
     at_end: false,
+    atx_close: false,
     write: parser_write,
   };
 }
@@ -217,6 +225,18 @@ const TOKEN_HANDLERS: Partial<Record<Token, TokenHandler>> = {
     handleRootContext(p, char, pending) ? actionContinue : actionBreak,
   [LIST_UNORDERED]: (p, char, pending) =>
     handleRootContext(p, char, pending) ? actionContinue : actionBreak,
+  [HEADING_1]: (p, char, pending) =>
+    handleHeading(p, char, pending) ? actionContinue : actionBreak,
+  [HEADING_2]: (p, char, pending) =>
+    handleHeading(p, char, pending) ? actionContinue : actionBreak,
+  [HEADING_3]: (p, char, pending) =>
+    handleHeading(p, char, pending) ? actionContinue : actionBreak,
+  [HEADING_4]: (p, char, pending) =>
+    handleHeading(p, char, pending) ? actionContinue : actionBreak,
+  [HEADING_5]: (p, char, pending) =>
+    handleHeading(p, char, pending) ? actionContinue : actionBreak,
+  [HEADING_6]: (p, char, pending) =>
+    handleHeading(p, char, pending) ? actionContinue : actionBreak,
   [TABLE]: (p, char, pending) => (handleTable(p, char, pending) ? actionContinue : actionBreak),
   [TABLE_ROW]: (p, char, pending) =>
     handleTableRow(p, char, pending) ? actionContinue : actionBreak,

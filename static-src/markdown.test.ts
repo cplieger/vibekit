@@ -987,6 +987,12 @@ describe("renderMarkdown deep nesting", () => {
   // read as the literal text that was typed. The opener used to be dropped: the
   // push was refused and the handler then overwrote `pending` with the next
   // character regardless.
+  it("keeps a bare hash run as text when the token stack is saturated", () => {
+    const html = renderMarkdown(">".repeat(23) + " ##");
+    expect(html).not.toContain("<h2");
+    expect(html).toContain("##");
+  });
+
   it.each([
     ["*a*", "*"],
     ["**a**", "**"],
@@ -1013,6 +1019,7 @@ describe("renderMarkdown deep nesting", () => {
   it.each([
     ["```js\ncode\n```", "class", "```js"],
     ["3. item", "start", "3. item"],
+    ["3) item", "start", "3) item"],
   ])("puts no attribute on the blockquote for %j past the cap", (body, attr, literal) => {
     const html = renderMarkdown(">".repeat(23) + " " + body);
     expect(html).not.toContain(attr + "=");
@@ -1063,6 +1070,165 @@ describe("renderMarkdown end-of-input characters", () => {
     } else {
       expect(html).toMatch(expected);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// An ordered list may be marked `1)` as well as `1.` (CommonMark 5.2), and
+// changing the delimiter mid-list starts a new list rather than continuing the
+// old one. A marker of more than nine digits is not a list marker at all.
+// ---------------------------------------------------------------------------
+
+describe("renderMarkdown ordered list delimiters", () => {
+  const cases: { name: string; input: string; expected: string }[] = [
+    {
+      name: "a paren-delimited list",
+      input: "1) first\n2) second",
+      expected: "<ol><li>first</li><li>second</li></ol>",
+    },
+    {
+      name: "a paren-delimited list starting past one",
+      input: "3) three\n4) four",
+      expected: '<ol start="3"><li>three</li><li>four</li></ol>',
+    },
+    { name: "a single paren-delimited item", input: "1) only", expected: "<ol><li>only</li></ol>" },
+    {
+      name: "a delimiter change from a dot starts a new list",
+      input: "1. first\n2) second",
+      expected: '<ol><li>first</li></ol><ol start="2"><li>second</li></ol>',
+    },
+    {
+      name: "a delimiter change from a paren starts a new list",
+      input: "1) first\n2. second",
+      expected: '<ol><li>first</li></ol><ol start="2"><li>second</li></ol>',
+    },
+    {
+      name: "an indented paren marker nests inside a dot list",
+      input: "1. a\n   1) b",
+      expected: "<ol><li>a<ol><li>b</li></ol></li></ol>",
+    },
+    {
+      name: "a nine-digit marker is still a list",
+      input: "123456789. x",
+      expected: '<ol start="123456789"><li>x</li></ol>',
+    },
+    {
+      name: "a ten-digit marker is not a list",
+      input: "1234567890. x",
+      expected: "<p>1234567890. x</p>",
+    },
+    { name: "a paren with no space is not a list", input: "1)first", expected: "<p>1)first</p>" },
+    {
+      name: "a paren inside prose is not a list",
+      input: "see 1) this",
+      expected: "<p>see 1) this</p>",
+    },
+    {
+      name: "a dot-delimited list is unchanged",
+      input: "1. first\n2. second",
+      expected: "<ol><li>first</li><li>second</li></ol>",
+    },
+  ];
+
+  it.each(cases)("$name", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// An ATX heading's optional closing sequence (CommonMark 4.2): a run of `#`
+// preceded by a space or tab and followed by nothing but spaces and tabs is
+// syntax, not content. A `#` run with no such whitespace, or with text after
+// it, is content. A bare `#` run opens an empty heading.
+// ---------------------------------------------------------------------------
+
+describe("renderMarkdown ATX closing sequence", () => {
+  const cases: { name: string; input: string; expected: string }[] = [
+    { name: "a two-hash closing run", input: "## heading ##", expected: "<h2>heading</h2>" },
+    { name: "a one-hash closing run", input: "## heading #", expected: "<h2>heading</h2>" },
+    { name: "a longer closing run", input: "## heading ###", expected: "<h2>heading</h2>" },
+    { name: "two spaces before the run", input: "## heading  ##", expected: "<h2>heading</h2>" },
+    {
+      name: "trailing spaces after the run",
+      input: "## heading ##   ",
+      expected: "<h2>heading</h2>",
+    },
+    { name: "a tab before the run", input: "## heading\t##", expected: "<h2>heading</h2>" },
+    { name: "a tab after the run", input: "## heading ##\t", expected: "<h2>heading</h2>" },
+    {
+      name: "only the last run closes the heading",
+      input: "## heading ## #",
+      expected: "<h2>heading ##</h2>",
+    },
+    {
+      name: "a single hash before the closing run is content",
+      input: "## heading # #",
+      expected: "<h2>heading #</h2>",
+    },
+    {
+      name: "inline code survives the strip",
+      input: "## a `#` b ##",
+      expected: "<h2>a <code>#</code> b</h2>",
+    },
+    {
+      name: "emphasis survives the strip",
+      input: "## a *b* ##",
+      expected: "<h2>a <em>b</em></h2>",
+    },
+    { name: "an escaped hash is content", input: "## \\## ##", expected: "<h2>##</h2>" },
+    { name: "two headings in a row", input: "# h #\n# i #", expected: "<h1>h</h1><h1>i</h1>" },
+    {
+      name: "a heading inside a blockquote",
+      input: "> ## h ##",
+      expected: "<blockquote><h2>h</h2></blockquote>",
+    },
+    {
+      name: "a following paragraph is unaffected",
+      input: "## h ##\ntext",
+      expected: "<h2>h</h2><p>text</p>",
+    },
+
+    // --- a bare run opens an empty heading ---
+    { name: "two hashes alone", input: "##", expected: "<h2></h2>" },
+    { name: "one hash alone", input: "#", expected: "<h1></h1>" },
+    { name: "six hashes alone", input: "######", expected: "<h6></h6>" },
+    { name: "seven hashes alone is a paragraph", input: "#######", expected: "<p>#######</p>" },
+    { name: "an opening run and a closing run", input: "## ##", expected: "<h2></h2>" },
+    { name: "an opening run and one hash", input: "## #", expected: "<h2></h2>" },
+    { name: "a bare run then a line", input: "##\nnext", expected: "<h2></h2><p>next</p>" },
+  ];
+
+  it.each(cases)("$name", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+
+  // A `#` run that is not a closing sequence stays exactly where it was typed.
+  const unchanged: { name: string; input: string; expected: string }[] = [
+    { name: "a run followed by text", input: "## heading #foo", expected: "<h2>heading #foo</h2>" },
+    {
+      name: "a run with no space before it",
+      input: "## heading##",
+      expected: "<h2>heading##</h2>",
+    },
+    {
+      name: "a run with text after it",
+      input: "## heading ## x",
+      expected: "<h2>heading ## x</h2>",
+    },
+    { name: "a trailing space with no run", input: "## heading ", expected: "<h2>heading</h2>" },
+    { name: "a plain heading", input: "## heading", expected: "<h2>heading</h2>" },
+    { name: "a hash-space-only heading", input: "## ", expected: "<h2></h2>" },
+    // A heading inside a list item is the nested-block family, which this
+    // parser does not open; the marker run stays literal text.
+    {
+      name: "a heading inside a list item",
+      input: "- ## h ##",
+      expected: "<ul><li>## h ##</li></ul>",
+    },
+  ];
+
+  it.each(unchanged)("leaves $name unchanged", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
   });
 });
 
