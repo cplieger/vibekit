@@ -13,6 +13,7 @@ import {
   RAW_URL,
   STRONG_AST,
   STRONG_UND,
+  UNCLOSED,
 } from "./smd-parser-types.js";
 
 /** No-op renderer for structural testing. */
@@ -332,6 +333,90 @@ describe("chunk-boundary invariance", () => {
       expect(chunked.ends).toEqual(whole.ends);
       expect(chunked.attrs).toEqual(whole.attrs);
       expect(chunked.texts.join("")).toBe(whole.texts.join(""));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The UNCLOSED signal: which literal the renderer is told to restore, and the
+// guarantee that a token which closed normally carries no such call.
+// ---------------------------------------------------------------------------
+
+function unclosed(t: Trace): string[] {
+  return t.attrs.filter((a) => a.attr === UNCLOSED).map((a) => a.value);
+}
+
+describe("unresolved inline tokens report their delimiter", () => {
+  const cases: [string, string[]][] = [
+    ["a *b", ["*"]],
+    ["a _b", ["_"]],
+    ["a **b", ["**"]],
+    ["a __b", ["__"]],
+    ["a ~~b", ["~~"]],
+    ["a `b", ["`"]],
+    ["a ``b", ["``"]],
+    ["a ` b", ["` "]],
+    ["a [b", ["["]],
+    ["a ![b", ["!["]],
+    ["a $b", ["$"]],
+    ["a \\(b", ["\\("]],
+    // Innermost first, so the italic's `*` precedes the strong's `**`.
+    ["a **b *c", ["*", "**"]],
+  ];
+
+  it.each(cases)("%j reports %j", (input, expected) => {
+    expect(unclosed(trace(input))).toEqual(expected);
+  });
+
+  const closed = ["a **b** c", "*em*", "_em_", "~~s~~", "`c`", "[a](http://e.com)", "$x$"];
+
+  it.each(closed)("%j reports nothing", (input) => {
+    expect(unclosed(trace(input))).toEqual([]);
+  });
+
+  it("records no delimiter for a token saturation refused to push", () => {
+    const input = ">".repeat(30) + " **x";
+    expect(() => trace(input)).not.toThrow();
+    expect(unclosed(trace(input))).toEqual([]);
+  });
+
+  it("emits the delimiter immediately before the end_token it belongs to", () => {
+    // The renderer consumes the signal on the very next end_token, so anything
+    // between the two would attach the delimiter to the wrong element.
+    const t: Trace = { tokens: [], ends: 0, attrs: [], texts: [] };
+    const ops: string[] = [];
+    const p = parser({
+      data: null,
+      add_token: (_: null, token: number) => {
+        ops.push(`open:${token}`);
+        t.tokens.push(token);
+      },
+      end_token: () => {
+        ops.push("close");
+        t.ends += 1;
+      },
+      add_text: (_: null, text: string) => {
+        ops.push(`text:${text}`);
+      },
+      set_attr: (_: null, attr: number, value: string) => {
+        ops.push(attr === UNCLOSED ? `unclosed:${value}` : `attr:${attr}`);
+      },
+    } as any);
+    parser_write(p, "a **b");
+    parser_end(p);
+    expect(ops[ops.length - 2]).toBe("unclosed:**");
+    expect(ops[ops.length - 1]).toBe("close");
+  });
+
+  it("keeps the same tree at every chunk size", () => {
+    for (const input of ["a **b", "a ` b\nc", "[a *b](https://e.com)", "an ![img"]) {
+      const whole = trace(input);
+      for (let chunkLen = 1; chunkLen <= 8; chunkLen += 1) {
+        const chunked = trace(input, chunkLen);
+        expect(chunked.tokens).toEqual(whole.tokens);
+        expect(chunked.attrs).toEqual(whole.attrs);
+        expect(chunked.texts.join("")).toBe(whole.texts.join(""));
+      }
     }
   });
 });

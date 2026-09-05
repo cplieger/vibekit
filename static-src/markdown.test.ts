@@ -582,19 +582,20 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       input: "__a _b_ c__",
       expected: "<p><strong>a <em>b</em> c</strong></p>",
     },
-    // The next two leave the OUTER run unclosed, which an append-only parser
-    // renders as emphasis where CommonMark falls back to literal text. That gap
-    // predates the delimiter rule and needs the same delimiter stack the close
-    // half does; what these pin is that the inner intraword run is literal.
+    // The next two leave the OUTER run unclosed. It is unwrapped at block close,
+    // so the whole run is literal. CommonMark pairs the runs differently
+    // (`<em>x__y</em>_` and `_<em>x_y</em>`), which needs the delimiter stack
+    // the close half does; what these pin is that no character is lost and
+    // nothing is emphasised that the author did not close.
     {
       name: "a trailing __ inside _ stays literal",
       input: "_x__y__",
-      expected: "<p><em>x__y__</em></p>",
+      expected: "<p>_x__y__</p>",
     },
     {
       name: "a trailing _ inside __ stays literal",
       input: "__x_y_",
-      expected: "<p><strong>x_y_</strong></p>",
+      expected: "<p>__x_y_</p>",
     },
   ];
 
@@ -619,15 +620,13 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
     expect(renderMarkdown("_foo bar_baz")).toBe("<p><em>foo bar</em>baz</p>");
   });
 
-  // A run of three or more only goes literal for its first two characters. The
-  // rule is evaluated per delimiter, and the blocked pair lands in the text
-  // buffer, so the remainder of the run reads a `_` — punctuation — as what
-  // precedes it and may open after all. Closer to CommonMark (which renders the
-  // whole run literally) than the `a<strong><em>b` this used to produce, and the
-  // shortfall needs the same delimiter stack the close half does.
-  it("a run of three or more underscores goes partly literal (known limitation)", () => {
-    expect(renderMarkdown("a___b")).toBe("<p>a__<em>b</em></p>");
-    expect(renderMarkdown("a____b")).toBe("<p>a__<strong>b</strong></p>");
+  // A run of three or more opens for its tail, because the rule is evaluated per
+  // delimiter and the blocked pair lands in the text buffer, so the remainder of
+  // the run reads a `_` — punctuation — as what precedes it. The token it opens
+  // never closes, so the unwrap restores the whole run: CommonMark-correct.
+  it("a run of three or more underscores stays literal", () => {
+    expect(renderMarkdown("a___b")).toBe("<p>a___b</p>");
+    expect(renderMarkdown("a____b")).toBe("<p>a____b</p>");
   });
 });
 
@@ -860,11 +859,15 @@ describe("markdown math rendering", () => {
     expect(host?.textContent).toBe("\\begin{pmatrix} a & b \\end{pmatrix}");
   });
 
-  it("leaves an unclosed expression as its raw LaTeX", () => {
+  it("restores the delimiter of an expression that never closes", () => {
+    // An unclosed `$` is not an equation, it is a dollar sign. The host is
+    // unwrapped at block close and the delimiter comes back as text, where it
+    // used to be deleted and the rest of the paragraph styled as source.
     const el = document.createElement("div");
     renderMarkdownInto(el, "unfinished $x^2 + y");
     expect(el.querySelector("math")).toBeNull();
-    expect(el.querySelector("[data-math-raw]")?.textContent).toBe("x^2 + y");
+    expect(el.querySelector("[data-math]")).toBeNull();
+    expect(el.textContent).toBe("unfinished $x^2 + y");
   });
 
   it("needs a newline after the block opener, and says so by rendering the source", () => {
@@ -1122,5 +1125,117 @@ describe("renderMarkdown bare URL with CJK punctuation", () => {
     expect(renderMarkdown("**https://example.com**")).toBe(
       "<p><strong>https://example.com</strong></p>",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// An inline opener with no closer.
+//
+// Every inline opener commits its token on sight, so one that never closed used
+// to format the rest of the block AND delete its own delimiter. The parser
+// cannot un-open a token, but the renderer still holds the element when the
+// block ends, so it unwraps it and restores the literal.
+// ---------------------------------------------------------------------------
+
+describe("renderMarkdown unclosed inline openers", () => {
+  const cases: { name: string; input: string; expected: string }[] = [
+    { name: "unclosed **", input: "a **b", expected: "<p>a **b</p>" },
+    { name: "unclosed *", input: "a *b", expected: "<p>a *b</p>" },
+    { name: "unclosed _", input: "a _b", expected: "<p>a _b</p>" },
+    { name: "unclosed __", input: "a __b", expected: "<p>a __b</p>" },
+    { name: "unclosed ~~", input: "a ~~b", expected: "<p>a ~~b</p>" },
+    { name: "unclosed backtick", input: "the ` char", expected: "<p>the ` char</p>" },
+    { name: "unclosed double backtick", input: "a ``b", expected: "<p>a ``b</p>" },
+    { name: "unclosed [", input: "random[0,500)", expected: "<p>random[0,500)</p>" },
+    { name: "unclosed ![", input: "an ![img", expected: "<p>an ![img</p>" },
+    { name: "unclosed $", input: "a $x^2", expected: "<p>a $x^2</p>" },
+    // The delimiter restored is the one the parser consumed. vibekit reads
+    // `\\(` as a math opener rather than an escaped paren, so `\\(` comes back.
+    { name: "unclosed \\(", input: "a \\(x^2", expected: "<p>a \\(x^2</p>" },
+    {
+      name: "the next paragraph is unaffected",
+      input: "a **b\n\nnext para",
+      expected: "<p>a **b</p><p>next para</p>",
+    },
+    { name: "inside a heading", input: "# a *b", expected: "<h1>a *b</h1>" },
+    {
+      name: "inside a blockquote",
+      input: "> a *b",
+      expected: "<blockquote><p>a *b</p></blockquote>",
+    },
+    {
+      name: "inside a list item",
+      input: "- a ` b\n- c",
+      expected: "<ul><li>a ` b</li><li>c</li></ul>",
+    },
+    { name: "two nested unclosed runs", input: "a **b *c", expected: "<p>a **b *c</p>" },
+    {
+      name: "a soft break does not close a code span",
+      input: "a ` b\nc",
+      expected: "<p>a ` b<br>c</p>",
+    },
+    {
+      // CommonMark resolves the link before emphasis, so the `*` is literal
+      // INSIDE the label and the link keeps its href.
+      name: "an unclosed run inside a link label leaves the link intact",
+      input: "[a *b](https://e.com)",
+      expected: '<p><a target="_blank" rel="noopener" href="https://e.com">a *b</a></p>',
+    },
+  ];
+
+  it.each(cases)("$name", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+
+  const unchanged: { name: string; input: string; expected: string }[] = [
+    { name: "closed **", input: "a **b** c", expected: "<p>a <strong>b</strong> c</p>" },
+    { name: "closed *", input: "*em*", expected: "<p><em>em</em></p>" },
+    { name: "closed _", input: "_em_", expected: "<p><em>em</em></p>" },
+    { name: "closed ~~", input: "~~gone~~", expected: "<p><s>gone</s></p>" },
+    { name: "closed backtick", input: "`code`", expected: "<p><code>code</code></p>" },
+    {
+      name: "closed link",
+      input: "[x](http://e.com)",
+      expected: '<p><a target="_blank" rel="noopener" href="http://e.com">x</a></p>',
+    },
+    {
+      name: "closed image",
+      input: "![r](http://e.com/r.png)",
+      expected: '<p><img alt="r" src="http://e.com/r.png"></p>',
+    },
+    {
+      name: "closed emphasis inside a link label",
+      input: "[a *b* c](https://e.com)",
+      expected: '<p><a target="_blank" rel="noopener" href="https://e.com">a <em>b</em> c</a></p>',
+    },
+  ];
+
+  it.each(unchanged)("leaves $name unchanged", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+
+  it("keeps a mid-arrival link streaming as it does today", () => {
+    // The block has not closed, so nothing about a partially arrived construct
+    // changes: the label renders inside an href-less anchor until `)` lands.
+    const el = document.createElement("div");
+    const r = createMarkdownStream(el, { flushIntervalMs: 0 });
+    r.writeDelta("see [the label");
+    // One character short: the parser holds the last one to disambiguate.
+    expect(el.querySelector("a")?.textContent).toBe("the labe");
+    r.writeDelta("](https://e.com) end");
+    r.end();
+    expect(el.querySelector("a")?.getAttribute("href")).toBe("https://e.com");
+    expect(el.textContent).toBe("see the label end");
+  });
+
+  it("keeps a mid-arrival code span streaming as it does today", () => {
+    const el = document.createElement("div");
+    const r = createMarkdownStream(el, { flushIntervalMs: 0 });
+    r.writeDelta("run `npm ");
+    expect(el.querySelector("code")?.textContent).toBe("npm");
+    r.writeDelta("test` now");
+    r.end();
+    expect(el.querySelector("code")?.textContent).toBe("npm test");
+    expect(el.textContent).toBe("run npm test now");
   });
 });

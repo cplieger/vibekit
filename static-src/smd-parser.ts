@@ -95,7 +95,9 @@ import {
   TOKEN_ARRAY_CAP,
   add_text,
   end_token,
+  end_token_unresolved,
   end_tokens_to_indent,
+  is_inline_token,
 } from "./smd-parser-types.js";
 
 const MAYBE_URL = 102 as Token; // local-only token, not in TOKENS
@@ -110,6 +112,7 @@ export function parser<T>(renderer: Renderer<T>): Parser {
     textBuf: "",
     pending: "",
     tokens,
+    delims: new Array<string>(TOKEN_ARRAY_CAP).fill(""),
     len: 0,
     token: DOCUMENT,
     fence_end: 0,
@@ -129,21 +132,26 @@ export function parser<T>(renderer: Renderer<T>): Parser {
 }
 
 export function parser_end(p: Parser): void {
-  if (p.pending.length === 0) {
-    return;
+  if (p.pending.length > 0) {
+    p.at_end = true;
+    parser_write(p, "\n");
+    // Whatever a handler is still holding was held for a character that never
+    // arrived, so it is literal text — `<` held as a possible `<br>` is the case
+    // this recovers. Drop out of any MAYBE_* token first, and strip the
+    // synthetic newline above, which is not input.
+    const held = p.pending.endsWith("\n") ? p.pending.slice(0, -1) : p.pending;
+    if (held !== "") {
+      p.token = p.tokens[p.len] as Token;
+      p.pending = "";
+      p.textBuf += held;
+      add_text(p);
+    }
   }
-  p.at_end = true;
-  parser_write(p, "\n");
-  // Whatever a handler is still holding was held for a character that never
-  // arrived, so it is literal text — `<` held as a possible `<br>` is the case
-  // this recovers. Drop out of any MAYBE_* token first, and strip the synthetic
-  // newline above, which is not input.
-  const held = p.pending.endsWith("\n") ? p.pending.slice(0, -1) : p.pending;
-  if (held !== "") {
-    p.token = p.tokens[p.len] as Token;
-    p.pending = "";
-    p.textBuf += held;
-    add_text(p);
+  // Trailing inline tokens never closed. Stop at the first block token: an open
+  // paragraph or fence is the streaming tail, and the code-block decoration
+  // sweeps rely on a fence staying open.
+  while (is_inline_token(p.tokens[p.len] as Token)) {
+    end_token_unresolved(p);
   }
 }
 

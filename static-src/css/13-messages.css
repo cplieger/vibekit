@@ -432,6 +432,13 @@
     & [data-vk-chunk-enter] {
       animation: vk-fade-in var(--dur-micro) var(--ease-enter) backwards;
     }
+
+    /* A span the renderer moved when it unwrapped an inline token whose
+     * delimiter never closed. Re-inserting a node restarts its animation, so
+     * without this the fade re-runs over text already on screen. */
+    & [data-vk-chunk-settled] {
+      animation: none;
+    }
     & pre[data-vk-block-enter],
     & blockquote[data-vk-block-enter],
     & table[data-vk-block-enter] {

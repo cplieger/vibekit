@@ -101,12 +101,16 @@ const ATTRS = {
   LANG: 4,
   CHECKED: 8,
   START: 16,
+  /** The literal that opened an inline token which never closed. Not an HTML
+   *  attribute: the renderer unwraps the element and restores this text in its
+   *  place. Always emitted immediately before that token's `end_token`. */
+  UNCLOSED: 32,
 } as const satisfies Record<string, number>;
 
 /** Attr type derived from the ATTRS constant object. */
 export type Attr = (typeof ATTRS)[keyof typeof ATTRS];
 
-export const { HREF, SRC, LANG, CHECKED, START } = ATTRS;
+export const { HREF, SRC, LANG, CHECKED, START, UNCLOSED } = ATTRS;
 
 export const TOKEN_ARRAY_CAP = 24;
 
@@ -127,6 +131,11 @@ export interface Parser {
   textBuf: string;
   pending: string;
   tokens: Uint32Array;
+  /** The literal that opened `tokens[i]`, for the inline tokens only. An
+   *  append-only parser cannot un-open a token, but the renderer can unwrap the
+   *  element at close time — and to restore the delimiter it needs to know what
+   *  it was, since the characters were consumed when the token opened. */
+  delims: string[];
   len: number;
   token: Token;
   spaces: Uint8Array;
@@ -206,6 +215,53 @@ export function end_token(p: Parser): void {
   p.renderer.end_token(p.renderer.data);
 }
 
+/** The inline tokens: those opened by a delimiter that has a matching closer.
+ *  A BLOCK token still open is the streaming tail, which is not a defect and
+ *  which the code-block decoration sweeps depend on; an inline one still open
+ *  when its block ends never closed at all, and CommonMark reads its delimiter
+ *  as literal text. RAW_URL is absent deliberately — it has no delimiter, and
+ *  it always terminates on the newline `parser_end` writes. */
+const INLINE_TOKENS: ReadonlySet<Token> = new Set<Token>([
+  ITALIC_AST,
+  ITALIC_UND,
+  STRONG_AST,
+  STRONG_UND,
+  STRIKE,
+  CODE_INLINE,
+  LINK,
+  IMAGE,
+  EQUATION_INLINE,
+]);
+
+export function is_inline_token(token: Token): boolean {
+  return INLINE_TOKENS.has(token);
+}
+
+/** Open an inline token, remembering the delimiter that opened it. */
+export function add_inline_token(p: Parser, token: Token, delim: string): void {
+  if (add_token(p, token)) {
+    p.delims[p.len] = delim;
+  }
+}
+
+/** Close an inline token that never met its closer, telling the renderer which
+ *  literal to restore in the element's place. */
+export function end_token_unresolved(p: Parser): void {
+  p.renderer.set_attr(p.renderer.data, UNCLOSED, p.delims[p.len] ?? "");
+  end_token(p);
+}
+
+/** Close the current token, annotating it when it is an inline token the input
+ *  never closed. Every legitimate inline close goes through its own handler, so
+ *  reaching an inline token from a BULK close means it never closed. */
+function end_token_or_unresolved(p: Parser): void {
+  if (is_inline_token(p.tokens[p.len] as Token)) {
+    end_token_unresolved(p);
+    return;
+  }
+  end_token(p);
+}
+
 /** Push `token` and make it current. Returns false when the stack is already at
  *  TOKEN_ARRAY_CAP, in which case NOTHING changed — `p.token` and `p.pending`
  *  still describe the caller's state. A caller that then re-feeds the character
@@ -242,7 +298,7 @@ export function idx_of_token(p: Parser, token: Token, start_idx: number): number
 export function end_tokens_to_len(p: Parser, len: number): void {
   p.fence_start = 0;
   while (p.len > len) {
-    end_token(p);
+    end_token_or_unresolved(p);
   }
 }
 
@@ -264,7 +320,7 @@ export function end_tokens_to_indent(p: Parser, indent: number): number {
     }
   }
   while (p.len > idx) {
-    end_token(p);
+    end_token_or_unresolved(p);
   }
   return indent;
 }

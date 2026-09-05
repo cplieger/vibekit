@@ -1,7 +1,7 @@
 // Table-driven tests for smd-renderer.ts TOKEN_TAG_MAP coverage via
 // add_token_dom verifying all token types produce correct elements.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { domRenderer } from "./smd-renderer.js";
 import {
   PARAGRAPH,
@@ -28,6 +28,7 @@ import {
   IMAGE,
   EQUATION_BLOCK,
   EQUATION_INLINE,
+  UNCLOSED,
 } from "./smd-parser-types.js";
 import type { Token } from "./smd-parser-types.js";
 
@@ -214,5 +215,200 @@ describe("the streaming caret attribute", () => {
     r.add_token(r.data, PARAGRAPH);
     r.add_text(r.data, "history");
     expect(container.querySelector("[data-vk-caret]")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Unwrapping an inline element whose token never closed.
+//
+// The parser is append-only and cannot un-open a token; the renderer still holds
+// the element at close time, so it replaces it with its own delimiter followed
+// by its children. That is what CommonMark renders for a delimiter run with no
+// closer, and it is the only route to it that does not stop the stream.
+// ---------------------------------------------------------------------------
+
+/** Open `token`, add `text`, then close it unresolved with `delim`. */
+function renderUnresolved(
+  token: Token,
+  text: string,
+  delim: string,
+  options: { animateText?: boolean } = {},
+): HTMLElement {
+  const container = document.createElement("div");
+  const r = domRenderer(container, { animateText: options.animateText ?? false });
+  r.add_token(r.data, PARAGRAPH);
+  r.add_token(r.data, token);
+  r.add_text(r.data, text);
+  r.set_attr(r.data, UNCLOSED, delim);
+  r.end_token(r.data);
+  return container;
+}
+
+describe("smd-renderer unresolved inline tokens", () => {
+  const cases: { label: string; token: Token; delim: string; tag: string }[] = [
+    { label: "STRONG_AST", token: STRONG_AST, delim: "**", tag: "strong" },
+    { label: "ITALIC_UND", token: ITALIC_UND, delim: "_", tag: "em" },
+    { label: "STRIKE", token: STRIKE, delim: "~~", tag: "s" },
+    { label: "CODE_INLINE", token: CODE_INLINE, delim: "`", tag: "code" },
+    { label: "LINK", token: LINK, delim: "[", tag: "a" },
+  ];
+
+  it.each(cases)("replaces an unresolved $label with its delimiter", ({ token, delim, tag }) => {
+    const container = renderUnresolved(token, "b", delim);
+    expect(container.querySelector(tag)).toBeNull();
+    expect(container.textContent).toBe(delim + "b");
+  });
+
+  it("replaces an unresolved IMAGE with its delimiter and alt text", () => {
+    const container = document.createElement("div");
+    const r = domRenderer(container, { animateText: false });
+    r.add_token(r.data, PARAGRAPH);
+    r.add_token(r.data, IMAGE);
+    r.add_text(r.data, "img reference");
+    r.set_attr(r.data, UNCLOSED, "![");
+    r.end_token(r.data);
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.textContent).toBe("![img reference");
+  });
+
+  it("does not convert an unresolved equation host to MathML", () => {
+    const container = renderUnresolved(EQUATION_INLINE, "x^2", "$");
+    expect(container.querySelector("math")).toBeNull();
+    expect(container.querySelector("[data-math]")).toBeNull();
+    expect(container.textContent).toBe("$x^2");
+  });
+
+  it("leaves a token that closed normally alone", () => {
+    const container = document.createElement("div");
+    const r = domRenderer(container, { animateText: false });
+    r.add_token(r.data, PARAGRAPH);
+    r.add_token(r.data, STRONG_AST);
+    r.add_text(r.data, "b");
+    r.end_token(r.data);
+    expect(container.querySelector("strong")?.textContent).toBe("b");
+  });
+
+  it("unwraps nested unresolved tokens innermost first, keeping text order", () => {
+    const container = document.createElement("div");
+    const r = domRenderer(container, { animateText: false });
+    r.add_token(r.data, PARAGRAPH);
+    r.add_token(r.data, STRONG_AST);
+    r.add_text(r.data, "b");
+    r.add_token(r.data, ITALIC_AST);
+    r.add_text(r.data, "c");
+    r.set_attr(r.data, UNCLOSED, "*");
+    r.end_token(r.data);
+    r.set_attr(r.data, UNCLOSED, "**");
+    r.end_token(r.data);
+    expect(container.querySelector("strong")).toBeNull();
+    expect(container.querySelector("em")).toBeNull();
+    expect(container.textContent).toBe("**b*c");
+  });
+
+  it("moves the caret off the element it removes", () => {
+    const container = document.createElement("div");
+    const r = domRenderer(container, { animateText: true });
+    r.add_token(r.data, PARAGRAPH);
+    r.add_token(r.data, STRONG_AST);
+    r.add_text(r.data, "b");
+    expect(container.querySelector("strong")?.hasAttribute("data-vk-caret")).toBe(true);
+    r.set_attr(r.data, UNCLOSED, "**");
+    r.end_token(r.data);
+    const marked = container.querySelectorAll("[data-vk-caret]");
+    expect(marked).toHaveLength(1);
+    expect(marked[0]?.tagName).toBe("P");
+  });
+
+  it("does not fire onBlockComplete for an unwrapped inline token", () => {
+    const blocks: HTMLElement[] = [];
+    const container = document.createElement("div");
+    const r = domRenderer(container, {
+      animateText: false,
+      onBlockComplete: (b) => {
+        blocks.push(b);
+      },
+    });
+    r.add_token(r.data, PARAGRAPH);
+    r.add_token(r.data, STRONG_AST);
+    r.add_text(r.data, "b");
+    r.set_attr(r.data, UNCLOSED, "**");
+    r.end_token(r.data);
+    expect(blocks).toHaveLength(0);
+    r.end_token(r.data);
+    expect(blocks.map((b) => b.tagName)).toEqual(["P"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The load-bearing R6 measurement, in a real browser rather than argued: the
+// per-chunk fade animates each `<span data-vk-chunk-enter>` ONCE on mount, so an
+// unwrap that recreated those spans would re-run the fade over settled text.
+// ---------------------------------------------------------------------------
+
+describe("unwrapping does not re-mount the per-chunk fade spans", () => {
+  const ANIM = "chunk-enter-probe";
+  const hosts: HTMLElement[] = [];
+
+  beforeAll(() => {
+    const style = document.createElement("style");
+    style.textContent = `
+      @keyframes ${ANIM} { from { opacity: 0 } to { opacity: 1 } }
+      .${ANIM}-scope [data-vk-chunk-enter] { animation: ${ANIM} 5s linear backwards }
+      .${ANIM}-scope [data-vk-chunk-settled] { animation: none }
+    `;
+    document.head.append(style);
+  });
+
+  afterEach(() => {
+    for (const h of hosts.splice(0)) {
+      h.remove();
+    }
+  });
+
+  function nextFrame(): Promise<void> {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    });
+  }
+
+  it("re-parents the same span objects and does not restart their animation", async () => {
+    const container = document.createElement("div");
+    container.className = `${ANIM}-scope`;
+    document.body.append(container);
+    hosts.push(container);
+
+    let starts = 0;
+    container.addEventListener("animationstart", () => {
+      starts += 1;
+    });
+
+    const r = domRenderer(container, { animateText: true });
+    r.add_token(r.data, PARAGRAPH);
+    r.add_token(r.data, STRONG_AST);
+    r.add_text(r.data, "one ");
+    r.add_text(r.data, "two ");
+    r.add_text(r.data, "three");
+    await nextFrame();
+    const before = [...container.querySelectorAll("[data-vk-chunk-enter]")];
+    expect(before).toHaveLength(3);
+    expect(starts).toBe(3);
+
+    r.set_attr(r.data, UNCLOSED, "**");
+    r.end_token(r.data);
+    await nextFrame();
+
+    const after = [...container.querySelectorAll("[data-vk-chunk-enter]")];
+    // Identity, not equality: `replaceWith(...el.childNodes)` MOVES the spans.
+    expect(after).toEqual(before);
+    // Re-inserting a node DOES restart its animation in Chromium (measured: 6
+    // starts without the settled marker), so the unwrap marks the spans it moves
+    // and the CSS rule skips them.
+    expect(after.every((s) => s.hasAttribute("data-vk-chunk-settled"))).toBe(true);
+    expect(starts).toBe(3);
+    expect(container.textContent).toBe("**one two three");
   });
 });

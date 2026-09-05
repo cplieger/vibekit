@@ -42,6 +42,8 @@ import {
   emit_leaf,
   end_token,
   add_token,
+  add_inline_token,
+  is_inline_token,
   idx_of_token,
   end_tokens_to_len,
   end_tokens_to_indent,
@@ -517,7 +519,7 @@ export function handleStrong(p: Parser, char: string): boolean {
       return false;
     }
     add_text(p);
-    add_token(p, italic);
+    add_inline_token(p, italic, symbol);
     p.pending = char;
     return true;
   }
@@ -543,7 +545,7 @@ export function handleItalic(p: Parser, char: string, pending_with_char: string)
           p.pending = "";
         } else {
           add_text(p);
-          add_token(p, strong);
+          add_inline_token(p, strong, symbol + symbol);
           p.pending = "";
         }
       } else {
@@ -558,7 +560,7 @@ export function handleItalic(p: Parser, char: string, pending_with_char: string)
       end_token(p);
       end_token(p);
       if (symbol !== char) {
-        add_token(p, italic);
+        add_inline_token(p, italic, symbol);
         p.pending = char;
       } else {
         p.pending = "";
@@ -602,6 +604,22 @@ export function handleMaybeURL(p: Parser, char: string, pending_with_char: strin
   }
   p.token = p.tokens[p.len] as Token;
   p.write(p, char);
+}
+
+/** Index of the innermost open LINK or IMAGE, or -1 when the innermost tokens
+ *  are not inside a label. Stops at the first block token, so it never reaches
+ *  across a paragraph. */
+function open_link_idx(p: Parser): number {
+  for (let i = p.len; i > 0; i -= 1) {
+    const token = p.tokens[i] as Token;
+    if (token === LINK || token === IMAGE) {
+      return i;
+    }
+    if (!is_inline_token(token)) {
+      return -1;
+    }
+  }
+  return -1;
 }
 
 export function handleLinkOrImage(p: Parser, char: string, pending_with_char: string): boolean {
@@ -765,7 +783,7 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       switch (char) {
         case "(":
           add_text(p);
-          add_token(p, EQUATION_INLINE);
+          add_inline_token(p, EQUATION_INLINE, "\\(");
           p.pending = "";
           return true;
         case "[":
@@ -840,7 +858,9 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       } else {
         p.fence_start += 1;
         add_text(p);
-        add_token(p, CODE_INLINE);
+        // The space after the opening run is dropped from the content, so it is
+        // part of the delimiter for restoration purposes.
+        add_inline_token(p, CODE_INLINE, "`".repeat(p.fence_start) + (char === " " ? " " : ""));
         p.textBuf = "";
         if (char !== " " && char !== "\n") {
           p.textBuf += char;
@@ -875,7 +895,7 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         }
         if (char !== " " && char !== "\n" && !undBlocked) {
           add_text(p);
-          add_token(p, italic);
+          add_inline_token(p, italic, symbol);
           p.pending = char;
           return true;
         }
@@ -885,14 +905,14 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         }
         if (symbol === char) {
           add_text(p);
-          add_token(p, strong);
-          add_token(p, italic);
+          add_inline_token(p, strong, symbol + symbol);
+          add_inline_token(p, italic, symbol);
           p.pending = "";
           return true;
         }
         if (char !== " " && char !== "\n") {
           add_text(p);
-          add_token(p, strong);
+          add_inline_token(p, strong, symbol + symbol);
           p.pending = char;
           return true;
         }
@@ -908,7 +928,7 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
           }
         } else if (char !== " " && char !== "\n") {
           add_text(p);
-          add_token(p, STRIKE);
+          add_inline_token(p, STRIKE, "~~");
           p.pending = char;
           return true;
         }
@@ -938,7 +958,7 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
           break;
         }
         add_text(p);
-        add_token(p, EQUATION_INLINE);
+        add_inline_token(p, EQUATION_INLINE, "$");
         p.pending = char;
         return true;
       }
@@ -955,16 +975,30 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         char !== "\n"
       ) {
         add_text(p);
-        add_token(p, LINK);
+        add_inline_token(p, LINK, "[");
         p.link_depth = 0;
         p.pending = char;
         return true;
       }
       break;
+    case "]":
+      // CommonMark resolves a link before emphasis (6.3 before 6.2), so a `]`
+      // ends the label even when an inline token opened inside it never closed.
+      // Without this the label end is never seen, the link loses its href and
+      // the destination shows up as visible text.
+      if (p.pending === "]" && p.link_depth === 0) {
+        const link_idx = open_link_idx(p);
+        if (link_idx !== -1) {
+          add_text(p);
+          end_tokens_to_len(p, link_idx);
+          return handleLinkOrImage(p, char, pending_with_char);
+        }
+      }
+      break;
     case "!":
       if (p.token !== IMAGE && char === "[") {
         add_text(p);
-        add_token(p, IMAGE);
+        add_inline_token(p, IMAGE, "![");
         p.link_depth = 0;
         p.pending = "";
         return true;
