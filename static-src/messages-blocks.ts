@@ -451,7 +451,7 @@ function buildBody(
   indexPipelines(st, m);
   // ONE index per pass: the mount and the collapse sync ask it different
   // questions about the same run boundaries.
-  const idx = indexGroups(st, m, marks, live);
+  const idx = indexGroups(st, m, marks, live, st.window.from);
   renderRange(st, m, want.from, want.to, live, marks, idx);
   syncGroupCollapse(st, idx);
 }
@@ -572,7 +572,7 @@ function updateBody(
   // in the store (out-of-order SSE), and this index is the only thing that knows
   // which pipeline a stage belongs to.
   indexPipelines(st, m);
-  const idx = indexGroups(st, m, marks, streaming);
+  const idx = indexGroups(st, m, marks, streaming, st.window.from);
   if (want.to > st.window.to) {
     renderRange(st, m, st.window.to, want.to, streaming, marks, idx);
   }
@@ -1771,9 +1771,14 @@ function toolGroupFor(
  *  re-classifying every earlier block is quadratic on one long tool loop. */
 interface GroupIndex {
   /** container key → ascending indices at which a new run may START: one past a
-   *  block that closed the container, or a steer note's own anchor. */
+   *  block that closed the container, a steer note's own anchor, or one past the
+   *  block at which a nested container's box LANDS — which is the first of its
+   *  blocks the RANGE reaches, not the first the store names. Every position here
+   *  is a mounted one, which is what makes a group's place range-independent. */
   readonly starts: ReadonlyMap<string, number[]>;
-  /** container key → the last block index that posts anything into it. */
+  /** container key → the last block index that posts anything into it, in the
+   *  STORE: a trace is finished by a successor the store holds, whether or not
+   *  this range reached it. */
   readonly lastPost: ReadonlyMap<string, number>;
 }
 
@@ -1788,6 +1793,7 @@ function indexGroups(
   m: Message,
   marks: readonly SteerMark[],
   live: boolean,
+  mountedFrom: number,
 ): GroupIndex {
   const blocks = m.blocks ?? [];
   const lastIdx = blocks.length - 1;
@@ -1795,6 +1801,7 @@ function indexGroups(
   const starts = new Map<string, number[]>();
   const lastPost = new Map<string, number>();
   const built = new Set<string>();
+  const landed = new Set<string>();
   const startAt = (key: string, at: number): void => {
     const list = starts.get(key);
     if (list === undefined) {
@@ -1809,13 +1816,19 @@ function indexGroups(
       startAt(key, at + 1);
     }
   };
-  // A box is built by whichever of its blocks arrives FIRST, and it lands in the
-  // host — which for a pipeline stage is the pipeline's own box, whose creation
-  // posts at the top level in turn.
+  // A box lands in its host — which for a pipeline stage is the pipeline's own box,
+  // whose creation posts at the top level in turn — at the first of its blocks the
+  // RANGE reaches, because that is where `containerFor` builds it. So the POST is
+  // priced at the store's own index, which is what seals a trace open in the host,
+  // and the BREAK where the box lands.
   const openBox = (id: string, host: string, at: number): void => {
     if (!built.has(id)) {
       built.add(id);
-      post(host, at, true);
+      lastPost.set(host, at);
+    }
+    if (!landed.has(id) && at >= mountedFrom) {
+      landed.add(id);
+      startAt(host, at + 1);
     }
   };
   for (const [i, block] of blocks.entries()) {

@@ -1434,18 +1434,22 @@ function applyFoldPass(turns: readonly Turn[], cards: readonly HTMLElement[]): v
     const folded = card.hasAttribute("data-folded");
     const mounted = card.querySelector(":scope > .turn-body") !== null;
     if (wantMounted && !mounted && t !== undefined) {
-      const range = wantedWindow.get(id) ?? WHOLE_TURN;
-      if (folded) {
-        // Hidden build: the card is folded, so the body lands at zero height.
-        startTurnBody(card, t, range);
-      } else {
-        // A card mid-deferral (its fold is still queued) is visible, so its
-        // build moves content; it joins the compensated batch instead.
-        changes.push(() => {
-          if (card.isConnected) {
-            startTurnBody(card, t, range);
-          }
-        });
+      // No whole-turn fallback: `wantMounted` IS `wantedWindow.has(id)`, so an
+      // absent range is the presence rule breaking, not a body to guess at.
+      const range = wantedWindow.get(id);
+      if (range !== undefined) {
+        if (folded) {
+          // Hidden build: the card is folded, so the body lands at zero height.
+          startTurnBody(card, t, range);
+        } else {
+          // A card mid-deferral (its fold is still queued) is visible, so its
+          // build moves content; it joins the compensated batch instead.
+          changes.push(() => {
+            if (card.isConnected) {
+              startTurnBody(card, t, range);
+            }
+          });
+        }
       }
     } else if (!wantMounted && mounted) {
       changes.push(() => {
@@ -1705,10 +1709,13 @@ function buildTurn(t: Turn): HTMLElement {
   // Born with its fold affordance decided, so the toggle never flashes on a
   // card that does not offer one. The fold pass keeps it current afterwards.
   card.toggleAttribute("data-no-fold", !(plan?.canFold ?? true));
-  if (plan === undefined || plan.mounted) {
+  // The window entry IS `plan.mounted`, so it decides here rather than a
+  // whole-turn fallback for a range the presence rule says exists.
+  const range = wantedWindow.get(t.id);
+  if (range !== undefined) {
     const body = el("div", { className: "turn-body" });
     card.appendChild(body);
-    startFirstSlice(body, bodyRows(t, wantedWindow.get(t.id) ?? WHOLE_TURN), t.id);
+    startFirstSlice(body, bodyRows(t, range), t.id);
   } else {
     setCardFolded(card, true);
   }
@@ -1741,13 +1748,13 @@ function updateTurn(card: HTMLElement, t: Turn): void {
   // protect; and a DROPPED range is the fold pass's, about to remove it.
   const body = card.querySelector<HTMLElement>(":scope > .turn-body");
   const range = wantedWindow.get(t.id);
-  if (
-    body !== null &&
-    range !== undefined &&
-    !hasPendingBuild(t.id) &&
-    headUnchanged(body, t, range)
-  ) {
-    reconcile(body, bodyRows(t, range), bodyRowSpec);
+  if (body !== null && range !== undefined && !hasPendingBuild(t.id)) {
+    // ONE projection per card per paint: every row is priced by `spacerHeight` over
+    // the ordinals it stands in for, so the gate and the reconcile share the list.
+    const rows = bodyRows(t, range);
+    if (headUnchanged(body, rows)) {
+      reconcile(body, rows, bodyRowSpec);
+    }
   }
   mountTurnFooter(card, t);
   mountRewind(card, t);
@@ -1759,8 +1766,7 @@ function updateTurn(card: HTMLElement, t: Turn): void {
  *  delta is the STREAMING path — a running workflow appends a row per turn-segment
  *  — and runs free here because it lands below the reader; a HEAD delta is the fold
  *  pass's, which owns the compensation and the deferral. */
-function headUnchanged(body: HTMLElement, t: Turn, range: TurnRange): boolean {
-  const rows = bodyRows(t, range);
+function headUnchanged(body: HTMLElement, rows: readonly BodyRow[]): boolean {
   const held: string[] = [];
   for (const child of body.children) {
     const key = child.getAttribute(KEY_ATTR);
