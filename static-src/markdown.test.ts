@@ -1361,9 +1361,18 @@ describe("renderMarkdown GFM tables", () => {
       expected: "<p>| a | b |<br>| - |<br>| 1 | 2 |</p>",
     },
     {
-      name: "a delimiter row needs a pipe",
+      name: "a pipeless line cannot match a two-cell header",
       input: "| a | b |\n---\n| 1 | 2 |",
       expected: "<p>| a | b |</p><hr><p>| 1 | 2 |</p>",
+    },
+    {
+      // A pipe is not required of a delimiter row, so this is a table — which is
+      // what the GFM reference renders for it too.
+      name: "a single-column delimiter row needs no pipe",
+      input: "| a |\n---\n| 1 |",
+      expected:
+        "<table><thead><tr><th> a </th></tr></thead>" +
+        "<tbody><tr><td> 1 </td></tr></tbody></table>",
     },
     {
       name: "a table starting on the second line of a rejected candidate still opens",
