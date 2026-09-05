@@ -124,6 +124,7 @@ export function parser<T>(renderer: Renderer<T>): Parser {
     indent: "",
     indent_len: 0,
     table_state: 0,
+    table_rejected: false,
     prev_is_word: false,
     link_depth: 0,
     at_end: false,
