@@ -396,6 +396,13 @@ describe("chunk-boundary invariance", () => {
     "| a | b |\n| - | - |\n| 1 | 2 |",
     "| a | b | \n| - | - |\n| 1 | 2 |",
     "| a | b |\n| x |\n| - |\n| 1 |",
+    // A tab is the newest character the held candidate admits, and the corpus
+    // has no occurrence of one in a delimiter row for the corpus-driven probes
+    // to have covered.
+    "| a |\n|\t-\t|\n| 1 |",
+    // An escaped pipe reaches the header's cell count from the held line, which
+    // is read one line before the row handlers replay it.
+    "| a \\| b |\n| - |\n| 1 |",
   ];
 
   it.each(inputs)("produces one tree for %j at every chunk size", (input) => {

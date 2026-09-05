@@ -74,17 +74,34 @@ import {
 const DELIMITER_ROW_CHARS = new Set(["-", " ", "\t", "|", ":"]);
 
 /** A table row's cells, split the way the row handlers split them: a leading `|`
- *  opens the row rather than a cell, and a trailing one closes the last cell
- *  rather than opening another. */
+ *  opens the row rather than a cell, a trailing one closes the last cell rather
+ *  than opening another, and a backslash hides the character after it.
+ *
+ *  The escape is the half a plain `split("|")` gets wrong. `handleCommon`'s `\`
+ *  arm consumes `\|` into the cell text, so the row handlers never see that pipe
+ *  as a delimiter — and a header counted with it splits at a cell count the
+ *  delimiter row underneath cannot match, which loses the whole table. */
 function table_row_cells(row: string): string[] {
-  let body = row.replace(/^[ \t]+/u, "").replace(/[ \t]+$/u, "");
-  if (body.startsWith("|")) {
-    body = body.slice(1);
+  const body = row.replace(/^[ \t]+/u, "").replace(/[ \t]+$/u, "");
+  const cells: string[] = [];
+  let cell = "";
+  for (let i = body.startsWith("|") ? 1 : 0; i < body.length; i += 1) {
+    const ch = body.charAt(i);
+    if (ch === "\\" && i + 1 < body.length) {
+      cell += ch + body.charAt(i + 1);
+      i += 1;
+    } else if (ch === "|") {
+      cells.push(cell);
+      cell = "";
+    } else {
+      cell += ch;
+    }
   }
-  if (body.endsWith("|")) {
-    body = body.slice(0, -1);
+  // A trailing `|` closed the last cell, so the empty remainder is not one.
+  if (cell !== "") {
+    cells.push(cell);
   }
-  return body === "" ? [] : body.split("|");
+  return cells;
 }
 
 /** GFM's delimiter row: a cell count matching the header's, and every cell a run

@@ -1379,6 +1379,52 @@ describe("renderMarkdown GFM tables", () => {
         "<tbody><tr><td> 1 </td><td> 2 </td><td> 3 </td></tr></tbody></table>",
     },
 
+    // --- an escaped pipe is content, not a cell boundary ---
+    {
+      // GFM's own way to put a pipe in a cell, and the parser already honours
+      // the escape when it splits a row. Counting the header's cells any other
+      // way measures the delimiter row against a count it cannot match, which
+      // loses the whole table rather than one cell.
+      name: "an escaped pipe in the header",
+      input: "| a \\| b |\n| - |\n| 1 |",
+      expected:
+        "<table><thead><tr><th> a | b </th></tr></thead>" +
+        "<tbody><tr><td> 1 </td></tr></tbody></table>",
+    },
+    {
+      name: "an escaped pipe in a header and a body cell",
+      input: "| cmd \\| grep | note |\n| - | - |\n| ls \\| wc | ok |",
+      expected:
+        "<table><thead><tr><th> cmd | grep </th><th> note </th></tr></thead>" +
+        "<tbody><tr><td> ls | wc </td><td> ok </td></tr></tbody></table>",
+    },
+    {
+      name: "an escaped pipe in a body cell keeps the row's cell count",
+      input: "| a | b |\n| - | - |\n| 1 \\| x | 2 |",
+      expected: HEAD + "<tbody><tr><td> 1 | x </td><td> 2 </td></tr></tbody></table>",
+    },
+    {
+      // One header cell over a two-cell delimiter row, which the GFM reference
+      // reads as a paragraph too.
+      name: "an escaped pipe does not add a header cell",
+      input: "| a \\| b |\n| - | - |\n| 1 | 2 |",
+      expected: "<p>| a | b |<br>| - | - |<br>| 1 | 2 |</p>",
+    },
+    {
+      name: "an escaped pipe closing the header row",
+      input: "| a \\| b | c |\n| - | - |\n| 1 | 2 |",
+      expected:
+        "<table><thead><tr><th> a | b </th><th> c </th></tr></thead>" +
+        "<tbody><tr><td> 1 </td><td> 2 </td></tr></tbody></table>",
+    },
+    {
+      // The row handlers open a cell for it, so the count has to as well.
+      name: "an empty header cell is still a cell",
+      input: "||\n| - |\n| 1 |",
+      expected:
+        "<table><thead><tr><th></th></tr></thead>" + "<tbody><tr><td> 1 </td></tr></tbody></table>",
+    },
+
     // --- the delimiter row is required ---
     {
       name: "a leading pipe in prose is not a table",
