@@ -145,6 +145,8 @@ import {
   resetTurnSourceView,
   turnMarkdown,
   initTurnActionCallbacks,
+  initTurnActionsBodyProbe,
+  syncSourceView,
   copyWithFeedback,
 } from "./messages-turn-actions.js";
 import { syncCodeReferences } from "./code-refs.js";
@@ -621,7 +623,21 @@ export function mountChatView(): void {
   // on-demand build this module's own fold toggle uses. Injected — both
   // modules are imported BY this one, so a static import back would cycle.
   initTurnRailCallbacks({ mountTurnBody, activeView: activeTranscriptView });
-  initSearchRevealBuilder(mountTurnBody);
+  // The hit's ordinal is resolved HERE, in the projection the plan is grown over:
+  // a second projection could price the same block at a different ordinal, and the
+  // grant is clamped against this one.
+  initSearchRevealBuilder(
+    (chatID, turnID, messageID, blockIndex) => {
+      const t = turnByID.get(turnID);
+      return mountTurnBody(
+        chatID,
+        turnID,
+        t === undefined ? undefined : turnOrdinalOf(t, messageID, blockIndex),
+      );
+    },
+    mountTurnBodyForWalk,
+    endWalkReveal,
+  );
   // Scrolling does not repaint; it re-windows. Through the controller's own listener,
   // which owns the self-write marker and the reading-state derivation.
   onViewportChange(windowPass);
@@ -1929,6 +1945,7 @@ function collectWindowMove(
     fn: () => {
       if (card.isConnected && !hasPendingBuild(t.id) && !stale()) {
         reconcile(body, rows, bodyRowSpec);
+        syncSourceView(body);
       }
     },
   });
@@ -1953,13 +1970,28 @@ function bodyHolds(body: HTMLElement, rows: readonly BodyRow[]): boolean {
     if (bodyRowSpec.key(row) !== held[i]) {
       return false;
     }
-    const have = row.kind === "msg" ? mountedWindow(row.m.id) : undefined;
-    if (row.kind === "msg" && (have?.from !== row.range.from || have.to !== row.range.to)) {
+    if (row.kind !== "msg") {
+      continue;
+    }
+    // An `event` row registers no window (only `buildBody` does) and holds no block
+    // to window, so the keyed node the check above just found IS its whole answer.
+    const have = mountedWindow(row.m.id);
+    if (have !== undefined && (have.from !== row.range.from || have.to !== row.range.to)) {
       return false;
     }
   }
   return true;
 }
+
+/** Whether `card`'s body holds every ordinal `t`'s body has, MOUNTED: what makes
+ *  "copy as text" a complete answer rather than a hole. Asked of the DOM, never of
+ *  `wantedWindow`, which leads the body by a build that has not landed AND by a window
+ *  move `deferWhileReading` holds until the reader returns. */
+function bodyHoldsWholeTurn(card: HTMLElement, t: Turn): boolean {
+  const body = card.querySelector<HTMLElement>(":scope > .turn-body");
+  return body !== null && bodyHolds(body, bodyRows(t, WHOLE_TURN));
+}
+initTurnActionsBodyProbe(bodyHoldsWholeTurn);
 
 /** Wire the header's fold toggle. One control, both directions, and the click
  *  RECORDS the reader's choice — an explicit fold or unfold outranks the
@@ -2217,6 +2249,7 @@ function updateTurn(card: HTMLElement, t: Turn): void {
     const rows = bodyRows(t, range);
     if (headUnchanged(body, rows)) {
       reconcile(body, rows, bodyRowSpec);
+      syncSourceView(body);
     }
   }
   mountTurnFooter(card, t);
@@ -2412,6 +2445,9 @@ function placeRow(
   }
   body.insertBefore(node, target);
   held.set(key, node);
+  // The source view hides the regions it FINDS, so a row the builder mounts under it
+  // has to be hidden here or the raw text gets a rendered neighbour.
+  syncSourceView(body);
 }
 
 /** Mount one slice of `rows` into `body`, starting at `from`. The reconcile's own

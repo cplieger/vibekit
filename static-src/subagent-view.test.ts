@@ -1,12 +1,6 @@
 // ---------------------------------------------------------------------------
-// The subagent-tab eviction exemption: an open subagent tab projects its
-// chat's transcript (the page is a projection over the chat store's blocks),
-// so evicting that chat would blank a surface someone deliberately opened.
-//
-// The predicate is answered from the RESIDENT blocks — the subtask ids
-// reachable from this chat are the ones on its blocks, and a tab for a
-// delegate whose turn is not resident was already rendering the not-resident
-// notice, so eviction changes nothing it was showing.
+// The subagent page: the eviction exemption its tab earns, and the repaint its
+// prose depends on.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -23,6 +17,9 @@ for (const id of [
   "send-btn",
   "prompt-input",
   "tab-strip",
+  // The page's own host: `paint` bails silently without it, which would make the
+  // streaming case below pass on an empty document.
+  "subagent-body",
 ]) {
   const d = document.createElement(id === "prompt-input" ? "textarea" : "div");
   d.id = id;
@@ -37,7 +34,9 @@ vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m
 
 const store = await import("./store.js");
 const { hasTab } = await import("./tabs.js");
-const { subagentTabProjectsChat } = await import("./subagent-view.js");
+const { subagentTabProjectsChat, showSubagent } = await import("./subagent-view.js");
+const { blockKey, blockTextSigs } = await import("./store-signals.js");
+const { mountedWindow } = await import("./messages-blocks.js");
 const mockHasTab = vi.mocked(hasTab);
 
 function session(id: string, messages: Message[]): Session {
@@ -70,6 +69,11 @@ beforeEach(() => {
   mockHasTab.mockReturnValue(false);
 });
 
+// An open subagent tab projects its chat's transcript, so evicting that chat would
+// blank a surface someone deliberately opened. The predicate is answered from the
+// RESIDENT blocks — the subtask ids reachable from this chat are the ones on its
+// blocks, and a tab for a delegate whose turn is not resident was already rendering
+// the not-resident notice, so eviction changes nothing it was showing.
 describe("subagentTabProjectsChat", () => {
   it("exempts a chat with an open subagent tab for one of its delegates", () => {
     store.setSessions([session("c1", [delegateMsg("m1", "st-1")])]);
@@ -111,5 +115,44 @@ describe("subagentTabProjectsChat", () => {
     mockHasTab.mockImplementation((kind, ref) => kind === "subagent" && ref === "c2/st-1");
     expect(subagentTabProjectsChat("c1")).toBe(false);
     expect(subagentTabProjectsChat("c2")).toBe(true);
+  });
+});
+
+// The page's ONE structural input. A text delta writes a per-block signal instead of
+// bumping the chat's version, and this page reads those signals with `get` rather
+// than `ensure` so it never silences the transcript's own repaint — which leaves it
+// depending on the store's signal-absent fallback to bump the version for it. That
+// fallback asks whether the block is MOUNTED, and this page files its sinks under a
+// synthetic id over a re-indexed slice, so the question is a union over surfaces.
+describe("a delegate's prose while the transcript holds no sink", () => {
+  it("repaints on a delta to a block only this page has mounted", async () => {
+    const chat = "c-stream";
+    const msgID = "m-stream";
+    store.setSessions([session(chat, [delegateMsg(msgID, "st-1")])]);
+    const host = document.getElementById("subagent-body") as HTMLElement;
+
+    showSubagent(chat, "st-1");
+    await vi.waitFor(() => {
+      expect(host.textContent).toContain("delegate work");
+    });
+
+    // The three premises that let the assertion below fail. No transcript view was
+    // ever built here, so nothing files a sink under the store's own message id —
+    // the background-chat shape. No per-block signal exists, so the page's own
+    // subscription cannot carry the delta and the version bump is its only input.
+    // And the page holds the delegate's block ALONE, so its own index for it is 0
+    // where the store's is 1: a probe asking this render the store's index answers
+    // "not mounted" over a block that is on screen.
+    expect(mountedWindow(msgID)).toBeUndefined();
+    expect(blockTextSigs.get(blockKey(msgID, 1))).toBeUndefined();
+    expect(host.textContent).not.toContain("parent prose");
+
+    // Ends on a paragraph break, so the incremental markdown parser has no
+    // trailing token to hold and the whole delta is on screen or none of it is.
+    store.appendChunk(chat, msgID, " and then more\n\n", false, 1, "st-1");
+
+    await vi.waitFor(() => {
+      expect(host.textContent).toContain("and then more");
+    });
   });
 });

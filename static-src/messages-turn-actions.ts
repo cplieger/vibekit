@@ -41,6 +41,15 @@ export function initTurnActionCallbacks(cbs: {
   _svgTemplate = cbs.svgTemplate;
 }
 
+/** Whether `card`'s mounted body is a COMPLETE answer for "copy as text": the
+ *  renderer owns which ordinals a body holds, injected because messages.ts imports
+ *  this module. True until wired, which is what a tree that windows nothing answers. */
+let bodyHoldsWholeTurn: (card: HTMLElement, t: Turn) => boolean = () => true;
+
+export function initTurnActionsBodyProbe(holdsWholeTurn: typeof bodyHoldsWholeTurn): void {
+  bodyHoldsWholeTurn = holdsWholeTurn;
+}
+
 /** Copy `text` and flash the button's confirmation.
  *
  *  Exported because the turn HEADER's Copy needs exactly this — the same action
@@ -217,6 +226,19 @@ export function resetTurnSourceView(card: HTMLElement): void {
   }
 }
 
+/** Hide the block regions of a body that is showing raw source, after something
+ *  mounted into it: `toggleTurnSource` hides the regions it FINDS, and a new ROW brings
+ *  an unhidden one with it. A window move makes that reachable on any scroll. */
+export function syncSourceView(body: HTMLElement): void {
+  const raw = body.querySelector<HTMLElement>(`:scope > .${RAW_CLASS}`);
+  if (raw === null || raw.classList.contains("hidden")) {
+    return;
+  }
+  for (const region of body.querySelectorAll<HTMLElement>(".assistant-blocks")) {
+    region.classList.add("hidden");
+  }
+}
+
 /**
  * Show the turn's markdown SOURCE in place of its rendering, and back.
  *
@@ -318,11 +340,17 @@ export function turnMarkdown(t: Turn): string {
 
 /** The turn's rendered plain text, for "copy as text": the assistant bubbles
  *  of whichever surface is mounted (body open, face folded), falling back to
- *  the markdown when neither holds one (a folded stub with no prose face). */
+ *  the markdown when neither holds one (a folded stub with no prose face).
+ *
+ *  The BODY answers only while it holds the whole turn MOUNTED — a windowed or
+ *  still-building one would copy a hole. The face and the store are the two complete
+ *  answers, in that order, exactly as before. */
 function turnPlainText(card: HTMLElement, t: Turn): string {
   const bubbles = [
     ...card.querySelectorAll(
-      ":scope > .turn-body .message.assistant, :scope > .turn-face > .message.assistant",
+      bodyHoldsWholeTurn(card, t)
+        ? ":scope > .turn-body .message.assistant, :scope > .turn-face > .message.assistant"
+        : ":scope > .turn-face > .message.assistant",
     ),
   ];
   if (bubbles.length > 0) {

@@ -65,18 +65,11 @@ const decodeChatGetResponseLocal: Decoder<{
 const PAGE_BUDGET_BYTES = 1 << 18;
 
 /**
- * The RESIDENCY bounds on one transcript page, in this client's own two units.
- *
- * `block-window.ts` prices a paint as a PAIR and stubs every turn past whichever
- * runs out first, so a page cut on bytes alone holds a chat-dependent number of
- * both — one assistant message can carry 580 blocks and 353 tool calls, so 256 KiB
- * can overshoot either and the surplus is decoded and then thrown away. Asking for
- * exactly what one paint holds, in BOTH units, is what makes the server's cut and
- * this client's window the same measure; sending one leaves the other to overshoot.
- *
- * Neither is a second message cap: the server still cuts at a message boundary and
- * still sends the newest message whole, and `has_more` reports honestly against
- * whichever budget cut the page.
+ * The RESIDENCY bounds on one transcript page: the same ORDER as the window, in two
+ * UNITS. This pair bounds what the server SENDS, message-granular over `tool_calls`
+ * entries; the window bounds what one paint MOUNTS, ordinal-granular over `tool_use`
+ * blocks, and an entry can carry no block of its own. A cut on bytes alone holds a
+ * chat-dependent number of both, and the server cuts at a message boundary regardless.
  */
 const PAGE_BUDGET_BLOCKS = RESIDENT_BLOCKS;
 const PAGE_BUDGET_TOOL_CALLS = RESIDENT_TOOL_CALLS;

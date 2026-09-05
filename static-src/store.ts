@@ -1592,6 +1592,16 @@ export function liveTurnMessage(chatID: string): string | undefined {
   return liveTurnMsgIDs.get(chatID);
 }
 
+/** Whether a mounted text sink exists for this block, which is what the
+ *  signal-absent repaint below is FOR. Default true, so a caller that never wires
+ *  it — and every test that does not — keeps the schedule unconditional. */
+let mountedBlockProbe: (messageID: string, blockIndex: number) => boolean = () => true;
+
+/** Injected by the block renderer, which is the only module that knows. */
+export function setMountedBlockProbe(fn: (messageID: string, blockIndex: number) => boolean): void {
+  mountedBlockProbe = fn;
+}
+
 export function appendChunk(
   chatID: string,
   messageID: string,
@@ -1708,14 +1718,16 @@ export function appendChunk(
     // the paint this schedules refreshes tail bookkeeping only.
     scheduleMessages(chatID, "chunk");
   }
+  // The signal-absent fallback is for a MOUNTED block whose liveness was misjudged:
+  // the pass re-reads it through `syncMountedText`. For an unmounted one the pass
+  // paints nothing either, so a parked reader would pay a full pass per delta.
+  const mounted = mountedBlockProbe(messageID, blockIndex);
   if (isReasoning) {
     const sig = streamingReasoningSigs.get(messageID);
     if (sig !== undefined) {
       sig.value = msg.reasoning ?? "";
       scheduleMessages(chatID, "chunk");
-    } else if (blockSig === undefined) {
-      // Signal-absent fallback: nothing is mounted to carry the text, so the
-      // full pass is what puts it on screen.
+    } else if (blockSig === undefined && mounted) {
       scheduleMessages(chatID, "shape");
     }
   } else {
@@ -1723,8 +1735,7 @@ export function appendChunk(
     if (sig !== undefined) {
       sig.value = msg.content ?? "";
       scheduleMessages(chatID, "chunk");
-    } else if (blockSig === undefined) {
-      // Signal-absent fallback, as above.
+    } else if (blockSig === undefined && mounted) {
       scheduleMessages(chatID, "shape");
     }
   }

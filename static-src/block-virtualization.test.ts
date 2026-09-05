@@ -10,6 +10,14 @@
 import { describe, it, expect, afterAll, beforeAll, beforeEach, vi } from "vitest";
 import type { Message, Session } from "./types.js";
 import type { Turn } from "./turns.js";
+import type { SearchHit } from "./chat-search.js";
+
+// The SERVER's search answer is the only thing stubbed for the navigation cases:
+// `chat-search.ts`, the reveal it injects, the renderer and the scroller all run for
+// real, which is the point — a hit inside an unmounted block needs a real build, and
+// a mocked reveal would pass with none having happened. Spy-wrapped rather than
+// replaced, because this module has a dozen other exports the graph links.
+vi.mock("./api-client.js", { spy: true });
 
 // NESTED as the shipped page nests them (static/index.html): `#messages-wrap` is
 // `position: absolute; inset: 0` inside the outer wrapper, so it is the
@@ -22,6 +30,10 @@ for (const id of [
   "scroll-bottom",
   "send-btn",
   "prompt-input",
+  // The transcript find box's trigger and the panel its context guard reads: the
+  // search-navigation cases drive the real overlay.
+  "find-btn",
+  "shell-panel",
 ]) {
   const d = document.createElement(id === "prompt-input" ? "textarea" : "div");
   d.id = id;
@@ -44,6 +56,10 @@ const { projectTurns } = await import("./turns.js");
 const { forgetHeights, recordRowHeight, spacerHeight } = await import("./block-heights.js");
 const { toolCallSigs, toolCallSigKey } = await import("./store-signals.js");
 const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
+const { appendChunk } = await import("./store.js");
+const { blockElement, mountedWindow } = await import("./messages-blocks.js");
+const { handleFindHotkey, toggleChatFind } = await import("./find-in-chat.js");
+const api = await import("./api-client.js");
 
 /** Blocks in the fixture message: comfortably past the measured 580 and past the
  *  block budget, so a window is the only way it can mount. */
@@ -186,6 +202,73 @@ function multiRowTurn(id: string, rows: number, per: number): Message[] {
   return out;
 }
 
+/** `hugeTurn` with one block carrying a needle no other block holds, so a query for
+ *  it marks NOTHING while that block is unmounted — which is what routes stepping to
+ *  the server hits instead of to the resident marks. */
+function sentinelTurn(id: string, blocks: number, at: number): Message[] {
+  const messages = hugeTurn(id, blocks);
+  const m = messages[1] as unknown as { blocks: Record<string, unknown>[] };
+  m.blocks[at] = { type: "text", text: `the ${SENTINEL} lives at ${String(at)}` };
+  return messages;
+}
+
+const SENTINEL = "chartreuse";
+
+/** A turn whose first assistant message LAUNCHES a workflow run near its end, and
+ *  whose second message's blocks are that run's step frames — so the second render's
+ *  blocks are mounted inside a card the FIRST render hosts. `launchAt` is deep enough
+ *  that the search walk's own head grant cannot reach it, so what the launch's window
+ *  does stays this case's variable. */
+function hostedRunTurn(id: string, head: number, launchAt: number, tail: number): Message[] {
+  const lane = `wf:${id}-run:${id}-run/lint`;
+  const blocks: Record<string, unknown>[] = Array.from({ length: head }, (_, i) => ({
+    type: "text",
+    text: `head ${String(i)}`,
+  }));
+  blocks[launchAt] = { type: "tool_use", tool_call_id: `${id}-wf` };
+  return [
+    { id, role: "user", ts: 1, content: `prompt ${id}` } as Message,
+    {
+      id: `${id}-a`,
+      role: "assistant",
+      ts: 2,
+      content: "",
+      blocks,
+      tool_calls: [
+        {
+          id: `${id}-wf`,
+          title: "Run Workflow",
+          kind: "other",
+          status: "completed",
+          workflow_id: `${id}-run`,
+        },
+      ],
+    } as unknown as Message,
+    {
+      id: `${id}-b`,
+      role: "assistant",
+      ts: 3,
+      content: "",
+      blocks: Array.from({ length: tail }, (_, i) => ({
+        type: "text",
+        text: i === HOSTED_HIT ? `the ${SENTINEL} frame` : `frame ${String(i)}`,
+        agent_subtask_id: lane,
+      })),
+    } as unknown as Message,
+  ];
+}
+
+/** Which of the hosted message's frames carries the needle. Its FIRST, so the frame
+ *  the drop re-homed is the one the search resolves: a later one the reveal would have
+ *  to mount fresh, in a card rebuilt after the drop, which is the state a broken
+ *  re-home also produces. */
+const HOSTED_HIT = 0;
+
+/** Which of the launching message's blocks is the launch. Past `2 × OVERSCAN_BLOCKS`,
+ *  so the search-wide walk's own head grant cannot reach it and the launch's residency
+ *  stays the case's own variable. */
+const LAUNCH_AT = 55;
+
 /** One turn whose body is `rows` separate one-block messages, so `.turn-body`'s
  *  own flex `gap` separates them and a spacer standing in for the lot has to
  *  carry those gaps. */
@@ -203,7 +286,10 @@ function rowTurn(id: string, rows: number): Message[] {
   return out;
 }
 
-function activate(chat: string, messages: Message[]): void {
+/** `thinking` is what makes the newest turn RUNNING and its newest block live
+ *  (`turns.ts` `deriveOutcome`, `isLikelyLiveStreaming`), which the streaming cases
+ *  need and every other case must not have. */
+function activate(chat: string, messages: Message[], thinking = false): void {
   setSessions([
     {
       id: chat,
@@ -211,7 +297,7 @@ function activate(chat: string, messages: Message[]): void {
       messages,
       message_count: messages.length,
       has_more: false,
-      thinking: false,
+      thinking,
       working_label: "",
     },
   ] as unknown as Session[]);
@@ -244,6 +330,60 @@ function bodyRows(turnID: string): HTMLElement[] {
   return [
     ...card(turnID).querySelectorAll<HTMLElement>(`:scope > .turn-body > .msg-wrap[${KEY_ATTR}]`),
   ];
+}
+
+// ---------------------------------------------------------------------------
+// Search navigation onto a block that does not exist yet. The overlay, the server
+// pre-pass, the injected reveal and the walker all run for real; only the server's
+// ANSWER is staged.
+// ---------------------------------------------------------------------------
+
+/** The server's hit list, for any search these cases run. Everything else
+ *  `api-client.js` serves keeps its real behaviour. */
+function stageServerHits(hits: SearchHit[]): void {
+  vi.mocked(api.apiGet).mockImplementation(((path: string) =>
+    Promise.resolve(path.includes("/search?q=") ? { hits } : null)) as typeof api.apiGet);
+}
+
+function hitOn(messageID: string, turnID: string, text: string, at: number): SearchHit {
+  return {
+    message_id: messageID,
+    turn_message_id: turnID,
+    excerpt: text,
+    role: "assistant",
+    segment_kind: "content",
+    block_index: at,
+    turn: 1,
+    offset: text.indexOf(SENTINEL),
+    segment_len: text.length,
+  };
+}
+
+function countText(): string {
+  return document.getElementById("chat-find-count")?.textContent ?? "";
+}
+
+/** Open the find box, run the query, then step once — the reader's own gestures,
+ *  because `navigateToHit` is reachable only from the stepping path. */
+async function findAndStep(query: string): Promise<void> {
+  handleFindHotkey(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true }));
+  const input = document.getElementById("chat-find-input") as HTMLInputElement;
+  const enter = (): void => {
+    input.value = query;
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+  };
+  enter();
+  await vi.waitFor(() => {
+    expect(countText()).toContain("in chat");
+  });
+  // The counter is painted synchronously by the query callback; the shell's render,
+  // which records the navigable hits, lands a few microtask hops later.
+  await new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+  enter();
 }
 
 beforeEach(() => {
@@ -333,6 +473,31 @@ describe("a cold load of a 700-block turn mounts a WINDOW", () => {
       }),
     ]);
     expect(settled).toBe("settled");
+  });
+
+  it("navigates a search hit onto a block that is not in the DOM, and marks it", async () => {
+    const id = chatID();
+    activate(id, sentinelTurn("big", HUGE, 200));
+    await vi.waitFor(() => {
+      expect(mountedIndices("big").length).toBeGreaterThan(RESIDENT_BLOCKS / 2);
+    });
+    const text = `the ${SENTINEL} lives at 200`;
+    stageServerHits([hitOn("big-a", "big", text, 200)]);
+    // The case's premise, and the whole difficulty: the hit's block is ABSENT, so
+    // there is nothing for the walker to mark and no node for `jumpTo` to reach. One
+    // rendered frame cannot fix that, which is why the build is awaited.
+    expect(card("big").querySelector('[data-block-index="200"]')).toBeNull();
+
+    await findAndStep(SENTINEL);
+
+    await vi.waitFor(() => {
+      expect(document.querySelector("mark.find-hit-current")).not.toBeNull();
+    });
+    const current = document.querySelector("mark.find-hit-current");
+    // ON the block the hit named — not the notice, and not a neighbouring block.
+    expect(current?.closest("[data-block-index]")?.getAttribute("data-block-index")).toBe("200");
+    expect(countText()).toBe("1 of 1");
+    toggleChatFind();
   });
 });
 
@@ -881,6 +1046,176 @@ describe("scrolling moves the window", () => {
     // REQUEST, held until they return to Following.
     expect(t2.hasAttribute("data-folded")).toBe(false);
     expect(t2.querySelector(":scope > .turn-body")).not.toBeNull();
+  });
+
+  it("lands a hit on a block whose run card a window drop RE-HOMED", async () => {
+    // C25's shape from the search path's side. The launching message hosts the run
+    // card; the NEXT message's frames are mounted inside it. Dropping the launch block
+    // removes a CONTAINER, so the fix re-homes the card to the render that still holds
+    // blocks in it — and `blockElement`, which is what the search resolves through,
+    // would otherwise hand out a detached node.
+    const id = await coldLoad("run", hostedRunTurn("run", 60, LAUNCH_AT, 400));
+    // A launch block's element IS the run card, which `stampBlock` never records — so
+    // its residency is read off the render's window rather than off a stamp.
+    const holdsLaunch = (): boolean => {
+      const w = mountedWindow("run-a");
+      return w !== undefined && w.from <= LAUNCH_AT && LAUNCH_AT < w.to;
+    };
+    const cardHost = (): string | null =>
+      card("run").querySelector(".run-card")?.closest(`[${KEY_ATTR}]`)?.getAttribute(KEY_ATTR) ??
+      null;
+    const frame = (): Element | null =>
+      card("run").querySelector(".run-card .run-step-body [data-block-msg='run-b']");
+
+    // One grant over the launch AND the first frames: the card is built where the
+    // launch is, and the frames route into it from the other render.
+    await mountTurnBody(id, "run", LAUNCH_AT + 1);
+    bumpMessages(id, "shape");
+    await vi.waitFor(() => {
+      expect(holdsLaunch()).toBe(true);
+      expect(frame()).not.toBeNull();
+    });
+    expect(cardHost()).toBe("run-a");
+    const node = card("run").querySelector(".run-card");
+    const hosted = blockElement("run-b", HOSTED_HIT);
+    expect(hosted).not.toBeUndefined();
+
+    // The grant steps past the launch. Its block drops while the frames stay mounted,
+    // which is the only path into the re-home.
+    // Two ordinals past it, plus the grant's own half-width: the launching message
+    // keeps a row (so the drop is a block drop rather than a render dispose) and the
+    // hosted frames stay mounted (so the drop has a claimant to hand the card to).
+    await mountTurnBody(id, "run", LAUNCH_AT + 2 + OVERSCAN_BLOCKS);
+    bumpMessages(id, "shape");
+    await vi.waitFor(() => {
+      expect(holdsLaunch()).toBe(false);
+    });
+    // MOVED, not rebuilt: the same card node, in the render that still holds blocks
+    // inside it, and every frame it was holding still in the READER'S transcript. The
+    // map answers with the same element either way — which is the defect, when the
+    // element it names has left the document.
+    expect(cardHost()).toBe("run-b");
+    expect(card("run").querySelector(".run-card")).toBe(node);
+    expect(frame()).not.toBeNull();
+    expect(blockElement("run-b", HOSTED_HIT)).toBe(hosted);
+    expect(hosted?.isConnected).toBe(true);
+
+    const text = `the ${SENTINEL} frame`;
+    stageServerHits([hitOn("run-b", "run", text, HOSTED_HIT)]);
+    // Inside a COLLAPSED run step, so the walker prunes it (`aria-hidden`) and there is
+    // no mark for stepping to cycle: the reader's Enter reaches the server hit.
+    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
+
+    await findAndStep(SENTINEL);
+
+    // The reader is taken to the block, and the block is inside the re-homed card and
+    // inside the transcript. A DETACHED answer takes `navigateToHit`'s `isConnected`
+    // exit instead — silently, with nothing selected and nothing said.
+    await vi.waitFor(() => {
+      const el = blockElement("run-b", HOSTED_HIT);
+      expect(el?.isConnected).toBe(true);
+      // Either arm is "the reader was taken there": a selected mark where the walker
+      // can read the text, the block's own flash where it cannot. Inside a collapsed
+      // run step it cannot, so this fixture takes the second.
+      expect(
+        el?.classList.contains("find-target-flash") === true ||
+          el?.querySelector("mark.find-hit-current") !== null,
+      ).toBe(true);
+    });
+    // On the SAME element the re-home carried, inside the card, inside the transcript.
+    expect(blockElement("run-b", HOSTED_HIT)).toBe(hosted);
+    expect(
+      card("run")
+        .querySelector(".run-card")
+        ?.contains(hosted ?? null),
+    ).toBe(true);
+    toggleChatFind();
+  });
+
+  // -------------------------------------------------------------------------
+  // The running turn: what the reader watching a live run sees.
+  // -------------------------------------------------------------------------
+
+  /** One paint's worth of settling: `appendChunk` schedules on a microtask and the
+   *  paint runs inside the store effect, so one macrotask turn covers both. */
+  function tick(): Promise<void> {
+    return new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  }
+
+  it("mounts every block a running turn appends, and stays bounded past the budget", async () => {
+    const id = chatID();
+    // Running and short: everything is mounted, and with the reader FOLLOWING the
+    // anchor is the live tail, so each arrival is in window by construction.
+    activate(id, hugeTurn("live", 8), true);
+    await vi.waitFor(() => {
+      expect(mountedIndices("live")).toHaveLength(8);
+    });
+    await atLiveEdge();
+
+    const total = RESIDENT_BLOCKS + 2 * OVERSCAN_BLOCKS;
+    for (let i = 8; i < total; i++) {
+      appendChunk(id, "live-a", `chunk ${String(i)}`, false, i, "");
+      await tick();
+      // EACH arrival, not a sample: a reader watching a run sees every block land.
+      expect(
+        card("live").querySelector(`[data-block-index="${String(i)}"]`),
+        `block ${String(i)}`,
+      ).not.toBeNull();
+      expect(mountedIndices("live").length, `at ${String(i)}`).toBeLessThanOrEqual(RESIDENT_BLOCKS);
+    }
+    // Bounded means the HEAD left, by query: the turn is past the budget.
+    expect(card("live").querySelector('[data-block-index="0"]')).toBeNull();
+    expect(mountedIndices("live").at(-1)).toBe(total - 1);
+  }, 30_000);
+
+  it("re-mounts a live tail from the STORE, still streaming, when the reader comes back", async () => {
+    const id = chatID();
+    activate(id, hugeTurn("live", HUGE), true);
+    await settled("live");
+    await atLiveEdge();
+    const live = `[data-block-index="${String(HUGE - 1)}"]`;
+    expect(card("live").querySelector(`${live} .message.streaming`)).not.toBeNull();
+    // The live bubble's REVEAL has to settle first, or its per-frame mutations keep
+    // re-pinning the scroller to the live edge and the drag below is undone by the
+    // harness rather than by anything the case is testing. Settled means STABLE, not
+    // complete: a live bubble holds its last characters back behind the caret.
+    let shown = "";
+    await vi.waitFor(() => {
+      const now = card("live").querySelector(live)?.textContent ?? "";
+      const was = shown;
+      shown = now;
+      expect(now).not.toBe("");
+      expect(now).toBe(was);
+    });
+
+    // The reader scrolls away, so the live tail is dropped. INTO the document rather
+    // than to its top: while a bubble streams the follow pin re-asserts itself every
+    // frame, and a drag to a position the pin has already written moves nothing, so no
+    // gesture is delivered and the reader never leaves Following.
+    await dragTo(Math.round(scroller().scrollHeight * 0.4));
+    await vi.waitFor(() => {
+      expect(card("live").querySelector(live)).toBeNull();
+    });
+    // …and the run keeps writing into a block that has no DOM to carry the text. The
+    // delta runs past the assertion below because a live bubble reveals up to its
+    // caret and holds the last characters back.
+    appendChunk(id, "live-a", " and it kept growing while nobody watched", false, HUGE - 1, "");
+    await tick();
+
+    // Back at the live edge the tail mounts from `block.text`, so nothing written
+    // while it was absent is lost.
+    await dragTo(scroller().scrollHeight);
+    await vi.waitFor(() => {
+      expect(card("live").querySelector(live)).not.toBeNull();
+    });
+    await vi.waitFor(() => {
+      expect(card("live").querySelector(live)?.textContent).toContain("and it kept growing");
+    });
+    // And it is STILL the live block: the caret is what tells the reader the run is
+    // going, and a re-mount that sealed it would say the turn had ended.
+    expect(card("live").querySelector(`${live} .message.streaming`)).not.toBeNull();
   });
 });
 

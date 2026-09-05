@@ -225,6 +225,27 @@ describe("planResidency", () => {
     expect(plan.get("newest")).toEqual({ from: 0, to: 1 });
   });
 
+  it("keeps the newest turn's ordinals when a 580-ordinal turn is left out of the sequence", () => {
+    // AC34, from the planner's side. Foldedness is not a fact this function can see —
+    // `computeFoldPlan` decides it and passes the surviving turns — so what is checkable
+    // here is the COST of including one: handed the sequence a fold has been filtered out
+    // of, both open turns keep their ordinals; handed the raw one, the bulky turn in the
+    // middle spends the whole budget and the newest turn gets nothing.
+    const anchor: ResidencyAnchor = { turnID: "reading", at: 0 };
+    const reading = turn("reading", [msg("a-read", 4)]);
+    const bulky = turn("bulky", [msg("a-bulky", 580)]);
+    const newest = turn("newest", [msg("a-new", 4)]);
+
+    expect([...planResidency([reading, newest], anchor)]).toEqual([
+      ["reading", { from: 0, to: 4 }],
+      ["newest", { from: 0, to: 4 }],
+    ]);
+
+    const raw = planResidency([reading, bulky, newest], anchor);
+    expect(raw.get("newest")).toBeUndefined();
+    expect(spanOf(raw, "bulky")).toBe(RESIDENT_BLOCKS - 4);
+  });
+
   it("holds ONE contiguous run across three turns that each exceed the budget", () => {
     // AC3. Both halves of contiguity at once: each turn's range is a single run,
     // and the turns holding ordinals are adjacent in the sequence.

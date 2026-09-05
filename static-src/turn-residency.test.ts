@@ -39,6 +39,20 @@ for (const id of [
 // overrides them to hold the deferred queue open.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
+// The clipboard action, so what a turn's Copy hands over is observable. A REPLACING
+// factory naming both exports: real-ESM linking fails on a missing one, and the second
+// is the error explainer this graph also imports.
+const { copied } = vi.hoisted(() => ({ copied: [] as string[] }));
+vi.mock("./actions/messages.js", () => ({
+  copyClipboard: {
+    dispatch: (text: string) => {
+      copied.push(text);
+      return Promise.resolve();
+    },
+  },
+  explainError: { dispatch: () => Promise.resolve(null) },
+}));
+
 // The graph's network edge, real except for the two GETs these cases drive: a
 // run's state (the live-run fold input) and the rail's session-wide turn index.
 const runStatus = new Map<string, string>();
@@ -68,7 +82,7 @@ const { setTurnOpen, openForSearch, clearSearchOpened, resetFoldState } =
   await import("./fold-state.js");
 const { OVERSCAN_BLOCKS, RESIDENT_BLOCKS, RESIDENT_TOOL_CALLS } = await import("./block-window.js");
 const { blockTextSigs, ensureBlockTextSig, blockKey } = await import("./store-signals.js");
-const { openContainerKeys } = await import("./messages-blocks.js");
+const { openContainerKeys, mountedWindow } = await import("./messages-blocks.js");
 const { invalidateRun } = await import("./run-store.js");
 const { loadTurnRail, resetTurnRail } = await import("./turn-rail.js");
 const { scrollMock } = await import("./__test-helpers__/scroll-mock.js");
@@ -86,6 +100,7 @@ interface Msg {
   blocks?: unknown[];
   tool_calls?: unknown[];
   refusal?: Record<string, unknown>;
+  event_kind?: string;
 }
 
 function user(id: string, text = `prompt ${id}`): Msg {
@@ -146,6 +161,44 @@ function heavyTurn(id: string, blocks: number): Msg[] {
     });
   }
   return out;
+}
+
+/** `heavyTurn`, with the LAST row's blocks emphasised. The store keeps the markers
+ *  and the markdown renderer eats them, so `**` in a clipboard names the store's
+ *  answer and its absence names the mounted body's. `blocks` must be a multiple of 8. */
+function markedTail(id: string, blocks: number): Msg[] {
+  const last = blocks / 8 - 1;
+  const out = heavyTurn(id, blocks - 8);
+  out.push({
+    id: `${id}-a${String(last)}`,
+    role: "assistant",
+    ts: 2,
+    content: "",
+    blocks: Array.from({ length: 8 }, (_, b) => ({
+      type: "text",
+      text: `**chunk ${String(last)}.${String(b)}**`,
+    })),
+  });
+  return out;
+}
+
+/** One turn whose body carries an inline EVENT beside its emphasised prose.
+ *
+ *  An event message has no blocks and is built by messages-events.ts, so it is a
+ *  body row that registers NO render — the one row a mountedness predicate has to
+ *  answer from the DOM. Cheap enough to build whole in the paint that mounts it. */
+function eventTurn(id: string): Msg[] {
+  return [
+    user(id),
+    {
+      id: `${id}-a`,
+      role: "assistant",
+      ts: 2,
+      content: "",
+      blocks: [{ type: "text", text: `**reply ${id}**` }],
+    },
+    { id: `${id}-e`, role: "event", ts: 3, content: "", event_kind: "interrupted" },
+  ];
 }
 
 /** One turn whose blocks are all unfilled PADS: real ordinals, zero estimated
@@ -235,6 +288,25 @@ function isFolded(turnID: string): boolean {
  *  stand in for the ordinals outside the window, and those are not rows. */
 function rowsIn(turnID: string): number {
   return card(turnID).querySelectorAll(`:scope > .turn-body > .msg-wrap[${KEY_ATTR}]`).length;
+}
+
+/** Press the turn footer's "Copy as text", the reader's own gesture. */
+function copyAsText(turnID: string): void {
+  const btn = card(turnID).querySelector<HTMLButtonElement>(
+    '.turn-action-btn[aria-label="Copy as text"]',
+  );
+  if (btn === null) {
+    throw new Error(`no copy button on turn ${turnID}`);
+  }
+  btn.click();
+}
+
+/** Every keyed child of a body, in document order — message rows AND spacers.
+ *  The list `bodyHolds` reads, so a spacer here says the window fell short. */
+function bodyKeys(turnID: string): string[] {
+  return [...card(turnID).querySelectorAll(`:scope > .turn-body > [${KEY_ATTR}]`)].map(
+    (e) => e.getAttribute(KEY_ATTR) ?? "",
+  );
 }
 
 /** The spacer sides a body carries, in document order. */
@@ -779,6 +851,91 @@ describe("the cold build", () => {
     await vi.waitFor(() => {
       expect(rowsIn("u-heavy")).toBe(40);
     });
+  });
+
+  it("copies the whole turn while that body is still filling in", async () => {
+    const id = chatID();
+    setTurnOpen(id, "u-heavy", true);
+    copied.length = 0;
+    activate(id, markedTail("u-heavy", 320));
+    // The state the case above measures: the plan WANTS all 320 ordinals from this
+    // paint, and one batch of them is mounted. The plan alone reads "whole body" here,
+    // so a copy that trusted it would hand over the rows the batch happened to reach.
+    expect(rowsIn("u-heavy")).toBeLessThan(40);
+
+    copyAsText("u-heavy");
+
+    expect(copied).toHaveLength(1);
+    expect(copied[0]).toContain("chunk 0.0");
+    // The emphasis markers are the STORE's own text, and no rendered bubble carries
+    // them — so this names which side answered, not merely that the tail is present.
+    expect(copied[0]).toContain("**chunk 39.7**");
+
+    await vi.waitFor(() => {
+      expect(rowsIn("u-heavy")).toBe(40);
+    });
+    copied.length = 0;
+    copyAsText("u-heavy");
+    // And once the build lands the MOUNTED body answers: the same tail block, rendered.
+    expect(copied[0]).toContain("chunk 39.7");
+    expect(copied[0]).not.toContain("**");
+  });
+
+  it("copies the whole turn while a head-ward window move waits for the reader", async () => {
+    const id = chatID();
+    // A grant mounts a NARROW window in the middle of the turn, and the newest turn
+    // holds the budget so nothing widens it. The turn is OPEN, so its body is the only
+    // answer the DOM has: a folded one would offer the face and prove nothing.
+    setTurnOpen(id, "u1", true);
+    activate(id, [...markedTail("u1", 200), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
+    await mountTurnBody(id, "u1", 100);
+    bumpMessages(id, "shape");
+    expect(spacersIn("u1")).toEqual(["__space_head__", "__space_tail__"]);
+
+    // The reader parks, and the newest turn goes away: the freed budget grows u1's
+    // range over its whole body, `updateTurn` refuses a head-ward growth, and the
+    // reconcile that would mount it queues until the reader returns to Following.
+    scrollMock.readingState.mockReturnValue("reading");
+    const queue: (() => void)[] = [];
+    scrollMock.deferWhileReading.mockImplementation((mutate: () => void) => {
+      queue.push(mutate);
+    });
+    activate(id, markedTail("u1", 200));
+    expect(queue.length).toBeGreaterThan(0);
+    // Held: the plan wants the whole body and the DOM still holds the hole. No build
+    // is owed in this state, which is what makes the plan's own answer a lie.
+    expect(spacersIn("u1")).toEqual(["__space_head__", "__space_tail__"]);
+
+    copied.length = 0;
+    copyAsText("u1");
+
+    // Both ends of the turn, neither of them mounted: the store answered.
+    expect(copied[0]).toContain("chunk 0.0");
+    expect(copied[0]).toContain("**chunk 24.7**");
+  });
+
+  it("copies the RENDERED text of a complete body whose rows are not all assistant", async () => {
+    const id = chatID();
+    copied.length = 0;
+    activate(id, eventTurn("u-evt"));
+
+    // The premises. The body holds a row per body message and no spacer, so it IS
+    // the complete answer; the event row registers no render, which is the only thing
+    // a window comparison can read as a hole; and the turn is open, so the face
+    // offers no bubble to fall back on.
+    expect(bodyKeys("u-evt")).toEqual(["u-evt-a", "u-evt-e"]);
+    expect(mountedWindow("u-evt-e")).toBeUndefined();
+    expect(isFolded("u-evt")).toBe(false);
+    expect(card("u-evt").querySelector(":scope > .turn-face > .message.assistant")).toBeNull();
+
+    copyAsText("u-evt");
+
+    expect(copied).toHaveLength(1);
+    expect(copied[0]).toContain("reply u-evt");
+    // The emphasis markers are the STORE's own text and no rendered bubble carries
+    // them, so this names which side answered rather than merely that the prose is
+    // there. The store's answer is complete too — it is markdown SOURCE.
+    expect(copied[0]).not.toContain("**");
   });
 
   it("builds a within-budget turn whole in the paint — one slice covers it", () => {
