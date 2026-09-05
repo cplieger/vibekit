@@ -326,6 +326,12 @@ describe("chunk-boundary invariance", () => {
     "ab<",
     "ab[\ncd",
     "ab`\ncd",
+    // The table deferral spans two lines before it decides, and the trailing
+    // space is the input that WAS chunk-dependent: whether the row terminated
+    // depended on where the write boundary fell.
+    "| a | b |\n| - | - |\n| 1 | 2 |",
+    "| a | b | \n| - | - |\n| 1 | 2 |",
+    "| a | b |\n| x |\n| - |\n| 1 |",
   ];
 
   it.each(inputs)("produces one tree for %j at every chunk size", (input) => {
