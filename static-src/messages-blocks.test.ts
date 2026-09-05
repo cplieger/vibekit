@@ -343,6 +343,31 @@ describe("one run card per transcript, not per message", () => {
     return { wrap, id };
   }
 
+  it("answers the per-block lookup per RENDER, where one subtree holds two messages' index 0", () => {
+    // What an attribute query over the hit's row cannot do, and the reason the search
+    // resolves a hit through the map: a run card inside one message's row hosts a LATER
+    // message's frames, so `[data-block-index="0"]` matches twice in one subtree and the
+    // first match in document order belongs to the wrong message.
+    const a = renderMsg(
+      [text("the launching message's own prose"), toolUse("t2b")],
+      [launch("t2b", "wf_two")],
+    );
+    const b = renderMsg([text("the hosted frame", "wf:wf_two:wf_two/lint")]);
+    const own = blockElement(a.id, 0);
+    const hosted = blockElement(b.id, 0);
+    expect(own).not.toBeUndefined();
+    expect(hosted).not.toBeUndefined();
+    // The collision, stated: both are index 0 and both are inside the launching
+    // message's row, so a query for the index answers in DOCUMENT order — the wrong
+    // message's block for a hit in the other.
+    expect(a.wrap.contains(hosted ?? null)).toBe(true);
+    expect(a.wrap.querySelector('[data-block-index="0"]')).toBe(own);
+    expect(hosted).not.toBe(own);
+    expect(own?.dataset["blockMsg"]).toBe(a.id);
+    expect(hosted?.dataset["blockMsg"]).toBe(b.id);
+    expect(hosted?.closest(".run-card")).not.toBeNull();
+  });
+
   it("routes a later message's step into the launching message's card", () => {
     const a = renderMsg([toolUse("t1")], [launch("t1", "wf_seg")]);
     const b = renderMsg([text("second segment work", "wf:wf_seg:wf_seg/deploy")]);
@@ -510,6 +535,7 @@ describe("one run card per transcript, not per message", () => {
       CHAT_ID,
       "sub-1",
       false,
+      [blockKey("m-det", 0)],
     );
     const a = renderMsg([toolUse("t4")], [launch("t4", "wf_det")]);
     const detachedSecond = document.createElement("div");
@@ -524,6 +550,7 @@ describe("one run card per transcript, not per message", () => {
       CHAT_ID,
       "sub-2",
       false,
+      [blockKey("m-det2", 0)],
     );
 
     expect(detachedFirst.querySelectorAll(".run-card")).toHaveLength(1);

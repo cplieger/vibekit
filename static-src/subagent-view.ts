@@ -191,12 +191,12 @@ function paint(
   const shape = blockShape(slice.blocks);
   const message = syntheticMessage(key, slice);
   if (kept !== undefined && shapeExtends(renderedShape, shape) && renderedShape.length > 0) {
-    updateDetachedBody(body, message, chatID, subtaskID, slice.live);
+    updateDetachedBody(body, message, chatID, subtaskID, slice.live, slice.sourceKeys);
   } else {
     disposeDetachedBody(key, subtaskID);
     body.replaceChildren();
     sealed = false;
-    buildDetachedBody(body, message, chatID, subtaskID, slice.live);
+    buildDetachedBody(body, message, chatID, subtaskID, slice.live, slice.sourceKeys);
   }
   renderedShape = shape;
 

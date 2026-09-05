@@ -31,6 +31,12 @@ vi.mock("./chat-search.js", { spy: true });
 // overlay tests always ran against).
 vi.mock("./store.js", { spy: true });
 vi.mock("./store-load.js", { spy: true });
+// The renderer's per-block map, which is how a hit's element is resolved now: this
+// file builds transcript DOM by hand, so no render would ever register one. A
+// REPLACING factory rather than a spy — the real dispatcher's graph reaches
+// `preserveReadingPosition` on the `./scroll.js` stubbed above, so loading it fails
+// linking for the whole file.
+vi.mock("./messages-blocks.js", () => ({ blockElement: vi.fn() }));
 
 import { FindEngine, formatCount } from "./find-engine.js";
 import type * as ModFindInChat from "./find-in-chat.js";
@@ -699,6 +705,7 @@ import type * as ModChatSearch from "./chat-search.js";
 import type * as ModStore from "./store.js";
 import type * as ModStoreLoad from "./store-load.js";
 import type * as ModScroll from "./scroll.js";
+import type * as ModBlocks from "./messages-blocks.js";
 
 describe("server-hit navigation", () => {
   let onHotkey: (e: KeyboardEvent) => void;
@@ -706,6 +713,7 @@ describe("server-hit navigation", () => {
   let store: typeof ModStore;
   let storeLoad: typeof ModStoreLoad;
   let scroll: typeof ModScroll;
+  let blocks: typeof ModBlocks;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -727,6 +735,17 @@ describe("server-hit navigation", () => {
     store = await import("./store.js");
     storeLoad = await import("./store-load.js");
     scroll = await import("./scroll.js");
+    blocks = await import("./messages-blocks.js");
+    // The renderer's map, stood in for by the fixtures' own `data-block-index`
+    // stamps: each fixture stamps the element its four mount sites would have
+    // registered, and the lookup is keyed by (message, INDEX) exactly as the real
+    // one is. Resolved per call, because a reveal mounts its DOM after this.
+    vi.mocked(blocks.blockElement).mockImplementation(
+      (messageID, blockIndex) =>
+        document.querySelector<HTMLElement>(
+          `[data-reconcile-key="${messageID}"] [data-block-index="${String(blockIndex)}"]`,
+        ) ?? undefined,
+    );
   });
 
   function ctrlF(): KeyboardEvent {
@@ -864,7 +883,7 @@ describe("server-hit navigation", () => {
             <div class="assistant-blocks">
               <div class="subagent-block collapsed" data-subtask="sub-1">
                 <div class="subagent-header">Subagent</div>
-                <div class="subagent-body"><div class="message assistant">delegate found the retry backoff</div></div>
+                <div class="subagent-body"><div class="message assistant" data-block-index="1">delegate found the retry backoff</div></div>
               </div>
             </div>
           </div>`;
@@ -898,6 +917,151 @@ describe("server-hit navigation", () => {
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(mark, expect.anything());
   });
 
+  it("resolves the block a hit names when the mounted window starts above index 0", async () => {
+    // The window holds 2..7 of eight blocks, which is what per-block residency makes
+    // ordinary. A same-kind ORDINAL counted from index 0 in the STORE names the FIFTH
+    // mounted trace for a hit in the third, and every consumer downstream then opens,
+    // walks, marks and reports success on the wrong block.
+    const traces = Array.from(
+      { length: 8 },
+      (_, i) => `paragraph ${String(i)} weighs the retry budget`,
+    );
+    stageChat([
+      { id: "u1", role: "user", content: "q" },
+      {
+        id: "a1",
+        role: "assistant",
+        blocks: traces.map((t) => ({ type: "thinking", thinking: t })),
+      },
+    ]);
+    const mounted = [2, 3, 4, 5, 6, 7];
+    mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row"><div class="assistant-blocks">${mounted
+        .map(
+          (i) =>
+            `<details class="reasoning-block msg-reasoning" data-block-index="${String(i)}">
+               <summary class="reasoning-summary">Reasoning</summary>
+               <blockquote class="reasoning-body">${traces[i] ?? ""}</blockquote>
+             </details>`,
+        )
+        .join("")}</div></div>`,
+    );
+    const want = traces[4] ?? "";
+    stageHits([
+      serverHit({
+        excerpt: want,
+        segment_kind: "reasoning",
+        block_index: 4,
+        offset: want.indexOf("retry"),
+        segment_len: want.length,
+      }),
+    ]);
+
+    await openAndSearch("retry");
+    // Every trace is a CLOSED <details>, so the walker marked nothing and stepping
+    // navigates the server hit — which is the only path that resolves an element.
+    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
+
+    typeAndEnter("retry");
+    await vi.waitFor(() => {
+      expect(document.querySelector("mark.find-hit-current")).not.toBeNull();
+    });
+    const current = document.querySelector("mark.find-hit-current");
+    expect(current?.closest("[data-block-index]")?.getAttribute("data-block-index")).toBe("4");
+    // And the one it opened is the one it marked: no other trace was touched.
+    expect(document.querySelectorAll("details.reasoning-block[open]")).toHaveLength(1);
+  });
+
+  it("declines an element the map still names after it left the document", async () => {
+    // A registry can answer with a node the document no longer holds, where the subtree
+    // query this replaced could not. `navigateToHit` exits on a disconnected target with
+    // nothing selected and nothing said, so declining HERE is what makes the message-row
+    // fallback happen at all.
+    stageChat([
+      { id: "u1", role: "user", content: "q" },
+      {
+        id: "a1",
+        role: "assistant",
+        blocks: [{ type: "text", text: "see the retry backoff here" }],
+      },
+    ]);
+    const row = mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row">
+         <div class="assistant-blocks" style="content-visibility: hidden">
+           <div class="msg-row" data-block-index="0">
+             <div class="message assistant">see the retry backoff here</div>
+           </div>
+         </div>
+       </div>`,
+    ).querySelector('[data-reconcile-key="a1"]') as HTMLElement;
+    // What a stale entry looks like: the block's element, built and never inserted.
+    const gone = document.createElement("div");
+    gone.setAttribute("data-block-index", "0");
+    gone.innerHTML = `<div class="message assistant">see the retry backoff here</div>`;
+    vi.mocked(blocks.blockElement).mockReturnValue(gone);
+    stageHits([
+      serverHit({
+        excerpt: "see the retry backoff here",
+        block_index: 0,
+        offset: 8,
+        segment_len: 26,
+      }),
+    ]);
+    await openAndSearch("retry");
+
+    typeAndEnter("retry");
+
+    // The hidden subtree is why no mark can be placed either way; what the fallback
+    // buys is that the reader is told, and taken to the row they can act on.
+    await vi.waitFor(() => {
+      expect(countText()).toBe("1 of 1 in chat \u00b7 not in rendered text");
+    });
+    expect(row.classList.contains("find-target-flash")).toBe(true);
+    expect(vi.mocked(scroll.jumpTo).mock.lastCall?.[0]).toBe(row);
+  });
+
+  it("counts the server's hits with the no-results skin absent when the DOM holds none", async () => {
+    // The matches are all in blocks the window does not hold, so the walker can mark
+    // nothing. Painting the box as a miss would contradict the count beside it and
+    // read as data loss — the reason enumeration moved server-side at all.
+    stageChat([
+      { id: "u1", role: "user", content: "q" },
+      {
+        id: "a1",
+        role: "assistant",
+        blocks: [
+          { type: "text", text: "the retry backoff" },
+          { type: "text", text: "retry again" },
+          { type: "text", text: "and retry once more" },
+        ],
+      },
+    ]);
+    // A body holding the LAST block only: the two the hits name are unmounted.
+    mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row">
+         <div class="assistant-blocks">
+           <div class="msg-row" data-block-index="2">
+             <div class="message assistant">and once more</div>
+           </div>
+         </div>
+       </div>`,
+    );
+    stageHits([
+      serverHit({ excerpt: "the retry backoff", block_index: 0, offset: 4, segment_len: 17 }),
+      serverHit({ excerpt: "retry again", block_index: 1, offset: 0, segment_len: 11 }),
+    ]);
+
+    await openAndSearch("retry");
+    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
+    expect(countText()).toBe("2 in chat");
+    expect(document.getElementById("chat-find")?.classList.contains("chat-find-no-results")).toBe(
+      false,
+    );
+  });
+
   it("selects the block and says so for a syntax-only hit (match not in rendered text)", async () => {
     stageChat([
       { id: "u1", role: "user", content: "q" },
@@ -909,9 +1073,14 @@ describe("server-hit navigation", () => {
     ]);
     mountTurnCard(
       "u1",
+      // A TOP-LEVEL text block is stamped on its avatar row, not on the bubble, so
+      // this shape is what the renderer registers and what the normalization has to
+      // step through to reach the element the flash belongs on.
       `<div data-reconcile-key="a1" class="msg-row">
          <div class="assistant-blocks">
-           <div class="message assistant">see docs for more</div>
+           <div class="msg-row" data-block-index="0">
+             <div class="message assistant">see docs for more</div>
+           </div>
          </div>
        </div>`,
     );
@@ -964,7 +1133,9 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row" style="content-visibility: auto; contain-intrinsic-size: auto 2.5rem">
          <div class="assistant-blocks">
-           <div class="message assistant">see the retry backoff here</div>
+           <div class="msg-row" data-block-index="0">
+             <div class="message assistant">see the retry backoff here</div>
+           </div>
          </div>
        </div>`,
     );
@@ -1015,7 +1186,9 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
          <div class="assistant-blocks" style="content-visibility: hidden">
-           <div class="message assistant">see the retry backoff here</div>
+           <div class="msg-row" data-block-index="0">
+             <div class="message assistant">see the retry backoff here</div>
+           </div>
          </div>
        </div>`,
     );
@@ -1096,7 +1269,7 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
          <div class="assistant-blocks">
-           <details class="reasoning-block msg-reasoning">
+           <details class="reasoning-block msg-reasoning" data-block-index="0">
              <summary class="reasoning-summary">Reasoning</summary>
              <blockquote class="reasoning-body"></blockquote>
            </details>
@@ -1149,7 +1322,7 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
          <div class="assistant-blocks">
-           <details class="reasoning-block msg-reasoning">
+           <details class="reasoning-block msg-reasoning" data-block-index="0">
              <summary class="reasoning-summary">Reasoning</summary>
              <blockquote class="reasoning-body"></blockquote>
            </details>
@@ -1195,7 +1368,7 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
          <div class="assistant-blocks">
-           <details class="reasoning-block msg-reasoning">
+           <details class="reasoning-block msg-reasoning" data-block-index="0">
              <summary class="reasoning-summary">Reasoning</summary>
              <blockquote class="reasoning-body">the retry lives here in this trace</blockquote>
            </details>

@@ -36,9 +36,8 @@
 //   - No focus trap: Tab moves through the widget and back out to the page.
 //     Escape closes and restores focus to wherever it was before opening.
 //
-// The keydown listener is registered from app.ts (the composition root) via
-// handleFindHotkey — this module is a leaf (imports dom/scroll/reactive; nothing
-// imports it except app.ts and the test), so there is no import cycle.
+// The keydown listener arrives through find-dispatch.ts from app.ts (the composition
+// root). Nothing below that imports this module, so its own imports cannot cycle.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
@@ -53,6 +52,7 @@ import {
   searchHitTotal,
 } from "./chat-search.js";
 import { getActive, getActiveId } from "./store.js";
+import { blockElement } from "./messages-blocks.js";
 import { loadMessages } from "./store-load.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
@@ -647,13 +647,12 @@ function messageRowEl(messageID: string): HTMLElement | null {
 }
 
 /**
- * The rendered container of the hit's SEGMENT, resolved by
- * (messageID, blockIndex, segment_kind) against the store's block array:
- * tool segments carry their tool call's id (the card is addressed by
- * `data-tool-id`), text and reasoning blocks map ordinally onto the bubbles
- * and traces mounted in their own container (top level, or the delegate box
- * addressed by `data-subtask`). Null — the caller falls back to the message
- * row — for legacy blockless hits and anything the renderer did not mount.
+ * The rendered container of the hit's SEGMENT: a tool segment by its call's id
+ * (`data-tool-id`, scoped to the row because one call can hold several slots), a text
+ * or reasoning block through the renderer's own per-block map. Null — the caller falls
+ * back to the message row — for a legacy blockless hit, for anything unmounted, and
+ * for a mounted tool slot the row scope cannot see: a run card hosts every later
+ * message's steps, so those sit in the FIRST message's row until a drop re-homes it.
  */
 function resolveSegmentEl(row: HTMLElement, hit: SearchHit): HTMLElement | null {
   const bi = hit.block_index;
@@ -671,34 +670,22 @@ function resolveSegmentEl(row: HTMLElement, hit: SearchHit): HTMLElement | null 
     }
     return row.querySelector<HTMLElement>(`[data-tool-id="${CSS.escape(tid)}"]`);
   }
-  // content | reasoning: the Nth same-kind block of this agent maps onto the
-  // Nth mounted bubble/trace in that agent's container, because the renderer
-  // mounts blocks in chronological order per container.
-  const wantType = hit.segment_kind === "content" ? "text" : "thinking";
-  const subtask = hit.agent_subtask_id ?? "";
-  const msg = getActive()?.messages.find((m) => m.id === hit.message_id);
-  let ordinal = 0;
-  for (let i = 0; i < bi; i++) {
-    const b = msg?.blocks?.[i];
-    if (b?.type === wantType && (b.agent_subtask_id ?? "") === subtask) {
-      ordinal++;
-    }
-  }
-  const scope =
-    subtask === ""
-      ? row
-      : row.querySelector<HTMLElement>(`[data-subtask="${CSS.escape(subtask)}"]`);
-  if (scope === null) {
+  // content | reasoning: the block INDEX, keyed by message, because the mounted
+  // window can start anywhere and a same-kind ordinal counted from 0 in the store
+  // then names a different element. A subtree query cannot answer either: a
+  // `.run-card` in this row can host another message's blocks at the same index.
+  const stamped = blockElement(hit.message_id, bi);
+  // A map can name an element that has LEFT the document, where the subtree query this
+  // replaced could not; `navigateToHit` exits silently on one, so decline it here.
+  if (stamped?.isConnected !== true) {
     return null;
   }
-  const selector = wantType === "text" ? ".message" : "details.reasoning-block";
-  const inScope = [...scope.querySelectorAll<HTMLElement>(selector)].filter((cand) => {
-    // Direct membership: a top-level block is not inside any delegate box, and
-    // a delegate's block belongs to ITS box, not a box nested deeper.
-    const owner = cand.closest("[data-subtask]");
-    return subtask === "" ? owner === null : owner === scope;
-  });
-  return inScope[ordinal] ?? null;
+  // A top-level text block is stamped on its ROW — that is what a window drop
+  // removes — so both shapes answer with the bubble, which is what every consumer
+  // downstream flashes, walks and jumps to.
+  return hit.segment_kind === "content"
+    ? (stamped.querySelector<HTMLElement>(":scope > .message") ?? stamped)
+    : stamped;
 }
 
 /**

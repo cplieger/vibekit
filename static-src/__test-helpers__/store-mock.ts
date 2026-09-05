@@ -101,6 +101,7 @@ export const storeMock = {
   appendMessage: vi.fn(),
   upsertMessage: vi.fn(),
   appendChunk: vi.fn(),
+  setMountedBlockProbe: vi.fn(),
   upsertToolCall: vi.fn(),
   applyToolCallDelta: vi.fn(),
   foldToolCallDelta: vi.fn(),

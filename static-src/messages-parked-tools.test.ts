@@ -328,6 +328,7 @@ describe("the run clock", () => {
       a,
       "subtask-1",
       false,
+      [sigs.blockKey(msgID, 0)],
     );
     await vi.advanceTimersByTimeAsync(0);
     const detachedClock = host.querySelector<HTMLElement>(".run-clock");
@@ -411,6 +412,7 @@ describe("two surfaces over one tool call", () => {
       chatID,
       "subtask-1",
       false,
+      [sigs.blockKey(msgID, 0)],
     );
   }
 

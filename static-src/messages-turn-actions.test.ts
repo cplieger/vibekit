@@ -9,7 +9,7 @@
 // into the raw view. New with the footer move: the buttons are per TURN and
 // identical open or folded, the toggle operates on whichever surface is
 // mounted (body open, face folded), and crossing the fold resets it.
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import type { Message } from "./types.js";
 import type { Turn } from "./turns.js";
 
@@ -45,8 +45,14 @@ vi.mock("./actions/messages.js", () => ({
 const downloadChatExport = vi.fn();
 vi.mock("./chat-export.js", () => ({ downloadChatExport }));
 
-const { mountTurnFooterActions, resetTurnSourceView, initTurnActionCallbacks, copyWithFeedback } =
-  await import("./messages-turn-actions.js");
+const {
+  mountTurnFooterActions,
+  resetTurnSourceView,
+  initTurnActionCallbacks,
+  initTurnActionsBodyProbe,
+  syncSourceView,
+  copyWithFeedback,
+} = await import("./messages-turn-actions.js");
 
 // The real injection point is messages.ts's CSP-safe <template> clone; a plain
 // element is enough here and keeps the fixture DOM readable.
@@ -56,6 +62,13 @@ initTurnActionCallbacks({
     span.dataset["icon"] = String(markup.length);
     return span;
   },
+});
+
+// The body probe is MODULE state and a plain arrow, so `mockReset` cannot restore
+// it: a case arming a windowed body must not leave every later case windowed, and a
+// case that FAILS while armed would. Wired here, not in each case.
+afterEach(() => {
+  initTurnActionsBodyProbe(() => true);
 });
 
 interface Fixture {
@@ -245,6 +258,29 @@ describe("mountTurnFooterActions", () => {
     buttons(f.footer)[0]?.click();
     expect(dispatch).toHaveBeenCalledWith("face words", expect.anything());
   });
+
+  it("copies the FACE, not a partial body, when the window holds only part of the turn", () => {
+    // The body is mounted but WINDOWED, so its bubbles are a hole rather than the
+    // turn's answer. The face is what the turn's final answer is, and the fold already
+    // relies on that; copying the body here would hand over whichever blocks the
+    // reader's scroll position happened to leave mounted.
+    const f = fixture(assistant({ content: "**bold**" }), "bold");
+    initTurnActionsBodyProbe(() => false);
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    fold(f, "face words");
+    buttons(f.footer)[0]?.click();
+    expect(dispatch).toHaveBeenCalledWith("face words", expect.anything());
+  });
+
+  it("falls back to the MARKDOWN for a partial body with no face at all", () => {
+    // A partial body and no face is the shape a running or faceless turn has: the store
+    // is then the only complete answer, and it is the one a folded stub already gives.
+    const f = fixture(assistant({ content: "**bold**" }), "bold");
+    initTurnActionsBodyProbe(() => false);
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    buttons(f.footer)[0]?.click();
+    expect(dispatch).toHaveBeenCalledWith("**bold**", expect.anything());
+  });
 });
 
 describe("the raw-markdown toggle", () => {
@@ -319,6 +355,36 @@ describe("the raw-markdown toggle", () => {
     expect(later.closest(".hidden")).toBe(f.blocks);
     expect(f.card.querySelectorAll(".turn-raw")).toHaveLength(1);
     expect(f.footer.querySelectorAll(".turn-actions-buttons")).toHaveLength(1);
+  });
+
+  it("swallows a whole ROW that arrives after the toggle, not just a block", () => {
+    // The case above covers a block landing in an already-hidden region. A window move
+    // or a mid-turn model switch mounts a new ROW instead, and it brings its own
+    // unhidden block region with it — rendered output beside the raw text.
+    const f = fixture(assistant());
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    sourceButton(f.footer).click();
+    const wrap = document.createElement("div");
+    wrap.className = "msg-wrap msg-wrap-assistant";
+    const region = document.createElement("div");
+    region.className = "assistant-blocks";
+    region.textContent = "the second model's reply";
+    wrap.appendChild(region);
+    f.body.appendChild(wrap);
+    expect(region.classList.contains("hidden")).toBe(false);
+
+    syncSourceView(f.body);
+
+    expect(region.classList.contains("hidden")).toBe(true);
+    // And the raw view is untouched: this only ever hides, and only while raw shows.
+    expect(raw(f.card)?.classList.contains("hidden")).toBe(false);
+  });
+
+  it("leaves a new row alone while the rendering is what is showing", () => {
+    const f = fixture(assistant());
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    syncSourceView(f.body);
+    expect(f.blocks.classList.contains("hidden")).toBe(false);
   });
 
   it("re-reads the source at click time, so a later refreshed turn wins", () => {

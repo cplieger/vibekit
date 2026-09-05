@@ -153,8 +153,8 @@ describe("loadList pruning", () => {
 });
 
 describe("the page budgets ride the request", () => {
-  // The item: the page the server cuts and the window this client can hold are
-  // measured in the SAME units. `block-window.ts` stubs every turn past
+  // The item: the page the server cuts and the window this client can hold are the
+  // same ORDER, in two units. `block-window.ts` windows every turn past
   // RESIDENT_BLOCKS *or* RESIDENT_TOOL_CALLS, whichever runs out first, so a page
   // bounded only in bytes holds a chat-dependent number of both and the surplus is
   // fetched, decoded and then thrown away. Sending one and not the other leaves the

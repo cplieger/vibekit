@@ -47,8 +47,9 @@ import type { Message, Block, ToolCall, PlanStatus, FileChange, SteerMark } from
 import type { BlockRange } from "./block-window.js";
 import { effect, el } from "@cplieger/reactive";
 import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
-import { getActiveId } from "./store.js";
+import { getActiveId, setMountedBlockProbe } from "./store.js";
 import {
+  blockKey,
   ensureBlockTextSig,
   ensureBlockThinkingSig,
   ensureToolCallSig,
@@ -439,6 +440,31 @@ const renders = new Map<string, MsgRender>();
  *  adopting the transcript's card would move the DOM node out of it. */
 const runCardHosts = new Map<string, Map<string, MsgRender>>();
 
+/** Detached render id → the STORE key of each of its own block indices. A detached
+ *  render's blocks are a re-indexed SLICE, so nothing else can turn a store
+ *  coordinate into an index that render answers to. Dropped with the render. */
+const detachedSources = new Map<string, Map<string, number>>();
+
+// A store delta repaints only where a sink for that block is MOUNTED, and one store
+// block can be mounted in several surfaces at once — the transcript keys its sinks by
+// the store's message id, a delegate page by a derived one. So this is a union.
+setMountedBlockProbe((messageID, blockIndex) => {
+  if (renders.get(messageID)?.blockText.has(blockIndex) === true) {
+    return true;
+  }
+  return detachedHolds(blockKey(messageID, blockIndex));
+});
+
+function detachedHolds(storeKey: string): boolean {
+  for (const [id, sources] of detachedSources) {
+    const own = sources.get(storeKey);
+    if (own !== undefined && renders.get(id)?.blockText.has(own) === true) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Public API (called by messages.ts)
 // ---------------------------------------------------------------------------
@@ -773,6 +799,7 @@ export function resetBlockRenders(): void {
     disposeAll(st);
   }
   renders.clear();
+  detachedSources.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -808,8 +835,11 @@ export function buildDetachedBody(
   chatID: string,
   subtask: string,
   live: boolean,
+  sourceKeys: readonly string[],
 ): void {
-  buildBody(host, { ...m, id: detachedID(m.id, subtask) }, chatID, live, true);
+  const id = detachedID(m.id, subtask);
+  noteDetachedSources(id, sourceKeys);
+  buildBody(host, { ...m, id }, chatID, live, true);
 }
 
 /** Append newly-arrived blocks and bring mounted ones up to the store's text. */
@@ -819,8 +849,22 @@ export function updateDetachedBody(
   chatID: string,
   subtask: string,
   live: boolean,
+  sourceKeys: readonly string[],
 ): void {
-  updateBody(host, { ...m, id: detachedID(m.id, subtask) }, chatID, live, true);
+  const id = detachedID(m.id, subtask);
+  noteDetachedSources(id, sourceKeys);
+  updateBody(host, { ...m, id }, chatID, live, true);
+}
+
+/** Record where this render's blocks came FROM, so the mounted-block probe can
+ *  answer a store-space question about them. `sourceKeys` is index-aligned with
+ *  `m.blocks` (subagent-slice.ts mints both in one walk). */
+function noteDetachedSources(id: string, sourceKeys: readonly string[]): void {
+  const sources = new Map<string, number>();
+  for (const [own, key] of sourceKeys.entries()) {
+    sources.set(key, own);
+  }
+  detachedSources.set(id, sources);
 }
 
 /** Flush every markdown stream and seal every reasoning trace. */
@@ -831,7 +875,9 @@ export function finalizeDetachedBody(messageID: string, subtask: string): void {
 /** Drop a detached render. The page's own unmount, and the only thing that fires
  *  its disposers — messages.ts never sees this id. */
 export function disposeDetachedBody(messageID: string, subtask: string): void {
-  disposeAssistantBody(detachedID(messageID, subtask));
+  const id = detachedID(messageID, subtask);
+  detachedSources.delete(id);
+  disposeAssistantBody(id);
 }
 
 /** Run and clear a render's message-lifetime cleanups. Idempotent: both dispose
