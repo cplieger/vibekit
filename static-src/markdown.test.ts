@@ -1366,6 +1366,13 @@ describe("renderMarkdown GFM tables", () => {
       expected: "<p>| a | b |</p><hr><p>| 1 | 2 |</p>",
     },
     {
+      name: "a table starting on the second line of a rejected candidate still opens",
+      input: "| a | b |\n| x |\n| - |\n| 1 |",
+      expected:
+        "<p>| a | b |</p><table><thead><tr><th> x </th></tr></thead>" +
+        "<tbody><tr><td> 1 </td></tr></tbody></table>",
+    },
+    {
       name: "colon forms are valid delimiter cells",
       input: "| a |\n| :- |\n| 1 |",
       expected:
