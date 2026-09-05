@@ -3,6 +3,7 @@
 
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { domRenderer } from "./smd-renderer.js";
+import { createMarkdownStream } from "./markdown.js";
 import {
   PARAGRAPH,
   HEADING_1,
@@ -416,6 +417,46 @@ describe("unwrapping does not re-mount the per-chunk fade spans", () => {
     expect(after.every((s) => s.hasAttribute("data-vk-chunk-settled"))).toBe(true);
     expect(starts).toBe(3);
     expect(container.textContent).toBe("**one two three");
+  });
+
+  it("marks the spans a label with no destination unwraps", async () => {
+    // The same mechanism now carries a second caller: a `[label]` that closes
+    // with no destination is unwrapped rather than left as an href-less anchor,
+    // so its streamed spans are re-parented too.
+    const container = document.createElement("div");
+    container.className = `${ANIM}-scope`;
+    document.body.append(container);
+    hosts.push(container);
+
+    // Targets, not a count: the text after the label legitimately mounts new
+    // spans, so only a SECOND start on an already-played one is the defect.
+    const started: EventTarget[] = [];
+    container.addEventListener("animationstart", (e) => {
+      started.push(e.target as EventTarget);
+    });
+
+    const r = createMarkdownStream(container, { flushIntervalMs: 0 });
+    r.writeDelta("see [the ");
+    r.writeDelta("label");
+    const before = [...container.querySelectorAll("a [data-vk-chunk-enter]")];
+    expect(before.length).toBeGreaterThan(0);
+    await vi.waitFor(() => {
+      expect(started.length).toBeGreaterThanOrEqual(before.length);
+    });
+
+    r.writeDelta("] done");
+    r.end();
+    await nextFrame();
+
+    expect(container.querySelector("a")).toBeNull();
+    expect(container.textContent).toBe("see [the label] done");
+    const moved = [...container.querySelectorAll("[data-vk-chunk-enter]")];
+    // Identity: the unwrap MOVES the spans rather than recreating them.
+    expect(moved.filter((s) => before.includes(s))).toEqual(before);
+    expect(before.every((s) => s.hasAttribute("data-vk-chunk-settled"))).toBe(true);
+    for (const span of before) {
+      expect(started.filter((t) => t === span)).toHaveLength(1);
+    }
   });
 });
 

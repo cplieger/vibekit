@@ -1759,8 +1759,76 @@ describe("renderMarkdown brackets inside a link label", () => {
     expect(renderMarkdown("[a](https://e.com)")).toBe(`<p>${A} href="https://e.com">a</a></p>`);
   });
 
-  it("closes the label on a bracket with no destination", () => {
-    expect(renderMarkdown("[a]b")).toBe(`<p>${A}>a</a>b</p>`);
+  it("renders a label with no destination as the text that was typed", () => {
+    // Not a link: it had no href, was not focusable, and the transcript's own
+    // CSS styled it as link text, so `[TODO]` in prose came out blue and
+    // underlined and did nothing.
+    expect(renderMarkdown("[a]b")).toBe("<p>[a]b</p>");
+  });
+
+  const noDestination: { name: string; input: string; expected: string }[] = [
+    { name: "an image label", input: "![a]b", expected: "<p>![a]b</p>" },
+    { name: "a label at end of input", input: "[a]", expected: "<p>[a]</p>" },
+    { name: "a label before a newline", input: "[a]\nnext", expected: "<p>[a]<br>next</p>" },
+    { name: "nested brackets", input: "[a [b] c]d", expected: "<p>[a [b] c]d</p>" },
+    { name: "markup inside the label", input: "[a *b*]c", expected: "<p>[a <em>b</em>]c</p>" },
+    {
+      name: "a bracketed word in prose",
+      input: "see [TODO] later",
+      expected: "<p>see [TODO] later</p>",
+    },
+    {
+      name: "a footnote marker",
+      input: "as noted [1] above",
+      expected: "<p>as noted [1] above</p>",
+    },
+    {
+      name: "a parenthesis that is not a destination",
+      input: "[a] (not a destination)",
+      expected: "<p>[a] (not a destination)</p>",
+    },
+    {
+      // What CommonMark renders for an UNDEFINED reference, which is strictly
+      // better than two anchors with no href. Resolving a definition needs a
+      // document-scoped map, so the definition line still renders.
+      name: "an unresolved reference link",
+      input: "[a][ref]\n\n[ref]: http://e.com",
+      expected: "<p>[a][ref]</p><p>[ref]: " + `${A} href="http://e.com">http://e.com</a></p>`,
+    },
+  ];
+
+  it.each(noDestination)("renders $name as text", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+
+  const unchanged: { name: string; input: string; expected: string }[] = [
+    {
+      name: "a checked task item",
+      input: "- [x] done",
+      expected:
+        '<ul><li><input type="checkbox" disabled="" aria-label="Task item" checked=""> done</li></ul>',
+    },
+    {
+      name: "an unchecked task item",
+      input: "- [ ] todo",
+      expected: '<ul><li><input type="checkbox" disabled="" aria-label="Task item"> todo</li></ul>',
+    },
+  ];
+
+  it.each(unchanged)("leaves $name unchanged", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+
+  it("leaves a partially arrived label alone while it streams", () => {
+    // The block has not closed, so nothing decides yet: the label renders inside
+    // an href-less anchor until either `(` or another character arrives.
+    const el = document.createElement("div");
+    const r = createMarkdownStream(el, { flushIntervalMs: 0 });
+    r.writeDelta("see [the label");
+    expect(el.querySelector("a")?.textContent).toBe("the labe");
+    r.writeDelta("](https://e.com) end");
+    r.end();
+    expect(el.querySelector("a")?.getAttribute("href")).toBe("https://e.com");
   });
 });
 
@@ -2285,11 +2353,25 @@ describe("renderMarkdown GFM tables", () => {
       expected: "<blockquote><p>| a | b |<br>| - | - |<br>| 1 | 2 |</p></blockquote>",
     },
     {
-      // The reference reads the lone `-` as a bullet and the header as a
-      // paragraph. Matching it needs setext headings, which this parser does not
-      // have, so the rule is left off rather than half applied.
-      name: "a bullet-marker delimiter row still opens a table (characterization)",
+      // GFM reads a `-` followed by a space at line start as a bullet, which
+      // outranks the delimiter row. `-|-` has no space, so it stays a candidate.
+      name: "a bullet-marker delimiter row is not a delimiter row",
+      input: "| a | b |\n- | -",
+      expected: "<p>| a | b |</p><ul><li>| -</li></ul>",
+    },
+    {
+      name: "a bullet-marker delimiter row with a body row underneath",
       input: "| a | b |\n- | -\n| 1 | 2 |",
+      expected: "<p>| a | b |</p><ul><li>| -<br>| 1 | 2 |</li></ul>",
+    },
+    {
+      name: "a star-marker delimiter row is not a delimiter row",
+      input: "| a |\n* | *",
+      expected: "<p>| a |</p><ul><li>| *</li></ul>",
+    },
+    {
+      name: "a multi-dash delimiter row with no pipe is still a delimiter row",
+      input: "| a | b |\n--- | ---\n| 1 | 2 |",
       expected: HEAD + BODY,
     },
     {
