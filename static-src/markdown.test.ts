@@ -982,6 +982,30 @@ describe("renderMarkdown deep nesting", () => {
       expect(html).toContain("| 1 | 2 |");
     },
   );
+
+  // Past the cap no delimiter can become markup, so every one of them has to
+  // read as the literal text that was typed. The opener used to be dropped: the
+  // push was refused and the handler then overwrote `pending` with the next
+  // character regardless.
+  it.each([
+    ["*a*", "*"],
+    ["**a**", "**"],
+    ["_a_", "_"],
+    ["__a__", "__"],
+    ["~~a~~", "~~"],
+    ["`a`", "`"],
+    ["[a](b)", "["],
+    ["![a](b)", "!["],
+    ["$a$", "$"],
+  ])("keeps the %s opener as text when the token stack is saturated", (body, opener) => {
+    const html = renderMarkdown(">".repeat(22) + " " + body);
+    expect(html).toContain(opener + "a");
+    expect(html).not.toContain("<em");
+    expect(html).not.toContain("<strong");
+    expect(html).not.toContain("<code");
+    expect(html).not.toContain("<a ");
+    expect(html).not.toContain("<img");
+  });
 });
 
 // ---------------------------------------------------------------------------

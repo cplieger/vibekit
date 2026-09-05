@@ -247,11 +247,16 @@ export function is_inline_token(token: Token): boolean {
   return INLINE_TOKENS.has(token);
 }
 
-/** Open an inline token, remembering the delimiter that opened it. */
+/** Open an inline token, remembering the delimiter that opened it. At the depth
+ *  cap nothing is pushed, and every caller then overwrites `pending` with the
+ *  character it was handed, so the delimiter is kept as literal text here — the
+ *  same reading it gets when the token opens and never closes. */
 export function add_inline_token(p: Parser, token: Token, delim: string): void {
   if (add_token(p, token)) {
     p.delims[p.len] = delim;
+    return;
   }
+  p.textBuf += delim;
 }
 
 /** Close an inline token that never met its closer, telling the renderer which
@@ -285,7 +290,6 @@ export function has_token_room(len: number, n: number): boolean {
  *  it was handed re-enters itself with identical state and recurses without
  *  bound, so a caller that re-feeds must consume the text itself instead. */
 export function add_token(p: Parser, token: Token): boolean {
-  p.prev_is_word = false;
   if (
     (p.tokens[p.len] === LIST_ORDERED || p.tokens[p.len] === LIST_UNORDERED) &&
     token !== LIST_ITEM
@@ -295,6 +299,7 @@ export function add_token(p: Parser, token: Token): boolean {
   if (p.len >= TOKEN_ARRAY_CAP - 1) {
     return false;
   } // saturate at max depth
+  p.prev_is_word = false;
   p.len += 1;
   p.tokens[p.len] = token;
   p.token = token;
