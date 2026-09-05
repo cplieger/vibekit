@@ -41,9 +41,13 @@ const {
   openContainerKeys,
   blockElement,
   mountedWindow,
+  mountHeadRange,
+  dropHead,
+  dropTail,
 } = await import("./messages-blocks.js");
 const { blockKey, blockTextSigs, blockThinkingSigs, ensureBlockTextSig, clearAllBlockSigs } =
   await import("./store-signals.js");
+const { forgetHeights, spacerHeight } = await import("./block-heights.js");
 const { setActive } = await import("./store.js");
 const { outcomeIcon } = await import("./icons.js");
 const { iconEl } = await import("./icon-el.js");
@@ -351,12 +355,135 @@ describe("one run card per transcript, not per message", () => {
     expect(body?.textContent).toContain("second segment work");
   });
 
-  it("is order-independent across messages: the launch binds into a step-built card", () => {
+  it("re-homes a step-built card into the launching message when its launch mounts", () => {
     const b = renderMsg([text("early frame", "wf:wf_race:wf_race/lint")]);
     const a = renderMsg([toolUse("t2")], [launch("t2", "wf_race")]);
 
-    expect(b.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+    // Still ONE card, and now the owning message's: a run's card belongs where its
+    // launch block is, so a window that reaches the launch takes the card with it.
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+    expect(b.wrap.querySelectorAll(".run-card")).toHaveLength(0);
+    // MOVED, not rebuilt — the step frame it was already holding came along.
+    const body = a.wrap.querySelector(
+      '.run-card .run-step[data-node="wf_race/lint"] .run-step-body',
+    );
+    expect(body?.textContent).toContain("early frame");
+  });
+
+  it("seats a re-homed card in STORE order, between the tool cards either side", () => {
+    // The grouping index prices where a container lands so a tool run can be broken
+    // there. Re-homing moves the card into this render, so the index has to price the
+    // break whatever the host registry says — otherwise the card is appended after a
+    // group holding BOTH tool calls and renders below a call that follows it.
+    renderMsg([text("early frame", "wf:wf_seat:wf_seat/lint")]);
+    const a = renderMsg(
+      [toolUse("c1"), toolUse("t3"), toolUse("c2")],
+      [call("c1", "Run Command"), launch("t3", "wf_seat"), call("c2", "Run Command")],
+    );
+
+    const seats = [...(a.wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) =>
+      e.classList.contains("run-card")
+        ? "run"
+        : `group(${String(e.querySelectorAll(".tool-call").length)})`,
+    );
+    expect(seats).toEqual(["group(1)", "run", "group(1)"]);
+  });
+
+  it("gives the run's own state back when a window drop takes its launch block", () => {
+    const blocks = [toolUse("t8"), text("prose after the launch")];
+    const calls = [launch("t8", "wf_drop")];
+    const a = renderMsg(blocks, calls);
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+
+    dropHead(
+      { id: a.id, role: "assistant", content: "", blocks, tool_calls: calls } as unknown as Message,
+      { from: 1, to: 2 },
+      [],
+    );
+
     expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(0);
+    // And the CLAIM went with it, so the next claimant builds its own card rather
+    // than being handed the detached node the drop just removed.
+    const b = renderMsg([text("later frame", "wf:wf_drop:wf_drop/lint")]);
+    expect(b.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+  });
+
+  it("re-homes the card to a LIVE claimant when the drop takes its launch block", () => {
+    // The card is a CONTAINER, and a run's frames span messages: the later message's step
+    // block is mounted INSIDE the launching message's card. Removing the node takes that
+    // render's block out of the document while its own `st.window` still counts it
+    // mounted. The claimant is built BEFORE the drop, which the existing case cannot
+    // state, and it holds a TOP-LEVEL block below its step frame so the card has a real
+    // SEAT to land above rather than the tail.
+    const blocks = [toolUse("t9"), text("prose after the launch")];
+    const calls = [launch("t9", "wf_home")];
+    const a = renderMsg(blocks, calls);
+    const b = renderMsg([text("later frame", "wf:wf_home:wf_home/lint"), text("claimant prose")]);
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+    expect(b.wrap.querySelectorAll(".run-card")).toHaveLength(0);
+    const step = a.wrap.querySelector('.run-step[data-node="wf_home/lint"]');
+    expect(step).not.toBeNull();
+
+    dropHead(
+      { id: a.id, role: "assistant", content: "", blocks, tool_calls: calls } as unknown as Message,
+      { from: 1, to: 2 },
+      [],
+    );
+
+    // Moved, not removed: still ONE card, now in the render that holds blocks inside it,
+    // and the same NODE, so the step frame and everything subscribed to it came along.
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(0);
+    expect(b.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+    expect(b.wrap.querySelector('.run-step[data-node="wf_home/lint"]')).toBe(step);
+    // And it landed ABOVE the ordinal the store puts after it, not at the tail.
+    expect(
+      [...(b.wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) =>
+        e.classList.contains("run-card") ? "run" : String(e.textContent).trim(),
+      ),
+    ).toEqual(["run", "claimant prose"]);
+    // The block b's own window still counts mounted is still in b's tree, which is the
+    // whole point: `updateBody` renders only past `st.window.to`, so a detached one stays
+    // gone from the reader's transcript until the window moves.
+    expect(b.wrap.contains(blockElement(b.id, 0) ?? null)).toBe(true);
+    // And the CLAIM moved with it, so a third message's frame routes into this card
+    // rather than building a second one.
+    const c = renderMsg([text("third frame", "wf:wf_home:wf_home/test")]);
+    expect(c.wrap.querySelectorAll(".run-card")).toHaveLength(0);
+    expect(b.wrap.querySelector('.run-step[data-node="wf_home/test"]')).not.toBeNull();
+  });
+
+  it("names a card built for an out-of-window launch from the launch CALL", () => {
+    const wrap = document.createElement("div");
+    const id = `m-lazy-${String(Math.random())}`;
+    // The launch block is OUTSIDE the mounted range, so nothing binds the card from a
+    // block: it has to read the call out of the message itself, or the reader gets the
+    // placeholder label and a failed launch is never reported.
+    buildAssistantBody(
+      wrap,
+      {
+        id,
+        role: "assistant",
+        content: "",
+        blocks: [toolUse("t7"), text("step prose", "wf:wf_lazy:wf_lazy/build")],
+        tool_calls: [
+          {
+            id: "t7",
+            title: "Run Workflow",
+            kind: "other",
+            status: "failed",
+            workflow_id: "wf_lazy",
+            input: { workflowPath: "recipes/deploy.yaml" },
+          } as unknown as ToolCall,
+        ],
+      } as unknown as Message,
+      CHAT_ID,
+      false,
+      [],
+      { from: 1, to: 2 },
+    );
+
+    expect(wrap.querySelectorAll(".run-card")).toHaveLength(1);
+    expect(wrap.querySelector(".run-card")?.textContent).toContain("deploy");
   });
 
   it("scopes the card to the CHAT: another chat's render builds its own", () => {
@@ -1741,6 +1868,17 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
 
   const cmd = (id: string): ToolCall => call(id, "Run Command");
 
+  /** A delegate INVOCATION call, carrying the subtask its box is keyed by — which is what
+   *  lets a range that does not hold the invocation block bind the box it creates. */
+  const subagentCall = (id: string, subtask: string): ToolCall =>
+    ({
+      id,
+      title: "Sub-agent: helper",
+      kind: "execute",
+      status: "completed",
+      agent_subtask_id: subtask,
+    }) as unknown as ToolCall;
+
   function mark(id: string, msgID: string, blockIndex: number): SteerMark {
     return {
       id,
@@ -1931,12 +2069,11 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
   });
 
   it("mounts a mid-message range with the grouping a whole mount gives it", () => {
-    // The DELEGATE's box is established at block 2, below the range, so this range
-    // builds it at block 4 — the first of its blocks the range holds. A break
-    // priced at block 2 instead puts both in-range cards in one group, and that
-    // group sits where its FIRST card mounted: above the box block 5's card
-    // follows. The whole mount's relative order is the property, over the three
-    // blocks this range holds.
+    // The DELEGATE's box is established at block 2, BELOW the range, so the range first
+    // reaches it at block 4 and has to SEAT it at block 2's position anyway. Left where
+    // it landed, block 3's card renders above it, the store's one run {3,5} is split by
+    // it into two group nodes, and the same window reached the other way is a different
+    // document. The markup comparison is the criterion; `shape` names what differs.
     const blocks = [
       text("intro"),
       toolUse("t1"),
@@ -1945,13 +2082,23 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
       text("delegate prose", "sub-D"),
       toolUse("t3"),
     ];
-    const calls = [cmd("t1"), call("inv", "Sub-agent: helper"), cmd("t2"), cmd("t3")];
+    // The invocation CALL carries the subtask, which the range's own lazy binder needs to
+    // find it: without it the box keeps the generic header and the markup differs for a
+    // reason that has nothing to do with where it sits.
+    const calls = [cmd("t1"), subagentCall("inv", "sub-D"), cmd("t2"), cmd("t3")];
     const whole = renderRange(blocks, calls, { id: "m-eq-whole" });
     expect(shape(whole.wrap)).toEqual(["text(intro)", "group(1)", "card(sub-D)", "group(2)"]);
+    const tail = mask(
+      [...(whole.wrap.querySelector(".assistant-blocks")?.children ?? [])]
+        .slice(2)
+        .map((e) => e.outerHTML)
+        .join(""),
+    );
 
     resetBlockRenders();
     const partial = renderRange(blocks, calls, { id: "m-eq-part", range: { from: 3, to: 6 } });
-    expect(shape(partial.wrap)).toEqual(["group(1)", "card(sub-D)", "group(1)"]);
+    expect(shape(partial.wrap)).toEqual(["card(sub-D)", "group(2)"]);
+    expect(blocksHTML(partial.wrap)).toBe(tail);
   });
 
   it("mounts a container-free mid-message range as the whole mount's own markup", () => {
@@ -1979,8 +2126,9 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
   });
 
   it("keeps a mid-message range's cards around a RUN CARD the range builds", () => {
-    // The launch block is the establishing block here, and it is below the range:
-    // the card is built at the step block instead, so the break belongs there.
+    // The LAUNCH is the establishing block and it is below the range, so the card is
+    // built at the step block and seated at the launch's ordinal — above both cards,
+    // which is where the whole mount puts it.
     const wf = {
       id: "l-win",
       title: "Run Workflow",
@@ -2009,7 +2157,7 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
 
     resetBlockRenders();
     const partial = renderRange(blocks, calls, { id: "m-rp", range: { from: 3, to: 6 } });
-    expect(runShape(partial.wrap)).toEqual(["group(1)", "run", "group(1)"]);
+    expect(runShape(partial.wrap)).toEqual(["run", "group(2)"]);
   });
 
   it("keeps a mid-message range's cards around a PIPELINE box the range builds", () => {
@@ -2041,13 +2189,13 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
 
     resetBlockRenders();
     const partial = renderRange(blocks, calls, { id: "m-pp", range: { from: 3, to: 6 } });
-    expect(shape(partial.wrap)).toEqual(["group(1)", "pipeline(d-win)", "group(1)"]);
+    expect(shape(partial.wrap)).toEqual(["pipeline(d-win)", "group(2)"]);
   });
 
-  it("keeps a tail extension's card below a box the earlier slice built", () => {
-    // The box's own first block is below the window, so the break belongs at the
-    // block that BUILT it — and the extension has to price it the same way, or its
-    // card joins the group that opened above the box.
+  it("keeps a tail extension's card in the group the earlier slice opened", () => {
+    // The box's own first block is below the window, so it is seated above ordinal 2
+    // rather than left where ordinal 3 built it — and that is what leaves ONE group
+    // below it for both cards, which is the run the store has.
     const blocks = [
       toolUse("t0"),
       toolUse("inv", "sub-F"),
@@ -2057,10 +2205,10 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
     ];
     const calls = [cmd("t0"), call("inv", "Sub-agent: helper"), cmd("t1"), cmd("t2")];
     const first = renderRange(blocks, calls, { id: "m-ext", range: { from: 2, to: 4 } });
-    expect(shape(first.wrap)).toEqual(["group(1)", "card(sub-F)"]);
+    expect(shape(first.wrap)).toEqual(["card(sub-F)", "group(1)"]);
 
     updateAssistantBody(first.wrap, first.m, CHAT_ID, false, [], { from: 2, to: 5 });
-    expect(shape(first.wrap)).toEqual(["group(1)", "card(sub-F)", "group(1)"]);
+    expect(shape(first.wrap)).toEqual(["card(sub-F)", "group(2)"]);
   });
 
   it("breaks the run at a box that lands on the range's own first block", () => {
@@ -2134,6 +2282,349 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
 
   it("has no mounted range for a message nothing rendered", () => {
     expect(mountedWindow("m-never")).toBeUndefined();
+  });
+
+  it("builds the same DOM whether the head arrived whole or was INSERTED under it", () => {
+    // A DELEGATE box established BELOW the first range, with a tool card either side of
+    // it, which is what makes this able to fail. Two block kinds cannot express it: a
+    // text block's break is in the store whatever the range, and a RUN CARD is re-homed
+    // to its launch ordinal by `reseatInserted`, a mechanism a delegate box has none of
+    // — so only a box the insertion never touches states whether its position and its
+    // groups came from the store or from the order the reader arrived in.
+    const blocks = [
+      toolUse("t1"),
+      toolUse("inv", "sub-Q"),
+      toolUse("t2"),
+      text("delegate prose", "sub-Q"),
+      toolUse("t3"),
+    ];
+    const calls = [cmd("t1"), subagentCall("inv", "sub-Q"), cmd("t2"), cmd("t3")];
+    // Anchored at 0, so the note is INSIDE the inserted region and its own placement is
+    // pinned too. Above ordinal 0 it adds no break the two arrivals could disagree on.
+    const whole = renderRange(blocks, calls, { id: "m-whole", marks: [mark("s", "m-whole", 0)] });
+    expect(shape(whole.wrap)).toEqual(["note", "group(1)", "card(sub-Q)", "group(2)"]);
+
+    resetBlockRenders();
+    const grown = renderRange(blocks, calls, {
+      id: "m-grown",
+      marks: [mark("s", "m-grown", 0)],
+      range: { from: 2, to: 5 },
+    });
+    mountHeadRange(grown.m, { from: 0, to: 5 }, false, [mark("s", "m-grown", 0)]);
+
+    expect(mountedWindow("m-grown")).toEqual({ from: 0, to: 5 });
+    expect(blocksHTML(grown.wrap)).toBe(blocksHTML(whole.wrap));
+  });
+
+  it("leaves the mounted region's LIVE trace open across a head insertion", () => {
+    // The trace is the message's last block and nothing follows it in the store, so
+    // it mounts open and `st.openReasoning` holds it. A head insertion posts nothing
+    // after it, so an unconditional seal at the append would collapse it under the
+    // reader with nothing to re-open it.
+    const wrap = document.createElement("div");
+    const m = {
+      id: "m-live-trace",
+      role: "assistant",
+      content: "",
+      blocks: [text("a"), text("b"), { type: "thinking", thinking: "still going" }],
+      tool_calls: [],
+    } as unknown as Message;
+    buildAssistantBody(wrap, m, CHAT_ID, true, [], { from: 2, to: 3 });
+    const trace = wrap.querySelector<HTMLDetailsElement>("details.reasoning-block");
+    expect(trace?.open).toBe(true);
+
+    mountHeadRange(m, { from: 0, to: 3 }, true, []);
+
+    expect(wrap.querySelector<HTMLDetailsElement>("details.reasoning-block")?.open).toBe(true);
+  });
+
+  it("keeps a head insertion's own container above the rows already mounted", () => {
+    // The insertion reference is captured per container at first touch and does not
+    // move, so a box the extension creates lands above the previously-mounted rows
+    // and its own members land inside it in ascending order.
+    const blocks = [text("a", "sub-H"), text("b", "sub-H"), text("tail")];
+    const { wrap, m } = renderRange(blocks, [], { id: "m-ins", range: { from: 2, to: 3 } });
+    expect(shape(wrap)).toEqual(["text(tail)"]);
+
+    mountHeadRange(m, { from: 0, to: 3 }, false, []);
+
+    expect(shape(wrap)).toEqual(["card(sub-H)", "text(tail)"]);
+    // Ascending INSIDE it too: the reference is captured on the first touch even
+    // when it is null, or the box's own members mount in reverse.
+    const inner = [...wrap.querySelectorAll(".subagent-body .message.assistant")].map((e) =>
+      e.textContent?.trim(),
+    );
+    expect(inner).toEqual(["a", "b"]);
+  });
+
+  it("keeps the insertion boundary below a container the insertion itself seated", () => {
+    // The box is established BELOW the first window, so seating it puts it above the
+    // pre-existing region — which makes it the host's FIRST child. Read the boundary
+    // after that move rather than before it and the boundary becomes the box, so every
+    // ordinal the insertion has still to mount lands above a container holding ordinal 0.
+    const blocks = [text("in the box", "sub-J"), text("mid"), text("tail")];
+    const { wrap, m } = renderRange(blocks, [], { id: "m-bound", range: { from: 2, to: 3 } });
+    expect(shape(wrap)).toEqual(["text(tail)"]);
+
+    mountHeadRange(m, { from: 0, to: 3 }, false, []);
+
+    expect(shape(wrap)).toEqual(["card(sub-J)", "text(mid)", "text(tail)"]);
+  });
+
+  it("seats a step-built run card at the launch ordinal a head insertion brings down", () => {
+    // ONE message holding both a run's launch and that run's own step blocks, which is
+    // what a step frame folding into the still-open launching turn produces. The window
+    // starts below the launch, so the STEP block builds the card and it is seated at the
+    // launch's ordinal; the insertion then brings the launch down and must leave the card
+    // where it already is, rather than carry it past ordinal 2 — the ladder reads DOM
+    // order.
+    const wf = {
+      id: "l-seat",
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      workflow_id: "wf-seat",
+    } as unknown as ToolCall;
+    const blocks = [
+      text("one"),
+      toolUse("l-seat"),
+      text("two"),
+      text("step work", "wf:wf-seat:wf-seat/build"),
+      text("three"),
+    ];
+    const calls = [wf];
+    const runShape = (wrap: HTMLElement): string[] => {
+      const named = shape(wrap);
+      return [...(wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e, i) =>
+        e.classList.contains("run-card") ? "run" : (named[i] ?? "?"),
+      );
+    };
+    const { wrap, m } = renderRange(blocks, calls, { id: "m-seat", range: { from: 2, to: 5 } });
+    expect(runShape(wrap)).toEqual(["run", "text(two)", "text(three)"]);
+
+    mountHeadRange(m, { from: 0, to: 5 }, false, []);
+
+    // Ordinal 0 above it, ordinals 2 and 4 below it, and still ONE card.
+    expect(runShape(wrap)).toEqual(["text(one)", "run", "text(two)", "text(three)"]);
+    expect(wrap.querySelectorAll(".run-card")).toHaveLength(1);
+    // The step frame it was already holding came along, so the node MOVED.
+    expect(
+      wrap.querySelector('.run-card .run-step[data-node="wf-seat/build"] .run-step-body')
+        ?.textContent,
+    ).toContain("step work");
+  });
+
+  it("brings a run card back COLLAPSED when the reader had closed it before the drop", () => {
+    // The one container that mounts OPEN, so the reader-set state runs the other way:
+    // its default is the only thing deciding unless the re-mount reads what they left.
+    const wf = {
+      id: "l-shut",
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      workflow_id: "wf-shut",
+    } as unknown as ToolCall;
+    const blocks = [toolUse("l-shut"), text("after the launch")];
+    const { wrap, m } = renderRange(blocks, [wf], { id: "m-shut" });
+    const cardEl = (): HTMLElement | null => wrap.querySelector<HTMLElement>(".run-card");
+    expect(cardEl()?.classList.contains("collapsed")).toBe(false);
+    wrap.querySelector<HTMLElement>(".run-head")?.click();
+    expect(cardEl()?.classList.contains("collapsed")).toBe(true);
+
+    dropHead(m, { from: 1, to: 2 }, []);
+    expect(cardEl()).toBeNull();
+    mountHeadRange(m, { from: 0, to: 2 }, false, []);
+
+    expect(cardEl()).not.toBeNull();
+    expect(cardEl()?.classList.contains("collapsed")).toBe(true);
+    expect(wrap.querySelector(".run-head")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("leaves a card the insertion itself placed where its own launch put it", () => {
+    // The same message and the same insertion, one ordinal LOWER: the window holds only
+    // the last block, so the LAUNCH builds the card during the insertion and the step
+    // frame after it finds one already correctly seated. A reseat that moves whatever is
+    // not the reference carries it past every ordinal mounted since — here past ordinal
+    // 2, which the store puts below it.
+    const wf = {
+      id: "l-low",
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      workflow_id: "wf-low",
+    } as unknown as ToolCall;
+    const blocks = [
+      text("one"),
+      toolUse("l-low"),
+      text("two"),
+      text("step work", "wf:wf-low:wf-low/build"),
+      text("three"),
+    ];
+    const { wrap, m } = renderRange(blocks, [wf], { id: "m-low", range: { from: 4, to: 5 } });
+    expect(shape(wrap)).toEqual(["text(three)"]);
+
+    mountHeadRange(m, { from: 0, to: 5 }, false, []);
+
+    const seats = [...(wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) =>
+      e.classList.contains("run-card") ? "run" : String(e.textContent).trim(),
+    );
+    expect(seats).toEqual(["one", "run", "two", "three"]);
+    expect(wrap.querySelectorAll(".run-card")).toHaveLength(1);
+  });
+
+  it("keeps a re-seated card ABOVE the ordinals inserted after it", () => {
+    // The same insertion where the card IS the reference the extension captured, which
+    // it is whenever the step block that built it opened the window. Re-seating it
+    // therefore moves nothing, and what has to move is the reference: the card is on
+    // the inserted side now, so the ordinals after it belong below it.
+    const wf = {
+      id: "l-ref",
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      workflow_id: "wf-ref",
+    } as unknown as ToolCall;
+    const blocks = [
+      text("one"),
+      toolUse("l-ref"),
+      text("two"),
+      text("step work", "wf:wf-ref:wf-ref/build"),
+      text("three"),
+    ];
+    const { wrap, m } = renderRange(blocks, [wf], { id: "m-ref", range: { from: 3, to: 5 } });
+    expect(wrap.querySelector(".assistant-blocks")?.firstElementChild?.className).toBe("run-card");
+
+    mountHeadRange(m, { from: 0, to: 5 }, false, []);
+
+    const seats = [...(wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) =>
+      e.classList.contains("run-card") ? "run" : String(e.textContent).trim(),
+    );
+    expect(seats).toEqual(["one", "run", "two", "three"]);
+  });
+
+  it("leaves a dropped block's element, text sink and streaming signal behind", () => {
+    const { wrap, m } = renderRange([text("one"), text("two"), text("three")], [], {
+      id: "m-drop",
+    });
+    ensureBlockTextSig("m-drop", 0, "one");
+    expect(blockTextSigs.get(blockKey("m-drop", 0))).not.toBeUndefined();
+
+    dropHead(m, { from: 1, to: 3 }, []);
+
+    expect(mountedWindow("m-drop")).toEqual({ from: 1, to: 3 });
+    expect(blockElement("m-drop", 0)).toBeUndefined();
+    expect(blockTextSigs.get(blockKey("m-drop", 0))).toBeUndefined();
+    expect(wrap.querySelector('[data-block-index="0"]')).toBeNull();
+    // A WINDOW move, so the blocks it kept are untouched.
+    expect(blockElement("m-drop", 1)).not.toBeUndefined();
+  });
+
+  it("prices a block measured while DETACHED at its estimate, not at zero", () => {
+    // ONE message holding a launch and that run's own step block, which is what a step
+    // frame folding into the still-open launching turn gives. The drop removes the launch
+    // first, which takes the card — and the step block LIVES INSIDE IT, so by the time
+    // its own turn comes its element is detached and reads 0. A spacer short by that
+    // block leaves the document shorter above the reader than the content it replaces.
+    const wf = {
+      id: "l-px",
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      workflow_id: "wf-px",
+    } as unknown as ToolCall;
+    const blocks = [text("intro"), toolUse("l-px"), text("step work", "wf:wf-px:wf-px/build")];
+    const m = {
+      id: "m-px",
+      role: "assistant",
+      ts: 2,
+      content: "",
+      blocks,
+      tool_calls: [wf],
+    } as unknown as Message;
+    const wrap = document.createElement("div");
+    document.body.appendChild(wrap);
+    forgetHeights(["m-px"]);
+    buildAssistantBody(wrap, m, CHAT_ID, false);
+    expect(wrap.querySelector('.run-step[data-node="wf-px/build"]')).not.toBeNull();
+
+    dropTail(m, { from: 0, to: 1 }, []);
+
+    // Ordinals 1 and 2, unmounted: the run card's own 64px estimate plus the text
+    // block's 48 and the 12px gap between two non-empty boxes. Priced at 0 the answer
+    // is 64, the gap gone with it.
+    const t = {
+      id: "t-px",
+      n: 1,
+      trigger: undefined,
+      body: [m],
+      ts: 1,
+      outcome: "completed" as const,
+      rewindTo: undefined,
+    };
+    expect(spacerHeight(t, { from: 0, to: 1 }, "tail")).toBe(124);
+    wrap.remove();
+  });
+
+  it("narrows the tail without touching the head, and never both in one call", () => {
+    const { wrap, m } = renderRange([text("one"), text("two"), text("three")], [], {
+      id: "m-two-edges",
+    });
+
+    // `keep.from` is 1, and the tail call must IGNORE it: a relocation retracts both
+    // edges, and one call doing both is the shape whose compensation drags the view.
+    dropTail(m, { from: 1, to: 2 }, []);
+
+    expect(mountedWindow("m-two-edges")).toEqual({ from: 0, to: 2 });
+    expect(wrap.querySelector('[data-block-index="2"]')).toBeNull();
+    expect(wrap.querySelector('[data-block-index="0"]')).not.toBeNull();
+  });
+
+  it("removes a container the drop left empty", () => {
+    const { wrap, m } = renderRange(
+      [toolUse("t1"), toolUse("t2"), text("after")],
+      [cmd("t1"), cmd("t2")],
+      {
+        id: "m-empty-group",
+      },
+    );
+    expect(shape(wrap)).toEqual(["group(2)", "text(after)"]);
+
+    dropHead(m, { from: 2, to: 3 }, []);
+
+    expect(shape(wrap)).toEqual(["text(after)"]);
+    expect(wrap.querySelectorAll(".tool-group")).toHaveLength(0);
+  });
+
+  it("takes a steer note whose anchor left the window with it", () => {
+    const { wrap, m } = renderRange(
+      [toolUse("t1"), toolUse("t2"), toolUse("t3")],
+      [cmd("t1"), cmd("t2"), cmd("t3")],
+      {
+        id: "m-note-drop",
+        marks: [mark("s", "m-note-drop", 1)],
+      },
+    );
+    expect(wrap.querySelectorAll(".steer-note")).toHaveLength(1);
+
+    dropHead(m, { from: 2, to: 3 }, [mark("s", "m-note-drop", 1)]);
+
+    expect(wrap.querySelectorAll(".steer-note")).toHaveLength(0);
+  });
+
+  it("keeps a steer note whose anchor is still inside the narrowed window", () => {
+    const { wrap, m } = renderRange(
+      [toolUse("t1"), toolUse("t2"), toolUse("t3")],
+      [cmd("t1"), cmd("t2"), cmd("t3")],
+      {
+        id: "m-note-keep",
+        marks: [mark("s", "m-note-keep", 2)],
+      },
+    );
+    expect(wrap.querySelectorAll(".steer-note")).toHaveLength(1);
+
+    dropHead(m, { from: 2, to: 3 }, [mark("s", "m-note-keep", 2)]);
+
+    expect(wrap.querySelectorAll(".steer-note")).toHaveLength(1);
   });
 });
 

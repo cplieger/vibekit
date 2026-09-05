@@ -124,6 +124,12 @@ class ScrollController {
    *  container instead of one per consumer: find-in-chat's live re-run used to
    *  duplicate it wholesale. */
   private mutateListeners: (() => void)[] = [];
+  /** Callbacks riding the scroll listener, coalesced to one frame. Dispatched for
+   *  the controller's OWN writes too: a `jumpTo` from the rail or from
+   *  find-in-chat moves the reader a long way and the residency window has to
+   *  follow, and `jumpTo` records no self marker to distinguish it by. */
+  private viewportListeners: (() => void)[] = [];
+  private viewportFrame = 0;
   /** Supplies the element Following should keep visible while a turn streams.
    *  Null (or a null return) falls back to the document bottom. */
   private anchorProvider: (() => HTMLElement | null) | null = null;
@@ -230,6 +236,7 @@ class ScrollController {
         // one event its own write produced.
         const self = this.selfScrollTop;
         this.selfScrollTop = -1;
+        this.dispatchViewportChange();
         if (self >= 0 && Math.abs(this.scrollEl.scrollTop - self) <= 1) {
           // The controller's own landing. It says nothing about where the reader
           // wants to be, so neither the state nor the debounce may move — and
@@ -455,6 +462,32 @@ class ScrollController {
     };
   }
 
+  /** Register `cb` for a scroll that has settled into one frame; returns the
+   *  unregister. A second `scroll` listener elsewhere is not an option: this one
+   *  owns the `selfScrollTop` bookkeeping and the reading-state derivation, and a
+   *  second owner would see its own compensations without that context. */
+  onViewportChange(cb: () => void): () => void {
+    this.viewportListeners.push(cb);
+    return () => {
+      const at = this.viewportListeners.indexOf(cb);
+      if (at >= 0) {
+        this.viewportListeners.splice(at, 1);
+      }
+    };
+  }
+
+  private dispatchViewportChange(): void {
+    if (this.viewportFrame !== 0 || this.viewportListeners.length === 0) {
+      return;
+    }
+    this.viewportFrame = requestAnimationFrame(() => {
+      this.viewportFrame = 0;
+      for (const cb of [...this.viewportListeners]) {
+        cb();
+      }
+    });
+  }
+
   setAnchorProvider(fn: (() => HTMLElement | null) | null): void {
     this.anchorProvider = fn;
   }
@@ -563,7 +596,11 @@ class ScrollController {
       kind === "content-growth" ? this.scrollEl.scrollHeight : this.scrollEl.clientHeight;
     const delta = kind === "content-growth" ? after - before : before - after;
     if (delta !== 0) {
-      this.scrollEl.scrollTop += delta;
+      // Through `scrollSelfTo`, or this write's own event arms
+      // `userScrollingUntil` and republishes `atLiveEdge` as a reader gesture —
+      // and under a moving residency window that happens on every window move
+      // rather than once per compensated fold.
+      this.scrollSelfTo(this.scrollEl.scrollTop + delta, "instant");
     }
   }
 
@@ -1088,6 +1125,11 @@ export function onReadingStateChange(cb: (s: ReadingState) => void): void {
 }
 export function onTranscriptMutate(cb: () => void): () => void {
   return getInstance().onTranscriptMutate(cb);
+}
+/** Register `cb` for a scroll that has settled into one frame; returns the
+ *  unregister. */
+export function onViewportChange(cb: () => void): () => void {
+  return getInstance().onViewportChange(cb);
 }
 export function setAnchorProvider(fn: (() => HTMLElement | null) | null): void {
   getInstance().setAnchorProvider(fn);
