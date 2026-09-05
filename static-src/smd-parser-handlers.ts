@@ -994,7 +994,6 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         // The space after the opening run is dropped from the content, so it is
         // part of the delimiter for restoration purposes.
         add_inline_token(p, CODE_INLINE, "`".repeat(p.fence_start) + (char === " " ? " " : ""));
-        p.textBuf = "";
         if (char !== " " && char !== "\n") {
           p.textBuf += char;
         }
