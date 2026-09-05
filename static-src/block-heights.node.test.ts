@@ -16,6 +16,9 @@ import type { Message } from "./types.js";
 /** The row estimate `.msg-row` declares, and what an unmeasured text block costs. */
 const TEXT_PX = 48;
 
+/** `.turn-body`'s flex `gap` (`--sp-3`), which no row's own height carries. */
+const GAP_PX = 12;
+
 function text(t: string): unknown {
   return { type: "text", text: t };
 }
@@ -93,12 +96,27 @@ describe("the per-outcome estimate", () => {
     expect(wholeTurn(turn([bare]))).toBe(TEXT_PX);
   });
 
-  it("sums across every message the spacer covers", () => {
+  it("sums across every message the spacer covers, and the gap between them", () => {
     const t = turn([
       assistant("a", [text("x"), text("y")]),
       assistant("b", [{ type: "thinking", thinking: "z" }]),
     ]);
-    expect(spacerHeight(t, { from: 3, to: 3 }, "head")).toBe(TEXT_PX + TEXT_PX + 40);
+    // Two whole rows behind ONE spacer: the parent separated them with a gap that
+    // neither row's height includes, so the spacer is what has to carry it.
+    expect(spacerHeight(t, { from: 3, to: 3 }, "head")).toBe(TEXT_PX + TEXT_PX + 40 + GAP_PX);
+  });
+
+  it("adds no gap for ONE row behind the spacer, whose own box replaces its gap", () => {
+    const t = turn([assistant("a", [text("x")]), assistant("b", [text("y")])]);
+    expect(spacerHeight(t, { from: 1, to: 2 }, "head")).toBe(TEXT_PX);
+  });
+
+  it("charges no gap for a row the spacer only PARTLY covers", () => {
+    // The windowed long message: one whole row above it and the head of the row
+    // the window cuts into. That row STAYS mounted, so the gap above it stays in
+    // the body and only the whole row's own gap leaves with it.
+    const t = turn([assistant("a", [text("x")]), assistant("b", [text("y"), text("z")])]);
+    expect(spacerHeight(t, { from: 2, to: 3 }, "head")).toBe(TEXT_PX + TEXT_PX);
   });
 });
 

@@ -420,6 +420,16 @@
   display: none;
 }
 
+/* The height the ordinals outside the window stand in for. Its own `block-size`
+ * and nothing else — no padding, border or background — so `spacerHeight` alone
+ * decides it; the `gap` this parent adds around the box is NOT part of it, and is
+ * a term in that function. No containment: there is nothing inside it to contain.
+ * `flex-shrink: 0` for symmetry with `.msg-row` and `.tool-call`, which both
+ * declare it. */
+.turn-space {
+  flex-shrink: 0;
+}
+
 /* Collapsing that body puts the header's own bottom rule straight against the
  * next 1px line, so the reader sees a 2px rule at exactly the moment a turn is
  * waiting on its first token. Which line it doubles depends on whether a footer

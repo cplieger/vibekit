@@ -44,6 +44,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Message, Block, ToolCall, PlanStatus, FileChange, SteerMark } from "./types.js";
+import type { BlockRange } from "./block-window.js";
 import { effect, el } from "@cplieger/reactive";
 import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
 import { getActiveId } from "./store.js";
@@ -270,8 +271,13 @@ interface MsgRender {
   chatID: string;
   /** The `.assistant-blocks` container holding all top-level + subagent blocks. */
   blocksEl: HTMLElement;
-  /** Count of blocks already mounted (index into m.blocks). */
-  rendered: number;
+  /** The block indices this render currently holds. Widened on both edges by
+   *  `renderRange`; `dropBlockRange` is the only writer that narrows it. */
+  window: BlockRange;
+  /** block index → the element whose removal drops that block, and the ONLY
+   *  block→element mapping: an index is unique per MESSAGE and not per DOM subtree,
+   *  because `runCardFor` routes a later message's steps into the first's card. */
+  blockEls: Map<number, HTMLElement>;
   /** block index → a call that brings that block's DOM up to a full text. Wraps
    *  the handle's `setText` in an arrow rather than storing the method itself:
    *  both handles keep their state in a closure and never read `this`, but a
@@ -355,14 +361,20 @@ interface MsgRender {
   topLiveEl: HTMLElement | null;
   /** Every mounted reasoning handle (for finalize seal()). */
   reasonings: ReasoningView[];
-  /** The still-open reasoning block per container (auto-collapse on sibling). */
+  /** A container's genuinely-live TRAILING reasoning trace. A trace the store
+   *  already has a successor for is sealed at its own mount, so head insertion
+   *  never reaches this map. */
   openReasoning: Map<HTMLElement, ReasoningView>;
-  /** The open tool group per container (consecutive tool cards share one). */
-  toolGroups: Map<HTMLElement, HTMLDivElement>;
-  /** Steer-mark ids already mounted into this message's block stream. This set
-   *  is what makes `flushSteerNotes` idempotent: it is called from two places
-   *  that deliberately overlap, and a mark must render exactly once. */
-  steerNotes: Set<string>;
+  /** container key → its tool groups, keyed by the RUN each one opened at, so
+   *  which group a card joins is a function of the store instead of mount order.
+   *  Outer key is the container's KEY, a bijection with its element inside one
+   *  render, so the collapse sync needs no reverse lookup. */
+  toolGroups: Map<string, Map<number, HTMLDivElement>>;
+  /** Steer-mark id → the block index it is anchored at and the note element.
+   *  The anchor is what makes a note droppable, the element what makes it
+   *  removable; the KEY is what makes `flushSteerNotes` idempotent across its
+   *  two deliberately-overlapping call sites. */
+  steerNotes: Map<string, { index: number; el: HTMLElement }>;
 }
 
 const renders = new Map<string, MsgRender>();
@@ -380,15 +392,22 @@ const runCardHosts = new Map<string, Map<string, MsgRender>>();
 // Public API (called by messages.ts)
 // ---------------------------------------------------------------------------
 
-/** Build the assistant body from scratch. Renders every block, then the plan. */
+/** The whole of `m`, for a caller that windows nothing. */
+function wholeOf(m: Message): BlockRange {
+  return { from: 0, to: (m.blocks ?? []).length };
+}
+
+/** Build the assistant body from scratch over `range`, then the plan. `range`
+ *  absent is the whole message, which is what a detached render always wants. */
 export function buildAssistantBody(
   wrap: HTMLElement,
   m: Message,
   chatID: string,
   live: boolean,
   marks: readonly SteerMark[] = [],
+  range?: BlockRange,
 ): void {
-  buildBody(wrap, m, chatID, live, false, marks);
+  buildBody(wrap, m, chatID, live, false, marks, range);
   mountPlan(wrap, m);
 }
 
@@ -399,13 +418,16 @@ function buildBody(
   live: boolean,
   detached: boolean,
   marks: readonly SteerMark[] = [],
+  range?: BlockRange,
 ): void {
+  const want = range ?? wholeOf(m);
   const blocksEl = el("div", { className: "assistant-blocks" });
   wrap.appendChild(blocksEl);
   const st: MsgRender = {
     chatID,
     blocksEl,
-    rendered: 0,
+    window: { from: want.from, to: want.from },
+    blockEls: new Map(),
     blockText: new Map(),
     subagents: new Map(),
     pipelines: new Map(),
@@ -423,12 +445,15 @@ function buildBody(
     reasonings: [],
     openReasoning: new Map(),
     toolGroups: new Map(),
-    steerNotes: new Set(),
+    steerNotes: new Map(),
   };
   renders.set(m.id, st);
-  const blocks = m.blocks ?? [];
   indexPipelines(st, m);
-  renderRange(st, m, 0, blocks.length, live, marks);
+  // ONE index per pass: the mount and the collapse sync ask it different
+  // questions about the same run boundaries.
+  const idx = indexGroups(st, m, marks, live);
+  renderRange(st, m, want.from, want.to, live, marks, idx);
+  syncGroupCollapse(st, idx);
 }
 
 /** Where a mount's turn-lifetime cleanup goes.
@@ -467,8 +492,9 @@ export function updateAssistantBody(
   chatID: string,
   streaming: boolean,
   marks: readonly SteerMark[] = [],
+  range?: BlockRange,
 ): void {
-  updateBody(wrap, m, chatID, streaming, false, marks);
+  updateBody(wrap, m, chatID, streaming, false, marks, range);
   mountPlan(wrap, m);
 }
 
@@ -477,8 +503,8 @@ export function updateAssistantBody(
  *
  *  Returns false when nothing is mounted for `msgID` — the caller must fall
  *  back to a full pass then, because only the full pass mounts. Refresh-only by
- *  construction: the wrap is resolved from the existing render, so this can
- *  never build, re-home or re-order a card. */
+ *  construction: the wrap is resolved from the existing render and the range is
+ *  read back off `st.window`, so this can never build, re-home or re-order. */
 export function refreshMessageCard(
   msgID: string,
   m: Message,
@@ -491,8 +517,23 @@ export function refreshMessageCard(
   if (st === undefined || wrap === null || wrap === undefined) {
     return false;
   }
-  updateAssistantBody(wrap, m, chatID, live, marks);
+  updateAssistantBody(wrap, m, chatID, live, marks, st.window);
   return true;
+}
+
+/** The block indices `messageID`'s row currently holds, or undefined when
+ *  nothing is mounted for it. The builder's completion test. */
+export function mountedWindow(messageID: string): BlockRange | undefined {
+  return renders.get(messageID)?.window;
+}
+
+/** The element whose removal drops `blockIndex` of `messageID`, or undefined.
+ *
+ *  Resolves the RENDER first, so a card hosting another message's step blocks
+ *  is in the wrong render's map and cannot answer — which a subtree query for
+ *  the same index cannot promise. */
+export function blockElement(messageID: string, blockIndex: number): HTMLElement | undefined {
+  return renders.get(messageID)?.blockEls.get(blockIndex);
 }
 
 /** Ids of renders still carrying live text: an unsealed live bubble, or any
@@ -517,28 +558,31 @@ function updateBody(
   streaming: boolean,
   detached: boolean,
   marks: readonly SteerMark[] = [],
+  range?: BlockRange,
 ): void {
   const st = renders.get(m.id);
   if (st === undefined) {
     // Should not happen (build runs first), but stay self-healing.
-    buildBody(wrap, m, chatID, streaming, detached, marks);
+    buildBody(wrap, m, chatID, streaming, detached, marks, range);
     return;
   }
-  const blocks = m.blocks ?? [];
+  const want = range ?? wholeOf(m);
   // Ahead of the render, and on EVERY pass rather than only when blocks arrive: a
   // stage's blocks can reach the dispatcher before its own invocation tool call is
   // in the store (out-of-order SSE), and this index is the only thing that knows
   // which pipeline a stage belongs to.
   indexPipelines(st, m);
-  if (blocks.length > st.rendered) {
-    renderRange(st, m, st.rendered, blocks.length, streaming, marks);
+  const idx = indexGroups(st, m, marks, streaming);
+  if (want.to > st.window.to) {
+    renderRange(st, m, st.window.to, want.to, streaming, marks, idx);
   }
   // OUTSIDE that guard, deliberately. A steer read between two chunks of the
   // same block adds no block, so gating this on block growth would strand its
   // note until the next one arrived — which on a long text block is the whole
   // rest of the turn. The two calls coincide whenever a block DID arrive, and
   // `st.steerNotes` is what makes that harmless.
-  flushSteerNotes(st, marks, m.id, blocks.length);
+  flushSteerNotes(st, marks, m.id, st.window.from, st.window.to);
+  syncGroupCollapse(st, idx);
   syncMountedText(st, m);
 }
 
@@ -726,17 +770,20 @@ function renderRange(
   to: number,
   live: boolean,
   marks: readonly SteerMark[],
+  idx: GroupIndex,
 ): void {
   const blocks = m.blocks ?? [];
   const lastIdx = blocks.length - 1;
-  if (to > from) {
-    // A block is being appended, so whatever held the caret is no longer the
-    // tail. Seal it here rather than in mountText: the new tail may be a
-    // thinking block or a tool card, and the previous text block stops
-    // streaming either way. Idempotent — `end()` nulls its own stream and
-    // `classList.remove` is a no-op when the class is absent.
+  if (to > st.window.to) {
+    // Only a TAIL append moves the tail: a head insertion posts nothing after
+    // the live block, and nothing re-establishes a caret sealed by mistake.
+    // Idempotent — `end()` nulls its own stream and `classList.remove` is a
+    // no-op when the class is absent.
     sealLiveBubble(st);
   }
+  // FIRST, not last: the in-loop steer-note bound reads `st.window.from`, and a
+  // head extension's ordinals all sit below the un-merged value.
+  st.window = { from: Math.min(st.window.from, from), to: Math.max(st.window.to, to) };
   for (let i = from; i < to; i++) {
     const block = blocks[i];
     if (block === undefined) {
@@ -744,14 +791,13 @@ function renderRange(
     }
     // BEFORE the block, so a note anchored at index i lands above it. This is
     // the whole of "chronologically at the point it was injected".
-    flushSteerNotes(st, marks, m.id, i);
-    placeBlock(st, m, block, i, live && blockIsLive(blocks, i, lastIdx));
+    flushSteerNotes(st, marks, m.id, st.window.from, i);
+    placeBlock(st, m, block, i, live && blockIsLive(blocks, i, lastIdx), idx);
   }
   // A note anchored at the CURRENT end has no block to sit above yet, and the
   // loop above can never reach it. Mounting it here is what puts it below
   // everything so far and above everything that arrives next.
-  flushSteerNotes(st, marks, m.id, to);
-  st.rendered = to;
+  flushSteerNotes(st, marks, m.id, st.window.from, st.window.to);
 }
 
 /** Whether block `i` is the one its stream is still writing.
@@ -784,45 +830,33 @@ function blockIsLive(blocks: readonly Block[], i: number, lastIdx: number): bool
   return true;
 }
 
-/** Mount every not-yet-drawn steer note whose anchor this render has reached.
- *
- *  Idempotent by mark id, which is required rather than defensive: `renderRange`
- *  and `updateAssistantBody` both call it and their ranges overlap by design.
- *
- *  Closing the open reasoning trace AND the open tool group first is
- *  CORRECTNESS, not tidiness. A group is keyed by container and stays open until
- *  something closes it, so a steer landing mid tool-loop would otherwise be
- *  appended after the group's container while the later tool cards still went
- *  INTO that group — rendering them above the note that preceded them. */
+/** Mount every not-yet-drawn steer note anchored inside `[from, to]`. Idempotent
+ *  by mark id, which is required: `renderRange` and `updateAssistantBody` both call
+ *  it and their ranges overlap by design. Bounded on BOTH sides, or an open upper
+ *  edge mounts a mark from far below the window at the end of the region. */
 function flushSteerNotes(
   st: MsgRender,
   marks: readonly SteerMark[],
   msgID: string,
-  upto: number,
+  from: number,
+  to: number,
 ): void {
   for (const mark of marks) {
-    if (
-      st.steerNotes.has(mark.id) ||
-      mark.anchor.msgID !== msgID ||
-      mark.anchor.blockIndex > upto
-    ) {
+    const at = mark.anchor.blockIndex;
+    if (st.steerNotes.has(mark.id) || mark.anchor.msgID !== msgID || at < from || at > to) {
       continue;
     }
-    closeToolGroup(st, st.blocksEl);
-    appendBlock(
-      st,
-      st.blocksEl,
-      buildSteerNote({
-        text: mark.text,
-        origin: mark.origin,
-        ...(mark.ack !== undefined ? { ack: mark.ack } : {}),
-        dropped: mark.dropped === true,
-        onRestore: () => {
-          cbs.restoreSteer(mark.text);
-        },
-      }),
-    );
-    st.steerNotes.add(mark.id);
+    const note = buildSteerNote({
+      text: mark.text,
+      origin: mark.origin,
+      ...(mark.ack !== undefined ? { ack: mark.ack } : {}),
+      dropped: mark.dropped === true,
+      onRestore: () => {
+        cbs.restoreSteer(mark.text);
+      },
+    });
+    appendBlock(st, st.blocksEl, note);
+    st.steerNotes.set(mark.id, { index: at, el: note });
   }
 }
 
@@ -877,13 +911,11 @@ function containerFor(st: MsgRender, block: Block, live: boolean): HTMLElement {
     });
     sa.root.dataset["subtask"] = subtask;
     st.subagents.set(subtask, sa);
-    // The box lands in its HOST (top level or a pipeline body), so the seal and
-    // the group close belong to the host: the delegate's card is the "something
-    // posted after" for whatever trace was open there, and a tool run the box
-    // interrupts must not keep collecting cards above it.
-    const host = stageHostFor(st, subtask, live);
-    closeToolGroup(st, host);
-    appendBlock(st, host, sa.root);
+    // The box lands in its HOST (top level or a pipeline body), so the seal
+    // belongs to the host: the delegate's card is the "something posted after"
+    // for whatever trace was open there. The run it interrupts is broken by
+    // `indexGroups`, which prices this creation as a post into the host.
+    appendBlock(st, stageHostFor(st, subtask, live), sa.root);
   }
   return sa.body;
 }
@@ -925,6 +957,13 @@ function subagentOpenerFor(st: MsgRender, subtask: string): { open?: SubagentOpe
       },
     },
   };
+}
+
+/** Whether this pipeline's own box is in this render, or will be by the end of the
+ *  pass. `stageHostFor`'s question, asked without building anything: an EXISTING
+ *  box outranks the count there, so the count alone answers a different one. */
+function hostsPipelineBox(st: MsgRender, pipelineID: string): boolean {
+  return st.pipelines.has(pipelineID) || pipelineHasContainer(st, pipelineID);
 }
 
 /** Where a stage's own box goes: its pipeline's body when that pipeline has a
@@ -983,13 +1022,11 @@ function pipelineBoxFor(st: MsgRender, pipelineID: string, live: boolean): Subag
     .filter((v): v is SubagentView => v?.root.parentElement === st.blocksEl);
   const first = promoted[0];
   if (first === undefined) {
-    closeToolGroup(st, st.blocksEl);
     appendBlock(st, st.blocksEl, box.root);
   } else {
-    // Lands where the first adopted stage sat, keeping transcript order. Neither
-    // `appendBlock` nor `closeToolGroup`: nothing is posted after an open trace
-    // by swapping a node already in place, and that stage's append closed the
-    // group.
+    // Lands where the first adopted stage sat, keeping transcript order, and not
+    // through `appendBlock`: nothing is posted after an open trace by swapping a
+    // node already in place.
     first.root.replaceWith(box.root);
   }
   for (const v of promoted) {
@@ -1075,7 +1112,6 @@ function runCardFor(st: MsgRender, workflowID: string, name: string): RunCardVie
     // The card mounts OPEN and the disclosure reports only later flips.
     openContainers.add(`run:${workflowID}`);
   }
-  closeToolGroup(st, st.blocksEl);
   appendBlock(st, st.blocksEl, card.root);
   st.disposers.push(() => {
     disarmRunCard(st, workflowID, card);
@@ -1102,6 +1138,17 @@ function runCardFor(st: MsgRender, workflowID: string, name: string): RunCardVie
   invalidateRun(workflowID);
   armRunCard(st, workflowID, card);
   return card;
+}
+
+/** Whether this render holds `workflowID`'s card, or will when the block that needs
+ *  it mounts. `runCardFor`'s question, asked without building anything: a card
+ *  ANOTHER message's render hosts is returned from there, so nothing enters this. */
+function hostsRunCard(st: MsgRender, workflowID: string): boolean {
+  if (st.runs.has(workflowID) || st.detached) {
+    return true;
+  }
+  const host = runCardHosts.get(st.chatID)?.get(workflowID);
+  return host === undefined || host === st;
 }
 
 /** Adopt the launch tool call into its run's card: the recipe name from the
@@ -1249,18 +1296,24 @@ export function mountFaceRunCard(workflowID: string): { root: HTMLElement; dispo
   };
 }
 
-function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: boolean): void {
+function placeBlock(
+  st: MsgRender,
+  m: Message,
+  block: Block,
+  i: number,
+  live: boolean,
+  idx: GroupIndex,
+): void {
   const container = containerFor(st, block, live);
   const subtask = block.agent_subtask_id ?? "";
 
   switch (block.type) {
     case "text": {
-      closeToolGroup(st, container);
       mountText(st, m.id, container, block, i, live);
       return;
     }
     case "thinking": {
-      mountThinking(st, m.id, container, block, i, live);
+      mountThinking(st, m, container, block, i, live, idx);
       return;
     }
     case "tool_use": {
@@ -1316,11 +1369,10 @@ function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: bo
         members.add(tc.id);
       }
       if (isTodoTool(tc)) {
-        closeToolGroup(st, container);
-        mountTodo(st, m.id, container, tc);
+        mountTodo(st, m.id, container, tc, i);
         return;
       }
-      mountToolCard(st, container, tc);
+      mountToolCard(st, m.id, container, subtask, tc, i, groupRunStart(idx, subtask, i));
       return;
     }
   }
@@ -1329,6 +1381,16 @@ function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: bo
 // ---------------------------------------------------------------------------
 // Block mounters
 // ---------------------------------------------------------------------------
+
+/** Record `el` as block `i`'s element and stamp both coordinates on it. The map
+ *  answers every lookup; the attributes serve the one consumer that starts from an
+ *  ELEMENT — the anchor ladder — which is why the owning message id is stamped
+ *  beside the index: a card in this row can carry another message's numbering. */
+function stampBlock(st: MsgRender, el: HTMLElement, msgId: string, i: number): void {
+  el.dataset["blockIndex"] = String(i);
+  el.dataset["blockMsg"] = msgId;
+  st.blockEls.set(i, el);
+}
 
 function mountText(
   st: MsgRender,
@@ -1373,10 +1435,14 @@ function mountText(
   st.blockText.set(i, (full) => {
     bubble.setText(full);
   });
+  // The stamped element is the one whose removal DROPS the block, which for a
+  // top-level block is the row and for a delegate-hosted one the bubble.
   if (row !== null) {
     row.appendChild(bubble.root);
+    stampBlock(st, row, msgId, i);
     appendBlock(st, container, row);
   } else {
+    stampBlock(st, bubble.root, msgId, i);
     appendBlock(st, container, bubble.root);
   }
   if (live && !st.detached) {
@@ -1402,20 +1468,18 @@ function mountText(
 
 function mountThinking(
   st: MsgRender,
-  msgId: string,
+  m: Message,
   container: HTMLElement,
   block: Block,
   i: number,
   live: boolean,
+  idx: GroupIndex,
 ): void {
+  const msgId = m.id;
   const initial = block.thinking ?? "";
   if (initial === "" && !live) {
     return; // an empty settled "Thinking completed" dropdown is worse than none
   }
-  // A trace interrupts a consecutive tool run. Without this, later tool calls
-  // kept joining the group element ABOVE the trace, which both mis-ordered the
-  // transcript and stacked every trace of a think→tool loop into one pile.
-  closeToolGroup(st, container);
   const view = buildReasoning(initial, live);
   st.reasonings.push(view);
   st.blockText.set(i, (full) => {
@@ -1423,8 +1487,16 @@ function mountThinking(
   });
   // Append (sealing any open predecessor) BEFORE registering the new view, or
   // appendBlock would seal the trace being mounted.
+  stampBlock(st, view.root, msgId, i);
   appendBlock(st, container, view.root);
-  st.openReasoning.set(container, view);
+  // Sealed from the STORE, not from what arrives next: a trace the store already
+  // has a successor for is finished however this range reached it, which is what
+  // keeps `openReasoning` to a container's genuinely-live trailing trace.
+  if (containerFollowed(idx, containerKeyOf(block), i)) {
+    view.seal();
+  } else {
+    st.openReasoning.set(container, view);
+  }
   if (live && !st.detached) {
     const sig = ensureBlockThinkingSig(msgId, i, initial);
     const cleanup = effect(() => {
@@ -1436,10 +1508,19 @@ function mountThinking(
   }
 }
 
-function mountToolCard(st: MsgRender, container: HTMLElement, tc: ToolCall): void {
-  const group = toolGroupFor(st, container);
+function mountToolCard(
+  st: MsgRender,
+  msgId: string,
+  container: HTMLElement,
+  key: string,
+  tc: ToolCall,
+  i: number,
+  runStart: number,
+): void {
+  const group = toolGroupFor(st, container, key, runStart);
   const card = mountToolCallCard(st.chatID, tc);
   card.setAttribute(RECONCILE_KEY, tc.id);
+  stampBlock(st, card, msgId, i);
   // Cards live in the group's body region (the disclosure-collapsible
   // container), not on the group root beside the header.
   groupBody(group).appendChild(card);
@@ -1454,9 +1535,16 @@ function mountToolCard(st: MsgRender, container: HTMLElement, tc: ToolCall): voi
   });
 }
 
-function mountTodo(st: MsgRender, msgId: string, container: HTMLElement, tc: ToolCall): void {
+function mountTodo(
+  st: MsgRender,
+  msgId: string,
+  container: HTMLElement,
+  tc: ToolCall,
+  i: number,
+): void {
   const list = buildTodoList(parseTodoItems(tc));
   list.dataset["toolId"] = tc.id;
+  stampBlock(st, list, msgId, i);
   appendBlock(st, container, list);
   const sig = ensureToolCallSig(st.chatID, tc.id, tc);
   let last = tc;
@@ -1652,21 +1740,189 @@ function appendBlock(st: MsgRender, container: HTMLElement, el: HTMLElement): vo
   container.appendChild(el);
 }
 
-function toolGroupFor(st: MsgRender, container: HTMLElement): HTMLDivElement {
-  let group = st.toolGroups.get(container);
+/** The group a card at run `runStart` joins, built on first use. */
+function toolGroupFor(
+  st: MsgRender,
+  container: HTMLElement,
+  key: string,
+  runStart: number,
+): HTMLDivElement {
+  let bucket = st.toolGroups.get(key);
+  if (bucket === undefined) {
+    bucket = new Map();
+    st.toolGroups.set(key, bucket);
+  }
+  let group = bucket.get(runStart);
   if (group === undefined) {
     group = buildToolGroupShell();
     appendBlock(st, container, group);
-    st.toolGroups.set(container, group);
+    bucket.set(runStart, group);
   }
   return group;
 }
 
-function closeToolGroup(st: MsgRender, container: HTMLElement): void {
-  const group = st.toolGroups.get(container);
-  st.toolGroups.delete(container);
-  if (group !== undefined) {
-    autoCollapseGroup(group);
+// ---------------------------------------------------------------------------
+// Grouping and sealing, derived from the store rather than accumulated
+// ---------------------------------------------------------------------------
+
+/** Where each of a message's containers BREAKS its run of tool cards, and how far
+ *  its content reaches. Built once per pass rather than answered per card: the
+ *  per-card question is "what came before me in my own container", and
+ *  re-classifying every earlier block is quadratic on one long tool loop. */
+interface GroupIndex {
+  /** container key → ascending indices at which a new run may START: one past a
+   *  block that closed the container, or a steer note's own anchor. */
+  readonly starts: ReadonlyMap<string, number[]>;
+  /** container key → the last block index that posts anything into it. */
+  readonly lastPost: ReadonlyMap<string, number>;
+}
+
+/** A block's container as a KEY: same key ⇒ same container. `containerFor`
+ *  creates its container on demand, so the derivation may not call it. */
+function containerKeyOf(block: Block): string {
+  return block.agent_subtask_id ?? "";
+}
+
+function indexGroups(
+  st: MsgRender,
+  m: Message,
+  marks: readonly SteerMark[],
+  live: boolean,
+): GroupIndex {
+  const blocks = m.blocks ?? [];
+  const lastIdx = blocks.length - 1;
+  const tools = new Map((m.tool_calls ?? []).map((tc) => [tc.id, tc]));
+  const starts = new Map<string, number[]>();
+  const lastPost = new Map<string, number>();
+  const built = new Set<string>();
+  const startAt = (key: string, at: number): void => {
+    const list = starts.get(key);
+    if (list === undefined) {
+      starts.set(key, [at]);
+    } else {
+      list.push(at);
+    }
+  };
+  const post = (key: string, at: number, closes: boolean): void => {
+    lastPost.set(key, at);
+    if (closes) {
+      startAt(key, at + 1);
+    }
+  };
+  // A box is built by whichever of its blocks arrives FIRST, and it lands in the
+  // host — which for a pipeline stage is the pipeline's own box, whose creation
+  // posts at the top level in turn.
+  const openBox = (id: string, host: string, at: number): void => {
+    if (!built.has(id)) {
+      built.add(id);
+      post(host, at, true);
+    }
+  };
+  for (const [i, block] of blocks.entries()) {
+    const key = containerKeyOf(block);
+    const step = key === "" ? null : parseStepSubtask(key);
+    if (step !== null) {
+      if (hostsRunCard(st, step.workflowID)) {
+        openBox(`run:${step.workflowID}`, "", i);
+      }
+    } else if (key !== "") {
+      const pipelineID = st.stagePipeline.get(key);
+      let host = "";
+      if (pipelineID !== undefined && hostsPipelineBox(st, pipelineID)) {
+        host = `pipe:${pipelineID}`;
+        openBox(host, "", i);
+      }
+      openBox(`sub:${key}`, host, i);
+    }
+    switch (block.type) {
+      case "text":
+        post(key, i, true);
+        break;
+      case "thinking":
+        if ((block.thinking ?? "") !== "" || (live && blockIsLive(blocks, i, lastIdx))) {
+          post(key, i, true);
+        }
+        break;
+      case "tool_use": {
+        const tc = tools.get(block.tool_call_id ?? "");
+        if (tc === undefined || isInternalToolTitle(tc.title)) {
+          break; // mounts nothing, so it posts nothing
+        }
+        const runID = key === "" ? workflowInvocation(tc) : "";
+        if (runID !== "") {
+          if (hostsRunCard(st, runID)) {
+            openBox(`run:${runID}`, "", i);
+          }
+        } else if (key === "" && isPipelineInvocation(tc)) {
+          // Priced at the DRIVER's block, where the box stands: `driverNeedsBox`
+          // stops asking for one at a count of 1, and the box outlives that.
+          if (hostsPipelineBox(st, tc.id) || driverNeedsBox(st, tc)) {
+            openBox(`pipe:${tc.id}`, "", i);
+          }
+        } else if (key !== "" && isSubagentInvocation(tc)) {
+          break; // its box's header, not a post into the box
+        } else {
+          post(key, i, isTodoTool(tc));
+        }
+        break;
+      }
+    }
+  }
+  // A note is posted into the top level immediately BEFORE its anchor, so the
+  // anchor itself is both where the next run may start and the position the note
+  // counts as posted at.
+  for (const mark of marks) {
+    if (mark.anchor.msgID === m.id) {
+      const at = mark.anchor.blockIndex;
+      startAt("", at);
+      lastPost.set("", Math.max(lastPost.get("") ?? -1, at));
+    }
+  }
+  for (const list of starts.values()) {
+    list.sort((a, b) => a - b);
+  }
+  return { starts, lastPost };
+}
+
+/** The index the run of tool cards holding block `i` started at, which is the
+ *  key of the group that card joins. */
+function groupRunStart(idx: GroupIndex, key: string, i: number): number {
+  let start = 0;
+  for (const at of idx.starts.get(key) ?? []) {
+    if (at > i) {
+      break;
+    }
+    start = at;
+  }
+  return start;
+}
+
+/** Whether anything is posted into `key` after block `i`: what seals a reasoning
+ *  trace. */
+function containerFollowed(idx: GroupIndex, key: string, i: number): boolean {
+  return (idx.lastPost.get(key) ?? -1) > i;
+}
+
+/** Whether the run starting at `runStart` is FOLLOWED: a LATER run starts here,
+ *  which happens only where something closed this one. The run's END, not its
+ *  start — its own second and later cards post at their own indices, so
+ *  `containerFollowed(runStart)` reads every multi-card run as followed. */
+function runFollowed(idx: GroupIndex, key: string, runStart: number): boolean {
+  const starts = idx.starts.get(key) ?? [];
+  return (starts[starts.length - 1] ?? -1) > runStart;
+}
+
+/** Collapse every group in this render whose run is FOLLOWED in the store.
+ *
+ *  Idempotent, so a group mounted already-finished collapses at its first sync
+ *  rather than waiting for a successor the store already holds. */
+function syncGroupCollapse(st: MsgRender, idx: GroupIndex): void {
+  for (const [key, bucket] of st.toolGroups) {
+    for (const [runStart, group] of bucket) {
+      if (runFollowed(idx, key, runStart)) {
+        autoCollapseGroup(group);
+      }
+    }
   }
 }
 

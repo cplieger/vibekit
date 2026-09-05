@@ -21,6 +21,11 @@ const BLOCK_ESTIMATE_PX = {
   row: 48,
 } as const;
 
+/** `.turn-body`'s flex `gap` (`--sp-3`), which the PARENT adds and no row's own
+ *  height includes. A spacer standing in for K whole rows replaces K−1 of the gaps
+ *  between them, its own box replacing the one that preceded the run. */
+const ROW_GAP_PX = 12;
+
 /** message id → block index → the height that block's element measured. */
 const blockHeights = new Map<string, Map<number, number>>();
 
@@ -87,9 +92,10 @@ export function recordRowHeight(messageID: string, px: number): void {
 }
 
 /** The pixel height of the ordinals one spacer stands in for: everything on
- *  `side` of `range`, which is the turn's MOUNTED range. Measured where measured,
- *  the per-outcome estimate where not — a HEAD spacer covers ordinals that have
- *  been mounted and dropped, and a tail estimate is corrected on arrival.
+ *  `side` of `range` — the turn's MOUNTED range — plus the parent gaps the replaced
+ *  rows contributed. Measured where measured, the per-outcome estimate where not: a
+ *  HEAD spacer covers ordinals mounted and dropped, a tail estimate is corrected on
+ *  arrival.
  *
  *  Takes a TURN range and slices it here, so no caller converts between the
  *  ordinal space and the renderer's message-local one. */
@@ -104,13 +110,17 @@ export function spacerHeight(t: Turn, range: TurnRange, side: "head" | "tail"): 
   }
   const slices = sliceTurn(t, stood);
   let px = 0;
+  let whole = 0;
   for (const m of t.body) {
     const covered = slices.get(m.id);
     if (covered !== undefined) {
       px += rangeHeight(m, covered);
+      if (covered.from === 0 && covered.to === (m.blocks ?? []).length) {
+        whole++;
+      }
     }
   }
-  return px;
+  return px + Math.max(0, whole - 1) * ROW_GAP_PX;
 }
 
 /** Drop a chat's cache (view dispose, chat delete). */
