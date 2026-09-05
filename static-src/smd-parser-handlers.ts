@@ -141,6 +141,11 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       clear_root_pending(p);
       p.blockquote_idx = 0;
       p.fence_start = 0;
+      if (!has_token_room(p.len, 1)) {
+        // Past the cap no block opens, so this line break is the only thing left
+        // to separate one line of text from the next.
+        p.textBuf += "\n";
+      }
       p.pending = char;
       return true;
     case "#":
@@ -152,7 +157,9 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
         }
       } else if (char === " ") {
         end_tokens_to_indent(p, p.indent_len);
-        add_token(p, heading_from_level(p.pending.length));
+        if (!add_token(p, heading_from_level(p.pending.length))) {
+          p.textBuf += p.indent + pending_with_char;
+        }
         clear_root_pending(p);
         return true;
       }
@@ -161,9 +168,14 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       const next_blockquote_idx = idx_of_token(p, BLOCKQUOTE, p.blockquote_idx + 1);
       if (next_blockquote_idx === -1) {
         end_tokens_to_len(p, p.blockquote_idx);
+        if (!add_token(p, BLOCKQUOTE)) {
+          // Past the cap the line is text, and so is the `>` that started it.
+          // `blockquote_idx` stays put: advancing it past `len` leaves every
+          // later search for an enclosing block starting above the stack.
+          break;
+        }
         p.blockquote_idx += 1;
         p.fence_start = 0;
-        add_token(p, BLOCKQUOTE);
       } else {
         p.blockquote_idx = next_blockquote_idx;
       }
@@ -204,7 +216,9 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       }
       // Unordered list: "* foo", "- foo", but not "_ foo"
       if (!p.pending.startsWith("_") && p.pending[1] === " ") {
-        continue_or_add_list(p, LIST_UNORDERED);
+        if (continue_or_add_list(p, LIST_UNORDERED) === "no_room") {
+          break;
+        }
         add_list_item(p, 2);
         p.write(p, pending_with_char.slice(2));
         return true;
@@ -239,7 +253,14 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       }
       if (char === "\n") {
         end_tokens_to_indent(p, p.indent_len);
-        add_token(p, CODE_FENCE);
+        if (!add_token(p, CODE_FENCE)) {
+          // The info string must not be emitted here: with no fence to carry it
+          // the attribute lands on the enclosing element as its `class`.
+          p.textBuf += p.indent + pending_with_char;
+          clear_root_pending(p);
+          p.fence_start = 0;
+          return true;
+        }
         if (p.pending.length > p.fence_start) {
           p.renderer.set_attr(p.renderer.data, LANG, p.pending.slice(p.fence_start));
         }
@@ -254,7 +275,9 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       if (char !== " ") {
         break;
       }
-      continue_or_add_list(p, LIST_UNORDERED);
+      if (continue_or_add_list(p, LIST_UNORDERED) === "no_room") {
+        break;
+      }
       add_list_item(p, 2);
       return true;
     case "0":
@@ -271,7 +294,11 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
         if (char !== " ") {
           break;
         }
-        if (continue_or_add_list(p, LIST_ORDERED) && p.pending !== "1.") {
+        const opened = continue_or_add_list(p, LIST_ORDERED);
+        if (opened === "no_room") {
+          break;
+        }
+        if (opened === "created" && p.pending !== "1.") {
           p.renderer.set_attr(p.renderer.data, START, p.pending.slice(0, -1));
         }
         add_list_item(p, p.pending.length + 1);
@@ -344,18 +371,27 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
   if (p.token === LINE_BREAK) {
     p.token = p.tokens[p.len] as Token;
     emit_leaf(p, LINE_BREAK);
-  } else if (p.indent_len >= 4) {
-    let code_start = 0;
-    for (; code_start < 4; code_start += 1) {
-      if (p.indent[code_start] === "\t") {
-        code_start = code_start + 1;
-        break;
-      }
-    }
-    to_write = p.indent.slice(code_start) + pending_with_char;
-    pushed = add_token(p, CODE_BLOCK);
   } else {
-    pushed = add_token(p, PARAGRAPH);
+    if (p.indent_len >= 4) {
+      let code_start = 0;
+      for (; code_start < 4; code_start += 1) {
+        if (p.indent[code_start] === "\t") {
+          code_start = code_start + 1;
+          break;
+        }
+      }
+      to_write = p.indent.slice(code_start) + pending_with_char;
+      pushed = add_token(p, CODE_BLOCK);
+    } else {
+      pushed = add_token(p, PARAGRAPH);
+    }
+    if (!pushed) {
+      // No block opened, so the leading whitespace one would have consumed is
+      // text as well — the four columns that mark indented code included.
+      // Promotion runs once per two characters past the cap, so without this a
+      // space landing on a promotion boundary disappears.
+      to_write = p.indent + pending_with_char;
+    }
   }
 
   clear_root_pending(p);
@@ -700,7 +736,14 @@ export function handleItalic(p: Parser, char: string, pending_with_char: string)
 export function handleMaybeEqBlock(p: Parser, char: string): void {
   if (char === "\n") {
     add_text(p);
-    add_token(p, EQUATION_BLOCK);
+    if (!add_token(p, EQUATION_BLOCK)) {
+      // Past the cap the opener is literal text, and the token that would have
+      // consumed the rest of the expression does not exist.
+      p.token = p.tokens[p.len] as Token;
+      p.textBuf += p.pending + char;
+      p.pending = "";
+      return;
+    }
     p.pending = "";
   } else {
     p.token = p.tokens[p.len] as Token;
@@ -717,7 +760,13 @@ export function handleMaybeEqBlock(p: Parser, char: string): void {
 export function handleMaybeURL(p: Parser, char: string, pending_with_char: string): void {
   if (pending_with_char === "http://" || pending_with_char === "https://") {
     add_text(p);
-    add_token(p, RAW_URL);
+    if (!add_token(p, RAW_URL)) {
+      // Past the cap the scheme is text like the rest of the line.
+      p.token = p.tokens[p.len] as Token;
+      p.textBuf += pending_with_char;
+      p.pending = "";
+      return;
+    }
     p.pending = pending_with_char;
     p.textBuf = pending_with_char;
     return;

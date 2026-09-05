@@ -1006,6 +1006,18 @@ describe("renderMarkdown deep nesting", () => {
     expect(html).not.toContain("<a ");
     expect(html).not.toContain("<img");
   });
+
+  // An attribute set after a refused push reaches whatever element is current,
+  // which past the cap is the enclosing blockquote: a fence's info string
+  // arrived as its `class` and an ordered list's number as its `start`.
+  it.each([
+    ["```js\ncode\n```", "class", "```js"],
+    ["3. item", "start", "3. item"],
+  ])("puts no attribute on the blockquote for %j past the cap", (body, attr, literal) => {
+    const html = renderMarkdown(">".repeat(23) + " " + body);
+    expect(html).not.toContain(attr + "=");
+    expect(html).toContain(literal);
+  });
 });
 
 // ---------------------------------------------------------------------------
