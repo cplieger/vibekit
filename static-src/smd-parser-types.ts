@@ -154,12 +154,21 @@ export interface Parser {
  *  punctuation, which makes every letter and digit in every script one. */
 const NOT_WORD = /[\s\p{P}\p{S}]/u;
 
-function is_word_char(ch: string): boolean {
-  return ch !== "" && !NOT_WORD.test(ch);
+/** Whether `s` ends in a word character. Reads the last CODE POINT: an astral
+ *  character's trailing low surrogate is category Cs on its own, which matches
+ *  none of NOT_WORD's classes, so a single-unit read calls `🎉` a word character
+ *  and blocks the emphasis in `🎉_yay_` that CommonMark opens. */
+function ends_with_word_char(s: string): boolean {
+  const len = s.length;
+  if (len === 0) {
+    return false;
+  }
+  const start = len > 1 && (s.codePointAt(len - 2) ?? 0) > 0xffff ? len - 2 : len - 1;
+  return !NOT_WORD.test(s.slice(start));
 }
 
 export function prev_is_word_char(p: Parser): boolean {
-  return p.textBuf === "" ? p.prev_is_word : is_word_char(p.textBuf.charAt(p.textBuf.length - 1));
+  return p.textBuf === "" ? p.prev_is_word : ends_with_word_char(p.textBuf);
 }
 
 /** Emit a leaf token (rule, line break, checkbox) straight to the renderer.
@@ -178,7 +187,7 @@ export function add_text(p: Parser): void {
   if (p.textBuf === "") {
     return;
   }
-  p.prev_is_word = is_word_char(p.textBuf.charAt(p.textBuf.length - 1));
+  p.prev_is_word = ends_with_word_char(p.textBuf);
   p.renderer.add_text(p.renderer.data, p.textBuf);
   p.textBuf = "";
 }

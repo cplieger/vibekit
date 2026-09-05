@@ -345,6 +345,30 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       input: "日本_語 test",
       expected: "<p>日本_語 test</p>",
     },
+    {
+      // A symbol is punctuation for flanking purposes (`\p{S}`), so the run is
+      // left-flanking only and opens. The BMP case is the control for the two
+      // astral cases below: same rule, one code unit instead of two.
+      name: "a symbol before the underscore still opens",
+      input: "\u2705_yay_",
+      expected: "<p>\u2705<em>yay</em></p>",
+    },
+    {
+      // The lookbehind must read the last CODE POINT. A lone low surrogate is
+      // category Cs, which matches neither `\p{P}` nor `\p{S}` nor `\s`, so a
+      // single-unit read calls this emoji a word character and blocks the open.
+      name: "an astral symbol before the underscore still opens",
+      input: "\u{1F389}_yay_",
+      expected: "<p>\u{1F389}<em>yay</em></p>",
+    },
+    {
+      // The other half of the same read: an astral LETTER is a word character,
+      // so it must still block. Both cases pass under a single-unit read only by
+      // coincidence, which is why the pair is needed rather than either alone.
+      name: "an astral letter before the underscore blocks the open",
+      input: "\u{1D400}_yay_",
+      expected: "<p>\u{1D400}_yay_</p>",
+    },
 
     // --- Emphasis at a word boundary is untouched ---
     {
@@ -519,38 +543,58 @@ describe("renderMarkdown intraword underscores (CommonMark 6.2)", () => {
       expected: "<p>a_b <code>c_d</code> e_f</p>",
     },
 
-    // --- Nesting inside an already-open `_` token is unchanged. These pin the
-    //     token stack: guarding the nested opens in handleItalic/handleStrong
-    //     instead of in handleCommon corrupted every one of them.
+    // --- Inside an already-open `_` token. The rule is applied at all three
+    //     places a `_` run can open emphasis, so an intraword run is literal
+    //     here too; only the CLOSE is left ungated, because refusing a close
+    //     would leave the token open to the end of the line.
     {
-      name: "nested __ inside _ is unchanged (characterization)",
-      input: "_a__b__c_",
-      expected: "<p><em>a<strong>b</strong>c</em></p>",
+      name: "the reported string inside __ renders literally",
+      input: "__run_progress__",
+      expected: "<p><strong>run_progress</strong></p>",
     },
     {
-      name: "nested _ inside __ is unchanged (characterization)",
+      name: "snake_case inside __ renders literally",
+      input: "__snake_case in strong__",
+      expected: "<p><strong>snake_case in strong</strong></p>",
+    },
+    {
+      name: "a single intraword _ inside __ renders literally",
+      input: "__a_b__",
+      expected: "<p><strong>a_b</strong></p>",
+    },
+    {
+      name: "an intraword __ inside _ stays literal",
+      input: "_a__b__c_",
+      expected: "<p><em>a__b__c</em></p>",
+    },
+    {
+      name: "an unbalanced __ inside _ stays literal",
+      input: "_a__b_",
+      expected: "<p><em>a__b</em></p>",
+    },
+    {
+      name: "an intraword _ inside __ stays literal",
+      input: "__a_b_c__",
+      expected: "<p><strong>a_b_c</strong></p>",
+    },
+    {
+      name: "_em_ at a word boundary inside __ still emphasises",
       input: "__a _b_ c__",
       expected: "<p><strong>a <em>b</em> c</strong></p>",
     },
+    // The next two leave the OUTER run unclosed, which an append-only parser
+    // renders as emphasis where CommonMark falls back to literal text. That gap
+    // predates the delimiter rule and needs the same delimiter stack the close
+    // half does; what these pin is that the inner intraword run is literal.
     {
-      name: "an unbalanced __ inside _ is unchanged (characterization)",
-      input: "_a__b_",
-      expected: "<p><em>a<strong>b<em></em></strong></em></p>",
-    },
-    {
-      name: "an intraword _ inside __ is unchanged (characterization)",
-      input: "__a_b_c__",
-      expected: "<p><strong>a<em>b</em>c</strong></p>",
-    },
-    {
-      name: "a trailing __ inside _ is unchanged (characterization)",
+      name: "a trailing __ inside _ stays literal",
       input: "_x__y__",
-      expected: "<p><em>x<strong>y</strong></em></p>",
+      expected: "<p><em>x__y__</em></p>",
     },
     {
-      name: "a trailing _ inside __ is unchanged (characterization)",
+      name: "a trailing _ inside __ stays literal",
       input: "__x_y_",
-      expected: "<p><strong>x<em>y</em></strong></p>",
+      expected: "<p><strong>x_y_</strong></p>",
     },
   ];
 

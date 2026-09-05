@@ -456,12 +456,19 @@ export function handleStrong(p: Parser, char: string): boolean {
   const italic = isUnd ? ITALIC_UND : ITALIC_AST;
 
   if (symbol === p.pending) {
-    add_text(p);
     if (symbol === char) {
+      add_text(p);
       end_token(p);
       p.pending = "";
       return true;
     }
+    // Same delimiter-run rule as handleCommon, on the nested open only: the
+    // close above must stay ungated, or `__run_progress__` would never close.
+    // Falling through leaves the `_` to handleCommon's literal path.
+    if (isUnd && prev_is_word_char(p)) {
+      return false;
+    }
+    add_text(p);
     add_token(p, italic);
     p.pending = char;
     return true;
@@ -479,6 +486,13 @@ export function handleItalic(p: Parser, char: string, pending_with_char: string)
       if (symbol === char) {
         if (p.tokens[p.len - 1] === strong) {
           p.pending = pending_with_char;
+        } else if (isUnd && prev_is_word_char(p)) {
+          // Same rule again, on the nested open. handleCommon cannot be
+          // delegated to here: it grows `pending` to `__`, which the next
+          // character reads as "close both" and fires two end_token calls
+          // against one open token. Consume the run as text instead.
+          p.textBuf += pending_with_char;
+          p.pending = "";
         } else {
           add_text(p);
           add_token(p, strong);
