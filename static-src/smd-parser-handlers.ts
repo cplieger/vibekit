@@ -53,6 +53,7 @@ import {
   is_digit,
   is_delimiter_or_number,
   prev_is_word_char,
+  is_word_char,
   heading_from_level,
   NEWLINE,
   MAYBE_BR,
@@ -654,6 +655,15 @@ export function handleItalic(p: Parser, char: string, pending_with_char: string)
           add_inline_token(p, strong, symbol + symbol);
           p.pending = "";
         }
+      } else if (isUnd && prev_is_word_char(p) && is_word_char(char)) {
+        // CommonMark 6.2 rule 6: a `_` run with a word character on both sides is
+        // both left- and right-flanking, so it cannot close either. Refused IN
+        // PLACE rather than delegated to handleCommon, which would grow `pending`
+        // to `__`, have the next character read that as "close both", and fire
+        // two end_token calls against one open token. The token stays open and is
+        // unwrapped at block close, restoring the whole run as literal text.
+        p.textBuf += p.pending;
+        p.pending = char;
       } else {
         add_text(p);
         end_token(p);
