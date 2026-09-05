@@ -413,6 +413,9 @@ describe("chunk-boundary invariance", () => {
     "## heading ##",
     "## heading ## #",
     "1) first\n2) second",
+    // At the cap the promotion path consumes the newline, so which line-scoped
+    // state the next line sees depends on where the boundary fell.
+    `${">".repeat(23)} a\n${">".repeat(23)} b`,
   ];
 
   it.each(inputs)("produces one tree for %j at every chunk size", (input) => {

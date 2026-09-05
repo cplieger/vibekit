@@ -987,6 +987,39 @@ describe("renderMarkdown deep nesting", () => {
   // read as the literal text that was typed. The opener used to be dropped: the
   // push was refused and the handler then overwrote `pending` with the next
   // character regardless.
+  // The promotion fallthrough consumes the whole line INCLUDING its newline, so
+  // the newline arm never ran for it and the line-scoped state still named the
+  // previous line's innermost blockquote. The next line's `>` run then searched
+  // above the stack, was refused, and fell through as literal text.
+  it("reads a continuation line's block prefix as markers at the cap", () => {
+    const el = document.createElement("div");
+    el.innerHTML = renderMarkdown(">".repeat(23) + " a\n" + ">".repeat(23) + " b");
+    expect(el.textContent).toBe(" a\n b\n");
+    expect(el.querySelectorAll("blockquote")).toHaveLength(23);
+  });
+
+  it("keeps the surplus prefix character as text one past the cap", () => {
+    const el = document.createElement("div");
+    el.innerHTML = renderMarkdown(">".repeat(24) + " a\n" + ">".repeat(24) + " b");
+    expect(el.textContent).toBe("> a\n> b\n");
+  });
+
+  it("leaves a continuation line below the cap unchanged", () => {
+    expect(renderMarkdown(">".repeat(22) + " a\n" + ">".repeat(22) + " b")).toBe(
+      "<blockquote>".repeat(22) + "<p>a<br>b</p>" + "</blockquote>".repeat(22),
+    );
+  });
+
+  it("opens a list on the line after a saturated prose line", () => {
+    const html = renderMarkdown(">".repeat(23) + " a\n- i");
+    expect(html).toContain("<ul><li>i</li></ul>");
+  });
+
+  it("opens a table on the line after a saturated prose line", () => {
+    const html = renderMarkdown(">".repeat(23) + " a\n| x |\n| - |\n| 1 |");
+    expect(html).toContain("<table><thead><tr><th> x </th></tr></thead>");
+  });
+
   it("keeps a bare hash run as text when the token stack is saturated", () => {
     const html = renderMarkdown(">".repeat(23) + " ##");
     expect(html).not.toContain("<h2");
