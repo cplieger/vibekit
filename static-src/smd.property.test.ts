@@ -240,7 +240,7 @@ describe("smd parser property: structural invariants", () => {
     expect(result.failed).toBe(false);
   });
 
-  it("chunked vs single-pass produces identical renderer callback sequence", () => {
+  it("chunked vs single-pass produces an identical token tree at paragraph boundaries", () => {
     expect.assertions(1);
 
     /** Renderer that tracks max nesting depth reached. */

@@ -4,33 +4,49 @@
 // Port of streaming-markdown v0.2.15 (MIT, © 2024 Damian Tarnawski)
 // https://github.com/thetarnav/streaming-markdown
 //
-// Rewritten in TypeScript with two substantive changes. First, `add_text`
-// appends text via the renderer's callback instead of the fixed
-// `appendChild(text node)` form, so our renderer wraps each new text chunk
-// in `<span data-vk-chunk-enter>` and CSS fades it in as it mounts. (The
-// upstream 0.2.15 Renderer interface could have been adapted to do the
-// same; the per-write callback alone would not justify a port.) Second, a
-// `_` run preceded by a word character does not open emphasis at any of the
-// three sites one can open, nested runs included, so `snake_case` stays
-// literal (CommonMark 6.2 delimiter runs). `*` is unchanged, and the closing
-// half of that rule is not implemented: an append-only parser cannot un-open
-// a token, so a run that never closes still renders as emphasis where
-// CommonMark falls back to literal text. The standing justification for
-// carrying this fork in-tree is unilateral fixability — parser bugs get
-// fixed here under this repo's invariant tests without waiting on an
-// upstream release — at the cost of manually tracking upstream fixes. The
-// parser is append-only, so old content stays stable across flushes.
+// The fork exists for unilateral fixability: parser bugs get fixed here under
+// this repo's invariant tests instead of waiting on an upstream release, at the
+// cost of tracking upstream by hand. The PARSER is append-only, so emitted
+// content stays stable across flushes; the RENDERER is not, and unwrapping an
+// element whose inline token never closed is the sanctioned use of that
+// (smd-renderer.ts, `unwrap_unclosed`).
 //
 // Construct coverage matches the reference implementation: paragraphs, headings
 // (1-6), blockquotes, ordered/unordered/task lists, code blocks/fences/
 // inline, bold/italic/strike, links/images/raw URLs, tables, line breaks,
 // horizontal rules. The equation tokens carry their expression as TEXT, and the
 // renderer converts the accumulated source to native MathML when the expression
-// closes (smd-renderer.ts + mathml.ts). An expression that never closes, or that
-// the converter does not support, stays as its raw string. Inline is `$x$` or
-// `\(x\)`; a BLOCK needs a newline right after its opener (`$$\n…$$`,
-// `\[\n…\]`), because `\[` is also a legitimate escaped bracket — so `\[x\]` on
-// one line renders as the literal text, which is honest but is not display math.
+// closes (smd-renderer.ts + mathml.ts). An expression the converter does not
+// support stays as its raw string. Inline is `$x$` or `\(x\)`; a BLOCK needs a
+// newline right after its opener (`$$\n…$$`, `\[\n…\]`), because `\[` is also a
+// legitimate escaped bracket — so `\[x\]` on one line renders as the literal
+// text, which is honest but is not display math.
+//
+// DIVERGENCE REGISTER. Reasoning, measurements and the append-only dependency
+// list live in `.kiro/steering/vibekit-ui.md`; this is the index.
+//
+// Fixed here, still open upstream: emphasis inside a word (#36, both the open
+// and the single-`_` close), a scheme check before an href is set (#45, in the
+// renderer), a bracketed run inside a link label (#39), column alignment from
+// the delimiter row (#44), the table section picked by child index (#43), a
+// fence closed by a mid-line backtick run (#34/#40), and a trailing space
+// breaking a table row (#30). Fixed with no upstream counterpart: unbounded
+// recursion once the token stack saturates, `<` `[` `\` and a backtick deleted at
+// the end of a line or of the input, an unclosed inline opener formatting the
+// rest of its block, a table opening without a delimiter row, and a bare URL
+// swallowing the backtick after a full-width comma.
+//
+// Deliberately not fixed. `__` cannot refuse a close the way `_` does: it
+// decides on the second character of the run, before the character after it has
+// arrived, so `__x_y_` keeps its literal reading. Raw HTML is emitted as text
+// rather than parsed, which is the security property the XSS tests pin. A soft
+// line break renders as `<br>` by product decision. Carried from upstream: a
+// nested blockquote escaping a list item (#41), `*` emphasis parsed inside a
+// link label (#29), and a block prefix in front of a table row (#42), which is
+// why a pipe line inside a blockquote is text. Absent from both: setext
+// headings, reference links, angle autolinks, link titles, entity references,
+// ATX closing sequences, `1)` ordered lists, `<p>` inside a loose list item, and
+// `***x***`'s nesting order.
 // ---------------------------------------------------------------------------
 
 import {
