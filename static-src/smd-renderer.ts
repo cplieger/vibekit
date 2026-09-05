@@ -54,6 +54,7 @@ import {
   EQUATION_BLOCK,
   EQUATION_INLINE,
   UNCLOSED,
+  ALIGN,
   attr_to_html_attr,
 } from "./smd-parser-types.js";
 import type { Token, Attr, Renderer } from "./smd-parser-types.js";
@@ -81,6 +82,11 @@ export interface DomRendererData {
    *  immediately follow it: the literal to restore in place of an inline
    *  element whose token never closed. */
   unclosedDelim?: string | null;
+  /** The open table's per-column `text-align`, and how many cells of the current
+   *  row have been created. A table cannot contain a table, so one of each is
+   *  enough; both are reset when a TABLE or a TABLE_ROW opens. */
+  align?: readonly string[] | null;
+  cellIndex?: number;
 }
 
 function makeEl(tag: string): HTMLElement {
@@ -195,26 +201,34 @@ function add_token_dom(data: DomRendererData, type: Token): void {
       data.nodes[++data.index] = parent.appendChild(a);
       return;
     }
+    case TABLE: {
+      data.align = null;
+      data.nodes[++data.index] = parent.appendChild(makeEl("table"));
+      return;
+    }
     case TABLE_ROW: {
-      let tableParent: Element;
-      switch (parent.children.length) {
-        case 0:
-          tableParent = parent.appendChild(makeEl("thead"));
-          break;
-        case 1:
-          tableParent = parent.appendChild(makeEl("tbody"));
-          break;
-        default:
-          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-          tableParent = parent.children[1]!;
-      }
-      const slot = makeEl("tr");
-      data.nodes[++data.index] = tableParent.appendChild(slot);
+      // Asked of the DOM rather than counted: `children.length` meant the first
+      // row landed in a `<thead>`, the second in a `<tbody>` and every later one
+      // in `children[1]`, so anything a third party appended to the `<table>`
+      // shifted the index and sent rows to the wrong section.
+      const table = parent as HTMLTableElement;
+      const section =
+        table.tHead === null
+          ? table.appendChild(makeEl("thead"))
+          : (table.tBodies[0] ?? table.appendChild(makeEl("tbody")));
+      data.cellIndex = 0;
+      data.nodes[++data.index] = section.appendChild(makeEl("tr"));
       return;
     }
     case TABLE_CELL: {
       const isHeader = parent.parentElement?.tagName === "THEAD";
       const slot = makeEl(isHeader ? "th" : "td");
+      const column = data.cellIndex ?? 0;
+      data.cellIndex = column + 1;
+      const align = data.align?.[column];
+      if (align !== undefined && align !== "") {
+        slot.setAttribute("style", `text-align:${align}`);
+      }
       data.nodes[++data.index] = parent.appendChild(slot);
       return;
     }
@@ -354,6 +368,10 @@ function add_text_dom(data: DomRendererData, text: string): void {
 function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
   if (attr === UNCLOSED) {
     data.unclosedDelim = value;
+    return;
+  }
+  if (attr === ALIGN) {
+    data.align = value.split(",");
     return;
   }
   const node = data.nodes[data.index];

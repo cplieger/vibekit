@@ -1239,3 +1239,181 @@ describe("renderMarkdown unclosed inline openers", () => {
     expect(el.textContent).toBe("run npm test now");
   });
 });
+
+// ---------------------------------------------------------------------------
+// GFM tables: the delimiter row is required, column alignment is emitted, and
+// trailing whitespace on a row is not a cell.
+// ---------------------------------------------------------------------------
+
+describe("renderMarkdown GFM tables", () => {
+  const HEAD = "<table><thead><tr><th> a </th><th> b </th></tr></thead>";
+  const BODY = "<tbody><tr><td> 1 </td><td> 2 </td></tr></tbody></table>";
+
+  const cases: { name: string; input: string; expected: string }[] = [
+    { name: "a real table", input: "| a | b |\n| - | - |\n| 1 | 2 |", expected: HEAD + BODY },
+    {
+      name: "a trailing space on the header row",
+      input: "| a | b | \n| - | - |\n| 1 | 2 |",
+      expected: HEAD + BODY,
+    },
+    {
+      name: "a trailing tab on the header row",
+      input: "| a | b |\t\n| - | - |\n| 1 | 2 |",
+      expected: HEAD + BODY,
+    },
+    {
+      name: "two trailing spaces on the header row",
+      input: "| a | b |  \n| - | - |\n| 1 | 2 |",
+      expected: HEAD + BODY,
+    },
+    {
+      name: "a trailing space on a body row",
+      input: "| a |\n| - |\n| 1 | \n| 2 |",
+      expected:
+        "<table><thead><tr><th> a </th></tr></thead>" +
+        "<tbody><tr><td> 1 </td></tr><tr><td> 2 </td></tr></tbody></table>",
+    },
+    {
+      name: "an intentionally empty middle cell",
+      input: "| a | | b |\n| - | - | - |\n| 1 | 2 | 3 |",
+      expected:
+        "<table><thead><tr><th> a </th><th> </th><th> b </th></tr></thead>" +
+        "<tbody><tr><td> 1 </td><td> 2 </td><td> 3 </td></tr></tbody></table>",
+    },
+
+    // --- the delimiter row is required ---
+    {
+      name: "a leading pipe in prose is not a table",
+      input: "| leading pipe in prose",
+      expected: "<p>| leading pipe in prose</p>",
+    },
+    { name: "a lone pipe is not a table", input: "|", expected: "<p>|</p>" },
+    {
+      name: "a pipe line with no delimiter row is not a table",
+      input: "| a | b |\nnot a table",
+      expected: "<p>| a | b |<br>not a table</p>",
+    },
+    {
+      name: "a delimiter row with the wrong cell count is not a delimiter row",
+      input: "| a | b |\n| - |\n| 1 | 2 |",
+      expected: "<p>| a | b |<br>| - |<br>| 1 | 2 |</p>",
+    },
+    {
+      name: "a delimiter row needs a pipe",
+      input: "| a | b |\n---\n| 1 | 2 |",
+      expected: "<p>| a | b |</p><hr><p>| 1 | 2 |</p>",
+    },
+    {
+      name: "colon forms are valid delimiter cells",
+      input: "| a |\n| :- |\n| 1 |",
+      expected:
+        '<table><thead><tr><th style="text-align:left"> a </th></tr></thead>' +
+        '<tbody><tr><td style="text-align:left"> 1 </td></tr></tbody></table>',
+    },
+    {
+      name: "a header-only table has no tbody",
+      input: "| h |\n| - |",
+      expected: "<table><thead><tr><th> h </th></tr></thead></table>",
+    },
+    { name: "an inline pipe is not a table", input: "a | b", expected: "<p>a | b</p>" },
+    {
+      name: "a lone pipe line after a table is not a second table",
+      input: "| a |\n| - |\n| 1 |\n\n| 2 |",
+      expected:
+        "<table><thead><tr><th> a </th></tr></thead>" +
+        "<tbody><tr><td> 1 </td></tr></tbody></table><p>| 2 |</p>",
+    },
+    {
+      name: "a table still interrupts a paragraph",
+      input: "text\n| a | b |\n| - | - |\n| 1 | 2 |",
+      expected: "<p>text</p>" + HEAD + BODY,
+    },
+    {
+      name: "an indented table still parses",
+      input: "   | a | b |\n   | - | - |\n| 1 | 2 |",
+      expected: HEAD + BODY,
+    },
+
+    // --- alignment ---
+    {
+      name: "all three alignments",
+      input: "| a | b | c |\n|:--|:-:|--:|\n| 1 | 2 | 3 |",
+      expected:
+        '<table><thead><tr><th style="text-align:left"> a </th>' +
+        '<th style="text-align:center"> b </th><th style="text-align:right"> c </th></tr></thead>' +
+        '<tbody><tr><td style="text-align:left"> 1 </td>' +
+        '<td style="text-align:center"> 2 </td><td style="text-align:right"> 3 </td></tr></tbody></table>',
+    },
+    {
+      name: "a colon-free delimiter row asks for no alignment",
+      input: "| a | b |\n| --- | --- |\n| 1 | 2 |",
+      expected: HEAD + BODY,
+    },
+    {
+      name: "alignment is per column",
+      input: "| a | b |\n|:--| --- |\n| 1 | 2 |",
+      expected:
+        '<table><thead><tr><th style="text-align:left"> a </th><th> b </th></tr></thead>' +
+        '<tbody><tr><td style="text-align:left"> 1 </td><td> 2 </td></tr></tbody></table>',
+    },
+    {
+      name: "a short body row keeps its own columns' alignment",
+      input: "| a | b | c |\n|:--|:-:|--:|\n| 1 |",
+      expected:
+        '<table><thead><tr><th style="text-align:left"> a </th>' +
+        '<th style="text-align:center"> b </th><th style="text-align:right"> c </th></tr></thead>' +
+        '<tbody><tr><td style="text-align:left"> 1 </td></tr></tbody></table>',
+    },
+
+    // --- cells are split before their content is parsed ---
+    {
+      name: "an unclosed run does not swallow the cell delimiters",
+      input: "| a **b | c |\n| - | - |\n| 1 | 2 |",
+      expected: "<table><thead><tr><th> a **b </th><th> c </th></tr></thead>" + BODY,
+    },
+    {
+      name: "an intraword underscore in a cell stays literal",
+      input: "\n| a_b | c |\n|---|---|\n| d_e | f |\n",
+      expected:
+        "<table><thead><tr><th> a_b </th><th> c </th></tr></thead>" +
+        "<tbody><tr><td> d_e </td><td> f </td></tr></tbody></table>",
+    },
+    {
+      // Not GFM (which nests the table in the blockquote) and not what this used
+      // to be either, which was three nested blockquotes each holding a
+      // header-only table. Routing a block prefix through a held row is upstream
+      // #42 and is not attempted here; every character survives.
+      name: "a pipe line inside a blockquote is text (characterization)",
+      input: "> | a | b |\n> | - | - |\n> | 1 | 2 |",
+      expected: "<blockquote><p>| a | b |<br>| - | - |<br>| 1 | 2 |</p></blockquote>",
+    },
+  ];
+
+  it.each(cases)("$name", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+
+  it("never paints the header row as paragraph text while streaming", () => {
+    const el = document.createElement("div");
+    const r = createMarkdownStream(el, { flushIntervalMs: 0 });
+    r.writeDelta("| a | b |\n");
+    expect(el.querySelector("table")).toBeNull();
+    expect(el.textContent).toBe("");
+    r.writeDelta("| - | - |\n");
+    expect(el.querySelector("table")).not.toBeNull();
+    r.writeDelta("| 1 | 2 |\n");
+    r.end();
+    expect(el.querySelectorAll("tbody tr")).toHaveLength(1);
+  });
+
+  it("falls back to a paragraph when the stream ends on the header row", () => {
+    const el = document.createElement("div");
+    const r = createMarkdownStream(el, { flushIntervalMs: 0 });
+    r.writeDelta("| a | b |");
+    expect(el.querySelector("table")).toBeNull();
+    r.end();
+    expect(el.querySelector("table")).toBeNull();
+    expect(el.querySelectorAll("p")).toHaveLength(1);
+    expect(el.textContent).toBe("| a | b |");
+  });
+});

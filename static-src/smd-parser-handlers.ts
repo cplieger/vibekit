@@ -62,7 +62,49 @@ import {
   LANG,
   CHECKED,
   START,
+  ALIGN,
 } from "./smd-parser-types.js";
+
+/** Everything a delimiter row may contain. One character outside this set rules
+ *  the line out, which is what bounds the held candidate to two lines. */
+const DELIMITER_ROW_CHARS = new Set(["-", " ", "|", ":"]);
+
+/** A table row's cells, split the way the row handlers split them: a leading `|`
+ *  opens the row rather than a cell, and a trailing one closes the last cell
+ *  rather than opening another. */
+function table_row_cells(row: string): string[] {
+  let body = row.replace(/^[ \t]+/u, "").replace(/[ \t]+$/u, "");
+  if (body.startsWith("|")) {
+    body = body.slice(1);
+  }
+  if (body.endsWith("|")) {
+    body = body.slice(0, -1);
+  }
+  return body === "" ? [] : body.split("|");
+}
+
+/** GFM's delimiter row: at least one pipe (a bare `---` is a thematic break, not
+ *  a delimiter), a cell count matching the header's, and every cell a run of
+ *  dashes with an optional colon on either side. */
+function is_delimiter_row(cells: string[], header_cells: number): boolean {
+  if (cells.length === 0 || cells.length !== header_cells) {
+    return false;
+  }
+  return cells.every((cell) => /^[ \t]*:?-+:?[ \t]*$/u.test(cell));
+}
+
+/** Per-column `text-align` from the delimiter row's colons, comma-joined, or ""
+ *  when the row asks for no alignment at all. */
+function column_alignments(cells: string[]): string {
+  const out = cells.map((cell) => {
+    const c = cell.trim();
+    if (!c.startsWith(":")) {
+      return c.endsWith(":") ? "right" : "";
+    }
+    return c.endsWith(":") ? "center" : "left";
+  });
+  return out.some((align) => align !== "") ? out.join(",") : "";
+}
 
 export function handleRootContext(p: Parser, char: string, pending_with_char: string): boolean {
   switch (p.pending[0]) {
@@ -234,13 +276,54 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
         }
       }
       break;
-    case "|":
-      end_tokens_to_len(p, p.blockquote_idx);
-      add_token(p, TABLE);
-      add_token(p, TABLE_ROW);
-      p.pending = "";
-      p.write(p, char);
-      return true;
+    case "|": {
+      // GFM needs a delimiter row on the line AFTER the header, so the header is
+      // HELD in `pending` until the next line decides. Painting the pipes as a
+      // paragraph and then restructuring them into a table would change the
+      // height of content the reader has already scrolled past, which
+      // `overflow-anchor: none` gives no net for; one late insertion does not.
+      if (p.table_rejected) {
+        break;
+      }
+      const nl = p.pending.indexOf("\n");
+      if (nl !== -1 && char === "\n") {
+        const header = p.pending.slice(0, nl);
+        const delim = p.pending.slice(nl + 1);
+        const cells = table_row_cells(delim);
+        if (!is_delimiter_row(cells, table_row_cells(header).length)) {
+          p.table_rejected = true;
+          break;
+        }
+        end_tokens_to_len(p, p.blockquote_idx);
+        if (!add_token(p, TABLE)) {
+          p.table_rejected = true;
+          break;
+        }
+        const align = column_alignments(cells);
+        if (align !== "") {
+          p.renderer.set_attr(p.renderer.data, ALIGN, align);
+        }
+        add_token(p, TABLE_ROW);
+        p.pending = "";
+        // Replayed through the row handlers rather than emitted here, so the
+        // header and the delimiter row go through exactly the path they took
+        // before the deferral existed.
+        p.write(p, header.slice(1) + "\n" + delim + "\n");
+        return true;
+      }
+      // No line follows the newline `parser_end` writes, so a candidate still
+      // being held at end of input can never become a table.
+      if (p.at_end) {
+        p.table_rejected = true;
+        break;
+      }
+      if (nl === -1 || DELIMITER_ROW_CHARS.has(char)) {
+        p.pending = pending_with_char;
+        return true;
+      }
+      p.table_rejected = true;
+      break;
+    }
   }
 
   // Fallthrough: promote pending to a paragraph or code block.
@@ -309,6 +392,15 @@ export function handleTable(p: Parser, char: string, pending_with_char: string):
   return false;
 }
 
+function is_blank(s: string): boolean {
+  for (const ch of s) {
+    if (ch !== " " && ch !== "\t") {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function handleTableRow(p: Parser, char: string, _pending_with_char: string): boolean {
   switch (p.pending) {
     case "":
@@ -326,6 +418,20 @@ export function handleTableRow(p: Parser, char: string, _pending_with_char: stri
       p.write(p, char);
       return true;
     default:
+      // GFM makes the trailing pipe optional and trims every cell, so whitespace
+      // between the last pipe and the newline is not a cell. Opening one for it
+      // left the row unterminated: `table_state` never advanced, the delimiter
+      // row was read as a fresh table, and which of the two happened depended on
+      // where the write boundary fell.
+      if (is_blank(p.pending)) {
+        if (char === "\n") {
+          p.pending = char;
+          return true;
+        }
+        if (char === " " || char === "\t") {
+          return true;
+        }
+      }
       add_token(p, TABLE_CELL);
       p.write(p, char);
       return true;
@@ -606,13 +712,15 @@ export function handleMaybeURL(p: Parser, char: string, pending_with_char: strin
   p.write(p, char);
 }
 
-/** Index of the innermost open LINK or IMAGE, or -1 when the innermost tokens
- *  are not inside a label. Stops at the first block token, so it never reaches
- *  across a paragraph. */
-function open_link_idx(p: Parser): number {
+/** Index of the innermost open token from `wanted`, reachable through inline
+ *  tokens only, or -1. Used where a structural delimiter has to win over an
+ *  inline token that never closed: CommonMark resolves a link before emphasis,
+ *  and GFM splits a table row into cells before parsing inline content at all.
+ *  Stopping at the first other block token keeps the search inside one block. */
+function enclosing_idx(p: Parser, wanted: readonly Token[]): number {
   for (let i = p.len; i > 0; i -= 1) {
     const token = p.tokens[i] as Token;
-    if (token === LINK || token === IMAGE) {
+    if (wanted.includes(token)) {
       return i;
     }
     if (!is_inline_token(token)) {
@@ -621,6 +729,9 @@ function open_link_idx(p: Parser): number {
   }
   return -1;
 }
+
+const LABEL_TOKENS: readonly Token[] = [LINK, IMAGE];
+const CELL_TOKENS: readonly Token[] = [TABLE_CELL];
 
 export function handleLinkOrImage(p: Parser, char: string, pending_with_char: string): boolean {
   // CommonMark 6.3 allows balanced brackets in a label, so the label ends at a
@@ -987,11 +1098,26 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       // Without this the label end is never seen, the link loses its href and
       // the destination shows up as visible text.
       if (p.pending === "]" && p.link_depth === 0) {
-        const link_idx = open_link_idx(p);
-        if (link_idx !== -1) {
+        const label_idx = enclosing_idx(p, LABEL_TOKENS);
+        if (label_idx !== -1) {
           add_text(p);
-          end_tokens_to_len(p, link_idx);
+          end_tokens_to_len(p, label_idx);
           return handleLinkOrImage(p, char, pending_with_char);
+        }
+      }
+      break;
+    case "|":
+      // GFM splits a row into cells BEFORE parsing their inline content, so a
+      // `|` ends the cell even when an inline token opened inside it never
+      // closed. Without this the run swallowed the cell delimiters and collapsed
+      // the rest of the row — and, once the delimiter row is required, the rest
+      // of the table with it.
+      if (p.pending === "|") {
+        const cell_idx = enclosing_idx(p, CELL_TOKENS);
+        if (cell_idx !== -1) {
+          add_text(p);
+          end_tokens_to_len(p, cell_idx);
+          return handleTableCell(p, char, pending_with_char);
         }
       }
       break;

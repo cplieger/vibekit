@@ -105,12 +105,16 @@ const ATTRS = {
    *  attribute: the renderer unwraps the element and restores this text in its
    *  place. Always emitted immediately before that token's `end_token`. */
   UNCLOSED: 32,
+  /** A table's per-column `text-align`, comma-joined, read off the delimiter
+   *  row's colons. Not an HTML attribute either: the renderer applies it to each
+   *  cell by position. Emitted on the TABLE token before its first row. */
+  ALIGN: 64,
 } as const satisfies Record<string, number>;
 
 /** Attr type derived from the ATTRS constant object. */
 export type Attr = (typeof ATTRS)[keyof typeof ATTRS];
 
-export const { HREF, SRC, LANG, CHECKED, START, UNCLOSED } = ATTRS;
+export const { HREF, SRC, LANG, CHECKED, START, UNCLOSED, ALIGN } = ATTRS;
 
 export const TOKEN_ARRAY_CAP = 24;
 
@@ -147,6 +151,11 @@ export interface Parser {
   hr_char: string;
   hr_chars: number;
   table_state: number;
+  /** A pipe-leading line in this block was held as a table header and turned out
+   *  not to have a delimiter row. Suppresses the deferral while those lines are
+   *  replayed as text, or the `|` arm would hold them again forever. Cleared at
+   *  every block boundary by `clear_root_pending`. */
+  table_rejected: boolean;
   /** Whether the last COMMITTED character was a word character — the lookbehind
    *  for CommonMark 6.2, where a `_` run preceded by one cannot open emphasis.
    *  Reading `textBuf`'s last character alone is not enough: `parser_write` ends
@@ -370,6 +379,7 @@ export function clear_root_pending(p: Parser): void {
   p.pending = "";
   p.prev_is_word = false;
   p.link_depth = 0;
+  p.table_rejected = false;
 }
 
 export function is_digit(cc: number): boolean {

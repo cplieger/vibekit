@@ -1,7 +1,7 @@
 // Table-driven tests for smd-renderer.ts TOKEN_TAG_MAP coverage via
 // add_token_dom verifying all token types produce correct elements.
 
-import { describe, it, expect, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { domRenderer } from "./smd-renderer.js";
 import {
   PARAGRAPH,
@@ -29,6 +29,9 @@ import {
   EQUATION_BLOCK,
   EQUATION_INLINE,
   UNCLOSED,
+  ALIGN,
+  TABLE_ROW,
+  TABLE_CELL,
 } from "./smd-parser-types.js";
 import type { Token } from "./smd-parser-types.js";
 
@@ -392,10 +395,13 @@ describe("unwrapping does not re-mount the per-chunk fade spans", () => {
     r.add_text(r.data, "one ");
     r.add_text(r.data, "two ");
     r.add_text(r.data, "three");
-    await nextFrame();
     const before = [...container.querySelectorAll("[data-vk-chunk-enter]")];
     expect(before).toHaveLength(3);
-    expect(starts).toBe(3);
+    // The premise, polled rather than assumed: without three starts on the
+    // board there is nothing for the unwrap to re-fire and the test is vacuous.
+    await vi.waitFor(() => {
+      expect(starts).toBe(3);
+    });
 
     r.set_attr(r.data, UNCLOSED, "**");
     r.end_token(r.data);
@@ -410,5 +416,104 @@ describe("unwrapping does not re-mount the per-chunk fade spans", () => {
     expect(after.every((s) => s.hasAttribute("data-vk-chunk-settled"))).toBe(true);
     expect(starts).toBe(3);
     expect(container.textContent).toBe("**one two three");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Table sections come from the DOM, not from a child count.
+// ---------------------------------------------------------------------------
+
+describe("smd-renderer table sections", () => {
+  function rows(count: number, decorate?: (table: HTMLTableElement) => void): HTMLElement {
+    const container = document.createElement("div");
+    const r = domRenderer(container, { animateText: false });
+    r.add_token(r.data, TABLE);
+    for (let i = 0; i < count; i += 1) {
+      if (i === 1) {
+        decorate?.(container.querySelector("table") as HTMLTableElement);
+      }
+      r.add_token(r.data, TABLE_ROW);
+      r.add_token(r.data, TABLE_CELL);
+      r.add_text(r.data, `r${i}`);
+      r.end_token(r.data);
+      r.end_token(r.data);
+    }
+    return container;
+  }
+
+  it("puts the first row in a thead and the rest in one tbody", () => {
+    const table = rows(4).querySelector("table") as HTMLTableElement;
+    expect(table.tHead?.rows).toHaveLength(1);
+    expect(table.tBodies).toHaveLength(1);
+    expect(table.tBodies[0]?.rows).toHaveLength(3);
+  });
+
+  it("keeps appending to the same tbody object", () => {
+    const table = rows(4).querySelector("table") as HTMLTableElement;
+    const bodies = [...table.querySelectorAll("tbody")];
+    expect(bodies).toHaveLength(1);
+    for (const row of table.tBodies[0]?.rows ?? []) {
+      expect(row.parentElement).toBe(bodies[0]);
+    }
+  });
+
+  it("still finds the sections when a third party inserts a child", () => {
+    // A caption, a colgroup or any decoration shifts `children[1]`, which is
+    // what the old child-count switch indexed.
+    const table = rows(4, (t) => {
+      t.insertBefore(document.createElement("caption"), t.firstChild);
+    }).querySelector("table") as HTMLTableElement;
+    expect(table.tHead?.rows).toHaveLength(1);
+    expect(table.querySelectorAll("tbody")).toHaveLength(1);
+    expect(table.tBodies[0]?.rows).toHaveLength(3);
+  });
+
+  it("marks header cells th and body cells td", () => {
+    const table = rows(2).querySelector("table") as HTMLTableElement;
+    expect(table.querySelectorAll("thead th")).toHaveLength(1);
+    expect(table.querySelectorAll("tbody td")).toHaveLength(1);
+  });
+
+  it("applies per-column alignment by position and resets per row", () => {
+    const container = document.createElement("div");
+    const r = domRenderer(container, { animateText: false });
+    r.add_token(r.data, TABLE);
+    r.set_attr(r.data, ALIGN, "left,,right");
+    for (let row = 0; row < 2; row += 1) {
+      r.add_token(r.data, TABLE_ROW);
+      for (let col = 0; col < 3; col += 1) {
+        r.add_token(r.data, TABLE_CELL);
+        r.end_token(r.data);
+      }
+      r.end_token(r.data);
+    }
+    const styles = [...container.querySelectorAll("th, td")].map((c) => c.getAttribute("style"));
+    expect(styles).toEqual([
+      "text-align:left",
+      null,
+      "text-align:right",
+      "text-align:left",
+      null,
+      "text-align:right",
+    ]);
+  });
+
+  it("does not carry alignment into the next table", () => {
+    const container = document.createElement("div");
+    const r = domRenderer(container, { animateText: false });
+    r.add_token(r.data, TABLE);
+    r.set_attr(r.data, ALIGN, "center");
+    r.add_token(r.data, TABLE_ROW);
+    r.add_token(r.data, TABLE_CELL);
+    r.end_token(r.data);
+    r.end_token(r.data);
+    r.end_token(r.data);
+    r.add_token(r.data, TABLE);
+    r.add_token(r.data, TABLE_ROW);
+    r.add_token(r.data, TABLE_CELL);
+    r.end_token(r.data);
+    const cells = [...container.querySelectorAll("th")];
+    expect(cells[0]?.getAttribute("style")).toBe("text-align:center");
+    expect(cells[1]?.hasAttribute("style")).toBe(false);
   });
 });
