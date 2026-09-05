@@ -49,6 +49,15 @@ const (
 	// after ~30s in background; 15s keeps both transports alive.
 	keepaliveInterval = 15 * time.Second
 
+	// reconnectDelay is the stream's advertised `retry:` field, governing the
+	// reconnect the BROWSER performs after a transient drop. transport.ts's own
+	// backoff ladder never sees that case — it fires only on readyState CLOSED —
+	// so without this the delay is whatever the browser defaults to, and the two
+	// disagree (3s Chrome, 5s Firefox). Deliberately not lower: a connection to a
+	// DOWN server retries on this same timer, and the SSE spec permits but does
+	// not require a user agent to back off above it.
+	reconnectDelay = 1500 * time.Millisecond
+
 	// outputBufferLimit is the byte budget for subprocess output ring
 	// buffers (agent terminals and the PTY shell scrollback). 64 KB
 	// covers a full terminal screen at 200 cols × 50 rows with
@@ -332,7 +341,11 @@ func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[st
 // at construction, before a nil one could build a runtime that cannot serve
 // a single chat and defer the crash to the first ACP frame.
 func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStore chatRecords, opts ...Option) *Runtime {
-	sseHub := sse.NewHub(sse.WithReplay(replayBufSize), sse.WithKeepalive(keepaliveInterval))
+	sseHub := sse.NewHub(
+		sse.WithReplay(replayBufSize),
+		sse.WithKeepalive(keepaliveInterval),
+		sse.WithReconnectDelay(reconnectDelay),
+	)
 	lc := &lifetime{
 		workDir: workDir,
 		done:    make(chan struct{}),
