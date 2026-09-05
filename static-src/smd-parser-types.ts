@@ -140,10 +140,14 @@ export interface Parser {
   textBuf: string;
   pending: string;
   tokens: Uint32Array;
-  /** The literal that opened `tokens[i]`, for the inline tokens only. An
-   *  append-only parser cannot un-open a token, but the renderer can unwrap the
-   *  element at close time — and to restore the delimiter it needs to know what
-   *  it was, since the characters were consumed when the token opened. */
+  /** The delimiter that opened `tokens[i]`, for the inline tokens and for an
+   *  ordered list. An append-only parser cannot un-open a token, but the
+   *  renderer can unwrap the element at close time — and to restore the
+   *  delimiter it needs to know what it was, since the characters were consumed
+   *  when the token opened. An ordered list records it for a different reason:
+   *  CommonMark 5.2 starts a new list when the marker's `.` or `)` changes, so
+   *  `continue_or_add_list` has to compare. `end_token_unresolved` reads it only
+   *  for an inline token, so a list's entry is inert there. */
   delims: string[];
   len: number;
   token: Token;
@@ -170,6 +174,12 @@ export interface Parser {
    *  not input, so a construct needing a character after it cannot be one: a
    *  trailing `\` is a literal backslash rather than a hard line break. */
   at_end: boolean;
+  /** Whether the open heading's `pending` is holding a candidate ATX closing
+   *  sequence (CommonMark 4.2). `pending`'s shape cannot answer it: `## a#` and
+   *  `## ##` both hold the same `"#"`, and only the second one is syntax. Set
+   *  where a heading opens — the opening sequence's own space is what precedes a
+   *  run starting the content — and again where a `#` follows whitespace. */
+  atx_close: boolean;
   write: (p: Parser, chunk: string) => void;
 }
 
@@ -370,12 +380,18 @@ export type ListOpen = "created" | "continued" | "no_room";
 /** Open or continue the list the marker belongs to, leaving `add_list_item` one
  *  slot to push into.
  *
+ *  `delim` is the marker that opened the list — an ordered list's `.` or `)`,
+ *  and the empty string for an unordered one, whose bullet character this parser
+ *  does not distinguish. CommonMark 5.2 starts a NEW list when the delimiter
+ *  changes, so an open list with a different one does not match and the
+ *  `list_idx === -1` branch below closes it and opens another.
+ *
  *  Room for the WHOLE construct is reserved before anything is pushed: a list
  *  whose item does not fit is created empty and its text lands directly inside
  *  it, which is neither the list the input asked for nor the plain text the
  *  depth limit promises. The check follows each branch's closes, since those
  *  free the slots it is asking about. */
-export function continue_or_add_list(p: Parser, list_token: Token): ListOpen {
+export function continue_or_add_list(p: Parser, list_token: Token, delim: string): ListOpen {
   let list_idx = -1;
   let item_idx = -1;
   for (let i = p.blockquote_idx + 1; i <= p.len; i += 1) {
@@ -386,7 +402,7 @@ export function continue_or_add_list(p: Parser, list_token: Token): ListOpen {
         break;
       }
       item_idx = i;
-    } else if (p.tokens[i] === list_token) {
+    } else if (p.tokens[i] === list_token && p.delims[i] === delim) {
       list_idx = i;
     }
   }
@@ -397,6 +413,7 @@ export function continue_or_add_list(p: Parser, list_token: Token): ListOpen {
       }
       end_tokens_to_len(p, p.blockquote_idx);
       add_token(p, list_token);
+      p.delims[p.len] = delim;
       return "created";
     }
     if (!has_token_room(list_idx, 1)) {
@@ -410,6 +427,7 @@ export function continue_or_add_list(p: Parser, list_token: Token): ListOpen {
   }
   end_tokens_to_len(p, item_idx);
   add_token(p, list_token);
+  p.delims[p.len] = delim;
   return "created";
 }
 

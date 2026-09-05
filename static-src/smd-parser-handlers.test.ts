@@ -408,6 +408,11 @@ describe("chunk-boundary invariance", () => {
     '[a](http://e.com "t")',
     "[a](http://e.com (t))",
     "[a](http://e.com/x(1))",
+    // A heading holds its trailing run until the newline decides whether it is
+    // a closing sequence, so a boundary inside the run is the case to pin.
+    "## heading ##",
+    "## heading ## #",
+    "1) first\n2) second",
   ];
 
   it.each(inputs)("produces one tree for %j at every chunk size", (input) => {
