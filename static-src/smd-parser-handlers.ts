@@ -39,6 +39,7 @@ import {
   TABLE_CELL,
   TABLE_ROW,
   add_text,
+  emit_leaf,
   end_token,
   add_token,
   idx_of_token,
@@ -49,6 +50,7 @@ import {
   clear_root_pending,
   is_digit,
   is_delimiter_or_number,
+  prev_is_word_char,
   heading_from_level,
   NEWLINE,
   MAYBE_BR,
@@ -140,8 +142,7 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
             // Fall through to unordered-list check below
           } else {
             end_tokens_to_indent(p, p.indent_len);
-            p.renderer.add_token(p.renderer.data, RULE);
-            p.renderer.end_token(p.renderer.data);
+            emit_leaf(p, RULE);
             clear_root_pending(p);
             p.hr_chars = 0;
             return true;
@@ -240,8 +241,7 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
   let to_write = pending_with_char;
   if (p.token === LINE_BREAK) {
     p.token = p.tokens[p.len] as Token;
-    p.renderer.add_token(p.renderer.data, LINE_BREAK);
-    p.renderer.end_token(p.renderer.data);
+    emit_leaf(p, LINE_BREAK);
   } else if (p.indent_len >= 4) {
     let code_start = 0;
     for (; code_start < 4; code_start += 1) {
@@ -440,11 +440,7 @@ export function handleMaybeTask(p: Parser, char: string, pending_with_char: stri
       if (char !== " ") {
         break;
       }
-      p.renderer.add_token(p.renderer.data, CHECKBOX);
-      if (p.pending[1] === "x") {
-        p.renderer.set_attr(p.renderer.data, CHECKED, "");
-      }
-      p.renderer.end_token(p.renderer.data);
+      emit_leaf(p, CHECKBOX, p.pending[1] === "x" ? CHECKED : undefined);
       p.pending = " ";
       return true;
   }
@@ -646,8 +642,7 @@ export function handleMaybeBR(p: Parser, char: string, pending_with_char: string
     if (char === ">") {
       add_text(p);
       p.token = p.tokens[p.len] as Token;
-      p.renderer.add_token(p.renderer.data, LINE_BREAK);
-      p.renderer.end_token(p.renderer.data);
+      emit_leaf(p, LINE_BREAK);
       p.pending = "";
       return true;
     }
@@ -753,19 +748,27 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       const isUnd = symbol === "_";
       const italic = isUnd ? ITALIC_UND : ITALIC_AST;
       const strong = isUnd ? STRONG_UND : STRONG_AST;
+      // CommonMark 6.2: a `_` run preceded by a word character is both left- and
+      // right-flanking, so it cannot open emphasis whatever follows — which is
+      // why this needs the lookbehind only. `*` is deliberately exempt: rules 1
+      // and 2 put no such exclusion on it, so `foo*bar*baz` still emphasises.
+      const undBlocked = isUnd && prev_is_word_char(p);
 
       if (p.pending.length === 1) {
         if (symbol === char) {
           p.pending = pending_with_char;
           return true;
         }
-        if (char !== " " && char !== "\n") {
+        if (char !== " " && char !== "\n" && !undBlocked) {
           add_text(p);
           add_token(p, italic);
           p.pending = char;
           return true;
         }
       } else {
+        if (undBlocked) {
+          break;
+        }
         if (symbol === char) {
           add_text(p);
           add_token(p, strong);
