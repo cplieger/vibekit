@@ -918,3 +918,209 @@ describe("renderMarkdown deep nesting", () => {
     expect(() => renderMarkdown(">".repeat(30) + " ```js`x")).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// A held character at the end of the input, or at the end of a line, is
+// literal text. It used to be deleted: `parser_end` writes a synthetic newline
+// to flush `pending`, and the arms that received it consumed the held
+// character as the opener of a construct the input never completes.
+// ---------------------------------------------------------------------------
+
+describe("renderMarkdown end-of-input characters", () => {
+  const cases: { name: string; input: string; expected: string | RegExp }[] = [
+    { name: "trailing <", input: "ab<", expected: "<p>ab&lt;</p>" },
+    { name: "lone <", input: "<", expected: "<p>&lt;</p>" },
+    { name: "trailing [", input: "ab[", expected: "<p>ab[</p>" },
+    { name: "trailing backslash", input: "ab\\", expected: "<p>ab\\</p>" },
+    { name: "trailing backtick", input: "ab`", expected: "<p>ab`</p>" },
+    { name: "[ before a newline", input: "ab[\ncd", expected: "<p>ab[<br>cd</p>" },
+    { name: "backtick before a newline", input: "ab`\ncd", expected: "<p>ab`<br>cd</p>" },
+    {
+      name: "backslash newline is still a hard break",
+      input: "ab\\\ncd",
+      expected: "<p>ab<br>cd</p>",
+    },
+    { name: "< followed by text is unchanged", input: "ab<x", expected: "<p>ab&lt;x</p>" },
+    { name: "< followed by a space is unchanged", input: "ab< ", expected: "<p>ab&lt; </p>" },
+    { name: "<br> is still a line break", input: "a<br>b", expected: "<p>a<br>b</p>" },
+    {
+      name: "a closed code span is unchanged",
+      input: "`code`",
+      expected: "<p><code>code</code></p>",
+    },
+    {
+      name: "a closed link is unchanged",
+      input: "[a](https://e.com)",
+      expected: '<p><a target="_blank" rel="noopener" href="https://e.com">a</a></p>',
+    },
+  ];
+
+  it.each(cases)("$name", ({ input, expected }) => {
+    const html = renderMarkdown(input);
+    if (typeof expected === "string") {
+      expect(html).toBe(expected);
+    } else {
+      expect(html).toMatch(expected);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A closing code fence must be alone on its line (CommonMark 4.5): at most
+// three spaces of indent, a run of at least as many backticks as the opener,
+// then nothing but spaces and tabs.
+// ---------------------------------------------------------------------------
+
+describe("renderMarkdown code fence close rule", () => {
+  const cases: { name: string; input: string; expected: string }[] = [
+    {
+      name: "a backtick run after content does not close the fence",
+      input: "```\nfoo ```\nbar\n",
+      expected: '<pre class="code"><code>foo ```\nbar\n</code></pre>',
+    },
+    {
+      name: "a backtick run glued to content keeps the content intact",
+      input: "```\nfoo```\nbar\n",
+      expected: '<pre class="code"><code>foo```\nbar\n</code></pre>',
+    },
+    {
+      name: "a four-space indented fence is code content",
+      input: "```\nfoo\n    ```\nbar\n",
+      expected: '<pre class="code"><code>foo\n    ```\nbar\n</code></pre>',
+    },
+    {
+      name: "a three-space indented fence still closes",
+      input: "```\nfoo\n   ```\nbar\n",
+      expected: '<pre class="code"><code>foo</code></pre><p>bar</p>',
+    },
+    {
+      name: "a longer run than the opener closes",
+      input: "```\nfoo\n`````\nbar\n",
+      expected: '<pre class="code"><code>foo</code></pre><p>bar</p>',
+    },
+    {
+      name: "a shorter run than the opener does not close",
+      input: "````\nfoo\n```\nbar\n",
+      expected: '<pre class="code"><code>foo\n```\nbar\n</code></pre>',
+    },
+    {
+      name: "trailing space after the run still closes",
+      input: "```\nfoo\n``` \nbar\n",
+      expected: '<pre class="code"><code>foo</code></pre><p>bar</p>',
+    },
+    {
+      name: "trailing tab after the run still closes",
+      input: "```\nfoo\n```\t\nbar\n",
+      expected: '<pre class="code"><code>foo</code></pre><p>bar</p>',
+    },
+    {
+      name: "a run followed by text does not close",
+      input: "```\nfoo ``` bar\n```\nend\n",
+      expected: '<pre class="code"><code>foo ``` bar</code></pre><p>end</p>',
+    },
+    {
+      name: "an info string mentioning backticks is unaffected",
+      input: "```md\nuse ``` to fence\n```\nafter\n",
+      expected:
+        '<pre class="code"><code class="language-md">use ``` to fence</code></pre><p>after</p>',
+    },
+    {
+      name: "an unterminated fence keeps its language",
+      input: "```js\nlet x=1;",
+      expected: '<pre class="code"><code class="language-js">let x=1;</code></pre>',
+    },
+    {
+      name: "an empty fence closes on the first line",
+      input: "```\n```\nafter\n",
+      expected: '<pre class="code"><code></code></pre><p>after</p>',
+    },
+  ];
+
+  it.each(cases)("$name", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Balanced brackets in a link or image label (CommonMark 6.3).
+// ---------------------------------------------------------------------------
+
+describe("renderMarkdown brackets inside a link label", () => {
+  const A = '<a target="_blank" rel="noopener"';
+
+  it("keeps a bracketed run inside the label and keeps the href", () => {
+    expect(renderMarkdown("[a [b] c](https://example.com)")).toBe(
+      `<p>${A} href="https://example.com">a [b] c</a></p>`,
+    );
+  });
+
+  it("handles brackets nested more than one deep", () => {
+    expect(renderMarkdown("[a [b [c] d] e](https://e.com)")).toBe(
+      `<p>${A} href="https://e.com">a [b [c] d] e</a></p>`,
+    );
+  });
+
+  it("keeps a bracketed run inside an image alt", () => {
+    expect(renderMarkdown("![alt [x] y](https://e.com/i.png)")).toBe(
+      '<p><img alt="alt [x] y" src="https://e.com/i.png"></p>',
+    );
+  });
+
+  it("leaves a plain link unchanged", () => {
+    expect(renderMarkdown("[a](https://e.com)")).toBe(`<p>${A} href="https://e.com">a</a></p>`);
+  });
+
+  it("closes the label on a bracket with no destination", () => {
+    expect(renderMarkdown("[a]b")).toBe(`<p>${A}>a</a>b</p>`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A bare URL followed by CJK punctuation.
+//
+// A CJK punctuation character is not on its own evidence that a URL ended —
+// real URLs carry it raw. The one decidable case is a separator immediately
+// followed by a backtick: RFC 3986 excludes the backtick, so it cannot be in
+// the URL, and swallowing it eats the opening delimiter of the code span that
+// follows and shifts every later backtick pairing in the paragraph.
+// ---------------------------------------------------------------------------
+
+describe("renderMarkdown bare URL with CJK punctuation", () => {
+  it("cuts the URL at a separator followed by a backtick", () => {
+    expect(renderMarkdown("见 https://example.com/2137，`96ed647b`）")).toBe(
+      '<p>见 <a target="_blank" rel="noopener" href="https://example.com/2137">' +
+        "https://example.com/2137</a>，<code>96ed647b</code>）</p>",
+    );
+  });
+
+  it("leaves a separator followed by text in the URL (characterization)", () => {
+    // Declined on Crew's evidence rule: …/wiki/苹果（公司）, …/wiki/我，机器人 and
+    // …/wiki/モーニング娘。 are real URLs, so the character alone proves nothing.
+    expect(renderMarkdown("https://e.com/a，b")).toBe(
+      '<p><a target="_blank" rel="noopener" href="https://e.com/a，b">https://e.com/a，b</a></p>',
+    );
+  });
+
+  it("keeps CJK punctuation inside a URL that a space terminates", () => {
+    expect(renderMarkdown("https://zh.wikipedia.org/wiki/苹果（公司） ok")).toBe(
+      '<p><a target="_blank" rel="noopener" href="https://zh.wikipedia.org/wiki/苹果（公司">' +
+        "https://zh.wikipedia.org/wiki/苹果（公司</a>） ok</p>",
+    );
+  });
+
+  it("keeps a sentence-ender out of the href when a space follows", () => {
+    expect(renderMarkdown("见 https://example.com。 然后")).toBe(
+      '<p>见 <a target="_blank" rel="noopener" href="https://example.com">' +
+        "https://example.com</a>。 然后</p>",
+    );
+  });
+
+  it("leaves a URL abutting its opening ** unlinked (characterization)", () => {
+    // The `h` is consumed by handleCommon's emphasis arm, which leaves `**` in
+    // `pending`, so parser_write's raw-URL entry (pending must be "" or " ")
+    // is never reached. A word before the URL is what makes it a link.
+    expect(renderMarkdown("**https://example.com**")).toBe(
+      "<p><strong>https://example.com</strong></p>",
+    );
+  });
+});

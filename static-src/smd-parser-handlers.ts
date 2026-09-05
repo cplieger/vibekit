@@ -192,6 +192,7 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
           p.renderer.set_attr(p.renderer.data, LANG, p.pending.slice(p.fence_start));
         }
         clear_root_pending(p);
+        p.fence_end = 0;
         p.token = NEWLINE;
         return true;
       }
@@ -367,34 +368,71 @@ export function handleCodeBlock(p: Parser, char: string, pending_with_char: stri
   }
 }
 
-export function handleCodeFence(p: Parser, char: string, pending_with_char: string): void {
-  switch (char) {
-    case "`":
-      p.pending = pending_with_char;
-      return;
-    case "\n":
-      if (pending_with_char.length === p.fence_start + p.fence_end + 1) {
-        add_text(p);
-        end_token(p);
-        p.pending = "";
-        p.fence_start = 0;
-        p.fence_end = 0;
-        p.token = NEWLINE;
-        return;
-      }
-      p.token = NEWLINE;
-      break;
-    case " ":
-      if (p.pending.startsWith("\n")) {
-        p.pending = pending_with_char;
-        p.fence_end += 1;
-        return;
-      }
-      break;
+/** Whether a held line is a closing fence per CommonMark 4.5: at most three
+ *  spaces of indent, then a run of at least `fence_start` backticks, then
+ *  nothing but spaces and tabs. `line` may carry the newline that started it. */
+function is_fence_close(line: string, fence_start: number): boolean {
+  let i = line.startsWith("\n") ? 1 : 0;
+  const indent_start = i;
+  while (line[i] === " ") {
+    i += 1;
   }
-  p.textBuf += p.pending;
-  p.pending = char;
-  p.fence_end = 1;
+  if (i - indent_start > 3) {
+    return false;
+  }
+  const run_start = i;
+  while (line[i] === "`") {
+    i += 1;
+  }
+  if (i - run_start < fence_start) {
+    return false;
+  }
+  while (i < line.length) {
+    if (line[i] !== " " && line[i] !== "\t") {
+      return false;
+    }
+    i += 1;
+  }
+  return true;
+}
+
+export function handleCodeFence(p: Parser, char: string, pending_with_char: string): void {
+  // `p.fence_end` is the current line's verdict: 0 while the line could still be
+  // the closing fence, 1 once a character ruled it out. While it could, the line
+  // is HELD in `pending` — a closing fence swallows the newline before it, so
+  // the newline that started the line is held with it and only reaches `textBuf`
+  // if the line turns out to be content.
+  if (p.fence_end === 0) {
+    switch (char) {
+      case "`":
+      case " ":
+      case "\t":
+        p.pending = pending_with_char;
+        return;
+      case "\n":
+        if (is_fence_close(p.pending, p.fence_start)) {
+          add_text(p);
+          end_token(p);
+          p.pending = "";
+          p.fence_start = 0;
+          p.fence_end = 0;
+          p.token = NEWLINE;
+          return;
+        }
+        break;
+      default:
+        p.fence_end = 1;
+    }
+  }
+  if (char === "\n") {
+    p.textBuf += p.pending;
+    p.pending = char;
+    p.token = NEWLINE;
+    p.fence_end = 0;
+    return;
+  }
+  p.textBuf += pending_with_char;
+  p.pending = "";
 }
 
 export function handleCodeInline(p: Parser, char: string, pending_with_char: string): void {
@@ -567,7 +605,23 @@ export function handleMaybeURL(p: Parser, char: string, pending_with_char: strin
 }
 
 export function handleLinkOrImage(p: Parser, char: string, pending_with_char: string): boolean {
+  // CommonMark 6.3 allows balanced brackets in a label, so the label ends at a
+  // `]` only when no `[` is open. A counter rather than a re-scan: a label that
+  // fails to close would make every later `[` restart the scan, which is
+  // quadratic on bracket-heavy input and a streaming parser sees every prefix.
+  if (p.pending === "[") {
+    p.link_depth += 1;
+    p.textBuf += p.pending;
+    p.pending = char;
+    return true;
+  }
   if (p.pending === "]") {
+    if (p.link_depth > 0) {
+      p.link_depth -= 1;
+      p.textBuf += p.pending;
+      p.pending = char;
+      return true;
+    }
     add_text(p);
     if (char === "(") {
       p.pending = pending_with_char;
@@ -604,6 +658,12 @@ function isCJKPunctuation(ch: string): boolean {
   return (cc >= 0x3000 && cc <= 0x303f) || (cc >= 0xff00 && cc <= 0xff65);
 }
 
+/** The CJK marks that separate clauses rather than end sentences. Sentence
+ *  enders (`。．！？…｡`) are deliberately absent: a URL genuinely containing one
+ *  is indistinguishable from a sentence that ends after a URL, so the only
+ *  honest answer there is to leave the run alone. */
+const CJK_SEPARATOR = new Set(["，", "、", "；", "：", "､"]);
+
 /** Split an accumulated bare URL into the href and the trailing run that is not
  *  part of it.
  *
@@ -623,24 +683,42 @@ function splitRawURLTail(pending: string): { url: string; tail: string } {
   return { url: pending.slice(0, end), tail: pending.slice(end) };
 }
 
+/** Close the open RAW_URL at the last character that can belong to it, then
+ *  re-feed the trimmed tail plus `trailing`.
+ *
+ *  Re-fed rather than dropped, so a stripped emphasis close still closes its
+ *  token and the punctuation still reaches the paragraph. The terminator rides
+ *  along: with the tail ahead of it, leaving it in `pending` would overwrite
+ *  whatever the tail left there. */
+function endRawURL(p: Parser, trailing: string): void {
+  const { url, tail } = splitRawURLTail(p.pending);
+  p.renderer.set_attr(p.renderer.data, HREF, url);
+  // `textBuf` holds only the href half already (see below), so the visible text
+  // is cut at the SAME point as the href — a link whose label shows a `**` its
+  // href no longer carries would be worse than the bug.
+  add_text(p);
+  end_token(p);
+  p.pending = "";
+  for (const c of tail + trailing) {
+    p.write(p, c);
+  }
+}
+
 export function handleRawURL(p: Parser, char: string, pending_with_char: string): void {
   if (char === " " || char === "\n" || char === "\\") {
-    const { url, tail } = splitRawURLTail(p.pending);
-    p.renderer.set_attr(p.renderer.data, HREF, url);
-    // `textBuf` holds only the href half already (see below), so the visible
-    // text is cut at the SAME point as the href — a link whose label shows a
-    // `**` its href no longer carries would be worse than the bug.
-    add_text(p);
-    end_token(p);
-    p.pending = "";
-    // Re-fed rather than dropped, so a stripped emphasis close still closes its
-    // token and the punctuation still reaches the paragraph. The terminator
-    // rides along: with the tail ahead of it, leaving it in `pending` would
-    // overwrite whatever the tail left there.
-    for (const c of tail + char) {
-      p.write(p, c);
-    }
+    endRawURL(p, char);
   } else if (RAW_URL_TAIL.has(char) || isCJKPunctuation(char)) {
+    // A CJK separator immediately followed by a backtick is the one shape that
+    // PROVES the URL ended: RFC 3986 excludes the backtick, so it cannot be in
+    // the URL. Letting it ride is not just a wrong href — it eats the opening
+    // delimiter of the code span that follows and shifts every later backtick
+    // pairing in the paragraph. Punctuation followed by anything else is not
+    // evidence, because real URLs carry it raw (…/wiki/苹果（公司）,
+    // …/wiki/我，机器人, …/wiki/モーニング娘。).
+    if (char === "`" && CJK_SEPARATOR.has(p.pending.charAt(p.pending.length - 1))) {
+      endRawURL(p, char);
+      return;
+    }
     // HELD, not appended. `add_text` hands text to the renderer, which appends
     // and cannot take it back, and `parser_write` flushes at every chunk
     // boundary — so a character that may turn out to be the tail must not
@@ -695,6 +773,11 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
           p.pending = pending_with_char;
           return true;
         case "\n":
+          if (p.at_end) {
+            // Nothing follows the synthetic newline, so this is a literal
+            // backslash rather than a hard line break.
+            p.textBuf += p.pending;
+          }
           p.pending = char;
           return true;
         default: {
@@ -742,6 +825,13 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       break;
     case "`":
       if (p.token === IMAGE) {
+        break;
+      }
+      if (char === "\n") {
+        // A code span cannot open on the last character of a line, so the held
+        // backticks are literal text. Without this they were consumed into a
+        // token that never received any content.
+        p.fence_start = 0;
         break;
       }
       if (char === "`") {
@@ -859,10 +949,14 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         p.token !== LINK &&
         p.token !== EQUATION_BLOCK &&
         p.token !== EQUATION_INLINE &&
-        char !== "]"
+        char !== "]" &&
+        // A label cannot open on the last character of a line; the held `[` is
+        // literal text.
+        char !== "\n"
       ) {
         add_text(p);
         add_token(p, LINK);
+        p.link_depth = 0;
         p.pending = char;
         return true;
       }
@@ -871,6 +965,7 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       if (p.token !== IMAGE && char === "[") {
         add_text(p);
         add_token(p, IMAGE);
+        p.link_depth = 0;
         p.pending = "";
         return true;
       }
