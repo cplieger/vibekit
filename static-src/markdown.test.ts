@@ -1517,6 +1517,24 @@ describe("renderMarkdown GFM tables", () => {
       input: "> | a | b |\n> | - | - |\n> | 1 | 2 |",
       expected: "<blockquote><p>| a | b |<br>| - | - |<br>| 1 | 2 |</p></blockquote>",
     },
+    {
+      // The reference reads the lone `-` as a bullet and the header as a
+      // paragraph. Matching it needs setext headings, which this parser does not
+      // have, so the rule is left off rather than half applied.
+      name: "a bullet-marker delimiter row still opens a table (characterization)",
+      input: "| a | b |\n- | -\n| 1 | 2 |",
+      expected: HEAD + BODY,
+    },
+    {
+      // GFM pads a short row and truncates a long one. Truncating deletes text,
+      // which nothing else in this parser does, so rows keep their own cells.
+      name: "a body row is not normalised to the header's cell count (characterization)",
+      input: "| a | b |\n| - | - |\n| 1 |\n| 1 | 2 | 3 |",
+      expected:
+        HEAD +
+        "<tbody><tr><td> 1 </td></tr>" +
+        "<tr><td> 1 </td><td> 2 </td><td> 3 </td></tr></tbody></table>",
+    },
   ];
 
   it.each(cases)("$name", ({ input, expected }) => {

@@ -33,9 +33,10 @@
 // fence closed by a mid-line backtick run (#34/#40); and a trailing space
 // breaking a table row (#30). Fixed with no upstream counterpart: unbounded
 // recursion once the token stack saturates, `<` `[` `\` and a backtick deleted at
-// the end of a line or of the input, an unclosed inline opener formatting the
-// rest of its block, a table opening without a delimiter row, and a bare URL
-// swallowing the backtick after a full-width comma.
+// the end of a line or of the input, an inline opener deleted at the depth cap,
+// an unclosed inline opener formatting the rest of its block, a table opening
+// without a delimiter row or losing one to a tab, and a bare URL swallowing the
+// backtick after a full-width comma.
 //
 // Deliberately not fixed. `__` cannot refuse a close the way `_` does: it
 // decides on the second character of the run, before the character after it has
@@ -47,10 +48,14 @@
 // soft line break renders as `<br>` by product decision. Carried from upstream:
 // a nested blockquote or table escaping a list item (#41), and a block prefix in
 // front of a table row (#42), which is why a pipe line inside a blockquote is
-// text. Absent from both: setext headings, reference links, angle autolinks,
-// link titles, entity references, ATX closing sequences, `1)` ordered lists,
-// `<p>` inside a loose list item, and the nesting of an emphasis run inside
-// another of the same character (`a *b *c* d* e`, `***x***`).
+// text. Two table rows read looser than GFM: a delimiter row starting with a
+// bullet marker (`| a | b |` over `- | -`) opens a table where the reference
+// opens a list, and a body row keeps its own cell count rather than the header's.
+// `***x***` nests `<strong><em>` where CommonMark nests `<em><strong>`. Absent
+// from both: setext headings, reference links, angle autolinks, link titles,
+// entity references, ATX closing sequences, `1)` ordered lists, `<p>` inside a
+// loose list item, and the nesting of an emphasis run inside another of the same
+// character (`a *b *c* d* e`).
 // ---------------------------------------------------------------------------
 
 import {
