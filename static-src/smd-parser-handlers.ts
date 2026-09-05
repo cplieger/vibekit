@@ -284,16 +284,17 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       // paragraph and then restructuring them into a table would change the
       // height of content the reader has already scrolled past, which
       // `overflow-anchor: none` gives no net for; one late insertion does not.
-      if (p.table_rejected) {
-        break;
-      }
+      //
+      // A rejected candidate needs no state: the promotion below consumes its
+      // first line as paragraph text and the rest is offered to this arm again,
+      // which is how a table starting on the SECOND line of a rejected candidate
+      // still opens, as GFM opens it.
       const nl = p.pending.indexOf("\n");
       if (nl !== -1 && char === "\n") {
         const header = p.pending.slice(0, nl);
         const delim = p.pending.slice(nl + 1);
         const cells = table_row_cells(delim);
         if (!is_delimiter_row(cells, table_row_cells(header).length)) {
-          p.table_rejected = true;
           break;
         }
         end_tokens_to_len(p, p.blockquote_idx);
@@ -321,14 +322,12 @@ export function handleRootContext(p: Parser, char: string, pending_with_char: st
       // No line follows the newline `parser_end` writes, so a candidate still
       // being held at end of input can never become a table.
       if (p.at_end) {
-        p.table_rejected = true;
         break;
       }
       if (nl === -1 || DELIMITER_ROW_CHARS.has(char)) {
         p.pending = pending_with_char;
         return true;
       }
-      p.table_rejected = true;
       break;
     }
   }
