@@ -83,7 +83,7 @@ import {
 } from "./turns.js";
 import { buildAssistantBubble } from "./fundamentals/text-bubble.js";
 import { isTurnOpen, isTurnRevealed, setTurnOpen } from "./fold-state.js";
-import { planResidency, RESIDENT_BLOCKS } from "./block-window.js";
+import { planResidency, turnCost, RESIDENT_BLOCKS, type TurnRange } from "./block-window.js";
 import { wireRowToggle } from "./disclosure-row.js";
 import { initSearchRevealBuilder, searchHitCount } from "./chat-search.js";
 import {
@@ -718,14 +718,22 @@ interface FoldPlan {
 }
 const foldPlan = new Map<string, FoldPlan>();
 
+/** Whether the plan's window reaches every ordinal of `t` — vacuously true for a
+ *  turn that has none, whose body holds no row for a budget to price. A body is
+ *  reconciled whole here, so a turn only PARTLY covered has no rendering yet. */
+function coversWholeTurn(t: Turn, range: TurnRange | undefined): boolean {
+  const span = turnCost(t).blocks;
+  return span === 0 || (range?.from === 0 && range.to === span);
+}
+
 function computeFoldPlan(chatID: string, turns: readonly Turn[]): void {
   foldPlan.clear();
   turnByID.clear();
-  const resident = planResidency(turns, (t) => isTurnPinned(chatID, t));
+  const residency = planResidency(turns, undefined);
   for (const [i, t] of turns.entries()) {
     turnByID.set(t.id, t);
     const hides = turnFoldHides(t);
-    const mounted = resident.has(t.id);
+    const mounted = coversWholeTurn(t, residency.get(t.id)) || isTurnPinned(chatID, t);
     // A hides-nothing turn stays OPEN while it is resident: its face would be
     // identical to its body, so an auto-fold buys nothing and its animation
     // reads as "something happened, nothing changed".
