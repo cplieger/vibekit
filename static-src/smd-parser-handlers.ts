@@ -57,7 +57,7 @@ import {
   is_word_char,
   heading_from_level,
   NEWLINE,
-  MAYBE_BR,
+  MAYBE_ANGLE,
   MAYBE_EQ_BLOCK,
   HREF,
   SRC,
@@ -1234,23 +1234,80 @@ export function handleRawURL(p: Parser, char: string, pending_with_char: string)
   }
 }
 
-export function handleMaybeBR(p: Parser, char: string, pending_with_char: string): boolean {
-  if (pending_with_char.startsWith("<br")) {
-    if (
-      pending_with_char.length === 3 ||
-      char === " " ||
-      (char === "/" && (pending_with_char.length === 4 || p.pending.endsWith(" ")))
-    ) {
-      p.pending = pending_with_char;
-      return true;
-    }
-    if (char === ">") {
+/** The `<br…>` shapes the angle deferral accepts, held or complete. */
+const BR_CANDIDATE = /^<br *\/? *$/u;
+
+/** CommonMark 6.5's absolute URI: a scheme of an ASCII letter then one to
+ *  thirty-one of letter, digit, `+`, `.` or `-`, a `:`, then anything but
+ *  whitespace, `<` or `>`. */
+const URI_AUTOLINK = /^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*$/u;
+
+/** CommonMark 6.5's email autolink. */
+const EMAIL_AUTOLINK =
+  /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/u;
+
+/** The href for an autolink's content, or null when the content is not one of
+ *  CommonMark 6.5's two forms — in which case the run is escaped text, as every
+ *  angle-bracket run was before this carve-out existed. */
+function autolink_url(content: string): string | null {
+  if (URI_AUTOLINK.test(content)) {
+    return content;
+  }
+  return EMAIL_AUTOLINK.test(content) ? "mailto:" + content : null;
+}
+
+/** Whether `char` can extend the held angle-bracket candidate. An autolink's
+ *  content admits no whitespace, `<` or `>`; the one exception is the space in
+ *  `<br />`. */
+function can_continue_angle(pending: string, char: string): boolean {
+  if (char === " ") {
+    return BR_CANDIDATE.test(pending);
+  }
+  return char !== "\t" && char !== "\n" && char !== "<";
+}
+
+/** Hold an angle-bracket run until the `>` decides what it is: a line break, an
+ *  autolink, or — as every such run was before — escaped text.
+ *
+ *  The autolink is a CARVE-OUT in the wholesale escaping of `<`, and the only
+ *  one. It routes through the SAME `set_attr(HREF)` and therefore the same
+ *  `isSafeUrl` gate as an inline link's destination, so it introduces no scheme a
+ *  destination could not already carry, and `Vec<String>`, `<div>` and
+ *  `<!-- -->` still render as the text that was typed. A nested anchor is
+ *  invalid HTML, so an autolink inside a link label stays text too. */
+export function handleMaybeAngle(p: Parser, char: string, pending_with_char: string): boolean {
+  if (char === ">") {
+    if (BR_CANDIDATE.test(p.pending)) {
       add_text(p);
       p.token = p.tokens[p.len] as Token;
       emit_leaf(p, LINE_BREAK);
       p.pending = "";
       return true;
     }
+    // Decoded before the shape test and before the href, for the same reason a
+    // destination is: a gate that only ever sees the encoded spelling passes it.
+    const label = decode_entities(p.pending.slice(1));
+    const url = autolink_url(label);
+    if (url !== null && enclosing_idx(p, LABEL_TOKENS) === -1) {
+      add_text(p);
+      p.token = p.tokens[p.len] as Token;
+      if (!has_token_room(p.len, 1)) {
+        // Past the cap the run is the text that was typed, brackets included.
+        p.textBuf += p.pending + char;
+        p.pending = "";
+        return true;
+      }
+      add_inline_token(p, LINK, "<");
+      p.textBuf += label;
+      add_text(p);
+      p.renderer.set_attr(p.renderer.data, HREF, url);
+      end_token(p);
+      p.pending = "";
+      return true;
+    }
+  } else if (can_continue_angle(p.pending, char)) {
+    p.pending = pending_with_char;
+    return true;
   }
   p.token = p.tokens[p.len] as Token;
   p.textBuf += "<";
@@ -1355,7 +1412,7 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       if (p.token !== IMAGE && p.token !== EQUATION_BLOCK && p.token !== EQUATION_INLINE) {
         add_text(p);
         p.pending = pending_with_char;
-        p.token = MAYBE_BR;
+        p.token = MAYBE_ANGLE;
         return true;
       }
       break;

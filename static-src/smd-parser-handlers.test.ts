@@ -421,6 +421,11 @@ describe("chunk-boundary invariance", () => {
     "5 &lt; 6 &amp; 7 &copy;",
     "a &nosuch; b",
     "&#x1F600; emoji",
+    // An angle-bracket run is held to its closing `>`, so a partially arrived
+    // `<String` must not flicker into a link at any boundary.
+    "<https://example.com>",
+    "Vec<String> in Rust",
+    "line<br />next",
   ];
 
   it.each(inputs)("produces one tree for %j at every chunk size", (input) => {
