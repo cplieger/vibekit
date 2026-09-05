@@ -145,6 +145,13 @@ export interface Parser {
    *  clears it, so a chunk boundary landing between `run_` and `progress` would
    *  otherwise lose the `n`. */
   prev_is_word: boolean;
+  /** Depth of unclosed `[` inside the open LINK/IMAGE label. CommonMark 6.3
+   *  allows balanced brackets in a label, so only a `]` at depth 0 ends it. */
+  link_depth: number;
+  /** Set by `parser_end` before it writes its synthetic newline. That newline is
+   *  not input, so a construct needing a character after it cannot be one: a
+   *  trailing `\` is a literal backslash rather than a hard line break. */
+  at_end: boolean;
   write: (p: Parser, chunk: string) => void;
 }
 
@@ -306,6 +313,7 @@ export function clear_root_pending(p: Parser): void {
   p.indent_len = 0;
   p.pending = "";
   p.prev_is_word = false;
+  p.link_depth = 0;
 }
 
 export function is_digit(cc: number): boolean {

@@ -122,13 +122,28 @@ export function parser<T>(renderer: Renderer<T>): Parser {
     indent_len: 0,
     table_state: 0,
     prev_is_word: false,
+    link_depth: 0,
+    at_end: false,
     write: parser_write,
   };
 }
 
 export function parser_end(p: Parser): void {
-  if (p.pending.length > 0) {
-    parser_write(p, "\n");
+  if (p.pending.length === 0) {
+    return;
+  }
+  p.at_end = true;
+  parser_write(p, "\n");
+  // Whatever a handler is still holding was held for a character that never
+  // arrived, so it is literal text — `<` held as a possible `<br>` is the case
+  // this recovers. Drop out of any MAYBE_* token first, and strip the synthetic
+  // newline above, which is not input.
+  const held = p.pending.endsWith("\n") ? p.pending.slice(0, -1) : p.pending;
+  if (held !== "") {
+    p.token = p.tokens[p.len] as Token;
+    p.pending = "";
+    p.textBuf += held;
+    add_text(p);
   }
 }
 

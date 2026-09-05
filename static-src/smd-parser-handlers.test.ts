@@ -305,3 +305,33 @@ describe("token-stack saturation", () => {
     expect(trace(">".repeat(23) + " x").texts.join("")).toContain("x");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Chunk-boundary invariance for the Phase A decisions. Each of these spans a
+// line or holds a character, so a boundary-dependent implementation shows up
+// here and nowhere else.
+// ---------------------------------------------------------------------------
+
+describe("chunk-boundary invariance", () => {
+  const inputs = [
+    "```\nfoo ```\nbar\n",
+    "```\nfoo\n    ```\nbar\n",
+    "```\nfoo\n`````\nbar\n",
+    "[a [b] c](https://e.com)",
+    "见 https://example.com/2137，`96ed647b`）",
+    "ab<",
+    "ab[\ncd",
+    "ab`\ncd",
+  ];
+
+  it.each(inputs)("produces one tree for %j at every chunk size", (input) => {
+    const whole = trace(input);
+    for (let chunkLen = 1; chunkLen <= 8; chunkLen += 1) {
+      const chunked = trace(input, chunkLen);
+      expect(chunked.tokens).toEqual(whole.tokens);
+      expect(chunked.ends).toEqual(whole.ends);
+      expect(chunked.attrs).toEqual(whole.attrs);
+      expect(chunked.texts.join("")).toBe(whole.texts.join(""));
+    }
+  });
+});
