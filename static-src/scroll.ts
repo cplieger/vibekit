@@ -10,14 +10,12 @@
 // reader Following). It is left by reaching the bottom again, by the resume
 // control, or by End.
 //
-// ONLY A READER GESTURE MAY ENTER READING. Every scroll this module performs
-// records its landing (`scrollSelfTo`) and the listener drops the event that
-// write produces, because Following pins to the ANCHOR rather than to the
-// document bottom: the pin is legitimately far from the bottom whenever tall
-// evidence renders below the live text block, so a controller that re-derived
-// its state from its own pin declared the reader Reading and switched its own
-// auto-scroll off. That is how a large tool card used to stop the transcript
-// following, with the resume control appearing untouched.
+// ONLY A READER GESTURE MAY ENTER READING, and a gesture is recognised by its
+// INPUT — a wheel, a touch drag, a scrolling key, a press on the scrollbar —
+// never by where the position ended up. Following pins to the ANCHOR, not to the
+// document bottom, so a legitimate pin sits far from the end whenever tall
+// evidence renders below the live text block; a controller deriving the state
+// from a position alone reads that as a reader who scrolled up.
 //
 // The value of naming the state is that the user stops fighting an invisible
 // heuristic. Log viewers have taught this for decades, and an agent transcript
@@ -54,13 +52,22 @@ const LOAD_MORE_THRESHOLD_PX = 100;
 /** Distance from the bottom still counted as "at the bottom". Same numeric
  *  value as LOAD_MORE_THRESHOLD_PX by coincidence; semantically independent. */
 const BOTTOM_TOLERANCE_PX = 100;
-/** Debounce before re-evaluating the state after a user scroll. */
-const USER_SCROLL_DEBOUNCE_MS = 150;
+/** How long after their last input the reader still owns the scroller.
+ *
+ *  A QUIET PERIOD rather than a gesture boundary, because `touchend` does not end
+ *  a touch scroll: iOS momentum keeps delivering scroll events after the finger
+ *  leaves, and one of those is what carries the reader out of the bottom tolerance
+ *  band. 300ms covers a fling above ~330px/s and a key's smooth scroll animation
+ *  (measured at ~8 events per press in Chromium). */
+const READER_CONTROL_MS = 300;
 /** How long a bottom pin keeps re-asserting the maximum. Derived from the fold
  *  choreography the pin itself releases: `--fold-slide` runs 0.3s and a close
  *  flips `content-visibility` at 0.42s (css/29-turns.css), so the document is
  *  still growing ~450ms after the click. */
 const PIN_SETTLE_MS = 700;
+/** Keys that scroll a box. `End` is excluded deliberately: the handler in `init`
+ *  turns it into a resume, and a resume's own pin is not a reader scroll. */
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", " "]);
 
 /** The reader's position, as a state rather than an inferred boolean. */
 export type ReadingState = "following" | "reading";
@@ -109,6 +116,14 @@ class ScrollController {
   private viewEl: HTMLElement;
 
   private state: ReadingState = "following";
+
+  /** Until when the reader owns the scroller (`READER_CONTROL_MS`), refreshed by every
+   *  input event a reader scroll produces.
+   *
+   *  Three actors move this scroller and only the reader fires input: this controller
+   *  writes it, and so does the PLATFORM — a `content-visibility` re-measure clamps
+   *  the position down and the document is tall again by the time the event arrives.
+   *  That absence is the whole discrimination. */
   private userScrollingUntil = 0;
 
   private hasMoreMessages = false;
@@ -140,15 +155,9 @@ class ScrollController {
   private pinUntil = 0;
   private pinFrame = 0;
 
-  /** The scrollTop this controller last wrote, or -1. A `scroll` event landing on it is
-   *  the controller's OWN, not a reader gesture: Following pins to the ANCHOR rather than
-   *  the document bottom, so reading a self-inflicted scroll as a gesture parks the reader
-   *  and latches the auto-scroll off for the session. Measured — a 200px anchor 1500px in,
-   *  a 400px viewport, a 900px card below — the pin lands at 1350 of a 2200 maximum and
-   *  fails its own `isAtBottom` by 750px. A POSITION rather than a flag, because a
-   *  programmatic scroll that changes nothing fires no event and a flag would then swallow
-   *  the reader's next real gesture; consumed on the first event either way. */
-  private selfScrollTop = -1;
+  /** A scrollbar drag in progress. Untimed, because the reader can hold the thumb for
+   *  as long as they like and a drag produces no repeat input to refresh a deadline. */
+  private barDragging = false;
 
   /** Last value written to `--scrollbar-w`, so a resize storm costs at most one
    *  style invalidation. */
@@ -219,28 +228,57 @@ class ScrollController {
     // overflows, and that file's END inset is what subtracts it.
     this.publishScrollbarWidth();
 
+    // `touchend` is in the set so the quiet period outlives the finger and covers the
+    // momentum after it. A wheel over a NESTED scroller is deliberately not excluded:
+    // if the child consumes it this box fires no scroll event, and if it chains here
+    // the reader did push this box.
+    const markInput = (): void => {
+      this.userScrollingUntil = Date.now() + READER_CONTROL_MS;
+    };
+    for (const type of ["wheel", "touchmove", "touchend"] as const) {
+      this.scrollEl.addEventListener(type, markInput, { passive: true });
+    }
+    // A scrollbar drag surfaces no wheel and no touch, so the press IS the input,
+    // scoped to the gutter or an ordinary click in the transcript would park the
+    // reader. Release on the DOCUMENT: a drag that leaves the scroller still owns
+    // the bar.
+    this.scrollEl.addEventListener(
+      "pointerdown",
+      (e) => {
+        if (this.inScrollbarGutter(e)) {
+          this.barDragging = true;
+          markInput();
+        }
+      },
+      { passive: true },
+    );
+    for (const type of ["pointerup", "pointercancel"] as const) {
+      document.addEventListener(
+        type,
+        () => {
+          if (this.barDragging) {
+            this.barDragging = false;
+            markInput();
+          }
+        },
+        { passive: true },
+      );
+    }
+
     this.scrollEl.addEventListener(
       "scroll",
       () => {
-        // Consume the marker whichever branch runs: it may only ever excuse the
-        // one event its own write produced.
-        const self = this.selfScrollTop;
-        this.selfScrollTop = -1;
         this.dispatchViewportChange();
-        if (self >= 0 && Math.abs(this.scrollEl.scrollTop - self) <= 1) {
-          // The controller's own landing. It says nothing about where the reader
-          // wants to be, so neither the state nor the debounce may move — and
-          // the debounce moving is what throttled the pin to one per 150ms
-          // while a turn streamed.
-          this.maybeLoadMore();
-          return;
-        }
-        this.userScrollingUntil = Date.now() + USER_SCROLL_DEBOUNCE_MS;
-        // Published as well as consumed: this read is free (a scroll event is
-        // delivered after layout), and it is the gesture's own answer, which the
-        // observer would not deliver until the next frame.
+        // Free to read here (a scroll event is delivered after layout), and true
+        // whoever moved the scroller.
         this.atLiveEdge = this.isAtBottom();
-        this.setState(this.atLiveEdge ? "following" : "reading");
+        if (this.readerInControl()) {
+          this.setState(this.atLiveEdge ? "following" : "reading");
+        } else if (this.atLiveEdge) {
+          // At the bottom is Following whoever put us there; only the DEMOTION needs
+          // the reader's fingerprint.
+          this.setState("following");
+        }
         this.maybeLoadMore();
       },
       { passive: true },
@@ -250,17 +288,25 @@ class ScrollController {
       this.resume();
     });
 
-    // End resumes Following, which is the keyboard half of the resume control.
-    // Ignored while the caret is in a text field, where End means end-of-line.
+    // On the DOCUMENT, not the scroller: the transcript carries no tabindex, so
+    // Chromium scrolls it with `activeElement` still on `body` and the keydown never
+    // passes through it (measured). Both arms stop at a text field, where End means
+    // end-of-line and every other key is typing.
     document.addEventListener("keydown", (e) => {
-      if (e.key !== "End" || e.ctrlKey || e.metaKey || e.altKey) {
-        return;
-      }
       const t = e.target as HTMLElement | null;
       if (t !== null && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) {
         return;
       }
-      if (this.state === "reading") {
+      // Under a modifier too, and BEFORE the resume arm's guard: Ctrl+Home scrolls
+      // this box, so dropping it leaves the reader at a position with no fingerprint
+      // on it, which reads as Following and pins them straight back down.
+      if (SCROLL_KEYS.has(e.key)) {
+        markInput();
+        return;
+      }
+      if (e.key === "End" && !e.ctrlKey && !e.metaKey && !e.altKey && this.state === "reading") {
+        // Ctrl+End is left to the platform: it lands AT the bottom, where the
+        // listener promotes to Following on the position alone.
         this.resume();
       }
     });
@@ -428,6 +474,16 @@ class ScrollController {
     document.documentElement.style.setProperty("--scrollbar-w", next);
   }
 
+  /** Did this press land on the scrollbar rather than on the transcript?
+   *
+   *  The gutter is the same width `publishScrollbarWidth` reserves, so an OVERLAY
+   *  scrollbar measures 0 and this answers false — those platforms have no
+   *  reserved strip to aim at, and a touch drag is how they scroll. */
+  private inScrollbarGutter(e: PointerEvent): boolean {
+    const gutter = this.scrollEl.offsetWidth - this.scrollEl.clientWidth;
+    return gutter > 0 && e.clientX >= this.scrollEl.getBoundingClientRect().right - gutter;
+  }
+
   // --- Public API ---
 
   readingState(): ReadingState {
@@ -454,8 +510,8 @@ class ScrollController {
 
   /** Register `cb` for a scroll that has settled into one frame; returns the
    *  unregister. A second `scroll` listener elsewhere is not an option: this one
-   *  owns the `selfScrollTop` bookkeeping and the reading-state derivation, and a
-   *  second owner would see its own compensations without that context. */
+   *  owns the reading-state derivation and the input marks it reads, and a second
+   *  owner would see this controller's own compensations without that context. */
   onViewportChange(cb: () => void): () => void {
     this.viewportListeners.push(cb);
     return () => {
@@ -532,6 +588,9 @@ class ScrollController {
     // the state Following, and the next frame would overwrite the landing and
     // abort the smooth scroll in flight with it.
     this.cancelPinPass();
+    // A jump is the READER moving, so it holds the window the same way a wheel
+    // does: nothing may re-derive the state or re-pin under a flight in progress.
+    this.userScrollingUntil = Date.now() + READER_CONTROL_MS;
     this.setState(this.landsAtLiveEdge(target, opts.block ?? "start") ? "following" : "reading");
     // Guarded because jsdom does not implement scrollIntoView, and both callers
     // are unit-tested against the DOM they build.
@@ -582,10 +641,9 @@ class ScrollController {
       kind === "content-growth" ? this.scrollEl.scrollHeight : this.scrollEl.clientHeight;
     const delta = kind === "content-growth" ? after - before : before - after;
     if (delta !== 0) {
-      // Through `scrollSelfTo`, or this write's own event arms
-      // `userScrollingUntil` and republishes `atLiveEdge` as a reader gesture —
-      // and under a moving residency window that happens on every window move
-      // rather than once per compensated fold.
+      // Through `scrollSelfTo` so the compensation is clamped to a landing the
+      // scroller can reach: an out-of-range target silently lands short, which is
+      // the displacement this helper exists to prevent.
       this.scrollSelfTo(this.scrollEl.scrollTop + delta, "instant");
     }
   }
@@ -610,28 +668,20 @@ class ScrollController {
 
   /** Land at the live edge and HOLD it there while the layout settles.
    *
-   *  The live edge is `followTarget`, the same number `autoScrollIfAnchored`
-   *  writes. ONE target for both writers, or the window holds a position
-   *  Following does not mean and the hand-off at its deadline has to move the
-   *  reader.
-   *
-   *  INSTANT, not smooth: a smooth scroll fires ~50 scroll events whose first is
-   *  a whole viewport from the target, so the single-shot `selfScrollTop` marker
-   *  is consumed by an event the listener then reads as a reader gesture — which
-   *  parks the reader, un-hides this control and switches the anchor re-pin off.
-   *  Its target is also frozen at flight start, so height the flush itself
-   *  animates in (`--fold-slide`) never moves it. Measured in Chromium: a
-   *  landing 2000px above the bottom, state stuck at Reading.
-   *
-   *  The re-assert is what covers the growth, and it is ~42 frames of measuring
-   *  `followTarget` with no write in the common case. That is not optimised away
-   *  with an it-stopped-moving exit: this runs only on an explicit resume or a
-   *  sent turn, and it already stops the moment the reader scrolls. Every write
-   *  goes through `scrollSelfTo`, so each frame records its own marker and the
-   *  listener stays quiet. */
+   *  The live edge is `followTarget`, the same number `autoScrollIfAnchored` writes:
+   *  ONE target for both writers, or the hand-off at the deadline has to move the
+   *  reader. INSTANT, not smooth — a smooth flight's target is frozen at its start,
+   *  so the height the flush animates in (`--fold-slide`) never reaches it, and this
+   *  pass re-asserts every frame, which would cancel and restart that animation ~42
+   *  times over. Measured in Chromium: a landing 2000px above the bottom. */
   private pinToLiveEdge(): void {
     this.setState("following");
+    // Both halves of the reader's licence, because this is the reader ASKING to
+    // follow and the pass's own frames test that licence: a `barDragging` latch left
+    // standing — a drag whose pointerup never arrived — would kill the pin on its
+    // first frame and leave the resume control looking dead.
     this.userScrollingUntil = 0;
+    this.barDragging = false;
     this.pinUntil = Date.now() + PIN_SETTLE_MS;
     this.pinLiveEdgeNow();
     this.queuePinFrame();
@@ -645,15 +695,11 @@ class ScrollController {
       this.pinFrame = 0;
       // The reader outranks their own earlier click, and the state alone cannot
       // see that: a gesture landing inside BOTTOM_TOLERANCE_PX keeps Following,
-      // so the debounce is the condition that catches it — the same guard
-      // `autoScrollIfAnchored` applies. `pinToLiveEdge` zeroes the debounce on
-      // entry and the listener's self-scroll branch never arms it, so the pass's
-      // own writes cannot trip this.
-      if (
-        this.state !== "following" ||
-        Date.now() < this.userScrollingUntil ||
-        Date.now() >= this.pinUntil
-      ) {
+      // so the debounce is the condition that catches it. `pinToLiveEdge` zeroes
+      // it on entry and only a reader's INPUT re-arms it, so the pass's own
+      // writes cannot trip this. No it-stopped-moving exit: the frames are cheap
+      // measurements and a resume must survive height arriving late.
+      if (this.state !== "following" || this.readerInControl() || Date.now() >= this.pinUntil) {
         this.pinUntil = 0;
         return;
       }
@@ -695,11 +741,12 @@ class ScrollController {
    *  the park/unpark pair; a freshly created view attaches with
    *  `{scrollTop: 0, readingState: "following"}`. */
   attach(handle: ViewAttachHandle): void {
-    // Before anything else: a live pin pass belongs to the OUTGOING view, and
-    // this method is about to write the incoming one's own scrollTop.
+    // Before anything else: a live pin pass belongs to the OUTGOING view, and this
+    // method is about to write the incoming one's own scrollTop.
     this.cancelPinPass();
     this.observeView(handle.el);
     this.userScrollingUntil = 0;
+    this.barDragging = false;
     this.setState(handle.readingState);
     this.scrollSelfTo(handle.scrollTop, "instant");
   }
@@ -719,7 +766,7 @@ class ScrollController {
     this.abandonLoadPass();
     this.cancelPinPass();
     this.userScrollingUntil = 0;
-    this.selfScrollTop = -1;
+    this.barDragging = false;
     this.onLoadMore = null;
     this.hasMoreMessages = false;
     this.disconnectView();
@@ -793,7 +840,7 @@ class ScrollController {
     this.abandonLoadPass();
     this.cancelPinPass();
     this.userScrollingUntil = 0;
-    this.selfScrollTop = -1;
+    this.barDragging = false;
     this.setLoadMore(null, false);
     this.setState("following");
   }
@@ -839,6 +886,13 @@ class ScrollController {
     }
   }
 
+  /** Is the reader working the scroller right now? The one window three rules read:
+   *  it suppresses this controller's own writes, it blocks a promotion driven by a
+   *  size change, and it is the only licence to enter Reading. */
+  private readerInControl(): boolean {
+    return this.barDragging || Date.now() < this.userScrollingUntil;
+  }
+
   private isAtBottom(): boolean {
     return (
       this.scrollEl.scrollTop + this.scrollEl.clientHeight >=
@@ -846,43 +900,19 @@ class ScrollController {
     );
   }
 
-  /**
-   * Re-derive Reading from the geometry after the content's SIZE changed.
+  /** Release Reading when a SIZE change put the reader back at the end — a shrink
+   *  need not move `scrollTop`, so there may be no scroll event to ask on.
    *
-   * Both observers reach this, and without it a Reading reader could only ever
-   * be released by a scroll event — so content DISAPPEARING from below them left
-   * the state (and therefore the resume control) describing a transcript that no
-   * longer exists. Collapsing a delegate's card is the case that reported it: the
-   * body goes to `height: 0`, the reader is now at the end, and no node was
-   * inserted or removed and no gesture was made, so nothing re-asked the
-   * question. A shrink need not even move `scrollTop`, so there may be no scroll
-   * event at all.
+   *  ONE-DIRECTIONAL, and that is the whole safety of it: only the reader may ENTER
+   *  Reading, and a size change is not the reader.
    *
-   * ONE-DIRECTIONAL, and that is the whole safety of it. Promoting Following to
-   * Reading from a size change is what the `selfScrollTop` marker exists to
-   * prevent (see its comment): tall evidence rendering below the anchor puts the
-   * controller's own legitimate pin hundreds of pixels from the bottom, so a
-   * resize-driven demotion would switch the auto-scroll off exactly when a turn
-   * is streaming. Deleting `autoScrollIfAnchored`'s early return would be that
-   * bug; this is the other half of the state machine and nothing else.
-   *
-   * The debounce window still wins: a gesture in flight is the reader's answer,
-   * not the layout's — and it is also what keeps this off a smooth `jumpTo`,
-   * whose intermediate scroll events refresh the window all the way to the
-   * landing.
-   *
-   * THE ANSWER IS PASSED IN, and which caller may measure is the point. A
-   * ResizeObserver and a scroll event are both delivered after layout, so they
-   * read `isAtBottom()` directly and it costs nothing. The MUTATION path may not:
-   * it runs mid-task with the DOM dirty, so a read there forces a synchronous
-   * layout of the whole transcript, up to once per animation frame while a turn
-   * streams. It consumes `atLiveEdge` instead.
-   */
+   *  `atBottom` is passed in because the MUTATION caller may not measure: it runs
+   *  mid-task with the DOM dirty, where the read costs a full synchronous layout. */
   private revalidateReadingState(atBottom: boolean): void {
     if (this.state !== "reading") {
       return;
     }
-    if (Date.now() < this.userScrollingUntil) {
+    if (this.readerInControl()) {
       return;
     }
     if (atBottom) {
@@ -906,16 +936,12 @@ class ScrollController {
     if (this.state === "reading") {
       return;
     }
-    // Exactly one writer moves the scroller per frame, or the second write
-    // overwrites the first's single-shot `selfScrollTop` marker and the orphaned
-    // event is read as a reader gesture. Yielding costs nothing: the pass
-    // re-asserts `followTarget`, the same number this frame would have written,
-    // so the window neither overrides the anchor nor has anything to correct
-    // when it closes.
+    // The pin pass owns the scroller while it runs. Yielding costs nothing: it
+    // re-asserts `followTarget`, the same number this frame would have written.
     if (this.pinFrame !== 0) {
       return;
     }
-    if (Date.now() < this.userScrollingUntil) {
+    if (this.readerInControl()) {
       return;
     }
     if (this.rafPending) {
@@ -928,16 +954,12 @@ class ScrollController {
     });
   }
 
-  /** Move the scroller and record where it will LAND, so the write's own `scroll` event is
-   *  recognised as this controller's. The marker has to be the position the browser
-   *  reaches, and callers pass targets out of range in BOTH directions: `scrollHeight` is
-   *  a viewport past the maximum, and an anchor within one viewport of the top asks for a
-   *  negative scrollTop. An unclamped marker never matches, which parks the reader. */
+  /** Move the scroller to a REACHABLE landing. Callers pass targets out of range in
+   *  both directions: `scrollHeight` is a viewport past the maximum, and an anchor
+   *  within one viewport of the top asks for a negative scrollTop. */
   private scrollSelfTo(top: number, behavior: ScrollBehavior): void {
     const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
-    const landing = Math.max(0, Math.min(top, max));
-    this.selfScrollTop = landing;
-    this.scrollEl.scrollTo({ top: landing, behavior });
+    this.scrollEl.scrollTo({ top: Math.max(0, Math.min(top, max)), behavior });
   }
 
   /** A `getBoundingClientRect` edge as a scrollTop in the scroller's own space.
@@ -988,10 +1010,9 @@ class ScrollController {
       if (document.getElementById("load-more-skeleton") === null) {
         this.endLoadPass();
         const newHeight = this.scrollEl.scrollHeight;
-        // Excused through `scrollSelfTo`: an unexcused event is read as a reader
-        // gesture, which arms `userScrollingUntil` — ending a settle window early,
-        // and at a follow position above the document bottom re-deriving the state
-        // as Reading, which parks the reader and switches the anchor re-pin off.
+        // Through `scrollSelfTo` so the write is clamped to a reachable landing:
+        // this compensation is the reader's position, and losing it throws them
+        // into the page that just arrived.
         this.scrollSelfTo(this.scrollEl.scrollTop + (newHeight - prevHeight), "instant");
       }
     });

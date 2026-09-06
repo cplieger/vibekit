@@ -415,11 +415,14 @@ describe("the view handle", () => {
     await flushed();
     await settledFrames();
 
-    // Chat A: the reader scrolls UP — Reading. `scroll-behavior: smooth` is on
-    // the scroller, so a bare scrollTop assignment would only START an
-    // animation; the instant scrollTo is the synchronous gesture.
+    // Chat A: the reader scrolls UP — Reading. Three parts, all load-bearing. The
+    // wheel is what makes it the READER's (the controller reads intent from input,
+    // not from the position). `scroll-behavior: smooth` is on the scroller, so a bare
+    // scrollTop assignment would only START an animation; the instant scrollTo is the
+    // synchronous gesture. And the event is what the listener acts on.
     const scroller = scroll.getScrollEl();
     expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight + 150);
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
     scroller.scrollTo({ top: 5, behavior: "instant" });
     scroller.dispatchEvent(new Event("scroll"));
     expect(scroll.readingState()).toBe("reading");
@@ -472,6 +475,7 @@ describe("the view handle", () => {
         .map((e) => Number(e.dataset["blockIndex"]))
         .sort((x, y) => x - y);
     expect(indices().length).toBeLessThan(500);
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
     scroller.scrollTo({ top: 120, behavior: "instant" });
     scroller.dispatchEvent(new Event("scroll"));
     expect(scroll.readingState()).toBe("reading");

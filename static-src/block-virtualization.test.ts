@@ -556,11 +556,10 @@ describe("scrolling moves the window", () => {
   /** Put the reader back on the live edge and wait out the bottom pin's own settle
    *  window: a gesture inside it is undone before any pass sees it.
    *
-   *  The re-pin is not ceremony. `content-visibility: auto` shrinks the document as
-   *  rows swap their declared `contain-intrinsic-size` for a real height, with no
-   *  mutation and no controller write; the browser clamps `scrollTop` itself, the
-   *  next build slice grows the page again, and the listener reads that clamp as a
-   *  reader gesture. So a heavy cold load can end up Reading, partway up. */
+   *  The re-pin is not ceremony — a heavy cold load leaves the reader wherever the
+   *  build slices left them. What it is no longer covering is the platform's own
+   *  clamp: a `content-visibility` shrink moves `scrollTop` with no input behind it,
+   *  and the controller now declines to read that as a gesture. */
   async function atLiveEdge(): Promise<void> {
     scrollToBottom();
     await new Promise((resolve) => {
@@ -568,28 +567,17 @@ describe("scrolling moves the window", () => {
     });
   }
 
-  /** Put the reader back on the live edge if the SCROLLER parked them, for the two
-   *  live-turn cases whose premise is a reader who stays there. An ACCOMMODATION for
-   *  a filed defect — a `content-visibility` shrink invalidates `scrollSelfTo`'s
-   *  marker, so the pin's own event reads as a gesture — and it MASKS a regression
-   *  that parks a following reader, so delete it with the defect. */
-  function keepFollowing(): void {
-    if (readingState() !== "following") {
-      scrollToBottom();
-    }
-  }
-
   /** Drag the scrollbar to `top`, and report how far the reader actually moved.
    *
-   *  A drag is a READER gesture, which is what the ladder is for; a teleport by
-   *  navigation goes through the demand pin instead. `behavior: "instant"`, not
-   *  `scrollTop =`: the scroller declares `scroll-behavior: smooth`
-   *  (css/13-messages.css), so a plain assignment starts an ANIMATION and the value
-   *  does not change on the line that sets it. Measured immediately, so the number is
-   *  the reader's own travel and excludes every later compensation. */
+   *  Two events, because the controller reads intent from INPUT: a bare positional
+   *  write is the shape of the platform's own clamp and stays Following on purpose.
+   *  `behavior: "instant"`, not `scrollTop =`: the scroller declares
+   *  `scroll-behavior: smooth` (css/13-messages.css), so an assignment only starts an
+   *  animation. Measured immediately, so the number excludes later compensation. */
   async function dragTo(top: number): Promise<number> {
     const el = scroller();
     const was = el.scrollTop;
+    el.dispatchEvent(new WheelEvent("wheel", { deltaY: 1 }));
     el.scrollTo({ top: Math.max(0, top), behavior: "instant" });
     const moved = el.scrollTop - was;
     for (let f = 0; f < 4; f++) {
@@ -1169,7 +1157,6 @@ describe("scrolling moves the window", () => {
     for (let i = 8; i < total; i++) {
       appendChunk(id, "live-a", `chunk ${String(i)}`, false, i, "");
       await tick();
-      keepFollowing();
       // EACH arrival, not a sample: a reader watching a run sees every block land.
       expect(
         card("live").querySelector(`[data-block-index="${String(i)}"]`),
@@ -1180,6 +1167,11 @@ describe("scrolling moves the window", () => {
     // Bounded means the HEAD left, by query: the turn is past the budget.
     expect(card("live").querySelector('[data-block-index="0"]')).toBeNull();
     expect(mountedIndices("live").at(-1)).toBe(total - 1);
+    // The premise, ASSERTED rather than enforced: every arrival above was in window
+    // because the reader never left the live edge, and nothing here touched the
+    // scroller. This used to be a helper that put them back, which is a fixture
+    // quietly repairing the thing under test.
+    expect(readingState()).toBe("following");
   }, 30_000);
 
   it("re-mounts a live tail from the STORE, still streaming, when the reader comes back", async () => {
@@ -1220,7 +1212,6 @@ describe("scrolling moves the window", () => {
     // while it was absent is lost.
     await dragTo(scroller().scrollHeight);
     await vi.waitFor(() => {
-      keepFollowing();
       expect(card("live").querySelector(live)).not.toBeNull();
     });
     await vi.waitFor(() => {
@@ -1229,6 +1220,13 @@ describe("scrolling moves the window", () => {
     // And it is STILL the live block: the caret is what tells the reader the run is
     // going, and a re-mount that sealed it would say the turn had ended.
     expect(card("live").querySelector(`${live} .message.streaming`)).not.toBeNull();
+    // NOT asserted here, and the reason is a filed defect rather than an oversight:
+    // the drag back lands at the live edge Following, and the re-mount that follows
+    // it then moves the reader ~9600px with no input behind it, because
+    // `preserveReadingPosition("content-growth")` compensates by the whole
+    // document's delta and a window re-index changes height on BOTH sides of the
+    // viewport. Traced in _scratch/input-intent-salvage/window-remeasure-defect.md.
+    // A helper used to scroll the reader back here, which hid it.
   });
 });
 
