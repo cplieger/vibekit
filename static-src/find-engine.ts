@@ -75,13 +75,10 @@ export function formatCount(
   return sessionTotal > total ? `${here} · ${sessionTotal} in chat` : here;
 }
 
-/** True when `elem` (and thus its descendant text) should be searched. Prunes
- *  script/style, already-wrapped hits, structurally-hidden subtrees (hidden
- *  attr, .hidden class, aria-hidden, closed <details>), the live-streaming
- *  bubble (its markdown writer owns those nodes), and — in a real browser —
- *  anything hidden by CSS via Element.checkVisibility(), a boxless element
- *  excepted (`rendersWithoutBox`). The structural checks work where
- *  `checkVisibility` is absent (it is optional and skipped there). */
+/** True when `elem` (and thus its descendant text) should be searched. Prunes script and style,
+ *  already-wrapped hits, structurally-hidden subtrees (hidden attr, .hidden class, aria-hidden,
+ *  closed <details>), the live-streaming bubble (its markdown writer owns those nodes) and, where
+ *  `checkVisibility` exists, anything CSS hides — a boxless element excepted. */
 function isSearchableElement(elem: Element): boolean {
   const tag = elem.tagName;
   if (tag === "SCRIPT" || tag === "STYLE" || tag === "MARK") {

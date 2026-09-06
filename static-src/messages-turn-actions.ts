@@ -338,13 +338,10 @@ export function turnMarkdown(t: Turn): string {
   return parts.join("\n\n");
 }
 
-/** The turn's rendered plain text, for "copy as text": the assistant bubbles
- *  of whichever surface is mounted (body open, face folded), falling back to
- *  the markdown when neither holds one (a folded stub with no prose face).
- *
- *  The BODY answers only while it holds the whole turn MOUNTED — a windowed or
- *  still-building one would copy a hole. The face and the store are the two complete
- *  answers, in that order, exactly as before. */
+/** The turn's rendered plain text, for "copy as text": the assistant bubbles of whichever
+ *  surface is mounted (body open, face folded), falling back to the markdown when neither holds
+ *  one. The BODY answers only while it holds the whole turn MOUNTED — a windowed or
+ *  still-building one would copy a hole. */
 function turnPlainText(card: HTMLElement, t: Turn): string {
   const bubbles = [
     ...card.querySelectorAll(

@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
-// Residency: which BLOCKS a paint may mount, as one contiguous window of
-// turn-block ordinals grown around the reader's own position. Pure and DOM-free;
-// WHICH turns it is grown over is the caller's policy.
+// Residency: which BLOCKS a paint may mount, as one contiguous window of turn-block ordinals
+// grown around the reader's own position. Pure and DOM-free; WHICH turns it is grown over is
+// the caller's policy.
 // ---------------------------------------------------------------------------
 
 import type { Message } from "./types.js";

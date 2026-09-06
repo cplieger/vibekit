@@ -1228,8 +1228,7 @@ describe("server-hit navigation", () => {
 
   it("steps into a tool card mounted in ANOTHER message's row", async () => {
     // Run-card hosting: `runCardFor` routes every later message's step blocks into the
-    // FIRST message's card, so a2's tool card is mounted inside a1's row — where the
-    // row-scoped query this replaced could not see it.
+    // FIRST message's card, so a2's tool card is mounted inside a1's row.
     stageChat([
       { id: "u1", role: "user", content: "q" },
       { id: "a1", role: "assistant", blocks: [{ type: "tool_use", tool_call_id: "t-launch" }] },

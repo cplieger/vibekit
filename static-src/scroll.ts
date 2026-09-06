@@ -140,24 +140,14 @@ class ScrollController {
   private pinUntil = 0;
   private pinFrame = 0;
 
-  /** The scrollTop this controller last wrote, or -1.
-   *
-   *  A `scroll` event landing on it is the controller's OWN and must not be read
-   *  as a reader gesture. Following pins to the ANCHOR, which is deliberately
-   *  not the document bottom, so deriving the state from a self-inflicted scroll
-   *  declared the reader Reading — and Reading is what makes
-   *  `autoScrollIfAnchored` return early, so the auto-scroll latched off for the
-   *  rest of the session. Measured in a real browser: a 200px anchor 1500px into
-   *  the transcript, in a 400px viewport with a 900px tool card below it, pins to
-   *  1350 against a maximum of 2200, which is 850px from the bottom, so the
-   *  controller's own pin failed its own `isAtBottom` check by 750px. The reader
-   *  saw the transcript stop following and the `Latest` control appear without
-   *  having touched anything.
-   *
-   *  Compared as a POSITION rather than tracked as a boolean, because a
-   *  programmatic scroll that changes nothing fires no event at all and a flag
-   *  would then swallow the reader's next real gesture. Consumed on the first
-   *  event either way, so a stale marker cannot outlive one. */
+  /** The scrollTop this controller last wrote, or -1. A `scroll` event landing on it is
+   *  the controller's OWN, not a reader gesture: Following pins to the ANCHOR rather than
+   *  the document bottom, so reading a self-inflicted scroll as a gesture parks the reader
+   *  and latches the auto-scroll off for the session. Measured — a 200px anchor 1500px in,
+   *  a 400px viewport, a 900px card below — the pin lands at 1350 of a 2200 maximum and
+   *  fails its own `isAtBottom` by 750px. A POSITION rather than a flag, because a
+   *  programmatic scroll that changes nothing fires no event and a flag would then swallow
+   *  the reader's next real gesture; consumed on the first event either way. */
   private selfScrollTop = -1;
 
   /** Last value written to `--scrollbar-w`, so a resize storm costs at most one
