@@ -234,7 +234,20 @@ async function park(top: number): Promise<void> {
   await quiet();
   wrap.scrollTop = top;
   await until(
-    () => scroll.readingState() === "reading" && wrap.scrollTop === top,
+    () => {
+      // RE-ASSERT until it sticks. `quiet()` cannot prove no pin frame is queued:
+      // the pin pass re-writes the SAME position every rAF for PIN_SETTLE_MS, so
+      // positional stability reads identically to nothing writing at all. A frame
+      // queued before this write lands after it and takes the scroller back to the
+      // live edge, and with a one-shot write nothing ever puts it back — which is
+      // this wait expiring under load. A reader holding a drag writes every frame
+      // too, so re-asserting is the honest shape rather than a workaround.
+      if (wrap.scrollTop !== top) {
+        wrap.scrollTop = top;
+        return false;
+      }
+      return scroll.readingState() === "reading";
+    },
     `the reader parked at ${String(top)}`,
   );
 }
