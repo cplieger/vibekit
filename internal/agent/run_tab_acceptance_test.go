@@ -1,17 +1,9 @@
 package agent
 
-// The acceptance test for a run's tab, end to end over the REAL stores.
-//
-// Nothing is faked below the runtime: a real tabs.Store on a temp dir, the real
-// membership coordinator, the real run surface, the real lease store, and the
-// assertion reads the PERSISTED tabs.json rather than the in-memory set. That is
-// what makes it the acceptance test rather than a third unit test — the two
-// symptoms were both "the document ends up wrong", and only the document can say
-// whether it does.
-//
-// The frame is what a run launched from a chat by the agent's run_workflow tool
-// produces: KAS creates and invokes the run itself, so `run_start` on the
-// launching chat's bridge is the first thing vibekit sees of it.
+// The acceptance test for a run's tab: nothing is faked below the runtime, and the
+// assertions read the PERSISTED tabs.json rather than the in-memory set, because both
+// symptoms were "the document ends up wrong" and only the document can say whether it
+// does.
 
 import (
 	"context"
@@ -25,8 +17,7 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// persistedTabs is the collection as it sits on disk, which is the server-owned
-// set every device projects.
+// persistedTabs is the collection as it sits on disk, the set every device projects.
 type persistedTabs struct {
 	Tabs    []vibekit.TabSubject `json:"tabs"`
 	Version uint64               `json:"version"`
@@ -45,8 +36,7 @@ func readTabsFile(t *testing.T, dir string) persistedTabs {
 	return doc
 }
 
-// subjectFor finds the persisted tab for one (kind, ref), which is what names a
-// subject.
+// subjectFor finds the persisted tab for one (kind, ref), which is what names a subject.
 func subjectFor(doc persistedTabs, kind vibekit.TabKind, ref string) (vibekit.TabSubject, bool) {
 	for _, tab := range doc.Tabs {
 		if tab.Kind == kind && tab.Ref == ref {
@@ -56,8 +46,7 @@ func subjectFor(doc persistedTabs, kind vibekit.TabKind, ref string) (vibekit.Ta
 	return vibekit.TabSubject{}, false
 }
 
-// newTabbedRuntime builds a runtime over a real tab store in a temp config dir,
-// and returns that dir so a test can read the document back.
+// newTabbedRuntime returns the temp config dir too, so a test can read the document.
 func newTabbedRuntime(t *testing.T) (*Runtime, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -75,9 +64,8 @@ func newTabbedRuntime(t *testing.T) (*Runtime, string) {
 	return h, dir
 }
 
-// openChatTab creates a chat through the coordinator, which is what a New chat
-// gesture does: the record and its tab, as one operation. The returned subject's
-// Ref is the chat id and its ID is what a run tab must nest under.
+// openChatTab creates a chat through the coordinator, as a New chat gesture does. The
+// returned subject's Ref is the chat id and its ID is what a run tab nests under.
 func openChatTab(t *testing.T, h *Runtime, opID string) vibekit.TabSubject {
 	t.Helper()
 	opened, err := h.Membership().CreateChatAndOpen(t.Context(), command.ChatCreate{
@@ -90,22 +78,17 @@ func openChatTab(t *testing.T, h *Runtime, opID string) vibekit.TabSubject {
 	return opened.Subject
 }
 
-// TestAcceptance_ARunLaunchedFromAChatGetsASubTabInThePersistedSet is symptom A
-// and symptom B in one document read: the run's tab EXISTS, and its parent is
-// exactly the launching chat's tab id.
-//
-// Before the fix, both facts depended on a browser: the open was an SSE reaction
-// with two per-page-load guards, and the parent came from a client-side map that a
-// reload emptied. So the set could hold no run tab at all, or hold one at top
-// level for good, and which one differed per device.
+// TestAcceptance_ARunLaunchedFromAChatGetsASubTabInThePersistedSet is both symptoms in
+// one document read: the run's tab EXISTS, and its parent is exactly the launching
+// chat's tab id. Both facts used to depend on client state, so the set could hold no
+// run tab at all or hold one at top level for good, differently per device.
 func TestAcceptance_ARunLaunchedFromAChatGetsASubTabInThePersistedSet(t *testing.T) {
 	h, dir := newTabbedRuntime(t)
 	chatTab := openChatTab(t, h, "op-chat")
 	before := readTabsFile(t, dir)
 
-	// What the agent's run_workflow tool produces: KAS creates and invokes the run
-	// itself, so this frame on the launching chat's bridge is vibekit's first sight
-	// of it.
+	// KAS creates and invokes an agent-launched run itself, so this frame on the
+	// launching chat's bridge is vibekit's first sight of it.
 	h.translateACPEvent(vibekit.ChatID(chatTab.Ref), runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_acceptance", "workflowName": "publish-pr",
 	}))
@@ -126,10 +109,9 @@ func TestAcceptance_ARunLaunchedFromAChatGetsASubTabInThePersistedSet(t *testing
 	}
 }
 
-// TestAcceptance_TheRunTabSurvivesAReloadOfTheCollection is the case that was
-// broken and the reason the open moved server-side at all: the tab is in the
-// SERVER's set, so a fresh boot's `listTabs()` restores it with no client state
-// and no new frame.
+// TestAcceptance_TheRunTabSurvivesAReloadOfTheCollection is why the open moved
+// server-side: a fresh boot's `listTabs()` restores it with no client state and no
+// new frame.
 func TestAcceptance_TheRunTabSurvivesAReloadOfTheCollection(t *testing.T) {
 	h, dir := newTabbedRuntime(t)
 	chatTab := openChatTab(t, h, "op-chat")
@@ -157,9 +139,8 @@ func TestAcceptance_TheRunTabSurvivesAReloadOfTheCollection(t *testing.T) {
 	}
 }
 
-// TestAcceptance_AReadersCloseOfTheRunTabIsFinal is what the durable offer flag
-// buys, and it is asserted across a RESTART because that is the half an in-memory
-// set fails: `run_start` re-fires on every resume.
+// TestAcceptance_AReadersCloseOfTheRunTabIsFinal is asserted across a RESTART because
+// that is the half an in-memory set fails: `run_start` re-fires on every resume.
 func TestAcceptance_AReadersCloseOfTheRunTabIsFinal(t *testing.T) {
 	h, dir := newTabbedRuntime(t)
 	chatTab := openChatTab(t, h, "op-chat")
@@ -190,23 +171,18 @@ func TestAcceptance_AReadersCloseOfTheRunTabIsFinal(t *testing.T) {
 	}
 }
 
-// TestAcceptance_ADeepLinkOpensTheRunAsAChildOfItsChat is symptom B as the user
-// reported it: opening the run in a separate browser tab, which is an `open_tab`
-// carrying a workflow id and NOTHING else — no store, no frames, no chat id
-// anywhere on that client.
-//
-// The command boundary is the subject rather than the coordinator's method, so the
-// payload validation and the parent fill are both in the path.
+// TestAcceptance_ADeepLinkOpensTheRunAsAChildOfItsChat drives an `open_tab` carrying a
+// workflow id and NOTHING else — no store, no frames, no chat id on that client. The
+// subject is the command boundary, so payload validation and the parent fill are both
+// in the path.
 func TestAcceptance_ADeepLinkOpensTheRunAsAChildOfItsChat(t *testing.T) {
 	h, dir := newTabbedRuntime(t)
 	chatTab := openChatTab(t, h, "op-chat")
-	// The run exists and its lease names the launching chat, which is the fact the
-	// deep link cannot carry.
+	// The lease names the launching chat, the fact the deep link cannot carry.
 	h.translateACPEvent(vibekit.ChatID(chatTab.Ref), runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_deeplink", "workflowName": "publish-pr",
 	}))
-	// The reader closes the offered tab, so the deep link is a fresh open rather
-	// than an activation of the one already there.
+	// Close the offered tab, so the deep link is a fresh open rather than an activation.
 	offered, ok := subjectFor(readTabsFile(t, dir), vibekit.TabKindRun, "wf_deeplink")
 	if !ok {
 		t.Fatal("the run was never offered a tab")
@@ -234,10 +210,9 @@ func TestAcceptance_ADeepLinkOpensTheRunAsAChildOfItsChat(t *testing.T) {
 	}
 }
 
-// TestAcceptance_AParentlessRunIsOfferedNoTab is the regression guard on the
-// deliberately parentless case: a manual or scheduled run's lifecycle frames are
-// workspace-global and it hosts its own bridge under the synthetic `run:` id, so
-// nothing here may put it in the set or in a chat's subtree.
+// TestAcceptance_AParentlessRunIsOfferedNoTab guards the deliberately parentless case:
+// a manual or scheduled run's frames are workspace-global and it hosts its own bridge
+// under the synthetic `run:` id, so nothing here may put it in the set or in a subtree.
 func TestAcceptance_AParentlessRunIsOfferedNoTab(t *testing.T) {
 	h, dir := newTabbedRuntime(t)
 	openChatTab(t, h, "op-chat")
@@ -255,7 +230,7 @@ func TestAcceptance_AParentlessRunIsOfferedNoTab(t *testing.T) {
 	if _, ok := subjectFor(doc, vibekit.TabKindRun, "wf_scheduled"); ok {
 		t.Errorf("a parentless run was offered a tab: %+v", doc.Tabs)
 	}
-	// Its lease still exists, which is what the orphan sweep and the deadline read.
+	// Its lease must survive: the orphan sweep and the deadline read it.
 	if l, held := h.runs.lease("wf_scheduled"); !held {
 		t.Error("the parentless run lost its lease, so nothing bounds or sweeps it")
 	} else if l.ChatID != "" {

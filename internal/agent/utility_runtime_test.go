@@ -392,13 +392,10 @@ func TestAnswerUtilityHostRequest(t *testing.T) {
 // TestForward_RoutesPolicyNotifications pins that the utility session hands
 // _kiro/policy/{changed,error} to its hook instead of dropping them.
 //
-// The utility session's notifications bypass the main dispatch table, so this
-// routing is the ONLY path a policy reload has to the client when no chat bridge
-// is alive — and Settings -> Permissions is exactly the surface someone uses with
-// no chat open. Without it, vibekit wrote permissions.yaml, KAS rebuilt from its
-// own file watcher ~0.5s later, and nothing told the panel: the switch it had
-// just been clicked on painted itself back off from the pre-write read and stayed
-// wrong until the page was reloaded.
+// These notifications bypass the main dispatch table, so this is the ONLY path a
+// policy reload has to the client with no chat bridge alive — which is exactly how
+// Settings -> Permissions is used. Without it the panel never hears about the write
+// it just made, and the switch paints itself back off until a reload.
 func TestForward_RoutesPolicyNotifications(t *testing.T) {
 	notifCh := make(chan vibekit.Notification, 2)
 	responseCh := make(chan utilityChunkPayload, 4)
@@ -969,16 +966,13 @@ func TestCullIdleUtilityBridgeOnce_LeavesARecentlyActiveBridgeAlone(t *testing.T
 }
 
 // TestUtilityBridge_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore is the
-// utility session's half of the capability the chat spawn already pins.
+// utility session's half of the capability the chat spawn already pins — a separate
+// spawn with its own StartOpts, and the bridge MCP's OAuth runs on.
 //
-// It is a separate spawn with its own StartOpts, so the two can disagree — and this
-// is the bridge MCP's OAuth actually runs on, which makes it the half that decides
-// whether a credential survives. KAS builds its AcpSecretStorage only for a client
-// that declared the capability and then asks that client to persist every
-// credential: declaring it without a store drops each one silently and re-runs the
-// OAuth dance on the next spawn, while withholding it where a store exists is the
-// same regression reached from the other side. The store is opened best-effort from
-// the config dir, so this is a runtime question rather than a build-time constant.
+// KAS asks any client that declared the capability to persist every credential, so
+// declaring it without a store drops each one silently while withholding it where a
+// store exists is the same regression from the other side. The store opens
+// best-effort, making this a runtime question rather than a constant.
 func TestUtilityBridge_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore(t *testing.T) {
 	startedUtilityBridge := func(t *testing.T, opts ...Option) *fakeBridge {
 		t.Helper()

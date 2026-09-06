@@ -195,19 +195,14 @@ func TestShutdown_WaitsForARunningSweep(t *testing.T) {
 	shutdownHub(t, h)
 }
 
-// TestSweepSessionsLoop_WaitsForTheListenerToBind is the destructive sweep's
-// ownership precondition.
+// TestSweepSessionsLoop_WaitsForTheListenerToBind is the destructive sweep's ownership
+// precondition. The reaper's root comes from $KIRO_HOME and never from the config dir, so a
+// boot pointed at the wrong one reaps the REAL instance's KAS session trees — and the sweep
+// starts inside agent.New, long before App.Run binds anything.
 //
-// The reaper's root comes from $KIRO_HOME and never from the config dir, so a boot
-// pointed at the wrong config dir reaps the REAL instance's KAS session trees — and
-// the sweep starts inside agent.New, which the composition root calls long before
-// App.Run binds anything. Measured from one observed side effect: a 4-second boot
-// that could not bind reaped 10 session trees out of a live volume.
-//
-// The held-gate half needs NO negative time window, which is what makes it
-// deterministic rather than probabilistic: Shutdown closes lifecycle.done and then
-// WAITS on the loop group, and an ungated loop calls refs before it could ever reach
-// a select — so once Shutdown has returned, zero calls can only mean the gate held.
+// The held-gate half needs no negative time window: Shutdown closes lifecycle.done and then
+// WAITS on the loop group, and an ungated loop calls refs before it could reach a select, so
+// zero calls after Shutdown returns can only mean the gate held.
 func TestSweepSessionsLoop_WaitsForTheListenerToBind(t *testing.T) {
 	newGatedHub := func(t *testing.T, gate <-chan struct{}, refs func(context.Context) (map[string]struct{}, bool)) *Runtime {
 		t.Helper()
@@ -292,16 +287,11 @@ func TestShutdown_JoinsTheTickerLoops(t *testing.T) {
 	}
 }
 
-// TestShutdown_WaitsForARunningMCPNotifier is the third loop's twin of
-// TestShutdown_WaitsForARunningSweep, and the one that was missing while the
-// notifier was a bare `go func()`. It holds the debounced notifier inside its
-// callback — which in production is the environment.md generator, a .kiro walk
-// plus an atomic write — and asserts Shutdown notices.
-//
-// Nothing else could catch this: the loop exits on lifecycle.done correctly, so
-// no test hangs, and no linter reports an unjoined goroutine. The only
-// observable symptom was that Shutdown's "background loops" wait was silent
-// about one of the three loops it claims to cover.
+// TestShutdown_WaitsForARunningMCPNotifier holds the debounced notifier inside its callback
+// — in production the environment.md generator, a .kiro walk plus an atomic write — and
+// asserts Shutdown notices. Nothing else catches an unjoined loop here: it exits on
+// lifecycle.done correctly, so no test hangs and no linter reports it, and the only symptom
+// is that Shutdown's wait is silent about one of the three loops it claims to cover.
 func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
 

@@ -1,52 +1,9 @@
-// ---------------------------------------------------------------------------
 // tab-materialize: the ONE place a TabSubject becomes a TabViewSpec.
 //
-// `materializeTab` is TOTAL over the nine tab kinds with no default branch, so
-// a tenth kind added to the Go const block is a compile error here rather than a
-// switch with no case for it on every connected device at once, already
-// persisted. That totality is the whole point: a subject arrives from the server
-// (a snapshot, an event, another device's open) and the strip has to be able to
-// render it without knowing which door opened it.
-//
-// One answer per kind, not one per door. Today the same singleton gets
-// materially different specs depending on who opened it — /git reached from a
-// path link carries no onShow while the sidebar's door passes loadGitRepos, and a
-// boot-restored Files tab carries no onClose while the sidebar's carries
-// resetFileBrowser. A tab's behaviour cannot depend on who opened it, so this
-// file takes the UNION of what the doors do, and each divergence is named at its
-// case.
-//
-// TWO THINGS A SUBJECT CANNOT SAY, both stated rather than papered over:
-//
-//   1. The display NAME. A chat's name lives in the chat store, a run's in the
-//      run store, and a subagent's in the invocation tool call inside its chat's
-//      messages, so all three are derived here — but a chat resumed from History
-//      has no store row yet and a run has no state until its first inspect, and
-//      in both cases today's opener passes a name from a source this module
-//      cannot see (KAS's session-row title, a `run_started` payload's name, a
-//      recipe's name). The factory falls back to a placeholder; a caller holding
-//      a better name overrides the one field.
-//   2. A run's PARENTLESSNESS. `showRun`'s third argument gates the retry
-//      control, and it asks whether the RUN has a parent agent session — not
-//      whether this tab nests under an open one. `TabSubject.Parent` answers the
-//      second question only: a chat-parented run reviewed while its chat's tab is
-//      closed has an empty Parent and is not parentless. So the injected opener
-//      takes `(workflowID, owns)` and the wiring resolves parentlessness from the
-//      run's own record.
-//
-// INJECTION, not import, for chat / editor / run. Those three behaviours live in
-// modules that will themselves call this factory, so a static import of chat.ts
-// or editor-core.ts from here closes a cycle. The composition root registers
-// them, exactly the way tabs.ts already takes setReorderCallback. The five
-// singletons need no injection: their loaders are reached through a LAZY import,
-// which is what the design's "a singleton's lazy import stays in its factory"
-// means and what app.ts already does for docs and history.
-//
-// DOM-free, and it reads only the two leaf stores (store.ts, run-store.ts) for
-// names. Both reads are untracked by construction — `store.get` is a peek and
-// `runLabelOf` documents itself as one — so materializing inside an effect cannot
-// subscribe the caller to every chat and every run.
-// ---------------------------------------------------------------------------
+// Chat / editor / run behaviour is INJECTED and the five singletons load through a
+// lazy import: those modules call back into this factory, so a static import here
+// closes a cycle. DOM-free, and both store reads are untracked, so materializing
+// inside an effect subscribes the caller to nothing.
 
 import type { TabKind, TabSubject } from "./types.js";
 import type { Route } from "./router.js";
@@ -58,42 +15,31 @@ import { findSubagentInvocation } from "./subagent-slice.js";
 
 // --- The injected half ---
 
-/** Chat behaviour, from chat.ts. `dot` is injected rather than derived here
- *  because the pending-ask half of it reads the decision dock, which is not a
- *  leaf module. `close` is the chat's CLIENT-LOCAL teardown, whoever closed the
- *  tab — the server's close operation owns everything beyond this device. */
+/** Chat behaviour, from chat.ts. `dot` is injected because the pending-ask half of
+ *  it reads the decision dock, which is not a leaf module; `close` is the chat's
+ *  CLIENT-LOCAL teardown, whoever closed the tab. */
 export interface ChatTabOpener {
   show: (chatID: string) => void;
   close: (chatID: string) => void;
   dot: (chatID: string) => TabDotStatus | "";
 }
 
-/** Editor behaviour, from editor-openers.ts. The editor's loaded content, dirty
- *  state, mode and line selection stay in `fileStates`, so a subject needs to
- *  carry nothing but the path. */
+/** Editor behaviour, from editor-openers.ts. A subject carries the path and nothing
+ *  else; content, dirty state, mode and line selection live in `fileStates`. */
 export interface EditorTabOpener {
   show: (path: string) => void;
   close: (path: string) => void;
 }
 
-/** Run behaviour, from run-view.ts.
- *
- *  `show` takes the workflow id and nothing else. It used to take `owns`, because an
- *  owned tab carried the status's live verbs and a review carried none — both halves
- *  of that are gone: a run tab is always a VIEW now, and the control row is offered
- *  wherever the run is stoppable rather than by which door opened the tab. There is
- *  no `cancel` either; nothing closing a tab cancels a run. */
+/** Run behaviour, from run-view.ts. No `owns` and no `cancel`: a run tab is always a
+ *  VIEW, and nothing that closes a tab cancels a run. */
 export interface RunTabOpener {
   show: (workflowID: string) => void;
 }
 
-/** Subagent behaviour, from subagent-view.ts.
- *
- *  There is no `close` half, and its absence is the design rather than a gap. A
- *  subagent tab is a READING SURFACE over blocks that live in the chat store: it
- *  owns nothing, starts nothing and can stop nothing, so closing it has nothing
- *  to tear down. Every such tab is opened with `owns: false` for the same reason,
- *  which is what makes the missing hook unreachable rather than merely unused. */
+/** Subagent behaviour, from subagent-view.ts. No `close` half: the tab is a reading
+ *  surface over blocks the chat store owns, so it starts nothing and can stop
+ *  nothing, and every door opens it with `owns: false`. */
 export interface SubagentTabOpener {
   show: (chatID: string, subtaskID: string) => void;
 }
@@ -108,20 +54,15 @@ export interface TabOpeners {
 let openers: TabOpeners | null = null;
 
 /** Register the behaviours the factory cannot author. Called once, from the
- *  composition root. Last registration wins, like setReorderCallback. */
+ *  composition root; last registration wins. */
 export function registerTabOpeners(next: TabOpeners): void {
   openers = next;
 }
 
-/** The registered openers, or a loud failure.
- *
- *  It throws for EVERY kind, including the five singletons that need no
- *  injection, and that is deliberate: an unwired composition root then fails on
- *  the first tab it materializes rather than working through boot and blowing up
- *  when someone opens a chat. The alternative — checking only where an opener is
- *  read — is the half-working factory this check exists to prevent, and a spec
- *  whose `onShow` silently does nothing is exactly the failure that has no
- *  symptom until a reader clicks a tab and nothing loads. */
+/** The registered openers, or a throw. Throws for EVERY kind, the five
+ *  injection-free singletons included, so an unwired composition root fails at the
+ *  first tab it materializes instead of producing a spec whose `onShow` silently
+ *  does nothing. */
 function requireOpeners(kind: TabKind): TabOpeners {
   if (openers === null) {
     throw new Error(
@@ -139,17 +80,13 @@ export function _resetTabOpenersForTest(): void {
 
 // --- Fallback labels ---
 
-/** The name a chat with no store row reads as.
- *
- *  Byte-identical to chat.ts's own NEW_CHAT_NAME, and duplicated rather than
- *  shared because chat.ts is on the INJECTED side of this seam: importing it for
- *  one string would close the cycle this module exists to avoid. The following
- *  stage should move the constant to a leaf both sides can read. */
+/** The name a chat with no store row reads as. Byte-identical to chat.ts's
+ *  NEW_CHAT_NAME and duplicated rather than shared, because chat.ts is on the
+ *  INJECTED side of this seam and importing it would close the cycle. */
 const FALLBACK_CHAT_NAME = "New conversation";
 
 /** The name a run this client has fetched nothing for reads as. Matches
- *  handlers/run.ts's `runLabel` fallback, which is what a toast for the same
- *  nameless run already says. */
+ *  handlers/run.ts's `runLabel` fallback. */
 const FALLBACK_RUN_NAME = "Workflow run";
 
 /** A chat's label, from the chat store.

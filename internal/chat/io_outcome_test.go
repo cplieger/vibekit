@@ -13,14 +13,10 @@ import (
 )
 
 // outcomeChatCases are the transcript shapes ChatHeader.LastTurnOutcome has to
-// read correctly, shared by the two tests below so the cross-path agreement and
-// the per-case expectation cannot drift apart.
-//
-// Every case is a real persisted shape rather than a synthetic one: the ordinary
-// successful turn stamps its outcome on the last assistant message, a turn that
-// emitted nothing stamps an EventTurnOutcome marker instead, and the agent
-// persists rows DURING a turn (a plan row, a compaction event) which land after
-// the carrier and carry no outcome of their own.
+// read, shared by the two tests below so the cross-path agreement and the
+// per-case expectation cannot drift apart. Each is a real persisted shape,
+// including rows the agent writes DURING a turn, which land after the carrier and
+// carry no outcome of their own.
 var outcomeChatCases = []struct {
 	name string
 	msgs []vibekit.Message
@@ -87,16 +83,11 @@ var outcomeChatCases = []struct {
 	},
 }
 
-// TestReadChatHeader_LastTurnOutcomeAgreesWithChatHeader is the load-bearing
-// test of this pair: the two header PRODUCERS must answer identically.
-//
-// Store.List reads headers through readChatHeader, which token-walks the raw
-// JSON on disk and never materialises a Message; every broadcast and the
-// single-chat GET go through Chat.Header(), which walks the in-memory slice.
-// Two derivations of one fact, over two entirely different representations, and
-// nothing else in the tree would catch a drift between them — a client would
-// simply see one dot state from the list endpoint and another from a
-// chat_updated frame.
+// TestReadChatHeader_LastTurnOutcomeAgreesWithChatHeader holds the two header
+// PRODUCERS to identical answers: the list path token-walks the raw JSON without
+// materialising a Message, while broadcasts and the single-chat GET walk the
+// in-memory slice. Nothing else would catch a drift, which reaches a client as one
+// dot state from the list and another from a chat_updated frame.
 func TestReadChatHeader_LastTurnOutcomeAgreesWithChatHeader(t *testing.T) {
 	dir := t.TempDir()
 
@@ -135,12 +126,10 @@ func TestReadChatHeader_LastTurnOutcomeAgreesWithChatHeader(t *testing.T) {
 	}
 }
 
-// TestReadChatHeader_MalformedMessagesStillYieldsAUsableHeader pins the
-// fail-soft half: a messages array the walk cannot finish reading leaves the
-// outcome empty rather than failing the whole read, so a damaged chat file
-// still lists with its name and timestamps intact. Invariant 6 — a broken state
-// must be able to heal itself, and a chat that cannot be listed cannot be
-// deleted from the UI either.
+// TestReadChatHeader_MalformedMessagesStillYieldsAUsableHeader pins the fail-soft
+// half: an unreadable messages array leaves the outcome empty rather than failing
+// the read, so a damaged chat still lists with its name and timestamps —
+// invariant 6, and a chat that cannot be listed cannot be deleted from the UI.
 func TestReadChatHeader_MalformedMessagesStillYieldsAUsableHeader(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "c1.json")
@@ -168,19 +157,13 @@ func TestReadChatHeader_MalformedMessagesStillYieldsAUsableHeader(t *testing.T) 
 	}
 }
 
-// TestHandleList_CarriesLastTurnOutcomeOnTheWire drives the REAL GET /api/chats
-// handler and asserts on the HTTP response BYTES, which is the only place the
-// two tests above cannot reach.
+// TestHandleList_CarriesLastTurnOutcomeOnTheWire drives the REAL handler and
+// asserts on the response BYTES: the tests above prove the derivation, and a field
+// dropped at the json tags or the encoder is indistinguishable from one never
+// derived, from the client's seat.
 //
-// They prove the derivation; this proves the WIRING — that the field survives
-// readChatHeader, the ChatHeader struct's json tags and the response encoder,
-// and so actually reaches the browser that has to paint a dot from it. A field
-// derived correctly and dropped at the encoder is indistinguishable from one
-// that was never derived, from the client's seat.
-//
-// Asserting on the raw body rather than on a re-decode is deliberate: decoding
-// into the same struct that produced it would pass for a field the encoder
-// omitted, because the zero value round-trips.
+// Raw body rather than a re-decode, because decoding into the same struct that
+// produced it passes for an omitted field — the zero value round-trips.
 func TestHandleList_CarriesLastTurnOutcomeOnTheWire(t *testing.T) {
 	s, _ := newTestStore(t)
 
@@ -251,13 +234,10 @@ func TestHandleList_CarriesLastTurnOutcomeOnTheWire(t *testing.T) {
 	}
 }
 
-// TestScanMessagesArray_StopsAtTheFirstSyntaxError pins the walk's own
-// fail-soft contract directly, where the test above can only reach it through
-// json.Unmarshal's stricter whole-document check.
-//
-// The elements BEFORE the damage are counted and their outcome is kept: they
-// were read successfully, and discarding them would turn a partially damaged
-// transcript into an empty one.
+// TestScanMessagesArray_StopsAtTheFirstSyntaxError pins the walk's fail-soft
+// contract directly, where the test above reaches it only through
+// json.Unmarshal's stricter whole-document check: elements BEFORE the damage are
+// counted and keep their outcome, or a partial transcript becomes an empty one.
 func TestScanMessagesArray_StopsAtTheFirstSyntaxError(t *testing.T) {
 	raw := json.RawMessage(`[{"turn_outcome":"completed"},{"id":"m2"`)
 

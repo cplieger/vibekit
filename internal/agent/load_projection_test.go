@@ -261,15 +261,11 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 	})
 }
 
-// TestReplayProjection_ADrainedReplaySettlesWhenTheLoadRETURNS is defect (a): the
-// case the old barrier had no trigger for at all.
-//
-// The settle used to run only from Forward — per frame consumed, and once at
-// bridge exit — while the load's return flipped the other half of the condition
-// and attempted nothing. So a replay whose frames all drained BEFORE the RPC
-// returned sat fully built with nothing left to notice: no frame was coming, and a
-// caller cannot wait for the bridge to die. AwaitReplayAdopted spent its whole 45s
-// budget and refused the rewind of a transcript that was sitting in the map.
+// TestReplayProjection_ADrainedReplaySettlesWhenTheLoadReturns: a replay whose frames all
+// drained BEFORE the RPC returned has nothing left to notice it — no frame is coming, and a
+// caller cannot wait for the bridge to die. With the settle running only from Forward (per
+// frame consumed, and once at bridge exit) such a transcript sat fully built in the map while
+// AwaitReplayAdopted spent its whole 45s budget and refused the rewind.
 func TestReplayProjection_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
 	const chatID vibekit.ChatID = "c1"
 	rp, rec := replayWithRecorder()
@@ -655,22 +651,12 @@ func loadedChat(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) {
 	}
 }
 
-// awaitReplayedTurn waits for the settled projection to reach the chat record.
-// A deadline-bounded poll rather than a sleep: the settle happens on the Forward
-// goroutine, so the test cannot know the instant it lands, and this fails closed
-// with a diagnostic instead of passing whenever the machine is fast enough.
-//
-// awaitPatience bounds the polls below. It is a test-owned patience bound, not a
-// production budget: nothing here asserts how PROMPTLY the transcript is adopted,
-// only that it is.
-//
-// Do not widen it again to fix a failure. It has been widened twice (5s, then
-// 20s) against a diagnosis of a starved runner, and that diagnosis was wrong both
-// times: the settle deletes its projection, so a settle that fires EARLY drops
-// every later frame and the transcript can never arrive. The expiry was the
-// symptom of a lost settle, which no bound can outwait. The message below dumps
-// what the record actually holds, because "a one-message transcript" is the tell
-// for that bug and "nothing at all" is the tell for a genuinely stuck Forward.
+// awaitPatience is a test-owned patience bound, not a production budget: nothing here
+// asserts how PROMPTLY the transcript is adopted, only that it is. Do NOT widen it to fix a
+// failure — the settle deletes its projection, so a settle that fires EARLY drops every later
+// frame and the transcript can never arrive, which no bound can outwait. The message below
+// dumps what the record holds: a one-message transcript is the tell for that bug, nothing at
+// all is the tell for a genuinely stuck Forward.
 const awaitPatience = 20 * time.Second
 
 func awaitReplayedTurn(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, want string) {
@@ -702,15 +688,11 @@ func awaitReplayedTurn(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, w
 	}
 }
 
-// TestSessionLoad_AdoptsTheReplayedTranscript is the load path end to end: KAS
-// replays the stored conversation as tagged session/update frames, and the chat's
-// transcript is what they build.
-//
-// Both halves of the settle condition are wired here rather than asserted
-// separately, because either one missing produces the same user-visible failure —
-// a resumed chat whose history is gone. The projection has to be OPEN before
-// Forward attaches, or the frames arrive with nowhere to land and are dropped; and
-// the load's return has to be recorded, or no settle path will ever complete.
+// TestSessionLoad_AdoptsTheReplayedTranscript is the load path end to end. Both halves of
+// the settle condition are wired here rather than asserted separately, because either one
+// missing produces the same user-visible failure — a resumed chat whose history is gone. The
+// projection must be OPEN before Forward attaches, or the frames arrive with nowhere to land,
+// and the load's return must be recorded, or no settle path completes.
 func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 	// A fresh bridge per spawn, because the utility bridge the rehydrate sweep
 	// starts would otherwise share this one's notification channel and drain the
@@ -759,15 +741,11 @@ func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 	awaitReplayedTurn(t, cs, chatID, "reply")
 }
 
-// TestForward_ReportsEachFramesOwnPosition pins the number Forward hands the
-// settle, which is the frame's OWN Seq off the wire.
-//
-// Every other chat-route case can settle by another door — the reader's post-load
-// attempt when the drain already caught up, or the seal when the bridge exits — so
-// none of them notices Forward reporting a constant. This one closes both: the load
-// position is recorded BEFORE any frame is folded, so no post-load attempt can
-// complete it, and the bridge is never stopped, so no seal is coming. The only
-// thing left that can close the barrier is the position travelling per frame.
+// TestForward_ReportsEachFramesOwnPosition pins the number Forward hands the settle, the
+// frame's OWN Seq off the wire. Every other chat-route case can settle by another door, so
+// none notices Forward reporting a constant; this one closes both — the load position is
+// recorded BEFORE any frame is folded so no post-load attempt can complete it, and the
+// bridge is never stopped so no seal is coming.
 func TestForward_ReportsEachFramesOwnPosition(t *testing.T) {
 	h, cs, br := newTestHub()
 	const chatID vibekit.ChatID = "c1"
@@ -803,15 +781,11 @@ func TestForward_ReportsEachFramesOwnPosition(t *testing.T) {
 	}
 }
 
-// TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame is the backstop neither
-// the frames nor the load's own settle attempt can provide.
-//
-// A position is only reachable while frames are still coming. A bridge that dies
-// with the consumer short of the load's position leaves a projection whose
-// condition can never hold again: no frame will advance it, and the reader's own
-// attempt already ran and found it short. Without the seal at Forward's exit that
-// transcript is never adopted and the projection is never released, so the chat
-// resumes with an empty history and the rebuild leaks for the life of the process.
+// TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame is the backstop neither the
+// frames nor the load's own settle attempt can provide: a bridge that dies with the consumer
+// short of the load's position leaves a projection whose condition can never hold again — no
+// frame will advance it, and the reader's own attempt already ran and found it short. Without
+// the seal at Forward's exit the chat resumes empty and the rebuild leaks for the process.
 func TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame(t *testing.T) {
 	h, cs, br := newTestHub()
 	const chatID vibekit.ChatID = "c1"
@@ -835,15 +809,12 @@ func TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame(t *testing.T) {
 	}
 }
 
-// TestReplayProjection_ConcurrentLoadsAreIndependent pins that the rebuilds are
-// keyed per chat and stay that way.
-//
-// Two chats loading at once is ordinary, not exotic: a restart with several tabs
-// open respawns a bridge per chat as each is touched, and each spawn opens its own
-// projection. If opening the second one disturbed the map holding the first, the
-// earlier chat's replay would be discarded mid-flight — it would resume with an
-// empty history and no error anywhere, because a dropped projection is
-// indistinguishable from a chat that never loaded.
+// TestReplayProjection_ConcurrentLoadsAreIndependent pins that the rebuilds are keyed per
+// chat. Two chats loading at once is ordinary: a restart with several tabs open respawns a
+// bridge per chat as each is touched. If opening the second disturbed the map holding the
+// first, the earlier chat's replay would be discarded mid-flight and it would resume with an
+// empty history and no error, because a dropped projection looks like a chat that never
+// loaded.
 func TestReplayProjection_ConcurrentLoadsAreIndependent(t *testing.T) {
 	rp, rec := replayWithRecorder()
 	const first vibekit.ChatID = "c1"
@@ -903,16 +874,12 @@ func TestReplayProjection_SettleReportsFramesAgainstMessages(t *testing.T) {
 	}
 }
 
-// TestSwapProjectedTranscript_WritesOnlyWhatTheRecordDoesNotAlreadyHold covers
-// both directions of the no-op guard, which is why the two cases live in one test:
-// each is the other's failure mode.
-//
-// A resume that rebuilds exactly the transcript already stored must not rewrite
-// it — every write broadcasts a chat_updated, and a reconnect storm after a
-// restart would push one per chat for no change. But the watermark is a second,
-// independent piece of state: a compaction that happened on the KAS side moves it
-// without changing the message count, and dropping that update leaves vibekit
-// compacting from a stale point forever.
+// TestSwapProjectedTranscript_WritesOnlyWhatTheRecordDoesNotAlreadyHold covers both
+// directions of the no-op guard, each of which is the other's failure mode. A resume that
+// rebuilds exactly the stored transcript must not rewrite it — every write broadcasts a
+// chat_updated, and a reconnect storm after a restart would push one per chat for no change.
+// But the watermark is independent state: a KAS-side compaction moves it without changing the
+// message count, and dropping that update leaves vibekit compacting from a stale point.
 func TestSwapProjectedTranscript_WritesOnlyWhatTheRecordDoesNotAlreadyHold(t *testing.T) {
 	seed := func(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, watermark string) []vibekit.Message {
 		t.Helper()

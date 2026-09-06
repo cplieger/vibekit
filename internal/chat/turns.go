@@ -7,27 +7,21 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// turnFirstLineMax caps the hover label. Long enough to recognise a request,
-// short enough that the response stays small on a 400-turn session.
+// turnFirstLineMax caps the hover label: long enough to recognise a request, short
+// enough that the response stays small on a 400-turn session.
 const turnFirstLineMax = 120
 
-// projectTurnSummaries groups a chat's flat message list into the
-// session-wide turn index the timeline rail draws from.
-//
-// A user message opens a turn, and so does the first message of a turn
-// with no user trigger — see opensHeaderlessTurn. Without it an
-// agent-initiated turn's reply landed in the PREVIOUS turn's body.
-//
-// `thinking` marks the LAST turn as running, and is the caller's
-// knowledge — a persisted chat file cannot tell whether a bridge is
-// mid-turn right now.
+// projectTurnSummaries groups a chat's flat message list into the session-wide turn
+// index the timeline rail draws from. A user message opens a turn, and so does the
+// first message of a turn with no user trigger (opensHeaderlessTurn), or an
+// agent-initiated reply lands in the PREVIOUS turn's body. `thinking` marks the LAST
+// turn as running and is the caller's: a chat file cannot see a live bridge.
 func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnSummary {
 	if len(msgs) == 0 {
 		return []vibekit.TurnSummary{}
 	}
-	// bodies[i] holds turn i's non-trigger messages, which is what the outcome
-	// derivation reads. Kept beside the summaries rather than on them because
-	// the wire shape must not carry a turn's content.
+	// bodies[i] holds turn i's non-trigger messages, kept beside the summaries
+	// rather than on them because the wire shape must not carry a turn's content.
 	out := make([]vibekit.TurnSummary, 0, 8)
 	bodies := make([][]vibekit.Message, 0, 8)
 	closed := false
@@ -61,25 +55,20 @@ func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnS
 	return out
 }
 
-// closesTurn reports whether an outcome value ENDS a segment. A settled
-// outcome does; "unknown" does not, since it marks a fragment whose end
-// never arrived (a bracket that never closed). Treating the fragment as a
-// terminator split that turn in two. A fragment JOINS the segment it
-// interrupted; deriveTurnOutcome lets the reply's settled outcome
-// supersede its "unknown".
+// closesTurn reports whether an outcome value ENDS a segment. A settled outcome
+// does; "unknown" does not, since it marks a fragment whose end never arrived, and
+// treating that as a terminator split the turn in two. A fragment JOINS the segment
+// it interrupted, and deriveTurnOutcome lets the reply's outcome supersede it.
 func closesTurn(outcome vibekit.TurnOutcome) bool {
 	return outcome != "" && outcome != vibekit.TurnOutcomeUnknown
 }
 
-// opensHeaderlessTurn reports whether m is the first persisted message of a
-// turn with no user trigger. Derivable from a flat list because a turn's
-// outcome-bearing message closes it — closesTurn owns the fragment
-// carve-out.
+// opensHeaderlessTurn reports whether m is the first persisted message of a turn
+// with no user trigger. Derivable from a flat list because a turn's outcome-bearing
+// message closes it; closesTurn owns the fragment carve-out.
 //
-// Both clauses are load-bearing: without the close test a prompted empty
-// turn's marker is split off its own prompt, and without the
-// assistant-or-marker test an interrupted divider is split off the turn
-// it describes.
+// Both clauses are load-bearing: without the close test a prompted empty turn's
+// marker splits off its own prompt, without the other an interrupted divider does.
 func opensHeaderlessTurn(m *vibekit.Message, prevClosed bool) bool {
 	if !prevClosed {
 		return false
@@ -87,28 +76,14 @@ func opensHeaderlessTurn(m *vibekit.Message, prevClosed bool) bool {
 	return m.Role == vibekit.RoleAssistant || m.TurnOutcome != ""
 }
 
-// deriveTurnOutcome reads a turn's outcome off its persisted body.
+// deriveTurnOutcome reads a turn's outcome off its persisted body: the DURABLE
+// outcome first, with the marker derivation below as the fallback for turns
+// persisted before that field existed.
 //
-// The DURABLE outcome first; the marker derivation below is the fallback
-// for turns persisted before that field existed.
-//
-// A terminal answer beats isLive deliberately: `thinking` can still be
-// true for the last turn when the next turn's stream has opened, so
-// trusting it would repaint a finished failure as in-progress.
-//
-// The TAIL clause is the honest answer for a turn NOTHING closed, and it is
-// the reader half of one change: every close now persists its carrier
-// (persistOutcomeMarker), so an absent carrier is a fact rather than a gap.
-// Three sites reach it — a prompt refused after its user row landed, a cancel
-// during the spawn window, and a process death mid-turn — and all three
-// persist the user row and nothing else. `completed` reported every one of
-// them as a turn that answered.
-//
-// The predicate is "no ASSISTANT message", not "empty body", and that is what
-// keeps a legacy transcript honest: this chat file only ever gained an
-// assistant message at finalize, so a turn persisted before the outcome field
-// existed still carries one and still reads `completed`. It also catches the
-// event-only turn a mid-turn compaction leaves behind.
+// A terminal answer beats isLive deliberately — `thinking` can still be true once
+// the next turn's stream has opened. The TAIL clause is the honest answer for a turn
+// NOTHING closed, and its predicate is "no ASSISTANT message" rather than "empty
+// body", which is what keeps a legacy transcript reading `completed`.
 func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome {
 	interrupted := false
 	sawUnknown := false
@@ -119,9 +94,8 @@ func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome 
 			sawAssistant = true
 		}
 		if m.TurnOutcome == vibekit.TurnOutcomeUnknown {
-			// A fragment's non-verdict (see closesTurn); remembered as the
-			// fallback since the segment usually continues into the real
-			// reply, whose settled outcome is the turn's.
+			// A fragment's non-verdict (see closesTurn), remembered as the fallback
+			// since the segment usually continues into the reply that settles it.
 			sawUnknown = true
 			continue
 		}
@@ -151,8 +125,8 @@ func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome 
 }
 
 // firstLine collapses every whitespace run to one space and truncates on a rune
-// boundary, so a pasted block yields one readable line and a multi-byte
-// character is never cut in half.
+// boundary, so a pasted block yields one readable line and a multi-byte character
+// is never cut in half.
 func firstLine(s string, maxRunes int) string {
 	var b strings.Builder
 	b.Grow(min(len(s), maxRunes+4))

@@ -98,15 +98,10 @@ func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string
 // recoverEmptyTurn re-prompts a turn that ended having produced nothing:
 // recreate the session, then send the same prompt once more.
 //
-// result is the finalized turn's captured outcome, read while the caller
-// still holds the turn's completion handle — the decision comes off the
-// finalized turn, never the live buffer, which can still be withholding
-// the turn's only text when this runs.
-//
-// The caller released both admission holds before this runs, so the retry
-// competes like anything else and re-reserves with a try: a user prompt
-// that won the slot abandons the retry, the right direction since the
-// empty turn is already recorded.
+// result is the FINALIZED turn's captured outcome, never the live buffer,
+// which can still be withholding the turn's only text when this runs.
+// Both admission holds are already released, so the retry re-reserves
+// with a try and a user prompt that won the slot abandons it.
 func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, outcome TurnOutcomeAccess, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, result vibekit.TurnResult, p *vibekit.PromptCommand, params map[string]any) {
 	// A verb KAS answers itself produces no content by design, so an
 	// empty turn is the correct outcome and recovery is pure damage.
@@ -167,20 +162,12 @@ func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, chats ChatS
 		slog.Error("empty turn: respawn failed",
 			"chat_id", chatID, keyError, err2)
 		reason := "Session refresh failed: " + rpcerr.Text(err2)
-		// Correct the transcript before reporting. refreshRetrySession has already
-		// written "Session refreshed, retrying" onto this turn, so without this the
-		// record claims a retry is in flight that will never happen — and the toast
-		// carrying the correction is gone in twelve seconds. It is APPENDED below
-		// that row rather than replacing it, so the reader sees two consecutive
-		// dividers — acceptable for a log, and the turn's own notice cannot carry
-		// it because recoverEmptyTurn only runs on end_turn, leaving the turn
-		// settled `completed` and turnFailureText silent.
-		//
-		// No turn to close: the empty turn was finalized before recovery began and
-		// the retry's epoch is never opened, so a divider is the only durable
-		// surface this failure has. That is also why the error frame below is NOT
-		// turn-scoped for suppression purposes — the reason is on the transcript but
-		// no turn carries it as an outcome, so the toast stays the primary report.
+		// Correct the transcript before reporting: refreshRetrySession already wrote
+		// "Session refreshed, retrying" onto this turn, so without this the record
+		// claims a retry that will never happen. Appended rather than replacing it,
+		// so the reader sees two consecutive dividers. The empty turn was finalized
+		// before recovery began and the retry's epoch never opens, so no turn carries
+		// this failure and the divider is its only durable surface.
 		evt := vibekit.Message{
 			ID: ids.NewMessageID(), Role: vibekit.RoleEvent, Ts: time.Now().UnixMilli(),
 			EventKind: vibekit.EventInterrupted, Content: reason,
@@ -423,12 +410,9 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 // StartTurn at bridge-ready, the ACP call, the settle, and the ordered
 // handoff into the empty-turn recovery.
 //
-// The release order on the settled path is the contract: the finalized
-// result is captured via the still-held epoch handle first, then the
-// bridge slot, then the reservation, so a waiting prompt is admitted the
-// moment the turn's effects are done — then recovery re-acquires both
-// holds with a try, and ReleaseTurn goes last so every epoch-based
-// recovery predicate reads a live record.
+// The release ORDER is the contract: capture the finalized result through
+// the still-held epoch handle, then the bridge slot, then the reservation,
+// and ReleaseTurn last so every epoch-based predicate reads a live record.
 func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chatID vibekit.ChatID, p *vibekit.PromptCommand) {
 	// The prompt Call gets its own cancellable context so CmdCancel's
 	// grace budget has something to trip when KAS never acks a
@@ -576,15 +560,11 @@ const (
 
 // validationErrorNames are the backend's own names for a request refused
 // as malformed or oversized, read off the kiro-cli-chat 2.19.0 binary's
-// string table. Every member is a statement about the bytes that were
-// sent, so a second attempt with the same bytes gets the same answer.
-// Without this table they land on -32603 like everything else and get
-// retried twice more.
-//
-// Deliberately excluded, though they sit in the same enumeration: quota
-// and capacity names, model names and the Kms* family — none is a
-// statement about the payload, so telling a user to shrink their prompt
-// because their monthly allowance ran out would be worse than nothing.
+// string table. Every member is a statement about the BYTES sent, so a
+// retry with the same bytes gets the same answer; without this table they
+// land on -32603 and are retried twice more. Quota, capacity, model and
+// Kms* names are excluded: none describes the payload, so classifying one
+// here would tell a user to shrink a prompt when their allowance ran out.
 var validationErrorNames = []string{
 	"ImageSizeExceeded",
 	"ImageDimensionExceeded",

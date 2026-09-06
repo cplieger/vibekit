@@ -10,11 +10,9 @@ import (
 	"time"
 )
 
-// TestStore_RoundTripsALeaseAcrossARestart is the durability the whole change
-// rests on: before it, a run's safety envelope died with the process while the
-// run itself survived, so a restart silently removed the only bound on a
-// non-scheduled run and the deny-fast budget that keeps an unattended run from
-// parking on a permission prompt at 03:00.
+// TestStore_RoundTripsALeaseAcrossARestart is the durability everything else rests on:
+// a run outlives the process, so a lease that did not would silently remove the only
+// bound on it and the deny-fast budget that keeps an unattended run answerable.
 func TestStore_RoundTripsALeaseAcrossARestart(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -58,17 +56,17 @@ func TestStore_RoundTripsALeaseAcrossARestart(t *testing.T) {
 	if !got.StartedAt.Equal(want.StartedAt) {
 		t.Errorf("StartedAt = %v, want %v", got.StartedAt, want.StartedAt)
 	}
-	// The DEADLINE is the one field that must not survive: it was set by a
-	// process that no longer exists, and the bound is on executing time.
+	// The DEADLINE must NOT survive: it was set by a process that no longer exists,
+	// and the bound is on executing time.
 	if got.Bounded() {
 		t.Errorf("the reloaded lease carries deadline %v; a stale deadline would cancel a run "+
 			"the moment it resumed", got.Deadline)
 	}
 }
 
-// TestStore_FileShapeIsAVersionedObject pins the format decision. schedules.json
-// is a bare array with nowhere to put a version; this file is the one genuinely
-// irreversible part of the lease work, so it carries one from the first write.
+// TestStore_FileShapeIsAVersionedObject pins the format decision: schedules.json is a
+// bare array with nowhere to put a version, so this file carries one from the first
+// write, which is the one genuinely irreversible part of the lease work.
 func TestStore_FileShapeIsAVersionedObject(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -96,16 +94,15 @@ func TestStore_FileShapeIsAVersionedObject(t *testing.T) {
 	if !strings.Contains(body, `"leases"`) {
 		t.Errorf("the file carries no leases array:\n%s", body)
 	}
-	// A parked lease must not write a zero timestamp the reader would have to
-	// interpret; omitzero is what keeps the file readable by a person.
+	// A parked lease must not write a zero timestamp a reader has to interpret.
 	if strings.Contains(body, "0001-01-01") {
 		t.Errorf("a zero time reached the file:\n%s", body)
 	}
 }
 
-// TestStore_RoundTripsTheLaunchingChat: the chat id is the live-runs
-// projection's whole payload, so a restart that dropped it would leave a
-// still-live agent run unable to exempt its chat from client eviction.
+// TestStore_RoundTripsTheLaunchingChat: the chat id is the live-runs projection's whole
+// payload, so dropping it leaves a live agent run unable to exempt its chat from
+// client-side eviction.
 func TestStore_RoundTripsTheLaunchingChat(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -133,12 +130,10 @@ func TestStore_RoundTripsTheLaunchingChat(t *testing.T) {
 	}
 }
 
-// TestNewStore_APreUpgradeRowDecodesWithAnEmptyChatID pins why ChatID is
-// ADDITIVE at Version 1: a lease written before the field existed must load as
-// a usable lease whose empty chat id means "no chat to exempt" — the same
-// designed value the parentless launch verbs mint — rather than costing a
-// version bump that would discard the whole file and strip every live lease of
-// its deadline at boot.
+// TestNewStore_APreUpgradeRowDecodesWithAnEmptyChatID pins why ChatID is ADDITIVE at
+// Version 1: an empty chat id already means "no chat to exempt" (the value a parentless
+// launch mints), where a version bump would discard the file and strip every live
+// lease of its deadline at boot.
 func TestNewStore_APreUpgradeRowDecodesWithAnEmptyChatID(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -166,14 +161,10 @@ func TestNewStore_APreUpgradeRowDecodesWithAnEmptyChatID(t *testing.T) {
 	}
 }
 
-// TestStore_RejectsAVersionItDoesNotKnow is the forward-compatibility rule, and
-// the reason it DISCARDS rather than refuses.
-//
-// A record written by another build may carry semantics this one cannot honour,
-// and acting on half-understood leases is how a live run gets cancelled by a
-// sweep. But refusing to open the store would leave the runtime with no lease
-// registry at all, so no run would get a wall clock — strictly worse. So: a
-// usable empty store, plus an error the caller logs.
+// TestStore_RejectsAVersionItDoesNotKnow is why it DISCARDS rather than refuses: acting
+// on half-understood leases is how a sweep cancels a live run, but refusing to open the
+// store leaves every run with no wall clock at all. So a usable empty store plus an
+// error the caller logs.
 func TestStore_RejectsAVersionItDoesNotKnow(t *testing.T) {
 	t.Parallel()
 	for name, body := range map[string]string{
@@ -209,10 +200,8 @@ func TestStore_RejectsAVersionItDoesNotKnow(t *testing.T) {
 	}
 }
 
-// TestStore_RefusesALeaseItCouldNotActOn: a lease with no id has no key, and one
-// with an unknown origin says neither whether the run is sweepable nor whether
-// it is unattended. Both are refused on the way IN as well as dropped on the way
-// back off disk.
+// TestStore_RefusesALeaseItCouldNotActOn: a lease with no id has no key, and an unknown
+// origin says neither whether the run is sweepable nor whether it is unattended.
 func TestStore_RefusesALeaseItCouldNotActOn(t *testing.T) {
 	t.Parallel()
 	s := NewMemory()
@@ -230,9 +219,9 @@ func TestStore_RefusesALeaseItCouldNotActOn(t *testing.T) {
 	}
 }
 
-// TestStore_DropsUnusableLeasesOnLoad is the same rule on the read side, and it
-// is separate because the file is not written only by this build's Put: a
-// hand-edited or partially-written record must not become a sweep candidate.
+// TestStore_DropsUnusableLeasesOnLoad is the same rule on the read side, separate because
+// the file is not written only by this build's Put: a hand-edited or partially-written
+// record must not become a sweep candidate.
 func TestStore_DropsUnusableLeasesOnLoad(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -257,8 +246,8 @@ func TestStore_DropsUnusableLeasesOnLoad(t *testing.T) {
 	}
 }
 
-// TestStore_SetDeadlineIsTheReArm pins the mutable half: every start re-stamps,
-// every pause parks, and a lease that is gone cannot be re-armed.
+// TestStore_SetDeadlineIsTheReArm: every start re-stamps, every pause parks, and a lease
+// that is gone cannot be re-armed.
 func TestStore_SetDeadlineIsTheReArm(t *testing.T) {
 	t.Parallel()
 	s := NewMemory()
@@ -355,21 +344,12 @@ func TestStore_MemoryPersistsNothing(t *testing.T) {
 	}
 }
 
-// TestStore_WritesA0600File makes the file's mode a pinned FACT rather than a
-// claim in a comment, which is what the store's doc asserts.
-//
-// The verification lives in the write, not in a pass afterwards:
-// atomicfile.WriteFile runs EnforceMode on the open temp descriptor (fchmod then
-// fstat, one handle) and fails the write rather than publishing a wider file, and
-// the rename then publishes that verified inode. So the two shapes below are the
-// ones that would catch a regression — a permissive umask, which is what a bare
-// O_CREATE mode loses to, and a mode widened between two writes.
-//
-// Not parallel: it sets the process umask, which is per-process state.
+// TestStore_WritesA0600File covers the two shapes that would catch a regression: a
+// permissive umask, which a bare O_CREATE mode loses to, and a mode widened between two
+// writes. Not parallel — it sets the process umask, which is per-process state.
 func TestStore_WritesA0600File(t *testing.T) {
 	dir := t.TempDir()
-	// The umask a request has to survive. Restored before any assertion runs, so a
-	// failure cannot leak it into the rest of the package.
+	// Restored before any assertion runs, so a failure cannot leak it into the package.
 	prev := syscall.Umask(0)
 	s, err := NewStore(dir)
 	if err != nil {
@@ -392,8 +372,7 @@ func TestStore_WritesA0600File(t *testing.T) {
 			"and this file's is meant to be enforced by the write", FileName, got)
 	}
 
-	// A mode widened between two writes is corrected by the next one, because the
-	// published inode is the temp's rather than the old file's.
+	// The next write corrects it, because the published inode is the temp's.
 	if err := os.Chmod(path, 0o666); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
@@ -409,10 +388,9 @@ func TestStore_WritesA0600File(t *testing.T) {
 	}
 }
 
-// TestStore_MarkTabOfferedIsSpentOnce pins the flag the tab offer keys on. Both
-// halves matter: the mark has to stick, because `run_start` re-fires on every
-// resume and each step frame retries the offer, and the repeat has to be a no-op
-// rather than an error, because the repeat is the normal case.
+// TestStore_MarkTabOfferedIsSpentOnce: the mark has to stick, because `run_start`
+// re-fires on every resume and each step frame retries the offer, and the repeat has to
+// be a no-op rather than an error, because the repeat is the normal case.
 func TestStore_MarkTabOfferedIsSpentOnce(t *testing.T) {
 	t.Parallel()
 	s := NewMemory()
@@ -440,9 +418,8 @@ func TestStore_MarkTabOfferedIsSpentOnce(t *testing.T) {
 	}
 }
 
-// TestStore_TabOfferedSurvivesARestart is the reason the flag is durable rather
-// than a set in process memory: a reader's close of the tab has to stay final
-// across a restart, and the run outlives the process.
+// TestStore_TabOfferedSurvivesARestart is why the flag is durable rather than in-memory:
+// the run outlives the process, and a reader's close has to stay final.
 func TestStore_TabOfferedSurvivesARestart(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -470,10 +447,9 @@ func TestStore_TabOfferedSurvivesARestart(t *testing.T) {
 	}
 }
 
-// TestNewStore_APreUpgradeRowReadsAsUnoffered is the additive field's accepted
-// cost, stated: a lease written before the flag existed carries no `tab_offered`,
-// decodes false, and earns exactly one re-offer. The alternative — a version bump
-// — would discard the whole file at load and strip every live run of its deadline.
+// TestNewStore_APreUpgradeRowReadsAsUnoffered states the additive field's accepted cost:
+// a pre-flag lease decodes false and earns exactly one re-offer, where a version bump
+// would discard the file and strip every live run of its deadline.
 func TestNewStore_APreUpgradeRowReadsAsUnoffered(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -17,9 +17,8 @@ type sessionMode struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	// Meta carries kiro-cli's v3 per-mode metadata. Only source is used:
-	// "bundled" (workflow modes + Kiro-shipped agents like semantic_reviewer)
-	// vs "workspace" (custom agents from .kiro/agents/). v2 omits _meta.
+	// Meta carries kiro-cli's v3 per-mode metadata. Only source is used: "bundled"
+	// (workflow modes, Kiro-shipped agents) vs "workspace" (.kiro/agents/).
 	Meta struct {
 		Kiro struct {
 			Source string `json:"source"`
@@ -32,19 +31,16 @@ type sessionModes struct {
 	AvailableModes []sessionMode `json:"availableModes"`
 }
 
-// sessionConfigOption is one entry in the v3 configOptions array returned
-// by session/new and session/load. The model catalog lives here (id ==
-// "model"): currentValue is the active model id and options[] is the
-// selectable catalog. v3 never returns a top-level `models` block.
+// sessionConfigOption is one entry in the v3 configOptions array. The model catalog
+// lives here (id == "model"); v3 never returns a top-level `models` block.
 type sessionConfigOption struct {
 	ID           string                `json:"id"`
 	CurrentValue json.RawMessage       `json:"currentValue"`
 	Options      []sessionConfigChoice `json:"options"`
 }
 
-// sessionConfigChoice is one selectable value in a config-option select.
-// For the model option each choice's rate multiplier rides _meta.kiro
-// (moved off ModelInfo on v3).
+// sessionConfigChoice is one selectable value in a config-option select. For the
+// model option the rate multiplier rides _meta.kiro (moved off ModelInfo on v3).
 type sessionConfigChoice struct {
 	Value       string `json:"value"`
 	Name        string `json:"name"`
@@ -58,55 +54,26 @@ type sessionConfigChoice struct {
 
 // sessionCreated is the session/new and session/load result.
 //
-// _meta is KAS's session-metadata object spread verbatim onto the result —
-// FLAT, not under `_meta.kiro` (probed 2026-08-02 against both verbs). Only
-// `title` is decoded: session/new always carries the literal "New Session"
-// placeholder, while session/load hands back the real stored title, which is
-// the case worth adopting. session/load's result carries no `sessionId`, which
-// is why loadSession sets it from its own argument.
+// _meta is KAS's session-metadata object spread FLAT onto the result, not under
+// `_meta.kiro` (probed 2026-08-02). session/load's result carries no `sessionId`,
+// which is why loadSession sets it from its own argument.
 type sessionCreated struct {
 	Modes     *sessionModes `json:"modes"`
 	SessionID string        `json:"sessionId"`
 	Meta      struct {
-		// WorkflowsEnabled is KAS's RESOLVED answer for settings.workflows, and it
-		// is read for one reason: to notice the day the session door stops working.
-		//
-		// First in the struct because it is the pointer (govet fieldalignment), not
-		// because it is the more important member.
-		//
-		// A POINTER because absent and false are different states. A build that
-		// does not report the member at all says nothing, while `false` against a
-		// declared `true` is the failure — and that failure is silent by
-		// construction, which is why observing it is worth a field. The key reaches
-		// KAS only because KiroSessionMetaSchema ends in `.passthrough()`, a
-		// property of somebody else's schema; drop that and vibekit keeps sending
-		// the key, the send-side test keeps passing, the census keeps passing
-		// (resolveWorkflows still READS the key, it just is not there any more),
-		// and the agent silently loses its entire workflowChatTools array with no
-		// error, no log and no -32601. That is the exact defect the workflows row
-		// was created to fix, recurring undetectably.
+		// WorkflowsEnabled is KAS's RESOLVED answer for settings.workflows. A POINTER
+		// because absent and false are different states, and the failure is otherwise
+		// silent: the agent loses its workflowChatTools array with no error, no -32601.
 		WorkflowsEnabled *bool  `json:"workflowsEnabled"`
 		Title            string `json:"title"`
 	} `json:"_meta"`
 	ConfigOptions []sessionConfigOption `json:"configOptions"`
 }
 
-// session/new and session/load carry `mcpServers: []` — always EMPTY, never
-// vibekit's server set. KAS reads the user's MCP servers from its own
-// hot-reloading config file, which vibekit renders (internal/mcp/kasfile.go).
-//
-// The key itself is REQUIRED: kiro-cli 2.16's session/new schema declares
-// mcpServers as a non-optional array, so omitting it fails every session
-// with "Invalid params: expected array, received undefined". The empty
-// array is SAFE alongside the file: KAS's mergeServers unions the four
-// sources per NAME (client entries win only for names they carry), so zero
-// client entries leaves the file-based set untouched.
-//
-// Do not put real entries back as a convenience. A client entry OUTRANKS
-// the file for its name: the file would still hot-reload, the agent would
-// keep using the inline copy, and every edit in the UI would look like it
-// did nothing. The parameter is also lossier — KAS's acpServerToWire drops
-// oauth, oauthScopes, autoApprove, cwd and timeout from a client-supplied entry.
+// session/new and session/load carry `mcpServers: []` — always EMPTY; KAS reads the
+// user's servers from its own hot-reloading file (internal/mcp/kasfile.go). The KEY is
+// required (2.16 declares it non-optional, so omitting it fails every session). Do not
+// put real entries back: a client entry OUTRANKS the file, so UI edits would do nothing.
 
 // validIdent delegates to ids.ValidIdent.
 func validIdent(s string) bool {
@@ -114,18 +81,9 @@ func validIdent(s string) bool {
 }
 
 // withSessionMeta adds the session door's _meta.kiro block to a session/new or
-// session/load parameter map, and returns the map.
-//
-// One function used by both verbs, deliberately. KAS resolves a session key from
-// the call's own _meta and falls back to the value persisted when the session was
-// created, so a key sent only on session/new works until the first resume and
-// then silently stops for every session created before the key existed. Sending
-// it from one place makes the two calls agree by construction rather than by two
-// people remembering.
-//
-// Only when the map is NON-EMPTY: an empty _meta.kiro would add bytes to a call
-// that carries none, and the projection is empty whenever the table declares no
-// session-door row (or an operator disabled the only one).
+// session/load parameter map, and returns the map. One function for both verbs: KAS
+// falls back to the value persisted at creation, so a key sent only on session/new
+// silently stops working at the first resume. Skipped when the projection is empty.
 func (b *Bridge) withSessionMeta(params map[string]any) map[string]any {
 	if meta := kascap.SessionMeta(b.spawn()); len(meta) > 0 {
 		params["_meta"] = map[string]any{metaKeyKiro: meta}
@@ -134,32 +92,12 @@ func (b *Bridge) withSessionMeta(params map[string]any) map[string]any {
 }
 
 // withSessionChoices adds this chat's composer choices to the session door's
-// _meta.kiro block: the model to start ON and the reasoning-effort level to start
-// AT. session/new only, because a resumed session already carries both in KAS's
-// own metadata.
+// _meta.kiro block: the model to start ON and the effort level to start AT.
+// session/new only — a resumed session already carries both in KAS's own metadata.
 //
-// This is the one-trip door, and it replaced two follow-up
-// session/set_config_option calls. Probed on kiro-cli 2.19.1 / KAS 0.48.0:
-// session/new with `_meta.kiro.{modelId,effortLevel}` returns a session already on
-// claude-opus-5 at max, the config_option_update agrees, and KAS persists BOTH
-// into its own session.json, so a later session/load restores them. The launch
-// flags are still not an option — `--model` and `--effort` are refused alongside
-// `--agent-engine=v3` with `error: the following arguments are not supported`,
-// re-probed on the same build.
-//
-// Setting the model here rather than afterwards is what fixes a silent loss, not
-// just two round trips. The `auto` model has NO effort tiers (`hasEffort:false`),
-// so KAS builds no effortLevel option for it and `setSessionConfigOption` drops
-// any level sent while a session sits there — measured: the call returns success,
-// the option stays absent, and session.json persists `effortLevel: null`. A
-// session/new starts on `auto`, so a chat whose model vibekit could not send (never
-// picked, or withheld by the entitlement gate) had its level thrown away, and
-// KAS's own first-prompt model pin then set that model's DEFAULT tier. Here the
-// model is chosen before the session exists, so the window never opens.
-//
-// Keyed into the SAME _meta.kiro map the capability table builds rather than a
-// second _meta block, because KAS reads one object; a second would replace the
-// first and take the whole door's declarations with it.
+// Choosing the model HERE rather than afterwards is what fixes a silent loss: `auto`
+// has no effort tiers, so KAS drops any level sent while a session sits on it. Keyed
+// into the SAME _meta.kiro map, because a second _meta block would replace the first.
 func (b *Bridge) withSessionChoices(params map[string]any, opts *vibekit.StartOpts) map[string]any {
 	choices := make(map[string]any, 2)
 	if opts.Model != "" && opts.Model != vibekit.ModelAuto {
@@ -206,37 +144,21 @@ func (b *Bridge) newSession(ctx context.Context, opts *vibekit.StartOpts) error 
 	current := b.currentMode
 	b.mu.Unlock()
 
-	// v3 (KAS): session/new starts in the engine default mode (vibe).
-	// When the chat asked for a specific role (a bundled mode or a
-	// workspace agent-as-mode) switch to it now — session/set_mode is
-	// legal on a just-created, idle session (verified on the wire).
+	// v3 (KAS): session/new starts in the engine default mode (vibe). session/set_mode
+	// is legal on a just-created idle session, so switch to the chat's role now.
 	b.applyInitialMode(ctx, sid, current, opts.Mode)
-	// The model and the level rode _meta.kiro above, so both of these are
-	// REPAIRS: each compares what the result reported against what was asked for
-	// and calls only on a mismatch. In the happy path that is zero round trips,
-	// and a build that ignores the meta keys still converges instead of running a
-	// chat on the wrong model at the wrong tier.
+	// The model and level rode _meta.kiro above, so both of these are REPAIRS: each
+	// calls only on a mismatch, and a build ignoring the meta keys still converges.
 	b.applyInitialModel(ctx, opts.Model)
 	b.applyInitialEffort(ctx, sid, opts.Effort)
 	b.applySupervised(ctx, sid, opts.Supervised)
 	return nil
 }
 
-// applyInitialModel selects the chat's model on a freshly-created session.
-//
-// It cannot be a launch flag. kiro-cli REFUSES `--model` alongside
-// `--agent-engine=v3` and exits before answering initialize, so passing one
-// does not merely fail to take effect, it kills the bridge (see
-// bridge_process.go buildACPArgs for the measured error). session/new starts
-// on KAS's own default model, so this is the only door.
-//
-// Best-effort like applyInitialMode: a failure leaves the session on that
-// default and logs, rather than failing session creation — the alternative is
-// refusing to open a chat over a model preference.
-//
-// Only session/new needs it. KAS persists modelId in its own session metadata
-// alongside agentMode and effortLevel, so a session/load already carries the
-// choice and re-asserting it would be a round trip that changes nothing.
+// applyInitialModel selects the chat's model on a freshly-created session. It cannot
+// be a launch flag: kiro-cli REFUSES `--model` alongside `--agent-engine=v3` and
+// exits before answering initialize, killing the bridge. Best-effort — a failure
+// leaves the session on KAS's default rather than refusing to open the chat.
 func (b *Bridge) applyInitialModel(ctx context.Context, model string) {
 	if model == "" || model == vibekit.ModelAuto {
 		return
@@ -252,22 +174,10 @@ func (b *Bridge) applyInitialModel(ctx context.Context, model string) {
 	}
 }
 
-// applyInitialEffort applies the chat's reasoning-effort level to a
-// freshly-created or resumed session, for the same reason applyInitialModel
-// exists: `--effort` is refused with `--agent-engine=v3` too, and it appeared in
-// the same rejection line (re-probed on 2.19.1: `error: the following arguments
-// are not supported with --agent-engine=v3: --model, --effort`).
-//
-// A repair, not the mechanism, and EnsureEffort is what makes it one. session/new
-// carries the level in _meta.kiro and its result reports the level back, so a
-// match costs nothing. A resumed session always asserts: KAS's session/load result
-// carries no effortLevel option at all, so the bridge knows no level and the chat
-// record is what vibekit has.
-//
-// This wrapper exists for the log line. Every other caller of EnsureEffort is
-// reporting a failure to somebody; on the session-creation path there is nobody to
-// report to, and refusing to open a chat over an effort preference would be worse
-// than opening it at the service's own level.
+// applyInitialEffort applies the chat's reasoning-effort level, for the reason
+// applyInitialModel exists: `--effort` is refused with `--agent-engine=v3` too. A
+// repair on session/new (the level rode _meta.kiro); an unconditional assert on a
+// resume, whose result carries no effortLevel option at all. Hence the log line.
 func (b *Bridge) applyInitialEffort(ctx context.Context, sessionID, effort string) {
 	if err := b.EnsureEffort(ctx, effort); err != nil {
 		slog.Warn("apply initial reasoning effort",
@@ -275,20 +185,11 @@ func (b *Bridge) applyInitialEffort(ctx context.Context, sessionID, effort strin
 	}
 }
 
-// applySupervised turns KAS's turn-approval gate on for this session by setting
-// `autopilot` to "off". No-op when the chat is not supervised, because the option
-// defaults to on at session creation — which is why only Off is reachable here.
-//
-// The VALUE is a string because the option is a select over "on" and "off"; a
-// boolean is refused with -32602 and leaves the session in autopilot. See
-// vibekit.ConfigValueAutopilotOff.
-//
-// Set ONCE, at creation. The value persists into KAS's own session metadata, so
-// it survives session/load and re-asserting it would be a round trip that
-// changes nothing. Best-effort like applyInitialMode: a failure leaves the
-// session in autopilot and logs, rather than failing session creation — but it
-// logs at ERROR rather than WARN, because the consequence is that writes the user
-// asked to review get applied without review.
+// applySupervised turns KAS's turn-approval gate on by setting `autopilot` to "off".
+// No-op when the chat is not supervised: the option defaults to on. The VALUE is a
+// string — a boolean is refused with -32602 and leaves the session in autopilot.
+// Set ONCE at creation; it persists into KAS's session metadata. Best-effort, but at
+// ERROR: the consequence is that writes the user asked to review are applied unreviewed.
 func (b *Bridge) applySupervised(ctx context.Context, sessionID string, supervised bool) {
 	if !supervised {
 		return
@@ -303,11 +204,9 @@ func (b *Bridge) applySupervised(ctx context.Context, sessionID string, supervis
 	}
 }
 
-// applyInitialMode switches a freshly-created session to wantMode when it
-// differs from the session's default. Best-effort: a failed switch logs a
-// warning and leaves the session in its default mode rather than failing
-// session creation. No-op when wantMode is empty (v2, or a chat that never
-// picked a non-default mode).
+// applyInitialMode switches a freshly-created session to wantMode when it differs
+// from the session's default. Best-effort: a failed switch logs and leaves the
+// default rather than failing session creation. No-op when wantMode is empty.
 func (b *Bridge) applyInitialMode(ctx context.Context, sessionID, currentMode, wantMode string) {
 	if wantMode == "" || wantMode == currentMode {
 		return
@@ -326,9 +225,7 @@ func (b *Bridge) applyInitialMode(ctx context.Context, sessionID, currentMode, w
 
 func (b *Bridge) loadSession(ctx context.Context, opts *vibekit.StartOpts) error {
 	// CallAt rather than Call: KAS answers a load by REPLAYING the session as
-	// notifications that precede the result on the wire, so the caller adopting
-	// that replay has to know the position the result arrived at — the response
-	// alone says nothing about what the consumer has folded. See SessionLoadSeq.
+	// notifications that precede the result, so the caller needs the result's position.
 	resp, seq, err := b.CallAt(ctx, methodSessionLoad, b.withSessionMeta(map[string]any{
 		vibekit.KeySessionID: opts.SessionID, "cwd": b.workDir, "mcpServers": []any{},
 	}))
@@ -341,26 +238,16 @@ func (b *Bridge) loadSession(ctx context.Context, opts *vibekit.StartOpts) error
 	sid := string(b.sessionID)
 	b.mu.Unlock()
 
-	// Re-assert the chat's reasoning-effort level on a resumed session, and ONLY
-	// that. Every other session option is KAS's to own on a load — tryLoadSession
-	// copies the mode, the mode list, the model list and the title back onto the
-	// chat record, so the two agree afterwards. Effort has no such reconciliation:
-	// Chat.Effort is the user's CHOICE and nothing overwrites it (Chat.EffortActive
-	// is the separate mirror of what the session reports running at), so a resumed
-	// session that lost the level would answer at something else while the record
-	// and the pill both kept saying max, forever.
-	//
-	// The model is deliberately NOT re-asserted here. It has the reconciliation
-	// effort lacks, and opts.Model on this path is a display fallback for a result
-	// that names no model rather than a value to assert.
+	// Re-assert the chat's effort level on a resume, and ONLY that. Every other option
+	// is reconciled by tryLoadSession copying it back onto the chat record; Chat.Effort
+	// is the user's CHOICE and nothing overwrites it, so a lost level would never heal.
 	b.applyInitialEffort(ctx, sid, opts.Effort)
 	return nil
 }
 
-// adoptLoadedSession copies a session/load result onto the bridge, falling back
-// to the requested model when the result is absent or unparseable. Split out of
-// loadSession so the lock is released before the post-load config-option calls,
-// which take it themselves.
+// adoptLoadedSession copies a session/load result onto the bridge, falling back to
+// the requested model when the result is absent or unparseable. Split out of
+// loadSession so the lock is released before the post-load config-option calls.
 func (b *Bridge) adoptLoadedSession(acpSessionID, fallbackModel string, resp *vibekit.RPCResponse) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -385,18 +272,10 @@ func (b *Bridge) adoptLoadedSession(acpSessionID, fallbackModel string, resp *vi
 func (b *Bridge) applySessionResultLocked(r sessionCreated, fallbackModel string) {
 	if r.Modes != nil {
 		b.currentMode = r.Modes.CurrentModeID
-		// ABSENT and PRESENT-BUT-EMPTY are different states and must not collapse.
-		// The gate above is on the modes BLOCK: a frame with no block at all says
-		// nothing about modes and leaves the previous list standing. A block
-		// carrying an EMPTY list used to replace that list with a zero-length one,
-		// which empties the mode picker for the rest of the session on a frame that
-		// reported no catalog rather than an empty catalog.
-		//
-		// This matters more the moment anything VALIDATES a mode id against the
-		// list: validating against an accidentally-empty list refuses every mode,
-		// which is the fail-closed-on-no-information shape upstream had to fix
-		// (KiroCrew #1542). Keeping the previous list is the "absent means attempt"
-		// half; the empty case is logged so it is visible rather than silent.
+		// ABSENT and PRESENT-BUT-EMPTY are different states. The gate above is on the
+		// modes BLOCK: a frame with no block leaves the previous list standing, where a
+		// block carrying an EMPTY list used to replace it — emptying the mode picker for
+		// the rest of the session, and failing closed once anything validates an id.
 		if len(r.Modes.AvailableModes) == 0 {
 			slog.Warn("session reported an empty mode list; keeping the previous catalog",
 				"current_mode", r.Modes.CurrentModeID)
@@ -418,21 +297,11 @@ func (b *Bridge) applySessionResultLocked(r sessionCreated, fallbackModel string
 	}
 }
 
-// reportWorkflowsDisagreement logs when the session resolved settings.workflows
-// to something other than what this spawn declared.
-//
-// A log line and nothing more, deliberately. There is no repair available: KAS
-// resolves the setting at session creation and freezes it, so by the time the
-// result is in hand the tool array is already decided, and refusing the session
-// would take a working chat away over a capability the user may not be using.
-// What the line buys is that the failure has a name in the logs instead of
-// presenting as "the agent cannot run workflows any more".
-//
-// The declared side is read back off the BUILT door rather than from a second
-// copy of the rule, so it cannot drift from the table: the operator env override
-// (VIBEKIT_AGENT_WORKFLOWS=false) withholds the key, KAS resolves absent to
-// false, and both sides then agree on false with nothing logged — which is the
-// intended off state rather than a disagreement.
+// reportWorkflowsDisagreement logs when the session resolved settings.workflows to
+// something other than what this spawn declared. A log line and nothing more: KAS
+// freezes the setting at session creation, so no repair is available. The declared
+// side is read off the BUILT door so it cannot drift from the table — the operator
+// override withholds the key, both sides then agree on false, and nothing logs.
 //
 // MUST be called with b.mu held (spawn() reads fields immutable after Start).
 func (b *Bridge) reportWorkflowsDisagreement(resolved *bool) {
@@ -463,37 +332,10 @@ func declaredSessionWorkflows(s kascap.Spawn) bool {
 	return on
 }
 
-// applyModelConfigOptionLocked sources the current model + catalog from
-// the v3 configOptions "model" select. currentValue is the active model
-// id; each option carries its rate multiplier under _meta.kiro.
-// MUST be called with b.mu held.
-//
-// TWO lists come out of the one loop, and keeping them in one loop is the point:
-//
-//   - models is for DISPLAY, so [Deprecated]/[Legacy] entries are filtered out
-//     (as the v2 models path did). The picker should not offer an end-of-life
-//     model.
-//   - servedModels is every advertised id, unfiltered, and it is the only sound
-//     input to an ENTITLEMENT check. Validating a configured id against the
-//     display list would refuse a deprecated model the account can still use,
-//     turning a working session into a client-side refusal — which is worse than
-//     the defect the check exists to prevent.
-//
 // applyEffortConfigOptionLocked records the reasoning-effort level the session
-// reports running at, from the `effortLevel` option's currentValue. MUST be
-// called with b.mu held.
-//
-// This exists so applyInitialEffort can be a repair rather than an unconditional
-// call: session/new now carries the level in _meta.kiro and the result reports it
-// back, so the common case is a match and no second round trip.
-//
-// An ABSENT option means the level is genuinely unknown, not that it is empty, so
-// the previous value stands. KAS omits the option entirely for a model with no
-// tiers (`auto`), and its session/load result omits it too — probed on 2.19.1,
-// where the load result carries neither the model nor the effort option and the
-// real state arrives on the config_option_update notification afterwards. Both
-// cases must leave a resumed bridge asserting the chat's level rather than
-// concluding it already matches.
+// reports running at, from the `effortLevel` option's currentValue. MUST be called
+// with b.mu held. An ABSENT option means the level is unknown, not empty, so the
+// previous value stands — KAS omits it for a tierless model and on every load result.
 func (b *Bridge) applyEffortConfigOptionLocked(opts []sessionConfigOption) {
 	for i := range opts {
 		opt := &opts[i]
@@ -509,6 +351,11 @@ func (b *Bridge) applyEffortConfigOptionLocked(opts []sessionConfigOption) {
 	}
 }
 
+// applyModelConfigOptionLocked sources the current model and catalog from the v3
+// configOptions "model" select. MUST be called with b.mu held. TWO lists come out of
+// the one loop: models is for DISPLAY, so end-of-life entries are filtered out, while
+// servedModels is every advertised id and the only sound input to an ENTITLEMENT
+// check — validating against the display list would refuse a model the account has.
 func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 	b.applyEffortConfigOptionLocked(opts)
 	for i := range opts {
@@ -521,14 +368,9 @@ func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 		if current != "" {
 			b.modelID = vibekit.ModelID(current)
 		}
-		// Same asymmetry the modes branch above spells out, and for the same
-		// reason: a `model` option carrying NO choices reports that the catalog is
-		// unknown, not that it is empty. An account with no models cannot run a
-		// turn at all, so an empty list is never more informative than the list
-		// already held — which is exactly the reading HandleConfigOptionUpdate
-		// applies on the notification channel, where `len(cat.models) == 0` returns
-		// early rather than writing. `currentValue` above is applied either way: it
-		// is a fact about which model is active and stands on its own.
+		// Same asymmetry the modes branch spells out: a `model` option carrying NO
+		// choices reports the catalog as unknown, not empty. `currentValue` above is
+		// applied either way — which model is active stands on its own.
 		if len(opt.Options) == 0 {
 			slog.Warn("session reported an empty model catalog; keeping the previous one",
 				"current_model", b.modelID)

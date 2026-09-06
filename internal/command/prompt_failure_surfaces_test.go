@@ -1,23 +1,10 @@
 package command
 
-// Which surfaces each prompt-failure emitter reaches, and in particular whether it
-// claims to be TURN-SCOPED.
-//
-// `ErrorPayload.TurnScoped` is what lets the client drop the toast for a chat the
-// reader is already looking at, on the grounds that the turn's own card holds the
-// same reason. It is a property of the EMISSION rather than of the code, and these
-// tests exist because the client used to derive it from the code: `prompt_failed`
-// has three emitters and `recovery_failed` two, and three of the five open no turn
-// at all — so for those the toast is the only surface, and a per-code answer
-// silenced them on the active chat with nothing else reporting them.
-//
-// The five emitters, and one case each:
-//
-//	prompt.go reportPromptFailure         prompt_failed / auth   turn: YES
-//	prompt.go bridge slot held            prompt_failed          turn: no
-//	prompt.go epoch == 0                  prompt_failed          turn: no
-//	prompt.go retry prompt failed         recovery_failed        turn: YES
-//	prompt.go recovery respawn failed     recovery_failed        turn: no
+// `ErrorPayload.TurnScoped` lets the client drop the toast for a chat already on
+// screen, on the grounds that the turn's own card holds the reason. It is a property
+// of the EMISSION rather than of the code: `prompt_failed` has three emitters and
+// `recovery_failed` two, and three of the five open no turn at all, so for those the
+// toast is the only surface a per-code answer would silence.
 
 import (
 	"context"
@@ -31,12 +18,9 @@ import (
 )
 
 // surfaceDeps records the two durable surfaces a failure can reach — the error
-// frames it broadcasts and the messages it appends — so a test can assert on both
-// without reading a chat file.
-//
-// It embeds benchDeps for the rest of hostDouble and overrides only what it
-// records, which is why an emitter reaching a surface this double does not model
-// shows up as a missing observation rather than as a compile error.
+// frames it broadcasts and the messages it appends. It embeds benchDeps and
+// overrides only what it records, so an emitter reaching a surface this double does
+// not model shows up as a missing observation rather than a compile error.
 type surfaceDeps struct {
 	*benchDeps
 	mu       sync.Mutex
@@ -99,9 +83,8 @@ func (d *surfaceDeps) AwaitTurn(context.Context, vibekit.ChatID, vibekit.TurnEpo
 	return vibekit.TurnResult{}, vibekit.ErrNoSuchTurn
 }
 
-// codeOf returns the payload for the one error frame the run produced, failing the
-// test when the count is not one — a second frame would mean two surfaces claiming
-// the same failure, which is the shape this whole file is about.
+// onlyError fails when the run produced other than one error frame: a second frame
+// would mean two surfaces claiming one failure, which is what this file is about.
 func (d *surfaceDeps) onlyError(t *testing.T) vibekit.ErrorPayload {
 	t.Helper()
 	d.mu.Lock()
@@ -133,8 +116,7 @@ func (*surfaceBridge) EndPromptCall()                                   {}
 func (*surfaceBridge) ArmCancelGrace(uint64, time.Duration) bool        { return true }
 func (*surfaceBridge) PromptGeneration() uint64                         { return 1 }
 
-// A turn WAS finalized, so the reason is on that turn's card and the client may
-// stand the toast down for the chat already on screen.
+// A turn WAS finalized, so the reason is on its card and the toast may stand down.
 func TestReportPromptFailure_MarksTheFrameTurnScoped(t *testing.T) {
 	deps := newSurfaceDeps()
 	reportPromptFailure(t.Context(), promptRolesOf(deps), "c1", 7,
@@ -151,10 +133,8 @@ func TestReportPromptFailure_MarksTheFrameTurnScoped(t *testing.T) {
 	}
 }
 
-// The three no-turn emitters, each driven through the real path that reaches it.
-// Every one must leave TurnScoped FALSE, because there is no turn card, no footer
-// mark and no composer report — the toast is the only surface it has, and the
-// prompt POST already answered at admission.
+// The three no-turn emitters must leave TurnScoped FALSE: with no turn card, no
+// footer mark and no composer report, the toast is the only surface they have.
 func TestPromptFailure_NoTurnEmittersAreNotTurnScoped(t *testing.T) {
 	cases := []struct {
 		name string
@@ -165,9 +145,9 @@ func TestPromptFailure_NoTurnEmittersAreNotTurnScoped(t *testing.T) {
 		run func(context.Context, *promptRoles, *vibekit.PromptCommand)
 	}{
 		{
-			// The bridge slot is held despite an owned admission reservation, which is
-			// a programming error rather than a fault — but the user's prompt is
-			// already persisted and the POST already acked, so it still has to report.
+			// A held slot despite an owned reservation is a programming error rather
+			// than a fault, but the prompt is persisted and the POST acked, so it
+			// still has to report.
 			name:    "the bridge slot was held despite the reservation",
 			want:    vibekit.ErrCodePromptFailed,
 			arrange: func(d *surfaceDeps) { d.slotHeld = true },
@@ -176,9 +156,8 @@ func TestPromptFailure_NoTurnEmittersAreNotTurnScoped(t *testing.T) {
 			},
 		},
 		{
-			// The most reachable of the three: a cancel during the spawn / prime / MCP
-			// window on a cold chat is an ordinary interaction, and StartTurn answers a
-			// zero epoch, so no ACP call is made and nothing finalizes.
+			// The most reachable of the three: a cancel in the spawn / prime / MCP
+			// window is ordinary, and a zero epoch means no ACP call and no finalize.
 			name:    "the turn was cancelled before an epoch was minted",
 			want:    vibekit.ErrCodePromptFailed,
 			arrange: func(d *surfaceDeps) { d.deadEpoch = true },
@@ -187,9 +166,8 @@ func TestPromptFailure_NoTurnEmittersAreNotTurnScoped(t *testing.T) {
 			},
 		},
 		{
-			// Empty-turn recovery could not respawn the session. The turn it was
-			// replacing was already finalized and the retry's epoch is never opened, so
-			// this failure finalizes nothing either.
+			// The turn being replaced was already finalized and the retry's epoch is
+			// never opened, so this failure finalizes nothing either.
 			name:    "empty-turn recovery could not respawn the session",
 			want:    vibekit.ErrCodeRecoveryFailed,
 			arrange: func(d *surfaceDeps) { d.spawnErr = errors.New("no such binary") },
@@ -221,8 +199,8 @@ func TestPromptFailure_NoTurnEmittersAreNotTurnScoped(t *testing.T) {
 	}
 }
 
-// The retry's own prompt failing IS turn-scoped: the retry ran as a turn of its
-// own and AbandonInFlightTurn stamped the reason on it.
+// The retry ran as a turn of its own and AbandonInFlightTurn stamped the reason on
+// it, so this failure IS turn-scoped.
 func TestRetryEmptyTurnPrompt_MarksTheRetryFailureTurnScoped(t *testing.T) {
 	deps := newSurfaceDeps()
 	deps.callErr = errors.New("connection reset")
@@ -242,11 +220,10 @@ func TestRetryEmptyTurnPrompt_MarksTheRetryFailureTurnScoped(t *testing.T) {
 	}
 }
 
-// A failed respawn CORRECTS the transcript, and this is the half a toast cannot do.
+// A failed respawn CORRECTS the transcript, which a toast cannot do:
 // refreshRetrySession has already written "Session refreshed, retrying" onto this
-// turn, so without the correction the durable record claims a retry is in flight
-// that will never happen — and the toast carrying the truth expires in twelve
-// seconds.
+// turn, so without the correction the durable record claims a retry that will never
+// happen.
 func TestRetryEmptyTurnPrompt_RespawnFailureCorrectsTheRetryingDivider(t *testing.T) {
 	deps := newSurfaceDeps()
 	deps.spawnErr = errors.New("no such binary")
@@ -281,8 +258,8 @@ func TestRetryEmptyTurnPrompt_RespawnFailureCorrectsTheRetryingDivider(t *testin
 	if got.ID == "" {
 		t.Error("id is empty: the store dedupes and orders by id")
 	}
-	// The frame and the divider carry the SAME prose, so a reader who saw the toast
-	// and a reader who scrolls back read one sentence rather than two wordings.
+	// The frame and the divider carry the SAME prose, so the toast and the scrollback
+	// read one sentence rather than two wordings.
 	if frame := deps.onlyError(t); frame.Message != got.Content {
 		t.Errorf("frame message %q != divider content %q: one failure, one rendering",
 			frame.Message, got.Content)

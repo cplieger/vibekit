@@ -21,29 +21,23 @@ type fakeBridge struct {
 	// deliveredSeq stamps each delivered frame, the way the real read loop does, so
 	// a test can drive the sequence the parked settle waits for.
 	deliveredSeq uint64
-	// loadSeq is the position a `session/load` answered at, recorded the way the
-	// real bridge records it: after the replay frames have been pushed, because
-	// they precede the result on the wire.
+	// loadSeq is the position a `session/load` answered at, recorded after the replay
+	// frames as on the real bridge, because they precede the result on the wire.
 	loadSeq     uint64
 	callResults map[string]json.RawMessage
 	callErrs    map[string]error
-	// callRPCErrs makes Call return a REPLY carrying a JSON-RPC error, which is
-	// how KAS actually refuses: the transport succeeds and the reason travels
-	// in-band. callErrs is the other channel — the transport itself failing.
+	// callRPCErrs makes Call return a REPLY carrying a JSON-RPC error, which is how KAS
+	// refuses; callErrs is the other channel, the transport itself failing.
 	callRPCErrs  map[string]*vibekit.RPCError
 	lastParams   map[string]map[string]any
 	callDeadline map[string]bool
 	chunksOnCall map[string][]string
-	// notifsOnCall are whole frames delivered after a named Call, verbatim and
-	// unstamped by this bridge's own session id — which is what a `session/load`
-	// replay is: KAS answers it with `session/update` notifications carrying the
-	// LOADED session's id, not the connection's. chunksOnCall cannot express that,
-	// because it stamps every frame with the bridge's own id, so it can only
-	// produce the frames the foreign-session screen is right to drop.
+	// notifsOnCall are whole frames delivered after a named Call, unstamped by this
+	// bridge's session id — which is what a `session/load` replay is. chunksOnCall
+	// stamps its own id, so it can only produce frames the own-session screen drops.
 	notifsOnCall map[string][]*vibekit.RPCResponse
-	// blockOn optionally makes Call block (after recording the call) until
-	// the method's channel is closed — for tests proving concurrency
-	// properties (e.g. RPC reads completing while a text turn is in flight).
+	// blockOn makes Call block after recording, until the method's channel closes — for
+	// concurrency properties like an RPC read completing during a text turn.
 	blockOn   map[string]chan struct{}
 	sessionID string
 	modelID   string
@@ -57,32 +51,25 @@ type fakeBridge struct {
 	models         []vibekit.SessionModel
 	sessionTitle   string
 	calls          []string
-	// startOpts records the StartOpts of the most recent Start, so a test can
-	// assert what a spawn was actually handed (e.g. that the utility bridge
-	// gets no operator launch flags).
+	// startOpts records the most recent Start's opts, so a test can assert what a spawn
+	// was handed — that the utility bridge gets no operator launch flags, say.
 	startOpts *vibekit.StartOpts
-	// startGate, when non-nil, parks Start until closed — the seam that holds a
-	// spawn OPEN, so a test of the bridge-ready transition is not saved by the
-	// forward-attach wake racing an instantaneous Start.
+	// startGate, when non-nil, parks Start until closed, holding a spawn OPEN so a
+	// bridge-ready test is not saved by the forward-attach wake racing a fast Start.
 	startGate chan struct{}
-	// startErr, when non-nil, fails every spawn. A SPAWN failure is a fault on this
-	// server rather than a statement about the run, and the REST layer classifies it
-	// differently for that reason (errRunHostStart), so a test of that arm needs a
-	// way to produce one.
+	// startErr, when non-nil, fails every spawn — a fault on this server rather than a
+	// statement about the run, which the REST layer classifies apart (errRunHostStart).
 	startErr error
-	// starts counts spawns. A boolean cannot answer the question a re-host test
-	// asks — one factory serves the utility session AND every run bridge, so
-	// "was a process started" is only meaningful as a DELTA across the call.
+	// starts counts spawns. One factory serves the utility session AND every run bridge,
+	// so "was a process started" is only meaningful as a DELTA across the call.
 	starts int
-	// notifsOnStart is the transcript a session/load replays. Start pushes these
-	// BEFORE it returns, which is the ordering the real bridge has and the one
-	// the settle barrier's correctness depends on — see Start.
+	// notifsOnStart is the transcript a session/load replays. Start pushes them BEFORE it
+	// returns, the ordering the settle barrier depends on — see Start.
 	notifsOnStart []*vibekit.RPCResponse
 	mu            sync.Mutex
 	responds      int
-	// setModelFailures makes the next N SetModel calls fail. The switch-by-restart
-	// fallback is only reachable when the fast path fails, so a test that wants it
-	// arms this with 1.
+	// setModelFailures makes the next N SetModel calls fail; the switch-by-restart
+	// fallback is only reachable when the fast path does.
 	setModelFailures int
 	stopped          bool
 	started          bool
@@ -121,26 +108,19 @@ func (b *fakeBridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 	notifs := b.notifsOnStart
 	b.mu.Unlock()
 
-	// A replay belongs to session/load, so these ride a Start that NAMES a
-	// session and never a session/new — otherwise the utility bridge, which
-	// shares this factory, would replay a transcript of its own.
-	//
-	// Pushing before the return is what makes the fake honest, not a detail: the
-	// replay is complete once the consumer has folded everything that preceded the
-	// load RESULT (replay_drain.go), so the result's own position is only a bound
-	// on the replay because every frame was pushed ahead of it. A fake that
-	// returned first and let the test push afterwards would answer at a position
-	// the consumer has already passed, and the barrier would settle on frame 1,
-	// delete the projection and drop the rest of the transcript.
+	// A replay belongs to session/load, so these ride a Start that NAMES a session:
+	// otherwise the utility bridge, which shares this factory, would replay a transcript
+	// of its own. Pushing BEFORE the return is what makes the fake honest — a fake that
+	// returned first would answer at a position the consumer has already passed, and the
+	// barrier would settle on frame 1 and drop the rest of the transcript.
 	if opts.SessionID == "" {
 		return nil
 	}
 	for _, n := range notifs {
 		b.deliver(n)
 	}
-	// AFTER the replay, which is where the real bridge takes it too: CallAt stamps
-	// the position notifications already delivered when the response arrived, and
-	// every replay frame precedes that response.
+	// AFTER the replay, as on the real bridge: CallAt stamps the position already
+	// delivered when the response arrived, and every replay frame precedes it.
 	b.mu.Lock()
 	b.loadSeq = b.deliveredSeq
 	b.mu.Unlock()
@@ -229,21 +209,14 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*vibe
 			return nil, ctx.Err()
 		}
 	}
-	// Deliver configured response chunks on notifCh AFTER unlocking so they
-	// arrive after the caller's Call begins (the forward goroutine moves them
-	// to responseCh). notifCh is buffered, so this doesn't block.
-	//
-	// Stamped with this bridge's OWN session id, because that is what KAS puts on
-	// the envelope: an unstamped frame is one the utility session's own-session
-	// screen is right to drop, so a fake that omits it tests the drop path.
+	// After unlocking, so the chunks arrive once the caller's Call has begun; notifCh is
+	// buffered, so this cannot block. Stamped with this bridge's OWN session id, because
+	// an unstamped frame is one the own-session screen is right to drop.
 	for _, text := range chunks {
 		b.deliver(newSessionChunkMsg(sessionID, text))
 	}
-	// Delivered BEFORE the return, which is the ordering the settle barrier's
-	// correctness rests on: every replay frame is pushed before the load result, so
-	// CallAt's position below counts them and reaching it means they have all been
-	// folded. A fake that returned first and let the test push afterwards would let
-	// a barrier settle on frame 1 and read as correct.
+	// Delivered BEFORE the return, the ordering the settle barrier rests on: CallAt's
+	// position below counts these, so reaching it means they have all been folded.
 	for _, f := range frames {
 		b.deliver(f)
 	}
@@ -311,17 +284,10 @@ func (b *fakeBridge) callLog() []string {
 	return out
 }
 
-// setCallResult re-arms one method's canned reply under the fake's own mutex.
-//
-// Needed rather than assigning into callResults directly, because a test that
-// has already opened a bridge shares this fake with a LIVE goroutine: OpenBridge
-// spawns tryLoadSession, which reaches resumeInterruptedRuns and calls back into
-// Call, and Call reads every one of these maps under b.mu. An unguarded write
-// from the test goroutine is then a genuine data race, and the detector reported
-// it as one.
-//
-// Assigning the whole map before OpenBridge stays fine and is what the seed
-// helpers do; this is for re-arming a reply AFTER the bridge is running.
+// setCallResult re-arms one method's canned reply under the fake's own mutex, for use AFTER
+// the bridge is running: OpenBridge spawns tryLoadSession, which calls back into Call, and
+// Call reads these maps under b.mu, so an unguarded write from the test goroutine is a real
+// data race. Assigning the whole map before OpenBridge stays fine.
 func (b *fakeBridge) setCallResult(method string, res json.RawMessage) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -398,10 +364,8 @@ func (b *fakeBridge) SetModel(_ context.Context, modelID string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.calls = append(b.calls, "session/set_config_option")
-	// setModelFailures makes the first N swaps fail, which is the only way to reach
-	// the switch-by-restart fallback: the fast path is what has to fail for the
-	// restart to run at all, and the RETRY on the reopened session is the behaviour
-	// under test.
+	// The only way to reach the switch-by-restart fallback: the fast path has to fail for
+	// the restart to run, and the RETRY on the reopened session is the behaviour under test.
 	if b.setModelFailures > 0 {
 		b.setModelFailures--
 		return errors.New("fake: model swap refused")

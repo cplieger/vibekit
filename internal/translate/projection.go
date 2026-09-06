@@ -1,43 +1,13 @@
 package translate
 
-// Wire projection: rebuilding a chat transcript from a `session/load` replay.
+// Wire projection: rebuilding a chat transcript from a `session/load` replay, which
+// KAS answers by replaying the stored transcript as ordinary `session/update`
+// notifications tagged `_meta.kiro.replay`. A pure accumulator: no chat store, no
+// broadcaster, no clock beyond the injected id generator.
 //
-// KAS answers `session/load` by replaying the session's stored transcript
-// as ordinary `session/update` notifications, each tagged
-// `update._meta.kiro.replay: true`. This file turns that stream back into
-// []vibekit.Message.
-//
-// It is a pure accumulator: no chat store, no broadcaster, no clock beyond
-// an injected id generator. The replay must be staged and swapped into the
-// chat record atomically, never merged frame by frame, because a
-// compaction marker arrives only after the turns it applies to and a
-// half-ingested replay is a transcript with history that should have been
-// summarised.
-//
-// The frame sequence (kiro-cli 2.16.0): a two-turn session that was then
-// compacted replays as user_message_chunk, then per turn
-// (turn_start / content / context_usage / turn_completion / turn_end),
-// then summarization_separator, summary_message, and finally three
-// untagged frames (available_commands_update, context_usage,
-// config_option_update).
-//
-// Three properties of that shape drive the design:
-//
-//  1. The user message precedes turn_start, so it is not inside the
-//     assistant turn's bracket — it is flushed when the bracket opens.
-//  2. Turns are fully bracketed by turn_start / turn_end. Live code opens
-//     a turn on the first chunk and ends it from the session/prompt
-//     response; a replay has no such response, so without these
-//     brackets every replayed turn merges into one message.
-//  3. Both compaction markers arrive at the tail, after every original
-//     turn, and the separator carries no message id. So "the segment
-//     before the separator" is the only thing the wire can mean.
-//
-// A separator arriving MID-TURN therefore splits that turn — closeTurn seals
-// segment 1, the following content frames open a second — which is what makes this
-// path agree with the live one, where the compaction frame seals the same boundary
-// itself (agent.BridgeCoordinator.SealTurnSegment). Both produce
-// [pre, event, post], so a chat's transcript does not change shape on reload.
+// The result is staged and swapped atomically, never merged frame by frame, because
+// a compaction marker arrives only AFTER the turns it applies to; and a replay has
+// no `session/prompt` response, so the turn brackets are what keep turns apart.
 
 import (
 	"encoding/json"
@@ -50,9 +20,8 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// replayInfoMeta decodes the `_meta.kiro` block of a replayed
-// session_info_update. Only the sub-kinds the projection consumes are
-// declared; everything else is identified by Kind and ignored.
+// replayInfoMeta decodes the `_meta.kiro` block of a replayed session_info_update.
+// Only the sub-kinds the projection consumes are declared.
 type replayInfoMeta struct {
 	Meta struct {
 		Kiro struct {
@@ -64,11 +33,9 @@ type replayInfoMeta struct {
 	} `json:"_meta"`
 }
 
-// replayTS converts KAS's RFC3339-with-milliseconds timestamp to the epoch
-// millis vibekit.Message carries. A missing or unparseable value yields 0, which
-// callers replace with their own fallback — never with time.Now() at the top
-// level, because stamping replayed history with the load's clock is the bug
-// this function exists to avoid.
+// replayTS converts KAS's RFC3339 timestamp to the epoch millis vibekit.Message
+// carries. A missing or unparseable value yields 0 for the caller's own fallback —
+// never time.Now(), which would stamp replayed history with the load's clock.
 func replayTS(s string) int64 {
 	if s == "" {
 		return 0
@@ -88,61 +55,33 @@ type replayChunk struct {
 	Meta ACPKiroMeta `json:"_meta"`
 }
 
-// workflowProgressIDPrefix is the id KAS gives a workflow-progress row it
-// writes onto the LAUNCHING chat's transcript.
-//
-// Read out of the 2.16.0 bundle's persistWorkflowEvent, which appends
-//
-//	id:      `wf-progress-${randomUUID()}`
-//	payload: {type: "user", source: "steer",
-//	          content: JSON.stringify({method, ...payload}),
-//	          _meta: {kiro: {notification: {kind: "workflow-progress", …}}}}
-//
-// So it replays as a user_message_chunk whose content is a JSON blob, and
-// rendering it as user prose would put raw JSON in the transcript claiming the
-// user typed it.
+// workflowProgressIDPrefix is the id KAS gives a workflow-progress row it writes onto
+// the LAUNCHING chat's transcript. It replays as a user_message_chunk whose content is
+// a JSON blob, so rendering it as prose would claim the user typed JSON.
 const workflowProgressIDPrefix = "wf-progress-"
 
 // workflowProgressKind is the semantic discriminator on the same row.
 const workflowProgressKind = "workflow-progress"
 
-// The two discriminators on a `send_message` note's durable copy.
-//
-// `deliverSendMessage` appends it as
-//
-//	id:      `notify-${randomUUID()}`
-//	payload: {type: "user", source: "steer", content: <the message>,
-//	          _meta: {kiro: {notification: {kind: "system-notification", …}}}}
-//
-// so it replays on the SAME frame type a real prompt does, and neither
-// discriminator above matches it: the id prefix is `notify-`, not
-// `wf-progress-`, and the kind is `system-notification`, not
-// `workflow-progress`. That is why the question a workflow step asked used to
-// come back as a user bubble on the launching chat, attributed to the reader.
+// The two discriminators on a `send_message` note's durable copy. It replays on the
+// SAME frame type a real prompt does and neither discriminator above matches it,
+// which is why a question a workflow step asked used to come back as a user bubble
+// on the launching chat, attributed to the reader.
 const (
 	stepNoticeIDPrefix = "notify-"
 	stepNoticeKind     = "system-notification"
 )
 
-// isStepNotice reports whether a replayed user chunk is really a step's note.
-//
-// BOTH discriminators, for isWorkflowProgress's reason: the id prefix is the one
-// measured to reach the wire on every content frame, and checking the semantic
-// field too means this keeps working if the id format moves.
+// isStepNotice reports whether a replayed user chunk is really a step's note. BOTH
+// discriminators, so this keeps working if the id format moves.
 func isStepNotice(m *ACPKiroMeta) bool {
 	return strings.HasPrefix(m.Kiro.MessageID, stepNoticeIDPrefix) ||
 		m.Kiro.Notification.Kind == stepNoticeKind
 }
 
 // isWorkflowProgress reports whether a replayed user chunk is really a workflow
-// progress row.
-//
-// BOTH discriminators are checked on purpose. The id prefix is the reliable one
-// — `_meta.kiro.messageId` is measured to reach the wire on every content frame
-// — whereas whether the nested `notification` block survives KAS's replay
-// mapping is NOT verified here (no workflow was available to probe). Checking
-// the semantic field too means this starts working the moment it does survive,
-// without waiting for a second discovery.
+// progress row. BOTH discriminators: the id prefix is the one measured to reach the
+// wire, and the semantic field starts working if the nested block survives too.
 func isWorkflowProgress(m *ACPKiroMeta) bool {
 	return strings.HasPrefix(m.Kiro.MessageID, workflowProgressIDPrefix) ||
 		m.Kiro.Notification.Kind == workflowProgressKind
@@ -151,56 +90,47 @@ func isWorkflowProgress(m *ACPKiroMeta) bool {
 // Projection accumulates a replayed transcript. Not safe for concurrent use;
 // one Projection belongs to one in-flight `session/load`.
 type Projection struct {
-	// Field order is driven by govet fieldalignment: the pointer-bearing
-	// fields first with a SLICE last among them, so its non-pointer len/cap
-	// words end the GC scan region, then the scalars.
+	// Field order is govet fieldalignment's: pointer-bearing fields first with the
+	// SLICE last among them, so its len/cap words end the GC scan region.
 	newID func() string
 	buf   *buffer.Buffer
 
 	userText string
-	// userID is the wire identity of the user message being accumulated,
-	// taken from the FIRST chunk of it (its timestamp is userTs, below with
-	// the other scalars — govet fieldalignment wants the pointer-bearing
-	// fields unbroken).
+	// userID is the wire identity of the user message being accumulated, taken from
+	// the FIRST chunk of it (its timestamp is userTs, below with the other scalars).
 	userID string
-	// turnID is the open assistant turn's id, adopted from the first content
-	// frame inside the turn. turn_start itself carries none (measured: it
-	// carries only turnStart/kind/replay).
+	// turnID is the open assistant turn's id, adopted from the first content frame
+	// inside the turn. turn_start itself carries none (measured).
 	turnID string
-	// Watermark is the id of the compaction event this replay produced, for
-	// the caller to stamp on Chat.CompactionWatermark. Empty when the
-	// session was never compacted.
+	// Watermark is the id of the compaction event this replay produced, for the caller
+	// to stamp on Chat.CompactionWatermark. Empty when the session was never compacted.
 	Watermark string
 
 	messages []vibekit.Message
 
 	userTs    int64
 	turnStart int64
-	// compactAt is the index in messages where a summarization_separator
-	// landed, or -1. The summary_message that follows collapses onto it.
+	// compactAt is the index in messages where a summarization_separator landed, or -1.
+	// The summary_message that follows collapses onto it.
 	compactAt int
 
 	userPending bool
 	turnOpen    bool
-	// dropNextTurn is set when flushUser drops a prime preamble: the bracket that
-	// opens next is the prime's own turn, and its reply is as invisible as its
-	// prompt. Consumed by openTurn.
+	// dropNextTurn is set when flushUser drops a prime preamble: the bracket that opens
+	// next is the prime's own turn, and its reply is as invisible as its prompt.
 	dropNextTurn bool
-	// turnPrimed is whether the OPEN turn is a prime's, so closeTurn discards it
-	// rather than emitting an assistant message.
+	// turnPrimed is whether the OPEN turn is a prime's, so closeTurn discards it.
 	turnPrimed bool
 }
 
-// NewProjection returns an empty Projection. newID must produce unique
-// message ids; the caller supplies it so the projection stays deterministic
-// under test.
+// NewProjection returns an empty Projection. newID must produce unique message ids;
+// the caller supplies it so the projection stays deterministic under test.
 func NewProjection(newID func() string) *Projection {
 	return &Projection{newID: newID, compactAt: -1}
 }
 
-// Ingest folds one replayed session/update frame into the projection.
-// Unknown kinds are ignored: a replay carries catalog and telemetry frames
-// that contribute nothing to a transcript.
+// Ingest folds one replayed session/update frame into the projection. Unknown kinds
+// are ignored: a replay carries catalog and telemetry frames a transcript cannot use.
 func (p *Projection) Ingest(kind vibekit.ACPUpdateKind, raw json.RawMessage) {
 	switch kind {
 	case vibekit.ACPUpdateSessionInfo:
@@ -214,9 +144,8 @@ func (p *Projection) Ingest(kind vibekit.ACPUpdateKind, raw json.RawMessage) {
 	case vibekit.ACPUpdateToolUpdate:
 		p.ingestToolUpdate(raw)
 	default:
-		// user_message_chunk is handled here rather than in the switch above
-		// because its kind constant lives outside the ACPUpdate* set vibekit
-		// declares (it has never had a live handler — see agent/translate.go).
+		// user_message_chunk is handled here because its kind constant lives outside
+		// the ACPUpdate* set vibekit declares (it has never had a live handler).
 		if kind == replayUserChunkKind {
 			p.ingestUserText(raw)
 		}
@@ -224,9 +153,8 @@ func (p *Projection) Ingest(kind vibekit.ACPUpdateKind, raw json.RawMessage) {
 }
 
 // replayUserChunkKind is KAS's user-message replay frame. vibekit declares no
-// vibekit.ACPUpdate* constant for it because the LIVE path deliberately has no
-// handler (vibekit echoes its own user bubbles), so a replay is the only
-// context in which it means anything.
+// ACPUpdate* constant for it because the LIVE path deliberately has no handler
+// (vibekit echoes its own user bubbles).
 const replayUserChunkKind vibekit.ACPUpdateKind = "user_message_chunk"
 
 func (p *Projection) ingestUserText(raw json.RawMessage) {
@@ -234,30 +162,22 @@ func (p *Projection) ingestUserText(raw json.RawMessage) {
 	if json.Unmarshal(raw, &c) != nil {
 		return
 	}
-	// A workflow-progress row rides this same frame type. It is machine state
-	// for the run card, not something the user said, so it must not become a
-	// user bubble full of JSON.
+	// A workflow-progress row rides this same frame type. It is machine state for the
+	// run card, not something the user said.
 	if isWorkflowProgress(&c.Meta) {
 		return
 	}
-	// A workflow step's own note rides the same frame type too. It is prose a step
-	// addressed to a person, so it is KEPT rather than dropped — it is the only
-	// durable copy of a question the ask registry holds in memory — but as an
-	// EVENT, because attributing it to the user is the defect: the transcript said
-	// the reader had typed the step's question.
-	//
-	// Emitted whole and immediately rather than accumulated, unlike a user
-	// message: KAS writes the note as one row, so there is no second chunk to
-	// wait for, and folding it into `userText` would splice it into a real
-	// prompt's text if one were mid-accumulation.
+	// A step's own note rides the same frame type. KEPT rather than dropped — it is the
+	// only durable copy of a question the ask registry holds in memory — but as an
+	// EVENT, because attributing it to the user made the transcript claim the reader
+	// typed the step's question. Emitted whole: KAS writes the note as one row.
 	if isStepNotice(&c.Meta) {
 		p.appendStepNotice(&c)
 		return
 	}
 	if !p.userPending {
-		// First chunk of this user message owns its identity. KAS echoes back
-		// the messageId vibekit sent on session/prompt, so this is the id the
-		// chat record already knows the message by.
+		// First chunk owns the identity: KAS echoes back the messageId vibekit sent on
+		// session/prompt, so this is the id the chat record already knows.
 		p.userID = c.Meta.Kiro.MessageID
 		p.userTs = replayTS(c.Meta.Kiro.Timestamp)
 	}
@@ -277,15 +197,10 @@ func (p *Projection) ingestAgentText(raw json.RawMessage, thinking bool) {
 		p.buf.AppendThinkingDelta(c.Content.Text, sub)
 		return
 	}
-	// The same marker filter as the live path, and not optional here: KAS replays
-	// its own log on every restart-resume and model-switch fallback, and the
-	// marker it never scrubbed is stored in that log. Without this, a marker the
-	// live stream hid would reappear the first time the chat was resumed.
-	// The acknowledgements the filter lifts out are DISCARDED here, unlike on the
-	// live path. A Projection rebuilds a transcript and has no Broadcast, and the
-	// chip row it would feed is per-turn state a resume has already cleared —
-	// KAS clears its steering buffer at every turn boundary, so there is no chip
-	// left for a replayed ack to land on.
+	// The same marker filter as the live path, and not optional here: KAS replays its
+	// own log on every resume and the marker it never scrubbed is stored in that log.
+	// The acknowledgements it lifts out are DISCARDED — a Projection has no Broadcast,
+	// and KAS clears its steering buffer at every turn boundary, so no chip is left.
 	prev, _ := p.buf.SteerCarry()
 	text, carry, _ := stripSteerAcks(prev, c.Content.Text)
 	p.buf.SetSteerCarry(carry, sub)
@@ -300,11 +215,9 @@ func (p *Projection) ingestToolCall(raw json.RawMessage) {
 	if json.Unmarshal(raw, &tc) != nil || tc.ToolCallID == "" {
 		return
 	}
-	// The live path's internal-tool suppression, applied to the replay: KAS's
-	// log stores the cloud-config fetch it announced during session creation,
-	// so without this a resumed chat regains the card the live stream dropped.
-	// The replayed update self-drops (its id is never buffered), and unlike the
-	// live path there is no TurnFoldTarget to guard against.
+	// The live path's internal-tool suppression, applied to the replay: KAS's log stores
+	// the cloud-config fetch it announced during session creation, so without this a
+	// resumed chat regains the card the live stream dropped.
 	if isInternalTool(tc.Meta.Kiro.ToolID) {
 		return
 	}
@@ -324,11 +237,9 @@ func (p *Projection) ingestToolCall(raw json.RawMessage) {
 	p.buf.AppendToolUseBlock(tc.ToolCallID, tc.Meta.Kiro.AgentSubtaskID)
 }
 
-// ingestToolUpdate folds a replayed tool_call_update into the call the
-// preceding tool_call opened. A replay always sends both: the persisted
-// status is `approved`, which KAS maps to `in_progress` on the way out, and
-// the update carries the terminal status plus the output. So a projected tool
-// card lands complete rather than stuck mid-flight.
+// ingestToolUpdate folds a replayed tool_call_update into the call the preceding
+// tool_call opened. A replay always sends both — the persisted status is `approved`
+// and the update carries the terminal one — so a projected card lands complete.
 func (p *Projection) ingestToolUpdate(raw json.RawMessage) {
 	var tu ACPToolCallUpdateWire
 	if json.Unmarshal(raw, &tu) != nil || p.buf == nil {
@@ -366,19 +277,17 @@ func (p *Projection) ingestInfo(raw json.RawMessage) {
 	}
 	switch u.Meta.Kiro.Kind {
 	case "turn_start":
-		// Close, THEN flush the pending user text, THEN open. A start with a turn
-		// already open means the previous end never arrived: opening without
-		// closing discards that turn's whole reply, and flushing first emits the
-		// orphaned reply after the NEXT prompt's user message, attributing it to
-		// the wrong turn. Messages() runs the same two in the same order.
+		// Close, THEN flush, THEN open. A start with a turn already open means the end
+		// never arrived: opening without closing discards that turn's reply, and flushing
+		// first attributes the orphan to the NEXT prompt. Messages() repeats the order.
 		p.closeTurn()
 		p.flushUser()
 		p.openTurn()
 	case "turn_end":
 		p.closeTurn()
 	case "summarization_separator":
-		// Everything accumulated so far is the segment the summary replaces.
-		// Close any open turn first so the boundary lands between messages.
+		// Everything so far is the segment the summary replaces. Close any open turn
+		// first so the boundary lands between messages.
 		p.closeTurn()
 		p.compactAt = len(p.messages)
 	case "summary_message":
@@ -386,20 +295,10 @@ func (p *Projection) ingestInfo(raw json.RawMessage) {
 	}
 }
 
-// applySummary appends the compaction event for a replayed summary. It
-// folds onto the same domain shape the live path produces (a RoleEvent
-// message with EventKind compacted, plus a watermark).
-//
-// The originals are kept, matching live behaviour: vibekit's model is a
-// watermark, not a deletion. The separator's position is what the
-// watermark means, which is why compactAt is recorded rather than the
-// messages dropped. Three reasons the originals stay rather than being
-// collapsed: the live path keeps them too, so a chat's transcript must
-// not change shape across a container restart; the context bar derives
-// summarizedCount by counting up to the watermark, which collapses to a
-// constant if the segment is gone; and collapse is a render decision
-// available downstream at zero cost, while dropping it here throws away
-// data no consumer can recover.
+// applySummary appends the compaction event for a replayed summary, folding onto the
+// same shape the live path produces. The originals are KEPT: vibekit's model is a
+// watermark, not a deletion, the context bar counts up to it, and collapsing is a
+// render decision available downstream at no cost.
 func (p *Projection) applySummary(sum *struct {
 	Content string `json:"content"`
 },
@@ -407,13 +306,10 @@ func (p *Projection) applySummary(sum *struct {
 	if sum == nil || p.compactAt < 0 {
 		return
 	}
-	// Insert at the separator's position so a later turn replayed after a
-	// compaction still sorts after the boundary.
+	// Insert at the separator's position so a later turn still sorts after the boundary.
 	at := min(p.compactAt, len(p.messages))
-	// The summary_message frame carries no timestamp of its own (measured),
-	// so it inherits the last message of the segment it summarises. That keeps
-	// the event ordered where it belongs instead of at the load's wall clock,
-	// which would sort every replayed compaction to the end of the transcript.
+	// The summary_message frame carries no timestamp (measured), so it inherits the last
+	// message of the segment; the load's wall clock would sort it to the end.
 	ts := int64(0)
 	if at > 0 {
 		ts = p.messages[at-1].Ts
@@ -442,20 +338,14 @@ func (p *Projection) openTurn() {
 	p.turnOpen = true
 	p.turnID = ""
 	p.turnStart = 0
-	// A prime's user message was just dropped, so the bracket opening now is the
-	// prime's own turn. Consumed here so the flag cannot outlive one turn.
+	// A prime's user message was just dropped, so this bracket is the prime's own turn.
 	p.turnPrimed = p.dropNextTurn
 	p.dropNextTurn = false
 }
 
-// adoptTurnIdentity gives the open turn the id and timestamp of the first
-// content frame inside it. `turn_start` carries neither (measured: only
-// turnStart/kind/replay), so the bracket cannot supply them.
-//
-// KAS records one message per say/tool rather than one per turn, so a turn
-// with several say blocks offers several ids; taking the first makes the
-// projected id a deterministic function of the replay, which is what
-// idempotence across repeated loads requires.
+// adoptTurnIdentity gives the open turn the id and timestamp of the first content
+// frame inside it; `turn_start` carries neither (measured). KAS records one message per
+// say/tool, so taking the FIRST is what makes the projection idempotent across loads.
 func (p *Projection) adoptTurnIdentity(messageID, timestamp string) {
 	if p.turnID == "" {
 		p.turnID = messageID
@@ -465,9 +355,8 @@ func (p *Projection) adoptTurnIdentity(messageID, timestamp string) {
 	}
 }
 
-// closeTurn assembles the open turn's buffer into one assistant message.
-// A turn that produced nothing at all is dropped rather than persisted as an
-// empty bubble.
+// closeTurn assembles the open turn's buffer into one assistant message. A turn that
+// produced nothing is dropped rather than persisted as an empty bubble.
 func (p *Projection) closeTurn() {
 	if !p.turnOpen {
 		return
@@ -478,16 +367,13 @@ func (p *Projection) closeTurn() {
 	primed := p.turnPrimed
 	p.turnPrimed = false
 	if b == nil || primed {
-		// A prime's ANSWER goes with its preamble. The prime instructs the model to
-		// reply with one short line confirming it is caught up, and that reply
-		// replays as an ordinary bracketed turn — so filtering only the user half
-		// left "Got it, I'm caught up" in the transcript as an agent-initiated
-		// segment, which the live path publishes and persists nowhere.
+		// A prime's ANSWER goes with its preamble. The prime asks the model for one line
+		// confirming it is caught up, and that reply replays as an ordinary bracketed
+		// turn — so filtering only the user half left it in the transcript.
 		return
 	}
-	// Settle anything the marker filter still withheld before the emptiness
-	// check below reads Content — a turn whose only text was a held candidate
-	// would otherwise be judged empty and dropped.
+	// Settle anything the marker filter withheld before the emptiness check reads
+	// Content — a turn whose only text was a held candidate would be judged empty.
 	FlushSteerCarry(b)
 	if b.Content.Len() == 0 && b.Reasoning.Len() == 0 && len(b.ToolCalls) == 0 {
 		return
@@ -503,10 +389,8 @@ func (p *Projection) closeTurn() {
 	})
 }
 
-// idOr prefers the wire's own message id and falls back to a generated one.
-// The fallback exists for frames that carry no messageId at all rather than as
-// the normal path: a generated id makes the projection non-deterministic
-// across loads, so it is the degraded case, not the default.
+// idOr prefers the wire's own message id and falls back to a generated one. The
+// fallback is the degraded case: a generated id makes the projection non-deterministic.
 func (p *Projection) idOr(wireID string) string {
 	if wireID != "" {
 		return wireID
@@ -523,10 +407,8 @@ func (p *Projection) frameTS(timestamp string) int64 {
 	return p.turnStart
 }
 
-// appendStepNotice emits a step's note as an inline event message.
-//
-// Its own id and timestamp come off the wire like every other projected row, so
-// two loads of one session produce the same transcript.
+// appendStepNotice emits a step's note as an inline event message. Its id and timestamp
+// come off the wire, so two loads of one session produce the same transcript.
 func (p *Projection) appendStepNotice(c *replayChunk) {
 	if c.Content.Text == "" {
 		return
@@ -552,14 +434,11 @@ func (p *Projection) flushUser() {
 	if text == "" {
 		return
 	}
-	// A PRIME is vibekit's own transcript replay, sent as a real session/prompt, so
-	// KAS persists it and replays it here like anything the user typed. Dropped
-	// rather than rendered: the live path publishes and persists none of a prime's
-	// frames, so keeping it here would make a resumed session the ONE place the
-	// priming preamble shows up as conversation.
+	// A PRIME is vibekit's own transcript replay, sent as a real session/prompt, so KAS
+	// persists and replays it here. Dropped: the live path publishes none of a prime's
+	// frames, so keeping it would make a resume the one place the preamble shows up.
 	if IsPrimePreamble(text) {
-		// The prime's own TURN goes too: see closeTurn. The bracket that opens next
-		// is the prime's, because the user message precedes turn_start on this wire.
+		// The prime's own TURN goes too (see closeTurn): the next bracket is the prime's.
 		p.dropNextTurn = true
 		return
 	}
@@ -571,11 +450,9 @@ func (p *Projection) flushUser() {
 	})
 }
 
-// Messages closes any still-open turn and returns the projected transcript as
-// a fresh slice, so a caller appending to it cannot write into the
-// projection's own backing array. Idempotent: closeTurn and flushUser are
-// both no-ops once they have run, so a second call returns the same
-// transcript rather than a truncated one.
+// Messages closes any still-open turn and returns the projected transcript as a fresh
+// slice, so a caller appending cannot write into the projection's backing array.
+// Idempotent: closeTurn and flushUser are both no-ops once they have run.
 func (p *Projection) Messages() []vibekit.Message {
 	p.closeTurn()
 	p.flushUser()

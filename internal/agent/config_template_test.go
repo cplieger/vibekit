@@ -63,17 +63,14 @@ func TestTemplateToResponse(t *testing.T) {
 	}
 }
 
-// TestTemplateToResponse_DistinguishesAnAbsentModelOptionFromAPopulatedOne pins
-// the one thing the old flattened body could not say. KAS omits the `model`
-// config option entirely when its model cache holds nothing, so the ONLY signal
-// separating "this is the catalog" from "there was no catalog" is that option's
-// presence — and the response used to carry `models: []` for both.
+// KAS omits the `model` config option entirely when its model cache holds nothing, so that
+// option's PRESENCE is the only signal separating "this is the catalog" from "there was no
+// catalog".
 func TestTemplateToResponse_DistinguishesAnAbsentModelOptionFromAPopulatedOne(t *testing.T) {
 	const present = `{"configOptions": [
 	  {"id": "model", "currentValue": "m-1", "options": [{"value": "m-1", "name": "One"}]}
 	]}`
-	// The shape KAS really sends for an unresolved or zero-model cache: the
-	// `model` entry is not there at all. Never a present-but-empty one.
+	// What KAS really sends for an unresolved cache: no `model` entry, never an empty one.
 	const absent = `{"configOptions": [
 	  {"id": "effortLevel", "currentValue": "high", "options": [{"value": "high", "name": "High"}]}
 	]}`
@@ -97,11 +94,9 @@ func TestTemplateToResponse_DistinguishesAnAbsentModelOptionFromAPopulatedOne(t 
 	}
 }
 
-// TestTemplateToResponse_APresentOptionWhoseEntriesAllFilterOutIsStillReady pins
-// that the verdict is the option's PRESENCE and not len(Models). A template whose
-// every model choice is [Deprecated] IS a catalog KAS answered with; deriving the
-// verdict from the filtered list would report it as an empty cache and send the
-// client into a retry loop over a read that can never change.
+// The verdict is the option's PRESENCE, not len(Models): an all-[Deprecated] template is
+// still a catalog KAS answered with, and deriving the verdict from the filtered list sends
+// the client into a retry loop over a read that can never change.
 func TestTemplateToResponse_APresentOptionWhoseEntriesAllFilterOutIsStillReady(t *testing.T) {
 	const raw = `{"configOptions": [
 	  {"id": "model", "currentValue": "m-old", "options": [
@@ -126,8 +121,7 @@ func TestTemplateToResponseEmpty(t *testing.T) {
 	if got.DefaultModel != "" || len(got.Modes) != 0 || len(got.Models) != 0 {
 		t.Errorf("empty template must yield empty catalog: %+v", got)
 	}
-	// The JSON contract keeps arrays non-null so the client can index
-	// without null checks.
+	// Arrays stay non-null so the client can index without null checks.
 	b, err := json.Marshal(got)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -138,15 +132,9 @@ func TestTemplateToResponseEmpty(t *testing.T) {
 	}
 }
 
-// TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo covers the endpoint's
-// contract in all three directions, because the degradation is what makes the other
-// two matter.
-//
-// The client keeps static fallbacks for a 200 carrying empty lists, so a failure
-// here is INVISIBLE in the UI — the picker simply shows the built-in defaults. The
-// log line is therefore the only evidence, which also means a guard flipped so it
-// fires on success reports a broken catalog on every page load while the real
-// failures look identical.
+// The client keeps static fallbacks for a 200 carrying empty lists, so a failure here is
+// INVISIBLE in the UI and the log line is the only evidence — which also means a guard
+// flipped to fire on success reports a broken catalog on every page load.
 func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 	const goodReply = `{
 	  "modes": {"currentModeId": "vibe", "availableModes": [
@@ -244,12 +232,9 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 	})
 }
 
-// TestHandleConfigTemplate_EveryBodyKeepsItsArraysNonNull asserts on the raw
-// BYTES, because that is the only place the defect was visible: the two degrade
-// branches built their literal without EffortLevels, so one response type had two
-// shapes on the wire — `"effort_levels": null` on failure against `[]` on success
-// — and a generated decoder requiring an array would fail on the failure path
-// alone. Decoding into the struct cannot see it (len(nil) == 0).
+// Asserted on the raw BYTES, because decoding into the struct cannot see this
+// (len(nil) == 0): a degrade branch omitting a slice puts `null` on the wire where success
+// puts `[]`, and a generated decoder requiring an array fails on the failure path alone.
 func TestHandleConfigTemplate_EveryBodyKeepsItsArraysNonNull(t *testing.T) {
 	cases := map[string]func(*fakeBridge){
 		"an unreachable bridge": func(br *fakeBridge) {

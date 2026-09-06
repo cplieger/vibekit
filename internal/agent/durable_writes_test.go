@@ -1,13 +1,10 @@
 package agent
 
-// The durable-write class, gated by a CENSUS rather than by a list somebody has
-// to remember. A write carrying a CONVERSATIONAL RECORD — a prompt, an assistant
-// reply, a turn-boundary event, a plan row, a transcript — must run detached from
-// the shutdown that made it necessary; every other write is abandonable.
-//
-// A whitelist cannot see the omission it exists for: SealTurnSegment landed while
-// the class was live, in a function nobody had listed. So every store write in
-// both packages is walked and must appear in exactly one list below.
+// The durable-write class, gated by a CENSUS rather than a list somebody has to
+// remember: a write carrying a CONVERSATIONAL RECORD (a prompt, a reply, a
+// turn-boundary event, a plan row, a transcript) must run detached from the shutdown
+// that made it necessary, and every other write is abandonable. A whitelist cannot
+// see the omission it exists for — SealTurnSegment landed in a function nobody listed.
 
 import (
 	"go/ast"
@@ -19,38 +16,32 @@ import (
 	"testing"
 )
 
-// storeWritePackages are the two packages the class spans. Their SOURCE is read
-// rather than imported: agent imports translate, so a test here has no other way
-// to reach the far half.
+// The two packages the class spans. Their SOURCE is read rather than imported:
+// agent imports translate, so a test here has no other way to reach the far half.
 var storeWritePackages = []string{"internal/agent", "internal/translate"}
 
-// storeWriteNames is what the census counts as a write: the four chat.Store
-// methods, plus the five finalize-path helpers that reach them on the caller's
-// own context and so decide nothing themselves.
+// What the census counts as a write: the four store methods, plus the five
+// finalize-path helpers that reach them on the caller's own context.
 var storeWriteNames = []string{
 	"Mutate", "AppendMessage", "UpsertTurnPlan", "UpdateMessage",
 	"persistTurn", "persistDisplacedTurn", "persistTurnReply", "appendEventMessage", "persistOutcomeMarker",
 }
 
-// storeWriteFloor is a floor under the census, so a walk that stops finding
-// anything fails instead of reporting a clean class.
+// A walk that stops finding anything must fail rather than report a clean class.
 const storeWriteFloor = 25
 
-// durableSite is one function whose store writes carry a ruling, named by the
-// function that performs them and the store calls inside it.
+// One function whose store writes carry a ruling.
 type durableSite struct {
 	file  string
 	fn    string
 	calls []string
-	// because is what is lost when the write is refused, or what decides the
-	// context when the function is not the decider, so a failure says what the
-	// reader loses rather than only which rule tripped.
+	// because is what a failure says the reader loses, or what decides the context
+	// when this function is not the decider.
 	because string
 }
 
-// durableWriteSites carry a conversational record. finalizeTurn is deliberately
-// absent: its whole closer dispatch runs below one seam, which is a different
-// shape and has its own test below.
+// Sites carrying a conversational record. finalizeTurn is deliberately absent: its
+// whole closer dispatch runs below one seam, which has its own test below.
 var durableWriteSites = []durableSite{{
 	file:    "internal/agent/turn_finalize.go",
 	fn:      "amendLostReason",
@@ -93,10 +84,9 @@ var durableWriteSites = []durableSite{{
 	because: "the turn's plan row, which the replay wire carries none of and nothing regenerates",
 }}
 
-// abandonableWriteSites are the writes ruled NOT durable, and each row says which
-// reason it is: the next frame or the next load re-derives the value, or the write
-// is scoped to a caller whose abandonment is the point. Naming them here is what
-// makes the omission a decision on the record rather than an oversight.
+// Writes ruled NOT durable, each row naming its reason: the next frame or load
+// re-derives the value, or the caller's abandonment is the point. Listing them is
+// what makes the omission a decision rather than an oversight.
 var abandonableWriteSites = []durableSite{{
 	file:    "internal/agent/turn_metering.go",
 	fn:      "mutateUsage",
@@ -144,11 +134,10 @@ var abandonableWriteSites = []durableSite{{
 	because: "the fallback mode, re-derived",
 }}
 
-// inheritedWriteSites take the caller's context and must not wrap it themselves,
-// because the decision is not theirs to make. Two shapes: a persist helper shared
-// between the finalize path and the segment seal, where a wrap in one body would
-// silently change the OTHER caller's shutdown behaviour; and a closer that already
-// runs below finalizeTurn's seam.
+// Sites that take the caller's context and must not wrap it, because the decision is
+// not theirs: a persist helper shared between the finalize path and the segment seal,
+// where a wrap would silently change the OTHER caller's shutdown behaviour, and a
+// closer already running below finalizeTurn's seam.
 var inheritedWriteSites = []durableSite{{
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "persistTurn",
@@ -196,14 +185,10 @@ var inheritedWriteSites = []durableSite{{
 	because: "finalizeTurn's seam, reached only from closeWithOutcome",
 }}
 
-// TestFinalizeTurn_EveryDurableWriteRunsDetached gates the seam itself: one
-// detach, below the position wait, above every closer.
-//
-// The two halves are one test because each is the other's failure mode. A seam
-// below a persist helper leaves that helper refused at shutdown; a seam above
-// awaitPosition turns a bounded shutdown wait into an unbounded one, and that
-// half fails by HANGING in a behavioural test, so having it as a line comparison
-// here is what makes it diagnosable.
+// The seam itself: one detach, below the position wait, above every closer. Both
+// halves in one test because each is the other's failure mode — a seam below a
+// persist helper leaves it refused at shutdown, and a seam above awaitPosition makes
+// a bounded shutdown wait unbounded, which fails by HANGING in a behavioural test.
 func TestFinalizeTurn_EveryDurableWriteRunsDetached(t *testing.T) {
 	const rel = "internal/agent/turn_finalize.go"
 	fset, file := parseModuleFile(t, rel)
@@ -250,8 +235,7 @@ func TestFinalizeTurn_EveryDurableWriteRunsDetached(t *testing.T) {
 			fset.Position(closerSwitch), fset.Position(seam))
 	}
 
-	// Every call into a persist helper is below the seam. The helpers themselves
-	// take finalizeTurn's ctx, so one above it is one refused at shutdown.
+	// The helpers take finalizeTurn's ctx, so a call above the seam is refused.
 	persistHelpers := map[string]bool{
 		"persistTurn":          true,
 		"persistDisplacedTurn": true,
@@ -285,11 +269,9 @@ func TestFinalizeTurn_EveryDurableWriteRunsDetached(t *testing.T) {
 	}
 }
 
-// TestDurableWrites_EveryStoreWriteCarriesARuling is the census the site lists
-// cannot be on their own. It walks every store write in both packages and fails
-// when the enclosing function appears in none of the three lists — which is the
-// omission class the whole gate exists for, since a whitelist only ever inspects
-// functions somebody already thought of.
+// The census the site lists cannot be on their own: a write whose enclosing function
+// appears in none of the three lists is the omission class the gate exists for, since
+// a whitelist only inspects functions somebody already thought of.
 func TestDurableWrites_EveryStoreWriteCarriesARuling(t *testing.T) {
 	ruled := map[string]string{}
 	for _, list := range []struct {
@@ -340,10 +322,8 @@ func TestDurableWrites_EveryStoreWriteCarriesARuling(t *testing.T) {
 	}
 }
 
-// TestDurableWrites_EverySiteCarryingAConversationalRecordIsDetached is the
-// non-finalize half of the class. One seam cannot reach it: these handlers are
-// called from the translate cascade and the Forward goroutine, not from
-// finalizeTurn.
+// The non-finalize half of the class. One seam cannot reach it: these handlers are
+// called from the translate cascade and the Forward goroutine.
 func TestDurableWrites_EverySiteCarryingAConversationalRecordIsDetached(t *testing.T) {
 	for _, site := range durableWriteSites {
 		t.Run(site.file+"/"+site.fn, func(t *testing.T) {
@@ -360,10 +340,9 @@ func TestDurableWrites_EverySiteCarryingAConversationalRecordIsDetached(t *testi
 	}
 }
 
-// TestDurableWrites_TheAbandonableSitesAreExemptedNotForgotten holds the other
-// direction. Each of these was ruled abandonable, and asserting the ruling still
-// describes real code is what stops the list quietly emptying out under a rename:
-// a site that vanished from here would read as a site nobody had to judge.
+// The other direction. Asserting each ruling still describes real code is what stops
+// the list emptying under a rename: a site that vanished would read as one nobody had
+// to judge.
 func TestDurableWrites_TheAbandonableSitesAreExemptedNotForgotten(t *testing.T) {
 	for _, site := range abandonableWriteSites {
 		t.Run(site.file+"/"+site.fn, func(t *testing.T) {
@@ -381,11 +360,9 @@ func TestDurableWrites_TheAbandonableSitesAreExemptedNotForgotten(t *testing.T) 
 	}
 }
 
-// TestDurableWrites_TheInheritedSitesDecideNothing holds the third ruling. A
-// persist helper shared between the finalize path and the segment seal must take
-// the caller's context unwrapped: a detach inside persistTurn would change the
-// seal's shutdown behaviour from refused to written, which is probably right and
-// definitely not what anyone reviewed.
+// The third ruling. A detach inside a shared persist helper would change the seal's
+// shutdown behaviour from refused to written, which is probably right and definitely
+// not what anyone reviewed.
 func TestDurableWrites_TheInheritedSitesDecideNothing(t *testing.T) {
 	for _, site := range inheritedWriteSites {
 		t.Run(site.file+"/"+site.fn, func(t *testing.T) {
@@ -402,16 +379,15 @@ func TestDurableWrites_TheInheritedSitesDecideNothing(t *testing.T) {
 	}
 }
 
-// storeWrite is one store write the census found, keyed by the function that
-// performs it.
+// One store write the census found, keyed by the function that performs it.
 type storeWrite struct {
 	site string
 	name string
 	at   string
 }
 
-// censusStoreWrites reports every store write in one package directory's
-// production files, whatever function performs it.
+// Every store write in one package directory's production files, whatever function
+// performs it.
 func censusStoreWrites(t *testing.T, dir string) []storeWrite {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(moduleRoot(t), dir))
@@ -439,15 +415,13 @@ func censusStoreWrites(t *testing.T, dir string) []storeWrite {
 	return out
 }
 
-// writeCall is one store write inside a function body.
 type writeCall struct {
 	name     string
 	at       string
 	detached bool
 }
 
-// siteWrites reports one listed site's writes and the subset running on an
-// ATTACHED context.
+// One listed site's writes, and the subset running on an ATTACHED context.
 func siteWrites(t *testing.T, site durableSite) (found, attached []writeCall) {
 	t.Helper()
 	fset, file := parseModuleFile(t, site.file)
@@ -461,9 +435,8 @@ func siteWrites(t *testing.T, site durableSite) (found, attached []writeCall) {
 	return found, attached
 }
 
-// writeCallsIn reports every store write in body, in source order. A write is
-// detached when its own context argument is durable.Context(...), or when the body
-// reassigned ctx from it beforehand.
+// A write is detached when its own context argument is durable.Context(...), or when
+// the body reassigned ctx from it beforehand.
 func writeCallsIn(fset *token.FileSet, body *ast.BlockStmt) []writeCall {
 	want := make(map[string]bool, len(storeWriteNames))
 	for _, n := range storeWriteNames {
@@ -493,7 +466,6 @@ func writeCallsIn(fset *token.FileSet, body *ast.BlockStmt) []writeCall {
 	return out
 }
 
-// missingWrites reports which of want no write in found is named for.
 func missingWrites(found []writeCall, want []string) []string {
 	have := make(map[string]bool, len(found))
 	for _, w := range found {
@@ -508,7 +480,6 @@ func missingWrites(found []writeCall, want []string) []string {
 	return missing
 }
 
-// formatWrites renders writes for a failure message.
 func formatWrites(calls []writeCall) []string {
 	out := make([]string, 0, len(calls))
 	for _, w := range calls {
@@ -517,7 +488,7 @@ func formatWrites(calls []writeCall) []string {
 	return out
 }
 
-// isDurableReassign reports whether stmt is `ctx = durable.Context(…)`.
+// Whether stmt is `ctx = durable.Context(…)`.
 func isDurableReassign(stmt *ast.AssignStmt) bool {
 	if stmt.Tok != token.ASSIGN || len(stmt.Lhs) != 1 || len(stmt.Rhs) != 1 {
 		return false
@@ -529,7 +500,7 @@ func isDurableReassign(stmt *ast.AssignStmt) bool {
 	return isDurableCall(stmt.Rhs)
 }
 
-// isDurableCall reports whether the first expression is a durable.Context call.
+// Whether the first expression is a durable.Context call.
 func isDurableCall(args []ast.Expr) bool {
 	if len(args) == 0 {
 		return false
@@ -546,7 +517,6 @@ func isDurableCall(args []ast.Expr) bool {
 	return ok && pkg.Name == "durable" && sel.Sel.Name == "Context"
 }
 
-// parseModuleFile parses one production file by its module-relative path.
 func parseModuleFile(t *testing.T, rel string) (*token.FileSet, *ast.File) {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -557,7 +527,6 @@ func parseModuleFile(t *testing.T, rel string) (*token.FileSet, *ast.File) {
 	return fset, file
 }
 
-// funcDeclNamed returns the function or method declared as name.
 func funcDeclNamed(t *testing.T, file *ast.File, rel, name string) *ast.FuncDecl {
 	t.Helper()
 	for _, decl := range file.Decls {
@@ -570,7 +539,7 @@ func funcDeclNamed(t *testing.T, file *ast.File, rel, name string) *ast.FuncDecl
 	return nil
 }
 
-// exprText renders an expression back to source, for comparing a switch tag.
+// An expression rendered back to source, for comparing a switch tag.
 func exprText(fset *token.FileSet, expr ast.Expr) string {
 	start := fset.Position(expr.Pos())
 	end := fset.Position(expr.End())
@@ -581,7 +550,6 @@ func exprText(fset *token.FileSet, expr ast.Expr) string {
 	return string(data[start.Offset:end.Offset])
 }
 
-// moduleRoot walks up from the test's working directory to the module root.
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

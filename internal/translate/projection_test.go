@@ -123,14 +123,10 @@ func TestProjection_MeasuredCompactedReplay(t *testing.T) {
 	}
 }
 
-// TestProjection_TurnBracketsSeparateTurns is the failure this whole file
-// exists to prevent.
-//
-// Live, a turn opens on its first chunk and is finalised from the
-// session/prompt response's stopReason. A whole-session replay has no such
-// response, so WITHOUT honouring turn_start/turn_end every replayed turn
-// merges into a single assistant message with one id — the transcript comes
-// back as one giant bubble.
+// TestProjection_TurnBracketsSeparateTurns is the failure this whole file exists to prevent.
+// Live, a turn opens on its first chunk and is finalised from the session/prompt response's
+// stopReason; a whole-session replay has no such response, so without honouring
+// turn_start/turn_end every replayed turn merges into one assistant message with one id.
 func TestProjection_TurnBracketsSeparateTurns(t *testing.T) {
 	p := NewProjection(seqIDs())
 	ingestAll(p, measuredCompactedReplay(t))
@@ -153,16 +149,12 @@ func TestProjection_TurnBracketsSeparateTurns(t *testing.T) {
 	}
 }
 
-// TestProjection_UserMessagePrecedesTheBracket pins the ordering the wire
-// actually uses: user_message_chunk arrives BEFORE turn_start, so the user
-// message is not inside the assistant turn's bracket.
-//
-// What this catches is flushing the user message at turn CLOSE rather than at
-// turn open — that emits the pair backwards, because the assistant message is
-// appended on close. It is deliberately NOT sensitive to whether flushUser
-// runs just before or just after openTurn: openTurn only allocates a buffer,
-// so that ordering cannot affect the output and pretending otherwise would be
-// a test asserting an implementation detail.
+// TestProjection_UserMessagePrecedesTheBracket pins the ordering the wire uses:
+// user_message_chunk arrives BEFORE turn_start, so the user message is not inside the
+// assistant turn's bracket. What it catches is flushing the user message at turn CLOSE, which
+// emits the pair backwards because the assistant message is appended on close. It is
+// deliberately NOT sensitive to flushUser running just before or after openTurn, which only
+// allocates a buffer.
 func TestProjection_UserMessagePrecedesTheBracket(t *testing.T) {
 	p := NewProjection(seqIDs())
 	ingestAll(p, measuredCompactedReplay(t))
@@ -253,14 +245,11 @@ func TestProjection_MidTurnSeparatorSplitsTheTurn(t *testing.T) {
 	}
 }
 
-// The complement of the case above, and the reason both are pinned: whether KAS
-// replays a mid-turn separator at its chronological POSITION is unmeasured. The
-// twice-compacted capture shows one at a turn BOUNDARY replayed where it happened,
-// so the wire may deliver a mid-turn one after that turn's turn_end instead. This
-// pins what the projection then does — it reconstructs no boundary the wire did not
-// state — so a future change that started splitting a turn on a tail separator, or
-// stopped splitting on a mid-turn one, fails one of the two rather than surprising
-// a reader.
+// The complement of the case above, and the reason both are pinned: whether KAS replays a
+// mid-turn separator at its chronological POSITION is unmeasured, so the wire may deliver one
+// after that turn's turn_end. This pins what the projection then does — it reconstructs no
+// boundary the wire did not state — so a change that started splitting on a tail separator,
+// or stopped splitting on a mid-turn one, fails one of the two.
 func TestProjection_TailSeparatorLeavesTheTurnWhole(t *testing.T) {
 	p := NewProjection(seqIDs())
 	ingestAll(p, [][2]any{
@@ -430,14 +419,11 @@ func dumpMessages(ms []vibekit.Message) string {
 	return b.String()
 }
 
-// probe23Turn is one turn of the probe-23 capture (kiro-cli 2.16.0,
-// 2026-08-01) with its REAL messageId and timestamp values: a user message, a
-// bracketed turn whose first content frame is a tool call, then agent text.
-//
-// The ids are the measured shapes — a bare uuid for the user message,
-// `<toolCallId>-call` / `-result` for the tool pair, `<uuid>-say` for agent
-// text — because the projection's identity rules key on which frame arrives
-// first, and a synthetic id would not exercise that.
+// probe23Turn is one turn of a capture from kiro-cli 2.16.0 (2026-08-01) with its REAL
+// messageId and timestamp values. The ids are the measured shapes — a bare uuid for the user
+// message, `<toolCallId>-call` / `-result` for the tool pair, `<uuid>-say` for agent text —
+// because the projection's identity rules key on which frame arrives first, and a synthetic
+// id would not exercise that.
 func probe23Turn(t *testing.T) [][2]any {
 	t.Helper()
 	f := func(kind vibekit.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
@@ -471,14 +457,11 @@ func probe23Turn(t *testing.T) [][2]any {
 	}
 }
 
-// TestProjection_AdoptsWireIdentity pins that the projection takes its message
-// ids and timestamps FROM THE WIRE rather than inventing them.
-//
-// Both halves are load-bearing. A fabricated id makes the projection
-// non-deterministic, so the same stored session projects differently on every
-// load and task 12's "resume addresses a message id" has nothing to address.
-// A wall-clock timestamp makes a resumed transcript claim all of its history
-// happened at the moment of the resume.
+// TestProjection_AdoptsWireIdentity pins that the projection takes its message ids and
+// timestamps FROM THE WIRE. Both halves are load-bearing: a fabricated id makes the
+// projection non-deterministic, so the same stored session projects differently on every load
+// and a resume has no message id to address, and a wall-clock timestamp makes a resumed
+// transcript claim all of its history happened at the moment of the resume.
 func TestProjection_AdoptsWireIdentity(t *testing.T) {
 	p := NewProjection(seqIDs())
 	ingestAll(p, probe23Turn(t))
@@ -593,30 +576,13 @@ func TestProjection_CompactionEventSortsWithItsSegment(t *testing.T) {
 	}
 }
 
-// TestProjection_TwiceCompactedKeepsEveryTurn is the "twice-compacted" fixture
-// the design's risk table asked for, asserting the OPPOSITE of what that table
-// specified — and the measurement is why.
-//
-// Probe (kiro-cli 2.16.0, 2026-08-02): a session of four turns compacted after
-// turn 2 and again after turn 4 replays 28 frames — all four original turns in
-// full, plus TWO separator/summary pairs at positions 13/14 and 27/28. The
-// separators carry `{summarizationSeparator: true, kind, replay}` and nothing
-// else; explicit checks for `effectiveFromMessageId`, `truncatedMessageCount`,
-// `visibleFrom` and `hidden` all came back absent from every frame on the wire.
-// On disk the tombstones DO carry both fields, and the second one's
-// effectiveFromMessageId points at the FIRST SUMMARY
-// (`summary_0745abfe-...`) — the segments NEST, each summary subsuming the one
-// before it.
-//
-// That is what rules collapse out. Applied positionally twice, separator 1
-// replaces turns 1-2 with summary 1 and separator 2 replaces
-// [summary 1 + turns 3-4] with summary 2, so the whole transcript becomes one
-// summary paragraph. Compaction fires automatically at 80% context, so a
-// long-lived chat would collapse to a single blob on EVERY resume — deleting
-// the content transcript search and the timeline rail exist to navigate, which
-// the design's own risk table classes as "a data-loss bug, not a polish item".
-// And the wire cannot even do it faithfully: with no id and no count, position
-// is all there is.
+// TestProjection_TwiceCompactedKeepsEveryTurn. Probed on kiro-cli 2.16.0 (2026-08-02): a
+// four-turn session compacted after turn 2 and again after turn 4 replays 28 frames — all
+// four turns in full plus TWO separator/summary pairs, and the separators carry
+// `{summarizationSeparator, kind, replay}` and nothing else, with no id and no count on the
+// wire. That is what rules COLLAPSE out: applied positionally twice, the second separator
+// subsumes the first summary and the whole transcript becomes one paragraph — and compaction
+// fires automatically at 80% context, so a long-lived chat would collapse on every resume.
 func TestProjection_TwiceCompactedKeepsEveryTurn(t *testing.T) {
 	f := func(kind vibekit.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
 		k, raw := replayFrame(t, kind, text, sub, extra)
@@ -722,19 +688,12 @@ func TestProjection_TwiceCompactedKeepsEveryTurn(t *testing.T) {
 	}
 }
 
-// TestProjection_WorkflowProgressIsNotUserProse pins that a workflow-progress
-// row does not become a user bubble.
-//
-// KAS's persistWorkflowEvent (2.16.0 bundle) writes a run's progress onto the
-// LAUNCHING chat's transcript as `{type: "user", source: "steer", content:
-// JSON.stringify({method, ...payload})}` with id `wf-progress-<uuid>` and
-// `_meta.kiro.notification.kind: "workflow-progress"`. It therefore replays as
-// a user_message_chunk whose content is a JSON blob — rendered as prose it puts
-// raw JSON in the transcript attributed to the user.
-//
-// Both discriminators are covered because only one is verified to reach the
-// wire: messageId is measured on every content frame, while the nested
-// notification block's survival through KAS's replay mapping is not.
+// TestProjection_WorkflowProgressIsNotUserProse: KAS's persistWorkflowEvent (2.16.0 bundle)
+// writes a run's progress onto the LAUNCHING chat's transcript as `{type:"user",
+// source:"steer", content: JSON.stringify(...)}` with id `wf-progress-<uuid>` and
+// `_meta.kiro.notification.kind: "workflow-progress"`, so it replays as a user_message_chunk
+// whose content is a JSON blob. Both discriminators are covered because only one is verified
+// to reach the wire: messageId is measured on every content frame, the nested block is not.
 func TestProjection_WorkflowProgressIsNotUserProse(t *testing.T) {
 	blob := `{"method":"workflow/nodeCompleted","workflowId":"wf-1"}`
 
@@ -781,22 +740,13 @@ func TestProjection_WorkflowProgressIsNotUserProse(t *testing.T) {
 	}
 }
 
-// TestProjection_StepNoticeIsNotUserProse pins that a workflow step's own
-// message does not come back attributed to the reader.
-//
-// KAS's deliverSendMessage writes it onto the LAUNCHING chat's transcript as
-// `{type:"user", source:"steer", content:<the message>}` with id
-// `notify-<uuid>` and `_meta.kiro.notification.kind: "system-notification"`, so
-// it replays on exactly the frame a real prompt does. Neither
-// workflow-progress discriminator matches it, which is why the question a step
-// asked used to render as something the user had typed.
-//
-// KEPT rather than dropped, unlike a workflow-progress row: that row is machine
-// state whose content is a JSON blob, while this is prose a step addressed to a
-// person and the only durable copy of a question the ask registry holds in
-// memory. So the assertion is on the ROLE, not on absence.
-//
-// Both discriminators are covered for the reason the sibling above gives.
+// TestProjection_StepNoticeIsNotUserProse: KAS's deliverSendMessage writes a step's own
+// message onto the LAUNCHING chat's transcript as `{type:"user", source:"steer"}` with id
+// `notify-<uuid>` and kind `system-notification`, so it replays on exactly the frame a real
+// prompt does and neither workflow-progress discriminator matches it. KEPT rather than
+// dropped, unlike a workflow-progress row: this is prose a step addressed to a person and the
+// only durable copy of a question the ask registry holds in memory, so the assertion is on
+// the ROLE rather than on absence.
 func TestProjection_StepNoticeIsNotUserProse(t *testing.T) {
 	const question = "Which branch should I target?"
 
@@ -1028,15 +978,11 @@ func TestProjection_ToolCallCarriesItsOwnTimestamp(t *testing.T) {
 	}
 }
 
-// TestProjection_SecondTurnStartClosesTheFirstTurn is the missing-turn_end case,
-// and the operation ORDER in ingestInfo is what it pins.
-//
-// Two starts with no end between them is the agent-initiated class: the previous
-// turn's bracket never arrived. Opening without closing threw the first turn's
-// whole reply away, because openTurn assigns a fresh buffer and nothing else ever
-// reads the old one. Flushing the pending user text BEFORE closing gets it wrong
-// the other way: the orphaned reply is then emitted after the next prompt's user
-// message, so the transcript attributes it to the turn that follows it.
+// TestProjection_SecondTurnStartClosesTheFirstTurn is the missing-turn_end case, and what it
+// pins is the operation ORDER in ingestInfo. Opening without closing throws the first turn's
+// whole reply away, because openTurn assigns a fresh buffer and nothing reads the old one.
+// Flushing the pending user text BEFORE closing gets it wrong the other way: the orphaned
+// reply lands after the next prompt's user message, attributing it to the turn that follows.
 func TestProjection_SecondTurnStartClosesTheFirstTurn(t *testing.T) {
 	f := func(kind vibekit.ACPUpdateKind, text, sub string) [2]any {
 		k, raw := replayFrame(t, kind, text, sub, nil)
@@ -1126,16 +1072,12 @@ func TestProjection_DropsThePrimePreamble(t *testing.T) {
 	}
 }
 
-// TestProjection_DropsThePrimesOwnReply is the other half of the prime's reload
-// suppression, and the half the preamble filter left behind.
-//
-// The prime instructs the model to absorb the transcript silently and reply with
-// one short line confirming it is caught up. That reply is a real turn on the
-// wire, so it replays as an ordinary bracketed assistant turn with no user
-// message in front of it — which, on a transcript with durable outcomes, opens a
-// headerless agent-initiated SEGMENT reading "Got it, I'm caught up" as
-// conversation. The live path broadcasts and persists nothing of a prime, so the
-// resumed session was again the one place any of it showed up.
+// TestProjection_DropsThePrimesOwnReply is the half of the prime's reload suppression the
+// preamble filter leaves behind. The prime tells the model to absorb the transcript silently
+// and confirm in one line; that reply is a real turn on the wire, so it replays as an
+// ordinary bracketed assistant turn with no user message in front of it and opens a headerless
+// agent-initiated SEGMENT. The live path persists nothing of a prime, so a resumed session is
+// the one place any of it shows up.
 func TestProjection_DropsThePrimesOwnReply(t *testing.T) {
 	p := NewProjection(seqIDs())
 	frames := [][2]any{

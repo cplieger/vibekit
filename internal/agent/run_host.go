@@ -1,18 +1,11 @@
 package agent
 
-// The run host: launching a PARENTLESS workflow run, and the process that holds
-// it. An agent-launched run is parented on its chat's session by KAS and needs
-// nothing here; a manual or scheduled one gets ONE bridge of its own, registered
-// under the synthetic chat id `run:<workflowId>` so every response path already
-// resolves it by chat id.
-
-// The synthetic id gets no chat file. Invariant 3 protects CONVERSATIONS; a run
-// bridge is ephemeral — its loss is a PAUSE, and closing the tab is a CANCEL.
-
-// Only an actively executing run holds a process (user ruling): a stop of any kind
-// closes the bridge and the four control verbs re-host on demand. Which bridge
-// holds what, why the lease outlives the process, and why cancel is excluded:
-// vibekit-runtime.md. The KAS-side shapes: vibekit-acp.md.
+// The run host: launching a PARENTLESS workflow run and the process that holds it.
+// An agent-launched run is parented on its chat's session by KAS and needs nothing
+// here; a manual or scheduled one gets ONE bridge of its own under the synthetic chat
+// id `run:<workflowId>`, which every response path already resolves by chat id. That
+// id gets no chat file. Which bridge holds what, and why the lease outlives the
+// process: vibekit-runtime.md. The KAS-side shapes: vibekit-acp.md.
 
 import (
 	"cmp"
@@ -36,9 +29,8 @@ const (
 	keyWorkspacePaths = "workspacePaths"
 )
 
-// runChatPrefix namespaces the synthetic chat ids run bridges register under.
-// Real chat ids are client-generated `c-*` uuids, so the namespace cannot
-// collide with one.
+// runChatPrefix namespaces the synthetic chat ids run bridges register under. Real
+// chat ids are client-generated `c-*` uuids, so the namespace cannot collide.
 const runChatPrefix = "run:"
 
 // runChatID is the bridge-manager key for a run's bridge.
@@ -51,9 +43,8 @@ func isRunChat(chatID vibekit.ChatID) bool {
 	return strings.HasPrefix(string(chatID), runChatPrefix)
 }
 
-// workflowIDOf recovers the run a bridge hosts from its synthetic chat id, or ""
-// for anything that is not one. The bridge hosts exactly ONE run, so a step's
-// content can be addressed without trusting the frame to name it.
+// workflowIDOf recovers the run a bridge hosts from its synthetic chat id, or "" for
+// anything that is not one.
 func workflowIDOf(chatID vibekit.ChatID) string {
 	if !isRunChat(chatID) {
 		return ""
@@ -61,39 +52,28 @@ func workflowIDOf(chatID vibekit.ChatID) string {
 	return strings.TrimPrefix(string(chatID), runChatPrefix)
 }
 
-// launchTimeout bounds the launch handshake (process start + initialize +
-// session/new + new + invoke). Generous because a first launch may unpack a
-// KAS runtime tree (~240 MB) before the process answers.
+// launchTimeout bounds the launch handshake. Generous because a first launch may
+// unpack a ~240 MB KAS runtime tree before the process answers.
 const launchTimeout = 120 * time.Second
 
-// errRecipeBusy reports the single-run rule: one live run per recipe
-// definition, globally (user decision). Concurrency is declared INSIDE a
-// workflow, never by launching the same recipe twice.
+// errRecipeBusy reports the single-run rule: one live run per recipe definition,
+// globally. Concurrency is declared INSIDE a workflow.
 var errRecipeBusy = errors.New("this recipe already has a live run")
 
-// Launch starts one parentless run of the recipe with the given source key
+// Launch starts one parentless ATTENDED run of the recipe with the given source key
 // and returns its workflow id and name.
-//
-// The source is re-validated against a fresh listRecipes call rather than
-// trusted: echoing an arbitrary path into `new` would let a client aim this
-// endpoint at a file that is not a recipe. The run stays ATTENDED.
 func (rs *Runs) Launch(ctx context.Context, source string, inputs map[string]string) (id, name string, err error) {
 	return rs.launch(ctx, source, inputs, manualLaunch())
 }
 
-// LaunchScheduled launches a run on behalf of a schedule, marking it
-// UNATTENDED for the duration.
-//
-// slotAt is when this run's own next slot comes due; zero means the schedule
-// cannot name one and the run's idle window and backstop alone bound it. The unattended mark rides
-// the lease granted between `new` and `invoke`, which is the earliest point the
-// workflow id exists and still before anything can execute.
+// LaunchScheduled launches a run on behalf of a schedule, marking it UNATTENDED for
+// the duration. slotAt is when this run's own next slot comes due; zero means the idle
+// window and backstop alone bound it.
 func (rs *Runs) LaunchScheduled(ctx context.Context, source, scheduleID string, slotAt time.Time) (id, name string, err error) {
 	return rs.launch(ctx, source, nil, scheduledLaunch(scheduleID, slotAt))
 }
 
-// launch is the shared body of both public launch verbs. The origin carries
-// everything that differs between them.
+// launch is the shared body of both public launch verbs.
 func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]string, o launchOrigin) (id, name string, err error) {
 	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
 	defer cancel()
@@ -103,23 +83,20 @@ func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]str
 		return "", "", err
 	}
 	if o.origin == runlease.OriginManual {
-		// A manual run of a recipe that ALSO has a schedule must yield to that
-		// recipe's next slot, only knowable once the recipe is resolved.
+		// A manual run yields to its recipe's next slot, known only once resolved.
 		o.slotAt = rs.manualSlot(recipe.Source)
 	}
 	if bErr := rs.recipeIdle(cctx, recipe.Name); bErr != nil {
 		return "", "", bErr
 	}
 
-	// Started OUTSIDE the manager: the map key is the workflow id, which only
-	// `new`'s reply knows. Call replies ride the readLoop rather than NotifCh, so
-	// the forward goroutine can attach after `new`.
+	// Started OUTSIDE the manager: the map key is the workflow id, which only `new`'s
+	// reply knows. Call replies ride the readLoop, so Forward can attach afterwards.
 	bridge := rs.bridges.factory()
 	if sErr := bridge.Start(cctx, &vibekit.StartOpts{
 		Lifetime: rs.lifecycle.shutdownCtx,
-		// Named rather than left to buildACPArgs's default so a future edit to
-		// that default cannot launch a run bridge on the legacy engine while
-		// every chat bridge stays on v3. Same argv today.
+		// Named rather than inherited from buildACPArgs's default, so a change there
+		// cannot launch a run bridge on the legacy engine. Same argv today.
 		AgentEngine: resolveAgentEngine(),
 		Presets:     securityPresets(cctx, rs.lifecycle.configDir),
 		ToolSearch:  toolSearchEnabled(cctx, rs.lifecycle.configDir),
@@ -143,8 +120,7 @@ func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]str
 	go rs.coord.Forward(runChatID(wfID), bridge)
 
 	if _, err := bridge.Call(cctx, methodKiroWorkflowInvoke, map[string]any{keyWorkflowID: wfID}); err != nil {
-		// The run was created but never started; nothing is executing. Tear the
-		// bridge down and surface the failure rather than leaving a zombie row.
+		// The run was created but never started, so nothing is executing.
 		rs.releaseLease(cctx, wfID)
 		rs.coord.CloseBridge(runChatID(wfID))
 		return "", "", fmt.Errorf("workflow invoke: %w", err)
@@ -156,22 +132,16 @@ func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]str
 	return wfID, recipe.Name, nil
 }
 
-// Cancel asks a run to stop, on the USER's behalf.
-//
-// It takes the run's termination claim like every bound does, so a deliberate stop
-// racing the run's own deadline cannot be relabelled `overran`; winning records NOTHING, which
-// is the third value the row's one field carries. A LOST claim returns nil —
-// something else got there first — and a won claim whose RPC fails is handed back
-// so a later Cancel is not silently refused. retryTermination owns what happens after
-// that refusal, so the button the user pressed keeps trying on its own budget.
+// Cancel asks a run to stop, on the USER's behalf. A LOST termination claim returns
+// nil — something else got there first — and a refused RPC is handed back, with
+// retryTermination re-attempting it on its own budget.
 func (rs *Runs) Cancel(ctx context.Context, workflowID string) error {
 	return rs.cancelOn(ctx, workflowID, nil)
 }
 
-// cancelOn is Cancel for a caller that has ALREADY resolved the run's carrier, so a
-// caller stopping N runs pays one run-inventory read instead of N+1 — see
-// CancelForSessions, which holds the whole inventory the resolver would re-fetch. A
-// nil carrier means resolve it here, which is every other caller.
+// cancelOn is Cancel for a caller that has ALREADY resolved the run's carrier, so
+// stopping N runs costs one inventory read instead of N+1 (CancelForSessions). A nil
+// carrier means resolve it here, which is every other caller.
 func (rs *Runs) cancelOn(ctx context.Context, workflowID string, carrier *sharedBridge) error {
 	if workflowID == "" {
 		return errors.New("missing workflow id")
@@ -182,22 +152,19 @@ func (rs *Runs) cancelOn(ctx context.Context, workflowID string, carrier *shared
 	return rs.finishTermination(ctx, workflowID, "", carrier)
 }
 
-// cancelRPC issues the cancel VERB and nothing else — no claim, no record.
-//
-// The bridge is NOT closed here: the owning process must live to the node boundary
-// to certify the cancelled state, so the terminal `run_complete` closes it instead.
+// cancelRPC issues the cancel VERB and nothing else — no claim, no record. The bridge
+// is NOT closed here: the owning process must live to the node boundary to certify the
+// cancelled state, so the terminal `run_complete` closes it.
 func (rs *Runs) cancelRPC(ctx context.Context, workflowID string, carrier *sharedBridge) error {
 	return rs.control(ctx, workflowID, methodKiroWorkflowCancel, "workflow cancel call", carrier)
 }
 
 // Delete removes a run and everything either side keeps about it, on the USER's
-// behalf. The only run verb that is not recoverable.
+// behalf. The only run verb that is not recoverable; a failed verb leaves everything
+// in place, because the run still exists in KAS.
 //
-// The ORDER is the opposite of cancel's, three ways. KAS's delete cancels a
-// non-terminal run itself, so pre-claiming termination would record an end reason
-// for a row about to stop existing. The bridge IS closed, because a deleted run has
-// nothing left to certify. And a failed verb leaves everything in place: the run
-// still exists in KAS, so forgetting the lease would strand it unbounded.
+// Deliberately unlike cancel: no termination claim (KAS's delete cancels a
+// non-terminal run itself) and the bridge IS closed.
 func (rs *Runs) Delete(ctx context.Context, workflowID string) error {
 	if workflowID == "" {
 		return errors.New("missing workflow id")
@@ -214,11 +181,8 @@ func (rs *Runs) Delete(ctx context.Context, workflowID string) error {
 
 // Pause asks a running run to stop at its next node boundary, keeping its state
 // resumable. The in-flight node runs to completion, so the reply confirms the ASK
-// rather than a paused state.
-//
-// KAS's pause reaches `registry.require`, which throws for a run its own process
-// forgot — so a re-hosted pause is expected to be REFUSED, and hostedControl's
-// failure path tears the carrier back down.
+// rather than a paused state; a re-hosted pause is expected to be REFUSED, because
+// KAS throws for a run its own process forgot.
 func (rs *Runs) Pause(ctx context.Context, workflowID string) error {
 	return rs.hostedControl(ctx, workflowID, methodKiroWorkflowPause)
 }
@@ -233,11 +197,8 @@ func (rs *Runs) Resume(ctx context.Context, workflowID string) error {
 	return err
 }
 
-// Retry re-hosts a finished run and resets its failed work.
-//
-// Only reachable for a PARENTLESS run (user decision); an agent-parented run's
-// recovery is the agent's own. The user opened the run's page and clicked Retry, so
-// the run tab OWNS this bridge as it owns a launched one.
+// Retry re-hosts a finished run and resets its failed work. Only reachable for a
+// PARENTLESS run; an agent-parented run's recovery is the agent's own.
 func (rs *Runs) Retry(ctx context.Context, workflowID string) error {
 	if workflowID == "" {
 		return errors.New("missing workflow id")
@@ -245,8 +206,7 @@ func (rs *Runs) Retry(ctx context.Context, workflowID string) error {
 	chatID := runChatID(workflowID)
 
 	// Not the expected path — retry's window implies a closed bridge — but a run
-	// aborted without a terminal frame can still be registered. Counted like every
-	// other verb: an earlier verb may have left this very carrier under a bound.
+	// aborted without a terminal frame can still be registered.
 	if sb := rs.bridges.get(chatID); sb != nil {
 		rs.carriers.enter(sb)
 		defer rs.carriers.leave(sb)
@@ -281,26 +241,23 @@ func (rs *Runs) Retry(ctx context.Context, workflowID string) error {
 	}
 
 	if _, err := sb.bridge.Call(cctx, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID}); err != nil {
-		// Nothing is executing: tear the carrier down and give back a lease this
-		// call minted for a run that never re-drove. A CONTEXT error keeps BOTH,
-		// under the one unknown-outcome rule discard already follows — armDeadline
-		// reads the lease first and returns when there is none, so a retry KAS did
-		// take would execute with no deadline and nothing able to arm one.
+		// A CONTEXT error keeps BOTH the carrier and the lease, under the one
+		// unknown-outcome rule: armDeadline returns when there is no lease, so a
+		// retry KAS did take would execute with no deadline and nothing to arm one.
 		if minted && !isCtxErr(err) {
 			rs.releaseLease(cctx, workflowID)
 		}
 		discard(err)
 		return fmt.Errorf("workflow retry: %w", err)
 	}
-	// A fresh clock and a clean row, only now the retry has landed: the client
-	// lets a recognised end_reason outrank live status.
+	// Only now the retry has landed: the client lets a recognised end_reason outrank
+	// live status.
 	rs.rearmRetried(cctx, workflowID, recipe)
 	slog.Info("workflow run retried", "workflow_id", workflowID, "recipe", recipe)
 	return nil
 }
 
-// recipeOf reads a run's recipe NAME off KAS's own run list, the only place this
-// process can learn the recipe of a run it did not launch. Best-effort: "" when the
+// recipeOf reads a run's recipe NAME off KAS's own run list. Best-effort: "" when the
 // list cannot be read, because a retry must not fail over a name.
 func (rs *Runs) recipeOf(ctx context.Context, workflowID string) string {
 	runs, err := rs.listRaw(ctx)
@@ -318,45 +275,34 @@ func (rs *Runs) recipeOf(ctx context.Context, workflowID string) string {
 }
 
 // errStepStatusRefused means KAS resolved the run and DECLINED the update instead of
-// throwing: the run is already terminal, or it holds no running-or-paused step to
-// mark. A state of the world rather than a fault, so the REST layer answers 409
-// carrying KAS's own sentence — the shape errRunNotParked takes on the answer route.
+// throwing: the run is terminal, or holds no running-or-paused step to mark. A state
+// of the world rather than a fault, so the REST layer answers 409 with KAS's sentence.
 var errStepStatusRefused = errors.New("this run's step status was not changed")
 
 // updateStatusAction is `_kiro/workflow/update`'s action id for a step-status write.
-// Sent EXPLICITLY although the handler treats any non-`replace_remaining` value as
-// this one: the tool schema declares `action` required, so an absent value is a
-// shape the verb only accepts by accident of one `if`.
+// Sent EXPLICITLY although any non-`replace_remaining` value works: the tool schema
+// declares `action` required, so an absent value is accepted only by accident.
 const updateStatusAction = "update_status"
 
-// errStepStatusMistargeted means the node the caller named is not the node KAS's own
-// resolver would mark — a different step is the run's current one, or the run holds no
-// running-or-paused step at all — so the write was WITHHELD rather than aimed at
-// whatever node the run happens to hold.
-//
-// WRAPS errStepStatusRefused: like a KAS decline it is a state of the world, so the
-// REST layer's 409 arm covers it with no fourth branch.
+// errStepStatusMistargeted means the node the caller named is not the node KAS's
+// resolver would mark, so the write was WITHHELD. Wraps errStepStatusRefused, so the
+// REST layer's 409 arm covers it too.
 var errStepStatusMistargeted = fmt.Errorf(
 	"%w: this run is not waiting at the step you asked to mark", errStepStatusRefused,
 )
 
 // errStepStatusUnreadable means the pre-send read failed, so whether the caller's node
 // is the one KAS would mark is UNKNOWN. Withheld rather than sent: a `completed` on the
-// wrong node publishes that node's capture and stamps it finished, which no later call
-// undoes, while a withheld write costs a retry.
+// wrong node publishes its capture and stamps it finished, which nothing undoes.
 var errStepStatusUnreadable = fmt.Errorf(
 	"%w: this run's state could not be read just now, so try again in a moment",
 	errStepStatusRefused,
 )
 
 // SetStepStatus marks a step completed, failed, or running so a wedged run can
-// advance.
-//
-// The params are FLAT and carry NO node id, so KAS resolves its own target
-// positionally and a client naming node X can have KAS mark node Y. That divergence
-// IS reachable, so the tree is READ and the write withheld unless the two agree —
-// answerAddress's pattern, on the verb that WRITES. Schema, resolver and the throw the
-// nested shape took on every call: vibekit-acp.md.
+// advance. The verb carries NO node id, so KAS resolves its target positionally and a
+// client naming node X can have KAS mark node Y — the tree is READ first and the write
+// withheld unless the two agree. Schema and resolver: vibekit-acp.md.
 func (rs *Runs) SetStepStatus(ctx context.Context, workflowID, nodeID, status string) error {
 	if nodeID == "" {
 		return errors.New("missing node id")
@@ -365,11 +311,8 @@ func (rs *Runs) SetStepStatus(ctx context.Context, workflowID, nodeID, status st
 		return fmt.Errorf("step status must be one of %v", runStepStatuses)
 	}
 	// BEFORE hostOrRehost, unlike AnswerInput's read: `inspect` runs on the utility
-	// session, so a withheld write spends no process start. COST of that ordering: a
-	// kiro-cli spawn sits between confirming the target and sending it, so the target
-	// can go stale across a process start where the answer path reads inside its
-	// carrier's span. Bounded — an unhosted run advances nothing itself, so the
-	// reachable actor is a second client, answerAddress's own accepted residual.
+	// session, so a withheld write spends no process start. Cost: the target can go
+	// stale across the spawn, bounded by an unhosted run advancing nothing itself.
 	if err := rs.stepStatusAddress(ctx, workflowID, nodeID); err != nil {
 		return err
 	}
@@ -388,14 +331,11 @@ func (rs *Runs) SetStepStatus(ctx context.Context, workflowID, nodeID, status st
 		discard(callErr)
 		return callErr
 	}
-	// The REPLY is read, because a decline is not a throw: a terminal run and a run
-	// with nothing to mark both answer {updated:false, queued:false, message} with a
-	// 200, so a caller that ignored the result would report the write as landed.
+	// The REPLY is read, because a decline is not a throw: both declines answer
+	// {updated:false} with a 200, which a caller ignoring it reports as landed.
 	if refusal := stepStatusRefusal(resp); refusal != "" {
-		// The carrier goes on this path too. A decline means KAS resolved the run and
-		// wrote nothing, so no run_complete follows and closeStoppedBridge never fires
-		// — a re-host's process would live until the container did. A no-op when the
-		// carrier was already held, so it cannot close a bridge this verb did not start.
+		// The carrier goes on this path too: a decline means nothing was written, so
+		// no run_complete follows and a re-host's process would outlive the verb.
 		discard(errStepStatusRefused)
 		return fmt.Errorf("%w: %s", errStepStatusRefused, refusal)
 	}
@@ -407,13 +347,9 @@ func (rs *Runs) SetStepStatus(ctx context.Context, workflowID, nodeID, status st
 	return nil
 }
 
-// stepStatusRefusal returns KAS's reason when it declined the update, "" when it
-// took it.
-//
-// `Updated` is a *bool so ABSENT reads as taken: an unstated field must not make a
-// verb that worked report a refusal, which is the worse direction, and an undecodable
-// result answers the same way. `queued` is not consulted — a queued update was taken.
-// The two declines and why the reply has to be read: vibekit-acp.md.
+// stepStatusRefusal returns KAS's reason when it declined the update, "" when it took
+// it. `Updated` is a *bool so ABSENT reads as taken: an unstated field must not make a
+// verb that worked report a refusal. A queued update was taken, so `queued` is unread.
 func stepStatusRefusal(resp *vibekit.RPCResponse) string {
 	if resp == nil || len(resp.Result) == 0 {
 		return ""
@@ -435,13 +371,9 @@ func stepStatusRefusal(resp *vibekit.RPCResponse) string {
 }
 
 // stepStatusAddress reports whether the node a caller named is the node KAS would
-// mark, and REFUSES rather than falling back when it cannot tell.
-//
-// answerAddress's unreadable arm falls back because a failed read there costs a
-// prompt sent to the address the ask already carries; here it would cost a positional
-// WRITE that publishes a capture and stamps endedAt, which nothing undoes. It matches
-// by NAME (askedStep's tolerance): a repeat's iterations share a node id and the verb
-// carries none, so an id is the only handle either side has.
+// mark, and REFUSES rather than falling back when it cannot tell: here a wrong answer
+// costs a positional WRITE that publishes a capture and stamps endedAt, which nothing
+// undoes.
 func (rs *Runs) stepStatusAddress(ctx context.Context, workflowID, nodeID string) error {
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
@@ -471,18 +403,13 @@ func (rs *Runs) stepStatusAddress(ctx context.Context, workflowID, nodeID string
 	return nil
 }
 
-// stepNodeType is the state tree's `type` for a STEP node — the only kind KAS's own
-// target resolver considers, which is what keeps a paused `parallel` container from
-// being read as the run's current step.
+// stepNodeType is the state tree's `type` for a STEP node — the only kind KAS's
+// resolver considers, which keeps a paused `parallel` container out of the answer.
 const stepNodeType = "step"
 
 // statusUpdateTarget resolves the node `_kiro/workflow/update` would mark, mirroring
-// KAS's own resolver: the first RUNNING step node in pre-order, else the FIRST PAUSED
-// one. Quoted off the pinned bundle, with why the ACP route can take no other arm:
-// vibekit-acp.md.
-//
-// Deliberately not pausedLeaf beside it — that answers "where is the run waiting" over
-// LEAVES, this answers "what will KAS write to" over typed step nodes, running first.
+// KAS's own resolver: the first RUNNING step node in pre-order, else the first PAUSED
+// one. Not pausedLeaf, which answers where the run is WAITING, over leaves.
 func statusUpdateTarget(root *askNode) *askNode {
 	running, paused := stepTargets(root)
 	if running != nil {

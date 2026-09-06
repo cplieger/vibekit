@@ -391,15 +391,10 @@ func TestStepTranscript_OnlyAssistantRowsTravel(t *testing.T) {
 	}
 }
 
-// TestStepTranscript_TheUtilitySessionKeepsItsOwnIdentity is the flagged risk this
-// design rests on, asserted rather than assumed.
-//
-// A raw `session/load` Call must NOT rebind the utility bridge's own session id.
-// If it did, liveID() would start reporting a step's id, which takes the real
-// utility session OUT of the orphan reaper's keep-list — and the reaper would then
-// delete on-disk state from under a live subprocess. Verified in internal/bridge
-// (Call is a plain round trip; only Start adopts a session result), and pinned here
-// because that is a property of the CALL path a future refactor could quietly move.
+// TestStepTranscript_TheUtilitySessionKeepsItsOwnIdentity: a raw `session/load` Call must
+// NOT rebind the utility bridge's own session id. If it did, liveID() would report a step's
+// id, taking the real utility session out of the orphan reaper's keep-list — and the reaper
+// would delete on-disk state from under a live subprocess.
 func TestStepTranscript_TheUtilitySessionKeepsItsOwnIdentity(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
@@ -761,16 +756,11 @@ func TestStepReplays_IngestReportsWhetherItConsumed(t *testing.T) {
 	}
 }
 
-// TestStepTranscript_SettlesOnTheBarrierRatherThanTheBudget drives the whole read
-// under a budget too short to hide behind.
-//
-// Every other end-to-end case here runs on the real 60s budget, so a read that
-// waits the budget out and answers `unavailable` looks the same as one that settles
-// — slower, and nothing asserts the difference. With the budget at 50ms, only a
-// read whose barrier actually closed can answer `ready`, which is what makes this
-// the end-to-end witness for the position plumbing: the load's own read-loop
-// position, the attachment it names, and the utility session's per-frame report all
-// have to agree or the barrier never closes.
+// TestStepTranscript_SettlesOnTheBarrierRatherThanTheBudget drives the read under a budget
+// too short to hide behind: on the real 60s budget, a read that waits it out and answers
+// `unavailable` is indistinguishable from one that settles. At 50ms only a closed barrier can
+// answer `ready`, so the load's read-loop position, the attachment it names and the utility
+// session's per-frame report all have to agree.
 func TestStepTranscript_SettlesOnTheBarrierRatherThanTheBudget(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })

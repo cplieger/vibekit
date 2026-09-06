@@ -8,32 +8,22 @@
   min-height: 0;
 
   /* THE GUTTER COLUMN, declared once on the box both its occupants position
-   * against: the timeline rail (29-turns.css) and the resume control docked at
-   * its foot. `--rail-inset-end` is the distance from this box's inline-END to
-   * the column, derived from the turn cards' own edge — see the rail, which
-   * carries the reasoning and the measurements. `--rail-inset-start` is the same
-   * column from the other side, and a control pinned there grows RIGHT into the
-   * gutter instead of back over the cards.
-   *
-   * The width is the rail's WIDEST ROW, which is a cluster RANGE and not a
-   * marker: `100-125` measures 42.67px at the cluster's 9px mono, against a
-   * three-digit marker's 25.88px. At the marker-sized 1.75rem every range past
-   * two digits per side was capped and wrapped onto two lines. It also sets the
-   * axis (`50%` of this column), so 29-turns.css's container query is derived
-   * from it. */
+   * against: the timeline rail (29-turns.css, which owns the reasoning) and the
+   * resume control docked at its foot. `--rail-inset-end` is the distance from
+   * this box's inline-END to the column; `--rail-inset-start` is the same column
+   * from the other side, so a control pinned there grows RIGHT into the gutter
+   * instead of back over the cards. The width is the rail's WIDEST row, which is a
+   * cluster RANGE and not a marker, and it also sets the axis. */
   --rail-w: 2.75rem;
   --rail-inset-end: calc(50% - var(--content-max-w) / 2 - var(--rail-w) - var(--sp-2));
   --rail-inset-start: calc(100% - var(--rail-inset-end) - var(--rail-w));
 }
 
-/* THE HELPER OWNS EVERY MUTATION. Native CSS scroll anchoring is off here on
- * purpose, and not as a fallback: Safari does not support `overflow-anchor` at
- * all and on iOS every browser is WebKit, so the platform this app is most read
- * on has none of it. Worse, leaving it ON alongside scroll.ts's
- * preserveReadingPosition is a DOUBLE correction rather than a harmless no-op —
- * anchoring queues an adjustment and applies it at the end of its suppression
- * window while the helper adds the same delta itself, moving the reader roughly
- * twice as far. Deterministic on one owner beats a feature-detect between two. */
+/* THE HELPER OWNS EVERY MUTATION. Native scroll anchoring is off deliberately,
+ * not as a fallback: Safari does not support `overflow-anchor` at all, and
+ * leaving it on alongside scroll.ts's preserveReadingPosition is a DOUBLE
+ * correction — anchoring applies its queued delta while the helper adds the same
+ * one, moving the reader roughly twice as far. */
 [id="messages-wrap"] {
   overflow-anchor: none;
   position: absolute;
@@ -41,92 +31,47 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 
-  /* The column's side inset lives HERE, outside the `--content-max-w` cap, and
-   * is the same `--sp-4` `.bottom-bar` uses (19-files.css) — so the transcript
-   * and the composer resolve to the same measure at every width. It used to be
-   * padding on `#messages` itself, which is border-box, so the cap paid for it
-   * and every turn card came out 2rem narrower than the prompt box. Keep the two
-   * insets equal apart from the scrollbar the block below subtracts; the timeline
-   * rail stays outside this gutter rather than taking a bite out of it
-   * (29-turns.css). */
+  /* The column's side inset lives HERE, outside the `--content-max-w` cap, and is
+   * the same `--sp-4` `.bottom-bar` uses (19-files.css), so the transcript and the
+   * composer resolve to the same measure at every width. As padding on `#messages`
+   * itself it was inside the border box, so the cap paid for it and every turn card
+   * came out 2rem narrower than the prompt box. */
 
-  /* THE SCROLLBAR SITS IN THE GUTTER, OUTSIDE THAT MEASURE, and giving back the
-   * width here is what puts it there. A classic scrollbar is placed at this box's
-   * inline-END border edge and takes its width out of the CONTENT box, so the
-   * column centred inside landed half a scrollbar LEFT of `.prompt-box` —
-   * measured 445 against 450 at 1440 with Chromium/Linux's 10px bar, both edges
-   * 5px out, which is what read as "the chat is too far left". Subtracting the
-   * measured width from the END inset restores the content box the bar has, so a
-   * turn card keeps the composer's edges and the scrollbar lives in what is left
-   * of the 16px gutter beside it. The bar is NOT the place to fix this: reserving
-   * a matching strip there aligns the two by making both narrower, which puts the
-   * scrollbar back inside the shared measure.
-   *
-   * `stable` is what makes the subtraction unconditional: the gutter then exists
-   * whether or not the transcript overflows, so the column does not grow 10px
-   * wider on a short chat, and it no longer jumps 5px left when the first turn
-   * makes the transcript scroll. `--scrollbar-w` is measured off this element by
-   * `scroll.ts` (`publishScrollbarWidth`), and `max()` covers a platform whose
-   * scrollbar is wider than the gutter it has to fit in — past 16px the gutter is
-   * spent and the column gives up the remainder rather than the inset going
-   * negative. Overlay-scrollbar platforms reserve nothing, so phones are
-   * untouched. Verified 0px on both edges at 1440/1280/1148/1024/900 and on the
-   * ipad and phone presets, transcript overflowing and not. */
+  /* THE SCROLLBAR SITS IN THE GUTTER, OUTSIDE THAT MEASURE, and giving its width
+   * back here is what puts it there: a classic scrollbar takes its width out of
+   * this box's CONTENT box, so the column centred inside landed half a scrollbar
+   * left of `.prompt-box`. Reserving a matching strip on the bar instead aligns
+   * the two by making both narrower. `stable` makes the subtraction unconditional,
+   * so the column neither widens nor jumps when the transcript starts to scroll;
+   * `--scrollbar-w` is measured off this element by scroll.ts. */
   padding-inline: var(--sp-4) max(0px, calc(var(--sp-4) - var(--scrollbar-w, 0px)));
   scrollbar-gutter: stable;
 
-  /* Smooth user-initiated scrolls (scroll-to-bottom click, keyboard
-   * navigation). Streaming auto-scroll calls scrollTo with
-   * behavior:"instant" which overrides this — small per-chunk deltas
-   * compose into perceptually continuous motion that "smooth" would
-   * stutter through. */
+  /* Smooth for user-initiated scrolls only. Streaming auto-scroll calls scrollTo
+   * with behavior:"instant", which overrides this: small per-chunk deltas compose
+   * into continuous motion that "smooth" would stutter through. */
   scroll-behavior: smooth;
 }
 
-/* NO HALF-VIEWPORT RESERVE WHILE STREAMING, and this is the third attempt at one
- * — do not add a fourth. Where the live edge lands during a turn is
- * `scroll.ts`'s to decide: `autoScrollIfAnchored` pins `liveTextAnchor`'s bottom
- * to the scrollport's bottom, so the reserve moved nothing on a transcript long
- * enough to scroll, and a CSS reserve cannot see that pin.
- *
- * What it did instead, measured live at a 1116px scrollport. It keyed on
- * `.message.assistant.streaming`, which is the caret rather than the turn:
- * `messages-blocks.ts` `sealLiveBubble` drops that class at EVERY block boundary,
- * and a tool card or a thinking block leaves no match in the DOM at all, so the
- * rule toggled several times per turn. On a one-turn chat the box below is
- * `min-height: 100%` + border-box + `justify-content: flex-end`, so 50dvh of
- * bottom padding did not add room under the card, it LIFTED the card: bottom
- * 16px above the scrollport, then 608px, then 16px again, with
- * `scrollHeight === clientHeight` throughout, so no scroll correction was even
- * possible. That is the reported "the turn box jumps from the bottom to the
- * middle of the page". On a taller transcript it hit `scrollToBottom()` instead
- * (the Latest control, and every new user turn): scrolling to `scrollHeight`
- * stopped on the padding, leaving the last real line 608px above the bottom
- * against 16px with the rule gone.
- *
- * The two earlier attempts were `.message.streaming { min-block-size: 50dvh }`
- * (an empty live bubble spawned as a giant empty box) and
- * `.message.assistant:last-child { min-block-size: 50dvh }`. If the live edge
- * ever needs more air than `padding-block` gives it, the offset belongs in
- * `anchorTop`, which is the one place that already knows what is being followed
- * and how far it may scroll. */
+/* NO HALF-VIEWPORT RESERVE WHILE STREAMING — third attempt at one, so do not add
+ * a fourth. Where the live edge lands is `scroll.ts`'s to decide, and a CSS
+ * reserve cannot see its pin. On a short chat the box below is
+ * `min-height: 100%` + border-box + `flex-end`, so bottom padding LIFTS the card
+ * rather than adding room under it, with `scrollHeight === clientHeight` so no
+ * correction is possible; on a tall one `scrollToBottom()` stops on the padding.
+ * More air for the live edge belongs in `anchorTop`. */
 [id="messages"] {
   /* The MULTIPLEXER: one `.transcript-view` child per resident chat view, the
-   * active one carrying `.is-active`. It holds none of the column declarations
-   * — those are per-view below — but it must hand the scroller's definite
-   * height down: the views' `min-height: 100%` resolves against THIS box, and
-   * a plain auto-height block would resolve it to nothing (the percentage
-   * needs a definite base), collapsing the flex-end geometry on short chats.
-   * `height` rather than `min-height` for the same reason — a min-height-only
-   * box still measures auto for its children's percentages. Content taller
-   * than the viewport overflows this box downward into the scroller's
-   * scrollable overflow, exactly as it used to overflow the scroller itself. */
+   * active one carrying `.is-active`. It must hand the scroller's definite height
+   * down — the views' `min-height: 100%` resolves against THIS box, and an
+   * auto-height block would resolve it to nothing and collapse the flex-end
+   * geometry on short chats. `height` rather than `min-height` for the same
+   * reason: a min-height-only box still measures auto for its children. */
   height: 100%;
 }
 
-/* One resident chat view. Carries ALL the column declarations the container
- * used to hold, so inter-turn spacing, the centred cap that the prompt box and
- * rail offset key on, and the flex-end geometry are all per-view state that
+/* One resident chat view. Carries ALL the column declarations, so inter-turn
+ * spacing, the centred cap and the flex-end geometry are per-view state that
  * parks and unparks with the chat. */
 .transcript-view {
   padding-block: var(--sp-4);
@@ -140,15 +85,12 @@
   justify-content: flex-end;
 }
 
-/* Parked views keep their DOM and rendering state but cost the page nothing:
- * content-visibility skips layout and paint of the subtree while preserving
- * its state (the whole point over display:none), and the box's own metrics are
- * zeroed because cv only skips the CONTENTS — the element's padding and its
- * min-height would otherwise stack a viewport of empty space under the active
- * view inside the shared scroller. The `inert` attribute rides along in JS
- * (messages.ts parkView): cv:hidden removes the subtree from focus and
- * find-in-page per spec, but cross-browser a11y exposure diverges, so the
- * explicit attribute is the guarantee. */
+/* A parked view keeps its DOM and rendering state but costs the page nothing.
+ * The box's own metrics are zeroed because content-visibility only skips the
+ * CONTENTS — its padding and min-height would otherwise stack a viewport of
+ * empty space under the active view inside the shared scroller. `inert` rides
+ * along in JS (messages.ts parkView): cv:hidden removes the subtree from focus
+ * per spec, but cross-browser a11y exposure diverges. */
 .transcript-view:not(.is-active) {
   content-visibility: hidden;
   min-height: 0;
@@ -164,18 +106,12 @@
   flex-direction: column;
   align-items: center;
 
-  /* `safe center` and NOT `center`, and it is the whole fix for a clipped
-     heading. The card count is the model catalog's, not ours, so the column can
-     be taller than the overlay at any width — and a centred flex column that
-     overflows loses content at BOTH ends, so the first thing to go is the
-     "Choose a model" heading the reader needs to know what the grid is. `safe`
-     falls back to start alignment exactly when the content does not fit, which
-     is what makes the heading reachable by scrolling instead of gone. Paired
-     with the scroller below: centring alone cannot recover an overflow.
-
-     A browser that does not know the keyword drops the declaration and lands on
-     `normal`, which is start alignment — the overflow case, correctly, and the
-     fitting case top-aligned rather than centred. */
+  /* `safe center` and NOT `center`. The card count is the model catalog's, so the
+   * column can outgrow the overlay at any width — and a centred flex column that
+   * overflows loses content at BOTH ends, taking the heading that says what the
+   * grid is. `safe` falls back to start alignment exactly when the content does
+   * not fit, which is what makes the heading reachable by scrolling. A browser
+   * that does not know the keyword lands on `normal`, which is start alignment. */
   justify-content: safe center;
   overflow-y: auto;
   gap: var(--sp-4);
@@ -187,11 +123,9 @@
 .picker-label {
   font-size: var(--fs-xl);
 
-  /* The empty state's one heading, so it carries the full ink. It was
-     --c-text-secondary, which measured 10.68:1 dark / 8.86:1 light here — past
-     AAA, so this is a hierarchy call and not a fix: the heading was 1.84x dimmer
-     than the cards it introduces. --c-text-control does not apply; this is a
-     heading, not a control's label. */
+  /* The empty state's one heading, so it carries the full ink: at
+   * --c-text-secondary it measured past AAA but read 1.84x dimmer than the cards it
+   * introduces. --c-text-control does not apply — this is a heading, not a label. */
   color: var(--c-text-primary);
   font-weight: var(--fw-medium);
   text-wrap: balance;
@@ -254,27 +188,19 @@
   }
 
   /* Secondary, not the hint ink: this sits on the CARD's fill rather than the
-     page's, and the hint ink is sized against the page. It measures 4.244:1 on
-     the card at rest and 3.203:1 once the card is hovered, both under AA for
-     11px text. The selected case is already handled a layer up, by
-     70-selection.css's on-selected muted ink. */
+   * page's, and the hint ink is sized against the page — 4.244:1 at rest and
+   * 3.203:1 hovered, both under AA for 11px text. */
   & .picker-meta {
     font-size: var(--fs-xs);
     color: var(--c-text-secondary);
   }
 }
 
-/* PHONE: THREE cards per row, from a grid rather than from the wrapping flex
-   line. `min-width: 10rem` is what pinned the phone to two per row — at 390px
-   the grid's content box is 342px after its own inline padding, so a third
-   160px card cannot fit and the catalog spends one row per two models. A
-   nine-model catalog was five rows plus the heading and the description, which
-   is the whole height of the overlay before the first card is even tall.
-
-   `minmax(0, 1fr)` rather than `1fr`: a grid track's automatic minimum is its
-   content, so a long model name would push the track past its share and the
-   three columns would stop being equal. The cards keep their equal HEIGHT for
-   free, because a grid row stretches its items. */
+/* PHONE: three cards per row, from a grid rather than a wrapping flex line. A
+ * `min-width` is what pinned the phone to two, spending one row per two models.
+ * `minmax(0, 1fr)` rather than `1fr`, because a grid track's automatic minimum is
+ * its content, so a long model name would push its track past its share and the
+ * three columns would stop being equal. */
 @media (width <= 48rem) {
   .picker-grid {
     display: grid;
@@ -300,61 +226,27 @@
   contain-intrinsic-size: auto 3rem;
 }
 
-/* A RESERVED BLOCK SLOT TAKES NO ROW UNTIL IT HAS SOMETHING TO SHOW, and the
- * node has to stay in the DOM for it: `store.ts` `padBlocks` reserves an index
- * whose frame has not arrived, and the block mounter is append-only, so that
- * mounted-but-empty bubble IS the position its text will fill into. A bubble with
- * no content still measured 0px and still cost the block column's `--sp-3` gap,
- * so a turn grew 12px per reserved slot with nothing visible to explain it.
- * `display: none` is what removes the gap as well — a zero-height flex item is
- * still an item, and `gap` counts it.
- *
- * `.is-empty` is renderer-set (the bubble reports its blank state, mountText
- * writes it onto the row): present while the bubble has nothing rendered AND is
- * not streaming, so a live bubble waiting on its first token keeps its caret,
- * and the row comes back the moment text lands. A class rather than
- * `.msg-row:has(> .message:empty:not(.streaming))` because the row's subtree
- * mutates every frame while a turn streams, and `:has()` makes each of those
- * recalcs run relational matching (design §B4). */
+/* A RESERVED BLOCK SLOT TAKES NO ROW UNTIL IT HAS SOMETHING TO SHOW, and the node
+ * must stay in the DOM for it: `padBlocks` reserves an index whose frame has not
+ * arrived, and the mounter is append-only, so that empty bubble IS the position
+ * its text fills into. `display: none` is what removes the gap too — a
+ * zero-height flex item is still an item. `.is-empty` is absent while streaming,
+ * so a live bubble keeps its caret; a class rather than `:has()` because the
+ * row's subtree mutates every frame while a turn streams. */
 .msg-row.is-empty {
   display: none;
 }
 
-/* Slide-in for genuinely new appended messages (set by paint() in
- * messages.ts on appendNewIds + the staggered tail of chat-switch
- * replay). Pre-existing rows on chat reload don't re-animate.
- *
- * The slide distance is intentionally larger than the prior 6px —
- * the user reported the original animation as "no slide-in", which
- * was technically wrong (it WAS sliding 6px) but functionally right
- * (6px is sub-perceptual on a 14px line-height). 16px slide makes
- * the entry visibly read as "from below". Animates the whole
- * `.msg-wrap` (one element per message) rather than the row + child
- * blocks separately so the bubble + reasoning + tool group enter
- * together as a single unit. */
 /* Entry animation lives on `.turn` now (29-turns.css): a turn arrives as one
- * unit, so its header, body and footer have to enter together. `.msg-wrap`
- * survives as the per-message grouping INSIDE a card's body. */
+ * unit, so its header, body and footer enter together. `.msg-wrap` survives as
+ * the per-message grouping INSIDE a card's body. */
 
-/* THE BLOCK CONTAINER, and it owns the spacing between blocks. `.msg-wrap` had
- * no rule at all, so it was a plain block box with nothing between its
- * children: `.assistant-blocks` is `display: contents` (14-tools.css), which
- * dissolves into this element, and the four block kinds then had to space
- * themselves. Only prose did — `.message` carried `padding: var(--sp-3) 0` —
- * so measured live at a 774px body every other boundary was 0.0px: tool group
- * to delegate card, delegate card to delegate card, delegate card to tool
- * group. Two workflow steps in a row rendered as one double-bordered box, and
- * the prose that DID look spaced was paying for it inside its own border box,
- * which is why the gap appeared and vanished depending on which kind sat next
- * to which.
- *
- * `flex-shrink: 0` on `.msg-row` (above), `.tool-call`, `.subagent-block` and
- * `.plan-message` (14-tools.css) is the evidence this rule was always meant to
- * exist — four declarations that are inert in a block box, all naming the same
- * missing parent. `gap` is `--sp-3` to match `.turn-body`'s own gap
- * (29-turns.css), so one value spaces blocks inside a message and messages
- * inside a card. `min-width: 0` lets a wide diff or a long command line shrink
- * instead of pushing the column, the same reason `.turn-body` declares it. */
+/* THE BLOCK CONTAINER, and it owns the spacing between blocks. Without a flex
+ * container here `.assistant-blocks`' `display: contents` dissolves into a plain
+ * block box and each kind has to space itself, which only prose did — tool group
+ * to delegate card measured 0.0px. `flex-shrink: 0` on `.msg-row`, `.tool-call`,
+ * `.subagent-block` and `.plan-message` is the evidence: four declarations inert
+ * in a block box, all naming this missing parent. The gap matches `.turn-body`'s. */
 .msg-wrap {
   display: flex;
   flex-direction: column;
@@ -370,101 +262,53 @@
 }
 
 .message {
-  /* No max-width here. The old `max-width: 85%` lived on this SHARED rule, so
-   * it capped assistant turns too and combined with the bubble tails to make a
-   * 40rem column with a triangle glued to one edge read as a rendering
-   * accident. The prose measure now lives on `&.assistant` alone, and evidence
-   * (tool cards, diffs, output) is uncapped by not being this element. */
+  /* No max-width on the SHARED rule: it capped assistant turns too. The prose
+   * measure lives on `&.assistant` alone, and evidence (tool cards, diffs, output)
+   * is uncapped by not being this element. */
 
-  /* NO INLINE PADDING, and that is the turn card's one left edge. `var(--sp-4)`
-   * used to sit here, which put the prose TEXT 16px right of every box in the
-   * same body — a tool card's border, a tool group, a subagent card, a todo
-   * list, a plan card, a refusal callout and a reasoning bar all start on
-   * `.turn-body`'s own content edge. The bubble's own edge is invisible, so the
-   * inset read as "the boxes stick out to the left of the reply", loudest on the
-   * reasoning block, whose accent bar is a drawn line at that edge. The card
-   * already has a gutter (`.turn-body` padding), so a second one on the prose
-   * alone was buying nothing and breaking the alignment the body was built for.
-   * `&.system` sets its own padding and is unaffected. */
+  /* NO INLINE PADDING: the turn card already has a gutter (`.turn-body` padding),
+   * and a second one on the prose alone put the text 16px right of every box in the
+   * same body — a tool card's border, a tool group, a subagent card, a todo list, a
+   * plan card, a refusal callout and a reasoning bar all start on `.turn-body`'s
+   * own content edge. `&.system` sets its own padding and is unaffected. */
 
-  /* NO BLOCK PADDING EITHER, and that is `.msg-wrap`'s gap instead. This read
-   * `var(--sp-3) 0`, which made prose the only block kind that spaced itself
-   * and put that space INSIDE its border box — so a reply sat 24px from the
-   * card's edge while every tool card, delegate card and plan card beside it
-   * sat at 12px, and a delegate card following another had nothing at all. The
-   * container owns block spacing now (see `.msg-wrap` above), so prose lands on
-   * the same 12px inset as its neighbours. The nested case improves too: prose
-   * inside `.subagent-body` was paying that padding on top of the body's own
-   * `gap: var(--sp-2)`. */
+  /* NO BLOCK PADDING EITHER — `.msg-wrap`'s gap owns it. Inside the border box it
+   * made prose the only kind that spaced itself, so a reply sat 24px from the
+   * card's edge while every neighbour sat at 12px. */
   padding-inline: 0;
   font-size: var(--fs-md);
   line-height: 1.6;
   overflow-wrap: anywhere;
 
-  /* `&.user` and its tail are GONE. The user's request is the turn card's
-   * tinted header band (29-turns.css), which carries the same pre-wrap text
-   * plus the three-line clamp a free-standing bubble had no reason to want. */
+  /* `&.user` and its tail are GONE: the user's request is the turn card's tinted
+   * header band (29-turns.css), which carries the same pre-wrap text plus a
+   * three-line clamp a free-standing bubble had no reason to want. */
 
   &.assistant {
-    /* No resting background and no border-radius: inside a turn card the
-     * agent's reply sits on the card's own surface, and a second box around it
-     * would be a bubble by another name. The streaming wash below stays — that
-     * one carries live state rather than identity.
+    /* No resting background and no border-radius: inside a turn card the reply sits
+     * on the card's own surface, and a second box around it is a bubble by another
+     * name. The streaming wash below carries live state and stays.
      *
-     * NO `max-width`, and the rule that used to sit here was the LAST BUBBLE in
-     * the stylesheet. It read `40.75rem`, called itself the prose measure, and
-     * was neither: in the repo's first commit this element had
-     * `background: var(--c-agent-bubble)`, a `::before` tail and a 1.5rem
-     * `.msg-avatar` beside it, `.message` carried `max-width: 85%`, and the flex
-     * line was 48rem — so 85% of 48rem is 40.8rem, which is 40.75rem on the
-     * quarter-rem grid. The number was the bubble's STAGGER pinned as an
-     * absolute length so it stopped growing on wide screens.
-     *
-     * Measured on the live page it cost 122px of dead gutter on the right of
-     * every reply, inside a `.turn-body` whose content box is 774px: the tool
-     * cards, the tool groups and the header and footer bands all ended at the
-     * same x, and the prose alone stopped 122px short. Third time this value has
-     * been deleted — 14-tools.css took it off every evidence card (as
-     * `39.25rem`, the same figure minus the avatar column) and
-     * `.subagent-body .message` cancels it for nested prose. This is the last
-     * holder.
-     *
-     * The reading-measure defence does not survive its own numbers. At 14px
-     * system-ui the average lowercase glyph is 7.42px, so the cap gave 88
-     * characters per line against 104 uncapped, and the range every source
-     * cites tops out near 75, which would be ~35rem. It shaved 16 characters
-     * off a line that was too long either way. Two other kinds of prose in the
-     * same card were never capped at all (`.reasoning-block` runs the full body
-     * width), and the cap also caught every code block, table and image a reply
-     * contains, which no reading measure has a claim on.
-     *
-     * The one surface that DOES want a measure is the editor's rendered-markdown
-     * view, which reuses this class; it declares its own now (20-editor.css). */
+     * NO `max-width`. The `40.75rem` that used to sit here was the old bubble's
+     * STAGGER pinned as a length, not a reading measure, and it cost 122px of dead
+     * gutter on every reply inside a 774px body while the tool cards beside it ran
+     * full width. The editor's rendered-markdown view declares its own measure. */
     color: var(--c-text-primary);
     position: relative;
     width: 100%;
 
-    /* Streaming: height grows naturally as content arrives. We
-     * deliberately DON'T transition the height — interpolate-size +
-     * `transition: height var(--dur-standard)` was causing a visible
-     * flicker on each chunk because every text delta retriggered a
-     * 200ms height animation, and chunks land faster than that.
-     * Removing the transition lets the bubble track content size
-     * instantly; the per-chunk fade-in (data-vk-chunk-enter) supplies
-     * the perception of motion. */
-    /* No streaming wash: the live bubble used to carry an accent gradient that
-     * vanished at turn end, which read as a rendering glitch rather than state
-     * (user report, 2026-08-31). The caret below and the working pill are the
-     * "still typing" signals; text surfaces carry no background. */
+    /* Streaming height is deliberately NOT transitioned: `interpolate-size` plus a
+     * height transition retriggered a 200ms animation per text delta, and chunks land
+     * faster than that. The per-chunk fade-in supplies the perception of motion. */
+    /* No streaming wash: an accent gradient that vanished at turn end read as a
+     * rendering glitch rather than as state (user report, 2026-08-31). The caret
+     * below and the working pill are the "still typing" signals. */
 
-    /* Blinking caret LEADING the text — attached to the element the renderer
-     * is currently writing into (`data-vk-caret`, smd-renderer.ts), so it sits
-     * right after the last word instead of on its own line below the paragraph
-     * (a container ::after lands after the last BLOCK child, which is exactly
-     * the "cursor is on the next line" report). The :empty arm covers the
-     * bubble waiting on its first token, when no element exists to carry the
-     * attribute. Gated on .streaming, so stale attributes cost nothing once
-     * the bubble seals. */
+    /* Blinking caret LEADING the text, attached to the element the renderer is
+     * writing into (`data-vk-caret`), so it sits after the last word: a container
+     * `::after` lands after the last BLOCK child, which is the "cursor is on the next
+     * line" report. The :empty arm covers a bubble with no element to carry the
+     * attribute yet. Gated on .streaming, so a stale attribute costs nothing. */
     &.streaming:empty::after,
     &.streaming [data-vk-caret]::after {
       content: "▌";
@@ -475,26 +319,20 @@
       vertical-align: baseline;
     }
 
-    /* Per-chunk fade-in: smd-renderer (animateText:true) wraps each
-     * text emission in `<span data-vk-chunk-enter>` so every delta
-     * fades in as it arrives. Replaces the older "per-block" approach
-     * that only animated when a paragraph completed — chunks were
-     * popping in instantly while fully-formed blocks faded, which
-     * read backward (the new content didn't move).
-     *
-     * Per-block fade is kept too, scoped to non-text container blocks
-     * (pre/code, blockquote, table) where wrapping individual text
-     * children would harm decorators like the syntax highlighter. */
-    /* Fill mode is `backwards`. One span per 3-10 streamed characters makes this
-     * the site where a forwards fill did visible damage; the rule and the
-     * measurement are at the keyframe library (03-base.css). */
+    /* Per-chunk fade-in: the renderer wraps each text emission in
+     * `<span data-vk-chunk-enter>`. Per-BLOCK fade is kept for non-text container
+     * blocks (pre/code, blockquote, table), where wrapping individual text children
+     * would break decorators like the syntax highlighter. */
+    /* Fill mode is `backwards`. One span per 3-10 streamed characters makes this the
+     * site where a forwards fill did visible damage; the measurement is at the
+     * keyframe library (03-base.css). */
     & [data-vk-chunk-enter] {
       animation: vk-fade-in var(--dur-micro) var(--ease-enter) backwards;
     }
 
-    /* A span the renderer moved when it unwrapped an inline token whose
-     * delimiter never closed. Re-inserting a node restarts its animation, so
-     * without this the fade re-runs over text already on screen. */
+    /* A span the renderer moved when it unwrapped an inline token whose delimiter
+     * never closed. Re-inserting a node restarts its animation, so without this the
+     * fade re-runs over text already on screen. */
     & [data-vk-chunk-settled] {
       animation: none;
     }
@@ -503,9 +341,6 @@
     & table[data-vk-block-enter] {
       animation: vk-fade-in var(--dur-enter) var(--ease-enter) backwards;
     }
-
-    /* The mirrored tail is GONE with the user's. Both sides of the bubble
-     * convention went, and so did the asymmetry between them. */
 
     & code {
       font-family: var(--font-mono);
@@ -606,9 +441,8 @@
       color: var(--c-text-primary);
     }
 
-    /* Bold on the purple-tinted blockquote background is unreadable at the
-       same accent color in dark mode — lift it to a very light tint.
-       Light mode has enough contrast at the base accent. */
+    /* Bold at the base accent is unreadable on the purple-tinted blockquote fill in
+     * dark mode; light mode has enough contrast. */
     & :where(blockquote) :where(strong) {
       color: color-mix(in srgb, var(--c-accent) 35%, var(--c-text-primary));
     }
@@ -679,9 +513,8 @@
       border-radius: var(--r);
     }
 
-    /* Replaces an image that failed to load, naming the file it asked for.
-       Reads as a note rather than an error: the agent's frame being absent is
-       usually a stale path, not a fault the reader must act on. */
+    /* Replaces an image that failed to load, naming the file it asked for. Reads as
+     * a note rather than an error: an absent frame is usually a stale path. */
     & .img-missing {
       display: inline-block;
       padding: var(--sp-1) var(--sp-2);
@@ -702,9 +535,8 @@
       margin-block: var(--sp-2);
     }
 
-    /* The download affordance for a presented file that is neither image nor
-       audio. Styled as a chip rather than a prose link so it reads as an object
-       in the transcript, which is what it is. */
+    /* The download affordance for a presented file that is neither image nor audio.
+     * A chip rather than a prose link, so it reads as an object in the transcript. */
     & .media-download {
       display: inline-flex;
       align-items: center;
@@ -722,9 +554,8 @@
       border-color: var(--c-accent);
     }
 
-    /* A rendered ```svg fence. The figure is the block; the image inside it is
-       inert by specification (see svg-block.ts) and carries no interactivity, so
-       there is nothing to hover and no cursor to change. */
+    /* A rendered ```svg fence. The image inside the figure is inert by specification
+     * (svg-block.ts), so there is nothing to hover and no cursor to change. */
     & .svg-figure {
       margin: var(--sp-3) 0;
     }
@@ -743,8 +574,6 @@
     }
   }
 
-  /* `.message.system` no longer styles the load-more affordance — that became a
-   * real button (.load-more-btn, below). It still covers genuine system rows. */
   &.system {
     align-self: center;
     color: var(--c-text-tertiary);
@@ -754,11 +583,9 @@
   }
 }
 
-/* Load older messages: a real BUTTON, not the instruction it used to be.
- * `div.message.system` reading "Scroll up for older messages" is unusable the
- * moment progressive collapse makes the transcript shorter than the viewport —
- * there is nothing to scroll, so the instruction describes an action the reader
- * cannot take. */
+/* Load older messages: a real BUTTON, not an instruction. "Scroll up for older
+ * messages" is unusable the moment progressive collapse makes the transcript
+ * shorter than the viewport — there is nothing to scroll. */
 .load-more-btn {
   align-self: center;
   flex-shrink: 0;
@@ -787,51 +614,35 @@
   outline-offset: var(--focus-offset);
 }
 
-/* Reasoning/thinking block (collapsible).
- *
- * NO bar and no indent (user ruling, 2026-08-30): the trace sits flush on
- * `.turn-body`'s own content edge — the same left edge the prose text and
- * every evidence card start from. Subordination is carried by the ink token
- * (`--c-text-aside`), the italic, and the smaller type step; an accent
- * border-inline-start read as decoration and pushed the block off the
- * shared measure.
- *
- * History, kept because it keeps being re-proposed: this rule used to carry
- * an accent bar, and before that TWO bars — a `--c-border` one on
- * `.reasoning-body` plus a legacy `.reasoning-block` rule in 61-mcp-tools.css
- * ("Wave 1") bordering the ROOT in `--c-accent` with `padding-left: 0.75rem`.
- * Later source order made the legacy rule win, so a trace rendered as an
- * accent bar, 14px of gap, a second grey bar, then text. */
+/* Reasoning/thinking block (collapsible). NO bar and no indent (user ruling,
+ * 2026-08-30): the trace sits flush on `.turn-body`'s content edge, the same left
+ * edge the prose and every evidence card start from. Subordination is carried by
+ * `--c-text-aside`, the italic and the smaller type step; an accent
+ * border-inline-start read as decoration and pushed the block off the measure. */
 .reasoning-block {
   max-width: var(--content-max-w);
 
-  /* Was `var(--sp-2) 0`. `.msg-wrap` is a flex column with `gap: var(--sp-3)`
-   * now, so a block margin here would stack on top of that gap and space a
-   * reasoning trace 20px from its neighbours while every other block sits at
-   * 12px. The container owns block spacing; see `.msg-wrap`. */
+  /* No block margin: `.msg-wrap` is a flex column with a gap, so one here would
+   * stack on top of it and space a trace 20px from its neighbours at 12px. */
   margin: 0;
   font-size: var(--fs-sm);
   color: var(--c-text-aside);
 
-  /* NO `opacity`. It was 0.7, inherited from the legacy rule, and it took hint
-   * ink to 2.792:1 dark / 2.742:1 light on this surface — under even the 3:1 a
-   * graphic needs, for the model's whole reasoning. Worse, an `opacity` is
-   * invisible to both contrast gates (the token graph and the stylesheet), so the
-   * number the tools reported was never the number on screen. Subordination is
-   * carried by the ink token, the italic and the smaller step. */
+  /* NO `opacity`. At 0.7 it took hint ink to 2.792:1 dark / 2.742:1 light here —
+   * under even the 3:1 a graphic needs, for the model's whole reasoning — and an
+   * opacity is invisible to both contrast gates, so the number the tools reported
+   * was never the number on screen. */
 
-  /* No height transition ON THE BLOCK: same per-chunk flicker reasoning as
-   * the streaming bubble — let height track content instantly while open. The
-   * open/close slide lives on ::details-content below, where the computed
-   * block-size only changes at the state flip, never per chunk. */
+  /* No height transition ON THE BLOCK: the streaming bubble's per-chunk flicker
+   * reasoning. The open/close slide lives on ::details-content below, where the
+   * computed block-size only changes at the state flip. */
 }
 
-/* Sealing folds shut with the same slide every other disclosure uses.
- * `::details-content` is the platform half of a native <details> (the UA flips
- * its content-visibility on open/close), so the close animates: block-size
- * 0↔auto rides interpolate-size (:root), the visibility flip lands at the end
- * of a close and the start of an open (allow-discrete). While OPEN the
- * computed block-size stays `auto`, so streamed growth never retriggers it. */
+/* `::details-content` is the platform half of a native <details> (the UA flips
+ * its content-visibility), so the close animates: block-size 0<->auto rides
+ * interpolate-size and the visibility flip lands at the end of a close via
+ * allow-discrete. While OPEN the computed block-size stays `auto`, so streamed
+ * growth never retriggers it. */
 .reasoning-block::details-content {
   overflow: clip;
   block-size: 0;
@@ -844,22 +655,15 @@
   block-size: auto;
 }
 
-/* NOTE: no animation may return to a reasoning selector. A breathing accent
- * disc used to sit here (`.msg-reasoning.streaming > .reasoning-summary::before`,
- * `vk-breathe`); it was removed by user ruling — a pulsing dot is reserved to
- * TABS and workflow-agent surfaces, which report work the reader cannot see.
- * A live trace is already on screen: it mounts open, its text grows, and its
- * label reads "Thinking…" until `seal()` rewrites it, which is enough.
- * `reasoning-live-cue.test.ts` fails if a reasoning selector grows an
- * animation again. */
+/* NO ANIMATION MAY RETURN TO A REASONING SELECTOR (user ruling): a pulsing dot
+ * is reserved to tabs and workflow-agent surfaces, which report work the reader
+ * cannot see. A live trace mounts open, its text grows, and its label reads
+ * "Thinking…" until `seal()` rewrites it. `reasoning-live-cue.test.ts` fails if
+ * one grows an animation again. */
 
-/* The summary row: chevron + label, on one line. `display: flex` and
- * `list-style: none` are load-bearing — without them the native `<details>`
- * marker paints beside the real chevron and the label wraps to its own line.
- * They lived on a duplicate `.reasoning-block summary` rule in 61-mcp-tools.css
- * until that whole legacy set was folded in here. The ink is the block's
- * (`--c-text-aside`); the duplicate declared `--c-text-secondary` here, which is
- * the same colour reached by a second name. */
+/* The summary row. `display: flex` and `list-style: none` are load-bearing:
+ * without them the native <details> marker paints beside the real chevron and the
+ * label wraps to its own line. */
 .reasoning-summary {
   display: flex;
   align-items: center;
@@ -872,40 +676,25 @@
   transition: color var(--dur-micro) var(--ease-standard);
 }
 
-/* Brightens to PRIMARY on hover. It used to say `--c-text-secondary`, which the
- * legacy rule above had already set as the resting colour, so the one hover
- * affordance on the disclosure resolved to the colour it already had. */
 .reasoning-summary:hover {
   color: var(--c-text-primary);
 }
 
-/* The label holds its width so the COUNT beside it is the part that gives on a
- * narrow row. Which way this shrinks is not a toss-up: the label is the block's
- * state ("Thinking…" / "Thinking completed") and the count annotates it, so an
- * ellipsized label would drop the sentence and keep the footnote.
- *
- * That leaves the count as the row's only shrinkable item, which is the point:
- * `.disclosure-chevron` (10-shell-app.css) declares its own `flex-shrink: 0`, so
- * pinning the label here redirects the squeeze onto the count rather than onto
- * the glyph. `reasoning-live-cue.test.ts` pins all three. */
+/* The label holds its width so the COUNT is what gives on a narrow row: the
+ * label is the block's state and the count annotates it, so an ellipsized label
+ * would drop the sentence and keep the footnote. The chevron declares its own
+ * `flex-shrink: 0`, so pinning the label redirects the squeeze onto the count.
+ * `reasoning-live-cue.test.ts` pins all three. */
 .reasoning-label {
   flex-shrink: 0;
 }
 
-/* The trace's word count, filling the empty space to the right of the label —
- * collapsed, the state alone says nothing about how much is folded behind it.
- * `margin-inline-start: auto` is what pushes it to the far edge.
- *
- * Metadata treatment, borrowed rather than invented: the tertiary ink and the
- * `--fs-xs` step are what `.code-refs` below already uses for a footnote, one
- * size under the summary's own `--fs-sm`. Upright against the row's italic
- * because it is a measurement rather than prose, and `tabular-nums` because it
- * repaints on every streamed chunk — proportional digits would twitch the row
- * as the number grows.
- *
- * `overflow: hidden` is load-bearing twice over: it clips to the ellipsis, and
- * it is what lets this item shrink past its own content at all (a flex item's
- * automatic minimum size only applies while overflow is visible). */
+/* The trace's word count: collapsed, the state alone says nothing about how much
+ * is folded behind it. `tabular-nums` because it repaints on every streamed
+ * chunk and proportional digits would twitch the row. `overflow: hidden` is
+ * load-bearing twice: it clips to the ellipsis, and it is what lets this item
+ * shrink past its own content at all — a flex item's automatic minimum size only
+ * applies while overflow is visible. */
 .reasoning-count {
   flex-shrink: 1;
   min-width: 0;
@@ -919,24 +708,13 @@
   white-space: nowrap;
 }
 
-/* The trace itself. Flush on the block's own left edge — the shared measure —
- * with block-only padding; the inline indent left with the bar (see
- * `.reasoning-block` above).
- *
- * NO `max-height` AND NO `overflow`. It was `max-height: 300px` +
- * `overflow-y: auto`, which put a scrollbar inside an OPEN live trace and pinned
- * the newest text below the fold: the reader watching the model think saw a
- * frozen box while the growth happened out of sight, because the scroller that
- * follows the live edge is the TRANSCRIPT's and it cannot see inside a nested
- * one. Unbounded, the trace grows the document instead, and `getLiveAnchor()`
- * answers null while no top-level bubble is streaming — which the scroll
- * controller reads as "follow the document bottom", so the newest line stays on
- * screen. Collapsing the box is the user's control over its size; a scrollbar was
- * a second one that fought it.
- *
+/* NO `max-height` AND NO `overflow`. A scrollbar inside an OPEN live trace pins
+ * the newest text below the fold: the scroller that follows the live edge is the
+ * TRANSCRIPT's and cannot see inside a nested one. Unbounded, the trace grows the
+ * document, and `getLiveAnchor()` answers null while no top-level bubble streams,
+ * which the controller reads as "follow the document bottom".
  * `overflow-wrap: anywhere` replaces what the removed overflow was incidentally
- * containing: the body is raw text under `pre-wrap`, so one long unbroken token —
- * a URL, a hash, a stack frame — would otherwise run past the card's edge. */
+ * containing: one unbroken token under `pre-wrap` would run past the card. */
 .reasoning-body {
   margin: 0;
   padding: var(--sp-2) 0;
@@ -952,12 +730,9 @@
 .code-refs {
   max-width: var(--content-max-w);
 
-  /* Was `margin: var(--sp-1) auto 0`, and both halves are now wrong.
-   * `.msg-wrap` is a flex column with a gap, so the block margin would stack on
-   * top of it; and `margin-inline: auto` on a flex item beats the container's
-   * `stretch`, which would turn this into a shrink-to-fit box centred in the
-   * body. The inline half was inert anyway — `--content-max-w` is 50rem and a
-   * turn body is about 48.4rem, so the cap never bound. */
+  /* No margin: `.msg-wrap` is a flex column with a gap, so a block margin stacks
+   * on it, and `margin-inline: auto` on a flex item beats the container's
+   * `stretch` and would shrink-to-fit this box. */
   margin: 0;
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
@@ -1055,11 +830,9 @@
   }
 }
 
-/* Boundary divider: centered icon + label with horizontal rules on both
-   sides. Used for `compressed` and `model_switched` events where a new
-   ACP session was started, and for `interrupted`, where the label is the
-   server's own account of why the turn stopped. Distinct from plain system
-   messages so long transcripts have obvious breakpoints on scroll-back. */
+/* Boundary divider for `compressed` / `model_switched` (a new ACP session) and
+ * `interrupted` (the server's own account of why the turn stopped). Distinct
+ * from a plain system message so long transcripts have breakpoints. */
 .boundary {
   display: flex;
   align-items: center;
@@ -1083,16 +856,11 @@
 
   & .boundary-label {
     font-style: italic;
-    /* NOT nowrap, and the change is load-bearing. Every label here used to be a
-       two-word constant ("Compacted", "Turn interrupted"), and nowrap on a flex
-       item that cannot shrink below its content was harmless for those. The
-       `interrupted` label now carries a failure reason from the server, up to a
-       couple of sentences, so nowrap collapsed both dashed rules to zero width
-       and ran the text past the transcript's own measure.
-
-       The 60% cap keeps a visible run of rule on each side at any width, and
-       `anywhere` covers the one thing a reason can contain that has no break
-       opportunity: a request id or a URL from the backend. */
+    /* NOT nowrap. The `interrupted` label carries a failure reason from the server,
+     * up to a couple of sentences, and nowrap on a flex item that cannot shrink below
+     * its content collapsed both dashed rules to zero width. The 60% cap keeps a
+     * visible run of rule on each side, and `anywhere` covers the one thing a reason
+     * can contain with no break opportunity: a request id or a URL. */
     max-width: 60%;
     text-align: center;
     overflow-wrap: anywhere;
@@ -1125,48 +893,14 @@
   color: var(--c-accent);
 }
 
-/* Banner stack: persistent per-chat banners on the chat toolbar's own row, to
-   its left.
-
-   AN OVERLAY, NOT A BAND IN FLOW, and that is what removes a background nobody
-   declared. In flow it carried `margin-block-start: var(--below-chat-toolbar)`,
-   so a banner spawning shrank `#messages-wrap-outer` by that margin plus its own
-   height and the region the transcript vacated painted the only thing under it,
-   which is the `body` canvas at `--c-bg-primary` — read as a hard box from the
-   top of the viewport down past the banner, against `--c-turn-body` cards at a
-   12.5-point lightness step. Nothing painted that box, so there is no
-   `background` here to remove; taking the reserved height away is the fix.
-
-   It stays a child of `#chat-view`, which is BOTH halves of its placement. The
-   containing block is `#chat-area` (`position: relative`; `#chat-view` sets
-   none), whose content-box top is the view area's top because `.chat-toolbar` is
-   absolute and takes no flow space — so one `inset-block-start` puts the two on
-   the same row. And `showView` hides a non-active `[data-tab-view]` with
-   `display: none`, which is what keeps a per-chat banner off Settings, git,
-   files and the rest; hoisting the band to `#chat-area` for the shared row would
-   have cost exactly that.
-
-   THE `z-index` IS LOAD-BEARING. Out of flow it precedes `#messages-wrap-outer`
-   in DOM order, and two positioned `z-index: auto` boxes paint in that order, so
-   the transcript would cover the band and reproduce the defect this element's
-   DOM position exists to prevent: a banner visible but answering no pointer
-   event, which is how an `agent_config_error` once shipped a CTA nobody could
-   reach. 9 clears the transcript, `#model-picker` (5) and `.turn-rail` (4), and
-   stays under `.chat-toolbar` (10) and `.search-pop` (60).
-
-   `inset-block-start` is `--below-chat-toolbar`, and it is REQUIRED rather than
-   cosmetic: the band's containing block is `#chat-area`, whose padding box starts
-   ABOVE the in-flow title bar, so a bare `--sp-3` puts the band's first 40px
-   under the bar — a banner visible but answering no pointer event, which is the
-   very defect this element's DOM position exists to prevent.
-
-   `inset-inline-end` no longer dodges the bar's width. The bar was a floating
-   pill of content-driven width, so only a measurement could say where it ended;
-   `chat-toolbar-metrics.ts` published `--chat-toolbar-w` for that one reader and
-   is deleted with it. The token resolves to 0 now (12-chat.css), so this
-   expression is one `--sp-3` plus one `--sp-2` of right inset.
-
-   No `inset-block-end`, so a long message grows the band downward. */
+/* Banner stack: persistent per-chat banners on the chat toolbar's own row.
+ * AN OVERLAY, NOT A BAND IN FLOW: in flow it reserved height, and the region the
+ * transcript vacated painted the `body` canvas, which read as a hard box past the
+ * banner. Nothing painted that box, so there is no `background` to remove.
+ * A child of `#chat-view` for both halves of its placement: the containing block
+ * is `#chat-area`, whose content-box top is the view area's top because
+ * `.chat-toolbar` is absolute, and `showView` hides a non-active
+ * `[data-tab-view]`, which keeps a per-chat banner off Settings. */
 .banner-stack {
   position: absolute;
   inset-block-start: var(--below-chat-toolbar);
@@ -1182,14 +916,11 @@
 }
 
 /* On a phone the band sits UNDER the toolbar and back IN FLOW, which needs no
-   repositioning: at this width `.chat-toolbar` is `position: static` and paints
-   its own background as the first in-flow child of `#chat-area`, and `#chat-view`
-   is the next flex child, so anything in flow inside it is already below the bar.
-   In flow rather than overlaid because the toolbar occupies and paints that top
-   band, so no canvas is revealed here — the defect above is desktop-only — and a
-   42px overlay on a 390px-wide viewport would sit on top of the live turn.
-   `position: static` also makes the insets and the `z-index` inert, so the side
-   gutter comes back as padding. */
+ * repositioning: `.chat-toolbar` is `position: static` here and paints its own
+ * background as the first in-flow child of `#chat-area`. In flow rather than
+ * overlaid because that top band is painted, so no canvas is revealed and the
+ * defect above is desktop-only — and a 42px overlay at 390px would sit on top of
+ * the live turn. `position: static` makes the insets and the z-index inert. */
 @media (width <= 48rem) {
   .banner-stack {
     position: static;
@@ -1197,36 +928,29 @@
   }
 }
 
-/* Severity is the 8% wash plus the ink, and the non-colour channel is the
- * `.banner-glyph` `banner-stack.ts` now emits — which is what let the 3px
- * severity-coloured left edge go, on the decision `.pill-status-content` records
- * in `15-input.css`. The glyph had to land FIRST: without it the level lived in
- * `border-left-color` and `color` alone, both colour (WCAG 1.4.1), and the
- * border was the only one of the two that survives `forced-colors: active`. */
+/* Severity is the wash plus the ink, and the non-colour channel is the
+ * `.banner-glyph` banner-stack.ts emits — which is what let the severity-coloured
+ * left edge go. The glyph had to land FIRST: without it the level lived in
+ * `border-left-color` and `color` alone, both colour (WCAG 1.4.1). */
 .banner {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
 
-  /* The MENU's full box height, so a banner row and the toolbar beside it read as
-     one row. On `.banner` and not on `.banner-stack`: each row is what the reader
-     compares against the menu, and a floor on the stack would let two banners be
-     shorter than one. A `min-` floor, so a wrapped message still grows the row. */
+  /* The MENU's full box height, so a banner row and the toolbar read as one row.
+   * On `.banner` and not on `.banner-stack`, because each ROW is what the reader
+   * compares against the menu. A `min-` floor, so a wrapped message still grows. */
   min-block-size: var(--chat-toolbar-h);
   padding: var(--sp-2) var(--sp-3);
 
-  /* The toolbar's own border, because the band is an OVERLAY now: its fill is the
-     canvas colour (see the severity rules below), so over the lighter turn cards
-     an unbordered rectangle reads as a hole punched in the transcript rather than
-     a notice sitting on top of it. Same 1px as `.chat-toolbar` beside it. */
+  /* The toolbar's own border, because the band is an OVERLAY: its fill is the
+   * canvas colour, so over the lighter turn cards an unbordered rectangle reads as
+   * a hole punched in the transcript. */
   border: 1px solid var(--c-border);
   border-radius: var(--r-md);
   font-size: var(--fs-sm);
 
-  /* Entry animation on bindList insert: fade + subtle drop-in using the app's
-   * enter vocabulary. Exit can't animate (bindList removes nodes
-   * synchronously), so entry is the realistic win. Reduced motion is
-   * neutralised globally by 40-a11y.css. */
+  /* Entry only: bindList removes nodes synchronously, so an exit cannot animate. */
   transition:
     opacity var(--dur-enter) var(--ease-enter),
     transform var(--dur-enter) var(--ease-enter);
@@ -1237,20 +961,12 @@
   }
 }
 
-/* THE WASH IS MIXED INTO A SURFACE, NOT INTO TRANSPARENCY, and that is forced by
- * the band being an overlay. At 8% over `transparent` the turn card underneath
- * reads straight through the banner and collides with its own message — measured
- * on a scrolled transcript, where a turn's header text was legible through the
- * notice. In flow over bare canvas the same declaration was fine, which is why it
- * took the move to surface it.
- *
- * THE BASE IS THE CANVAS TOKEN, NOT THE RAISED ONE, and contrast is what decides
- * it: `--c-bg-secondary` reads as the toolbar's own surface and is tempting for
- * that reason, but in LIGHT mode it is darker than the canvas, so mixing into it
- * put the error level at 4.23:1 against the 4.5 its text needs. Over
- * `--c-bg-primary` every level clears in both themes, and the rendered colour is
- * byte-identical to what the in-flow band always painted — so the fix changes
- * what is UNDER the banner and nothing about the banner itself. */
+/* THE WASH IS MIXED INTO A SURFACE, NOT INTO TRANSPARENCY, forced by the band
+ * being an overlay: over `transparent` the turn card underneath reads straight
+ * through the banner and collides with its own message. THE BASE IS THE CANVAS
+ * TOKEN, NOT THE RAISED ONE, and contrast decides it — in LIGHT mode
+ * `--c-bg-secondary` is darker than the canvas, which put the error level at
+ * 4.23:1 against the 4.5 its text needs. */
 .banner-error {
   background: color-mix(in srgb, var(--c-red) 8%, var(--c-bg-primary));
   color: var(--c-red);
@@ -1266,10 +982,9 @@
   color: var(--c-accent);
 }
 
-/* Shape only: the hue is inherited from the severity rule above, so this rule
- * never has to know which level it is in. `flex-shrink` because the message is
- * the element allowed to ellipsize, never the channel that says what kind of
- * message it is. */
+/* Shape only: the hue is inherited from the severity rule, so this rule never
+ * has to know which level it is in. `flex-shrink` because the message is what
+ * may ellipsize, never the channel that says what kind of message it is. */
 .banner-glyph {
   flex-shrink: 0;
   line-height: 1;
@@ -1282,15 +997,10 @@
   text-overflow: ellipsis;
 }
 
-/* THE RECEDE IS A HOVER WASH, NOT A RESTING OPACITY. `opacity: 0.6` dimmed the ×
- * against the banner's own fill, which is the compounded-opacity class
- * `contrast-audit.mjs` exists to catch: measured on the error banner it read
- * 3.574:1 against the 4.5 a 20px glyph needs, and 2.992:1 once the fill became an
- * opaque surface — under the 3:1 floor a graphical object gets. At full ink it is
- * 5.6:1, the same as the message beside it, which is right because it is the same
- * ink. The affordance moves to a wash mixed toward the text colour, which is the
- * house pattern (vibekit-ui.md: interactions INCREASE contrast) and the one
- * `.tab-close` already uses. */
+/* THE RECEDE IS A HOVER WASH, NOT A RESTING OPACITY. At `opacity: 0.6` the ×
+ * measured 3.574:1 against the 4.5 a 20px glyph needs, and 2.992:1 once the fill
+ * became opaque — under the 3:1 a graphical object gets. Interactions INCREASE
+ * contrast (vibekit-ui.md); this is the wash `.tab-close` already uses. */
 .banner-dismiss {
   background: none;
   border: none;
@@ -1339,12 +1049,11 @@
 }
 
 /* ONE box, and the WRAPPER draws it: the border, the radius and the clip. The
- * prose `pre` carries no radius, and the clip is not a substitute for that —
- * `overflow: hidden` removes what falls outside the parent's rounded box and
- * leaves a child's own corners rounded, so a 6px pre under the head painted a
- * notch of card background at each end of the seam. Squaring it from here is
- * unreachable anyway: the prose skin nests under `.message { &.assistant { … } }`,
- * so `& :where(pre)` scores (0,2,0) and `.code-wrap > pre` an inferior (0,1,1). */
+ * prose `pre` carries no radius, and the clip is not a substitute —
+ * `overflow: hidden` leaves a child's own corners rounded, so a 6px pre under the
+ * head painted a notch of card background at each end of the seam. Squaring it
+ * from here is unreachable anyway: the prose skin nests under `.message`, so
+ * `& :where(pre)` scores (0,2,0) against `.code-wrap > pre`'s (0,1,1). */
 .code-wrap {
   position: relative;
   margin: var(--sp-2) 0;
@@ -1358,11 +1067,9 @@
   margin: 0 !important;
 }
 
-/* The block's title bar: which language on the left, the block's actions on the
- * right. The actions used to float absolutely over the pre's top-right, where
- * they covered the first line of code — the worst line to cover, since it is
- * the one that says what the snippet is. A flow row costs one row of height and
- * covers nothing. */
+/* The block's title bar. The actions used to float over the pre's top-right,
+ * covering the first line of code — the worst line to cover, since it is the one
+ * that says what the snippet is. A flow row costs one row and covers nothing. */
 .code-head {
   display: flex;
   align-items: center;
@@ -1374,10 +1081,9 @@
   border-block-end: 1px solid var(--c-border);
 }
 
-/* The RAW fence tag, as the author wrote it. highlight.ts exposes no
- * display-name map and inventing one would be a fourth lookup table beside the
- * three that already decide highlighting. Empty for a fence with no tag: the
- * bar still earns its row by holding the actions. */
+/* The RAW fence tag, as the author wrote it: highlight.ts exposes no display-name
+ * map and inventing one would be a fourth lookup table beside the three that
+ * already decide highlighting. Empty for an untagged fence. */
 .code-lang {
   min-width: 0;
   overflow: hidden;
@@ -1394,9 +1100,9 @@
   gap: 0.25rem;
 }
 
-/* Still arriving. The block has its chrome but not its highlighting, because
- * the text is still growing; the dot says which state it is in rather than
- * leaving the missing colour to be read as a failure. */
+/* Still arriving: the block has its chrome but not its highlighting, because the
+ * text is still growing. The dot says which state it is in rather than leaving
+ * the missing colour to be read as a failure. */
 .code-wrap[data-code-state="streaming"] .code-lang::after {
   content: "";
   display: inline-block;
@@ -1428,17 +1134,10 @@
   }
 }
 
-/* The reply's markdown SOURCE, shown in place of its rendering.
- *
- * A sibling of the whole rendered block region rather than a replacement of it,
- * and hidden with `.hidden` rather than opacity — see the reasoning in
- * messages-turn-actions.ts toggleTurnSource.
- *
- * NO `max-width`, for the same reason the rendering it stands in for has none
- * (`.message.assistant` above). It used to carry a second copy of the same
- * `40.75rem` literal so that toggling did not change the column width; that
- * promise is now kept by both sides filling the turn body, and a source view is
- * the last place to wrap early anyway. */
+/* The reply's markdown SOURCE, in place of its rendering. A sibling of the whole
+ * rendered region rather than a replacement, and hidden with `.hidden` rather
+ * than opacity (messages-turn-actions.ts toggleTurnSource). NO `max-width`, for
+ * the same reason the rendering it stands in for has none. */
 .turn-raw {
   margin: 0;
   padding: var(--sp-3);
@@ -1453,22 +1152,13 @@
   overflow-wrap: anywhere;
 }
 
-/* Math (native MathML, no KaTeX).
- *
- * THE FONT IS THE WHOLE REASON THIS BLOCK EXISTS. MathML Core layout is native
- * in every browser this app targets, but Chromium ships no math font, so
- * without a stack a fraction lays out correctly while its stretchy braces and
- * radical signs fall back to whatever the page font happens to have. Naming
- * fonts a system may already carry (TeX distributions, Office, most Linux
- * font packages) costs nothing and degrades gracefully: the `math` generic and
- * then `serif` still set fractions, roots and scripts, and only stretchy
- * operators come out at a fixed size instead of stretched. Bundling a math font
- * file was the alternative and it buys a guarantee at the price of a permanent
- * binary asset inside //go:embed static.
- *
- * `[data-math-raw]` is the DEGRADATION state, set by smd-renderer.ts: an
- * expression still streaming, never closed, or outside the converter's subset
- * keeps its LaTeX. It reads as source rather than as broken mathematics. */
+/* Math (native MathML, no KaTeX). THE FONT IS THE WHOLE REASON THIS BLOCK EXISTS:
+ * MathML Core layout is native everywhere this app targets, but Chromium ships no
+ * math font, so without a stack a fraction lays out correctly while its stretchy
+ * braces and radicals fall back to the page font. Naming fonts a system may
+ * already carry degrades gracefully. `[data-math-raw]` is the DEGRADATION state:
+ * an expression still streaming, never closed, or outside the converter's subset
+ * keeps its LaTeX. */
 [data-math] {
   font-family: "Latin Modern Math", "STIX Two Math", "XITS Math", "Cambria Math", math, serif;
 }
@@ -1521,24 +1211,13 @@
   background: var(--c-bg-tertiary);
 }
 
-/* DOCKED AT THE FOOT OF THE TIMELINE RAIL, wherever the rail is shown. The
-   floating form above sits over the middle of the transcript, covering the last
-   lines of the very content the reader is behind on; the rail's column is empty
-   space beside the cards, and the rail's axis already ends at exactly this y
-   (both are `--sp-3` off the wrapper's bottom), so the control reads as the end
-   of the timeline it returns you to.
-
-   The threshold is the rail's own (29-turns.css), because it is the width at
-   which the gutter is proven wide enough to hold the column.
-
-   Pinned by its inline-START edge: that is what makes the label grow RIGHT into
-   the gutter rather than back over the cards, and it keeps the glyph on the axis
-   at every label length. `--sp-3` short of the wrapper's end because #chat-area
-   clips, so a long label would be cut rather than wrapped.
-
-   Both thresholds here track `--rail-w`: the gutter is `(width - cap) / 2`, so a
-   column 1rem wider needs 2rem more chat area for the same clearance. They read
-   55.5rem and 68rem while the column was 1.75rem. */
+/* DOCKED AT THE FOOT OF THE TIMELINE RAIL, wherever the rail is shown: a floating
+ * form sits over the last lines of the content the reader is behind on, while the
+ * rail's column is empty space whose axis already ends at this y. The threshold
+ * is the rail's own (29-turns.css), the width at which the gutter is proven wide
+ * enough. Pinned by its inline-START edge, so the label grows RIGHT into the
+ * gutter rather than back over the cards, and `--sp-3` short of the wrapper's end
+ * because #chat-area clips. Both thresholds track `--rail-w`. */
 @container chat-area (width >= 57.5rem) {
   [id="scroll-bottom"] {
     left: var(--rail-inset-start);
@@ -1546,12 +1225,10 @@
     min-inline-size: var(--rail-w);
     max-inline-size: max(var(--rail-w), calc(var(--rail-inset-end) + var(--rail-w) - var(--sp-3)));
 
-    /* Height is the app's button token, NOT `--rail-w`. Only the glyph COLUMN
-       below is bound to the column, because that is what puts the glyph on the
-       axis; a height read off the same token made this a square, which stopped
-       meaning anything once the column was sized for a cluster range rather
-       than for a marker. Base rule already says `--btn-h`, so there is no
-       override here. */
+    /* Height is the app's button token, NOT `--rail-w`. Only the glyph COLUMN below
+     * is bound to the column, because that is what puts the glyph on the axis; a
+     * height read off the same token made this a square, which stopped meaning
+     * anything once the column was sized for a cluster range. */
     justify-content: flex-start;
     gap: 0;
     padding: 0;
@@ -1561,27 +1238,24 @@
   }
 
   /* The glyph takes the rail's own column, so it sits on the axis whether or not
-     the label is showing. `- 2px` is this button's two borders, which the column
-     width does not include; the svg's viewBox then centres the 14px drawing in
-     what is left. */
+   * the label is showing. `- 2px` is this button's two borders, which the column
+   * width does not include. */
   [id="scroll-bottom"] > svg {
     flex: 0 0 calc(var(--rail-w) - 2px);
   }
 
-  /* HIDDEN, not truncated, at a width the gutter cannot hold it: `setResumeLabel`
-     (scroll.ts) also writes the label to the tooltip, which the tooltip
-     controller publishes as this button's accessible description, so the count is
-     never the only copy. */
+  /* HIDDEN, not truncated, at a width the gutter cannot hold: `setResumeLabel`
+   * also writes the label to the tooltip, which is published as this button's
+   * accessible description, so the count is never the only copy. */
   [id="scroll-bottom"] > span {
     display: none;
   }
 }
 
-/* The label pops out to the right of the glyph. 70rem is the width at which
-   `--rail-inset-end` reaches 6.75rem: the longest label this control writes is
-   about 5rem at `--fs-sm`, and the rest is the glyph column, its own end padding
-   and the `--sp-3` the box stops short of the window by. Past that the ellipsis
-   is the guard, for an agent-authored working label of any length. */
+/* The label pops out to the right of the glyph. 70rem is where
+ * `--rail-inset-end` reaches 6.75rem: the longest label is about 5rem at
+ * `--fs-sm` and the rest is the glyph column, its end padding and the `--sp-3`
+ * the box stops short by. Past that the ellipsis is the guard. */
 @container chat-area (width >= 70rem) {
   [id="scroll-bottom"] > span {
     display: block;
@@ -1592,22 +1266,18 @@
   }
 }
 
-/* Model-refusal callout (kiro-cli 2.13 refusal contract). The refusal
- * explanation renders as ordinary assistant text; this callout under the turn
- * is the distinct affordance: octagon glyph + title + category chip, and the
- * recovery actions (Rewind / Switch to the recommended model). Red-tinted but
- * quiet — informational, not an app error. */
+/* Model-refusal callout (kiro-cli 2.13 refusal contract). The explanation
+ * renders as ordinary assistant text; this is the distinct affordance — glyph,
+ * title, category chip and the recovery actions. Quiet: informational, not an
+ * app error. */
 .refusal-callout {
   max-width: var(--content-max-w);
 
-  /* Was `margin: var(--sp-2) auto 0` — see `.code-refs` for why both halves
-   * had to go once `.msg-wrap` became a flex column with a gap. */
   margin: 0;
   padding: var(--sp-2) var(--sp-3);
-  /* A symmetric tinted ring, no state-coloured left edge: the 3px override said
-   * the same thing this ring and the wash below already say, which is the
-   * decision `.pill-status-content` records in `15-input.css`. The non-colour
-   * channels are the octagon glyph, the title and the category chip. */
+  /* A symmetric tinted ring, no state-coloured left edge (the decision
+   * `.pill-status-content` records in 15-input.css). The non-colour channels are
+   * the octagon glyph, the title and the category chip. */
   border: 1px solid color-mix(in srgb, var(--c-red) 35%, var(--c-border));
   border-radius: var(--r);
   background: color-mix(in srgb, var(--c-red) 6%, transparent);
@@ -1619,9 +1289,8 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--sp-2);
-  /* The hue is here for the octagon GLYPH, which is a graphic at 1.4.11's 3:1
-     floor and clears it (5.802 dark / 3.839 light on this callout's own wash).
-     The title below opts out of inheriting it. */
+  /* The hue is here for the octagon GLYPH, a graphic at 1.4.11's 3:1 floor, which
+   * it clears. The title below opts out of inheriting it. */
   color: var(--c-red);
 }
 
@@ -1631,12 +1300,10 @@
 
 .refusal-title {
   font-weight: var(--fw-medium);
-  /* PRIMARY ink rather than the hue it would inherit. `--c-red` is a status hue
-     sized for a glyph or a badge — css-contrast.py measures that family at a 3:1
-     floor and says outright that "a hue used for small body text needs the
-     stricter floor". This is a 12px sentence, and the hue reads 3.839:1 in light
-     mode on the callout's 6% wash, under AA. The red stays on the glyph, the
-     border and the chip fill; the sentence takes an ink sized for sentences. */
+  /* PRIMARY ink rather than the hue it would inherit. `--c-red` is sized for a
+   * glyph or a badge at a 3:1 floor; this is a 12px sentence, and the hue reads
+   * 3.839:1 in light mode on the callout's wash, under AA. The red stays on the
+   * glyph, the border and the chip fill. */
   color: var(--c-text-primary);
 }
 
@@ -1646,9 +1313,8 @@
   font-size: var(--fs-xs);
   line-height: 1.5;
   white-space: nowrap;
-  /* Same call as the title, and it was worse here: the category label sits on the
-     chip's own 14% red fill over the callout's 6%, where the hue reads 3.228:1
-     light / 4.523:1 dark. The FILL is what carries the status; the label is read. */
+  /* Same call as the title, and worse here: on the chip's own red fill over the
+   * callout's the hue reads 3.228:1 light. The FILL carries the status. */
   color: var(--c-text-primary);
   background: color-mix(in srgb, var(--c-red) 14%, transparent);
 }
@@ -1683,40 +1349,14 @@
   outline-offset: var(--focus-offset);
 }
 
-/* ==========================================================================
-   The mid-turn steer note — a message delivered into a running turn
-   ==========================================================================
-
-   Sent while the turn was already running. It waits in the bottom dock until the
-   agent reads it, then leaves the dock and appears HERE, between the blocks the
-   turn had produced and the ones that came after.
-
-   A CARD ON THE TOOL-CARD BOX, and that is the whole visual decision: the same
-   `--c-bg-secondary` fill, 1px border, `--r` radius, `overflow: hidden` and
-   `vk-slide-up` entry that `.tool-call` and `.subagent-block` carry
-   (14-tools.css), with `.subagent-block`'s accent-mixed border as the resting
-   colour. The transcript has exactly one idiom for a block that is not prose, so
-   the note reads as a sibling of the evidence beside it. It replaced a 3px accent
-   LEFT RAIL, which `#vibekit-ui` reserves for work this agent did not do itself —
-   the run card and the delegated-work card — so a steer carrying one was
-   borrowing the wrong vocabulary. The head reuses `.tool-header`'s shape and the
-   glyph slot is `.tool-icon` itself, so nothing here re-derives either.
-
-   TWO ORIGINS, separated by the LABEL and the GLYPH rather than by a hue: KAS's
-   steering buffer is the only inbound channel into a live turn, so it carries the
-   user's own corrections AND a workflow reporting its result into the chat that
-   launched it. Both keep the accent-mixed border, because both are genuinely
-   input into a running turn. `data-origin` is on the root for a rule that ever
-   needs it; today only the label's words differ.
-
-   Two states on top: `read` (optionally with the agent's own account of what it
-   did) and `dropped` (a turn boundary cleared the buffer first — neutral border,
-   aside ink, and one control to put the text back in the message box).
-
-   NO `max-width` here. It carried `--content-max-w`, and `#vibekit-ui` records
-   that the transcript has ONE measure and the card is it: that cap is the same
-   122px-dead-gutter defect removed from `.message.assistant` and
-   `.turn-req-text`. */
+/* THE MID-TURN STEER NOTE — a message delivered into a running turn. It waits in
+ * the bottom dock until the agent reads it, then appears HERE, between the blocks
+ * the turn had produced and the ones that came after.
+ *
+ * A CARD ON THE TOOL-CARD BOX: the transcript has one idiom for a block that is
+ * not prose, so the note reads as a sibling of the evidence beside it. TWO
+ * ORIGINS — the user's own correction and a workflow reporting into the launching
+ * chat — separated by the LABEL and the GLYPH, never by a hue. */
 .steer-note {
   background: var(--c-bg-secondary);
   border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
@@ -1728,8 +1368,8 @@
 }
 
 /* `.tool-header`'s shape, so the note's head and a tool card's sit on one
-   density. Not a `.tool-header` itself: this row is not a disclosure summary and
-   must not inherit a rule written for one. */
+ * density. Not a `.tool-header` itself: this row is not a disclosure summary and
+ * must not inherit a rule written for one. */
 .steer-note-head {
   display: flex;
   align-items: center;
@@ -1739,10 +1379,9 @@
   min-width: 0;
 }
 
-/* The word, not only the glyph. Uppercase and tracked out so it reads as a
-   status rather than as the first line of the message. It is also the ONE channel
-   that names the origin, which is why it is never carried by colour alone
-   (WCAG 1.4.1). */
+/* The word, not only the glyph, uppercase and tracked out so it reads as a status
+ * rather than as the message's first line. It is also the ONE channel that names
+ * the origin, which is why that is never carried by colour alone (WCAG 1.4.1). */
 .steer-note-label {
   font-size: var(--fs-xs);
   font-weight: 600;
@@ -1752,7 +1391,7 @@
 }
 
 /* Concentric with the head: same inline padding, so the message's left edge is
-   the label's. */
+ * the label's. */
 .steer-note-body {
   display: flex;
   flex-direction: column;
@@ -1772,9 +1411,9 @@
 }
 
 /* THE CLAMP, four lines, behind the attribute the opener toggles — the turn
-   header's own mechanism (29-turns.css, clamp-text.ts). Not an ellipsis that
-   cuts: every character stays in the DOM and in the accessibility tree, which is
-   what keeps find-in-chat able to match the reader's own words. */
+ * header's own mechanism (29-turns.css, clamp-text.ts). Not an ellipsis that
+ * cuts: every character stays in the DOM and in the accessibility tree, which is
+ * what keeps find-in-chat able to match the reader's own words. */
 .steer-note-text[data-clamped] {
   display: -webkit-box;
   -webkit-line-clamp: 4;
@@ -1783,8 +1422,8 @@
   overflow: hidden;
 }
 
-/* Skinned on `.turn-req-more` (29-turns.css), because it is the same control:
-   a text button that opens a clamp. */
+/* Skinned on `.turn-req-more` (29-turns.css): it is the same control, a text
+ * button that opens a clamp. */
 .steer-note-more {
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
@@ -1806,16 +1445,16 @@
 }
 
 /* What the agent said it DID about the steer, from its own acknowledgement
-   marker. One step down in weight from the message, because the message above it
-   is the part the reader wrote and already knows. */
+ * marker. One step down in weight, because the message above is the part the
+ * reader wrote and already knows. */
 .steer-note-ack {
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
 }
 
-/* Dropped: the agent never read it. Subordinate rather than dimmed — the ink is
-   chosen (`--c-text-aside`), never an `opacity`, because an opacity multiplies
-   the measured contrast and is invisible to both contrast gates. */
+/* Dropped: the agent never read it. Subordinate through a chosen ink rather than
+ * an `opacity`, which multiplies the measured contrast and is invisible to both
+ * contrast gates. */
 .steer-note[data-state="dropped"] {
   border-color: var(--c-border);
 }
@@ -1827,8 +1466,7 @@
 }
 
 /* The one control the wire can honour on a dropped steer: the text back in the
-   message box, from which it is one Send from being a prompt. Aligned left with
-   the label rather than stretched across the note. */
+ * message box, from which it is one Send from being a prompt. */
 .steer-note-restore {
   align-self: flex-start;
   margin-block-start: var(--sp-1);

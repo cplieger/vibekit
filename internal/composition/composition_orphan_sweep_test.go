@@ -1,13 +1,8 @@
 package composition
 
-// The boot orphan sweep's retry policy.
-//
-// The sweep needs the utility bridge and the utility bridge needs an active
-// kiro-cli, so a boot that finds the pinned version still downloading answers
-// `run list unavailable` and stops. That happened seven times in ten days on the
-// live volume and nothing retried it, so every one of those processes kept its
-// stale leases for its whole life — each of which keeps advertising a dead run on
-// /api/runs/live and holds its chat exempt from the client's eviction sweep.
+// The sweep needs the utility bridge, which needs an active kiro-cli, so a boot
+// that finds the pinned version still downloading answers `run list unavailable`.
+// Without a retry that process keeps its stale leases for its whole life.
 
 import (
 	"context"
@@ -15,9 +10,8 @@ import (
 	"time"
 )
 
-// sweepRecorder is a fake run sweep: it answers a scripted verdict per call and
-// reports each invocation on a channel, so a test synchronises on the sweep itself
-// rather than on a sleep.
+// sweepRecorder reports each invocation on a channel, so a test synchronises on
+// the sweep itself rather than on a sleep.
 type sweepRecorder struct {
 	calls    chan context.Context
 	verdicts []bool
@@ -37,8 +31,6 @@ func (s *sweepRecorder) sweep(ctx context.Context) bool {
 	return v
 }
 
-// awaitCall waits for the next sweep invocation, failing with a diagnostic rather
-// than hanging the package's whole test binary.
 func (s *sweepRecorder) awaitCall(t *testing.T, what string) {
 	t.Helper()
 	select {
@@ -48,10 +40,9 @@ func (s *sweepRecorder) awaitCall(t *testing.T, what string) {
 	}
 }
 
-// refuseCall fails when a sweep call arrives inside a short window. Bounded by a
-// real deadline because the property is an ABSENCE and there is nothing to
-// synchronise on; the window is short because the goroutine's other arm is a
-// closed channel it would take immediately.
+// refuseCall is bounded by a real deadline because the property is an ABSENCE with
+// nothing to synchronise on; short, because the goroutine's other arm is a closed
+// channel it would take immediately.
 func (s *sweepRecorder) refuseCall(t *testing.T, what string) {
 	t.Helper()
 	select {
@@ -61,12 +52,8 @@ func (s *sweepRecorder) refuseCall(t *testing.T, what string) {
 	}
 }
 
-// TestStartOrphanSweep_RetriesOnceTheInstallCompletes is Fix B: the seven measured
-// skips become seven recoveries.
-//
-// It waits on the INSTALL rather than polling readiness, because the installer knows
-// the instant a version goes active and a poll would have to invent an interval and
-// a ceiling for it.
+// The retry waits on the INSTALL rather than polling readiness: the installer knows
+// the instant a version goes active, where a poll must invent an interval and a ceiling.
 func TestStartOrphanSweep_RetriesOnceTheInstallCompletes(t *testing.T) {
 	t.Parallel()
 	rec := newSweepRecorder(false, true)
@@ -82,9 +69,8 @@ func TestStartOrphanSweep_RetriesOnceTheInstallCompletes(t *testing.T) {
 	rec.awaitCall(t, "the retry after the install completed")
 }
 
-// TestStartOrphanSweep_DoesNotRetryASweepThatReachedKAS: the retry exists for ONE
-// failure, and a sweep that read the run list has already decided every lease it
-// holds. Retrying would spend a second pass over the whole lease store per boot.
+// The retry exists for ONE failure: a sweep that read the run list has already decided
+// every lease it holds, so retrying would spend a second pass over the lease store per boot.
 func TestStartOrphanSweep_DoesNotRetryASweepThatReachedKAS(t *testing.T) {
 	t.Parallel()
 	rec := newSweepRecorder(true)
@@ -97,10 +83,8 @@ func TestStartOrphanSweep_DoesNotRetryASweepThatReachedKAS(t *testing.T) {
 	rec.refuseCall(t, "a retry after a sweep that reached KAS")
 }
 
-// TestStartOrphanSweep_SweepsImmediatelyRatherThanWaitingForTheInstall pins the
-// ordering the call site's own comment protects: on every ordinary boot the pinned
-// version is already on the volume, so waiting for the install signal would delay
-// the sweep past the point the schedule runner can launch a run.
+// On every ordinary boot the pinned version is already on the volume, so waiting for
+// the install signal would delay the sweep past the point a schedule can launch a run.
 func TestStartOrphanSweep_SweepsImmediatelyRatherThanWaitingForTheInstall(t *testing.T) {
 	t.Parallel()
 	rec := newSweepRecorder(true)
@@ -111,13 +95,9 @@ func TestStartOrphanSweep_SweepsImmediatelyRatherThanWaitingForTheInstall(t *tes
 	rec.awaitCall(t, "the boot attempt with the install still pending")
 }
 
-// TestStartOrphanSweep_WithNoInstallToWaitFor covers the two runtimes that can
-// never complete an install — no pins at all (a bare `go run`), and pins the manager
-// refused. There is no second condition for a retry to wait for, so the first
-// attempt is all there is.
-//
-// A nil channel needs no special case: `select` takes the ctx arm, which is what the
-// stop below joins on.
+// No pins at all (a bare `go run`) and pins the manager refused can never complete an
+// install, so there is no second condition to wait for and the first attempt is all
+// there is. A nil channel needs no special case: `select` takes the ctx arm the stop joins on.
 func TestStartOrphanSweep_WithNoInstallToWaitFor(t *testing.T) {
 	t.Parallel()
 	rec := newSweepRecorder(false)
@@ -129,26 +109,17 @@ func TestStartOrphanSweep_WithNoInstallToWaitFor(t *testing.T) {
 	rec.refuseCall(t, "a retry with no install channel to wait on")
 }
 
-// TestStartOrphanSweep_StopsAtShutdown is the goroutine's LIFETIME, and it is
-// asserted on the stop rather than on the absence of a call.
-//
-// The absence of a call is what the shape claims and not what it proves: a goroutine
-// PARKED forever on the install signal makes no call either, so a test that only
-// counts calls passes with the ctx arm deleted. This one measures how long the join
-// takes — runBackground's stop cancels and then waits out `backgroundStopGrace`
-// before giving up, so a goroutine with no ctx arm turns a millisecond into five
-// seconds and says so in a log line nobody reads.
-//
-// On a container whose install never completes the park IS forever, which is why the
-// arm exists and why the call site holds the stop on App.
+// Asserted on the STOP, not on the absence of a call: a goroutine parked forever on the
+// install signal makes no call either, so a call-counting test passes with the ctx arm
+// deleted. The join duration is what discriminates — runBackground's stop cancels and then
+// waits out `backgroundStopGrace`, so a goroutine with no ctx arm turns a millisecond into
+// five seconds. On a container whose install never completes the park IS forever.
 func TestStartOrphanSweep_StopsAtShutdown(t *testing.T) {
 	t.Parallel()
 	rec := newSweepRecorder(false)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// Never closed: an install that will not finish.
-	stop := startOrphanSweep(ctx, rec.sweep, make(chan struct{}))
+	stop := startOrphanSweep(t.Context(), rec.sweep, make(chan struct{}))
 	rec.awaitCall(t, "the boot attempt")
 
 	start := time.Now()

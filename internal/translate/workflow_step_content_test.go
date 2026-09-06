@@ -1,12 +1,8 @@
 package translate
 
-// Tests for a PARENTLESS run's step projection.
-//
-// The rule under test in every case is the one the chat path does not have to
-// state: a run has no buffer, so anything that needs accumulating has to be
-// accumulated HERE or it cannot be rendered at all. Text and reasoning need none
-// (the client appends deltas into a live block), and a tool call needs all of it
-// (an update carries a status and an output delta and nothing that says what ran).
+// Tests for a PARENTLESS run's step projection. A run has no buffer, so anything that
+// needs accumulating is accumulated HERE or cannot be rendered at all: text and reasoning
+// need none, a tool call needs all of it.
 
 import (
 	"encoding/json"
@@ -158,20 +154,12 @@ func TestHandleRunStepFrame_FoldsAToolUpdate(t *testing.T) {
 	}
 }
 
-// TestHandleRunStepFrame_ReportsRunProgress is the progress signal for the
-// population that has no other one, and it is here rather than only on the chat
-// path because that asymmetry is the whole reason this call site exists.
-//
-// A manual or scheduled run's step frames arrive on its own bridge and reach
-// forwardRunToolCall, never the chat path's countStepTurn site. So without this,
-// an unattended run's only progress signal would be `node_complete` — and one
-// legitimately long step, which is exactly the shape a fifteen-minute idle window
-// exists to tolerate, would read as a stall and be cancelled. That population is
-// the one the watchdog exists for.
-//
-// The UPDATE deliberately reports nothing: a status change on a call already
-// counted is not new evidence the run is producing frames, and crediting it would
-// let one wedged tool call refill the window forever by re-reporting itself.
+// TestHandleRunStepFrame_ReportsRunProgress pins the progress signal for the population
+// that has no other one: a manual or scheduled run's frames never reach the chat path's
+// countStepTurn site, so without this an unattended run's only signal is `node_complete`
+// and one legitimately long step reads as a stall and is cancelled. The UPDATE reports
+// nothing deliberately — crediting it would let one wedged tool call refill the idle
+// window forever by re-reporting itself.
 func TestHandleRunStepFrame_ReportsRunProgress(t *testing.T) {
 	t.Parallel()
 	deps := newBaseDeps()
@@ -197,15 +185,10 @@ func TestHandleRunStepFrame_ReportsRunProgress(t *testing.T) {
 	}
 }
 
-// TestHandleRunStepFrame_ReportsProgressAboveTheRenderGuards is the report's
-// PLACEMENT on the population that has no other progress signal, which is what makes
-// it the sharper half of the same property.
-//
-// Both guards below it are rendering decisions — do not draw a hook card, and there
-// is no row to put content in — and neither says anything about whether KAS is
-// producing frames, which is the only question the idle window asks. Reported under
-// them, hooks.showStatus off cancels an unattended run whose step is asking a hook
-// gate, as stalled, while it works.
+// TestHandleRunStepFrame_ReportsProgressAboveTheRenderGuards pins the report's PLACEMENT.
+// Both guards below it are rendering decisions and neither says whether KAS is producing
+// frames, which is the only question the idle window asks — reported under them,
+// hooks.showStatus off cancels a working unattended run as stalled.
 func TestHandleRunStepFrame_ReportsProgressAboveTheRenderGuards(t *testing.T) {
 	t.Parallel()
 	for name, meta := range map[string]map[string]any{
@@ -358,12 +341,9 @@ func TestHandleRunStepFrame_DropsUnaddressableAndReplayedFrames(t *testing.T) {
 				`"content":{"type":"text","text":"orphan"}}}`),
 		},
 		{
-			// Hand-written rather than built by stepFrame: the replay flag sits on
-			// the UPDATE object beside the workflow block, which that helper's own
-			// `_meta` write would clobber. Note the nesting — the flag is NOT on
-			// `params` (see ACPSessionUpdateBase, where reading it off params
-			// yields false for every frame and looks exactly like a wire that
-			// never sets it).
+			// Hand-written because the replay flag sits on the UPDATE object beside
+			// the workflow block, which stepFrame's own `_meta` write would clobber.
+			// It is NOT on `params`: reading it there yields false for every frame.
 			name: "a replayed frame",
 			params: json.RawMessage(`{"sessionId":"s","update":{` +
 				`"sessionUpdate":"agent_message_chunk",` +

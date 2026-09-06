@@ -1,11 +1,8 @@
 package agent
 
-// What a workflow step's turn persists and announces, whichever closer reaches it.
-// The RUN finishing is the closer that exists for it — a step's own turn_end is
-// dropped by the attribution gate, so without it the content stays in memory for the
-// life of the process and the Turn record never closes — but a bridge death and the
-// chat's own bracket claim the same turn, and both rulings are keyed on the turn's
-// SOURCE so all three agree.
+// What a workflow step's turn persists and announces. The RUN finishing is the closer
+// that exists for it (the attribution gate drops a step's own turn_end), but a bridge
+// death and the chat's bracket claim the same turn, so all three key on its SOURCE.
 
 import (
 	"testing"
@@ -13,13 +10,9 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// stagedStepTurn opens a turn the way a chat-parented run's step frames open one
-// — through the real fold target with the step SOURCE — and stages `text` on it.
-//
-// It goes through TurnFoldTarget rather than setting the source by hand, so the
-// turn under test is the one production produces: openWire is what stamps
-// TurnSourceWorkflowStep, and a test asserting the source it just assigned would
-// pin nothing.
+// stagedStepTurn opens a step turn through the real fold target rather than setting
+// the source by hand: openWire is what stamps TurnSourceWorkflowStep, and a test
+// asserting the source it just assigned would pin nothing.
 func stagedStepTurn(t *testing.T, h *Runtime, cs *fakeChatStore, chatID vibekit.ChatID, text string) {
 	t.Helper()
 	if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
@@ -37,11 +30,8 @@ func stagedStepTurn(t *testing.T, h *Runtime, cs *fakeChatStore, chatID vibekit.
 	buf.Content.WriteString(text)
 }
 
-// outcomeMarkerCount counts the chat's persisted turn-outcome marker rows.
-//
-// A COUNT rather than turn_segment_test.go's outcomeMarker, which answers with the
-// last one: the ruling here is that a step turn persists NO marker, and the
-// idempotency case needs the number to be unchanged rather than merely non-nil.
+// outcomeMarkerCount is a COUNT rather than a last-one lookup: the ruling is that a
+// step turn persists NO marker, so the idempotency case needs the number unchanged.
 func outcomeMarkerCount(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) int {
 	t.Helper()
 	c, ok := cs.Get(t.Context(), chatID)
@@ -57,9 +47,8 @@ func outcomeMarkerCount(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) 
 	return n
 }
 
-// appendUserRow persists a prompt sent while the turn was still folding — the
-// trailing row the ordering rule is about, and the one the client renders AFTER the
-// reply it arrived during.
+// appendUserRow persists a prompt sent while the turn was still folding: the trailing
+// row the client renders AFTER the reply it arrived during.
 func appendUserRow(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, text string) {
 	t.Helper()
 	if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
@@ -74,12 +63,8 @@ func appendUserRow(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, text 
 	}
 }
 
-// rowOrder reports where the chat's assistant row and its trailing user row landed,
-// -1 for either that is absent.
-//
-// A READ rather than an assertion helper: three closers now share the ordering rule
-// and each case states its own expectation, so the walk is the only thing worth
-// having once.
+// rowOrder is a READ rather than an assertion helper: three closers share the ordering
+// rule and each case states its own expectation, so only the walk is worth having once.
 func rowOrder(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) (assistantAt, userAt int) {
 	t.Helper()
 	c, ok := cs.Get(t.Context(), chatID)
@@ -99,12 +84,9 @@ func rowOrder(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) (assistant
 	return assistantAt, userAt
 }
 
-// TestCloseStepTurn_PersistsAStepsContent is the defect. A chat-parented run's
-// step frames fold onto the launching chat and open a turn there, the attribution
-// gate drops that turn's own turn_end, and before this closer nothing on the run's
-// completion reached the turn lifecycle at all — so a reader who watched a run and
-// then reloaded lost everything its steps produced except each node's captured
-// output.
+// TestCloseStepTurn_PersistsAStepsContent is the defect: a step's frames open a turn on
+// the launching chat whose own turn_end the attribution gate drops, so without a closer
+// on the run's completion a reader who reloaded lost everything the steps produced.
 func TestCloseStepTurn_PersistsAStepsContent(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const reply = "the step got this far before its run ended"
@@ -131,10 +113,9 @@ func TestCloseStepTurn_PersistsAStepsContent(t *testing.T) {
 	}
 }
 
-// TestCloseStepTurn_LeavesAPromptTurnAlone is why the read is keyed on the turn's
-// SOURCE rather than on displaceableEngineTurn, which also matches the chat's own
-// agent-initiated turn. A run ending says nothing about a turn this chat prompted:
-// closing one would take a live reply away from the reader mid-answer.
+// TestCloseStepTurn_LeavesAPromptTurnAlone is why the read keys on the turn's SOURCE
+// rather than on displaceableEngineTurn, which also matches an agent-initiated turn:
+// closing a prompted turn takes a live reply away from the reader mid-answer.
 func TestCloseStepTurn_LeavesAPromptTurnAlone(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "the chat's own reply, still streaming")
@@ -152,16 +133,11 @@ func TestCloseStepTurn_LeavesAPromptTurnAlone(t *testing.T) {
 	}
 }
 
-// TestCloseStepTurn_AnEmptyStepTurnPersistsAndAnnouncesNothing is THE RULING, and
-// it is the inverse of the prompted case a marker exists for.
-//
-// `carried` is snap.Started, and every path that opens a step turn AND folds
-// content calls ensureTurnStarted immediately — so nothing folded here means no
-// message_created was ever broadcast and nothing entered the TRANSCRIPT. A marker
-// would therefore close no transcript divergence, and what it WOULD do is open a
-// headless turn card with a stopped mark and an empty body in a conversation the
-// turn is not about. The announcement goes with it: turn_ended means "this chat's
-// turn ended", and every effect of one lands on the launching chat's OWN last turn.
+// TestCloseStepTurn_AnEmptyStepTurnPersistsAndAnnouncesNothing is THE RULING. Nothing
+// folded means no message_created was broadcast and nothing entered the transcript, so
+// a marker would close no divergence and would instead open a headless turn card in a
+// conversation the turn is not about. The announcement goes with it, because every
+// effect of turn_ended lands on the launching chat's OWN last turn.
 func TestCloseStepTurn_AnEmptyStepTurnPersistsAndAnnouncesNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	stagedStepTurn(t, h, cs, "c1", "")
@@ -181,12 +157,9 @@ func TestCloseStepTurn_AnEmptyStepTurnPersistsAndAnnouncesNothing(t *testing.T) 
 	}
 }
 
-// TestCloseStepTurn_InsertsAheadOfATrailingUserRow pins where the message LANDS.
-//
-// A prompt sent while a run's steps were still folding persists its user row
-// first, and the client places such a row AFTER the reply it arrived during. A
-// plain append would record the reply as following that prompt, so the file and
-// the array every client is showing would disagree about the order.
+// TestCloseStepTurn_InsertsAheadOfATrailingUserRow pins where the message LANDS: a
+// prompt sent mid-fold persists its user row first and the client places it AFTER the
+// reply, so a plain append makes the file and every client's array disagree on order.
 func TestCloseStepTurn_InsertsAheadOfATrailingUserRow(t *testing.T) {
 	h, cs, _ := newTestHub()
 	stagedStepTurn(t, h, cs, "c1", "the step's reply")
@@ -204,9 +177,8 @@ func TestCloseStepTurn_InsertsAheadOfATrailingUserRow(t *testing.T) {
 	}
 }
 
-// TestCloseAsInterrupted_InsertsAStepsContentAheadOfATrailingUserRow is the same
-// ordering rule reached by a BRIDGE DEATH, which is the closer it did not cover
-// while the choice was keyed on the closer rather than on the turn's source.
+// TestCloseAsInterrupted_InsertsAStepsContentAheadOfATrailingUserRow is the same ordering
+// rule reached by a BRIDGE DEATH, the closer a per-closer choice left out.
 func TestCloseAsInterrupted_InsertsAStepsContentAheadOfATrailingUserRow(t *testing.T) {
 	h, cs, _ := newTestHub()
 	stagedStepTurn(t, h, cs, "c1", "the step got this far before the process exited")
@@ -224,11 +196,9 @@ func TestCloseAsInterrupted_InsertsAStepsContentAheadOfATrailingUserRow(t *testi
 	}
 }
 
-// TestCloseOnWireEnd_InsertsAStepsContentAheadOfATrailingUserRow is the third
-// closer that can claim a step turn: the CHAT's own bracket, whose AnyOpen claim
-// takes whatever is open. Narrower window than a bridge death — the trailing row
-// means a prompt already on disk whose StartTurn has not yet displaced the step turn
-// — and it was the other closer the per-closer list left out.
+// TestCloseOnWireEnd_InsertsAStepsContentAheadOfATrailingUserRow is the third closer
+// that can claim a step turn: the CHAT's own bracket, whose AnyOpen claim takes whatever
+// is open. The trailing row means a prompt on disk whose StartTurn has not displaced it.
 func TestCloseOnWireEnd_InsertsAStepsContentAheadOfATrailingUserRow(t *testing.T) {
 	h, cs, _ := newTestHub()
 	stagedStepTurn(t, h, cs, "c1", "the step's reply")
@@ -246,11 +216,9 @@ func TestCloseOnWireEnd_InsertsAStepsContentAheadOfATrailingUserRow(t *testing.T
 	}
 }
 
-// TestCloseAsInterrupted_AnEmptyStepTurnPersistsAndAnnouncesNothing is the ruling
-// on the closer the marker gate could not reach. A bridge death claims whatever is
-// open, so an agent process exiting while an EMPTY step turn was open used to append
-// an EventInterrupted row — a headless turn card with a BROKEN mark, in a
-// conversation the turn is not about — and announce it on top.
+// TestCloseAsInterrupted_AnEmptyStepTurnPersistsAndAnnouncesNothing is the ruling on the
+// closer the marker gate could not reach: a bridge death claims whatever is open, so an
+// EventInterrupted row would give the launching chat a headless card with a BROKEN mark.
 func TestCloseAsInterrupted_AnEmptyStepTurnPersistsAndAnnouncesNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	stagedStepTurn(t, h, cs, "c1", "")
@@ -276,10 +244,8 @@ func TestCloseAsInterrupted_AnEmptyStepTurnPersistsAndAnnouncesNothing(t *testin
 	}
 }
 
-// TestCloseStepTurn_AStepTurnWithContentStillAnnounces is the other side of the
-// broadcast gate, and it is what stops the gate being narrowed to `carried` alone:
-// a carrier exists here, so the client's latch is right and the dot it sets is
-// re-derived from the persisted header after a reload.
+// TestCloseStepTurn_AStepTurnWithContentStillAnnounces is the other side of the broadcast
+// gate: a carrier exists, so the client's latch is right and survives a reload.
 func TestCloseStepTurn_AStepTurnWithContentStillAnnounces(t *testing.T) {
 	h, cs, _ := newTestHub()
 	stagedStepTurn(t, h, cs, "c1", "the step got this far before its run ended")
@@ -296,11 +262,9 @@ func TestCloseStepTurn_AStepTurnWithContentStillAnnounces(t *testing.T) {
 	}
 }
 
-// TestCloseOnWireEnd_AnEmptyStepTurnCancelledStillPersistsAndAnnounces is the
-// population the gate must NOT swallow. A cancel persists its own EventCancelled row
-// carrying the outcome whatever the turn's source, so there IS a carrier and the
-// client must be told — which is why the gate reads what the close persisted rather
-// than re-deriving it from the source.
+// TestCloseOnWireEnd_AnEmptyStepTurnCancelledStillPersistsAndAnnounces is the population
+// the gate must NOT swallow: a cancel persists its own row whatever the turn's source, so
+// the gate reads what the close persisted rather than re-deriving it from the source.
 func TestCloseOnWireEnd_AnEmptyStepTurnCancelledStillPersistsAndAnnounces(t *testing.T) {
 	h, cs, _ := newTestHub()
 	stagedStepTurn(t, h, cs, "c1", "")
@@ -323,10 +287,9 @@ func TestCloseOnWireEnd_AnEmptyStepTurnCancelledStillPersistsAndAnnounces(t *tes
 	}
 }
 
-// TestCloseStepTurn_FailsAnUnsettledToolCall is the spinner rule. The run's
-// terminal transition ends the only thing that could still send a
-// tool_call_update for a step's call, so a card persisted `in_progress` renders as
-// a permanent spinner on every later reload.
+// TestCloseStepTurn_FailsAnUnsettledToolCall is the spinner rule: the run's terminal
+// transition ends the only thing that could still send a tool_call_update, so a card
+// persisted `in_progress` renders as a permanent spinner on every later reload.
 func TestCloseStepTurn_FailsAnUnsettledToolCall(t *testing.T) {
 	h, cs, _ := newTestHub()
 	stagedStepTurn(t, h, cs, "c1", "the step ran a command")
@@ -338,8 +301,8 @@ func TestCloseStepTurn_FailsAnUnsettledToolCall(t *testing.T) {
 
 	h.coord.CloseStepTurn(t.Context(), "c1")
 
-	// TWO guards rather than one disjunction: the second reads msgs[0], so folding
-	// them makes the Fatalf's own condition panic when nothing was persisted.
+	// TWO guards, not one disjunction: the second reads msgs[0], so folding them makes
+	// the Fatalf's own condition panic when nothing was persisted.
 	msgs := assistantMessages(t, cs, "c1")
 	if len(msgs) != 1 {
 		t.Fatalf("persisted %d assistant messages, want exactly 1", len(msgs))
@@ -352,9 +315,8 @@ func TestCloseStepTurn_FailsAnUnsettledToolCall(t *testing.T) {
 	}
 }
 
-// TestCloseStepTurn_IsIdempotent is what makes the call safe at a site that
-// cannot know whether an earlier frame already closed the turn. The claim is
-// first-wins, so a second call finds nothing open.
+// TestCloseStepTurn_IsIdempotent makes the call safe at a site that cannot know whether
+// an earlier frame already closed the turn: the claim is first-wins.
 func TestCloseStepTurn_IsIdempotent(t *testing.T) {
 	h, cs, _ := newTestHub()
 	stagedStepTurn(t, h, cs, "c1", "the step's reply")
@@ -373,11 +335,9 @@ func TestCloseStepTurn_IsIdempotent(t *testing.T) {
 	}
 }
 
-// TestCloseStepTurn_MintsNoLifecycle is why the read goes through `lookup`. This
-// is asked once per terminal run frame — a run-lifecycle event, not a turn one —
-// so asking must not record that it was asked. An entry leaves the map only
-// through forget, so a minted one and its `changed` channel would outlive every
-// chat that never had a turn.
+// TestCloseStepTurn_MintsNoLifecycle is why the read goes through `lookup`: asked once
+// per terminal RUN frame, and an entry leaves the map only through forget, so a minted
+// one and its `changed` channel would outlive every chat that never had a turn.
 func TestCloseStepTurn_MintsNoLifecycle(t *testing.T) {
 	h, _, _ := newTestHub()
 

@@ -1,8 +1,4 @@
-// ---------------------------------------------------------------------------
-// HTTP load operations for the session store — thin I/O shell.
-// Pure state lives in store.ts; this module hydrates it from the server.
-// Dependency is one-way: store-load.ts → store.ts (never reverse).
-// ---------------------------------------------------------------------------
+// HTTP load operations for the session store: hydrates the state store.ts owns.
 
 import type { Session, ChatHeader, Message } from "./types.js";
 import { apiGetTyped, apiGetTypedOrError } from "./api-client.js";
@@ -45,32 +41,15 @@ const decodeChatGetResponseLocal: Decoder<{
     chat: decodeChatHeader(o["chat"]),
     messages: decodeArray(o["messages"], decodeMessage, "$.chat_get.messages"),
     has_more: reqBool(o, "has_more", "$.chat_get"),
-    // Whether the server has a turn OPEN on this chat — the one fact in this
-    // payload the record cannot supply, because the in-flight reply is in an
-    // in-memory buffer and reaches the chat file only at turn end. Riding the same
-    // response as the transcript is what removes the window in which the client
-    // used to derive a terminal verdict from that silence.
-    //
-    // Optional-tolerant for `draft`'s reason: an older server, or a proxy that
-    // strips it, must not fail the whole chat load. Absent decodes as false, which
-    // is exactly the behaviour that predates the field.
+    // Both fields are optional-tolerant: an older server, or a proxy that strips one,
+    // must not fail the whole chat load. `store.ts` turnLive is turn_open's one reader.
     turn_open: o["turn_open"] === true,
-    // `draft` rides this response rather than the header, so it stays off the
-    // list endpoint and off every chat_updated frame. Optional-tolerant: a
-    // server that predates the field, or a proxy that strips it, must not fail
-    // the whole chat load.
     draft: typeof o["draft"] === "string" ? o["draft"] : "",
   };
 };
 
-/** Re-order the rows re-adopted after a newest-page fetch the way the live path
- *  puts them: a server-persisted row before the unflushed reply, a row that OPENS
- *  a turn after it. Without it a row ingested WHILE the fetch was in flight lands
- *  after the live message, contradicting the rule `ingestMessage` applies to that
- *  same row when no fetch is racing it.
- *
- *  Inert when the live message is not among the kept rows: with nothing to insert
- *  against, local order is already the answer. */
+/** Re-order re-adopted rows the way the live path puts them; `store.ts` insertIndexFor owns
+ *  that rule. Inert when the live message is not among them — nothing to insert against. */
 function reorderKept(kept: Message[], liveID: string | undefined): Message[] {
   const live = kept.find((m) => m.id === liveID);
   if (live === undefined) {
@@ -91,27 +70,16 @@ function reorderKept(kept: Message[], liveID: string | undefined): Message[] {
 let listController: AbortController | null = null;
 const msgControllers = new Map<string, AbortController>();
 
-/** Whether `loadList` has ever succeeded, i.e. whether the chat store is the
- *  authoritative set of chats this client knows about. */
+/** Whether `loadList` has ever succeeded. Read through `chatListLoaded`. */
 let listLoaded = false;
 
-/** What the last `loadList` attempt established about the SERVER, as opposed to
- *  about that request.
- *
- *  Two different facts used to share one boolean, and conflating them is what made
- *  a deep link fail against a perfectly healthy server. `loadList` opens with
- *  `listController?.abort()`, so a boot load is aborted by any `connected`-driven
- *  refetch that overtakes it — measured happening in two live passes — and it then
- *  returns false exactly like a load against a dead server. An abort is a fact about
- *  a REQUEST and proves nothing about the server, so it deliberately leaves this
- *  value alone. */
+/** What the last `loadList` attempt established about the SERVER, not about that request.
+ *  An abort is a fact about a request only, so the abort path leaves this alone. */
 type ListReach = "unknown" | "reachable" | "unreachable";
 let listReach: ListReach = "unknown";
 
-/** What the SERVER says about a chat id, for a reader that must not guess.
- *
- *  `gone` is the only value that licenses a terminal claim; `unresolved` means
- *  nobody answered and the caller has to hold whatever it has. */
+/** What the SERVER says about a chat id. `gone` is the only value that licenses a terminal
+ *  claim; `unresolved` means nobody answered and the caller holds whatever it has. */
 export type ChatVerdict = "exists" | "gone" | "unresolved";
 
 /** The single-chat GET reduced to the one field this question needs. Its own

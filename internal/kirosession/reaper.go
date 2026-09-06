@@ -1,36 +1,18 @@
-// Package kirosession reaps kiro-cli / KAS on-disk session state that
-// vibekit no longer needs.
+// Package kirosession reaps the kiro-cli / KAS on-disk session state that backs
+// session/load resume: it exists only to reload a chat vibekit still keeps, so it
+// dies with that chat. vibekit is the sole retention authority — KAS's own
+// sessionEviction defaults to disabled and the boot conformance check keeps it so.
 //
-// On v3, KAS persists per-session state under $KIRO_HOME/sessions so a chat
-// can be resumed via session/load across container restarts. That state's
-// ONLY purpose is to reload a chat vibekit still keeps — so it must die with
-// the chat. vibekit owns this end to end: a session is reaped promptly when its
-// chat is deleted, when an archived chat is purged, and a periodic orphan sweep
-// removes crash residue and pre-v3 files.
-//
-// vibekit is the ONLY retention authority, but not for the reason previously
-// recorded here. This comment used to say kiro-cli's `cleanup.periodDays` is
-// "pinned to 0/never"; that key has ZERO occurrences in both the KAS bundle and
-// the kiro-cli binary, and `kiro-cli settings` accepts unknown keys, so
-// vibekit's 0 is stored and ignored. The pin is documentation of intent, not a
-// mechanism. The real reason is that KAS's one self-initiated delete path —
-// `sessionEviction`, an LRU sweep once total session bytes exceed a 500 MB
-// default budget, newest 5 preserved, checked once per process at newSession —
-// DEFAULTS TO DISABLED and neither layer enables it. If it were ever enabled it
-// would implement a different policy from this one and delete live chains
-// silently, which is why the boot conformance check asserts it stays absent.
-//
-// On-disk layout (verified against KAS 2.12):
+// Layout (KAS 2.12):
 //
 //	$KIRO_HOME/sessions/<workspace-hash>/sess_<id>/   — the KAS session dir
 //	$KIRO_HOME/sessions/<workspace-hash>/workflows/<workflowId>/ — a run's state
 //	$KIRO_HOME/sessions/cli/sess_<id>.history         — its history sidecar
 //	$KIRO_HOME/sessions/cli/<uuid>.{json,jsonl,lock}  — dead v2-engine files
 //
-// The workspace-hash dir is not tracked by vibekit, so a single session is
-// located by globbing sessions/*/sess_<id>. That glob crosses every workspace
-// bucket under one $KIRO_HOME, so the hash cannot be the only thing standing
-// between a reap and another workspace's transcripts — see belongsToWorkspace.
+// The workspace-hash dir is untracked, so a session is located by globbing
+// sessions/*/sess_<id>: that crosses every bucket under one $KIRO_HOME, so each
+// match must still name this workspace (belongsToWorkspace).
 package kirosession
 
 import (
@@ -43,26 +25,22 @@ import (
 	"time"
 )
 
-// sessionPrefix is the v3 KAS session-id prefix. Anything without it is
-// either empty/garbage (never reaped by id) or a dead v2-engine file
-// (reaped by the sweep purely on age).
+// sessionPrefix is the v3 KAS session-id prefix. Anything without it is empty,
+// garbage, or a dead v2-engine file the sweep reaps purely on age.
 const sessionPrefix = "sess_"
 
-// defaultGuard spares session state younger than this from the orphan
-// sweep. It covers the create race: KAS writes the session dir a moment
-// before vibekit persists the chat file that references it, so a brand-new
-// session can momentarily look unreferenced. Direct Reap (on delete) is not
-// subject to the guard — there the caller knows the chat is gone.
+// defaultGuard spares session state younger than this from the orphan sweep: it
+// covers the create race, since KAS writes the session dir a moment before vibekit
+// persists the chat file that references it. Direct Reap is not subject to it —
+// there the caller knows the chat is gone.
 const defaultGuard = 10 * time.Minute
 
-// sessionRecordName is the per-session file KAS writes its own metadata into.
-// Its workspacePaths list is the subject record every removal here is checked
-// against.
+// sessionRecordName is the per-session file KAS writes its own metadata into. Its
+// workspacePaths list is the subject record every removal here is checked against.
 const sessionRecordName = "session.json"
 
-// workflowsDirName is the per-bucket directory KAS keeps a workflow RUN's state
-// in: sessions/<workspace-hash>/workflows/<workflowId>/. A step session's spare
-// check below asks whether its own run is still there.
+// workflowsDirName is the per-bucket directory KAS keeps a workflow RUN's state in:
+// sessions/<workspace-hash>/workflows/<workflowId>/.
 const workflowsDirName = "workflows"
 
 // Reaper removes on-disk KAS session state under sessionsDir, for the one
@@ -71,16 +49,14 @@ type Reaper struct {
 	sessionsDir string
 	// workspaceRoot is the workspace this reaper may delete sessions for. Every
 	// removal reads the candidate's own workspacePaths and skips a session whose
-	// list does not name it — see belongsToWorkspace for why doubt skips too.
-	// There is no empty-root escape: an empty root names nothing, so it reaps
-	// nothing, which is the same direction every other doubt takes here.
+	// list does not name it; an empty root names nothing, so it reaps nothing.
 	workspaceRoot string
 	guard         time.Duration
 }
 
 // New returns a Reaper rooted at sessionsDir (typically
-// filepath.Join(workspace.KiroHome(), "sessions")) and confined to
-// workspaceRoot (the bridge's own cwd).
+// filepath.Join(workspace.KiroHome(), "sessions")) and confined to workspaceRoot
+// (the bridge's own cwd).
 func New(sessionsDir, workspaceRoot string) *Reaper {
 	root := workspaceRoot
 	if root != "" {
@@ -89,19 +65,14 @@ func New(sessionsDir, workspaceRoot string) *Reaper {
 	return &Reaper{sessionsDir: sessionsDir, workspaceRoot: root, guard: defaultGuard}
 }
 
-// belongsToWorkspace reports whether the session at sessionDir names this
-// reaper's workspace root in its own workspacePaths.
+// belongsToWorkspace reports whether the session at sessionDir names this reaper's
+// workspace root in its own workspacePaths.
 //
-// A MISMATCH is a skip, and so is DOUBT — an unreadable record, an absent or
-// empty list, a decode error. That is this package's stated posture (see Sweep's
-// empty-keep-list refusal) and it is the cheap side of an asymmetric trade: a
-// wrong skip costs retained disk, a wrong removal costs somebody else's history.
-// So a KAS version that stops writing workspacePaths reclaims nothing, and a
-// multi-root or non-canonical entry is spared.
-//
-// It exists because the reap paths glob across every workspace-hash bucket under
-// one $KIRO_HOME and never read the hash, so no collision is required for a reap
-// to cross workspaces — a `docker exec kiro-cli` at another cwd is enough.
+// A mismatch is a skip and so is DOUBT (unreadable record, absent or empty list,
+// decode error): a wrong skip costs disk, a wrong removal costs another
+// workspace's history. The reap paths glob across every bucket under one
+// $KIRO_HOME and never read the hash, so no collision is needed for a reap to
+// cross workspaces.
 func (r *Reaper) belongsToWorkspace(sessionDir string) bool {
 	paths, _, ok := readSessionRecord(sessionDir)
 	if !ok {
@@ -110,9 +81,8 @@ func (r *Reaper) belongsToWorkspace(sessionDir string) bool {
 	return namesRoot(paths, r.workspaceRoot)
 }
 
-// namesRoot reports whether a decoded workspacePaths list names root. Split out
-// so the sweep's one-read path (orphanReapable) applies the SAME rule as
-// belongsToWorkspace rather than a second copy of it.
+// namesRoot reports whether a decoded workspacePaths list names root. Split out so
+// the sweep's one-read path applies the same rule rather than a second copy.
 func namesRoot(paths []string, root string) bool {
 	for _, p := range paths {
 		if p != "" && filepath.Clean(p) == root {
@@ -122,31 +92,27 @@ func namesRoot(paths []string, root string) bool {
 	return false
 }
 
-// readSessionRecord decodes the two facts this package reads out of a session's
-// own session.json: the workspace roots it claims, and the workflow RUN it was
-// created for (empty for every session that is not a workflow step). ok is false
-// when the file is absent, unreadable or undecodable.
+// readSessionRecord decodes the two facts this package reads out of a session's own
+// session.json: the workspace roots it claims, and the workflow RUN it was created
+// for (empty for every non-step session). ok is false when the file is absent,
+// unreadable or undecodable.
 //
-// ONE reader for both answers, because the orphan sweep needs both about the same
-// candidate and two reads of one file could disagree while a KAS write lands
-// between them. Both fields are measured against the live volume: a step
-// session's record carries `_meta.kiro.workflow.workflowId` beside
-// `workspacePaths: ["/workspace"]`, and every other session omits the `_meta`
-// block entirely.
+// ONE reader for both, because two reads of one file could disagree while a KAS
+// write lands between them.
 func readSessionRecord(sessionDir string) (workspacePaths []string, workflowID string, ok bool) {
 	data, err := os.ReadFile(filepath.Join(sessionDir, sessionRecordName))
 	if err != nil {
 		return nil, "", false
 	}
 	var rec struct {
-		WorkspacePaths []string `json:"workspacePaths"`
-		Meta           struct {
+		Meta struct {
 			Kiro struct {
 				Workflow struct {
 					WorkflowID string `json:"workflowId"`
 				} `json:"workflow"`
 			} `json:"kiro"`
 		} `json:"_meta"`
+		WorkspacePaths []string `json:"workspacePaths"`
 	}
 	if json.Unmarshal(data, &rec) != nil {
 		return nil, "", false
@@ -155,20 +121,16 @@ func readSessionRecord(sessionDir string) (workspacePaths []string, workflowID s
 }
 
 // Reap removes all on-disk state for a single session id, immediately and
-// regardless of age. Used on chat delete, where the caller already knows the
-// chat (and therefore its session) is gone. A no-op for an empty or
-// malformed id, or when the reaper is nil.
-//
-// The cli/ sidecars go unconditionally: they are addressed by the exact id the
-// caller owns, not by a wildcard, and a sidecar whose dir is already gone must
-// still be reclaimable.
+// regardless of age; used on chat delete. A no-op for an empty or malformed id, or
+// a nil reaper. The cli/ sidecars go unconditionally: they are addressed by the
+// exact id the caller owns, and a sidecar whose dir is already gone must still be
+// reclaimable.
 func (r *Reaper) Reap(sessionID string) {
 	if r == nil || !validSessionID(sessionID) {
 		return
 	}
-	// Session dir under an untracked per-workspace-hash subdir: glob for it. The
-	// glob spans every bucket in this $KIRO_HOME, so each match still has to say
-	// it belongs to this workspace before it is removed.
+	// Session dir under an untracked per-workspace-hash subdir: glob for it. Each
+	// match still has to say it belongs to this workspace before it is removed.
 	dirs, _ := filepath.Glob(filepath.Join(r.sessionsDir, "*", sessionID))
 	for _, d := range dirs {
 		if !r.belongsToWorkspace(d) {
@@ -183,36 +145,14 @@ func (r *Reaper) Reap(sessionID string) {
 	r.removeCLISidecars(sessionID)
 }
 
-// Sweep removes orphaned session state: any session dir or cli sidecar whose
-// id is not in referenced and is older than the guard window, plus dead
-// v2-engine files (bare-uuid, no sess_ prefix) older than the guard. Returns
-// the number of sessions reaped. A no-op when the reaper is nil or the sessions
-// dir is absent.
-//
-// ONE exception, and it is not a liveness test either: a workflow STEP session
-// whose run's own directory is still on disk is spared, because such a session is
-// referenced by no chat and would otherwise be reaped mid-run. See
-// orphanReapable.
-//
-// `referenced` must be the COMPLETE keep-list — every session in every active
-// and archived chat's chain, unioned with every live bridge's session. Age is
-// not evidence that a session is disposable: the guard below is a create-race
-// cushion, not a liveness test. Passing a partial set deletes user history, so
-// the caller skips the sweep rather than narrowing the set (agent.sweepSessionsOnce).
-//
-// PASSING AN EMPTY SET IS REFUSED while the tree holds sessions. A zero-
-// reference keep-list is indistinguishable from a misconfigured one, and the
-// two outcomes are wildly asymmetric: refusing costs some disk, proceeding
-// deletes every transcript on the volume. This is not hypothetical — it
-// happened. A dev build was run with KIRO_CONFIG_DIR pointed at a scratch
-// directory while KIRO_HOME was left unset, so the chat store was empty and
-// `workspace.KiroHome()` still resolved to the real `$HOME/.kiro`; the first
-// sweep at startup took ~450 sessions belonging to another application sharing
-// that home. The caller's "is the keep-list complete" flag did not help,
-// because an empty store is COMPLETE — it read every one of its zero files.
-//
-// The guard lives here rather than at the call site on purpose: this function
-// holds the RemoveAll, and a check in one caller does not protect the next one.
+// Sweep removes orphaned session state: any session dir or cli sidecar whose id is
+// not in referenced and is older than the guard, plus dead v2-engine files
+// (bare-uuid, no sess_ prefix). Returns the number of sessions reaped. `referenced`
+// must be the COMPLETE keep-list — every chat's chain unioned with every live
+// bridge's session — because age is not evidence a session is disposable, so a
+// caller holding a partial set skips the sweep instead. An EMPTY set is refused
+// while the tree holds sessions: it is indistinguishable from a misconfigured one
+// and would delete every transcript on the volume. Step sessions: orphanReapable.
 func (r *Reaper) Sweep(referenced map[string]struct{}) int {
 	if r == nil {
 		return 0
@@ -239,13 +179,12 @@ func (r *Reaper) Sweep(referenced map[string]struct{}) int {
 }
 
 // countSessions counts `sess_*` entries under every workspace-hash directory,
-// without regard to age. It answers only "is there anything here to lose",
-// which is what the empty-keep-list guard needs.
+// answering only "is there anything here to lose" for the empty-keep-list guard.
 func (r *Reaper) countSessions() int {
 	hashes, err := os.ReadDir(r.sessionsDir)
 	if err != nil {
-		// Unreadable root: report a non-zero count so the guard errs toward
-		// refusing. A sweep could not enumerate anything to delete anyway.
+		// Unreadable root: report a non-zero count so the guard errs toward refusing.
+		// A sweep could not enumerate anything to delete anyway.
 		if !errors.Is(err, os.ErrNotExist) {
 			return 1
 		}
@@ -253,10 +192,8 @@ func (r *Reaper) countSessions() int {
 	}
 	n := 0
 	for _, h := range hashes {
-		// Skip "cli": it holds per-session SIDECARS, not sessions. Counting it
-		// as a workspace hash double-counted every session (each has a dir and
-		// a `sess_<id>.history`), which made the guard's log line lie about how
-		// much was at stake.
+		// Skip "cli": it holds per-session SIDECARS, so counting it as a workspace
+		// hash double-counts every session and overstates what is at stake.
 		if !h.IsDir() || h.Name() == "cli" {
 			continue
 		}
@@ -338,11 +275,9 @@ func (r *Reaper) reapOrphanSessionDir(sub string, sd os.DirEntry, referenced map
 	return true
 }
 
-// sweepSpare names why the orphan sweep must leave a session alone, or
-// spareNone when it may be reaped. A typed reason rather than a bool because two
-// callers report it differently and a bare false made them indistinguishable —
-// and rather than a string, because a slog message must be a constant for an
-// attribute-keyed log filter to find it.
+// sweepSpare names why the orphan sweep must leave a session alone, or spareNone
+// when it may be reaped. Typed rather than a bool because two callers report it
+// differently, and constant rather than a string for attribute-keyed log filters.
 type sweepSpare int
 
 const (
@@ -356,39 +291,17 @@ const (
 )
 
 // spareReason answers both questions the sweep asks of an aged, unreferenced
-// candidate, off ONE read of its own session.json: does it name this workspace,
-// and is it a workflow STEP whose run is still on disk.
-//
-// A step session is referenced by no chat (ReferencedSessionIDs reads chat
-// records' session chains) and is no bridge's own session, so it is an orphan by
-// construction from the moment KAS creates it — measured on the live volume, the
-// hourly sweep was reaping step sessions MID-RUN once they passed the 10-minute
-// guard. Since a step's transcript can only be read back out of its session
-// directory, that made every step of every run unreadable within the hour, which
-// is why this spare is a prerequisite for serving one rather than an
-// optimisation.
-//
-// THE BOUND IS THE RUN'S OWN RETENTION, and it is honest rather than open-ended:
-// KAS prunes the workflows tree for nobody, so a spared step session lives as
-// long as `sessions/<hash>/workflows/<workflowId>/` does, and what reclaims it is
-// the reader's own `DELETE /api/runs/{id}`, which removes that directory. Measured
-// cost on this volume: 83 run directories over ~9 days, and step sessions are the
-// bulk of the session tree.
-//
-// The run directory is looked for in the candidate's OWN bucket, which is both
-// the layout KAS uses and the right containment: a step session in one
-// workspace-hash bucket may not be spared by a same-named run in another's.
-//
-// No RPC is added — the sweep stays a zero-process filesystem walk, which is the
-// property this package's comment protects.
-//
-// The workspace question is asked FIRST, so the spare can only ever narrow what
-// is reaped and never widen who this reaper answers for.
+// candidate off ONE read of its session.json: does it name this workspace, and is
+// it a workflow STEP whose run is still on disk. A step session is referenced by no
+// chat, so without the second question the sweep reaps it mid-run and the step's
+// transcript — readable only out of that directory — goes with it. The bound is the
+// run's own retention: KAS prunes the workflows tree for nobody, so what reclaims a
+// spared step session is DELETE /api/runs/{id}. The run dir is looked for in the
+// candidate's OWN bucket, and the workspace question is asked first.
 func (r *Reaper) spareReason(sub, path string) sweepSpare {
 	paths, workflowID, ok := readSessionRecord(path)
-	// The sweep enumerates every bucket, so a session belonging to another
-	// workspace root under this $KIRO_HOME is unreferenced by construction. Its
-	// own record is what tells the two apart.
+	// The sweep enumerates every bucket, so a session belonging to another workspace
+	// root under this $KIRO_HOME is unreferenced by construction.
 	if !ok || !namesRoot(paths, r.workspaceRoot) {
 		return spareForeignWorkspace
 	}
@@ -401,9 +314,8 @@ func (r *Reaper) spareReason(sub, path string) sweepSpare {
 	return spareNone
 }
 
-// sweepCLI reaps orphaned/dead files under sessions/cli/: v3 sess_<id>.*
-// sidecars whose id is unreferenced, and dead v2-engine files (no sess_
-// prefix), both gated on the guard window.
+// sweepCLI reaps orphaned files under sessions/cli/: v3 sess_<id>.* sidecars whose
+// id is unreferenced, and dead v2-engine files, both gated on the guard window.
 func (r *Reaper) sweepCLI(referenced map[string]struct{}, cutoff time.Time) int {
 	cliDir := filepath.Join(r.sessionsDir, "cli")
 	entries, err := os.ReadDir(cliDir)
@@ -419,10 +331,9 @@ func (r *Reaper) sweepCLI(referenced map[string]struct{}, cutoff time.Time) int 
 	return reaped
 }
 
-// reapOrphanCLIFile removes one sessions/cli/ file when it is an
-// unreferenced v3 sidecar or a dead v2-engine file, older than the guard.
-// Reports whether a v3 SESSION was reaped (dead v2 files are incidental and
-// not counted).
+// reapOrphanCLIFile removes one sessions/cli/ file when it is an unreferenced v3
+// sidecar or a dead v2-engine file, older than the guard. Reports whether a v3
+// SESSION was reaped; dead v2 files are not counted.
 func (r *Reaper) reapOrphanCLIFile(cliDir string, e os.DirEntry, referenced map[string]struct{}, cutoff time.Time) bool {
 	if e.IsDir() {
 		return false
@@ -453,22 +364,12 @@ func (r *Reaper) reapOrphanCLIFile(cliDir string, e os.DirEntry, referenced map[
 
 // sidecarReapable reports whether the cli/ sidecars for sessionID may be removed.
 //
-// A sidecar carries no workspacePaths of its own, so ownership is answered by the
-// session DIR it belongs to: a dir that names this workspace makes the sidecar
-// ours, and a dir that does not makes it another workspace's file to keep. A
-// sidecar with no dir anywhere is STRANDED — the shape a crash between the two
-// removals leaves — and nothing will ever reference it again, so it stays
-// reclaimable.
-//
-// Without this the workspace guard would be half a guard: the dir sweep would
-// spare a foreign session while this loop deleted its history sidecar, which is
-// the same lost transcript by a narrower route.
-//
-// It asks spareReason rather than belongsToWorkspace for exactly that reason,
-// generalised: EVERY reason the dir sweep spares a session is a reason to keep its
-// sidecar, so a step session spared while its run exists keeps its history too. A
-// workspace check alone spared the directory and deleted the history file beside
-// it, which is the same half-guard one rule further on.
+// A sidecar carries no workspacePaths, so ownership is answered by the session DIR
+// it belongs to; a sidecar with no dir anywhere is stranded — the shape a crash
+// between the two removals leaves — and stays reclaimable. It asks spareReason
+// rather than belongsToWorkspace because EVERY reason the dir sweep spares a
+// session is a reason to keep its history: a workspace check alone spared the
+// directory and deleted the sidecar beside it.
 func (r *Reaper) sidecarReapable(sessionID string) bool {
 	dirs, _ := filepath.Glob(filepath.Join(r.sessionsDir, "*", sessionID))
 	stranded := true
@@ -495,10 +396,9 @@ func (r *Reaper) removeCLISidecars(sessionID string) {
 	}
 }
 
-// validSessionID reports whether id is a well-formed KAS session id safe to
-// use in a filesystem glob: the sess_ prefix followed by one or more
-// id-safe chars (hex, dashes, underscores — no glob metacharacters, no path
-// separators, no dots).
+// validSessionID reports whether id is a well-formed KAS session id safe to use in
+// a filesystem glob: the sess_ prefix plus id-safe chars (hex, dashes,
+// underscores — no glob metacharacters, path separators or dots).
 func validSessionID(id string) bool {
 	rest, ok := strings.CutPrefix(id, sessionPrefix)
 	if !ok || rest == "" {

@@ -9,10 +9,8 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// bridgeManager owns the per-chat bridge map and provides thread-safe
-// access to bridge lifecycle operations. Runtime composes this type,
-// reducing Runtime's direct field count and clarifying the ownership
-// boundary: bridgeManager owns the map; Runtime owns dispatch.
+// bridgeManager owns the per-chat bridge map and serializes access to bridge
+// lifecycle operations. Runtime composes it and owns dispatch.
 type bridgeManager struct {
 	spawnSF singleflight.Group
 	bridges map[vibekit.ChatID]*sharedBridge
@@ -34,11 +32,9 @@ func (bm *bridgeManager) get(chatID vibekit.ChatID) *sharedBridge {
 	return bm.bridges[chatID]
 }
 
-// orInsert returns an existing bridge for chatID if present.
-// If not, it creates a new sharedBridge via the factory, inserts it
-// into the map, and returns (newBridge, false). With singleflight in
-// OpenBridge, concurrent callers coalesce so the new bridge
-// no longer needs to be returned locked.
+// orInsert returns the existing bridge for chatID, or creates one via the factory,
+// inserts it, and returns (newBridge, false). OpenBridge's singleflight is what lets
+// the new bridge be returned unlocked.
 func (bm *bridgeManager) orInsert(chatID vibekit.ChatID) (sb *sharedBridge, existed bool) {
 	bm.mu.Lock()
 	if existing, ok := bm.bridges[chatID]; ok {
@@ -52,12 +48,10 @@ func (bm *bridgeManager) orInsert(chatID vibekit.ChatID) (sb *sharedBridge, exis
 	return sb, false
 }
 
-// insert registers an ALREADY-STARTED bridge under chatID. The run-host path: a run
-// bridge's map key is its workflow id, which only `workflow/new`'s reply knows, so
-// the bridge is started first and registered once the key exists — the inverse of
-// orInsert's create-then-start. Replacing an entry would orphan a live process, so
-// insert refuses instead, answering the RESIDENT entry so a loser can reach the
-// winner's bridge rather than holding one that is in no map. See rehost.
+// insert registers an ALREADY-STARTED bridge under chatID: a run bridge's map key is
+// its workflow id, which only `workflow/new`'s reply knows. Replacing an entry would
+// orphan a live process, so insert refuses and answers the RESIDENT one, letting a
+// loser reach the winner's bridge rather than holding one no map holds. See rehost.
 func (bm *bridgeManager) insert(
 	chatID vibekit.ChatID, sb *sharedBridge,
 ) (resident *sharedBridge, inserted bool) {
@@ -71,8 +65,8 @@ func (bm *bridgeManager) insert(
 	return sb, true
 }
 
-// remove deletes chatID from the map and returns the removed bridge
-// (nil if not present). Does NOT call Stop.
+// remove deletes chatID from the map and returns the removed bridge, or nil. Does NOT
+// call Stop.
 func (bm *bridgeManager) remove(chatID vibekit.ChatID) *sharedBridge {
 	bm.mu.Lock()
 	sb := bm.bridges[chatID]
@@ -95,12 +89,8 @@ func (bm *bridgeManager) removeIfSame(chatID vibekit.ChatID, sb *sharedBridge) b
 }
 
 // removeIfBridge removes chatID only if the current entry's bridge is the SAME
-// INSTANCE as bridge.
-//
-// The parameter is an identity, not a capability: 0 of the 15 methods are
-// called on it. It stays the full ACPBridge anyway, because the comparison is
-// only meaningful against what the map holds, and a narrower type here would
-// let a caller pass something that could never have been registered.
+// INSTANCE as bridge. The parameter is an identity, not a capability: it stays the
+// full ACPBridge so a caller cannot pass something the map could never have held.
 func (bm *bridgeManager) removeIfBridge(chatID vibekit.ChatID, bridge ACPBridge) bool {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
@@ -126,9 +116,7 @@ func (bm *bridgeManager) count() int {
 	return len(bm.bridges)
 }
 
-// all returns a snapshot of all bridges. Used for iteration patterns
-// that need to inspect every bridge (e.g. Shutdown teardown, model
-// snapshot collection).
+// all returns a snapshot of every bridge, for callers that must inspect them all.
 func (bm *bridgeManager) all() map[vibekit.ChatID]*sharedBridge {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
@@ -137,8 +125,7 @@ func (bm *bridgeManager) all() map[vibekit.ChatID]*sharedBridge {
 	return cp
 }
 
-// drain removes all bridges from the map and returns them for
-// teardown. Used during Shutdown.
+// drain removes every bridge from the map and returns them for teardown.
 func (bm *bridgeManager) drain() []*sharedBridge {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()

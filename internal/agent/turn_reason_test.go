@@ -1,15 +1,12 @@
 package agent
 
-// The REASON, durable: what a finalized turn records about WHY it ended badly.
-//
-// The outcome was durable and the account of it was not, and that asymmetry is the
-// whole of the reported defect. `closeWithOutcome` passed an empty string for every
-// event message's content and stamped no marker at all once the turn had streamed
-// something, so a turn that failed on the wire's own `stopReason: "error"` persisted
-// a settled `failed`, a red footer mark, three changed files — and no sentence
-// anywhere in the record. Measured on the live chat file the report named: 26
-// blocks, zero prose. The cause reached the reader through a 12-second toast and
-// nothing else.
+// The REASON, durable: what a finalized turn records about WHY it ended badly. The outcome
+// was durable and the account of it was not, and that asymmetry is the whole defect —
+// `closeWithOutcome` passed an empty content string and stamped no marker once the turn had
+// streamed something, so a turn that failed on the wire's own `stopReason: "error"` persisted
+// a settled `failed`, a red footer mark, three changed files, and no sentence anywhere.
+// Measured on the live chat file: 26 blocks, zero prose; the cause reached the reader through
+// a 12-second toast and nothing else.
 
 import (
 	"context"
@@ -217,16 +214,12 @@ func TestCloseAsInterrupted_StampsTheReasonOnTheCarrierAsWellAsTheDivider(t *tes
 	}
 }
 
-// ---------------------------------------------------------------------------
-// THE LOST CLAIM. Two closers race one fault, the winner stamps its reason, and
-// the loser is usually the one that knows more — so the account of the stop that
-// reached the record was the LESS specific of the two.
-//
-// Chat 1's exact sequence: the wire's turn_end wins with `stopReason: "error"` and
-// no stopDetails, so reasonFor falls through to the outcome's default sentence,
-// while the prompt-failure closer arriving second holds the transport error's own
-// prose and dropped it on the floor.
-// ---------------------------------------------------------------------------
+// --- THE LOST CLAIM ---
+// Two closers race one fault, the winner stamps its reason, and the loser is usually the one
+// that knows more, so the account reaching the record was the LESS specific of the two. The
+// measured sequence: the wire's turn_end wins with `stopReason: "error"` and no stopDetails,
+// so reasonFor falls through to the outcome's default sentence while the prompt-failure closer
+// arriving second holds the transport error's own prose and drops it.
 
 // TestLostClaim_UpgradesTheCarriersReasonToTheLosersProse is chat 1's sequence.
 func TestLostClaim_UpgradesTheCarriersReasonToTheLosersProse(t *testing.T) {
@@ -296,15 +289,11 @@ func TestLostClaim_TwoSuppliedReasonsKeepTheFirst(t *testing.T) {
 	}
 }
 
-// TestLostClaim_ADeletedCarrierIsNotResurrected is the no-phantom half, and it holds
-// by construction rather than by a guard: UpdateMessage's own loop reports no match
-// for an absent id, which is what a truncation leaves behind, and Mutate's !exists
-// branch covers a deleted chat.
-//
-// It runs against the REAL store because the broadcast is half the property: a
-// recording fake performs the same no-op write and emits nothing either way, so it
-// could not tell an amend that matched nothing from one that told every client
-// something had changed.
+// TestLostClaim_ADeletedCarrierIsNotResurrected is the no-phantom half, and it holds by
+// construction rather than by a guard: UpdateMessage's own loop reports no match for an absent
+// id, which is what a truncation leaves behind, and Mutate's !exists branch covers a deleted
+// chat. It runs against the REAL store because the broadcast is half the property — a
+// recording fake performs the same no-op write and emits nothing either way.
 func TestLostClaim_ADeletedCarrierIsNotResurrected(t *testing.T) {
 	const chatID vibekit.ChatID = "c1"
 	h, cs, rec := hubOnDiskWatchingBroadcasts(t, chatID)
@@ -337,17 +326,13 @@ func TestLostClaim_ADeletedCarrierIsNotResurrected(t *testing.T) {
 	}
 }
 
-// TestLostClaim_AnAbsentCarrierRowIsNotReportedAsTheGateDeclining is the other half
-// of the truncation case above, and it pins a DECISION rather than prose: which of
-// the amend's four declines ran, read off which facts the line carries.
-//
-// The defect it guards is the one item 10d exists to fix, recurring one arm over.
-// `Store.UpdateMessage` returns nil when the chat does not exist or the message id is
-// absent — its own loop simply finds no row — so `wrote` stays false and `outcome`
-// stays the ZERO VALUE, and a single decline arm then reported "the winner's outcome
-// has nothing to say" for a case where the outcome was never read at all. The
-// discriminator is the ABSENCE of the `outcome` attribute, not the wording: an arm
-// may only report a field something read.
+// TestLostClaim_AnAbsentCarrierRowIsNotReportedAsTheGateDeclining is the other half of the
+// truncation case above, and it pins a DECISION rather than prose: which of the amend's four
+// declines ran, read off which facts the line carries. `Store.UpdateMessage` returns nil when
+// the chat or the message id is absent, so `wrote` stays false and `outcome` stays the ZERO
+// VALUE — a single decline arm then reports "the winner's outcome has nothing to say" for a
+// case where the outcome was never read. The discriminator is the ABSENCE of the `outcome`
+// attribute, not the wording: an arm may only report a field something read.
 func TestLostClaim_AnAbsentCarrierRowIsNotReportedAsTheGateDeclining(t *testing.T) {
 	const chatID vibekit.ChatID = "c1"
 	h, cs, _ := hubOnDiskWatchingBroadcasts(t, chatID)
@@ -470,16 +455,12 @@ func TestSeverityOfEveryClose_RecordsSomethingToShow(t *testing.T) {
 // nothing to say.
 // ---------------------------------------------------------------------------
 
-// TestLostClaim_ADiscardedTurnsMarkerCanStillBeAmended is the race item 10a made
-// reachable. `closeAsDiscarded` called appendEventMessage and threw the returned id
-// away, so `t.carrier.MessageID` stayed empty and every amend against a model-switch
-// winner declined with `winner_carrier=false` — including this one, where the loser
-// holds a real transport error and the winner's own sentence is
-// `reasonFor(cancelled, "")`, i.e. defaulted.
-//
-// The order is not synthetic: closerModelSwitch claims with AnyOpen and
-// closerPromptFailure carries an epoch, so a model switch during a failing prompt has
-// the switch WIN.
+// TestLostClaim_ADiscardedTurnsMarkerCanStillBeAmended: `closeAsDiscarded` throwing away
+// appendEventMessage's returned id leaves `t.carrier.MessageID` empty, so every amend against
+// a model-switch winner declines with `winner_carrier=false` — including this one, where the
+// loser holds a real transport error and the winner's sentence is defaulted. The order is not
+// synthetic: closerModelSwitch claims with AnyOpen and closerPromptFailure carries an epoch,
+// so a model switch during a failing prompt has the switch WIN.
 func TestLostClaim_ADiscardedTurnsMarkerCanStillBeAmended(t *testing.T) {
 	h, cs, _ := newTestHub()
 	epoch := startedTurnReturningEpoch(t, h, cs, "c1", "half an answer")
@@ -510,15 +491,11 @@ func TestLostClaim_ADiscardedTurnsMarkerCanStillBeAmended(t *testing.T) {
 	}
 }
 
-// TestLostClaim_NeverStampsAReasonOnACleanCarrier is item 10c. `reasonFor` returns
-// the loser's prose whatever the carrier's outcome, and `ReasonSupplied` is false for
-// a `completed` winner precisely because `DefaultFailureReason(completed)` is "" — so
-// without the gate a wire `end_turn` racing a prompt failure writes
-// `turn_failure_reason` onto a turn that SUCCEEDED.
-//
-// Invisible on screen today (`turnFailureText` returns "" for severity `clean` before
-// it reads any row, and no Go reader consumes the field), so what this pins is record
-// integrity rather than a rendered defect.
+// TestLostClaim_NeverStampsAReasonOnACleanCarrier: `reasonFor` returns the loser's prose
+// whatever the carrier's outcome, and `ReasonSupplied` is false for a `completed` winner
+// because `DefaultFailureReason(completed)` is "" — so without the gate a wire `end_turn`
+// racing a prompt failure writes `turn_failure_reason` onto a turn that SUCCEEDED. Invisible
+// on screen today, so what this pins is record integrity rather than a rendered defect.
 func TestLostClaim_NeverStampsAReasonOnACleanCarrier(t *testing.T) {
 	h, cs, _ := newTestHub()
 	epoch := startedTurnReturningEpoch(t, h, cs, "c1", "the whole answer")

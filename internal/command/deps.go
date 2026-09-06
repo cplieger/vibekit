@@ -8,13 +8,11 @@ import (
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 
-// This file is the package's dependency contracts: the role interfaces each
-// handler names in its own signature, and the per-chat bridge interfaces the
-// handlers call. Each is shaped by what this package invokes, which is what
-// keeps a test stub small enough to be obviously correct.
-//
-// No composite over these roles exists here: a handler's reach is its
-// signature, so widening one is a diff at its declaration.
+// This file is the package's dependency contracts: the role interfaces each handler
+// names in its own signature, and the per-chat bridge interfaces the handlers call.
+// Each is shaped by what this package invokes, which keeps a test stub small enough
+// to be obviously correct. No composite over these roles exists here: a handler's
+// reach is its signature, so widening one is a diff at its declaration.
 
 // sessionScoped names the ACP session an RPC is addressed to.
 type sessionScoped interface {
@@ -26,10 +24,9 @@ type sessionScoped interface {
 type bridgeCaller interface {
 	// Call sends an RPC call to kiro-cli.
 	Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error)
-	// CallAt is Call plus the read loop position at which the response
-	// arrived: notifications queue on a buffered channel while a response
-	// goes straight to the waiting Call, so the wire's own turn_end is
-	// routinely still unread when the response lands.
+	// CallAt is Call plus the read loop position at which the response arrived:
+	// notifications queue on a buffered channel while a response goes straight to
+	// the waiting Call, so the wire's own turn_end is routinely still unread.
 	CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error)
 }
 
@@ -53,12 +50,10 @@ type bridgeRPC interface {
 	Respond(ctx context.Context, requestID int64, result any, err error) error
 }
 
-// promptSlot is the per-chat turn lock and its unresponsive-cancel budget:
-// acquire the slot, register the in-flight call's cancel func against a
-// turn generation, arm the grace budget for that generation, then release.
-// The generation is what stops an expired budget cancelling a turn that
-// started after the one it was armed for — time.Timer.Stop does not halt an
-// already-running func.
+// promptSlot is the per-chat turn lock and its unresponsive-cancel budget: acquire
+// the slot, register the in-flight call's cancel func against a turn generation, arm
+// the grace budget for that generation, then release. The generation stops an expired
+// budget cancelling a later turn — time.Timer.Stop does not halt a running func.
 type promptSlot interface {
 	// TryAcquireForPrompt attempts to lock the bridge for prompting.
 	TryAcquireForPrompt() bool
@@ -79,12 +74,10 @@ type promptSlot interface {
 	PromptGeneration() uint64
 }
 
-// Bridge is the per-chat ACP bridge as a whole. Only a handler that owns a
-// chat for the length of a turn needs it — helpers take a narrower
-// parameter. Priming is deliberately not here: that is a bridge-lifecycle
-// question PrimeIfNeeded already answers.
-//
-// Exported because BridgeAccess returns it and runtime's dispatcher wiring names it.
+// Bridge is the per-chat ACP bridge as a whole. Only a handler that owns a chat for
+// the length of a turn needs it — helpers take a narrower parameter. Priming is
+// deliberately not here: that is a bridge-lifecycle question PrimeIfNeeded answers.
+// Exported because BridgeAccess returns it and the runtime's wiring names it.
 type Bridge interface {
 	bridgeRPC
 	promptSlot
@@ -99,32 +92,24 @@ type BridgeAccess interface {
 	// PrimeIfNeeded gives the chat's current session its transcript, if that
 	// session has not had it yet.
 	PrimeIfNeeded(ctx context.Context, chatID vibekit.ChatID)
-	// PrimeFromChat notes that chatID's first session should be primed with
-	// another chat's transcript — the tangent's fallback when a refused
-	// session/fork leaves the new chat with no inherited session.
-	//
-	// A note rather than a chat-record field: it describes one session's
-	// launch, is consumed by the next spawn, and does not survive a restart.
+	// PrimeFromChat notes that chatID's first session should be primed with another
+	// chat's transcript — the tangent's fallback when a refused session/fork leaves
+	// the new chat with no inherited session. A note rather than a chat-record field:
+	// it describes one session's launch and does not survive a restart.
 	PrimeFromChat(chatID, sourceChatID vibekit.ChatID)
-	// AwaitReplayAdopted blocks until a session/load replay this chat may have
-	// in flight has been adopted into the record (or discarded), so a caller
-	// about to REWRITE the transcript cannot be undone by it. A nil error on a
-	// chat with no replay open.
-	//
-	// A non-nil error means DO NOT REWRITE, and it is bounded by the
-	// implementation's own budget as well as by ctx — the settle is triggered
-	// by the bridge's frame loop, which a caller cannot wait for indefinitely.
+	// AwaitReplayAdopted blocks until a session/load replay this chat may have in
+	// flight has been adopted into the record (or discarded), so a caller about to
+	// REWRITE the transcript cannot be undone by it; nil error on a chat with no
+	// replay open. A non-nil error means DO NOT REWRITE, and it is bounded by the
+	// implementation's own budget as well as by ctx.
 	AwaitReplayAdopted(ctx context.Context, chatID vibekit.ChatID) error
 }
 
-// ChatStore is the chat store as the command handlers use it: read a chat,
-// mutate it, append a message, record a draft and its attachments, delete
-// it. It excludes List, BuildHistory, UpsertTurnPlan, UpdateMessage and
-// RegisterRoutes — each a capability a command handler must not have.
-//
-// Exported because ChatAccess is exported and *agent.Runtime names this;
-// internal/translate declares its own narrower ChatRecords for the same
-// store.
+// ChatStore is the chat store as the command handlers use it: read a chat, mutate it,
+// append a message, record a draft and its attachments, delete it. It excludes List,
+// BuildHistory, UpsertTurnPlan, UpdateMessage and RegisterRoutes — each a capability a
+// command handler must not have. Exported because ChatAccess is exported and
+// *agent.Runtime names this.
 type ChatStore interface {
 	// Get returns the full chat at id, or false if it does not exist.
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
@@ -133,13 +118,11 @@ type ChatStore interface {
 	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error
 	// AppendMessage appends msg to the chat's messages.
 	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
-	// SetDraft persists the chat's unsent composer text. Its own method
-	// rather than a Mutate call because a draft save is not activity: Mutate
-	// stamps UpdatedAt, and the retention purge ages a chat from that field.
-	// A no-op for a chat that does not exist — typing must not create one.
-	//
-	// The returned state is what landed, nil when nothing did (no record, or
-	// the same text already stored) — the draft_changed broadcast keys on it.
+	// SetDraft persists the chat's unsent composer text. Its own method rather than a
+	// Mutate call because a draft save is not activity: Mutate stamps UpdatedAt, which
+	// the retention purge ages a chat from. A no-op for a chat that does not exist —
+	// typing must not create one. The returned state is what landed, nil when nothing
+	// did, and the draft_changed broadcast keys on it.
 	SetDraft(ctx context.Context, id vibekit.ChatID, text string) (*vibekit.ComposerState, error)
 	// SetAttachments persists the paths staged beside the draft, replacing
 	// the list. The draft's twin, with the same no-UpdatedAt and no-op-on-
@@ -156,11 +139,9 @@ type Broadcaster interface {
 	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
 }
 
-// ChatTeardown ends a chat's life, in one of two ways. Cancelling the chat's
-// runs is inside both, not a separate step a caller pairs with them: a run
-// is durable state a dead bridge only pauses (KAS reconciles it to paused
-// and a later read revives it), so it must be told to cancel before the
-// bridge goes.
+// ChatTeardown ends a chat's life, in one of two ways. Cancelling the chat's runs is
+// inside both rather than a step a caller pairs with them: a run is durable state a
+// dead bridge only pauses, so it must be told to cancel before the bridge goes.
 type ChatTeardown interface {
 	// DeleteChatState is the delete path: cancel the chat's runs, drop every
 	// in-memory trace, and reap the durable KAS session too. Resolves runs
@@ -183,18 +164,11 @@ type ChatTeardown interface {
 // answering or abandoning one has to retire the entry.
 type PendingPermAccess interface {
 	ClearPendingPermsForChat(chatID vibekit.ChatID)
-	// TakePendingPerm claims the request before its answer is sent, and
-	// reports false when another surface already answered it: two tabs
-	// could each answer one request, and the agent server discards the
-	// loser silently.
-	//
-	// settledBy travels with the claim because the winning take is
-	// broadcast to the surfaces that lost, and their card says who
-	// answered — from a command handler always vibekit.SettledByUser.
-	//
-	// The chat is part of the claim because a request id is unique only
-	// within one bridge: every bridge mints ids from zero, so two chats
-	// routinely hold the same id.
+	// TakePendingPerm claims the request before its answer is sent, reporting false
+	// when another surface already answered it. settledBy travels with the claim
+	// because the winning take is broadcast to the surfaces that lost, and their card
+	// says who answered. The chat is part of the claim because a request id is unique
+	// only within one bridge: every bridge mints ids from zero.
 	TakePendingPerm(chatID vibekit.ChatID, requestID int64, settledBy vibekit.SettledBy) bool
 }
 
@@ -207,10 +181,9 @@ type TerminalAccess interface {
 	KillForTurn(chatID vibekit.ChatID)
 }
 
-// Workspace carries the two paths handlers resolve against: the hook writer
-// and the shell spawn need the working directory, the prompt reads a
-// setting out of the config directory, and an attachment path is confined
-// to the workspace before it is read.
+// Workspace carries the two paths handlers resolve against: the working directory the
+// hook writer and the shell spawn need, and the config directory the prompt reads a
+// setting out of. An attachment path is confined to the workspace before it is read.
 type Workspace struct {
 	// Dir is the workspace root every relative path resolves against.
 	Dir string
@@ -224,11 +197,9 @@ func (w Workspace) ResolveInside(rel string) (string, error) {
 	return workspace.ResolveInsideAbs(w.Dir, rel)
 }
 
-// LifecycleAccess is the process-lifetime seam: the context a turn runs
-// under, and the in-flight accounting that makes agent shutdown wait for
-// it. A handler that starts long-lived work takes a turn context,
-// registers itself as in-flight, and deregisters on return; shutdown
-// cancels the first and waits on the second.
+// LifecycleAccess is the process-lifetime seam: the context a turn runs under, and
+// the in-flight accounting that makes agent shutdown wait for it. Shutdown cancels
+// the first and waits on the second.
 type LifecycleAccess interface {
 	// TurnContext returns the context an in-flight turn runs under, plus
 	// the teardown its handler defers.
@@ -237,10 +208,9 @@ type LifecycleAccess interface {
 	InflightDone()
 }
 
-// MCPAccess is the MCP readiness gate a prompt waits on, so a first turn
-// does not reach the model before the workspace's MCP servers have
-// connected, plus the account of what the wait was waiting for when it
-// expires.
+// MCPAccess is the MCP readiness gate a prompt waits on, so a first turn does not
+// reach the model before the workspace's MCP servers have connected, plus the account
+// of what the wait was short of when it expires.
 type MCPAccess interface {
 	WaitForReady(ctx context.Context, timeout time.Duration) bool
 	// PendingSummary names the servers a readiness wait is still short of.
@@ -305,25 +275,17 @@ type TurnOutcomeAccess interface {
 	// ReleaseTurnReservation frees the admission slot, waking every
 	// waiter.
 	ReleaseTurnReservation(chatID vibekit.ChatID)
-	// AdmissionHolderSource reports who holds the chat's admission: the
-	// open turn's source when one is open, else the reservation's.
-	//
-	// A prime holder (TurnSourcePrime) matters because a prime is
-	// vibekit's own transcript replay sent as a real session/prompt, and
-	// its frames are neither broadcast nor served nor persisted — a steer
-	// aimed into that window would be silently discarded, so CmdSteer
-	// refuses instead.
+	// AdmissionHolderSource reports who holds the chat's admission: the open turn's
+	// source when one is open, else the reservation's. A prime holder matters because
+	// a prime is vibekit's own transcript replay sent as a real session/prompt, whose
+	// frames are neither broadcast nor persisted — a steer aimed into that window
+	// would be silently discarded, so CmdSteer refuses instead.
 	AdmissionHolderSource(chatID vibekit.ChatID) (vibekit.TurnOpenSource, bool)
-	// StartTurn opens the chat's turn at bridge-ready, immediately before
-	// the call that drives it, so everything true of the turn is recorded
-	// once for its whole life, with the bridge live. The caller holds a
-	// completion handle until ReleaseTurn; zero means none opened, and a
-	// caller answering zero must broadcast the failure and release its
-	// slots rather than proceed.
-	//
-	// It waits while the chat is finalizing a previous turn, so a prompt
-	// sent during that turn's persistence does not observe an epoch as
-	// open too early.
+	// StartTurn opens the chat's turn at bridge-ready, immediately before the call
+	// that drives it, so everything true of the turn is recorded once with the bridge
+	// live. The caller holds a completion handle until ReleaseTurn; zero means none
+	// opened, and a caller answering zero must broadcast the failure and release its
+	// slots. It waits while the chat is finalizing a previous turn.
 	StartTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch
 	// AwaitTurn blocks until the named turn has finalized and reports what
 	// it did. A caller holding that turn's handle never receives
@@ -332,11 +294,9 @@ type TurnOutcomeAccess interface {
 	// ReleaseTurn gives up the handle StartTurn issued, after which the
 	// finalized record may be dropped.
 	ReleaseTurn(chatID vibekit.ChatID, epoch vibekit.TurnEpoch)
-	// SettleTurnOnResponse closes the named turn on the response that
-	// settled it — the local fallback, which runs only if the wire's own
-	// turn_end did not get there first.
-	//
-	// seq is the read loop position the response arrived at, and the
+	// SettleTurnOnResponse closes the named turn on the response that settled it —
+	// the local fallback, which runs only if the wire's own turn_end did not get
+	// there first. seq is the read loop position the response arrived at, and the
 	// settle parks until the folder reaches it.
 	SettleTurnOnResponse(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, seq uint64, resp *vibekit.RPCResponse)
 	// TurnOpenedAfter reports whether any turn on the chat opened after
@@ -344,13 +304,10 @@ type TurnOutcomeAccess interface {
 	TurnOpenedAfter(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) bool
 	// FinalizeLocalShellTurn closes a `!cmd` turn vibekit ran itself.
 	FinalizeLocalShellTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch)
-	// AbandonInFlightTurn finalizes a turn the prompt call could not
-	// finish. reason is the user-facing account of the failure and becomes
-	// the transcript's interrupted divider.
-	//
-	// It waits for no read loop position: the two failures that reach it —
-	// an oversize frame and a cancel-grace expiry — settle locally with
-	// the bridge and the KAS execution still alive.
+	// AbandonInFlightTurn finalizes a turn the prompt call could not finish. reason is
+	// the user-facing account of the failure and becomes the transcript's interrupted
+	// divider. It waits for no read loop position: the two failures that reach it — an
+	// oversize frame and a cancel-grace expiry — settle with the bridge still alive.
 	AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, reason string)
 }
 
@@ -361,22 +318,17 @@ type SteerRecorder interface {
 	RecordUserSteer(chatID vibekit.ChatID, steerID string)
 }
 
-// Roles is the wiring-time role set: the host names which of its
-// interfaces answers each role once, at registration, and
-// RegisterDefaults hands every handler only the roles that handler's
-// signature declares.
+// Roles is the wiring-time role set: the host names which of its interfaces answers
+// each role once, at registration, and RegisterDefaults hands every handler only the
+// roles that handler's signature declares. Taken by pointer wherever it travels.
 //
-// A plain struct rather than an interface, deliberately: no handler,
-// helper or constructor takes this type, so nothing in the package widens
-// as the host grows.
-//
-// Taken by pointer wherever it travels.
+// A plain struct rather than an interface, deliberately: no handler, helper or
+// constructor takes this type, so nothing in the package widens as the host grows.
 type Roles struct {
 	Bridges BridgeAccess
-	// Chats is the chat store directly, not through a getter on a wider
-	// composite — the composite would need to also carry Broadcast and the
-	// run surface, which is how a host becomes the one thing that
-	// qualifies.
+	// Chats is the chat store directly, not through a getter on a wider composite —
+	// that composite would need to carry Broadcast and the run surface too, which is
+	// how a host becomes the one thing that qualifies.
 	Chats     ChatStore
 	Bus       Broadcaster
 	Teardown  ChatTeardown

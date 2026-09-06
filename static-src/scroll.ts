@@ -1,49 +1,11 @@
-// ---------------------------------------------------------------------------
-// Reading position for the transcript: TWO NAMED STATES, and one helper that
-// every layout change goes through.
-//
-//   Following — pinned to the live edge. The default while a turn streams.
-//   Reading   — parked on purpose. Nothing may move under the reader.
-//
-// Reading is entered by scrolling up, and by a timeline or search jump that
-// actually leaves the live edge (`jumpTo` — a jump with nowhere to go keeps the
-// reader Following). It is left by reaching the bottom again, by the resume
-// control, or by End.
-//
-// ONLY A READER GESTURE MAY ENTER READING. Every scroll this module performs
-// records its landing (`scrollSelfTo`) and the listener drops the event that
-// write produces, because Following pins to the ANCHOR rather than to the
-// document bottom: the pin is legitimately far from the bottom whenever tall
-// evidence renders below the live text block, so a controller that re-derived
-// its state from its own pin declared the reader Reading and switched its own
-// auto-scroll off. That is how a large tool card used to stop the transcript
-// following, with the resume control appearing untouched.
-//
-// The value of naming the state is that the user stops fighting an invisible
-// heuristic. Log viewers have taught this for decades, and an agent transcript
-// IS a log.
-//
-// WHY A BESPOKE HELPER RATHER THAN CSS SCROLL ANCHORING. Safari does not support
-// `overflow-anchor` at all, and on iOS every browser is WebKit — so the platform
-// this app is most read on has no native anchoring whatsoever. Worse, where it IS
-// supported, leaving it on alongside the helper is not a harmless no-op but a
-// DOUBLE correction: anchoring queues an adjustment and applies it at the end of
-// its suppression window while the helper adds the same delta itself, so the
-// reader moves roughly twice as far. So `overflow-anchor: none` is set on the
-// scroller (css/13-messages.css) and this module owns every mutation, on every
-// engine. Deterministic, and it removes the feature-detect entirely.
-//
-// (If native anchoring is ever wanted back, the helper must switch from ADDING a
-// height delta to correcting the RESIDUAL displacement of a snapshotted anchor
-// rect. That is a different algorithm, not a flag.)
-//
-// Auto-scroll during streaming: a MutationObserver on the container fires on
-// every chunk; a ResizeObserver catches images loading and code blocks
-// expanding. `behavior: "instant"` — not "smooth" — is correct here, because
-// each chunk's small delta compounds into perceptually continuous motion while
-// "smooth" schedules a 250ms animation the next chunk cancels, producing
-// visible stutter. Reference: vercel/ai-chatbot use-scroll-to-bottom.
-// ---------------------------------------------------------------------------
+// Reading position for the transcript, as two named states:
+//   Following — pinned to the live edge, the default while a turn streams.
+//   Reading   — parked on purpose; nothing may move under the reader, and only a
+//               reader gesture enters it (see `selfScrollTop`).
+// `overflow-anchor: none` on the scroller (css/13-messages.css) leaves this module
+// owning every mutation: Safari implements no `overflow-anchor`, and where it is
+// supported it queues its own adjustment on top of this one, so the reader moves
+// roughly twice as far.
 
 import { el } from "@cplieger/reactive";
 import { loadMoreSkeleton } from "./skeleton.js";
@@ -51,61 +13,49 @@ import { $ } from "./dom.js";
 
 /** Distance from the top at which older messages start loading. */
 const LOAD_MORE_THRESHOLD_PX = 100;
-/** Distance from the bottom still counted as "at the bottom". Same numeric
- *  value as LOAD_MORE_THRESHOLD_PX by coincidence; semantically independent. */
+/** Distance from the bottom still counted as "at the bottom". Independent of
+ *  LOAD_MORE_THRESHOLD_PX despite the equal value. */
 const BOTTOM_TOLERANCE_PX = 100;
 /** Debounce before re-evaluating the state after a user scroll. */
 const USER_SCROLL_DEBOUNCE_MS = 150;
-/** How long a bottom pin keeps re-asserting the maximum. Derived from the fold
- *  choreography the pin itself releases: `--fold-slide` runs 0.3s and a close
- *  flips `content-visibility` at 0.42s (css/29-turns.css), so the document is
- *  still growing ~450ms after the click. */
+/** How long a bottom pin keeps re-asserting the live edge. Sized to the fold
+ *  choreography it releases: `--fold-slide` runs 0.3s and a close flips
+ *  `content-visibility` at 0.42s (css/29-turns.css). */
 const PIN_SETTLE_MS = 700;
 
-/** The reader's position, as a state rather than an inferred boolean. */
+/** The reader's position. */
 export type ReadingState = "following" | "reading";
 
-/** The scroll-owned slice of a parked view's saved state: where the scroller
- *  stood and which reading state the reader was in. The multiplexer
- *  (messages.ts) carries it inside its ViewHandle across a park/unpark cycle;
- *  everything else the controller holds per view (the deferred-mutation queue,
- *  the pagination pass) is deliberately NOT saved — the pass is abandoned via
- *  its existing cancellable hook and the catch-up paint re-derives the queue. */
+/** A parked view's scroll-owned state: where the scroller stood and which reading
+ *  state the reader was in. `messages.ts` carries it inside its ViewHandle across a
+ *  park/unpark cycle. */
 export interface ViewScrollState {
   scrollTop: number;
   readingState: ReadingState;
 }
 
-/** What `attach` needs to hand the scroller to a transcript view: the view
- *  element (the observers' new root) plus the state to restore into it. */
+/** What `attach` needs: the incoming view element (the observers' new root) plus
+ *  the state to restore into it. */
 export interface ViewAttachHandle extends ViewScrollState {
   el: HTMLElement;
 }
 
-/** Which geometry a mutation disturbs. The two are physically different and a
- *  helper that measures the wrong one compensates by ZERO:
+/** Which geometry a mutation disturbs; measuring the wrong one compensates by ZERO.
  *
- *   content-growth  content is inserted above the reader; the box is unchanged,
- *                   so `scrollHeight` moves and `clientHeight` does not.
- *                   (Loading older messages; a turn folding above the reader.)
- *   viewport-shrink a panel takes vertical space; the content is unchanged, so
- *                   `clientHeight` moves and `scrollHeight` does not.
- *                   (The shell panel opening; the composer dock growing.)
+ *   content-growth  content inserted above the reader: `scrollHeight` moves,
+ *                   `clientHeight` does not (older messages, a fold above).
+ *   viewport-shrink a panel takes vertical space: `clientHeight` moves,
+ *                   `scrollHeight` does not (the shell panel, the composer dock).
  *
- *  A growing prompt bar measured as content-growth yields a delta of zero and
- *  compensates nothing — which is precisely the failure the dock needs
- *  prevented. Each call site declares the shift it causes. */
+ *  Each call site declares the shift it causes. */
 export type ShiftKind = "content-growth" | "viewport-shrink";
 
 class ScrollController {
   readonly scrollEl: HTMLElement;
 
-  /** The observers' root: the ACTIVE transcript view under the multiplexer,
-   *  or the multiplexer itself before any view has attached (which is also
-   *  what keeps the pre-multiplexer test fixtures valid — they populate
-   *  `#messages` directly and never attach a view). Every mutation callback,
-   *  the per-child ResizeObserver set and the pagination furniture key off
-   *  this element, so a parked view receives no callbacks and no furniture. */
+  /** The observers' root: the ACTIVE transcript view, or the multiplexer itself
+   *  before any view attaches. Every mutation callback, the per-child ResizeObserver
+   *  set and the pagination furniture key off this, so a parked view gets none. */
   private viewEl: HTMLElement;
 
   private state: ReadingState = "following";
@@ -119,25 +69,10 @@ class ScrollController {
    *  arrival order on the return to Following. */
   private deferred: (() => void)[] = [];
   private stateListeners: ((s: ReadingState) => void)[] = [];
-  /** Callbacks riding the transcript MutationObserver this module already owns
-   *  (childList + subtree + characterData on `#messages`). One observer for the
-   *  container instead of one per consumer: find-in-chat's live re-run used to
-   *  duplicate it wholesale. */
+  /** Callbacks riding the transcript MutationObserver this module owns, so a
+   *  consumer needs no observer of its own. */
   private mutateListeners: (() => void)[] = [];
-  /** Callbacks fired when the READER says where they want to be, and only then.
-   *
-   *  Separate from `stateListeners` because a state listener fires on
-   *  TRANSITIONS: a reader scrolling within Following never transitions, so a
-   *  consumer that has to react to the gesture itself would never hear about it.
-   *
-   *  TWO publishers, because the reader has two ways of saying it. The scroll
-   *  listener's reader-gesture branch is one, and it is already this module's
-   *  definition of "the reader moved this" — everything the controller writes goes
-   *  through `scrollSelfTo` and is excused above it. `pinToLiveEdge` is the other:
-   *  a click on the resume control, End, and a turn the reader just sent all ask
-   *  for the live edge, and they reach the scroller through `scrollSelfTo` too, so
-   *  the scroll branch cannot see them. Missing that half is what let the timeline
-   *  rail keep its accent fill on the turn the reader had just left. */
+  /** Reader-gesture subscribers; `onReaderGesture` owns the contract. */
   private readerGestureListeners: (() => void)[] = [];
   /** Supplies the element Following should keep visible while a turn streams.
    *  Null (or a null return) falls back to the document bottom. */
@@ -149,24 +84,14 @@ class ScrollController {
   private pinUntil = 0;
   private pinFrame = 0;
 
-  /** The scrollTop this controller last wrote, or -1.
-   *
-   *  A `scroll` event landing on it is the controller's OWN and must not be read
-   *  as a reader gesture. Following pins to the ANCHOR, which is deliberately
-   *  not the document bottom, so deriving the state from a self-inflicted scroll
-   *  declared the reader Reading — and Reading is what makes
-   *  `autoScrollIfAnchored` return early, so the auto-scroll latched off for the
-   *  rest of the session. Measured in a real browser: an anchor 200px tall,
-   *  1500px down the transcript, in a 400px viewport with a 900px tool card below
-   *  it pins to 1350 against a maximum of 2200 — 850px from the bottom, so the
-   *  controller's own pin failed its own `isAtBottom` check by 750px. The reader
-   *  saw the transcript stop following and the `Latest` control appear without
-   *  having touched anything.
-   *
-   *  Compared as a POSITION rather than tracked as a boolean, because a
-   *  programmatic scroll that changes nothing fires no event at all and a flag
-   *  would then swallow the reader's next real gesture. Consumed on the first
-   *  event either way, so a stale marker cannot outlive one. */
+  /** The scrollTop this controller last wrote, or -1. A `scroll` event landing on it
+   *  is the controller's OWN and must not be read as a reader gesture: Following pins
+   *  to the ANCHOR rather than the document bottom, so deriving state from a
+   *  self-inflicted scroll declares Reading, and Reading is what makes
+   *  `autoScrollIfAnchored` return early — the auto-scroll then stays off for the
+   *  session. A POSITION rather than a boolean, because a programmatic scroll that
+   *  changes nothing fires no event and a flag would swallow the reader's next real
+   *  gesture. Consumed on the first event either way. */
   private selfScrollTop = -1;
 
   /** Last value written to `--scrollbar-w`, so a resize storm costs at most one

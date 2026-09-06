@@ -1,12 +1,7 @@
 package agent
 
-// The liveness split: only an ACTIVELY EXECUTING run holds a process, every run
-// stays reachable, and the verbs that drive a parked run re-host it on demand.
-//
-// What is pinned here is the split itself — a stop drops the carrier, a pause
-// keeps the envelope, each of the four verbs starts a carrier when nothing holds
-// the run, the ANSWER path starts one before it claims the card, the cancel side
-// is untouched, and a parked run's page still renders with neither.
+// The liveness split: only an ACTIVELY EXECUTING run holds a process, every run stays
+// reachable, and the verbs that drive a parked run re-host it on demand.
 
 import (
 	"context"
@@ -21,9 +16,8 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// runCompleteFrame builds the `_kiro/workflow/run_complete` notification KAS sends
-// when a run stops — terminal or paused alike, which is the whole point: one frame
-// reports both, and the status is the only thing separating them.
+// The `_kiro/workflow/run_complete` notification KAS sends when a run stops. One frame
+// reports terminal and paused alike; the status is the only thing separating them.
 func runCompleteFrame(t *testing.T, workflowID, status string) *vibekit.RPCResponse {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{"workflowId": workflowID, "status": status})
@@ -33,8 +27,7 @@ func runCompleteFrame(t *testing.T, workflowID, status string) *vibekit.RPCRespo
 	return &vibekit.RPCResponse{Method: methodWFRunComplete, Params: params}
 }
 
-// hostedRun seeds a run whose bridge is registered under its synthetic chat id and
-// whose lease is granted and bounded — the state an EXECUTING run is in.
+// A run whose bridge is registered and whose lease is granted and bounded: EXECUTING.
 func hostedRun(t *testing.T, workflowID string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, _, br := newTestHub()
@@ -44,10 +37,8 @@ func hostedRun(t *testing.T, workflowID string) (*Runtime, *fakeBridge) {
 	return h, br
 }
 
-// waitForBridge polls until the run's bridge reaches the wanted presence, or fails
-// with a diagnostic. Deadline-bounded rather than a sleep: closeStoppedBridge hands
-// the close to a goroutine (it is called FROM the bridge's own forward loop), so
-// the effect is asynchronous by design and a fixed sleep can only flake.
+// Deadline-bounded rather than a sleep: closeStoppedBridge hands the close to a
+// goroutine (it runs FROM the bridge's own forward loop), so the effect is async.
 func waitForBridge(t *testing.T, h *Runtime, workflowID string, want bool) bool {
 	t.Helper()
 	stop := time.Now().Add(3 * time.Second)
@@ -62,14 +53,10 @@ func waitForBridge(t *testing.T, h *Runtime, workflowID string, want bool) bool 
 	}
 }
 
-// TestRunStopped_DropsTheProcessAndAPausedRunKeepsItsLease is the ruling in one
-// table: "no process needs to be running if they cannot be resumed", and every run
-// stays reachable. The PAUSED row is the change; the lease it keeps is not an
-// inconsistency (vibekit-runtime.md's liveness-split block).
-//
-// Driven through the real dispatch path rather than closeStoppedBridge directly:
-// the lease half is decided by observeComplete on that same frame, and only the two
-// together say whether the split landed.
+// The ruling in one table: no process needs to run for a run that cannot be resumed,
+// and every run stays reachable. The lease a PAUSED run keeps is not an inconsistency
+// (vibekit-runtime.md's liveness-split block). Driven through the real dispatch path
+// because observeComplete decides the lease half on that same frame.
 func TestRunStopped_DropsTheProcessAndAPausedRunKeepsItsLease(t *testing.T) {
 	cases := map[string]struct {
 		status     string
@@ -78,16 +65,14 @@ func TestRunStopped_DropsTheProcessAndAPausedRunKeepsItsLease(t *testing.T) {
 	}{
 		// The ruling's own row.
 		"a pause drops the process and keeps the lease": {runStatusPaused, false, true},
-		// Unchanged, and here so a mutation that widens the close cannot pass by
-		// only satisfying the pause row.
+		// Here so a mutation widening the close cannot pass on the pause row alone.
 		"a completed run drops both":  {"completed", false, false},
 		"a failed run drops both":     {"failed", false, false},
 		"an aborted run drops both":   {"aborted", false, false},
 		"a cancelled run drops both":  {"cancelled", false, false},
 		"an executing run keeps both": {"running", true, true},
-		// A status vibekit does not know keeps the bridge: a leaked process costs
-		// memory, where a wrongly closed one loses the frames a live run is still
-		// emitting.
+		// An unknown status keeps the bridge: a leaked process costs memory, a wrongly
+		// closed one loses the frames a live run is still emitting.
 		"an unrecognised status keeps both": {"reticulating", true, true},
 	}
 
@@ -107,14 +92,9 @@ func TestRunStopped_DropsTheProcessAndAPausedRunKeepsItsLease(t *testing.T) {
 	}
 }
 
-// TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor is the second half of the
-// pause row, and it is what "the lease STAYS and that is not an inconsistency"
-// means concretely: presence alone would be satisfied by a lease stripped of
-// everything it answers.
-//
-// The DEADLINE is deliberately absent from the wanted set: a pause parks it
-// (disarmDeadline), and a re-arm on resume is what bounds the next stretch of
-// EXECUTING time.
+// The second half of the pause row: presence alone would be satisfied by a lease
+// stripped of everything it answers. The DEADLINE is deliberately absent from the
+// wanted set — a pause parks it, and a re-arm on resume bounds the next stretch.
 func TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor(t *testing.T) {
 	h, _, br := newTestHub()
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
@@ -144,23 +124,17 @@ func TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor(t *testing.T) {
 	}
 }
 
-// TestRunVerbs_ReHostARunNothingHolds: the four verbs that drive a parked run start
-// a carrier on demand, exactly as Retry already did. Every one answered a refusal
-// before, which made the whole parked population unreachable the moment a pause
-// dropped its bridge.
-//
-// Exercised through their PUBLIC entry points, so what is pinned is the behaviour a
-// REST caller gets rather than the helper they share.
+// The four verbs that drive a parked run start a carrier on demand: without it the
+// parked population is unreachable the moment a pause drops its bridge. Through their
+// PUBLIC entry points, so what is pinned is the behaviour a REST caller gets.
 func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
-	// A run parented on nothing this process knows, so hostBridge resolves nothing
-	// and the re-host is the only way the verb can land.
+	// Parented on nothing this process knows, so the re-host is the verb's only way in.
 	seed := func(t *testing.T) (*Runtime, *fakeBridge) {
 		t.Helper()
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
 			methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
-			// SetStepStatus reads the run's own tree before it sends, so the target has
-			// to resolve to the node the verb names or the re-host is never attempted.
+			// SetStepStatus reads the tree first, so the target must resolve to its node.
 			methodKiroWorkflowInspect: parkedInspect(
 				t, runStatusPaused, needInputPauseReason, "sess_step",
 			),
@@ -178,10 +152,8 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		"resume": {methodKiroWorkflowResume, func(h *Runtime) error {
 			return h.runs.Resume(context.Background(), "wf_1")
 		}},
-		// Pause is here even though KAS's own pause reaches `registry.require` and is
-		// expected to REFUSE a run it has forgotten: the refusal has to come from KAS
-		// rather than from vibekit declining to carry the verb, or the reason a reader
-		// is shown is vibekit's bookkeeping instead of the run's actual state.
+		// KAS's pause REFUSES a run it has forgotten, and the refusal has to come from
+		// KAS rather than vibekit, or the reader is shown vibekit's bookkeeping.
 		"pause": {methodKiroWorkflowPause, func(h *Runtime) error {
 			return h.runs.Pause(context.Background(), "wf_1")
 		}},
@@ -225,10 +197,8 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		}
 	})
 
-	// The failure half, and the reason `discard` is returned rather than derived: a
-	// carrier THIS call started is holding a run nothing is executing once the verb
-	// fails, so it must go — while one that was already there belongs to a launch or
-	// to a conversation and must be left alone.
+	// Why `discard` is returned rather than derived: a carrier THIS call started holds
+	// a run nothing is executing once the verb fails, so it must go.
 	t.Run("a refused verb tears the carrier it started back down", func(t *testing.T) {
 		h, br := seed(t)
 		br.callRPCErrs = map[string]*vibekit.RPCError{
@@ -242,13 +212,10 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		}
 	})
 
-	// The DECLINE, which is the one outcome neither the error path above nor a
-	// lifecycle frame covers: KAS resolved the run and WROTE NOTHING, so no
-	// run_complete follows, closeStoppedBridge never fires, and the bound is armed
-	// only by discard's own context arm — the re-host's process tree would live until
-	// the container did. Driven through the re-host deliberately: every other
-	// SetStepStatus case pre-inserts a bridge, where discard is a no-op, so the suite
-	// could not observe the gap.
+	// The DECLINE, the one outcome neither the error path above nor a lifecycle frame
+	// covers: KAS resolved the run and WROTE NOTHING, so no run_complete follows and
+	// nothing else would ever close the process the re-host started. Driven through the
+	// re-host, because every other case pre-inserts a bridge where discard is a no-op.
 	t.Run("a DECLINED step status tears the carrier it started back down", func(t *testing.T) {
 		h, br := seed(t)
 		br.callResults[methodKiroWorkflowUpdate] = json.RawMessage(
@@ -266,9 +233,8 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		}
 	})
 
-	// The other side of that asymmetry: a bridge the verb did NOT start survives its
-	// refusal. For an agent-launched run that bridge is the launching CHAT's, so
-	// closing it on a refused pause would tear down the conversation's process.
+	// The other side: for an agent-launched run the bridge the verb did not start is
+	// the launching CHAT's, so closing it would tear down the conversation's process.
 	t.Run("a refused verb leaves a bridge it did not start alone", func(t *testing.T) {
 		h, _, br := newTestHub()
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
@@ -285,12 +251,9 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 	})
 }
 
-// TestRehost_ALostRaceStopsItsOwnBridgeAndLeavesTheWinnerAlone. The three wrongs
-// discarding `insert`'s refusal produced, and how the race is reached, are in
-// vibekit-runtime.md's liveness-split block.
-//
-// The factory is overridden because newTestHub's serves one shared bridge, and the
-// whole question here is which of TWO processes survives.
+// The three wrongs discarding `insert`'s refusal produced are in vibekit-runtime.md's
+// liveness-split block. The factory is overridden because newTestHub's serves one
+// shared bridge, and the question here is which of TWO processes survives.
 func TestRehost_ALostRaceStopsItsOwnBridgeAndLeavesTheWinnerAlone(t *testing.T) {
 	h, _, _ := newTestHub()
 	incumbent := newFakeBridge()
@@ -323,12 +286,9 @@ func TestRehost_ALostRaceStopsItsOwnBridgeAndLeavesTheWinnerAlone(t *testing.T) 
 	}
 }
 
-// TestRehost_ACancelledVerbKeepsTheCarrierItStarted. A context error says the
-// verb's outcome is UNKNOWN, so the carrier stays — the conservative direction
-// closeStoppedBridge already takes for an unrecognised status.
-//
-// Asserted through hostedControl rather than the closure alone, because the verb
-// call is where the caller's context reaches the bridge.
+// A context error says the verb's outcome is UNKNOWN, so the carrier stays — the same
+// direction closeStoppedBridge takes for an unrecognised status. Through hostedControl
+// rather than the closure, because the verb call is where the caller's context lands.
 func TestRehost_ACancelledVerbKeepsTheCarrierItStarted(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -345,14 +305,10 @@ func TestRehost_ACancelledVerbKeepsTheCarrierItStarted(t *testing.T) {
 	}
 }
 
-// TestRetry_ACancelledRetryKeepsTheLeaseItMinted. The lease and the carrier follow
-// ONE unknown-outcome rule: `discard` keeps the process because KAS may already have
-// taken the verb, and handing the lease back in the same breath acts on the opposite
-// premise.
-//
-// The lease is what makes the run BOUNDABLE — armDeadline reads it first and returns
-// when there is none — so releasing it here left a retry KAS did take executing with
-// no ceiling, no slot, absent from the executing set, and unbindable afterwards.
+// The lease and the carrier follow ONE unknown-outcome rule, and the lease is what
+// makes a run BOUNDABLE — armDeadline reads it first and returns when there is none.
+// So handing it back on a cancellation leaves a retry KAS did take executing with no
+// ceiling, no slot, absent from the executing set, and unbindable afterwards.
 func TestRetry_ACancelledRetryKeepsTheLeaseItMinted(t *testing.T) {
 	cases := map[string]struct {
 		cause     error
@@ -361,9 +317,8 @@ func TestRetry_ACancelledRetryKeepsTheLeaseItMinted(t *testing.T) {
 		// The unknown outcome: the client walked away mid-verb.
 		"a cancelled retry keeps it": {context.Canceled, true},
 		"a deadline keeps it":        {context.DeadlineExceeded, true},
-		// A KAS refusal is a KNOWN outcome — nothing re-drove — so the lease this
-		// call minted goes back. Here so a mutation that keeps it unconditionally
-		// cannot pass by only satisfying the rows above.
+		// A KAS refusal is a KNOWN outcome — nothing re-drove — so the minted lease goes
+		// back, and a mutation keeping it cannot pass on the rows above alone.
 		"a refused retry gives it back": {errors.New("refused"), false},
 	}
 
@@ -392,10 +347,9 @@ func TestRetry_ACancelledRetryKeepsTheLeaseItMinted(t *testing.T) {
 	}
 }
 
-// TestCloseKeptCarrier_DecidesOnAFreshRead is the bound's decision, asked
-// SYNCHRONOUSLY rather than through its timer. The spared rows are why: driven
-// through the timer, "the bridge is still there" is satisfied by the instant BEFORE
-// the grace elapses, so every one of them would pass against a bound that closes the
+// The bound's decision, asked SYNCHRONOUSLY rather than through its timer. The spared
+// rows are why: through the timer, "the bridge is still there" is satisfied by the
+// instant BEFORE the grace elapses, so each would pass against a bound that closes the
 // carrier unconditionally a moment later.
 func TestCloseKeptCarrier_DecidesOnAFreshRead(t *testing.T) {
 	cases := map[string]struct {
@@ -422,11 +376,9 @@ func TestCloseKeptCarrier_DecidesOnAFreshRead(t *testing.T) {
 		"a reply naming another run is ignored": {
 			inspectReply(t, "wf_other", "failed", ""), false, carrierSpared,
 		},
-		// The USE guard, and the reviewed premise it replaces: a reader whose first
-		// resume was cancelled clicks again and reuses the kept carrier, so KAS
-		// reports the run still parked while that second verb is in flight on the
-		// very process the bound is about to stop. Closing it reproduces exactly the
-		// unknown-outcome state the keep exists to prevent.
+		// The USE guard: a reader whose first resume was cancelled clicks again and
+		// reuses the kept carrier, so KAS reports the run parked while that second verb
+		// is in flight on the very process the bound is about to stop.
 		"a carrier a verb is holding is kept, whatever the run reports": {
 			inspectReply(t, "wf_1", runStatusPaused, ""), true, carrierBusy,
 		},
@@ -462,10 +414,9 @@ func TestCloseKeptCarrier_DecidesOnAFreshRead(t *testing.T) {
 		})
 	}
 
-	// The other guard, and the one a run's own terminal frame reaches first: the map
-	// holds a DIFFERENT carrier, so this one is no longer ours to end. SPARED rather
-	// than busy even while a verb holds it, so a stale bound cannot re-arm forever
-	// over a carrier nothing will ever close.
+	// The map holds a DIFFERENT carrier, so this one is no longer ours to end. SPARED
+	// rather than busy even under a verb, so a stale bound cannot re-arm forever over a
+	// carrier nothing will close.
 	t.Run("a carrier replaced meanwhile is left alone", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
@@ -487,14 +438,10 @@ func TestCloseKeptCarrier_DecidesOnAFreshRead(t *testing.T) {
 	})
 }
 
-// TestBoundKeptCarrier_ReArmsWhileAVerbIsStillHoldingTheCarrier. The BUSY verdict is
-// only half a fix: a second verb reuses the kept carrier through hostOrRehost, whose
-// discard is then a no-op, so a bound that declined once and stopped would leave
-// exactly the leak it exists to end.
-//
-// Asserted through the TIMER, deliberately — the re-arm is the timer's own decision
-// and closeKeptCarrier cannot show it. The negative half runs first and only the
-// positive half polls, so neither can pass by the other's timing.
+// A second verb reuses the kept carrier through hostOrRehost, whose discard is then a
+// no-op, so a bound that declines once and stops leaves exactly the leak it exists to
+// end. Through the TIMER, because the re-arm is the timer's own decision; the negative
+// half runs first and only the positive half polls.
 func TestBoundKeptCarrier_ReArmsWhileAVerbIsStillHoldingTheCarrier(t *testing.T) {
 	old := keptCarrierGrace
 	keptCarrierGrace = time.Millisecond
@@ -526,11 +473,10 @@ func TestBoundKeptCarrier_ReArmsWhileAVerbIsStillHoldingTheCarrier(t *testing.T)
 	}
 }
 
-// TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan pins the WIRING, which the
-// decision table above cannot: that one drives carrierUse from the test, so with a
-// verb's enter/leave gone the guard still answers while nothing ever registers. Each
-// verb is held open ON a real call, so the assertion lands strictly inside its window
-// rather than near it.
+// The WIRING, which the decision table above cannot pin: that one drives carrierUse
+// from the test, so with a verb's enter/leave gone the guard still answers while
+// nothing registers. Each verb is held open ON a real call, so the assertion lands
+// strictly inside its window.
 func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 	cases := map[string]struct {
 		// blocked is the method held open, and it is what puts the assertion inside
@@ -538,16 +484,14 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 		blocked string
 		drive   func(*testing.T, *Runtime) error
 	}{
-		// The reviewed scenario itself: a reader whose first resume was cancelled
-		// clicks again, reuses the kept carrier, and is still waiting when the grace
-		// elapses — at which point both older guards pass.
+		// A reader whose first resume was cancelled clicks again, reuses the kept carrier,
+		// and is still waiting when the grace elapses — where both older guards pass.
 		"a resume in flight": {
 			methodKiroWorkflowResume,
 			func(t *testing.T, h *Runtime) error { return h.runs.Resume(t.Context(), "wf_1") },
 		},
-		// The WIDEST span, and the reason the count is entered at RESOLVE rather than
-		// around the Call: this verb's address read is a round trip, so a Call-scoped
-		// count would leave the reader's carrier closable for the length of it.
+		// Why the count is entered at RESOLVE: this verb's address read is a round trip,
+		// so a Call-scoped count leaves the carrier closable for the length of it.
 		"an answer still resolving its address": {
 			methodKiroWorkflowInspect,
 			func(t *testing.T, h *Runtime) error {
@@ -561,10 +505,9 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 				return h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the release branch")
 			},
 		},
-		// The other two verbs, so no site's hold is a line that can be deleted
-		// silently. Retry's own call IS bounded by launchTimeout — it is the one verb
-		// the withdrawn premise held for — and it is counted anyway, because a bound
-		// armed by an EARLIER verb targets this same carrier.
+		// The other two verbs, so no site's hold can be deleted silently. Retry's own call
+		// is bounded by launchTimeout and counted anyway: a bound armed by an EARLIER verb
+		// targets this same carrier.
 		"a step-status write in flight": {
 			methodKiroWorkflowUpdate,
 			func(t *testing.T, h *Runtime) error {
@@ -630,10 +573,9 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 	}
 }
 
-// TestRehost_ACancelledVerbArmsTheBoundOnTheCarrierItKeeps: the keeping and the
-// bound are one decision, so a cancelled verb has to ARM it rather than leaving the
-// carrier for the container's life. The grace is driven in milliseconds; what keeps
-// the re-read off a verb in flight is carrierUse, not the grace's length.
+// The keeping and the bound are one decision, so a cancelled verb has to ARM it rather
+// than leave the carrier for the container's life. What keeps the re-read off a verb in
+// flight is carrierUse, not the grace's length.
 func TestRehost_ACancelledVerbArmsTheBoundOnTheCarrierItKeeps(t *testing.T) {
 	old := keptCarrierGrace
 	keptCarrierGrace = time.Millisecond
@@ -658,13 +600,10 @@ func TestRehost_ACancelledVerbArmsTheBoundOnTheCarrierItKeeps(t *testing.T) {
 	}
 }
 
-// TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered. KAS reroutes a prompt
-// into the run only while the addressed step is parked, and past that the same
-// prompt runs as an ordinary turn on that session — bundle evidence in
-// vibekit-acp.md "A step's answer is a plain `session/prompt`".
-//
-// SETTLED rather than restored, because nothing is ever going to wait on the question
-// again — which is what separates both rows from the between-steps case below.
+// KAS reroutes a prompt into the run only while the addressed step is parked; past
+// that the same prompt runs as an ordinary turn on that session (vibekit-acp.md "A
+// step's answer is a plain `session/prompt`"). SETTLED rather than restored, because
+// nothing will wait on the question again — the between-steps case below will.
 func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 	cases := map[string]json.RawMessage{
 		"a different step is parked now": parkedInspect(
@@ -711,12 +650,10 @@ func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 	}
 }
 
-// TestAnswerInput_ARunBetweenStepsHoldsTheAnswerRatherThanDiscardingIt is the third
-// verdict, and the one a reader reaches WITHOUT a race: the run view offers Resume and
-// the ask card at once, and between the resume and the re-park nothing is parked.
-//
-// Reading that as GONE discarded the words the reader had just typed and told them the
-// step had moved on, false in both clauses. So the card goes BACK.
+// The third verdict, and the one a reader reaches WITHOUT a race: the run view offers
+// Resume and the ask card at once, and between the resume and the re-park nothing is
+// parked. Reading that as GONE discards the words just typed and reports the step as
+// moved on, false in both clauses, so the card goes BACK.
 func TestAnswerInput_ARunBetweenStepsHoldsTheAnswerRatherThanDiscardingIt(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -756,13 +693,10 @@ func TestAnswerInput_ARunBetweenStepsHoldsTheAnswerRatherThanDiscardingIt(t *tes
 	}
 }
 
-// TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch. The check
-// asks whether the step THAT ASKED is parked, so it is addressed by the ask's own
-// node id rather than by pausedLeaf's first depth-first match.
-//
-// Those two agree for a run parked at one step and diverge exactly here: with two
-// branches parked at once, first-match names the wrong one and the other branch's
-// answer is destroyed.
+// The check asks whether the step THAT ASKED is parked, addressed by the ask's own node
+// id rather than by pausedLeaf's first depth-first match. The two agree for a run parked
+// at one step and diverge exactly here: with two branches parked, first-match names the
+// wrong one and the other branch's answer is destroyed.
 func TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch(t *testing.T) {
 	tree, err := json.Marshal(map[string]any{
 		"state": map[string]any{
@@ -807,11 +741,8 @@ func TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch(t *test
 	}
 }
 
-// TestAnswerInput_TheFreshAddressBeatsTheOneTheAskCarries.
-//
-// The read has to LEAD for the check above to mean anything: preferring the ask's
-// own address and consulting the run only when it carries none is what made a stale
-// ask unnoticeable. The payload stays as the fallback for an unreadable run.
+// The read has to LEAD for the check above to mean anything: preferring the ask's own
+// address makes a stale ask unnoticeable. The payload is only the unreadable-run fallback.
 func TestAnswerInput_TheFreshAddressBeatsTheOneTheAskCarries(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -843,12 +774,9 @@ func TestAnswerInput_TheFreshAddressBeatsTheOneTheAskCarries(t *testing.T) {
 	}
 }
 
-// TestAnswerInput_AnUnreadableRunFallsBackToTheAddressTheAskCarries.
-//
-// This file's standing rule is that a failed read never destroys work, and here the
-// work is the answer itself: refusing every answer whenever the utility session is
-// briefly unreachable would be a new way to lose a run parked on a person. The
-// fallback is exactly the behaviour the fresh read replaced.
+// A failed read never destroys work, and here the work is the answer itself: refusing
+// every answer whenever the utility session is briefly unreachable would be a new way
+// to lose a run parked on a person.
 func TestAnswerInput_AnUnreadableRunFallsBackToTheAddressTheAskCarries(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -874,14 +802,10 @@ func TestAnswerInput_AnUnreadableRunFallsBackToTheAddressTheAskCarries(t *testin
 	}
 }
 
-// TestAnswerInput_HostsBeforeItClaimsTheAsk pins the ORDERING, not the outcome: a
-// claimed ask is off every surface, so the other order leaves a window with neither
-// a card nor a process.
-//
-// The discriminator is an ask that is ALREADY GONE — host-then-claim spends one
-// spawn, claim-then-host none — so the spawn DELTA answers which order ran, with no
-// goroutine and no timing. The utility session is warmed first because one factory
-// serves it and every run bridge.
+// The ORDERING, not the outcome: a claimed ask is off every surface, so the other order
+// leaves a window with neither a card nor a process. The discriminator is an ask already
+// GONE — host-then-claim spends one spawn, claim-then-host none — so the spawn DELTA
+// answers which ran. The utility session is warmed first because one factory serves both.
 func TestAnswerInput_HostsBeforeItClaimsTheAsk(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -906,12 +830,9 @@ func TestAnswerInput_HostsBeforeItClaimsTheAsk(t *testing.T) {
 	}
 }
 
-// TestCancel_IsUnchangedByTheReHostAndStartsNoProcess.
-//
-// Cancel is the one verb that may run on the utility session — it rehydrates from
-// disk and only WRITES state — and it is also the tab-close gesture, so it must
-// never be the verb that fails. Giving it a re-host would spend a ~300 MB process
-// tree to tell a run to stop.
+// Cancel is the one verb that may run on the utility session — it rehydrates from disk
+// and only WRITES state — and it is the tab-close gesture, so it must never be the verb
+// that fails. A re-host would spend a ~300 MB process tree to tell a run to stop.
 func TestCancel_IsUnchangedByTheReHostAndStartsNoProcess(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -940,13 +861,9 @@ func TestCancel_IsUnchangedByTheReHostAndStartsNoProcess(t *testing.T) {
 	}
 }
 
-// TestHandleRun_AParkedRunsPageRendersWithNoLeaseAndNoBridge is the user's ruling
-// in one assertion: "i still want failed runs to be accessible in a subtab i can
-// open but no process needs to be running if they cannot be resumed."
-//
-// Reachability was always free and this is what proves it stayed free: the endpoint
-// reads no lease and needs no run bridge — it goes out on the shared utility
-// session and passes `state` and `nodePlan` through verbatim.
+// The ruling's other half: a failed run stays openable in a subtab though nothing is
+// running. The endpoint reads no lease and needs no run bridge — it goes out on the
+// shared utility session and passes `state` and `nodePlan` through verbatim.
 func TestHandleRun_AParkedRunsPageRendersWithNoLeaseAndNoBridge(t *testing.T) {
 	h, _, br := newTestHub()
 	tree, err := json.Marshal(map[string]any{
@@ -992,10 +909,9 @@ func TestHandleRun_AParkedRunsPageRendersWithNoLeaseAndNoBridge(t *testing.T) {
 	}
 }
 
-// TestCarrierUse_WhenIdleDefersACloseUnderALiveVerb pins the mechanism that lets a
-// lifecycle frame ask the question the kept-carrier bound asks and answer it without a
-// timer. Asked directly rather than through closeStoppedBridge: the wait is bounded by
-// the verb's own span, and that is a property of this type rather than of the frame.
+// The mechanism that lets a lifecycle frame ask the kept-carrier bound's question with
+// no timer. Asked directly, because the wait is bounded by the verb's own span and that
+// is a property of this type rather than of the frame.
 func TestCarrierUse_WhenIdleDefersACloseUnderALiveVerb(t *testing.T) {
 	t.Run("an idle carrier closes immediately", func(t *testing.T) {
 		var c carrierUse
@@ -1031,11 +947,9 @@ func TestCarrierUse_WhenIdleDefersACloseUnderALiveVerb(t *testing.T) {
 		}
 	})
 
-	// A run emits one terminal frame, but a re-registration is cheap to reach (a
-	// duplicate frame, a paused frame followed by a terminal one) and closing twice
-	// would tear down whatever a later re-host put under that chat id. Which of the two
-	// closers survives is NOT asserted, because both close the same carrier: only
-	// exactly-once is a requirement, and the code carries no branch that picks.
+	// A re-registration is cheap to reach (a duplicate frame, a paused frame then a
+	// terminal one) and closing twice tears down whatever a later re-host put under that
+	// chat id. WHICH closer survives is not asserted: both close the same carrier.
 	t.Run("two registrations still close once", func(t *testing.T) {
 		var c carrierUse
 		sb := &sharedBridge{bridge: newFakeBridge(), state: bridgeIdle}
@@ -1066,14 +980,10 @@ func TestCarrierUse_WhenIdleDefersACloseUnderALiveVerb(t *testing.T) {
 	})
 }
 
-// TestCloseStoppedBridge_AsksAboutAVerbInFlight is the asymmetry item D named: this
-// closer and closeKeptCarrier are siblings, and only one of them used to ask.
-//
-// The reachability is narrow — the response and the notification travel one stdio
-// stream but land in two places, so nothing serializes them and the measured margin
-// was 15 ms — but Stop unblocks every pending waiter with the bridge-exited sentinel,
-// so a frame landing inside a verb's span reproduces exactly the unknown-outcome state
-// carrierUse exists to end.
+// This closer and closeKeptCarrier are siblings and both must ask. Reachability is
+// narrow — the response and the notification travel one stdio stream but land in two
+// places, measured margin 15 ms — but Stop unblocks every pending waiter with the
+// bridge-exited sentinel, so a frame inside a verb's span makes its outcome unknown.
 func TestCloseStoppedBridge_AsksAboutAVerbInFlight(t *testing.T) {
 	h, _, br := newTestHub()
 	br.setCallResult(methodKiroWorkflowInspect, parkedInspect(
@@ -1100,10 +1010,8 @@ func TestCloseStoppedBridge_AsksAboutAVerbInFlight(t *testing.T) {
 
 	h.dispatch(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", "completed"))
 
-	// A BOUNDED negative, because the close the guard suppresses is a goroutine: the
-	// unguarded shape launches it inside dispatch, so absence has to be observed over
-	// a window rather than at one instant. Polled rather than slept once, so any
-	// scheduling inside the window is caught.
+	// A BOUNDED negative: the close the guard suppresses is a goroutine, so absence has
+	// to be observed over a window rather than at one instant.
 	windowEnd := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(windowEnd) {
 		if h.bridge.mgr.get(runChatID("wf_1")) == nil {
@@ -1125,10 +1033,9 @@ func TestCloseStoppedBridge_AsksAboutAVerbInFlight(t *testing.T) {
 	}
 }
 
-// TestCloseStoppedBridge_DoesNotCloseALaterReHostsCarrier is the identity re-check the
-// deferral needs and the kept-carrier bound already had. A discard on a non-context
-// error closes the carrier itself, so a later verb can re-host and put a DIFFERENT
-// process under the same chat id while this close is still pending.
+// The identity re-check the deferral needs: a discard on a non-context error closes the
+// carrier itself, so a later verb can re-host and put a DIFFERENT process under the same
+// chat id while this close is still pending.
 func TestCloseStoppedBridge_DoesNotCloseALaterReHostsCarrier(t *testing.T) {
 	h, _, br := newTestHub()
 	kept := &sharedBridge{bridge: br, state: bridgeIdle}
@@ -1145,9 +1052,8 @@ func TestCloseStoppedBridge_DoesNotCloseALaterReHostsCarrier(t *testing.T) {
 
 	h.runs.carriers.leave(kept)
 
-	// BOUNDED, because the close the identity check suppresses is a goroutine: without
-	// the check it is launched by `leave` and an assertion read at one instant usually
-	// wins the race, which is how this test first passed against the mutant.
+	// BOUNDED for the same reason: without the check `leave` launches the close, and an
+	// assertion read at one instant usually wins that race.
 	windowEnd := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(windowEnd) {
 		if got := h.bridge.mgr.get(runChatID("wf_1")); got != incumbent {

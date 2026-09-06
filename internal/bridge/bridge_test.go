@@ -675,17 +675,11 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 	_ = notifLine
 }
 
-// TestRealBridge_Contract runs BridgeContractTest (from agent/shared_test.go)
-// against the real bridge.Bridge using a pipe-based fake kiro-cli script.
-// This catches interface drift between the fake and real implementations
-// at the Start/Stop/NotifCh lifecycle level without requiring a real
-// kiro-cli binary.
-//
-// The fake script reads JSON-RPC requests from stdin and responds with
-// minimal valid responses for initialize, session/new, session/load, and
-// session/prompt. Any other id'd request (e.g. v3's
-// session/set_config_option) gets a generic empty result via the default
-// case.
+// TestRealBridge_Contract runs BridgeContractTest against the real bridge.Bridge over a
+// pipe-based fake kiro-cli script, so interface drift between the fake and the real
+// implementation fails at the Start/Stop/NotifCh lifecycle level without a real binary. The
+// script answers initialize, session/new, session/load and session/prompt; any other id'd
+// request gets a generic empty result via the default case.
 func TestRealBridge_Contract(t *testing.T) {
 	// Write a fake kiro-cli script that speaks minimal JSON-RPC.
 	script := `#!/bin/sh
@@ -959,18 +953,12 @@ func TestParseErrTracker_TheWindowOpensWhenTheBurstEnds(t *testing.T) {
 	})
 }
 
-// TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker covers the
-// parseErrDecay branch, which had no test — a real-clock one costs five minutes —
-// and pins the half the old comment got wrong.
-//
-// Decay resets the storm WINDOW, so a bridge that saw a storm hours ago gets its
-// verbatim burst back instead of staying summary-only for the life of the
-// process. It deliberately leaves `consecutive` alone: Reset clears that on every
-// frame that parses, so parseErrMaxConsecutive frames with not one valid frame
-// between them is a dead stream at any pace, and decaying the count would stop
-// the breaker firing on a stream that fails totally but slowly. The old comment
-// claimed decay prevented "false circuit-breaks", which is the opposite of what
-// the second half asserts here.
+// TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker: decay resets the storm WINDOW,
+// so a bridge that saw a storm hours ago gets its verbatim burst back instead of staying
+// summary-only for the life of the process. It deliberately leaves `consecutive` alone —
+// Reset clears that on every frame that parses, so parseErrMaxConsecutive frames with no
+// valid frame between them is a dead stream at any pace, and decaying the count would stop
+// the breaker firing on a stream that fails totally but slowly.
 func TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var tr parseErrTracker
@@ -1286,17 +1274,9 @@ func readLoopBridge(r io.Reader) *Bridge {
 	}
 }
 
-// runLoadSession drives loadSession against an injected RPC response: it
-// spawns loadSession, waits for the pending request to register, sends
-// waitPending polls until Call has registered at least n pending requests.
-// This is the state the tests below need before they reach into b.pending to
-// inject a response: an empty map leaves ch nil, and a send on a nil channel
-// blocks forever, so the test fails as an unexplained "Call did not return"
-// timeout instead of naming the real cause. Deadline-bounded, fails closed.
-// readFrame drains one newline-delimited frame the bridge wrote to the pipe,
-// so a test can synchronize on the write itself rather than on a state the
-// write only follows. Bounded: a missing write fails the test with a
-// diagnostic instead of hanging until the package timeout.
+// readFrame drains one newline-delimited frame the bridge wrote to the pipe, so a test can
+// synchronize on the write itself rather than on a state the write only follows. Bounded: a
+// missing write fails with a diagnostic instead of hanging until the package timeout.
 func readFrame(t *testing.T, pr *os.File) []byte {
 	t.Helper()
 	if err := pr.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
@@ -1309,6 +1289,9 @@ func readFrame(t *testing.T, pr *os.File) []byte {
 	return line
 }
 
+// waitPending polls until Call has registered at least n pending requests. An empty map
+// leaves ch nil and a send on a nil channel blocks forever, so a test injecting a response
+// too early fails as an unexplained "Call did not return" instead of naming the cause.
 func waitPending(t *testing.T, b *Bridge, n int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -1326,7 +1309,7 @@ func waitPending(t *testing.T, b *Bridge, n int) {
 	}
 }
 
-// resp on the matching pending channel, and returns loadSession's error.
+// runLoadSession drives loadSession against an injected RPC response and returns its error.
 func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *vibekit.RPCResponse) error {
 	t.Helper()
 	_, err := runLoadSessionOpts(t, b,
@@ -1474,14 +1457,6 @@ func TestStop_NoKillErrorLogOnLiveProcess(t *testing.T) {
 // --- bridge_process.go: startProcess ---
 
 // startProcess reports a spawn failure rather than swallowing it.
-//
-// This was TestStartProcess_NilLifecycleCtxFallsBackToBackground, which pinned a
-// context.Background() substitution for a nil lifecycleCtx — the state right
-// after New. That fallback is deleted: Start refuses a nil StartOpts.Lifetime
-// (TestStart_RefusesNilLifetime), so the only path into startProcess has already
-// assigned a real lifetime, and a nil arriving here would be a bug worth the
-// panic rather than a case to absorb into an uncancellable subprocess. The
-// assertion that stood on its own survives.
 func TestStartProcess_ReportsSpawnFailure(t *testing.T) {
 	bogus := filepath.Join(t.TempDir(), "no-such-kiro-cli")
 	b := New(bogus, t.TempDir())
@@ -1745,15 +1720,11 @@ func TestWriteFrame_ReturnsUnderlyingWriteError(t *testing.T) {
 	}
 }
 
-// shortenWriteDeadline replaces the shipped stdin write deadline for the duration
-// of one test.
-//
-// The budget is a package var for this reason and no other, exactly as
-// handshakeBudget is: driving the expiry through the SHIPPED value means the
-// assertion fails when the timer is removed, where a test that arranged its own
-// deadline would pass with the deadline deleted. Nothing in production writes it,
-// so a test that calls this must not run in parallel with anything that writes a
-// frame.
+// shortenWriteDeadline replaces the shipped stdin write deadline for one test. The budget is
+// a package var for this reason and no other: driving the expiry through the SHIPPED value
+// means the assertion fails when the timer is removed, where a test arranging its own
+// deadline would pass with the deadline deleted. Nothing in production writes it, so a caller
+// must not run in parallel with anything that writes a frame.
 func shortenWriteDeadline(t *testing.T, d time.Duration) {
 	t.Helper()
 	orig := writeDeadline
@@ -1780,15 +1751,11 @@ func waitReaped(t *testing.T, b *Bridge, what string) {
 	}
 }
 
-// TestWriteFrame_ReapsTheBridgeWhenStdinStopsDraining pins both halves of the
-// write bound: the write is bounded at all, and its expiry kills the bridge.
-//
-// The reap is the load-bearing half. An expiry leaves a PARTIAL frame in
-// kiro-cli's stdin scanner (measured: 65,536 of 1,048,576 bytes on a 64 KiB pipe
-// buffer), which writeFrame's own comment calls an unrecoverable desync — so a
-// deadline that returned an error and left the bridge running would be strictly
-// worse than the permanent stall it replaces, because every later frame would
-// land in a scanner that can no longer parse one.
+// TestWriteFrame_ReapsTheBridgeWhenStdinStopsDraining pins both halves of the write bound:
+// the write is bounded at all, and its expiry kills the bridge. The reap is the load-bearing
+// half — an expiry leaves a PARTIAL frame in kiro-cli's stdin scanner (measured: 65,536 of
+// 1,048,576 bytes on a 64 KiB pipe buffer), an unrecoverable desync, so a deadline that
+// returned an error and left the bridge running is worse than the stall it replaces.
 func TestWriteFrame_ReapsTheBridgeWhenStdinStopsDraining(t *testing.T) {
 	pr, pw, err := os.Pipe()
 	if err != nil {
@@ -2073,19 +2040,13 @@ func TestApplySessionResult_ReportsAWorkflowsDisagreement(t *testing.T) {
 	}
 }
 
-// A load result that omits the `model` option leaves the previous catalog
-// standing, and so does one that omits the `modes` block.
-//
-// This is the common case rather than an edge: KAS resolves ListAvailableModels
-// asynchronously, so a session/load result routinely carries `mode`, `autopilot`
-// and `contentCollection` with `model` ABSENT and the full catalog arrives on the
-// config_option_update notification afterwards (measured on kiro-cli 2.20.0). An
-// EXPIRED auth token produces the same shape from a different cause.
-//
-// applyModelConfigOptionLocked implements the keep by `continue`ing past every
-// other option id and never reaching its body, which is the kind of behaviour a
-// refactor removes without noticing — nothing pinned it before, and the layer
-// above (agent.tryLoadSession) was overwriting its result anyway.
+// A load result that omits the `model` option leaves the previous catalog standing, and so
+// does one that omits the `modes` block. This is the common case: KAS resolves
+// ListAvailableModels asynchronously, so a session/load result routinely carries `mode`,
+// `autopilot` and `contentCollection` with `model` ABSENT and the catalog arrives on the
+// config_option_update notification afterwards (measured on kiro-cli 2.20.0); an EXPIRED
+// auth token produces the same shape. The keep is implemented by `continue`ing past every
+// other option id and never reaching the body, which a refactor removes without noticing.
 func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
 	b := New("/nonexistent", "/work")
 
@@ -2358,25 +2319,13 @@ done
 			t.Errorf("initialize missing base kiro capabilities; got: %s", got)
 		}
 		// Each settings key is asserted INDEPENDENTLY rather than as one exact
-		// `"settings":{...}` substring. Three reasons: Go marshals map keys
-		// sorted, so an exact match breaks whenever a key is added; the old exact
-		// form is what hid the two MISSING keys, since it asserted the map's
-		// contents were complete when they were not; and each key gates a
-		// different KAS subsystem, so a per-key assertion says which one broke.
-		//
-		// All of them are read with an absent-key-means-false resolver on the
-		// KAS side, so dropping one costs a whole capability with nothing in any
-		// log to say so: codeIntelligence removes the native code tool,
-		// knowledge removes the Knowledge tool (leaving vibekit's whole
-		// knowledge UI with no retrieval half), subagentOrchestration downgrades
-		// the delegation tool, and goal makes typed /goal reach the model as
-		// prose instead of launching a run.
-		//
-		// `workflows` is deliberately NOT in this list any more: KAS resolves it
-		// per session, so it moved to the session door and is asserted by
-		// TestSessionNewCarriesWorkflowsAtSessionDoor. Asserting it here is what
-		// this test used to do while the key resolved absent-to-false on every
-		// session — a green assertion over a dead key.
+		// `"settings":{...}` substring: Go marshals map keys sorted so an exact match
+		// breaks whenever a key is added, the exact form is what hid two MISSING keys,
+		// and each key gates a different KAS subsystem so a per-key assertion says
+		// which one broke. All are read with an absent-key-means-false resolver, so
+		// dropping one costs a whole capability with nothing in any log to say so.
+		// `workflows` is deliberately absent: KAS resolves it per session, so it moved
+		// to the session door and has its own fixture there.
 		for _, key := range []string{"codeIntelligence", "knowledge", "subagentOrchestration", "goal"} {
 			if !strings.Contains(got, `"`+key+`":{"enabled":true}`) {
 				t.Errorf("initialize missing the %s settings opt-in; got: %s", key, got)
@@ -2443,17 +2392,11 @@ while IFS= read -r line; do
 done
 `
 
-// captureRequest starts a bridge against sessionDoorScript and returns the raw
-// request line for one method, failing when the method was never sent.
-//
-// Fails rather than returns empty on a miss, because "the call did not happen"
-// and "the call carried nothing" are different defects and only one of them is
-// about the session door.
-//
-// alsoContains narrows the match for a method a single start sends more than once:
-// session/set_config_option carries the model, the effort level and autopilot on
-// the same method name, so a caller after one of them names the configId too
-// rather than depending on which applier ran first.
+// captureRequest starts a bridge against sessionDoorScript and returns the raw request line
+// for one method, failing rather than returning empty on a miss: "the call did not happen"
+// and "the call carried nothing" are different defects. alsoContains narrows the match for a
+// method one start sends more than once — session/set_config_option carries the model, the
+// effort level and autopilot on the same method name, so a caller names the configId too.
 func captureRequest(t *testing.T, method string, opts *vibekit.StartOpts, alsoContains ...string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -2493,15 +2436,11 @@ func captureRequest(t *testing.T, method string, opts *vibekit.StartOpts, alsoCo
 	return ""
 }
 
-// digObject walks a captured request down a chain of nested objects, failing at
-// the first level that is absent or not an object.
-//
-// A walk rather than a substring match, because the failure this guards is a key
-// nested at the wrong depth: `settings` beside `kiro` instead of inside it, or
-// `_meta.settings` with no `kiro` at all. Both would satisfy a
-// strings.Contains(`"workflows":{"enabled":true}`) and both resolve to nothing on
-// the KAS side. Each missing level is named, and `what` names the subject, so a
-// failure says which door's block broke rather than only which key.
+// digObject walks a captured request down a chain of nested objects, failing at the first
+// level that is absent or not an object. A walk rather than a substring match, because the
+// failure this guards is a key nested at the wrong depth: `settings` beside `kiro` instead of
+// inside it satisfies a strings.Contains and resolves to nothing on the KAS side. Each
+// missing level is named, and `what` names the subject.
 func digObject(t *testing.T, what, line string, levels ...string) map[string]any {
 	t.Helper()
 	var req map[string]any
@@ -2526,17 +2465,12 @@ func metaKiroSettings(t *testing.T, line string) map[string]any {
 	return digObject(t, "the session door's block", line, "params", "_meta", "kiro", "settings")
 }
 
-// TestSessionNewCarriesWorkflowsAtSessionDoor pins that session/new carries the
-// workflows settings opt-in, at the exact depth KAS reads it from.
-//
-// This is the wire half of the defect the kascap row records. KAS resolves this
-// key ONLY per session — createNewSessionState calls resolveWorkflows over
-// parseSettings(kiroMeta?.settings) off this call's own _meta, with no
-// connection-level fallback — so while it rode initialize it resolved
-// absent-to-false on every session and the agent had no run_workflow,
-// inspect_workflow, update_workflow, validate_workflow or send_message tool, and
-// no workflow steering doc. Nothing logged it and no method 404'd, so a fixture
-// on this exact call is the only thing that notices.
+// TestSessionNewCarriesWorkflowsAtSessionDoor pins that session/new carries the workflows
+// settings opt-in at the exact depth KAS reads it from. KAS resolves this key ONLY per
+// session — createNewSessionState calls resolveWorkflows over the call's own _meta, with no
+// connection-level fallback — so while it rode initialize it resolved absent-to-false on
+// every session and the agent had no run_workflow, inspect_workflow, update_workflow,
+// validate_workflow or send_message tool. Nothing logged it and no method 404'd.
 func TestSessionNewCarriesWorkflowsAtSessionDoor(t *testing.T) {
 	line := captureRequest(t, "session/new", &vibekit.StartOpts{Lifetime: t.Context(), Model: "m"})
 	settings := metaKiroSettings(t, line)
@@ -2577,29 +2511,13 @@ lose a capability a fresh one has. Captured:
 	}
 }
 
-// TestSessionDoorOmitsSettingsWhenDisabled pins two properties of the session
-// door on the REAL wire: the operator off switch reaches these bytes rather than
-// only the projection its own package tests, and the settings container is
-// DERIVED from the rows rather than always emitted — with workflows off there is
-// no session-door settings row left, so the container must be absent, not `{}`.
-//
-// This test used to assert something stronger and can no longer reach it. Its
-// subject was the `len(meta) > 0` guard in withSessionMeta — an empty projection
-// must add no `_meta` at all — and the env switch was then the only way to empty
-// the projection, because workflows was the only session-door row. policyPreset
-// is now also on that door, and since 2026-08-25 it is GATED on the active
-// security profile's preset set rather than unconditional, so this test supplies
-// one below to keep a second row present. That is what makes the assertions a
-// statement about the OVERRIDE's blast radius rather than about a door that
-// happens to be empty.
-//
-// The guard STAYS, and the cost of not testing it is recorded here rather than
-// papered over: it is now reachable only by a table with no session-door rows,
-// which is a state the table cannot be put in from a test without a seam this
-// does not earn. What survives is the half that still has a wire consequence, and
-// it is the half that would actually regress — a settings container emitted empty
-// would be bytes on every session start and would read to the next person as
-// though the door carried something.
+// TestSessionDoorOmitsSettingsWhenDisabled pins two properties of the session door on the
+// REAL wire: the operator off switch reaches these bytes rather than only the projection its
+// own package tests, and the settings container is DERIVED from the rows rather than always
+// emitted — with workflows off there is no session-door settings row left, so the container
+// must be absent, not `{}`. It supplies a policyPreset below to keep a second row present,
+// which is what makes the assertions a statement about the OVERRIDE's blast radius rather
+// than about a door that happens to be empty.
 func TestSessionDoorOmitsSettingsWhenDisabled(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "fake-kiro-cli")
@@ -2663,16 +2581,11 @@ security profile stops reaching the session:
 
 // --- supervised mode: the autopilot config-option VALUE ---
 
-// TestApplySupervised_SendsTheStringKASDeclares pins that autopilot travels as
-// the string KAS's select declares, on the real wire.
-//
-// A boolean is REFUSED: probed on the pinned kiro-cli 2.20.0,
-// {"configId":"autopilot","value":false} answers -32602 Invalid params and the
-// session stays in autopilot, so a supervised chat ran every turn without asking
-// while the switch read on and the only signal was one log line. Asserted on the
-// captured bytes rather than on a params map, because `false` and `"off"` are both
-// a legal map value and a unit assertion cannot tell the accepted shape from the
-// refused one.
+// TestApplySupervised_SendsTheStringKASDeclares pins that autopilot travels as the string
+// KAS's select declares. A boolean is REFUSED: probed on the pinned kiro-cli 2.20.0,
+// {"configId":"autopilot","value":false} answers -32602 Invalid params and the session stays
+// in autopilot, so a supervised chat ran every turn without asking. Asserted on the captured
+// bytes, because `false` and `"off"` are both a legal map value.
 func TestApplySupervised_SendsTheStringKASDeclares(t *testing.T) {
 	line := captureRequest(t, "session/set_config_option",
 		&vibekit.StartOpts{Lifetime: t.Context(), Model: "m", Supervised: true},
@@ -2694,16 +2607,12 @@ shape with -32602 and leaves the session in autopilot. Captured:
 
 // --- _meta.title: the wire shape KAS actually sends ---
 
-// TestApplySessionResult_TakesFlatMetaTitle pins that the session title is read
-// from a FLAT `_meta.title`, not from `_meta.kiro.title`.
-//
-// Every other `_meta` vibekit decodes on this wire is nested under `kiro`
-// (sessionConfigChoice's rateMultiplier, the prompt metadata), so `_meta.kiro`
-// is the shape a reader expects — and moving the tag there compiles cleanly and
-// silently yields "". Probed 2026-08-02 against a live kiro-cli: session/new and
-// session/load both spread KAS's session-metadata object directly onto `_meta`,
-// so `title` sits at its top level alongside `id`, `agentMode` and
-// `workspacePaths`. The second case is the trap.
+// TestApplySessionResult_TakesFlatMetaTitle pins that the session title is read from a FLAT
+// `_meta.title`, not from `_meta.kiro.title`. Every other `_meta` vibekit decodes on this
+// wire is nested under `kiro`, so that is the shape a reader expects — and moving the tag
+// there compiles cleanly and silently yields "". Probed 2026-08-02: session/new and
+// session/load both spread KAS's session-metadata object directly onto `_meta`, so `title`
+// sits at its top level alongside `id` and `agentMode`.
 func TestApplySessionResult_TakesFlatMetaTitle(t *testing.T) {
 	cases := []struct {
 		name string
@@ -2750,33 +2659,22 @@ func TestApplySessionResult_TakesFlatMetaTitle(t *testing.T) {
 
 // --- R1: the bridge's Cancel must close stdin, not just signal the head ---
 
-// TestCancelClosesStdinSoTheTreeSeesEOF is the R1 regression.
-//
-// vibekit runs `kiro-cli acp` on pipes and the head passes its stdio down, so
-// the tree (kiro-cli -> kiro-cli-chat -> node, ~300 MB) stays in ONE session
-// with no setsid(). Closing vibekit's write end therefore delivers EOF to the
-// whole chain, and that — not the signal — is what reclaims it: WaitDelay's
-// SIGKILL escalation targets the head only. Measured on kiro-cli 2.16.0,
-// signal-without-close leaked 2/2 trials at ~250 MB each while
-// close-then-signal leaked 0/2.
-//
-// The bait isolates the close from the signal: the head IGNORES SIGTERM, so the
-// grandchild can only be reclaimed by stdin reaching EOF. If Cancel goes back to
-// a bare Signal(SIGTERM), the grandchild survives and this fails.
+// TestCancelClosesStdinSoTheTreeSeesEOF: vibekit runs `kiro-cli acp` on pipes and the head
+// passes its stdio down, so the tree (kiro-cli -> kiro-cli-chat -> node, ~300 MB) stays in
+// ONE session with no setsid(). Closing vibekit's write end delivers EOF to the whole chain,
+// and that — not the signal — is what reclaims it: WaitDelay's SIGKILL escalation targets the
+// head only, and measured on kiro-cli 2.16.0 signal-without-close leaked 2/2 trials at ~250
+// MB each. The bait isolates the close: the head IGNORES SIGTERM, so only stdin EOF reclaims
+// the grandchild.
 func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "grandchild.pid")
-	// The head IGNORES SIGTERM and blocks forever. Its child reads vibekit's
-	// stdin pipe, and `head -c 1` returns the moment that pipe closes with no
-	// data. So the grandchild's death proves an EOF reached the TREE, and
-	// nothing else can cause it inside the deadline: WaitDelay's 5s SIGKILL
-	// escalation is past it, and Wait — which would close the pipes itself — is
-	// not called until Stop.
-	//
-	// `exec 3<&0` is required, not decoration: POSIX redirects an asynchronous
-	// command's stdin from /dev/null when job control is off, so a plain
-	// `head &` would read EOF instantly and the test would pass vacuously
-	// (observed). fd 3 carries the real pipe past that rule.
+	// The head IGNORES SIGTERM and blocks forever. Its child reads vibekit's stdin pipe
+	// and `head -c 1` returns the moment that pipe closes with no data, so the
+	// grandchild's death proves an EOF reached the TREE: WaitDelay's 5s SIGKILL is past
+	// the deadline and Wait is not called until Stop. `exec 3<&0` is required — POSIX
+	// redirects an asynchronous command's stdin from /dev/null when job control is off, so
+	// a plain `head &` would read EOF instantly and pass vacuously (observed).
 	script := "#!/bin/sh\ntrap '' TERM\nexec 3<&0\nhead -c 1 <&3 >/dev/null &\n" +
 		"echo $! > " + pidFile + "\nwhile :; do sleep 0.05; done\n"
 	scriptPath := filepath.Join(dir, "fake-kiro-cli")
@@ -2819,21 +2717,12 @@ func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
 }
 
 // processAlive reports whether pid is a live (non-zombie) process, read from
-// /proc/<pid>/stat.
-//
-// A null-signal poll is NOT usable, and the test above used to be one. `kill(pid,
-// 0)` answers "alive" for a zombie, and the pid here is the bait shell's
-// backgrounded child: the shell reaps it on its next wait, so a null-signal poll
-// asserts the SHELL's reaping latency on top of the property under test. That
-// happens to hold today because the bait ignores SIGTERM and stays alive to reap
-// — one fixture edit that lets the shell die with the group orphans the child onto
-// PID 1 and the poll then measures whatever init this suite runs under, which in
-// the vibekit container never reaps. A zombie already proves the EOF reached the
-// tree, which is the whole property.
-//
-// The state field follows the LAST ')' — comm is parenthesized and may itself
-// contain spaces or parens, so the prefix has to be skipped from the right rather
-// than split on whitespace.
+// /proc/<pid>/stat. A null-signal poll is NOT usable: `kill(pid, 0)` answers "alive" for a
+// zombie, and the pid here is the bait shell's backgrounded child, so such a poll asserts the
+// SHELL's reaping latency on top of the property — and one fixture edit letting the shell die
+// orphans the child onto a PID 1 that never reaps in this container. A zombie already proves
+// the EOF reached the tree. The state field follows the LAST ')', because comm is
+// parenthesized and may itself contain spaces or parens.
 func processAlive(pid int) bool {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)) // #nosec G304 -- pid from the test's own child
 	if err != nil {
@@ -2865,24 +2754,13 @@ func waitForBridgePID(t *testing.T, path string) int {
 	}
 }
 
-// TestSessionParams_CarryNoMCPServers pins BOTH halves of the MCP session
-// param contract, on the wire.
-//
-// PRESENCE: kiro-cli 2.16's session/new schema requires `mcpServers` as a
-// non-optional array — omitting the key fails every session with "Invalid
-// params: expected array, received undefined". So the key must be there.
-//
-// EMPTINESS: vibekit used to send its server set inline. It renders KAS's
-// own hot-reloading config file instead, and KAS merges client entries over
-// file entries PER NAME — a surviving inline entry OUTRANKS the file: the
-// file would still reload, the agent would keep using the inline copy, and
-// every edit in the UI would look like it did nothing. That failure is
-// silent and would present as "MCP settings don't work". An EMPTY array
-// carries no names, so the file-based set is untouched.
-//
-// It asserts on the RAW request bytes, not on a Go struct, because the bug
-// it guards against is a re-added or re-dropped map key — something a typed
-// assertion on StartOpts would not see.
+// TestSessionParams_CarryNoMCPServers pins BOTH halves of the MCP session param contract on
+// the wire. PRESENCE: kiro-cli 2.16's session/new schema requires `mcpServers` as a
+// non-optional array, so omitting the key fails every session. EMPTINESS: KAS merges client
+// entries over file entries PER NAME, so a surviving inline entry OUTRANKS the hot-reloading
+// config file — the file would still reload, the agent would keep the inline copy, and every
+// edit in the UI would look like it did nothing. It asserts on the RAW request bytes because
+// the bug it guards is a re-added or re-dropped map key, which a typed assertion misses.
 func TestSessionParams_CarryNoMCPServers(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "requests.log")
@@ -2969,23 +2847,13 @@ var coreIOToolIDs = []string{
 	"execute_bash", "read_file", "fs_write", "str_replace", "grep_search", "file_search",
 }
 
-// TestInitialize_DeclaresNoCoreIOTool guards a bound vibekit does not own and
-// cannot see.
-//
-// Registering any client tool named above flips `hasClientIOTools` and silently
-// promotes the agent to the UNBOUNDED ExecuteBash. Nothing logs the switch and no
-// behaviour changes until some command runs long, so the 30 minute ceiling would
-// vanish as a side effect of an unrelated feature and the symptom would be "a
-// turn hung forever" months later.
-//
-// The constraint was already written down beside the capability map
-// (bridge.go's clientCapabilities block). A comment does not fail a build, which
-// is what this test is for. If a future change genuinely wants one of these
-// tools, it has to delete this test — and that deletion is the conversation about
-// reintroducing the bound deliberately.
-//
-// Asserts on the RAW initialize bytes rather than a Go value: the ids can reach
-// KAS through clientCapabilities or through _meta, and only the wire sees both.
+// TestInitialize_DeclaresNoCoreIOTool guards a bound vibekit does not own and cannot see:
+// registering any client tool named above flips `hasClientIOTools` and silently promotes the
+// agent to the UNBOUNDED ExecuteBash. Nothing logs the switch and no behaviour changes until
+// some command runs long, so the 30 minute ceiling would vanish as a side effect of an
+// unrelated feature. A change that genuinely wants one of these tools has to delete this
+// test. Asserts on the RAW initialize bytes: the ids can reach KAS through
+// clientCapabilities or through _meta, and only the wire sees both.
 func TestInitialize_DeclaresNoCoreIOTool(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "init.log")
@@ -3057,26 +2925,14 @@ const initializeGoldenPath = "testdata/initialize.golden"
 // message this fixture can produce.
 const initializeGoldenCmd = "UPDATE_GOLDEN=1 go test ./internal/bridge/ -run TestInitializeDeclaresExactly"
 
-// initGateCases is the COMPLETE matrix of runtime gates on the _meta.kiro
-// block, and there are four: StartOpts.SecretStorage decides secretStorage's
-// VALUE (the key is present either way), StartOpts.EnableHooks decides whether
-// the hooks key is present AT ALL, StartOpts.ToolSearch decides presence for
-// settings.toolSearch, and StartOpts.Knowledge decides the VALUE of two keys at
-// once (the knowledge capability and settings.knowledge). Four different
-// mechanisms, which is why each needs its own axis rather than one shared
-// "capabilities on/off" case.
-//
-// Exhaustive over the two original booleans, representative over the two added
-// ones — the same argument internal/kascap's spawnMatrix makes for the same
-// reason: the added gates key on their own fields and write their own keys, so a
-// full 16-row product would add twelve rows differing from a row already here by
-// one key. What each added gate needs is both of its states plus a line where it
-// coexists with the originals, and Presets is deliberately absent from this door
-// (it rides the session door, pinned by its own session/new and session/load
-// fixtures).
-//
-// The slice order IS the golden's line order. Reordering it rewrites the
-// fixture without changing the wire, which would destroy the fixture's value.
+// initGateCases is the COMPLETE matrix of runtime gates on the _meta.kiro block, and there
+// are four different mechanisms: SecretStorage decides secretStorage's VALUE (the key is
+// present either way), EnableHooks decides whether the hooks key is present AT ALL,
+// ToolSearch decides presence for settings.toolSearch, and Knowledge decides the VALUE of
+// two keys at once. Exhaustive over the two original booleans, representative over the two
+// added ones: they key on their own fields, so a full 16-row product would add twelve rows
+// differing by one key. Presets is absent — it rides the session door. The slice order IS
+// the golden's line order, so reordering rewrites the fixture without changing the wire.
 var initGateCases = []struct {
 	name          string
 	secretStorage bool
@@ -3093,38 +2949,12 @@ var initGateCases = []struct {
 	{"every gate on", true, true, true, true},
 }
 
-// TestInitializeDeclaresExactly pins the exact bytes of every initialize
-// request vibekit can send, against a committed golden.
-//
-// The fixture was originally captured from the PRE-kascap code, so that it
-// witnessed one claim nothing else could: moving the _meta.kiro block into
-// internal/kascap changed no byte on the wire. That claim is DISCHARGED and is
-// not re-checked here — the fixture has since been regenerated for the
-// capability-door change (workflows left this door for the session door, goal and
-// workspaceTrusted joined it), and a golden regenerated after a change proves
-// only that the change agrees with itself.
-//
-// What it pins now is the current connection-door contract, which is worth as
-// much: every failure mode this fixture exists for is silent on the wire. A
-// settings key dropped to a bare true resolves false, a capability renamed by a
-// KAS bump simply never matches, and a key nested one level wrong is ignored.
-// None of those produce an error, a log line or a -32601.
-//
-// The capture is the raw JSON-RPC line vibekit wrote to the subprocess's
-// stdin, not a re-marshalling of an intermediate map, so it cannot agree with
-// the code while disagreeing with the wire. The session door has its own
-// fixtures beside it: TestSessionNewCarriesWorkflowsAtSessionDoor and its
-// session/load twin.
-//
-// Two things make it deterministic and both are pinned elsewhere: the RPC id
-// is 1 because initialize is the first Call of a bridge's life (Call does
-// nextID.Add(1), and Start calls initialize before session/new), and
-// clientInfo.version is "dev" because version.Build only leaves its default
-// under the image build's -ldflags, which version.TestBuildDefaultsToDev pins.
-// Neither is masked; a change to either is a real wire change and should fail
-// here.
-//
-// Regenerate with:
+// TestInitializeDeclaresExactly pins the exact bytes of every initialize request vibekit can
+// send against a committed golden, because every failure mode it guards is silent on the
+// wire: a settings key dropped to a bare true resolves false, a capability renamed by a KAS
+// bump never matches, and a key nested one level wrong is ignored. The capture is the raw
+// JSON-RPC line written to the subprocess's stdin, so it cannot agree with the code while
+// disagreeing with the wire. Regenerate with:
 //
 //	UPDATE_GOLDEN=1 go test ./internal/bridge/ -run TestInitializeDeclaresExactly
 func TestInitializeDeclaresExactly(t *testing.T) {

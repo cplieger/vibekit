@@ -174,14 +174,10 @@ func TestCloseTurnOnBridgeDeath_APromptTurnAppendsAfterItsOwnUserRow(t *testing.
 }
 
 // TestForwardExit_DeliberateCloseIsNotADeath is the discriminator the third actor
-// rests on.
-//
-// Every teardown vibekit performs itself removes the bridge from the map first
-// and has its own closer: the model-switch fallback, the empty-turn recovery's
-// session refresh, the shutdown drain. Reading a deliberate stop as a death would
-// close the turn those paths are still driving — the empty-turn retry is the case
-// that bites, because it closes the bridge mid-turn on purpose and then answers
-// the same turn.
+// rests on: every teardown vibekit performs removes the bridge from the map first
+// and has its own closer, so reading a deliberate stop as a death closes a turn
+// those paths are still driving — the empty-turn retry closes the bridge mid-turn
+// on purpose and then answers the same turn.
 func TestForwardExit_DeliberateCloseIsNotADeath(t *testing.T) {
 	h, cs, br := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "half an answer")
@@ -539,14 +535,10 @@ func TestAwaitTurn_DeadContextReturnsRatherThanParking(t *testing.T) {
 
 // An epoch-scoped closer handed a ZERO epoch closes nothing.
 //
-// Zero was overloaded: it meant "take whatever is open" AND it is what StartTurn
-// returns when it refuses, which is reachable — a user cancel landing while a
-// prompt's StartTurn is parked on the previous turn's persistence. The prompt Call
-// then fails on the dead context and the failure path ran with epoch zero, so
-// AbandonInFlightTurn claimed the chat's open turn: an agent-initiated one, whose
-// partial it persisted under an interrupt outcome carrying ANOTHER turn's failure
-// reason, with an interrupted divider to match. "Close whatever is open" now has
-// its own spelling.
+// Zero is also what StartTurn returns when it refuses, which is reachable, so
+// overloading it as "take whatever is open" let a failed prompt claim an
+// agent-initiated turn and persist its partial under an interrupt outcome
+// carrying ANOTHER turn's failure reason. That meaning has its own spelling now.
 func TestAbandonInFlightTurn_WithNoEpochClosesNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -576,14 +568,11 @@ func TestAbandonInFlightTurn_WithNoEpochClosesNothing(t *testing.T) {
 }
 
 // The closers read the buffer through ONE guarded snapshot, so a fold still in
-// flight when the claim landed cannot race them.
-//
-// turnFinalizing excludes the NEXT fold, not the one already past TurnFoldTarget,
-// and the position advance runs as consumeFrame's defer — so the settle wakes at the
-// instant frame N finishes and the folder is free to begin N+1 in parallel with the
-// claim. Reading eight exported fields one at a time then races a strings.Builder
-// and three slices, which by the memory model can persist a torn Content as the
-// turn's final text. Run with -race; that is the point of it.
+// flight when the claim landed cannot race them: turnFinalizing excludes the NEXT
+// fold, so the settle wakes as frame N finishes while the folder is free to begin
+// N+1. Reading eight exported fields one at a time races a strings.Builder and
+// three slices, and can persist a torn Content as the turn's final text. Run with
+// -race; that is the point of it.
 func TestCloseTurn_ConcurrentFoldDoesNotRaceTheContentSnapshot(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()

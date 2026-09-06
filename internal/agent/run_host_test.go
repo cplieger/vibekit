@@ -97,15 +97,11 @@ func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_StepContentIsProjected pins the run bridge's content door.
-//
-// Two halves, and both are the point. The frame REACHES the client, as a
-// workspace-global `run_step` naming the node it came from — it used to be
-// dropped, which left exactly the runs whose only surface is the run tab as the
-// ones whose steps could not be watched. And it does NOT open an assistant
-// buffer for the synthetic chat id, because that would be the phantom chat
-// invariant 3 exists to prevent; the content goes straight to the run's watchers
-// instead of into a transcript.
+// TestRunDispatch_StepContentIsProjected pins the run bridge's content door, both halves.
+// The frame REACHES the client as a workspace-global `run_step` naming the node it came
+// from, which is what makes a run whose only surface is the run tab watchable. And it does
+// NOT open an assistant buffer for the synthetic chat id, because that is the phantom chat
+// invariant 3 exists to prevent; the content goes to the run's watchers, not a transcript.
 func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 	logs := captureLogs(t)
 	h, _, _ := newTestHub()
@@ -675,15 +671,11 @@ func TestCancelRun_FailedRPCHandsTheClaimBack(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_TheOtherAskKindsReachTheRunTab is the rest of the ask
-// population: a step can raise an elicitation or a plain question, not only a
-// permission, and each has to travel the same route.
-//
-// Both are BLOCKING requests — KAS holds the step until an answer comes back — so
-// a dispatch that fell through to the refusal ladder would not merely hide a
-// dialog, it would answer "unsupported" and strand the step with no way for the
-// user to unblock it. The synthetic chat id is the route in both directions: it is
-// what the client dock renders in the run tab and what the reply is keyed by.
+// TestRunDispatch_TheOtherAskKindsReachTheRunTab is the rest of the ask population: a step
+// can raise an elicitation or a plain question, not only a permission. Both are BLOCKING
+// requests — KAS holds the step until an answer comes back — so a dispatch falling through
+// to the refusal ladder would answer "unsupported" and strand the step with no way to
+// unblock it. The synthetic chat id is the route in both directions.
 func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -753,15 +745,11 @@ func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_TerminalCompletionClosesTheRunsBridge pins the teardown that
-// TestCloseFinishedRunBridge_TerminalOnly only pins the PREDICATE of: the frame the
-// close hangs off is run_complete specifically, and a run bridge that outlives its
-// terminal run holds a kiro-cli subprocess for the life of the process.
-//
-// The close runs on its own goroutine — it is called from the bridge's forward loop
-// and closing that bridge closes the channel the loop ranges over — so the wait is
-// a deadline-bounded poll that fails closed rather than an assumption about which
-// side of the race won.
+// TestRunDispatch_TerminalCompletionClosesTheRunsBridge pins the FRAME the close hangs off
+// — run_complete specifically — where its sibling pins only the predicate; a run bridge
+// outliving its terminal run holds a kiro-cli subprocess for the life of the process. The
+// close runs on its own goroutine, because it is called from the forward loop and closing
+// that bridge closes the channel the loop ranges over, so the wait is a bounded poll.
 func TestRunDispatch_TerminalCompletionClosesTheRunsBridge(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -780,15 +768,11 @@ func TestRunDispatch_TerminalCompletionClosesTheRunsBridge(t *testing.T) {
 	}
 }
 
-// TestLaunchRun_ReportsTheReplysOwnError pins which of a Call's two failure
-// channels a launch believes.
-//
-// KAS refuses a launch IN BAND: the transport succeeds and the reply carries a
-// JSON-RPC error, which is where the reason lives ("recipe not found", a schema
-// complaint about the inputs). A launch that read only the transport error would
-// fall through to the decode and report the generic "reply carried no workflowId"
-// instead — the same message a genuinely malformed reply produces, so the operator
-// loses the one sentence that says what to fix.
+// TestLaunchRun_ReportsTheReplysOwnError pins which of a Call's two failure channels a
+// launch believes. KAS refuses a launch IN BAND: the transport succeeds and the reply
+// carries a JSON-RPC error, which is where the reason lives. A launch reading only the
+// transport error falls through to the decode and reports the generic "reply carried no
+// workflowId" — the same message a malformed reply produces, so the reason is lost.
 func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -809,15 +793,12 @@ func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
 	}
 }
 
-// TestCancelForSessions_CancelsARunWhoseRecordIsGone is the close escalation's
-// half of the run lifecycle: the record was deleted inside the close commit, so
-// the cancel is driven from the CAPTURED session chain. The record-reading form
-// (CancelForChat) is the control — on a deleted chat it must no-op, which is
-// exactly why the chain-shaped seam exists.
-//
-// Two chains, because the membership layer captures one per doomed chat: a root
-// chat whose run hangs off a RETIRED session (the chain's whole point — the
-// current id alone would miss it), and a tangent child's single-session chain.
+// TestCancelForSessions_CancelsARunWhoseRecordIsGone: the record was deleted inside the
+// close commit, so the cancel is driven from the CAPTURED session chain. The record-reading
+// form (CancelForChat) is the control — on a deleted chat it must no-op, which is why the
+// chain-shaped seam exists. Two chains, because the membership layer captures one per doomed
+// chat: a root chat whose run hangs off a RETIRED session (the chain's whole point, since
+// the current id alone would miss it), and a tangent child's single-session chain.
 func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -905,19 +886,12 @@ func TestCancelForChat_ReportsARunListItCouldNotRead(t *testing.T) {
 	})
 }
 
-// TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts.
-//
-// `decodePauseFrame` used to discard the WHOLE frame on any unmarshal error, so a
-// `pauseDetail` whose wire shape stopped matching would have broken the heal for
-// EVERY pause rather than only the branch ones — and broken it silently, because
-// an empty workflow id makes `healPaused` return before the line that reports a
-// decline. Two halves of the same defect, and this pins the survivable one: what
-// the reason arms need must reach them whatever the detail turned into.
-//
-// `encoding/json` finishes the object on a type mismatch and reports the earliest
-// one, so keeping what decoded is not a guess — the sibling fields genuinely
-// decoded. What is NOT kept is a syntax error's leftovers, which is the other case
-// here: there the bytes are not JSON and nothing may be read off them.
+// TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts: discarding the WHOLE frame on
+// any unmarshal error breaks the heal for EVERY pause rather than only the branch ones, and
+// breaks it silently, because an empty workflow id makes `healPaused` return before the line
+// that reports a decline. `encoding/json` finishes the object on a type mismatch and reports
+// the earliest one, so keeping what decoded is not a guess. What is NOT kept is a syntax
+// error's leftovers: there the bytes are not JSON and nothing may be read off them.
 func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 	frame := func(t *testing.T, params string) pauseFrame {
 		t.Helper()
@@ -998,17 +972,12 @@ func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 		}
 	})
 
-	// The line the tolerance may not cross, and it is asserted at the HELPER because
-	// the frame cannot show it: `json.Unmarshal` validates the whole document before
-	// it decodes anything, so a syntax error leaves the destination untouched and the
-	// frame is the zero value whether the error is tolerated or not. Measured — a
-	// frame-level assertion here survives a mutant that tolerates everything, which
-	// makes it a test that cannot fail.
-	//
-	// What IS observable is the helper's own verdict, and that is where the rule
-	// lives: a type drift is a partial answer, bytes that are not JSON are not, and
-	// `encoding/json` only promises the UnmarshalTypeError when nothing more serious
-	// happened. `rs.inspect` hands this an unguarded RPC payload, so the empty
+	// The line the tolerance may not cross, asserted at the HELPER because the frame
+	// cannot show it: `json.Unmarshal` validates the whole document before it decodes
+	// anything, so a syntax error leaves the destination untouched and the frame is the
+	// zero value either way — a frame-level assertion here survives a mutant that
+	// tolerates everything, which makes it a test that cannot fail. The helper's verdict
+	// is observable, and `rs.inspect` hands it an unguarded RPC payload, so the empty
 	// document is a reachable input rather than a hypothetical.
 	for name, body := range map[string]string{
 		"a truncated object": `{"workflowId":"wf_1","pauseReason":"x"`,

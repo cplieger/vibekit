@@ -1,18 +1,8 @@
 package agent
 
-// Pre-session catalog: GET /api/config-template serves the mode + model
-// catalog from kiro-cli 2.14's _kiro/config/template — the session-less
-// config-options template. Replaces the former `kiro-cli chat --list-models`
-// shell-out behind /api/models: one call seeds both the pre-session model
-// picker and the role picker's mode list (the client still merges workspace
-// agents from /api/workspace/kiro-config, since the template carries none).
-//
-// Routed through the long-lived UTILITY bridge: the method is advertised
-// unconditionally and needs no session context, but the model registry it
-// reads is populated by the governance refresh that runs on session
-// creation, which the utility bridge's own session/new covers. Once a chat
-// session exists its config_option_update stays the authoritative catalog;
-// this endpoint only feeds pre-session UI.
+// Pre-session catalog: GET /api/config-template serves the mode + model catalog
+// from kiro-cli's session-less _kiro/config/template, over the UTILITY bridge,
+// whose own session/new populates the model registry the method reads.
 
 import (
 	"context"
@@ -26,14 +16,11 @@ import (
 	"github.com/cplieger/webhttp/v2"
 )
 
-// configTemplateTimeout bounds the template round-trip: first call may
-// lazily spin up the utility bridge, so this matches hookCallTimeout
-// rather than a bare read timeout.
-//
-// The CLIENT's bound for this endpoint is deliberately LONGER (fetchModelsFromREST
-// in static-src/app.ts), or this budget can never be spent: the library default is
-// 30s, so a boot fetch aborted every cold start — spawn, unpack the KAS runtime,
-// handshake — before the server had finished. Move the two together.
+// configTemplateTimeout bounds the template round-trip: the first call may lazily
+// spin up the utility bridge, so this matches hookCallTimeout rather than a bare
+// read timeout. The CLIENT's bound (fetchModelsFromREST in static-src/app.ts) is
+// deliberately LONGER, or this budget can never be spent — the library's 30s
+// default aborted every cold start. Move the two together.
 const configTemplateTimeout = 45 * time.Second
 
 // kasConfigTemplate is the _kiro/config/template result shape. Modes
@@ -71,9 +58,8 @@ type kasConfigChoice struct {
 	Options     []kasConfigChoice `json:"options"` // grouped selects nest
 	Meta        struct {
 		Kiro struct {
-			// DefaultEffortLevel is the model's own default tier; the tier
-			// list itself is the `effortLevel` option's own options[] — see
-			// vibekit.SessionModel.
+			// DefaultEffortLevel is the model's own default tier; the tier list is
+			// the `effortLevel` option's own options[] — see vibekit.SessionModel.
 			DefaultEffortLevel string  `json:"defaultEffortLevel"`
 			RateMultiplier     float64 `json:"rateMultiplier"`
 			HasEffort          bool    `json:"hasEffort"`
@@ -105,12 +91,9 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 	webhttp.WriteJSON(w, templateToResponse(&tpl))
 }
 
-// unavailableTemplate is the body for a read that produced no catalog. ONE
-// builder for both failure branches: they used to construct the literal
-// separately and leave EffortLevels nil, so the two degrade paths emitted
-// `"effort_levels": null` where the success path emits `[]` — one response type
-// with two shapes, and a decoder requiring an array would have failed on the
-// failure path alone.
+// unavailableTemplate is the body for a read that produced no catalog. ONE builder
+// for both failure branches, which used to leave EffortLevels nil and so emitted
+// `null` where the success path emits `[]` — one response type with two shapes.
 func unavailableTemplate(reason vibekit.CatalogReason) vibekit.ConfigTemplateResponse {
 	return vibekit.ConfigTemplateResponse{
 		Catalog:       vibekit.CatalogUnavailable,
@@ -140,10 +123,9 @@ func templateToResponse(tpl *kasConfigTemplate) vibekit.ConfigTemplateResponse {
 		})
 	}
 	out := vibekit.ConfigTemplateResponse{
-		// Empty until a `model` option turns up. The verdict is the option's
-		// PRESENCE, never len(out.Models): KAS omits the option when its cache
-		// holds nothing, and a present option whose every entry the
-		// [Deprecated] filter drops is still a catalog KAS answered with.
+		// The verdict is the option's PRESENCE, never len(out.Models): KAS omits
+		// the option when its cache holds nothing, and a present option whose
+		// entries the [Deprecated] filter all drops is still a catalog KAS answered.
 		Catalog:      vibekit.CatalogEmpty,
 		Modes:        modes,
 		Models:       []vibekit.SessionModel{},

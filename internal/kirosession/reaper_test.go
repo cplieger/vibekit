@@ -158,16 +158,10 @@ func TestNilReaperSafe(t *testing.T) {
 
 // An EMPTY keep-list against a populated tree is refused, not obeyed.
 //
-// This is the incident test. A dev build ran with KIRO_CONFIG_DIR pointed at a
-// scratch directory while KIRO_HOME was left unset, so the chat store was empty
-// while the session store still resolved to the real `$HOME/.kiro` shared with
-// another application. The startup sweep received a keep-list of zero refs,
-// treated it as authoritative, and deleted ~450 sessions belonging to that other
-// app. The caller's completeness flag could not catch it: an empty store IS
-// complete, having successfully read all zero of its files.
-//
-// Every session here is old enough to be past the guard, so without the refusal
-// this test would reap all four.
+// A config dir pointed elsewhere while KIRO_HOME still resolves to a shared
+// `$HOME/.kiro` yields zero refs, and the caller's completeness flag cannot
+// catch it — an empty store IS complete. Every session here is past the guard,
+// so without the refusal this reaps all four.
 func TestSweepRefusesEmptyKeepListAgainstPopulatedTree(t *testing.T) {
 	root := t.TempDir()
 	old := 30 * time.Minute
@@ -209,12 +203,9 @@ func TestSweepEmptyKeepListOnEmptyTreeIsOrdinaryNoop(t *testing.T) {
 }
 
 // countSessions is what the guard keys on, so it must see sessions across every
-// workspace-hash directory — the bug deleted across ten of them.
-//
-// It counts SESSIONS, not files. A session leaves a dir under its workspace hash
-// and one or more sidecars under cli/, so counting the sidecars instead reports a
-// number the guard's log line then states as how much is at stake — and an
-// operator deciding whether to repair a volume reads that number.
+// workspace-hash directory, and it counts SESSIONS rather than files: one session
+// leaves a dir plus one or more cli/ sidecars, and its number is what the guard's
+// log states as how much is at stake.
 func TestCountSessionsSpansWorkspaceHashes(t *testing.T) {
 	root := t.TempDir()
 	makeSession(t, root, "h1", "sess_1", 0)
@@ -237,12 +228,9 @@ func TestCountSessionsSpansWorkspaceHashes(t *testing.T) {
 // TestSweep_ReapingASessionTakesItsSidecarsWhateverTheirAge pins the two things
 // a reaped session dir owes: it counts, and its sidecars go with it.
 //
-// The guard window spares a YOUNG orphan because a session being created right
-// now has no reference yet. It does not follow that a young SIDECAR of a session
-// already judged reapable is spared: the session it belongs to is gone, so
-// nothing will ever reference it again and the age that would normally protect it
-// is meaningless. And the returned count is what the caller logs, so a dir this
-// sweep really removed has to be in it.
+// The guard spares a young ORPHAN because it may not be referenced yet; a young
+// SIDECAR of an already-reapable session is not spared, since nothing will ever
+// reference it again.
 func TestSweep_ReapingASessionTakesItsSidecarsWhateverTheirAge(t *testing.T) {
 	root := t.TempDir()
 	makeSession(t, root, "h", "sess_orphan", 30*time.Minute)
@@ -301,15 +289,9 @@ func TestSweep_CountsAStrandedSidecarAsAReapedSession(t *testing.T) {
 }
 
 // TestReaperLogsOnlyWhatHappened pins every line this package emits, and its
-// silence.
-//
-// Each of them reports an outcome the filesystem no longer shows: a removal that
-// failed leaves the entry behind, but the same call succeeding leaves nothing to
-// look at either way, so the log is the whole record. Two of the lines are load
-// bearing — the refusal is what stopped ~450 sessions of another application
-// being deleted, and the reaped count is what says a sweep did anything — and a
-// line that fires when nothing went wrong is how a reader learns to skip all of
-// them.
+// silence. Each reports an outcome the filesystem no longer shows, so the log is
+// the whole record — and a line that fires when nothing went wrong is how a
+// reader learns to skip all of them.
 func TestReaperLogsOnlyWhatHappened(t *testing.T) {
 	t.Run("a successful reap says nothing", func(t *testing.T) {
 		root := t.TempDir()
@@ -422,15 +404,12 @@ func TestReap_SkipsASessionInAnotherWorkspacesBucket(t *testing.T) {
 	}
 }
 
-// TestSweep_SkipsSessionsThatDoNotNameThisWorkspace is the sweep half, and the
-// population it protects is every session another client in this Kiro home
-// created: they are unreferenced by construction, because the keep-list is built
-// from vibekit's own chats.
+// TestSweep_SkipsSessionsThatDoNotNameThisWorkspace protects every session
+// another client in this Kiro home created: unreferenced by construction, since
+// the keep-list is built from vibekit's own chats.
 //
-// The trailing case is what makes the whole guard honest rather than a hash
-// comparison in disguise: a session in OUR bucket that names another root is
-// still skipped, and a session in a foreign-looking bucket that names ours is
-// still reaped. The record decides, not the path.
+// The trailing case is what keeps this from being a hash comparison in disguise:
+// the record decides, not the path.
 func TestSweep_SkipsSessionsThatDoNotNameThisWorkspace(t *testing.T) {
 	root := t.TempDir()
 	old := 30 * time.Minute
@@ -461,14 +440,10 @@ func TestSweep_SkipsSessionsThatDoNotNameThisWorkspace(t *testing.T) {
 	}
 }
 
-// TestSweep_DoubtRetains pins the three doubt cases against the mismatch case
-// above, because they are the ones a future KAS version can produce by accident.
-//
-// Each of them is a session this sweep would otherwise reap: unreferenced, past
-// the guard, in a readable bucket. Skipping costs retained disk; reaping costs
-// history that cannot be recovered, and there is no way to tell "KAS stopped
-// writing workspacePaths" from "this session is not ours" at the moment of the
-// unlink. So the cheap outcome is the answer for all four.
+// TestSweep_DoubtRetains pins the three doubt cases, the ones a future KAS
+// version can produce by accident. Nothing distinguishes "KAS stopped writing
+// workspacePaths" from "not ours" at the unlink, and reaping costs unrecoverable
+// history, so retaining is the answer for all four.
 func TestSweep_DoubtRetains(t *testing.T) {
 	old := 30 * time.Minute
 	for _, tc := range []struct {
@@ -538,12 +513,10 @@ func makeRunDir(t *testing.T, root, hash, workflowID string) {
 // TestSweep_SparesAStepSessionWhoseRunStillExists is the prerequisite for reading
 // a step's transcript back at all.
 //
-// A step session is referenced by no chat and is no bridge's own session, so it
-// is an orphan from the moment KAS creates it — measured on the live volume, the
-// hourly sweep was reaping step sessions MID-RUN once they passed the guard. The
-// four cases below are the whole rule: spared while its run is on disk, reaped
-// once the run is gone, and neither answer changes for a session that is not a
-// step at all.
+// A step session is referenced by no chat and is no bridge's own, so it is an
+// orphan from creation and the sweep was reaping steps MID-RUN. The rule: spared
+// while its run is on disk, reaped once the run is gone, unchanged for a
+// non-step.
 func TestSweep_SparesAStepSessionWhoseRunStillExists(t *testing.T) {
 	old := 30 * time.Minute
 	for _, tc := range []struct {

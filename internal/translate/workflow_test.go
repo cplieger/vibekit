@@ -1,14 +1,9 @@
 package translate
 
-// Tests for the workflow-run channel and the step-frame classification it makes
-// possible.
+// Tests for the workflow-run channel and step-frame classification.
 //
-// Every case here pins a defect a run creates on code that predates runs. Before
-// a workflow existed, a session id differing from the chat's could only mean a
-// subagent, and six sites read it that way — three by DROPPING the frame and
-// three by labelling it a subagent's. A step is neither, and the whole point of
-// the classifier is that the two questions those six sites ask are different
-// questions with different right answers for a step.
+// A step is neither the chat nor a subagent, so the drop question and the
+// subagent question have different right answers for one.
 
 import (
 	"context"
@@ -26,7 +21,6 @@ const (
 	testSub    = "sess_subagent"
 )
 
-// notif builds an A→C notification frame with the given params.
 func notif(method string, params map[string]any) *vibekit.RPCResponse {
 	raw, err := json.Marshal(params)
 	if err != nil {
@@ -35,7 +29,6 @@ func notif(method string, params map[string]any) *vibekit.RPCResponse {
 	return &vibekit.RPCResponse{Method: method, Params: raw}
 }
 
-// capturing returns deps that append every broadcast event to the slice.
 func capturing(events *[]vibekit.ServerEvent) *baseDeps {
 	d := newBaseDeps()
 	d.parent = testParent
@@ -207,17 +200,11 @@ func TestRunStart_CarriesTheName(t *testing.T) {
 	}
 }
 
-// TestRunStart_CarriesTheScheduledMark pins the one fact on this event the client
-// provably cannot derive for itself.
+// TestRunStart_CarriesTheScheduledMark pins a flag no client can derive: both
+// scheduled and manual launches are parentless, and `parentSessionId` is empty
+// for both, so only the launch path knows.
 //
-// A parentless run's lifecycle frames are workspace-global with an EMPTY chat id,
-// and a manual launch is parentless too, so nothing a client can watch separates
-// scheduled from manual. `parentSessionId` does not either: it separates
-// agent-parented from parentless and is empty for both of these. Only the launch
-// path knows, which is why the flag is read from the host here.
-//
-// The lookup is keyed on the WORKFLOW id, and that is the part worth a test: the
-// obvious key, chatID, is the empty string for exactly the runs the flag is about.
+// The lookup must key on the WORKFLOW id — chatID is "" for exactly these runs.
 func TestRunStart_CarriesTheScheduledMark(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -344,15 +331,10 @@ func TestNodeStart_RecordsTheStepSession(t *testing.T) {
 }
 
 // TestRunComplete_LeavesTheStepSessionsToItsCaller pins where the registry's
-// bound is NOT.
-//
-// This frame carries a status, and `paused` is one of the values it carries: KAS
-// reports a step parked on a question through `run_complete` seconds after the
-// ask and minutes before the run resumes. So wiping the registry here emptied it
-// MID-RUN, and the resumed run's next ask resolved no run id at all. The gate is
-// the caller's (agent.observeComplete's `terminalRunStatus` branch, which already
-// makes the identical decision for the run's own bounds), so this handler forgets
-// nothing even for a status that IS terminal.
+// bound is NOT: this frame's status can be `paused`, so wiping the registry here
+// empties it MID-RUN and the resumed run's next ask resolves no run id. The gate
+// is the caller's (agent.observeComplete's `terminalRunStatus` branch), so this
+// handler forgets nothing even for a status that IS terminal.
 func TestRunComplete_LeavesTheStepSessionsToItsCaller(t *testing.T) {
 	t.Parallel()
 	var events []vibekit.ServerEvent
@@ -368,7 +350,6 @@ func TestRunComplete_LeavesTheStepSessionsToItsCaller(t *testing.T) {
 			t.Errorf("%s was forgotten by the frame rather than by the gated caller", id)
 		}
 	}
-	// The frame's own job still happened.
 	if len(events) != 1 || events[0].Type != vibekit.EventRunFinished {
 		t.Errorf("events = %+v, want one run_finished", events)
 	}
@@ -462,7 +443,7 @@ func TestWorkflowMeta_SubtaskID(t *testing.T) {
 // subtask), which EXTENDS the trailing block when kind and subtask both match. A
 // step's text frame carries an empty agentSubtaskId (KAS stamps that only on tool
 // frames), so empty matched empty and the step's words landed inside the parent's
-// paragraph — reproducing exactly the context confusion workflows exist to fix.
+// paragraph.
 func TestStepChunk_OpensItsOwnBlock(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
@@ -564,8 +545,7 @@ func TestSessionInfoUpdate_StepMeteringCountsCreditsOnly(t *testing.T) {
 	t.Parallel()
 	// NO `workflow` block, deliberately: KAS's buildSessionInfoUpdate merges no
 	// promptMeta, so a step's turn_completion is byte-identical to the chat's own
-	// and the step fact can only arrive as ATTRIBUTION. The earlier version of
-	// this test set the block and so proved a mechanism the wire never triggers.
+	// and the step fact can only arrive as ATTRIBUTION.
 	infoFrame := func() json.RawMessage {
 		kiro := map[string]any{
 			"kind":                "turn_completion",
@@ -730,19 +710,9 @@ func TestStepToolCall_SharesTheStepsBlockKey(t *testing.T) {
 	}
 }
 
-// TestAgentLaunchedRun_IsRecorded pins the one durable trace an agent-launched
-// run gets in this tier, in both directions.
-//
-// The capability that makes the agent able to start a run
-// (_meta.kiro.settings.workflows, internal/kascap) creates runs nobody clicked,
-// and this tier has no run record, no supervisor and no host-lost detection. Two
-// slog lines are the whole mechanism, so a change that silently stops emitting
-// them takes the only evidence with it — which is exactly the class of loss a log
-// assertion catches and nothing else does.
-//
-// Both directions matter equally. Logging a manual run would dilute the class the
-// line exists to make greppable, and the origin test is real logic rather than a
-// formality: it reads `parentSessionId`, the only origin signal on this wire.
+// TestAgentLaunchedRun_IsRecorded pins both directions of the two slog lines that
+// are an agent-launched run's only durable trace in this tier — nothing else
+// observes them, and logging a manual run would dilute the greppable class.
 //
 // slog's default logger is process-global, so no t.Parallel here.
 func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
@@ -814,16 +784,9 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 	}
 }
 
-// TestRunComplete_ReadsTopLevelParentSessionID pins the PRIMARY origin field on
-// the terminal frame.
-//
-// The notification bridge merges `parentSessionId` top-level into every lifecycle
-// payload when the run has a parent, and upstream treats that as the primary
-// source with the copy inside `finalState` as a back-compat fallback. The case
-// above sends both, so it passes whichever one is decoded; this one sends ONLY the
-// top-level field, which is the shape a bundle that dropped the state copy would
-// produce. Without the top-level decode the terminal line disappears while the
-// launch line still prints — silently, since nothing else observes it.
+// TestRunComplete_ReadsTopLevelParentSessionID sends ONLY the top-level field,
+// which the case above cannot distinguish because it sends both. Without that
+// decode the terminal line disappears silently while the launch line prints.
 //
 // slog's default logger is process-global, so no t.Parallel here.
 func TestRunComplete_ReadsTopLevelParentSessionID(t *testing.T) {

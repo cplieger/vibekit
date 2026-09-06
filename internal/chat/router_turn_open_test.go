@@ -1,17 +1,8 @@
 package chat
 
-// Does the HTTP surface STATE whether a turn is open, or leave the client to guess?
-//
-// The in-flight reply lives in the agent's in-memory buffer and is appended to the
-// chat file once, at turn end, so a turn in flight has NO carrier in either of these
-// responses. A reader that treats that silence as evidence derives `unknown` —
-// "nothing closed this turn" — for a turn that is running: a TERMINAL verdict during
-// the one window in which nothing can know one.
-//
-// Both handlers read ONE injected predicate. `handleTurns` used to pass a hardcoded
-// `false`, which is the same defect on a third surface: a mid-turn fetch reported the
-// in-flight turn as `unknown`, so the timeline rail painted a neutral marker labelled
-// "This turn's end could not be read" for a turn that was still going.
+// The in-flight reply reaches the chat file only at turn end, so a turn in flight has NO
+// carrier in either response, and a reader treating that silence as evidence derives a
+// TERMINAL `unknown`. Both handlers must read the same injected predicate instead.
 
 import (
 	"encoding/json"
@@ -22,12 +13,9 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// seedMidTurn writes the record a turn in flight actually leaves on disk: the user's
-// prompt and NOTHING ELSE. The reply is accumulating in the agent's in-memory buffer
-// and reaches the chat file once, at turn end, so there is no assistant message and no
-// carrier — which is exactly the input `deriveTurnOutcome`'s `!sawAssistant` arm
-// answers `unknown` for. Seeding an assistant message instead would read `completed`
-// (the legacy-transcript case) and neither assertion below would mean anything.
+// seedMidTurn writes the record a turn in flight leaves on disk: the user's prompt and
+// NOTHING ELSE, which is the carrier-less input the derivation answers `unknown` for.
+// Seeding an assistant message reads `completed`, and no assertion below would mean anything.
 func seedMidTurn(t *testing.T, s *Store, id vibekit.ChatID) {
 	t.Helper()
 	if err := s.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
@@ -41,7 +29,6 @@ func seedMidTurn(t *testing.T, s *Store, id vibekit.ChatID) {
 	}
 }
 
-// getChat drives the paginated single-chat GET and decodes its envelope.
 func getChat(t *testing.T, s *Store, id vibekit.ChatID) map[string]any {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id), nil)
@@ -57,7 +44,7 @@ func getChat(t *testing.T, s *Store, id vibekit.ChatID) map[string]any {
 	return envelope
 }
 
-// getTurns drives the session-wide turn index and returns the newest turn's row.
+// getTurns returns the NEWEST turn's row.
 func getTurns(t *testing.T, s *Store, id vibekit.ChatID) map[string]any {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id)+"/turns", nil)
@@ -79,9 +66,8 @@ func getTurns(t *testing.T, s *Store, id vibekit.ChatID) map[string]any {
 }
 
 func TestChatGet_ReportsTurnOpenFromTheInjectedPredicate(t *testing.T) {
-	// BOTH directions from one fixture: the key has to be on the wire spelled the
-	// way `decodeChatGetResponseLocal` reads it, and it has to carry the predicate's
-	// answer rather than a constant.
+	// BOTH directions: the key must be on the wire under the spelling the client reads,
+	// carrying the predicate's answer rather than a constant.
 	for _, open := range []bool{true, false} {
 		s, err := NewStore(t.TempDir(), WithTurnOpen(func(vibekit.ChatID) bool { return open }))
 		if err != nil {
@@ -97,10 +83,8 @@ func TestChatGet_ReportsTurnOpenFromTheInjectedPredicate(t *testing.T) {
 	}
 }
 
-// TestChatGet_ReportsTurnClosedWithNoPredicateInjected is the nil-tolerance half.
-// Every existing chat test constructs a Store with no predicate, and a nil deref
-// there would be a boot-path panic; false is also the safe answer, because a client
-// told "no turn is open" derives the outcome the record supports.
+// A Store constructed with no predicate must not deref nil, and false is the safe answer:
+// a client told no turn is open derives the outcome the record supports.
 func TestChatGet_ReportsTurnClosedWithNoPredicateInjected(t *testing.T) {
 	s, err := NewStore(t.TempDir())
 	if err != nil {
@@ -114,10 +98,8 @@ func TestChatGet_ReportsTurnClosedWithNoPredicateInjected(t *testing.T) {
 	}
 }
 
-// TestTurnsIndex_MarksTheNewestTurnRunningWhileOpen is the THIRD surface, and the
-// direction the hardcoded `false` got wrong. `projectTurnSummaries`' liveness input
-// used to be a literal, so the rail's own fetch could only ever report a carrier-less
-// newest turn as `unknown`.
+// The turn index is the third surface: with a literal for its liveness input it can only
+// ever report a carrier-less newest turn as `unknown`.
 func TestTurnsIndex_MarksTheNewestTurnRunningWhileOpen(t *testing.T) {
 	s, err := NewStore(t.TempDir(), WithTurnOpen(func(vibekit.ChatID) bool { return true }))
 	if err != nil {
@@ -132,10 +114,8 @@ func TestTurnsIndex_MarksTheNewestTurnRunningWhileOpen(t *testing.T) {
 	}
 }
 
-// TestTurnsIndex_MarksTheNewestTurnUnknownWhenNoTurnIsOpen is the other direction,
-// and it is what keeps the previous item's fix from erasing this one: a reload after a
-// server restart mid-turn reports no turn open, because the process died — so the
-// newest turn is genuinely one nothing closed, and `unknown` is the honest answer.
+// The other direction, which keeps the liveness fix from erasing this one: after a restart
+// mid-turn no turn is open, so the newest turn is genuinely one nothing closed.
 func TestTurnsIndex_MarksTheNewestTurnUnknownWhenNoTurnIsOpen(t *testing.T) {
 	s, err := NewStore(t.TempDir(), WithTurnOpen(func(vibekit.ChatID) bool { return false }))
 	if err != nil {

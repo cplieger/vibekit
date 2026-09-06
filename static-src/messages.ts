@@ -1,29 +1,9 @@
-// ---------------------------------------------------------------------------
-// Message view: signal-driven reactive renderer, and the transcript
-// MULTIPLEXER — `#messages` holds one `.transcript-view` per resident chat,
-// the active one live, the parked ones frozen (see the multiplexer section).
-//
-// One effect watches the active chat id + that chat's messages version and
-// reconciles its messages into the ACTIVE view by message id. Per-message
-// factories (buildUser / buildAssistant / buildEvent) own initial DOM
-// construction; per-message updaters (updateAssistant, updateEvent) own
-// incremental changes.
-//
-// Assistant bodies are composed ENTIRELY from the fundamentals/ primitives by
-// the single block dispatcher in messages-blocks.ts — this module is the shell
-// that mounts and updates them by message identity, owns the streaming-effect
-// registry + avatar rows, and drives turn finalization from store state.
-//
-// The "liquid" feel comes from CSS:
-//   - @starting-style + transitions on `.msg-row` for entry animations
-//   - .streaming class on the active assistant TEXT bubble: an accent wash
-//     plus a blinking block caret (css/13-messages.css). A reasoning trace
-//     carries no such marker — see fundamentals/reasoning.ts
-//   - interpolate-size: allow-keywords on :root so height: auto can
-//     animate (set in css/01-tokens.css)
-//   - content-visibility: auto on rows so off-screen messages don't pay
-//     paint cost
-// ---------------------------------------------------------------------------
+// The transcript SHELL, and the multiplexer: `#messages` holds one
+// `.transcript-view` per resident chat, the active one live and the parked ones
+// frozen. One effect watches the active chat id + that chat's messages version
+// and reconciles into the active view by message id. Assistant BODIES are
+// composed entirely by messages-blocks.ts; this module mounts and updates them
+// by message identity and drives turn finalization from store state.
 
 import type { Message, Session } from "./types.js";
 import {
@@ -135,41 +115,31 @@ import {
 import { syncCodeReferences } from "./code-refs.js";
 import { syncRefusal, setRefusalRewindHandler } from "./refusal.js";
 
-// ---------------------------------------------------------------------------
-// Public re-exports
-// ---------------------------------------------------------------------------
+// --- Public re-exports ---
 
 export { getScrollEl, setLoadMore };
-// Re-exported for the same reason the scroll helpers are: this module owns the
-// rail (it mounts it and feeds it the painted cards), so chat.ts reaching the
-// rail THROUGH here keeps ownership in one place instead of two modules driving
-// the same surface.
+// This module owns the rail, so chat.ts reaches it through here rather than
+// driving the same surface itself.
 export { loadTurnRail, pointTurnRail };
 
-// ---------------------------------------------------------------------------
-// Module state
-// ---------------------------------------------------------------------------
+// --- Module state ---
 
 const messagesEl = $.messages;
 
-// ---------------------------------------------------------------------------
-// The transcript multiplexer.
+// --- The transcript multiplexer ---
 //
-// `#messages` holds one `.transcript-view` per RESIDENT chat view; exactly one
-// carries `.is-active` and the scroller's observers. A parked view keeps its
-// DOM, its `MsgRender`s and its `messageStates` rows, with every writer that
-// could reach that DOM paused: streaming effects disposed, tool + run effects
-// suspended, clock holds released, tickers stopped, terminal output buffered.
-// The store keeps ingesting for parked chats — only rendering is frozen.
-// ---------------------------------------------------------------------------
+// Exactly one resident view carries `.is-active` and the scroller's observers. A
+// parked view keeps its DOM, renders and `messageStates` rows with every writer
+// that could reach that DOM paused. The store keeps ingesting for parked chats;
+// only rendering is frozen.
 
 /** How many PARKED views stay resident (the active view is not counted).
  *  Past this, the least-recently-used parked view runs the real dispose. */
 export const PARKED_VIEWS = 3;
 
 /** One resident chat view. The saved-at-park fields are meaningful only while
- *  `parked` is true; the view→message index is deliberately NOT here — it is
- *  the store read (`chatID` + the session's message ids ∩ `messageStates`). */
+ *  `parked` is true. There is no view→message index: that is a store read
+ *  (`viewMessages`). */
 interface ChatView {
   chatID: string;
   el: HTMLElement;
@@ -180,11 +150,9 @@ interface ChatView {
   reachableBlocks: number;
   lastNewestId: string | undefined;
   resumeLabel: string;
-  /** Message ids that were live-streaming when the view parked. Resume
-   *  rebuilds these bodies fresh whether or not they are still streaming: the
-   *  ones that settled while parked missed their finalizing updates (their
-   *  binding effects were disposed), so only a fresh render from the current
-   *  store is equivalent to a cold rebuild. */
+  /** Message ids live-streaming when the view parked. Resume rebuilds these
+   *  bodies fresh even if they have settled: their binding effects were
+   *  disposed, so they missed every update that landed while parked. */
   pausedStreaming: Set<string>;
 }
 
@@ -193,9 +161,8 @@ interface ChatView {
 const views = new Map<string, ChatView>();
 let activeView: ChatView | null = null;
 
-/** The active view's element, for the container consumers that mount transcript
- *  furniture (chat.ts's skeleton and load-error retry). Null when no chat view
- *  is active (boot, the last-tab window). */
+/** The active view's element, for consumers mounting transcript furniture.
+ *  Null when no chat view is active (boot, the last-tab window). */
 export function activeTranscriptView(): HTMLElement | null {
   return activeView?.el ?? null;
 }
@@ -207,25 +174,11 @@ export function transcriptViewFor(chatID: string): HTMLElement | null {
 
 /** Reveal a run's card in `chatID`'s transcript. Returns whether it landed.
  *
- *  BEST-EFFORT by design: the card exists only where its launching turn is
- *  RESIDENT, and this window is paginated, so a run launched far enough back is
- *  simply not here. A false answer means the reader is in the right conversation
- *  and nothing more was claimed — which is why the caller treats this as a
- *  refinement of the tab open rather than as the affordance.
- *
- *  MOUNTEDNESS is the whole condition, and it deliberately does not also unfold. A
- *  turn past `TURNS_WARM` is a header/footer stub with no body, so it holds no run
- *  card to scroll to and this answers false — the tab is open on the right
- *  conversation, which is what the link promised, and the card is one unfold away.
- *  A card inside a FOLDED but warm turn is found and jumped to: the jump lands on
- *  the turn, and the fold toggle is the rest of the way. Unfolding from here was
- *  tried and is not wanted: the reveal is a refinement of the tab open, not a
- *  licence to rearrange a transcript the reader is holding.
- *
- *  SCOPED to that chat's own view, never the document: `.run-card[data-run]`
- *  repeats once per RESIDENT view and `document.querySelector` answers in document
- *  order, which can be a PARKED view's card. Same reason `turn-rail.ts`
- *  `scrollToAnchor` scopes its `#turn-{n}` lookup. */
+ *  BEST-EFFORT: mountedness is the whole condition, and this never unfolds. The
+ *  window is paginated and a turn past `TURNS_WARM` is a bodyless stub, so a card
+ *  outside either bound answers false and the caller keeps only the tab open.
+ *  SCOPED to that chat's view: `.run-card[data-run]` repeats once per resident
+ *  view, so `document.querySelector` can answer with a parked view's card. */
 export function revealRunCard(chatID: string, workflowID: string): boolean {
   if (workflowID === "") {
     return false;
@@ -238,23 +191,19 @@ export function revealRunCard(chatID: string, workflowID: string): boolean {
   if (card === null) {
     return false;
   }
-  // `jumpTo` rather than a raw `scrollIntoView`: it owns both halves of the decision
-  // — parking the reader, and deciding whether the jump leaves the live edge at all —
-  // which is the same call the rail and find-in-chat make.
+  // `jumpTo`, not a raw `scrollIntoView`: it owns whether the jump parks the reader.
   jumpTo(card, { block: "start", behavior: "smooth" });
   return true;
 }
 
-/** Where paint reconciles and the card walk runs: the active view, or the bare
- *  multiplexer before any view exists (kept for the boot instant; nothing
- *  renders turns there). */
+/** Where paint reconciles: the active view, or the bare multiplexer before any
+ *  view exists (the boot instant; nothing renders turns there). */
 function paintRoot(): HTMLElement {
   return activeView?.el ?? messagesEl;
 }
 
-/** The message ids this view has mounted: the session's messages ∩
- *  `messageStates` (the design's view→message index — a store read, no second
- *  index maintained). */
+/** The messages this view has mounted: the session's messages ∩ `messageStates`.
+ *  A store read, so no second index is maintained. */
 function viewMessages(session: Session): Message[] {
   return session.messages.filter((m) => messageStates.has(m.id));
 }

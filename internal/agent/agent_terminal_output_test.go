@@ -211,14 +211,10 @@ func TestTerminalExited_IsOrderedAfterEveryOutputEvent(t *testing.T) {
 	}
 }
 
-// The live stream carries PLAIN text plus spans, and the order of the two
-// sanitizers is what makes that possible.
-//
-// sanitize.Output is SanitizeUnicode(StripANSI(s)) iterated to a fixed point,
-// so calling it here would delete every escape BEFORE the parser saw one and
-// every chunk would arrive unstyled — worse than the client library this
-// replaced. SanitizeUnicode alone keeps the hidden-Unicode defence (nothing can
-// hide a sequence behind a zero-width character) and leaves the escapes for the
+// The live stream carries PLAIN text plus spans, and the ORDER of the two sanitizers is what
+// makes that possible. sanitize.Output is SanitizeUnicode(StripANSI(s)), so calling it here
+// would delete every escape before the parser saw one and every chunk would arrive unstyled.
+// SanitizeUnicode alone keeps the hidden-Unicode defence and leaves the escapes for the
 // parser, whose own guarantee is that no ESC survives into the text.
 func TestTerminalEmitter_ParsesStylingAndStillStripsHiddenUnicode(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
@@ -733,19 +729,11 @@ func stageTerminal(h *Runtime, id string, chatID vibekit.ChatID) {
 	h.agentTerms.byChatID[chatID] = append(h.agentTerms.byChatID[chatID], id)
 }
 
-// TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals is defect H1 at the
-// place it actually hurts, and the case the ordinal this replaced could not see.
-//
-// The registry used to keep its own turn count, advanced from two Runtime
-// wrappers on the PROMPT path. So no turn the wire started ever advanced it: an
-// agent-initiated turn opened, spawned a `npm run dev`, closed on its own
-// turn_end — and the count stayed where it was, which means the next prompted
-// turn shared it. Cancelling that prompt then killed a background process the
-// user never asked to stop, and the transcript said nothing about it.
-//
-// Nothing here mentions the terminal registry's boundary: the whole point is
-// that the WINNING closer publishes it, so a turn vibekit did not prompt moves
-// the boundary exactly as a prompted one does.
+// TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals: the registry's own turn count
+// was advanced from the PROMPT path only, so no wire-started turn ever moved it — an
+// agent-initiated turn spawning `npm run dev` shared its count with the next prompted turn,
+// and cancelling that prompt killed a background process nobody asked to stop. Nothing here
+// names the registry's boundary on purpose: the WINNING closer publishes it, whoever opened.
 func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	ctx := t.Context()

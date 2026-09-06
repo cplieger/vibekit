@@ -1,7 +1,7 @@
 package agent
 
 // The mid-turn segment seal: what SealTurnSegment persists, when it refuses, and
-// what the turn's own closer still has to carry once a turn has been split.
+// what a split turn's closer still has to carry.
 
 import (
 	"strings"
@@ -10,7 +10,6 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// assistantMessages returns the chat's persisted assistant messages, in order.
 func assistantMessages(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) []vibekit.Message {
 	t.Helper()
 	c, ok := cs.Get(t.Context(), chatID)
@@ -47,16 +46,13 @@ func eventMessageOf(
 	return found
 }
 
-// outcomeMarker returns the chat's last turn-outcome marker, or nil.
 func outcomeMarker(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) *vibekit.Message {
 	t.Helper()
 	return eventMessageOf(t, cs, chatID, vibekit.EventTurnOutcome)
 }
 
-// A seal persists what the turn has produced so far as its own assistant message
-// and leaves the buffer ready for the rest of the turn, which is what lets a
-// boundary INSIDE a turn be represented as the sibling message every consumer
-// already reads in array order.
+// A seal represents a boundary INSIDE a turn as the sibling message every consumer
+// already reads in array order, so the buffer must be left ready for the rest.
 func TestSealTurnSegment_PersistsTheSegmentAndReadiesTheBuffer(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "before the boundary")
@@ -72,27 +68,23 @@ func TestSealTurnSegment_PersistsTheSegmentAndReadiesTheBuffer(t *testing.T) {
 	if msgs[0].Content != "before the boundary" {
 		t.Errorf("sealed segment content = %q, want %q", msgs[0].Content, "before the boundary")
 	}
-	// The TURN is not over, so the segment claims none of the turn's own facts:
-	// exactly one persisted message per turn may carry the outcome, and a second
-	// carrier opens a spurious segment for both projections.
+	// Exactly one persisted message per turn may carry the outcome; a second carrier
+	// opens a spurious segment for both projections.
 	if msgs[0].TurnOutcome != "" || msgs[0].TurnCredits != 0 || msgs[0].TurnElapsedMs != 0 {
 		t.Errorf("sealed segment carried turn facts: outcome=%q credits=%v elapsed=%v; want none",
 			msgs[0].TurnOutcome, msgs[0].TurnCredits, msgs[0].TurnElapsedMs)
 	}
-	// And the rest of the turn accumulates into a fresh message rather than
-	// re-extending the one already on disk.
+	// The rest of the turn must accumulate into a fresh message, not re-extend the
+	// one already on disk.
 	if snap := h.liveTurnBuffer("c1").TakeTurn(); snap.Started || snap.Content != "" {
 		t.Errorf("after the seal the buffer holds %q with Started = %t, want empty and false",
 			snap.Content, snap.Started)
 	}
 }
 
-// A turn holding a tool call still in flight is NOT split, and the refusal says so.
-//
-// An update resolves its call against the CURRENT buffer, so a call sealed
-// mid-flight can never be written back and its card renders as a permanent spinner
-// in a message nothing rewrites. The boundary landing after the turn is the wrong
-// position; a frozen card is a broken one.
+// A turn holding a tool call in flight is NOT split: an update resolves its call
+// against the CURRENT buffer, so a call sealed mid-flight can never be written back
+// and its card renders as a permanent spinner in a message nothing rewrites.
 func TestSealTurnSegment_RefusesWithAToolInFlight(t *testing.T) {
 	h, cs, _ := newTestHub()
 	logs := captureLogs(t) // not parallel: swaps the slog default
@@ -114,9 +106,8 @@ func TestSealTurnSegment_RefusesWithAToolInFlight(t *testing.T) {
 	}
 }
 
-// A chat with no turn in flight has no point inside a turn to seal at, and a seal
-// must never OPEN one to find that out — an opened-then-sealed turn is a phantom
-// assistant message on a chat that was idle.
+// A seal must never OPEN a turn to discover there was none: an opened-then-sealed
+// turn is a phantom assistant message on a chat that was idle.
 func TestSealTurnSegment_RefusesWithNoTurnOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
 	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -135,12 +126,9 @@ func TestSealTurnSegment_RefusesWithNoTurnOpen(t *testing.T) {
 	}
 }
 
-// A compaction can land between the message id being minted and the first delta,
-// and there is nothing to seal in that window.
-//
-// `Started` is exactly what minting the id sets, so a seal gated on it persisted a
-// BLANK assistant row above the summary and handed the rest of the reply a second
-// id — while the client was already streaming under the first one.
+// A compaction can land between the id mint and the first delta, and `Started` is
+// exactly what minting sets — so a seal gated on it persists a BLANK assistant row
+// and hands the rest of the reply a second id the client is not streaming under.
 func TestSealTurnSegment_RefusesBetweenTheIDMintAndTheFirstDelta(t *testing.T) {
 	h, cs, _ := newTestHub()
 	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -172,9 +160,8 @@ func TestSealTurnSegment_RefusesBetweenTheIDMintAndTheFirstDelta(t *testing.T) {
 	}
 }
 
-// A turn that has emitted nothing has nothing to seal, and the refusal must leave
-// no trace: a turn marked as split would send its closer looking for a segment
-// nothing persisted.
+// The refusal must leave no trace: a turn marked as split sends its closer looking
+// for a segment nothing persisted.
 func TestSealTurnSegment_RefusesATurnThatEmittedNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -198,14 +185,9 @@ func TestSealTurnSegment_RefusesATurnThatEmittedNothing(t *testing.T) {
 	}
 }
 
-// A turn whose reply ended exactly at the split point closes with nothing left to
-// persist, so its credits, duration and changed files have no assistant message to
-// ride. The marker is what carries them; without it the footer goes silent on a turn
-// that did real work.
-//
-// Being SEGMENTED used to be what made the marker worth writing at all, because a
-// clean prompted turn's marker was skipped. The skip is gone (persistOutcomeMarker),
-// so this case is no longer about earning the marker — it is about the FACTS on it.
+// A turn whose reply ended exactly at the split point has nothing left to persist,
+// so its credits, duration and changed files have no assistant message to ride. The
+// marker carries them; without it the footer goes silent on a turn that did work.
 func TestCloseOnWireEnd_ASplitTurnWithNothingAfterItKeepsItsFooter(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "everything this turn said")
@@ -214,8 +196,7 @@ func TestCloseOnWireEnd_ASplitTurnWithNothingAfterItKeepsItsFooter(t *testing.T)
 	if !h.coord.SealTurnSegment(t.Context(), "c1") {
 		t.Fatal("the fixture could not seal a segment")
 	}
-	// Spend after the baseline was latched, so the turn has a credit delta to
-	// attribute.
+	// Spend after the baseline was latched, so the turn has a credit delta.
 	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Usage.Credits = 0.5
 		return true
@@ -243,12 +224,9 @@ func TestCloseOnWireEnd_ASplitTurnWithNothingAfterItKeepsItsFooter(t *testing.T)
 	}
 }
 
-// A CANCELLED split turn keeps its footer too. The cancel event is that turn's
-// carrier — its presence is what stops a marker being written beside it — so the
-// facts have to ride it or they reach nothing.
-//
-// The turn_ended broadcast in the same call reports the same numbers, so a carrier
-// that omitted them showed the footer while the turn was live and lost it on reload.
+// The cancel event is a cancelled turn's carrier — its presence is what stops a
+// marker being written beside it — so the facts have to ride it or they reach
+// nothing, and the footer shows live then vanishes on reload.
 func TestCloseOnWireEnd_ACancelledSplitTurnKeepsItsFooter(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "everything before the cancel")
@@ -279,19 +257,9 @@ func TestCloseOnWireEnd_ACancelledSplitTurnKeepsItsFooter(t *testing.T) {
 	if evt.TurnOutcome == "" {
 		t.Error("cancel event carries no TurnOutcome, so both projections read the turn as still open")
 	}
-	// Exactly one carrier per turn: a marker beside the cancel event would open a
-	// spurious second turn for both projections.
+	// One carrier per turn: a marker beside the cancel event opens a spurious second
+	// turn for both projections.
 	if m := outcomeMarker(t, cs, "c1"); m != nil {
 		t.Errorf("a cancelled turn persisted a second carrier: %+v", m)
 	}
 }
-
-// DELETED: TestCloseOnWireEnd_AnUnsplitCleanPromptedTurnStillPersistsNoMarker.
-//
-// Its whole subject was persistOutcomeMarker's skip, and the skip is gone — an
-// absent carrier now MEANS nothing closed the turn, so the reader can answer
-// `unknown` instead of guessing `completed`. Recorded here rather than removed
-// silently, because a reader who remembers the skip should find out where it went.
-// The unsplit clean prompted turn's marker is asserted in turn_outcome_test.go
-// (through the wire bracket) and bridge_buffer_test.go (through the local settle);
-// exactly-one-carrier is asserted by the cancelled-split case above.

@@ -1,12 +1,8 @@
 package agent
 
-// What the ONE carrier of a turn's facts has to hold, and where it lands.
-//
 // A turn's footer facts — credits, elapsed, changed files, model — belong to the
-// turn rather than to any part of it, so exactly one persisted message carries
-// them. When the turn was SPLIT and produced nothing after the split, that
-// carrier is an event row, and every fact the assistant message would have held
-// has to reach it instead.
+// turn, so exactly one persisted message carries them. When the turn was SPLIT
+// with nothing after it, that carrier is an event row.
 
 import (
 	"testing"
@@ -14,11 +10,9 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// The client's turn ledger reads turn_model off every row in a turn's body, so a
-// segmented turn whose only carrier is an event showed its numbers attributed to
-// nothing. The buffer's LATCHED model is the answer rather than the turn
-// record's: the record holds what the chat was set to at open, and a fast
-// in-session switch moves it after that.
+// The client's turn ledger reads turn_model off every row, so a carrier without one
+// attributes its numbers to nothing. The buffer's LATCHED model rather than the chat
+// record's: the record holds the model at open, and a fast switch moves it after.
 func TestCloseOnWireEnd_ASplitTurnsCarrierNamesItsModel(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "everything before the boundary")
@@ -36,8 +30,7 @@ func TestCloseOnWireEnd_ASplitTurnsCarrierNamesItsModel(t *testing.T) {
 	if marker.TurnModel != "m-latched" {
 		t.Errorf("carrier TurnModel = %q, want the buffer's latched %q", marker.TurnModel, "m-latched")
 	}
-	// The segment itself claims none of the turn's facts, so the carrier is the
-	// only place the model can be read from.
+	// The segment claims none of the turn's facts: one carrier per turn.
 	for _, m := range assistantMessages(t, cs, "c1") {
 		if m.TurnModel != "" {
 			t.Errorf("segment %q claims TurnModel %q; exactly one carrier per turn", m.ID, m.TurnModel)
@@ -45,8 +38,6 @@ func TestCloseOnWireEnd_ASplitTurnsCarrierNamesItsModel(t *testing.T) {
 	}
 }
 
-// A cancelled split turn's carrier is the cancel event, and it needs the model
-// for the same reason the marker does.
 func TestCloseOnWireEnd_ACancelledSplitTurnsEventNamesItsModel(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "everything before the cancel")
@@ -66,13 +57,10 @@ func TestCloseOnWireEnd_ACancelledSplitTurnsEventNamesItsModel(t *testing.T) {
 	}
 }
 
-// An INTERRUPTED split turn keeps its changed files, which the cancel arm's fix
-// did not reach.
-//
-// SplitSegment clears Started, so a split turn always takes the no-partial branch,
-// where the divider carried the conclusion and nothing else. Omitting the stats is
-// deliberate; that reasoning never covered the file map, because those files are on
-// disk whatever stopped the turn and the divider is their only carrier.
+// SplitSegment clears Started, so a split turn takes the no-partial branch, where the
+// divider carries the conclusion and nothing else. Omitting the SPEND is deliberate;
+// the file map is not — those files are on disk whatever stopped the turn, and the
+// divider is their only carrier.
 func TestAbandonInFlightTurn_AnInterruptedSplitTurnKeepsItsChangedFiles(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "everything before the interruption")
@@ -99,7 +87,7 @@ func TestAbandonInFlightTurn_AnInterruptedSplitTurnKeepsItsChangedFiles(t *testi
 	if divider.TurnModel != "m-latched" {
 		t.Errorf("divider TurnModel = %q, want the buffer's latched %q", divider.TurnModel, "m-latched")
 	}
-	// Still no spend: that omission is deliberate and unchanged.
+	// Still no spend: that omission is deliberate.
 	if divider.TurnCredits != 0 || divider.TurnElapsedMs != 0 {
 		t.Errorf("divider carries credits %v / elapsed %v, want neither for an interrupted turn",
 			divider.TurnCredits, divider.TurnElapsedMs)
@@ -110,19 +98,14 @@ func TestAbandonInFlightTurn_AnInterruptedSplitTurnKeepsItsChangedFiles(t *testi
 	}
 }
 
-// A turn a PROMPT displaced is persisted AHEAD of the prompt that ended it, so
-// the chat file records the order the two actually ran in.
-//
 // The prompt writes its user row before it asks for admission and an engine-opened
-// turn holds no reservation, so the displacement runs with that row already on
-// disk. Appending recorded the reply as following the prompt, which projectTurns
-// reads as a headerless turn BELOW it — while the client's array has it above,
-// since the broadcast carries the streamed message's id and merges in place.
+// turn holds no reservation, so the displacement runs with that row already on disk.
+// Appending records the reply as FOLLOWING the prompt, which projectTurns reads as a
+// headerless turn below it while the client's array has it above.
 func TestStartTurn_ADisplacedTurnIsPersistedAheadOfThePromptThatEndedIt(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	// An engine-opened turn mid-reply: a workflow step's frames folding onto the
-	// launching chat is the ordinary case.
+	// An engine-opened turn mid-reply: a workflow step's frames on the launching chat.
 	if err := cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true

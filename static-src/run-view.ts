@@ -1,66 +1,9 @@
-// ---------------------------------------------------------------------------
-// One workflow run: the WORKFLOW DOOR into the shared subpage view.
-//
-// This module is wiring and nothing else: it folds KAS's `inspect` reply through
-// `run-exec-source.ts` into `exec-view/`'s model, hands that to `buildExecPage`, and
-// owns the three things only a workflow knows — which verbs the status offers, what
-// an empty step body means, and where a `run_step` frame renders. It draws no run UI
-// of its own.
-//
-// Every door opens the same page: the Workflows tab's Run button, a History row, the
-// transcript card's footer link, a `/run/{id}` deep link, and the sub-tab a starting
-// run's launching chat is given SERVER-side (`internal/agent/run_tabs.go`) — so the
-// only opener here is the manual one, beside the marker the completion auto-close
-// reads. The verbs gate on the RUN (below), not on the door, and no × stops anything.
-//
-// There is no composer, because there is nobody to type to.
-//
-// THE VIEW SERVES THREE SUBJECTS and the code below is only one of the three doors
-// into it (user decision, 2026-08):
-//
-//   a PARENTLESS workflow    launched from the Workflows tab or by the scheduler.
-//                            vibekit hosts its bridge, so the page carries the
-//                            status's verbs and its steps stream in through
-//                            `run_step`.
-//   a CHAT-TRIGGERED workflow  launched by an agent calling `run_workflow`. The
-//                            agent drives it on a bridge it holds, so the page
-//                            carries NO verbs and its steps stream into that
-//                            chat's transcript instead — which is what the detail
-//                            pane's note says rather than sitting blank.
-//   a SUBAGENT expansion     the same page over a delegate, reached when a reader
-//                            wants one out of the transcript's keyhole. Its own
-//                            adapter; nothing under `exec-view/` learns it exists.
-//
-// CLOSING NEVER STOPS THE WORK, for any of the three. `owns: false` at every door,
-// no `onClose` in the factory. A × that means "close this" on one door and "destroy
-// the work" on another is a gesture a reader cannot learn, and it was the only
-// destructive control in the app with no confirmation, on the smallest target in the
-// row. Stopping a run is the Cancel VERB. The launching chat's × still cancels its
-// runs, and that is a different gesture: it destroys the conversation.
-//
-// WHAT IT RENDERS IS `exec-view/`, the shared subpage view, through an adapter. This
-// page used to hand-roll its own node tree and output list, and that was a second,
-// poorer rendering of one state: it put 7 of the ~30 fields `inspect` carries on
-// screen, so a failed run showed a red dot and no reason while the card in a chat
-// named the failing step and quoted it, a running step showed no elapsed time, and a
-// captured report written in markdown showed its own asterisks in a `<pre>`.
-// `run_http.go` refuses to keep a second representation of KAS's state on the server
-// for exactly this reason; the client had one anyway.
-//
-// It does NOT render the transcript's run card. A card among a conversation's turns is
-// a glance and a page of its own is a review, so the card's short-lived `full` detail
-// mode is deleted: a flag that made one component mean two things was the wrong seam.
-// What the two share is `exec-view/status.ts` — one status vocabulary — and nothing
-// else.
-//
-// It also HOSTS EVERY STEP TRANSCRIPT, and it is the ONLY surface that does: the
-// transcript's run card is the run's record and renders no step content, its rows
-// being doors into this page. A parentless run's frames arrive as `run_step` events
-// and render through `run-step-blocks.ts` into the detail pane's own per-path host
-// (`exec-view/detail.ts` `bodyFor`); that content is live-only — it belongs to a
-// turn vibekit never prompted and so never finalizes — which is why an empty step
-// body on a FINISHED run says so rather than sitting blank.
-// ---------------------------------------------------------------------------
+// The WORKFLOW door into `exec-view/`, the shared subpage view: wiring only, folding
+// KAS's `inspect` through `run-exec-source.ts` into that model, and owning the three
+// things only a workflow knows — the status's verbs, what an empty step body means, and
+// where a `run_step` frame renders. It is also the ONLY surface hosting a step
+// transcript. Closing a run tab stops nothing (`owns: false` at every door, no
+// `onClose`); stopping a run is the Cancel VERB.
 
 import { el, effect, touch } from "@cplieger/reactive";
 import {
@@ -106,9 +49,8 @@ import { ICON_EXTERNAL } from "./icons.js";
 import { parseStepSubtask } from "./step-subtask.js";
 import type { RunStepPayload } from "./types.js";
 
-/** Verb → its action. Separate from run-controls.ts's table on purpose: that
- *  module is the pure RULE and must stay importable without the actions
- *  framework; this is the wiring. */
+/** Verb → its action. Separate from run-controls.ts's table because that module is the
+ *  pure RULE and must stay importable without the actions framework. */
 const RUN_ACTION: Record<RunVerb, { dispatch: (id: string) => Promise<unknown> }> = {
   pause: pauseRun,
   resume: resumeRun,
@@ -116,12 +58,9 @@ const RUN_ACTION: Record<RunVerb, { dispatch: (id: string) => Promise<unknown> }
   retry: retryRun,
 };
 
-/** The exec view's state back to the run status `RUN_CONTROLS` is keyed by.
- *
- *  `input` maps to `running`, which is the whole point of that state existing: a run
- *  blocked on an unanswered ask IS still running, so it keeps the verbs a running
- *  run has. `pending` and `skipped` have no run-level meaning and answer undefined,
- *  which renders no control row rather than guessing one. */
+/** The exec view's state back to the run status `RUN_CONTROLS` is keyed by. `input` maps
+ *  to `running` because a run blocked on an ask still is; `pending` and `skipped` have no
+ *  run-level meaning and answer undefined, which renders no control row. */
 const EXEC_TO_WIRE: Partial<Record<ExecState, string>> = {
   running: "running",
   input: "running",
@@ -131,52 +70,20 @@ const EXEC_TO_WIRE: Partial<Record<ExecState, string>> = {
   warn: "aborted",
 };
 
-/** The run this view is currently showing, so an SSE invalidation knows whether
- *  it is about the run on screen. Cleared when the view loads a different one;
- *  a closed tab simply stops matching, because the next open reassigns it. */
+/** The run on screen, so an invalidation knows whether it is about that run. */
 let shownRun = "";
 
-/** Whether the shown run was launched by an AGENT, from the run's own state.
- *
- *  `state.parentSessionId` is the authority: `internal/vibekit/domain_workflow.go`
- *  states it "separates agent-parented from parentless and is empty for both of
- *  these [manual and scheduled]", and `GET /api/runs/{id}` is a verbatim
- *  passthrough of `inspect`. A known launching chat is belt-and-braces beside it:
- *  it can only ADD chat-parented verdicts, and every one it adds WITHHOLDS the
- *  control verbs, which is the safe direction for a run an agent owns on a bridge
- *  it holds. */
+/** Whether the shown run was launched by an AGENT, from the run's own state. */
 let shownRunChatParented = false;
 
-/** Whether the shown run was launched manually (no parent chat).
- *
- *  The ONE authority fact left. It gates the verbs that only make sense on a run
- *  vibekit hosts itself: an agent-parented run's recovery is the agent's, on a bridge
- *  it holds.
- *
- *  DERIVED from the run's own state now (`!shownRunChatParented`) rather than taken
- *  from the constructor argument, which STRENGTHENS the gate in the withholding
- *  direction: a chat-parented run whose lease this client never saw used to answer
- *  "parentless" and be offered pause/cancel.
- *
- *  What used to sit beside it — `shownRunOwned`, "did this door own the run" — is
- *  gone with the ×-cancels behaviour it existed for. Controls are no longer gated on
- *  which door opened the tab, and that follows directly: with the × disarmed, a
- *  History-opened tab denied Cancel would put a live run on screen with no way to
- *  stop it. The verbs are the status's now, wherever the run is read from. */
+/** Whether the shown run was launched manually. Gates the one verb that only makes sense
+ *  on a run vibekit hosts itself, and is derived from the run's state, not from the door. */
 let shownRunParentless = false;
 
-/** The launching chat of a run, or "" for a parentless one.
- *
- *  TWO sources, in order, because each covers what the other cannot. `runChatID`
- *  is fed by SSE frames and by `GET /api/runs/live`, so it answers for a LIVE run
- *  and for one History opened with a parent. `parentChatRef` reads the run tab's
- *  own persisted `TabSubject.Parent`, which the coordinator filled from the run's
- *  LEASE at open time — the only answer left for the common post-reload case,
- *  where a finished run's lease has been released and the store's map is empty.
- *
- *  A non-empty second answer is written back through `noteRunChat`, so every other
- *  reader (the card's footer link, a later re-open, the eviction exemption below)
- *  converges on one answer instead of each re-deriving it. */
+/** The launching chat of a run, or "" for a parentless one. TWO sources: `runChatID`
+ *  (SSE-fed, so it answers for a live run), then the run tab's persisted
+ *  `TabSubject.Parent`, the only answer left once a finished run's lease is released. A
+ *  non-empty second answer is written back so every other reader converges on it. */
 function launchingChatOf(workflowID: string): string {
   const known = runChatID(workflowID);
   if (known !== "") {

@@ -1,13 +1,9 @@
 package agent
 
-// Can the RECORD be trusted yet? `hasOpenTurn` is the fact the chat store's HTTP
-// surface cannot know for itself.
-//
-// The in-flight reply lives in an in-memory buffer and is appended to the chat file
-// once, at turn end, so a turn in flight has NO carrier in `GET /api/chats/{id}` —
-// and the client's derivation reads an absent carrier as "nothing closed this turn"
-// and answers `unknown`, a TERMINAL verdict during the one window in which nothing
-// can know one. This predicate is what lets the response state the liveness instead.
+// Can the RECORD be trusted yet — the fact the chat store's HTTP surface cannot know for
+// itself. The in-flight reply is appended to the chat file only at turn end, so a running
+// turn has no carrier in the response, and the client's derivation reads an absent carrier
+// as a TERMINAL `unknown`.
 
 import (
 	"testing"
@@ -37,16 +33,14 @@ func TestHasOpenTurn_TrueWhileATurnIsOpen(t *testing.T) {
 	}
 }
 
-// TestHasOpenTurn_TrueWhileFinalizing is the state the predicate exists for as much
-// as `turnOpen` is: `openFactsLocked` counts `turnFinalizing` as OPEN because the
-// carrier's persistence and broadcast have not completed, so the record is still
-// provisional at exactly the moment a refetch is most likely to race it.
+// `turnFinalizing` counts as OPEN: the carrier's persistence and broadcast have not
+// completed, so the record is still provisional at the moment a refetch is most likely to
+// race it.
 func TestHasOpenTurn_TrueWhileFinalizing(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 
-	// Claiming moves the chat to turnFinalizing without finishing it, which is the
-	// window between a closer claiming and its effects landing.
+	// Claiming without finishing IS the window between a closer claiming and its effects landing.
 	turn, won := h.coord.turns.claimOpen(t.Context(), "c1")
 	if !won {
 		t.Fatal("claimOpen lost the claim on a freshly opened turn")
@@ -61,15 +55,9 @@ func TestHasOpenTurn_TrueWhileFinalizing(t *testing.T) {
 	}
 }
 
-// TestHasOpenTurn_RecordsNothingAboutTheChatItWasAskedAbout is the read-path half,
-// and it is what makes this predicate safe to call from HTTP.
-//
-// Its two call sites are `GET /api/chats/{id}` and `GET /api/chats/{id}/turns`, so it
-// answers for every chat a reader merely OPENS. `lifecycleFor` creates a lifecycle on
-// first use and only `forget` (bridge teardown or delete) removes one, so asking
-// through it left an entry and its `changed` channel behind per chat read. The
-// sibling predicate `HasLiveBridge` is a plain locked map read with no such effect,
-// and that asymmetry is the tell.
+// What makes the predicate safe to call from HTTP: both call sites answer for every chat a
+// reader merely OPENS, and `lifecycleFor` creates a lifecycle on first use that only a
+// bridge teardown or delete removes — so asking through it leaks an entry per chat read.
 func TestHasOpenTurn_RecordsNothingAboutTheChatItWasAskedAbout(t *testing.T) {
 	h, _, _ := newTestHub()
 	reg := h.coord.turns
@@ -98,9 +86,8 @@ func TestHasOpenTurn_RecordsNothingAboutTheChatItWasAskedAbout(t *testing.T) {
 	}
 }
 
-// TestHasOpenTurn_FalseForAPrimeTurn mirrors replayTurnState's own exclusion rather
-// than inventing one: a prime's frames are vibekit's transcript replay and it
-// persists no carrier, so a prime turn does not make the record provisional.
+// Mirrors replayTurnState's own exclusion rather than inventing one: a prime persists no
+// carrier, so it does not make the record provisional.
 func TestHasOpenTurn_FalseForAPrimeTurn(t *testing.T) {
 	h, _, _ := newTestHub()
 	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrime)

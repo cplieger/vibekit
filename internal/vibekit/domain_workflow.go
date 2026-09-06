@@ -1,57 +1,22 @@
 package vibekit
 
-// Workflow-run domain types.
-//
-// A run is KAS's entity, not vibekit's: its state lives at
-// ~/.kiro/sessions/<hash>/workflows/<workflowId>/ and vibekit persists nothing
-// about it. So the types here are the EVENT surface and nothing more — there is
-// no Run struct, no node tree and no plan model, because `_kiro/workflow/inspect`
-// already returns all three and re-modelling them here would be a second
-// representation of a structure vibekit does not own. GET /api/runs/{id} passes
-// KAS's `state` and `nodePlan` through verbatim for exactly that reason.
-//
-// THREE INVALIDATION events, where an earlier design said six, plus one content
-// event added later for the runs no chat can carry. Each of the three removals is
-// measured, not a judgement call:
-//
-//   - `run_notify` (step narration) is dropped because there is no frame that
-//     could emit it. KAS's `KIND_TO_METHOD` table (workflow-notification-bridge)
-//     has exactly nine kinds — run_start, node_start, node_complete, node_paused,
-//     loop_iteration, watch_poll, paused, run_complete, steps_queued — and none
-//     carries a severity or a message. An event whose producer does not exist is
-//     worse than a missing feature: every client branch on it is dead code.
-//   - `runs_changed` is dropped as redundant. The list changes when a run starts
-//     and when it finishes, which is what the other two events already say.
-//   - `run_paused` is folded into RunProgress as a kind. The reason it was
-//     separate — "it needs a visible explanation" — is satisfied by the refetch:
-//     `pauseReason` is on `inspect`, and putting it on the event would invite the
-//     accumulate-from-events model the invalidation contract exists to forbid.
-//
-// All three ride the LAUNCHING CHAT's topic, which costs no transport code: KAS
-// parents a run on the calling chat's session (`RunWorkflowTool.handle` sets
-// `parentSessionId` from the execution's chat session), so a run's frames arrive
-// on that chat's bridge and `translateACPEvent` already knows the chat id. A run
-// started from the TUI arrives on no vibekit bridge at all and therefore receives
-// no live events — it is visible in the history inventory and nowhere else.
-//
-// `run_notify`'s reasoning above still holds and RunStepPayload does not weaken
-// it: there is still no step-NARRATION frame, because KAS emits no prose about a
-// step. What run_step carries is the step agent's OWN output, off the ordinary
-// `session/update` channel every other agent's content travels on, which is a
-// producer that does exist and was simply being discarded on run bridges.
+// Workflow-run domain types: the EVENT surface and nothing more. A run is KAS's
+// entity and vibekit persists nothing about it, so there is no Run struct, no node
+// tree and no plan model here — `_kiro/workflow/inspect` returns all three and GET
+// /api/runs/{id} passes them through verbatim. There is deliberately no
+// step-NARRATION event either: KAS's nine notification kinds carry neither a
+// severity nor a message, so nothing could emit one.
 
 import "encoding/json"
 
-// RunProgressKind is the KAS lifecycle kind behind a run_progress event.
-//
-// Seven of KAS's nine notification kinds. The other two are their own events
-// (run_start → run_started, run_complete → run_finished) because one inserts a
-// row and the other is terminal and fires a push; everything between them is
-// the same instruction to the client: refetch.
+// RunProgressKind is the KAS lifecycle kind behind a run_progress event: seven of
+// KAS's nine. The other two are their own events, because one inserts a row and
+// the other is terminal and fires a push, while every kind between them carries
+// the same instruction — refetch.
 type RunProgressKind string
 
-// The seven progress kinds, spelled exactly as KAS's method suffixes so a
-// reader can grep one string across both codebases.
+// The seven progress kinds, spelled as KAS's method suffixes so one string greps
+// across both codebases.
 const (
 	RunProgressNodeStart     RunProgressKind = "node_start"
 	RunProgressNodeComplete  RunProgressKind = "node_complete"
@@ -63,21 +28,13 @@ const (
 )
 
 // RunStartedPayload is the payload for type="run_started": a run began on this
-// chat. Carries the name because a client that has never fetched this run has
-// nothing to label the row with, and a row appearing with no name reads as a
-// bug rather than as a pending fetch.
+// chat. Name is carried because a client that has never fetched this run has
+// nothing to label the row with.
 //
-// Scheduled marks a run the SCHEDULER launched, and it exists because the client
-// cannot work this out. A parentless run's lifecycle frames are workspace-global
-// with an empty chat id, and a MANUAL launch is parentless too, so watching
-// events cannot separate the two; `parentSessionId` separates agent-parented from
-// parentless and is empty for both of these. Only the launch path knows, so the
-// distinction travels from there.
-//
-// Its one consumer is the client's start signal: a manual launch already has the
-// user's attention (they clicked Run, and a run tab opened), while a scheduled one
-// began with nobody looking. Absent on the wire for a manual run rather than
-// false, so an older client and a manual launch read alike.
+// Scheduled marks a run the SCHEDULER launched, and it travels because only the
+// launch path knows: a manual launch is parentless too, so events cannot separate
+// the two. It drives the client's start signal — a manual launch already has the
+// user's attention, a scheduled one began with nobody looking.
 type RunStartedPayload struct {
 	WorkflowID string `json:"workflow_id"`
 	Name       string `json:"name,omitempty"`
@@ -85,18 +42,10 @@ type RunStartedPayload struct {
 }
 
 // RunProgressPayload is the payload for type="run_progress": an INVALIDATION
-// signal. The client refetches `GET /api/runs/{id}`; it never reconstructs run
-// state from these events, and the payload is deliberately too thin to let it.
-//
-// That thinness is load-bearing rather than minimalist. `run_start` re-fires on
-// every resume and progress frames duplicate across a resume (probe 6 saw three
-// `run_start` frames for one run), so a client accumulating them would render a
-// garbled tree. `node_complete` also cannot be joined by (nodeId, iteration,
-// branchId) — it carries none of the last two — so an accumulating client could
-// not even tell two repeat iterations apart.
-//
-// NodeID is absent on `paused` (a run-level frame) and holds the loop id on
-// `loop_iteration`, which is the node the frame is about in both cases.
+// signal, deliberately too thin to reconstruct a run from. `run_start` re-fires on
+// every resume and `node_complete` carries neither iteration nor branchId, so an
+// accumulating client could not tell two repeat iterations apart. NodeID is absent
+// on the run-level `paused` and holds the loop id on `loop_iteration`.
 type RunProgressPayload struct {
 	WorkflowID string          `json:"workflow_id"`
 	NodeID     string          `json:"node_id,omitempty"`
@@ -104,30 +53,20 @@ type RunProgressPayload struct {
 }
 
 // RunFinishedPayload is the payload for type="run_finished": terminal. Status is
-// KAS's own run-level status (completed / failed / aborted / paused — a policy
-// pause at `onMaxIterations` reports through here too, since KAS emits
-// `run_complete` for it).
+// KAS's own run-level status, `paused` included — a policy pause at
+// `onMaxIterations` reports through here, because KAS emits `run_complete` for it.
 //
-// There is no aborted_by_restart flag. A restart PAUSES a run — KAS's read-path
-// reconcile has exactly one outcome and no path to aborted (probe 24) — so there
-// is nothing for such a flag to mean.
-//
-// Name is here for RunStartedPayload's reason, arriving at the other end of the
-// run: an outcome signal has to say WHICH run finished, and a client that never
-// saw this run's start frame (a page opened mid-run, another device) has nothing
-// else to name it with. Read out of KAS's `finalState`, which this frame already
-// decodes for its log line, so it costs one field and no new decode. Empty when
-// KAS sends no state, and the consumer falls back to a generic label.
+// There is deliberately no aborted_by_restart flag: a restart PAUSES a run and
+// KAS's read-path reconcile has no path to aborted, so nothing would fill it.
+// Name is here for RunStartedPayload's reason, and empty when KAS sends no state.
 type RunFinishedPayload struct {
 	WorkflowID string `json:"workflow_id"`
 	Status     string `json:"status"`
 	Name       string `json:"name,omitempty"`
 }
 
-// RunStepKind discriminates what a run_step frame carries. Three members,
-// matching the three block kinds a transcript already renders, because a step's
-// content IS a transcript and inventing a fourth vocabulary for it would make a
-// reader learn the same thing twice.
+// RunStepKind discriminates what a run_step frame carries: the three block kinds a
+// transcript already renders, because a step's content IS a transcript.
 type RunStepKind string
 
 // The three run-step kinds.
@@ -136,28 +75,19 @@ const (
 	RunStepText RunStepKind = "text"
 	// RunStepThinking is a delta of its reasoning.
 	RunStepThinking RunStepKind = "thinking"
-	// RunStepTool is one tool call, whole. Sent on create AND on every update,
-	// folded server-side, so a client renders from the frame it holds rather than
-	// accumulating partials — the same rule the run lifecycle follows, applied to
-	// the one surface that has no endpoint to refetch.
+	// RunStepTool is one tool call, whole: sent on create and on every update,
+	// folded server-side, so a client renders the frame it holds and accumulates
+	// nothing. The one surface with no endpoint to refetch.
 	RunStepTool RunStepKind = "tool"
 )
 
 // RunStepPayload is the payload for type="run_step".
 //
-// NodePath, not NodeID, and that is the same choice ACPWorkflowMeta.SubtaskID
-// makes for the transcript: a repeat's iterations share a node id, so an id
-// cannot address one execution and two passes of a loop body would write into
-// each other's rows. Joined with "/", and NOT byte-identical to what a client
-// derives from `inspect`'s state tree: KAS spells a repeat's iteration container
-// `iter-<n>` here and `<repeatId>#<n>` there, so the client translates the tree
-// into this spelling (`static-src/run-store.ts`'s nodePathSegment).
-//
-// ToolCall is whole rather than a delta because there is no buffer at this end to
-// fold into: a parentless run has no chat, so nothing accumulates its content.
-// The translator holds the in-flight calls per run instead, bounded by the same
-// `run_complete` that bounds the step-session registry, and sends the folded
-// value. A client can therefore render the last frame it received and be right.
+// NodePath, not NodeID, because a repeat's iterations share a node id and two
+// passes of a loop body would write into each other's rows. NOT byte-identical to
+// `inspect`'s state tree: KAS spells an iteration container `iter-<n>` here and
+// `<repeatId>#<n>` there, so the client translates. ToolCall is whole because a
+// parentless run has no chat and so no buffer to fold into.
 type RunStepPayload struct {
 	ToolCall   *ToolCall   `json:"tool_call,omitempty"`
 	WorkflowID string      `json:"workflow_id"`
@@ -166,110 +96,64 @@ type RunStepPayload struct {
 	Delta      string      `json:"delta,omitempty"`
 }
 
-// RunStepTranscriptState is the verdict GET /api/runs/{id}/steps/{path...}
-// answers with. A registered wire enum, so the three values have one definition
-// across both languages and a client's branch over them is total.
-//
-// THREE values rather than a 200-with-an-empty-list, and the precedent is this
-// app's own: GET /api/config-template's `catalog` and GET /api/sessions'
-// `sessions_state`/`runs_state` exist because flattening several outcomes into one
-// empty answer makes every client policy a guess. Here the outcomes are genuinely
-// three and the reader says something different for each.
+// RunStepTranscriptState is the verdict GET /api/runs/{id}/steps/{path...} answers
+// with. A registered wire enum, so the three values have one definition across both
+// languages and a client's branch over them is total. Three rather than a
+// 200-with-an-empty-list, because flattening the outcomes makes every client policy
+// a guess.
 type RunStepTranscriptState string
 
 // The three step-transcript verdicts.
 const (
-	// RunStepTranscriptReady: the transcript was read. Messages may still be
-	// EMPTY, which is its own fact — the step ran and produced no prose.
+	// RunStepTranscriptReady: the transcript was read. Messages may still be EMPTY,
+	// which is its own fact — the step ran and produced no prose.
 	RunStepTranscriptReady RunStepTranscriptState = "ready"
-	// RunStepTranscriptGone: KAS no longer holds the step's session, so there is
-	// nothing to serve and never will be. A step that never started answers this
-	// too: it has no session to load.
+	// RunStepTranscriptGone: KAS holds no session for the step, so there is nothing
+	// to serve and never will be. A step that never started answers this too.
 	RunStepTranscriptGone RunStepTranscriptState = "gone"
-	// RunStepTranscriptUnavailable: the read could not be completed — the RPC
-	// failed, the budget expired, or the utility bridge could not be reached. A
-	// TRANSIENT answer, and the only one a client may retry.
+	// RunStepTranscriptUnavailable: the read failed. TRANSIENT, and the only verdict
+	// a client may retry.
 	RunStepTranscriptUnavailable RunStepTranscriptState = "unavailable"
 )
 
-// RunStepTranscript is GET /api/runs/{id}/steps/{path...}'s reply: one workflow
-// step's transcript, read out of KAS on demand.
+// RunStepTranscript is GET /api/runs/{id}/steps/{path...}'s reply, projected from
+// KAS's replay per request and PERSISTED BY NOTHING. It exists because a step's
+// transcript is on no other endpoint: `inspect` carries what a step DECLARED.
 //
-// It exists because a step's transcript is on no other endpoint. `inspect` returns
-// the node tree and a step's `capturedOutput`, which is what the step chose to
-// declare — not how it got there — and the live `run_step` channel is emitted for
-// PARENTLESS runs only and persisted by nobody. So a reader opening a finished
-// run's page could see the plan, the timings and the captures, and nothing of the
-// work.
-//
-// NOTHING IS PERSISTED BY THIS: the reply is projected from KAS's own replay per
-// request and dropped. A run has no chat, no message and no buffer, so there is
-// nowhere to accumulate it even if that were wanted — and accumulating a run's
-// content from events is what the run surface's invalidate-and-refetch contract
-// exists to forbid.
-//
-// NO `omitempty` on ANY field, deliberately and for EffectiveSettings' reason: the
-// generator emits a REQUIRED TypeScript field for a field without it, and a
-// required field is what stops a client inventing a fallback for the verdict. An
-// optional `state` would read as "assume ready", which is the one reading that
-// makes the three-valued answer pointless.
+// NO `omitempty` on ANY field, deliberately: the generator emits a REQUIRED
+// TypeScript field without it, which stops a client inventing a fallback for the
+// verdict. An optional `state` would read as "assume ready".
 type RunStepTranscript struct {
-	// Messages is the step's own transcript, projected from KAS's replay and
-	// filtered to the ASSISTANT rows. Empty on any state but ready, and legitimately
-	// empty on ready.
-	Messages []Message `json:"messages"`
-	// WorkflowID and NodePath echo what was asked for, so a client holding several
-	// reads in flight can tell the answers apart without correlating by request.
+	// WorkflowID and NodePath echo the request, so a client holding several reads in
+	// flight tells the answers apart without correlating.
 	WorkflowID string                 `json:"workflow_id"`
 	NodePath   string                 `json:"node_path"`
 	State      RunStepTranscriptState `json:"state"`
+	// Messages is the step's transcript, filtered to the ASSISTANT rows. Empty on any
+	// state but ready, and legitimately empty on ready.
+	Messages []Message `json:"messages"`
 }
 
-// RunInputNeededPayload is the payload for type="run_input_needed": a workflow
-// STEP asked a question and the run is parked until somebody answers it.
-//
-// The FIFTH run event, and the second that is not an invalidation. It carries its
-// payload for the same reason run_step does and the three invalidations do not:
-// the question text is on no endpoint. KAS parks the run with one fixed literal
-// in `state.pauseReason` and an empty `pauseDetail`, so `inspect` can say a step
-// wants input and can never say what it asked.
-//
-// WorkflowID is the IDENTITY, never a chat id. The envelope's chat id is the
-// launching chat for an agent-parented run and empty for a parentless one, so the
-// ask must be findable from the run in both cases.
-//
-// Question MAY BE EMPTY, and a consumer has to render that case. The ask registry
-// is in memory, so a restart loses the text while the run stays parked; the read
-// path then synthesises an ask from the paused leaf rather than stranding the
-// user, and an empty question is what that ask carries.
-//
-// There is deliberately no Severity field. KAS's `send_message` carries four, and
-// only `warning` parks a run — the other three advance, complete or fail the step
-// with no wait — so the translator drops them and a severity here would be a
-// field with one possible value.
+// RunInputNeededPayload is the payload for type="run_input_needed": a workflow STEP
+// asked a question and the run is parked until somebody answers it. It carries its
+// payload rather than invalidating because the text is on no endpoint — KAS parks
+// with one fixed literal in `state.pauseReason` — and WorkflowID is the IDENTITY,
+// since the envelope's chat id is empty for a parentless run. Question MAY BE
+// EMPTY: the ask registry is in memory, so a restart loses the text while the run
+// stays parked. No Severity field — only `warning` parks a run.
 type RunInputNeededPayload struct {
 	WorkflowID string `json:"workflow_id"`
-	// AskID is the ask's identity within its run, and the value an answer names.
-	// Composed server-side with keyenc so it cannot be forged by a separator
-	// inside one of its parts: the notification's own id for a live ask, the
-	// paused leaf's node PATH for one synthesised after a restart. The second
-	// spelling has to be deterministic, because the read path that mints it runs
-	// on every refetch and a fresh id per read would stack duplicate cards.
+	// AskID is composed with keyenc so a separator inside one part cannot forge it.
+	// The after-restart spelling must be DETERMINISTIC, or the read path that mints it
+	// on every refetch stacks duplicate cards.
 	AskID string `json:"ask_id"`
-	// NodeID addresses the asking step, and it is what every ask surface in this
-	// app already joins on (the run card marks the row whose node id an ask
-	// names). MAY BE EMPTY: KAS puts the node id on the notification only when the
-	// caller is a step, and a run blocked by an unattributable ask is still
-	// blocked, so the count travels separately from the row.
-	//
-	// There is deliberately no NodePath. The step-session registry holds a node
-	// ID and no path, so a live ask could never carry one, and a field populated
-	// on the restart-reconcile path alone would invite a reader to rely on it.
+	// NodeID addresses the asking step. MAY BE EMPTY — KAS sets it only for a step
+	// caller, and a run blocked by an unattributable ask is still blocked. No
+	// NodePath: the step-session registry holds no path, so a live ask could not.
 	NodeID string `json:"node_id"`
-	// StepSessionID is the ANSWER ADDRESS: a `session/prompt` sent to the paused
-	// step's own session is what KAS reroutes into the run. Empty when the notify
-	// frame carried no caller session, in which case the answer path resolves it
-	// from a fresh `inspect`.
+	// StepSessionID is the ANSWER ADDRESS: KAS reroutes a `session/prompt` sent to the
+	// paused step's session into the run. Empty when the notify frame carried no
+	// caller session, and the answer path resolves it from a fresh `inspect`.
 	StepSessionID string `json:"step_session_id"`
 	AgentName     string `json:"agent_name"`
 	Question      string `json:"question"`
@@ -279,11 +163,9 @@ type RunInputNeededPayload struct {
 // RunInputSettledPayload is the payload for type="run_input_settled": the ask is
 // answered or waived, so every surface still showing it must retire the card.
 //
-// Its own event rather than a member of decision_settled, whose payload is keyed
-// by an int64 JSON-RPC request id. A run ask has no open request behind it, so a
-// second identity field on that payload would make one shape carry two mutually
-// exclusive keys — one per family — and neither consumer could tell which to read
-// without first knowing the kind.
+// Its own event rather than a member of decision_settled, which is keyed by an
+// int64 JSON-RPC request id: a run ask has no open request, so sharing that payload
+// would give one shape two mutually exclusive identity keys.
 type RunInputSettledPayload struct {
 	WorkflowID string    `json:"workflow_id"`
 	AskID      string    `json:"ask_id"`
@@ -292,10 +174,9 @@ type RunInputSettledPayload struct {
 
 // RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step.
 //
-// Text empty is a 400 rather than a waive. Continuing without an answer is a
-// DIFFERENT verb (POST /api/runs/{id}/step with status `running`), because it
-// drives the step with KAS's default continuation instead of the user's words and
-// a reader must not reach it by submitting an empty box.
+// Empty Text is a 400 rather than a waive. Continuing without an answer is a
+// DIFFERENT verb (POST /api/runs/{id}/step with status `running`) — it drives the
+// step with KAS's default continuation, and an empty box must not reach it.
 type RunAnswerRequest struct {
 	AskID string `json:"ask_id"`
 	Text  string `json:"text"`
@@ -303,11 +184,9 @@ type RunAnswerRequest struct {
 
 // RunLaunchRequest is POST /api/runs's body: launch one recipe, PARENTLESS.
 //
-// The recipe is named by its `source` exactly as `_kiro/workflow/listRecipes`
-// reported it — `bundled://<name>` for a compiled-in recipe, an absolute
-// `*.workflow.json` path for a workspace one. The server re-validates the value
-// against a fresh listRecipes call rather than trusting it, so this endpoint
-// cannot be steered at an arbitrary file even though the wire value looks like
+// Source is `_kiro/workflow/listRecipes`' own value verbatim. The server
+// re-validates it against a fresh listRecipes call rather than trusting it, so the
+// endpoint cannot be steered at an arbitrary file even though the value looks like
 // a path.
 type RunLaunchRequest struct {
 	Inputs map[string]string `json:"inputs,omitempty"`
@@ -331,19 +210,10 @@ type Recipe struct {
 	// Source is the launch key: `bundled://<name>` or a workspace
 	// `*.workflow.json` path. Echoed back verbatim in RunLaunchRequest.
 	Source string `json:"source"`
-	// Plan is KAS's node plan for the recipe, forwarded VERBATIM. It is an array
-	// of node descriptors: `{nodeId, type, agentName, modelId?, effortLevel?}`
-	// for a step, and a nested `steps` / `branches` array for a sequence, repeat
-	// or parallel node. So it says what the recipe will do and on which model,
-	// which is what a reader needs BEFORE launching one.
-	//
-	// KAS sends it on every listRecipes reply whether or not a client reads it,
-	// so forwarding costs one field. Raw rather than modelled, for the reason
-	// stated at the top of this file: the node plan is KAS's structure, and a
-	// second representation of it here would be one more thing to keep in sync
-	// for no gain. Last of the pointer-bearing fields on purpose — a slice's
-	// len/cap words end the GC scan region, where a trailing string would extend
-	// it (the vibekit.ToolCall.Checkpoint note records the same rule).
+	// Plan is KAS's node plan, forwarded VERBATIM: what the recipe will do and on
+	// which model, raw for the reason at the top of this file. Last of the
+	// pointer-bearing fields on purpose — a slice's len/cap words end the GC scan
+	// region where a trailing string would extend it.
 	Plan    json.RawMessage `json:"plan,omitempty"`
 	BuiltIn bool            `json:"built_in,omitempty"`
 }
@@ -353,41 +223,22 @@ type RecipesResponse struct {
 	Recipes []Recipe `json:"recipes"`
 }
 
-// LiveRun is one row of GET /api/runs/live: a run vibekit's own lease registry
-// says is in flight, named with the chat whose agent launched it. ChatID is
-// empty for a parentless run (manual, scheduled) and for a lease written
-// before the field existed — both mean "no chat to launch a tab under".
-//
-// THREE consumers read this row and they ask three different questions, which is
-// why Executing is a field rather than a filter applied here: the client's
-// eviction sweep asks "are frames still arriving into this chat's transcript",
-// the tab-dot painter asks "which runs should this client paint a dot for" (every
-// run with an open tab, parked ones included), and the tab-parent resolver asks
-// "which chat launched this run", which is true of a run whatever its state. A
-// server that answered only the first would take the row away from the other two.
+// LiveRun is one row of GET /api/runs/live: a run vibekit's own lease registry says
+// is in flight, named with the chat whose agent launched it. ChatID is empty for a
+// parentless run and for a lease predating the field — both mean "no chat to launch
+// a tab under". Executing is a FIELD rather than a filter applied here because
+// three consumers ask this row three different questions, and filtering for the
+// eviction sweep would take the row away from the tab dot and the tab parent.
 type LiveRun struct {
 	WorkflowID string `json:"workflow_id"`
 	ChatID     string `json:"chat_id"`
-	// Executing reports whether THIS PROCESS is holding a deadline for the run,
-	// which is its own record of "I saw this run start and have not seen it park".
+	// Executing reports whether THIS PROCESS holds a deadline for the run. NOT
+	// `status` and none of KAS's five, because serving one would mean an `inspect` per
+	// lease on the client's boot path (runlease.Lease.Deadline owns the answer).
 	//
-	// It is deliberately NOT called `status` and does NOT carry one of KAS's five
-	// workflow statuses. Serving one would mean reading `_kiro/workflow/inspect`
-	// per lease, which is exactly what the endpoint's doc refuses (it sits on the
-	// client's boot path), so the honest field is the one the lease can answer for
-	// itself: a deadline is armed on every start and resume and PARKED on every
-	// pause, because the bound is on executing time (runlease.Lease.Deadline).
-	//
-	// Where it can disagree with KAS, and both directions are accepted:
-	//
-	//   - a lease read back from disk is parked by NewStore, so a run that was
-	//     executing when this process died reports false. That is the right answer
-	//     to the eviction question — the bridge carrying its frames died too — and
-	//     KAS reconciles such a run to `paused` on the next read anyway.
-	//   - `set_step_status` advances a parked step without re-arming, so a run
-	//     continued that way reports false while it executes. The client corrects
-	//     itself on the run's next progress frame; the endpoint is the reconciliation
-	//     at boot and after a transport gap, not the live channel.
+	// It can read false while KAS says running — a lease read back from disk is
+	// parked, and `set_step_status` advances a step without re-arming — and both are
+	// accepted: the client corrects itself on the run's next progress frame.
 	Executing bool `json:"executing"`
 }
 

@@ -109,19 +109,12 @@ func agentRunList(t *testing.T, status string) json.RawMessage {
 	})
 }
 
-// TestCancel_IsCarriedOnTheOWNINGChatsBridge is the routing defect, and the
-// assertion is on the CARRIER rather than on the outcome.
-//
-// An agent-launched run has no `run:<id>` bridge and never will — KAS parents it on
-// the calling chat's session — so `control` fell through to the UTILITY session for
-// that population, which is nearly all of them. KAS's cancel handler tries its own
-// registry first and cancels a hit with no ownership check; a miss reaches the write
-// helper, which opens with `ensureRunOwnership` and throws while the owner is live.
-// Measured: 35 of 36 bound-driven cancels refused over 2026-08-20 → 09-05.
-//
-// Asserting only that the run stopped would pass on the utility session too, because
-// the fake answers every carrier identically. So this counts carriers: exactly one
-// bridge takes the cancel, and it is the one the chat holds.
+// TestCancel_IsCarriedOnTheOWNINGChatsBridge asserts the CARRIER rather than the outcome. An
+// agent-launched run has no `run:<id>` bridge and never will — KAS parents it on the calling
+// chat's session — so a fall-through to the UTILITY session covers nearly the whole
+// population, and KAS refuses a cancel there while the owner lives (measured: 35 of 36
+// bound-driven cancels refused over 2026-08-20 → 09-05). Asserting only that the run stopped
+// would pass on the utility session too, because the fake answers every carrier identically.
 func TestCancel_IsCarriedOnTheOWNINGChatsBridge(t *testing.T) {
 	h, rec := agentLaunchedRun(t, map[string]json.RawMessage{
 		methodKiroWorkflowList:    agentRunList(t, "running"),
@@ -168,19 +161,12 @@ func TestDelete_IsCarriedOnTheOWNINGChatsBridge(t *testing.T) {
 	}
 }
 
-// TestCancelForSessions_ReadsTheRunInventoryOnce is the routing fix's COST, one layer
-// up from the fix itself.
-//
-// The tab-close route enumerates the inventory and then cancels per run, and through
-// the plain Cancel each of those re-entered `workflow/list` to recover the parent
-// session the loop was already holding — N+1 sequential trips against the utility
-// session, each with its own sessionListTimeout, during a teardown the user is
-// watching. The carrier now comes off the row, so the TRIP COUNT is the subject here;
-// which carrier it is belongs to the routing tests above.
-//
-// The chat's bridge is INSERTED rather than opened: OpenBridge fires the rehydrate
-// hook, whose own resumeInterruptedRuns reads the inventory on another goroutine, so a
-// count taken after it would be measuring a race rather than this path.
+// TestCancelForSessions_ReadsTheRunInventoryOnce: the tab-close route enumerates the
+// inventory and then cancels per run, and through the plain Cancel each of those re-enters
+// `workflow/list` to recover the parent session the loop already holds — N+1 sequential trips
+// against the utility session during a teardown the user is watching. The TRIP COUNT is the
+// subject here. The chat's bridge is INSERTED rather than opened, because OpenBridge fires the
+// rehydrate hook, whose resumeInterruptedRuns reads the inventory on another goroutine.
 func TestCancelForSessions_ReadsTheRunInventoryOnce(t *testing.T) {
 	h, cs, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -221,20 +207,12 @@ func TestCancelForSessions_ReadsTheRunInventoryOnce(t *testing.T) {
 	}
 }
 
-// TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED is the one door the
-// routing did not reach, and the assertion is on the CARRIER rather than on the
-// outcome for TestCancel_IsCarriedOnTheOWNINGChatsBridge's reason.
-//
-// With retention off, Membership.CloseTab deletes the doomed chat's record at its
-// commit point and only then dispatches deleteChatTeardown → DeleteChatStateByChain
-// → here. The record-matching resolver reads chat.Store.Get, a disk read with no
-// cache, so on that path every row resolved a NIL carrier and its cancel went to the
-// utility session — where KAS refuses it while the owner lives. The bridge was in the
-// map the whole time: present and unreachable.
-//
-// So the fixture is the delete-grade state exactly: a live bridge under "c1" and NO
-// chat record. The carrier now comes off the chat ID this loop was handed, which by
-// construction is the launching chat for every run it cancels and needs no record.
+// TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED is the one door the routing did
+// not reach, asserted on the CARRIER for its sibling's reason. With retention off,
+// Membership.CloseTab deletes the doomed chat's record at its commit point and only then
+// dispatches the teardown that reaches here, so a record-matching resolver (a disk read with
+// no cache) resolves a NIL carrier for every row while the bridge sits in the map. The fixture
+// is that state exactly: a live bridge under "c1" and NO chat record.
 func TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED(t *testing.T) {
 	rec := &spawnRecorder{results: map[string]json.RawMessage{
 		methodKiroWorkflowList:   agentRunList(t, "running"),
@@ -341,15 +319,11 @@ func TestCancel_FallsBackToTheUtilitySessionWhenNothingHostsTheRun(t *testing.T)
 	}
 }
 
-// TestFinishTermination_ARefusedCancelKEEPSTheDeadline is the ordering fix.
-//
-// The disarm used to run BEFORE the cancel, so a refusal left the run executing with
-// `Bounded() == false` — and armDeadline's idempotence check then had nothing to
-// protect, so nothing ever re-armed it. Each of the 35 measured refusals unbounded
-// its run for the rest of its life; two were still on disk when the defect was found.
-//
-// The deadline is the record that vibekit is bounding a run, and a run whose cancel
-// was refused is still a run vibekit is bounding.
+// TestFinishTermination_ARefusedCancelKEEPSTheDeadline: a disarm running BEFORE the cancel
+// leaves a refusal's run executing with `Bounded() == false`, and armDeadline's idempotence
+// check then has nothing to protect, so nothing ever re-arms it — each of the 35 measured
+// refusals unbounded its run for the rest of its life. The deadline is the record that vibekit
+// is bounding a run, and a run whose cancel was refused is still one vibekit is bounding.
 func TestFinishTermination_ARefusedCancelKEEPSTheDeadline(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner pid 979344 is live")}
@@ -444,17 +418,11 @@ func restoreCancelRetryDelay(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { cancelRetryBaseDelay = prev })
 }
 
-// TestRetryTermination_IsBoundedAndDoesNotReFireForever.
-//
-// Keeping the deadline is what makes this necessary: the timer that fired is spent
-// and claimExpiredDeadline would pass again against a lease this path did not
-// change, so the next attempt has to be installed deliberately. Deliberately means
-// bounded — a permanently unkillable run would otherwise attempt a cancel for the
-// life of the container.
-//
-// The bound is on the RETRY and not on the deadline, which is what the second
-// assertion pins: the budget runs out and the run is STILL bounded, because vibekit
-// is still bounding a run it could not stop.
+// TestRetryTermination_IsBoundedAndDoesNotReFireForever. Keeping the deadline is what makes
+// this necessary: the timer that fired is spent and claimExpiredDeadline would pass again
+// against a lease this path did not change, so the next attempt is installed deliberately and
+// therefore bounded. The bound is on the RETRY and not on the deadline, which is what the
+// second assertion pins: the budget runs out and the run is STILL bounded.
 func TestRetryTermination_IsBoundedAndDoesNotReFireForever(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}
@@ -509,17 +477,12 @@ func awaitCalls(t *testing.T, br *fakeBridge, method string, want int, why strin
 	}
 }
 
-// TestHealProgress_RefillsTheCancelRetryBudget: the retry budget has TWO spenders,
-// so a run's own Cancel button can spend the ceiling's re-attempts.
-//
-// finishTermination's error path is reached by cancelOn as well as cancelBounded, and
-// nothing that a still-EXECUTING run reaches ever cleared the counter — clearCancelRetries
-// fired only on a landed cancel, in forgetBounds and in clearEnd. So three refused
-// presses left the ceiling firing hours later, being refused once, and logging
-// logMsgCancelUnretried having never re-attempted.
-//
-// A refusal is evidence about a MOMENT, so progress makes the earlier refusals stale:
-// a completed node returns the budget, exactly as it returns the heal budget beside it.
+// TestHealProgress_RefillsTheCancelRetryBudget: the retry budget has TWO spenders, so a run's
+// own Cancel button can spend the ceiling's re-attempts. finishTermination's error path is
+// reached by cancelOn as well as cancelBounded, and with clearCancelRetries firing only on a
+// landed cancel, three refused presses left the ceiling firing hours later, refused once, and
+// logging logMsgCancelUnretried having never re-attempted. A refusal is evidence about a
+// MOMENT, so a completed node returns the budget, as it returns the heal budget beside it.
 func TestHealProgress_RefillsTheCancelRetryBudget(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}

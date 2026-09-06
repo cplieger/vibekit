@@ -5,14 +5,9 @@ import (
 	"time"
 )
 
-// TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor is the whole
-// arithmetic of "one clock, three inputs".
-//
-// Before the lease these were two independent mechanisms: armDeadline (the
-// slot, armed only by the scheduler's launch) and the run ceiling (armed by
-// everything). So a manual run of a scheduled recipe held that recipe for the
-// whole ceiling and refused every slot underneath it, and a slot that fired late
-// bounded its run by whatever remained of an interval that had nearly elapsed.
+// The whole arithmetic of one clock over three inputs. Two mechanisms would let a manual
+// run of a scheduled recipe hold that recipe for the whole ceiling and refuse every slot
+// under it, and a late slot bound its run by whatever remained of the interval.
 func TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 1, 3, 0, 0, 0, time.UTC)
@@ -59,10 +54,8 @@ func TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor(t *testing.T
 			in:   Bounds{BackstopAt: now.Add(100 * idle), Idle: idle, Floor: floor},
 			want: now.Add(idle),
 		},
-		// The one case where the answer is deliberately in the PAST, and the one
-		// that makes the backstop absolute: floored to now+Floor instead, every
-		// stamp grants a fresh minimum, so a run refilling on its own progress
-		// would roll the absolute bound forward for the life of the container.
+		// Deliberately in the PAST, which is what makes the backstop absolute: floored
+		// instead, a run refilling on its own progress rolls the bound forward forever.
 		"a spent backstop is honoured, not floored": {
 			in:   Bounds{BackstopAt: now.Add(-time.Hour), Idle: idle, Floor: floor},
 			want: now.Add(-time.Hour),
@@ -115,21 +108,12 @@ func TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor(t *testing.T
 	}
 }
 
-// TestNextDeadline_FloorOutranksTheSlotButNotTheBackstop states the ordering as
-// its own property, because it is the one place the inputs genuinely disagree and
-// the answer is not "the tighter one" — and the two halves disagree in OPPOSITE
-// directions, which is why one composition step cannot serve both.
-//
-// A schedule whose interval was edited below the run floor, or a slot that fired
-// at the very end of its window, would otherwise hand every run a budget it
-// cannot finish inside — which writes "failed" into the row on every slot while
-// nothing is actually wrong. That rationale is about how much budget a run should
-// GET, so it cannot reach the backstop, which answers how much it has LEFT: any
-// remainder tighter than the floor wins, and a spent one is the sharpest case,
-// where the honest answer is an instant in the past the timer fires on at once.
-// Floored, the answer is now+Floor on every stamp, so a run whose own progress
-// re-stamps the deadline is granted a fresh minimum indefinitely and the absolute
-// bound never comes due.
+// The one place the inputs genuinely disagree, and the two halves disagree in OPPOSITE
+// directions, so no single composition step serves both. The floor answers how much budget
+// a run should GET — without it an interval edited below it, or a slot fired at the end of
+// its window, writes "failed" into the row while nothing is wrong. The backstop answers how
+// much a run has LEFT, so the floor cannot reach it: any remainder tighter than the floor
+// wins, and a spent one is an instant in the past the timer fires on at once.
 func TestNextDeadline_FloorOutranksTheSlotButNotTheBackstop(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
@@ -150,17 +134,15 @@ func TestNextDeadline_FloorOutranksTheSlotButNotTheBackstop(t *testing.T) {
 			spent.Sub(now), backstop.Sub(now))
 	}
 
-	// And the stamp a REFILL would compute a moment later is the same instant, which
-	// is what makes it terminal: the anchor is fixed for the whole stretch, so the
-	// refill's granularity test refuses it and the armed timer stands.
+	// A REFILL a moment later computes the same instant, which is what makes it terminal:
+	// the anchor is fixed for the whole stretch, so the armed timer stands.
 	later := NextDeadline(now.Add(2*time.Minute), Bounds{BackstopAt: backstop, Idle: 15 * time.Minute, Floor: floor})
 	if !later.Equal(spent) {
 		t.Errorf("a stamp two minutes later moved the spent backstop from %v to %v", spent, later)
 	}
 }
 
-// TestLeaseBounded_IsTheSuccessorOfTheArmMap pins the meaning of a zero
-// deadline, which three readers depend on: the timer callback's own liveness
+// Three readers depend on the meaning of a zero deadline: the timer callback's liveness
 // test, the step cap's authority to act, and the re-arm.
 func TestLeaseBounded_IsTheSuccessorOfTheArmMap(t *testing.T) {
 	t.Parallel()
@@ -186,10 +168,8 @@ func TestLeaseBounded_IsTheSuccessorOfTheArmMap(t *testing.T) {
 	}
 }
 
-// TestOriginValid pins the closed set. An unknown origin cannot be reasoned
-// about — it says neither whether the run is sweepable nor whether it is
-// unattended — so it is refused on the way in and dropped on the way back off
-// disk.
+// An unknown origin says neither whether the run is sweepable nor whether it is
+// unattended, so it is refused on the way in and dropped on the way back off disk.
 func TestOriginValid(t *testing.T) {
 	t.Parallel()
 	for _, o := range []Origin{OriginScheduled, OriginManual, OriginAgent} {
