@@ -649,7 +649,12 @@ function messageRowEl(messageID: string): HTMLElement | null {
 /** The rendered container of the hit's SEGMENT, from the renderer's own per-block
  *  map, for every segment kind. NOT scoped to the hit's row: a run card holds every
  *  later message's steps, so a mounted card can sit in an EARLIER message's row.
- *  Null when the hit resolves to no element; the caller falls back to the row. */
+ *
+ *  Every block kind that mounts an element stamps it, so null means nothing is mounted
+ *  for this hit — no block index, a block the store no longer has, an ordinal outside the
+ *  mounted window, an element that has left the document, or a block whose own arm
+ *  renders nothing (an unknown tool call, a suppressed internal one). The caller falls
+ *  back to the row. */
 function resolveSegmentEl(hit: SearchHit): HTMLElement | null {
   const bi = hit.block_index;
   if (bi === undefined) {

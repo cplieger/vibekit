@@ -1014,8 +1014,12 @@ function dropBlockRange(
     return;
   }
   const blocks = m.blocks ?? [];
+  const orphaned = new Map<string, RunCardView>();
   for (const i of removed) {
-    dropBlock(st, m, blocks[i], i);
+    const hosted = dropBlock(st, m, blocks[i], i);
+    if (hosted !== undefined) {
+      orphaned.set(hosted.runID, hosted.card);
+    }
   }
   cbs.disposeBlockEffects(m.id, removed);
   for (const [id, note] of [...st.steerNotes]) {
@@ -1027,20 +1031,59 @@ function dropBlockRange(
   pruneEmptyContainers(st);
   rebindSurvivingBoxes(st);
   st.window = keep;
+  // After the LOOP: `st` is a candidate claimant, and mid-loop its `blockEls` still holds
+  // ordinals this same drop is about to take.
+  for (const [runID, card] of orphaned) {
+    resolveRunCardFate(st, runID, card);
+  }
   // The marks are re-flushed against the narrowed window, so a note whose anchor
   // is still inside it survives a drop that removed its neighbour.
   flushSteerNotes(st, marks, m.id, st.window.from, st.window.to);
 }
 
+/** Re-home or release `runID`'s card once the drop that took its launch block is
+ *  complete: one card per run, hosted by the earliest render still holding mounted
+ *  blocks inside it, which can be `st` itself. */
+function resolveRunCardFate(st: MsgRender, runID: string, card: RunCardView): void {
+  const claim = liveRunClaimant(st, card);
+  if (claim === undefined) {
+    // Nothing mounted inside it, so the run's own state goes back — or `runCardFor`
+    // hands the next claimant a DETACHED node and re-homing never fires.
+    st.runs.delete(runID);
+    releaseRunCard(st, runID, card);
+    card.root.remove();
+    return;
+  }
+  // RE-HOMED: the card is a CONTAINER, and removing it takes a render's mounted blocks
+  // out of the document while that render still counts them.
+  const seat = seatAbove(claim.host, claim.host.blocksEl, claim.at, card.root);
+  if (claim.host !== st) {
+    adoptRunCard(claim.host, st, runID, card, seat);
+    return;
+  }
+  // The claim is already this render's, so only the SEAT can be wrong: the launch
+  // ordinal it was placed at is gone. Guarded because ANY re-seat blurs whatever the
+  // card holds focus on, and a drop runs while the reader scrolls.
+  if (card.root.nextElementSibling !== seat) {
+    st.blocksEl.insertBefore(card.root, seat);
+  }
+}
+
 /** Release one block: its measured height into the cache, its disclosure state, its
- *  element, its text sink, its streaming signals and its block-lifetime cleanups. */
-function dropBlock(st: MsgRender, m: Message, block: Block | undefined, i: number): void {
+ *  element, its text sink, its streaming signals and its block-lifetime cleanups.
+ *
+ *  Answers with the run card the block hosted, whose fate its caller decides once the
+ *  whole range is gone. */
+function dropBlock(
+  st: MsgRender,
+  m: Message,
+  block: Block | undefined,
+  i: number,
+): { runID: string; card: RunCardView } | undefined {
   const hosted = hostedRun(st, block);
   const el = st.blockEls.get(i);
   st.blockEls.delete(i);
-  // A LAUNCH block's element is the run's card, whose fate the arm at the bottom
-  // already owns. Every other kind owns the element it stamped.
-  if (el !== undefined && el !== hosted?.card.root) {
+  if (el !== undefined && !isContainerRoot(st, el, hosted?.card)) {
     // MEASURED on the way out, so the spacer replacing it holds the height it held, and
     // only a REAL reading: a detached element answers 0 and a short spacer leaves the
     // document shorter than the content it stands in for. The estimate over-prices.
@@ -1079,23 +1122,31 @@ function dropBlock(st: MsgRender, m: Message, block: Block | undefined, i: numbe
   st.blockText.delete(i);
   clearBlockSig(m.id, i);
   runDisposers(st, i);
-  if (hosted !== undefined) {
-    const { runID, card } = hosted;
-    const claim = liveRunClaimant(st, card);
-    if (claim === undefined) {
-      // Nothing mounted inside it, so the run's own state goes back — or `runCardFor`
-      // hands the next claimant a DETACHED node and re-homing never fires.
-      st.runs.delete(runID);
-      releaseRunCard(st, runID, card);
-      card.root.remove();
-    } else {
-      // RE-HOMED: the card is a CONTAINER, and removing it takes another render's
-      // mounted blocks out of the document while that render still counts them. One
-      // card per run, by the earliest in-window claimant once the launch is gone.
-      const seat = seatAbove(claim.host, claim.host.blocksEl, claim.at, card.root);
-      adoptRunCard(claim.host, st, runID, card, seat);
+  return hosted;
+}
+
+/** Whether `el` is a CONTAINER whose lifetime this render owns somewhere other than the
+ *  block that stamped it: a run card (the range's own claim resolution), or a delegate or
+ *  pipeline box (`pruneEmptyContainers`, once nothing is left inside it).
+ *
+ *  Released like an ordinary block, such an element records the whole box's height
+ *  against one ordinal, seals live bubbles belonging to blocks that are still mounted, and
+ *  removes the box out from under them while `st.window` still counts them. */
+function isContainerRoot(st: MsgRender, el: HTMLElement, card: RunCardView | undefined): boolean {
+  if (el === card?.root) {
+    return true;
+  }
+  for (const sa of st.subagents.values()) {
+    if (sa.root === el) {
+      return true;
     }
   }
+  for (const box of st.pipelines.values()) {
+    if (box.root === el) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** The run card THIS render hosts for `block`'s workflow, for any `tool_use` block
@@ -1114,16 +1165,18 @@ function hostedRun(
   return card === undefined ? undefined : { runID, card };
 }
 
-/** The render, other than `st`, holding mounted blocks INSIDE `card`, and the lowest
- *  such ordinal. DOM order decides between several, which is what "earliest" means:
- *  `renders` is keyed in BUILD order and a scroll up builds earlier messages last. */
+/** The render holding mounted blocks INSIDE `card`, and the lowest such ordinal. `st`
+ *  is a candidate like any other: a step frame folding into the still-open launching turn
+ *  leaves ONE message holding both the launch and blocks inside the card. DOM order
+ *  decides between several, which is what "earliest" means: `renders` is keyed in BUILD
+ *  order and a scroll up builds earlier messages last. */
 function liveRunClaimant(
   st: MsgRender,
   card: RunCardView,
 ): { host: MsgRender; at: number } | undefined {
   let out: { host: MsgRender; at: number } | undefined;
   for (const other of renders.values()) {
-    if (other === st || other.detached || other.chatID !== st.chatID) {
+    if (other.detached || other.chatID !== st.chatID) {
       continue;
     }
     for (let i = other.window.from; i < other.window.to; i++) {
@@ -1863,10 +1916,13 @@ function placeBlock(
         bindPipeline(st, m.id, tc, live, i);
         return;
       }
-      // The subagent invocation becomes the SubagentBlock's header, not a card.
+      // The subagent invocation becomes the SubagentBlock's header, not a card. Stamped
+      // like every other kind, so a search hit on the invocation resolves to the box it
+      // opened; ahead of the bind, which returns early for a box already bound.
       if (subtask !== "" && isSubagentInvocation(tc)) {
         const sa = st.subagents.get(subtask);
         if (sa !== undefined) {
+          stampBlock(st, sa.root, m.id, i);
           bindSubagent(st, subtask, m.id, sa, tc, i);
         }
         return;
@@ -2100,7 +2156,12 @@ function bindPipeline(
     if (!driverNeedsBox(st, next)) {
       return;
     }
-    paintPipeline(st, pipelineBoxFor(st, tc.id, live), next);
+    const box = pipelineBoxFor(st, tc.id, live);
+    // Stamped HERE rather than at the call site: the box does not exist for a
+    // single-stage pipeline, and the upgrade that builds one replaces the node it lands
+    // on, so the stamp has to follow whatever this paint's box currently is.
+    stampBlock(st, box.root, msgId, blockIndex);
+    paintPipeline(st, box, next);
   };
   paint(tc);
   const sig = ensureToolCallSig(st.chatID, tc.id, tc);

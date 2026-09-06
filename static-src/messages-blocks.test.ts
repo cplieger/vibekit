@@ -477,6 +477,77 @@ describe("one run card per transcript, not per message", () => {
     expect(b.wrap.querySelector('.run-step[data-node="wf_home/test"]')).not.toBeNull();
   });
 
+  it("keeps the card when the drop takes the launch and THIS render still holds a step", () => {
+    // A step frame folding into the still-open launching turn puts both the launch and
+    // the run's step blocks in ONE message, so the render losing the launch is also the
+    // render holding blocks inside the card. The claimant search has to consider it: the
+    // sibling case above cannot express this, because its claimant is a second message.
+    // The fixture needs the step BELOW the dropped launch and a top-level ordinal below
+    // the step, so the card has a real seat to land above rather than the tail.
+    const blocks = [
+      toolUse("t10"),
+      text("step work", "wf:wf_self:wf_self/build"),
+      text("prose after the step"),
+    ];
+    const calls = [launch("t10", "wf_self")];
+    const a = renderMsg(blocks, calls);
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+    const step = a.wrap.querySelector('.run-step[data-node="wf_self/build"]');
+    expect(step).not.toBeNull();
+
+    dropHead(
+      { id: a.id, role: "assistant", content: "", blocks, tool_calls: calls } as unknown as Message,
+      { from: 1, to: 3 },
+      [],
+    );
+
+    // Still ONE card and the same NODE, so the step frame and everything subscribed to
+    // it came along; `st.window` still counts the step mounted, and `updateBody` only
+    // renders past `window.to`, so a removed card never comes back.
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+    expect(a.wrap.querySelector('.run-step[data-node="wf_self/build"]')).toBe(step);
+    expect(mountedWindow(a.id)).toEqual({ from: 1, to: 3 });
+    // And it kept its seat above the ordinal the store puts after it.
+    expect(
+      [...(a.wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) =>
+        e.classList.contains("run-card") ? "run" : String(e.textContent).trim(),
+      ),
+    ).toEqual(["run", "prose after the step"]);
+    // The claim is still THIS render's, so a later frame routes into this card rather
+    // than building a second one.
+    const c = renderMsg([text("later frame", "wf:wf_self:wf_self/test")]);
+    expect(c.wrap.querySelectorAll(".run-card")).toHaveLength(0);
+    expect(a.wrap.querySelector('.run-step[data-node="wf_self/test"]')).not.toBeNull();
+  });
+
+  it("releases the card when the drop takes the launch AND every block inside it", () => {
+    // The other half of the same rule, and what decides WHERE the claim is resolved: the
+    // launch and the step are both in the removed prefix while a top-level block below
+    // survives. Answered per block, the step is still mounted when the launch goes and
+    // claims the card for a render that is about to have nothing inside it, leaving an
+    // empty card at the head with the run's claim still held.
+    const blocks = [
+      toolUse("t11"),
+      text("step work", "wf:wf_gone:wf_gone/build"),
+      text("prose below the run"),
+    ];
+    const calls = [launch("t11", "wf_gone")];
+    const a = renderMsg(blocks, calls);
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+
+    dropHead(
+      { id: a.id, role: "assistant", content: "", blocks, tool_calls: calls } as unknown as Message,
+      { from: 2, to: 3 },
+      [],
+    );
+
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(0);
+    // And the claim went with it, so the next frame builds its own card rather than
+    // being handed the node the drop just removed.
+    const b = renderMsg([text("later frame", "wf:wf_gone:wf_gone/test")]);
+    expect(b.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+  });
+
   it("makes the launch block's element the card it opened", () => {
     const a = renderMsg([toolUse("t-stamp")], [launch("t-stamp", "wf_stamp")]);
     // Every other kind stamps the element its ordinal names. The launch stamped
@@ -484,10 +555,6 @@ describe("one run card per transcript, not per message", () => {
     // the reader was handed the whole message instead of the run's box.
     expect(blockElement(a.id, 0)).toBe(a.wrap.querySelector(".run-card"));
   });
-
-  // A drop of the launch block must NOT release the card as that block's element;
-  // "prices a block measured while DETACHED at its estimate, not at zero" below is
-  // what fails when it does, at 150 instead of 124.
 
   it("names a card built for an out-of-window launch from the launch CALL", () => {
     const wrap = document.createElement("div");
@@ -2107,6 +2174,44 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
     expect(collapsed(wrap)).toEqual([true, false]);
   });
 
+  /** Whether the group holding `toolID`'s card is auto-collapsed. */
+  const cardCollapsed = (wrap: HTMLElement, toolID: string): boolean => {
+    const group = wrap
+      .querySelector(`.tool-call[data-tool-id="${toolID}"]`)
+      ?.closest(".tool-group");
+    if (group === null || group === undefined) {
+      throw new Error(`no group holds ${toolID}`);
+    }
+    return group.classList.contains("tool-group-auto-collapsed");
+  };
+
+  it("gives a windowed range the collapse state the whole mount gives the same card", () => {
+    // `shape` counts a group's cards, so a group rendered COLLAPSED where the whole mount
+    // leaves it open is invisible to every other case here. Two things put the divergence
+    // in reach: a container established BELOW the floor (the delegate box at block 2), and
+    // a card the store's last run start does NOT follow (t2 at 3, keyed 3 with the last
+    // start at 3). Price that box's run break at the range's own landing instead of at its
+    // store index and t2 lands in group 1 with a start at 5 above it, which reads as
+    // followed. t1 is asserted collapsed so the fixture is known to produce a collapse at
+    // all, without which the two `false`s below would agree vacuously.
+    const blocks = [
+      text("intro"),
+      toolUse("t1"),
+      toolUse("inv", "sub-D"),
+      toolUse("t2"),
+      text("delegate prose", "sub-D"),
+      toolUse("t3"),
+    ];
+    const calls = [cmd("t1"), subagentCall("inv", "sub-D"), cmd("t2"), cmd("t3")];
+    const whole = renderRange(blocks, calls, { id: "m-col-whole" });
+    expect(cardCollapsed(whole.wrap, "t1")).toBe(true);
+    expect(cardCollapsed(whole.wrap, "t2")).toBe(false);
+
+    resetBlockRenders();
+    const partial = renderRange(blocks, calls, { id: "m-col-part", range: { from: 3, to: 6 } });
+    expect(cardCollapsed(partial.wrap, "t2")).toBe(false);
+  });
+
   it("mounts a mid-message range with the grouping a whole mount gives it", () => {
     // The DELEGATE's box is established at block 2, BELOW the range, so the range first
     // reaches it at block 4 and has to SEAT it at block 2's position anyway. Left where
@@ -2127,16 +2232,32 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
     const calls = [cmd("t1"), subagentCall("inv", "sub-D"), cmd("t2"), cmd("t3")];
     const whole = renderRange(blocks, calls, { id: "m-eq-whole" });
     expect(shape(whole.wrap)).toEqual(["text(intro)", "group(1)", "card(sub-D)", "group(2)"]);
+    // The one attribute pair the two mounts may NOT share: the box's block coordinates
+    // name the INVOCATION at ordinal 2, and `blockEls` is mounted space, so a range
+    // starting at 3 must not claim it. Stripped from the expectation, asserted on both
+    // sides instead — and stripped from the whole mount only, so a range that started
+    // stamping it would still fail the comparison.
+    const wholeBox = whole.wrap.querySelector<HTMLElement>(".subagent-block");
+    expect(wholeBox?.dataset["blockIndex"]).toBe("2");
     const tail = mask(
       [...(whole.wrap.querySelector(".assistant-blocks")?.children ?? [])]
         .slice(2)
-        .map((e) => e.outerHTML)
+        .map((e) => {
+          const bare = e.cloneNode(true) as HTMLElement;
+          if (bare.classList.contains("subagent-block")) {
+            bare.removeAttribute("data-block-index");
+            bare.removeAttribute("data-block-msg");
+          }
+          return bare.outerHTML;
+        })
         .join(""),
     );
 
     resetBlockRenders();
     const partial = renderRange(blocks, calls, { id: "m-eq-part", range: { from: 3, to: 6 } });
     expect(shape(partial.wrap)).toEqual(["card(sub-D)", "group(2)"]);
+    const partBox = partial.wrap.querySelector<HTMLElement>(".subagent-block");
+    expect(partBox?.dataset["blockIndex"]).toBeUndefined();
     expect(blocksHTML(partial.wrap)).toBe(tail);
   });
 
@@ -2558,12 +2679,48 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
     expect(blockElement("m-drop", 1)).not.toBeUndefined();
   });
 
-  it("prices a block measured while DETACHED at its estimate, not at zero", () => {
-    // ONE message holding a launch and that run's own step block, which is what a step
-    // frame folding into the still-open launching turn gives. The drop removes the launch
-    // first, which takes the card — and the step block LIVES INSIDE IT, so by the time
-    // its own turn comes its element is detached and reads 0. A spacer short by that
-    // block leaves the document shorter above the reader than the content it replaces.
+  it("prices a block whose element has NO BOX at its estimate, not at zero", () => {
+    // The measurement is only worth taking where the element really has one: a spacer
+    // short by a block leaves the document shorter above the reader than the content it
+    // replaces, and the cache has no invalidation, so one zero is permanent. The premise
+    // is asserted rather than assumed — an element measuring its real height would make
+    // the expectation below hold for the estimate it never reached.
+    const blocks = [text("intro"), text("second"), text("third")];
+    const m = {
+      id: "m-zero",
+      role: "assistant",
+      ts: 2,
+      content: "",
+      blocks,
+      tool_calls: [],
+    } as unknown as Message;
+    // NOT in the document, so no block gets laid out.
+    const wrap = document.createElement("div");
+    forgetHeights(["m-zero"]);
+    buildAssistantBody(wrap, m, CHAT_ID, false);
+    expect(blockElement("m-zero", 1)?.offsetHeight).toBe(0);
+
+    dropTail(m, { from: 0, to: 1 }, []);
+
+    // Ordinals 1 and 2, unmounted: two 48px text estimates and the 12px gap between two
+    // non-empty boxes. Priced at 0 the answer is 0, the gap gone with them.
+    const t = {
+      id: "t-zero",
+      n: 1,
+      trigger: undefined,
+      body: [m],
+      ts: 1,
+      outcome: "completed" as const,
+      rewindTo: undefined,
+    };
+    expect(spacerHeight(t, { from: 0, to: 1 }, "tail")).toBe(108);
+  });
+
+  it("prices a dropped LAUNCH block at its own estimate, not at the card's height", () => {
+    // The launch block's element IS the run card, a container whose fate the range's own
+    // resolution owns. Measured like an ordinary block it records the whole card's height
+    // against one ordinal, so the spacer over-prices the launch by everything the card
+    // holds.
     const wf = {
       id: "l-px",
       title: "Run Workflow",
@@ -2571,7 +2728,7 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
       status: "completed",
       workflow_id: "wf-px",
     } as unknown as ToolCall;
-    const blocks = [text("intro"), toolUse("l-px"), text("step work", "wf:wf-px:wf-px/build")];
+    const blocks = [text("intro"), toolUse("l-px")];
     const m = {
       id: "m-px",
       role: "assistant",
@@ -2584,13 +2741,12 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
     document.body.appendChild(wrap);
     forgetHeights(["m-px"]);
     buildAssistantBody(wrap, m, CHAT_ID, false);
-    expect(wrap.querySelector('.run-step[data-node="wf-px/build"]')).not.toBeNull();
+    // Real layout, or the card measures 0 and the wrong reading is indistinguishable
+    // from the right one.
+    expect(wrap.querySelector(".run-card")?.clientHeight).toBeGreaterThan(0);
 
     dropTail(m, { from: 0, to: 1 }, []);
 
-    // Ordinals 1 and 2, unmounted: the run card's own 64px estimate plus the text
-    // block's 48 and the 12px gap between two non-empty boxes. Priced at 0 the answer
-    // is 64, the gap gone with it.
     const t = {
       id: "t-px",
       n: 1,
@@ -2600,7 +2756,7 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
       outcome: "completed" as const,
       rewindTo: undefined,
     };
-    expect(spacerHeight(t, { from: 0, to: 1 }, "tail")).toBe(124);
+    expect(spacerHeight(t, { from: 0, to: 1 }, "tail")).toBe(64);
     wrap.remove();
   });
 
