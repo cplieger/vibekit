@@ -41,60 +41,44 @@ type Server struct {
 	steering      SteeringGenerator
 	mcpRegistry   routeHandler
 	staticFS      fs.FS
-	// kiroDocs memoizes the document-oriented .kiro inventory behind a
-	// directory-mtime signature (kiro_docs.go). A pointer so the zero Server
-	// used by the method-guard tests needs no initialisation.
+	// kiroDocs memoizes the document-oriented .kiro inventory behind a directory-mtime
+	// signature. A pointer so the zero Server the method-guard tests use needs no init.
 	kiroDocs *docsCache
-	// tabs is the open-tab SET, the modelled replacement for the ui-state
-	// arrangement's tab_order. Nil in a bare test server and in a build with no
-	// config dir; the handler answers an empty collection at version 0 rather
-	// than 404, for uiState's reason.
-	//
-	// A one-method ROLE rather than *tabs.Store, unlike uiState above, and the
-	// reason is a property no concrete store can express: this endpoint's whole
-	// contract is that the set and its version come from ONE call, and only a
-	// double that MOVES between two calls holds a handler to that
-	// deterministically. internal/tabs exports no interface of its own, so the
-	// declaration belongs here, at the consumer.
+	// tabs is the open-tab SET. Nil in a bare test server and in a build with no config
+	// dir; the handler then answers an empty collection at version 0 rather than 404. A
+	// one-method ROLE rather than *tabs.Store, because the endpoint's contract is that the
+	// set and its version come from ONE call and only a double that MOVES between two
+	// calls holds a handler to that.
 	tabs      tabReader
 	cliRunner CLIRunner
 	tools     *toolbelt.Engine
-	// kiroReady is the kiro-cli install manager's readiness verdict plus its
-	// TYPED reason, consulted per /api/health probe so a recovery becomes
-	// visible without a restart. Nil = this server does not own the install,
-	// which happens only outside the container (a bare `go run` with no pins),
-	// and readiness stays pure-listener. Every container boot wires it. The
-	// wording served on the wire is this package's (kiroReasonText).
+	// kiroReady is the install manager's readiness verdict plus its TYPED reason,
+	// consulted per /api/health probe so a recovery is visible without a restart. Nil =
+	// this server does not own the install, and readiness stays pure-listener.
 	kiroReady func() (bool, pinstall.Reason)
-	// kiroRescan re-derives the active kiro-cli version from what is on disk,
-	// downloading nothing. It backs the loopback repair hook; nil when there is
-	// no manager, and then the route is not mounted at all.
+	// kiroRescan re-derives the active kiro-cli version from disk, downloading nothing.
+	// Nil when there is no manager, and then the route is not mounted at all.
 	kiroRescan func(context.Context) (bool, error)
-	// authUnavailable reports whether the last attempt to vend a KAS access
-	// token failed. It reads a LATCH written on the session-creation path
-	// (agent.AuthTokenUnavailable), never a probe: this is consulted per
-	// /api/health, and a probe here would spawn kiro-cli on a monitor's poll and
-	// could block on an SSO-OIDC refresh. Nil = unwired, no auth leg.
+	// authUnavailable reports whether the last attempt to vend a KAS access token failed.
+	// A LATCH read, never a probe: /api/health consults it per request, and probing would
+	// spawn kiro-cli on a monitor's poll and could block on an SSO-OIDC refresh.
 	authUnavailable func() bool
 	configDir       string
 	workDir         string
-	// trustedProxies is the reverse-proxy network set passed to
-	// webhttp.WithClientIP so the access log's client_ip resolves the
-	// real client from a trusted X-Forwarded-For. Nil (unconfigured) =
-	// log the unspoofable socket peer.
+	// trustedProxies is passed to webhttp.WithClientIP. Nil = log the unspoofable socket
+	// peer rather than resolving X-Forwarded-For.
 	trustedProxies []*net.IPNet
-	// hostPolicy is the ALLOWED_HOSTS exact-match Host allowlist the
-	// security middleware applies before the CSRF check (anti-DNS-rebinding;
-	// see internal/composition parseAllowedHosts). Nil/inactive = any Host
-	// accepted.
-	hostPolicy  *webhttp.HostPolicy
+	// hostPolicy is the ALLOWED_HOSTS exact-match allowlist the security middleware
+	// applies before the CSRF check. Nil or inactive = any Host accepted.
+	hostPolicy *webhttp.HostPolicy
+	// onListen fires once per successful bind, before serving: it is what tells the rest
+	// of the app this process is the one serving its config dir.
+	onListen    func()
 	acctUsage   acctUsageCache
 	cliTimeouts cliTimeouts
 	settingsMu  sync.Mutex
-	// ready flips to true once the listener binds and srv.Serve is
-	// running; flips back to false on shutdown signal so /api/health
-	// reports unready during drain. Same semantic across the cplieger
-	// Go apps (subflux, plex-exporter, web-terminal-kiro).
+	// ready flips true once the listener binds, and false on the shutdown signal so
+	// /api/health reports unready during drain. Same semantic fleet-wide.
 	ready atomic.Bool
 }
 
@@ -251,6 +235,17 @@ func WithHostPolicy(p *webhttp.HostPolicy) Option {
 	return func(s *Server) { s.hostPolicy = p }
 }
 
+// WithOnListen registers a callback fired once the listener has SUCCESSFULLY
+// bound, which is this app's evidence that this process — rather than another one
+// already on the port — is serving its config dir.
+//
+// A bind failure returns before it, so a boot that could not bind never fires it.
+// It runs on the bind goroutine ahead of serving, so it must not block; the one
+// caller closes a channel (see composition, the session-sweep gate).
+func WithOnListen(fn func()) Option {
+	return func(s *Server) { s.onListen = fn }
+}
+
 // New constructs a Server with the given options applied.
 func New(opts ...Option) *Server {
 	s := &Server{
@@ -263,33 +258,14 @@ func New(opts ...Option) *Server {
 	return s
 }
 
-// ListenAndServe registers all routes and starts the HTTP server.
-// Blocks until SIGTERM/SIGINT, then shuts down gracefully.
+// ListenAndServe registers all routes and starts the HTTP server. Blocks until
+// SIGTERM/SIGINT, then shuts down gracefully.
 //
-// # Every route here is a plain path, and the method is gated in the handler
-//
-// ServeMux method patterns ("GET /api/x", Go 1.22) cannot answer 405 in this
-// app, and the reason is structural rather than a matter of taste. ServeMux only
-// synthesises its 405 + Allow when NO pattern matched the request at all
-// (net/http computes allowedMethods on the nil-node path); the "/" SPA mount
-// registered above matches every path and every method, so a method-mismatched
-// request lands there and is answered 200 with index.html.
-//
-// _Measured on go1.27.0_ over a mux carrying "GET /api/permissions",
-// "POST /api/kiro-cli/rescan" and a "/" catch-all: POST /api/permissions,
-// DELETE /api/permissions and GET /api/kiro-cli/rescan all reached the
-// catch-all with an empty Allow header, and only HEAD /api/permissions was
-// served (ServeMux's GET patterns match HEAD). Take the catch-all away and the
-// same three answer 405 with Allow: GET / Allow: POST. So the SPA fallback and a
-// method pattern's 405 are mutually exclusive, and the fallback is not optional
-// (History-API client routing needs it).
-//
-// That is why httpreply.RequireMethod / httpreply.MethodNotAllowed is the whole
-// of vibekit's 405 surface — which is what makes
-// httpreply.TestMethodNotAllowedSetsAllow's "the one place the header format is
-// decided" a provable statement instead of a lucky one. Do not put a method back
-// on a pattern here: it converts an RFC 9110 §15.5.6 405 into a 200 carrying
-// HTML, the same silent-success class canonicalAPIPath exists to refuse.
+// EVERY ROUTE HERE IS A PLAIN PATH AND THE METHOD IS GATED IN THE HANDLER. ServeMux
+// synthesises its 405 + Allow only when NO pattern matched at all, and the "/" SPA mount
+// matches every path and method, so a method-mismatched request lands there and is answered
+// 200 with index.html. That fallback is not optional, so httpreply.RequireMethod is the
+// whole of vibekit's 405 surface: do not put a method back on a pattern here.
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.Handle("/", spaHandler(s.staticFS))
@@ -299,30 +275,19 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/kiro-settings", s.handleKiroSettings)
 	s.chats.RegisterRoutes(mux)
 	mux.HandleFunc("/api/health", s.handleHealth)
-	// The kiro-cli repair hook exists only when this server owns the install
-	// (see WithKiroRescan): with no pins in the environment there is nothing to
-	// rescan, so the route is absent rather than answering a misleading 503.
-	//
-	// Registered as a PLAIN PATH with the method gated in the handler, like
-	// every other route here. A `POST `-prefixed pattern is not equivalent: a
-	// method it does not match falls through to the "/" SPA mount, which
-	// answers 200 with index.html — see ListenAndServe's own doc comment.
+	// Only when this server owns the install: with no pins there is nothing to rescan, so
+	// the route is absent rather than answering a misleading 503.
 	if s.kiroRescan != nil {
 		mux.Handle(kiroRescanPath, loopbackOnly(kiroRescanSurface, http.HandlerFunc(s.handleKiroRescan)))
 	}
-	// Runtime profiles, same loopback gate. Unconditional unlike the repair hook
-	// above: that route depends on this server owning the install, while a
-	// goroutine dump is a property of the process and is always answerable. See
-	// pprof.go for which profiles are mounted and which are deliberately not.
+	// Runtime profiles, same loopback gate, but unconditional: a goroutine dump is a
+	// property of the process and is always answerable.
 	mux.Handle(pprofPath, pprofHandler())
 	s.auth.RegisterRoutes(mux)
 	mux.HandleFunc("/api/steering", s.handleSteering)
-	// Tools REST surface: the toolbelt httpapi projection, mounted at
-	// the exact prefix and the subtree. /api/tools/status stays
-	// app-owned (vibekit's feature-gating PATH probes); its exact
-	// pattern wins over the subtree mount for EVERY method, which is
-	// what keeps PATCH/DELETE /api/tools/status out of toolbelt's
-	// /api/tools/{name} handlers with name="status".
+	// The toolbelt httpapi projection, at the exact prefix and the subtree.
+	// /api/tools/status stays app-owned, and its exact pattern winning over the subtree
+	// for EVERY method is what keeps it out of toolbelt's {name} handlers as name="status".
 	if s.tools != nil {
 		toolsAPI := httpapi.Handler(s.tools, "/api/tools")
 		mux.Handle("/api/tools", toolsAPI)
@@ -353,70 +318,30 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/account/usage", s.handleAccountUsage)
 	s.push.RegisterRoutes(mux)
 
-	// Compute the CSP once from the embedded index.html so the inline
-	// importmap's sha256 hash is always in sync with what the browser
-	// actually sees — no hardcoded literal to hand-update on every
-	// importmap edit. Startup fails fast if the embed is malformed.
+	// Computed from the embedded index.html so the inline importmap's sha256 stays in sync
+	// with what the browser sees, with no literal to hand-update per importmap edit.
 	cspPolicy, err := buildCSPPolicy(s.staticFS)
 	if err != nil {
 		return fmt.Errorf("build CSP: %w", err)
 	}
 
-	// REST Idempotency-Key dedup wraps the mux from the inside: it sits
-	// inside securityMiddleware (so only same-origin, CSRF-checked
-	// requests are deduped) and inside the access logger (so replays are
-	// still access-logged). Its janitor goroutine is stopped via defer
-	// when ListenAndServe returns — both the errCh and signal paths
-	// below return, so the cache lives exactly as long as the server.
+	// Inside securityMiddleware, so only same-origin CSRF-checked requests are deduped,
+	// and inside the access logger, so a replay is still logged.
 	idem := newIdempotencyCache(idempotencyTTL)
 	defer idem.stop()
 
-	// webhttp.NewServer's defaults match the former hand-rolled server exactly
-	// (ReadHeaderTimeout 10s, IdleTimeout 120s, MaxHeaderBytes 1 MiB, and
-	// Read/WriteTimeout left unset for the SSE, WebSocket, and streaming-zip
-	// responses).
-	//
-	// Server.MaxHeaderValueCount (Go 1.27) is deliberately LEFT AT ITS DEFAULT,
-	// and this is the one place in the app that could set it — webhttp.NewServer
-	// hands back the *http.Server, so `srv.MaxHeaderValueCount = n` is already
-	// reachable and a library option for it would be pure added surface.
-	//
-	// What the default buys, measured on go1.27.0: DefaultMaxHeaderValueCount is
-	// 500, counting total header VALUES per request including Host, identically
-	// for repeated and distinct names (499 extra headers plus Host passes, 500
-	// extra answers 431). Parsing the worst request it admits costs 77.9 µs and
-	// 88 KB for 5.9 KB on the wire — a 13x allocation amplification and 21.6x
-	// the 3.6 µs a realistic 21-value browser request costs. With the cap off,
-	// which is all the 1 MiB MaxHeaderBytes bounded before 1.27, a full 1 MiB
-	// header block carries 209,708 values and parses in 22.8 ms for 20.2 MB —
-	// 19x the wire. So the default cut the worst case by 293x on CPU and 229x on
-	// allocation with no code here.
-	//
-	// What a LOWER cap would buy, and why it is refused: 64 values (still ~2.5x
-	// vibekit's real ceiling — a Chrome navigation is ~16, plus ~6 for a
-	// WebSocket handshake and whatever the reverse proxy appends) parses in
-	// 11.2 µs / 11.8 KB, so the saving is 67 µs and 76 KB on a request nothing
-	// legitimate sends. Against that, the 431 is answered BELOW the middleware
-	// chain — measured: the access logger never runs, SecurityHeaders sets
-	// nothing on it, and the response carries only Content-Type and
-	// Connection: close. So a cap tuned even slightly under a future proxy's
-	// header count refuses requests with no access-log line, no request id and
-	// no client_ip: exactly the silent-in-both-directions failure canonicalAPIPath
-	// exists to stop, bought for 67 µs. The knob would trade a visible cost for
-	// an invisible refusal.
-	//
-	// Consequence worth knowing when reading logs rather than code: the 431 is
-	// unobservable in the access stream at ANY cap, default included. A client
-	// whose requests vanish above 500 header values leaves no trace here; the
-	// evidence is on its side of the wire.
+	// webhttp.NewServer's defaults are what this app wants: ReadHeaderTimeout 10s,
+	// IdleTimeout 120s, MaxHeaderBytes 1 MiB, and Read/WriteTimeout unset for the SSE,
+	// WebSocket and streaming-zip responses. Server.MaxHeaderValueCount is deliberately
+	// left at its default, and this is the one place that could set it: a 431 is answered
+	// BELOW the middleware chain, so a cap tuned under a future proxy's header count
+	// refuses requests with no access-log line, no request id and no client_ip.
 	handler := webhttp.Chain(mux, s.middlewareStack(cspPolicy, idem)...)
 	srv := webhttp.NewServer(handler)
 	srv.Addr = ":" + port
 
-	// Bind listener up front so port-in-use surfaces synchronously
-	// (rather than appearing after the serve goroutine launches).
-	// Bind-then-flip-ready mirrors subflux/plex-exporter so /api/health
-	// reports unready until the listener is genuinely ready to accept.
+	// Bound up front so port-in-use surfaces synchronously, and so /api/health reports
+	// unready until the listener can genuinely accept.
 	var lc net.ListenConfig
 	ln, err := lc.Listen(context.Background(), "tcp", srv.Addr)
 	if err != nil {
@@ -427,28 +352,28 @@ func (s *Server) ListenAndServe() error {
 	defer stop()
 
 	s.ready.Store(true)
-	slog.Info("Kiro Web UI listening", "port", port)
-	// DNS rebinding rides the victim's BROWSER, so it reaches even a
-	// loopback/private bind, and vibekit's HTTP surface (a PTY shell
-	// included) carries no auth of its own — the exact-Host allowlist is
-	// the gate that closes it (see internal/composition parseAllowedHosts).
+	// AFTER the bind, so nothing downstream can read a failed bind as ownership.
+	if s.onListen != nil {
+		s.onListen()
+	}
+	// The bound ADDRESS, not the port constant: a misdirected boot's own output then says
+	// which listener it got.
+	slog.Info("Kiro Web UI listening", "addr", ln.Addr().String())
+	// DNS rebinding rides the victim's BROWSER, so it reaches even a loopback bind, and
+	// this HTTP surface carries no auth of its own: the Host allowlist is the whole gate.
 	if !s.hostPolicy.Active() {
 		slog.Warn("ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
 			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,vibekit.example.com)")
 	}
 
-	// webhttp.Run owns the serve/shutdown sequence (default 5s grace, matching
-	// the previous hand-rolled shutdown timeout). The pre-drain hook preserves
-	// vibekit's agent-before-server ordering: readiness flips, then the runtime stops
-	// bridges and cancels the SSE/WebSocket streams, and only then does the
-	// HTTP drain run.
+	// webhttp.Run owns the serve/shutdown sequence. The pre-drain hook is what keeps the
+	// agent-before-server ordering: readiness flips, the runtime stops bridges and cancels
+	// the SSE/WebSocket streams, and only then does the HTTP drain run.
 	runErr := webhttp.Run(ctx, srv, ln, nil, webhttp.WithPreDrain(func(drainCtx context.Context) {
 		slog.Info("received signal, shutting down", "cause", context.Cause(ctx))
 		s.ready.Store(false)
-		// drainCtx carries the shutdown grace, and Run calls this hook
-		// SYNCHRONOUSLY before srv.Shutdown: an unbounded agent teardown here
-		// would consume the whole grace and leave the HTTP drain none, so the
-		// budget is passed on rather than discarded.
+		// Run calls this hook SYNCHRONOUSLY before srv.Shutdown, so an unbounded teardown
+		// here would consume the whole grace: drainCtx is passed on, never discarded.
 		if err := s.agent.Shutdown(drainCtx); err != nil {
 			slog.Error("agent runtime shutdown did not finish within the grace period", "error", err)
 		}
@@ -457,127 +382,73 @@ func (s *Server) ListenAndServe() error {
 	return runErr
 }
 
-// middlewareStack returns the middleware wrapping the route mux, OUTERMOST
-// FIRST (webhttp.Chain's order): request-id access logging, then panic
-// recovery, then the security layer (dynamic CSP + the ALLOWED_HOSTS host
-// allowlist + stdlib CSRF), then the canonical-path gate over the API surface,
-// then the REST idempotency dedup, then the mux.
+// middlewareStack returns the middleware wrapping the route mux, OUTERMOST FIRST
+// (webhttp.Chain's order): access logging, panic recovery, the security layer (dynamic CSP
+// + ALLOWED_HOSTS + stdlib CSRF), the canonical-path gate, the REST idempotency dedup.
 //
-// It is a method rather than an inline literal in ListenAndServe so the ORDER
-// is assertable without binding a port: the ordering is a security property
-// (see the canonicalAPIPath entry below and securityMiddleware's own doc), and
-// a test that hand-assembled the same list would only assert agreement with
-// itself.
-//
-// webhttp.WithClientIP adds a spoof-safe "client_ip" to every access line:
-// with no trusted proxies it is the unspoofable socket peer; when
-// TRUSTED_PROXIES lists the reverse proxy's CIDRs it is the real client
-// resolved from a trusted X-Forwarded-For. It costs nothing on the skipped
-// streaming paths.
+// A method rather than an inline literal so the ORDER is assertable without binding a
+// port: that order is a security property, and a test hand-assembling the same list would
+// only assert agreement with itself.
 func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []webhttp.Middleware {
 	return []webhttp.Middleware{
 		webhttp.Logging(
-			// The long-lived SSE stream is skipped by path so it doesn't log a
-			// single open-forever line.
+			// Skipped by path, or the long-lived stream logs one open-forever line.
 			webhttp.WithSkipPaths("/api/events"),
-			// The shell PTY at /api/shell/ws is silenced by RESPONSE, not by
-			// path: WithSkipUpgrades drops the record only when the response
-			// actually left HTTP framing (a recorded 101 — what the terminal
-			// engine's coder/websocket handshake does — or a bare hijack), so
-			// the open-forever line is gone while every handshake REFUSAL on
-			// the same path keeps its status, duration, request id and
-			// client_ip: the engine's 426 for a non-upgrade probe, the 400 for
-			// a malformed Sec-WebSocket-Key, the 403 from the host/CSRF layer,
-			// the 401 from auth. Those are exactly the lines read when a
-			// browser cannot attach a shell, and the path skip this replaced
-			// deleted them along with the noise.
+			// The shell PTY is silenced by RESPONSE rather than by path: the record is
+			// dropped only once the response left HTTP framing, so every handshake
+			// REFUSAL keeps its line — which is what a reader needs when a browser
+			// cannot attach a shell, and what the path skip deleted along with the noise.
 			webhttp.WithSkipUpgrades(true),
-			// /api/health is probed every 30s (Docker HEALTHCHECK curl +
-			// Gatus). The fleet-standard ProbeLogLevel keeps healthy probes
-			// at Debug (out of the shipped stream) and surfaces a failing
-			// probe at Warn/Error — previously every probe logged at Info
-			// (~5,760 noise lines/day) while carrying no failure emphasis.
+			// /api/health is probed every 30s, so a healthy probe logs at Debug and only
+			// a failing one is surfaced.
 			webhttp.ProbeLogLevel("/api/health"),
 			webhttp.WithClientIP(s.trustedProxies...),
 		),
 		webhttp.Recoverer(),
 		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, s.hostPolicy, next) },
-		// The canonical-path gate (requestpath.go) sits INSIDE the ALLOWED_HOSTS
-		// allowlist and the CSRF check and OUTSIDE every route: the two
-		// request-authorization gates answer 403 and must not be shadowed by a
-		// 400 about spelling, so a rebound-Host or forged cross-origin request
-		// still reads as the refusal it is. Being outside the mux is what makes
-		// it work at all — ServeMux canonicalizes before it selects a pattern,
-		// so no handler can be reached to refuse for itself. Being outside the
-		// idempotency cache too means a refused spelling never mints a dedup
-		// entry a later well-formed retry would replay.
+		// INSIDE the host allowlist and the CSRF check, so their 403 is never shadowed by
+		// a 400 about spelling; OUTSIDE the mux, because ServeMux canonicalizes before it
+		// selects a pattern and no handler can be reached to refuse for itself; outside
+		// the dedup cache, so a refused spelling mints no entry a retry would replay.
 		canonicalAPIPath,
 		idem.middleware,
 	}
 }
 
-// requirePOST returns true if r.Method is POST; otherwise it writes a
-// 405 response and returns false. All vibekit command endpoints accept
-// only POST, so this specialised wrapper avoids an always-identical
-// method argument at call sites.
+// requirePOST returns true if r.Method is POST, and otherwise writes 405 and returns false.
+// Every command endpoint here is POST-only, so this saves an identical argument per site.
 func requirePOST(w http.ResponseWriter, r *http.Request) bool {
 	return httpreply.RequireMethod(w, r, http.MethodPost)
 }
 
-// decodeBody applies LimitBody, decodes JSON into v, and returns true
-// on success. On failure it writes a 400 response and returns false.
+// decodeBody applies LimitBody, decodes JSON into v, and returns true on success. On
+// failure it writes a 400 and returns false.
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return httpreply.DecodeBody(w, r, v, "bad request")
 }
 
-// healthBody is the readiness envelope handleHealth and the kiro-cli repair
-// hook (handleKiroRescan) both answer with, so an operator reads the same shape
-// from either surface. A struct, not a map, and that is the point:
-// webhttp.ReadinessHandler fixes its key order with a struct, while
-// this handler built a map and encoding/json sorts map keys — so the "canonical
-// envelope shared across the cplieger Go apps" claimed below was emitting
-// {"reason":…,"status":…} here and {"status":…,"reason":…} from the library that
-// owns it. Matching the library byte-for-byte is what makes the claim true.
-//
-// This handler cannot simply BE webhttp.ReadinessHandler: its verdict is
-// composite (a second reason for an unavailable kiro-cli) while the library's
-// ReadinessChecker is Ready() bool. Extending the library to absorb a composite
-// verdict was considered and rejected as a wide public surface for a six-line
-// envelope; matching the wire shape is the cheap half that removes the drift.
+// healthBody is the readiness envelope handleHealth and handleKiroRescan both answer with,
+// so an operator reads one shape from either surface. A struct, not a map, so the key order
+// matches webhttp.ReadinessHandler's byte for byte — encoding/json sorts map keys, which is
+// what made the shared-envelope claim false. This handler cannot BE ReadinessHandler: its
+// verdict is composite where the library's ReadinessChecker is Ready() bool.
 type healthBody struct {
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`
 }
 
-// handleHealth returns the liveness+readiness status. Emits the
-// canonical JSON envelope shared across the cplieger Go apps
-// (vibekit, web-terminal-kiro, subflux, registry-stats, plex-exporter): 200 with
-// {"status":"ok"} when the listener is bound and serving; 503 with
-// {"status":"unready",...} during startup or graceful shutdown drain —
-// or when kiro-cli is unavailable, which is how a failed or still-running
-// install surfaces to `docker ps`, monitoring and the client's degraded banner.
+// handleHealth returns the liveness+readiness status in the envelope shared across the
+// fleet: 200 {"status":"ok"} when the listener is bound and serving, 503
+// {"status":"unready",...} during startup, drain, or an unavailable kiro-cli.
 //
-// The kiro-cli verdict is the install manager's (github.com/cplieger/pinstall/v3,
-// wired in internal/composition): it is VERSION-AWARE, where the check this
-// replaced only asked whether SOMETHING named kiro-cli was on PATH — so a binary
-// drifted from the pin, or one whose auto-update could not be switched off, now
-// reads unready instead of healthy. Reading it is a lock-and-two-field-read,
-// never a subprocess spawn, and it re-evaluates per request, so an install
-// completing (or an in-container repair plus a rescan) heals the signal with no
-// restart. The library reports a typed reason; the wording below the fold is
-// kiroReasonText's (internal/server/kirocli.go).
-//
-// This is a READINESS signal: under `restart: unless-stopped` nothing restarts
-// on the unhealthy state, so there is no restart loop; if ever run
-// under Swarm/k8s, wire it to a readinessProbe, not a livenessProbe.
+// The kiro-cli verdict is the install manager's and is VERSION-AWARE, so a binary drifted
+// from the pin reads unready rather than healthy. Reading it is a lock and two field reads,
+// never a spawn, and it re-evaluates per request, so a completing install heals the signal
+// with no restart. A READINESS signal: nothing restarts on the unhealthy state.
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	// A readiness verdict must never be cached. Under RFC 9111 a 200 carrying no
-	// explicit freshness is heuristically cacheable, and this answer is never
-	// valid a moment later: a cached "ok" outliving the readiness it reported
-	// keeps traffic arriving at an instance that has begun draining, defeating the
-	// gate exactly when it matters. The unready direction is safe by accident (503
-	// is not heuristically cacheable). webhttp.ReadinessHandler now sets the same
-	// header, so every app in the fleet answers this the same way.
+	// Never cached: under RFC 9111 a 200 with no explicit freshness is heuristically
+	// cacheable, and a cached "ok" outliving the readiness it reported keeps traffic
+	// arriving at an instance that has begun draining. (503 is not, so unready is safe.)
 	w.Header().Set("Cache-Control", "no-store")
 	unready := func(reason string) {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
@@ -595,10 +466,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 			return
 		}
 	}
-	// The kiro-cli leg stays FIRST: an uninstalled runtime is the superset
-	// failure, since with no binary there is nothing to vend a token, and the
-	// envelope carries one reason. This leg is the narrower one below it, and it
-	// reads a latch rather than probing (see WithAuthUnavailable).
+	// The kiro-cli leg stays FIRST: with no binary there is nothing to vend a token, so it
+	// is the superset failure and the envelope carries one reason.
 	if s.authUnavailable != nil && s.authUnavailable() {
 		unready(reasonSignIn)
 		return

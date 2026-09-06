@@ -50,6 +50,7 @@ import { fitTabBar } from "./tab-bar-fit.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
+import { setPageSubtitle } from "./page-title.js";
 
 /** One document row, as the server reports it. Fields are per-category and
  *  mostly optional — see the endpoint's own note on why they are not uniform. */
@@ -531,10 +532,7 @@ function syncTabChrome(tab: DocsTab): void {
     }
     return active;
   });
-  const title = document.getElementById("docs-page-title");
-  if (title !== null) {
-    title.textContent = TAB_LABELS[tab];
-  }
+  setPageSubtitle("docs", TAB_LABELS[tab]);
 }
 
 function panelFor(tab: DocsTab): HTMLDivElement | null {

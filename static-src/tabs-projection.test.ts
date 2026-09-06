@@ -86,6 +86,22 @@ vi.mock("./dom.js", () => ({
       },
     },
   ),
+  // `byId` is reached through this graph by page-title.ts. ESM links for real, so
+  // a name any module in the graph imports must exist on the mock or the whole
+  // FILE fails at link time, naming the export rather than the test. Inlined
+  // rather than shared because a `vi.mock` factory is hoisted above every
+  // top-level import, so it cannot reach a helper module. Resolve-or-create,
+  // because the real `byId` throws and a suite mocking `dom.js` stages only what
+  // its own subject needs.
+  byId: (id: string): HTMLElement => {
+    let el = document.getElementById(id);
+    if (el === null) {
+      el = document.createElement("span");
+      el.id = id;
+      document.body.appendChild(el);
+    }
+    return el;
+  },
 }));
 vi.mock("./tabs-drag.js", () => ({
   attachDrag: vi.fn(),
@@ -110,7 +126,11 @@ vi.mock("./composer-state.js", () => ({
   initComposerState: vi.fn(),
   _resetComposerStateForTest: vi.fn(),
 }));
-vi.mock("./run-store.js", () => ({ peekRunState: vi.fn(() => undefined) }));
+vi.mock("./run-store.js", () => ({
+  // The tab factory's name read. Inert here; a Browser-Mode mock is linked as
+  // real ESM, so a name any module in the graph reaches has to exist on it.
+  runLabelOf: vi.fn(() => ""),
+}));
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 // A singleton needs no injected opener: the factory reaches its loader through a

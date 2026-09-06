@@ -32,8 +32,11 @@ import {
   syncEpoch,
   bumpSyncEpoch,
   transcriptStale,
+  setTurnOpen,
+  turnLive,
 } from "./store.js";
 import type { Block, ChatHeader, Message, Session } from "./types.js";
+import type { TurnOutcome } from "./wire/types.gen.js";
 import { effect } from "@cplieger/reactive";
 
 // Arbitrary generators for domain types.
@@ -1192,6 +1195,8 @@ import {
   clearTurnFailed,
   clearTurnDone,
   relatchTurnVerdict,
+  outcomeLatch,
+  latchFieldsFor,
   tabStatusFor,
   setAgentStatus,
   setCurrentMode,
@@ -1202,7 +1207,10 @@ import {
   reinsertSession,
   setCodeReferences,
   rebuildMsgIndex,
+  subagentStatusFor,
+  type TabDotState,
 } from "./store.js";
+import type { ToolStatus } from "./types.js";
 import { ensureBlockTextSig, ensureBlockThinkingSig, clearAllBlockSigs } from "./store-signals.js";
 
 /** Let the queueMicrotask coalescer run. A macrotask, so every pending
@@ -1374,6 +1382,61 @@ describe("Store failure latch", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// turnLive: the projection's liveness input, and the ONE reader of `turn_open`.
+//
+// `thinking` alone cannot answer it. It is this client's memory of a stream it has
+// watched, and it starts false — so between `GET /api/chats/{id}` painting and the
+// held `turn_state` frame releasing, a turn whose reply is still in the server's
+// buffer read "not running", and the projection derived `unknown` ("nothing closed
+// this turn") for a turn the server knew was running.
+// ---------------------------------------------------------------------------
+
+describe("Store turnLive", () => {
+  it("is true when EITHER input says a turn is running", () => {
+    resetStore("tl-1");
+    setThinking("tl-1", true);
+    const streaming = get("tl-1");
+    expect(streaming !== undefined && turnLive(streaming)).toBe(true);
+
+    // The reload shape: no frame has arrived, so `thinking` is false and only the
+    // server's statement is available.
+    resetStore("tl-2");
+    setTurnOpen("tl-2", true);
+    const reloaded = get("tl-2");
+    expect(reloaded?.thinking).toBe(false);
+    expect(reloaded !== undefined && turnLive(reloaded)).toBe(true);
+  });
+
+  it("is false only when BOTH inputs say nothing is running", () => {
+    resetStore("tl-3");
+    const idle = get("tl-3");
+    expect(idle !== undefined && turnLive(idle)).toBe(false);
+
+    setTurnOpen("tl-3", false);
+    const stated = get("tl-3");
+    expect(stated !== undefined && turnLive(stated)).toBe(false);
+  });
+
+  it("drops the server's statement when a NEW turn starts", () => {
+    // It described the PREVIOUS turn, so it joins the two outcome latches in
+    // `setThinking(id, true)`'s invalidation block. Left standing, a stale `false`
+    // would put `turnLive` back on `thinking` alone.
+    resetStore("tl-4");
+    setTurnOpen("tl-4", false);
+    setThinking("tl-4", true);
+    expect(get("tl-4")?.turn_open).toBeUndefined();
+  });
+
+  it("does not churn the session on a repeated statement", () => {
+    resetStore("tl-5");
+    setTurnOpen("tl-5", true);
+    const stated = get("tl-5");
+    setTurnOpen("tl-5", true);
+    expect(get("tl-5")).toBe(stated);
+  });
+});
+
 describe("Store finished latch", () => {
   it("does not churn the session clearing a latch that was never set", () => {
     resetStore("td-1");
@@ -1431,15 +1494,16 @@ describe("Store relatchTurnVerdict", () => {
     expect(get("rl-3")?.turn_failed).toBe(true);
   });
 
-  it("a cancelled newest turn latches nothing, even over an older completed one", () => {
-    // The newest outcome is the chat's verdict: the scan STOPS there rather
-    // than digging for a latchable one below it, matching turn_ended's
-    // treatment of a cancel.
-    seed("rl-4", [row("m1", "completed"), row("m2", "cancelled")]);
+  it("takes the NEWEST outcome even when an older row would grade differently", () => {
+    // The newest outcome is the chat's verdict: the scan STOPS there rather than
+    // digging below it. Both rows here happen to latch `done` now, so the thing
+    // this pins is that the walk stops — `turn_failed` staying unset is what
+    // proves it read m2 and not something else.
+    seed("rl-4", [row("m1", "failed"), row("m2", "cancelled")]);
     relatchTurnVerdict("rl-4");
-    expect(get("rl-4")?.turn_done).toBeUndefined();
     expect(get("rl-4")?.turn_failed).toBeUndefined();
-    expect(tabStatusFor(get("rl-4"))).toBe("idle");
+    expect(get("rl-4")?.turn_done).toBe(true);
+    expect(tabStatusFor(get("rl-4"))).toBe("done");
   });
 
   it("refuses while a turn is live: thinking invalidates every prior verdict", () => {
@@ -2401,6 +2465,20 @@ describe("Store appendChunk repaint discipline", () => {
     await tick();
     expect(get("ar-7")?.messages[0]?.refusal).toEqual({ category: "policy" });
   });
+
+  it("lets a load bump win a window a shape cause is still parked in", async () => {
+    // The mid-turn refetch, and the one interleave the cause ranks decide: a chunk
+    // for a message the store has never seen parks `shape` on the microtask, and a
+    // fetched window can land before that flush. `shape`'s WORK is contained in
+    // `load`'s, while `load`'s statement — these rows are a replay — is not
+    // recoverable from the array, so losing it makes the paint read a refetched
+    // window as an appended tail and animate every row of a reopened conversation.
+    resetStore("ar-8");
+    appendChunk("ar-8", "m-1", "hello", false, 0, "");
+    bumpMessages("ar-8", "load");
+    expect(renderCauseOf("ar-8").cause).toBe("load");
+    await tick();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2957,5 +3035,473 @@ describe("transcriptStale (the activation refetch gate)", () => {
     // claiming loaded with no epoch record must refetch, not trust the hole.
     const s: Session = { ...makeSession("c-unstamped"), residency: "loaded" };
     expect(transcriptStale(s)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Where a server-persisted row lands relative to the unflushed reply.
+//
+// The server writes the chat file BEFORE it broadcasts, and the in-flight turn's
+// message is not in that file until turn_ended — so every row persisted mid-turn
+// sits ABOVE the reply on disk. Appending it put it BELOW the reply live, so the
+// same conversation read one way on screen and the other way after a reload.
+// ---------------------------------------------------------------------------
+
+describe("a server-persisted row lands before the unflushed reply", () => {
+  /** A chat with one user prompt and a streaming reply, which is what makes the
+   *  in-flight marker meaningful. */
+  function streamingChat(chatID: string): void {
+    resetStore(chatID);
+    appendMessage(chatID, { id: "u-1", role: "user", ts: 1, content: "go" });
+    appendChunk(chatID, "m-turn", "streaming", false, 0, "");
+  }
+
+  function ids(chatID: string): string[] {
+    return (get(chatID)?.messages ?? []).map((m) => m.id);
+  }
+
+  it("puts the turn's plan row above the reply", () => {
+    streamingChat("chat-ord1");
+    appendMessage("chat-ord1", {
+      id: "m-plan",
+      role: "assistant",
+      ts: 2,
+      content: "",
+      plan: [{ content: "step one", priority: "high", status: "pending" }],
+    });
+    expect(ids("chat-ord1")).toEqual(["u-1", "m-plan", "m-turn"]);
+  });
+
+  it.each(["compaction_failed", "infra_safety_blocked", "model_switched", "compacted"] as const)(
+    "puts a %s event above the reply",
+    (kind) => {
+      const chatID = `chat-ord-${kind}`;
+      streamingChat(chatID);
+      appendMessage(chatID, { id: "e-1", role: "event", ts: 2, content: "", event_kind: kind });
+      expect(ids(chatID)).toEqual(["u-1", "e-1", "m-turn"]);
+    },
+  );
+
+  // The message index is by POSITION, so an insert moves every id at or past the
+  // splice point. Without the rebuild the next frame for the reply merges into
+  // whatever now occupies its old slot.
+  it("re-derives the index, so the reply's own next frame still finds it", () => {
+    streamingChat("chat-ord2");
+    appendMessage("chat-ord2", { id: "m-plan", role: "assistant", ts: 2, content: "" });
+    upsertMessage("chat-ord2", {
+      id: "m-turn",
+      role: "assistant",
+      ts: 3,
+      content: "streaming (sanitized)",
+    });
+    expect(ids("chat-ord2")).toEqual(["u-1", "m-plan", "m-turn"]);
+    expect(get("chat-ord2")?.messages[2]?.content).toBe("streaming (sanitized)");
+  });
+
+  // The one exemption, and it is the ordinary case rather than an edge: a prompt
+  // is admitted while an engine-opened turn streams (such a turn holds no
+  // admission reservation), and projectTurns opens a new turn on a user message.
+  it("keeps a user prompt at the END, because it OPENS a turn", () => {
+    streamingChat("chat-ord3");
+    appendMessage("chat-ord3", { id: "u-2", role: "user", ts: 2, content: "and this" });
+    expect(ids("chat-ord3")).toEqual(["u-1", "m-turn", "u-2"]);
+  });
+
+  // An UNPERSISTED frame keeps appending: message_created and a reconnect's
+  // turn_state describe the live turn itself, which is not in the file at all.
+  it("still appends an unpersisted frame", () => {
+    streamingChat("chat-ord4");
+    upsertMessage("chat-ord4", { id: "m-later", role: "assistant", ts: 2, content: "second" });
+    expect(ids("chat-ord4")).toEqual(["u-1", "m-turn", "m-later"]);
+  });
+
+  it("appends when no turn is in flight, which is every settled transcript", () => {
+    resetStore("chat-ord5");
+    appendMessage("chat-ord5", { id: "u-1", role: "user", ts: 1, content: "go" });
+    appendMessage("chat-ord5", { id: "a-1", role: "assistant", ts: 2, content: "done" });
+    appendMessage("chat-ord5", {
+      id: "e-1",
+      role: "event",
+      ts: 3,
+      content: "",
+      event_kind: "compacted",
+    });
+    expect(ids("chat-ord5")).toEqual(["u-1", "a-1", "e-1"]);
+  });
+});
+
+describe("a plan row does not capture a pending steer anchor", () => {
+  // A plan row is RoleAssistant, so before the shape gate it took every
+  // anchor-less mark and the reply's own message_created found none left — the
+  // note then rendered against the plan card instead of the point in the reply
+  // where the agent read it.
+  it("leaves the anchor for the reply that follows it", () => {
+    resetStore("chat-anchor1");
+    appendMessage("chat-anchor1", { id: "u-1", role: "user", ts: 1, content: "go" });
+    promoteSteer("chat-anchor1", "steer-1", "read before anything landed", "user");
+    expect(steerMarks("chat-anchor1")[0]?.anchor).toEqual({ msgID: "", blockIndex: 0 });
+
+    appendMessage("chat-anchor1", {
+      id: "m-plan",
+      role: "assistant",
+      ts: 2,
+      content: "",
+      plan: [{ content: "step one", priority: "high", status: "pending" }],
+    });
+    expect(steerMarks("chat-anchor1")[0]?.anchor).toEqual({ msgID: "", blockIndex: 0 });
+
+    noteLiveTurnMessage("chat-anchor1", "m-turn");
+    upsertMessage("chat-anchor1", { id: "m-turn", role: "assistant", ts: 3, content: "" });
+    expect(steerMarks("chat-anchor1")[0]?.anchor).toEqual({ msgID: "m-turn", blockIndex: 0 });
+  });
+});
+
+describe("setTurnSummary stamps exactly one carrier per turn", () => {
+  it("skips the segment when a persisted row in the turn already carries the outcome", () => {
+    // The sealed-then-empty turn: the seal persisted segment 1, the turn produced
+    // nothing after it, so the server's marker is the turn's carrier. turnLedger
+    // SUMS across the turn's body, so stamping the segment too reported the
+    // credits and the elapsed time twice live and once after a reload.
+    resetStore("chat-sum1");
+    appendMessage("chat-sum1", { id: "u-1", role: "user", ts: 1, content: "go" });
+    appendMessage("chat-sum1", { id: "seg-1", role: "assistant", ts: 2, content: "before" });
+    appendMessage("chat-sum1", {
+      id: "e-1",
+      role: "event",
+      ts: 3,
+      content: "",
+      event_kind: "turn_outcome",
+      turn_outcome: "completed",
+      turn_credits: 0.5,
+      turn_elapsed_ms: 1200,
+    });
+
+    setTurnSummary("chat-sum1", { credits: 0.5, elapsedMs: 1200, model: "m-x" });
+
+    const seg = get("chat-sum1")?.messages[1];
+    expect(seg?.turn_credits).toBeUndefined();
+    expect(seg?.turn_elapsed_ms).toBeUndefined();
+    expect(seg?.turn_model).toBeUndefined();
+  });
+
+  it("stamps the reply when the turn has no persisted carrier", () => {
+    resetStore("chat-sum2");
+    appendMessage("chat-sum2", { id: "u-1", role: "user", ts: 1, content: "go" });
+    appendMessage("chat-sum2", { id: "a-1", role: "assistant", ts: 2, content: "done" });
+
+    setTurnSummary("chat-sum2", { credits: 0.5, elapsedMs: 1200, model: "m-x" });
+
+    const reply = get("chat-sum2")?.messages[1];
+    expect(reply?.turn_credits).toBe(0.5);
+    expect(reply?.turn_elapsed_ms).toBe(1200);
+    expect(reply?.turn_model).toBe("m-x");
+  });
+
+  it("finds the carrier even behind a trailing user row", () => {
+    // The next prompt can already be on the record when a background turn's
+    // summary lands, so the walk steps over trailing user rows — and the veto has
+    // to survive that step, or the case it exists for is exactly the one it misses.
+    resetStore("chat-sum3");
+    appendMessage("chat-sum3", { id: "u-1", role: "user", ts: 1, content: "go" });
+    appendMessage("chat-sum3", { id: "seg-1", role: "assistant", ts: 2, content: "before" });
+    appendMessage("chat-sum3", {
+      id: "e-1",
+      role: "event",
+      ts: 3,
+      content: "",
+      event_kind: "turn_outcome",
+      turn_outcome: "completed",
+      turn_credits: 0.5,
+    });
+    appendMessage("chat-sum3", { id: "u-2", role: "user", ts: 4, content: "next" });
+
+    setTurnSummary("chat-sum3", { credits: 0.5, elapsedMs: 1200 });
+
+    expect(get("chat-sum3")?.messages[1]?.turn_credits).toBeUndefined();
+  });
+
+  it("stamps a new headerless turn whose predecessor sealed with a carrier", () => {
+    // Two turns with no user row between them, which is what an engine-opened
+    // turn produces: persistOutcomeMarker seals the first with a carrier, and the
+    // second's reply is a NEW turn by projectTurns' own rule (an outcome-bearing
+    // row closes a turn). The veto is for a carrier in the turn being summarised,
+    // so it must not reach across that boundary — ungated it did, and the live
+    // footer showed no credits and no elapsed time until a reload.
+    resetStore("chat-sum4");
+    appendMessage("chat-sum4", { id: "u-1", role: "user", ts: 1, content: "go" });
+    appendMessage("chat-sum4", { id: "a-1", role: "assistant", ts: 2, content: "first turn" });
+    appendMessage("chat-sum4", {
+      id: "e-1",
+      role: "event",
+      ts: 3,
+      content: "",
+      event_kind: "turn_outcome",
+      turn_outcome: "completed",
+      turn_credits: 0.5,
+    });
+    appendMessage("chat-sum4", { id: "a-2", role: "assistant", ts: 4, content: "second turn" });
+
+    setTurnSummary("chat-sum4", { credits: 0.25, elapsedMs: 900, model: "m-y" });
+
+    const fresh = get("chat-sum4")?.messages[3];
+    expect(fresh?.turn_credits).toBe(0.25);
+    expect(fresh?.turn_elapsed_ms).toBe(900);
+    expect(fresh?.turn_model).toBe("m-y");
+    // The sealed turn's own segment keeps its carrier's numbers and gains none.
+    expect(get("chat-sum4")?.messages[1]?.turn_credits).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// outcomeLatch + latchFieldsFor: the header-derived dot state.
+//
+// The two outcome latches are client memory, so a fresh page load, a brand-new
+// browser session and a transport gap all arrived with nothing to derive them
+// from — and every door that rebuilds a Session from a header alone produced a
+// session with neither latch, which `tabStatusFor` reports as `idle`. `idle`
+// paints a hollow ring where `done` paints a solid fill, which is the "empty
+// circle" a finished turn came back as after a reconnect.
+//
+// `outcomeLatch` is the ONE table both derivation paths read, so the table is
+// pinned over the whole enum rather than over the members that happen to matter:
+// a member added later is judged here instead of silently latching nothing.
+// ---------------------------------------------------------------------------
+
+describe("outcomeLatch maps every turn outcome to the latch it sets", () => {
+  /** The latch each wire outcome sets, keyed over the GENERATED union — which is
+   *  what makes this table complete in BOTH directions, at compile time. An
+   *  eighth member added to `TurnOutcome` leaves a required key missing and
+   *  `npm run typecheck:tests` rejects the literal; a key that is not a member is
+   *  rejected the same way.
+   *
+   *  A `Record` rather than a list of pairs FOR that reason, and it replaced an
+   *  `expect(cases).toHaveLength(8)` that claimed the same guarantee and could
+   *  not deliver it: it read the length of the table declared three lines above
+   *  itself, so a member added to the wire and forgotten here left it green, and
+   *  `TURN_OUTCOMES` (the runtime enum the decoder validates against) is
+   *  module-private to decoders.gen.ts, so nothing tied the rows to the wire at
+   *  all. Same shape `CUE_ICON` and `DOT_SUBJECT` use, for the same reason. */
+  const LATCH_BY_OUTCOME: Readonly<Record<TurnOutcome, "done" | "failed" | "">> = {
+    // The two that latch what they say.
+    completed: "done",
+    failed: "failed",
+    // A refusal is a failure for the dot: nothing malfunctioned, but the turn
+    // produced no answer, and the remedy is the user's.
+    refused: "failed",
+    // `interrupted` is BROKEN, and this row is deliberately NOT "latches
+    // nothing". `turn-severity.ts` is the authority: five surfaces already
+    // graded an interrupted turn as a fault (the transcript's red divider, the
+    // collapsed turn face, the footer glyph, and fold-state's never-auto-fold
+    // promise) and this latch was the ONE that mapped it to nothing — which is
+    // why its dot fell through to `idle` and painted the same hollow ring this
+    // change exists to remove. A fault nobody chose stopped the turn, so the
+    // chat does have something to report.
+    interrupted: "failed",
+    // The two STOPPED outcomes latch DONE, and neither row is "latches nothing".
+    // The hollow ring means the chat has NOT INITIATED (user ruling, 2026-09-04),
+    // so a turn that ended may never fall to it — and both of these ended. They
+    // are not `failed` either: a cancel is the user's own doing, and `unknown` is
+    // an unmeasured stop reason, so grading it broken would report a working turn
+    // as a failure. `done` is the transport's "a turn finished here", which is
+    // exactly what both are. `runStatusFor` already answered a run's cancel the
+    // same way, so the two dot derivations agree.
+    cancelled: "done",
+    unknown: "done",
+    // `running` is the ONE outcome that latches nothing: the turn has not ended,
+    // and `thinking` already paints it `working`, so the chat is never left
+    // hollow by this row either. Unreachable from a persisted record.
+    running: "",
+  };
+
+  const cases: readonly (readonly [TurnOutcome | undefined, "done" | "failed" | ""])[] = [
+    // `Object.entries` widens the key back to `string`, so the cast restores what
+    // the declaration above already checked. Derived rather than restated, so the
+    // rows and the exhaustive table cannot drift apart.
+    ...(Object.entries(LATCH_BY_OUTCOME) as (readonly [TurnOutcome, "done" | "failed" | ""])[]),
+    // ABSENT is the one case the ruling exempts, and it is answered before
+    // `severityOf` is consulted: there is genuinely no state to pull from a
+    // record written before the field existed, so the hollow ring is honest
+    // rather than a guess. Reading it through severity's unknown-value arm
+    // latched `done` on every legacy chat. It cannot be a row in the Record —
+    // `undefined` is not a member of the wire enum — which is why it is the one
+    // case spelled out here.
+    [undefined, ""],
+  ];
+
+  for (const [outcome, want] of cases) {
+    it(`maps ${outcome ?? "an absent outcome"} to ${want === "" ? "nothing" : want}`, () => {
+      expect(outcomeLatch(outcome)).toBe(want);
+    });
+  }
+});
+
+describe("latchFieldsFor seeds a rebuilt session from the header", () => {
+  const withOutcome = (chatID: string, outcome: string | undefined): ChatHeader => {
+    const h = headerFor(chatID);
+    return outcome === undefined ? h : ({ ...h, last_turn_outcome: outcome } as ChatHeader);
+  };
+
+  it("seeds done from a completed turn for a chat it has never seen live", () => {
+    // The case the whole change exists for: no existing session at all, which is
+    // what a fresh page load and a brand-new browser session both look like.
+    expect(latchFieldsFor(undefined, withOutcome("c1", "completed"))).toEqual({ turn_done: true });
+  });
+
+  it("seeds failed from a failed turn and from a refused one", () => {
+    expect(latchFieldsFor(undefined, withOutcome("c1", "failed"))).toEqual({ turn_failed: true });
+    expect(latchFieldsFor(undefined, withOutcome("c1", "refused"))).toEqual({ turn_failed: true });
+  });
+
+  it("seeds done for a STOPPED turn, so a cancel is not reported as no chat at all", () => {
+    // The hollow ring means the chat has not initiated (user ruling, 2026-09-04),
+    // and a cancelled or unreadable turn is still a turn that ran.
+    expect(latchFieldsFor(undefined, withOutcome("c1", "cancelled"))).toEqual({ turn_done: true });
+    expect(latchFieldsFor(undefined, withOutcome("c1", "unknown"))).toEqual({ turn_done: true });
+  });
+
+  it("seeds neither for an ABSENT outcome, which is the one case the ruling exempts", () => {
+    // A record written before the field existed: there is genuinely no state to
+    // pull, so the hollow ring is the honest answer rather than a guess. This is
+    // also what keeps `omitempty` on the wire meaningful.
+    expect(latchFieldsFor(undefined, withOutcome("c1", undefined))).toEqual({});
+  });
+
+  it("carries an existing latch over even when the header disagrees", () => {
+    // Rule 1. A latch set by a live `turn_ended` on this page is newer than
+    // anything a header read can carry, so the local verdict wins.
+    const existing = { ...makeSession("c1"), turn_failed: true } as Session;
+    expect(latchFieldsFor(existing, withOutcome("c1", "completed"))).toEqual({ turn_failed: true });
+  });
+
+  it("carries BOTH latches when both are somehow set, so it can never clear one", () => {
+    // This is what lets `upsertHeader` apply the result over an existing session
+    // without a guard: the helper only ever preserves or adds.
+    const existing = { ...makeSession("c1"), turn_done: true, turn_failed: true } as Session;
+    expect(latchFieldsFor(existing, withOutcome("c1", "cancelled"))).toEqual({
+      turn_done: true,
+      turn_failed: true,
+    });
+  });
+
+  it("seeds nothing while a turn is in flight", () => {
+    // Rule 2. The header's outcome describes the turn BEFORE the one now
+    // running, so seeding it would paint a settled dot over a working chat on a
+    // mid-turn reload.
+    const existing = { ...makeSession("c1"), thinking: true } as Session;
+    expect(latchFieldsFor(existing, withOutcome("c1", "completed"))).toEqual({});
+  });
+
+  it("seeds an existing session that carries no latch and no live turn", () => {
+    // The gap-reconcile shape: `transport:gap` clears both latches explicitly
+    // and then reloads the list, so the row exists with nothing latched and the
+    // header is entitled to re-seed it.
+    const existing = makeSession("c1");
+    expect(latchFieldsFor(existing, withOutcome("c1", "completed"))).toEqual({ turn_done: true });
+  });
+
+  it("never returns an explicit undefined, which would delete a latch on spread", () => {
+    // exactOptionalPropertyTypes makes an explicit `undefined` a different thing
+    // from an absent key, and `upsertHeader` spreads this over a live session.
+    for (const outcome of [undefined, "completed", "cancelled", "failed"]) {
+      const fields = latchFieldsFor(undefined, withOutcome("c1", outcome));
+      for (const [key, value] of Object.entries(fields)) {
+        expect(value, `${key} must be true or absent, never undefined`).toBe(true);
+      }
+    }
+  });
+});
+
+describe("upsertHeader applies the header's outcome to the dot", () => {
+  it("seeds a chat arriving for the first time on a chat_created frame", () => {
+    setSessions([]);
+    upsertHeader({ ...headerFor("uh-new"), last_turn_outcome: "completed" } as ChatHeader);
+    expect(tabStatusFor(get("uh-new"))).toBe("done");
+  });
+
+  it("seeds an existing row that has no latch of its own", () => {
+    setSessions([makeSession("uh-seed")]);
+    expect(tabStatusFor(get("uh-seed"))).toBe("idle");
+
+    upsertHeader({ ...headerFor("uh-seed"), last_turn_outcome: "failed" } as ChatHeader);
+    expect(tabStatusFor(get("uh-seed"))).toBe("failed");
+  });
+
+  it("does not overwrite a local latch with the header's older verdict", () => {
+    setSessions([{ ...makeSession("uh-keep"), turn_failed: true } as Session]);
+    upsertHeader({ ...headerFor("uh-keep"), last_turn_outcome: "completed" } as ChatHeader);
+    expect(tabStatusFor(get("uh-keep"))).toBe("failed");
+  });
+
+  it("leaves a working chat working", () => {
+    setSessions([makeSession("uh-live")]);
+    setThinking("uh-live", true);
+    upsertHeader({ ...headerFor("uh-live"), last_turn_outcome: "completed" } as ChatHeader);
+    expect(tabStatusFor(get("uh-live"))).toBe("working");
+  });
+
+  it("leaves a chat with no reported outcome on the idle floor", () => {
+    setSessions([]);
+    upsertHeader(headerFor("uh-quiet"));
+    expect(tabStatusFor(get("uh-quiet"))).toBe("idle");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// subagentStatusFor: the third producer of the tab-dot vocabulary.
+//
+// A delegate had no activity signal on the strip at all while a chat and a run
+// both did, and the fact that answers for it is its INVOCATION TOOL CALL's
+// status. Two things make this table worth pinning rather than reading off the
+// four-line switch. `failed` is not a theoretical arm — measured over the
+// addressable subagent invocations on this container's chat volume, 5.3% of them
+// are failures, and that is the one state a reader must never see reported as
+// the settled green disc. And nothing may map to `idle`: the hollow ring means a
+// chat has not initiated (the ruling at `outcomeLatch`), so a delegate someone
+// opened a tab for may not paint it whatever became of the delegate.
+// ---------------------------------------------------------------------------
+
+describe("subagentStatusFor maps a delegate's tool status to its dot state", () => {
+  /** The dot state each `ToolStatus` produces, keyed over the GENERATED union so
+   *  the table is complete in BOTH directions at compile time — the same shape
+   *  `LATCH_BY_OUTCOME` uses, for the same reason. A fifth member added to
+   *  `ToolStatus` upstream leaves a required key missing and
+   *  `npm run typecheck:tests` rejects the literal, which is what stops a new
+   *  wire value reaching the strip as whatever the switch happens to fall to.
+   *
+   *  Every value here is one the strip ALREADY paints: this producer reaches four
+   *  of the seven states, so it needed no CSS rule, no `NEUTRAL_PHRASE` entry and
+   *  no new ink. A fifth value would be a state with no rule behind it, which paints
+   *  an invisible dot rather than failing — so a new entry is a CSS question. */
+  const DOT_BY_TOOL_STATUS: Readonly<Record<ToolStatus, TabDotState>> = {
+    // `isToolActive`'s pair, and it is one arm rather than two on purpose: the
+    // transcript's own delegate card spins for both, so a dot that separated
+    // them would disagree with the card beside it about what in-flight means.
+    pending: "working",
+    in_progress: "working",
+    // The settled disc. `done` is the transport's "it finished" and never a
+    // claim that the delegate succeeded — the same reading a chat's and a run's
+    // `done` carries.
+    completed: "done",
+    // The red diamond. Distinct from `completed` because the wire distinguishes
+    // them, and this is the arm a reader has to be able to see.
+    failed: "failed",
+  };
+
+  for (const [status, want] of Object.entries(DOT_BY_TOOL_STATUS) as (readonly [
+    ToolStatus,
+    TabDotState,
+  ])[]) {
+    it(`maps ${status} to ${want}`, () => {
+      expect(subagentStatusFor(status)).toBe(want);
+    });
+  }
+
+  it("answers nothing at all when this client holds no invocation", () => {
+    // ABSENCE, which is a statement about the RESIDENT WINDOW rather than about
+    // the delegate: the invocation is persisted with its subtask id, so a chat
+    // whose messages have not been fetched simply has nothing to read. Not
+    // knowing is different from knowing nothing is happening, which is the same
+    // call `runStatusFor` makes for a run it has not fetched.
+    expect(subagentStatusFor(undefined)).toBe("");
   });
 });

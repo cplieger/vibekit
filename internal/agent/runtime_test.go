@@ -195,6 +195,70 @@ func TestShutdown_WaitsForARunningSweep(t *testing.T) {
 	shutdownHub(t, h)
 }
 
+// TestSweepSessionsLoop_WaitsForTheListenerToBind is the destructive sweep's ownership
+// precondition. The reaper's root comes from $KIRO_HOME and never from the config dir, so a
+// boot pointed at the wrong one reaps the REAL instance's KAS session trees — and the sweep
+// starts inside agent.New, long before App.Run binds anything.
+//
+// The held-gate half needs no negative time window: Shutdown closes lifecycle.done and then
+// WAITS on the loop group, and an ungated loop calls refs before it could reach a select, so
+// zero calls after Shutdown returns can only mean the gate held.
+func TestSweepSessionsLoop_WaitsForTheListenerToBind(t *testing.T) {
+	newGatedHub := func(t *testing.T, gate <-chan struct{}, refs func(context.Context) (map[string]struct{}, bool)) *Runtime {
+		t.Helper()
+		cs := newFakeChatStore()
+		h := New(context.Background(), t.TempDir(),
+			func() ACPBridge { return newFakeBridge() }, cs,
+			WithSessionReaper(kirosession.New(t.TempDir(), testReaperWorkDir), refs),
+			WithSessionSweepGate(gate))
+		cs.Bus = h
+		return h
+	}
+	// Non-empty and complete, so the sweep reaches Reaper.Sweep rather than
+	// declining on its own keep-list guard.
+	keepList := func(context.Context) (map[string]struct{}, bool) {
+		return map[string]struct{}{"sess_live": {}}, true
+	}
+
+	t.Run("a gate that never closes reaps nothing", func(t *testing.T) {
+		var calls atomic.Int32
+		h := newGatedHub(t, make(chan struct{}), func(ctx context.Context) (map[string]struct{}, bool) {
+			calls.Add(1)
+			return keepList(ctx)
+		})
+
+		shutdownHub(t, h)
+
+		if got := calls.Load(); got != 0 {
+			t.Errorf("the keep-list was read %d time(s) with the listener unbound, want 0: "+
+				"a boot that cannot bind is not the owner of its config dir and must not "+
+				"reap another live process's session trees", got)
+		}
+	})
+
+	t.Run("a closed gate releases the sweep", func(t *testing.T) {
+		gate := make(chan struct{})
+		asked := make(chan struct{}, 1)
+		h := newGatedHub(t, gate, func(ctx context.Context) (map[string]struct{}, bool) {
+			select {
+			case asked <- struct{}{}:
+			default:
+			}
+			return keepList(ctx)
+		})
+		t.Cleanup(func() { shutdownHub(t, h) })
+
+		close(gate)
+
+		select {
+		case <-asked:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the sweep never ran after the listener bound, so the gate is a " +
+				"dead end and nothing reclaims KAS session state at all")
+		}
+	})
+}
+
 // TestShutdown_JoinsTheTickerLoops covers the two loops no fixture can hold
 // inside their work, both of which sit in a ticker select until lifecycle.done
 // closes. The reaper is deliberately unwired, so sweepSessionsLoop returns at
@@ -223,16 +287,11 @@ func TestShutdown_JoinsTheTickerLoops(t *testing.T) {
 	}
 }
 
-// TestShutdown_WaitsForARunningMCPNotifier is the third loop's twin of
-// TestShutdown_WaitsForARunningSweep, and the one that was missing while the
-// notifier was a bare `go func()`. It holds the debounced notifier inside its
-// callback — which in production is the environment.md generator, a .kiro walk
-// plus an atomic write — and asserts Shutdown notices.
-//
-// Nothing else could catch this: the loop exits on lifecycle.done correctly, so
-// no test hangs, and no linter reports an unjoined goroutine. The only
-// observable symptom was that Shutdown's "background loops" wait was silent
-// about one of the three loops it claims to cover.
+// TestShutdown_WaitsForARunningMCPNotifier holds the debounced notifier inside its callback
+// — in production the environment.md generator, a .kiro walk plus an atomic write — and
+// asserts Shutdown notices. Nothing else catches an unjoined loop here: it exits on
+// lifecycle.done correctly, so no test hangs and no linter reports it, and the only symptom
+// is that Shutdown's wait is silent about one of the three loops it claims to cover.
 func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
 
@@ -265,4 +324,59 @@ func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
 	// met: released, the loop returns and a second pass joins it cleanly.
 	close(release)
 	shutdownHub(t, h)
+}
+
+// lifetimeWatchingBridge records what the runtime's lifetime looked like at the
+// instant its Stop landed, which is the one observation the ordering question
+// turns on.
+type lifetimeWatchingBridge struct {
+	*fakeBridge
+
+	lifetime  context.Context
+	stopErr   error
+	sawLive   atomic.Bool
+	stopCount atomic.Int32
+}
+
+func (b *lifetimeWatchingBridge) Stop() {
+	b.stopErr = b.lifetime.Err()
+	b.sawLive.Store(b.stopErr == nil)
+	b.stopCount.Add(1)
+	b.fakeBridge.Stop()
+}
+
+// TestShutdown_CancelsTheLifetimeAfterDrainingBridges closes the bridge-death
+// door for the WHOLE shutdown rather than almost all of it.
+//
+// drain() removes every bridge from the map before any Stop, so the death closer
+// is skipped for each one this teardown kills. Cancelling the lifetime FIRST left
+// a window between that cancel and the drain where a bridge dying on its own
+// still reached that closer, on a bare goroutine holding a dead context.
+// close(lifecycle.done) stays at step 0: the tickers select on it.
+func TestShutdown_CancelsTheLifetimeAfterDrainingBridges(t *testing.T) {
+	cs := newFakeChatStore()
+	watcher := &lifetimeWatchingBridge{fakeBridge: newFakeBridge()}
+	h := New(t.Context(), t.TempDir(), func() ACPBridge { return watcher }, cs)
+	watcher.lifetime = h.lifecycle.shutdownCtx
+	cs.Bus = h
+
+	sb := &sharedBridge{bridge: watcher}
+	h.bridge.mgr.mu.Lock()
+	h.bridge.mgr.bridges["c1"] = sb
+	h.bridge.mgr.mu.Unlock()
+
+	shutdownHub(t, h)
+
+	if watcher.stopCount.Load() == 0 {
+		t.Fatal("the bridge was never stopped, so the ordering was not exercised")
+	}
+	if !watcher.sawLive.Load() {
+		t.Errorf("the lifetime was already %v when the bridge was stopped; a bridge dying in that "+
+			"window reaches the death closer with a dead context on an untracked goroutine",
+			watcher.stopErr)
+	}
+	// And the cancel still happens: the reorder moves it, it does not drop it.
+	if h.lifecycle.shutdownCtx.Err() == nil {
+		t.Error("the lifetime is still live after Shutdown returned")
+	}
 }

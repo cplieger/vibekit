@@ -9,6 +9,7 @@ import {
 } from "./turn-header.js";
 import { initAttachmentPillCallbacks } from "../attachment-pill.js";
 import { mountAppCSS } from "../__test-helpers__/css-rules.js";
+import { FRAME_BUDGET_MS, testTimeoutFor } from "../__test-helpers__/frame-budget.js";
 
 function data(over: Partial<TurnHeaderData> = {}): TurnHeaderData {
   return {
@@ -153,7 +154,7 @@ describe("the three-line clamp", () => {
 // where both `scrollHeight` and `clientHeight` read 0 and the verdict can only
 // be the character guess; these mount the card under the shipped stylesheet and
 // pin what the measurement then says.
-describe("the clamp measured on the page", () => {
+describe("the clamp measured on the page", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
   let styleEl: HTMLStyleElement;
   let host: HTMLElement;
 
@@ -184,9 +185,12 @@ describe("the clamp measured on the page", () => {
    *  CHANGE: a poll whose condition already holds returns before the observer
    *  has run, which is how a test of an unchanged verdict passes vacuously. */
   async function settles(h: HTMLElement, hidden: boolean, why: string): Promise<void> {
-    await vi.waitFor(() => {
-      expect(more(h).hidden, why).toBe(hidden);
-    });
+    await vi.waitFor(
+      () => {
+        expect(more(h).hidden, why).toBe(hidden);
+      },
+      { timeout: FRAME_BUDGET_MS },
+    );
   }
 
   /** Give the observer its chance, for a verdict that must NOT change. A resize

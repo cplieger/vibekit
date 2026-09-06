@@ -1,29 +1,9 @@
-// ---------------------------------------------------------------------------
-// Message view: signal-driven reactive renderer, and the transcript
-// MULTIPLEXER — `#messages` holds one `.transcript-view` per resident chat,
-// the active one live, the parked ones frozen (see the multiplexer section).
-//
-// One effect watches the active chat id + that chat's messages version and
-// reconciles its messages into the ACTIVE view by message id. Per-message
-// factories (buildUser / buildAssistant / buildEvent) own initial DOM
-// construction; per-message updaters (updateAssistant, updateEvent) own
-// incremental changes.
-//
-// Assistant bodies are composed ENTIRELY from the fundamentals/ primitives by
-// the single block dispatcher in messages-blocks.ts — this module is the shell
-// that mounts and updates them by message identity, owns the streaming-effect
-// registry + avatar rows, and drives turn finalization from store state.
-//
-// The "liquid" feel comes from CSS:
-//   - @starting-style + transitions on `.msg-row` for entry animations
-//   - .streaming class on the active assistant TEXT bubble: an accent wash
-//     plus a blinking block caret (css/13-messages.css). A reasoning trace
-//     carries no such marker — see fundamentals/reasoning.ts
-//   - interpolate-size: allow-keywords on :root so height: auto can
-//     animate (set in css/01-tokens.css)
-//   - content-visibility: auto on rows so off-screen messages don't pay
-//     paint cost
-// ---------------------------------------------------------------------------
+// The transcript SHELL, and the multiplexer: `#messages` holds one
+// `.transcript-view` per resident chat, the active one live and the parked ones
+// frozen. One effect watches the active chat id + that chat's messages version
+// and reconciles into the active view by message id. Assistant BODIES are
+// composed entirely by messages-blocks.ts; this module mounts and updates them
+// by message identity and drives turn finalization from store state.
 
 import type { Message, Session } from "./types.js";
 import {
@@ -36,6 +16,7 @@ import {
   steerMarks,
   bumpMessages,
   registerEvictionExemption,
+  turnLive,
 } from "./store.js";
 import { clearStreamingSig, clearReasoningSig, clearBlockSigsFor } from "./store-signals.js";
 import { effect, el, touch } from "@cplieger/reactive";
@@ -55,6 +36,7 @@ import {
   setAnchorProvider,
   setResumeLabel,
   readingState,
+  jumpTo,
   attach as attachScroll,
   detach as detachScroll,
   type ReadingState,
@@ -76,11 +58,12 @@ import {
   turnLedger,
   turnAnchorID,
   turnFaceProse,
-  turnFaceError,
-  turnRunIDs,
+  turnFailureText,
   turnFoldHides,
   type Turn,
 } from "./turns.js";
+import { severityOf } from "./turn-severity.js";
+import { ICON_REWIND } from "./icons.js";
 import { buildAssistantBubble } from "./fundamentals/text-bubble.js";
 import { isTurnOpen, setTurnOpen, TURNS_WARM } from "./fold-state.js";
 import { wireRowToggle } from "./disclosure-row.js";
@@ -107,7 +90,6 @@ import {
   openContainerKeys,
   initBlockRenderer,
   getLiveAnchor,
-  mountFaceRunCard,
 } from "./messages-blocks.js";
 import { explainError as explainErrorAction } from "./actions/messages.js";
 import { rewindChat } from "./actions/rewind.js";
@@ -133,41 +115,31 @@ import {
 import { syncCodeReferences } from "./code-refs.js";
 import { syncRefusal, setRefusalRewindHandler } from "./refusal.js";
 
-// ---------------------------------------------------------------------------
-// Public re-exports
-// ---------------------------------------------------------------------------
+// --- Public re-exports ---
 
 export { getScrollEl, setLoadMore };
-// Re-exported for the same reason the scroll helpers are: this module owns the
-// rail (it mounts it and feeds it the painted cards), so chat.ts reaching the
-// rail THROUGH here keeps ownership in one place instead of two modules driving
-// the same surface.
+// This module owns the rail, so chat.ts reaches it through here rather than
+// driving the same surface itself.
 export { loadTurnRail, pointTurnRail };
 
-// ---------------------------------------------------------------------------
-// Module state
-// ---------------------------------------------------------------------------
+// --- Module state ---
 
 const messagesEl = $.messages;
 
-// ---------------------------------------------------------------------------
-// The transcript multiplexer.
+// --- The transcript multiplexer ---
 //
-// `#messages` holds one `.transcript-view` per RESIDENT chat view; exactly one
-// carries `.is-active` and the scroller's observers. A parked view keeps its
-// DOM, its `MsgRender`s and its `messageStates` rows, with every writer that
-// could reach that DOM paused: streaming effects disposed, tool + run effects
-// suspended, clock holds released, tickers stopped, terminal output buffered.
-// The store keeps ingesting for parked chats — only rendering is frozen.
-// ---------------------------------------------------------------------------
+// Exactly one resident view carries `.is-active` and the scroller's observers. A
+// parked view keeps its DOM, renders and `messageStates` rows with every writer
+// that could reach that DOM paused. The store keeps ingesting for parked chats;
+// only rendering is frozen.
 
 /** How many PARKED views stay resident (the active view is not counted).
  *  Past this, the least-recently-used parked view runs the real dispose. */
 export const PARKED_VIEWS = 3;
 
 /** One resident chat view. The saved-at-park fields are meaningful only while
- *  `parked` is true; the view→message index is deliberately NOT here — it is
- *  the store read (`chatID` + the session's message ids ∩ `messageStates`). */
+ *  `parked` is true. There is no view→message index: that is a store read
+ *  (`viewMessages`). */
 interface ChatView {
   chatID: string;
   el: HTMLElement;
@@ -178,11 +150,9 @@ interface ChatView {
   reachableBlocks: number;
   lastNewestId: string | undefined;
   resumeLabel: string;
-  /** Message ids that were live-streaming when the view parked. Resume
-   *  rebuilds these bodies fresh whether or not they are still streaming: the
-   *  ones that settled while parked missed their finalizing updates (their
-   *  binding effects were disposed), so only a fresh render from the current
-   *  store is equivalent to a cold rebuild. */
+  /** Message ids live-streaming when the view parked. Resume rebuilds these
+   *  bodies fresh even if they have settled: their binding effects were
+   *  disposed, so they missed every update that landed while parked. */
   pausedStreaming: Set<string>;
 }
 
@@ -191,9 +161,8 @@ interface ChatView {
 const views = new Map<string, ChatView>();
 let activeView: ChatView | null = null;
 
-/** The active view's element, for the container consumers that mount transcript
- *  furniture (chat.ts's skeleton and load-error retry). Null when no chat view
- *  is active (boot, the last-tab window). */
+/** The active view's element, for consumers mounting transcript furniture.
+ *  Null when no chat view is active (boot, the last-tab window). */
 export function activeTranscriptView(): HTMLElement | null {
   return activeView?.el ?? null;
 }
@@ -203,16 +172,38 @@ export function transcriptViewFor(chatID: string): HTMLElement | null {
   return views.get(chatID)?.el ?? null;
 }
 
-/** Where paint reconciles and the card walk runs: the active view, or the bare
- *  multiplexer before any view exists (kept for the boot instant; nothing
- *  renders turns there). */
+/** Reveal a run's card in `chatID`'s transcript. Returns whether it landed.
+ *
+ *  BEST-EFFORT: mountedness is the whole condition, and this never unfolds. The
+ *  window is paginated and a turn past `TURNS_WARM` is a bodyless stub, so a card
+ *  outside either bound answers false and the caller keeps only the tab open.
+ *  SCOPED to that chat's view: `.run-card[data-run]` repeats once per resident
+ *  view, so `document.querySelector` can answer with a parked view's card. */
+export function revealRunCard(chatID: string, workflowID: string): boolean {
+  if (workflowID === "") {
+    return false;
+  }
+  const view = transcriptViewFor(chatID);
+  if (view === null) {
+    return false;
+  }
+  const card = view.querySelector<HTMLElement>(`.run-card[data-run="${CSS.escape(workflowID)}"]`);
+  if (card === null) {
+    return false;
+  }
+  // `jumpTo`, not a raw `scrollIntoView`: it owns whether the jump parks the reader.
+  jumpTo(card, { block: "start", behavior: "smooth" });
+  return true;
+}
+
+/** Where paint reconciles: the active view, or the bare multiplexer before any
+ *  view exists (the boot instant; nothing renders turns there). */
 function paintRoot(): HTMLElement {
   return activeView?.el ?? messagesEl;
 }
 
-/** The message ids this view has mounted: the session's messages ∩
- *  `messageStates` (the design's view→message index — a store read, no second
- *  index maintained). */
+/** The messages this view has mounted: the session's messages ∩ `messageStates`.
+ *  A store read, so no second index is maintained. */
 function viewMessages(session: Session): Message[] {
   return session.messages.filter((m) => messageStates.has(m.id));
 }
@@ -476,9 +467,10 @@ function disposeStreamingEffect(id: string): void {
 }
 
 /** IDs of messages newly appended at the end since the last paint
- *  (i.e. streaming arrival). buildMessage uses this to mark new rows
- *  with `data-chat-entry` so the CSS entry animation plays for new
- *  content but NOT for chat-switch replay or pagination prepend. */
+ *  (i.e. streaming arrival). Two mounts read it, for the same reason: the entry
+ *  animation, and the live-edge pin a sent turn asks for. Both must be silent
+ *  for a chat-switch replay and a pagination prepend, which mount cards the
+ *  reader did not just cause. */
 const appendNewIds = new Set<string>();
 let lastNewestId: string | undefined;
 let lastActiveId: string | undefined;
@@ -624,10 +616,14 @@ export function fadeInTranscript(): void {
  *  number nothing on the page can account for is worse than no number.
  *
  *  A block with no `agent_subtask_id` is the parent stream: always inline, always
- *  counted. One with a subtask id counts only while its container chain is open —
- *  `openContainerKeys` (messages-blocks.ts) owns what "open" means, including a
- *  workflow step needing BOTH the run card and its row — so opening a card
- *  legitimately raises the count: those blocks became reachable at that moment. */
+ *  counted. One with a subtask id counts only while its container is open —
+ *  `openContainerKeys` (messages-blocks.ts) owns what "open" means — so expanding a
+ *  delegate's card legitimately raises the count: those blocks became reachable at
+ *  that moment.
+ *
+ *  A WORKFLOW STEP's blocks are never counted, and that is not a fold state: the
+ *  dispatcher DROPS them, so nothing on the page renders them however the run card
+ *  is folded, and `openContainerKeys` can never name one. */
 function blockCount(msgs: readonly Message[]): number {
   const open = openContainerKeys();
   let n = 0;
@@ -646,9 +642,11 @@ function blockCount(msgs: readonly Message[]): number {
 let followBaseline = 0;
 
 /** The last FULL pass's reachable-block count. `refreshResumeLabel` runs on
- *  chunk- and tool-cause paints too, and those causes cannot add blocks (a new
- *  block is `shape`), so the walk happens once per full pass instead of once
- *  per streamed delta. */
+ *  chunk- and tool-cause paints too, and those causes cannot add a REACHABLE
+ *  block: a block this transcript draws arrives as `shape`, while the blocks that
+ *  now take `chunk` on first sighting are a dropped step's, which are never drawn
+ *  and so cannot move this count. The walk therefore happens once per full pass
+ *  instead of once per streamed delta. */
 let reachableBlocks = 0;
 
 function initFollowModel(): void {
@@ -690,14 +688,6 @@ function refreshResumeLabel(): void {
   // claiming a count of zero.
   setResumeLabel(session?.thinking === true ? session.working_label || "Working" : "Latest");
 }
-
-/** Per-turn workflow-run ids, memoized at projection. `turnRunIDs` (turns.ts)
- *  stays the one derivation; this is its result cached per turn per FULL pass,
- *  so the fold pass reads a map entry instead of re-walking every turn's blocks.
- *  The `tool` branch refreshes the owning turn's entry only — additive, because
- *  an attached workflow id never detaches, and every structural change declares
- *  fact/shape, which rebuilds the whole cache. */
-const turnRunIDsCache = new Map<string, string[]>();
 
 /** What this pass wants per turn, on the two independent axes (D1): the fold
  *  policy's open/closed, and the tier derivation's mountedness
@@ -799,22 +789,36 @@ function paint(): void {
     return;
   }
   // Mark genuinely-new appended messages (streaming arrival) so only
-  // those get the entry animation. Chat-switches and paginated prepends
-  // are silent (no animation).
+  // those get the entry animation. Chat-switches, paginated prepends and
+  // refetched windows are silent (no animation).
   appendNewIds.clear();
   staggerIndex.clear();
-  if (!isChatSwitch && lastNewestId !== undefined) {
-    // Reverse scan: lastNewestId is always near the tail (set at end of
-    // previous paint), so scanning backward is O(1) amortized.
-    let idx = -1;
-    for (let i = session.messages.length - 1; i >= 0; i--) {
-      if (session.messages[i]?.id === lastNewestId) {
-        idx = i;
-        break;
+  // A FETCHED window is a replay whatever its rows look like, and only the
+  // paint's cause can say so: `activateChatView` paints on `setActive` before
+  // `loadMessages` resolves, so a cold open's post-fetch paint is not a chat
+  // switch AND its predecessor recorded no tail — which the array alone cannot
+  // tell from a first prompt.
+  const replayed = isChatSwitch || flushed?.cause === "load";
+  if (!replayed) {
+    // Where the arrivals start. An UNSET tail means the previous paint of this
+    // same chat had no messages at all, so every message here arrived since. With
+    // a fetched window excluded above, that is the reader's first prompt in a
+    // fresh chat — the one appended-tail paint with no tail behind it. A tail the
+    // array no longer carries (a rewind truncated past it) names no arrivals.
+    let from = 0;
+    if (lastNewestId !== undefined) {
+      // Reverse scan: lastNewestId is always near the tail (set at end of
+      // previous paint), so scanning backward is O(1) amortized.
+      from = -1;
+      for (let i = session.messages.length - 1; i >= 0; i--) {
+        if (session.messages[i]?.id === lastNewestId) {
+          from = i + 1;
+          break;
+        }
       }
     }
-    if (idx >= 0) {
-      for (let i = idx + 1; i < session.messages.length; i++) {
+    if (from >= 0) {
+      for (let i = from; i < session.messages.length; i++) {
         const id = session.messages[i]?.id;
         if (id !== undefined) {
           appendNewIds.add(id);
@@ -823,7 +827,9 @@ function paint(): void {
     }
   } else if (isChatSwitch) {
     // Cascade the last 8 messages on chat-switch so they stagger
-    // visually rather than flashing in together.
+    // visually rather than flashing in together. Not for a fetched window: its
+    // rows either replace ones already on screen or fill a view whose switch
+    // paint had nothing to cascade.
     const total = session.messages.length;
     for (let i = Math.max(0, total - 8); i < total; i++) {
       const id = session.messages[i]?.id;
@@ -832,11 +838,7 @@ function paint(): void {
       }
     }
   }
-  const turns = projectTurns(session.messages, session.thinking);
-  turnRunIDsCache.clear();
-  for (const t of turns) {
-    turnRunIDsCache.set(t.id, turnRunIDs(t));
-  }
+  const turns = projectTurns(session.messages, turnLive(session));
   computeFoldPlan(session.id, turns);
   paintMountedCards = false;
   const root = paintRoot();
@@ -896,11 +898,9 @@ function refreshToolMessage(session: Session, msgID: string | undefined): boolea
   }
   // Reverse scan: tool updates target recent turns.
   let msg: Message | undefined;
-  let msgIdx = -1;
   for (let i = session.messages.length - 1; i >= 0; i--) {
     if (session.messages[i]?.id === msgID) {
       msg = session.messages[i];
-      msgIdx = i;
       break;
     }
   }
@@ -911,39 +911,7 @@ function refreshToolMessage(session: Session, msgID: string | undefined): boolea
   // judgment, re-promoted upward when the store now says the turn is live
   // (see liveStateOf).
   const live = liveStateOf(msg);
-  if (!refreshMessageCard(msgID, msg, session.id, live, steerMarks(session.id))) {
-    return false;
-  }
-  refreshTurnRunIDs(session.messages, msgIdx, msg);
-  return true;
-}
-
-/** Merge an updated message's run ids into its turn's cached list — a tool
- *  update can attach one. Additive only; see `turnRunIDsCache`. */
-function refreshTurnRunIDs(messages: readonly Message[], msgIdx: number, m: Message): void {
-  // The owning turn's id, exactly as projectTurns assigns it: the nearest user
-  // message at or before this one, else the loaded window's first message.
-  let turnID = messages[0]?.id;
-  for (let i = msgIdx; i >= 0; i--) {
-    const t = messages[i];
-    if (t?.role === "user") {
-      turnID = t.id;
-      break;
-    }
-  }
-  if (turnID === undefined) {
-    return;
-  }
-  const cached = turnRunIDsCache.get(turnID);
-  if (cached === undefined) {
-    return; // no full pass has projected this turn yet
-  }
-  for (const tc of m.tool_calls ?? []) {
-    const id = tc.workflow_id ?? "";
-    if (id !== "" && !cached.includes(id)) {
-      cached.push(id);
-    }
-  }
+  return refreshMessageCard(msgID, msg, session.id, live, steerMarks(session.id));
 }
 
 /**
@@ -1102,9 +1070,9 @@ const turnSpec: ReconcileSpec<Turn> = {
   },
   update: updateTurn,
   onRemove: (card) => {
-    // The face's run-card effects die with the card, or a removed turn keeps
-    // subscribing to its run's cell.
-    disposeTurnFace(card);
+    // No face teardown: the face holds only prose, so it has no effect to stop,
+    // its element leaves with the card, and the WeakMap entry dies with it.
+    //
     // Dispose the body's messages: the inner reconcile never runs again for a
     // removed card, so its onRemove would not fire on its own.
     const rows = card.querySelectorAll<HTMLElement>(`:scope > .turn-body > [${KEY_ATTR}]`);
@@ -1412,30 +1380,34 @@ function setCardFolded(card: HTMLElement, folded: boolean): void {
 
 // --- The collapsed turn's FACE ---
 //
-// A collapsed turn is input + output, in the OPEN layout: the header carries
-// the request exactly as when open, and a face slots in where the body was —
-// the run cards the turn launched (duplicates of the in-body cards, above the
-// prose), the final answer prose in full (real markdown, default type), and a
-// failed turn's error text. The ledger footer stays below it, unchanged, so
-// credits/model/duration survive the fold. Open, the body shows all of it in
-// place and the face does not exist, so the duplication is never visible twice.
+// A collapsed turn is input + output, in the OPEN layout: the header carries the
+// request exactly as when open, and a face slots in where the body was, carrying
+// the turn's final answer prose in full (real markdown, default type). The ledger
+// footer stays below it, unchanged, so credits/model/duration survive the fold.
+//
+// The face carries NO run card. It used to mount a duplicate of every in-body card
+// the turn launched, which cost a lossy second rendering (a generic label, no step
+// bodies) plus one refetch and one clock hold per folded turn. A live run's
+// persistent surface is the composer band's run bar (`run-bar.ts`), which is
+// per-chat and survives both the fold and a reload; the invocation card itself is
+// one unfold away.
 
-/** Face bookkeeping per CARD element: the key detects a content change (a run
- *  arriving for a folded turn), the dispose stops the face cards' effects. */
-const turnFaces = new WeakMap<HTMLElement, { key: string; dispose: () => void }>();
+/** Face bookkeeping per CARD element: the content key, which detects a change the
+ *  face has to be rebuilt for. No dispose half — with only prose in it the face
+ *  holds no effect, and its element leaves with the card. */
+const turnFaces = new WeakMap<HTMLElement, string>();
 
 function faceKey(t: Turn): string {
-  const runs = turnRunIDsCache.get(t.id) ?? turnRunIDs(t);
-  return `${t.outcome}|${runs.join(",")}|${String(turnFaceProse(t).length)}`;
+  // `t.outcome` stays in the key: an outcome flip is exactly when the turn's final
+  // prose block can be superseded by text of the same length.
+  return `${t.outcome}|${String(turnFaceProse(t).length)}`;
 }
 
 function disposeTurnFace(card: HTMLElement): void {
-  const face = turnFaces.get(card);
-  if (face === undefined) {
+  if (!turnFaces.has(card)) {
     return;
   }
   turnFaces.delete(card);
-  face.dispose();
   card.querySelector(":scope > .turn-face")?.remove();
 }
 
@@ -1447,35 +1419,24 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
     return;
   }
   const key = faceKey(t);
-  if (turnFaces.get(card)?.key === key) {
+  if (turnFaces.get(card) === key) {
     return;
   }
   disposeTurnFace(card);
   const face = el("div", { className: "turn-face" });
-  const disposers: (() => void)[] = [];
-  for (const id of turnRunIDsCache.get(t.id) ?? turnRunIDs(t)) {
-    const mounted = mountFaceRunCard(id);
-    disposers.push(mounted.dispose);
-    face.appendChild(mounted.root);
-  }
   const prose = turnFaceProse(t);
   if (prose !== "") {
     const bubble = buildAssistantBubble(prose, false);
     bubble.root.classList.add("turn-face-prose");
     face.appendChild(bubble.root);
   }
-  const error = turnFaceError(t);
-  if (error !== "") {
-    face.appendChild(el("div", { className: "turn-face-error" }, error));
-  }
-  const dispose = (): void => {
-    for (const d of disposers) {
-      d();
-    }
-  };
+  // The failure text is NOT here any more: it is a card-level notice
+  // (syncTurnNotice) so an OPEN turn shows it too. The face was the only surface
+  // that ever rendered it, and `syncTurnFace` early-returns for an unfolded card,
+  // so an open failed turn's reason was unreachable however durably it was stored.
   if (face.childElementCount === 0) {
     // Nothing to show: the ledger row alone carries the fold, as before.
-    turnFaces.set(card, { key, dispose });
+    turnFaces.set(card, key);
     return;
   }
   // A card-level child in the body's slot, NOT inside the footer: the footer
@@ -1487,7 +1448,60 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
   } else {
     card.appendChild(face);
   }
-  turnFaces.set(card, { key, dispose });
+  turnFaces.set(card, key);
+}
+
+/** Mount or refresh the turn's failure notice: one card-level row saying why a turn
+ *  that did not end cleanly ended that way.
+ *
+ *  ONE mount point for both fold states, which is the whole point. The text used to
+ *  live inside the collapsed face, and `syncTurnFace` early-returns for a card
+ *  without `data-folded` — so an OPEN failed turn showed nothing at all, and a
+ *  broken turn is exactly the turn that does not auto-fold. A reader therefore got
+ *  the reason only by folding the card that had just failed in front of them.
+ *
+ *  A card-level child before the footer, like the face, rather than a row inside
+ *  `.turn-body`: the body is a keyed reconcile over the turn's MESSAGES, and this is
+ *  a statement about the turn. Placing it there would also make it a stub's problem
+ *  — a tier-3 card has no body element — and the notice must survive residency.
+ *
+ *  Tinted BY SEVERITY rather than always red, so it never overstates: a cancel the
+ *  user asked for and a stop reason vibekit could not read are `stopped`, and they
+ *  take the same yellow the footer glyph gives them. Idempotent per text and
+ *  severity, so the fold pass and every repaint can call it for free. */
+function syncTurnNotice(card: HTMLElement, t: Turn): void {
+  const text = turnFailureText(t);
+  const existing = card.querySelector<HTMLElement>(":scope > .turn-notice");
+  if (text === "") {
+    existing?.remove();
+    return;
+  }
+  const severity = severityOf(t.outcome);
+  if (existing !== null) {
+    if (existing.textContent !== text) {
+      existing.textContent = text;
+    }
+    existing.dataset["severity"] = severity;
+    existing.dataset["outcome"] = t.outcome;
+    return;
+  }
+  const notice = el("div", { className: "turn-notice" }, text);
+  notice.dataset["severity"] = severity;
+  // The outcome beside the severity, for the ONE stated hue exception the four
+  // other outcome surfaces in 29-turns.css already carry: `unknown` keeps a
+  // neutral ink because an unreadable end has no honest hue, and severity alone
+  // cannot express it (`unknown` and `cancelled` are one severity, two inks).
+  notice.dataset["outcome"] = t.outcome;
+  // `role="status"` rather than `alert`: the turn has already ended by the time
+  // this mounts, so it is a result to be read in course, not an interruption. A
+  // repaint would re-announce an `alert` on every pass.
+  notice.setAttribute("role", "status");
+  const footer = card.querySelector<HTMLElement>(":scope > .turn-footer");
+  if (footer !== null) {
+    footer.before(notice);
+  } else {
+    card.appendChild(notice);
+  }
 }
 
 // --- The turn card ---
@@ -1514,8 +1528,11 @@ function buildTurn(t: Turn): HTMLElement {
   // case needs no mark and the footer only says how a turn ENDED — and the header
   // dot only below 48rem, where the tab strip is off-canvas and the transcript is
   // the only place the outcome can be read.
-  // The permalink target. `#turn-{n}` addresses a turn from a ledger row, a
-  // search hit or the rail.
+  // The permalink target, in the WINDOW-LOCAL numbering space: `t.n` is an
+  // ordinal within the paginated store, not the session-absolute number the
+  // timeline rail's index carries. The rail therefore does NOT address this id —
+  // it joins on the reconcile key below, which is the one value both spaces share
+  // (see `turnAnchorID` in turns.ts for the two spaces and why they differ).
   card.id = turnAnchorID(t.n);
 
   const header = buildTurnHeader(headerData(t));
@@ -1539,13 +1556,25 @@ function buildTurn(t: Turn): HTMLElement {
   // After the footer: Rewind lives inside it, so it must exist first — and the
   // face goes into the footer, so a card born folded builds it here.
   mountRewind(card, t);
+  syncTurnNotice(card, t);
   syncTurnFace(card, t);
   syncTurnBodyless(card);
   paintMountedCards = true;
 
-  // A turn the user just sent overrides Reading: they asked for it, so the pin
+  // A turn the reader just sent overrides Reading: they asked for it, so the pin
   // takes them to it even if they were parked further up.
-  if (t.trigger !== undefined) {
+  //
+  // BOTH conditions, because a user trigger alone does not mean the reader asked
+  // for anything NOW: this mount also runs for a chat-switch replay, a refetched
+  // window and a pagination prepend, and `appendNewIds` is the paint's own record
+  // of which rows arrived at the tail since the last one. The pin publishes a
+  // reader gesture (scroll.ts `onReaderGesture`), which revokes the timeline
+  // rail's pick — and a prepend's cards are built DURING the rail's own jump to
+  // one of them, so an ungated pin revoked the pick that jump was serving. An
+  // opened chat still
+  // lands at the live edge without this: a Following reader is pinned there by
+  // `autoScrollIfAnchored`.
+  if (t.trigger !== undefined && appendNewIds.has(t.id)) {
     scrollToBottom();
   }
   return card;
@@ -1566,6 +1595,7 @@ function updateTurn(card: HTMLElement, t: Turn): void {
   }
   mountTurnFooter(card, t);
   mountRewind(card, t);
+  syncTurnNotice(card, t);
   syncTurnBodyless(card);
   syncTurnFace(card, t);
 }
@@ -1681,7 +1711,7 @@ async function buildTurnBodyBatches(chatID: string, turnID: string): Promise<voi
     // Re-projected per batch rather than captured: a page load can reshape the
     // window while a build yields, and the projection is the only truth about
     // what this turn's body holds now.
-    const t = projectTurns(session.messages, session.thinking).find((x) => x.id === turnID);
+    const t = projectTurns(session.messages, turnLive(session)).find((x) => x.id === turnID);
     if (t === undefined) {
       return;
     }
@@ -1785,7 +1815,10 @@ function mountRewind(card: HTMLElement, t: Turn): void {
         type: "button",
         "aria-label": "Rewind to this point",
       },
-      "Rewind",
+      svgTemplate(ICON_REWIND)(),
+      // Desktop only: 29-turns.css drops the word at the width the footer's own
+      // actions collapse, and the `aria-label` above is the name once it is gone.
+      el("span", { className: "turn-rewind-label" }, "Rewind"),
     ) as HTMLButtonElement;
     footer.appendChild(btn);
   }
@@ -1802,9 +1835,15 @@ function mountRewind(card: HTMLElement, t: Turn): void {
   // exactly what a paint is reacting to.
   const busy = getActive()?.thinking ?? false;
   btn.disabled = busy;
-  btn.title = busy
-    ? "Can't rewind while the agent is running \u2014 cancel the turn first"
-    : "Rewind to right after this turn, discarding everything that follows";
+  // The CONSEQUENCE, in the channel `aria-label` is not: the name carries the
+  // action. `data-tooltip` rather than `title` reaches this button even while it
+  // is disabled — `web.md` "A DISABLED control still fires hover events".
+  btn.setAttribute(
+    "data-tooltip",
+    busy
+      ? "Can't rewind while the agent is running \u2014 cancel the turn first"
+      : "Rewind to right after this turn, discarding everything that follows",
+  );
 }
 
 /** Mount / refresh the turn's outcome ledger as the card's last child.

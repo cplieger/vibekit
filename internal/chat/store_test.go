@@ -186,16 +186,9 @@ func TestMutate_RejectsBadChatID(t *testing.T) {
 
 // --- Broadcaster contract ---
 
-// BroadcasterContractTest verifies that a Broadcaster implementation
-// satisfies the expected semantics under concurrent Broadcast calls:
-//  1. Events appear in the order they were submitted (when serialised
-//     by a single goroutine) — i.e. the implementation is linearisable
-//     from a single-writer perspective.
-//  2. Broadcast never blocks indefinitely (completes within a timeout).
-//
-// The test is parameterised so it can be reused against any Broadcaster
-// implementation (fakeBroadcaster today, SSE broadcaster in integration
-// tests later).
+// BroadcasterContractTest holds any Broadcaster implementation to two semantics
+// under concurrent Broadcast calls: a single writer's events stay in submission
+// order, and Broadcast never blocks indefinitely.
 func BroadcasterContractTest(t *testing.T, newBroadcaster func() broadcaster) {
 	t.Helper()
 
@@ -304,21 +297,13 @@ func TestGet_MissingChat(t *testing.T) {
 
 // --- List ---
 
-// TestList_SortsByUpdatedAtDesc runs in a synctest bubble, which is what lets it
-// assert the gap between the two timestamps EXACTLY rather than nudge a real
-// clock and hope.
+// TestList_SortsByUpdatedAtDesc runs in a synctest bubble, so the gap between the
+// two timestamps is exact rather than a real-clock nudge that can collide on a
+// fast machine.
 //
-// The two `time.Sleep(2 * time.Millisecond)` calls this replaces were class (b)
-// — advancing a real clock the test could not fake — and their comment said so:
-// "nudge the wall clock so the UpdatedAt ms timestamps don't collide on fast
-// machines". Inside the bubble the clock is synthetic, so the nudge is exact and
-// the ordering is deterministic by construction instead of by resolution.
-//
-// Measured: atomicfile.WriteFile's real filesystem work (mkdir walk, fsync,
-// rename, parent fsync) is fine in here. That is the documented boundary —
-// TRANSIENT file I/O reaches a durably-blocked state afterwards, so the clock
-// still advances; only a goroutine parked indefinitely on an external FD defeats
-// a bubble.
+// The store's real filesystem work is fine in here: TRANSIENT file I/O reaches a
+// durably-blocked state afterwards so the clock still advances, and only a
+// goroutine parked indefinitely on an external FD defeats a bubble.
 func TestList_SortsByUpdatedAtDesc(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s, _ := newTestStore(t)
@@ -700,21 +685,13 @@ func TestHandleOne_ReturnsChatAndMessages(t *testing.T) {
 }
 
 // TestHandleOne_PaginationSurvivesUnorderedTimestamps pins the two states that
-// made the previous `?before=<ts>` cursor lose a page, because both are reachable
-// on the real wire and neither is exotic.
+// made a `?before=<ts>` cursor lose a page, both reachable on the real wire.
 //
-// The cursor resolved a millisecond timestamp with sort.Search, which needs
-// Message.Ts to be non-decreasing across the slice. Nothing makes that true:
-// render order is array position, and translate.newEventMessage stamps Ts at
-// CONSTRUCTION, outside the per-chat lock AppendMessage takes, so two writers can
-// stamp in one order and append in the other. Separately,
-// projection.applySummary gives a compaction event its predecessor's exact Ts on
-// purpose, so a tie group always exists after a replayed compaction.
-//
-// Both cases assert the same property: paging back from the newest window returns
-// the messages immediately before it, in array order, with none skipped. Run
-// against the old cursor, the tie case returns "a" only (the whole tie group is
-// excluded at once) and the inverted case returns an arbitrary window.
+// Message.Ts is not non-decreasing across the slice: a sender stamps it outside
+// the per-chat lock the append takes, so two writers can stamp in one order and
+// append in the other, and a replayed compaction event deliberately reuses its
+// predecessor's exact Ts, so a tie group always exists. Both cases assert one
+// property: paging back from the newest window skips nothing.
 func TestHandleOne_PaginationSurvivesUnorderedTimestamps(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -1855,5 +1832,39 @@ func TestHandleExport_SuccessfulMarkdownWriteIsQuiet(t *testing.T) {
 	}
 	if got := logs.String(); strings.Contains(got, `msg="chat export: markdown write failed"`) {
 		t.Errorf("a successful export logged a write failure; logs = %q", got)
+	}
+}
+
+// TestMutate_RefusesACancelledContext pins the guard at Mutate's entry, untested
+// until now, and it is the negative that keeps the durable-write decision
+// enforceable from this side.
+//
+// Deleting the guard is the cheap way to stop a shutdown discarding an assistant
+// turn, and it opens nine request-context sites at once: a rewind truncation, a
+// user message, a membership change would all persist for a POST the client
+// abandoned. The caller detaches instead — only it can tell the two apart.
+func TestMutate_RefusesACancelledContext(t *testing.T) {
+	s, b := newTestStore(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	var mutatorRan bool
+	err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+		mutatorRan = true
+		c.Name = "written for a request nobody is waiting on"
+		return true
+	})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Mutate on a cancelled context = %v, want context.Canceled", err)
+	}
+	if mutatorRan {
+		t.Error("the mutator ran, so the guard sits below the load rather than at the entry")
+	}
+	if _, exists := s.Get(t.Context(), "c1"); exists {
+		t.Error("a refused Mutate created the chat anyway")
+	}
+	if events := b.snapshot(); len(events) != 0 {
+		t.Errorf("a refused Mutate broadcast %d events, want none", len(events))
 	}
 }

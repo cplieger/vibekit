@@ -82,5 +82,5 @@
   color: var(--c-text-secondary);
   background: var(--c-bg-tertiary);
   border: 1px solid var(--c-border);
-  border-radius: calc(var(--r) / 2);
+  border-radius: var(--r-sm);
 }

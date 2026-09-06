@@ -20,7 +20,25 @@ const { surfaces } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("./dom.js", () => ({ $: surfaces }));
+vi.mock("./dom.js", () => ({
+  $: surfaces,
+  // `byId` is reached through this graph by page-title.ts. ESM links for real, so
+  // a name any module in the graph imports must exist on the mock or the whole
+  // FILE fails at link time, naming the export rather than the test. Inlined
+  // rather than shared because a `vi.mock` factory is hoisted above every
+  // top-level import, so it cannot reach a helper module. Resolve-or-create,
+  // because the real `byId` throws and a suite mocking `dom.js` stages only what
+  // its own subject needs.
+  byId: (id: string): HTMLElement => {
+    let el = document.getElementById(id);
+    if (el === null) {
+      el = document.createElement("span");
+      el.id = id;
+      document.body.appendChild(el);
+    }
+    return el;
+  },
+}));
 // highlight() escapes its input by construction and emits only <span> wrappers;
 // the identity stub keeps the raw-source assertion about what the editor SHOWS
 // rather than about the highlighter's markup.

@@ -17,6 +17,7 @@ import { linkifyPaths } from "./linkify.js";
 import { fileIcon, toolIcon, outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { chevronEl } from "./chevron.js";
+import { CHROME_ATTR } from "./chrome-attr.js";
 import { openFileDiff } from "./editor-openers.js";
 import { openChange, openAtLine } from "./navigate.js";
 import { lineDiff, windowHunks, stats as diffStats } from "./diff.js";
@@ -88,11 +89,11 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   node.appendChild(summary);
   applyOutcome(node, opts.status, displayTitle, info);
 
-  // A claim-only kind gets no details region and no toggle. A `search` or
-  // `fetch` keeps the subtitle row, which is its claim's second fact. It lives
-  // inside the same summary as the title so the whole visible box is one
-  // disclosure target and one hover surface.
-  if (depth1 === "search" || depth1 === "fetch" || depth1 === "generic") {
+  // A claim-only kind gets no details region and no toggle. On `output` the
+  // subtitle is the only place the command reaches a collapsed delegate's tail,
+  // because the <pre> carrying the same string is chrome. The row sits in the
+  // summary with the title, so the box is one disclosure and one hover target.
+  if (depth1 === "search" || depth1 === "fetch" || depth1 === "generic" || depth1 === "output") {
     const subtitle = extractSubtitle(opts.input);
     if (subtitle !== "") {
       summary.appendChild(el("div", { className: "tool-subtitle" }, subtitle));
@@ -143,7 +144,11 @@ function moveRow(input: Record<string, unknown> | undefined): HTMLElement | null
     "div",
     { className: "tool-move-row" },
     el("span", { className: "tool-move-from" }, from),
-    el("span", { className: "tool-move-arrow", "aria-hidden": "true" }, "\u2192"),
+    el(
+      "span",
+      { className: "tool-move-arrow", "aria-hidden": "true", [CHROME_ATTR]: "" },
+      "\u2192",
+    ),
     el("span", { className: "tool-move-to" }, to),
   );
 }
@@ -185,7 +190,11 @@ function buildHeader(
   if (info.mcp !== null) {
     const badge = el(
       "span",
-      { className: "tool-mcp-badge", title: `From the ${info.mcp.server} MCP integration` },
+      {
+        className: "tool-mcp-badge",
+        title: `From the ${info.mcp.server} MCP integration`,
+        [CHROME_ATTR]: "",
+      },
       info.mcp.server,
     );
     badge.style.setProperty("--mcp-hue", String(mcpHue(info.mcp.server)));
@@ -216,7 +225,7 @@ function buildHeader(
   }
 
   if (opts.live) {
-    const duration = el("span", { className: "tool-duration" });
+    const duration = el("span", { className: "tool-duration", [CHROME_ATTR]: "" });
     header.appendChild(duration);
   }
 
@@ -403,7 +412,7 @@ export function mcpHue(server: string): number {
 function buildDetails(opts: BuildToolCardOpts): string {
   const inputBlock =
     opts.live && opts.input !== undefined
-      ? `<pre class="tool-input">${escText(JSON.stringify(opts.input, null, 2))}</pre>`
+      ? `<pre class="tool-input" ${CHROME_ATTR}>${escText(JSON.stringify(opts.input, null, 2))}</pre>`
       : "";
   // No "collapsed" class: the disclosure controller wired in wireToggle owns
   // the collapse state (inline height + aria-hidden/inert on the region).
@@ -442,7 +451,7 @@ function denialBlock(d: ToolDenial | undefined): string {
       `<div class="tool-denial-row"><span>From</span><code>${escText(d.scope)}: ${escText(d.source)}</code></div>`,
     );
   }
-  return `<div class="tool-denial">${rows.join("")}</div>`;
+  return `<div class="tool-denial" ${CHROME_ATTR}>${rows.join("")}</div>`;
 }
 
 // --- Wiring ---
@@ -556,7 +565,7 @@ function appendOutput(
   }
   const reveal = el(
     "button",
-    { type: "button", className: "tool-output-reveal" },
+    { type: "button", className: "tool-output-reveal", [CHROME_ATTR]: "" },
     `Show ${String(win.elided)} more line${win.elided === 1 ? "" : "s"}`,
   );
   reveal.addEventListener("click", (e: Event) => {
@@ -587,7 +596,12 @@ export function insertDiffPreview(
   // stay on the claim line and become the second entry point to depth 2.
   const statBtn = el(
     "button",
-    { type: "button", className: "tool-diff-stats", "data-tooltip": "Open the diff" },
+    {
+      type: "button",
+      className: "tool-diff-stats",
+      "data-tooltip": "Open the diff",
+      [CHROME_ATTR]: "",
+    },
     el("span", { className: "diff-add-count" }, `+${String(s.adds)}`),
     el("span", { className: "diff-del-count" }, `-${String(s.dels)}`),
   );
@@ -614,7 +628,7 @@ export function insertDiffPreview(
     wrap.appendChild(
       el(
         "div",
-        { className: "tool-diff-more" },
+        { className: "tool-diff-more", [CHROME_ATTR]: "" },
         `+${String(win.hunksOmitted)} more hunk${win.hunksOmitted === 1 ? "" : "s"}`,
       ),
     );

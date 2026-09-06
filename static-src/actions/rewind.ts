@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { transportAction } from "./index.js";
+import { loadMessages } from "../store-load.js";
 
 interface RewindArgs {
   chatID: string;
@@ -21,9 +22,20 @@ interface RewindArgs {
  *  A transportAction rather than an apiAction because there is no longer a
  *  response body worth reading. The old create action went through apiAction
  *  purely to recover the server-assigned `rewind_id` so the caller could open
- *  and activate the new branch chat; with no branch, the reverted transcript
- *  arrives over SSE like any other change to the chat you are already looking
- *  at.
+ *  and activate the new branch chat; with no branch, there is nothing to open.
+ *
+ *  THE REVERTED TRANSCRIPT DOES NOT ARRIVE OVER SSE — this comment claimed it
+ *  did, and no such mechanism exists. Two facts make the refetch necessary:
+ *  `chat_updated` carries only the header, and `upsertHeader` merges the count
+ *  as `Math.max(local, incoming)`, so a SHRINK is discarded. Nothing else in the
+ *  store removes messages in response to an event. So a rewind that reached KAS
+ *  rolled the files back and truncated the record while the reader kept looking
+ *  at the dropped turns until a reload.
+ *
+ *  `onSuccess` refetches rather than reconstructing, which is the pattern the run
+ *  store already uses: the record is authoritative after the revert and the
+ *  client's window is a page of it, so re-reading that page is both simpler and
+ *  more correct than trying to replay the cut locally.
  *
  *  `idempotencyKey` still matters, and more than before: a timed-out-but-
  *  succeeded retry used to create a duplicate branch, which was untidy; now it
@@ -40,5 +52,8 @@ export const rewindChat = transportAction<RewindArgs>({
     chat_id: chatID,
     payload: { message_id: messageID },
   }),
+  onSuccess: (_result, { chatID }) => {
+    void loadMessages(chatID);
+  },
   error: "Couldn't rewind chat",
 });

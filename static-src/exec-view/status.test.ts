@@ -11,7 +11,14 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect } from "vitest";
-import { STATE_MARK, STATE_WORD, paintStateMark, type ExecState } from "./status.js";
+import {
+  STATE_MARK,
+  STATE_WORD,
+  inFlight,
+  neverRan,
+  paintStateMark,
+  type ExecState,
+} from "./status.js";
 
 /** Every member of the vocabulary, listed once so the exhaustiveness assertions
  *  below cannot silently shrink when a state is added. */
@@ -67,6 +74,30 @@ describe("STATE_MARK is total, and every state carries exactly one channel", () 
       // tints reach them with no new colour token.
       expect(svg).toContain('fill="currentColor"');
     }
+  });
+});
+
+// THE VOCABULARY SPLITS THREE WAYS, and reading it as two is what put a past-tense
+// sentence on a step that never ran: the complement of `inFlight` is not "ran", it is
+// "ran or never will". A consumer branching on one predicate has to have an arm for
+// the third bucket, so these pin that the buckets are disjoint and that between them
+// they name every state — a ninth state added to `ALL` above then has to be
+// classified here rather than falling into whichever arm happens to be last.
+describe("inFlight and neverRan partition the vocabulary", () => {
+  it("agrees on no state", () => {
+    expect(ALL.filter((s) => inFlight(s) && neverRan(s))).toEqual([]);
+  });
+
+  it("names the in-flight three", () => {
+    expect(ALL.filter(inFlight)).toEqual(["running", "waiting", "input"]);
+  });
+
+  it("names the two states with no execution behind them", () => {
+    expect(ALL.filter(neverRan)).toEqual(["pending", "skipped"]);
+  });
+
+  it("leaves exactly the settled outcomes for neither predicate", () => {
+    expect(ALL.filter((s) => !inFlight(s) && !neverRan(s))).toEqual(["ok", "fail", "warn"]);
   });
 });
 

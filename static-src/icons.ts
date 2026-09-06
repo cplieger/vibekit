@@ -9,92 +9,128 @@ import { extToIconKey } from "./file-extensions.js";
 
 // --- Action icons (shared across modules) ---
 
-function svg(size: number, d: string, extra = ""): string {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"${extra}>${d}</svg>`;
+type IconTier = "inline" | "ui" | "lg" | "hero";
+
+/** Build a stroked glyph on the 24-unit grid.
+ *
+ *  `tier` names a SIZE TIER, never a pixel count: `03-base.css` owns the size
+ *  and the stroke, so a tier is one number for the whole app. No width/height
+ *  and no stroke-width is emitted — an <svg> carrying those presentation
+ *  attributes would still lose to the stylesheet, but leaving them in means two
+ *  places claim to decide one thing and only one of them is read. */
+function svg(tier: IconTier, d: string, extra = ""): string {
+  return `<svg class="ic-${tier}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"${extra}>${d}</svg>`;
 }
 
-export const ICON_EDIT = svg(12, '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
-export const ICON_EDIT_14 = svg(14, '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
-export const ICON_CLOSE = svg(12, '<path d="M18 6L6 18M6 6l12 12"/>');
+export const ICON_EDIT = svg(
+  "inline",
+  '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>',
+);
+export const ICON_EDIT_14 = svg("ui", '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
+export const ICON_CLOSE = svg("inline", '<path d="M18 6L6 18M6 6l12 12"/>');
 export const ICON_TRASH = svg(
-  12,
+  "inline",
   '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
 );
 export const ICON_TRASH_14 = svg(
-  14,
+  "ui",
   '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
 );
-export const ICON_PLUS = svg(12, '<path d="M12 5v14M5 12h14"/>');
-export const ICON_PLUS_16 = svg(16, '<path d="M12 5v14M5 12h14"/>');
-export const ICON_MINUS = svg(12, '<path d="M5 12h14"/>');
+export const ICON_PLUS = svg("inline", '<path d="M12 5v14M5 12h14"/>');
+export const ICON_PLUS_16 = svg("ui", '<path d="M12 5v14M5 12h14"/>');
 // Pin icons for the per-tool auto_update toggle. Filled = pinned
 // (auto_update off), outline = tracking upstream (auto_update on).
 export const ICON_PIN = svg(
-  12,
+  "inline",
   '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/>',
 );
+// Stroke 2 like its outline twin `ICON_PIN`, so the pin does not change WEIGHT
+// when it changes state. `fill` is the only difference between the two, which is
+// what the state is meant to say.
 export const ICON_PIN_FILLED =
-  '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/></svg>';
+  '<svg class="ic-inline" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/></svg>';
 export const ICON_COPY = svg(
-  14,
+  "ui",
   '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>',
 );
 export const ICON_COPY_MD =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v14H3z"/><path d="M7 15V9l2 3 2-3v6M15 9v6m0 0l2-2m-2 2l-2-2"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v14H3z"/><path d="M7 15V9l2 3 2-3v6M15 9v6m0 0l2-2m-2 2l-2-2"/></svg>';
 // Angle brackets (Lucide "code"): show the reply's markdown SOURCE instead of
 // its rendering, for when a message renders wrong and the question is whether
 // the model or the parser is at fault.
-export const ICON_SOURCE = svg(14, '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>');
+export const ICON_SOURCE = svg("ui", '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>');
 export const ICON_LINK =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
 // Open-in-new-tab / external-link icon (Lucide). Used by the
 // repo-picker and forge-auth panels to mark links that leave the app.
 export const ICON_EXTERNAL =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
 // Download / clone-into-workspace icon (Lucide).
 export const ICON_DOWNLOAD =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 // Repo (book-style) icon — same shape as the empty-state glyph, used
 // in the per-account collapsible repo summary.
 export const ICON_REPO =
-  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>';
 export const ICON_EXPORT =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 export const ICON_DIFF =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M12 4v16"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M12 4v16"/></svg>';
 export const ICON_X =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-export const ICON_PLAY = svg(14, '<polygon points="5 3 19 12 5 21 5 3"/>');
-export const ICON_CHEVRON_DOWN = svg(16, '<path d="M6 9l6 6 6-6"/>');
-export const ICON_CHEVRON_UP = svg(16, '<path d="M18 15l-6-6-6 6"/>');
-export const ICON_SEND = svg(16, '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>');
-export const ICON_SEND_14 = svg(14, '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>');
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+export const ICON_PLAY = svg("ui", '<polygon points="5 3 19 12 5 21 5 3"/>');
+export const ICON_CHEVRON_DOWN = svg("ui", '<path d="M6 9l6 6 6-6"/>');
+export const ICON_CHEVRON_UP = svg("ui", '<path d="M18 15l-6-6-6 6"/>');
+export const ICON_SEND = svg("ui", '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>');
+export const ICON_SEND_14 = svg("ui", '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>');
 // The AI-generate glyph (Lucide "sparkles"), for every button that asks a model
 // to fill a field: the commit box's message button and the branch popover's
 // name suggestion. It replaced a literal ✨ in both, because the branch
 // popover's row puts it directly beside a stroke-drawn send arrow and an emoji
 // renders from a colour font at its own weight and baseline.
 export const ICON_SPARKLE = svg(
-  14,
+  "ui",
   '<path d="m12 3-1.9 5.8a2 2 0 01-1.3 1.3L3 12l5.8 1.9a2 2 0 011.3 1.3L12 21l1.9-5.8a2 2 0 011.3-1.3L21 12l-5.8-1.9a2 2 0 01-1.3-1.3z"/>' +
     '<path d="M5 3v4M3 5h4M19 17v4M17 19h4"/>',
 );
-// Busy-state spinner rendered INTO the send button. Uses xmlns so it
-// renders correctly when injected via innerHTML. CSS `.icon-spinner`
-// drives the rotation; we keep a single SVG circle here so the arc
-// geometry is deterministic regardless of browser font metrics.
+// Busy-state spinner rendered INTO the send button. CSS `.icon-spinner` drives
+// the rotation; the arc is an SVG path rather than a bordered box so its
+// geometry does not move with the browser's font metrics.
 export const ICON_SPINNER =
-  '<svg class="icon-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" xmlns="http://www.w3.org/2000/svg"><path d="M21 12a9 9 0 0 1-9 9"/></svg>';
+  '<svg class="icon-spinner ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-9 9"/></svg>';
+/* A SYMMETRIC hourglass, and the redraw is a bug fix rather than a restyle: the
+ * closed outline this replaces had its two waist arcs bulging OUTWARD, so it
+ * rendered as two stacked lozenges with a flat square top and a 3-unit rounded
+ * bottom — a figure-8, not a funnel, and at 13.6px an unreadable blob.
+ *
+ * Two cap bars plus two chambers, mirrored about x=12 AND y=12. Every
+ * coordinate is ABSOLUTE so `icon-hourglass.test.ts` reads both axes straight
+ * off the string; a relative form would hide a drift behind its deltas. Sized
+ * for the steer dock's 13.6px, where one unit is 0.57 CSS px and the stroke is a
+ * flat 1 CSS px (`vector-effect: non-scaling-stroke`, 03-base.css): the caps
+ * overhang each chamber by 1.5 units, which is what reads as an hourglass rather
+ * than an X once the taper itself is under 3 px wide. */
 export const ICON_HOURGLASS = svg(
-  16,
-  '<path d="M6 2h12v3a6 6 0 01-3 5.2 6 6 0 013 5.2V19a3 3 0 01-3 3H9a3 3 0 01-3-3v-3.6a6 6 0 013-5.2A6 6 0 016 5z"/>',
+  "ui",
+  '<path d="M5.5 2.5H18.5M5.5 21.5H18.5"/>' +
+    '<path d="M7 2.5V4.9L12 12L17 4.9V2.5"/>' +
+    '<path d="M7 21.5V19.1L12 12L17 19.1V21.5"/>',
 );
 // The one-button activity control's Cancel face: a stop square. Filled — the
 // outline family reads as a checkbox at 16px, and stop-is-filled is the
 // transport convention every player uses.
 export const ICON_CANCEL = svg(
-  16,
+  "ui",
   '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
+);
+// The turn footer's Rewind: transport again, because the control's own name is a
+// transport verb, so it joins `ICON_CANCEL` and `ICON_PLAY` rather than starting a
+// second vocabulary. Filled for `ICON_CANCEL`'s reason — each triangle is ~6px
+// wide at --icon-ui, where a 1px outline around one is a sliver.
+export const ICON_REWIND = svg(
+  "ui",
+  '<polygon points="11 19 2 12 11 5 11 19" fill="currentColor" stroke="none"/>' +
+    '<polygon points="22 19 13 12 22 5 22 19" fill="currentColor" stroke="none"/>',
 );
 
 /* THE MODEL GLYPH — one `d`, two sizes, because it renders at both (20px in
@@ -137,20 +173,24 @@ const MODEL_ROBOT_D =
   '<circle cx="7.5" cy="9" r="2.5" fill="currentColor" stroke="none"/>' +
   '<circle cx="16.5" cy="9" r="2.5" fill="currentColor" stroke="none"/>' +
   '<path d="M8 15q4 4 8 0"/>';
-export const ICON_MODEL = svg(12, MODEL_ROBOT_D);
-export const ICON_MODEL_20 = svg(20, MODEL_ROBOT_D);
+export const ICON_MODEL = svg("inline", MODEL_ROBOT_D);
+export const ICON_MODEL_UI = svg("ui", MODEL_ROBOT_D);
 
 export const ICON_ALERT = svg(
-  16,
+  "ui",
   '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
 );
-export const ICON_GIT_UP_ARROW = svg(16, '<path d="M12 19V5M5 12l7-7 7 7"/>');
-export const ICON_GIT_DOWN_ARROW = svg(16, '<path d="M12 5v14M5 12l7 7 7-7"/>');
+export const ICON_GIT_UP_ARROW = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
+export const ICON_GIT_DOWN_ARROW = svg("ui", '<path d="M12 5v14M5 12l7 7 7-7"/>');
 export const ICON_REFRESH =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>';
 
+// The funnel: this app's mark for a filter that NARROWS A LIST, and only that.
+// The file browser's changed-by-this-chat toggle is deliberately not a consumer —
+// it sets opacity on the rows the chat did not write and removes nothing, so the
+// funnel would claim an operation it does not perform (user ruling, 2026-09).
 export const ICON_FILTER =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<svg class="ic-hero" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
   "</svg>";
 
@@ -166,9 +206,9 @@ export const ICON_FILTER =
  *
  *  ONE producer, consumed by the toolbar button and by the box it opens, so the
  *  two can never disagree about which of the two a page is. */
-export function findGlyph(kind: "search" | "filter", size: number): string {
+export function findGlyph(kind: "search" | "filter"): string {
   return svg(
-    size,
+    "ui",
     kind === "search"
       ? '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>'
       : '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
@@ -176,37 +216,49 @@ export function findGlyph(kind: "search" | "filter", size: number): string {
 }
 
 export const ICON_REPO_EMPTY =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<svg class="ic-hero" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>' +
   '<path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>' +
   "</svg>";
 
+// The pull-request glyph (Lucide "git-pull-request"), byte-identical to the one
+// the Pull requests TAB carries in static/index.html. It used to be a different
+// three-circle drawing, so the empty state rendered a second mark for the same
+// concept directly under the tab whose icon named it.
 export const ICON_PR_EMPTY =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<circle cx="6" cy="6" r="3"/>' +
-  '<circle cx="6" cy="18" r="3"/>' +
-  '<line x1="6" y1="9" x2="6" y2="15"/>' +
+  '<svg class="ic-hero" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<circle cx="18" cy="18" r="3"/>' +
-  '<path d="M18 9a9 9 0 00-9-9"/>' +
+  '<circle cx="6" cy="6" r="3"/>' +
+  '<path d="M13 6h3a2 2 0 012 2v7"/>' +
+  '<line x1="6" y1="9" x2="6" y2="21"/>' +
   "</svg>";
 // Globe with meridian + equator stripes — used by the repo-picker for
 // "remote, not cloned" entries.
 export const ICON_GLOBE =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
 export const ICON_WARN_12 =
-  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M4.93 19l14.14 0a2 2 0 0 0 1.73-3L13.73 4a2 2 0 0 0-3.46 0L3.2 16a2 2 0 0 0 1.73 3Z"/></svg>';
+  '<svg class="ic-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M4.93 19l14.14 0a2 2 0 0 0 1.73-3L13.73 4a2 2 0 0 0-3.46 0L3.2 16a2 2 0 0 0 1.73 3Z"/></svg>';
 // Balance-scale icon (Lucide "scale"). Marks the licensed-code attribution
 // chip/footnote (v3 _kiro/code_references) — the universal "license" glyph.
 export const ICON_SCALE_12 = svg(
-  12,
+  "inline",
   '<path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/>',
 );
 
-// Save-indicator icons (14px, coloured stroke for inline status feedback)
-export const ICON_SAVE_OK =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-export const ICON_SAVE_FAIL =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-red)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+// Save-indicator icons. `currentColor` and a semantic CLASS, never a baked hue:
+// these two were the only library icons whose host could not tint them, while
+// `outcomeIcon` argues the opposite discipline for the same three colours one
+// screen away. The class is what 17-settings.css colours.
+export const ICON_SAVE_OK = svg(
+  "ui",
+  '<polyline points="20 6 9 17 4 12"/>',
+  ' class="icon-save-ok"',
+);
+export const ICON_SAVE_FAIL = svg(
+  "ui",
+  '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+  ' class="icon-save-fail"',
+);
 // --- Tool-call icons (used by messages.ts for both live and replay rendering) ---
 //
 // Keyed primarily on ACP kind (`read`, `edit`, `delete`, `move`, `search`,
@@ -215,42 +267,42 @@ export const ICON_SAVE_FAIL =
 // specific icon than their coarse kind suggests.
 
 const ICON_TOOL_READ = svg(
-  14,
+  "ui",
   '<path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>',
 );
-const ICON_TOOL_EDIT = svg(14, '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
+const ICON_TOOL_EDIT = svg("ui", '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
 const ICON_TOOL_DELETE = svg(
-  14,
+  "ui",
   '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
 );
 const ICON_TOOL_MOVE = svg(
-  14,
+  "ui",
   '<path d="M5 9l-3 3 3 3"/><path d="M19 15l3-3-3-3"/><path d="M2 12h20"/>',
 );
-const ICON_TOOL_SEARCH = svg(14, '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>');
-const ICON_TOOL_EXECUTE = svg(14, '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>');
+const ICON_TOOL_SEARCH = svg("ui", '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>');
+const ICON_TOOL_EXECUTE = svg("ui", '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>');
 const ICON_TOOL_THINK = svg(
-  14,
+  "ui",
   '<path d="M9 22c0-1 0-2 1-3"/><path d="M15 22c0-1 0-2-1-3"/><path d="M7 16h10"/><path d="M12 2a7 7 0 017 7c0 4-3 6-4 8H9c-1-2-4-4-4-8a7 7 0 017-7z"/>',
 );
 const ICON_TOOL_FETCH = svg(
-  14,
+  "ui",
   '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 010 20"/><path d="M12 2a15 15 0 000 20"/>',
 );
 const ICON_TOOL_SWITCH = svg(
-  14,
+  "ui",
   '<path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 014-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 01-4 4H3"/>',
 );
 const ICON_TOOL_FALLBACK = svg(
-  14,
+  "ui",
   '<path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>',
 );
 const ICON_TOOL_FOLDER = svg(
-  14,
+  "ui",
   '<path d="M21 19a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h4l2 4h8a2 2 0 012 2z"/>',
 );
 const ICON_TOOL_TERMINAL = svg(
-  14,
+  "ui",
   '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
 );
 // MCP (Model Context Protocol): a plug icon — "external integration the
@@ -258,7 +310,7 @@ const ICON_TOOL_TERMINAL = svg(
 // downward cord. Reads as "something you connect" at 14px without needing
 // colour or detail.
 const ICON_TOOL_MCP = svg(
-  14,
+  "ui",
   '<path d="M9 2v6"/><path d="M15 2v6"/><path d="M6 8h12v3a6 6 0 11-12 0z"/><path d="M12 17v5"/>',
 );
 
@@ -314,11 +366,18 @@ export function toolIcon(kind: ToolKind, title: string): string {
 // appearing beside the first.
 //
 // Road-sign silhouettes, SOLID fills, deliberately neither a checkmark nor an X.
-// Solid because these render at 14px, where a two-feature stroked shape (a wall
-// and a hole inside ~1.5 CSS px) keeps neither — the same reasoning the model
-// glyph's eyes record. The fill goes on the PATH, not on the `<svg>`: `svg()`
-// hard-codes `fill="none" stroke="currentColor"`, and a duplicate attribute
-// appended through `extra` LOSES to the first spelling in HTML parsing.
+// Solid because these render small, where a two-feature stroked shape (a wall and
+// a hole inside ~1.5 CSS px) keeps neither — the same reasoning the model glyph's
+// eyes record. The fill goes on the PATH, not on the `<svg>`: `svg()` hard-codes
+// `fill="none" stroke="currentColor"`, and a duplicate attribute appended through
+// `extra` LOSES to the first spelling in HTML parsing.
+//
+// THE FOOTPRINT IS THE TAB DOT'S, not the `ic-ui` box these sit in. A solid fill
+// spanning that box carries around three times the ink of the stroked glyph it
+// replaces, so it read as the heaviest mark on screen beside an 8px tab dot
+// reporting the same thing. The BOX is unchanged — shrinking it would move the
+// title next to it — and only the drawn shape is smaller. `12-tabs.css` owns both
+// numbers: `--dot-size` for a disc, and a diamond whose DIAGONAL matches it.
 //
 // `warn` and `denied` knock their bar OUT of the disc as one `fill-rule="evenodd"`
 // path rather than painting a second shape over it. A background-coloured bar
@@ -327,34 +386,39 @@ export function toolIcon(kind: ToolKind, title: string): string {
 // paint differently), and a `<mask>` needs an `id` — `iconEl` CLONES each glyph,
 // so N copies of one id would collide in the document.
 
-/** The shared circle: centre (12,12), r=10, so it spans 2..22 on both axes like
- *  the other 15 glyphs. Two semicircles, because a chord equal to the diameter
- *  makes the large-arc flag immaterial. */
-const OUTCOME_DISC = "M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20z";
+/** The shared circle: centre (12,12), r=6, which paints at `--dot-size`. Two
+ *  semicircles, because a chord equal to the diameter makes the large-arc flag
+ *  immaterial. */
+const OUTCOME_DISC = "M12 6a6 6 0 1 0 0 12a6 6 0 1 0 0-12z";
 
-const ICON_OUTCOME_OK = svg(14, `<path d="${OUTCOME_DISC}" fill="currentColor" stroke="none"/>`);
+const ICON_OUTCOME_OK = svg("ui", `<path d="${OUTCOME_DISC}" fill="currentColor" stroke="none"/>`);
 
-/** Apex up, base y=20.5 from x=2.5 to 21.5 — base 19, height 17, so near
- *  equilateral and unmistakable against the disc at a glance. */
+/** A DIAMOND, so a failure reads the same here as in the tab strip, and it is the
+ *  same construction as that rule rather than a lookalike: a 6px square with a
+ *  1.5px corner rotated 45 degrees, which is 9 and 2.25 units at this scale. The
+ *  greyscale argument behind the shape is `12-tabs.css`'s, at
+ *  `[data-status="failed"]`. The apex-up triangle it replaces was a second
+ *  failure silhouette for one reader to learn. */
 const ICON_OUTCOME_FAIL = svg(
-  14,
-  '<path d="M12 3.5L21.5 20.5H2.5z" fill="currentColor" stroke="none"/>',
+  "ui",
+  '<rect x="7.5" y="7.5" width="9" height="9" rx="2.25" transform="rotate(45 12 12)" fill="currentColor" stroke="none"/>',
 );
 
-/** Horizontal bar x 5.5..18.5, y 10.25..13.75. The disc's half-chord at y=13.75
- *  is 9.85, so the bar ends 3.35 units short of the rim and the outline stays
+/** Horizontal bar x 8.1..15.9, y 10.75..13.25. The disc's half-chord at y=13.25
+ *  is 5.87, so the bar ends 1.97 units short of the rim and the outline stays
  *  unbroken — which is what separates a stop from a plain disc. */
 const ICON_OUTCOME_WARN = svg(
-  14,
-  `<path d="${OUTCOME_DISC}M5.5 10.25h13v3.5h-13z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
+  "ui",
+  `<path d="${OUTCOME_DISC}M8.1 10.75h7.8v2.5h-7.8z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
 );
 
-/** The same bar at 45 degrees: length 16, thickness 3.5, centred on (12,12). All
- *  four corners sit 8.19 from the centre, so this disc's rim is unbroken too and
- *  only the bar's ANGLE separates a policy refusal from a stop. */
+/** The SAME bar at 45 degrees, so the ANGLE is the whole difference between a
+ *  policy refusal and a stop; its four corners sit 4.1 from the centre, inside the
+ *  rim like the one above. The pair used to differ in LENGTH as well (16 against
+ *  13), which made the angle the weaker of two channels. */
 const ICON_OUTCOME_DENIED = svg(
-  14,
-  `<path d="${OUTCOME_DISC}M7.58 18.894L18.894 7.58L16.42 5.106L5.106 16.42z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
+  "ui",
+  `<path d="${OUTCOME_DISC}M13.874 8.358L15.642 10.126L10.126 15.642L8.358 13.874z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
 );
 
 /** The states the glyph set covers. `ok` is here for the surfaces with no
@@ -388,25 +452,30 @@ export function outcomeIcon(state: OutcomeGlyph): string {
 // because the map is exhaustive over TabKind by type, not because a chat row
 // reads them.
 
+// Speech bubble (Lucide "message-square"). It was a WRENCH, byte-identical to
+// `ICON_SUBAGENT_TASK` below — so the default conversational mode and the
+// general-task subagent drew one mark, against `iconForMode`'s own promise that
+// each bundled mode gets a distinct glyph. The wrench belongs to the subagent,
+// whose comment says so; a conversation gets the bubble.
 export const ICON_TAB_CHAT = svg(
-  14,
-  '<path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>',
+  "ui",
+  '<path d="M22 17a2 2 0 01-2 2H6.828a2 2 0 00-1.414.586l-2.202 2.202A.71.71 0 012 21.286V5a2 2 0 012-2h16a2 2 0 012 2z"/>',
 );
 export const ICON_TAB_PLAN = svg(
-  14,
+  "ui",
   '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 8h8M8 13h5"/>',
 );
 // Spec role tab icon (Lucide "list-checks") — the spec agent drives the
 // structured requirements/design/tasks workflow, so a checklist reads right.
 export const ICON_TAB_SPEC = svg(
-  14,
+  "ui",
   '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
 );
 // Generic custom-agent tab icon (hexagon module + core dot). The one
 // common glyph shared by every workspace custom agent (and bundled
 // non-workflow agents like semantic_reviewer) in the mode picker.
 export const ICON_TAB_AGENT = svg(
-  14,
+  "ui",
   '<path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5"/>',
 );
 // --- Subagent header icons (SubagentBlock in the chat transcript) ---
@@ -418,73 +487,79 @@ export const ICON_TAB_AGENT = svg(
 // Introspect (Lucide "book-open") — answers questions about Kiro from the
 // official docs.
 export const ICON_SUBAGENT_INTROSPECT = svg(
-  14,
+  "ui",
   '<path d="M12 7v14"/><path d="M3 18a1 1 0 01-1-1V4a1 1 0 011-1h5a4 4 0 014 4 4 4 0 014-4h5a1 1 0 011 1v13a1 1 0 01-1 1h-6a3 3 0 00-3 3 3 3 0 00-3-3z"/>',
 );
 // Context gatherer (Lucide "search") — explores the codebase read-only.
 export const ICON_SUBAGENT_GATHERER = svg(
-  14,
+  "ui",
   '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
 );
-// General task execution (Lucide "wrench") — does delegated work.
+// General task execution (Lucide "hammer") — does delegated work. It was the
+// WRENCH, which `ICON_TOOL_FALLBACK` above also draws, and the two are adjacent
+// by construction: an unrecognised tool card renders inside this subagent's own
+// block. The wrench stays with the fallback, whose whole meaning is "some tool";
+// a named subagent should not wear another set's generic mark. Hammer keeps the
+// does-work metaphor so the concept still reads, with a silhouette that
+// separates from the wrench's open jaw at 14px.
 export const ICON_SUBAGENT_TASK = svg(
-  14,
-  '<path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>',
+  "ui",
+  '<path d="m15 12-9.373 9.373a1 1 0 01-3.001-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5-1.914-1.914A2 2 0 0119 8.172v-.344a2 2 0 00-.586-1.414l-1.657-1.657A6 6 0 0012.516 3H9l1.243 1.243A6 6 0 0112 8.485V10l2 2h1.172a2 2 0 011.414.586L18.5 14.5"/>',
 );
 // Custom agent creator (hexagon module + plus) — builds new agents; keeps
 // the agent-hexagon design language with a create affordance.
 export const ICON_SUBAGENT_CREATOR = svg(
-  14,
+  "ui",
   '<path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><path d="M12 9v6M9 12h6"/>',
 );
 // Model-refusal callout icon (Lucide "octagon-alert").
 export const ICON_REFUSAL = svg(
-  14,
+  "ui",
   '<path d="M12 16h.01"/><path d="M12 8v4"/><path d="M15.312 2a2 2 0 011.414.586l4.688 4.688A2 2 0 0122 8.688v6.624a2 2 0 01-.586 1.414l-4.688 4.688a2 2 0 01-1.414.586H8.688a2 2 0 01-1.414-.586l-4.688-4.688A2 2 0 012 15.312V8.688a2 2 0 01.586-1.414l4.688-4.688A2 2 0 018.688 2z"/>',
 );
 // Quick Spec mode icon (Lucide "file-check") — a single doc with a check,
 // distinct from Spec's multi-item checklist: the fast one-pass spec flow.
 export const ICON_TAB_QUICK_SPEC = svg(
-  14,
+  "ui",
   '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/>',
 );
 // Bug Fix mode icon (Lucide "bug").
 export const ICON_TAB_BUG = svg(
-  14,
+  "ui",
   '<path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 116 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 014-4h4a4 4 0 014 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/>',
 );
 // Autonomous mode icon (Lucide "bot") — the self-driving agent loop.
 export const ICON_TAB_AUTONOMOUS = svg(
-  14,
+  "ui",
   '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
 );
-export const ICON_TAB_SETTINGS = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1.08-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1.08 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001.08 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1.08z"/></svg>`;
+export const ICON_TAB_SETTINGS = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1.08-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1.08 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001.08 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1.08z"/></svg>`;
 // The git-branch glyph (Lucide "git-branch"), under two names for the two
 // jobs it does: the git TAB's icon, and the leading glyph of the branch popover's
 // create field. One path, so the two can never drift apart.
 export const ICON_GIT_BRANCH = svg(
-  14,
+  "ui",
   '<circle cx="18" cy="17" r="3"/><circle cx="6" cy="5" r="3"/><path d="M6 20V8a9 9 0 009 9"/>',
 );
 export const ICON_TAB_GIT = ICON_GIT_BRANCH;
-export const ICON_TAB_EDITOR = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>`;
+export const ICON_TAB_EDITOR = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>`;
 export const ICON_TAB_FILES = svg(
-  14,
+  "ui",
   '<path d="M21 19a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h4l2 4h8a2 2 0 012 2z"/>',
 );
-export const ICON_TAB_HISTORY = svg(14, '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
-/** The Kiro configuration browser: an open book. The freed spec-board toolbar
- *  slot, and the one glyph on the page — the categories are text, because a
- *  five-icon set for five word-labelled tabs teaches nothing. */
+export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
+/** The Kiro configuration browser: an open book. Also the sidebar button that
+ *  opens the page, which is pinned to this constant by `menu-icons.test.ts` — the
+ *  two used to draw different books. */
 export const ICON_TAB_DOCS = svg(
-  14,
+  "ui",
   '<path d="M2 4.5A2.5 2.5 0 014.5 2H9a2 2 0 012 2v16a1.5 1.5 0 00-1.5-1.5H4.5A2.5 2.5 0 012 16z"/><path d="M22 4.5A2.5 2.5 0 0019.5 2H15a2 2 0 00-2 2v16a1.5 1.5 0 011.5-1.5h5A2.5 2.5 0 0022 16z"/>',
 );
 /** Workflow run: three nodes joined top-to-bottom, the shape of a run's node
  *  plan. Distinct from the chat and subagent glyphs so a run tab is never
  *  mistaken for a conversation. */
 export const ICON_TAB_RUN = svg(
-  14,
+  "ui",
   '<rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/>',
 );
 /** The nesting marker a SUB-TAB carries instead of its kind glyph (Lucide
@@ -499,39 +574,59 @@ export const ICON_TAB_RUN = svg(
  *  at 14px the shared weight rendered as a hairline the eye read as an artifact
  *  of the glyph beside it rather than as structure. */
 export const ICON_TAB_SUBTAB =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v7a4 4 0 004 4h12"/><path d="m15 10 5 5-5 5"/></svg>';
+  '<svg class="ic-ui ic-subtab" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v7a4 4 0 004 4h12"/><path d="m15 10 5 5-5 5"/></svg>';
+/** Forge brand marks (Simple Icons, CC0), one set for the whole app.
+ *
+ *  There were TWO: this 24-viewBox set in `forge-auth.ts` and a hand-drawn
+ *  16-viewBox set in `forge-types.ts`, so the GitHub mark was one shape on the
+ *  Sources tab and another on the PRs tab (GitLab's was a bare triangle).
+ *  `fill="currentColor"` rather than no fill, so a mark renders in the host's
+ *  ink wherever it lands; the `.forge-kind-<kind>` rules in 17-settings.css
+ *  still win over it, because a CSS declaration beats a presentation
+ *  attribute. Size is CSS's. */
+export const FORGE_ICONS: Record<string, string> = {
+  github:
+    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>',
+  gitlab:
+    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m23.6004 9.5927-.0337-.0862L20.3.9814a.851.851 0 0 0-.3362-.405.8748.8748 0 0 0-.9997.0539.8748.8748 0 0 0-.29.4399l-2.2055 6.748H7.5375l-2.2057-6.748a.8573.8573 0 0 0-.29-.4412.8748.8748 0 0 0-.9997-.0537.8585.8585 0 0 0-.3362.4049L.4332 9.5015l-.0325.0862a6.0657 6.0657 0 0 0 2.0119 7.0105l.0113.0087.03.0213 4.976 3.7264 2.462 1.8633 1.4995 1.1321a1.0085 1.0085 0 0 0 1.2197 0l1.4995-1.1321 2.4619-1.8633 5.006-3.7489.0125-.01a6.0682 6.0682 0 0 0 2.0094-7.003z"/></svg>',
+  codeberg:
+    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.955.49A12 12 0 0 0 0 12.49a12 12 0 0 0 1.832 6.373L11.838 5.928a.187.14 0 0 1 .324 0l10.006 12.935A12 12 0 0 0 24 12.49a12 12 0 0 0-12-12 12 12 0 0 0-.045 0zm.375 6.467l4.416 16.553a12 12 0 0 0 5.137-4.213z"/></svg>',
+  gitea:
+    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4.209 4.603c-.247 0-.525.02-.84.088-.333.07-1.28.283-2.054 1.027C-.403 7.25.035 9.685.089 10.052c.065.446.263 1.687 1.21 2.768 1.749 2.141 5.513 2.092 5.513 2.092s.462 1.103 1.168 2.119c.955 1.263 1.936 2.248 2.89 2.367 2.406 0 7.212-.004 7.212-.004s.458.004 1.08-.394c.535-.324 1.013-.893 1.013-.893s.492-.527 1.18-1.73c.21-.37.385-.729.538-1.068 0 0 2.107-4.471 2.107-8.823-.042-1.318-.367-1.55-.443-1.627-.156-.156-.366-.153-.366-.153s-4.475.252-6.792.306c-.508.011-1.012.023-1.512.027v4.474l-.634-.301c0-1.39-.004-4.17-.004-4.17-1.107.016-3.405-.084-3.405-.084s-5.399-.27-5.987-.324c-.187-.011-.401-.032-.648-.032zm.354 1.832h.111s.271 2.269.6 3.597C5.549 11.147 6.22 13 6.22 13s-.996-.119-1.641-.348c-.99-.324-1.409-.714-1.409-.714s-.73-.511-1.096-1.52C1.444 8.73 2.021 7.7 2.021 7.7s.32-.859 1.47-1.145c.395-.106.863-.12 1.072-.12zm8.33 2.554c.26.003.509.127.509.127l.868.422-.529 1.075a.686.686 0 0 0-.614.359.685.685 0 0 0 .072.756l-.939 1.924a.69.69 0 0 0-.66.527.687.687 0 0 0 .347.763.686.686 0 0 0 .867-.206.688.688 0 0 0-.069-.882l.916-1.874a.667.667 0 0 0 .237-.02.657.657 0 0 0 .271-.137 8.826 8.826 0 0 1 1.016.512.761.761 0 0 1 .286.282c.073.21-.073.569-.073.569-.087.29-.702 1.55-.702 1.55a.692.692 0 0 0-.676.477.681.681 0 1 0 1.157-.252c.073-.141.141-.282.214-.431.19-.397.515-1.16.515-1.16.035-.066.218-.394.103-.814-.095-.435-.48-.638-.48-.638-.467-.301-1.116-.58-1.116-.58s0-.156-.042-.27a.688.688 0 0 0-.148-.241l.516-1.062 2.89 1.401s.48.218.583.619c.073.282-.019.534-.069.657-.24.587-2.1 4.317-2.1 4.317s-.232.554-.748.588a1.065 1.065 0 0 1-.393-.045l-.202-.08-4.31-2.1s-.417-.218-.49-.596c-.083-.31.104-.691.104-.691l2.073-4.272s.183-.37.466-.497a.855.855 0 0 1 .35-.077z"/></svg>',
+};
+
 /** Seti file type icons keyed by short name. */
 export const FILE_ICONS: Record<string, string> = {
-  go: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M18.3 10c-1.1 0-1.9-.6-2.1-1.6-.1-.6.1-1.1.5-1.5.6-.7 1.6-.9 2.5-.6.8.3 1.3 1 1.2 1.9 0 .8-.5 1.4-1.4 1.7-.3.1-.5.1-.7.1zm-1.7-1.8c0 .4.3.7.6.7s.6-.3.6-.7c0-.4-.3-.7-.6-.7-.3.1-.6.4-.6.7zm-3.5-1.8C15 6.4 15.5 8 15 9.1c-.3.7-.9 1-1.7 1.1-1 .2-1.9-.4-2.2-1.3-.4-1.1.3-2.2 1.5-2.5h.5zm-.4 2c0-.4-.3-.7-.6-.7s-.6.3-.6.7c0 .4.3.7.6.7s.6-.3.6-.7zm3.2 1c.2 0 .4 0 .6.1.3.1.4.4.3.6 0 .1 0 .1.1.2.2.1.3.2.5.4s.2.4.1.6c-.1.2-.4.3-.6.2-.1 0-.3-.1-.4-.2-.3-.1-.6-.1-.9 0-.2.1-.4.2-.6.2-.4 0-.6-.2-.5-.6 0-.3.2-.5.4-.6 0 0 .1 0 .1-.1-.1-.4.2-.5.4-.7.1-.1.3-.1.5-.1zm-.1 1.1c.3 0 .6-.1.8-.2.3-.2.3-.4.1-.6-.1-.1-.3-.2-.4-.2-.3-.1-.7 0-.9.2-.3.3-.2.6.2.7-.1.1 0 .1.2.1z"/><path fill="currentColor" d="M16.7 12.1v.2c0 .2-.1.4-.3.4-.2 0-.4-.2-.4-.3-.1-.3 0-.6 0-1 0-.1 0-.1.1-.1.2 0 .4.1.5.2.1 0 .1.1.1.1v.5zm-.9-.2v.3c0 .2-.1.3-.2.4-.2.2-.4.1-.5-.1-.1-.2-.1-.5-.1-.8 0-.1 0-.1.1-.1.2-.1.4-.1.6-.2.1 0 .1 0 .1.1v.4z"/><g fill="currentColor"><path fill="currentColor" d="M10.5 27h-.2c-.1-.1-.3-.2-.4-.4-.2-.2-.2-.5.1-.8.2-.3.6-.5.9-.7-.8-.7-1.2-1.5-1.4-2.5-.2-.7-.2-1.5-.2-2.3 0-1.2.2-2.3.2-3.5-.3.2-.6.4-1 .5h-.2c-.2-.2-.3-.4-.3-.6 0-.2.2-.4.3-.5.3-.2.6-.3 1-.3.2 0 .2-.1.2-.2-.1-1-.2-2-.2-3-.1-1-.1-2.1.1-3.1.1-.5.1-.5-.3-.6-.5-.3-.8-.9-.7-1.4.2-1.1 1.4-1.6 2.4-1.1.1.1.2.1.3 0 .5-.4 1-.7 1.6-.9 1.7-.6 3.5-.7 5.2-.4.9.1 1.8.4 2.5 1 .2.2.4.2.6.1.8-.4 1.7-.1 2.1.7.4.8.1 1.5-.8 1.9-.1.1-.1.1-.1.2.3 1 .4 2 .4 3.1 0 1.2 0 2.3.1 3.5 0 .2 0 .2.2.3.4 0 .7.2 1 .5.2.2.2.3 0 .6v.1c0 .2-.2.3-.4.3s-.4-.1-.5-.2c-.1 0-.2-.1-.3-.1v.1c0 .6.1 1.2.1 1.9 0 1.1 0 2.1-.2 3.2-.2 1-.6 2-1.3 2.8-.1.1-.1.2 0 .3.3.2.6.5.8.9.1.3 0 .5-.3.7-.2.2-.4.1-.6 0l-.4-.4c-.2-.2-.3-.4-.5-.5-.1-.1-.2-.1-.3 0-1.1.6-2.3.8-3.5.8-1.4.1-2.9-.1-4.2-.7h-.1c-.2.2-.6.3-.8.5-.3-.2-.6 0-.9.2zm7.8-17c.2 0 .5 0 .7-.1.8-.3 1.3-.9 1.4-1.7 0-.9-.5-1.6-1.2-1.9-.8-.3-1.9 0-2.5.6-.4.4-.6.9-.5 1.5.2 1 1 1.6 2.1 1.6zm-5.2-3.6h-.5c-1.2.2-1.9 1.3-1.5 2.5.3.9 1.2 1.4 2.2 1.3.7-.1 1.3-.4 1.7-1.1.5-1.1 0-2.7-1.9-2.7zm2.8 3c-.2 0-.4 0-.6.1-.3.2-.5.3-.4.7 0 .1-.1.1-.1.1-.2.1-.4.3-.4.6-.1.4.2.6.5.6.2 0 .4-.1.6-.2.3-.1.6-.1.9 0 .1.1.3.1.4.2.3.1.5 0 .6-.2.1-.2.1-.4-.1-.6-.1-.2-.3-.3-.5-.4-.1 0-.1-.1-.1-.2.1-.3 0-.5-.3-.6-.1-.1-.3-.1-.5-.1zm.8 2.7v-.5c0-.1 0-.1-.1-.1-.2-.1-.4-.1-.5-.2-.1 0-.1 0-.1.1 0 .3-.1.6 0 1 0 .2.2.4.4.3.2 0 .3-.2.3-.4v-.2zm-.9-.2v-.4c0-.1 0-.1-.1-.1-.2.1-.4.1-.6.2-.1 0-.1.1-.1.1 0 .3 0 .5.1.8.1.2.3.3.5.1.1-.1.2-.2.2-.4-.1-.1 0-.2 0-.3z"/><path fill="currentColor" d="M16.6 8.2c0-.4.3-.7.6-.7s.6.3.6.7c0 .4-.3.7-.6.7s-.6-.3-.6-.7zm1.1.2c0-.1 0-.2-.1-.2s-.1.1-.1.2 0 .2.1.2c0 0 0-.1.1-.2zm-5 0c0 .4-.3.7-.6.7s-.6-.3-.6-.7c0-.4.3-.7.6-.7s.6.3.6.7zm-.3.3c.1 0 .1-.1.1-.1 0-.1 0-.2-.1-.2s-.1.1-.1.1c-.1.1 0 .2.1.2zm3.4 1.8c-.1 0-.3 0-.4-.1-.4-.1-.4-.4-.2-.7.3-.2.6-.3.9-.2.2 0 .3.1.4.2.2.2.2.5-.1.6-.1.1-.3.2-.6.2z"/></g><path fill="currentColor" d="M17.7 8.4c0 .1 0 .2-.1.2s-.1-.1-.1-.2 0-.2.1-.2c0 0 0 .1.1.2zm-5.3.3c-.1 0-.1-.1-.1-.2s0-.2.1-.1c.1 0 .1.1.1.2s0 .1-.1.1z"/></svg>',
-  ts: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path d="M15.6 11.8h-3.4V22H9.7V11.8H6.3V10h9.2v1.8zm7.7 7.1c0-.5-.2-.8-.5-1.1-.3-.3-.9-.5-1.7-.8-1.4-.4-2.5-.9-3.3-1.5-.7-.6-1.1-1.3-1.1-2.3 0-1 .4-1.8 1.3-2.4.8-.6 1.9-.9 3.2-.9 1.3 0 2.4.4 3.2 1.1.8.7 1.2 1.6 1.2 2.6h-2.3c0-.6-.2-1-.6-1.4-.4-.3-.9-.5-1.6-.5-.6 0-1.1.1-1.5.4-.4.3-.5.7-.5 1.1 0 .4.2.7.6 1 .4.3 1 .5 2 .8 1.3.4 2.3.9 3 1.5.7.6 1 1.4 1 2.4s-.4 1.9-1.2 2.4c-.8.6-1.9.9-3.2.9-1.3 0-2.5-.3-3.4-1s-1.5-1.6-1.4-2.9h2.4c0 .7.2 1.2.7 1.6.4.3 1.1.5 1.8.5s1.2-.1 1.5-.4c.2-.3.4-.7.4-1.1z" fill="currentColor"/></svg>',
-  js: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M11.4 10h2.7v7.6c0 3.4-1.6 4.6-4.3 4.6-.6 0-1.5-.1-2-.3l.3-2.2c.4.2.9.3 1.4.3 1.1 0 1.9-.5 1.9-2.4V10zm5.1 9.2c.7.4 1.9.8 3 .8 1.3 0 1.9-.5 1.9-1.3s-.6-1.2-2-1.7c-2-.7-3.3-1.8-3.3-3.6 0-2.1 1.7-3.6 4.6-3.6 1.4 0 2.4.3 3.1.6l-.6 2.2c-.5-.2-1.3-.6-2.5-.6s-1.8.5-1.8 1.2c0 .8.7 1.1 2.2 1.7 2.1.8 3.1 1.9 3.1 3.6 0 2-1.6 3.7-4.9 3.7-1.4 0-2.7-.4-3.4-.7l.6-2.3z"/></svg>',
-  py: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M15.6 15.5h-2c-1.4 0-2.3.9-2.3 2.3v1.8c0 .2-.1.3-.3.3h-.9c-.9 0-1.6-.4-2-1.2-.3-.6-.5-1.2-.5-1.8-.1-1.1-.1-2.2.3-3.3.3-.9.9-1.6 1.9-1.8h5.8c.1 0 .3 0 .3-.1v-.5s-.2-.1-.3-.1h-3.4c-.3 0-.4-.1-.4-.4V9.4c0-.7.3-1.2.9-1.4.5-.2 1-.4 1.5-.5 1.2-.2 2.4-.2 3.6.1.5.1 1 .3 1.4.6.4.4.7.8.6 1.4v3.6c0 1.4-.8 2.2-2.2 2.2-.7.1-1.4.1-2 .1zm-2.8-6c0 .4.3.8.8.8.4 0 .8-.4.8-.8s-.4-.7-.8-.8c-.5 0-.8.4-.8.8zm3.6 7h2c1.4 0 2.3-.9 2.3-2.3v-1.8c0-.2.1-.3.3-.3h.9c.9 0 1.6.4 2 1.2.3.6.5 1.2.5 1.8.1 1.1.1 2.2-.3 3.3-.3.9-.9 1.6-1.9 1.8h-5.8c-.1 0-.3 0-.3.1v.5s.2.1.3.1h3.4c.3 0 .4.1.4.4v1.3c0 .7-.3 1.2-.9 1.4-.5.2-1 .4-1.5.5-1.2.2-2.4.2-3.6-.1-.5-.1-1-.3-1.4-.6-.4-.4-.7-.8-.6-1.4v-3.6c0-1.4.8-2.2 2.2-2.2.7-.1 1.4-.1 2-.1zm2.8 6c0-.4-.3-.8-.8-.8-.4 0-.8.4-.8.8s.4.7.8.8c.5 0 .8-.4.8-.8z"/></svg>',
-  rs: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M21.7 8.4V9l.1.1h.1c.3-.1.6-.1.9-.2.2-.1.4.1.3.3-.1.3-.1.6-.2.9v.1l.1.1c0 .1.1.1.2.1h.9c.2 0 .3.1.3.3v.2c-.1.3-.3.6-.4.8v.1s.1.1.1.2h.1c.3.1.6.1.9.2.2 0 .3.3.2.5-.2.3-.4.5-.5.7v.2c0 .1.1.1.2.2.3.1.5.2.8.3.2.1.3.3.1.5-.2.2-.4.4-.7.6v.3s.1.1.2.1c.2.1.4.3.7.4.2.1.2.4 0 .5-.3.2-.5.3-.8.5v.1c0 .2 0 .2.1.3.2.2.4.4.6.5.2.2.1.4-.1.5-.3.1-.6.2-.8.3 0 0-.1 0-.1.1-.1.1 0 .2 0 .3.2.2.3.4.5.7.1.1.1.3-.1.4-.1 0-.1 0-.2.1-.3 0-.5.1-.8.1h-.1c0 .1-.1.1-.1.2s0 .1.1.2c.1.2.2.5.3.7.1.1 0 .3-.1.4h-1.2c-.1.1-.1.2-.1.3.1.3.1.5.2.8.1.2-.1.4-.4.4-.3-.1-.6-.1-.9-.2H22l-.1.1s-.1.1 0 .1v.9c0 .2-.1.3-.3.3h-.2c-.3-.1-.5-.2-.8-.4h-.1c-.1 0-.2.1-.2.2 0 .3-.1.5-.1.8 0 .2-.3.3-.5.2-.2-.2-.5-.4-.7-.5h-.1c-.1 0-.2.1-.2.2-.1.3-.2.5-.3.8-.1.2-.2.2-.3.2-.1 0-.1-.1-.1-.1-.2-.2-.4-.4-.6-.7h-.2c-.1 0-.2.1-.2.2-.1.2-.3.5-.4.7-.1.2-.4.2-.5 0-.2-.3-.3-.5-.5-.8h-.2c-.1 0-.1 0-.2.1l-.6.6c-.1.1-.2.1-.4.1-.1 0-.1-.1-.1-.2l-.3-.9s0-.1-.1-.1h-.3c-.2.2-.4.3-.7.5-.4-.2-.7-.3-.7-.5-.1-.3-.1-.6-.1-.9 0 0 0-.1-.1-.1s-.1-.1-.2-.1-.1 0-.2.1c-.2.1-.5.2-.7.3-.2.1-.4 0-.4-.2V23l-.1-.1h-.1c-.3.1-.6.1-.9.2-.2.1-.4-.1-.3-.3.1-.3.1-.6.2-.9v-.1l-.1-.1H8c-.2 0-.3-.1-.3-.3v-.2c.1-.3.3-.6.4-.8v-.1s0-.1-.1-.1c0-.1-.1-.1-.1-.1-.3 0-.6-.1-.9-.1-.2 0-.3-.3-.2-.5.2-.2.4-.5.5-.7v-.1c0-.1 0-.1-.1-.2 0 0-.1-.1-.2-.1-.2-.1-.5-.2-.7-.3-.2-.1-.3-.3-.1-.5.3-.1.5-.4.8-.6v-.2c0-.1 0-.2-.1-.2-.2-.1-.5-.3-.7-.4-.2-.1-.2-.4 0-.5.3-.2.5-.3.8-.5V15l-.1-.1-.6-.6c-.1-.1-.1-.3 0-.4 0 0 .1 0 .1-.1l.9-.3v-.1c.1-.1 0-.2 0-.3-.2-.2-.3-.4-.5-.6-.1-.2 0-.5.2-.5.3-.1.6-.1.9-.2H8c0-.1.1-.1.1-.2s0-.1-.1-.2c-.1-.2-.2-.5-.3-.7-.1-.2 0-.4.2-.4H9s0-.1.1-.1v-.1c-.1-.3-.2-.6-.2-.9-.1-.2.1-.4.3-.3.3 0 .6.1.9.2h.1l.1-.1s.1-.1 0-.1V8c0-.2.1-.3.3-.3h.2c.3.1.6.3.8.4h.1s.1 0 .1-.1c.1 0 .1-.1.1-.1 0-.3.1-.6.1-.9 0-.2.3-.3.5-.2.2.2.5.4.7.5h.1c.1 0 .1 0 .2-.1 0 0 0-.1.1-.2.1-.2.2-.5.3-.7.1-.2.2-.2.4-.2l.1.1c.1.3.4.5.6.8h.1c.1 0 .2-.1.2-.1.1-.2.3-.5.4-.7.2-.2.4-.2.5-.1l.1.1c.2.3.3.5.5.8h.3c.1 0 .1-.1.1-.1.2-.2.4-.4.5-.6.1-.1.3-.1.4 0v.1c.1.3.2.6.3.8l.1.1h.2c.3-.1.6-.3.8-.5.2-.1.5 0 .5.2 0 .3.1.6.1.9 0 0 0 .1.1.1h.1c.1.1.2.1.2 0 .2-.1.5-.2.8-.3.2-.1.4 0 .4.3v.4zm-11.1 2.7h7.6c.3 0 .6 0 .9.1.6.2 1.1.5 1.4.9.3.3.5.7.5 1.2 0 .4-.1.8-.3 1.2-.2.3-.5.6-.8.8-.1.1-.2.2-.3.2.1.1.2.1.3.2.2.2.5.4.6.7.2.3.3.7.3 1 0 .1.1.2.2.3.2.2.5.2.8.2.2 0 .4-.1.5-.2.2-.2.2-.4.3-.6v-.5c0-.1 0-.1.1-.1h.7v-1.3c-.3-.1-.6-.3-.9-.4-.1-.1-.3-.1-.4-.2-.3-.1-.4-.4-.3-.8.2-.5.4-1 .7-1.5v-.1c-.4-.6-.8-1.2-1.4-1.7-1-.9-2.2-1.5-3.6-1.8h-.1c-.3.3-.6.6-1 .9-.2.2-.6.2-.8 0l-.9-.9h-.1c-.4.1-.7.2-1 .3-1.1.4-2 1-2.8 1.8-.1.1-.2.2-.2.3zm11.3 9.2h-3c-.2 0-.3 0-.4-.1-.4-.2-.6-.6-.7-1-.1-.4-.2-.7-.2-1.1 0-.2-.1-.4-.2-.6-.2-.5-.6-.8-1.1-.8h-1.8V18h1.8c.1 0 .1 0 .1.1v2c0 .1 0 .1-.1.1h-6c.2.3.4.5.6.7h.1c.4-.1.8-.2 1.2-.2.3-.1.6.1.7.4.1.4.2.9.3 1.3v.1c.8.3 1.6.6 2.4.6.7.1 1.4 0 2.1-.1.5-.1 1-.3 1.5-.5v-.1c.1-.4.2-.9.3-1.3.1-.3.3-.5.7-.4l1.2.3h.1c0-.2.2-.5.4-.7zm-11.9-7l.3.6c0 .1.1.2 0 .3 0 .2-.2.3-.3.4-.4.2-.8.4-1.2.5 0 0-.1 0-.1.1v.5c0 .7.1 1.4.3 2.2 0 0 0 .1.1.1h2.1v-4.7H10zm4.3 1.4c.1 0 .1 0 0 0h2.3c.2 0 .4 0 .6-.1.1-.1.2-.1.3-.3.1-.2.1-.5-.1-.7-.2-.2-.5-.3-.7-.3h-2.5c.1.5.1.9.1 1.4zm-6-1c0 .3.3.6.6.6s.6-.3.6-.6-.3-.6-.6-.6-.6.3-.6.6zM21 22.1c0-.3-.3-.6-.6-.6s-.6.3-.6.6.3.6.6.6.6-.2.6-.6zm-9.4-.6c-.3 0-.6.3-.6.6s.3.6.6.6.6-.3.6-.6-.3-.6-.6-.6zm5-13.1c0-.3-.2-.6-.6-.6-.3 0-.6.2-.6.6 0 .3.2.6.6.6.3 0 .5-.3.6-.6zm6.5 6c.3 0 .6-.3.6-.6s-.3-.6-.6-.6-.6.3-.6.6.2.6.6.6z"/></svg>',
-  css: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M10.3 23.3l.8-4H8.6v-2.1h3l.5-2.5H9.5v-2.1h3.1l.8-3.9h2.8l-.8 3.9h2.8l.8-3.9h2.8l-.8 3.9h2.5v2.1h-2.9l-.6 2.5h2.6v2.1h-3l-.8 4H16l.8-4H14l-.8 4h-2.9zm6.9-6.1l.5-2.5h-2.8l-.5 2.5h2.8z"/></svg>',
-  html: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M8 15l6-5.6V12l-4.5 4 4.5 4v2.6L8 17v-2zm16 2.1l-6 5.6V20l4.6-4-4.6-4V9.3l6 5.6v2.2z"/></svg>',
-  json: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M7.5 15.1c1.5 0 1.7-.8 1.7-1.5 0-.6-.1-1.1-.1-1.7S9 10.7 9 10.2c0-2.1 1.3-3 3.4-3h.8v1.9h-.4c-1 0-1.3.6-1.3 1.6 0 .4.1.8.1 1.3 0 .4.1.9.1 1.5 0 1.7-.7 2.3-1.9 2.6 1.2.3 1.9.9 1.9 2.6 0 .6-.1 1.1-.1 1.5 0 .4-.1.9-.1 1.2 0 1 .3 1.6 1.3 1.6h.4v1.9h-.8c-2 0-3.3-.8-3.3-3 0-.6 0-1.1.1-1.7.1-.6.1-1.2.1-1.7 0-.6-.2-1.5-1.7-1.5l-.1-1.9zm17 1.7c-1.5 0-1.7.9-1.7 1.5s.1 1.1.1 1.7c.1.6.1 1.2.1 1.7 0 2.2-1.4 3-3.4 3h-.8V23h.4c1 0 1.3-.6 1.3-1.6 0-.4 0-.8-.1-1.2 0-.5-.1-1-.1-1.5 0-1.7.7-2.3 1.9-2.6-1.2-.3-1.9-.9-1.9-2.6 0-.6.1-1.1.1-1.5.1-.5.1-.9.1-1.3 0-1-.4-1.5-1.3-1.6h-.4V7.2h.8c2.1 0 3.4.9 3.4 3 0 .6-.1 1.1-.1 1.7-.1.6-.1 1.2-.1 1.7 0 .7.2 1.5 1.7 1.5v1.7z"/></svg>',
-  yaml: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path d="M17.1 19.3c-.5 0-.8.1-1.1.1h-1.8c.4-4.3.7-8.5 1.1-12.8 1.2 0 2.2-.1 3.2 0 .3 0 .7.5.6.8-.3 2.3-.8 4.7-1.2 7-.2 1.6-.5 3.2-.8 4.9zm.4 4c.1 1.1-.8 2.1-2.1 2.2-1.3.1-2.5-.7-2.6-1.8-.1-1.2.8-2.1 2.2-2.2 1.4-.1 2.4.6 2.5 1.8z" fill-rule="evenodd" clip-rule="evenodd" fill="currentColor"/></svg>',
-  md: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M20.7 6.7v9.9h3.8c-2.9 3-5.8 5.9-8.7 8.8-2.7-2.8-5.6-5.8-8.4-8.7h3.5V6.6c1.3.9 4.4 3.1 5 3.1.6 0 3.6-2.2 4.8-3z"/></svg>',
-  sh: '<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M14.42 9.31c-.26.1-.67.3-.91.44-.14.08-.26.17-.38.26-.22.17-.54.49-.71.71-.08.1-.15.2-.22.3-.15.23-.36.64-.43.91-.04.14-.07.29-.09.44-.04.28-.04.74-.01 1.01.02.22.06.43.12.64.07.27.26.69.41.92.07.1.14.2.22.3.17.22.51.52.74.68.15.11.31.23.48.34.23.16.63.36.89.47.25.11.51.23.78.34.26.1.69.23.94.35a.3.3 0 01.08.04c.67.2 1.16.58 1.46 1.11.06.11.2.42.2.7 0 .12.07.48-.05.72-.57 1.16-1.27 1.14-2.35 1.1-.97-.22-1.35-.8-1.64-1.68-.01-.04-.02-.08-.02-.12-.05-.28-.27-.51-.55-.51h-1.61c-.28 0-.5.23-.49.51.02.33.07.65.14.94.06.27.23.7.36.95.1.18.21.35.33.51.18.22.54.49.76.65.14.1.29.2.45.29.24.14.66.31.92.41.08.03.16.05.24.07.27.06.5.28.5.56v.81c0 .28.22.51.5.51h1.11c.28 0 .5-.23.5-.51v-.81c0-.28.22-.54.49-.61.13-.03.24-.07.35-.11.26-.1.67-.28.91-.43.55-.34.93-.77 1.29-1.27.16-.23.39-.62.46-.89.05-.17.08-.35.1-.54.03-.28.03-.74 0-1.02-.02-.19-.05-.37-.1-.54a3.83 3.83 0 00-.42-.92c-.38-.6-.92-1.02-1.46-1.4-.23-.16-.62-.39-.87-.51-.61-.28-1.18-.46-1.8-.71-.26-.1-.68-.26-.89-.44-.16-.13-.45-.4-.6-.64a1.41 1.41 0 01-.17-.62c0-.06-.02-.35.03-.62.02-.12.15-.42.31-.65.03-.04.21-.27.47-.34.1-.03.4-.11.68-.12.17-.01.54-.03.82.03.12.02.42.16.64.33.1.08.34.31.46.56.07.16.19.52.2.8v.01c.02.28.23.51.51.51h1.61c.28 0 .51-.23.48-.51-.02-.25-.06-.5-.12-.74-.07-.27-.24-.7-.35-.95a3.55 3.55 0 00-.23-.43c-.14-.24-.41-.61-.62-.8-.11-.1-.22-.19-.34-.28-.23-.16-.63-.37-.87-.51-.09-.05-.18-.09-.28-.13-.26-.1-.49-.36-.49-.64V7.52c0-.28-.22-.51-.5-.51h-1.11c-.28 0-.5.23-.5.51v1.12c0 .28-.2.44-.45.56-.1.05-.21.08-.31.11z" fill="currentColor"/></svg>',
+  go: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M18.3 10c-1.1 0-1.9-.6-2.1-1.6-.1-.6.1-1.1.5-1.5.6-.7 1.6-.9 2.5-.6.8.3 1.3 1 1.2 1.9 0 .8-.5 1.4-1.4 1.7-.3.1-.5.1-.7.1zm-1.7-1.8c0 .4.3.7.6.7s.6-.3.6-.7c0-.4-.3-.7-.6-.7-.3.1-.6.4-.6.7zm-3.5-1.8C15 6.4 15.5 8 15 9.1c-.3.7-.9 1-1.7 1.1-1 .2-1.9-.4-2.2-1.3-.4-1.1.3-2.2 1.5-2.5h.5zm-.4 2c0-.4-.3-.7-.6-.7s-.6.3-.6.7c0 .4.3.7.6.7s.6-.3.6-.7zm3.2 1c.2 0 .4 0 .6.1.3.1.4.4.3.6 0 .1 0 .1.1.2.2.1.3.2.5.4s.2.4.1.6c-.1.2-.4.3-.6.2-.1 0-.3-.1-.4-.2-.3-.1-.6-.1-.9 0-.2.1-.4.2-.6.2-.4 0-.6-.2-.5-.6 0-.3.2-.5.4-.6 0 0 .1 0 .1-.1-.1-.4.2-.5.4-.7.1-.1.3-.1.5-.1zm-.1 1.1c.3 0 .6-.1.8-.2.3-.2.3-.4.1-.6-.1-.1-.3-.2-.4-.2-.3-.1-.7 0-.9.2-.3.3-.2.6.2.7-.1.1 0 .1.2.1z"/><path fill="currentColor" d="M16.7 12.1v.2c0 .2-.1.4-.3.4-.2 0-.4-.2-.4-.3-.1-.3 0-.6 0-1 0-.1 0-.1.1-.1.2 0 .4.1.5.2.1 0 .1.1.1.1v.5zm-.9-.2v.3c0 .2-.1.3-.2.4-.2.2-.4.1-.5-.1-.1-.2-.1-.5-.1-.8 0-.1 0-.1.1-.1.2-.1.4-.1.6-.2.1 0 .1 0 .1.1v.4z"/><g fill="currentColor"><path fill="currentColor" d="M10.5 27h-.2c-.1-.1-.3-.2-.4-.4-.2-.2-.2-.5.1-.8.2-.3.6-.5.9-.7-.8-.7-1.2-1.5-1.4-2.5-.2-.7-.2-1.5-.2-2.3 0-1.2.2-2.3.2-3.5-.3.2-.6.4-1 .5h-.2c-.2-.2-.3-.4-.3-.6 0-.2.2-.4.3-.5.3-.2.6-.3 1-.3.2 0 .2-.1.2-.2-.1-1-.2-2-.2-3-.1-1-.1-2.1.1-3.1.1-.5.1-.5-.3-.6-.5-.3-.8-.9-.7-1.4.2-1.1 1.4-1.6 2.4-1.1.1.1.2.1.3 0 .5-.4 1-.7 1.6-.9 1.7-.6 3.5-.7 5.2-.4.9.1 1.8.4 2.5 1 .2.2.4.2.6.1.8-.4 1.7-.1 2.1.7.4.8.1 1.5-.8 1.9-.1.1-.1.1-.1.2.3 1 .4 2 .4 3.1 0 1.2 0 2.3.1 3.5 0 .2 0 .2.2.3.4 0 .7.2 1 .5.2.2.2.3 0 .6v.1c0 .2-.2.3-.4.3s-.4-.1-.5-.2c-.1 0-.2-.1-.3-.1v.1c0 .6.1 1.2.1 1.9 0 1.1 0 2.1-.2 3.2-.2 1-.6 2-1.3 2.8-.1.1-.1.2 0 .3.3.2.6.5.8.9.1.3 0 .5-.3.7-.2.2-.4.1-.6 0l-.4-.4c-.2-.2-.3-.4-.5-.5-.1-.1-.2-.1-.3 0-1.1.6-2.3.8-3.5.8-1.4.1-2.9-.1-4.2-.7h-.1c-.2.2-.6.3-.8.5-.3-.2-.6 0-.9.2zm7.8-17c.2 0 .5 0 .7-.1.8-.3 1.3-.9 1.4-1.7 0-.9-.5-1.6-1.2-1.9-.8-.3-1.9 0-2.5.6-.4.4-.6.9-.5 1.5.2 1 1 1.6 2.1 1.6zm-5.2-3.6h-.5c-1.2.2-1.9 1.3-1.5 2.5.3.9 1.2 1.4 2.2 1.3.7-.1 1.3-.4 1.7-1.1.5-1.1 0-2.7-1.9-2.7zm2.8 3c-.2 0-.4 0-.6.1-.3.2-.5.3-.4.7 0 .1-.1.1-.1.1-.2.1-.4.3-.4.6-.1.4.2.6.5.6.2 0 .4-.1.6-.2.3-.1.6-.1.9 0 .1.1.3.1.4.2.3.1.5 0 .6-.2.1-.2.1-.4-.1-.6-.1-.2-.3-.3-.5-.4-.1 0-.1-.1-.1-.2.1-.3 0-.5-.3-.6-.1-.1-.3-.1-.5-.1zm.8 2.7v-.5c0-.1 0-.1-.1-.1-.2-.1-.4-.1-.5-.2-.1 0-.1 0-.1.1 0 .3-.1.6 0 1 0 .2.2.4.4.3.2 0 .3-.2.3-.4v-.2zm-.9-.2v-.4c0-.1 0-.1-.1-.1-.2.1-.4.1-.6.2-.1 0-.1.1-.1.1 0 .3 0 .5.1.8.1.2.3.3.5.1.1-.1.2-.2.2-.4-.1-.1 0-.2 0-.3z"/><path fill="currentColor" d="M16.6 8.2c0-.4.3-.7.6-.7s.6.3.6.7c0 .4-.3.7-.6.7s-.6-.3-.6-.7zm1.1.2c0-.1 0-.2-.1-.2s-.1.1-.1.2 0 .2.1.2c0 0 0-.1.1-.2zm-5 0c0 .4-.3.7-.6.7s-.6-.3-.6-.7c0-.4.3-.7.6-.7s.6.3.6.7zm-.3.3c.1 0 .1-.1.1-.1 0-.1 0-.2-.1-.2s-.1.1-.1.1c-.1.1 0 .2.1.2zm3.4 1.8c-.1 0-.3 0-.4-.1-.4-.1-.4-.4-.2-.7.3-.2.6-.3.9-.2.2 0 .3.1.4.2.2.2.2.5-.1.6-.1.1-.3.2-.6.2z"/></g><path fill="currentColor" d="M17.7 8.4c0 .1 0 .2-.1.2s-.1-.1-.1-.2 0-.2.1-.2c0 0 0 .1.1.2zm-5.3.3c-.1 0-.1-.1-.1-.2s0-.2.1-.1c.1 0 .1.1.1.2s0 .1-.1.1z"/></svg>',
+  ts: '<svg viewBox="0 0 32 32"><path d="M15.6 11.8h-3.4V22H9.7V11.8H6.3V10h9.2v1.8zm7.7 7.1c0-.5-.2-.8-.5-1.1-.3-.3-.9-.5-1.7-.8-1.4-.4-2.5-.9-3.3-1.5-.7-.6-1.1-1.3-1.1-2.3 0-1 .4-1.8 1.3-2.4.8-.6 1.9-.9 3.2-.9 1.3 0 2.4.4 3.2 1.1.8.7 1.2 1.6 1.2 2.6h-2.3c0-.6-.2-1-.6-1.4-.4-.3-.9-.5-1.6-.5-.6 0-1.1.1-1.5.4-.4.3-.5.7-.5 1.1 0 .4.2.7.6 1 .4.3 1 .5 2 .8 1.3.4 2.3.9 3 1.5.7.6 1 1.4 1 2.4s-.4 1.9-1.2 2.4c-.8.6-1.9.9-3.2.9-1.3 0-2.5-.3-3.4-1s-1.5-1.6-1.4-2.9h2.4c0 .7.2 1.2.7 1.6.4.3 1.1.5 1.8.5s1.2-.1 1.5-.4c.2-.3.4-.7.4-1.1z" fill="currentColor"/></svg>',
+  js: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M11.4 10h2.7v7.6c0 3.4-1.6 4.6-4.3 4.6-.6 0-1.5-.1-2-.3l.3-2.2c.4.2.9.3 1.4.3 1.1 0 1.9-.5 1.9-2.4V10zm5.1 9.2c.7.4 1.9.8 3 .8 1.3 0 1.9-.5 1.9-1.3s-.6-1.2-2-1.7c-2-.7-3.3-1.8-3.3-3.6 0-2.1 1.7-3.6 4.6-3.6 1.4 0 2.4.3 3.1.6l-.6 2.2c-.5-.2-1.3-.6-2.5-.6s-1.8.5-1.8 1.2c0 .8.7 1.1 2.2 1.7 2.1.8 3.1 1.9 3.1 3.6 0 2-1.6 3.7-4.9 3.7-1.4 0-2.7-.4-3.4-.7l.6-2.3z"/></svg>',
+  py: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M15.6 15.5h-2c-1.4 0-2.3.9-2.3 2.3v1.8c0 .2-.1.3-.3.3h-.9c-.9 0-1.6-.4-2-1.2-.3-.6-.5-1.2-.5-1.8-.1-1.1-.1-2.2.3-3.3.3-.9.9-1.6 1.9-1.8h5.8c.1 0 .3 0 .3-.1v-.5s-.2-.1-.3-.1h-3.4c-.3 0-.4-.1-.4-.4V9.4c0-.7.3-1.2.9-1.4.5-.2 1-.4 1.5-.5 1.2-.2 2.4-.2 3.6.1.5.1 1 .3 1.4.6.4.4.7.8.6 1.4v3.6c0 1.4-.8 2.2-2.2 2.2-.7.1-1.4.1-2 .1zm-2.8-6c0 .4.3.8.8.8.4 0 .8-.4.8-.8s-.4-.7-.8-.8c-.5 0-.8.4-.8.8zm3.6 7h2c1.4 0 2.3-.9 2.3-2.3v-1.8c0-.2.1-.3.3-.3h.9c.9 0 1.6.4 2 1.2.3.6.5 1.2.5 1.8.1 1.1.1 2.2-.3 3.3-.3.9-.9 1.6-1.9 1.8h-5.8c-.1 0-.3 0-.3.1v.5s.2.1.3.1h3.4c.3 0 .4.1.4.4v1.3c0 .7-.3 1.2-.9 1.4-.5.2-1 .4-1.5.5-1.2.2-2.4.2-3.6-.1-.5-.1-1-.3-1.4-.6-.4-.4-.7-.8-.6-1.4v-3.6c0-1.4.8-2.2 2.2-2.2.7-.1 1.4-.1 2-.1zm2.8 6c0-.4-.3-.8-.8-.8-.4 0-.8.4-.8.8s.4.7.8.8c.5 0 .8-.4.8-.8z"/></svg>',
+  rs: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M21.7 8.4V9l.1.1h.1c.3-.1.6-.1.9-.2.2-.1.4.1.3.3-.1.3-.1.6-.2.9v.1l.1.1c0 .1.1.1.2.1h.9c.2 0 .3.1.3.3v.2c-.1.3-.3.6-.4.8v.1s.1.1.1.2h.1c.3.1.6.1.9.2.2 0 .3.3.2.5-.2.3-.4.5-.5.7v.2c0 .1.1.1.2.2.3.1.5.2.8.3.2.1.3.3.1.5-.2.2-.4.4-.7.6v.3s.1.1.2.1c.2.1.4.3.7.4.2.1.2.4 0 .5-.3.2-.5.3-.8.5v.1c0 .2 0 .2.1.3.2.2.4.4.6.5.2.2.1.4-.1.5-.3.1-.6.2-.8.3 0 0-.1 0-.1.1-.1.1 0 .2 0 .3.2.2.3.4.5.7.1.1.1.3-.1.4-.1 0-.1 0-.2.1-.3 0-.5.1-.8.1h-.1c0 .1-.1.1-.1.2s0 .1.1.2c.1.2.2.5.3.7.1.1 0 .3-.1.4h-1.2c-.1.1-.1.2-.1.3.1.3.1.5.2.8.1.2-.1.4-.4.4-.3-.1-.6-.1-.9-.2H22l-.1.1s-.1.1 0 .1v.9c0 .2-.1.3-.3.3h-.2c-.3-.1-.5-.2-.8-.4h-.1c-.1 0-.2.1-.2.2 0 .3-.1.5-.1.8 0 .2-.3.3-.5.2-.2-.2-.5-.4-.7-.5h-.1c-.1 0-.2.1-.2.2-.1.3-.2.5-.3.8-.1.2-.2.2-.3.2-.1 0-.1-.1-.1-.1-.2-.2-.4-.4-.6-.7h-.2c-.1 0-.2.1-.2.2-.1.2-.3.5-.4.7-.1.2-.4.2-.5 0-.2-.3-.3-.5-.5-.8h-.2c-.1 0-.1 0-.2.1l-.6.6c-.1.1-.2.1-.4.1-.1 0-.1-.1-.1-.2l-.3-.9s0-.1-.1-.1h-.3c-.2.2-.4.3-.7.5-.4-.2-.7-.3-.7-.5-.1-.3-.1-.6-.1-.9 0 0 0-.1-.1-.1s-.1-.1-.2-.1-.1 0-.2.1c-.2.1-.5.2-.7.3-.2.1-.4 0-.4-.2V23l-.1-.1h-.1c-.3.1-.6.1-.9.2-.2.1-.4-.1-.3-.3.1-.3.1-.6.2-.9v-.1l-.1-.1H8c-.2 0-.3-.1-.3-.3v-.2c.1-.3.3-.6.4-.8v-.1s0-.1-.1-.1c0-.1-.1-.1-.1-.1-.3 0-.6-.1-.9-.1-.2 0-.3-.3-.2-.5.2-.2.4-.5.5-.7v-.1c0-.1 0-.1-.1-.2 0 0-.1-.1-.2-.1-.2-.1-.5-.2-.7-.3-.2-.1-.3-.3-.1-.5.3-.1.5-.4.8-.6v-.2c0-.1 0-.2-.1-.2-.2-.1-.5-.3-.7-.4-.2-.1-.2-.4 0-.5.3-.2.5-.3.8-.5V15l-.1-.1-.6-.6c-.1-.1-.1-.3 0-.4 0 0 .1 0 .1-.1l.9-.3v-.1c.1-.1 0-.2 0-.3-.2-.2-.3-.4-.5-.6-.1-.2 0-.5.2-.5.3-.1.6-.1.9-.2H8c0-.1.1-.1.1-.2s0-.1-.1-.2c-.1-.2-.2-.5-.3-.7-.1-.2 0-.4.2-.4H9s0-.1.1-.1v-.1c-.1-.3-.2-.6-.2-.9-.1-.2.1-.4.3-.3.3 0 .6.1.9.2h.1l.1-.1s.1-.1 0-.1V8c0-.2.1-.3.3-.3h.2c.3.1.6.3.8.4h.1s.1 0 .1-.1c.1 0 .1-.1.1-.1 0-.3.1-.6.1-.9 0-.2.3-.3.5-.2.2.2.5.4.7.5h.1c.1 0 .1 0 .2-.1 0 0 0-.1.1-.2.1-.2.2-.5.3-.7.1-.2.2-.2.4-.2l.1.1c.1.3.4.5.6.8h.1c.1 0 .2-.1.2-.1.1-.2.3-.5.4-.7.2-.2.4-.2.5-.1l.1.1c.2.3.3.5.5.8h.3c.1 0 .1-.1.1-.1.2-.2.4-.4.5-.6.1-.1.3-.1.4 0v.1c.1.3.2.6.3.8l.1.1h.2c.3-.1.6-.3.8-.5.2-.1.5 0 .5.2 0 .3.1.6.1.9 0 0 0 .1.1.1h.1c.1.1.2.1.2 0 .2-.1.5-.2.8-.3.2-.1.4 0 .4.3v.4zm-11.1 2.7h7.6c.3 0 .6 0 .9.1.6.2 1.1.5 1.4.9.3.3.5.7.5 1.2 0 .4-.1.8-.3 1.2-.2.3-.5.6-.8.8-.1.1-.2.2-.3.2.1.1.2.1.3.2.2.2.5.4.6.7.2.3.3.7.3 1 0 .1.1.2.2.3.2.2.5.2.8.2.2 0 .4-.1.5-.2.2-.2.2-.4.3-.6v-.5c0-.1 0-.1.1-.1h.7v-1.3c-.3-.1-.6-.3-.9-.4-.1-.1-.3-.1-.4-.2-.3-.1-.4-.4-.3-.8.2-.5.4-1 .7-1.5v-.1c-.4-.6-.8-1.2-1.4-1.7-1-.9-2.2-1.5-3.6-1.8h-.1c-.3.3-.6.6-1 .9-.2.2-.6.2-.8 0l-.9-.9h-.1c-.4.1-.7.2-1 .3-1.1.4-2 1-2.8 1.8-.1.1-.2.2-.2.3zm11.3 9.2h-3c-.2 0-.3 0-.4-.1-.4-.2-.6-.6-.7-1-.1-.4-.2-.7-.2-1.1 0-.2-.1-.4-.2-.6-.2-.5-.6-.8-1.1-.8h-1.8V18h1.8c.1 0 .1 0 .1.1v2c0 .1 0 .1-.1.1h-6c.2.3.4.5.6.7h.1c.4-.1.8-.2 1.2-.2.3-.1.6.1.7.4.1.4.2.9.3 1.3v.1c.8.3 1.6.6 2.4.6.7.1 1.4 0 2.1-.1.5-.1 1-.3 1.5-.5v-.1c.1-.4.2-.9.3-1.3.1-.3.3-.5.7-.4l1.2.3h.1c0-.2.2-.5.4-.7zm-11.9-7l.3.6c0 .1.1.2 0 .3 0 .2-.2.3-.3.4-.4.2-.8.4-1.2.5 0 0-.1 0-.1.1v.5c0 .7.1 1.4.3 2.2 0 0 0 .1.1.1h2.1v-4.7H10zm4.3 1.4c.1 0 .1 0 0 0h2.3c.2 0 .4 0 .6-.1.1-.1.2-.1.3-.3.1-.2.1-.5-.1-.7-.2-.2-.5-.3-.7-.3h-2.5c.1.5.1.9.1 1.4zm-6-1c0 .3.3.6.6.6s.6-.3.6-.6-.3-.6-.6-.6-.6.3-.6.6zM21 22.1c0-.3-.3-.6-.6-.6s-.6.3-.6.6.3.6.6.6.6-.2.6-.6zm-9.4-.6c-.3 0-.6.3-.6.6s.3.6.6.6.6-.3.6-.6-.3-.6-.6-.6zm5-13.1c0-.3-.2-.6-.6-.6-.3 0-.6.2-.6.6 0 .3.2.6.6.6.3 0 .5-.3.6-.6zm6.5 6c.3 0 .6-.3.6-.6s-.3-.6-.6-.6-.6.3-.6.6.2.6.6.6z"/></svg>',
+  css: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M10.3 23.3l.8-4H8.6v-2.1h3l.5-2.5H9.5v-2.1h3.1l.8-3.9h2.8l-.8 3.9h2.8l.8-3.9h2.8l-.8 3.9h2.5v2.1h-2.9l-.6 2.5h2.6v2.1h-3l-.8 4H16l.8-4H14l-.8 4h-2.9zm6.9-6.1l.5-2.5h-2.8l-.5 2.5h2.8z"/></svg>',
+  html: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M8 15l6-5.6V12l-4.5 4 4.5 4v2.6L8 17v-2zm16 2.1l-6 5.6V20l4.6-4-4.6-4V9.3l6 5.6v2.2z"/></svg>',
+  json: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M7.5 15.1c1.5 0 1.7-.8 1.7-1.5 0-.6-.1-1.1-.1-1.7S9 10.7 9 10.2c0-2.1 1.3-3 3.4-3h.8v1.9h-.4c-1 0-1.3.6-1.3 1.6 0 .4.1.8.1 1.3 0 .4.1.9.1 1.5 0 1.7-.7 2.3-1.9 2.6 1.2.3 1.9.9 1.9 2.6 0 .6-.1 1.1-.1 1.5 0 .4-.1.9-.1 1.2 0 1 .3 1.6 1.3 1.6h.4v1.9h-.8c-2 0-3.3-.8-3.3-3 0-.6 0-1.1.1-1.7.1-.6.1-1.2.1-1.7 0-.6-.2-1.5-1.7-1.5l-.1-1.9zm17 1.7c-1.5 0-1.7.9-1.7 1.5s.1 1.1.1 1.7c.1.6.1 1.2.1 1.7 0 2.2-1.4 3-3.4 3h-.8V23h.4c1 0 1.3-.6 1.3-1.6 0-.4 0-.8-.1-1.2 0-.5-.1-1-.1-1.5 0-1.7.7-2.3 1.9-2.6-1.2-.3-1.9-.9-1.9-2.6 0-.6.1-1.1.1-1.5.1-.5.1-.9.1-1.3 0-1-.4-1.5-1.3-1.6h-.4V7.2h.8c2.1 0 3.4.9 3.4 3 0 .6-.1 1.1-.1 1.7-.1.6-.1 1.2-.1 1.7 0 .7.2 1.5 1.7 1.5v1.7z"/></svg>',
+  yaml: '<svg viewBox="0 0 32 32"><path d="M17.1 19.3c-.5 0-.8.1-1.1.1h-1.8c.4-4.3.7-8.5 1.1-12.8 1.2 0 2.2-.1 3.2 0 .3 0 .7.5.6.8-.3 2.3-.8 4.7-1.2 7-.2 1.6-.5 3.2-.8 4.9zm.4 4c.1 1.1-.8 2.1-2.1 2.2-1.3.1-2.5-.7-2.6-1.8-.1-1.2.8-2.1 2.2-2.2 1.4-.1 2.4.6 2.5 1.8z" fill-rule="evenodd" clip-rule="evenodd" fill="currentColor"/></svg>',
+  md: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M20.7 6.7v9.9h3.8c-2.9 3-5.8 5.9-8.7 8.8-2.7-2.8-5.6-5.8-8.4-8.7h3.5V6.6c1.3.9 4.4 3.1 5 3.1.6 0 3.6-2.2 4.8-3z"/></svg>',
+  sh: '<svg viewBox="0 0 32 32"><path d="M14.42 9.31c-.26.1-.67.3-.91.44-.14.08-.26.17-.38.26-.22.17-.54.49-.71.71-.08.1-.15.2-.22.3-.15.23-.36.64-.43.91-.04.14-.07.29-.09.44-.04.28-.04.74-.01 1.01.02.22.06.43.12.64.07.27.26.69.41.92.07.1.14.2.22.3.17.22.51.52.74.68.15.11.31.23.48.34.23.16.63.36.89.47.25.11.51.23.78.34.26.1.69.23.94.35a.3.3 0 01.08.04c.67.2 1.16.58 1.46 1.11.06.11.2.42.2.7 0 .12.07.48-.05.72-.57 1.16-1.27 1.14-2.35 1.1-.97-.22-1.35-.8-1.64-1.68-.01-.04-.02-.08-.02-.12-.05-.28-.27-.51-.55-.51h-1.61c-.28 0-.5.23-.49.51.02.33.07.65.14.94.06.27.23.7.36.95.1.18.21.35.33.51.18.22.54.49.76.65.14.1.29.2.45.29.24.14.66.31.92.41.08.03.16.05.24.07.27.06.5.28.5.56v.81c0 .28.22.51.5.51h1.11c.28 0 .5-.23.5-.51v-.81c0-.28.22-.54.49-.61.13-.03.24-.07.35-.11.26-.1.67-.28.91-.43.55-.34.93-.77 1.29-1.27.16-.23.39-.62.46-.89.05-.17.08-.35.1-.54.03-.28.03-.74 0-1.02-.02-.19-.05-.37-.1-.54a3.83 3.83 0 00-.42-.92c-.38-.6-.92-1.02-1.46-1.4-.23-.16-.62-.39-.87-.51-.61-.28-1.18-.46-1.8-.71-.26-.1-.68-.26-.89-.44-.16-.13-.45-.4-.6-.64a1.41 1.41 0 01-.17-.62c0-.06-.02-.35.03-.62.02-.12.15-.42.31-.65.03-.04.21-.27.47-.34.1-.03.4-.11.68-.12.17-.01.54-.03.82.03.12.02.42.16.64.33.1.08.34.31.46.56.07.16.19.52.2.8v.01c.02.28.23.51.51.51h1.61c.28 0 .51-.23.48-.51-.02-.25-.06-.5-.12-.74-.07-.27-.24-.7-.35-.95a3.55 3.55 0 00-.23-.43c-.14-.24-.41-.61-.62-.8-.11-.1-.22-.19-.34-.28-.23-.16-.63-.37-.87-.51-.09-.05-.18-.09-.28-.13-.26-.1-.49-.36-.49-.64V7.52c0-.28-.22-.51-.5-.51h-1.11c-.28 0-.5.23-.5.51v1.12c0 .28-.2.44-.45.56-.1.05-.21.08-.31.11z" fill="currentColor"/></svg>',
   docker:
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><g fill="currentColor"><path fill="currentColor" d="M14.5 8.6h2v2h-2zm0 2.3h2v2h-2zm0 2.4h2v2h-2zm-2.3-2.4h2v2h-2zm0 2.4h2v2h-2zm-2.4-2.4h2v2h-2zm0 2.4h2v2h-2zm-2.3 0h2v2h-2zm9.4 0h2v2h-2z"/><path fill="currentColor" d="M27.1 13.6c-.4-.1-.9-.2-1.3-.2-.5.1-.8-.1-1-.6-.2-.5-.5-.9-.9-1.2-.6-.7-1.2-.5-1.5.3-.2.7-.2 1.5-.1 2.2.2.9.1 1.1-.8 1.3-1.1.3-16.3.2-16.3.2-.2 0-.3.5-.3 1s.1 2 .4 2.7c1 2.2 2.7 3.8 5.2 4H15c2.9-.1 5.2-1.5 7.2-3.6.8-.9 1.5-1.9 2-3 .2-.4.5-.6.9-.7.7-.1 1.3-.2 1.8-.6.1-.2.3-.4.4-.5.7-.5.6-1.1-.2-1.3zm-14.9 5.1c.4 0 .8.3.8.8s-.3.8-.8.8c-.4 0-.8-.3-.8-.8s.4-.8.8-.8zm-4.9 2.2c.8-.1 1.6.1 2.3-.1.9-.3 1.6-.2 2.1.8.3.6 1 .9 1.7 1.3-2.2.3-4.6-.5-6.1-2z"/></g></svg>',
-  img: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M21.3 17.2c1 0 1.8-.8 1.8-1.8s-.8-1.8-1.8-1.8-1.8.8-1.8 1.8.8 1.8 1.8 1.8zm-11.1-5.5v12.4h15.3V11.7H10.2zm.7.7h13.9v10.8l-3.6-4.1-2.2 2.6-4.4-4.7-3.7 4.6v-9.2zm9.8-4.5H6.5v10.8h1.9V9.6h12.3V7.9z"/></svg>',
+    '<svg viewBox="0 0 32 32"><g fill="currentColor"><path fill="currentColor" d="M14.5 8.6h2v2h-2zm0 2.3h2v2h-2zm0 2.4h2v2h-2zm-2.3-2.4h2v2h-2zm0 2.4h2v2h-2zm-2.4-2.4h2v2h-2zm0 2.4h2v2h-2zm-2.3 0h2v2h-2zm9.4 0h2v2h-2z"/><path fill="currentColor" d="M27.1 13.6c-.4-.1-.9-.2-1.3-.2-.5.1-.8-.1-1-.6-.2-.5-.5-.9-.9-1.2-.6-.7-1.2-.5-1.5.3-.2.7-.2 1.5-.1 2.2.2.9.1 1.1-.8 1.3-1.1.3-16.3.2-16.3.2-.2 0-.3.5-.3 1s.1 2 .4 2.7c1 2.2 2.7 3.8 5.2 4H15c2.9-.1 5.2-1.5 7.2-3.6.8-.9 1.5-1.9 2-3 .2-.4.5-.6.9-.7.7-.1 1.3-.2 1.8-.6.1-.2.3-.4.4-.5.7-.5.6-1.1-.2-1.3zm-14.9 5.1c.4 0 .8.3.8.8s-.3.8-.8.8c-.4 0-.8-.3-.8-.8s.4-.8.8-.8zm-4.9 2.2c.8-.1 1.6.1 2.3-.1.9-.3 1.6-.2 2.1.8.3.6 1 .9 1.7 1.3-2.2.3-4.6-.5-6.1-2z"/></g></svg>',
+  img: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M21.3 17.2c1 0 1.8-.8 1.8-1.8s-.8-1.8-1.8-1.8-1.8.8-1.8 1.8.8 1.8 1.8 1.8zm-11.1-5.5v12.4h15.3V11.7H10.2zm.7.7h13.9v10.8l-3.6-4.1-2.2 2.6-4.4-4.7-3.7 4.6v-9.2zm9.8-4.5H6.5v10.8h1.9V9.6h12.3V7.9z"/></svg>',
   config:
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M24.5 17.3c-.4-.1-.8-.3-1.1-.4 0-.7-.1-1.3-.1-2 0-.1.1-.1.1-.2.4-.2.7-.3 1.1-.5.4-.2.5-.6.4-1-.3-.7-.6-1.3-.9-2-.2-.4-.6-.6-1-.4-.4.2-.7.3-1.1.5-.1 0-.2 0-.2-.1-.2-.3-.5-.5-.7-.7-.2-.2-.5-.4-.7-.6.2-.4.3-.8.5-1.2.2-.5 0-.9-.5-1.1-.6-.1-1.3-.4-1.9-.6-.5-.2-.9 0-1.1.5-.1.4-.3.8-.4 1.1-.7 0-1.3.1-2 .1-.1 0-.1-.1-.2-.1-.2-.4-.3-.7-.5-1.1-.2-.4-.6-.5-1-.4-.7.3-1.3.6-2 .9-.4.2-.6.6-.4 1 .2.4.3.7.5 1.1 0 .1 0 .2-.1.2-.2.2-.4.3-.5.5-.3.3-.5.6-.8.9-.4-.1-.8-.3-1.1-.4-.5-.2-.9 0-1.1.5-.2.5-.5 1.2-.7 1.8-.2.6-.1.9.5 1.1.4.1.8.3 1.1.4 0 .7.1 1.3.1 2 0 .1-.1.1-.1.2-.4.2-.7.3-1.1.5-.4.2-.5.6-.4 1 .3.7.6 1.3.9 2 .2.4.6.6 1 .4.4-.2.7-.3 1.1-.5.1 0 .2 0 .2.1.2.3.5.5.7.7.2.2.5.4.7.6-.2.4-.3.8-.5 1.2-.2.5 0 .9.5 1.1.6.2 1.2.5 1.9.7.6.2.9.1 1.1-.5.1-.4.3-.8.4-1.1.7 0 1.3-.1 2-.1.1 0 .1.1.2.1.2.4.3.7.5 1.1.2.4.6.5 1 .4.7-.3 1.3-.6 2-.9.4-.2.6-.6.4-1-.2-.4-.3-.7-.5-1.1 0-.1 0-.2.1-.2.3-.2.5-.5.7-.7.2-.2.4-.5.6-.7.4.1.8.3 1.1.4.5.2.9 0 1.1-.5.2-.6.5-1.2.7-1.9.2-.5.1-.9-.5-1.1zm-7 2.1c-1.9.8-4 0-4.9-1.9-.8-1.9 0-4 1.9-4.9 1.9-.8 4 0 4.9 1.9.8 1.9 0 4-1.9 4.9z"/></svg>',
-  file: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1000"><path fill="currentColor" d="M394.1 537.8h411.7v54.7H394.1v-54.7zm0-130.3H624v54.7H394.1v-54.7zm0-130.3h411.7v54.7H394.1v-54.7zm0 390.9H700v54.7H394.1v-54.7z"/></svg>',
+    '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M24.5 17.3c-.4-.1-.8-.3-1.1-.4 0-.7-.1-1.3-.1-2 0-.1.1-.1.1-.2.4-.2.7-.3 1.1-.5.4-.2.5-.6.4-1-.3-.7-.6-1.3-.9-2-.2-.4-.6-.6-1-.4-.4.2-.7.3-1.1.5-.1 0-.2 0-.2-.1-.2-.3-.5-.5-.7-.7-.2-.2-.5-.4-.7-.6.2-.4.3-.8.5-1.2.2-.5 0-.9-.5-1.1-.6-.1-1.3-.4-1.9-.6-.5-.2-.9 0-1.1.5-.1.4-.3.8-.4 1.1-.7 0-1.3.1-2 .1-.1 0-.1-.1-.2-.1-.2-.4-.3-.7-.5-1.1-.2-.4-.6-.5-1-.4-.7.3-1.3.6-2 .9-.4.2-.6.6-.4 1 .2.4.3.7.5 1.1 0 .1 0 .2-.1.2-.2.2-.4.3-.5.5-.3.3-.5.6-.8.9-.4-.1-.8-.3-1.1-.4-.5-.2-.9 0-1.1.5-.2.5-.5 1.2-.7 1.8-.2.6-.1.9.5 1.1.4.1.8.3 1.1.4 0 .7.1 1.3.1 2 0 .1-.1.1-.1.2-.4.2-.7.3-1.1.5-.4.2-.5.6-.4 1 .3.7.6 1.3.9 2 .2.4.6.6 1 .4.4-.2.7-.3 1.1-.5.1 0 .2 0 .2.1.2.3.5.5.7.7.2.2.5.4.7.6-.2.4-.3.8-.5 1.2-.2.5 0 .9.5 1.1.6.2 1.2.5 1.9.7.6.2.9.1 1.1-.5.1-.4.3-.8.4-1.1.7 0 1.3-.1 2-.1.1 0 .1.1.2.1.2.4.3.7.5 1.1.2.4.6.5 1 .4.7-.3 1.3-.6 2-.9.4-.2.6-.6.4-1-.2-.4-.3-.7-.5-1.1 0-.1 0-.2.1-.2.3-.2.5-.5.7-.7.2-.2.4-.5.6-.7.4.1.8.3 1.1.4.5.2.9 0 1.1-.5.2-.6.5-1.2.7-1.9.2-.5.1-.9-.5-1.1zm-7 2.1c-1.9.8-4 0-4.9-1.9-.8-1.9 0-4 1.9-4.9 1.9-.8 4 0 4.9 1.9.8 1.9 0 4-1.9 4.9z"/></svg>',
+  file: '<svg viewBox="0 0 1200 1000"><path fill="currentColor" d="M394.1 537.8h411.7v54.7H394.1v-54.7zm0-130.3H624v54.7H394.1v-54.7zm0-130.3h411.7v54.7H394.1v-54.7zm0 390.9H700v54.7H394.1v-54.7z"/></svg>',
   folder:
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M28.8 6.9H16.1V5.7c0-1.4-1.1-2.5-2.5-2.5H.6v25.6h30.6V9.4c.1-1.4-1-2.5-2.4-2.5z"/></svg>',
-  ruby: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M17.8 7.5h4.1c.1 0 .2.1.3.1 1.2.3 2 1 2.2 2.2 0 .2.1.4.1.6v.8c0 .2-.1.4-.1.6-.1 1.4-.2 2.9-.3 4.3-.2 2.4-.4 4.7-.5 7.1 0 .4-.1.5-.5.5-1.1.1-2.1.1-3.2.2-2.2.1-4.4.3-6.6.4-.6 0-1.2.1-1.8.2h-1c-.1 0-.2-.1-.3-.1-1.2-.2-2.1-.9-2.4-2.1-.1-.3-.1-.6-.2-.9v-.5c0-.1.1-.2.1-.4 0-.8.1-1.7.1-2.5 0-.5 0-.9.1-1.3.7-1.8 1.5-3.5 2.9-4.9 1.7-1.8 3.6-3.2 6-3.8.3-.2.6-.3 1-.5z"/></svg>',
-  php: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M12.7 19.7c-.1-.6-.4-1.1-1-1.3-.2-.1-.5-.3-.7-.4-.3-.1-.6-.2-.8-.3-.2-.1-.4 0-.6.2-.1.2 0 .4.1.5.1.2.2.3.4.5.2.3.4.5.7.8.2.3.4.5.3.9-.1.7-.4 1.4-.9 1.9-.1.1-.2.1-.2.1-.3 0-.7-.2-.9-.4-.3-.3-.2-.6.1-.8.1 0 .2-.1.2-.2.2-.2.3-.4.2-.7-.1-.1-.1-.2-.2-.3-.4-.4-.9-.8-1.4-1.2-1.3-1-1.9-2.2-2-3.6-.1-1.6.3-3.1 1.1-4.5.3-.5.7-1 1.3-1.3.4-.2.8-.3 1.2-.4 1.1-.3 2.3-.5 3.5-.3 1 .2 1.8.7 2.1 1.7.2.7.3 1.3.2 2-.1 1.4-1.2 2.6-2.5 3-.6.2-.9.1-1.2-.4-.2-.3-.5-.7-.7-1.1V14c0-.1-.1-.1-.1-.2.1.6.2 1.2.5 1.7.2.3.4.5.8.5 1.3.1 2.3-.3 3.1-1.3.8-1.1 1-2.4.8-3.8 0-.3-.1-.5-.2-.8 0-.2 0-.3.2-.4.1 0 .2 0 .2-.1 1-.2 2.1-.3 3.1-.2 1.2.1 2.3.4 3.3 1.1 1.6 1 2.6 2.5 3.1 4.3.1.3.1.5.1.8 0 .2-.1.2-.3.1-.2-.1-.3-.3-.4-.4-.1-.1-.2-.3-.3-.4-.1-.1-.2-.1-.2 0s-.1.2-.1.3c-.3 1-.7 1.9-1.4 2.6-.1.1-.2.3-.2.4 0 .4-.1.8 0 1.2.1.8.2 1.7.3 2.5.1.5-.1.7-.5.9-.3.1-.6.2-1 .2h-1.6c0-.6 0-1.2-.5-1.5.1-.4.2-.8.3-1.3.1-.4 0-.7-.2-1-.2-.3-.5-.3-.8-.2-.8.5-1.6.5-2.5.2-.4-.1-.7-.1-.9.3-.2.4-.3.8-.3 1.2 0 .5.1 1.1.2 1.6 0 .3 0 .4-.3.5-.7.2-1.4.2-2 .1h-.1c0-.6 0-1.2-.7-1.5.4-.4.4-1.1.3-1.7zm-4.1-2.3c.1-.1.2-.2.2-.4.1-.3-.2-.8-.5-.9-.2-.1-.3 0-.4.1-.3.3-.5.6-.8.9 0 .1-.1.1-.1.2-.1.2 0 .4.2.4.1 0 .3 0 .4.1.4 0 .7-.1 1-.4zm0-3.3c0-.2-.2-.4-.4-.4s-.5.2-.4.5c0 .2.2.4.5.4.1-.1.3-.3.3-.5z"/></svg>',
-  java: '<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"> <g id="Java"> <path id="Vector" d="M22.0025 18.236C21.98 19 22.0212 20.0151 21.7215 20.8764C21.4593 21.7378 21.0099 22.5056 20.3732 23.1797C19.7366 23.8165 19.0062 24.3034 18.1823 24.6404C17.3583 24.94 16.73 25 15.598 25C14.466 25 13.4631 24.8839 12.4519 24.4718C11.4781 24.0224 10.6542 23.3857 9.98 22.5618L12.0025 19.9776C12.4145 20.5018 12.9201 20.9139 13.5193 21.2136C14.1186 21.5131 14.774 21.663 15.4856 21.663C16.4219 21.663 17.1523 21.3632 17.6766 20.764C18.201 20.1274 18.4631 19.191 18.4631 17.9551V7H22.0025V18.236Z" fill="currentColor"/> </g> </svg>',
-  c: '<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M22.3 22.9q-1.07.572-2.22.863-1.14.292-2.39.292-3.73 0-5.91-2.16-2.18-2.17-2.18-5.89 0-3.72 2.18-5.89 2.18-2.18 5.91-2.18 1.24 0 2.39.292 1.16.291 2.22.863v3.22q-1.08-.76-2.12-1.11-1.03-.353-2.18-.353-2.07 0-3.24 1.37-1.18 1.37-1.18 3.79 0 2.4 1.18 3.78 1.18 1.37 3.24 1.37 1.14 0 2.18-.354 1.04-.354 2.12-1.11z" font-size="22" font-stretch="semi-condensed" font-weight="700" letter-spacing="0" word-spacing="0"/></svg>',
-  xml: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M9.7 9.6c7.2-.1 12.9 6.2 12.7 12.7h-2.6c-.1-2.8-1-5.1-2.9-7.1s-4.4-2.9-7.1-2.9c-.1-.9-.1-1.8-.1-2.7zm8.6 12.8h-2.6c-.1-.5-.2-1.1-.3-1.6-.8-2.4-2.3-3.8-4.8-4.3-.2-.1-.4-.1-.7-.1-.2 0-.2-.1-.2-.2v-2.5c2.1 0 3.9.7 5.5 2 2 1.8 3 4 3.1 6.7zm-5.1-1.8c0 1-.8 1.8-1.8 1.8s-1.7-.8-1.8-1.8c0-1 .8-1.8 1.8-1.8s1.8.8 1.8 1.8z"/></svg>',
-  lock: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1000"><path fill="currentColor" d="M818.5 463.8v290.9h-437V463.8h73.4v-6.2c0-22-.1-44 .1-66 .1-7.1.6-14.3 1.6-21.4 11.3-80 87.2-136 166.9-123.1C694 258.5 746.2 319.7 746.2 391v72.7c24.4.1 48.4.1 72.3.1zm-145.2-.1c.1-1.6.2-2.6.2-3.5 0-23.7.1-47.3-.1-71 0-4.1-.6-8.3-1.4-12.4-8-38.7-41-62.2-81.3-58.2-35.6 3.6-63.3 35.5-63.3 73.1v72h145.9z"/></svg>',
-  git: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M7 16.2v-.3c.1-.5.4-.7.7-1.1l4.8-4.8.2-.2s.1 0 .1.1l1.8 1.8c.1.1.1.2 0 .3-.1.6.1 1.2.6 1.5.2.1.2.2.2.4v4.4c0 .2-.1.3-.2.4-.5.3-.8.9-.6 1.5.2.6.7 1 1.3 1 .6 0 1.1-.4 1.3-.9.2-.6 0-1.2-.5-1.6-.2-.1-.2-.2-.2-.4v-4.5h.1l1.6 1.6c.1.1.1.2.1.2v.6c.1.8.8 1.3 1.6 1.2.8-.1 1.4-.9 1.2-1.7-.1-.7-.9-1.2-1.6-1.1-.1 0-.2 0-.4-.1l-1.7-1.7c-.1-.1-.1-.2-.1-.3.2-.9-.7-1.8-1.6-1.6-.1 0-.3 0-.3-.1-.6-.6-1.2-1.2-1.8-1.7-.1-.1-.1-.2 0-.3.5-.4.9-.9 1.3-1.3.6-.6 1.2-.6 1.8 0l7.6 7.6c.6.6.6 1.2 0 1.8L17 24.2c-.3.3-.6.7-1.1.8h-.2c-.2-.1-.5-.2-.7-.4-.6-.6-1.3-1.2-1.9-1.9l-5.5-5.5c-.1-.3-.5-.6-.6-1z"/></svg>',
-  lua: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M14.7 26C9.9 26 6 22.1 6 17.3c0-4.8 3.9-8.8 8.9-8.7 4.7.1 8.5 3.9 8.5 8.7 0 4.8-3.9 8.7-8.7 8.7zm3.6-14.9c-1.4 0-2.6 1.2-2.6 2.6 0 1.4 1.1 2.6 2.6 2.6 1.4 0 2.6-1.1 2.6-2.6 0-1.4-1.1-2.6-2.6-2.6zm5.1 0c-1.4 0-2.6-1.1-2.5-2.6C20.9 7.1 22 6 23.5 6 24.9 6 26 7.2 26 8.6c0 1.4-1.2 2.5-2.6 2.5z"/></svg>',
-  vue: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1000"><path fill="currentColor" d="M600 495.9l159.1-275.4h-84.4L600 349.7l-74.6-129.2h-84.5z"/><path fill="currentColor" d="M793.7 220.5L600 555.9 406.3 220.5H277l323 559 323-559z"/></svg>',
-  sass: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M18 17.3c-1.1.7-2.4 1.5-3.5 2.2.4.9.4 1.8.1 2.7-.5 1.6-1.7 2.5-3.2 2.7-.4.1-.8 0-1.1-.1-.4-.1-.6-.4-.7-.7-.4-.9-.3-1.7.3-2.4.4-.4.8-.9 1.3-1.2.5-.4 1.2-.7 1.8-1.1.1-.1.2-.1.4-.2-.3-.2-.4-.4-.6-.4-.8-.5-1.6-1.1-2.3-1.8-.4-.4-.8-.8-1.1-1.3-.9-.7-1-1.7-.5-2.6.4-1 1.1-1.8 1.8-2.5 1.6-1.4 3.4-2.4 5.4-3.1 1.4-.5 2.8-.7 4.2-.5.4.2 1 .3 1.4.5 1.5.6 2.1 1.8 1.6 3.4-.4 1.3-1.2 2.4-2.4 3.1-1.6 1-3.2 1.4-5.1 1.1-.6-.1-1.1-.4-1.6-.9-.1-.2-.2-.4-.3-.5 0 0 0-.1.1-.2 0 0 .1 0 .2.1.8.8 1.7.9 2.6.7 1.7-.3 3.2-.9 4.3-2.2.4-.5.8-1.1 1-1.8.2-.8-.2-1.4-.9-1.8-.8-.4-1.6-.4-2.4-.3-2 .3-3.8 1.1-5.4 2.1-.9.5-1.7 1.1-2.3 1.9-.3.4-.5.8-.7 1.2-.3.8-.2 1.6.4 2.2.4.4.8.8 1.2 1.1.6.5 1.3 1.1 1.9 1.6.1 0 .2.1.3 0 .3-.2.5-.3.8-.4.9-.5 1.8-.9 2.8-1.1 0 .4.1.4.2.5 0-.1 0-.1 0 0zm-4.3 2.5c-.9.5-1.6 1-2.3 1.7-.4.4-.6.8-.7 1.3-.1.6.3.9.9.8.8-.2 1.4-.7 1.8-1.3.5-.8.5-1.5.3-2.5z"/></svg>',
-  less: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M7.5 15.1c1.5 0 1.7-.8 1.7-1.5 0-.6-.1-1.1-.1-1.7S9 10.7 9 10.2c0-2.1 1.3-3 3.4-3h.8v1.9h-.4c-1 0-1.3.6-1.3 1.6 0 .4.1.8.1 1.3 0 .4.1.9.1 1.5 0 1.7-.7 2.3-1.9 2.6 1.2.3 1.9.9 1.9 2.6 0 .6-.1 1.1-.1 1.5 0 .4-.1.9-.1 1.2 0 1 .3 1.6 1.3 1.6h.4v1.9h-.8c-2 0-3.3-.8-3.3-3 0-.6 0-1.1.1-1.7.1-.6.1-1.2.1-1.7 0-.6-.2-1.5-1.7-1.5l-.1-1.9zm17 1.7c-1.5 0-1.7.9-1.7 1.5s.1 1.1.1 1.7c.1.6.1 1.2.1 1.7 0 2.2-1.4 3-3.4 3h-.8V23h.4c1 0 1.3-.6 1.3-1.6 0-.4 0-.8-.1-1.2 0-.5-.1-1-.1-1.5 0-1.7.7-2.3 1.9-2.6-1.2-.3-1.9-.9-1.9-2.6 0-.6.1-1.1.1-1.5.1-.5.1-.9.1-1.3 0-1-.4-1.5-1.3-1.6h-.4V7.2h.8c2.1 0 3.4.9 3.4 3 0 .6-.1 1.1-.1 1.7-.1.6-.1 1.2-.1 1.7 0 .7.2 1.5 1.7 1.5v1.7z"/></svg>',
+    '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M28.8 6.9H16.1V5.7c0-1.4-1.1-2.5-2.5-2.5H.6v25.6h30.6V9.4c.1-1.4-1-2.5-2.4-2.5z"/></svg>',
+  ruby: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M17.8 7.5h4.1c.1 0 .2.1.3.1 1.2.3 2 1 2.2 2.2 0 .2.1.4.1.6v.8c0 .2-.1.4-.1.6-.1 1.4-.2 2.9-.3 4.3-.2 2.4-.4 4.7-.5 7.1 0 .4-.1.5-.5.5-1.1.1-2.1.1-3.2.2-2.2.1-4.4.3-6.6.4-.6 0-1.2.1-1.8.2h-1c-.1 0-.2-.1-.3-.1-1.2-.2-2.1-.9-2.4-2.1-.1-.3-.1-.6-.2-.9v-.5c0-.1.1-.2.1-.4 0-.8.1-1.7.1-2.5 0-.5 0-.9.1-1.3.7-1.8 1.5-3.5 2.9-4.9 1.7-1.8 3.6-3.2 6-3.8.3-.2.6-.3 1-.5z"/></svg>',
+  php: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M12.7 19.7c-.1-.6-.4-1.1-1-1.3-.2-.1-.5-.3-.7-.4-.3-.1-.6-.2-.8-.3-.2-.1-.4 0-.6.2-.1.2 0 .4.1.5.1.2.2.3.4.5.2.3.4.5.7.8.2.3.4.5.3.9-.1.7-.4 1.4-.9 1.9-.1.1-.2.1-.2.1-.3 0-.7-.2-.9-.4-.3-.3-.2-.6.1-.8.1 0 .2-.1.2-.2.2-.2.3-.4.2-.7-.1-.1-.1-.2-.2-.3-.4-.4-.9-.8-1.4-1.2-1.3-1-1.9-2.2-2-3.6-.1-1.6.3-3.1 1.1-4.5.3-.5.7-1 1.3-1.3.4-.2.8-.3 1.2-.4 1.1-.3 2.3-.5 3.5-.3 1 .2 1.8.7 2.1 1.7.2.7.3 1.3.2 2-.1 1.4-1.2 2.6-2.5 3-.6.2-.9.1-1.2-.4-.2-.3-.5-.7-.7-1.1V14c0-.1-.1-.1-.1-.2.1.6.2 1.2.5 1.7.2.3.4.5.8.5 1.3.1 2.3-.3 3.1-1.3.8-1.1 1-2.4.8-3.8 0-.3-.1-.5-.2-.8 0-.2 0-.3.2-.4.1 0 .2 0 .2-.1 1-.2 2.1-.3 3.1-.2 1.2.1 2.3.4 3.3 1.1 1.6 1 2.6 2.5 3.1 4.3.1.3.1.5.1.8 0 .2-.1.2-.3.1-.2-.1-.3-.3-.4-.4-.1-.1-.2-.3-.3-.4-.1-.1-.2-.1-.2 0s-.1.2-.1.3c-.3 1-.7 1.9-1.4 2.6-.1.1-.2.3-.2.4 0 .4-.1.8 0 1.2.1.8.2 1.7.3 2.5.1.5-.1.7-.5.9-.3.1-.6.2-1 .2h-1.6c0-.6 0-1.2-.5-1.5.1-.4.2-.8.3-1.3.1-.4 0-.7-.2-1-.2-.3-.5-.3-.8-.2-.8.5-1.6.5-2.5.2-.4-.1-.7-.1-.9.3-.2.4-.3.8-.3 1.2 0 .5.1 1.1.2 1.6 0 .3 0 .4-.3.5-.7.2-1.4.2-2 .1h-.1c0-.6 0-1.2-.7-1.5.4-.4.4-1.1.3-1.7zm-4.1-2.3c.1-.1.2-.2.2-.4.1-.3-.2-.8-.5-.9-.2-.1-.3 0-.4.1-.3.3-.5.6-.8.9 0 .1-.1.1-.1.2-.1.2 0 .4.2.4.1 0 .3 0 .4.1.4 0 .7-.1 1-.4zm0-3.3c0-.2-.2-.4-.4-.4s-.5.2-.4.5c0 .2.2.4.5.4.1-.1.3-.3.3-.5z"/></svg>',
+  java: '<svg viewBox="0 0 32 32" fill="none"> <g id="Java"> <path id="Vector" d="M22.0025 18.236C21.98 19 22.0212 20.0151 21.7215 20.8764C21.4593 21.7378 21.0099 22.5056 20.3732 23.1797C19.7366 23.8165 19.0062 24.3034 18.1823 24.6404C17.3583 24.94 16.73 25 15.598 25C14.466 25 13.4631 24.8839 12.4519 24.4718C11.4781 24.0224 10.6542 23.3857 9.98 22.5618L12.0025 19.9776C12.4145 20.5018 12.9201 20.9139 13.5193 21.2136C14.1186 21.5131 14.774 21.663 15.4856 21.663C16.4219 21.663 17.1523 21.3632 17.6766 20.764C18.201 20.1274 18.4631 19.191 18.4631 17.9551V7H22.0025V18.236Z" fill="currentColor"/> </g> </svg>',
+  c: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M22.3 22.9q-1.07.572-2.22.863-1.14.292-2.39.292-3.73 0-5.91-2.16-2.18-2.17-2.18-5.89 0-3.72 2.18-5.89 2.18-2.18 5.91-2.18 1.24 0 2.39.292 1.16.291 2.22.863v3.22q-1.08-.76-2.12-1.11-1.03-.353-2.18-.353-2.07 0-3.24 1.37-1.18 1.37-1.18 3.79 0 2.4 1.18 3.78 1.18 1.37 3.24 1.37 1.14 0 2.18-.354 1.04-.354 2.12-1.11z" font-size="22" font-stretch="semi-condensed" font-weight="700" letter-spacing="0" word-spacing="0"/></svg>',
+  xml: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M9.7 9.6c7.2-.1 12.9 6.2 12.7 12.7h-2.6c-.1-2.8-1-5.1-2.9-7.1s-4.4-2.9-7.1-2.9c-.1-.9-.1-1.8-.1-2.7zm8.6 12.8h-2.6c-.1-.5-.2-1.1-.3-1.6-.8-2.4-2.3-3.8-4.8-4.3-.2-.1-.4-.1-.7-.1-.2 0-.2-.1-.2-.2v-2.5c2.1 0 3.9.7 5.5 2 2 1.8 3 4 3.1 6.7zm-5.1-1.8c0 1-.8 1.8-1.8 1.8s-1.7-.8-1.8-1.8c0-1 .8-1.8 1.8-1.8s1.8.8 1.8 1.8z"/></svg>',
+  lock: '<svg viewBox="0 0 1200 1000"><path fill="currentColor" d="M818.5 463.8v290.9h-437V463.8h73.4v-6.2c0-22-.1-44 .1-66 .1-7.1.6-14.3 1.6-21.4 11.3-80 87.2-136 166.9-123.1C694 258.5 746.2 319.7 746.2 391v72.7c24.4.1 48.4.1 72.3.1zm-145.2-.1c.1-1.6.2-2.6.2-3.5 0-23.7.1-47.3-.1-71 0-4.1-.6-8.3-1.4-12.4-8-38.7-41-62.2-81.3-58.2-35.6 3.6-63.3 35.5-63.3 73.1v72h145.9z"/></svg>',
+  git: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M7 16.2v-.3c.1-.5.4-.7.7-1.1l4.8-4.8.2-.2s.1 0 .1.1l1.8 1.8c.1.1.1.2 0 .3-.1.6.1 1.2.6 1.5.2.1.2.2.2.4v4.4c0 .2-.1.3-.2.4-.5.3-.8.9-.6 1.5.2.6.7 1 1.3 1 .6 0 1.1-.4 1.3-.9.2-.6 0-1.2-.5-1.6-.2-.1-.2-.2-.2-.4v-4.5h.1l1.6 1.6c.1.1.1.2.1.2v.6c.1.8.8 1.3 1.6 1.2.8-.1 1.4-.9 1.2-1.7-.1-.7-.9-1.2-1.6-1.1-.1 0-.2 0-.4-.1l-1.7-1.7c-.1-.1-.1-.2-.1-.3.2-.9-.7-1.8-1.6-1.6-.1 0-.3 0-.3-.1-.6-.6-1.2-1.2-1.8-1.7-.1-.1-.1-.2 0-.3.5-.4.9-.9 1.3-1.3.6-.6 1.2-.6 1.8 0l7.6 7.6c.6.6.6 1.2 0 1.8L17 24.2c-.3.3-.6.7-1.1.8h-.2c-.2-.1-.5-.2-.7-.4-.6-.6-1.3-1.2-1.9-1.9l-5.5-5.5c-.1-.3-.5-.6-.6-1z"/></svg>',
+  lua: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M14.7 26C9.9 26 6 22.1 6 17.3c0-4.8 3.9-8.8 8.9-8.7 4.7.1 8.5 3.9 8.5 8.7 0 4.8-3.9 8.7-8.7 8.7zm3.6-14.9c-1.4 0-2.6 1.2-2.6 2.6 0 1.4 1.1 2.6 2.6 2.6 1.4 0 2.6-1.1 2.6-2.6 0-1.4-1.1-2.6-2.6-2.6zm5.1 0c-1.4 0-2.6-1.1-2.5-2.6C20.9 7.1 22 6 23.5 6 24.9 6 26 7.2 26 8.6c0 1.4-1.2 2.5-2.6 2.5z"/></svg>',
+  vue: '<svg viewBox="0 0 1200 1000"><path fill="currentColor" d="M600 495.9l159.1-275.4h-84.4L600 349.7l-74.6-129.2h-84.5z"/><path fill="currentColor" d="M793.7 220.5L600 555.9 406.3 220.5H277l323 559 323-559z"/></svg>',
+  sass: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M18 17.3c-1.1.7-2.4 1.5-3.5 2.2.4.9.4 1.8.1 2.7-.5 1.6-1.7 2.5-3.2 2.7-.4.1-.8 0-1.1-.1-.4-.1-.6-.4-.7-.7-.4-.9-.3-1.7.3-2.4.4-.4.8-.9 1.3-1.2.5-.4 1.2-.7 1.8-1.1.1-.1.2-.1.4-.2-.3-.2-.4-.4-.6-.4-.8-.5-1.6-1.1-2.3-1.8-.4-.4-.8-.8-1.1-1.3-.9-.7-1-1.7-.5-2.6.4-1 1.1-1.8 1.8-2.5 1.6-1.4 3.4-2.4 5.4-3.1 1.4-.5 2.8-.7 4.2-.5.4.2 1 .3 1.4.5 1.5.6 2.1 1.8 1.6 3.4-.4 1.3-1.2 2.4-2.4 3.1-1.6 1-3.2 1.4-5.1 1.1-.6-.1-1.1-.4-1.6-.9-.1-.2-.2-.4-.3-.5 0 0 0-.1.1-.2 0 0 .1 0 .2.1.8.8 1.7.9 2.6.7 1.7-.3 3.2-.9 4.3-2.2.4-.5.8-1.1 1-1.8.2-.8-.2-1.4-.9-1.8-.8-.4-1.6-.4-2.4-.3-2 .3-3.8 1.1-5.4 2.1-.9.5-1.7 1.1-2.3 1.9-.3.4-.5.8-.7 1.2-.3.8-.2 1.6.4 2.2.4.4.8.8 1.2 1.1.6.5 1.3 1.1 1.9 1.6.1 0 .2.1.3 0 .3-.2.5-.3.8-.4.9-.5 1.8-.9 2.8-1.1 0 .4.1.4.2.5 0-.1 0-.1 0 0zm-4.3 2.5c-.9.5-1.6 1-2.3 1.7-.4.4-.6.8-.7 1.3-.1.6.3.9.9.8.8-.2 1.4-.7 1.8-1.3.5-.8.5-1.5.3-2.5z"/></svg>',
+  less: '<svg viewBox="0 0 32 32"><path fill="currentColor" d="M7.5 15.1c1.5 0 1.7-.8 1.7-1.5 0-.6-.1-1.1-.1-1.7S9 10.7 9 10.2c0-2.1 1.3-3 3.4-3h.8v1.9h-.4c-1 0-1.3.6-1.3 1.6 0 .4.1.8.1 1.3 0 .4.1.9.1 1.5 0 1.7-.7 2.3-1.9 2.6 1.2.3 1.9.9 1.9 2.6 0 .6-.1 1.1-.1 1.5 0 .4-.1.9-.1 1.2 0 1 .3 1.6 1.3 1.6h.4v1.9h-.8c-2 0-3.3-.8-3.3-3 0-.6 0-1.1.1-1.7.1-.6.1-1.2.1-1.7 0-.6-.2-1.5-1.7-1.5l-.1-1.9zm17 1.7c-1.5 0-1.7.9-1.7 1.5s.1 1.1.1 1.7c.1.6.1 1.2.1 1.7 0 2.2-1.4 3-3.4 3h-.8V23h.4c1 0 1.3-.6 1.3-1.6 0-.4 0-.8-.1-1.2 0-.5-.1-1-.1-1.5 0-1.7.7-2.3 1.9-2.6-1.2-.3-1.9-.9-1.9-2.6 0-.6.1-1.1.1-1.5.1-.5.1-.9.1-1.3 0-1-.4-1.5-1.3-1.6h-.4V7.2h.8c2.1 0 3.4.9 3.4 3 0 .6-.1 1.1-.1 1.7-.1.6-.1 1.2-.1 1.7 0 .7.2 1.5 1.7 1.5v1.7z"/></svg>',
 };
 
 /** Map exact filename to icon key. */

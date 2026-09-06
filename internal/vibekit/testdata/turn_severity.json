@@ -1,0 +1,79 @@
+{
+  "_comment": [
+    "The turn-SEVERITY rule, as a table both languages must satisfy.",
+    "",
+    "A severity is HOW BADLY a turn ended, derived from its outcome and from nothing",
+    "else. It exists because five surfaces each carried their own partial answer to",
+    "that one question and disagreed: the transcript divider, the collapsed face and",
+    "the footer glyph all read `interrupted` as a failure, while the tab dot and the",
+    "favicon cue read it as nothing at all — so a network error that stopped a turn",
+    "showed an inline error message beside a hollow 'nothing is happening here' ring.",
+    "",
+    "The rule is implemented twice for TurnOutcome's own reason (internal/vibekit's",
+    "SeverityOf for the server's surfaces, static-src/turn-severity.ts for the",
+    "client's five), so this file is the contract between them. It is read by Go's",
+    "TestTurnSeverityContract (internal/vibekit/turns_test.go) and by",
+    "static-src/turn-severity.node.test.ts. Change the rule in one language and the",
+    "other language's test fails.",
+    "",
+    "It lives beside SeverityOf rather than beside turn_outcomes.json, which pins a",
+    "rule internal/chat implements: a fixture belongs with the function it pins, so",
+    "neither test has to reach into another package's testdata.",
+    "",
+    "`default_reason` is in the same table rather than a second one because it is",
+    "the same kind of fact and drifts the same way: the client needs it as the",
+    "fallback for every turn persisted before turn_failure_reason existed, and two",
+    "hand-written copies of one sentence is exactly what a shared fixture prevents.",
+    "It is keyed per OUTCOME rather than per severity, because a reader wants the",
+    "distinction the severity throws away — a refusal and a dropped connection are",
+    "both broken and want different words. Empty means there is nothing to say.",
+    "",
+    "COVERAGE IS ASSERTED IN BOTH DIRECTIONS: every row must match, and the rows",
+    "must cover every TurnOutcome constant. An eighth outcome therefore fails this",
+    "test rather than sliding through to a surface with no case for it."
+  ],
+  "cases": [
+    {
+      "outcome": "running",
+      "severity": "running",
+      "default_reason": "",
+      "_why": "In flight. No settled mark on any surface, and nothing to explain."
+    },
+    {
+      "outcome": "completed",
+      "severity": "clean",
+      "default_reason": "",
+      "_why": "The absence of a mark IS the clean case; a mark on every row says nothing."
+    },
+    {
+      "outcome": "cancelled",
+      "severity": "stopped",
+      "default_reason": "The turn was cancelled.",
+      "_why": "The user asked for it, so it must not read alarming — and it produced no answer, so it must not read clean either."
+    },
+    {
+      "outcome": "interrupted",
+      "severity": "broken",
+      "default_reason": "The turn was interrupted before the agent finished.",
+      "_why": "A fault nobody chose. THIS ROW is the fix for the hollow tab dot: four surfaces already called it a failure and the dot's latch was the one that did not."
+    },
+    {
+      "outcome": "failed",
+      "severity": "broken",
+      "default_reason": "The agent reported an error and the turn stopped.",
+      "_why": "The wire said error."
+    },
+    {
+      "outcome": "refused",
+      "severity": "broken",
+      "default_reason": "The model declined to continue.",
+      "_why": "Nothing malfunctioned, but the turn produced no answer and the remedy is a different prompt or model — which is a thing to act on, so it is broken rather than stopped."
+    },
+    {
+      "outcome": "unknown",
+      "severity": "stopped",
+      "default_reason": "The turn ended for a reason vibekit could not read.",
+      "_why": "ConcludeStopReason's ruling holds: an unmeasured stop reason says nothing about whether the work succeeded, so grading it broken would report a working turn as failed. Equally not clean — a status mark may fall back to ambiguous, never to reassuring."
+    }
+  ]
+}

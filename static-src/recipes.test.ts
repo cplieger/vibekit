@@ -88,10 +88,10 @@ vi.mock("./actions/schedules.js", () => ({
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { openRunView } from "./run-view.js";
 import { launchRun, cancelRun } from "./actions/runs.js";
-import type { RecipesResponse, WorkflowRunRow, ResumableSessionRow } from "./types.js";
+import type { RecipesResponse, WorkflowRun, ResumableSession } from "./types.js";
 
 let recipesReply: RecipesResponse = { recipes: [] };
-let runsReply: { sessions: ResumableSessionRow[]; runs: WorkflowRunRow[] } = {
+let runsReply: { sessions: ResumableSession[]; runs: WorkflowRun[] } = {
   sessions: [],
   runs: [],
 };
@@ -101,7 +101,7 @@ function recipe(name: string, inputs?: Record<string, string>): RecipesResponse[
   return inputs === undefined ? base : { ...base, inputs };
 }
 
-function run(name: string, id: string, status: string): WorkflowRunRow {
+function run(name: string, id: string, status: string): WorkflowRun {
   return { workflow_id: id, name, status, updated_at: 0 };
 }
 

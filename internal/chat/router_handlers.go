@@ -17,8 +17,7 @@ import (
 )
 
 // RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id}
-// (one chat with paginated messages). Delegates to Router for structural
-// separation of HTTP concerns.
+// (one chat with paginated messages).
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 	rt := NewRouter(s)
 	rt.Register(mux)
@@ -49,8 +48,7 @@ func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 	rt.serveChatMessages(w, r, rest)
 }
 
-// routeChatSubResource dispatches /api/chats/{id}/<sub> to the handler for
-// the addressed sub-resource.
+// routeChatSubResource dispatches /api/chats/{id}/<sub> to its handler.
 func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, cid vibekit.ChatID, sub string) {
 	switch sub {
 	case "export":
@@ -64,8 +62,7 @@ func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, c
 	}
 }
 
-// serveChatMessages serves the paginated single-chat GET for a bare
-// /api/chats/{id} request.
+// serveChatMessages serves the paginated single-chat GET for /api/chats/{id}.
 func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -90,29 +87,27 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		end = indexOfMessage(msgs, beforeID)
 	}
 	start := max(end-limit, 0)
-	// NOT slices.Clone: cloning a sub-slice of a NIL messages array yields
-	// nil and marshals as `null`, where make+copy yields a non-nil empty
-	// slice and marshals as `[]`. The wire decoder rejects `null` for an
-	// array.
+	// NOT slices.Clone: a sub-slice of a nil array clones to nil and marshals as
+	// `null`, which the wire decoder rejects for an array. make+copy yields `[]`.
 	window := make([]vibekit.Message, end-start)
 	copy(window, msgs[start:end])
 
-	// `draft` rides here as its own field, keeping the composer autosave
-	// off the SSE fan-out and off the list response.
+	// `turn_open` ships with the transcript because the in-flight reply has no
+	// carrier in `messages` until turn end, so a client deriving an outcome from
+	// that silence would answer `unknown` mid-turn.
 	webhttp.WriteJSON(w, map[string]any{
-		"chat":     c.Header(),
-		"messages": window,
-		"has_more": start > 0,
-		"draft":    c.Draft,
+		"chat":      c.Header(),
+		"messages":  window,
+		"has_more":  start > 0,
+		"draft":     c.Draft,
+		"turn_open": rt.store.TurnOpen(vibekit.ChatID(id)),
 	})
 }
 
 // handleTurns serves GET /api/chats/{id}/turns: the chat's session-wide turn
 // index (number, outcome, start time, first line) with no message bodies.
-//
-// The timeline rail spans the whole session while the client's transcript
-// store holds a paginated window, so a rail assembled from resident turns
-// would grow markers as the reader scrolled up.
+// Session-wide because the client's transcript store is a paginated window, so
+// a rail assembled from resident turns would grow markers on scroll-up.
 func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -127,9 +122,10 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID vib
 		httpreply.NotFound(w, errMsgChatNotFound)
 		return
 	}
-	// thinking=false: the store is the persisted record and knows nothing
-	// about a bridge being mid-turn.
-	webhttp.WriteJSON(w, map[string]any{"turns": projectTurnSummaries(c.Messages, false)})
+	// Liveness is injected: the persisted record cannot see a bridge mid-turn.
+	webhttp.WriteJSON(w, map[string]any{
+		"turns": projectTurnSummaries(c.Messages, rt.store.TurnOpen(chatID)),
+	})
 }
 
 // handleSearch serves GET /api/chats/{id}/search?q=: a lexical scan of the
@@ -149,17 +145,15 @@ func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID vi
 		httpreply.NotFound(w, errMsgChatNotFound)
 		return
 	}
-	// `case=1` is the client's match-case toggle; both halves of the
-	// in-chat search must agree on it, so it rides the request.
+	// Both halves of the in-chat search must agree on the match-case toggle.
 	caseSensitive := r.URL.Query().Get("case") == "1"
 	webhttp.WriteJSON(w, map[string]any{
 		"hits": Search(c.Messages, r.URL.Query().Get("q"), caseSensitive),
 	})
 }
 
-// parseLimitParam returns the validated ?limit= page size, defaulting to 50
-// and honouring values in the inclusive 1..500 range; anything else (absent,
-// non-numeric, <=0, >500) falls back to the default.
+// parseLimitParam returns the ?limit= page size, honouring 1..500 inclusive;
+// anything else (absent, non-numeric, out of range) falls back to 50.
 func parseLimitParam(r *http.Request) int {
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
@@ -171,16 +165,8 @@ func parseLimitParam(r *http.Request) int {
 }
 
 // indexOfMessage returns the position of the message with the given id, the
-// exclusive upper bound of the page before it. Returns len(msgs) for an
-// unknown id, so an unknown cursor pages the newest window rather than an
-// empty one.
-//
-// This replaced a `?before=<ts>` cursor resolved with sort.Search over
-// Message.Ts. Message order is ARRAY POSITION, not sorted, and
-// translate.newEventMessage stamps Ts outside the per-chat lock
-// AppendMessage takes — so two writers can stamp 101 and 102 and append 102
-// first, making sort.Search return an arbitrary index. An id is exact and
-// needs no ordering invariant.
+// exclusive upper bound of the page before it. Returns len(msgs) for an unknown
+// id, so an unknown cursor pages the newest window rather than an empty one.
 func indexOfMessage(msgs []vibekit.Message, id string) int {
 	for i := range slices.Backward(msgs) {
 		if msgs[i].ID == id {
@@ -198,10 +184,8 @@ const (
 	exportFormatJSON
 )
 
-// handleExport serves GET /api/chats/{id}/export?format=md|json, rendering
-// the persisted chat to a downloadable Markdown transcript (the default) or
-// the raw chat JSON. The chat store is the source of truth, so no live ACP
-// bridge is involved.
+// handleExport serves GET /api/chats/{id}/export?format=md|json as a
+// downloadable Markdown transcript (the default) or the raw chat JSON.
 func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -235,10 +219,8 @@ func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID vi
 	}
 }
 
-// parseExportFormat maps the ?format= value to an exportFormat. Absent or
-// md/markdown selects Markdown (the default); json selects raw JSON;
-// anything else is rejected so a typo fails loudly rather than silently
-// returning the wrong format.
+// parseExportFormat maps ?format= to an exportFormat: absent/md/markdown to
+// Markdown, json to raw JSON, anything else rejected so a typo fails loudly.
 func parseExportFormat(v string) (exportFormat, bool) {
 	switch strings.ToLower(v) {
 	case "", "md", "markdown":
@@ -250,23 +232,20 @@ func parseExportFormat(v string) (exportFormat, bool) {
 	}
 }
 
-// loadForExport returns the chat for chatID. One lookup: chats never move, so
-// there is no second location to fall back to.
+// loadForExport returns the chat for chatID.
 func (rt *Router) loadForExport(ctx context.Context, chatID vibekit.ChatID) (*vibekit.Chat, bool) {
 	return rt.store.Get(ctx, chatID)
 }
 
-// dispositionAttachment builds a safe Content-Disposition header value
-// (attachment) for filename via mime.FormatMediaType, which quotes/escapes
-// any characters the sanitiser left in.
+// dispositionAttachment builds an attachment Content-Disposition value via
+// mime.FormatMediaType, which escapes anything the sanitiser left in.
 func dispositionAttachment(filename string) string {
 	return mime.FormatMediaType("attachment", map[string]string{"filename": filename})
 }
 
-// exportFilename builds a filesystem-safe download name of the form
-// "<name>-<id><ext>", falling back to "<id><ext>" when the name is empty and
-// "chat<ext>" when both are empty. The name stem is rune-capped so a very
-// long chat title can't produce an unwieldy filename.
+// exportFilename builds a filesystem-safe "<name>-<id><ext>", falling back to
+// "<id><ext>" when the name is empty and "chat<ext>" when both are. The stem is
+// rune-capped, so a very long chat title cannot produce an unwieldy filename.
 func exportFilename(name, id, ext string) string {
 	const maxStem = 80
 	stem := sanitizeFilenamePart(name)
@@ -286,9 +265,8 @@ func exportFilename(name, id, ext string) string {
 	}
 }
 
-// sanitizeFilenamePart replaces control characters and characters unsafe in
-// a filename (and in a Content-Disposition filename param) with '_', then
-// trims surrounding whitespace.
+// sanitizeFilenamePart replaces control and filename-unsafe characters with
+// '_', then trims surrounding whitespace.
 func sanitizeFilenamePart(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))

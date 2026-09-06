@@ -138,15 +138,69 @@ interface ApiResult<T> {
   body?: unknown;
 }
 
+/** The ONE mapping from @cplieger/fetch's envelope onto `ApiResult`, for the three
+ *  OrError helpers below.
+ *
+ *  It exists because the three had written the same construction three times and
+ *  differed by one expression each, which is duplicated KNOWLEDGE in the module
+ *  that is this app's single source of truth for server calls — the worst place in
+ *  the client to keep three copies of one rule. What each helper still owns is what
+ *  genuinely differs: the verb, whether a decoder is attached, and whether the
+ *  failure is logged.
+ *
+ *  Two rules the shape encodes. `data` is collapsed to null on the failure side
+ *  rather than passed through, because a caller that has been handed a status has
+ *  no business reading a body the transport rejected. And `data ?? null` on the
+ *  success side is what turns a 204 or an empty body (`undefined`) into a value a
+ *  caller can test, while a JSON `null` / `0` / `false` / `""` body passes through
+ *  as the real data it is.
+ *
+ *  Private, and it stays private: the public surface is the three helpers. */
+function toApiResult<T>(r: FetchResult<T>): ApiResult<T> {
+  if (r.ok) {
+    return { ok: true, status: r.status, data: r.data ?? null, error: "" };
+  }
+  return { ok: false, status: r.status, data: null, error: r.error, body: r.body };
+}
+
 /** GET `path`, validate the response with `decoder`, return the typed value or
  *  null on non-2xx, network error, or decoder failure. Failures are logged
- *  centrally. */
+ *  centrally.
+ *
+ *  `timeoutMs` overrides the 30s library default, because a server budget LONGER
+ *  than the client's is unreachable. A caller's `AbortSignal.timeout()` cannot
+ *  substitute: signals compose with `AbortSignal.any`, so the shorter one wins. */
 export async function apiGetTyped<T>(
   path: string,
   decoder: Decoder<T>,
   signal?: AbortSignal,
+  timeoutMs?: number,
 ): Promise<T | null> {
-  return collapse(await fx.apiGetRaw<T>(path, reqOpts({ decoder }, signal)), "GET", path);
+  const base: RequestOptions<T> = timeoutMs === undefined ? { decoder } : { decoder, timeoutMs };
+  return collapse(await fx.apiGetRaw<T>(path, reqOpts(base, signal)), "GET", path);
+}
+
+/** `apiGetTyped`'s OrError twin: GET `path`, validate the 2xx body with
+ *  `decoder`, and report WHICH failure happened instead of collapsing every one
+ *  of them to null.
+ *
+ *  It exists because a caller sometimes has to tell an ANSWER from the absence of
+ *  one. The live consumer asks the server whether a chat still exists: a 404 is
+ *  authoritative and licenses a terminal claim, while a 5xx, a dead network or an
+ *  aborted request licenses nothing — and `apiGetTyped` hands back `null` for all
+ *  four. Deriving a verdict from that null is the defect, not the null.
+ *
+ *  A rejected decoder lands on the FAILURE side carrying the real 2xx status
+ *  (@cplieger/fetch's `"decode"` code), so a caller keying on 404 can never
+ *  mistake an undecodable 200 for one. Logs nothing, for `apiGetOrError`'s reason:
+ *  a status this helper exists to report is an expected state, not a fault worth a
+ *  console audit line. */
+export async function apiGetTypedOrError<T>(
+  path: string,
+  decoder: Decoder<T>,
+  signal?: AbortSignal,
+): Promise<ApiResult<T>> {
+  return toApiResult(await fx.apiGetRaw<T>(path, reqOpts({ decoder }, signal)));
 }
 
 /** POST variant of apiGetTyped: validates the 2xx response body via the
@@ -163,18 +217,26 @@ export async function apiPostTyped<T>(
 /** PUT variant that surfaces error details. Use when the UI must show the
  *  server's validation message; otherwise prefer apiAction. On a non-2xx the
  *  `error` field carries the server's JSON "error" message (or "HTTP <status>"
- *  when the body didn't include one), matching the old hand-rolled behavior. */
+ *  when the body didn't include one), matching the old hand-rolled behavior.
+ *
+ *  It is the one of the three that LOGS, and that difference is deliberate: a PUT
+ *  is a mutation, so a failure is a fault worth a console audit line, where the
+ *  other two exist precisely because their non-2xx statuses are expected states.
+ *
+ *  Sharing `toApiResult` also gives it `body` on the failure side, which it left
+ *  undefined before. Additive and at `error`'s own trust level (both are
+ *  server-controlled), and no caller reads it today — the alternative was keeping a
+ *  fourth hand-written copy of the mapping to withhold one documented field. */
 export async function apiPutOrError<T>(
   path: string,
   body: unknown,
   signal?: AbortSignal,
 ): Promise<ApiResult<T>> {
   const r = await fx.apiPutRaw<T>(path, body, reqOpts({}, signal));
-  if (r.ok) {
-    return { ok: true, status: r.status, data: r.data ?? null, error: "" };
+  if (!r.ok) {
+    logApiError(r, "PUT", path);
   }
-  logApiError(r, "PUT", path);
-  return { ok: false, status: r.status, data: null, error: r.error };
+  return toApiResult(r);
 }
 
 /** GET variant that surfaces error details instead of collapsing every
@@ -183,13 +245,9 @@ export async function apiPutOrError<T>(
  *  runtime banner needs the `reason` field). On failure, `body` carries
  *  the parsed error JSON when the server sent one. */
 export async function apiGetOrError<T>(path: string, signal?: AbortSignal): Promise<ApiResult<T>> {
-  const r = await fx.apiGetRaw<T>(path, reqOpts({}, signal));
-  if (r.ok) {
-    return { ok: true, status: r.status, data: r.data ?? null, error: "" };
-  }
   // No logApiError: the canonical consumer polls health where a 503 is
   // an EXPECTED state, not a fault worth a console audit line.
-  return { ok: false, status: r.status, data: null, error: r.error, body: r.body };
+  return toApiResult(await fx.apiGetRaw<T>(path, reqOpts({}, signal)));
 }
 
 // --- CancellableSlot: reusable abort-controller lifecycle helper ---

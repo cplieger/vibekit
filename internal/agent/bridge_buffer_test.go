@@ -8,9 +8,6 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// Tests for bridge_buffer.go: buffer.Buffer lifecycle + emitTurnEndedWithStats
-// persistence behaviour. Shared fixtures live in shared_test.go.
-
 func TestTrackFileChanges_Table(t *testing.T) {
 	tests := []struct {
 		wantFiles map[string]*vibekit.FileChange
@@ -106,7 +103,6 @@ func TestEmitTurnEnded_PersistsAssistantMessage(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	// Start a turn: one chunk then end.
 	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("finished"))
 	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
@@ -118,7 +114,6 @@ func TestEmitTurnEnded_PersistsAssistantMessage(t *testing.T) {
 	if c.Messages[0].Role != vibekit.RoleAssistant || c.Messages[0].Content != "finished" {
 		t.Errorf("message mismatch: %+v", c.Messages[0])
 	}
-	// Buffer should be cleared.
 	if h.liveTurnBuffer("c1") != nil {
 		t.Errorf("buffer not cleared after turn_ended")
 	}
@@ -137,7 +132,12 @@ func TestEmitTurnEnded_CancelledAppendsEventMessage(t *testing.T) {
 	}
 }
 
-func TestEmitTurnEnded_NoBufferNoMessagePersisted(t *testing.T) {
+// A turn that streamed nothing persists no ASSISTANT message and exactly one row, the
+// outcome marker. The marker is written even for the derivation's default, because a reader
+// can only guess that default safely while the writer omits it — otherwise a clean empty
+// turn and one a restart killed are the same bytes on disk. This is the LOCAL settle door;
+// turn_outcome_test.go pins the same conclusion through the wire bracket.
+func TestEmitTurnEnded_NoBufferPersistsOnlyTheOutcomeMarker(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -145,8 +145,15 @@ func TestEmitTurnEnded_NoBufferNoMessagePersisted(t *testing.T) {
 	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
 
 	c, _ := cs.Get(t.Context(), "c1")
-	if len(c.Messages) != 0 {
-		t.Errorf("messages = %+v (expected none)", c.Messages)
+	if len(c.Messages) != 1 {
+		t.Fatalf("messages = %+v, want exactly the outcome marker", c.Messages)
+	}
+	m := &c.Messages[0]
+	if m.Role != vibekit.RoleEvent || m.EventKind != vibekit.EventTurnOutcome {
+		t.Errorf("persisted %+v, want an event/turn_outcome marker and no assistant message", m)
+	}
+	if m.TurnOutcome != vibekit.TurnOutcomeCompleted {
+		t.Errorf("marker TurnOutcome = %q, want completed", m.TurnOutcome)
 	}
 }
 
@@ -154,18 +161,14 @@ func TestEmitTurnEnded_CancelledMarksToolsFailed(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	// Simulate a tool call in progress.
 	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
-	// Cancel the turn.
 	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)})
 
 	c, _ := cs.Get(t.Context(), "c1")
-	// Should have the assistant message + the cancelled event.
 	if len(c.Messages) != 2 {
 		t.Fatalf("expected 2 messages, got %d: %+v", len(c.Messages), c.Messages)
 	}
-	// The assistant message should have the tool call marked as failed.
 	assistantMsg := c.Messages[0]
 	if len(assistantMsg.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call, got %d", len(assistantMsg.ToolCalls))
@@ -179,12 +182,10 @@ func TestToolStartTimeTracking(t *testing.T) {
 	buf := &buffer.Buffer{ToolStartTimes: make(map[string]int64)}
 	buf.RecordToolStart("tc1")
 
-	// Small sleep to ensure non-zero duration.
 	dur := buf.ComputeDuration("tc1")
 	if dur < 0 {
 		t.Errorf("duration = %d, want >= 0", dur)
 	}
-	// Second call should return 0 (start time consumed).
 	dur2 := buf.ComputeDuration("tc1")
 	if dur2 != 0 {
 		t.Errorf("second duration = %d, want 0", dur2)
@@ -218,7 +219,6 @@ func TestThoughtChunkPopulatesReasoningField(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	// Send a thought chunk.
 	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	raw := mustJSON(t, map[string]any{
 		"sessionUpdate": "agent_thought_chunk",
@@ -229,7 +229,6 @@ func TestThoughtChunkPopulatesReasoningField(t *testing.T) {
 		Params: mustJSON(t, map[string]any{"update": raw}),
 	})
 
-	// End the turn.
 	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
 
 	c, _ := cs.Get(t.Context(), "c1")
@@ -248,11 +247,9 @@ func TestToolCallDurationMs(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	// Send a tool call.
 	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
 
-	// Send a tool call update with completed status.
 	raw := mustJSON(t, map[string]any{
 		"sessionUpdate": "tool_call_update",
 		"toolCallId":    "tc1",
@@ -264,7 +261,6 @@ func TestToolCallDurationMs(t *testing.T) {
 		Params: mustJSON(t, map[string]any{"update": raw}),
 	})
 
-	// End the turn and check the persisted tool call has a duration.
 	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
 
 	c, _ := cs.Get(t.Context(), "c1")
@@ -287,7 +283,6 @@ func TestEmitTurnEnded_DifferentChatID(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c2", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
 
-	// Start a turn on a different chat ID to exercise the chatID parameter.
 	epoch := h.StartTurn(t.Context(), "c2", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c2", newChunkMsg("hello from c2"))
 	h.SettleTurnOnResponse(t.Context(), "c2", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})

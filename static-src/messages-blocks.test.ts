@@ -2,11 +2,14 @@
 // Two grouping rules of the block dispatcher, which are deliberately OPPOSITE
 // and were documented as the same thing.
 //
-// A tool GROUP is contiguous: `toolGroups` is keyed by container and any text
-// block calls `closeToolGroup`, so a run of tool calls broken by prose becomes
-// two groups. A SUBAGENT card is not: `st.subagents` is keyed by subtask id and
-// nothing closes it, so a delegate's blocks join the card it opened however much
-// the parent agent emitted in between.
+// A tool GROUP is contiguous, and it is contiguous because it REGISTERS in the
+// per-container auto-collapse registry declaring `continues: ["tool_use"]` — so a
+// further tool call extends it and every other arrival supersedes it, which is
+// what turns a run broken by prose into two groups. A SUBAGENT card registers
+// NOTHING: `st.subagents` is keyed by subtask id and no arrival closes it, so a
+// delegate's blocks join the card it opened however much the parent agent emitted
+// in between. One registry, two opposite behaviours, both declared rather than
+// implied by which append path a mounter happens to use.
 //
 // Four comments and three steering passages all claimed the subagent case was
 // contiguous too. It never was, and nothing caught it, which is why these are
@@ -99,6 +102,9 @@ function shape(wrap: HTMLElement): string[] {
     if (e.classList.contains("subagent-block")) {
       return `card(${String((e as HTMLElement).dataset["subtask"])})`;
     }
+    if (e.classList.contains("run-card")) {
+      return `run(${String((e as HTMLElement).dataset["run"])})`;
+    }
     if (e.classList.contains("tool-group")) {
       return `group(${String(e.querySelectorAll(".tool-call").length)})`;
     }
@@ -149,21 +155,24 @@ describe("subagent grouping is keyed by subtask id, NOT by contiguity", () => {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// A WORKFLOW RUN is the third destination the dispatcher resolves, and the only
-// one that is TWO containers deep: a step's subtask id names its run and its node
-// path, so its blocks land in a step row inside the run's card.
+// A WORKFLOW RUN is the launch tool call's card, and a WORKFLOW STEP is the one
+// block kind with NO destination at all: a block whose `agent_subtask_id` parses as
+// `wf:<workflowId>:<nodePath>` is DROPPED.
 //
-// The property that matters is ORDER INDEPENDENCE. The launch tool call and the
-// first step's frame race on the wire, and after a refresh the launch is persisted
-// while the step blocks are not — so whichever arrives first must build the card
-// and the other must find it. Getting that wrong produces two cards for one run,
-// or a step's transcript rendered as a sibling of the run that produced it.
+// The DROP is the property to pin, and it is explicit rather than a removed route
+// for one reason: a block with no destination falls through to `blocksEl` and
+// renders as loose top-level content in the launching turn, which is worse than
+// either hosting it or dropping it. So every case here asserts the step's text is
+// NOWHERE in the wrap, not merely that it is not in a row.
+//
+// The card itself is still keyed on the launch's `workflow_id`, and both arrival
+// orders must still build exactly one card: the launch is persisted in its turn
+// while a step's frames are not, so a refresh delivers them in either order.
 // ---------------------------------------------------------------------------
 
-describe("a workflow run's steps render inside the launch that started them", () => {
-  // The card registry is TRANSCRIPT-scoped now (one box per run per chat), and
-  // every render in this file shares one chat id — so without a reset each case
-  // would route its blocks into the card a previous case's render still hosts.
+describe("a workflow run's card is its launch, and its steps are dropped", () => {
+  // `st.runs` is per RENDER and every case here shares one chat id, so a reset keeps
+  // each case's cards its own.
   beforeEach(() => {
     resetBlockRenders();
   });
@@ -193,28 +202,34 @@ describe("a workflow run's steps render inside the launch that started them", ()
     expect(wrap.querySelectorAll(".assistant-blocks > .tool-group")).toHaveLength(0);
   });
 
-  it("puts a step's blocks in a row inside that card", () => {
+  it("renders a step's text NOWHERE, not even as a top-level block", () => {
+    // The strong form of the drop. Removing the routing without dropping would put
+    // this prose at the top level of the launching turn, which is why the assertion
+    // is on the whole wrap rather than on the absence of a row.
     const wrap = render(
       [toolUse("t1"), text("checking the build", "wf:wf_1:wf_1/build")],
       [launch("t1", "wf_1")],
     );
     expect(cards(wrap)).toHaveLength(1);
-    expect(stepNodes(wrap)).toEqual(["wf_1/build"]);
-    const body = wrap.querySelector(".run-card .run-step .run-step-body");
-    expect(body?.textContent).toContain("checking the build");
+    expect(cards(wrap)[0]?.dataset["run"]).toBe("wf_1");
+    expect(wrap.textContent).not.toContain("checking the build");
+    expect(shape(wrap)).toEqual(["run(wf_1)"]);
   });
 
-  it("is order-independent: a step arriving BEFORE its launch builds the same one card", () => {
+  it("is order-independent: a step arriving BEFORE its launch still builds one card", () => {
     const stepFirst = render(
       [text("checking the build", "wf:wf_1:wf_1/build"), toolUse("t1")],
       [launch("t1", "wf_1")],
     );
     expect(cards(stepFirst)).toHaveLength(1);
-    expect(stepNodes(stepFirst)).toEqual(["wf_1/build"]);
     expect(cards(stepFirst)[0]?.dataset["run"]).toBe("wf_1");
+    expect(stepFirst.textContent).not.toContain("checking the build");
   });
 
-  it("gives each step of a run its own row, and two runs their own cards", () => {
+  it("gives two runs their own cards, and neither any rows", () => {
+    // Rows come from the run's STATE now, and this suite mocks no network, so no
+    // state resolves and no row is ever painted here. `run-card.test.ts` owns the
+    // rows; what this owns is that a step block contributes nothing.
     const wrap = render(
       [
         toolUse("t1"),
@@ -226,27 +241,17 @@ describe("a workflow run's steps render inside the launch that started them", ()
       [launch("t1", "wf_1"), launch("t2", "wf_2")],
     );
     expect(cards(wrap).map((c) => c.dataset["run"])).toEqual(["wf_1", "wf_2"]);
-    expect(stepNodes(wrap)).toEqual(["wf_1/lint", "wf_1/build", "wf_2/deploy"]);
+    expect(stepNodes(wrap)).toEqual([]);
+    expect(shape(wrap)).toEqual(["run(wf_1)", "run(wf_2)"]);
   });
 
-  it("keeps two iterations of one loop body in two rows", () => {
-    // They share a nodeId, so the node PATH is what separates them — the same
-    // reason the server keys the subtask id on the path.
-    const wrap = render(
-      [
-        toolUse("t1"),
-        text("pass one", "wf:wf_1:wf/loop/iter-0/work"),
-        text("pass two", "wf:wf_1:wf/loop/iter-1/work"),
-      ],
-      [launch("t1", "wf_1")],
-    );
-    expect(stepNodes(wrap)).toEqual(["wf/loop/iter-0/work", "wf/loop/iter-1/work"]);
-  });
-
-  it("names a step row after the last path segment, keeping the loop above it", () => {
+  it("builds no card at all for a step whose launch is not resident", () => {
+    // The card's ONLY creator is the launch tool call now, and that is a stated
+    // consequence rather than an oversight: a run whose launching turn has paged out
+    // has no card, and `run-bar.ts` plus the run's own sub-tab are its surfaces.
     const wrap = render([text("x", "wf:wf_1:wf/loop/iter-1/work")], []);
-    const name = wrap.querySelector(".run-card .run-step-name")?.textContent;
-    expect(name).toBe("work");
+    expect(cards(wrap)).toHaveLength(0);
+    expect(shape(wrap)).toEqual([]);
   });
 
   it("falls back to a delegate box for a malformed step id rather than losing the block", () => {
@@ -295,16 +300,19 @@ describe("a workflow run's steps render inside the launch that started them", ()
 });
 
 // ---------------------------------------------------------------------------
-// ONE RUN CARD PER TRANSCRIPT, not per message. The server folds a run's later
-// frames into a NEW assistant message per turn-segment, so the per-message key
-// this registry replaced rebuilt the card in every segment: the reported
-// symptom was the workflow box twice in the launching turn and twice more in
-// the next one — four identical boxes in two turns, all reading one store
-// cell. A later message's steps route into the card the first message built;
-// step rows are keyed by node path, so the routing lands in the right row.
+// ONE RUN CARD PER RUN, and it lives in the LAUNCHING message.
+//
+// This used to need a chat-level registry (`runCardHosts`): the server folds a
+// run's later frames into a new assistant message per turn-segment, so a later
+// message's step blocks had to find the card the first one built rather than build
+// a second — the reported symptom was four identical boxes across two turns, all
+// reading one store cell. With those blocks dropped, the launch TOOL CALL is the
+// only creator and a tool call belongs to exactly one message, so the dedupe is
+// unreachable and the registry is gone. These cases pin that: a step-bearing
+// message contributes NOTHING, whichever order the two arrive in.
 // ---------------------------------------------------------------------------
 
-describe("one run card per transcript, not per message", () => {
+describe("one run card per run, in the message that launched it", () => {
   beforeEach(() => {
     resetBlockRenders();
   });
@@ -334,78 +342,70 @@ describe("one run card per transcript, not per message", () => {
     return { wrap, id };
   }
 
-  it("routes a later message's step into the launching message's card", () => {
+  it("keeps the card in the launching message and gives a later step message none", () => {
     const a = renderMsg([toolUse("t1")], [launch("t1", "wf_seg")]);
     const b = renderMsg([text("second segment work", "wf:wf_seg:wf_seg/deploy")]);
 
     expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
     expect(b.wrap.querySelectorAll(".run-card")).toHaveLength(0);
-    const body = a.wrap.querySelector(
-      '.run-card .run-step[data-node="wf_seg/deploy"] .run-step-body',
-    );
-    expect(body?.textContent).toContain("second segment work");
+    // And the later segment's own turn stays empty rather than growing loose prose.
+    expect(b.wrap.textContent).not.toContain("second segment work");
   });
 
-  it("is order-independent across messages: the launch binds into a step-built card", () => {
+  it("is order-independent across messages: the step message contributes nothing", () => {
     const b = renderMsg([text("early frame", "wf:wf_race:wf_race/lint")]);
     const a = renderMsg([toolUse("t2")], [launch("t2", "wf_race")]);
 
-    expect(b.wrap.querySelectorAll(".run-card")).toHaveLength(1);
-    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(0);
+    expect(b.wrap.querySelectorAll(".run-card")).toHaveLength(0);
+    expect(b.wrap.textContent).not.toContain("early frame");
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
   });
 
-  it("scopes the card to the CHAT: another chat's render builds its own", () => {
+  it("scopes the card to its own RENDER: two launches of one run build two cards", () => {
+    // The chat-level dedupe is gone, so nothing folds a second LAUNCH of the same
+    // workflow id into the first message's card. Two launch calls are two runs to
+    // the reader whatever their ids say, and a launch belongs to one message.
     const a = renderMsg([toolUse("t3")], [launch("t3", "wf_x")]);
-    const other = renderMsg([text("elsewhere", "wf:wf_x:wf_x/step")], [], "c-other-chat");
+    const other = renderMsg([toolUse("t3b")], [launch("t3b", "wf_x")], "c-other-chat");
 
     expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
     expect(other.wrap.querySelectorAll(".run-card")).toHaveLength(1);
   });
 
-  it("a detached render neither adopts the transcript's card nor donates its own", () => {
-    // Adopting would MOVE the card's DOM node out of the transcript and into
-    // the page; donating would anchor the transcript's card in a render
-    // messages.ts has never heard of. Both directions, one isolation rule.
-    const detachedFirst = document.createElement("div");
+  it("a detached render builds its own card and never adopts the transcript's", () => {
+    // Adopting would MOVE the card's DOM node out of the transcript and into the
+    // page. Driven by LAUNCH calls, because a step block reaches neither surface.
+    const detached = document.createElement("div");
     buildDetachedBody(
-      detachedFirst,
+      detached,
       {
         id: "m-det",
         role: "assistant",
         content: "",
-        blocks: [text("page view", "wf:wf_det:wf_det/build")],
+        blocks: [toolUse("t4d")],
+        tool_calls: [launch("t4d", "wf_det")],
       } as unknown as Message,
       CHAT_ID,
       "sub-1",
       false,
     );
     const a = renderMsg([toolUse("t4")], [launch("t4", "wf_det")]);
-    const detachedSecond = document.createElement("div");
-    buildDetachedBody(
-      detachedSecond,
-      {
-        id: "m-det2",
-        role: "assistant",
-        content: "",
-        blocks: [text("page view again", "wf:wf_det:wf_det/build")],
-      } as unknown as Message,
-      CHAT_ID,
-      "sub-2",
-      false,
-    );
 
-    expect(detachedFirst.querySelectorAll(".run-card")).toHaveLength(1);
+    expect(detached.querySelectorAll(".run-card")).toHaveLength(1);
     expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
-    expect(detachedSecond.querySelectorAll(".run-card")).toHaveLength(1);
+    expect(a.wrap.querySelector(".run-card")).not.toBe(detached.querySelector(".run-card"));
   });
 
-  it("releases the host slot on dispose, so a later message rebuilds the card", () => {
+  it("keeps the card alive across a sibling render's dispose", () => {
+    // Nothing is shared between renders any more, so one message's unmount cannot
+    // reach another's card. The registry this replaced needed a release rule for
+    // exactly this, and getting it wrong took a live card away.
     const a = renderMsg([toolUse("t5")], [launch("t5", "wf_re")]);
+    const b = renderMsg([toolUse("t6")], [launch("t6", "wf_re2")]);
     expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
 
-    disposeAssistantBody(a.id);
-    const c = renderMsg([text("resumed frames", "wf:wf_re:wf_re/build")]);
-    expect(c.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+    disposeAssistantBody(b.id);
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
   });
 });
 
@@ -895,6 +895,25 @@ describe("a pipeline's stages render inside the orchestrate call that started th
     expect(moved?.querySelector(":scope > .subagent-body")?.textContent).toContain("early work");
   });
 
+  it("re-homes a stage whose pipeline became known after its box was placed", () => {
+    // A stage's text can reach the dispatcher before its invocation is in the store,
+    // so its box starts at the top level and `rehomeStages` has to move it.
+    const wrap = renderThenGrow(
+      { blocks: [toolUse("d-ooo"), text("planning", "u-ooo-a")], calls: [driver("d-ooo", 2)] },
+      {
+        blocks: [toolUse(stageID("d-ooo", "code"), "u-ooo-b")],
+        calls: [stage("d-ooo", "plan", "u-ooo-a"), stage("d-ooo", "code", "u-ooo-b")],
+      },
+    );
+    expect(shape(wrap)).toEqual(["pipeline(d-ooo)"]);
+    expect(nested(wrap)).toEqual(["u-ooo-a", "u-ooo-b"]);
+    // A RE-PARENT, not a rebuild: the stranded box's streamed text came with it.
+    const moved = wrap.querySelector(
+      '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-ooo-a"]',
+    );
+    expect(moved?.querySelector(":scope > .subagent-body")?.textContent).toContain("planning");
+  });
+
   it("still renders a box for a driver that settled having dispatched no stage", () => {
     // The one case where a promoted-count driver keeps its box: nothing stands in
     // for it, and a block that renders nothing is a lost block. Deferred to the
@@ -923,6 +942,133 @@ describe("tool grouping IS contiguous, which is the contrast", () => {
       [call("t1", "Run Command"), call("t2", "Run Command"), call("t3", "Run Command")],
     );
     expect(shape(wrap)).toEqual(["group(3)"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The auto-collapse REGISTRY, which is what makes the rule above total.
+//
+// A tool group declares `continues: ["tool_use"]`, so a further tool call joins
+// it and EVERY other destination in a container supersedes it. That used to be
+// seven hand-written `closeToolGroup` calls — all of them correct, and the eighth
+// destination added would have forgotten. The table below is one row per closer,
+// so a ninth destination has an obvious place to be added.
+// ---------------------------------------------------------------------------
+
+describe("the auto-collapse registry: which arrivals close a tool group", () => {
+  /** Member counts of the top-level groups, in order. One entry means the run
+   *  was unbroken; two means something closed the first group. */
+  function groups(wrap: HTMLElement): number[] {
+    return [...wrap.querySelectorAll(".assistant-blocks > .tool-group")].map(
+      (g) => g.querySelectorAll(".tool-call").length,
+    );
+  }
+
+  function thinking(t: string, subtask = ""): Record<string, unknown> {
+    return { type: "thinking", thinking: t, agent_subtask_id: subtask };
+  }
+
+  const todoCall = { id: "td", title: "todo_list", kind: "other", status: "completed" };
+
+  /** `[what arrives between two tool calls, the middle blocks, its tool calls, the
+   *  member counts of the resulting groups]`. The continuation row is the only one
+   *  expecting ONE group holding all three cards; every closer splits the run. */
+  const arrivals: [string, Record<string, unknown>[], ToolCall[], number[]][] = [
+    [
+      "a further tool call (the one TOLERATED continuation)",
+      [toolUse("t2")],
+      [call("t2", "Read")],
+      [3],
+    ],
+    ["a text block", [text("prose")], [], [1, 1]],
+    ["a thinking block", [thinking("weighing")], [], [1, 1]],
+    ["a todo checklist", [toolUse("td")], [todoCall as unknown as ToolCall], [1, 1]],
+    ["a delegate's box", [text("delegate prose", "sub-A")], [], [1, 1]],
+    // A genuine card ARRIVAL closes the group; a DROPPED step block appends nothing
+    // at all, so it must not. The two rows together are what say the supersede is
+    // driven by an append rather than by a block existing.
+    [
+      "a run card",
+      [toolUse("tw")],
+      [
+        {
+          id: "tw",
+          title: "Run Workflow",
+          kind: "other",
+          status: "completed",
+          workflow_id: "wf_8",
+        } as unknown as ToolCall,
+      ],
+      [1, 1],
+    ],
+    [
+      "a DROPPED workflow step (appends nothing)",
+      [text("step prose", "wf:wf_9:wf_9/build")],
+      [],
+      [2],
+    ],
+  ];
+
+  it.each(arrivals)("%s", (what, middle, extra, expected) => {
+    const wrap = render(
+      [toolUse("t1"), ...middle, toolUse("t9")],
+      [call("t1", "Read"), ...extra, call("t9", "Read")],
+    );
+    expect(
+      groups(wrap),
+      `${what} must ${expected.length === 1 ? "extend" : "close"} the group`,
+    ).toEqual(expected);
+  });
+
+  it("is keyed by CONTAINER: a parent-lane block does not close a DELEGATE's group", () => {
+    // The registry is per container, so the parent's prose supersedes the parent's
+    // own registrants and nothing inside the delegate's body. Without that keying a
+    // delegate's tool run would be split by every parent block that interleaved.
+    const wrap = render(
+      [toolUse("t1", "sub-A"), text("parent prose"), toolUse("t2", "sub-A")],
+      [call("t1", "Read"), call("t2", "Read")],
+    );
+    const body = wrap.querySelector(".subagent-block .subagent-body");
+    expect(body?.querySelectorAll(":scope > .tool-group")).toHaveLength(1);
+    expect(body?.querySelectorAll(".tool-call")).toHaveLength(2);
+  });
+
+  it("does not enrol a subagent box: a following block neither closes nor folds it", () => {
+    // The non-contiguity contrast the file's header comment draws, now enforced
+    // rather than implied. Two halves: a later same-subtask block still joins the
+    // card, and the card's own disclosure is untouched by the arrival.
+    const wrap = render(
+      [text("delegate prose", "sub-A"), text("parent prose"), text("more delegate", "sub-A")],
+      [],
+    );
+    const cards = wrap.querySelectorAll<HTMLElement>(".assistant-blocks > .subagent-block");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.querySelectorAll(".subagent-body .message.assistant")).toHaveLength(2);
+  });
+
+  it("leaves a subagent box the reader opened open when the next block lands", () => {
+    // A box mounts collapsed and the only toggle is the reader's, so the falsifiable
+    // half is that nothing re-folds it. If the box registered with `continues: []`,
+    // the parent's prose arriving after it would put `.collapsed` back.
+    const wrap = render([text("delegate prose", "sub-A")], []);
+    const box = wrap.querySelector<HTMLElement>(".subagent-block")!;
+    box.classList.remove("collapsed");
+
+    updateAssistantBody(
+      wrap,
+      {
+        id: lastMsgID,
+        role: "assistant",
+        content: "",
+        blocks: [text("delegate prose", "sub-A"), text("parent prose")],
+        tool_calls: [],
+      } as unknown as Message,
+      CHAT_ID,
+      false,
+    );
+
+    expect(wrap.querySelector(".assistant-blocks")?.children).toHaveLength(2);
+    expect(box.classList.contains("collapsed")).toBe(false);
   });
 });
 
@@ -1332,6 +1478,28 @@ describe("exactly one streaming caret, and it ends", () => {
     finalizeAssistantBody(m.id);
     expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
   });
+
+  it("keeps the caret when the only arrival is a DROPPED workflow step", () => {
+    // A workflow step's frames land in the launching chat by the dozen while that
+    // chat's own reply is still streaming. Nothing is placed for one, so sealing on
+    // its arrival would end the reader's caret for a render that draws nothing —
+    // which is what the seal ahead of the drop did.
+    const wrap = document.createElement("div");
+    const blocks = [text("still writing")];
+    const m = liveMessage(blocks);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
+    expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
+
+    blocks.push(text("step output", "wf:wf_1:wf_1/build"));
+    updateAssistantBody(wrap, m, CHAT_ID, true);
+    expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
+    expect(wrap.textContent).not.toContain("step output");
+
+    // A real arrival still seals, so the skip is scoped rather than a disabled rule.
+    blocks.push(toolUse("t1"));
+    updateAssistantBody(wrap, m, CHAT_ID, true);
+    expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1598,13 +1766,22 @@ describe("thinking blocks mount open per LANE and seal on the next sibling", () 
     expect(traces(wrap)[0]?.open).toBe(false);
   });
 
-  it("seals the trace when a step-first run card mounts after it", () => {
-    // No launch tool call in the store yet: the step's frame alone creates the
-    // card (order independence), and the card landing is what closes the trace.
+  it("seals the trace when a run card mounts after it", () => {
     const wrap = document.createElement("div");
     buildAssistantBody(
       wrap,
-      liveMsg([thinking("planning"), text("step prose", "wf:wf_9:wf_9/build")]),
+      liveMsg(
+        [thinking("planning"), toolUse("tw2")],
+        [
+          {
+            id: "tw2",
+            title: "Run Workflow",
+            kind: "other",
+            status: "completed",
+            workflow_id: "wf_9",
+          } as unknown as ToolCall,
+        ],
+      ),
       CHAT_ID,
       true,
     );

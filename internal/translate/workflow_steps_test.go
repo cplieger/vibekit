@@ -6,6 +6,7 @@ package translate
 // TOLD rather than what it does about it.
 
 import (
+	"slices"
 	"strconv"
 	"testing"
 
@@ -32,12 +33,9 @@ func stepToolFrame(id, workflowID, nodeID string, nodePath []string) map[string]
 	}
 }
 
-// TestStepTurnCap_ReportsOnceAtTheCap is the arithmetic the whole cap rests on.
-//
-// Once matters more than the threshold. A cancel is decided at a node boundary,
-// so a runaway step keeps emitting tool frames while the cancel travels — with a
-// `>=` comparison every one of those frames would report a fresh breach, and the
-// host would issue a cancel per frame for a run it is already cancelling.
+// TestStepTurnCap_ReportsOnceAtTheCap: once matters more than the threshold. A cancel is
+// decided at a node boundary, so a runaway step keeps emitting frames while it travels, and
+// a `>=` comparison would have the host issue a cancel per frame for a run already stopping.
 func TestStepTurnCap_ReportsOnceAtTheCap(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
@@ -76,12 +74,9 @@ func TestStepTurnCap_StaysSilentBelowTheCap(t *testing.T) {
 	}
 }
 
-// TestStepTurnCap_CountsPerStepInstance pins the key.
-//
-// Two iterations of one repeat node share a NodeID and are separate work; a
-// counter keyed on the node id would add them together and cap a two-iteration
-// loop at half its allowance. Two different steps of one run must not pool
-// either.
+// TestStepTurnCap_CountsPerStepInstance pins the key: two iterations of one repeat node
+// share a NodeID and are separate work, so a counter keyed on the node id would cap a
+// two-iteration loop at half its allowance. Two steps of one run must not pool either.
 func TestStepTurnCap_CountsPerStepInstance(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
@@ -102,6 +97,75 @@ func TestStepTurnCap_CountsPerStepInstance(t *testing.T) {
 	if len(deps.stepCapBreaches) != 0 {
 		t.Errorf("three separate step instances at %d calls each tripped the cap %d times",
 			half, len(deps.stepCapBreaches))
+	}
+}
+
+// TestRunProgress_EveryStepToolCallReportsProgress is the tool-call half of the idle
+// window's progress signal on the CHAT-parented path. Per FRAME, not per breach: every call
+// is evidence, and a threshold would let a healthy run's window expire between thresholds.
+func TestRunProgress_EveryStepToolCallReportsProgress(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+	chatID := vibekit.ChatID("c1")
+	path := []string{"wf", "step-a"}
+
+	for i := range 3 {
+		tr.HandleToolCall(t.Context(), chatID,
+			mustJSON(t, stepToolFrame("tc-"+strconv.Itoa(i), "wf_1", "step-a", path)), FrameAttribution{})
+	}
+
+	if want := []string{"wf_1", "wf_1", "wf_1"}; !slices.Equal(deps.runProgress, want) {
+		t.Errorf("progress reported = %v, want %v: one report per step tool call, naming the run",
+			deps.runProgress, want)
+	}
+}
+
+// TestRunProgress_AHookAskStillRefillsTheWindow pins the report's placement above the
+// card drop. hooks.showStatus off is a transcript decision and says nothing about whether
+// KAS is producing frames; reported under it, a display preference cancels a working run
+// whose step's frames are hook asks. The internal-tool drop below it is the same class.
+func TestRunProgress_AHookAskStillRefillsTheWindow(t *testing.T) {
+	base, _ := newEventCaptureDeps()
+	deps := &hookStatusDeps{baseDeps: base, enabled: false}
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+
+	frame := stepToolFrame("hook-ask-1", "wf_1", "step-a", []string{"wf", "step-a"})
+	meta := frame["_meta"].(map[string]any)["kiro"].(map[string]any)
+	meta["hookAsk"] = map[string]any{"kind": "pre-tool-use", "toolName": "fs_write"}
+	frame["kind"] = "other"
+
+	tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, frame), FrameAttribution{})
+
+	if want := []string{"wf_1"}; !slices.Equal(base.runProgress, want) {
+		t.Errorf("progress reported = %v, want %v: hooks.showStatus is a rendering setting, "+
+			"so it must not decide whether a run's idle window is refilled",
+			base.runProgress, want)
+	}
+	// The card itself still goes, because that half IS the setting's job.
+	if n := len(base.bufStore.GetOrInit(vibekit.ChatID("c1")).ToolCalls); n != 0 {
+		t.Errorf("buffered tool calls = %d, want 0: the hook-ask card is still suppressed", n)
+	}
+}
+
+// TestRunProgress_IgnoresANonStepToolCall: an ordinary chat tool call and a
+// SUBAGENT's carry no workflow block, so neither names a run whose window could be
+// refilled. A subagent's calls are the dangerous half — they arrive on a chat that
+// may well have a live run, and crediting them would keep a genuinely wedged run
+// alive on a different agent's work.
+func TestRunProgress_IgnoresANonStepToolCall(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+
+	tr.HandleToolCall(t.Context(), "c1", mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"title":      "Read a file",
+		"kind":       "read",
+		"status":     "pending",
+		"_meta":      map[string]any{"kiro": map[string]any{"agentSubtaskId": "sub-1"}},
+	}), FrameAttribution{})
+
+	if len(deps.runProgress) != 0 {
+		t.Errorf("a subagent's tool call reported progress for %v", deps.runProgress)
 	}
 }
 
@@ -127,15 +191,10 @@ func TestStepTurnCap_IgnoresANonStepToolCall(t *testing.T) {
 	}
 }
 
-// TestStepTurnCap_CountsPerRunNotPerNodePath is the collision the turn key's
-// workflow-id half exists to prevent.
-//
-// A node path is only unique WITHIN a run — `wf:<nodePath>` names no run at all —
-// so two concurrent workflows executing the same path pooled their counts. Their
-// combined calls reached the cap and cancelled a run whose step had made only half
-// of them, and the other run could then step over the cap without ever landing on
-// it, which left it unbounded. Interleaved rather than sequential, because that is
-// the shape two live runs actually produce.
+// TestStepTurnCap_CountsPerRunNotPerNodePath is the collision the turn key's workflow-id
+// half prevents: a node path is unique only WITHIN a run, so two concurrent workflows on
+// the same path pooled their counts — cancelling one run at half its allowance while the
+// other stepped over the cap unbounded. Interleaved, because that is what two live runs do.
 func TestStepTurnCap_CountsPerRunNotPerNodePath(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
@@ -237,12 +296,9 @@ func TestStepTurnCap_ForgetsATerminatedRunsCounts(t *testing.T) {
 	}
 }
 
-// A step's ask is attributed to its run, and the attribution is the registry
-// lookup: the run id is what lets a run tab render an ask that arrived on
-// another surface, and the node id is what makes the card say who is asking. A
-// frame with no session id is not a step and stamps two empty strings, which is
-// why the miss is not an error. Observed through the permission card, the
-// surface the ref actually reaches.
+// A step's ask is attributed by registry lookup: the run id is what lets a run tab render
+// an ask that arrived elsewhere, the node id is what makes the card say who is asking. A
+// frame with no session id is not a step and stamps empty strings, so a miss is not an error.
 func TestStepRef_AttributesAnAskToItsRun(t *testing.T) {
 	tests := []struct {
 		name       string

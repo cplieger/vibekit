@@ -1,25 +1,22 @@
 package workflow
 
-// Tests for the two questions this package answers, both grounded in a REAL
-// `_kiro/workflow/inspect` response rather than an invented shape.
-//
-// The tree below is trimmed from a measured probe result: a `parallel` with two
-// branch steps, then a `repeat` whose two iterations each contain one step under
-// the SAME node id, then a pending step. That shape is what proves the two
-// non-obvious facts the package rests on — every step node carries its own
-// `sessionId` (so there is nothing to join), and a repeat's iterations share a
-// node id (so the id alone cannot address a step).
+// The fixture below is trimmed from a real `_kiro/workflow/inspect` response
+// because its shape carries the three facts the package rests on: every step node
+// has its own `sessionId`, a repeat's iterations share one node id, and the wire
+// names the iteration container `iter-0` where the tree says `loop#0`.
 
 import (
 	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// realInspect is trimmed from a measured inspect result. Fields this package
-// does not decode are kept so the test also proves they are tolerated.
+// realInspect keeps fields this package does not decode, so the test also proves
+// they are tolerated.
 const realInspect = `{
   "workflowId": "wf_4bdc8cd5",
   "state": {
@@ -39,10 +36,12 @@ const realInspect = `{
         ]},
         {"nodeId": "loop", "type": "repeat", "status": "paused", "children": [
           {"nodeId": "loop#0", "type": "sequence", "status": "completed", "iteration": 0, "children": [
-            {"nodeId": "iter", "type": "step", "status": "completed", "iteration": 0, "sessionId": "sess_i0"}
+            {"nodeId": "iter", "type": "step", "status": "completed", "iteration": 0, "sessionId": "sess_i0"},
+            {"nodeId": "review", "type": "step", "status": "completed", "iteration": 0, "sessionId": "sess_r0"}
           ]},
           {"nodeId": "loop#1", "type": "sequence", "status": "completed", "iteration": 1, "children": [
-            {"nodeId": "iter", "type": "step", "status": "completed", "iteration": 1, "sessionId": "sess_i1"}
+            {"nodeId": "iter", "type": "step", "status": "completed", "iteration": 1, "sessionId": "sess_i1"},
+            {"nodeId": "review", "type": "step", "status": "completed", "iteration": 1, "sessionId": "sess_r1"}
           ]}
         ]},
         {"nodeId": "replaced", "type": "step", "status": "pending", "agentName": "probe-tool"}
@@ -60,36 +59,62 @@ func TestStepSessions_WalksARealTree(t *testing.T) {
 	}
 	got := StepSessions(res.State)
 
-	// Depth-first declaration order, and ONLY step nodes that actually ran: the
-	// containers have no session and `replaced` is still pending.
+	// The PATHS are the load-bearing half: `iter-0`/`iter-1` where the tree says
+	// `loop#0`/`loop#1`, while the step named `iter` keeps its own NODE ID because
+	// the translation is gated on the PARENT being the repeat.
 	want := []StepSession{
-		{NodeID: "pa", SessionID: "sess_pa"},
-		{NodeID: "pb", SessionID: "sess_pb"},
-		{NodeID: "iter", SessionID: "sess_i0"},
-		{NodeID: "iter", SessionID: "sess_i1"},
+		{NodeID: "pa", SessionID: "sess_pa", Path: []string{"wf_4bdc8cd5", "par", "pa"}},
+		{NodeID: "pb", SessionID: "sess_pb", Path: []string{"wf_4bdc8cd5", "par", "pb"}},
+		{NodeID: "iter", SessionID: "sess_i0", Path: []string{"wf_4bdc8cd5", "loop", "iter-0", "iter"}},
+		{NodeID: "review", SessionID: "sess_r0", Path: []string{"wf_4bdc8cd5", "loop", "iter-0", "review"}},
+		{NodeID: "iter", SessionID: "sess_i1", Path: []string{"wf_4bdc8cd5", "loop", "iter-1", "iter"}},
+		{NodeID: "review", SessionID: "sess_r1", Path: []string{"wf_4bdc8cd5", "loop", "iter-1", "review"}},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d step sessions, want %d: %+v", len(got), len(want), got)
 	}
 	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("step %d = %+v, want %+v", i, got[i], want[i])
+		if got[i].NodeID != want[i].NodeID || got[i].SessionID != want[i].SessionID {
+			t.Errorf("step %d = %s/%s, want %s/%s",
+				i, got[i].NodeID, got[i].SessionID, want[i].NodeID, want[i].SessionID)
+		}
+		if !slices.Equal(got[i].Path, want[i].Path) {
+			t.Errorf("step %d path = %v, want %v", i, got[i].Path, want[i].Path)
 		}
 	}
 }
 
-// TestStepSessions_TheTreeIsTheJoin pins the fact that removed a whole planned
-// component: an earlier design joined a separate `stepSessions[]` array to the
-// node plan by (nodeId, iteration, branchId). No such array exists — the session
-// id is ON the step node.
+// TestStepSessions_EveryPathIsDistinct pins that a path names one EXECUTION. The
+// table above compares each row to its own expectation, so it would still pass if
+// two rows shared a path.
+func TestStepSessions_EveryPathIsDistinct(t *testing.T) {
+	t.Parallel()
+	var res InspectResult
+	if err := json.Unmarshal([]byte(realInspect), &res); err != nil {
+		t.Fatal(err)
+	}
+	got := StepSessions(res.State)
+	seen := map[string]string{}
+	for _, s := range got {
+		key := strings.Join(s.Path, "/")
+		if prev, dup := seen[key]; dup {
+			t.Errorf("path %q addresses two sessions (%s and %s)", key, prev, s.SessionID)
+		}
+		seen[key] = s.SessionID
+	}
+	if len(seen) != len(got) {
+		t.Errorf("%d distinct paths for %d step sessions", len(seen), len(got))
+	}
+}
+
+// TestStepSessions_TheTreeIsTheJoin pins that the session id is ON the step node:
+// there is no separate array to join by (nodeId, iteration, branchId).
 func TestStepSessions_TheTreeIsTheJoin(t *testing.T) {
 	t.Parallel()
 	var res InspectResult
 	if err := json.Unmarshal([]byte(realInspect), &res); err != nil {
 		t.Fatal(err)
 	}
-	// Two iterations of ONE node id, each with its own session. Nothing outside
-	// the tree was consulted to learn that.
 	seen := map[string]int{}
 	for _, s := range StepSessions(res.State) {
 		seen[s.NodeID]++
@@ -107,8 +132,7 @@ func TestStepSessions_EmptyInputs(t *testing.T) {
 	if got := StepSessions(&State{}); got != nil {
 		t.Errorf("StepSessions(no root) = %+v, want nil", got)
 	}
-	// A step that has not started has no session and must not be reported: a
-	// caller would try to address a session that does not exist.
+	// An unstarted step has no session: reporting one makes a caller address nothing.
 	only := &State{Root: &Node{NodeID: "r", Type: "sequence", Children: []Node{
 		{NodeID: "a", Type: "step"},
 	}}}
@@ -135,9 +159,8 @@ func TestClassify(t *testing.T) {
 	}{
 		{"nil", nil, false},
 		{
-			// The measured shape: message is the literal "Internal error" and the
-			// classifier's text is in data. Reading message alone cannot tell an
-			// unregistered verb from a genuine failure.
+			// Measured: message is the literal "Internal error" and the classifier's
+			// text is in data, so message alone cannot tell this from a real failure.
 			"an unregistered verb",
 			rpcErr("Internal error", `{"details":"[PersistenceClassification] Ext method _kiro/workflow/nope has no persistence classification"}`),
 			true,
@@ -146,9 +169,8 @@ func TestClassify(t *testing.T) {
 		{"a param error with no data at all", rpcErr("workspacePaths is not iterable", ""), false},
 		{"a plain error", errors.New("boom"), false},
 		{
-			// The narrowing: an error that merely QUOTES the marker in its own text
-			// is a failure, not an unregistered verb. The rendered-chain sniff this
-			// replaced called it one.
+			// An error that merely QUOTES the marker in its own text is a failure,
+			// not an unregistered verb.
 			"a failure quoting the marker in its message",
 			errors.New("workflow inspect call: _kiro/workflow/inspect has no persistence classification"),
 			false,
@@ -167,11 +189,60 @@ func TestClassify(t *testing.T) {
 				}
 				return
 			}
-			// The original error stays reachable whichever way it was classified,
-			// so a caller can still report what KAS actually said.
+			// The original stays reachable either way, so a caller can still report
+			// what KAS said.
 			if !errors.Is(got, c.err) {
 				t.Errorf("Classify(%v) = %v, want the original error still unwrappable", c.err, got)
 			}
 		})
+	}
+}
+
+// TestSteps_IncludesAStepThatHasNotRun pins the one thing Steps adds over
+// StepSessions: a path naming a PENDING step must be answerable, because that is a
+// different answer from a path naming nothing at all.
+func TestSteps_IncludesAStepThatHasNotRun(t *testing.T) {
+	t.Parallel()
+	var res InspectResult
+	if err := json.Unmarshal([]byte(realInspect), &res); err != nil {
+		t.Fatal(err)
+	}
+	all := Steps(res.State)
+	ran := StepSessions(res.State)
+	if len(all) != len(ran)+1 {
+		t.Fatalf("Steps returned %d and StepSessions %d, want exactly one more (the pending step)",
+			len(all), len(ran))
+	}
+	var pending *StepSession
+	for i := range all {
+		if all[i].NodeID == "replaced" {
+			pending = &all[i]
+		}
+	}
+	if pending == nil {
+		t.Fatal("the pending step is absent from Steps")
+	}
+	if pending.SessionID != "" {
+		t.Errorf("pending step SessionID = %q, want empty", pending.SessionID)
+	}
+	if !slices.Equal(pending.Path, []string{"wf_4bdc8cd5", "replaced"}) {
+		t.Errorf("pending step path = %v, want [wf_4bdc8cd5 replaced]", pending.Path)
+	}
+	// It must stay out of the SESSION list, or RecordRunSteps addresses nothing.
+	for _, s := range ran {
+		if s.NodeID == "replaced" {
+			t.Error("a step with no session reached StepSessions")
+		}
+	}
+}
+
+// TestSteps_EmptyInputs pins that the unfiltered door tolerates a missing tree.
+func TestSteps_EmptyInputs(t *testing.T) {
+	t.Parallel()
+	if got := Steps(nil); got != nil {
+		t.Errorf("Steps(nil) = %+v, want nil", got)
+	}
+	if got := Steps(&State{}); got != nil {
+		t.Errorf("Steps(no root) = %+v, want nil", got)
 	}
 }

@@ -1,14 +1,9 @@
 package command
 
-// Rewind: revert this chat to a past turn. There is no branch, no promote
-// and no discard — a fork makes a second chat, and rewind edits the one
-// you are in.
-//
-// The operation is one KAS call. `_kiro/checkpoint/revertMultiple` drops
-// the addressed user message and everything after it, rolls the files
-// back from KAS's own snapshots, and appends a tombstone so the truncation
-// is durable. Vibekit's Rewind and its former turn-level Restore are the
-// same operation.
+// Rewind: revert this chat to a past turn. There is no branch, no promote and no
+// discard — a fork makes a second chat, and rewind edits the one you are in. One
+// KAS call does it: `_kiro/checkpoint/revertMultiple` drops the addressed user
+// message and everything after it, rolls the files back, and tombstones the cut.
 
 import (
 	"cmp"
@@ -22,21 +17,10 @@ import (
 )
 
 // CmdRewindChat reverts the chat to a past turn via KAS's own checkpoint
-// machinery, then truncates vibekit's record to match.
-//
-// The truncation is not redundant with the revert: vibekit's chat file
-// still holds the dropped turns, and mergeProjection deliberately
-// preserves anything newer than a replay's last message (KAS's log is not
-// fsynced, so an absent tail is normally a durability gap rather than an
-// intended deletion). A revert is the one case where the tail is gone on
-// purpose, and only vibekit knows that at this moment.
-//
-// No session/load follows: the live session's context is already reverted
-// in place, and the tombstone covers every future load.
-//
-// Mid-turn is refused, not queued — KAS throws on a live turn and refuses
-// a concurrent revert per session, so vibekit forwards the reason instead
-// of reimplementing the guard.
+// machinery, then truncates vibekit's record to match. The truncation is not
+// redundant: mergeProjection preserves anything newer than a replay's last
+// message, because an absent tail is normally a durability gap, and a revert is
+// the one case where it is intended. Mid-turn is KAS's refusal, forwarded.
 func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -55,11 +39,9 @@ func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, c
 		return nil, StatusError(http.StatusBadRequest, errRewindTargetNotFound)
 	}
 
-	bridge := bridges.Bridge(cmd.ChatID)
-	if bridge == nil {
-		// No live session to revert. The files and the transcript move together
-		// or not at all, so truncating the record alone is not an option.
-		return nil, StatusError(http.StatusConflict, errNoBridge)
+	bridge, err := resumeForRevert(ctx, bridges, cmd.ChatID, chat.ACPSessionID)
+	if err != nil {
+		return nil, err
 	}
 
 	result, status, err := revertToMessage(ctx, bridge, p.MessageID)
@@ -95,6 +77,45 @@ func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, c
 	}), nil
 }
 
+// resumeForRevert hands back a bridge whose session is the one the target message
+// lives in and whose replay has already been adopted — the two conditions under
+// which truncating is safe. `want` is read BEFORE the resume, because a failed
+// session/load falls through to session/new and retires that id.
+func resumeForRevert(ctx context.Context, bridges BridgeAccess, chatID vibekit.ChatID, want string) (Bridge, error) {
+	if want == "" {
+		return nil, StatusError(http.StatusConflict, errRewindNoSession)
+	}
+
+	// Empty model on purpose: spawnBridge then keeps the chat's own, so a rewind
+	// can never silently change which model the chat runs.
+	bridge, err := bridges.OpenBridge(ctx, chatID, "")
+	if err != nil || bridge == nil {
+		// The spawn's own error is logged, not forwarded: it names vibekit's
+		// internals, and the client renders the reason verbatim to the user.
+		slog.Warn("rewind: no bridge to revert on", "chat", chatID, keyError, err)
+		return nil, StatusError(http.StatusBadGateway, errRewindNoBridge)
+	}
+	if string(bridge.SessionID()) != want {
+		// The resume fell through to a fresh session, which holds none of this
+		// transcript: KAS would refuse the id or roll back the wrong thing.
+		slog.Warn("rewind: original session not resumed",
+			"chat", chatID, "want", want, "got", bridge.SessionID())
+		return nil, StatusError(http.StatusConflict, errRewindSessionNotResumed)
+	}
+
+	// A resume replays into a projection swapped in on the Forward goroutine, and
+	// mergeProjection returns its messages wholesale — so a swap landing after the
+	// truncation hands every reverted turn straight back. Refuse rather than cut.
+	if err := bridges.AwaitReplayAdopted(ctx, chatID); err != nil {
+		slog.Warn("rewind: replay not adopted, refusing to truncate",
+			"chat", chatID, keyError, err)
+		// One refusal for both causes: the other is the caller's own context, and
+		// a caller that walked away reads nothing anyway.
+		return nil, StatusError(http.StatusServiceUnavailable, errRewindReplayPending)
+	}
+	return bridge, nil
+}
+
 // revertResult is KAS's reply to a revert. affectedFiles are the paths it put
 // back (or removed, for a file the discarded turns created).
 type revertResult struct {
@@ -104,11 +125,10 @@ type revertResult struct {
 	Success       bool     `json:"success"`
 }
 
-// revertToMessage performs the KAS round trip and normalises its two
-// failure channels into one error plus the HTTP status to report: a
-// transport/JSON-RPC failure comes back as an error, while a refusal KAS
-// can explain comes back `success:false` with a reason, forwarded verbatim
-// since it is more specific than anything vibekit could infer.
+// revertToMessage performs the KAS round trip and normalises its two failure
+// channels into one error plus the status to report: a transport failure comes
+// back as an error, a refusal KAS can explain as `success:false` with a reason,
+// forwarded verbatim since it is more specific than anything vibekit can infer.
 func revertToMessage(ctx context.Context, bridge sessionCaller, messageID string) (revertResult, int, error) {
 	var result revertResult
 	resp, err := bridge.Call(ctx, vibekit.MethodCheckpointRevertMultiple, SessionParams(bridge, map[string]any{
@@ -126,10 +146,9 @@ func revertToMessage(ctx context.Context, bridge sessionCaller, messageID string
 	return result, http.StatusOK, nil
 }
 
-// userMessageIndex locates the revert target: the user message with this
-// id. User-only because KAS requires it, and only user messages share an
-// id space with KAS — an assistant turn carries KAS's own id. Returns -1
-// when absent.
+// userMessageIndex locates the revert target, returning -1 when absent.
+// User-only because KAS requires it, and only user messages share an id space
+// with KAS — an assistant turn carries KAS's own id.
 func userMessageIndex(messages []vibekit.Message, id string) int {
 	for i := range messages {
 		if messages[i].ID == id && messages[i].Role == vibekit.RoleUser {
@@ -139,17 +158,11 @@ func userMessageIndex(messages []vibekit.Message, id string) int {
 	return -1
 }
 
-// CmdSetEffort sets the chat's reasoning-effort level. On v3 (KAS) effort is
-// a session config option, so a running session is switched in place via
-// session/set_config_option; the level is then persisted on the chat and
-// applied to any later session through StartOpts.Effort.
-//
-// Effort is per-chat: two chats can disagree, and switching models no
-// longer discards the previous model's choice.
-//
-// A chat with no bridge is not a 409: the persisted level is enough, and
-// auto-create mirrors CmdSetMode — a fresh chat is client-side only until
-// its first prompt.
+// CmdSetEffort sets the chat's reasoning-effort level. On v3 effort is a session
+// config option, so a running session is switched in place; the level is then
+// persisted on the chat and applied to later sessions through StartOpts.Effort.
+// Per-chat, so two chats can disagree and a model switch discards nothing. A
+// bridgeless chat is not a 409, and auto-create mirrors CmdSetMode.
 func CmdSetEffort(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err

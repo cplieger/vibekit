@@ -95,8 +95,8 @@
      state), so the presence of `data-status` IS the reveal condition and there
      is no second flag to keep in sync. */
   display: none;
-  width: 9px;
-  height: 9px;
+  inline-size: var(--dot-size);
+  block-size: var(--dot-size);
   border-radius: 50%;
   flex-shrink: 0;
 
@@ -119,7 +119,7 @@
    ahead of it the dot is no longer the leading element and the rule correctly
    stops applying. */
 .tab-status-dot:first-child {
-  margin-inline: calc((0.875rem - 9px) / 2);
+  margin-inline: calc((0.875rem - var(--dot-size)) / 2);
 }
 
 /* The TRAILING dot (every other kind: the editor's unsaved mark) sits after the
@@ -139,21 +139,27 @@
 }
 
 /* The diamond's slot correction, one position over from the leading one below.
-   `failed` is 8px where every other state is 9px, so a run sub-tab's name moved
-   1px sideways at the exact moment its status flipped to or from failed — which
-   for a run is the moment that matters most. Re-derived against the 9px disc
-   rather than the 14px glyph slot, because here the nesting arrow holds the glyph
-   slot and the dot only has to match its own siblings. */
+   `failed` is the smaller mark, so a run sub-tab's name would move sideways at the
+   exact moment its status flipped to or from failed — which for a run is the
+   moment that matters most. Derived from the two dot tokens rather than the 14px
+   glyph slot, because here the nesting arrow holds the glyph slot and the dot only
+   has to match its own siblings. */
 .tab.tab-child .tab-status-dot[data-status="failed"] {
-  margin-inline: calc((9px - 8px) / 2);
+  margin-inline: calc((var(--dot-size) - var(--dot-size-sm)) / 2);
 }
 
 /* A sub-tab's dot RESERVES its slot even with no state to show, which the
    leading chat dot never has to: a chat is always in some state (idle is one),
-   while a run has none until its first frame lands, and an `idle` ring there
-   would claim one it cannot support. Without this the name sat 17px left and
-   then jumped sideways the moment the run reported — the same defect the failed
-   diamond's re-derived margin exists to prevent, one element over. */
+   while the two kinds that nest here can both be stateless for a while — a run
+   until its first frame lands, a subagent until its invocation is resident — and
+   an `idle` ring would claim a state neither can support. Without this the name
+   sat 17px left and then jumped sideways the moment the state arrived, which is
+   the same defect the failed diamond's re-derived margin exists to prevent, one
+   element over.
+
+   BOTH consumers write through this slot now (run-dots.ts and subagent-dots.ts),
+   so it is a hidden gap only until the first state lands rather than forever —
+   which is what the subagent kind lacked when it had no writer at all. */
 .tab.tab-child .tab-status-dot:not([data-status]) {
   display: block;
   visibility: hidden;
@@ -187,25 +193,42 @@
 .tab-status-dot[data-status="working"] {
   background: var(--dot-color);
 
-  /* Own compositing layer. The overlay and the wave are compositor-driven
-     layers, and a nested layer's position snaps to DEVICE pixels independently
-     of its parent's fractional page position — at 9px that reads as the pulse
-     sitting visibly off-centre. Promoting the dot rasters disc, overlay and
-     wave in one frame of reference, so they snap together. */
+  /* `position: relative` only — the overlay below is absolutely positioned
+     against this box and needs a containing block.
+
+     The `transform: translateZ(0)` that used to sit here is GONE with the
+     per-dot animations. It existed because the overlay and the travelling wave
+     were each compositor-driven, and a nested layer snaps to device pixels
+     independently of its parent's fractional page position, which read as a
+     pulse sitting off-centre; promoting the dot rastered all three in one frame
+     of reference. With the beat now an inherited value there is no composited
+     child to be out of step with, so the promotion is a layer per open tab
+     bought for nothing — and `will-change`/`translateZ` on an element that no
+     longer animates is exactly what this app's own performance rule forbids. */
   position: relative;
-  transform: translateZ(0);
 
   --dot-color: var(--c-dot-working);
 }
 
-/* The glow beat, compositor-only. The disc itself never changes; this
-   pre-painted overlay carries the beat's bright peak and animates ONLY opacity,
-   so after one rasterization the GPU blends two static layers.
+/* The glow beat. The disc itself never changes; this pre-painted overlay carries
+   the beat's bright peak and its opacity is read STRAIGHT OFF THE DOCUMENT CLOCK
+   (03-base.css) rather than animated here.
 
-   Geometry is load-bearing: a HARD-edged overlay at 9px shows any half-pixel
-   layer snap as an off-centre pulse, so this is a radial with a solid bright
-   core and a ~1px feather ending at the disc's rim — a snapped half-pixel then
-   falls inside the feather. */
+   That is the whole synchronisation fix. A per-dot animation is created when
+   `data-status` becomes `working` and destroyed when it leaves, so 48 working
+   chats produced 48 arbitrary phases and nothing ever drifted into alignment. An
+   inherited clock has no per-element creation moment, so a dot that starts
+   working mid-cycle is already in step with every other one.
+
+   Peak 0.55 rather than 1: with every dot now beating together the strip reads as
+   one pulse instead of a field of them, and at that amplitude it does not need to
+   be bright to be seen. Two dozen dots flashing to full opacity in unison would
+   trade a noisy strip for a throbbing one.
+
+   Geometry is load-bearing: a HARD-edged overlay at this size shows any half-pixel
+   layer snap as an off-centre pulse, so this is a radial with a solid bright core
+   and a ~1px feather ending at the disc's rim — a snapped half-pixel then falls
+   inside the feather. */
 .tab-status-dot[data-status="working"]::before {
   content: "";
   position: absolute;
@@ -216,35 +239,27 @@
     color-mix(in oklch, var(--dot-color) 78%, #fff) 0 70%,
     transparent 92%
   );
-  opacity: 0;
-  /* The app's own standard curve rather than the bare `ease-in-out` the port
-     carried over. A glow beat is ordinary UI emphasis, which is exactly what
-     `--ease-standard` is the token for; the wave below keeps `linear` because its
-     travel is continuous motion and an eased one made it invisible (the source
-     records the same finding). */
-  animation: vk-dot-glow 1.2s var(--ease-standard) infinite;
-  will-change: opacity;
+  opacity: calc(var(--vk-beat) * 0.55);
 }
 
-/* The wave: a feathered radial BAND (not a hairline ring) that starts hugging
-   the disc's edge and travels outward, dissolving, re-emitted each cycle. Soft
-   on both edges, so it reads as light leaving the disc rather than an outline
-   shrinking in opacity; scaling the layer scales the feather with it, which is
-   what makes the wave dissipate as it grows. transform + opacity only, so it
-   composites — an animated box-shadow spread would repaint every frame. */
-.tab-status-dot[data-status="working"]::after {
-  content: "";
-  position: absolute;
-  inset: -2px;
-  border-radius: 50%;
-  background: radial-gradient(
-    closest-side,
-    transparent 44%,
-    var(--dot-color) 76%,
-    transparent 100%
-  );
-  animation: vk-dot-wave 1.2s linear infinite;
-}
+/* THE TRAVELLING WAVE IS GONE, and its absence is the other half of the answer
+   to "make them less frequent or visually present".
+
+   It was a radial band launching off the disc and dissolving by 2.1x, once per
+   cycle, on EVERY working dot — so a strip of active chats was a field of
+   expanding rings. Synchronising it would have made 48 rings pulse in unison,
+   which is a different noise rather than less of it, and a ring that leaves its
+   own disc cannot be read as belonging to one row anyway.
+
+   It was also the expensive half: each one animated `transform` on its own
+   pseudo-element, and 48 of those force 48 rasters per frame. Measured in
+   Chromium 151 over 48 dots, interleaved A/B — 48fps with 32 of 119 frames past
+   20ms with the per-dot animations, against 60fps and zero long frames on the
+   clock alone.
+
+   A travelling ripple survives only where exactly one can be on screen: the
+   sidebar's transport dot (10-shell-app.css), and that one is STILL too, so
+   `@keyframes vk-dot-wave` is deleted along with `vk-dot-glow` and `vk-ping`. */
 
 /* WAITING and INPUT — the two states that want you, and the RING is what says
    so. It is the source's exclusive vocabulary for "blocked, waiting on you", so
@@ -310,11 +325,16 @@
    with motion spent on `working` and the ring spent on the wants-you pair they
    had only hue left — and in greyscale they are close enough to alias. The source
    vocabulary has the same gap between `crashed` and `done`; porting it would have
-   shipped a 1.4.1 failure. 8px rather than 9px because a rotated square's
-   diagonal is its footprint. */
+   shipped a 1.4.1 failure.
+
+   `--dot-size-sm` rather than `--dot-size`, because a rotated square's DIAGONAL is
+   its footprint: 6px on the diagonal is 8.49px, which sits within 6% of the 8px
+   disc beside it. The pair it replaces was an 8px square against a 9px disc —
+   11.31px against 9, over by a quarter — so the diamond read as the biggest mark
+   in the strip. */
 .tab-status-dot[data-status="failed"] {
-  width: 8px;
-  height: 8px;
+  inline-size: var(--dot-size-sm);
+  block-size: var(--dot-size-sm);
   background: var(--dot-color);
   border-radius: 1.5px;
   transform: rotate(45deg);
@@ -322,15 +342,15 @@
   --dot-color: var(--c-dot-failed);
 }
 
-/* The leading slot's margin is derived from the 9px disc, so the 8px diamond
-   above reserved 13px where every other state reserves 14px — and the chat's name
-   moved 1px sideways at the exact moment its status flipped to or from failed,
-   which is the one moment the reader is looking at that row. Re-derived from its
-   own width so the slot's total inline footprint stays 14px. Specificity beats the
+/* The leading slot's margin is derived from the DISC, so the smaller diamond
+   above would reserve less than every other state — and the chat's name would move
+   sideways at the exact moment its status flipped to or from failed, which is the
+   one moment the reader is looking at that row. Re-derived from its own width so
+   the slot's total inline footprint stays 14px either way. Specificity beats the
    generic `:first-child` rule (class + attribute + pseudo-class), so the order in
    this file is not what makes it win. */
 .tab-status-dot[data-status="failed"]:first-child {
-  margin-inline: calc((0.875rem - 8px) / 2);
+  margin-inline: calc((0.875rem - var(--dot-size-sm)) / 2);
 }
 
 /* Done — the turn finished: the agent declared it complete, or `turn_ended`
@@ -371,25 +391,23 @@
      BOTH ringed states; without it, only `idle` is one channel away.
 
      That one remaining pair is why the hole is 45% and not the 55% it was. Both
-     are rings of ink at 9px, so the band widths have to be tellable apart: 45%
-     leaves a 2.5px band around a 4px hole against idle's 1.5px hairline around a
-     6px one — heavy ring versus outline. Widening further would close the hole
-     until the donut read as a solid disc, which is the collision on the other
-     side. */
+     are rings of ink at the disc's 8px, so the band widths have to be tellable
+     apart: 45% leaves a 2.2px band around a 3.6px hole against idle's 1.5px
+     hairline around a 5px one — heavy ring versus outline. Widening further would
+     close the hole until the donut read as a solid disc, which is the collision on
+     the other side. */
   .tab-status-dot[data-status="working"] {
     background: radial-gradient(closest-side, transparent 0 45%, var(--dot-color) 45% 100%);
   }
 
-  /* The overlay and the wave disappear ENTIRELY rather than freezing mid-beat or
-     mid-travel, and this is load-bearing rather than tidy. 40-a11y.css zeroes
-     every animation's duration and iteration count globally, which RUNS each
-     one to completion instead of suppressing it — and neither keyframe set
-     declares a fill-mode, so a completed `vk-dot-wave` reverts the ::after to
-     its own declarations: `opacity: 1`, no transform. That is a solid opaque
-     band hugging the disc, permanently. Removing the pseudos is what stops it,
-     so `content: none` is the fix and the global rule alone is not enough. */
-  .tab-status-dot[data-status="working"]::before,
-  .tab-status-dot[data-status="working"]::after {
+  /* The overlay disappears ENTIRELY rather than resting at its floor, and this is
+     load-bearing rather than tidy. 03-base.css stops the clock under reduced
+     motion, so `--vk-beat` sits at its initial 0 and the overlay would be
+     invisible anyway — but `initial-value: 0` is the only thing making that true,
+     and a future non-zero resting amplitude would paint a permanent bright ring
+     over the donut below. Removing the pseudo is what makes it independent of the
+     clock's resting value. */
+  .tab-status-dot[data-status="working"]::before {
     content: none;
   }
 }
@@ -399,8 +417,13 @@
   z-index: 999;
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
-  border-radius: var(--r);
+  border-radius: var(--r-lg);
   padding: var(--sp-1);
+
+  /* Same shape and same derivation as the shared popup (11-popups.css). */
+  --menu-inset: var(--sp-1);
+  --menu-radius: calc(var(--r-lg) - 1px - var(--menu-inset));
+
   box-shadow:
     var(--shadow-ambient),
     0 4px 12px oklch(0% 0 none / 25%);
@@ -416,7 +439,7 @@
   font-size: var(--fs-sm);
   cursor: pointer;
   text-align: left;
-  border-radius: calc(var(--r) / 2);
+  border-radius: var(--menu-radius);
 }
 
 .tab-context-item:hover {

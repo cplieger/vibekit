@@ -2,51 +2,65 @@
    Universal interaction feedback
    ========================================================================== */
 
-/* Press scale, on the controls that do NOT yet carry a colour press.
+/* THE PRESS, and it is one rule for every interactive surface.
  *
- * The design system's press is a COLOUR step on the same axis as hover — one
- * rung deeper — because that is one mechanism instead of two and because it
- * survives prefers-reduced-motion, which a transform does not. `.pill`, `.tab`
- * and `.send-btn` have been converted and have left this list. The rest are
- * still here, and converting one means knowing its resting fill: a transparent
- * control takes `var(--c-press)`, a filled one steps up the ramp (see the
- * interaction ladder in 01-tokens.css). That is per-surface work.
+ * A colour step on the same axis as hover, one rung deeper, painted as an INSET
+ * SHADOW flooded across the whole box. That composites over whatever fill the
+ * control already carries, so one rule serves a transparent icon button and a
+ * solid accent button without either site knowing which it is, and it follows the
+ * control's own `border-radius` for free.
  *
- * Scoped via :where() so specificity stays at 0 and a component-level override
- * wins naturally. */
-:where(
-  .icon-btn,
-  .action-pill,
-  .btn,
-  .btn-small,
-  .sidebar-action-btn,
-  .turn-action-btn,
-  .picker-btn,
-  .chip,
-  .list-row-btn,
-  .git-action-btn,
-  .mcp-modal-tab,
-  .history-modal-row,
-  .perm-mode
-):active {
-  transform: scale(0.96);
-  transition: transform var(--dur-micro) var(--ease-standard);
+ * `background-image: var(--layer-press)` was the obvious mechanism — 01-tokens.css
+ * recommends exactly that, and its reasoning is right for a site that OPTS IN. It
+ * cannot be the universal, and the measurement is the argument: `background:` is a
+ * SHORTHAND that resets `background-image` to none, 395 rules in this tree use it
+ * against 23 using `background-color`, and a class rule beats this rule's zero
+ * specificity. Verified live by forcing `:active` over eight shapes — the layer
+ * reached `summary` and `[role="button"]` and NOT one single button class, because
+ * every one of them declares `background: none` or a fill. Only 24 rules set
+ * `box-shadow`, so the inset form reaches ~94% of sites and degrades the same way
+ * everywhere else: the control keeps its own shadow and loses the wash.
+ *
+ * WHAT THIS REPLACED, and the shape was the defect rather than the values: a
+ * hand-kept `:where()` list of 13 class names carrying `transform: scale(0.96)`.
+ * A control missing from that list had no press at all, and 14 interactive
+ * families were missing — the same ratchet the hit floor's 25-class allow-list had
+ * before 61-mcp-tools.css replaced it, and the focus ring's before 40-a11y.css
+ * did. This is the third of the three. The list was already mid-migration:
+ * `.pill`, `.tab` and `.send-btn` had been converted to a colour press and left
+ * it, so the app's most-used controls already pressed this way.
+ *
+ * A SCALE CANNOT BE THE UNIVERSAL PRESS, which is why the migration went this
+ * direction rather than growing the list. It depends on the control's SIZE in both
+ * directions: 4% of an icon-only pill about 30px wide is ~1.2px of travel and does
+ * not read as a press at all (15-input.css records that measurement), while 4% of
+ * a full-width menu row reads as the card wobbling rather than the row depressing
+ * (15-input.css records that one too). The band where it reads is narrow, and a
+ * rule whose correctness depends on the width of what it hits is not a rule.
+ *
+ * Scoped to buttons, summaries and role=button. NOT `input` or `select`: both
+ * carry a real `background-image` of their own — the checkbox's glyph
+ * (02-reset.css) and the select's chevron (18-pages.css) — and both have a native
+ * press. NOT a bare `a[href]` either, because an inline link in prose is not a
+ * control and a wash across a word is not a press.
+ *
+ * `:where()` scores ZERO, so every control that already declares its own `:active`
+ * keeps it. This is the floor, not a mandate.
+ *
+ * The transition trap that governed the old list governs this one: a member
+ * declaring its own `transition` must name `box-shadow` in it, or the wash appears
+ * and leaves in one frame. `:where(…):active` scores (0,1,0), the same as a bare
+ * single class, so a tie is decided by MANIFEST order.
+ *
+ * Four controls carry a bespoke `:active` and now compound with this one, which
+ * reads as a firmer press on the controls that were deliberately tuned. Left alone
+ * rather than guessed at: deleting a tuned press is per-surface work, and the
+ * compounded direction is at least correct, since both steps go the same way on
+ * the ramp. 70-selection.css opts OUT explicitly, because a selected surface has
+ * its own press token and double-stepping it would leave the selected ramp. */
+:where(button, summary, [role="button"]):active {
+  box-shadow: inset 0 0 0 100vmax var(--c-press);
 }
-
-/* THE TRANSITION TRAP, kept because it still applies to every member above.
- * `:where(…):active` scores (0,1,0) — exactly what a bare `.icon-btn` scores —
- * and both stylesheets are unlayered, so the LATER file in the CSS MANIFEST
- * takes the `transition` property. A member of the list above that declares its
- * own `transition` must therefore name `transform` in it, or the scale applies
- * with no animation in either direction: a one-frame snap on press and on
- * release. The same rule governs the colour press: a converted control must
- * name `background` in its own transition list.
- *
- * `.pill` left this list, and with it the whole scale-versus-open-card problem:
- * an expanded pill's card is a SIBLING inside `.pill-slot` rather than a child
- * (15-input.css "Expandable pill system"), so nothing was scaling the open menu
- * even before the colour press replaced the scale. Do not re-add a `transform`
- * exception for it. */
 
 /* ==========================================================================
    Canonical keyframe library (vk-* prefix)
@@ -162,69 +176,6 @@
   }
 }
 
-@keyframes vk-ping {
-  0% {
-    transform: scale(1);
-    opacity: 0.6;
-  }
-
-  15% {
-    transform: scale(2.5);
-    opacity: 0;
-  }
-
-  100% {
-    opacity: 0;
-  }
-}
-
-/* The status-dot glow beat: base -> brighter -> base, then a rest until the next
- * cycle — expressed as the OPACITY ENVELOPE of a pre-painted bright overlay, not
- * as the disc's own colours. Animating background-color/border-color at every
- * keyframe (what this replaced) repaints the disc every frame for the whole time
- * an agent works; an opacity blend over two static layers costs compositing
- * only. Shared verbatim with @cplieger/web-terminal-ui's wt-working-glow.
- *
- * Phase-locked with vk-dot-wave at 1.2s — change both or neither. */
-@keyframes vk-dot-glow {
-  0%,
-  70%,
-  100% {
-    opacity: 0;
-  }
-
-  35% {
-    opacity: 1;
-  }
-}
-
-/* The status-dot wave: one emission per cycle, launching off the disc's edge and
- * dissolving by ~2.1x. Deliberately NOT vk-ping (which stays the sidebar/repo
- * ping): the travel is LINEAR while the opacity is shaped separately, because an
- * ease shared by both spends the slow opening on top of the disc — where the
- * wave is indistinguishable from it — and then accelerates away exactly as the
- * opacity collapses. Bright at birth (0.95 after a 12% ramp-in) so it holds
- * usable weight across the travel instead of only while merged with the disc. */
-@keyframes vk-dot-wave {
-  0% {
-    transform: scale(1);
-    opacity: 0.15;
-  }
-
-  12% {
-    opacity: 0.95;
-  }
-
-  70% {
-    opacity: 0.45;
-  }
-
-  100% {
-    transform: scale(2.1);
-    opacity: 0;
-  }
-}
-
 /* The activity-dot wave: a travelling BRIGHTNESS, never a travelling size.
  *
  * It replaced `vk-bounce-dot`, whose one consumer was the dead `.thinking-dots`
@@ -234,12 +185,18 @@
  * running pipeline caught nothing at all. An indicator whose job is "something in
  * here is still working" may not read as empty at any instant.
  *
- * So the disc is always painted and only its opacity moves, which is the same
- * choice `vk-dot-glow` above makes for the tab's working dot, for the same two
- * reasons: it composites rather than repainting, and the thing being animated
- * never leaves. Floor at 0.35 so a resting dot is visibly a dot.
+ * So the disc is always painted and only its opacity moves, for the same two
+ * reasons the tab dot's overlay reads an opacity rather than repainting: it
+ * composites, and the thing being animated never leaves. Floor at 0.35 so a
+ * resting dot is visibly a dot.
  *
- * Phase-locked with vk-dot-glow / vk-dot-wave at 1.2s — change all three or none. */
+ * THIS IS THE ONE INDICATOR THAT KEEPS ITS OWN ANIMATION, and the reason is the
+ * per-dot STAGGER below: three dots offset in phase are what make the indicator
+ * read as a travelling brightness, and one shared clock has exactly one phase, so
+ * reading it would freeze all three together. It is self-contained (three dots
+ * inside one card), few instances, and it says "something inside is working"
+ * rather than reporting a state — so it is not in the status-dot vocabulary the
+ * document beat unifies. */
 @keyframes vk-dot-pulse {
   0%,
   100% {
@@ -329,6 +286,114 @@
   [data-chat-entry] {
     animation-duration: 10ms;
   }
+}
+
+/* ==========================================================================
+   The document beat
+
+   `--vk-beat` ramps 0 -> 1 -> 0 once per `--dot-beat-dur`, eased with the app's
+   own standard curve, on an element that never changes state. Why that placement
+   IS the synchronisation is in 00-header.css where the property is registered.
+
+   The easing lives here rather than in each dot's own animation, so the SHAPE is
+   shared too: a dot reads `var(--vk-beat)` as a plain 0..1 amplitude and scales
+   it to taste. No dot declares an animation, so none can be created at its own
+   mount time, which is what made them drift apart.
+   ========================================================================== */
+
+@keyframes vk-beat {
+  0%,
+  100% {
+    --vk-beat: 0;
+  }
+
+  50% {
+    --vk-beat: 1;
+  }
+}
+
+:root {
+  animation: vk-beat var(--dot-beat-dur) var(--ease-standard) infinite;
+}
+
+/* Reduced motion stops the CLOCK, once, and every dot in the app goes still with
+   it — there is no per-dot animation left to gate. `0.01ms` is the house value so
+   `animationend` still fires; a stopped clock rests at 0, so any dot reading it
+   settles at its own resting amplitude rather than mid-beat. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    animation: none;
+  }
+}
+
+/* ==========================================================================
+   Icon size tiers
+
+   An icon declares WHICH TIER it is and nothing about its pixels. `svg()` in
+   icons.ts emits the class and no width/height, so the size and the stroke are
+   both here — one number per tier for the whole app, which is what makes
+   "shrink every chrome glyph" a one-line experiment instead of a sweep.
+
+   The stroke comes from CSS, not the markup, and it is DECOUPLED from the size
+   by `vector-effect: non-scaling-stroke`, so `stroke-width: 1` renders 1 CSS
+   pixel at any size — crisp at DPR 1 and DPR 2 alike, and immune to a per-site
+   rule that overrides the size (see 01-tokens.css for the arithmetic this
+   replaced and the 0.78px it measured). `vector-effect` does NOT inherit from
+   the <svg>, verified in Chromium 151, so it is set on the SHAPES.
+
+   Setting size and stroke here is legal because width, height and stroke-width
+   on an <svg> are PRESENTATION attributes, which any author declaration beats
+   with no specificity contest — which is also why these rules can sit at ZERO
+   specificity inside :where() and still take effect. That is deliberate: every
+   per-site rule that already sizes an icon keeps winning, so this layer is a
+   default, not an override.
+
+   A filled glyph (the Seti file icons, the forge marks) ignores the stroke
+   harmlessly. `flex-shrink: 0` is here because an icon in a flex row must not
+   be squeezed into an ellipse by a long label beside it.
+   ========================================================================== */
+
+:where(.ic-inline, .ic-ui, .ic-lg, .ic-hero) {
+  flex-shrink: 0;
+}
+
+:where(.ic-inline, .ic-ui, .ic-lg, .ic-hero)
+  :where(path, circle, line, rect, polyline, polygon, ellipse) {
+  vector-effect: non-scaling-stroke;
+}
+
+:where(.ic-inline) {
+  inline-size: var(--icon-inline);
+  block-size: var(--icon-inline);
+  stroke-width: var(--icon-stroke-inline);
+}
+
+:where(.ic-ui) {
+  inline-size: var(--icon-ui);
+  block-size: var(--icon-ui);
+  stroke-width: var(--icon-stroke-ui);
+}
+
+:where(.ic-lg) {
+  inline-size: var(--icon-lg);
+  block-size: var(--icon-lg);
+  stroke-width: var(--icon-stroke-lg);
+}
+
+:where(.ic-hero) {
+  inline-size: var(--icon-hero);
+  block-size: var(--icon-hero);
+  stroke-width: var(--icon-stroke-hero);
+}
+
+/* The tab strip's nesting arrow is STRUCTURE, not a glyph, and it is the one
+   icon that wants a heavier stroke than its tier: at this size the shared
+   weight read as an artifact of the glyph beside it rather than as an indent.
+   It carried stroke-width 3 in its own markup, which this layer would now
+   override, so the exception moved here where it sits next to the rule it
+   breaks. 2 CSS px under non-scaling-stroke, so it stays crisp at both DPRs. */
+:where(.ic-subtab) {
+  stroke-width: 2;
 }
 
 /* ==========================================================================

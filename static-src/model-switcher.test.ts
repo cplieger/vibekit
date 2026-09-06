@@ -19,6 +19,11 @@ import type { ModelInfo } from "./types.js";
 /** Catalog the module reads through picker.getCachedModels. */
 let cachedModels: ModelInfo[] = [];
 
+/** The stand-in line picker.ts hands out when there is no model list, staged here
+ *  because the COPY is picker.ts's to own and this file's subject is what the card
+ *  does with it. */
+let notice: { text: string; busy: boolean } | null = null;
+
 const { onExpand, effortDispatch, setLastEffortSpy } = vi.hoisted(() => ({
   onExpand: { fn: null as null | (() => void) },
   effortDispatch: vi.fn(),
@@ -73,6 +78,12 @@ vi.mock("./store.js", async () => {
 vi.mock("./picker.js", () => ({
   getCachedModels: () => cachedModels,
   refreshPickerIfVisible: vi.fn(),
+  catalogNotice: () => notice,
+  // Named because Browser Mode links ESM for real: a factory missing a name the
+  // module under test imports fails COLLECTION, not the case that uses it. The
+  // card's Retry is model-switcher-catalog.test.ts's subject.
+  retryCatalog: vi.fn(),
+  RETRY_LABEL: "Retry loading the model list",
 }));
 vi.mock("./actions/index.js", () => ({
   bindLoadingState: vi.fn(),
@@ -151,6 +162,7 @@ describe("the effort section", () => {
     card.id = "model-switch-list";
     document.body.append(pill, card);
     cachedModels = [];
+    notice = null;
     onExpand.fn = null;
     lastEffort = "";
     lastEffortModel = "";

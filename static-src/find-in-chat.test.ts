@@ -31,6 +31,11 @@ vi.mock("./chat-search.js", { spy: true });
 // overlay tests always ran against).
 vi.mock("./store.js", { spy: true });
 vi.mock("./store-load.js", { spy: true });
+// A one-export factory, unlike the three above: this module is NOT in
+// find-in-chat's own import graph (it is reached by a lazy `await import`), so
+// nothing here needs its real implementation, and replacing it keeps the
+// exec-view chunk out of this suite entirely.
+vi.mock("./run-view.js", () => ({ openRunView: vi.fn() }));
 
 import { FindEngine, formatCount } from "./find-engine.js";
 import type * as ModFindInChat from "./find-in-chat.js";
@@ -699,6 +704,7 @@ import type * as ModChatSearch from "./chat-search.js";
 import type * as ModStore from "./store.js";
 import type * as ModStoreLoad from "./store-load.js";
 import type * as ModScroll from "./scroll.js";
+import type * as ModRunView from "./run-view.js";
 
 describe("server-hit navigation", () => {
   let onHotkey: (e: KeyboardEvent) => void;
@@ -706,6 +712,7 @@ describe("server-hit navigation", () => {
   let store: typeof ModStore;
   let storeLoad: typeof ModStoreLoad;
   let scroll: typeof ModScroll;
+  let runView: typeof ModRunView;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -727,6 +734,7 @@ describe("server-hit navigation", () => {
     store = await import("./store.js");
     storeLoad = await import("./store-load.js");
     scroll = await import("./scroll.js");
+    runView = await import("./run-view.js");
   });
 
   function ctrlF(): KeyboardEvent {
@@ -896,6 +904,9 @@ describe("server-hit navigation", () => {
     expect(countText()).toBe("1 of 1");
     const mark = document.querySelector("mark.find-hit-current");
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(mark, expect.anything());
+    // The step branch is NARROW: `sub-1` is a delegate uuid, not a `wf:` step id,
+    // so this hit resolves in the DOM exactly as it always has.
+    expect(vi.mocked(runView.openRunView)).not.toHaveBeenCalled();
   });
 
   it("selects the block and says so for a syntax-only hit (match not in rendered text)", async () => {
@@ -1190,6 +1201,114 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(countText()).toBe("1 of 1 in chat \u00b7 could not be shown");
     });
+  });
+
+  // A WORKFLOW STEP's hit. Its blocks are DROPPED by the transcript's dispatcher
+  // (messages-blocks.ts placeBlock), so there is no DOM segment for the chain above
+  // to open and the old path ended at "could not be shown" on the launching turn's
+  // row. The run TAB renders that step's transcript out of the same blocks, so it
+  // is a real destination — the hit navigates there instead of resolving in place.
+  it("routes a step hit to the run tab with that node focused", async () => {
+    stageChat([
+      { id: "u1", role: "user", content: "find it" },
+      {
+        id: "a1",
+        role: "assistant",
+        blocks: [
+          { type: "text", text: "the step logged a retry", agent_subtask_id: "wf:wf-1:wf-1/build" },
+        ],
+      },
+    ]);
+    mountTurnCard(
+      "u1",
+      // The launching turn's row exists and holds NO step content: that is the
+      // whole reason the DOM path has nothing to resolve here.
+      `<div data-reconcile-key="a1" class="msg-row"><div class="assistant-blocks"></div></div>`,
+    );
+    stageHits([
+      serverHit({
+        excerpt: "the step logged a retry",
+        segment_kind: "content",
+        agent_subtask_id: "wf:wf-1:wf-1/build",
+        block_index: 0,
+        offset: 15,
+        segment_len: 23,
+      }),
+    ]);
+
+    await openAndSearch("retry");
+    typeAndEnter("retry");
+
+    await vi.waitFor(() => {
+      expect(vi.mocked(runView.openRunView)).toHaveBeenCalledTimes(1);
+    });
+    // The run, the node, and this chat as the tab's parent. Name is "" so the tab
+    // factory derives the label from the run store.
+    expect(vi.mocked(runView.openRunView)).toHaveBeenCalledWith("wf-1", "", "c1", "wf-1/build");
+    // No paging and no turn reveal: the destination is another tab, so opening the
+    // launching chat's history would be work for a surface nobody is about to look
+    // at. And nothing is selected in the transcript, because nothing is there.
+    expect(vi.mocked(storeLoad.loadMessages)).not.toHaveBeenCalled();
+    expect(vi.mocked(chatSearch.revealHitTurn)).not.toHaveBeenCalled();
+    expect(document.querySelector("mark.find-hit-current")).toBeNull();
+    // The position painted before navigating. On a successful open the tab switch
+    // tears the overlay down; on a refused one this is the accurate position for a
+    // reader still looking at the transcript.
+    expect(countText()).toBe("1 of 1 in chat");
+  });
+
+  // The predicate is the RENDERER's own `parseStepSubtask`, not a `wf:` prefix
+  // test, so a malformed step id falls through to the delegate box exactly as it
+  // does in the transcript.
+  it("falls through to the DOM path for a malformed wf: id", async () => {
+    stageChat([
+      { id: "u1", role: "user", content: "find it" },
+      {
+        id: "a1",
+        role: "assistant",
+        blocks: [
+          { type: "tool_use", tool_call_id: "t-sub", agent_subtask_id: "wf:no-second-colon" },
+          {
+            type: "text",
+            text: "delegate found the retry backoff",
+            agent_subtask_id: "wf:no-second-colon",
+          },
+        ],
+      },
+    ]);
+    mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row">
+         <div class="assistant-blocks">
+           <div class="subagent-block collapsed" data-subtask="wf:no-second-colon">
+             <div class="subagent-header">Subagent</div>
+             <div class="subagent-body"><div class="message assistant">delegate found the retry backoff</div></div>
+           </div>
+         </div>
+       </div>`,
+    );
+    const box = document.querySelector<HTMLElement>(".subagent-block");
+    if (box !== null) {
+      wireSubagentBox(box);
+    }
+    stageHits([
+      serverHit({
+        excerpt: "delegate found the retry backoff",
+        segment_kind: "content",
+        agent_subtask_id: "wf:no-second-colon",
+        block_index: 1,
+        offset: 19,
+        segment_len: 32,
+      }),
+    ]);
+
+    await openAndSearch("retry");
+    typeAndEnter("retry");
+
+    await vi.waitFor(() => {
+      expect(document.querySelector(".subagent-body mark.find-hit-current")).not.toBeNull();
+    });
+    expect(vi.mocked(runView.openRunView)).not.toHaveBeenCalled();
   });
 
   it("keeps Enter-cycling on resident marks when any exist, however many hits the server found", async () => {

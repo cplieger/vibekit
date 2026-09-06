@@ -1,6 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import * as fc from "fast-check";
-import { parseRoute, buildPath, type Route, type SettingsTab, type DocsTab } from "./router";
+import {
+  parseRoute,
+  buildPath,
+  pushRoute,
+  type Route,
+  type SettingsTab,
+  type DocsTab,
+} from "./router";
 
 // ---------------------------------------------------------------------------
 // Proposal tarch-b14-p2: Table-driven test for parseRoute
@@ -115,6 +122,42 @@ describe("parseRoute (table-driven)", () => {
       pathname: "/file/",
       hash: "",
       expected: { kind: "chat", id: "" },
+    },
+    {
+      // The baseline: a run URL with no fragment carries no node, which is what
+      // every caller that means "the run" produces.
+      name: "/run/wf_1 (no hash)",
+      pathname: "/run/wf_1",
+      hash: "",
+      expected: { kind: "run", id: "wf_1" },
+    },
+    {
+      // A node path contains `/`, which is why it is a fragment rather than a
+      // path segment — the tab's identity stays `(run, workflowId)`.
+      name: "/run/wf_1#node=wf_1%2Fiter-0%2Fwork",
+      pathname: "/run/wf_1",
+      hash: "#node=wf_1%2Fiter-0%2Fwork",
+      expected: { kind: "run", id: "wf_1", node: "wf_1/iter-0/work" },
+    },
+    {
+      name: "/run/wf_1#node= (empty value) → no node",
+      pathname: "/run/wf_1",
+      hash: "#node=",
+      expected: { kind: "run", id: "wf_1" },
+    },
+    {
+      name: "/run/wf_1#L12 (the editor's fragment) → no node",
+      pathname: "/run/wf_1",
+      hash: "#L12",
+      expected: { kind: "run", id: "wf_1" },
+    },
+    {
+      // safeDecode is the decoder, so a bare `%` survives as itself instead of
+      // throwing — a hash arrives straight off location and off popstate.
+      name: "/run/wf_1#node=%zz (malformed percent) → raw value",
+      pathname: "/run/wf_1",
+      hash: "#node=%zz",
+      expected: { kind: "run", id: "wf_1", node: "%zz" },
     },
     {
       name: "/settings → general",
@@ -255,6 +298,27 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
         fc.integer({ min: 1, max: 10000 }),
       )
       .map(([segs, line]): Route => ({ kind: "file", path: segs.join("/"), line })),
+    // run without a node — the "the run" spelling, byte-identical to what it
+    // has always been
+    fc
+      .string({ minLength: 1, maxLength: 30 })
+      .filter((s) => !s.includes("/") && !s.includes("#"))
+      .map((id): Route => ({ kind: "run", id })),
+    // run WITH a node: a multi-segment path, which is the case a path segment
+    // could not carry
+    fc
+      .tuple(
+        fc
+          .string({ minLength: 1, maxLength: 20 })
+          .filter((s) => !s.includes("/") && !s.includes("#")),
+        fc.array(
+          fc
+            .string({ minLength: 1, maxLength: 15 })
+            .filter((s) => !s.includes("/") && !s.includes("#") && s !== ""),
+          { minLength: 1, maxLength: 4 },
+        ),
+      )
+      .map(([id, segs]): Route => ({ kind: "run", id, node: segs.join("/") })),
     // settings
     fc.constantFrom(...settingsTabs).map((tab): Route => ({ kind: "settings", tab })),
     // docs — every sub-tab. "steering" omits the segment (/docs), the rest
@@ -288,6 +352,13 @@ function canonicalize(route: Route): Route {
       // line <= 0 or undefined → no line property in parsed output
       if (route.line === undefined || route.line <= 0) {
         return { kind: "file", path: route.path };
+      }
+      return route;
+    case "run":
+      // An empty node is dropped on both sides: buildPath omits the fragment
+      // and parseRoute reads `#node=` as no node. Mirrors the file/line case.
+      if (route.node === undefined || route.node === "") {
+        return { kind: "run", id: route.id };
       }
       return route;
     default:
@@ -333,5 +404,73 @@ describe("parseRoute adversarial inputs (no-throw)", () => {
       { numRuns: 300 },
     );
     expect(result.failed).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pushRoute's fragment collapse.
+//
+// A fragment names a position inside the page its route already names, and the
+// app consumes it on arrival: a cold `/run/x#node=y` focuses that step and then
+// activates the tab, whose own route carries no fragment. Pushing there would
+// leave the reader an entry that renders identically to the one they opened, so
+// the first Back press looks inert. Asserted through spies rather than
+// `history.length`, which counts entries this runner's iframe made before the
+// test and cannot be reset.
+// ---------------------------------------------------------------------------
+
+describe("pushRoute", () => {
+  const originalHref = location.pathname + location.search + location.hash;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    history.replaceState(null, "", originalHref);
+  });
+
+  it("replaces rather than pushes when the only change is dropping the fragment", () => {
+    expect.assertions(3);
+    history.replaceState(null, "", "/run/wf_1#node=wf_1/build-loop/iter-0/implement");
+    const push = vi.spyOn(history, "pushState");
+    const replace = vi.spyOn(history, "replaceState");
+
+    pushRoute({ kind: "run", id: "wf_1" });
+
+    expect(push).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(replace.mock.calls[0]?.[2]).toBe("/run/wf_1");
+  });
+
+  it("pushes when a fragment is ADDED, because that is a real move to a position", () => {
+    expect.assertions(2);
+    history.replaceState(null, "", "/run/wf_1");
+    const push = vi.spyOn(history, "pushState");
+
+    pushRoute({ kind: "run", id: "wf_1", node: "wf_1/plan" });
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push.mock.calls[0]?.[2]).toBe("/run/wf_1#node=wf_1%2Fplan");
+  });
+
+  it("pushes when the PATH changes, fragment or no fragment", () => {
+    expect.assertions(2);
+    history.replaceState(null, "", "/run/wf_1#node=wf_1/plan");
+    const push = vi.spyOn(history, "pushState");
+
+    pushRoute({ kind: "run", id: "wf_2" });
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push.mock.calls[0]?.[2]).toBe("/run/wf_2");
+  });
+
+  it("does nothing when the target is already the current location", () => {
+    expect.assertions(2);
+    history.replaceState(null, "", "/run/wf_1");
+    const push = vi.spyOn(history, "pushState");
+    const replace = vi.spyOn(history, "replaceState");
+
+    pushRoute({ kind: "run", id: "wf_1" });
+
+    expect(push).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
   });
 });

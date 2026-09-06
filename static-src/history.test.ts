@@ -282,6 +282,120 @@ describe("history: previous chats and runs", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The two per-list read verdicts. The server answers 200 with an empty list
+// whether it read nothing or failed to read at all — the picker is an
+// affordance, not a correctness surface — so `sessions_state` / `runs_state` are
+// the only thing separating the two, and without reading them this page told the
+// user their workspace had no history every time KAS was unreachable.
+//
+// The lists degrade INDEPENDENTLY (separate verbs on the same bridge), which is
+// why a half-failure says which half is missing.
+// ---------------------------------------------------------------------------
+
+describe("history: which empty state it is", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    bootSeq++;
+    hasTab.mockReturnValue(false);
+  });
+
+  async function emptyText(payload: unknown): Promise<string> {
+    document.body.innerHTML = `<div id="history-table"></div>`;
+    dispatch.mockResolvedValue(payload);
+    const { loadHistoryView } = (await import(
+      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
+    )) as typeof ModHistory;
+    loadHistoryView();
+    await vi.waitFor(() => {
+      if (document.querySelector("#history-table .list-empty") === null) {
+        throw new Error("no empty state");
+      }
+    });
+    return document.getElementById("history-table")?.textContent ?? "";
+  }
+
+  it("claims nothing to resume only when BOTH reads succeeded", async () => {
+    const t = await emptyText({
+      sessions: [],
+      runs: [],
+      sessions_state: "ready",
+      runs_state: "ready",
+    });
+    expect(t).toContain("No previous sessions in this workspace.");
+  });
+
+  it("says the read failed rather than claiming the workspace is empty", async () => {
+    const t = await emptyText({
+      sessions: [],
+      runs: [],
+      sessions_state: "unavailable",
+      runs_state: "unavailable",
+    });
+    expect(t).toContain("Couldn't read");
+    expect(t).not.toContain("No previous sessions in this workspace.");
+  });
+
+  it("names WHICH list failed when only one did", async () => {
+    const chats = await emptyText({
+      sessions: [],
+      runs: [],
+      sessions_state: "unavailable",
+      runs_state: "ready",
+    });
+    expect(chats).toContain("Couldn't read previous conversations.");
+    expect(chats).toContain("No workflow runs to show.");
+
+    const runs = await emptyText({
+      sessions: [],
+      runs: [],
+      sessions_state: "ready",
+      runs_state: "unavailable",
+    });
+    expect(runs).toContain("Couldn't read workflow runs.");
+    expect(runs).toContain("No previous conversations to show.");
+  });
+
+  // The verdict is ALL the wire carries: the server knows why a read failed and
+  // logs it (session_list.go), and none of that reaches the client, so copy
+  // blaming an account, a permission or the connection would be inventing a
+  // cause. picker.test.ts pins the same rule for the catalog notice, which is the
+  // other surface that has to stand in for a list it could not read.
+  it("names no cause in any of the four states", async () => {
+    const all = [
+      await emptyText({ sessions: [], runs: [], sessions_state: "ready", runs_state: "ready" }),
+      await emptyText({
+        sessions: [],
+        runs: [],
+        sessions_state: "unavailable",
+        runs_state: "unavailable",
+      }),
+      await emptyText({
+        sessions: [],
+        runs: [],
+        sessions_state: "unavailable",
+        runs_state: "ready",
+      }),
+      await emptyText({
+        sessions: [],
+        runs: [],
+        sessions_state: "ready",
+        runs_state: "unavailable",
+      }),
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    expect(all).not.toContain("account");
+    expect(all).not.toContain("entitle");
+    expect(all).not.toContain("permission");
+    expect(all).not.toContain("expire");
+    expect(all).not.toContain("connect");
+    expect(all).not.toContain("sign in");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A chat already open HERE is not history. The server only knows ownership (it
 // tags such a session with `chat_id` rather than omitting it); "open here" is
 // this device's localStorage, which is why the predicate is the client's and

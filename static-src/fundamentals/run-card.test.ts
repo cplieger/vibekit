@@ -8,6 +8,8 @@
 import { describe, it, expect } from "vitest";
 
 import { buildRunCard, type RunAsks } from "./run-card.js";
+import { leaves } from "../exec-view/model.js";
+import { runToExec } from "../run-exec-source.js";
 import type { RunNode, RunState } from "../run-store.js";
 
 function step(nodeId: string, status: RunNode["status"]): RunNode {
@@ -25,6 +27,8 @@ function runOf(status: NonNullable<RunState["status"]>, ...children: RunNode[]):
 function asks(count: number, nodes: string[], label = ""): RunAsks {
   return { count, nodes: new Set(nodes), label };
 }
+
+const NO_ASKS: RunAsks = asks(0, []);
 
 function card(): ReturnType<typeof buildRunCard> {
   return buildRunCard("wf_1", "Workflow run", () => {
@@ -247,6 +251,33 @@ describe("a pause that means a step is waiting on a person", () => {
     );
   });
 
+  // The branch arm, which no reason can reach: the run keeps only the wrapper KAS
+  // composes for a parallel, and that same wrapper covers an interruption and a
+  // permanent failure — so the sentence has to come from the node's own signal.
+  it("recognises a park inside a parallel branch", () => {
+    const run: RunState = {
+      workflowId: "wf_1",
+      status: "paused",
+      pauseReason: "Parallel 'phase1' is waiting on branch 'verify'.",
+      root: {
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [
+          {
+            nodeId: "phase1",
+            type: "parallel",
+            status: "paused",
+            children: [
+              { nodeId: "verify", type: "step", status: "paused", completionSignal: "need_input" },
+            ],
+          },
+        ],
+      },
+    };
+    expect(alertText(buildAndRender(run, asks(0, [])))).toBe("A step is waiting for your answer");
+  });
+
   it("quotes any other reason verbatim, because it is not about the reader", () => {
     expect(pausedWith("waiting on a watch condition")).toBe(
       "Waiting: waiting on a watch condition",
@@ -278,15 +309,18 @@ function buildAndRender(state: RunState, a: RunAsks): HTMLElement {
 }
 
 // ---------------------------------------------------------------------------
-// The two row producers must agree on the KEY, and no single-producer test can
-// see it: `render` builds a row per state-tree leaf through `nodePathOf`, while
-// `stepBody` builds one from the `nodePath` KAS stamps on a step FRAME. KAS
-// spells a repeat's iteration container `<repeatId>#<n>` in the state tree and
-// `iter-<n>` in a frame path, so every loop-body step used to get TWO rows — the
-// painted one from the tree and an unpainted twin from its own content, which is
-// what read as "these steps never executed" under a finished run.
+// THE DOOR'S KEY. A step row is a door into `/run/<id>` with that node selected,
+// so the path the row hands over has to be the path the exec view addresses that
+// node by — otherwise the click lands on nothing and the page silently
+// auto-follows. Two producers, two modules: `render` builds a row per state-tree
+// leaf through `nodePathOf`, and `run-exec-source.ts` builds an `ExecNode.path`
+// through `nodePathSegment`. Nothing pinned that they agree.
+//
+// It is the same key defect one surface along: KAS spells a repeat's iteration
+// container `<repeatId>#<n>` in the state tree and `iter-<n>` in a frame path,
+// which is what used to give every loop-body step TWO rows in this card.
 // ---------------------------------------------------------------------------
-describe("the state tree and a step frame address one row", () => {
+describe("a step row's key is the exec view's own node path", () => {
   // The shape a real completed loop run has: the iteration container carries its
   // own generated id AND its `iteration`, which is what the segment rule reads.
   function loopRun(): RunState {
@@ -318,42 +352,192 @@ describe("the state tree and a step frame address one row", () => {
     };
   }
 
-  const FRAME_PATH = "wf_1/loop/iter-0/code";
+  const CODE_PATH = "wf_1/loop/iter-0/code";
 
-  function codeRow(root: HTMLElement): HTMLElement | null {
-    return root.querySelector<HTMLElement>(`.run-step[data-node="${FRAME_PATH}"]`);
+  function rowPaths(root: HTMLElement): (string | undefined)[] {
+    return [...root.querySelectorAll<HTMLElement>(".run-step")].map((e) => e.dataset["node"]);
   }
 
-  it("renders one row per executed step when the state arrives first", () => {
+  it("keys every row by the path the exec view addresses that node by", () => {
+    const state = loopRun();
+    const c = card();
+    c.render(state);
+    // The other producer, over the same state. `leaves` is what the run tab
+    // navigates and `bodyFor` files a transcript under, so a row that keyed on
+    // anything else would open the page on no node at all.
+    const execPaths = leaves(runToExec("wf_1", state, undefined, NO_ASKS).nodes).map((n) => n.path);
+    expect(execPaths).toEqual(["wf_1/plan", CODE_PATH, "wf_1/loop/iter-0/review"]);
+    expect(rowPaths(c.root)).toEqual(execPaths);
+  });
+
+  it("names a row after its last path segment, keeping the loop above it", () => {
     const c = card();
     c.render(loopRun());
-    const body = c.stepBody(FRAME_PATH);
-
-    expect(
-      [...c.root.querySelectorAll<HTMLElement>(".run-step")].map((e) => e.dataset["node"]),
-    ).toEqual(["wf_1/plan", FRAME_PATH, "wf_1/loop/iter-0/review"]);
-    // Painted, so the frame's row is the state's row rather than a twin beside it.
-    const row = codeRow(c.root);
+    const row = c.root.querySelector<HTMLElement>(`.run-step[data-node="${CODE_PATH}"]`);
+    expect(row?.querySelector(".run-step-name")?.textContent).toBe("code");
     expect(row?.dataset["status"]).toBe("ok");
     // A settled ok step's mark is the outcome SVG silhouette, not the old ✓ glyph.
     expect(row?.querySelector(".run-step-glyph svg")).not.toBeNull();
-    // The strongest form of the join: the host the blocks stream into IS that row.
-    expect(row?.contains(body)).toBe(true);
   });
 
-  it("renders one row per executed step when the frame arrives first", () => {
-    // The order production takes: a step's first content frame routinely beats the
-    // `inspect` fetch that describes it.
+  it("keeps two iterations of one loop body in two rows", () => {
+    // They share a nodeId, so the node PATH is what separates them.
     const c = card();
-    const body = c.stepBody(FRAME_PATH);
-    c.render(loopRun());
+    c.render({
+      workflowId: "wf_1",
+      status: "completed",
+      root: {
+        nodeId: "wf_1",
+        type: "repeat",
+        status: "completed",
+        children: [
+          {
+            nodeId: "loop#0",
+            type: "sequence",
+            status: "completed",
+            iteration: 0,
+            children: [step("work", "completed")],
+          },
+          {
+            nodeId: "loop#1",
+            type: "sequence",
+            status: "completed",
+            iteration: 1,
+            children: [step("work", "completed")],
+          },
+        ],
+      },
+    });
+    expect(rowPaths(c.root)).toEqual(["wf_1/iter-0/work", "wf_1/iter-1/work"]);
+  });
+});
 
+// ---------------------------------------------------------------------------
+// A ROW IS A DOOR, NOT A DISCLOSURE. It used to open a per-row body hosting that
+// step's own live blocks, which made the transcript BUILD every tool card and
+// reasoning trace of every step of every run — `content-visibility` skips layout
+// and paint on a closed row, not construction. The body is gone; the row opens
+// `/run/<id>` at that node instead.
+// ---------------------------------------------------------------------------
+describe("a step row is a door into the run tab", () => {
+  const opened: [string, string, string | undefined][] = [];
+
+  function doorCard(): ReturnType<typeof buildRunCard> {
+    opened.length = 0;
+    const c = buildRunCard("wf_1", "Workflow run", (id, label, focusNode) => {
+      opened.push([id, label, focusNode]);
+    });
+    c.render(runOf("running", step("build", "running")));
+    return c;
+  }
+
+  function head(c: ReturnType<typeof buildRunCard>): HTMLAnchorElement {
+    return c.root.querySelector<HTMLAnchorElement>(".run-step-head")!;
+  }
+
+  it("makes the row head a real anchor at that STEP's route", () => {
+    // Real, so middle-click and copy-link work — and the route carries the node as
+    // a FRAGMENT, so a copied row link lands on the step rather than on the run's
+    // auto-followed default. A fragment rather than a segment because a node path
+    // contains `/` and the tab's identity must stay `(run, workflowId)`.
+    const h = head(doorCard());
+    expect(h.tagName).toBe("A");
+    expect(h.getAttribute("href")).toBe("/run/wf_1#node=wf_1%2Fbuild");
+  });
+
+  it("keeps the FOOT link on the run itself, with no fragment", () => {
+    // "Open run" means the run, not a step, so it must not inherit a node from
+    // whichever row happens to be first.
+    const c = doorCard();
+    expect(c.root.querySelector<HTMLAnchorElement>(".run-open")?.getAttribute("href")).toBe(
+      "/run/wf_1",
+    );
+  });
+
+  it("gives two iterations of one loop body DIFFERENT hrefs", () => {
+    // What proves the href is per ROW rather than per card: these two rows share a
+    // nodeId, so only the node path separates them.
+    //
+    // Its own card rather than `doorCard`'s: a row is inserted once and never
+    // removed, so re-rendering a different plan into that card would leave its
+    // `build` row in the DOM beside these two.
+    const c = card();
+    c.render({
+      workflowId: "wf_1",
+      status: "completed",
+      root: {
+        nodeId: "wf_1",
+        type: "repeat",
+        status: "completed",
+        children: [
+          {
+            nodeId: "loop#0",
+            type: "sequence",
+            status: "completed",
+            iteration: 0,
+            children: [step("work", "completed")],
+          },
+          {
+            nodeId: "loop#1",
+            type: "sequence",
+            status: "completed",
+            iteration: 1,
+            children: [step("work", "completed")],
+          },
+        ],
+      },
+    });
     expect(
-      [...c.root.querySelectorAll<HTMLElement>(".run-step")].map((e) => e.dataset["node"]),
-    ).toEqual(["wf_1/plan", FRAME_PATH, "wf_1/loop/iter-0/review"]);
-    const row = codeRow(c.root);
-    expect(row?.dataset["status"]).toBe("ok");
-    expect(row?.querySelector(".run-step-glyph svg")).not.toBeNull();
-    expect(row?.contains(body)).toBe(true);
+      [...c.root.querySelectorAll<HTMLAnchorElement>(".run-step-head")].map((a) =>
+        a.getAttribute("href"),
+      ),
+    ).toEqual(["/run/wf_1#node=wf_1%2Fiter-0%2Fwork", "/run/wf_1#node=wf_1%2Fiter-1%2Fwork"]);
+  });
+
+  it("hosts no step body and carries no disclosure chevron", () => {
+    // Not `.hidden` and not `content-visibility`: the body was DELETED, and a
+    // region kept in the DOM is a region that still costs its construction.
+    const c = doorCard();
+    expect(c.root.querySelector(".run-step-body")).toBeNull();
+    expect(c.root.querySelector(".run-step-toggle")).toBeNull();
+    expect(c.root.querySelector(".run-step.collapsed")).toBeNull();
+  });
+
+  it("leaves no interactive element nested inside another", () => {
+    // axe's `nested-interactive` (serious): an `<a>` inside a `role="button"` host
+    // fires it, and `aria-hidden` + `tabindex="-1"` does not clear it. So the row's
+    // anchor carries no role of its own and its children are spans.
+    const h = head(doorCard());
+    expect(h.getAttribute("role")).toBeNull();
+    expect(h.hasAttribute("tabindex")).toBe(false);
+    expect([...h.children].map((e) => e.tagName)).toEqual(["SPAN", "SPAN", "SPAN", "SPAN"]);
+    expect(h.querySelector("a, button, [tabindex]")).toBeNull();
+  });
+
+  it("opens the run at that node on a plain click", () => {
+    const c = doorCard();
+    const ev = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+    head(c).dispatchEvent(ev);
+    expect(opened).toEqual([["wf_1", "Workflow run", "wf_1/build"]]);
+    // The app's own routing took the click, so the browser must not also navigate.
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it("stands aside for a modified click", () => {
+    const c = doorCard();
+    const ev = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      ctrlKey: true,
+    });
+    head(c).dispatchEvent(ev);
+    expect(opened).toEqual([]);
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
+  it("still names the state in the row's accessible label", () => {
+    // The ROLE says the row opens something, so the name says what the row IS.
+    expect(head(doorCard()).getAttribute("aria-label")).toBe("build, running");
   });
 });

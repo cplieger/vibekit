@@ -2,6 +2,10 @@
 
 export type AlwaysAllowBlock = "unparseable";
 
+export type CatalogReason = "rpc" | "decode";
+
+export type CatalogState = "ready" | "empty" | "unavailable";
+
 export type DecisionKind = "permission" | "elicitation" | "user_input";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "model_not_served" | "auth_token_unavailable";
@@ -12,9 +16,13 @@ export type ForgeKind = "github" | "gitlab" | "gitea" | "codeberg";
 
 export type PlanStatus = "pending" | "in_progress" | "completed";
 
+export type ReadState = "ready" | "unavailable";
+
 export type Role = "user" | "assistant" | "event";
 
 export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "loop_iteration" | "watch_poll" | "paused" | "steps_queued";
+
+export type RunStepTranscriptState = "ready" | "gone" | "unavailable";
 
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
 
@@ -33,6 +41,8 @@ export type ToolStatus = "pending" | "in_progress" | "completed" | "failed";
 export type Transport = "stdio" | "http" | "sse";
 
 export type TurnOutcome = "running" | "completed" | "cancelled" | "interrupted" | "failed" | "refused" | "unknown";
+
+export type TurnSeverity = "running" | "clean" | "stopped" | "broken";
 
 /**
  * AccountUsage is the account/subscription usage snapshot for the
@@ -95,22 +105,13 @@ export interface AccountUsageBreakdown {
 }
 
 /**
- * AgentNoticePayload is the payload for type="agent_notice": a progress notice a
- * workflow step or a subagent reported into the session that launched it.
- * //
- * KAS decides this by sniffing the text for a `[notification/<severity>]` prefix
- * and delivers it through the steering buffer, which is the only inbound channel
- * into a live turn. vibekit refuses to SEND that shape (command/steer.go), so a
- * notice reaching here is never the user's words.
- * //
- * Severity is one of info/success/warning/error and is what makes this its own
- * event rather than a field on a steer: it maps onto the client's toast levels,
- * and the whole point of separating them is that a consumer never has to decide
- * whose voice a message is in.
- * //
- * There is no id. A steer needs one because its chip has to be updated when the
- * model reads it and cleared when the boundary drops it; a notice has no later
- * state, so nothing would ever address it.
+ * AgentNoticePayload is the payload for type="agent_notice": a progress notice a workflow step
+ * or subagent reported into the session that launched it. KAS decides this by sniffing the text
+ * for a `[notification/<severity>]` prefix and delivers it through the steering buffer, and
+ * vibekit refuses to SEND that shape, so a notice here is never the user's words. Severity
+ * (info/success/warning/error) is why this is its own event rather than a field on a steer: a
+ * consumer never has to decide whose voice a message is in. There is no id — a notice has no
+ * later state to address.
  */
 export interface AgentNoticePayload {
   severity: string;
@@ -124,9 +125,8 @@ export interface ApprovalFile {
   /** SnapshotURI addresses the pre-image, so a diff is a snapshot read. */
   snapshot_uri?: string;
   /**
- * ActionID is KAS's pending-action id and THE KEY the decision map must use.
- * KAS applies the accepted ids and restores the rest, so an id omitted from
- * the response counts as a REJECT rather than as unspecified.
+ * ActionID is KAS's pending-action id and THE KEY the decision map must use. KAS
+ * restores every id the response omits, so omission counts as a REJECT.
  */
   action_id: string;
 }
@@ -144,9 +144,8 @@ export interface AptPackage {
 }
 
 /**
- * Attachment is a file attached to a prompt. The server reads the file
- * and decides whether to send it as a document content block (PDF, DOCX,
- * etc.) or a text path reference based on the extension.
+ * Attachment is a file staged beside a prompt; its extension decides whether it
+ * travels as a document content block or as a text path reference.
  */
 export interface Attachment {
   path: string;
@@ -154,43 +153,30 @@ export interface Attachment {
 }
 
 /**
- * Block is one entry in an assistant message's chronological content
- * array. Within ONE agent's stream, position in Message.Blocks IS the
- * order that agent emitted the block — text → tool → text → tool, etc.
- * — so the client renders them inline as they happened rather than
- * concatenating all text into one bubble at the top with tools dumped
- * below.
+ * Block is one entry in an assistant message's chronological content array. Within
+ * ONE agent's stream, position IS emission order, so the client renders inline.
  * //
- * ACROSS streams the position is NOT a global chronology, because a
- * parent and its delegates share one array: internal/buffer extends the
- * newest block of the delta's OWN subtask, so a parent delta arriving
- * after a delegate opened a block lands BEHIND that delegate's block.
- * Order is per AgentSubtaskID; Content is what carries arrival order.
- * //
- * Replay-compatible: messages persisted before this field existed have
- * Blocks=nil. Renderers fall back to the legacy Content + ToolCalls
- * layout when Blocks is empty.
+ * ACROSS streams it is NOT a global chronology: a parent and its delegates share
+ * one array and internal/buffer extends the newest block of the delta's OWN
+ * subtask, so a parent delta can land BEHIND a delegate's block. Order is per
+ * AgentSubtaskID; Content carries arrival order. Nil on a message persisted
+ * before the field existed, where a renderer falls back to Content + ToolCalls.
  */
 export interface Block {
   /** Type is the discriminator: text | tool_use | thinking. */
   type: string;
   /**
- * Text carries the markdown text for Type=BlockText. Accumulated
- * across MessageChunkPayload events targeting this block index.
+ * Text is the markdown for Type=BlockText, accumulated across the
+ * MessageChunkPayload events targeting this block index.
  */
   text?: string;
   /** Thinking carries the reasoning text for Type=BlockThinking. */
   thinking?: string;
-  /**
- * ToolCallID references a tool by ID in Message.ToolCalls for
- * Type=BlockToolUse. Empty for other types.
- */
+  /** ToolCallID references a Message.ToolCalls entry for Type=BlockToolUse. */
   tool_call_id?: string;
   /**
- * AgentSubtaskID is the subtask id of the agent that produced this
- * block ("" = top-level agent). Set from the emitting event's
- * _meta.kiro.agentSubtaskId; lets the client group a subagent's
- * blocks and render them nested.
+ * AgentSubtaskID is the subtask id of the agent that produced this block, ""
+ * for the top-level one. It is what lets the client nest a subagent's blocks.
  */
   agent_subtask_id?: string;
 }
@@ -268,6 +254,16 @@ export interface ChatHeader {
  */
   effort?: string;
   /**
+ * LastTurnOutcome is how this chat's NEWEST finished turn ended, DERIVED on
+ * every read from the last message carrying a TurnOutcome — a second copy
+ * would be a second thing that can be wrong. Here because the header is the
+ * only projection reaching every chat, which is what the tab dot needs.
+ * //
+ * Empty for a chat with no finished turn and for older records (invariant 5
+ * forbids the backfill). Never `running`.
+ */
+  last_turn_outcome?: TurnOutcome;
+  /**
  * EffortActive + EffortLevels mirror Chat's, for the same reason Effort does:
  * the control renders from the ACTIVE chat's header, and an empty chat never
  * fetches its full record.
@@ -300,15 +296,11 @@ export interface Check {
 }
 
 /**
- * CodeReference is one licensed-code attribution surfaced by the agent
- * (v3/KAS _kiro/code_references). KAS emits it when a completion reproduces
- * a recognizable chunk of a referenced open-source file and the account's
- * code-reference tracker is enabled. The KAS ACP layer maps every reference
- * down to these three fields (licenseName + repository + url); the raw
- * CodeWhisperer recommendationContentSpan and information fields are dropped
- * upstream before we ever see them, so there is no span to map a reference
- * to a specific message region — attributions are turn-scoped and persisted
- * on the assistant Message they arrived during.
+ * CodeReference is one licensed-code attribution, emitted when a completion
+ * reproduces a recognizable chunk of a referenced open-source file.
+ * //
+ * KAS drops CodeWhisperer's recommendationContentSpan upstream, so there is no span
+ * to map a reference to a message region: attributions are TURN-scoped.
  */
 export interface CodeReference {
   license_name: string;
@@ -317,16 +309,45 @@ export interface CodeReference {
 }
 
 /**
- * CodeReferencesPayload is the payload for type="code_references". Carries
- * the licensed-code attributions accumulated on the in-flight assistant
- * turn (v3/KAS). MessageID targets that turn's assistant message so the
- * client attaches the chip to it; References is the full deduped list so
- * the client can render idempotently (a later notification replaces rather
- * than appends). Also persisted on the Message so the chip survives reload.
+ * CodeReferencesPayload is the payload for type="code_references": the licensed-code
+ * attributions on the in-flight assistant turn. References is the full deduped list, so a
+ * later notification REPLACES rather than appends. Also persisted on the Message.
  */
 export interface CodeReferencesPayload {
   message_id: string;
   references: CodeReference[];
+}
+
+/**
+ * ConfigTemplateResponse is the GET /api/config-template reply: the pre-session
+ * mode + model catalog, plus the verdict that says which outcome produced it.
+ * //
+ * Named …Response rather than …Payload because it is bound to no SSE event;
+ * internal/wirespec's binding tests key on the Payload suffix, and
+ * auth.WhoamiResponse is the precedent.
+ */
+export interface ConfigTemplateResponse {
+  default_model?: string;
+  /**
+ * EffortActive is the `effortLevel` option's currentValue: the tier a
+ * fresh session would run at. Pre-session, this is the only evidence of
+ * a live level.
+ */
+  effort_active?: string;
+  /**
+ * Catalog carries NO omitempty deliberately: wiregen emits a required
+ * TypeScript field for a field without it, so a client cannot invent a
+ * fallback for the one value the whole retry policy reads.
+ */
+  catalog: CatalogState;
+  catalog_reason?: CatalogReason;
+  /**
+ * The three lists are non-null on every path, degrade branches included, so a
+ * generated decoder requiring an array cannot fail on a failure body.
+ */
+  modes: SessionMode[];
+  models: SessionModel[];
+  effort_levels: SessionEffortLevel[];
 }
 
 /**
@@ -353,19 +374,15 @@ export interface ConfiguredForge {
 }
 
 /**
- * ConnectedPayload is the payload for type="connected", the SSE handshake
- * event. Floor is the oldest event ID still in the replay ring; Head is
- * the newest. Clients with last-seen-id < Floor know they missed events
- * and should refetch authoritative state.
+ * ConnectedPayload is the payload for type="connected", the SSE handshake. Floor is the
+ * oldest event ID still in the replay ring, Head the newest; a client whose last-seen id
+ * is below Floor missed events and must refetch authoritative state.
  */
 export interface ConnectedPayload {
   /**
- * Workspace is the absolute workspace root, and the client needs it from
- * the first frame because it cannot derive it. Every ACP-supplied path
- * reaches the client workspace-RELATIVE (translate.relPath strips this
- * prefix so a turn footer reads "hello.sh"), while the /api/file* surface
- * has a container-ABSOLUTE namespace. Opening a changed file rejoins the
- * two, and this is the missing half of that join.
+ * Workspace is the absolute workspace root, needed from the first frame because the
+ * client cannot derive it: ACP-supplied paths arrive workspace-RELATIVE while the
+ * /api/file* surface is container-ABSOLUTE, and opening a changed file rejoins them.
  */
   workspace?: string;
   floor: number;
@@ -373,13 +390,10 @@ export interface ConnectedPayload {
 }
 
 /**
- * DecisionSettledPayload is the payload for type="decision_settled": the
- * request named here has been answered, and not by the surface reading this.
- * //
- * It exists because a decision is offered on EVERY surface at once — every tab,
- * plus the run tab watching the same ask — while only one answer is accepted.
- * Without this event the losing surfaces keep a live-looking card for a question
- * that is closed, and clicking it achieves nothing.
+ * DecisionSettledPayload is the payload for type="decision_settled": the request named
+ * here was answered, and not by the surface reading this. A decision is offered on EVERY
+ * surface at once while only one answer is accepted, so without this event the losers keep
+ * a live-looking card for a closed question.
  */
 export interface DecisionSettledPayload {
   kind: DecisionKind;
@@ -397,19 +411,11 @@ export interface DeviceFlowResponse {
 }
 
 /**
- * DraftChangedPayload is the payload for type="draft_changed": the composer
- * state one chat now holds, sent so an idle device converges on a draft it is
- * not typing.
- * //
- * Both halves travel on every frame, and BOTH writers fill both, because the
- * event describes the composer rather than the field that moved: a receiver
- * applying only what changed would have to know which command fired, and a
- * second event type for the twin would be two channels to order.
- * //
- * The set_draft REPLY deliberately carries only a byte count, and this payload
- * carrying the text is not a contradiction. That reply goes back to the device
- * that just sent the words, where echoing them is pure cost; this goes to the
- * devices that do not have them, which is the only thing it is for.
+ * DraftChangedPayload is the payload for type="draft_changed": the composer state one chat
+ * now holds, sent so an idle device converges on a draft it is not typing. Both halves travel
+ * on every frame and BOTH writers fill both, because the event describes the COMPOSER rather
+ * than the field that moved. The set_draft reply carries only a byte count, which is not a
+ * contradiction: that goes back to the device that already has the words.
  */
 export interface DraftChangedPayload {
   text: string;
@@ -577,6 +583,15 @@ export interface ElicitationRequestSchema {
 export interface ErrorPayload {
   code: ErrorCode;
   message: string;
+  /**
+ * TurnScoped reports that this failure finalized a turn now carrying the same Message
+ * durably, so the reason is already in that turn's card. A property of the EMISSION,
+ * not of the Code: three of the five emitters behind ErrCodePromptFailed and
+ * ErrCodeRecoveryFailed never open a turn, so no per-code answer fits both groups.
+ * Absent means NO, the safe direction — report the failure rather than trust an inline
+ * row that may not exist.
+ */
+  turn_scoped?: boolean;
 }
 
 /** FileChange tracks per-file change stats during a turn. */
@@ -587,27 +602,16 @@ export interface FileChange {
 }
 
 /**
- * GovernanceFeatures is the org/account feature-flag set carried by the v3
- * (KAS) _kiro/governance/state notification (KAS's GovernanceFeatures object,
- * verified against the KAS 2.12 acp-server bundle + a live probe). Every field
- * is the RESOLVED effective value: MCPEnabled/WebToolsEnabled/AutonomousAgents
- * are the negation of a "…GovernanceDisabled" flag; the analytics/logging/
- * tracker fields are direct "…GovernanceEnabled" flags. On an individual /
- * Builder-ID login these resolve to a permissive default (mcp/webTools/
- * autonomousAgents on; analytics/promptLogging/codeReferenceTracker off;
- * contentCollection on) with isEnterprise=false and no disabledReason.
- * //
- * NOTE: Infrastructure-Safety (infraSafetyMonitor/infraSafetyEnforce) is NOT
- * here — it is a separate modelConfigProvider.isFeatureEnabled channel, not a
- * governance feature (verified: absent from _kiro/governance/state). So the
- * safety banner (translate/safety.go) is gated by KAS's own emission, not by
- * any field on this struct.
+ * GovernanceFeatures is the org/account feature-flag set carried by the v3 (KAS)
+ * _kiro/governance/state notification. Every field is the RESOLVED effective value, so a
+ * Builder-ID login reads permissive with isEnterprise=false and no disabledReason.
+ * Infrastructure-Safety is NOT here: it rides a separate isFeatureEnabled channel, so the
+ * safety banner is gated by KAS's own emission rather than by any field here.
  */
 export interface GovernanceFeatures {
   /**
- * MCPEnabled reports whether the MCP subsystem is permitted. When false,
- * enterprise governance has suppressed MCP entirely (vibekit disables the
- * add-server affordance and shows a disabled state in Settings → Tools).
+ * MCPEnabled reports whether the MCP subsystem is permitted; false means enterprise
+ * governance suppressed MCP entirely.
  */
   mcp_enabled: boolean;
   /** WebToolsEnabled reports whether built-in web tools are permitted. */
@@ -619,9 +623,8 @@ export interface GovernanceFeatures {
   /** PromptLogging reports whether prompt logging is enabled. */
   prompt_logging: boolean;
   /**
- * CodeReferenceTracker reports whether licensed-code reference tracking is
- * enabled — the flag that governs whether KAS emits _kiro/code_references
- * (the attribution chip in code-refs.ts is dormant unless this is true).
+ * CodeReferenceTracker governs whether KAS emits _kiro/code_references at all, so the
+ * attribution chip is dormant unless this is true.
  */
   code_reference_tracker: boolean;
   /** AutonomousAgents reports whether autonomous agent runs are permitted. */
@@ -629,22 +632,11 @@ export interface GovernanceFeatures {
 }
 
 /**
- * GovernanceStatePayload is the payload for type="governance_state", translated
- * from the v3 (KAS) _kiro/governance/state notification (buildNotification:
- * {sessionId, isEnterprise, features, disabledReason}). The account/workspace
- * feature-flag policy KAS pushes on every session/new + session/load, and
- * re-pushes on a prompt when it changes; vibekit caches the latest runtime-side and
- * also serves it at GET /api/governance so a fresh page load can read it with
- * no chat open. The wire sessionId is used only for subagent-copy dedup and is
- * dropped from this payload — governance is account-global, so the SSE is
- * broadcast with an empty chat id (every client receives it).
- * //
- * Known distinguishes "the server has told us the real policy" (Known=true, on
- * every SSE broadcast and a warm REST snapshot) from "not yet observed"
- * (Known=false, a cold REST snapshot before any bridge has started). Clients
- * MUST only gate/annotate affordances when Known is true — the all-false zero
- * value would otherwise read as "everything disabled" when we simply don't know
- * yet.
+ * GovernanceStatePayload is the payload for type="governance_state". Governance is
+ * account-global, so the wire sessionId is dropped and the SSE is broadcast with an empty
+ * chat id; GET /api/governance serves the cached copy so a fresh page load can read it with
+ * no chat open. Clients MUST gate affordances only when Known is true — the all-false zero
+ * value otherwise reads as "everything disabled" when the policy is simply unobserved.
  */
 export interface GovernanceStatePayload {
   /**
@@ -739,15 +731,26 @@ export interface Label {
 }
 
 /**
- * LiveRun is one row of GET /api/runs/live: a run vibekit's own lease registry
- * says is in flight, named with the chat whose agent launched it. ChatID is
- * empty for a parentless run (manual, scheduled) and for a lease written
- * before the field existed — both mean "no chat to exempt" to the consumer,
- * the client's eviction sweep.
+ * LiveRun is one row of GET /api/runs/live: a run vibekit's own lease registry says
+ * is in flight, named with the chat whose agent launched it. ChatID is empty for a
+ * parentless run and for a lease predating the field — both mean "no chat to launch
+ * a tab under". Executing is a FIELD rather than a filter applied here because
+ * three consumers ask this row three different questions, and filtering for the
+ * eviction sweep would take the row away from the tab dot and the tab parent.
  */
 export interface LiveRun {
   workflow_id: string;
   chat_id: string;
+  /**
+ * Executing reports whether THIS PROCESS holds a deadline for the run. NOT
+ * `status` and none of KAS's five, because serving one would mean an `inspect` per
+ * lease on the client's boot path (runlease.Lease.Deadline owns the answer).
+ * //
+ * It can read false while KAS says running — a lease read back from disk is
+ * parked, and `set_step_status` advances a step without re-arming — and both are
+ * accepted: the client corrects itself on the run's next progress frame.
+ */
+  executing: boolean;
 }
 
 /**
@@ -803,63 +806,52 @@ export interface MCPOAuthPayload {
  */
 export interface Message {
   /**
- * ChangedFiles is part of the per-turn summary (credits · elapsed · files
- * changed) shown in the assistant turn's footer, set on the final assistant
- * message at turn_ended so the footer survives reload. It was previously an
- * un-keyed direct DOM write in the client, which double-rendered on SSE
- * replay and vanished on refresh. Mirrors the turn_ended SSE payload shape.
- * (Field order in this struct is govet-fieldalignment-optimal, not logical.)
+ * ChangedFiles is part of the per-turn footer summary, set on the final assistant
+ * message at turn_ended so the footer survives reload. Field order in this struct
+ * is govet-fieldalignment-optimal, not logical.
  */
   changed_files?: Record<string, FileChange>;
   role: Role;
   content?: string;
   /**
- * Reasoning is the agent's "thinking" trace for this turn —
- * extended-thinking models emit it as a parallel stream alongside
- * Content. Persisted on the same message so the one-message-per-turn
- * invariant holds; rendered above the content bubble in the UI.
+ * Reasoning is the agent's thinking trace, a parallel stream alongside Content.
+ * On the same message so the one-message-per-turn invariant holds.
  */
   reasoning?: string;
   event_kind?: EventKind;
   id: string;
   /**
- * TurnOutcome is how this turn ENDED, stamped on the message that finalized it
- * — the last assistant message, or an EventTurnOutcome marker when the turn
- * emitted nothing. It is the durable half of a fact that otherwise exists only
- * on the live turn_ended SSE, so a reloaded transcript had to guess it from the
- * event messages that happened to survive.
- * //
- * Its presence is also what CLOSES a turn for the two turn projections: the
- * next assistant message or marker after it opens a new segment. A message
- * persisted before this field existed carries none, so those turns never close
- * and both projections behave exactly as they did.
+ * TurnOutcome is how this turn ENDED, stamped on the message that finalized
+ * it: the durable half of a fact otherwise carried only by the live
+ * turn_ended SSE. Its presence also CLOSES a turn for both projections, so an
+ * older message never closes one.
  */
   turn_outcome?: TurnOutcome;
   /**
- * TurnStopReasonRaw is the wire's stop reason verbatim. Kept because the enum
- * is OPEN — KAS exceeds ACP spec v1's closed union — so a value vibekit has
- * not measured is recoverable from the record instead of flattened into
- * `unknown`. No consumer may branch on it; TurnOutcome is what they read.
+ * TurnStopReasonRaw is the wire's stop reason verbatim, kept because the enum is
+ * OPEN: an unmeasured value stays recoverable rather than flattened to `unknown`.
+ * No consumer may branch on it; TurnOutcome is what they read.
  */
   turn_stop_reason_raw?: StopReason;
   /**
- * TurnModel is the model that answered this turn, stamped on the final
- * assistant message at turn_ended alongside TurnCredits / TurnElapsedMs
- * below. It belongs on the MESSAGE and not only on the Chat because the
- * chat's Model is the CURRENT one: a footer reading that at render time
- * would relabel every historical turn the moment the user switched models.
- * Absent on every message persisted before this field existed, and the
- * client renders nothing rather than "unknown". (Grouped with the strings
- * above for govet fieldalignment, not for logical order.)
+ * TurnFailureReason is WHY the turn ended badly, stamped by the same code that
+ * stamps TurnOutcome so exactly one persisted message per turn carries both.
+ * //
+ * Sanitized and byte-capped at the write, because its usual source is the
+ * agent's own text. Absent on older records, so the client keeps a per-outcome
+ * default.
+ */
+  turn_failure_reason?: string;
+  /**
+ * TurnModel is the model that answered this turn. It belongs on the MESSAGE and
+ * not only on the Chat, whose Model is the CURRENT one: rendering that would
+ * relabel every historical turn the moment the user switched models.
  */
   turn_model?: string;
   tool_calls?: ToolCall[];
   /**
- * Blocks is the chronologically-ordered content array — text / tool_use /
- * thinking blocks in the order the agent emitted them, each stamped with an
- * agent_subtask_id (empty for the parent agent, set for a subagent). It is
- * the canonical render model; the client normalizes legacy Content/ToolCalls
- * into Blocks on replay so there is a single render path.
+ * Blocks is the canonical render model, in emission order. The client normalizes
+ * legacy Content/ToolCalls into Blocks on replay so there is a single render path.
  */
   blocks?: Block[];
   /**
@@ -878,16 +870,13 @@ export interface Message {
   refusal?: RefusalInfo;
   plan?: PlanEntry[];
   /**
- * Attachments are the files the user attached to THIS prompt, stamped on
- * the user message so a sent turn can render them as pills in its header.
- * It has to live on the record: BuildPromptBlocks consumes
- * PromptCommand.Attachments on the way OUT to KAS and folds each one into a
- * content block, so by the time the turn is read back there is nothing to
- * recover the list from — an image or a document does not even leave its
- * path in Content. Absent on every message persisted before this field
- * existed, and on every turn opened by a steer (`_session/steer` takes a
- * plain string, so a mid-turn send has no structured attachment list to
- * carry).
+ * Attachments are the files attached to THIS prompt, on the user message so a
+ * sent turn renders them as header pills. It must live on the record:
+ * BuildPromptBlocks folds each one into a content block on the way OUT, so a
+ * turn read back has nothing to recover the list from.
+ * //
+ * Absent on older records and on a turn opened by a steer, which takes a plain
+ * string and so carries no structured list.
  */
   attachments?: Attachment[];
   /**
@@ -899,36 +888,23 @@ export interface Message {
   turn_elapsed_ms?: number;
   ts: number;
   /**
- * TurnTruncated marks a turn the model stopped at a bound: it completed, and
+ * TurnTruncated marks a turn the model stopped at a bound: it completed and
  * its answer is cut off. Stored though derivable from the raw stop reason, so
  * the Go and TypeScript projections do not each re-implement the mapping.
- * //
- * Last in the struct because it is the only bool: govet's fieldalignment counts
- * leading pointer bytes, and a bool between the strings above pads them apart.
  */
   turn_truncated?: boolean;
 }
 
 /**
- * MessageChunkPayload is the payload for type="message_chunk" (assistant
- * streaming deltas). IsReasoning distinguishes reasoning deltas from
- * regular content deltas — both flow through the same SSE event but
- * land on different fields client-side (Message.Reasoning vs Content).
- * BlockIndex addresses the chronological content block this delta
- * belongs to (Anthropic's content_block_delta.index): consecutive text
- * chunks of one subtask share an index; a tool_call between text segments
- * of that subtask bumps the next text chunk to a new index, while an
- * interleaved OTHER subtask does not — so an index may go BACKWARDS
- * mid-turn. Clients accumulate by index rather than assuming the newest
- * one, which is what makes a non-monotonic index harmless.
+ * MessageChunkPayload is the payload for type="message_chunk" (assistant streaming deltas).
+ * BlockIndex addresses the content block this delta belongs to and may go BACKWARDS
+ * mid-turn: a tool_call bumps its own subtask's next text chunk to a new index while an
+ * interleaved OTHER subtask does not. Accumulate BY INDEX, never into the newest block.
  */
 export interface MessageChunkPayload {
   /**
- * Refusal tags this delta as the model-refusal explanation (kiro-cli
- * 2.13 _meta.kiro.refusal on the chunk). Set on at most one chunk per
- * turn, right before the turn ends with stop_reason "refusal"; lets the
- * live renderer style the refusal callout without waiting for
- * turn_ended.
+ * Refusal tags this delta as the model-refusal explanation, set on at most one chunk
+ * per turn so the live renderer can style the callout without waiting for turn_ended.
  */
   refusal?: RefusalInfo;
   message_id: string;
@@ -936,11 +912,9 @@ export interface MessageChunkPayload {
   agent_subtask_id?: string;
   block_index: number;
   /**
- * Seq is the delta's 1-based sequence number within the turn
- * (assigned by the buffer under its lock). A client that ingested
- * a connect-time turn_state snapshot drops chunks with
- * seq <= the snapshot's chunk_seq watermark — they are already
- * folded into the snapshot — instead of double-appending them.
+ * Seq is the delta's 1-based sequence number within the turn. A client that ingested a
+ * connect-time turn_state snapshot drops chunks at or below its chunk_seq watermark —
+ * they are already folded in — instead of double-appending them.
  */
   seq?: number;
   is_reasoning?: boolean;
@@ -958,13 +932,9 @@ export interface MeteringItem {
 }
 
 /**
- * OpenExternalURLPayload is the payload for type="open_external_url".
- * The agent (v3/KAS) asks the client to open a URL for the user, most
- * often an MCP server's OAuth authorization page. Browsers popup-block a
- * window.open() not driven by a user gesture, so the client surfaces a
- * clickable affordance (a banner link) the user activates rather than
- * auto-opening. Only http/https URLs are broadcast (server-side scheme
- * guard in agent/bridge_v3_auth.go; the client re-checks before rendering).
+ * OpenExternalURLPayload is the payload for type="open_external_url". Browsers popup-block a
+ * window.open() not driven by a user gesture, so the client surfaces a banner link rather
+ * than auto-opening. Only http/https URLs are broadcast.
  */
 export interface OpenExternalURLPayload {
   url: string;
@@ -1021,35 +991,28 @@ export interface PermissionNeededPayload {
   tool_call_id?: string;
   title?: string;
   /**
- * Kind forwards the ACP toolCall.kind so the client can style
- * distinctive permission prompts (switch_mode gets a different
- * dialog vs an execute_bash prompt).
+ * Kind forwards the ACP toolCall.kind so the client can style distinctive prompts
+ * (switch_mode gets a different dialog from an execute_bash prompt).
  */
   kind?: ToolKind;
   sub_session_id?: string;
   /**
- * RunID + NodeID attribute a WORKFLOW STEP's ask to its run. Stamped from
- * the step-session registry whichever bridge the ask arrived on, so the
- * same fields serve both launch shapes: an agent-launched run's ask (on
- * the chat bridge, chat_id set) and a manually launched one's (on the run
- * bridge, chat_id `run:<id>`). What they buy the client: the card can say
- * WHICH step is asking, and a run tab can render the ask of a run it is
- * watching even though the ask is keyed to the launching chat.
+ * RunID + NodeID attribute a WORKFLOW STEP's ask to its run, stamped from the
+ * step-session registry whichever bridge the ask arrived on, so a run tab can render
+ * the ask of a run it is watching even though the ask is keyed to the launching chat.
  */
   run_id?: string;
   node_id?: string;
   /**
- * AlwaysAllowBlocked, when set, names why the card must not offer to persist
- * a rule for this command. Empty means the offer stands.
+ * AlwaysAllowBlocked names why the card must not offer to persist a rule for this
+ * command. Empty means the offer stands.
  */
   always_allow_blocked?: AlwaysAllowBlock;
   options: PermissionOption[];
   /**
- * Files is the turn's staged file list, present ONLY on a turn approval
- * (`_meta.kiro.type == "turn_approval"`). A turn approval arrives as an
- * ordinary session/request_permission, which is why it rides this payload
- * rather than a second event: the only difference is that it carries files and
- * expects per-file decisions back.
+ * Files is the turn's staged file list, present ONLY on a turn approval. Such an
+ * approval arrives as an ordinary session/request_permission, so it rides this payload
+ * rather than a second event; it expects per-file decisions back.
  */
   files?: ApprovalFile[];
   request_id: number;
@@ -1200,19 +1163,10 @@ export interface Recipe {
  */
   source: string;
   /**
- * Plan is KAS's node plan for the recipe, forwarded VERBATIM. It is an array
- * of node descriptors: `{nodeId, type, agentName, modelId?, effortLevel?}`
- * for a step, and a nested `steps` / `branches` array for a sequence, repeat
- * or parallel node. So it says what the recipe will do and on which model,
- * which is what a reader needs BEFORE launching one.
- * //
- * KAS sends it on every listRecipes reply whether or not a client reads it,
- * so forwarding costs one field. Raw rather than modelled, for the reason
- * stated at the top of this file: the node plan is KAS's structure, and a
- * second representation of it here would be one more thing to keep in sync
- * for no gain. Last of the pointer-bearing fields on purpose — a slice's
- * len/cap words end the GC scan region, where a trailing string would extend
- * it (the vibekit.ToolCall.Checkpoint note records the same rule).
+ * Plan is KAS's node plan, forwarded VERBATIM: what the recipe will do and on
+ * which model, raw for the reason at the top of this file. Last of the
+ * pointer-bearing fields on purpose — a slice's len/cap words end the GC scan
+ * region where a trailing string would extend it.
  */
   plan?: unknown;
   built_in?: boolean;
@@ -1224,14 +1178,10 @@ export interface RecipesResponse {
 }
 
 /**
- * RefusalInfo is the structured refusal metadata KAS attaches when the model
- * declines to continue a conversation (modelStopReason "content_filtered";
- * kiro-cli 2.13+). It rides the refusal explanation chunk's update-level
- * _meta.kiro.refusal and the turn ends with stopReason "refusal". The
- * explanation text itself streams as ordinary assistant content, so only the
- * classification fields are kept here; persisted on the assistant Message so
- * the refusal callout survives reload. RecommendedModel, when set, names a
- * model the service suggests switching to.
+ * RefusalInfo is the refusal metadata KAS attaches when the model declines to
+ * continue a conversation, and the turn then ends with stopReason "refusal". The
+ * explanation streams as ordinary assistant content, so only the classification is
+ * kept here; persisted so the callout survives reload.
  */
 export interface RefusalInfo {
   category?: string;
@@ -1275,12 +1225,40 @@ export interface Repo {
 }
 
 /**
+ * ResumableSession is one stored KAS session offered by the previous-session
+ * picker (GET /api/sessions). Adopts kiro-cli's own `--resume-picker`
+ * capability: KAS owns the inventory and the transcript, so vibekit carries no
+ * archive of its own. See agent/session_list.go for the wire provenance.
+ * //
+ * Field order is fieldalignment's, not the JSON's.
+ */
+export interface ResumableSession {
+  session_id: string;
+  title: string;
+  agent_mode?: string;
+  /** Status is KAS's own session status: idle | failed | waiting_on_user. */
+  status?: string;
+  /**
+ * Description is the agent's self-declared focus for that session, present
+ * on a minority of rows (88 of 399 measured).
+ */
+  description?: string;
+  /**
+ * ChatID names the vibekit chat that already owns this session, empty when
+ * no chat does. A claimed session is one the user can simply open, so the
+ * picker offers it differently rather than duplicating the chat.
+ */
+  chat_id?: string;
+  updated_at: number;
+  created_at?: number;
+}
+
+/**
  * RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step.
  * //
- * Text empty is a 400 rather than a waive. Continuing without an answer is a
- * DIFFERENT verb (POST /api/runs/{id}/step with status `running`), because it
- * drives the step with KAS's default continuation instead of the user's words and
- * a reader must not reach it by submitting an empty box.
+ * Empty Text is a 400 rather than a waive. Continuing without an answer is a
+ * DIFFERENT verb (POST /api/runs/{id}/step with status `running`) — it drives the
+ * step with KAS's default continuation, and an empty box must not reach it.
  */
 export interface RunAnswerRequest {
   ask_id: string;
@@ -1289,20 +1267,12 @@ export interface RunAnswerRequest {
 
 /**
  * RunFinishedPayload is the payload for type="run_finished": terminal. Status is
- * KAS's own run-level status (completed / failed / aborted / paused — a policy
- * pause at `onMaxIterations` reports through here too, since KAS emits
- * `run_complete` for it).
+ * KAS's own run-level status, `paused` included — a policy pause at
+ * `onMaxIterations` reports through here, because KAS emits `run_complete` for it.
  * //
- * There is no aborted_by_restart flag. A restart PAUSES a run — KAS's read-path
- * reconcile has exactly one outcome and no path to aborted (probe 24) — so there
- * is nothing for such a flag to mean.
- * //
- * Name is here for RunStartedPayload's reason, arriving at the other end of the
- * run: an outcome signal has to say WHICH run finished, and a client that never
- * saw this run's start frame (a page opened mid-run, another device) has nothing
- * else to name it with. Read out of KAS's `finalState`, which this frame already
- * decodes for its log line, so it costs one field and no new decode. Empty when
- * KAS sends no state, and the consumer falls back to a generic label.
+ * There is deliberately no aborted_by_restart flag: a restart PAUSES a run and
+ * KAS's read-path reconcile has no path to aborted, so nothing would fill it.
+ * Name is here for RunStartedPayload's reason, and empty when KAS sends no state.
  */
 export interface RunFinishedPayload {
   workflow_id: string;
@@ -1311,57 +1281,32 @@ export interface RunFinishedPayload {
 }
 
 /**
- * RunInputNeededPayload is the payload for type="run_input_needed": a workflow
- * STEP asked a question and the run is parked until somebody answers it.
- * //
- * The FIFTH run event, and the second that is not an invalidation. It carries its
- * payload for the same reason run_step does and the three invalidations do not:
- * the question text is on no endpoint. KAS parks the run with one fixed literal
- * in `state.pauseReason` and an empty `pauseDetail`, so `inspect` can say a step
- * wants input and can never say what it asked.
- * //
- * WorkflowID is the IDENTITY, never a chat id. The envelope's chat id is the
- * launching chat for an agent-parented run and empty for a parentless one, so the
- * ask must be findable from the run in both cases.
- * //
- * Question MAY BE EMPTY, and a consumer has to render that case. The ask registry
- * is in memory, so a restart loses the text while the run stays parked; the read
- * path then synthesises an ask from the paused leaf rather than stranding the
- * user, and an empty question is what that ask carries.
- * //
- * There is deliberately no Severity field. KAS's `send_message` carries four, and
- * only `warning` parks a run — the other three advance, complete or fail the step
- * with no wait — so the translator drops them and a severity here would be a
- * field with one possible value.
+ * RunInputNeededPayload is the payload for type="run_input_needed": a workflow STEP
+ * asked a question and the run is parked until somebody answers it. It carries its
+ * payload rather than invalidating because the text is on no endpoint — KAS parks
+ * with one fixed literal in `state.pauseReason` — and WorkflowID is the IDENTITY,
+ * since the envelope's chat id is empty for a parentless run. Question MAY BE
+ * EMPTY: the ask registry is in memory, so a restart loses the text while the run
+ * stays parked. No Severity field — only `warning` parks a run.
  */
 export interface RunInputNeededPayload {
   workflow_id: string;
   /**
- * AskID is the ask's identity within its run, and the value an answer names.
- * Composed server-side with keyenc so it cannot be forged by a separator
- * inside one of its parts: the notification's own id for a live ask, the
- * paused leaf's node PATH for one synthesised after a restart. The second
- * spelling has to be deterministic, because the read path that mints it runs
- * on every refetch and a fresh id per read would stack duplicate cards.
+ * AskID is composed with keyenc so a separator inside one part cannot forge it.
+ * The after-restart spelling must be DETERMINISTIC, or the read path that mints it
+ * on every refetch stacks duplicate cards.
  */
   ask_id: string;
   /**
- * NodeID addresses the asking step, and it is what every ask surface in this
- * app already joins on (the run card marks the row whose node id an ask
- * names). MAY BE EMPTY: KAS puts the node id on the notification only when the
- * caller is a step, and a run blocked by an unattributable ask is still
- * blocked, so the count travels separately from the row.
- * //
- * There is deliberately no NodePath. The step-session registry holds a node
- * ID and no path, so a live ask could never carry one, and a field populated
- * on the restart-reconcile path alone would invite a reader to rely on it.
+ * NodeID addresses the asking step. MAY BE EMPTY — KAS sets it only for a step
+ * caller, and a run blocked by an unattributable ask is still blocked. No
+ * NodePath: the step-session registry holds no path, so a live ask could not.
  */
   node_id: string;
   /**
- * StepSessionID is the ANSWER ADDRESS: a `session/prompt` sent to the paused
- * step's own session is what KAS reroutes into the run. Empty when the notify
- * frame carried no caller session, in which case the answer path resolves it
- * from a fresh `inspect`.
+ * StepSessionID is the ANSWER ADDRESS: KAS reroutes a `session/prompt` sent to the
+ * paused step's session into the run. Empty when the notify frame carried no
+ * caller session, and the answer path resolves it from a fresh `inspect`.
  */
   step_session_id: string;
   agent_name: string;
@@ -1373,11 +1318,9 @@ export interface RunInputNeededPayload {
  * RunInputSettledPayload is the payload for type="run_input_settled": the ask is
  * answered or waived, so every surface still showing it must retire the card.
  * //
- * Its own event rather than a member of decision_settled, whose payload is keyed
- * by an int64 JSON-RPC request id. A run ask has no open request behind it, so a
- * second identity field on that payload would make one shape carry two mutually
- * exclusive keys — one per family — and neither consumer could tell which to read
- * without first knowing the kind.
+ * Its own event rather than a member of decision_settled, which is keyed by an
+ * int64 JSON-RPC request id: a run ask has no open request, so sharing that payload
+ * would give one shape two mutually exclusive identity keys.
  */
 export interface RunInputSettledPayload {
   workflow_id: string;
@@ -1388,11 +1331,9 @@ export interface RunInputSettledPayload {
 /**
  * RunLaunchRequest is POST /api/runs's body: launch one recipe, PARENTLESS.
  * //
- * The recipe is named by its `source` exactly as `_kiro/workflow/listRecipes`
- * reported it — `bundled://<name>` for a compiled-in recipe, an absolute
- * `*.workflow.json` path for a workspace one. The server re-validates the value
- * against a fresh listRecipes call rather than trusting it, so this endpoint
- * cannot be steered at an arbitrary file even though the wire value looks like
+ * Source is `_kiro/workflow/listRecipes`' own value verbatim. The server
+ * re-validates it against a fresh listRecipes call rather than trusting it, so the
+ * endpoint cannot be steered at an arbitrary file even though the value looks like
  * a path.
  */
 export interface RunLaunchRequest {
@@ -1411,18 +1352,10 @@ export interface RunLaunchedResponse {
 
 /**
  * RunProgressPayload is the payload for type="run_progress": an INVALIDATION
- * signal. The client refetches `GET /api/runs/{id}`; it never reconstructs run
- * state from these events, and the payload is deliberately too thin to let it.
- * //
- * That thinness is load-bearing rather than minimalist. `run_start` re-fires on
- * every resume and progress frames duplicate across a resume (probe 6 saw three
- * `run_start` frames for one run), so a client accumulating them would render a
- * garbled tree. `node_complete` also cannot be joined by (nodeId, iteration,
- * branchId) — it carries none of the last two — so an accumulating client could
- * not even tell two repeat iterations apart.
- * //
- * NodeID is absent on `paused` (a run-level frame) and holds the loop id on
- * `loop_iteration`, which is the node the frame is about in both cases.
+ * signal, deliberately too thin to reconstruct a run from. `run_start` re-fires on
+ * every resume and `node_complete` carries neither iteration nor branchId, so an
+ * accumulating client could not tell two repeat iterations apart. NodeID is absent
+ * on the run-level `paused` and holds the loop id on `loop_iteration`.
  */
 export interface RunProgressPayload {
   workflow_id: string;
@@ -1432,21 +1365,13 @@ export interface RunProgressPayload {
 
 /**
  * RunStartedPayload is the payload for type="run_started": a run began on this
- * chat. Carries the name because a client that has never fetched this run has
- * nothing to label the row with, and a row appearing with no name reads as a
- * bug rather than as a pending fetch.
+ * chat. Name is carried because a client that has never fetched this run has
+ * nothing to label the row with.
  * //
- * Scheduled marks a run the SCHEDULER launched, and it exists because the client
- * cannot work this out. A parentless run's lifecycle frames are workspace-global
- * with an empty chat id, and a MANUAL launch is parentless too, so watching
- * events cannot separate the two; `parentSessionId` separates agent-parented from
- * parentless and is empty for both of these. Only the launch path knows, so the
- * distinction travels from there.
- * //
- * Its one consumer is the client's start signal: a manual launch already has the
- * user's attention (they clicked Run, and a run tab opened), while a scheduled one
- * began with nobody looking. Absent on the wire for a manual run rather than
- * false, so an older client and a manual launch read alike.
+ * Scheduled marks a run the SCHEDULER launched, and it travels because only the
+ * launch path knows: a manual launch is parentless too, so events cannot separate
+ * the two. It drives the client's start signal — a manual launch already has the
+ * user's attention, a scheduled one began with nobody looking.
  */
 export interface RunStartedPayload {
   workflow_id: string;
@@ -1457,19 +1382,11 @@ export interface RunStartedPayload {
 /**
  * RunStepPayload is the payload for type="run_step".
  * //
- * NodePath, not NodeID, and that is the same choice ACPWorkflowMeta.SubtaskID
- * makes for the transcript: a repeat's iterations share a node id, so an id
- * cannot address one execution and two passes of a loop body would write into
- * each other's rows. Joined with "/", and NOT byte-identical to what a client
- * derives from `inspect`'s state tree: KAS spells a repeat's iteration container
- * `iter-<n>` here and `<repeatId>#<n>` there, so the client translates the tree
- * into this spelling (`static-src/run-store.ts`'s nodePathSegment).
- * //
- * ToolCall is whole rather than a delta because there is no buffer at this end to
- * fold into: a parentless run has no chat, so nothing accumulates its content.
- * The translator holds the in-flight calls per run instead, bounded by the same
- * `run_complete` that bounds the step-session registry, and sends the folded
- * value. A client can therefore render the last frame it received and be right.
+ * NodePath, not NodeID, because a repeat's iterations share a node id and two
+ * passes of a loop body would write into each other's rows. NOT byte-identical to
+ * `inspect`'s state tree: KAS spells an iteration container `iter-<n>` here and
+ * `<repeatId>#<n>` there, so the client translates. ToolCall is whole because a
+ * parentless run has no chat and so no buffer to fold into.
  */
 export interface RunStepPayload {
   tool_call?: ToolCall;
@@ -1480,10 +1397,33 @@ export interface RunStepPayload {
 }
 
 /**
- * SafetyPropertiesPayload is the payload for type="safety_properties",
- * translated from the v3 (KAS) _kiro/safety/propertiesChanged notification.
- * Reason is the KAS PropertyChangeReason (formalized/toggled/expired). Same
- * gating + authoring caveats as SafetyStatusPayload.
+ * RunStepTranscript is GET /api/runs/{id}/steps/{path...}'s reply, projected from
+ * KAS's replay per request and PERSISTED BY NOTHING. It exists because a step's
+ * transcript is on no other endpoint: `inspect` carries what a step DECLARED.
+ * //
+ * NO `omitempty` on ANY field, deliberately: the generator emits a REQUIRED
+ * TypeScript field without it, which stops a client inventing a fallback for the
+ * verdict. An optional `state` would read as "assume ready".
+ */
+export interface RunStepTranscript {
+  /**
+ * WorkflowID and NodePath echo the request, so a client holding several reads in
+ * flight tells the answers apart without correlating.
+ */
+  workflow_id: string;
+  node_path: string;
+  state: RunStepTranscriptState;
+  /**
+ * Messages is the step's transcript, filtered to the ASSISTANT rows. Empty on any
+ * state but ready, and legitimately empty on ready.
+ */
+  messages: Message[];
+}
+
+/**
+ * SafetyPropertiesPayload is the payload for type="safety_properties". Reason is the KAS
+ * PropertyChangeReason (formalized/toggled/expired). Same gating and authoring caveats as
+ * SafetyStatusPayload.
  */
 export interface SafetyPropertiesPayload {
   reason?: string;
@@ -1491,11 +1431,9 @@ export interface SafetyPropertiesPayload {
 }
 
 /**
- * SafetyProperty is one formalized Infrastructure-Safety property. Properties
- * are authored OUT-OF-BAND: KAS "formalizes" them via a remote MCP tool
- * (evaluate_infrastructure_safety at runtime.us-east-1.kiro.dev) from the
- * agent's own infrastructure work — there is no client RPC to create, set, or
- * toggle one, so vibekit only ever displays them, never authors them.
+ * SafetyProperty is one formalized Infrastructure-Safety property. Authored OUT-OF-BAND by
+ * KAS via a remote MCP tool; there is no client RPC to create, set or toggle one, so vibekit
+ * only ever displays them.
  */
 export interface SafetyProperty {
   description: string;
@@ -1504,14 +1442,10 @@ export interface SafetyProperty {
 }
 
 /**
- * SafetyStatusPayload is the payload for type="safety_status", translated from
- * the v3 (KAS) _kiro/safety/statusChanged notification. It surfaces the
- * Infrastructure-Safety gate's live state so the client can show a transient
- * status banner. Defensive/forward-looking: KAS only installs the gate (and so
- * only emits this) when the client declares the infrastructureSafety capability
- * AND an AWS governance flag (infraSafetyMonitor/infraSafetyEnforce) is on — off
- * by default on individual/Builder-ID accounts, so this normally never fires.
- * Distinct from supervised mode, which is KAS's autopilot gate (vibekit-acp.md).
+ * SafetyStatusPayload is the payload for type="safety_status", translated from the v3 (KAS)
+ * _kiro/safety/statusChanged notification and rendered as a transient banner. KAS installs
+ * the gate only under an AWS governance flag, off by default on Builder-ID accounts, so this
+ * normally never fires. Distinct from supervised mode, which is KAS's autopilot gate.
  */
 export interface SafetyStatusPayload {
   status: SafetyStatus;
@@ -1610,16 +1544,28 @@ export interface SessionEffortLevel {
 }
 
 /**
- * SessionMode describes one mode the running agent supports. Populated
- * from the `modes.availableModes` field of kiro-cli's session/new or
- * session/load response; kept on the chat so the UI can render a mode
- * pill without re-querying the bridge.
+ * SessionListResponse is the GET /api/sessions reply.
  * //
- * On v3 (KAS) the availableModes list is unified: it carries both the
- * bundled workflow modes (vibe/spec/quick-spec/bug-fix/plan/autonomous)
- * AND every workspace custom agent (.kiro/agents/*), each switchable via
- * session/set_mode. Source distinguishes them ("bundled" vs "workspace")
- * so the picker can group built-in modes above custom agents.
+ * The two lists degrade INDEPENDENTLY — separate verbs on the same bridge, so
+ * one can fail alone — which is why each carries its own verdict rather than the
+ * response carrying one. Neither verdict carries omitempty: a reader must not be
+ * able to read an absent field as success.
+ */
+export interface SessionListResponse {
+  sessions_state: ReadState;
+  runs_state: ReadState;
+  sessions: ResumableSession[];
+  runs: WorkflowRun[];
+}
+
+/**
+ * SessionMode describes one mode the running agent supports, from
+ * `modes.availableModes` on session/new or session/load; kept on the chat so the
+ * mode pill renders without re-querying the bridge.
+ * //
+ * The v3 list is unified — bundled workflow modes AND every workspace custom
+ * agent, all switchable via session/set_mode — so Source ("bundled" vs
+ * "workspace") is what lets the picker group them.
  */
 export interface SessionMode {
   id: string;
@@ -1638,104 +1584,73 @@ export interface SessionModel {
   name: string;
   description?: string;
   /**
- * DefaultEffortLevel is the level this MODEL defaults to, from the model
- * choice's `_meta.kiro.defaultEffortLevel`. Read off kiro-cli 2.18.0's own
- * TUI, which resolves the same field the same way
- * (`kasAvailableModels.find(m => m.id === currentModelId)?.defaultEffortLevel`)
- * and labels that tier `[default]`. vibekit uses it for a chat with no
- * session yet, where no live level exists to read. NOT persisted onto
- * Chat.Effort: seeding a chat's CHOICE from a service default would pin it to
- * every later session through StartOpts.Effort.
+ * DefaultEffortLevel is the level this MODEL defaults to, from
+ * `_meta.kiro.defaultEffortLevel`; used for a chat with no session yet.
+ * //
+ * NOT persisted onto Chat.Effort: seeding a chat's CHOICE from a service
+ * default would pin it to every later session through StartOpts.Effort.
  */
   default_effort_level?: string;
   rate_multiplier?: number;
   /**
- * HasEffort reports whether this model supports a reasoning-effort level,
- * from `_meta.kiro.hasEffort`.
- * //
- * **kiro-cli 2.19.1 DOES stamp it**, on every model choice, alongside
- * defaultEffortLevel (probed 2026-08-25 against KAS 0.48.0). An earlier note
- * here said 2.18.0 stamped it nowhere and that the field was therefore false on
- * every entry, so the client's gate fell through to showing the control always;
- * that is now stale, and the gate is live.
- * //
- * The value it reports first is the one that matters: `auto` carries
- * `hasEffort:false` and every real model in this account's catalog carries
- * `hasEffort:true` with `defaultEffortLevel:"high"`. So a chat still on `auto`
- * now HIDES the effort row, which is correct — KAS builds no effortLevel option
- * for a model with no tiers and silently drops any level sent while a session
- * sits there.
- * //
- * Chat.EffortLevels answers the same question from the other side (an empty
- * list is what kiro-cli's own TUI treats as "Effort is not available on the
- * current model"), and the two agree.
+ * HasEffort reports whether this model offers reasoning-effort tiers, from
+ * `_meta.kiro.hasEffort`. `auto` carries false, so a chat on it hides the
+ * effort row: KAS builds no effortLevel option for a tierless model and
+ * silently drops a level sent to one. Chat.EffortLevels answers the same
+ * question from the other side.
  */
   has_effort?: boolean;
 }
 
 /**
- * SteerClearedPayload is the payload for type="steer_cleared": the steers named
- * here were dropped from the buffer without reaching the model.
- * //
- * KAS clears at every turn boundary — normal end, prompt error, and cancel —
- * and on an explicit steer_clear, bumping an epoch so a concurrent append is
- * refused. So an id appearing here after its steer_injected is ordinary
- * housekeeping, while one appearing WITHOUT an injected is a message the user
- * wrote that nothing ever read. The client has to be able to tell those apart,
- * which is why injected is its own event.
+ * SteerClearedPayload is the payload for type="steer_cleared": the steers named here were
+ * dropped from the buffer without reaching the model. KAS clears at every turn boundary and on
+ * an explicit steer_clear, so an id appearing after its steer_injected is housekeeping, while
+ * one appearing WITHOUT an injected is a message nothing ever read — which is why injected is
+ * its own event.
  */
 export interface SteerClearedPayload {
   steer_ids: string[];
 }
 
 /**
- * SteerInjectedPayload is the payload for type="steer_injected": the model has
- * now READ the steer. This is the moment the chip stops being a promise.
- * //
- * It is broadcast TWICE for a steer the agent answers, and the two frames carry
- * different halves. KAS's own steering channel produces the first, when the model
- * reads the steer, with Text and no Ack. The second comes off the assistant TEXT
- * stream when the agent's `[STEERING steer-<id>: …]` acknowledgement marker
- * closes (translate/steer_marker.go), with Ack and no Text: reading a steer and
- * acting on it are separate moments, so they cannot share one frame, and the
- * client merges both onto the chip by SteerID.
+ * SteerInjectedPayload is the payload for type="steer_injected": the model has now READ the
+ * steer. Broadcast TWICE for a steer the agent answers, carrying different halves — KAS's
+ * steering channel sends Text with no Ack, then the assistant TEXT stream sends Ack with no
+ * Text when the `[STEERING steer-<id>: …]` marker closes. Reading a steer and acting on it are
+ * separate moments, so the client merges both onto the chip by SteerID.
  */
 export interface SteerInjectedPayload {
   steer_id: string;
   text: string;
   /**
- * Ack is the agent's own statement of what it did about the steer, lifted
- * out of the acknowledgement marker KAS asks it to emit and which vibekit
- * hides from the transcript as machinery. That statement is strictly better
- * information than a check glyph, so the chip carries it: "read" becomes
- * "read: rebased onto main instead". Empty on the read frame, and empty when
- * the agent closed its response without a marker.
+ * Ack is the agent's own statement of what it did, lifted out of the acknowledgement
+ * marker vibekit hides from the transcript: "read" becomes "read: rebased onto main
+ * instead". Empty on the read frame, and empty when the agent emitted no marker.
  */
   ack?: string;
   /**
  * Origin is whose words these are, as on SteerQueuedPayload. On BOTH because an
- * agent-injected steer has no queued frame (KAS 2.21.0 broadcasts one only from
- * `_session/steer`), so for the case Origin names, this frame is the only one.
+ * agent-injected steer has no queued frame, so for the case Origin names this frame is
+ * the only one.
  */
   origin: SteerOrigin;
 }
 
 /**
- * SteerQueuedPayload is the payload for type="steer_queued": a mid-turn steer
- * reached KAS's per-session buffer and is waiting for the next node boundary.
- * //
- * Text is carried even though the sending client already has it, because this
- * event is the ONLY source for every other device — and for the sender itself
- * after a reconnect. The chip row is a projection of server state, so it has to
- * be reconstructible from the events alone.
+ * SteerQueuedPayload is the payload for type="steer_queued": a mid-turn steer reached KAS's
+ * per-session buffer and is waiting for the next node boundary. Text travels even though the
+ * sender has it, because the chip row is a projection of server state and must be
+ * reconstructible from the events alone — for every other device and for the sender after a
+ * reconnect.
  */
 export interface SteerQueuedPayload {
   steer_id: string;
   text: string;
   /**
- * Origin is whose words these are, resolved server-side against the steers
- * this server sent. NO omitempty: an absent field lets the client invent a
- * fallback, and the one it would pick is wrong for a workflow's report.
+ * Origin is whose words these are, resolved server-side. NO omitempty: an absent field
+ * lets the client invent a fallback, and the one it would pick is wrong for a
+ * workflow's report.
  */
   origin: SteerOrigin;
 }
@@ -1832,57 +1747,39 @@ export interface TabSubject {
 }
 
 /**
- * TabsChangedPayload is the payload for type="tabs_changed": ONE committed
- * mutation of the open-tab set.
- * //
- * Workspace-global, so the chat id is empty. Every field except Version is
- * optional because one mutation touches a different combination of them: an open
- * carries Changed and Order, a close carries RemovedIDs and Order, a pin carries
- * Changed alone, a reorder carries Order alone.
- * //
- * REMOVAL IS STATED, never inferred. That is the whole point of the shape: the
- * arrangement used to travel as one whole list, so the client read "absent from
- * the incoming list" as "closed elsewhere" and closed tabs nobody closed (live
- * instance, 2026-08-25). Absence from Order still never means closure — a client
- * holding a tab the order does not name keeps its position and sorts last.
+ * TabsChangedPayload is the payload for type="tabs_changed": ONE committed mutation of the
+ * open-tab set, workspace-global, so the chat id is empty. REMOVAL IS STATED, never inferred:
+ * absence from Order never means closure, and a client holding a tab the order does not name
+ * keeps its position and sorts last.
  */
 export interface TabsChangedPayload {
   /**
- * Changed is the one tab this mutation added or altered, absent on a close
- * and on a reorder. A pointer because "no tab changed" and "a zero-valued
- * tab changed" are different facts and the client branches on which.
+ * Changed is the one tab this mutation added or altered, absent on a close and a
+ * reorder. A pointer because "no tab changed" and "a zero-valued tab changed" are
+ * different facts the client branches on.
  */
   changed?: TabSubject;
   /**
- * OpID is the client-minted correlation id from the command that caused this
- * mutation, echoed back so the caller can match the frame to its own
- * dispatch. Empty for a mutation no client asked for (a retention close, a
- * load-time prune). Distinct from Idempotency-Key, which keeps its
- * retry-safety job: this has no TTL, no cache and no 409 branch.
+ * OpID is the client-minted correlation id echoed back so a caller can match the frame
+ * to its own dispatch; empty for a mutation no client asked for. Distinct from
+ * Idempotency-Key: this has no TTL, no cache and no 409 branch.
  */
   op_id?: string;
   /**
- * RemovedIDs names every tab this mutation closed, per id and explicitly. A
- * close of a parent with children is one mutation, so this is where the
- * children arrive.
+ * RemovedIDs names every tab this mutation closed, per id. Closing a parent with
+ * children is one mutation, so this is where the children arrive.
  */
   removed_ids?: string[];
   /**
- * Order is the EXPANDED list: every open tab including children, in the order
- * the collection now holds. Sent whenever the membership or the position
- * moved, so a client never has to derive a position from a delta.
+ * Order is the EXPANDED list, children included, so a client never derives a position
+ * from a delta.
  */
   order?: string[];
   /**
- * Version is the collection version this mutation produced, and it is the
- * client's only watermark. Three rules, exhaustive: at or below local is a
- * duplicate or stale frame and is ignored, exactly one past applies, more
- * than one past means a frame was missed so stop applying and re-list.
- * //
- * ONLY AN EVENT MAY ADVANCE THE LOCAL VERSION. A command response carries the
- * version for diagnostics and a client must not adopt it: adopting a
- * response's v+2 would make another device's in-flight v+1 read as stale, so
- * it would be dropped and no gap would ever be detectable.
+ * Version is the client's only watermark, with three exhaustive rules: at or below local
+ * is ignored, exactly one past applies, more than one past means re-list. ONLY AN EVENT
+ * MAY ADVANCE IT — adopting a response's v+2 would make another device's in-flight v+1
+ * read as stale, so no gap could ever be detected.
  */
   version: number;
 }
@@ -1895,11 +1792,9 @@ export interface TerminalCreatedPayload {
 }
 
 /**
- * TerminalExitedPayload is the payload for type="terminal_exited". A
- * signal-killed process carries Signal (e.g. "killed") with ExitCode
- * omitted; a normal exit carries ExitCode (>=0) with Signal empty. This
- * mirrors KAS's zTerminalExitStatus, which requires exitCode>=0 and a
- * separate signal string, so a signal death never reports exit_code:-1.
+ * TerminalExitedPayload is the payload for type="terminal_exited". A signal-killed process
+ * carries Signal with ExitCode omitted; a normal exit carries ExitCode (>=0) with Signal
+ * empty. Mirrors KAS's zTerminalExitStatus, so a signal death never reports exit_code:-1.
  */
 export interface TerminalExitedPayload {
   exit_code?: number;
@@ -1908,18 +1803,11 @@ export interface TerminalExitedPayload {
 }
 
 /**
- * TerminalOutputPayload is the payload for type="terminal_output".
- * //
- * Data is PLAIN text with escape sequences already parsed off and hidden
- * Unicode already stripped; Spans style ranges of it. The parse happens
- * server-side (internal/ansitext) so the browser never builds HTML out of
- * agent-controlled bytes.
- * //
- * Offset is where this chunk's Data begins in the terminal's accumulated
- * output, in the same UTF-16 code units the spans are addressed in. It is
- * load-bearing rather than diagnostic: the spans carry ABSOLUTE offsets across
- * the terminal's whole stream, so a client painting one chunk has to subtract
- * this base to index into the chunk it was handed.
+ * TerminalOutputPayload is the payload for type="terminal_output". Data is PLAIN text with
+ * escape sequences parsed off server-side, so the browser never builds HTML out of
+ * agent-controlled bytes; Spans style ranges of it. Offset is where this chunk begins in the
+ * terminal's accumulated output, in the UTF-16 code units the spans use — and the spans carry
+ * ABSOLUTE offsets, so a client painting one chunk must subtract this base.
  */
 export interface TerminalOutputPayload {
   terminal_id: string;
@@ -1929,41 +1817,33 @@ export interface TerminalOutputPayload {
 }
 
 /**
- * TextSpan styles the half-open range [Start,End) of a sibling text field.
+ * TextSpan styles the half-open range [Start,End) of a sibling text field. It
+ * mirrors internal/ansitext.Span, and the wire type lives here because that package
+ * stays a stdlib-only leaf that knows nothing about the wire.
  * //
- * It mirrors internal/ansitext.Span; the wire type lives here because
- * internal/vibekit owns every shape codegen projects into TypeScript and
- * internal/ansitext stays a stdlib-only leaf that knows nothing about the wire.
- * //
- * Attrs values match web-terminal-engine's vt.WireRun.A so the terminal
- * renderer and the transcript renderer share one attribute vocabulary. The
- * COLOUR encoding deliberately differs from WireRun's, which resolves every
- * colour to 0xRRGGBB against the terminal's theme: a palette INDEX survives
- * into a persisted chat file without baking today's theme into it, and the
- * transcript's ANSI palette is a set of CSS custom properties the user's theme
- * redefines.
+ * Attrs matches web-terminal-engine's vt.WireRun.A so both renderers share one
+ * attribute vocabulary. The COLOUR encoding deliberately differs: a palette INDEX
+ * survives into a persisted chat file without baking today's theme into it.
  */
 export interface TextSpan {
   /**
- * Start is the inclusive offset into the styled text, in UTF-16 CODE UNITS
- * rather than bytes, because the consumer indexes with JavaScript string
- * offsets. A byte offset would point into the middle of a character the
- * moment output contained a box-drawing glyph or an accented name.
+ * Start is the inclusive offset in UTF-16 CODE UNITS, not bytes, because the
+ * consumer indexes with JavaScript string offsets: a byte offset would point
+ * mid-character the moment output carried a box-drawing glyph or accented name.
  */
   start: number;
   /** End is the exclusive offset into the styled text, in UTF-16 code units. */
   end: number;
   /**
- * FG is the foreground colour: -1 for default, 0-255 for a palette index,
- * or 0x1000000|RGB for 24-bit colour.
+ * FG is the foreground colour: -1 default, 0-255 a palette index, or
+ * 0x1000000|RGB for 24-bit.
  */
   fg: number;
   /** BG is the background colour, encoded like FG. */
   bg: number;
   /**
- * Attrs is a bitfield: 1=bold, 2=italic, 4=underline, 8=inverse,
- * 16=strike, 32=dim, 64=hidden, 128=blink, 256=overline,
- * 512=double-underline.
+ * Attrs is a bitfield: 1 bold, 2 italic, 4 underline, 8 inverse, 16 strike,
+ * 32 dim, 64 hidden, 128 blink, 256 overline, 512 double-underline.
  */
   attrs: number;
 }
@@ -1985,65 +1865,51 @@ export interface ToolCall {
  */
   sub_session_id?: string;
   /**
- * AgentSubtaskID is set from a tool call's _meta.kiro.agentSubtaskId.
- * On v3 (KAS) a subagent surfaces as an ordinary tool_call with
- * _meta.kiro.kind=="agent-subtask"; this id links the subagent card
- * to its nested agent_message_chunk / agent_thought_chunk deltas
- * (which carry the same id) so the client can render them nested.
+ * AgentSubtaskID is from a tool call's _meta.kiro.agentSubtaskId. On v3 a
+ * subagent surfaces as an ordinary tool_call, and this id is what links its
+ * card to the nested deltas carrying the same id.
  */
   agent_subtask_id?: string;
   /**
- * WorkflowID names the run a `run_workflow` invocation started, taken from
- * the terminal update's `rawOutput.workflowId`. Empty on every other tool
- * call, and empty on this one until the run is created.
- * //
- * It is what makes the invocation the RUN's card in the transcript rather
- * than a generic row: the client keys a run card on this id, and a step's
- * blocks arrive carrying the same id in their `agent_subtask_id`
- * (`wf:<workflowId>:<nodePath>`), so the two sides join with no accumulation
- * and no guessing. It is also the handle for the route to `/run/{id}` and
- * for reading `GET /api/runs/{id}`, which is the only refresh-safe source of
- * a run's plan, per-step status and outputs.
+ * WorkflowID names the run a `run_workflow` invocation started, from the
+ * terminal update's `rawOutput.workflowId`; empty until the run is created and
+ * on every other tool call. It makes the invocation the RUN's card — a step's
+ * blocks carry the same id in `agent_subtask_id`, so the two join with no
+ * accumulation — and is the handle for `/run/{id}`.
  */
   workflow_id?: string;
   /**
- * TerminalID links an execute tool call to the agent terminal running it,
- * taken from the ACP type:"terminal" content block KAS sends on the tool
- * call. It is what lets the CARD be the terminal's rendering surface: the
- * client subscribes the card's output region to this terminal's live
- * stream. Empty on every tool call that spawned no process.
+ * TerminalID links an execute tool call to the agent terminal running it, which
+ * is what lets the CARD be that terminal's rendering surface. Empty on every
+ * tool call that spawned no process.
  */
   terminal_id?: string;
   /**
- * Checkpoint is KAS's snapshot mapping for a tool call that wrote a
- * file, taken from _meta.kiro.checkpoint. Nil for every tool call that
- * touched no file — which is most of them. Placed ahead of the slices
- * below to keep govet fieldalignment happy: a trailing pointer would
- * extend the GC scan region past a slice's non-pointer len/cap words.
+ * Checkpoint is KAS's snapshot mapping for a tool call that wrote a file, nil
+ * for the majority that touched none. Ahead of the slices below for govet
+ * fieldalignment: a trailing pointer would extend the GC scan region past a
+ * slice's non-pointer len/cap words.
  */
   checkpoint?: ToolCheckpoint;
   /**
  * Disclosed names the skill or steering document a `disclose_context` call
- * loaded, from _meta.kiro.disclosedContext. Nil on every other tool call.
- * This is the only signal that a skill's body actually reached the model, so
- * it is what the transcript renders instead of a generic tool card.
+ * loaded. The only signal that a skill's body reached the model, which is why
+ * the transcript renders it instead of a generic tool card.
  */
   disclosed?: ToolDisclosed;
   /**
- * Denial is KAS's structured reason for a call the Cedar policy refused,
- * from _meta.kiro.policyDenial. Nil unless the policy denied it. Present so a
- * refusal reads as a refusal rather than a tool failure, and names the rule
- * responsible, since the user owns the policy.
+ * Denial is KAS's structured reason for a call the Cedar policy refused, nil
+ * unless it did. Present so a refusal reads as a refusal rather than a tool
+ * failure, and names the rule responsible, since the user owns the policy.
  */
   denial?: ToolDenial;
   input?: unknown;
   locations?: ToolLocation[];
   diffs?: ToolDiff[];
   /**
- * OutputSpans styles ranges of Output. Parsed once server-side by
- * internal/ansitext, so Output stays plain searchable text and the client
- * paints spans without ever building HTML from agent-controlled bytes.
- * Empty for the ~99.75% of real command outputs that carry no escape.
+ * OutputSpans styles ranges of Output, parsed once server-side so Output stays
+ * plain searchable text and the client never builds HTML from agent bytes.
+ * Empty for the ~99.75% of real command outputs carrying no escape.
  */
   output_spans?: TextSpan[];
   duration_ms?: number;
@@ -2051,10 +1917,9 @@ export interface ToolCall {
 }
 
 /**
- * ToolCallPayload is the payload for type="tool_call". BlockIndex is
- * the position of the tool_use block in the assistant message's
- * chronological Blocks array — the client uses it to insert the tool
- * card at the right spot relative to surrounding text blocks.
+ * ToolCallPayload is the payload for type="tool_call". BlockIndex is the tool_use block's
+ * position in the assistant message's Blocks array, so the card lands between the right
+ * surrounding text blocks.
  */
 export interface ToolCallPayload {
   message_id: string;
@@ -2069,27 +1934,14 @@ export interface ToolCallUpdatePayload {
 }
 
 /**
- * ToolCheckpoint is KAS's pre/post-image mapping for one file write,
- * persisted verbatim so a diff is a snapshot read plus a file read with no
- * derivation. vibekit captures no snapshots of its own; KAS does it
- * unconditionally and hands the addresses over on the wire.
+ * ToolCheckpoint is KAS's pre/post-image mapping for one file write, persisted
+ * verbatim so a diff is a snapshot read plus a file read. Original and Modified are
+ * opaque `kiro-snapshot-v2://` handles, NOT filesystem paths, deliberately unparsed.
  * //
- * Original and Modified are `kiro-snapshot-v2://<sessionId>:<snapshotId>/?originalPath=<relpath>`
- * URIs — opaque handles, NOT filesystem paths, deliberately stored
- * unparsed. Local is a `file://` URI for the live file.
- * //
- * **All three fields are independently optional and a consumer must
- * tolerate any subset** (probed 2026-08-02, kiro-cli 2.16.0): a file
- * CREATE has no pre-image, so it arrives as {Modified, Local} with Original
- * empty, while overwriting an existing file yields all three. Code that
- * treats this as a fixed triplet breaks on the first file the agent
- * creates.
- * //
- * Granularity is per-file-write, not per-turn, and a multi-file tool
- * (semantic_rename) carries no per-file mapping at all — KAS's
- * checkpoint.fileChanges has zero occurrences in the corpus — so
- * multi-file attribution is not recoverable from this field and must not
- * be inferred from it.
+ * ALL THREE FIELDS ARE INDEPENDENTLY OPTIONAL and a consumer must tolerate any
+ * subset: a file CREATE has no pre-image, so code treating this as a fixed triplet
+ * breaks on the first file the agent creates. Granularity is per-file-write, so
+ * multi-file attribution must not be inferred from it.
  */
 export interface ToolCheckpoint {
   /** Original is the pre-image snapshot URI. Empty on a file creation. */
@@ -2101,13 +1953,9 @@ export interface ToolCheckpoint {
 }
 
 /**
- * ToolDenial is the policy verdict that refused a tool call.
- * //
- * Rule is the matched rule, and it is the load-bearing field: a denial that
- * names its rule is one click from editing it, which is what makes "configure
- * permissions however you like" actionable. Scope and Source say WHERE the rule
- * lives (user or workspace `permissions.yaml`), so the user knows which file to
- * open.
+ * ToolDenial is the policy verdict that refused a tool call. Rule is the
+ * load-bearing field — a denial naming its rule is one click from editing it — and
+ * Scope plus Source say which `permissions.yaml` to open.
  */
 export interface ToolDenial {
   rule?: ToolDenialRule;
@@ -2129,17 +1977,13 @@ export interface ToolDenialRule {
 }
 
 /**
- * ToolDiff is a before/after text change from a write tool call. Sent
- * by kiro-cli in tool_call notifications for edit operations. Path is
- * workspace-relative (absolute paths from kiro-cli are normalised via
- * agent.relPath before being stored here).
+ * ToolDiff is a before/after text change from a write tool call. Path is
+ * workspace-relative; agent.relPath normalises it on the way in.
  * //
- * OldText/NewText carry the WHOLE FILE for KAS's edit tools (measured on the
- * live volume: 325 of 413 persisted fragments are whole-file shaped). A hunk
- * pair is also accepted — some tools send one — so a consumer must DIFF the two
- * sides rather than count their newlines: counting reported the entire file as
- * removed and re-added for a one-line edit. internal/buffer/linediff.go is the
- * one line-delta primitive, and its TypeScript twin is diff.ts's lineDelta.
+ * OldText/NewText carry the WHOLE FILE for KAS's edit tools (325 of 413 persisted
+ * fragments measured whole-file shaped), and a hunk pair is also accepted, so a
+ * consumer must DIFF the two sides rather than count newlines — counting reported a
+ * one-line edit as the entire file removed and re-added.
  */
 export interface ToolDiff {
   path: string;
@@ -2208,10 +2052,9 @@ export interface ToolInfo {
 }
 
 /**
- * ToolJobChangedPayload is the payload for type="tool_job_changed".
- * Broadcast (workspace-global — no chat_id) on every tool-job state
- * transition: enqueued, started, done, failed, cancelled. The job
- * carries no output tail; output streams via tool_job_output.
+ * ToolJobChangedPayload is the payload for type="tool_job_changed", workspace-global, on
+ * every job state transition. The job carries no output tail; output streams via
+ * tool_job_output.
  */
 export interface ToolJobChangedPayload {
   job?: Job;
@@ -2227,10 +2070,8 @@ export interface ToolJobOutputPayload {
 }
 
 /**
- * ToolLocation is a file path (and optional line) the agent is working
- * with. Sent by kiro-cli in tool_call and tool_call_update notifications.
- * Used by the editor to scroll to the file the agent is accessing or
- * modifying.
+ * ToolLocation is a file path, and optional line, the agent is working with. The
+ * editor scrolls to it.
  */
 export interface ToolLocation {
   path: string;
@@ -2241,23 +2082,19 @@ export interface ToolLocation {
 export interface TurnEndedPayload {
   changed_files?: Record<string, FileChange>;
   /**
- * Refusal accompanies stop_reason "refusal": the model declined to
- * continue and the final assistant chunk carried this metadata
- * (also persisted on the message; here for the live render).
+ * Refusal accompanies stop_reason "refusal"; also persisted on the message, so
+ * this copy is for the live render.
  */
   refusal?: RefusalInfo;
   /**
- * Outcome is the turn's RESULT, and it is what a client reads. StopReason
- * travels beside it as the wire's raw text because the enum is OPEN, and no
- * consumer may branch on that text: an unmeasured value maps to `unknown`, and
- * grading it from the string is how six banner codes came to decide whether a
- * turn was over.
+ * Outcome is the turn's RESULT and what a client reads. StopReason travels beside
+ * it as the wire's raw text because the enum is OPEN, and no consumer may branch
+ * on that text: an unmeasured value maps to `unknown`.
  */
   outcome?: TurnOutcome;
   stop_reason?: StopReason;
   /**
- * Model is the model that answered this turn, for the live footer render.
- * The same value is persisted on the message (Message.TurnModel) so the
+ * Model answered this turn. Persisted on the message too (Message.TurnModel) so the
  * footer survives a reload; empty when the turn produced no buffer.
  */
   model?: string;
@@ -2268,46 +2105,31 @@ export interface TurnEndedPayload {
 }
 
 /**
- * TurnStatePayload is the payload for type="turn_state": the
- * connect-time synthesis of a chat's in-flight turn (P6). Synthesized
- * per busy chat in the SSE OnConnect replay — never broadcast live —
- * so a reconnecting or freshly-loaded client renders the accumulated
- * turn immediately instead of waiting for the next chunk or
- * turn_ended, and learns authoritatively that the chat is busy
- * (replacing the gap handler's eager thinking-clear guess).
+ * TurnStatePayload is the payload for type="turn_state": one per busy chat in the SSE
+ * OnConnect replay, NEVER broadcast live, so a reconnecting client renders the accumulated
+ * turn immediately and learns authoritatively that the chat is busy.
  */
 export interface TurnStatePayload {
   /**
- * Message is the in-flight assistant message as accumulated so
- * far — the runtime's turn mirror, byte-equivalent to what a
- * never-disconnected client would have rendered. Omitted when the
- * turn hasn't produced content yet (busy signal only).
+ * Message is the in-flight assistant message as accumulated so far. Omitted when the
+ * turn has produced no content yet (busy signal only).
  */
   message?: Message;
   /**
- * Status/Description replay the agent's last self-declared
- * chat_status for the busy chat. Authoritative here — the turn is
- * verifiably in flight — unlike the live event, which stays
- * ephemeral and is cleared on gaps precisely because a bare
- * replay could resurrect a stale "in_progress".
+ * Status/Description replay the agent's last self-declared chat_status. Authoritative
+ * here because the turn is verifiably in flight, unlike the live event, which is
+ * cleared on gaps precisely so a bare replay cannot resurrect a stale "in_progress".
  */
   status?: string;
   description?: string;
-  /**
- * ChunkSeq is the sequence number of the last delta folded into
- * Message (see MessageChunkPayload.Seq).
- */
+  /** ChunkSeq is the last delta folded into Message (see MessageChunkPayload.Seq). */
   chunk_seq?: number;
   /**
- * WorkflowStep marks a replayed turn that belongs to a workflow RUN rather
- * than to this chat: a chat-parented run executes on the launching chat's
- * session, so a step's frames opened this turn.
- * //
- * The contract for a client: APPLY the snapshot, do NOT set thinking. The
- * snapshot is the only copy of an in-flight step's transcript (it is never
- * persisted), so the event still has to be emitted — but the chat's own agent
- * is idle, and a client that reads this turn as the chat working says so for
- * the whole run, on every reconnect, with nothing to clear it.
+ * WorkflowStep marks a turn a workflow RUN opened on the launching chat's session.
+ * Contract: APPLY the snapshot, do NOT set thinking. The snapshot is the only copy of
+ * an in-flight step's transcript, so the event must still be emitted — but the chat's
+ * own agent is idle, and a client reading this as the chat working says so for the
+ * whole run, on every reconnect, with nothing to clear it.
  */
   workflow_step?: boolean;
 }
@@ -2384,5 +2206,38 @@ export interface WhoamiResponse {
   startUrl?: string;
   region?: string;
   error?: string;
+}
+
+/**
+ * WorkflowRun is one previous workflow run, listed beside previous chats in
+ * the history surface (GET /api/sessions) and reviewable read-only.
+ * //
+ * Sourced from _kiro/workflow/list, NOT session/list: that verb's workflow rows
+ * are STEP sessions reporting idle whatever the run did, so they can be neither
+ * counted nor judged as runs.
+ */
+export interface WorkflowRun {
+  workflow_id: string;
+  name: string;
+  /** Status is run-level: paused / completed / failed. */
+  status?: string;
+  /**
+ * ParentChatID is the vibekit chat that launched the run, resolved through
+ * the launching session's chain. Empty for a run with no vibekit parent
+ * (launched from the TUI, or by a chat vibekit no longer keeps).
+ */
+  parent_chat_id?: string;
+  /**
+ * EndReason says why something OTHER than the run stopped it: "overran" (a
+ * slot, the idle window or the backstop) or "step_cap". Every bound cancels
+ * through the verb the Cancel button reaches, so KAS reports `cancelled`
+ * either way and only this separates a bound from a person; a user cancel
+ * records nothing. In-memory for the runs THIS process stopped, so one
+ * stopped before a restart falls back to the plain status.
+ */
+  end_reason?: string;
+  updated_at: number;
+  created_at?: number;
+  started_at?: number;
 }
 

@@ -4,6 +4,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fitTabBar } from "./tab-bar-fit.js";
+import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 
 const ICONS = "tab-bar-icons";
 
@@ -38,7 +39,7 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-describe("fitTabBar", () => {
+describe("fitTabBar", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
   it("keeps labels when every label fits", () => {
     const bar = buildBar("600px", ["Changes", "Pull requests", "Sources"]);
     fitTabBar(bar);
@@ -59,9 +60,12 @@ describe("fitTabBar", () => {
     // Widen the container; the ResizeObserver re-measures. RO callbacks are
     // delivered async (before paint), so poll briefly.
     (bar.parentElement as HTMLElement).style.width = "600px";
-    await vi.waitFor(() => {
-      expect(bar.classList.contains(ICONS)).toBe(false);
-    });
+    await vi.waitFor(
+      () => {
+        expect(bar.classList.contains(ICONS)).toBe(false);
+      },
+      { timeout: FRAME_BUDGET_MS },
+    );
   });
 
   it("re-measures in label mode so icon mode does not latch", async () => {
@@ -78,15 +82,21 @@ describe("fitTabBar", () => {
       expect(bar.classList.contains(ICONS)).toBe(true);
 
       (bar.parentElement as HTMLElement).style.width = "600px";
-      await vi.waitFor(() => {
-        expect(bar.classList.contains(ICONS)).toBe(false);
-      });
+      await vi.waitFor(
+        () => {
+          expect(bar.classList.contains(ICONS)).toBe(false);
+        },
+        { timeout: FRAME_BUDGET_MS },
+      );
 
       // And shrink again: labels must yield back to icons.
       (bar.parentElement as HTMLElement).style.width = "120px";
-      await vi.waitFor(() => {
-        expect(bar.classList.contains(ICONS)).toBe(true);
-      });
+      await vi.waitFor(
+        () => {
+          expect(bar.classList.contains(ICONS)).toBe(true);
+        },
+        { timeout: FRAME_BUDGET_MS },
+      );
     } finally {
       style.remove();
     }

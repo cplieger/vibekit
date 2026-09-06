@@ -24,10 +24,22 @@
 
 import { onSSE, emitBus, BUS_RUNS_CHANGED } from "../bus.js";
 import { info, success, error } from "../toast.js";
-import { invalidateRun, noteRunChat, noteRunLive, noteRunSettled } from "../run-store.js";
+import {
+  invalidateRun,
+  noteRunChat,
+  noteRunLive,
+  noteRunSettled,
+  hasLiveRunForChat,
+} from "../run-store.js";
+import { isThinking } from "../store.js";
 import { trackRun } from "../run-dots.js";
-import { autoCloseRunSubTab, openRunSubTab, applyRunStep } from "../run-view.js";
-import { pushDecision, collapseSettledRunInput } from "../decision-dock.js";
+import { autoCloseRunSubTab, noteAutoOpenedRun, applyRunStep } from "../run-view.js";
+import {
+  pushDecision,
+  collapseSettledRunInput,
+  dropRunAsks,
+  dropTurnDecisions,
+} from "../decision-dock.js";
 import { answerRunInput, continueRunStep } from "../actions/runs.js";
 import { notifyIfHidden, NOTIFY_TITLE } from "../notify.js";
 
@@ -83,8 +95,13 @@ function toastCompletion(status: string, name: string | undefined): void {
 onSSE("run_started", (chatID, p) => {
   trackRun(p.workflow_id);
   noteRunChat(p.workflow_id, chatID);
-  noteRunLive(p.workflow_id, chatID);
-  openRunSubTab(p.workflow_id, runLabel(p.name), chatID);
+  // A start frame is proof of execution: it fires on the launch and again on every
+  // resume, so it is exactly the moment frames begin arriving into this chat.
+  noteRunLive(p.workflow_id, chatID, true);
+  // The tab itself is the SERVER's, opened at the frame that grants the run's
+  // lease. What is recorded here is only that the tab is the app's doing, which is
+  // what lets the completion auto-close tell it from one the reader asked for.
+  noteAutoOpenedRun(p.workflow_id, chatID);
   invalidateRun(p.workflow_id);
   emitBus(BUS_RUNS_CHANGED);
   if (p.scheduled === true && !announcedStarts.has(p.workflow_id)) {
@@ -99,8 +116,37 @@ onSSE("run_finished", (chatID, p) => {
   noteRunChat(p.workflow_id, chatID);
   // `paused` stays live: stopped waiting for something, not over. Anything
   // else is an ending.
-  if (p.status !== "paused") {
+  if (p.status === "paused") {
+    // A policy stop (`onMaxIterations`) reports through this same frame, so the run
+    // is resumable and its row stays — but it has stopped executing, which is what
+    // lets its chat's message window be reclaimed while it sits.
+    noteRunLive(p.workflow_id, chatID, false);
+  } else {
     noteRunSettled(p.workflow_id);
+    // A run that is over cannot still be waiting on a person. Which asks that
+    // reaches, and why each kind needs it, is `dropRunAsks`' own doc.
+    dropRunAsks(p.workflow_id);
+    // And the ORPHANS that sweep cannot name: a step's request-shaped ask whose
+    // `run_id` arrived EMPTY (the step-session registry had not seen its
+    // sub-session). Every run-scoped remover keys on `runID`, so such an ask is
+    // reachable only by the turn-scoped sweep — and its one other trigger,
+    // `turn_ended` on this chat, never fires for a step-driven turn, because the
+    // attribution gate drops that turn's `turn_end`.
+    //
+    // A run's terminal frame is the turn-boundary-equivalent moment for it: the
+    // launching turn ended when the run was created, so anything still queued here
+    // with no `runID` is moot. Both gates are load-bearing. Without the first, a
+    // user who prompted this chat while the run was going has that turn's own
+    // permission ask swept, stranding a live JSON-RPC request. Without the second,
+    // a SIBLING run's orphan — also `runID: ""`, and indistinguishable from this
+    // run's — is swept while that run is still executing; `noteRunSettled` ran two
+    // lines above, so the predicate answers about siblings only.
+    //
+    // An empty envelope chat id is a parentless run, whose asks `dropRunAsks`
+    // already reached through the `run:<id>` key. There is no chat to sweep.
+    if (chatID !== "" && !isThinking(chatID) && !hasLiveRunForChat(chatID)) {
+      dropTurnDecisions(chatID);
+    }
   }
   // Deliberately NOT opened: a run that finished before anyone looked has
   // nothing live to watch. History is the door to a finished run.
@@ -115,8 +161,8 @@ onSSE("run_finished", (chatID, p) => {
 
 // A parentless run's step content — the one run event that is not an
 // invalidation, since a step's transcript is not in `inspect` and no
-// endpoint serves it. Reaches exactly one surface: the run tab holding the
-// card whose step rows the content belongs in.
+// endpoint serves it. Reaches exactly one surface: the run tab's DETAIL PANE,
+// which hosts a transcript per node path.
 //
 // A chat-parented run raises none of these: its steps travel as ordinary
 // blocks on the launching chat's connection, keyed by `_meta.kiro.workflow`.
@@ -179,11 +225,15 @@ onSSE("run_progress", (chatID, p) => {
   trackRun(p.workflow_id);
   noteRunChat(p.workflow_id, chatID);
   // A progress frame is proof of life: a client that missed run_started
-  // re-learns the run here.
-  noteRunLive(p.workflow_id, chatID);
-  // Also opens, since `run_started` can be missed (run events are not in
-  // the SSE replay ring). `openRunSubTab` offers once per run per client,
-  // so a close stays final for the automatic path.
-  openRunSubTab(p.workflow_id, "Workflow run", chatID);
+  // re-learns the run here. Whether it is proof of EXECUTION is the kind's to
+  // say — the run-level `paused` folds into this event, so treating every
+  // progress frame as executing would let a parked run keep its chat's window
+  // resident on the strength of the frame that parked it. A node-level pause
+  // (`node_paused`) is a step waiting inside a run that is still going, so it
+  // deliberately reads as executing.
+  noteRunLive(p.workflow_id, chatID, p.kind !== "paused");
+  // No tab open, and no auto-open MARKER either. The server retries its own offer
+  // on each step's frame, and claiming the tab here would let the completion
+  // auto-close take one a mid-run reader opened themselves.
   invalidateRun(p.workflow_id);
 });

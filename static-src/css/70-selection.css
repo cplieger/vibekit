@@ -181,6 +181,13 @@
 .editor-find-case[aria-pressed="true"]:active,
 .tab.active:active {
   background: var(--c-selected-bg-press);
+
+  /* Opt OUT of the app-wide press wash (03-base.css). A selected surface has its
+     own press token, one rung into its own fill, and the wash would add a second
+     step on a different ramp — so a pressed selected row would leave the selected
+     vocabulary this file exists to keep. Stated here because this file owns the
+     selected state, its hover and its press. */
+  box-shadow: none;
 }
 
 /* ==========================================================================

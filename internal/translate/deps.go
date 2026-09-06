@@ -32,18 +32,29 @@ type BufferAccess interface {
 }
 
 // TurnBoundary is the wire's own turn bracket, which KAS emits for every
-// turn, agent-initiated included.
+// turn, agent-initiated included — plus the one MID-turn boundary vibekit
+// declares itself, at a compaction point.
 type TurnBoundary interface {
 	// WireTurnStart binds the bracket to the pending pre-open, or closes a
 	// turn whose own end never arrived and opens one the engine started.
 	WireTurnStart(ctx context.Context, chatID vibekit.ChatID)
 	// WireTurnEnd closes the chat's open turn with the wire's own
-	// outcome. A no-op when no turn is open.
-	WireTurnEnd(ctx context.Context, chatID vibekit.ChatID, stop vibekit.StopReason)
+	// outcome. A no-op when no turn is open. `details` is the wire's own
+	// account of the stop, empty on every build that sends none, and it is
+	// the only channel that could explain a `stopReason: "error"` turn.
+	WireTurnEnd(ctx context.Context, chatID vibekit.ChatID, stop vibekit.StopReason, details string)
 	// ReviseTurnBinding undoes a provisional binding on a frame carrying
 	// agentInitiated: the started turn was the agent's, and the pre-open
 	// is still owed its own bracket.
 	ReviseTurnBinding(ctx context.Context, chatID vibekit.ChatID)
+	// SealTurnSegment persists what the open turn has produced so far as its
+	// own assistant message and lets the rest of the turn accumulate into a
+	// fresh one, so a boundary inside a turn can be represented as a sibling
+	// message. Reports whether a segment was sealed; false for a chat with no
+	// open turn, a turn that emitted nothing, and a turn holding an unsettled
+	// tool call, all of which leave the boundary to land as a sibling of the
+	// whole turn instead.
+	SealTurnSegment(ctx context.Context, chatID vibekit.ChatID) bool
 }
 
 // LineRecorder is the consumer-side interface for line tracking, narrowed
@@ -141,13 +152,10 @@ type PendingPermAdder interface {
 
 // Responder answers a server-to-client ACP request on the chat's bridge.
 //
-// The one role here that writes to the wire rather than the event bus: a
-// request vibekit declines to process still has to be answered, since
-// KAS's sendRequest carries no timeout and an unanswered ask strands the
-// tool batch until process teardown.
-//
-// A chat with no bridge is not an error — a response has nowhere to go —
-// so an implementation reports nil for that case rather than a failure.
+// The one role here that writes to the wire rather than the event bus: a request
+// vibekit declines to process still has to be answered, since KAS's sendRequest
+// carries no timeout and an unanswered ask strands the tool batch until teardown.
+// A chat with no bridge is not an error, so an implementation reports nil for it.
 type Responder interface {
 	BridgeRespond(ctx context.Context, chatID vibekit.ChatID, requestID int64, result any, err error) error
 }
@@ -170,17 +178,13 @@ type HookStatusReader interface {
 	IsHookStatusEnabled() bool
 }
 
-// TerminalReader returns an agent terminal's rendered output: plain text
-// with escapes parsed off, plus the spans styling it.
+// TerminalReader returns an agent terminal's rendered output: plain text with
+// escapes parsed off, plus the spans styling it. ok reports whether the terminal is
+// known, not whether it printed anything — a registered terminal that produced no
+// output answers ("", nil, true).
 //
-// ok reports whether the terminal is known, not whether it printed
-// anything: a registered terminal that produced no output answers
-// ("", nil, true).
-//
-// This is what makes the tool card the durable home of a command's
-// output: KAS puts none of it on the tool call, so before this every
-// finished command persisted an empty output and the bytes lived only in
-// an ephemeral SSE stream a page reload discarded.
+// This is what makes the tool card the durable home of a command's output: KAS puts
+// none of it on the tool call, so the bytes otherwise live only in an SSE stream.
 type TerminalReader interface {
 	Output(terminalID string) (text string, spans []vibekit.TextSpan, ok bool)
 }
@@ -322,29 +326,32 @@ type RunOriginAccess interface {
 	IsScheduled(workflowID string) bool
 }
 
-// RunBoundsAccess reports a workflow step that blew its turn cap.
+// RunBoundsAccess reports a workflow step that blew its turn cap, and the observable
+// progress that rolls a run's idle window forward.
 //
-// Takes the breach rather than asking permission for it: counting
-// belongs here (the step's tool frames pass through this package), while
-// enforcement belongs on the host (it owns the bridges and the only stop
-// verb, which is run-scoped). The host is expected to cancel the whole
-// run, since no per-step stop verb exists on the wire.
+// Takes the breach rather than asking permission for it: counting belongs here (the
+// step's tool frames pass through this package) while enforcement belongs on the
+// host, which owns the bridges and the only stop verb — run-scoped, so the host
+// cancels the whole run. Both methods are that same split applied twice.
 type RunBoundsAccess interface {
 	StepTurnCapExceeded(workflowID, nodeID string, turns int)
+	// RunMadeProgress reports that a run's step did something observable, so
+	// the run's idle window may be rolled forward.
+	//
+	// FIRE-AND-FORGET and idempotent: it is called once per tool-call frame,
+	// so it must be cheap, and it must no-op for a run with no lease, a
+	// parked run and a run this process is not bounding. Keyed on the RUN
+	// rather than the node, because the window is a property of the run —
+	// a node id would invite a per-node window nothing enforces.
+	RunMadeProgress(workflowID string)
 }
 
-// TurnInterruptAccess ends a turn kiro-cli has abandoned without
-// answering.
+// TurnInterruptAccess ends a turn kiro-cli has abandoned without answering.
 //
-// Same split as RunBoundsAccess: detection belongs here (the sentinel
-// arrives as an assistant text chunk) and termination belongs on the
-// host, which owns the bridges and the in-flight prompt's cancel func.
-//
-// reason travels because the host cannot derive it — the divider needs
-// the attribution, and only the detector knows which sentinel matched.
-//
-// Advisory in one direction only: the host may decline (no turn in
-// flight, or a user cancel already claimed this one).
+// Same split as RunBoundsAccess: detection belongs here (the sentinel arrives as an
+// assistant text chunk), termination on the host, which owns the in-flight prompt's
+// cancel func. reason travels because only the detector knows which sentinel
+// matched. Advisory: the host may decline if no turn is in flight.
 type TurnInterruptAccess interface {
 	InterruptTurn(chatID vibekit.ChatID, reason string)
 }

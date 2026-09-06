@@ -37,7 +37,6 @@ vi.mock("./icons.js", () => ({
   ICON_TRASH_14: "",
   ICON_PLUS: "",
   ICON_PLUS_16: "",
-  ICON_MINUS: "",
   ICON_PIN: "",
   ICON_PIN_FILLED: "",
   ICON_COPY: "",
@@ -58,7 +57,7 @@ vi.mock("./icons.js", () => ({
   ICON_HOURGLASS: "",
   ICON_CANCEL: "",
   ICON_MODEL: "",
-  ICON_MODEL_20: "",
+  ICON_MODEL_UI: "",
   ICON_ALERT: "",
   ICON_GIT_UP_ARROW: "",
   ICON_GIT_DOWN_ARROW: "",
@@ -112,7 +111,11 @@ vi.mock("./device-view.js", () => {
 });
 // The two leaf stores the tab factory reads for a display NAME. Neither matters
 // here: what this suite reads off a row is its DOT.
-vi.mock("./run-store.js", () => ({ peekRunState: vi.fn(() => undefined) }));
+vi.mock("./run-store.js", () => ({
+  // The tab factory's name read. Inert here; a Browser-Mode mock is linked as
+  // real ESM, so a name any module in the graph reaches has to exist on it.
+  runLabelOf: vi.fn(() => ""),
+}));
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 vi.mock("./tabs-drag.js", () => ({
@@ -142,6 +145,22 @@ vi.mock("./dom.js", () => ({
       },
     },
   ),
+  // `byId` is reached through this graph by page-title.ts. ESM links for real, so
+  // a name any module in the graph imports must exist on the mock or the whole
+  // FILE fails at link time, naming the export rather than the test. Inlined
+  // rather than shared because a `vi.mock` factory is hoisted above every
+  // top-level import, so it cannot reach a helper module. Resolve-or-create,
+  // because the real `byId` throws and a suite mocking `dom.js` stages only what
+  // its own subject needs.
+  byId: (id: string): HTMLElement => {
+    let el = document.getElementById(id);
+    if (el === null) {
+      el = document.createElement("span");
+      el.id = id;
+      document.body.appendChild(el);
+    }
+    return el;
+  },
 }));
 
 import {

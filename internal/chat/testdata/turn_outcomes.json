@@ -16,7 +16,29 @@
     "",
     "`body` lists the turn's non-trigger messages. `refusal` true means the message",
     "carries a refusal marker; `event` names an inline event's kind. `is_live` is",
-    "the caller's 'this is the last turn and the session is thinking' flag."
+    "the caller's 'this is the last turn and the session is thinking' flag.",
+    "",
+    "THE WRITER AND THE READER ARE ONE MECHANISM, so the tail clause below only",
+    "holds because persistOutcomeMarker skips nothing. It used to omit the carrier",
+    "for a clean prompted empty turn — the reader's default already said",
+    "`completed`, so the row looked redundant — which made a legitimately clean",
+    "empty turn byte-identical on disk to one a restart killed. Now every close",
+    "persists a carrier, so a body carrying no assistant message and no settled",
+    "outcome means NOTHING closed the turn, and `unknown` is a fact rather than a",
+    "guess. Restore the skip and the two `unknown` rows below become unreachable.",
+    "",
+    "The predicate is 'no assistant message', not 'an empty body', and that is what",
+    "protects every turn already on disk: this chat file only ever gained an",
+    "assistant message at finalize, so a legacy turn carries one and still reads",
+    "`completed` — the row named for that carve-out is what stops a later reader",
+    "widening the clause.",
+    "",
+    "ACCEPTED RESIDUAL, stated rather than fixed: a restart-killed turn whose",
+    "mid-turn compaction SEALED a segment does have an assistant message on disk",
+    "(SealTurnSegment -> segmentMessage), and that segment carries no outcome by",
+    "construction, so such a turn still reads `completed`. Stamping an outcome on a",
+    "segment would put two carriers in one turn and break the exactly-one-carrier",
+    "invariant."
   ],
   "cases": [
     {
@@ -26,8 +48,37 @@
       "want": "completed"
     },
     {
-      "name": "an empty body is still a turn",
+      "name": "a turn nothing closed reads unknown, not completed",
+      "_comment": [
+        "The reported population: a prompt refused after its user row landed, a cancel",
+        "during the spawn/prime/MCP window, and a process death mid-turn all persist the",
+        "user row and nothing else. This row used to want `completed`, which reported",
+        "every one of them as a turn that answered."
+      ],
       "body": [],
+      "is_live": false,
+      "want": "unknown"
+    },
+    {
+      "name": "a turn nothing closed YET is still running, not unknown",
+      "_comment": [
+        "The live half, and why the clause sits below the isLive one: the carrier arrives",
+        "at finalize, so an in-flight turn legitimately has none and must not be reported",
+        "as an end nobody could read."
+      ],
+      "body": [],
+      "is_live": true,
+      "want": "running"
+    },
+    {
+      "name": "a legacy turn with an assistant message and no outcome still completed",
+      "_comment": [
+        "THE CARVE-OUT, and the row that stops a later reader widening the clause to",
+        "'an empty carrier'. Measured over the live records: 8 of the 14 carrier-less",
+        "turns are richly-answered legacy turns, two of them 185 and 265 blocks. Reading",
+        "those as failures would be a regression, not a fix."
+      ],
+      "body": [{}],
       "is_live": false,
       "want": "completed"
     },
@@ -98,10 +149,17 @@
       "want": "completed"
     },
     {
-      "name": "a successful compaction is not an outcome",
+      "name": "a successful compaction is not a FAILURE",
+      "_comment": [
+        "This row's real property is that a compaction does not make a turn failed, and",
+        "that is unchanged. It wanted `completed` while an absent carrier defaulted that",
+        "way; a body holding one event row and no assistant message is now a turn nothing",
+        "closed, so it wants `unknown`. Either way the assertion worth having is that it",
+        "is not `failed`."
+      ],
       "body": [{ "event": "compacted" }],
       "is_live": false,
-      "want": "completed"
+      "want": "unknown"
     },
     {
       "name": "a durable outcome is read, not inferred",

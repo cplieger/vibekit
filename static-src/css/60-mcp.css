@@ -324,11 +324,6 @@
   background: var(--c-bg-tertiary);
 }
 
-.conflict-btn:disabled {
-  opacity: 0.6;
-  cursor: wait;
-}
-
 .conflict-btn-suggest {
   border-color: var(--c-accent);
   color: var(--c-accent);
@@ -403,6 +398,13 @@
 }
 
 .mcp-row {
+  /* Row height comes from the TIER, not from the font. Without it this row
+     resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
+     close — so it measured the same on a finger as on a mouse while `.tab`
+     beside it correctly went 36px to 44px. A floor, so a taller row keeps its
+     own height: measured, this moves desktop by at most 1px and gives every
+     list row a real 36px target on touch. */
+  min-block-size: var(--ctl-h-sm);
   display: flex;
   align-items: center;
   gap: var(--sp-3);
@@ -511,12 +513,12 @@
 
   &.oauth {
     background: var(--c-yellow);
-    animation: vk-breathe 2s ease-in-out infinite;
+    opacity: calc(1 - var(--vk-beat) * 0.6);
   }
 
   &.failed {
     background: var(--c-red);
-    animation: vk-breathe 2s ease-in-out infinite;
+    opacity: calc(1 - var(--vk-beat) * 0.6);
   }
 
   &.disabled {
@@ -996,11 +998,6 @@
 
 /* The reconnect icon-btn reuses .icon-btn; its spinning state swaps in
  * ICON_SPINNER (.icon-spinner animates via vk-spin). Hidden when idle. */
-.mcp-row-actions .icon-btn[aria-busy="true"] {
-  pointer-events: none;
-  opacity: 0.7;
-}
-
 .mcp-discovery {
   margin-block-start: 0.25rem;
 }
@@ -1095,11 +1092,6 @@
 .mcp-disc-insert:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
-}
-
-.mcp-disc-insert:disabled {
-  opacity: 0.6;
-  cursor: wait;
 }
 
 .mcp-disc-prompt-wrap {

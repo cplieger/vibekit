@@ -140,6 +140,72 @@ func TestTryFastModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 	}
 }
 
+// The fast path CLOSES whatever turn is open before it swaps, which is what the
+// restart fallback has always done through its own flush.
+//
+// An engine-opened turn holds no admission reservation, so nothing refuses a
+// switch that lands mid-turn — a second device, or the client's queue draining
+// while a workflow step's turn folds onto the launching chat. The
+// `model_switched` row this path persists is not turn-terminal, so without the
+// flush it is written into the body of a turn the switch had nothing to do with.
+func TestTryFastModelSwitch_ClosesTheTurnInFlight(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	h.coord.StartTurn(ctx, "c1", vibekit.TurnSourceWireTurnStart)
+	buf := h.stageTurnBuffer(t, "c1")
+	buf.Started = true
+	buf.MessageID = newMessageID()
+	buf.Content.WriteString("the step's reply, still streaming")
+	if _, open := h.coord.turns.openEpoch("c1"); !open {
+		t.Fatal("the fixture left no turn open, so there is nothing for the switch to close")
+	}
+
+	if got := h.coord.TryFastModelSwitch(ctx, "c1", "m-new", ""); !got {
+		t.Fatalf("TryFastModelSwitch = %v, want true", got)
+	}
+
+	if epoch, open := h.coord.turns.openEpoch("c1"); open {
+		t.Errorf("turn %d is still open after the fast switch; the model_switched row lands in its body", epoch)
+	}
+	// The content already on every client's screen is persisted rather than
+	// discarded: the session survives the fast swap, so nothing licenses dropping
+	// a reply somebody else's turn produced.
+	if got := assistantMessages(t, cs, "c1"); len(got) != 1 {
+		t.Errorf("persisted %d assistant messages, want the displaced step's reply", len(got))
+	}
+}
+
+// The other side of that guard: the caller's OWN prompt turn survives the swap.
+//
+// The restart fallback discards an in-flight turn because the bridge goes with
+// it; the fast path keeps the session, so a turn that was going to finish still
+// finishes. Widening the guard to any open turn destroyed exactly this.
+func TestTryFastModelSwitch_LeavesThePromptsOwnTurnOpen(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	epoch := h.coord.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	buf := h.stageTurnBuffer(t, "c1")
+	buf.Started = true
+	buf.MessageID = newMessageID()
+	buf.Content.WriteString("the user's own reply, still streaming")
+
+	if got := h.coord.TryFastModelSwitch(ctx, "c1", "m-new", ""); !got {
+		t.Fatalf("TryFastModelSwitch = %v, want true", got)
+	}
+
+	if open, ok := h.coord.turns.openEpoch("c1"); !ok || open != epoch {
+		t.Errorf("open turn = %d (open %t), want the prompt's own %d", open, ok, epoch)
+	}
+}
+
 // A chat that has chosen no level sends no effort call: there is nothing to
 // re-assert, and the service's own reconciliation is the right answer.
 func TestTryFastModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
@@ -525,19 +591,12 @@ func writeSessionRecord(t *testing.T, sessionDir, workspaceRoot string) {
 	}
 }
 
-// TestSweepSessionsOnce_KeepListCompleteness pins doubt-retains at the sweep
-// boundary, against a real orphan on disk.
-//
-// A partial keep-list means some chat's sessions are missing from it, so
-// sweeping anyway deletes them. Not sweeping only postpones reclaiming disk
-// until the next hourly tick. The control arm proves the orphan really was
-// reapable, so the incomplete arm is not passing vacuously.
-//
-// The control's keep-list names a session that EXISTS on disk, rather than being
-// empty. An empty keep-list is refused outright by the reaper now
-// (kirosession.Sweep) because it is indistinguishable from a misconfigured
-// store — that is a separate guard with its own test, and using it as the
-// control here would have made this test assert the opposite of it.
+// TestSweepSessionsOnce_KeepListCompleteness pins doubt-retains at the sweep boundary against
+// a real orphan on disk: a partial keep-list means some chat's sessions are missing from it,
+// so sweeping anyway deletes them, where not sweeping only postpones reclaiming disk. The
+// control arm proves the orphan really was reapable. Its keep-list names a session that EXISTS
+// on disk rather than being empty, because an empty keep-list is refused outright by the
+// reaper — using it as the control would make this test assert the opposite of that guard.
 func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -704,17 +763,13 @@ func TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted(t *testing.T) {
 	}
 }
 
-// TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied pins the visibility
-// half of the mode contract, and the reason it is needed is subtle enough to state.
-//
-// applyInitialMode warns and continues when session/set_mode is refused, so the
-// session runs the engine's default. persistNewSessionMetadata then writes the
-// ACTUAL mode onto the chat, which is right — the mode pill must not claim a role
-// the agent is not running under — but it was also the ONLY record of the request.
-// So one transient refusal silently and permanently converted a chat pinned to
-// "spec" into a default-mode chat: at the next spawn the requested id now EQUALS
-// the current one, so applyInitialMode's own guard means no retry is attempted and
-// nothing ever says why.
+// TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied pins the visibility half of the
+// mode contract. applyInitialMode warns and continues when session/set_mode is refused, so the
+// session runs the engine's default, and persistNewSessionMetadata then writes the ACTUAL mode
+// onto the chat — right, because the pill must not claim a role the agent is not running under,
+// but also the only record of the request. So one transient refusal permanently converts a chat
+// pinned to "spec" into a default-mode chat: at the next spawn the ids match, so the guard
+// skips the retry and nothing says why.
 func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -774,17 +829,11 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 	}
 }
 
-// Closing a chat must NOT reap its durable KAS session; deleting one must.
-//
-// Close shared the delete path, so the × on a tab reaped the chat's whole
-// session chain off disk. That broke its own stated contract twice: the chat
-// record survived with nothing left to `session/load`, and the History page —
-// which lists KAS's sessions, not vibekit's chat files — could only ever show
-// chats that were still open, which is exactly how it was reported ("it only
-// shows active chats, when i close them they are gone").
-//
-// The delete arm is the control: without it, a close-preserves assertion would
-// also pass if the reaper were simply unwired.
+// Closing a chat must NOT reap its durable KAS session; deleting one must. Sharing the delete
+// path breaks the contract twice: the chat record survives with nothing left to
+// `session/load`, and the History page — which lists KAS's sessions, not vibekit's chat files
+// — can only ever show chats that are still open. The delete arm is the control: without it, a
+// close-preserves assertion would also pass if the reaper were simply unwired.
 func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -898,18 +947,12 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 	}
 }
 
-// TestSessionLoad_HealsTheChatsRestartPausedRuns is the recovery model for
-// agent-launched runs, and the reason there is no Resume button anywhere.
-//
-// A restart kills a chat's bridge, which KAS reconciles by PAUSING the runs that
-// bridge launched. The user's next message respawns the bridge, and this sweep is
-// what makes the run heal with the chat. Without it a restart leaves every
-// agent-launched run parked with nothing in the product able to restart it.
-//
-// The sweep runs off the spawn path deliberately — the user's prompt must not wait
-// behind a run-list round trip — so the resume is awaited rather than assumed. The
-// wait fails closed: a sweep that never ran reports that, instead of passing
-// whenever the goroutine happened to win.
+// TestSessionLoad_HealsTheChatsRestartPausedRuns is the recovery model for agent-launched
+// runs, and the reason there is no Resume button anywhere. A restart kills a chat's bridge,
+// which KAS reconciles by PAUSING the runs that bridge launched; the user's next message
+// respawns it and this sweep makes the run heal with the chat. The sweep runs OFF the spawn
+// path deliberately — the prompt must not wait behind a run-list round trip — so the resume is
+// awaited rather than assumed, and the wait fails closed.
 func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 	h, cs, br := newTestHub()
 	const chatID vibekit.ChatID = "c1"
@@ -942,17 +985,12 @@ func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 	}
 }
 
-// TurnFoldTarget reads the chat store only when it has to OPEN a turn, not on
-// every folded frame.
-//
-// It opened by asking for the two facts a turn records at open — the answering
-// model and the credit baseline — and that read is chat.Store.Get: a per-chat
-// mutex, a whole-file read and a json.Unmarshal of the entire message history,
-// per streamed delta and per tool frame. The cost scales with the TRANSCRIPT
-// rather than the frame, it contends with every persist on the same chat, and it
-// runs on the only consumer of a 256-slot channel, so a long conversation could
-// stall the read loop under its own bookkeeping. No benchmark could see it: the
-// fold target in the translate benchmarks is a fake over a local map.
+// TurnFoldTarget reads the chat store only when it has to OPEN a turn, not on every folded
+// frame. The two facts a turn records at open — the answering model and the credit baseline —
+// come from chat.Store.Get: a per-chat mutex, a whole-file read and a json.Unmarshal of the
+// entire history, per streamed delta and per tool frame. The cost scales with the TRANSCRIPT,
+// it contends with every persist on the same chat, and it runs on the only consumer of a
+// 256-slot channel. No benchmark sees it: the translate benchmarks' fold target is a fake.
 func TestTurnFoldTarget_ReadsTheChatOnlyWhenItOpensATurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()

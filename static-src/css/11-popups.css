@@ -2,13 +2,26 @@
    Popups (shared)
    ========================================================================== */
 
+/* THE POPUP RUNG IS --c-bg-secondary, one step off the page — never the ramp's
+   top rung, which is the tempting choice and wrong in both themes for opposite
+   reasons. The ramp steps AWAY from the page background, so in light
+   --c-bg-elevated is the DEEPEST surface in the app: two menus shipped there at
+   L 80% over their own footer band's 86%, a slab darker than what it floats over.
+   In dark it only costs ink, --c-text-secondary 4.561:1 against 8.062:1 here.
+   Read by this component, .pill-expand-content (15-input.css), and the collapsed
+   toolbar menus in 61-mcp-tools.css and 19-files.css. */
 .popup {
   position: absolute;
   top: calc(100% + 0.25rem);
   right: 0;
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
-  border-radius: var(--r);
+  border-radius: var(--r-lg);
+
+  /* Derived corner for the rows inside; see the note above .popup-item. */
+  --menu-inset: var(--sp-1);
+  --menu-radius: calc(var(--r-lg) - 1px - var(--menu-inset));
+
   min-width: 13.75rem;
   max-height: 20rem;
   overflow-y: auto;
@@ -22,7 +35,28 @@
   padding: var(--sp-1);
 }
 
+/* THE MENU'S DERIVED CORNER. All three of this app's menu surfaces are the same
+   shape — a 1px border and a `--sp-1` list inset — so one derivation serves them,
+   declared on the container the way `--card-radius` and `--pill-radius` are
+   (01-tokens.css: "THE LADDER DOES NOT ANSWER A CORNER", so this is not a token).
+
+   The container moved from `--r` to `--r-lg`. At 6px the concentric inner radius
+   is 6 - 1 - 4 = 1px, which is square to the eye, and the items were shipping 6px
+   (identical to their container) or 3px (`calc(var(--r) / 2)`, a halving rather
+   than a derivation, 2px over). At 12px the inner is 7px — a real corner that is
+   visibly rounder than nothing and visibly tighter than its container.
+
+   It also closes the pair the user named: the composer is `--r-lg` and the
+   top-right menu was `--r`, so the two most-looked-at rounded boxes in the app
+   disagreed by a rung. */
 .popup-item {
+  /* Row height comes from the TIER, not from the font. Without it this row
+     resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
+     close — so it measured the same on a finger as on a mouse while `.tab`
+     beside it correctly went 36px to 44px. A floor, so a taller row keeps its
+     own height: measured, this moves desktop by at most 1px and gives every
+     list row a real 36px target on touch. */
+  min-block-size: var(--ctl-h-sm);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -33,7 +67,7 @@
   color: var(--c-text-primary);
   font-size: var(--fs-base);
   cursor: pointer;
-  border-radius: var(--r);
+  border-radius: var(--menu-radius);
   text-align: left;
   gap: var(--sp-2);
 

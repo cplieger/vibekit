@@ -58,6 +58,43 @@ export function forceReflow(el: Element): number {
   return el.getBoundingClientRect().height;
 }
 
+/** Mark any element as BUSY — its content or its work is in flight — or clear it.
+ *
+ *  THE ONLY PLACE THE VALUE IS SPELLED, and that is the point. `aria-busy` is a
+ *  boolean-typed ARIA attribute, so its value must be the literal `"true"`;
+ *  `toggleAttribute("aria-busy", true)` writes the empty string, which is invalid
+ *  and therefore treated as the default of false. Measured in Chromium against
+ *  the accessibility tree: the empty form yields NO busy property at all, exactly
+ *  like an element with no attribute, while `"true"` yields `busy: 1`. It also
+ *  fails `[aria-busy="true"]`, so the busy face never paints either. Two callers
+ *  had it — the model grid and the model list, each announcing nothing while
+ *  their catalogue loaded. */
+export function setBusy(el: Element, busy: boolean): void {
+  if (busy) {
+    el.setAttribute("aria-busy", "true");
+  } else {
+    el.removeAttribute("aria-busy");
+  }
+}
+
+/** Mark a CONTROL busy: `disabled` and `aria-busy` together.
+ *
+ *  That pair is what the two readers need. Assistive tech announces the busy
+ *  state off the attribute, and `40-a11y.css`'s busy face paints off the same
+ *  one, so a control cannot look busy without saying so or the reverse. Callers
+ *  that disable around an `await` had been setting `disabled` alone, which took
+ *  the UNAVAILABLE face — dimmed, `not-allowed` — while their own label read
+ *  "Suggesting…" or "Delivering…".
+ *
+ *  Not for a control that is unavailable rather than working: that is `disabled`
+ *  on its own, and it should keep the refusal face. `bindLoadingState` from
+ *  `@cplieger/actions` already sets both, so an action-bound control needs
+ *  nothing here. */
+export function setControlBusy(el: HTMLButtonElement | HTMLInputElement, busy: boolean): void {
+  el.disabled = busy;
+  setBusy(el, busy);
+}
+
 // Lazy singleton: elements are queried on first access via getter.
 // This allows the module to be imported before DOMContentLoaded
 // as long as no property is accessed until the DOM is ready.
@@ -121,6 +158,11 @@ class Elements {
   }
   get attachmentRow(): HTMLUListElement {
     return byId("attachment-row");
+  }
+  /** The bottom-bar region between the dock and the steer stack: one line per live
+   *  workflow run this chat launched. */
+  get runBar(): HTMLUListElement {
+    return byId("run-bar");
   }
   get steerStack(): HTMLUListElement {
     return byId("steer-stack");
@@ -431,10 +473,6 @@ class Elements {
   }
 
   // Tabs / shell
-  get toolbarTitle(): HTMLElement {
-    return byId("toolbar-title");
-  }
-
   // Startup
   get appRoot(): HTMLElement {
     return byId("app");

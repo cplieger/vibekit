@@ -41,8 +41,17 @@ type SubmitFn = (text: string | null) => void;
  *  advance animation, so two cards coexist, and a module-level reporter would be
  *  overwritten by the incoming one — after which the outgoing card's buttons would
  *  answer the INCOMING decision, which `settle`'s membership guard cannot catch
- *  because that decision is legitimately still queued. */
-export function buildRunInputCard(payload: RunInputNeededPayload, onSubmit: SubmitFn): HTMLElement {
+ *  because that decision is legitimately still queued.
+ *
+ *  `held` is the text a previous send is still holding for this ask, or "": the dock
+ *  splices the card before the answer goes out, so a retryable refusal re-offers the
+ *  question and this is what stops the box coming back empty. Seeded rather than
+ *  restored, because the card is a fresh element each time. */
+export function buildRunInputCard(
+  payload: RunInputNeededPayload,
+  held: string,
+  onSubmit: SubmitFn,
+): HTMLElement {
   // An EMPTY question is the post-restart case rather than a malformed frame, so
   // it gets a sentence of its own instead of a blank heading. Shared with the
   // dock's own one-line label so the card and the run card's alert agree.
@@ -72,6 +81,9 @@ export function buildRunInputCard(payload: RunInputNeededPayload, onSubmit: Subm
     placeholder: "Type your answer\u2026",
     "aria-label": "Your answer to the workflow step",
   }) as HTMLTextAreaElement;
+  // A property write rather than an attribute, which is what a textarea's value is
+  // after first paint; "" is the ordinary case and writes the same empty box.
+  input.value = held;
 
   const send = el(
     "button",

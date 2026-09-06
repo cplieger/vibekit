@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// Tests for domain.go types. The single interesting behaviour here is
-// Chat.Header; the rest of the types are plain structs with JSON tags.
-
 func TestChatHeader_copies_metadata_without_messages(t *testing.T) {
 	modes := []SessionMode{
 		{ID: "plan", Name: "Plan", Description: "planning mode"},
@@ -123,8 +120,7 @@ func TestRPCError_Error_returns_message_verbatim(t *testing.T) {
 }
 
 func TestRPCError_implements_error_interface(t *testing.T) {
-	// Round-trip through errors.AsType — the exact pattern bridge.Respond uses
-	// (bridge_rpc.go's `errors.AsType[*vibekit.RPCError](err)`).
+	// The unwrap pattern bridge.Respond depends on.
 	var err error = &RPCError{Code: -32601, Message: "method not found"}
 
 	re, ok := errors.AsType[*RPCError](err)
@@ -141,10 +137,8 @@ func TestRPCError_implements_error_interface(t *testing.T) {
 
 // --- The session chain: what retention is allowed to delete ---
 
-// TestRecordSession pins the chain bookkeeping. Every case here is a way to
-// LOSE a session id, and a lost id is a session directory the reaper then
-// deletes as an orphan — taking that period's transcript and pre-images with
-// it. The old code assigned ACPSessionID directly, which is exactly case 2.
+// Every case is a way to LOSE a session id, and a lost id is a session directory the
+// reaper deletes as an orphan, taking that period's transcript and pre-images with it.
 func TestRecordSession(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -209,10 +203,8 @@ func TestRecordSession(t *testing.T) {
 	}
 }
 
-// TestSessionChain_ReturnsACopy pins copy-on-return on BOTH branches. The
-// detached branch used to hand back PriorACPSessionIDs itself, so a caller that
-// mutated the chain it was given was correct while a session was attached and
-// silently rewrote the chat's retention set when one was not.
+// Copy-on-return on BOTH branches: a caller mutating the chain it was handed must not
+// rewrite the chat's retention set.
 func TestSessionChain_ReturnsACopy(t *testing.T) {
 	// Spare capacity is part of the fixture: an aliasing chain writes through on
 	// append as well as on assignment, and the append half is invisible without it.
@@ -240,8 +232,8 @@ func TestSessionChain_ReturnsACopy(t *testing.T) {
 			t.Run("Chat", func(t *testing.T) {
 				c := Chat{ACPSessionID: tc.current, PriorACPSessionIDs: freshPrior()}
 				chain := c.SessionChain()
-				// Fatal: the mutation below indexes chain, and a short one would
-				// make every assertion after it pass for the wrong reason.
+				// Fatal: the mutation below indexes chain, so a short one would make
+				// every later assertion pass for the wrong reason.
 				if !slices.Equal(chain, tc.wantChain) {
 					t.Fatalf("Chat.SessionChain() = %v, want %v", chain, tc.wantChain)
 				}
@@ -283,9 +275,8 @@ func TestSessionChain_ReturnsACopy(t *testing.T) {
 	}
 }
 
-// TestSessionChain pins that the chain is the full keep-set and that Chat and
-// ChatHeader agree on it — the sweep reads headers while the delete path reads
-// chats, so a disagreement means one of them reaps what the other keeps.
+// The chain is the full keep-set, and Chat must agree with ChatHeader: the sweep reads
+// headers while the delete path reads chats, so a disagreement reaps what the other keeps.
 func TestSessionChain(t *testing.T) {
 	cases := []struct {
 		name string
@@ -315,5 +306,110 @@ func TestSessionChain(t *testing.T) {
 				t.Errorf("ChatHeader.SessionChain() = %v, want %v (Header dropped the chain)", got, tc.want)
 			}
 		})
+	}
+}
+
+// The dot state every chat tab shows after a reconnect comes from this field. Three
+// carriers exist: the last assistant message, an EventTurnOutcome marker for a turn that
+// emitted nothing, and rows the agent persists DURING a turn, which land after the carrier
+// with no outcome of their own and must not hide it.
+func TestChatHeader_LastTurnOutcome(t *testing.T) {
+	cases := []struct {
+		name string
+		msgs []Message
+		want TurnOutcome
+	}{
+		{name: "a chat with no messages has no outcome", msgs: nil, want: ""},
+		{
+			name: "a record written before the field existed reports nothing",
+			msgs: []Message{{ID: "m1", Role: RoleUser}, {ID: "m2", Role: RoleAssistant}},
+			want: "",
+		},
+		{
+			name: "the ordinary successful turn",
+			msgs: []Message{
+				{ID: "m1", Role: RoleUser},
+				{ID: "m2", Role: RoleAssistant, TurnOutcome: TurnOutcomeCompleted},
+			},
+			want: TurnOutcomeCompleted,
+		},
+		{
+			name: "the newest outcome wins over an older one",
+			msgs: []Message{
+				{ID: "m1", Role: RoleAssistant, TurnOutcome: TurnOutcomeCompleted},
+				{ID: "m2", Role: RoleAssistant, TurnOutcome: TurnOutcomeFailed},
+			},
+			want: TurnOutcomeFailed,
+		},
+		{
+			name: "an outcome on an event row is found",
+			msgs: []Message{
+				{ID: "m1", Role: RoleUser},
+				{ID: "m2", Role: RoleEvent, EventKind: EventTurnOutcome, TurnOutcome: TurnOutcomeFailed},
+			},
+			want: TurnOutcomeFailed,
+		},
+		{
+			name: "rows persisted after the carrier do not hide it",
+			msgs: []Message{
+				{ID: "m1", Role: RoleAssistant, TurnOutcome: TurnOutcomeCompleted},
+				{ID: "m2", Role: RoleAssistant, Plan: []PlanEntry{{Content: "step"}}},
+				{ID: "m3", Role: RoleEvent, EventKind: EventCompacted},
+			},
+			want: TurnOutcomeCompleted,
+		},
+		{
+			name: "an empty outcome string is not a carrier",
+			msgs: []Message{
+				{ID: "m1", Role: RoleAssistant, TurnOutcome: TurnOutcomeCompleted},
+				{ID: "m2", Role: RoleAssistant, TurnOutcome: ""},
+			},
+			want: TurnOutcomeCompleted,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Chat{ID: "c1", Messages: tc.msgs}
+			if got := c.Header().LastTurnOutcome; got != tc.want {
+				t.Errorf("Chat.Header().LastTurnOutcome = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The derivation is a pure read of the record, so an outcome it dropped or rewrote would
+// paint the wrong tab dot on every device at once. The reachable set comes from the
+// PRODUCER rather than a list beside it, which is what makes the `running` half checkable:
+// only the client can know a turn is in flight, so the no-persisted-`running` guarantee
+// lives in the finalize path and is asked of that path.
+func TestChatHeader_LastTurnOutcomeReportsWhatWasPersisted(t *testing.T) {
+	// The derivation does not filter, so a hand-planted `running` comes back out; keeping
+	// it off the record is the writer's job below.
+	planted := &Chat{ID: "c1", Messages: []Message{
+		{ID: "m1", Role: RoleAssistant, TurnOutcome: TurnOutcomeRunning},
+	}}
+	if got := planted.Header().LastTurnOutcome; got != TurnOutcomeRunning {
+		t.Errorf("LastTurnOutcome = %q, want the derivation to report what the record holds", got)
+	}
+
+	// A member added to the enum and forgotten here narrows coverage, but no assertion can
+	// pass for the wrong reason: each one's subject is what the producer RETURNED.
+	stops := []StopReason{
+		StopReasonEndTurn, StopReasonCancelled, StopReasonInterrupted,
+		StopReasonRefusal, StopReasonUnknown, StopReasonError,
+		StopReasonContentFiltered, StopReasonMaxTokens, StopReasonMaxTurnRequests,
+		"", "a reason nobody has shipped yet",
+	}
+	for _, stop := range stops {
+		outcome := ConcludeStopReason(stop).Outcome
+		if outcome == TurnOutcomeRunning {
+			t.Errorf("ConcludeStopReason(%q) = %q; a finalize must never persist a live-turn outcome", stop, outcome)
+			continue
+		}
+		got := (&Chat{Messages: []Message{{TurnOutcome: outcome}}}).Header().LastTurnOutcome
+		if got != outcome {
+			t.Errorf("LastTurnOutcome for %q (from stop %q) = %q, want it carried through", outcome, stop, got)
+		}
 	}
 }

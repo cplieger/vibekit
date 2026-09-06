@@ -14,11 +14,11 @@
 import { apiGet, apiPost } from "./api-client.js";
 import { onSSE } from "./bus.js";
 import { relativeTime } from "./utils-format.js";
-import { kindTitle, FORGE_META } from "./forge-types.js";
+import { kindTitle } from "./forge-types.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { openMergeMethodDialog } from "./merge-dialog.js";
-import { ICON_REFRESH, ICON_PR_EMPTY, ICON_FILTER } from "./icons.js";
+import { FORGE_ICONS, ICON_REFRESH, ICON_PR_EMPTY, ICON_FILTER } from "./icons.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 import {
@@ -572,7 +572,7 @@ function renderGroup(g: RepoGroup): HTMLElement {
         className: `git-repo-section-forge-icon git-repo-section-forge-${g.forge_kind}`,
         "aria-hidden": "true",
       },
-      iconEl(FORGE_META[g.forge_kind].icon),
+      iconEl(FORGE_ICONS[g.forge_kind] ?? ""),
     ),
     el("span", { className: "git-repo-section-name" }, g.full_name),
     el("span", { className: "git-repo-section-meta" }, countText),

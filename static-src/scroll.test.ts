@@ -6,6 +6,11 @@
 // nothing, which is exactly the bug the helper exists to prevent.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
+// Read for the premise test below: the regression cases only reproduce
+// production while `.msg-row` really is a containment box, so the declaration is
+// asserted out of the shipped stylesheet rather than copied into a fixture.
+import messagesCss from "./css/13-messages.css?raw";
+
 // The module builds its singleton against $.messages / $.messagesWrap at import,
 // and reads $.scrollBottom in init.
 vi.mock("./dom.js", () => ({
@@ -244,15 +249,30 @@ describe("resetScrollState", () => {
 // transcript that had not moved, and since nothing scrolled, no scroll event
 // arrived to put the state back.
 describe("jumpTo", () => {
-  /** A target at `top` relative to the scroller's own top. jsdom gives every
-   *  rect zeros, so the scroller's own rect needs no faking. */
+  // The helper below appends to the shared transcript, which the fix requires:
+  // `scrollFrameRect` answers null for a disconnected element, so a target that
+  // is not in the DOM takes the no-landing branch instead of the arithmetic.
+  beforeEach(resetBetween);
+
+  /** A target `top` px from the scroller's own top edge, `height` tall.
+   *
+   *  The rect is offset by the scroller's live rect so the frame conversion
+   *  cancels it and `top` means exactly what it says, whatever the harness's own
+   *  layout puts the scroller at. Appended, and answering `getClientRects`,
+   *  because the landing arithmetic reads rects and treats an element with no box
+   *  as one a jump cannot move the reader to. */
   function target(top: number, height: number): HTMLElement {
     const e = document.createElement("div");
-    e.getBoundingClientRect = (() => ({ top, height })) as never;
-    Object.defineProperty(e, "offsetHeight", { configurable: true, get: () => height });
-    e.scrollIntoView = () => {
-      /* jsdom has no layout; the state decision is what is under test */
+    const rectAt = (): DOMRect => {
+      const wrapTop = scroll.getScrollEl().getBoundingClientRect().top;
+      return new DOMRect(0, wrapTop + top, 100, height);
     };
+    e.getBoundingClientRect = rectAt;
+    e.getClientRects = (() => [rectAt()] as unknown as DOMRectList) as typeof e.getClientRects;
+    e.scrollIntoView = () => {
+      /* no layout is driven here; the state decision is what is under test */
+    };
+    messagesEl.appendChild(e);
     return e;
   }
 
@@ -267,6 +287,19 @@ describe("jumpTo", () => {
     scroll.jumpTo(target(-3000, 400));
     expect(scroll.readingState()).toBe("reading");
     expect(document.getElementById("scrollBottom")?.classList.contains("hidden")).toBe(false);
+  });
+
+  // The no-landing branch, on the same geometry as the case above — which parks
+  // the reader — so this passes because the target has no box and not because
+  // the jump lands at the live edge. An element with no box has no landing, so
+  // the jump moves the reader nowhere, and a transcript that did not move must
+  // not raise a resume control over itself.
+  it("keeps the reader Following when the jump target has left the DOM", () => {
+    fakeScroller({ scrollHeight: 4000, clientHeight: 800, scrollTop: 3200 });
+    const gone = target(-3000, 400);
+    gone.remove();
+    scroll.jumpTo(gone);
+    expect(scroll.readingState()).toBe("following");
   });
 
   it("returns to Following, and hides the resume control, when the jump lands at the bottom", () => {
@@ -541,11 +574,27 @@ describe("scrollToBottom", () => {
 describe("the streaming auto-scroll", () => {
   beforeEach(resetBetween);
 
-  /** An element with the layout the anchor arithmetic reads. */
-  function fakeAnchor(offsetTop: number, offsetHeight: number): HTMLElement {
+  /** An element reporting a position `frameTop` px down the scroller's own scroll
+   *  frame.
+   *
+   *  Faked through RECTS rather than `offsetTop`, because rects are the
+   *  coordinate space the anchor arithmetic reads: `offsetTop` is measured
+   *  against `offsetParent`, which for a real transcript bubble is its own
+   *  containment-bounded `.msg-row` and not the scroller. The rect is computed
+   *  per call against the scroller's live rect and scrollTop, which is what the
+   *  frame conversion undoes — so the four numbers below still mean a position in
+   *  the transcript, and they are unchanged from the offsetTop era on purpose. If
+   *  one of them moves, the fake is wrong. */
+  function fakeAnchor(frameTop: number, height: number): HTMLElement {
     const anchor = document.createElement("div");
-    Object.defineProperty(anchor, "offsetTop", { configurable: true, get: () => offsetTop });
-    Object.defineProperty(anchor, "offsetHeight", { configurable: true, get: () => offsetHeight });
+    const rectAt = (): DOMRect => {
+      const wrap = scroll.getScrollEl();
+      const top = wrap.getBoundingClientRect().top + wrap.clientTop + frameTop - wrap.scrollTop;
+      return new DOMRect(0, top, 100, height);
+    };
+    anchor.getBoundingClientRect = rectAt;
+    anchor.getClientRects = (() =>
+      [rectAt()] as unknown as DOMRectList) as typeof anchor.getClientRects;
     return anchor;
   }
 
@@ -849,6 +898,64 @@ function block(px: number, className = ""): HTMLElement {
   return d;
 }
 
+/** The production shape of a live top-level bubble: a `.msg-row` wrapper holding
+ *  the `.message.assistant.streaming` element the block dispatcher registers as
+ *  the anchor. Returns the CHILD, which is what `getLiveAnchor` hands over.
+ *
+ *  The row's declarations are `.msg-row`'s own (css/13-messages.css), inline so
+ *  the scene needs no stylesheet, and `content-visibility` is the load-bearing
+ *  one: it implies `contain: layout paint style`, and `contain: paint` makes the
+ *  row a containing block — which is where an offsetParent walk stops. */
+function containedRow(px: number): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "msg-row";
+  row.style.cssText =
+    "display:flex;align-items:flex-end;flex-shrink:0;" +
+    "content-visibility:auto;contain-intrinsic-size:auto 3rem;";
+  const child = document.createElement("div");
+  child.className = "message assistant streaming";
+  child.style.cssText = `height:${String(px)}px;width:100%;`;
+  row.appendChild(child);
+  messagesEl.appendChild(row);
+  return child;
+}
+
+/** Every scrollTop this controller WRITES, in order, still performing the write.
+ *
+ *  A landing assertion cannot see an INTERMEDIATE position, and the defect below
+ *  is intermediate by construction: it writes 0, and the next frame — or the next
+ *  block seal, which empties the anchor slot and falls the target through to the
+ *  document bottom — writes the right number again. The reader sees a flicker
+ *  that the final scrollTop agrees with.
+ *
+ *  Delegates to the platform's own method, captured by `bind` before the instance
+ *  property shadows it, so the scroller really moves and the events the listener
+ *  reads are really fired. `realScroller`'s delete loop already drops `scrollTo`,
+ *  so this comes off with the rest of the shadowing. */
+function recordWrites(wrap: HTMLElement): number[] {
+  const writes: number[] = [];
+  const platform = wrap.scrollTo.bind(wrap);
+  wrap.scrollTo = ((arg?: number | ScrollToOptions, y?: number): void => {
+    if (typeof arg === "number") {
+      writes.push(y ?? 0);
+      platform(arg, y ?? 0);
+      return;
+    }
+    if (arg?.top !== undefined) {
+      writes.push(arg.top);
+    }
+    platform(arg ?? {});
+  }) as typeof wrap.scrollTo;
+  return writes;
+}
+
+/** How many of those writes were the top of the transcript. Zero is the
+ *  assertion in every case below: none of these scenes has a legitimate follow
+ *  target of 0, so a single one is the defect. */
+function zeroWrites(writes: readonly number[]): number {
+  return writes.filter((top) => top === 0).length;
+}
+
 /** Longer than `settle()`: a real scroll event is delivered on its own turn,
  *  after the frame the write happened in. The argument is for a wait that has to
  *  outlast a named piece of choreography (a transition, a settle window). */
@@ -1012,6 +1119,139 @@ describe("a large tool card below the streaming block", () => {
     // Two distinct pin positions, not two landings on a clamped maximum: the
     // 900px card below keeps both pins short of the document's end.
     expect([first, wrap.scrollTop]).toEqual([1550, 1750]);
+  });
+});
+
+// The reported failure: while the reader sat at the bottom of a streaming reply,
+// the transcript snapped to the very top of turn 1 for one or more frames and
+// then snapped back, over and over.
+//
+// The follow target was measured with `offsetTop`, which is relative to the
+// anchor's `offsetParent` — and a top-level bubble's offsetParent is its own
+// `.msg-row`, not the scroller, because `content-visibility: auto` on that row
+// implies `contain: paint` and a paint-containing box is a containing block. So
+// `offsetTop` read 0 however far down the transcript the live block sat, and the
+// target resolved to scrollTop 0. The snap BACK is the same bug's other half: a
+// block seal empties the anchor slot (`clearLiveAnchor`), the target falls
+// through to `scrollHeight`, and a turn shaped prose → tool → prose alternates
+// between the two several times. Both writes go through `scrollSelfTo`, so the
+// listener excused each one and the reader was never parked — there was no state
+// change to interrupt the flicker.
+//
+// Every case here asserts the WRITE SEQUENCE as well as the landing, because the
+// defect is an intermediate position the final scrollTop agrees with.
+describe("the streaming pin through a containment-bounded row", () => {
+  beforeEach(realLayoutReset);
+
+  it("still declares content-visibility on .msg-row", () => {
+    // Green before and after the fix, on purpose: it is what stops the three
+    // cases below from silently ceasing to reproduce production if the
+    // declaration ever moves. Read out of the stylesheet, never copied here.
+    const rule = /^\.msg-row\s*\{[^}]*\}/m.exec(messagesCss);
+    expect(rule, "the .msg-row rule is missing from css/13-messages.css").not.toBeNull();
+    expect(rule?.[0]).toContain("content-visibility");
+  });
+
+  it("follows the live block through a containment-bounded row", async () => {
+    // 1350 is the number the uncontained sibling case already asserts ("keeps
+    // Following when the pin lands far from the document bottom"), and that is
+    // the point: wrapping the anchor in its production row must not move the pin.
+    const wrap = realScroller();
+    block(1500);
+    const streaming = containedRow(200);
+    block(900);
+    scroll.setAnchorProvider(() => streaming);
+    const writes = recordWrites(wrap);
+    await land();
+
+    streaming.appendChild(document.createTextNode("a streamed chunk"));
+    await land();
+
+    expect({
+      scrollTop: wrap.scrollTop,
+      state: scroll.readingState(),
+      zeros: zeroWrites(writes),
+      max: wrap.scrollHeight - wrap.clientHeight,
+    }).toEqual({ scrollTop: 1350, state: "following", zeros: 0, max: 2200 });
+  });
+
+  it("never writes an intermediate 0 while a turn streams through several blocks", async () => {
+    // The seal/re-register alternation the reader actually saw: anchor
+    // registered, then the slot emptied at a block boundary, then a second
+    // bubble takes it. Each transition is a chance to write the top of the
+    // transcript, and the bottom-anchored position has to survive all of them.
+    const wrap = realScroller();
+    block(1500);
+    const first = containedRow(200);
+    const tail = block(900);
+    let live: HTMLElement | null = first;
+    scroll.setAnchorProvider(() => live);
+    const writes = recordWrites(wrap);
+    await land();
+
+    first.appendChild(document.createTextNode("prose"));
+    await land();
+    const onFirst = wrap.scrollTop;
+
+    // The seal: no top-level bubble is live, so the target is the document
+    // bottom for as long as the slot stays empty. 1500 + 200 + 1000 - 400.
+    live = null;
+    tail.style.height = "1000px";
+    await land();
+    const sealed = wrap.scrollTop;
+
+    // The next block registers its own bubble, with tall evidence below it so
+    // the new pin is short of the maximum rather than coincidentally equal to it.
+    const second = containedRow(300);
+    block(900);
+    live = second;
+    await land();
+    second.appendChild(document.createTextNode("more prose"));
+    await land();
+
+    expect({
+      onFirst,
+      sealed,
+      onSecond: wrap.scrollTop,
+      state: scroll.readingState(),
+      zeros: zeroWrites(writes),
+    }).toEqual({
+      onFirst: 1350,
+      sealed: 2300,
+      onSecond: 2650,
+      state: "following",
+      zeros: 0,
+    });
+  });
+
+  it("falls back to the document bottom when the anchor has left the DOM", async () => {
+    // The seventh producer of the same write: a detached anchor reports
+    // offsetTop 0, offsetHeight 0 and offsetParent null, so the old arithmetic
+    // resolved to the top of the transcript here too. An element with no box has
+    // no position to follow, which is the same answer as having no anchor.
+    const wrap = realScroller();
+    block(1500);
+    const streaming = containedRow(200);
+    block(900);
+    scroll.setAnchorProvider(() => streaming);
+    const writes = recordWrites(wrap);
+    await land();
+
+    streaming.remove();
+    block(100);
+    await land();
+
+    expect({
+      scrollTop: wrap.scrollTop,
+      max: wrap.scrollHeight - wrap.clientHeight,
+      state: scroll.readingState(),
+      zeros: zeroWrites(writes),
+    }).toEqual({
+      scrollTop: wrap.scrollHeight - wrap.clientHeight,
+      max: wrap.scrollHeight - wrap.clientHeight,
+      state: "following",
+      zeros: 0,
+    });
   });
 });
 
@@ -1272,5 +1512,194 @@ describe("the bottom pin's settle window", () => {
       scrollTop: target.offsetTop,
       state: "following",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `onReaderGesture`: the seam for "the reader said where they want to be".
+//
+// TWO publishers, and the second is the one this block exists to pin: a scroll,
+// and a request for the LIVE EDGE. The resume control, End, and a turn the reader
+// just sent all reach the scroller through `scrollSelfTo`, whose marker the scroll
+// listener consumes on its early-return branch — so a seam published from the
+// scroll branch alone is silent for every one of them, which is what let the
+// timeline rail keep its accent fill on the turn the reader had just left.
+//
+// Real-layout, and for a stronger reason than the block above: half the contract is
+// that a scroll the CONTROLLER performed does NOT fire, and `fakeScroller` shadows
+// `scrollTo` with an assignment to its own number, so it emits no scroll event at
+// all — under it every case here would pass with the callbacks wired to the wrong
+// branch, or to none.
+// ---------------------------------------------------------------------------
+
+describe("onReaderGesture", () => {
+  beforeEach(realLayoutReset);
+
+  it("fires for a scroll the reader performed", async () => {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+
+    wrap.scrollTop = 1200;
+    await land();
+    off();
+
+    expect(seen).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires when the reader asks for the live edge", async () => {
+    // The resume control. It is a gesture whose whole meaning is "take me to the
+    // live edge", so a consumer holding a position the reader has now abandoned has
+    // to hear it — and the scroll listener cannot say so, because this landing is
+    // written through `scrollSelfTo` and excused.
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    await park(wrap);
+    expect(scroll.readingState()).toBe("reading");
+
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+    scrollBtn.click();
+    await land(300);
+    off();
+
+    expect(wrap.scrollTop).toBe(2600);
+    expect(seen).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires for a turn the reader just sent", async () => {
+    // `buildTurn`'s `scrollToBottom()` for a triggered turn, and the app's own
+    // comment at that call site says why it counts: the reader asked for the turn,
+    // so the pin takes them to it even if they were parked further up. The
+    // transcript moves; anything claiming they are still where they were is wrong.
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    await park(wrap);
+
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+    scroll.scrollToBottom();
+    await land(300);
+    off();
+
+    expect(wrap.scrollTop).toBe(2600);
+    expect(seen).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes a live-edge request once, not once per re-assert frame", async () => {
+    // The pin holds its landing for PIN_SETTLE_MS by re-asserting it every frame
+    // (~42 of them). The GESTURE happened once, so publishing from the frame loop
+    // would hand a consumer dozens of identical revocations and make the seam
+    // unusable for anything that repaints on one.
+    const wrap = realScroller();
+    block(3000);
+    const streaming = block(200, "message assistant streaming");
+    block(900);
+    scroll.setAnchorProvider(() => streaming);
+    await land();
+    await park(wrap);
+
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+    scrollBtn.click();
+    // Well past the settle window, with growth arriving inside it so the frames
+    // have something to re-assert.
+    await land(200);
+    streaming.appendChild(document.createTextNode("a streamed chunk"));
+    await land(800);
+    off();
+
+    expect(seen).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire for an instant jump", async () => {
+    // A jump is a gesture whose whole meaning is "this turn", so publishing it
+    // revokes the very pick that produced it — the timeline rail sets its pick and
+    // then jumps to that turn. The write is the platform's own `scrollIntoView`,
+    // so `jumpTo` records where it LANDED for the listener to excuse; only an
+    // instant scroll has landed by the time it returns, which is the asymmetry the
+    // rail asks for by name and find-in-chat's smooth jump keeps.
+    const wrap = realScroller();
+    block(3000);
+    const target = block(200);
+    block(2000);
+    await land();
+
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+    scroll.jumpTo(target, { block: "start", behavior: "instant" });
+    await land(300);
+    off();
+
+    expect(wrap.scrollTop).toBe(target.offsetTop);
+    expect(scroll.readingState()).toBe("reading");
+    expect(seen).not.toHaveBeenCalled();
+  });
+
+  it("does not fire for the controller's own streaming re-pin", async () => {
+    // The other half of the contract, and the case the seam was built for: a turn
+    // streaming under a reader who has not moved writes a scroll position several
+    // times a second, and none of those is the reader changing their mind. The
+    // scrollTop assertion is what stops this passing because nothing scrolled.
+    const wrap = realScroller();
+    block(1500);
+    const streaming = block(200, "message assistant streaming");
+    block(900);
+    scroll.setAnchorProvider(() => streaming);
+    await land();
+    expect(scroll.readingState()).toBe("following");
+
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+    streaming.appendChild(document.createTextNode("a streamed chunk"));
+    await land(300);
+    off();
+
+    expect(wrap.scrollTop).toBe(1350);
+    expect(seen).not.toHaveBeenCalled();
+  });
+
+  it("fires for a gesture that keeps the reader Following", async () => {
+    // Not `onReadingStateChange`: a scroll landing inside BOTTOM_TOLERANCE_PX
+    // stays Following, so a state listener hears nothing while the reader has
+    // plainly acted.
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    wrap.scrollTop = 2600;
+    await land();
+    expect(scroll.readingState()).toBe("following");
+
+    const seen = vi.fn();
+    const stateSeen = vi.fn();
+    scroll.onReadingStateChange(stateSeen);
+    const off = scroll.onReaderGesture(seen);
+
+    wrap.scrollTop = 2560;
+    await land();
+    off();
+
+    expect(seen).toHaveBeenCalledTimes(1);
+    expect(stateSeen).not.toHaveBeenCalled();
+  });
+
+  it("stops firing once unregistered", async () => {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+
+    wrap.scrollTop = 500;
+    await land();
+    off();
+    wrap.scrollTop = 900;
+    await land();
+
+    expect(seen).toHaveBeenCalledTimes(1);
   });
 });

@@ -169,7 +169,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     suggestBtn,
     createBtn,
   ) as HTMLFormElement;
-  pop.append(branchField(findGlyph("filter", 14), filter), list, status, createForm);
+  pop.append(branchField(findGlyph("filter"), filter), list, status, createForm);
   const ctl = createPopover(anchorEl, pop, {
     placement: "bottom",
     align: "start",

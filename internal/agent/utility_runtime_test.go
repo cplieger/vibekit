@@ -177,7 +177,7 @@ func TestUtilityBridge_ConcurrentPrompts(t *testing.T) {
 	// Fatal off the test goroutine ends the wrong one (go-rulebook §7).
 	frames := make([]*vibekit.RPCResponse, goroutines)
 	for i := range frames {
-		frames[i] = newChunkMsg(fmt.Sprintf("resp-%d", i))
+		frames[i] = newSessionChunkMsg(string(freshBr.SessionID()), fmt.Sprintf("resp-%d", i))
 	}
 	go func() {
 		for i := range goroutines {
@@ -392,13 +392,10 @@ func TestAnswerUtilityHostRequest(t *testing.T) {
 // TestForward_RoutesPolicyNotifications pins that the utility session hands
 // _kiro/policy/{changed,error} to its hook instead of dropping them.
 //
-// The utility session's notifications bypass the main dispatch table, so this
-// routing is the ONLY path a policy reload has to the client when no chat bridge
-// is alive — and Settings -> Permissions is exactly the surface someone uses with
-// no chat open. Without it, vibekit wrote permissions.yaml, KAS rebuilt from its
-// own file watcher ~0.5s later, and nothing told the panel: the switch it had
-// just been clicked on painted itself back off from the pre-write read and stayed
-// wrong until the page was reloaded.
+// These notifications bypass the main dispatch table, so this is the ONLY path a
+// policy reload has to the client with no chat bridge alive — which is exactly how
+// Settings -> Permissions is used. Without it the panel never hears about the write
+// it just made, and the switch paints itself back off until a reload.
 func TestForward_RoutesPolicyNotifications(t *testing.T) {
 	notifCh := make(chan vibekit.Notification, 2)
 	responseCh := make(chan utilityChunkPayload, 4)
@@ -414,7 +411,7 @@ func TestForward_RoutesPolicyNotifications(t *testing.T) {
 		},
 	}}
 
-	go us.forward(nil, notifCh, responseCh, done)
+	go us.forward(newFakeBridge(), testFwdGen, notifCh, responseCh, done)
 	notifCh <- vibekit.Notification{Msg: &vibekit.RPCResponse{Method: methodV3PolicyChanged}, Seq: 1}
 	notifCh <- vibekit.Notification{Msg: &vibekit.RPCResponse{Method: methodV3PolicyError}, Seq: 2}
 	close(notifCh)
@@ -439,7 +436,7 @@ func TestForward_RoutesPolicyNotifications(t *testing.T) {
 // on the `update` object, so a fixture that flattens it tests nothing.
 func TestForwardChunk_ForwardsAssistantText(t *testing.T) {
 	ch := make(chan utilityChunkPayload, 4)
-	forwardChunk(newChunkMsg("feat/branch-name"), ch)
+	forwardChunk(newSessionChunkMsg("sess-utility", "feat/branch-name"), "sess-utility", ch, nil)
 	select {
 	case got := <-ch:
 		if got.Content.Text != "feat/branch-name" {
@@ -455,7 +452,7 @@ func TestForwardChunk_ForwardsAssistantText(t *testing.T) {
 // forwarded as one would splice tool metadata into a generated commit message.
 func TestForwardChunk_IgnoresOtherKinds(t *testing.T) {
 	ch := make(chan utilityChunkPayload, 4)
-	forwardChunk(newToolCallMsg(t, "tc-1", "readFile", "pending"), ch)
+	forwardChunk(newToolCallMsg(t, "tc-1", "readFile", "pending"), "", ch, nil)
 	if len(ch) != 0 {
 		t.Errorf("responseCh len = %d, want 0 (only agent_message_chunk is text)", len(ch))
 	}
@@ -474,7 +471,7 @@ func TestForwardChunk_NonBlockingDropsWhenFull(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		forwardChunk(msg, ch)
+		forwardChunk(msg, "", ch, nil)
 		close(done)
 	}()
 	select {
@@ -484,6 +481,59 @@ func TestForwardChunk_NonBlockingDropsWhenFull(t *testing.T) {
 	}
 	if len(ch) != 1 {
 		t.Errorf("responseCh len = %d, want 1 (the overflow chunk must be dropped)", len(ch))
+	}
+}
+
+// TestForwardChunk_DropsAForeignSessionsChunk is the cross-session leak. KAS can
+// hydrate a CHAT's session inside the utility bridge's process, and this session
+// denies every tool and persists nothing, so that turn's assistant text belongs
+// to a transcript rather than to whichever UtilityPrompt is draining. Adopting it
+// puts another chat's output in a commit message, a PR description or a branch
+// name.
+func TestForwardChunk_DropsAForeignSessionsChunk(t *testing.T) {
+	ch := make(chan utilityChunkPayload, 4)
+
+	forwardChunk(newSessionChunkMsg("sess-somebody-elses-chat", "rm -rf the wrong thing"), "sess-utility", ch, nil)
+
+	if len(ch) != 0 {
+		got := <-ch
+		t.Errorf("a foreign session's chunk reached responseCh as %q; it can land in a commit message", got.Content.Text)
+	}
+}
+
+// TestForwardChunk_AdmitsItsOwnAndThePreSessionWindow is the negative the screen
+// needs as much as the positive. Made unconditional it would drop the frames
+// arriving before session/new has answered, and every utility result would come
+// back EMPTY — the exact symptom the flat-decode bug produced for months.
+//
+// The pre-session window cannot contaminate anything: contamination needs a
+// draining UtilityPrompt, a drain needs a prompt, and a prompt needs the session
+// that supplies the id.
+func TestForwardChunk_AdmitsItsOwnAndThePreSessionWindow(t *testing.T) {
+	tests := map[string]struct {
+		frameSession string
+		ownSession   string
+	}{
+		"its_own_session":            {frameSession: "sess-utility", ownSession: "sess-utility"},
+		"before_its_own_id_is_known": {frameSession: "sess-utility", ownSession: ""},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			ch := make(chan utilityChunkPayload, 4)
+
+			forwardChunk(newSessionChunkMsg(tc.frameSession, "chore: bump the pin"), tc.ownSession, ch, nil)
+
+			select {
+			case got := <-ch:
+				if got.Content.Text != "chore: bump the pin" {
+					t.Errorf("forwardChunk(frame %q, own %q) text = %q, want %q",
+						tc.frameSession, tc.ownSession, got.Content.Text, "chore: bump the pin")
+				}
+			default:
+				t.Errorf("forwardChunk(frame %q, own %q) forwarded nothing, so every utility result would be empty",
+					tc.frameSession, tc.ownSession)
+			}
+		})
 	}
 }
 
@@ -916,16 +966,13 @@ func TestCullIdleUtilityBridgeOnce_LeavesARecentlyActiveBridgeAlone(t *testing.T
 }
 
 // TestUtilityBridge_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore is the
-// utility session's half of the capability the chat spawn already pins.
+// utility session's half of the capability the chat spawn already pins — a separate
+// spawn with its own StartOpts, and the bridge MCP's OAuth runs on.
 //
-// It is a separate spawn with its own StartOpts, so the two can disagree — and this
-// is the bridge MCP's OAuth actually runs on, which makes it the half that decides
-// whether a credential survives. KAS builds its AcpSecretStorage only for a client
-// that declared the capability and then asks that client to persist every
-// credential: declaring it without a store drops each one silently and re-runs the
-// OAuth dance on the next spawn, while withholding it where a store exists is the
-// same regression reached from the other side. The store is opened best-effort from
-// the config dir, so this is a runtime question rather than a build-time constant.
+// KAS asks any client that declared the capability to persist every credential, so
+// declaring it without a store drops each one silently while withholding it where a
+// store exists is the same regression from the other side. The store opens
+// best-effort, making this a runtime question rather than a constant.
 func TestUtilityBridge_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore(t *testing.T) {
 	startedUtilityBridge := func(t *testing.T, opts ...Option) *fakeBridge {
 		t.Helper()

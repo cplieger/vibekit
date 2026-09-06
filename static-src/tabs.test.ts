@@ -107,6 +107,19 @@ vi.mock("./dom.js", () => ({
       },
     },
   ),
+  // `byId` is reached through this graph by page-title.ts, which tabs.ts calls to
+  // paint the title bar's heading on every view switch. ESM links for real, so a
+  // name any module in the graph imports has to exist on the mock or the whole
+  // file fails at link time — which is what it did.
+  byId: (id: string) => {
+    let el = document.getElementById(id);
+    if (el === null) {
+      el = document.createElement("span");
+      el.id = id;
+      document.body.appendChild(el);
+    }
+    return el;
+  },
 }));
 vi.mock("./tabs-drag.js", () => ({
   attachDrag: vi.fn(),
@@ -123,7 +136,11 @@ vi.mock("./tabs-drag.js", () => ({
 vi.mock("./store.js", () =>
   import("./__test-helpers__/store-mock.js").then((m) => ({ ...m.storeMock })),
 );
-vi.mock("./run-store.js", () => ({ peekRunState: vi.fn(() => undefined) }));
+vi.mock("./run-store.js", () => ({
+  // The tab factory's name read. Inert here; a Browser-Mode mock is linked as
+  // real ESM, so a name any module in the graph reaches has to exist on it.
+  runLabelOf: vi.fn(() => ""),
+}));
 // The composer half of the close gesture: retargeting and the failed-send
 // restore are per-chat state this suite does not stage, so both are inert.
 vi.mock("./composer-state.js", () => ({
@@ -713,6 +730,26 @@ describe("activateTab", () => {
     expect(getActiveTabId()).toBe(chatID("b"));
     expect(sidebar.classList.contains("open")).toBe(false);
   });
+
+  // A CLOSE IS NOT NAVIGATION. Both cases were regressions: the drawer's
+  // dismissal used to live in showView, which the view effect re-runs on every
+  // projection mutation, so closing a tab from the drawer on a phone dismissed the
+  // drawer under the reader's finger — the ACTIVE tab through the successor
+  // activation, and a BACKGROUND tab through showView running for the unchanged
+  // active row.
+  it.each([
+    { desc: "the active tab", close: "b" },
+    { desc: "a background tab", close: "a" },
+  ])("leaves the mobile drawer open when closing $desc", async ({ close }) => {
+    expect.assertions(1);
+    await openChats("a", "b");
+    const sidebar = $.sidebar;
+    sidebar.classList.add("open");
+
+    await closeTab(chatID(close));
+
+    expect(sidebar.classList.contains("open")).toBe(true);
+  });
 });
 
 // The history is in memory only and it is not observable directly, so every case
@@ -1300,6 +1337,156 @@ describe("setTabDirty (editor unsaved indicator)", () => {
     expect(() => {
       setTabDirty("tb_missing", true);
     }).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cueCandidates: what the out-of-page attention fold is handed.
+//
+// It had no test at all, and the gap was load-bearing rather than incidental:
+// this is the one place a chat's dot could be filtered on its way to the favicon
+// and the `(N)` title count, so a reviewer proposing to make the cue disagree
+// with the dot lands HERE. The user ratified that they must not disagree
+// (2026-09-04) — a turn that ENDED raises a cue whatever became of it, cancelled
+// and unreadable included, because the cue is the dot carried off-page for a
+// reader who cannot see the strip. So these cases pin the projection as verbatim,
+// and a per-outcome carve-out cannot be added without turning one of them red.
+// ---------------------------------------------------------------------------
+
+describe("cueCandidates", () => {
+  it("reports every owned chat tab's dot VERBATIM, stopped verdicts included", async () => {
+    expect.assertions(2);
+    const { setTabStatus, cueCandidates } = await import("./tabs.js");
+    await openChat("c-done");
+    await openChat("c-failed");
+
+    // `done` is what a cancelled or unreadable turn latches (store.ts
+    // `outcomeLatch`), so this row IS the ratified case: it is indistinguishable
+    // here from a turn that finished with an answer, deliberately.
+    setTabStatus(chatID("c-done"), "done");
+    setTabStatus(chatID("c-failed"), "failed");
+
+    expect(cueCandidates()).toEqual([
+      { id: chatID("c-done"), status: "done" },
+      { id: chatID("c-failed"), status: "failed" },
+    ]);
+
+    // And a tab whose dot has never been written reports "" rather than a guess —
+    // attention.ts reads that as NO INFORMATION and keeps the acknowledgement,
+    // which is what stops a boot restore re-lighting a dismissed cue.
+    await openChat("c-fresh");
+    expect(cueCandidates()).toContainEqual({ id: chatID("c-fresh"), status: "" });
+  });
+
+  it("excludes a VIEW tab, so one chat is never counted twice", async () => {
+    expect.assertions(1);
+    const { setTabStatus, cueCandidates } = await import("./tabs.js");
+    await openChat("c-owned");
+    await openChat("c-watched", { owns: false });
+    setTabStatus(chatID("c-owned"), "done");
+    setTabStatus(chatID("c-watched"), "done");
+
+    expect(cueCandidates()).toEqual([{ id: chatID("c-owned"), status: "done" }]);
+  });
+
+  it("excludes every non-chat kind, whatever dot it carries", async () => {
+    expect.assertions(1);
+    const { setTabStatus, cueCandidates } = await import("./tabs.js");
+    // A run tab's dot speaks the same vocabulary (run-dots.ts `runStatusFor`) and
+    // a `run:` subject is genuinely `done` when its run finishes, so the filter is
+    // what keeps a background run out of the favicon rather than the dot's value.
+    await openRunTab("wf_1", "A run");
+    await openEditorView("/a.ts");
+    setTabStatus(tabIdFor("run", "wf_1"), "done");
+    setTabStatus(tabIdFor("editor", "/a.ts"), "dirty");
+
+    expect(cueCandidates()).toEqual([]);
+  });
+
+  // The value the SERVER writes, rather than the one `openTab` defaults to.
+  // Every case above reaches the strip through a local dispatch, and `openTab`
+  // coerces with its own `owns ?? true`, so none of them can tell a server that
+  // states `owns` from a server that omits it — which is exactly the difference
+  // `create_chat` / `fork_chat` / `resume_session` got wrong. These subjects
+  // arrive as frames with no dispatch behind them, carrying the value verbatim.
+  it("counts a chat tab the server authored as owned, and excludes one it authored as a view", async () => {
+    expect.assertions(2);
+    const { setTabStatus, cueCandidates } = await import("./tabs.js");
+    tabServer.openElsewhere({ kind: "chat", ref: "c-owned-remote", owns: true });
+    tabServer.openElsewhere({ kind: "chat", ref: "c-view-remote", owns: false });
+    tabServer.flushFrames();
+    await settleTabs();
+    setTabStatus(chatID("c-owned-remote"), "done");
+    setTabStatus(chatID("c-view-remote"), "done");
+
+    expect(cueCandidates()).toContainEqual({
+      id: chatID("c-owned-remote"),
+      status: "done",
+    });
+    expect(cueCandidates().map((c) => c.id)).not.toContain(chatID("c-view-remote"));
+  });
+
+  // `owns` is set at open and never reassigned (TabSubject.Owns), which is what
+  // lets a row's `spec` be a SNAPSHOT: `upsertSubject` replaces the subject and
+  // re-derives the name, deliberately not the spec. So a later frame cannot
+  // promote a view into the cue under a reader who is looking at it.
+  it("never lets a later frame change a tab's authority", async () => {
+    expect.assertions(2);
+    const { setTabStatus, cueCandidates } = await import("./tabs.js");
+    const view = tabServer.openElsewhere({ kind: "chat", ref: "c-view", owns: false });
+    tabServer.flushFrames();
+    await settleTabs();
+    setTabStatus(chatID("c-view"), "done");
+    expect(cueCandidates()).toEqual([]);
+
+    tabServer.emitRaw({
+      changed: { ...view, owns: true },
+      version: tabServer.version() + 1,
+    });
+    await settleTabs();
+
+    expect(cueCandidates()).toEqual([]);
+  });
+});
+
+// The seam `subagent-dots.ts` reads the tab set through. Its consumer is an
+// effect, so the TRACKED read is the whole contract: a delegate's page is opened
+// from a card's link or a deep link, which means its row routinely arrives after
+// the invocation it names is already resident and no transcript change follows to
+// paint it. That file mocks `tabs.js`, so the mock supplies its own subscription
+// and cannot see this property — which is why it is pinned here, against the real
+// projection.
+describe("openSubagentRefs", () => {
+  it("re-runs an effect that reads it when a subagent tab lands or leaves", async () => {
+    expect.assertions(3);
+    const { openSubagentRefs, openSubagentTab } = await import("./tabs.js");
+    await openChat("c1");
+
+    const seen: string[][] = [];
+    const stop = effect(() => {
+      seen.push(openSubagentRefs());
+    });
+    expect(seen).toEqual([[]]);
+
+    await openSubagentTab("c1", "task-1");
+    expect(seen.at(-1)).toEqual(["c1/task-1"]);
+
+    await closeTab(tabIdFor("subagent", "c1/task-1"));
+    expect(seen.at(-1)).toEqual([]);
+    stop();
+  });
+
+  it("reports only subagent tabs, whatever else is on the strip", async () => {
+    expect.assertions(1);
+    const { openSubagentRefs, openSubagentTab } = await import("./tabs.js");
+    await openChat("c1");
+    await openRunTab("wf_1", "A run");
+    await openEditorView("/a.ts");
+    await openSubagentTab("c1", "task-1");
+
+    // The COMPOSITE ref verbatim, because that is what carries the two halves the
+    // dot needs; an id would say nothing.
+    expect(openSubagentRefs()).toEqual(["c1/task-1"]);
   });
 });
 

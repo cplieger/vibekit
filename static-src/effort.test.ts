@@ -1,11 +1,12 @@
 // The model pill's reasoning-tier readout: `nonDefaultEffortLabel`, which names
-// the tier a chat runs at and ONLY when that tier departs from the model's own
-// default.
+// the tier a chat runs at when the USER decided it, and otherwise only when a
+// known default proves the tier is a departure.
 //
 // The default is never a local table. It arrives per model on the catalog
 // (`default_effort_level`, from KAS `_meta.kiro.defaultEffortLevel`), so these
 // tests hand it in the way the wire does and none of them hardcode which tier
-// any real model defaults to.
+// any real model defaults to. A catalog with NO default is a first-class case
+// here rather than a degenerate one — it is what a chat with no bridge has.
 import { beforeEach, describe, expect, it } from "vitest";
 import { nonDefaultEffortLabel, setCatalogEfforts } from "./effort.js";
 import type { ModelInfo, Session } from "./types.js";
@@ -120,12 +121,50 @@ describe("the pill's reasoning-tier readout", () => {
     expect(nonDefaultEffortLabel(s, models, "max")).toBe("");
   });
 
-  it("says nothing when the catalog carries no default for this model", () => {
+  it("names a chosen tier even when the catalog carries no default", () => {
     const models = [model("older")];
     const s = session({ model: "older", effort: "max", effort_levels: fiveTiers() });
 
-    // Without a default there is no way to know max is a departure. Withholding
-    // is the honest answer; naming it would be a guess that reads as a fact.
+    // The user picked it, and `ifOffered` has already checked this model offers
+    // it, so the pill states what the session will run at. Withholding here is
+    // what made a click show nothing until a bridge existed: no bridge means no
+    // per-model catalog, so no default is known.
+    expect(nonDefaultEffortLabel(s, models, "")).toBe("max");
+  });
+
+  it("names a chosen tier with an EMPTY catalog", () => {
+    // The worst case and the ordinary one: the pre-session feed answered with no
+    // models at all, which it does on any failure and whenever KAS has not
+    // resolved its model list yet.
+    const s = session({ model: "opus-5", effort: "max", effort_levels: fiveTiers() });
+
+    expect(nonDefaultEffortLabel(s, [], "")).toBe("max");
+  });
+
+  it("names the remembered pick with an EMPTY catalog", () => {
+    // Same reasoning one rung down the resolution order: the server resolves this
+    // same seed into StartOpts.Effort under the same per-model gate.
+    const s = session({ model: "opus-5", effort_levels: fiveTiers() });
+
+    expect(nonDefaultEffortLabel(s, [], "max")).toBe("max");
+  });
+
+  it("says nothing about a SERVICE-resolved tier with no default to compare it to", () => {
+    // The permanent-readout guard, and the one case that must stay silent: the
+    // chat chose nothing and remembered nothing, so `high` is what this model
+    // would have done anyway. Naming it with nothing to compare against would put
+    // a suffix on every model rather than marking an exception.
+    const s = session({ model: "opus-5", effort_active: "high", effort_levels: fiveTiers() });
+
+    expect(nonDefaultEffortLabel(s, [], "")).toBe("");
+  });
+
+  it("says nothing about an explicit pick that IS the known default", () => {
+    // A decided level still loses to a default it matches: there is nothing to
+    // mark, and the pill's job is marking the exception.
+    const models = [model("opus-5", "high")];
+    const s = session({ model: "opus-5", effort: "high", effort_levels: fiveTiers() });
+
     expect(nonDefaultEffortLabel(s, models, "")).toBe("");
   });
 
@@ -142,6 +181,11 @@ describe("the pill's reasoning-tier readout", () => {
     const models = [model("opus-5", "high", true)];
     const s = session({ model: "some-new-model", effort: "max", effort_levels: fiveTiers() });
 
+    // The `hasEffort` gate answers this one, NOT the default test: the catalog
+    // plumbs the capability and says nothing about this model, so as far as the
+    // client knows the model offers no tiers at all. A chosen tier is named for a
+    // model the catalog KNOWS but has no default for (above); a model it does not
+    // know is a different question.
     expect(nonDefaultEffortLabel(s, models, "")).toBe("");
   });
 

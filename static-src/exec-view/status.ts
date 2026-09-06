@@ -89,6 +89,17 @@ export function inFlight(state: ExecState): boolean {
   return state === "running" || state === "waiting" || state === "input";
 }
 
+/** Whether a node produced nothing because it never ran: `pending` has not started
+ *  and `skipped` never will.
+ *
+ *  The COMPLEMENT of `inFlight` is not "ran" — these two states sit between them —
+ *  and a caller that treats it as one answers for a node that has no execution to
+ *  describe. Exported for the same reason `inFlight` is: the set belongs to the
+ *  vocabulary, and a consumer re-deriving it privately is how a copy drifts. */
+export function neverRan(state: ExecState): boolean {
+  return state === "pending" || state === "skipped";
+}
+
 /** Fold a wire status onto the vocabulary. `skipped` stays its own state (a
  *  branch that never ran did not succeed). `aborted` maps to `warn`, not `fail`:
  *  a stop is not a fault. */

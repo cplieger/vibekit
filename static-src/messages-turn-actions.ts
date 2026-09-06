@@ -54,9 +54,18 @@ export function copyWithFeedback(btn: HTMLButtonElement, text: string): void {
   copyAndAnimate(btn, text);
 }
 
-function copyAndAnimate(btn: HTMLButtonElement, text: string): void {
+/** Copy, and choose which confirmation channel says so.
+ *
+ *  `announce` is for a click that came from the COLLAPSED overflow menu: the
+ *  gesture closes the menu, so the button carrying the 1.5s `.copied` flash is
+ *  off screen before it could be read, and the action's own "Copied" toast is
+ *  the only channel left. It stays suppressed everywhere else, where the flash
+ *  is beside the reader's pointer and a toast would be a second rendering of one
+ *  fact. The class is still added either way — one code path, and reopening the
+ *  menu inside the window shows it. */
+function copyAndAnimate(btn: HTMLButtonElement, text: string, announce = false): void {
   void copyClipboard.dispatch(text, {
-    silent: true,
+    silent: !announce,
     onSuccess: () => {
       btn.classList.add("copied");
       const prev = copyTimers.get(btn);
@@ -81,7 +90,13 @@ function copyAndAnimate(btn: HTMLButtonElement, text: string): void {
  *  and refresh the turn snapshot the handlers read. Buttons appear only once
  *  the turn has settled with something to copy — a running turn's footer (rare:
  *  ledger data lands at turn end) stays actions-free, matching the old
- *  finalize-time attachment. */
+ *  finalize-time attachment.
+ *
+ *  EVERY action is inside the collapsible group, Copy included (user call,
+ *  2026-09): on a narrow row the footer keeps the ledger, the turn's time, one
+ *  `…` trigger and Rewind's glyph, and nothing else. Copy used to sit outside as
+ *  the one direct control, which left the phone row carrying two targets where
+ *  the point of the overflow is one. */
 export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t: Turn): void {
   footerTurns.set(footer, t);
   if (footer.querySelector(":scope > .turn-actions-buttons") !== null) {
@@ -97,7 +112,7 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
   const makeBtn = (
     svgMarkup: string,
     ariaLabel: string,
-    onClick: (btn: HTMLButtonElement) => void,
+    onClick: (btn: HTMLButtonElement, fromMenu: boolean) => void,
   ): HTMLButtonElement => {
     const btn = el(
       "button",
@@ -111,30 +126,33 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
       el("span", { className: "turn-action-label" }, ariaLabel),
     ) as HTMLButtonElement;
     btn.addEventListener("click", () => {
-      onClick(btn);
-      // On phone the secondary buttons sit inside this native disclosure. An
-      // action commits the choice, so close the menu in the same gesture. On
-      // desktop the details content is forced inline and this changes nothing.
-      btn.closest<HTMLDetailsElement>(".turn-actions-more")?.removeAttribute("open");
+      // On phone every one of these sits inside this native disclosure. An
+      // action commits the choice, so close the menu in the same gesture — which
+      // also takes the button off screen, hence `fromMenu`.
+      //
+      // Read `open` BEFORE closing, and note this needs no copy of the layout
+      // breakpoint: on desktop the summary is `display: none`, so nothing can
+      // open the details and `open` is itself the test for the collapsed layout.
+      const menu = btn.closest<HTMLDetailsElement>(".turn-actions-more");
+      const fromMenu = menu?.open === true;
+      onClick(btn, fromMenu);
+      menu?.removeAttribute("open");
     });
     return btn;
   };
 
-  // Copy as text stays direct at every width. It is the common action and the
-  // one whose immediate feedback a reader expects beside the turn.
-  slot.appendChild(
-    makeBtn(ICON_COPY, "Copy as text", (btn) => {
-      copyAndAnimate(btn, turnPlainText(card, current()));
+  // All five stay inline on desktop and collapse behind one native <details>
+  // summary on phone. One set of real buttons serves both layouts, so resizing
+  // cannot leave a duplicate source toggle out of sync.
+  const group = el("span", { className: "turn-actions-group" });
+  group.appendChild(
+    makeBtn(ICON_COPY, "Copy as text", (btn, fromMenu) => {
+      copyAndAnimate(btn, turnPlainText(card, current()), fromMenu);
     }),
   );
-
-  // The other four actions stay inline on desktop and collapse behind one
-  // native <details> summary on phone. One set of real buttons serves both
-  // layouts, so resizing cannot leave a duplicate source toggle out of sync.
-  const secondary = el("span", { className: "turn-actions-secondary" });
-  secondary.appendChild(
-    makeBtn(ICON_COPY_MD, "Copy as markdown", (btn) => {
-      copyAndAnimate(btn, turnMarkdown(current()));
+  group.appendChild(
+    makeBtn(ICON_COPY_MD, "Copy as markdown", (btn, fromMenu) => {
+      copyAndAnimate(btn, turnMarkdown(current()), fromMenu);
     }),
   );
   const srcBtn = makeBtn(ICON_SOURCE, "View markdown source", (btn) => {
@@ -145,16 +163,16 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
   });
   srcBtn.classList.add("turn-action-src");
   srcBtn.setAttribute("aria-pressed", "false");
-  secondary.appendChild(srcBtn);
-  secondary.appendChild(
-    makeBtn(ICON_LINK, "Copy chat ID", (btn) => {
+  group.appendChild(srcBtn);
+  group.appendChild(
+    makeBtn(ICON_LINK, "Copy chat ID", (btn, fromMenu) => {
       const chatID = getActiveId();
       if (chatID !== "") {
-        copyAndAnimate(btn, chatID);
+        copyAndAnimate(btn, chatID, fromMenu);
       }
     }),
   );
-  secondary.appendChild(
+  group.appendChild(
     makeBtn(ICON_EXPORT, "Export chat as JSON", () => {
       const chatID = getActiveId();
       if (chatID !== "") {
@@ -178,7 +196,7 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
       "\u2026",
     ),
   );
-  more.appendChild(secondary);
+  more.appendChild(group);
   slot.appendChild(more);
 
   // Before the Rewind button when one exists, so the destructive action keeps

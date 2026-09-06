@@ -5,6 +5,22 @@
 [id="prompt-form"] {
   display: flex;
   flex-direction: column;
+
+  /* ONE INSET FOR THE WHOLE BOX'S CHROME. The distance from .prompt-box's inner
+     edge to a control is the same on the left, on the right and at the bottom,
+     and the same as the gap BETWEEN controls, so the pill row reads as one
+     block rather than as three unrelated measurements. It was
+     `var(--sp-1) var(--sp-2)` — sides 8px, bottom 4px, gaps 4px — which is
+     three values where the eye expects one. Consumed by .prompt-pills and
+     .attachment-row; the textarea keeps its own roomier
+     padding, because text has no border of its own to sit behind.
+
+     Declared on the FORM rather than on the box, because the bar itself needs it
+     too: 50-mobile.css charges this inset plus the box's border against the
+     home-indicator inset, so the last pill lands on Apple's 34pt boundary rather
+     than 5px past it. A custom property inherits down, so .prompt-box and every
+     rule inside it read the same one declaration. */
+  --pill-inset: var(--sp-1);
 }
 
 .prompt-box {
@@ -16,16 +32,6 @@
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);
-
-  /* ONE INSET FOR THE WHOLE BOX'S CHROME. The distance from this box's inner
-     edge to a control is the same on the left, on the right and at the bottom,
-     and the same as the gap BETWEEN controls, so the pill row reads as one
-     block rather than as three unrelated measurements. It was
-     `var(--sp-1) var(--sp-2)` — sides 8px, bottom 4px, gaps 4px — which is
-     three values where the eye expects one. Consumed by .prompt-pills and
-     .attachment-row; the textarea keeps its own roomier
-     padding, because text has no border of its own to sit behind. */
-  --pill-inset: var(--sp-1);
 
   /* CONCENTRIC WITH THIS BOX, not a rung off the radius ladder.
      A border-radius corner is a quarter circle whose centre sits `radius` in
@@ -429,7 +435,7 @@
     border: 0.125rem solid currentcolor;
     border-top-color: transparent;
     border-radius: 50%;
-    animation: vk-spin 0.6s linear infinite;
+    animation: vk-spin var(--spin-dur) linear infinite;
   }
 
   &.pending {
@@ -464,7 +470,14 @@
   font-weight: var(--fw-semibold);
   background: var(--c-accent);
   color: var(--c-on-accent);
-  border-radius: var(--r-md);
+
+  /* A COUNT BADGE IS A STADIUM, and saying so is the fix. It declared --r-md
+     (8px) inside a 7px `--pill-radius` pill, so the inner box was rounder than
+     its container -- and at 14px tall, 8px exceeds half the height, so the
+     browser clamped it to a stadium and the declared rung never rendered. The
+     ladder reserves --r-pill for non-interactive status chips, which is exactly
+     what this is. */
+  border-radius: var(--r-pill);
   padding: 0 0.25rem;
   min-width: 0.875rem;
   text-align: center;
@@ -636,10 +649,13 @@
   white-space: nowrap;
 }
 
-/* Per-unit metering breakdown shown inside the context pill expanded
-   view. Rendered only when kiro-cli reports more than one metering
-   entry (e.g. tokens-in + tokens-out + credits). Fixed compact grid
-   so long unit labels wrap within the pill instead of overflowing. */
+/* Per-unit metering breakdown inside the context pill's expanded view, shown
+ * only when kiro-cli reports more than one metering entry.
+ *
+ * Both declarations below are needed for a label to wrap and neither works
+ * alone: the card sets `white-space: nowrap`, and a unit is whatever kiro-cli
+ * reports (`MeteringItem.UnitPlural`), so an underscored identifier carries no
+ * break of its own. Measured at 390px: either alone overflows the card by 97px. */
 .pill-metering {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -648,6 +664,8 @@
   padding-top: var(--sp-2);
   margin-top: var(--sp-2);
   border-top: 1px dashed var(--c-border);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .pill-metering-row {
@@ -695,6 +713,13 @@
 }
 
 .pill-model-item {
+  /* Row height comes from the TIER, not from the font. Without it this row
+     resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
+     close — so it measured the same on a finger as on a mouse while `.tab`
+     beside it correctly went 36px to 44px. A floor, so a taller row keeps its
+     own height: measured, this moves desktop by at most 1px and gives every
+     list row a real 36px target on touch. */
+  min-block-size: var(--ctl-h-sm);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -758,6 +783,13 @@
 }
 
 .pill-role-item {
+  /* Row height comes from the TIER, not from the font. Without it this row
+     resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
+     close — so it measured the same on a finger as on a mouse while `.tab`
+     beside it correctly went 36px to 44px. A floor, so a taller row keeps its
+     own height: measured, this moves desktop by at most 1px and gives every
+     list row a real 36px target on touch. */
+  min-block-size: var(--ctl-h-sm);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -815,7 +847,13 @@
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   padding: 0.0625rem var(--sp-1);
-  border-radius: var(--r-sm);
+
+  /* --r-pill, not --r-sm: this is a status chip on a row whose own corner is
+     `--card-radius` (3px), so 4px made the chip rounder than the box holding it.
+     A stadium is a deliberate SHAPE rather than a rung, so it does not read as a
+     nesting mistake the way an almost-matching radius does -- the same reading
+     `.pill-badge` above takes. */
+  border-radius: var(--r-pill);
   background: color-mix(in oklch, var(--c-yellow) 18%, transparent);
   color: var(--c-yellow);
 }
@@ -1013,11 +1051,6 @@
    * its chat holds a conversation to branch. Kept visible (not hidden) so the
    * card does not reflow the moment the first message lands, and the row's own
    * hint says what to do next. */
-  &:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
   &:disabled:hover,
   &:disabled:active {
     background: none;
@@ -1071,7 +1104,11 @@
   min-block-size: var(--ctl-h-dense);
   padding: 0.25rem var(--sp-2);
   border: 1px solid var(--c-border);
-  border-radius: var(--r);
+
+  /* Derived from the form that holds it, not the standalone-control rung: the
+     form's own corner is `--card-radius` (3px) and this input sits against it, so
+     `--r` (6px) made the inner box twice as round as its container. */
+  border-radius: var(--card-radius);
   background: var(--c-bg-secondary);
   color: var(--c-text-primary);
   font: inherit;
@@ -1143,6 +1180,12 @@
   justify-content: center;
   position: relative;
 
+  /* The streaming face's beat overlay sits BEHIND the glyph (`z-index: -1`), and
+     a negative layer escapes to the nearest ancestor stacking context — which
+     here is the prompt box, whose own background would hide it. This is that
+     context, so the overlay stays inside the control it belongs to. */
+  isolation: isolate;
+
   --send-hue: var(--c-accent);
   --send-depth: 38%;
 
@@ -1191,6 +1234,24 @@
     --send-hue: var(--c-red);
   }
 
+  /* THE BREATH — a slow swell of the hue while a turn runs, so a working agent
+     reads off the composer without the glyph. Opacity on a pre-painted overlay
+     whose amplitude is read off the DOCUMENT CLOCK (03-base.css): nothing is
+     animated here, so it beats in step with the tab dot of the chat it belongs
+     to, and reduced motion stops that one clock (--vk-beat rests at 0, leaving
+     this face identical to a still one). 8% of the hue is ~5 points of depth
+     wherever the ladder sits — 38 -> 43 resting, 46 -> 50 hovered, half the
+     rest-to-hover step. Radius 7 - 1 = 6px, concentric with the ring above. */
+  &:where(.streaming)::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border-radius: calc(var(--pill-radius) - 1px);
+    background: var(--send-hue);
+    opacity: calc(var(--vk-beat) * 0.08);
+  }
+
   /* Something failed, and the control is still CLICKABLE — the tooltip names the
      failure and the click is the retry, so this must not read as dead. */
   &:where(.failed) {
@@ -1202,8 +1263,16 @@
     }
   }
 
+  /* Opts out of the unavailable face (40-a11y.css). Nothing disables the
+   * composer — `prompt-input.ts` only ever writes `disabled = false`, and a
+   * failed send keeps this control live because the next click is the retry — so
+   * a dimmed, refused send button would advertise a state the app does not
+   * enter. The declaration stays as the floor's opt-out rather than being
+   * deleted, so a future writer who does disable it gets a readable control
+   * instead of a faded one. */
   &:disabled {
     cursor: default;
+    opacity: 1;
   }
 }
 
@@ -1215,6 +1284,15 @@
   .pill {
     padding: 0 var(--sp-3);
     font-size: var(--fs-sm);
+  }
+
+  /* No reasoning tier on a phone, at any level. The row is already full at
+     390px (the spacer measures 0), and the tier declares `flex-shrink: 0`, so
+     the model NAME is what pays for it: 36px of the 78px it asks for, rendering
+     `clau… · max`. Visual only — the button's aria-label still names the level
+     (status.ts), so a screen reader loses nothing. */
+  .pill-model-effort {
+    display: none;
   }
 
   .send-btn {
@@ -1288,7 +1366,7 @@
  * an arc (3/4 circle); we spin the whole SVG. Avoids needing a
  * dedicated keyframe; reuses the existing vk-spin rotation. */
 .icon-spinner {
-  animation: vk-spin 0.9s linear infinite;
+  animation: vk-spin var(--spin-dur) linear infinite;
   transform-origin: center;
 }
 
@@ -1302,7 +1380,7 @@
   border: 0.125rem solid var(--c-border);
   border-top-color: var(--c-text-primary);
   border-radius: 50%;
-  animation: vk-spin 0.8s linear infinite;
+  animation: vk-spin var(--spin-dur) linear infinite;
 }
 
 .spinner-sm {
@@ -1311,5 +1389,5 @@
   border: 0.125rem solid var(--c-border);
   border-top-color: var(--c-text-primary);
   border-radius: 50%;
-  animation: vk-spin 0.8s linear infinite;
+  animation: vk-spin var(--spin-dur) linear infinite;
 }

@@ -15,6 +15,8 @@ import {
   getActiveId,
   setTurnFailed,
   setTurnDone,
+  setTurnOpen,
+  outcomeLatch,
   dropSteers,
 } from "../store.js";
 import { notifyIfHidden, isAgentFinishedEnabled, NOTIFY_TITLE } from "../notify.js";
@@ -29,6 +31,8 @@ import { respondPermission, respondElicitation, respondUserInput } from "../acti
 import { ERROR_ROUTES, type ErrorAction } from "./error-routing.js";
 import { clearTurnState } from "../turn-teardown.js";
 import { refreshTurnRail } from "../turn-rail.js";
+import { severityOf, defaultFailureReason } from "../turn-severity.js";
+import type { TurnOutcome } from "../wire/types.gen.js";
 export { ERROR_ROUTES };
 
 /** Track last notification time per chat to avoid duplicate notifications
@@ -58,6 +62,37 @@ function _pruneNotifyMap(now: number): void {
   }
 }
 
+/** What an off-screen notification SAYS about a finished turn, and "" for a turn
+ *  that must notify nothing.
+ *
+ *  A TOTAL switch on the SEVERITY, which is the whole fix: this gated on
+ *  `stop_reason !== "cancelled"` and then said `Agent finished` whatever had
+ *  happened, so a turn that failed, was interrupted or was refused pushed a claim of
+ *  success to a reader who was not looking. The `stopped` arm subsumes the old cancel
+ *  condition exactly; the one behaviour change beyond the failure case is that
+ *  `unknown` now says nothing, because an unreadable end says nothing about success.
+ *
+ *  Total in both directions with no default arm: every `TurnSeverity` member returns,
+ *  so a fifth member leaves a path with no return and fails `noImplicitReturns`
+ *  rather than silently inheriting a wording.
+ *
+ *  The server's own push (internal/agent/turn_finalize.go, closeWithOutcome) makes
+ *  the identical switch, and the two agree BY CONSTRUCTION rather than by
+ *  coordination: both read one table the shared severity fixture pins, and
+ *  `defaultFailureReason` is byte-identical to `vibekit.DefaultFailureReason` for the
+ *  same reason. No sentence is authored here. */
+function notifyBodyFor(outcome: TurnOutcome | undefined, name: string): string {
+  switch (severityOf(outcome)) {
+    case "clean":
+      return `${name}: Agent finished`;
+    case "broken":
+      return `${name}: ${defaultFailureReason(outcome)}`;
+    case "stopped":
+    case "running":
+      return "";
+  }
+}
+
 onSSE("working_label", (chatID, p) => {
   setWorkingLabel(chatID, p.label);
 });
@@ -67,19 +102,29 @@ onSSE("turn_ended", (chatID, p) => {
   // it outlives the turn that launched it. Must run before the dot is
   // re-derived, or a stale ask decides the state one last time.
   dropTurnDecisions(chatID);
-  // The turn's own verdict. `completed` only arrives if the model calls its
-  // status tool. Latched even for the chat the reader is watching (2026-08):
-  // skipping it there hid the "I am done" state at the exact moment it
-  // happened. Cleared only by the next turn's progress, matching
+  // The turn's own verdict. Latched even for the chat the reader is watching
+  // (2026-08): skipping it there hid the "I am done" state at the exact moment
+  // it happened. Cleared only by the next turn's progress, matching
   // web-terminal-kiro's engine-side latch.
   //
-  // Outcome decides, not stop reason: `cancelled`/`interrupted`/`unknown`
-  // latch neither, since the user stopped it or nothing said how it went.
-  if (p.outcome === "completed") {
+  // Outcome decides, not stop reason, and `outcomeLatch` is the one table that
+  // says which outcome latches what — the same call the two RE-derivations make
+  // (`relatchTurnVerdict` off the transcript, `latchFieldsFor` off the header).
+  // This site hand-wrote the mapping and disagreed with them on `interrupted`,
+  // so an interrupted turn showed idle's hollow ring live and a solid failed dot
+  // after the next reload.
+  const latch = outcomeLatch(p.outcome);
+  if (latch === "done") {
     setTurnDone(chatID);
-  } else if (p.outcome === "failed" || p.outcome === "refused") {
+  } else if (latch === "failed") {
     setTurnFailed(chatID);
   }
+  // A closer RAN, so the record is final: the carrier's own `message_appended`
+  // echo is already on its way. Written at the CALL SITE rather than inside
+  // `clearTurnState`, deliberately — that function also runs on `transport:gap`,
+  // where dropping the server's last liveness statement at the exact moment
+  // `thinking` is also cleared is the gap-path flash `turnLive` exists to remove.
+  setTurnOpen(chatID, false);
   clearTurnState(chatID);
   // This chat's turn index changed, so its rail record needs a re-read.
   void refreshTurnRail(chatID);
@@ -93,15 +138,16 @@ onSSE("turn_ended", (chatID, p) => {
   const now = Date.now();
   _pruneNotifyMap(now);
 
-  const stopReason = p.stop_reason;
-  if (stopReason !== "cancelled" && isAgentFinishedEnabled()) {
-    // Dedup: SSE reconnect replay can fire duplicates in rapid succession.
-    const last = _lastNotifyMs.get(chatID) ?? 0;
-    if (now - last > 2000) {
-      _lastNotifyMs.set(chatID, now);
-      const s = get(chatID);
-      const name = s?.name ?? "Chat";
-      notifyIfHidden(NOTIFY_TITLE, `${name}: Agent finished`);
+  if (isAgentFinishedEnabled()) {
+    const body = notifyBodyFor(p.outcome, get(chatID)?.name ?? "Chat");
+    // "" is "say nothing", so a stopped turn never consumes the dedup window either.
+    if (body !== "") {
+      // Dedup: SSE reconnect replay can fire duplicates in rapid succession.
+      const last = _lastNotifyMs.get(chatID) ?? 0;
+      if (now - last > 2000) {
+        _lastNotifyMs.set(chatID, now);
+        notifyIfHidden(NOTIFY_TITLE, body);
+      }
     }
   }
 
@@ -236,9 +282,17 @@ onSSE("error", (chatID, p) => {
   }
   switch (route.surface) {
     case "toast":
-      // Reported for every chat, not just the active one: a background
-      // chat's failure must still surface, since it claims no shared control.
-      reportFailure(chatID, msg, toastActionFor(route.action));
+      // Reported for every chat the reader is not looking at, and NOT for the one
+      // they are when the failure is turn-scoped: the turn's own card carries the
+      // same reason durably, so a corner overlay there is a second copy of it over
+      // the top of the first. The suppression is `failure-notice.ts`'s, gated on
+      // `turn_scoped` plus the route's action — see that module.
+      //
+      // `turn_scoped` comes off the FRAME rather than the route, because whether a
+      // turn was finalized is a property of the emission: `prompt_failed` has three
+      // server emitters that open no turn at all. Absent means no, so an older
+      // server's frame reports rather than being silenced (error-routing.ts).
+      reportFailure(chatID, msg, toastActionFor(route.action), p.turn_scoped ?? false);
       break;
     case "agent-down":
       // Active chat only: this DOES paint a shared control, so a background

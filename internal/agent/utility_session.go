@@ -1,13 +1,10 @@
-// Utility session: the shared kiro-cli subprocess + ACP session behind
-// vibekit's ambient AI features.
+// Utility session: the shared kiro-cli subprocess + ACP session behind vibekit's
+// ambient AI features. Split by role — this file holds the session (lifecycle,
+// forward goroutine, host-request answering), utility_rpc.go the stateless RPC
+// wrappers, utility_agent.go the text-generation agent.
 //
-// Split across three files by role: this file is the session-holder
-// (lifecycle, forward goroutine, host-request answering); utility_rpc.go is
-// the stateless RPC wrappers, which Call outside any lock; utility_agent.go
-// is the cheap text-generation agent, serialized one turn at a time.
-// Concurrency: acquire() a lease and use its bridge OUTSIDE the session
-// mutex; resetIf(gen) is idempotent, so a stale failure can't tear down an
-// already-recycled session.
+// Concurrency: acquire() a lease and use its bridge OUTSIDE the session mutex;
+// resetIf(gen) is idempotent, so a stale failure cannot tear down a recycled one.
 
 package agent
 
@@ -31,9 +28,8 @@ import (
 // lazily constructs together: the session-holder and the text-gen agent.
 type utilityRuntime struct {
 	session *utilitySession
-	// textgen is the text-generation agent, named for what it does rather than
-	// what it is. It was `agent`, and inside package agent a field by that name
-	// invites a local that shadows the package.
+	// textgen is the text-generation agent. Named for what it does: inside package
+	// agent, a field called `agent` invites a local that shadows the package.
 	textgen *utilityAgent
 }
 
@@ -49,28 +45,30 @@ func newUtilityRuntime(shutdownCtx context.Context, factory ACPBridgeFactory, mo
 type utilitySessionHooks struct {
 	// onHooksChanged broadcasts an hooks_changed SSE on _kiro/hooks/didChange.
 	onHooksChanged func()
-	// onGovernanceState captures the _kiro/governance/state notification the
-	// session receives on session/new (its notifications bypass the main
-	// dispatcher), so GET /api/governance is warm with no chat open.
+	// onGovernanceState captures the _kiro/governance/state notification this session
+	// receives on session/new, so GET /api/governance is warm with no chat open.
 	onGovernanceState func(json.RawMessage)
-	// onPolicyNotification routes _kiro/policy/{changed,error} into the same
-	// translator the chat dispatch uses, so a permissions.yaml change reaches
-	// the client with NO chat open — the utility session's own PolicySession
-	// watches the file independently and its notifications bypass the main
-	// dispatcher, so without this Settings -> Permissions never hears about
-	// a write it just made itself.
+	// onPolicyNotification routes _kiro/policy/{changed,error} into the translator the
+	// chat dispatch uses: this session's own PolicySession watches the file and its
+	// notifications bypass that dispatcher, so a write with no chat open is lost.
 	onPolicyNotification func(*vibekit.RPCResponse)
 	// tokenSource answers the _kiro/auth/getAccessToken callback (the runtime's
 	// kiroAccessTokenResult). nil = not wired (older tests) → RPC error.
 	tokenSource func(context.Context) (map[string]any, error)
-	// presets resolves the active security profile into KAS policy preset ids for
-	// this session's StartOpts. A hook rather than a configDir field so the session
-	// stays ignorant of settings and policyfile, like the two callbacks above.
-	//
-	// It matters here and not only on chat bridges: this is the session answering
-	// GET /api/permissions, so a profile absent from it would leave the policy view
-	// unable to report the rules the profile actually grants. nil is a legitimate
-	// wiring (older tests) and means send none.
+	// onForeignUpdate offers a `session/update` frame belonging to ANOTHER session to
+	// whoever is reading it, reporting whether it was consumed: a workflow step's
+	// transcript is read here, and `session/load` replays it carrying that session's
+	// id, which forwardChunk otherwise drops as foreign. Consulted BEFORE the Warn.
+	onForeignUpdate func(sessionID string, kind vibekit.ACPUpdateKind, update json.RawMessage) bool
+	// onFrameDrained reports the read-loop position this session has FOLDED, plus the
+	// attachment it belongs to; `force` marks the call after the drain loop ended,
+	// where no frame can advance it again. It is what closes a step replay: see
+	// stepReplays.settleConsumed.
+	onFrameDrained func(at drainPoint, force bool)
+	// presets resolves the active security profile into KAS policy preset ids for this
+	// session's StartOpts. It matters here rather than only on chat bridges because
+	// this is the session answering GET /api/permissions, so a profile absent from it
+	// leaves the policy view unable to report what that profile grants. nil sends none.
 	presets func(context.Context) []string
 }
 
@@ -79,26 +77,19 @@ type utilitySessionHooks struct {
 // context. Lazily started on first acquire, culled after 30 minutes of
 // inactivity (same as chat bridges).
 type utilitySession struct {
-	// shutdownCtx is the RUNTIME's lifetime, required by the constructor and never a
-	// request context. It is a lifetime handle rather than a stashed caller
-	// context, and it has no run method to take it: the session is started
-	// lazily from acquire, whose ctx belongs to whichever request happened to
-	// arrive first. The two are deliberately not merged — startLocked's ctx picks
-	// the model and dies with the request, while the subprocess this field bounds
-	// must outlive it.
+	// shutdownCtx is the RUNTIME's lifetime, never a request context: the session is
+	// started lazily from acquire, whose ctx picks the model and dies with the
+	// request, while the subprocess this field bounds must outlive it.
 	shutdownCtx   context.Context
 	bridgeFactory ACPBridgeFactory
 	models        func() []vibekit.SessionModel
-	// secrets is the runtime's credential store, shared not copied, so a
-	// registration obtained on any bridge is visible from every other one.
-	// Nil when the runtime has no configDir; see bridge_v3_secret.go.
+	// secrets is the runtime's credential store, shared not copied, so a registration
+	// obtained on any bridge is visible from every other. Nil when there is no configDir.
 	secrets *secretstore.Store
 	hooks   utilitySessionHooks
 
-	// lastActiveAt, bridge, gen, started, responseCh, forwardDone are the
-	// lifecycle fields guarded by mu. mu is held only for short
-	// bookkeeping sections — NEVER across a bridge Call — so lifecycle
-	// operations can't be starved by a slow turn.
+	// These lifecycle fields are guarded by mu, which is held only for short
+	// bookkeeping — NEVER across a bridge Call, or a slow turn starves a recycle.
 	lastActiveAt time.Time
 	bridge       utilityBridge
 	responseCh   chan utilityChunkPayload
@@ -106,18 +97,15 @@ type utilitySession struct {
 	gen          uint64
 	mu           sync.Mutex
 
-	// enableHooks opts this session into KAS's v2 hook engine (StartOpts.
-	// EnableHooks → _meta.kiro.hooks); always true in production so the
-	// hooks list/setEnabled RPCs are available.
+	// enableHooks opts this session into KAS's v2 hook engine; always true in
+	// production, so the hooks list/setEnabled RPCs are available.
 	enableHooks bool
 	started     bool
 }
 
-// newUtilitySession constructs a stopped session with the initialization
-// invariants explicit: started=false, gen=0, lastActiveAt=zero.
-//
-// shutdownCtx is required, positionally: it is the session's lifetime, and every
-// default for a lifetime is a lifetime nothing can cancel.
+// newUtilitySession constructs a stopped session with the initialization invariants
+// explicit: started=false, gen=0, lastActiveAt=zero. shutdownCtx is positional
+// because every default for a lifetime is a lifetime nothing can cancel.
 func newUtilitySession(shutdownCtx context.Context, factory ACPBridgeFactory, models func() []vibekit.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilitySession {
 	return &utilitySession{
 		shutdownCtx:   shutdownCtx,
@@ -168,48 +156,40 @@ func (us *utilitySession) startLocked(ctx context.Context) error {
 	bridge := us.bridgeFactory()
 	model := cheapestModel(ctx, us.models())
 
-	// The forward goroutine must be draining NotifCh BEFORE Start: on v3
-	// (KAS) session/new blocks until the host answers the
-	// _kiro/auth/getAccessToken and _kiro/terminal/shell_type requests,
-	// which arrive on NotifCh and are answered by forward's
-	// answerHostRequest. Channels are locals so a failed Start (bridge
-	// stopped, NotifCh closed, goroutine exits) leaves no session state
-	// behind.
+	// The forward goroutine must be draining NotifCh BEFORE Start: on v3, session/new
+	// blocks until the host answers _kiro/auth/getAccessToken and
+	// _kiro/terminal/shell_type, which arrive on NotifCh. The channels are locals, so
+	// a failed Start leaves no session state behind.
 	responseCh := make(chan utilityChunkPayload, 64)
 	forwardDone := make(chan struct{})
-	go us.forward(bridge, bridge.NotifCh(), responseCh, forwardDone)
+	// Taken BEFORE the goroutine: the position it reports is comparable only within
+	// one attachment, and a lease handed out below carries the same number. A bump on
+	// a Start that then FAILS is harmless — us.started stays false, so resetIf
+	// returns early for every gen.
+	us.gen++
+	go us.forward(bridge, us.gen, bridge.NotifCh(), responseCh, forwardDone)
 
-	// The subprocess context is us.shutdownCtx, not a per-request ctx: this
-	// call runs under us.mu, so a session/new that never answers would hold
-	// the mutex for the process lifetime and hang every utility-backed
-	// endpoint, and the subprocess must outlive whichever request started it.
-	// Safe as the HANDSHAKE ctx too, since Start bounds that itself
-	// (bridge.handshakeBudget).
+	// The subprocess context is us.shutdownCtx, not a per-request ctx: this call runs
+	// under us.mu, so a session/new that never answers would hold the mutex for the
+	// process lifetime. Safe as the HANDSHAKE ctx too, since Start bounds that itself.
 	if err := bridge.Start(us.shutdownCtx, &vibekit.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil, Presets: us.sessionPresets(ctx)}); err != nil {
 		return err
 	}
 	us.bridge = bridge
 	us.started = true
-	// A new generation per start: resetIf calls carrying a stale gen
-	// (from a lease on the previous subprocess) become no-ops, and the
-	// agent's per-session counters resync on the mismatch.
-	us.gen++
 	us.lastActiveAt = time.Now()
 	us.responseCh = responseCh
 	us.forwardDone = forwardDone
 
-	// The session id is logged because this bridge's session is the one that
-	// appears in `session/list` owned by no chat, so a row nobody can explain is
-	// diagnosed by grepping for it. See toResumable.
+	// The session id is logged because this session appears in `session/list` owned by
+	// no chat, so a row nobody can explain is diagnosed by grepping for it.
 	slog.Info("utility bridge started", "model", model, "session_id", string(bridge.SessionID()))
 	return nil
 }
 
-// stopLocked stops the subprocess and waits for the forward goroutine to
-// exit (it returns when NotifCh closes after Stop), so a recycle leaks no
-// goroutine. Safe against a wedged forward: forwardChunk's send is
-// non-blocking, so a full responseCh can't park forward and stall the
-// <-forwardDone. Caller holds us.mu.
+// stopLocked stops the subprocess and waits for the forward goroutine to exit, so a
+// recycle leaks no goroutine. Safe against a wedged forward: forwardChunk's send is
+// non-blocking, so a full responseCh cannot park it. Caller holds us.mu.
 func (us *utilitySession) stopLocked() {
 	us.bridge.Stop()
 	if us.forwardDone != nil {
@@ -220,10 +200,9 @@ func (us *utilitySession) stopLocked() {
 	us.forwardDone = nil
 }
 
-// resetIf stops the session ONLY when the caller's generation is still
-// the live one. A lease-holder that hit an error calls this; if the
-// session was already recycled/restarted since that lease was taken, the
-// reset is a stale complaint about a dead subprocess and is dropped.
+// resetIf stops the session ONLY when the caller's generation is still the live one.
+// A lease-holder that hit an error calls this; once the session has been recycled,
+// the reset is a stale complaint about a dead subprocess and is dropped.
 func (us *utilitySession) resetIf(gen uint64) {
 	us.mu.Lock()
 	defer us.mu.Unlock()
@@ -245,19 +224,16 @@ func (us *utilitySession) Stop() {
 	slog.Info("utility bridge stopped")
 }
 
-// stopIfIdle stops the session when it has been inactive since before
-// cutoff, reporting whether it did. The victim is stopped asynchronously
-// and forward's exit is not awaited (the cull must never block on a slow
-// teardown); the old forward exits on its own once the victim's NotifCh
-// closes, and any lease-held chunk channel just closes.
+// stopIfIdle stops the session when it has been inactive since before cutoff,
+// reporting whether it did. The victim is stopped asynchronously and forward's exit
+// is not awaited, because the cull must never block on a slow teardown.
 func (us *utilitySession) stopIfIdle(cutoff time.Time) bool {
 	us.mu.Lock()
 	shouldStop := us.started && !us.lastActiveAt.IsZero() && us.lastActiveAt.Before(cutoff)
 	var victim acpStopper
 	if shouldStop {
-		// Capture the victim INSIDE the lock: startLocked reassigns
-		// us.bridge under us.mu, so reading it after the unlock could
-		// stop a freshly-restarted bridge.
+		// Captured INSIDE the lock: startLocked reassigns us.bridge under us.mu, so
+		// reading it after the unlock could stop a freshly-restarted bridge.
 		victim = us.bridge
 		us.started = false
 		us.responseCh = nil
@@ -270,11 +246,9 @@ func (us *utilitySession) stopIfIdle(cutoff time.Time) bool {
 	return shouldStop
 }
 
-// liveID returns the ACP session id of the running session, or ""
-// when stopped. Used by the runtime's orphan-session sweep to exempt the live
-// utility session's on-disk KAS state: it is referenced by no chat, so
-// without this the hourly sweep could delete the session dir out from
-// under the live subprocess once it idles past the reaper's age guard.
+// liveID returns the ACP session id of the running session, or "" when stopped. The
+// orphan-session sweep needs it to exempt this session's on-disk KAS state: no chat
+// references it, so the sweep would delete it out from under the live subprocess.
 func (us *utilitySession) liveID() string {
 	us.mu.Lock()
 	defer us.mu.Unlock()
@@ -291,24 +265,36 @@ func (us *utilitySession) shuttingDown() bool {
 	return us.shutdownCtx.Err() != nil
 }
 
-// utilitySessionParams builds an ACP parameter map with the bridge's
-// session ID injected. Mirrors command.SessionParams, and like it takes the
-// 1-method session reader rather than a whole bridge — the two are separate
-// declarations because the utility session's bridge does not carry the prompt
-// slot command.Bridge requires.
+// utilitySessionParams builds an ACP parameter map with the bridge's session id
+// injected. Separate from command.SessionParams because the utility session's bridge
+// does not carry the prompt slot command.Bridge requires.
 func utilitySessionParams(bridge acpSession, extra map[string]any) map[string]any {
 	m := map[string]any{vibekit.KeySessionID: bridge.SessionID()}
 	maps.Copy(m, extra)
 	return m
 }
 
-// utilityUpdateBase extracts the sessionUpdate kind discriminator.
-//
-// Decoded from the notification's `update` OBJECT, never from `params` — a
-// session/update's params are `{sessionId, update:{sessionUpdate, …}}`, so
-// reading the kind off params yields "" for every frame. Rides
-// translate.ACPSessionUpdateBase's type, which carries the same field at the
-// same depth, rather than a second copy.
+// foreignUpdateHook is utilitySessionHooks.onForeignUpdate as forwardChunk takes it:
+// a parameter rather than a field read, because forwardChunk is a package function
+// and a nil hook is a legitimate wiring.
+type foreignUpdateHook func(sessionID string, kind vibekit.ACPUpdateKind, update json.RawMessage) bool
+
+// updateKind reads the sessionUpdate discriminator off a frame's `update` object,
+// reporting false when the object cannot be decoded at all. The two answers are kept
+// apart because an unrecognised kind is an ordinary frame to ignore, while an
+// UNDECODABLE update is the wire having changed shape.
+func updateKind(update json.RawMessage) (vibekit.ACPUpdateKind, bool) {
+	var base utilityUpdateBase
+	if json.Unmarshal(update, &base) != nil {
+		return "", false
+	}
+	return base.Kind, true
+}
+
+// utilityUpdateBase extracts the sessionUpdate kind discriminator, decoded from the
+// notification's `update` OBJECT and never from `params` — a session/update's params
+// are `{sessionId, update:{sessionUpdate, …}}`, so reading the kind off params
+// yields "" for every frame.
 type utilityUpdateBase struct {
 	Kind vibekit.ACPUpdateKind `json:"sessionUpdate"`
 }
@@ -321,21 +307,15 @@ type utilityChunkPayload struct {
 	} `json:"content"`
 }
 
-// forward is a dedicated goroutine that continuously drains the bridge's
-// NotifCh, forwarding agent_chunk text to responseCh. Peer requests
-// (msg.ID != nil) are answered via answerHostRequest, since the utility
-// session must vend the host-mediated auth token + shell type or session/new
-// stalls. Every other notification except hooks/policy is discarded, which
-// keeps NotifCh from filling and blocking readLoop. bridge is passed
-// explicitly (not read from us.bridge) so a recycle can't make this
-// goroutine answer on the wrong pipe; forward takes NO locks, so a held
-// session mutex can never deadlock it.
-func (us *utilitySession) forward(bridge acpResponder, notifCh <-chan vibekit.Notification, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
+// forward drains the bridge's NotifCh, forwarding agent_chunk text to responseCh.
+// Peer requests (msg.ID != nil) go to answerHostRequest, since this session must vend
+// the host-mediated auth token and shell type or session/new stalls. Everything else
+// but hooks/policy is discarded, which keeps NotifCh from blocking readLoop. bridge is
+// passed explicitly so a recycle cannot make this goroutine answer on the wrong pipe.
+func (us *utilitySession) forward(bridge acpSessionResponder, gen uint64, notifCh <-chan vibekit.Notification, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
 	defer close(done)
 	defer close(responseCh)
 	for n := range notifCh {
-		// The read-loop sequence rides every frame; this goroutine ignores it
-		// because the utility session opens no turn to order against.
 		msg := n.Msg
 		switch {
 		case msg.ID != nil:
@@ -353,8 +333,25 @@ func (us *utilitySession) forward(bridge acpResponder, notifCh <-chan vibekit.No
 				us.hooks.onPolicyNotification(msg)
 			}
 		default:
-			forwardChunk(msg, responseCh)
+			// Read at the call, never captured at goroutine start: the id is empty
+			// until session/new answers. SessionID takes the BRIDGE's own mutex, which
+			// no bridge method holds across a round trip, so this cannot park readLoop.
+			forwardChunk(msg, string(bridge.SessionID()), responseCh, us.hooks.onForeignUpdate)
 		}
+		// AFTER the frame is handled, so the position reported is one this goroutine
+		// has FOLDED rather than merely received. See stepReplays.settleConsumed.
+		us.noteFrameDrained(drainPoint{gen: gen, seq: n.Seq}, false)
+	}
+	// The channel is closed and drained, so nothing can advance the position again:
+	// this call is the seal that completes a replay whose trailing frames never came.
+	us.noteFrameDrained(drainPoint{gen: gen}, true)
+}
+
+// noteFrameDrained reports the folded position to the runtime, tolerating an
+// unwired hook so every existing utility test constructs unchanged.
+func (us *utilitySession) noteFrameDrained(at drainPoint, force bool) {
+	if us.hooks.onFrameDrained != nil {
+		us.hooks.onFrameDrained(at, force)
 	}
 }
 
@@ -367,15 +364,11 @@ func (us *utilitySession) sessionPresets(ctx context.Context) []string {
 	return us.hooks.presets(ctx)
 }
 
-// forwardChunk forwards an agent_message_chunk's text to responseCh, ignoring
-// every other notification. Split out of forward to keep it under the
-// cognitive-complexity gate.
-//
-// TWO decodes, because there are two levels: the outer envelope names the
-// session and wraps the frame, and the frame carries the kind and the content.
-// See utilityUpdateBase for what reading the inner fields off the outer object
-// cost.
-func forwardChunk(msg *vibekit.RPCResponse, responseCh chan<- utilityChunkPayload) {
+// forwardChunk forwards an agent_message_chunk's text to responseCh, ignoring every
+// other notification. TWO decodes, because there are two levels: the outer envelope
+// names the session and wraps the frame, the frame carries the kind and the content.
+// See utilityUpdateBase for what reading the inner fields off the outer object cost.
+func forwardChunk(msg *vibekit.RPCResponse, ownSession string, responseCh chan<- utilityChunkPayload, onForeign foreignUpdateHook) {
 	if msg.Method != vibekit.MethodSessionUpdate || msg.Params == nil {
 		return
 	}
@@ -383,19 +376,31 @@ func forwardChunk(msg *vibekit.RPCResponse, responseCh chan<- utilityChunkPayloa
 	if json.Unmarshal(msg.Params, &env) != nil || env.Update == nil {
 		return
 	}
-	var base utilityUpdateBase
-	if json.Unmarshal(env.Update, &base) != nil || base.Kind != vibekit.ACPUpdateAgentChunk {
+	kind, kindOK := updateKind(env.Update)
+	// KAS can hydrate a CHAT's session into this process, and this session denies every
+	// tool and persists nothing, so that turn's text belongs to a transcript rather
+	// than to whichever UtilityPrompt is draining. An empty id is the window before
+	// session/new answered, which no prompt can be draining in.
+	if ownSession != "" && env.SessionID != ownSession {
+		// A frame somebody is READING is not a surprise, so it is offered before the
+		// Warn. An undecodable update is offered to nobody: the projection would
+		// consume it and swallow the one signal that says the wire changed shape.
+		if kindOK && onForeign != nil && onForeign(env.SessionID, kind, env.Update) {
+			return
+		}
+		slog.Warn("utility bridge: dropping a frame for a foreign session",
+			"frame_session", env.SessionID, "utility_session", ownSession)
+		return
+	}
+	if !kindOK || kind != vibekit.ACPUpdateAgentChunk {
 		return
 	}
 	var chunk utilityChunkPayload
 	if json.Unmarshal(env.Update, &chunk) == nil {
-		// Non-blocking send: if responseCh (buffer 64) is full — a wedged
-		// or already-drained turn whose leftover chunks nobody reads — drop
-		// the chunk instead of blocking here forever. A blocked forward
-		// never loops back to observe notifCh closing, so stopLocked's
-		// <-forwardDone (taken under us.mu) would never return and the
-		// whole utility subsystem would deadlock. Post-turn leftover
-		// chunks are noise; dropping them is correct.
+		// Non-blocking send: a full responseCh (buffer 64) means a wedged or
+		// already-drained turn nobody reads, and a blocked forward never loops back
+		// to observe notifCh closing, so stopLocked's <-forwardDone under us.mu
+		// would never return. Post-turn leftover chunks are noise.
 		select {
 		case responseCh <- chunk:
 		default:
@@ -403,15 +408,11 @@ func forwardChunk(msg *vibekit.RPCResponse, responseCh chan<- utilityChunkPayloa
 	}
 }
 
-// answerHostRequest answers the v3 (KAS) host-mediated requests the utility
-// session receives. getAccessToken + shell_type are on the session-creation
-// critical path (session/new stalls without them). `_kiro/hooks/executeHook`
-// is deliberately NOT answered — it would run a shell command a hook file
-// specifies — and falls to -32601 instead; KAS runs runCommand hooks
-// internally on autofire, so nothing regresses. Tool-use requests are
-// refused rather than left pending: nothing stops the model trying a tool
-// even though this session is text-only, and an unanswered request would
-// wedge the turn until the 60s drain ceiling resets the session.
+// answerHostRequest answers the v3 host-mediated requests the utility session
+// receives. getAccessToken and shell_type are on the session-creation critical path
+// (session/new stalls without them). `_kiro/hooks/executeHook` is deliberately NOT
+// answered — it would run a shell command a hook file names — and falls to -32601.
+// A tool request is refused rather than left pending, which would wedge the turn.
 func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *vibekit.RPCResponse) {
 	ctx := context.Background()
 	switch {
@@ -430,9 +431,8 @@ func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *vibekit.RP
 	case msg.Method == methodKiroShellType:
 		_ = bridge.Respond(ctx, *msg.ID, kiroShellTypeResult(), nil)
 	case msg.Method == methodKiroSecretGet:
-		// The utility session starts with NO mcpServers, so it should never
-		// reach this; answered anyway because secretStorage is declared by the
-		// SHARED bridge initialize, conditional on us.secrets being non-nil.
+		// Unreachable with NO mcpServers, but answered anyway because secretStorage is
+		// declared by the SHARED bridge initialize whenever us.secrets is non-nil.
 		_ = bridge.Respond(ctx, *msg.ID, secretGetResult(us.secrets, msg.Params), nil)
 	case msg.Method == methodKiroSecretStore:
 		result, err := secretStoreResult(ctx, us.secrets, msg.Params)
@@ -447,20 +447,16 @@ func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *vibekit.RP
 	case msg.Method == vibekit.MethodFSRead || msg.Method == vibekit.MethodFSWrite ||
 		strings.HasPrefix(msg.Method, methodTermPrefix):
 		slog.Warn("utility bridge: refusing tool request (text-only session)", "method", msg.Method)
-		// -32601 rather than a bare error, for the reason the sibling refusals
-		// carry it: this is a capability vibekit deliberately does not offer on
-		// this session, not a fault it hit while trying.
+		// -32601 rather than a bare error: a capability vibekit deliberately does not
+		// offer on this session, not a fault it hit while trying.
 		_ = bridge.Respond(ctx, *msg.ID, nil, &vibekit.RPCError{
 			Code:    vibekit.RPCCodeMethodNotFound,
 			Message: "utility session is text-generation only; tools are unavailable",
 		})
 	default:
-		// Unknown peer request: answer with an error rather than leaving
-		// the request pending (an unanswered request can wedge the turn).
+		// Answered rather than left pending, which can wedge the turn.
 		slog.Warn("utility bridge: unexpected peer request, refusing", "method", msg.Method, "id", *msg.ID)
-		// -32601, for the same reason the chat dispatcher uses it: this is a
-		// deliberate refusal, not an internal fault, and -32603 would make the
-		// log blame the wrong side.
+		// -32601: a deliberate refusal, where -32603 would blame the wrong side.
 		_ = bridge.Respond(ctx, *msg.ID, nil, &vibekit.RPCError{
 			Code:    vibekit.RPCCodeMethodNotFound,
 			Message: "unsupported on the utility session: " + msg.Method,

@@ -57,6 +57,7 @@ import {
   dropRunDecisions,
   collapseSettledDecision,
   collapseSettledRunInput,
+  dropRunAsks,
   RUN_INPUT_FALLBACK,
   DOCK_PHASE_MS,
   runPendingAsks,
@@ -656,6 +657,81 @@ describe("a workflow step's question", () => {
     send?.click();
     send?.click();
     expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // The held answer. `settle` splices the entry BEFORE the answer goes out, so
+  // the card carrying the reader's text is already gone when the server refuses
+  // it — and the one refusal that is RETRYABLE re-offers the SAME ask on a fresh
+  // `run_input_needed`. Invariant 2 grants the optimistic dock its carve-out on a
+  // refusal returning the TEXT as well as the row, so these pin both directions.
+  // -------------------------------------------------------------------------
+  describe("the words a refused send is holding", () => {
+    function sendAnswer(text: string): void {
+      const box = textarea();
+      if (box !== null) {
+        box.value = text;
+      }
+      clickButton("Send answer");
+    }
+
+    it("comes back with the ask the server re-offered", () => {
+      pushAsk("c1");
+      sendAnswer("the release branch");
+      settleMotion();
+      // What the server does on a between-steps refusal: restoreAsk re-broadcasts
+      // the same ask, so the client pushes it again against a fresh card.
+      pushAsk("c1");
+      expect(textarea()?.value).toBe("the release branch");
+    });
+
+    it("is dropped once the ask is genuinely settled", () => {
+      pushAsk("c1");
+      sendAnswer("the release branch");
+      settleMotion();
+      collapseSettledRunInput("wf_1", "notify:7", "user");
+      // A second ask carrying that id is a NEW question — a run can park on the
+      // same node again — so seeding it with words answering the old one would put
+      // a stale sentence in front of the reader as though they had typed it.
+      pushAsk("c1");
+      expect(textarea()?.value).toBe("");
+    });
+
+    it("is dropped when the run itself ends", () => {
+      // The path the per-ask settle cannot cover: a run's terminal sweep drops
+      // cards without a settle frame per ask, so nothing else frees the words.
+      pushAsk("c1");
+      sendAnswer("the release branch");
+      settleMotion();
+      dropRunAsks("wf_1");
+      pushAsk("c1");
+      expect(textarea()?.value).toBe("");
+    });
+
+    it("is dropped by continue-without-answering, which retires the question", () => {
+      pushAsk("c1");
+      sendAnswer("the release branch");
+      settleMotion();
+      pushAsk("c1");
+      clickButton("Continue without answering");
+      settleMotion();
+      pushAsk("c1");
+      expect(textarea()?.value).toBe("");
+    });
+
+    it("is held per ASK, so a second parked step cannot evict the first's", () => {
+      // One slot would lose the older answer here, which is why the store is keyed
+      // by ask rather than holding the last send.
+      pushAsk("c1", { ask_id: "notify:1" });
+      sendAnswer("the release branch");
+      settleMotion();
+      pushAsk("c1", { ask_id: "notify:2" });
+      sendAnswer("main");
+      settleMotion();
+
+      pushAsk("c1", { ask_id: "notify:1" });
+      expect(textarea()?.value).toBe("the release branch");
+    });
   });
 
   it("ignores a re-delivered ask (the connect replay re-offers every parked one)", () => {

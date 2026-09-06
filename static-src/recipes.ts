@@ -31,7 +31,7 @@ import { createPopup } from "@cplieger/ui-primitives/popup";
 import { openRunView } from "./run-view.js";
 import { loadSettings } from "./persist.js";
 import { toggleSettingsView } from "./tabs.js";
-import type { Recipe, WorkflowRunRow } from "./types.js";
+import type { Recipe, WorkflowRun } from "./types.js";
 
 /** Last fetched recipe list, kept so a repaint needs no refetch. */
 let recipes: Recipe[] = [];
@@ -47,7 +47,7 @@ let filterText = "";
 
 /** Live (non-terminal) run per recipe NAME. The single-run rule makes the name
  *  a sufficient key: at most one live run per definition exists. */
-let liveRuns = new Map<string, WorkflowRunRow>();
+let liveRuns = new Map<string, WorkflowRun>();
 
 let container: HTMLElement | null = null;
 let wired = false;
@@ -279,7 +279,7 @@ async function refreshRuns(): Promise<void> {
   if (d === null) {
     return;
   }
-  const next = new Map<string, WorkflowRunRow>();
+  const next = new Map<string, WorkflowRun>();
   for (const run of d.runs) {
     if (!isTerminal(run.status ?? "")) {
       next.set(run.name, run);

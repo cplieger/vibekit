@@ -182,6 +182,12 @@ export function renderConflictOverlay(state: FileState): void {
         title: "Propose a merged version using the utility AI bridge",
         "aria-label": `Suggest a merged resolution for the conflict at line ${lineNo}`,
         disabled: suggestion?.loading === true,
+        // BUSY, not unavailable: this button disables itself for the length of
+        // its own request and its label becomes "Suggesting…". Without the
+        // attribute it took the refusal face, dimming that very label. Declared
+        // rather than set through `setControlBusy` because this row is rebuilt
+        // per render, so the state is an attribute of the markup here.
+        ...(suggestion?.loading === true ? { "aria-busy": "true" } : {}),
       },
       suggestion?.loading === true ? "Suggesting..." : "Suggest",
     );

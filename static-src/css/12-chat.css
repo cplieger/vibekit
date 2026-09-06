@@ -15,52 +15,74 @@
   display: none;
 }
 
-/* The y at which content clears the chat toolbar, derived from the toolbar's own
-   metrics below: its `--sp-3` top inset, one `--btn-h` row, its 2×0.125rem
-   padding, a `--sp-2` gap, and the safe-area inset it also honours.
+/* THE TITLE BAR, at every width. It used to be a floating pill anchored to the
+   top-right corner at `position: absolute` and z-index 10, and full-width in flow
+   only below 48rem — so one element had two layouts and the desktop one was an
+   OBSTACLE: opaque, over the same corner as three other surfaces, reserving no
+   height while occupying y 12..54.
 
-   FOUR SURFACES need this number and it is declared once here, beside the
-   element it measures, so a change to the toolbar's padding reaches all of them:
-   `.chat-find` and `.search-pop` (24-find.css), `.turn-rail` (29-turns.css) and
-   `.banner-stack` (13-messages.css). Each of the first three learned it the same
-   way — the toolbar is opaque at z-index 10, so anything sharing that corner is
-   invisible AND unclickable underneath it, measured at a 198px overlap for
-   search and at markers #1-#2 for the rail. The rail carried a byte-identical
-   copy of the calc under a comment claiming the three could not drift apart; a
-   copy is exactly how they could. */
+   Promoting the mobile shape to the only shape removes that whole class of
+   defect rather than working around it. `.settings-title-row` existed solely to
+   push a full-width tab bar clear of the band (its own comment records the
+   measurement: the Sources segment lost its last 33px at 1440x900), the banner
+   stack needed a ResizeObserver publishing the bar's live WIDTH so it could stop
+   short of it, and `.turn-rail`'s first two markers rendered underneath it,
+   invisible and unclickable.
+
+   The three tokens below are kept, redefined against the new geometry, because
+   their consumers still ask a real question — an absolutely positioned overlay
+   inside `#chat-area` is positioned against the padding box, which starts ABOVE
+   the in-flow bar, so it still needs the clearance. */
 :root {
-  /* The toolbar's FULL box height: its buttons, its own 2 x 0.125rem padding and
-     its 1px border on both edges. Declared because two things need it and one of
-     them is not an offset — `.banner` (13-messages.css) takes it as a
-     `min-block-size` so a banner row and the menu read as the same size, and the
-     offset below derives from it rather than restating its terms. The border was
-     missing from that offset, so the `--sp-2` gap it claims was really 6px. */
-  --chat-toolbar-h: calc(var(--btn-h) + 0.25rem + 2px);
-  --below-chat-toolbar: calc(
-    var(--sp-3) + var(--chat-toolbar-h) + var(--sp-2) + env(safe-area-inset-top, 0)
-  );
+  /* The bar's own height, without the notch inset. `.banner` (13-messages.css)
+     takes it as a `min-block-size` so a banner row reads as the same size as the
+     bar above it. */
+  --chat-toolbar-h: var(--titlebar-h);
+
+  /* Clearance for an overlay that is absolutely positioned inside `#chat-area`:
+     `.chat-find` and `.search-pop` (24-find.css). Both sit in that container, so
+     both start at its padding-box top, above the bar.
+
+     `.turn-rail` (29-turns.css) is NOT one of these any more and must not read
+     this: it lives in `#messages-wrap-outer`, which is inside the view and so
+     already below the bar. Its inset is `var(--sp-3)` now. */
+  --below-chat-toolbar: calc(var(--titlebar-h) + var(--sp-2) + env(safe-area-inset-top, 0));
+
+  /* Was published from JS by chat-toolbar-metrics.ts, a ResizeObserver whose only
+     reader was `.banner-stack`'s right inset: the bar was a floating pill of
+     content-driven width, so nothing but a measurement could say where it ended.
+     A full-width bar has no right edge to dodge, so the answer is a constant and
+     the module is deleted. Declared rather than dropped because `.banner-stack`
+     reads it with a fallback, and a fallback on an undefined token is how a
+     palette forks silently (vibekit-ui.md "No phantom tokens"). */
+  --chat-toolbar-w: 0px;
 }
 
 .chat-toolbar {
   --toolbar-gap: 0.125rem;
 
-  position: absolute;
-  top: calc(var(--sp-3) + env(safe-area-inset-top, 0));
-  right: var(--sp-3);
+  /* The bar's rendered bottom edge, for the ONE surface that has to sit under it
+     and cannot derive it: the phone toast banner (04-uip-skin.css). Below 30rem of
+     chat area this bar wraps its heading onto a second row, so its height stops
+     being `--titlebar-h` and becomes content-driven. Every other overlay that
+     needs this clearance is positioned INSIDE `#chat-area` and reads
+     `--below-chat-toolbar` instead; the banner is a body-level fixed box, which is
+     why it needs an anchor rather than a token. */
+  anchor-name: --chat-toolbar;
   display: flex;
   align-items: center;
   gap: var(--toolbar-gap);
-  z-index: 10;
+  flex-shrink: 0;
+  inline-size: 100%;
 
-  /* Own compositing layer: `translateZ(0)` holds this bar above the
-     accelerated layers a loading view creates and drops (its @starting-style
-     fade, then one per `.skeleton` row), which WebKit otherwise re-resolves by
-     overlap testing per rebuild. */
-  transform: translateZ(0);
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  padding: 0.125rem;
+  /* The notch inset is PADDING, not part of the height, so the bar's content band
+     stays `--titlebar-h` on a device with a notch and its hairline still lands on
+     the sidebar header's. Both bars derive from that one token, which is what
+     makes the two rules meet by construction rather than by agreement. */
+  min-block-size: calc(var(--titlebar-h) + env(safe-area-inset-top, 0));
+  padding: env(safe-area-inset-top, 0) var(--sp-3) 0;
+  background: var(--c-bg-primary);
+  border-block-end: 1px solid var(--c-border);
 
   & .icon-btn {
     min-width: var(--btn-h);
@@ -68,11 +90,13 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    /* CONCENTRIC with the toolbar: inner = outer − border − inset. This was
-       `calc(var(--r) - 0.125rem)`, which subtracted the padding and forgot the
-       1px border, so the buttons sat at 4px where 3px shares the toolbar's
-       corner centre. Rule and sources: web.md "A nested rounded corner". */
-    border-radius: calc(var(--r) - 1px - 0.125rem);
+    /* A FLAT rung now, not a derivation. The bar is square and full-bleed, so
+       there is no parent corner to nest inside — the old
+       `calc(var(--r) - 1px - 0.125rem)` subtracted a radius and a padding that
+       no longer exist, and below 48rem it had already been subtracting a radius
+       the mobile rule zeroed. `--r-sm` is the rung for a control under 28px on
+       the fine tier; see 01-tokens.css's ladder. */
+    border-radius: var(--r-sm);
   }
 
   & .mobile-only {
@@ -141,14 +165,137 @@
   pointer-events: none;
 }
 
-.toolbar-title {
-  display: none;
-  font-size: var(--fs-lg);
+/* ==========================================================================
+   The bar's heading: every page's title, left-aligned, with an optional subtitle.
+
+   ONE element, written by ONE function (page-title.ts), for all nine views. What
+   it replaces was nine answers to one question: five views carried a `.page-title`
+   inside their own scrolling content (three of those hardcoded in markup, two
+   written by their own tab module), four carried none at all, and the bar itself
+   held a separate `#toolbar-title` that only ever appeared below 48rem. No view
+   had a subtitle, and there was no registry — `TabViewSpec.name` came closest and
+   fed only the mobile span and the sidebar rows.
+
+   The SEPARATOR is a rule rather than a middle dot, and that is a legibility
+   decision: git already shipped `Git · Changes` and it reads as one string, so a
+   dot inside a title becomes part of the title. A rule is structural, and it
+   lets the whole subtitle segment be dropped at a narrow width without leaving
+   orphan punctuation behind.
+   ========================================================================== */
+
+.titlebar-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+
+  /* Takes the row's slack, which is what puts the actions hard right. */
+  margin-inline-end: auto;
+
+  /* An extra flex layer means a child's automatic minimum size no longer reaches
+     the bar, so the title cannot ellipsize without this. */
+  min-inline-size: 0;
+}
+
+.titlebar-title {
+  /* --fs-md, not the --fs-xl the old `.page-title` used: an 18px title beside
+     36px buttons in a 52px bar is top-heavy, and that 18px lived in scrolling
+     content rather than in chrome. */
+  font-size: var(--fs-md);
   font-weight: var(--fw-semibold);
   color: var(--c-text-primary);
-  margin-inline-end: auto;
+  margin: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding-inline-start: var(--sp-2);
+}
+
+.titlebar-sep {
+  flex-shrink: 0;
+  inline-size: 1px;
+  block-size: 1rem;
+  background: var(--c-border);
+}
+
+.titlebar-subtitle {
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* An empty heading takes no space and draws no rule. `:empty` is what keeps a
+   view with no subtitle (chat, history) from rendering a bare separator, and it
+   costs no JS: page-title.ts writes "" rather than toggling a class. */
+.titlebar-title:empty,
+.titlebar-subtitle:empty {
+  display: none;
+}
+
+.titlebar-subtitle:empty + .titlebar-sep,
+.titlebar-heading:has(> .titlebar-subtitle:empty) > .titlebar-sep {
+  display: none;
+}
+
+/* THE SUBTITLE SPEAKS ONLY WHEN NOTHING ELSE DOES.
+ *
+ * Settings, Docs and Git put their active section in a segmented bar, so a
+ * subtitle naming that same section is the word twice, twenty pixels apart. But
+ * that bar drops its labels when they stop fitting (`tab-bar-fit.ts` measures per
+ * bar and writes `.tab-bar-icons`), and then the subtitle is the only text naming
+ * the section — which is exactly the job `.settings-title-row` was doing.
+ *
+ * So the rule is: suppress the subtitle while a labelled segmented bar is on
+ * screen, and show it otherwise. `tab-bar-fit.ts` publishes `.tab-bar-named` for
+ * exactly that condition — visible AND labelled — because the derivation needs
+ * the bar's visibility as well as its label mode, and it already measures both.
+ * Deriving it here instead took a `:has()` chain of four pseudo-classes past
+ * stylelint's ceiling, which was a fair complaint about the wrong owner. */
+[id="chat-area"]:has(.tab-bar-named) :is(.titlebar-subtitle, .titlebar-sep) {
+  display: none;
+}
+
+/* ==========================================================================
+   Narrow: the heading takes its own row.
+
+   A CONTAINER query, not a viewport one, because the sidebar decides how much
+   width the chat area gets — the same reasoning `.turn-rail` uses. Measured at
+   390px with the coarse tier: seven 44px buttons plus the bar's own 24px of
+   padding is 332px of a 390px bar, which leaves the title 44px for text that
+   wants 259px. It rendered 17% of itself.
+
+   Wrapping is what lets ONE element serve both layouts: the heading keeps its
+   single writer and CSS decides whether it sits beside the actions or under them.
+   `order` puts it second so the chrome stays on top and the title labels the
+   content directly beneath it.
+   ========================================================================== */
+
+@container chat-area (inline-size < 34rem) {
+  .titlebar-heading :is(.titlebar-subtitle, .titlebar-sep) {
+    display: none;
+  }
+}
+
+@container chat-area (inline-size < 30rem) {
+  .chat-toolbar {
+    flex-wrap: wrap;
+    padding-block-end: var(--sp-1);
+  }
+
+  .titlebar-heading {
+    order: 1;
+    flex-basis: 100%;
+    margin-inline-end: 0;
+  }
+
+  /* The subtitle fits again on its own row, so it comes back — the 34rem rule
+     above is about competing with the actions, not about the text being too long. */
+  .titlebar-heading :is(.titlebar-subtitle, .titlebar-sep) {
+    display: revert;
+  }
+
+  .titlebar-heading .titlebar-subtitle:empty,
+  .titlebar-heading:has(> .titlebar-subtitle:empty) > .titlebar-sep {
+    display: none;
+  }
 }

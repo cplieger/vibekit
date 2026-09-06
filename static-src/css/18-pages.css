@@ -30,15 +30,6 @@
   flex: 1 0 auto;
 }
 
-.page-title {
-  font-size: var(--fs-xl);
-  font-weight: var(--fw-semibold);
-  color: var(--c-text-primary);
-  padding-top: calc(0.3125rem + env(safe-area-inset-top, 0));
-  padding-bottom: var(--sp-4);
-  text-wrap: balance;
-}
-
 .page-section {
   display: flex;
   flex-direction: column;
@@ -56,12 +47,8 @@
   margin: 0;
 }
 
-h3.section-title {
+.section-title {
   padding-block-start: var(--sp-4);
-}
-
-.page-title + .page-section > h3.section-title {
-  padding-block-start: 0;
 }
 
 .section-hint {
@@ -319,7 +306,12 @@ h3.section-title {
   min-width: 11rem;
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
-  border-radius: var(--r);
+  border-radius: var(--r-lg);
+
+  /* Same shape and same derivation as the shared popup (11-popups.css). */
+  --menu-inset: var(--sp-1);
+  --menu-radius: calc(var(--r-lg) - 1px - var(--menu-inset));
+
   box-shadow:
     var(--shadow-ambient),
     0 0.25rem 0.75rem oklch(0% 0 none / 40%);
@@ -361,7 +353,7 @@ h3.section-title {
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--c-text-primary);
-  border-radius: calc(var(--r) / 2);
+  border-radius: var(--menu-radius);
 
   &:hover {
     background: var(--c-bg-tertiary);
@@ -385,7 +377,7 @@ h3.section-title {
     padding: var(--sp-1) var(--sp-2);
     background: var(--c-bg-primary);
     border: 1px solid var(--c-border);
-    border-radius: calc(var(--r) / 2);
+    border-radius: var(--menu-radius);
     color: var(--c-text-primary);
     font-family: var(--font-mono);
     font-size: var(--fs-xs);
@@ -532,6 +524,13 @@ h3.section-title {
 }
 
 .list-row {
+  /* Row height comes from the TIER, not from the font. Without it this row
+     resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
+     close — so it measured the same on a finger as on a mouse while `.tab`
+     beside it correctly went 36px to 44px. A floor, so a taller row keeps its
+     own height: measured, this moves desktop by at most 1px and gives every
+     list row a real 36px target on touch. */
+  min-block-size: var(--ctl-h-sm);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -622,11 +621,6 @@ h3.section-title {
   &:hover {
     color: var(--c-text-primary);
     background: var(--c-bg-tertiary);
-  }
-
-  &:disabled {
-    opacity: 0.3;
-    cursor: default;
   }
 
   &:disabled:hover {
@@ -724,9 +718,10 @@ h3.section-title {
 .tool-form-select {
   padding-inline-end: var(--sp-5);
   appearance: none;
-  background-image: url("data:image/svg+xml,%3csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M1 1l4 4 4-4' stroke='%236c7086' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
+  background-image: var(--img-chevron);
   background-repeat: no-repeat;
   background-position: right 0.625rem center;
+  background-size: 1rem;
 }
 
 .tool-form-hint {
@@ -762,19 +757,13 @@ h3.section-title {
 
 .tool-state-busy {
   background: var(--c-accent);
-  animation: tool-dot-pulse 1.2s ease-in-out infinite;
-}
 
-@keyframes tool-dot-pulse {
-  50% {
-    opacity: 0.35;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tool-state-busy {
-    animation: none;
-  }
+  /* Reads the document beat (03-base.css) like every other status dot, so an
+     installing tool pulses in step with the tab strip instead of on its own
+     1.2s. `tool-dot-pulse` was a seventh bespoke keyframe outside the vk-*
+     family and it is deleted; reduced motion needs no rule here either, because
+     stopping the one clock stops this. */
+  opacity: calc(1 - var(--vk-beat) * 0.65);
 }
 
 .tool-installing {
@@ -931,6 +920,13 @@ h3.section-title {
    15, date 13, glyph 14, button 28) put five centres 7.5px apart, the delete
    button 8.6px below the title's. Centring needs no per-element number. */
 .history-table-row {
+  /* Row height comes from the TIER, not from the font. Without it this row
+     resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
+     close — so it measured the same on a finger as on a mouse while `.tab`
+     beside it correctly went 36px to 44px. A floor, so a taller row keeps its
+     own height: measured, this moves desktop by at most 1px and gives every
+     list row a real 36px target on touch. */
+  min-block-size: var(--ctl-h-sm);
   cursor: pointer;
   padding-block: var(--sp-2);
 }
@@ -1068,20 +1064,32 @@ button.list-row-name:focus-visible {
   flex: 1 1 0;
   min-height: 0;
 
-  /* NOT the scroller. The card is a column that fills this box and its own body
-     scrolls, so the run's identity row and its outcome ledger stay on screen while
-     the steps move under them — which is the whole difference between a page and a
-     tall box. Two nested scrollports would also fight each other. */
-  overflow: hidden;
+  /* THE ONE SCROLLER, and it is this element rather than the VIEW because
+     `.run-bottom-bar` is pinned OUTSIDE it — which is why `16-login.css` leaves
+     `#run-view` out of its view-scrolls group. Everything below sizes to content
+     (`#run-body`, `.ev-page`, `.ev-panes`), so the page scrolls as one document
+     instead of crushing its regions into fixed cages that each scroll alone.
+
+     ONE rule, deliberately: this selector carried two contradictory blocks 63
+     lines apart (`overflow: hidden` above, `overflow-y: auto` below), and the
+     later declaration silently won. `run-page-layout.test.ts` now counts the
+     occurrences.
+
+     The two-value shorthand is `overflow-x` then `overflow-y`, so this is
+     `hidden` across and `auto` down. Written as the shorthand because stylelint's
+     `declaration-block-no-redundant-longhand-properties` requires it. */
+  overflow: hidden auto;
 }
 
-/* The run body is the page's growing region, so `#run-body` has to pass the
-   height through rather than sizing to content. */
+/* The run body passes the SCROLLER's width through and sizes to its content, so
+   the page's own height is the sum of its regions. `flex: 1 0 auto` is this
+   file's established page-scrolling shape (see the `[id="git-view"] >
+   .page-content` group at the top); `flex-basis: 0` plus `min-height: 0` is what
+   pinned it to the scrollport and made a scrollbar unreachable. */
 [id="run-body"] {
   display: flex;
   flex-direction: column;
-  flex: 1 1 0;
-  min-height: 0;
+  flex: 1 0 auto;
 }
 
 /* --- The subagent page ---------------------------------------------------- */
@@ -1104,17 +1112,18 @@ button.list-row-name:focus-visible {
   flex: 1 1 0;
   min-height: 0;
 
-  /* NOT the scroller. The exec page is a column that fills this box and its detail
-     pane scrolls, so the delegate's identity row stays on screen while its
-     transcript moves under it. Two nested scrollports would fight. */
-  overflow: hidden;
+  /* THE SCROLLER, for the same reason the run page's is: `.ev-page` no longer
+     clamps itself to this box, so leaving this `overflow: hidden` would clip the
+     delegate's transcript outright. There is no pinned bar here, so the view
+     could have scrolled instead — this element keeps it so both consumers of the
+     exec page have one scroller in the same place. `hidden` across, `auto` down. */
+  overflow: hidden auto;
 }
 
 [id="subagent-body"] {
   display: flex;
   flex-direction: column;
-  flex: 1 1 0;
-  min-height: 0;
+  flex: 1 0 auto;
 }
 
 /* --- The run tab's bottom bar --------------------------------------------- */
@@ -1123,15 +1132,9 @@ button.list-row-name:focus-visible {
    the "one dock, two hosts" contract. No composer: there is nobody to type to,
    which is exactly why the dock is a bottom-bar region rather than a composer
    feature. The column shape the pinned bar needs, and the `flex: 1` that gives
-   this scroller a parent height to fill, both come from the shared view group in
-   16-login.css — a `flex-basis: 0` scroller under a content-sized parent
-   collapses, so the two cannot be separated. */
-[id="run-view"] .page-content {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow-y: auto;
-}
-
+   the scroller above a parent height to fill, both come from the shared view
+   group in 16-login.css — a `flex-basis: 0` scroller under a content-sized
+   parent collapses, so the two cannot be separated. */
 .run-bottom-bar {
   flex: 0 0 auto;
 
