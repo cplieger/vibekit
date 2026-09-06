@@ -184,7 +184,11 @@ function fakeGeometry(
  *  event is the PLATFORM's shape — a `content-visibility` clamp — which the
  *  controller deliberately refuses to read as intent. */
 function readerScroll(el: HTMLElement): void {
-  el.dispatchEvent(new WheelEvent("wheel", { deltaY: 1 }));
+  // The wheel's DIRECTION is the one that would have brought the reader to where the
+  // fixture has already put them: the controller enters Reading from the aim of the
+  // input, never from the position alone.
+  const atEdge = el.scrollTop + el.clientHeight >= el.scrollHeight - 100;
+  el.dispatchEvent(new WheelEvent("wheel", { deltaY: atEdge ? 1 : -1 }));
   el.dispatchEvent(new Event("scroll"));
 }
 

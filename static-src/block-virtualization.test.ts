@@ -569,15 +569,16 @@ describe("scrolling moves the window", () => {
 
   /** Drag the scrollbar to `top`, and report how far the reader actually moved.
    *
-   *  Two events, because the controller reads intent from INPUT: a bare positional
-   *  write is the shape of the platform's own clamp and stays Following on purpose.
+   *  The wheel's DIRECTION is load-bearing, not decoration: the controller enters
+   *  Reading from the aim of the reader's input, so a bare positional write is the
+   *  shape of the platform's own clamp and stays Following on purpose.
    *  `behavior: "instant"`, not `scrollTop =`: the scroller declares
    *  `scroll-behavior: smooth` (css/13-messages.css), so an assignment only starts an
    *  animation. Measured immediately, so the number excludes later compensation. */
   async function dragTo(top: number): Promise<number> {
     const el = scroller();
     const was = el.scrollTop;
-    el.dispatchEvent(new WheelEvent("wheel", { deltaY: 1 }));
+    el.dispatchEvent(new WheelEvent("wheel", { deltaY: top < was ? -1 : 1 }));
     el.scrollTo({ top: Math.max(0, top), behavior: "instant" });
     const moved = el.scrollTop - was;
     for (let f = 0; f < 4; f++) {
@@ -1220,13 +1221,12 @@ describe("scrolling moves the window", () => {
     // And it is STILL the live block: the caret is what tells the reader the run is
     // going, and a re-mount that sealed it would say the turn had ended.
     expect(card("live").querySelector(`${live} .message.streaming`)).not.toBeNull();
-    // NOT asserted here, and the reason is a filed defect rather than an oversight:
-    // the drag back lands at the live edge Following, and the re-mount that follows
-    // it then moves the reader ~9600px with no input behind it, because
-    // `preserveReadingPosition("content-growth")` compensates by the whole
-    // document's delta and a window re-index changes height on BOTH sides of the
-    // viewport. Traced in _scratch/input-intent-salvage/window-remeasure-defect.md.
-    // A helper used to scroll the reader back here, which hid it.
+    // The drag back to the bottom is what re-mounted the tail, so the reader has to be
+    // Following for the case to mean what it says. It is also the defect that used to
+    // live here: the re-mount moves the reader ~9600px, and while a demotion needed
+    // only the reader's control WINDOW rather than their aim, that displacement parked
+    // them for the rest of the turn. A helper used to scroll them back, which hid it.
+    expect(readingState()).toBe("following");
   });
 });
 

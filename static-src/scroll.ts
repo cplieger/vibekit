@@ -65,9 +65,11 @@ const READER_CONTROL_MS = 300;
  *  flips `content-visibility` at 0.42s (css/29-turns.css), so the document is
  *  still growing ~450ms after the click. */
 const PIN_SETTLE_MS = 700;
-/** Keys that scroll a box. `End` is excluded deliberately: the handler in `init`
- *  turns it into a resume, and a resume's own pin is not a reader scroll. */
-const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", " "]);
+/** Keys that scroll a box, by direction. `End` is in neither deliberately: the
+ *  handler in `init` turns it into a resume, and a resume's own pin is not a reader
+ *  scroll. Shift+Space scrolls UP, which no other key spelling distinguishes. */
+const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
+const SCROLL_DOWN_KEYS = new Set(["ArrowDown", "PageDown", " "]);
 
 /** The reader's position, as a state rather than an inferred boolean. */
 export type ReadingState = "following" | "reading";
@@ -155,9 +157,18 @@ class ScrollController {
   private pinUntil = 0;
   private pinFrame = 0;
 
+  /** Did the reader's last directional input ask to go UP? The only thing that may
+   *  enter Reading, and spent as soon as they reach the live edge again. */
+  private upwardIntent = false;
+
   /** A scrollbar drag in progress. Untimed, because the reader can hold the thumb for
    *  as long as they like and a drag produces no repeat input to refresh a deadline. */
   private barDragging = false;
+
+  /** Last `clientY` seen from a touch and from a held scrollbar thumb, because both
+   *  events carry a position rather than a delta (null = no gesture in progress). */
+  private lastTouchY: number | null = null;
+  private lastBarY: number | null = null;
 
   /** Last value written to `--scrollbar-w`, so a resize storm costs at most one
    *  style invalidation. */
@@ -228,27 +239,79 @@ class ScrollController {
     // overflows, and that file's END inset is what subtracts it.
     this.publishScrollbarWidth();
 
-    // `touchend` is in the set so the quiet period outlives the finger and covers the
-    // momentum after it. A wheel over a NESTED scroller is deliberately not excluded:
-    // if the child consumes it this box fires no scroll event, and if it chains here
-    // the reader did push this box.
-    const markInput = (): void => {
+    // Every input marks the quiet period; the ones that carry a DIRECTION also aim
+    // it. `touchend` marks but cannot aim, which costs nothing: a fling's direction
+    // is already known from the `touchmove` that started it. A wheel over a NESTED
+    // scroller is deliberately not excluded — if the child consumes it this box fires
+    // no scroll event, and if it chains here the reader did push this box.
+    const markInput = (dir: -1 | 0 | 1 = 0): void => {
       this.userScrollingUntil = Date.now() + READER_CONTROL_MS;
+      if (dir !== 0) {
+        this.upwardIntent = dir < 0;
+      }
     };
-    for (const type of ["wheel", "touchmove", "touchend"] as const) {
-      this.scrollEl.addEventListener(type, markInput, { passive: true });
-    }
+    this.scrollEl.addEventListener(
+      "wheel",
+      (e) => {
+        markInput(e.deltaY < 0 ? -1 : 1);
+      },
+      { passive: true },
+    );
+    this.scrollEl.addEventListener(
+      "touchend",
+      () => {
+        markInput();
+      },
+      { passive: true },
+    );
+    // A finger moving DOWN the screen scrolls the content UP, so the sign inverts.
+    // Tracked between moves because a `touchmove` carries a position, not a delta.
+    this.scrollEl.addEventListener(
+      "touchmove",
+      (e) => {
+        const y = e.touches[0]?.clientY ?? null;
+        markInput(y === null || this.lastTouchY === null ? 0 : y > this.lastTouchY ? -1 : 1);
+        this.lastTouchY = y;
+      },
+      { passive: true },
+    );
+    this.scrollEl.addEventListener(
+      "touchstart",
+      (e) => {
+        this.lastTouchY = e.touches[0]?.clientY ?? null;
+      },
+      { passive: true },
+    );
     // A scrollbar drag surfaces no wheel and no touch, so the press IS the input,
-    // scoped to the gutter or an ordinary click in the transcript would park the
-    // reader. Release on the DOCUMENT: a drag that leaves the scroller still owns
-    // the bar.
+    // scoped to the gutter or an ordinary click in the transcript would suppress the
+    // next chunk's pin. Release on the DOCUMENT: a drag that leaves the scroller
+    // still owns the bar.
     this.scrollEl.addEventListener(
       "pointerdown",
       (e) => {
         if (this.inScrollbarGutter(e)) {
           this.barDragging = true;
+          this.lastBarY = e.clientY;
           markInput();
         }
+      },
+      { passive: true },
+    );
+    // The thumb moves the same way as the content, so this sign does NOT invert.
+    document.addEventListener(
+      "pointermove",
+      (e) => {
+        if (!this.barDragging) {
+          return;
+        }
+        markInput(
+          this.lastBarY === null || e.clientY === this.lastBarY
+            ? 0
+            : e.clientY < this.lastBarY
+              ? -1
+              : 1,
+        );
+        this.lastBarY = e.clientY;
       },
       { passive: true },
     );
@@ -272,12 +335,17 @@ class ScrollController {
         // Free to read here (a scroll event is delivered after layout), and true
         // whoever moved the scroller.
         this.atLiveEdge = this.isAtBottom();
-        if (this.readerInControl()) {
-          this.setState(this.atLiveEdge ? "following" : "reading");
-        } else if (this.atLiveEdge) {
-          // At the bottom is Following whoever put us there; only the DEMOTION needs
-          // the reader's fingerprint.
+        if (this.atLiveEdge) {
+          // At the bottom is Following whoever put us there, and the aim that parked
+          // the reader is spent with it — left standing, the next layout shift re-parks
+          // them under an intent they have already satisfied.
+          this.upwardIntent = false;
           this.setState("following");
+        } else if (this.upwardIntent) {
+          // The reader ASKED to go up. Position alone cannot say this: a block-window
+          // re-index moved a reader 9600px up inside the window their own downward drag
+          // had opened, and the transcript stopped following for the rest of the turn.
+          this.setState("reading");
         }
         this.maybeLoadMore();
       },
@@ -300,8 +368,12 @@ class ScrollController {
       // Under a modifier too, and BEFORE the resume arm's guard: Ctrl+Home scrolls
       // this box, so dropping it leaves the reader at a position with no fingerprint
       // on it, which reads as Following and pins them straight back down.
-      if (SCROLL_KEYS.has(e.key)) {
-        markInput();
+      if (SCROLL_UP_KEYS.has(e.key) || (e.key === " " && e.shiftKey)) {
+        markInput(-1);
+        return;
+      }
+      if (SCROLL_DOWN_KEYS.has(e.key)) {
+        markInput(1);
         return;
       }
       if (e.key === "End" && !e.ctrlKey && !e.metaKey && !e.altKey && this.state === "reading") {
@@ -676,12 +748,10 @@ class ScrollController {
    *  times over. Measured in Chromium: a landing 2000px above the bottom. */
   private pinToLiveEdge(): void {
     this.setState("following");
-    // Both halves of the reader's licence, because this is the reader ASKING to
-    // follow and the pass's own frames test that licence: a `barDragging` latch left
-    // standing — a drag whose pointerup never arrived — would kill the pin on its
-    // first frame and leave the resume control looking dead.
-    this.userScrollingUntil = 0;
-    this.barDragging = false;
+    // The reader is ASKING to follow, and the pass's own frames test their licence:
+    // a `barDragging` latch left standing — a drag whose pointerup never arrived —
+    // would kill the pin on its first frame and leave the resume control looking dead.
+    this.forgetReaderGesture();
     this.pinUntil = Date.now() + PIN_SETTLE_MS;
     this.pinLiveEdgeNow();
     this.queuePinFrame();
@@ -745,8 +815,7 @@ class ScrollController {
     // method is about to write the incoming one's own scrollTop.
     this.cancelPinPass();
     this.observeView(handle.el);
-    this.userScrollingUntil = 0;
-    this.barDragging = false;
+    this.forgetReaderGesture();
     this.setState(handle.readingState);
     this.scrollSelfTo(handle.scrollTop, "instant");
   }
@@ -765,8 +834,7 @@ class ScrollController {
     this.deferred = [];
     this.abandonLoadPass();
     this.cancelPinPass();
-    this.userScrollingUntil = 0;
-    this.barDragging = false;
+    this.forgetReaderGesture();
     this.onLoadMore = null;
     this.hasMoreMessages = false;
     this.disconnectView();
@@ -839,8 +907,7 @@ class ScrollController {
     this.deferred = [];
     this.abandonLoadPass();
     this.cancelPinPass();
-    this.userScrollingUntil = 0;
-    this.barDragging = false;
+    this.forgetReaderGesture();
     this.setLoadMore(null, false);
     this.setState("following");
   }
@@ -884,6 +951,18 @@ class ScrollController {
     for (const fn of queue) {
       fn();
     }
+  }
+
+  /** Drop every trace of a gesture in progress: the quiet period, the aim it carried,
+   *  the held thumb and the two positions the touch and bar deltas are measured
+   *  against. Called wherever the reader's own scroll stops being the question — a
+   *  resume, and both halves of a view swap. */
+  private forgetReaderGesture(): void {
+    this.userScrollingUntil = 0;
+    this.upwardIntent = false;
+    this.barDragging = false;
+    this.lastTouchY = null;
+    this.lastBarY = null;
   }
 
   /** Is the reader working the scroller right now? The one window three rules read:
