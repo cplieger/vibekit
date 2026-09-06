@@ -62,7 +62,7 @@
 // body on a FINISHED run says so rather than sitting blank.
 // ---------------------------------------------------------------------------
 
-import { el, effect } from "@cplieger/reactive";
+import { el, effect, touch } from "@cplieger/reactive";
 import {
   closeTab,
   getActiveTabId,
@@ -241,14 +241,14 @@ function installViewEffect(): void {
     // and the run's own invalidation re-runs this effect when the pairing arrives.
     const chat = id === "" ? "" : launchingChatOf(id);
     if (chat !== "") {
-      void messagesVersionOf(chat).value;
+      touch(messagesVersionOf(chat));
     }
     // A resolved on-demand read repaints the page. ONE signal for every step, which
     // is the inverse of the run store's per-run cells and right for the same reason
     // reversed: this page shows one node at a time, so a coarse bump costs one
     // repaint of the page the reader is looking at. Read BEFORE the early return,
     // with the others, so the effect stays subscribed on the passes that bail.
-    void stepTranscriptVersion.value;
+    touch(stepTranscriptVersion);
     if (id === "") {
       return;
     }
@@ -970,8 +970,7 @@ function leafPaints(
 function subscribeToDeltas(slices: ReadonlyMap<string, RunStepSlice>): void {
   for (const slice of slices.values()) {
     for (const key of slice.sourceKeys) {
-      void blockTextSigs.get(key)?.value;
-      void blockThinkingSigs.get(key)?.value;
+      touch(blockTextSigs.get(key), blockThinkingSigs.get(key));
     }
   }
 }

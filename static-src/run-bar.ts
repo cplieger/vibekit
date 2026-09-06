@@ -46,7 +46,7 @@
 // navigating is the click's.
 // ---------------------------------------------------------------------------
 
-import { el, computed, effect, untracked } from "@cplieger/reactive";
+import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
 import { $ } from "./dom.js";
 import { watchActiveId } from "./store.js";
@@ -108,7 +108,7 @@ export function initRunBar(): void {
   const bar = $.runBar;
   const sig = computed(() => key());
   stopRender = effect(() => {
-    void sig.value;
+    touch(sig);
     // The computed IS the dedupe. A tracked read inside `render` would subscribe
     // this effect to every run cell directly, so a `run_progress` refetch that did
     // not move the key would still re-run `replaceChildren` and re-fire every row's

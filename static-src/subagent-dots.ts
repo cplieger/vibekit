@@ -53,7 +53,7 @@
 // holding, the escalation is the per-tab registry `chat.ts` already uses.
 // ---------------------------------------------------------------------------
 
-import { effect } from "@cplieger/reactive";
+import { effect, touch } from "@cplieger/reactive";
 import { openSubagentRefs, setTabStatus, tabIdFor } from "./tabs.js";
 import { get, messagesVersionOf, subagentStatusFor } from "./store.js";
 import { findSubagentInvocation } from "./subagent-slice.js";
@@ -74,7 +74,7 @@ function repaint(): void {
     // `tool_call_update` lands, with no tab mutation behind it. A pass that finds
     // nothing resident must stay subscribed, or the delegate's first frame would
     // never reach the row.
-    void messagesVersionOf(chatID).value;
+    touch(messagesVersionOf(chatID));
     // Both this and `openSubagentRefs` above walk the projection's own array in
     // one synchronous pass, so the id resolves for every ref that pass produced.
     // `setTabStatus` is a no-op for an unknown id in any case, which is why there

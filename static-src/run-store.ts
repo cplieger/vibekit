@@ -3,7 +3,7 @@
 // the cache bound and the live-run inventory: vibekit-client.md "The run store";
 // why the run events cannot reconstruct a run: vibekit-acp.md.
 
-import { signal, type Signal } from "@cplieger/reactive";
+import { signal, touch, type Signal } from "@cplieger/reactive";
 import { apiGet, apiGetTyped } from "./api-client.js";
 import { decodeLiveRunsResponse } from "./wire/decoders.gen.js";
 
@@ -273,7 +273,7 @@ export function hasLiveRunForChat(chatID: string): boolean {
  *  The one TRACKED read of the inventory here, because this caller is a reactive
  *  effect where the two booleans' are not: vibekit-client.md "The run store". */
 export function liveRunIDsForChat(chatID: string): string[] {
-  void liveRunsVersion.value;
+  touch(liveRunsVersion);
   if (chatID === "") {
     return [];
   }

@@ -77,8 +77,7 @@ export function severityOf(outcome: TurnOutcome | undefined): TurnSeverity {
     case undefined:
       return "stopped";
     default: {
-      const _never: never = outcome;
-      void _never;
+      outcome satisfies never;
       return "stopped";
     }
   }
@@ -171,8 +170,7 @@ export function defaultFailureReason(outcome: TurnOutcome | undefined): string {
     case undefined:
       return "";
     default: {
-      const _never: never = outcome;
-      void _never;
+      outcome satisfies never;
       return "";
     }
   }
