@@ -1,11 +1,10 @@
 // Property-based tests for smd-parser-handlers: exercises individual handler
 // functions at block-boundary edge cases via single-character streaming.
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 import { parser, parser_write, parser_end, DOCUMENT } from "./smd-parser.js";
 import type { Parser } from "./smd-parser.js";
-import { entitiesReady } from "./smd-entity-refs.js";
 import {
   BLOCKQUOTE,
   HREF,
@@ -17,15 +16,6 @@ import {
   STRONG_UND,
   UNCLOSED,
 } from "./smd-parser-types.js";
-
-// This file reaches the parser directly, so nothing here fires the lazy entity
-// table's fetch — without this hook every named reference in the corpus below is
-// unresolved, which is the fallback state `smd-entity-refs.test.ts` already owns.
-// Install it so the chunk-boundary invariant runs against the state a real page
-// is in, and so both halves of each comparison see one table.
-beforeAll(async () => {
-  await entitiesReady();
-});
 
 /** No-op renderer for structural testing. */
 function nullRenderer() {

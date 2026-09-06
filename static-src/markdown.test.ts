@@ -3,18 +3,9 @@
 // edge cases. markdown.ts renders via the smd-parser streaming state machine
 // into real DOM nodes, so a document is required.
 
-import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import * as fc from "fast-check";
 import { renderMarkdown, createMarkdownStream } from "./markdown.js";
-import { entitiesReady } from "./smd-entity-refs.js";
-
-// The named-reference rows below need the lazy WHATWG table installed. markdown.ts
-// starts that fetch at module scope, but nothing makes it SETTLE before the first
-// test runs: measured 1 red run in 3 without this hook, on the four rows that
-// assert a decoded name.
-beforeAll(async () => {
-  await entitiesReady();
-});
 
 // ---------------------------------------------------------------------------
 // Property-based tests: XSS invariants (testarch-b15-p1)

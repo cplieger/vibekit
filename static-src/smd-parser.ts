@@ -74,20 +74,10 @@
 //
 // THE ENTITY TABLE IS THE FULL WHATWG SET, 2,125 names, because CommonMark 6.2
 // defines a valid named reference as membership in it — the table IS the rule, and
-// a subset is a second, private one no reader can discover. Both alternatives keep
-// their measured numbers so neither comes back as a guess: a 243-name subset is
-// 1,455 gzipped bytes and gives up the rule; front-coding the full table is
-// 10,353, buying 0.4% for an encoding nobody can diff.
-//
-// PRODUCT DECISION: the table ships as a LAZILY IMPORTED CHUNK, so the supported
-// set is unchanged and the initial payload no longer carries it. Measured
-// 297,269 → 285,456 gzipped bytes, ~11.8 KB off first paint (4.0%), the chunk
-// itself 11,639, and total JS DOWN, which is what says the table moved rather
-// than was copied. Numeric references and the five XML predefined names decode INLINE
-// (`smd-entity-refs.ts`) and never wait on it, which is what keeps the two security
-// rules above independent of the network. A chunk that never arrives leaves every
-// other named reference literal — this parser's own invalid-reference rule, and the
-// behaviour before the feature landed, not a new failure mode.
+// a subset is a second, private one no reader can discover. 11,561 gzipped bytes,
+// 4.3% of the app. Both alternatives carry their measured numbers so neither comes
+// back as a guess: a 243-name subset is 1,455 and gives up the rule; front-coding
+// the full table is 10,353, buying 0.4% for an encoding nobody can diff.
 //
 // THE AUTOLINK CARVE-OUT is the only exception to escaping `<` wholesale. Only
 // CommonMark 6.5's absolute-URI and email forms are recognised, both route
