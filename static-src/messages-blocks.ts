@@ -1035,8 +1035,12 @@ function dropBlockRange(
 /** Release one block: its measured height into the cache, its disclosure state, its
  *  element, its text sink, its streaming signals and its block-lifetime cleanups. */
 function dropBlock(st: MsgRender, m: Message, block: Block | undefined, i: number): void {
+  const hosted = hostedRun(st, block);
   const el = st.blockEls.get(i);
-  if (el !== undefined) {
+  st.blockEls.delete(i);
+  // A LAUNCH block's element is the run's card, whose fate the arm at the bottom
+  // already owns. Every other kind owns the element it stamped.
+  if (el !== undefined && el !== hosted?.card.root) {
     // MEASURED on the way out, so the spacer replacing it holds the height it held, and
     // only a REAL reading: a detached element answers 0 and a short spacer leaves the
     // document shorter than the content it stands in for. The estimate over-prices.
@@ -1071,32 +1075,43 @@ function dropBlock(st: MsgRender, m: Message, block: Block | undefined, i: numbe
       st.topLiveEl = null;
     }
     el.remove();
-    st.blockEls.delete(i);
   }
   st.blockText.delete(i);
   clearBlockSig(m.id, i);
   runDisposers(st, i);
-  if (block?.type === "tool_use") {
-    const tc = st.tools.find((c) => c.id === block.tool_call_id);
-    const runID = tc === undefined ? "" : workflowInvocation(tc);
-    const card = runID === "" ? undefined : st.runs.get(runID);
-    if (runID !== "" && card !== undefined) {
-      const claim = liveRunClaimant(st, card);
-      if (claim === undefined) {
-        // Nothing mounted inside it, so the run's own state goes back — or `runCardFor`
-        // hands the next claimant a DETACHED node and re-homing never fires.
-        st.runs.delete(runID);
-        releaseRunCard(st, runID, card);
-        card.root.remove();
-      } else {
-        // RE-HOMED: the card is a CONTAINER, and removing it takes another render's
-        // mounted blocks out of the document while that render still counts them. One
-        // card per run, by the earliest in-window claimant once the launch is gone.
-        const seat = seatAbove(claim.host, claim.host.blocksEl, claim.at, card.root);
-        adoptRunCard(claim.host, st, runID, card, seat);
-      }
+  if (hosted !== undefined) {
+    const { runID, card } = hosted;
+    const claim = liveRunClaimant(st, card);
+    if (claim === undefined) {
+      // Nothing mounted inside it, so the run's own state goes back — or `runCardFor`
+      // hands the next claimant a DETACHED node and re-homing never fires.
+      st.runs.delete(runID);
+      releaseRunCard(st, runID, card);
+      card.root.remove();
+    } else {
+      // RE-HOMED: the card is a CONTAINER, and removing it takes another render's
+      // mounted blocks out of the document while that render still counts them. One
+      // card per run, by the earliest in-window claimant once the launch is gone.
+      const seat = seatAbove(claim.host, claim.host.blocksEl, claim.at, card.root);
+      adoptRunCard(claim.host, st, runID, card, seat);
     }
   }
+}
+
+/** The run card THIS render hosts for `block`'s workflow, for any `tool_use` block
+ *  naming one. The pair `dropBlock` needs twice: to leave the card out of the generic
+ *  release, and to decide its fate afterwards. */
+function hostedRun(
+  st: MsgRender,
+  block: Block | undefined,
+): { runID: string; card: RunCardView } | undefined {
+  if (block?.type !== "tool_use") {
+    return undefined;
+  }
+  const tc = st.tools.find((c) => c.id === block.tool_call_id);
+  const runID = tc === undefined ? "" : workflowInvocation(tc);
+  const card = runID === "" ? undefined : st.runs.get(runID);
+  return card === undefined ? undefined : { runID, card };
 }
 
 /** The render, other than `st`, holding mounted blocks INSIDE `card`, and the lowest
@@ -1647,16 +1662,17 @@ function hostsRunCard(st: MsgRender, workflowID: string): boolean {
   return host === undefined || host === st;
 }
 
-/** Adopt the launch tool call into its run's card: the recipe name from the
- *  call's input as a placeholder label, and a failed launch reported on the card
- *  rather than lost.
+/** Adopt the launch tool call into its run's card, and answer with the card's
+ *  root: the recipe name from the call's input as a placeholder label, and a
+ *  failed launch reported on the card rather than lost.
  *
  *  A launch that FAILED never created a run, so `GET /api/runs/{id}` has nothing
  *  and the card would sit at "starting" forever. The tool call is the only witness
  *  in that case, which is why its status is folded in here. */
-function bindRunCard(st: MsgRender, workflowID: string, tc: ToolCall): void {
+function bindRunCard(st: MsgRender, workflowID: string, tc: ToolCall): HTMLElement {
   const card = runCardFor(st, workflowID, recipeNameOf(tc), true);
   card.setLaunch(tc.status, tc.output);
+  return card.root;
 }
 
 /** The recipe a launch names, from the tool call's own input. A placeholder only:
@@ -1833,7 +1849,9 @@ function placeBlock(
       // rebuilt, which is what keeps the two arrival orders equivalent.
       const runID = workflowInvocation(tc);
       if (subtask === "" && runID !== "") {
-        bindRunCard(st, runID, tc);
+        // Stamped like every other kind, so a search hit on the launch call
+        // resolves to the card it opened rather than to the whole message.
+        stampBlock(st, bindRunCard(st, runID, tc), m.id, i);
         return;
       }
       // A PIPELINE LAUNCH becomes the pipeline's box, not a tool row. Like the
