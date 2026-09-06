@@ -111,6 +111,10 @@ describe("isSafeUrl", () => {
     ["java\rscript:alert(1)", "carriage return bypass"],
     ["java\x00script:alert(1)", "null byte bypass"],
     ["  javascript:alert(1)", "leading whitespace"],
+    ["\x01javascript:alert(1)", "C0 control lead javascript:"],
+    ["\x1fjavascript:alert(1)", "high C0 control lead javascript:"],
+    [" \x01 javascript:alert(1)", "C0 control between spaces javascript:"],
+    ["\x01data:text/html,x", "C0 control lead data:"],
     ["vbscript:MsgBox", "basic vbscript:"],
     ["VBSCRIPT:run", "uppercase vbscript:"],
     ["data:text/html,<script>alert(1)</script>", "basic data:"],
@@ -242,16 +246,22 @@ describe("relativeTime", () => {
 describe("isSafeUrl property-based", () => {
   const blockedPrefixes = ["javascript:", "vbscript:", "data:", "file:"] as const;
 
+  // The gate's own normalization. The two over-blocking bounds below are stated in
+  // its terms on purpose; the completeness property between them is the one whose
+  // rule comes from the URL parser instead, and it is the only one that can see a
+  // gap between the two.
+  const normalize = (s: string): string =>
+    s
+      .replace(/[\x00-\x1f]/g, "") // eslint-disable-line no-control-regex
+      .trim()
+      .toLowerCase();
+
   it("soundness: rejected URLs normalize to a blocked prefix", () => {
     fc.assert(
       fc.property(fc.string(), (s) => {
         const result = isSafeUrl(s);
         if (!result) {
-          const normalized = s
-            .trim()
-            .replace(/[\t\n\r\x00]/g, "") // eslint-disable-line no-control-regex
-            .toLowerCase();
-          const hasBlocked = blockedPrefixes.some((p) => normalized.startsWith(p));
+          const hasBlocked = blockedPrefixes.some((p) => normalize(s).startsWith(p));
           expect(hasBlocked).toBe(true);
         } else {
           expect(result).toBe(true);
@@ -270,16 +280,30 @@ describe("isSafeUrl property-based", () => {
     );
   });
 
+  // The WHATWG URL parser removes every leading C0 control or space before it
+  // reads a scheme, so the gate has to remove at least as much or the browser sees
+  // a scheme the gate did not. A decoder makes that lead spellable in printable
+  // ASCII (`&#1;`), which is how this arrives.
+  it("no false negatives: a C0 control or space lead is stripped before the scheme", () => {
+    const lead = fc
+      .array(
+        fc.integer({ min: 0x00, max: 0x20 }).map((c) => String.fromCharCode(c)),
+        { minLength: 1, maxLength: 8 },
+      )
+      .map((chars) => chars.join(""));
+
+    fc.assert(
+      fc.property(lead, fc.constantFrom(...blockedPrefixes), fc.string(), (pre, prefix, suffix) => {
+        expect(isSafeUrl(pre + prefix + suffix)).toBe(false);
+      }),
+      { numRuns: 500 },
+    );
+  });
+
   it("safe strings stay safe: no blocked prefix after normalization means true", () => {
     fc.assert(
       fc.property(
-        fc.string().filter((s) => {
-          const n = s
-            .trim()
-            .replace(/[\t\n\r\x00]/g, "") // eslint-disable-line no-control-regex
-            .toLowerCase();
-          return !blockedPrefixes.some((p) => n.startsWith(p));
-        }),
+        fc.string().filter((s) => !blockedPrefixes.some((p) => normalize(s).startsWith(p))),
         (s) => {
           expect(isSafeUrl(s)).toBe(true);
         },
