@@ -33,9 +33,6 @@ func (s *Store) Lock(chatID vibekit.ChatID) *sync.Mutex { return s.lock(chatID) 
 // Dir returns the store's base directory.
 func (s *Store) Dir() string { return s.dir }
 
-// Load reads a chat from the active directory (exported for archive).
-func (s *Store) Load(chatID vibekit.ChatID) (*vibekit.Chat, error) { return s.load(chatID) }
-
 // markDeleted records that chatID was just deleted. Mutate calls for
 // the same id within tombstoneTTL will refuse to auto-create.
 func (s *Store) markDeleted(chatID vibekit.ChatID) {
