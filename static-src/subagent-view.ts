@@ -85,6 +85,11 @@ const shown = signal<{ chatID: string; subtaskID: string }>({ chatID: "", subtas
  *  second consumer of that page rather than a second page. */
 let page: ExecPageView | undefined;
 let pageKey = "";
+// The subtask `pageKey`'s render was FILED under, which is not `shown`'s on a switch:
+// mountPage drops the old page before the new key is adopted, so reading the visible
+// subtask there asks disposeDetachedBody for a render nobody created and leaks the one
+// that exists — its sinks then answer detachedHolds for a page whose DOM is gone.
+let pageSubtask = "";
 
 /** The block shape already mounted into the detail host.
  *
@@ -180,7 +185,7 @@ function paint(
   // is one shared element, and a page cached against a detached container would send
   // every render into DOM nobody can see.
   const kept = pageKey === key && page?.root.parentElement === host ? page : undefined;
-  const view = kept ?? mountPage(host, key);
+  const view = kept ?? mountPage(host, key, subtaskID);
   view.render(subagentToExec(messages, subtaskID, slice));
 
   // The delegate's transcript, into the host the detail pane hands out for its node.
@@ -209,7 +214,7 @@ function paint(
 }
 
 /** Build the page into `#subagent-body`, replacing whatever was there. */
-function mountPage(host: HTMLElement, key: string): ExecPageView {
+function mountPage(host: HTMLElement, key: string, subtaskID: string): ExecPageView {
   dropPage();
   const built = buildExecPage({
     emptyNote: emptyNote,
@@ -219,6 +224,7 @@ function mountPage(host: HTMLElement, key: string): ExecPageView {
   });
   page = built;
   pageKey = key;
+  pageSubtask = subtaskID;
   renderedShape = [];
   sealed = false;
   host.replaceChildren(built.root);
@@ -228,11 +234,12 @@ function mountPage(host: HTMLElement, key: string): ExecPageView {
 /** Release the page and the render it holds. Idempotent. */
 function dropPage(): void {
   if (pageKey !== "") {
-    disposeDetachedBody(pageKey, shown.peek().subtaskID);
+    disposeDetachedBody(pageKey, pageSubtask);
   }
   page?.dispose();
   page = undefined;
   pageKey = "";
+  pageSubtask = "";
   renderedShape = [];
   sealed = false;
 }
