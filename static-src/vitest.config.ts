@@ -273,11 +273,24 @@ export default defineConfig({
     coverage: {
       provider: "v8",
 
-      // Report all TS source files, not just those imported by tests.
-      include: ["*.ts", "handlers/*.ts"],
+      // Report all TS source files, not just those imported by tests. The `**/`
+      // is load-bearing on vitest 5: it matches include/exclude against the
+      // root-relative path without picomatch's `contains`, so a bare `*.ts`
+      // reaches only the top level and silently stops measuring every nested
+      // directory (actions/, exec-view/, fundamentals/, lib/, wire/).
+      //
+      // `node_modules/**` is equally load-bearing and must not be dropped: this
+      // list feeds tinyglobby's `ignore` for untested-file discovery, and `**/*.ts`
+      // without it walks the dependency tree (measured: 4439 extra files).
+      include: ["**/*.ts"],
       exclude: [
-        "*.test.ts",
-        "*.d.ts",
+        "node_modules/**",
+        "**/.stryker-tmp/**",
+        "**/*.test.ts",
+        "**/*.d.ts",
+        // Test-only helpers, imported by tests and shipped to nobody. Same
+        // classification @cplieger/actions makes with "src/test-helpers/**".
+        "**/__test-helpers__/**",
         // sw.ts: service worker — runs in ServiceWorkerGlobalScope, not
         // Window, so a page-context runner cannot host PushEvent /
         // NotificationEvent / ServiceWorkerRegistration either.
