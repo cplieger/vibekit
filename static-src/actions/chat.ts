@@ -17,12 +17,15 @@ import {
 import type {
   ChatHeader,
   PendingSteer,
-  ResumableSessionRow,
   Session,
+  SessionListResponse,
   TabSubject,
-  WorkflowRunRow,
 } from "../types.js";
-import { decodeChatHeader, decodeTabSubject } from "../wire/decoders.gen.js";
+import {
+  decodeChatHeader,
+  decodeSessionListResponse,
+  decodeTabSubject,
+} from "../wire/decoders.gen.js";
 import {
   get,
   setThinking,
@@ -390,16 +393,21 @@ export const setMode = transportAction<{ chatID: string; modeID: string }, { pre
 
 // --- chat.restore ---
 
+/** The History picker's inventory. Read through the GENERATED decoder, because
+ *  the reply's two per-list verdicts are what the picker branches on to say
+ *  whether there is nothing to resume or the read failed — a claim with no
+ *  decoder behind it would let an absent verdict read as success. */
 export const loadSessions = apiAction<
   // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
   void,
-  { sessions: ResumableSessionRow[]; runs: WorkflowRunRow[] }
+  SessionListResponse
 >({
   name: "chat.load_sessions",
   dedupe: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   request: () => ({ method: "GET", path: "/api/sessions" }),
+  decode: decodeSessionListResponse,
   error: "Couldn't load previous sessions",
 });
 

@@ -27,6 +27,15 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 	if json.Unmarshal(raw, &tc) != nil {
 		return
 	}
+	// The run's idle window, reported ABOVE EVERY GUARD BELOW: all of those are
+	// RENDERING decisions (do not draw a hook card, do not fold engine bookkeeping
+	// into a turn) and this is ENFORCEMENT, so sat under them a display preference
+	// decides a cancellation — with hooks.showStatus off, a step whose frames are hook
+	// asks stops refilling its run's window. It is DELIBERATELY apart from
+	// countStepTurn below, which needs the step key this does not: they are two bounds
+	// talking to one host, and folding them together would also skip progress for a
+	// step whose key is empty, which countStepTurn tolerates.
+	t.reportRunProgress(tc.Meta.Kiro.Workflow)
 	// Hook status suppression. On v3 (KAS) a pre-tool-use hook's
 	// ask-permission gate arrives as a kind:"other" tool call tagged
 	// _meta.kiro.hookAsk. When hooks.showStatus is off, drop the

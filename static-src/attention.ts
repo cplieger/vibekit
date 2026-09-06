@@ -48,7 +48,19 @@ import { $ } from "./dom.js";
  *  that ticked up while an agent worked would nag with nothing to act on.
  *  `dirty` is the editor's unsaved mark, which rides the same dot element and is
  *  not a chat state at all — it is excluded here AND by the candidate filter
- *  (tabs.ts `cueCandidates`), so it cannot reach the fold by either route. */
+ *  (tabs.ts `cueCandidates`), so it cannot reach the fold by either route.
+ *
+ *  `done` MEANS A TURN ENDED, not that it succeeded, so a turn the user cancelled
+ *  and one whose stop reason vibekit could not read raise this cue exactly like a
+ *  turn that finished with an answer (user ratification, 2026-09-04). It follows
+ *  from what these surfaces are FOR — the header above states it: a latched dot is
+ *  not reliably on screen, so the cue is that dot carried off-page, and a cue that
+ *  disagreed with the dot would be a second verdict on one chat. The case for
+ *  declining was that a stop is the reader's own doing and wants nothing from
+ *  them; it lost because a stop performed on ANOTHER device is news to this one,
+ *  and because `unknown` is a turn nobody could grade. Do not add a per-outcome
+ *  carve-out — the only place one could go is `cueCandidates`, and
+ *  `tabs.test.ts` pins that projection as verbatim. */
 export type CueStatus = "input" | "waiting" | "failed" | "done";
 
 /** Severity order over CueStatus, most severe first, AND the complete set: this
@@ -96,7 +108,8 @@ export function worseCue(a: CueStatus | "", b: CueStatus | ""): CueStatus | "" {
  *  favicon-variants.test.ts pins.
  *
  *  A Record rather than a switch, so the map is exhaustive over CueStatus by type
- *  and a new cue cannot ship unmapped (the same reason DOT_PHRASE is one). */
+ *  and a new cue cannot ship unmapped (the same reason tabs.ts's DOT_SUBJECT and
+ *  NEUTRAL_PHRASE are). */
 const CUE_ICON: Readonly<Record<CueStatus, "input" | "done" | "alert">> = {
   input: "input",
   waiting: "input",

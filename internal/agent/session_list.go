@@ -56,9 +56,10 @@ type kasSessionRow struct {
 // handleSessionList: GET /api/sessions → the workspace's resumable sessions,
 // newest first.
 //
-// Degrades to an empty list on every failure, matching /api/config-template:
-// the picker is an affordance, not a correctness surface, and an empty list
-// reads as "nothing to resume" rather than breaking the view.
+// Still answers 200 with an empty list on failure — the picker is an affordance,
+// not a correctness surface — but it now SAYS which happened, per list. Answering
+// an empty list alone was copied from /api/config-template with that endpoint's
+// defect: "nothing to resume" and "the read failed" were byte-identical.
 func (rt *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -66,19 +67,25 @@ func (rt *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 	}
 	// Chats and runs degrade INDEPENDENTLY: a workflow-list failure must not
 	// blank the chat list, and vice versa. They are separate verbs on the same
-	// bridge, so one can fail on its own.
+	// bridge, so one can fail on its own — which is why each carries its own
+	// verdict.
 	claimed := rt.claimedSessions(r.Context())
+	out := vibekit.SessionListResponse{SessionsState: vibekit.ReadReady, RunsState: vibekit.ReadReady}
 	rows, err := rt.resumableSessions(r.Context(), claimed)
 	if err != nil {
 		slog.Warn("session list failed", "error", err)
 		rows = []vibekit.ResumableSession{}
+		out.SessionsState = vibekit.ReadUnavailable
 	}
 	runs, rErr := rt.runs.list(r.Context(), claimed)
 	if rErr != nil {
 		slog.Warn("workflow run list failed", "error", rErr)
 		runs = []vibekit.WorkflowRun{}
+		out.RunsState = vibekit.ReadUnavailable
 	}
-	webhttp.WriteJSON(w, map[string]any{"sessions": rows, "runs": runs})
+	out.Sessions = rows
+	out.Runs = runs
+	webhttp.WriteJSON(w, out)
 }
 
 // resumableSessions fetches and filters the workspace's stored sessions.

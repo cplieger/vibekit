@@ -137,7 +137,16 @@ func TestEmitTurnEnded_CancelledAppendsEventMessage(t *testing.T) {
 	}
 }
 
-func TestEmitTurnEnded_NoBufferNoMessagePersisted(t *testing.T) {
+// A turn that streamed nothing persists no ASSISTANT message — there is no content
+// to persist — and exactly one row: the outcome marker that says how it ended.
+//
+// The marker half used to be asserted the other way round, on the reasoning that a
+// clean prompted turn's `completed` marker states only the derivation's default. It
+// is written now because that default was the reader guessing, and it could only
+// guess safely while the writer omitted the fact — so a clean empty turn and one a
+// restart killed were the same bytes on disk. This is the LOCAL settle door;
+// turn_outcome_test.go pins the same conclusion through the wire bracket.
+func TestEmitTurnEnded_NoBufferPersistsOnlyTheOutcomeMarker(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -145,8 +154,15 @@ func TestEmitTurnEnded_NoBufferNoMessagePersisted(t *testing.T) {
 	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
 
 	c, _ := cs.Get(t.Context(), "c1")
-	if len(c.Messages) != 0 {
-		t.Errorf("messages = %+v (expected none)", c.Messages)
+	if len(c.Messages) != 1 {
+		t.Fatalf("messages = %+v, want exactly the outcome marker", c.Messages)
+	}
+	m := &c.Messages[0]
+	if m.Role != vibekit.RoleEvent || m.EventKind != vibekit.EventTurnOutcome {
+		t.Errorf("persisted %+v, want an event/turn_outcome marker and no assistant message", m)
+	}
+	if m.TurnOutcome != vibekit.TurnOutcomeCompleted {
+		t.Errorf("marker TurnOutcome = %q, want completed", m.TurnOutcome)
 	}
 }
 

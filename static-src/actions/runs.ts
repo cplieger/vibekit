@@ -12,9 +12,9 @@ import type {
   RunAnswerRequest,
   RunLaunchRequest,
   RunLaunchedResponse,
-  WorkflowRunRow,
-  ResumableSessionRow,
+  SessionListResponse,
 } from "../types.js";
+import { decodeSessionListResponse } from "../wire/decoders.gen.js";
 
 /** The launchable recipe list, bundled + workspace. */
 export const loadRecipes = apiAction<
@@ -37,13 +37,17 @@ export const loadRecipes = apiAction<
 export const loadRuns = apiAction<
   // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
   void,
-  { sessions: ResumableSessionRow[]; runs: WorkflowRunRow[] }
+  SessionListResponse
 >({
   name: "runs.list",
   dedupe: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   request: () => ({ method: "GET", path: "/api/sessions" }),
+  // One endpoint, one decoded shape: this and chat.load_sessions read the same
+  // reply, so a second structural claim here is the drift the generated type
+  // removes.
+  decode: decodeSessionListResponse,
   error: false,
 });
 
@@ -107,10 +111,15 @@ export const resumeRun = runControl("resume", "Couldn't resume the run");
 /** Answer the question a parked workflow step asked.
  *
  *  The server claims the ask BEFORE it sends, so exactly one surface can answer it
- *  — two browser tabs and a run tab are all offered the same card. A 409 means
- *  somebody else got there first or the step moved on, and the card is retired by
- *  the `run_input_settled` frame either way, so the message is worth showing but
- *  there is nothing for the reader to redo.
+ *  — two browser tabs and a run tab are all offered the same card. A 409 has TWO
+ *  causes and the server's own sentence is what separates them, which is why this
+ *  action shows that sentence alone. Somebody else got there first, or the step
+ *  moved on: settled, the card retired by the `run_input_settled` frame, nothing to
+ *  redo. Or the run is momentarily BETWEEN steps (a resume on its way back to the
+ *  same park): the QUESTION is held rather than discarded server-side and comes back
+ *  on a fresh `run_input_needed`, the WORDS are held client-side by the dock (which
+ *  splices the card at the click, so the re-offered box would otherwise be empty),
+ *  and the sentence says to try again.
  *
  *  NO argument-composite idempotency key, deliberately: inside that cache's window
  *  a repeated dispatch replays a cached success and never runs, and a re-sent

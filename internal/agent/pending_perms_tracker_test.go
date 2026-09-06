@@ -217,3 +217,93 @@ func TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID(t *testing.T) {
 		t.Error(`TakeIfPresent("chat-4", 7) succeeded against chat-3's request`)
 	}
 }
+
+// requestIDOf reads one replayed card's request id, whichever of the three kinds
+// it is. `listIDs` above cannot serve: it fails the test on any payload that is
+// not a permission, and this table mixes all three deliberately.
+func requestIDOf(t *testing.T, evt vibekit.ServerEvent) int64 {
+	t.Helper()
+	switch p := evt.Payload.(type) {
+	case vibekit.PermissionNeededPayload:
+		return p.RequestID
+	case vibekit.ElicitationNeededPayload:
+		return p.RequestID
+	case vibekit.UserInputNeededPayload:
+		return p.RequestID
+	default:
+		t.Fatalf("replayed event carries payload %T, want one of the three *_needed payloads", evt.Payload)
+		return 0
+	}
+}
+
+// TestClearForRun_DropsOnlyTheNamedRunsDecisions pins the run-scoped clear's
+// predicate: the run comes off the PAYLOAD, because the key does not carry one.
+//
+// The permission and elicitation rows are the load-bearing ones. All four kinds a
+// step can raise are run-scoped — `permission_needed` and `elicitation_needed`
+// carry a `RunID` exactly as `user_input_needed` does — so a clear that named only
+// the question kind would leave two thirds of the population behind.
+func TestClearForRun_DropsOnlyTheNamedRunsDecisions(t *testing.T) {
+	t.Parallel()
+	const launching vibekit.ChatID = "c-parent"
+	entries := []struct {
+		id      int64
+		name    string
+		payload any
+		// survives says the entry must still be replayable after ClearForRun("wf_1").
+		survives bool
+	}{
+		{1, "a step's question", vibekit.UserInputNeededPayload{RequestID: 1, RunID: "wf_1"}, false},
+		{2, "a step's permission", vibekit.PermissionNeededPayload{RequestID: 2, RunID: "wf_1"}, false},
+		{3, "a step's elicitation", vibekit.ElicitationNeededPayload{RequestID: 3, RunID: "wf_1"}, false},
+		// A SIBLING run launched from the same chat shares the launching chat's
+		// entries, so the clear has to separate them by run rather than by chat.
+		{4, "a sibling run's question", vibekit.UserInputNeededPayload{RequestID: 4, RunID: "wf_2"}, true},
+		// An ordinary chat ask carries no run at all, and it still blocks a live
+		// turn with a card that can answer it.
+		{5, "the chat's own permission", vibekit.PermissionNeededPayload{RequestID: 5}, true},
+	}
+	kindOf := map[int64]vibekit.EventType{
+		1: vibekit.EventUserInputNeeded, 2: vibekit.EventPermissionNeeded,
+		3: vibekit.EventElicitationNeeded, 4: vibekit.EventUserInputNeeded,
+		5: vibekit.EventPermissionNeeded,
+	}
+	tracker := newPendingPermsTracker()
+	for _, e := range entries {
+		tracker.Add(e.id, vibekit.NewEvent(kindOf[e.id], launching, e.payload))
+	}
+
+	tracker.ClearForRun("wf_1")
+
+	left := map[int64]bool{}
+	for _, evt := range tracker.List("") {
+		left[requestIDOf(t, evt)] = true
+	}
+	for _, e := range entries {
+		t.Run(e.name, func(t *testing.T) {
+			if left[e.id] != e.survives {
+				verb := "survived the run's end"
+				if e.survives {
+					verb = "was swept by another run's end"
+				}
+				t.Errorf("request %d (%s) %s", e.id, e.name, verb)
+			}
+		})
+	}
+}
+
+// TestClearForRun_RefusesAnEmptyRunID: `RunID` is empty on every ordinary chat
+// ask, so an empty argument would match the whole tracker rather than one run —
+// and the id arrives off a wire frame.
+func TestClearForRun_RefusesAnEmptyRunID(t *testing.T) {
+	t.Parallel()
+	tracker := newPendingPermsTracker()
+	tracker.Add(1, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
+		vibekit.PermissionNeededPayload{RequestID: 1}))
+
+	tracker.ClearForRun("")
+
+	if got := len(tracker.List("")); got != 1 {
+		t.Errorf("an empty run id left %d cards, want the chat's own 1", got)
+	}
+}

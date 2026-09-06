@@ -32,6 +32,12 @@ package translate
 //  3. Both compaction markers arrive at the tail, after every original
 //     turn, and the separator carries no message id. So "the segment
 //     before the separator" is the only thing the wire can mean.
+//
+// A separator arriving MID-TURN therefore splits that turn — closeTurn seals
+// segment 1, the following content frames open a second — which is what makes this
+// path agree with the live one, where the compaction frame seals the same boundary
+// itself (agent.BridgeCoordinator.SealTurnSegment). Both produce
+// [pre, event, post], so a chat's transcript does not change shape on reload.
 
 import (
 	"encoding/json"

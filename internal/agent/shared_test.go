@@ -151,13 +151,25 @@ func mustJSON(t testing.TB, v any) json.RawMessage {
 // builder callable from a fake must not be able to end a test from another
 // goroutine (go-rulebook §7).
 func newChunkMsg(text string) *vibekit.RPCResponse {
+	return newSessionChunkMsg("", text)
+}
+
+// newSessionChunkMsg is newChunkMsg with the envelope's `sessionId` set, which
+// is what every real frame carries and what the utility bridge's own-session
+// screen reads. An empty id omits the key, for the callers that only care about
+// the `update` object.
+func newSessionChunkMsg(sessionID, text string) *vibekit.RPCResponse {
 	update, _ := json.Marshal(map[string]any{
 		"sessionUpdate": "agent_message_chunk",
 		"content":       map[string]any{"type": "text", "text": text},
 	})
 	// json.RawMessage, not []byte: a []byte field marshals to a base64 STRING,
 	// which decodes as no frame at all.
-	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
+	env := map[string]any{"update": json.RawMessage(update)}
+	if sessionID != "" {
+		env["sessionId"] = sessionID
+	}
+	params, _ := json.Marshal(env)
 	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
 }
 

@@ -20,6 +20,21 @@ function line(el: HTMLElement): string {
   return el.querySelector(".turn-ledger-text")?.textContent ?? "";
 }
 
+/** The turn's own time, which left the ledger string for a right-aligned slot of
+ *  its own. Returns "" for a turn with no duration, matching the element's own
+ *  empty state. */
+function elapsed(el: HTMLElement): string {
+  return el.querySelector(".turn-elapsed")?.textContent ?? "";
+}
+
+function elapsedEl(el: HTMLElement): HTMLTimeElement {
+  const t = el.querySelector<HTMLTimeElement>(".turn-elapsed");
+  if (t === null) {
+    throw new Error("no .turn-elapsed");
+  }
+  return t;
+}
+
 function summary(el: HTMLElement): HTMLButtonElement {
   const b = el.querySelector<HTMLButtonElement>(".turn-ledger-summary");
   if (b === null) {
@@ -38,23 +53,17 @@ const TWO_FILES = {
 };
 
 describe("the aggregate row", () => {
-  it("uses one decimal second for sub-minute elapsed", () => {
-    expect(line(buildTurnFooter({ elapsedMs: 45500 }))).toBe("45.5s");
+  it("leaves the duration out of the ledger string entirely", () => {
+    // It used to be the sixth of up to seven `·`-separated parts, buried in a line
+    // that otherwise reports cost. Its own slot is asserted in "the turn's own
+    // time" below; here the point is that the string no longer carries it.
+    const el = buildTurnFooter({ elapsedMs: 45500 });
+    expect(line(el)).toBe("");
+    expect(elapsed(el)).toBe("45.5s");
   });
 
-  it("splits minute+ elapsed into m and s", () => {
-    expect(line(buildTurnFooter({ elapsedMs: 90000 }))).toBe("1m 30s");
-  });
-
-  it("floors the seconds in the minute branch (no round-up to 60)", () => {
-    expect(line(buildTurnFooter({ elapsedMs: 119999 }))).toBe("1m 59s");
-  });
-
-  it("joins credits and elapsed", () => {
-    expect(line(buildTurnFooter({ credits: 1.5, elapsedMs: 2000 }))).toBe("1.50 cr \u00b7 2.0s");
-  });
-
-  it("renders credits alone without an elapsed segment", () => {
+  it("renders credits without an elapsed segment beside them", () => {
+    expect(line(buildTurnFooter({ credits: 1.5, elapsedMs: 2000 }))).toBe("1.50 cr");
     expect(line(buildTurnFooter({ credits: 0.5 }))).toBe("0.50 cr");
   });
 
@@ -69,11 +78,35 @@ describe("the aggregate row", () => {
     expect(line(buildTurnFooter({ commands: 1, reads: 1 }))).toBe("1 cmd \u00b7 1 read");
   });
 
-  it("leads with the outcome when the turn did not finish cleanly", () => {
-    expect(line(buildTurnFooter({ outcome: "interrupted", elapsedMs: 1000 }))).toBe(
-      "Interrupted \u00b7 1.0s",
-    );
+  it("leads with the outcome for EVERY turn that did not finish cleanly", () => {
+    // Total over the five glyph-bearing outcomes, and three of them used to say
+    // their name only in a `data-tooltip` — which is no channel at all on a touch
+    // device, so a cancelled, refused or unknown turn rendered a coloured 8px
+    // circle leading a cost line with nothing anywhere explaining the circle. Same
+    // class of defect as the hollow tab dot: a status reachable only by a gesture
+    // the reader may never make.
+    expect(line(buildTurnFooter({ outcome: "interrupted", elapsedMs: 1000 }))).toBe("Interrupted");
     expect(line(buildTurnFooter({ outcome: "failed" }))).toBe("Failed");
+    expect(line(buildTurnFooter({ outcome: "refused" }))).toBe("Refused");
+    expect(line(buildTurnFooter({ outcome: "cancelled" }))).toBe("Cancelled");
+    expect(line(buildTurnFooter({ outcome: "unknown" }))).toBe("Outcome unknown");
+  });
+
+  it("leads with nothing for the two outcomes that carry no glyph", () => {
+    // The absence of a mark IS the clean case, and the footer reports how a turn
+    // ENDED rather than one still going, so neither has a circle to explain.
+    expect(line(buildTurnFooter({ outcome: "completed", commands: 1 }))).toBe("1 cmd");
+    expect(line(buildTurnFooter({ outcome: "running", commands: 1 }))).toBe("1 cmd");
+  });
+
+  it("never opens with a cost on a turn that ended badly", () => {
+    // The property behind the two cases above, stated so a sixth outcome cannot
+    // quietly land on a line that opens with credits. A reader scanning a
+    // transcript must not have to reach the glyph to know a turn failed.
+    for (const outcome of ["cancelled", "interrupted", "failed", "refused", "unknown"] as const) {
+      const text = line(buildTurnFooter({ outcome, credits: 1.5, elapsedMs: 1000 }));
+      expect(text, `${outcome} leads with a word`).not.toMatch(/^[\d.]/u);
+    }
   });
 
   it("orders files before non-file work before cost", () => {
@@ -87,13 +120,14 @@ describe("the aggregate row", () => {
           elapsedMs: 1000,
         }),
       ),
-    ).toBe("1 file +1 \u00b7 2 cmds \u00b7 1 read \u00b7 0.50 cr \u00b7 1.0s");
+    ).toBe("1 file +1 \u00b7 2 cmds \u00b7 1 read \u00b7 0.50 cr");
   });
 
   it("recomputes in place", () => {
     const el = buildTurnFooter({ credits: 0.5 });
     updateTurnFooter(el, { credits: 1, elapsedMs: 3000 });
-    expect(line(el)).toBe("1.00 cr \u00b7 3.0s");
+    expect(line(el)).toBe("1.00 cr");
+    expect(elapsed(el)).toBe("3.0s");
   });
 
   // Which model, last on the line: it answers "who did this" rather than "what
@@ -113,6 +147,89 @@ describe("the aggregate row", () => {
   it("renders nothing rather than 'unknown' for a turn with no model", () => {
     expect(line(buildTurnFooter({ credits: 0.5 }))).toBe("0.50 cr");
     expect(line(buildTurnFooter({ credits: 0.5, models: [] }))).toBe("0.50 cr");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The turn's own time, in its own slot.
+//
+// It was one `·`-separated part of the ledger string, sixth of up to seven, in a
+// line that otherwise reports cost — so "how long did that take", which a reader
+// asks of a turn often, was the hardest thing on the row to find. It now sits
+// right-aligned in a `<time>` of its own, revealed on hover of the card.
+// ---------------------------------------------------------------------------
+
+describe("the turn's own time", () => {
+  it("renders the same span the ledger used to spell", () => {
+    // The thresholds are `formatElapsed`'s and did not move: a tenth of a second
+    // below a minute, whole seconds above it, floored rather than rounded.
+    expect(elapsed(buildTurnFooter({ elapsedMs: 45500 }))).toBe("45.5s");
+    expect(elapsed(buildTurnFooter({ elapsedMs: 90000 }))).toBe("1m 30s");
+    expect(elapsed(buildTurnFooter({ elapsedMs: 119999 }))).toBe("1m 59s");
+    expect(elapsed(buildTurnFooter({ elapsedMs: 7_200_000 }))).toBe("2h 0m");
+  });
+
+  it("carries a machine-readable duration beside the text", () => {
+    // What a `<time>` is FOR, and it costs nothing: both spellings come from one
+    // value, so they cannot disagree.
+    expect(elapsedEl(buildTurnFooter({ elapsedMs: 92000 })).dateTime).toBe("PT1M32S");
+    expect(elapsedEl(buildTurnFooter({ elapsedMs: 400 })).dateTime).toBe("PT0.4S");
+    expect(elapsedEl(buildTurnFooter({ elapsedMs: 7_200_000 })).dateTime).toBe("PT2H");
+  });
+
+  it("makes no claim at all for a turn that has no duration", () => {
+    // Not a zero span: a duration nobody stamped is not a duration of zero, and a
+    // `<time>` with neither a `datetime` nor valid content is not a conforming
+    // `<time>` — so the element is emptied AND hidden rather than asserting `PT0S`.
+    const el = buildTurnFooter({ credits: 1 });
+    expect(elapsed(el)).toBe("");
+    expect(elapsedEl(el).hasAttribute("datetime")).toBe(false);
+    expect(elapsedEl(el).hidden).toBe(true);
+  });
+
+  it("clears itself when a repaint drops the duration", () => {
+    const el = buildTurnFooter({ elapsedMs: 3000 });
+    expect(elapsedEl(el).hasAttribute("datetime")).toBe(true);
+    expect(elapsedEl(el).hidden).toBe(false);
+    updateTurnFooter(el, { credits: 1 });
+    expect(elapsed(el)).toBe("");
+    expect(elapsedEl(el).hasAttribute("datetime")).toBe(false);
+    expect(elapsedEl(el).hidden).toBe(true);
+  });
+
+  it("comes back when a later repaint has one", () => {
+    // The reachable direction: `updateTurnFooter` runs on every paint and a turn's
+    // duration is stamped at turn end, so the footer exists before the value does.
+    const el = buildTurnFooter({ commands: 2 });
+    expect(elapsedEl(el).hidden).toBe(true);
+    updateTurnFooter(el, { commands: 2, elapsedMs: 3000 });
+    expect(elapsed(el)).toBe("3.0s");
+    expect(elapsedEl(el).hidden).toBe(false);
+  });
+
+  it("is the footer's own child, so the grid can place it", () => {
+    // `:scope >` is how every one of the footer's own readers addresses its parts,
+    // and the stylesheet places this one by `.turn-footer > .turn-elapsed`.
+    const el = buildTurnFooter({ elapsedMs: 1000 });
+    expect(el.querySelector(":scope > .turn-elapsed")).not.toBeNull();
+  });
+
+  it("still reaches a screen reader through the summary's accessible name", () => {
+    // The channel the duration had, and it left `line` when it moved. The slot is
+    // NOT a replacement for it: the slot is revealed on hover, and a label on the
+    // button beside it says nothing about a sibling.
+    const el = buildTurnFooter({ credits: 1.5, elapsedMs: 92000 });
+    expect(summary(el).getAttribute("aria-label")).toBe("Turn summary: 1.50 cr \u00b7 1m 32s");
+  });
+
+  it("names the duration even when the ledger line is otherwise empty", () => {
+    expect(summary(buildTurnFooter({ elapsedMs: 2000 })).getAttribute("aria-label")).toBe(
+      "Turn summary: 2.0s",
+    );
+  });
+
+  it("leaves the label alone for a turn with neither", () => {
+    expect(summary(buildTurnFooter({})).getAttribute("aria-label")).toBe("Turn summary");
   });
 });
 
@@ -303,26 +420,22 @@ describe("the ledger's hover text", () => {
     expect(tip(footer)).not.toContain(line(footer));
   });
 
-  it("names the outcome the glyph stands for when the line does not", () => {
-    // `summaryLine` leads with a word only for `interrupted` and `failed`, so a
-    // cancelled turn shows a coloured circle the row says nothing about.
-    const footer = buildTurnFooter({ outcome: "cancelled", commands: 1 });
-    expect(tip(footer)).toBe("Cancelled");
+  it("carries NO outcome clause at all, because the line names every outcome now", () => {
+    // REWRITTEN twice, and this is the shape that ends it. The clause existed for
+    // the three outcomes `summaryLine` left unnamed, which made a hover the only
+    // explanation of a coloured circle — the same defect as `running`'s "Still
+    // running" tooltip that a previous pass removed for exactly this reason. With
+    // OUTCOME_LEAD total there is nothing left for the tooltip to add, so it is
+    // gone rather than made conditional.
+    for (const outcome of ["cancelled", "refused", "unknown", "failed", "interrupted"] as const) {
+      const footer = buildTurnFooter({ outcome, commands: 1 });
+      expect(line(footer), `${outcome} names itself in the row`).not.toBe("1 cmd");
+      expect(tip(footer), `${outcome} adds no hover clause`).toBeNull();
+    }
   });
 
-  it("says nothing about a running turn, which no longer carries a glyph", () => {
-    // REWRITTEN, not weakened: this case asserted "Still running", which was the
-    // one state in the app whose whole explanation was a hover. The footer reports
-    // how a turn ENDED — 29-turns.css folds `running` into `completed`'s
-    // `display: none` — so there is no circle left to name, and a tooltip naming
-    // an invisible mark is worse than none.
+  it("says nothing about a running turn, which carries no glyph", () => {
     const footer = buildTurnFooter({ outcome: "running", commands: 1 });
-    expect(tip(footer)).toBeNull();
-  });
-
-  it("does not repeat an outcome the line already leads with", () => {
-    const footer = buildTurnFooter({ outcome: "failed", commands: 1 });
-    expect(line(footer)).toContain("Failed");
     expect(tip(footer)).toBeNull();
   });
 
@@ -343,14 +456,17 @@ describe("the ledger's hover text", () => {
     expect(tip(footer)).toBeNull();
   });
 
-  it("carries both clauses when both apply", () => {
-    // `running` used to be this case's outcome; it names nothing now, so the pair
-    // is demonstrated with one that still does.
+  it("carries the disclosure clause ALONE, even on an outcome that has a glyph", () => {
+    // This case asserted two clauses joined by the separator, and it is down to one
+    // because the outcome half moved into the row itself. The pin that matters is
+    // that the outcome is NOT repeated here: the line already leads with it, and
+    // restating it was the defect the two-clause split existed to avoid.
     const footer = buildTurnFooter({
       outcome: "cancelled",
       changedFiles: { "a.ts": { lines_added: 1, lines_removed: 0 } },
     });
-    expect(tip(footer)).toBe("Cancelled \u00b7 Show the changed files");
+    expect(tip(footer)).toBe("Show the changed files");
+    expect(line(footer)).toContain("Cancelled");
   });
 
   it("puts the styled tooltip on the file row too, not a native title", () => {

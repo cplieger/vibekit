@@ -98,9 +98,23 @@ export const ICON_SPARKLE = svg(
 // geometry does not move with the browser's font metrics.
 export const ICON_SPINNER =
   '<svg class="icon-spinner ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-9 9"/></svg>';
+/* A SYMMETRIC hourglass, and the redraw is a bug fix rather than a restyle: the
+ * closed outline this replaces had its two waist arcs bulging OUTWARD, so it
+ * rendered as two stacked lozenges with a flat square top and a 3-unit rounded
+ * bottom — a figure-8, not a funnel, and at 13.6px an unreadable blob.
+ *
+ * Two cap bars plus two chambers, mirrored about x=12 AND y=12. Every
+ * coordinate is ABSOLUTE so `icon-hourglass.test.ts` reads both axes straight
+ * off the string; a relative form would hide a drift behind its deltas. Sized
+ * for the steer dock's 13.6px, where one unit is 0.57 CSS px and the stroke is a
+ * flat 1 CSS px (`vector-effect: non-scaling-stroke`, 03-base.css): the caps
+ * overhang each chamber by 1.5 units, which is what reads as an hourglass rather
+ * than an X once the taper itself is under 3 px wide. */
 export const ICON_HOURGLASS = svg(
   "ui",
-  '<path d="M6 2h12v3a6 6 0 01-3 5.2 6 6 0 013 5.2V19a3 3 0 01-3 3H9a3 3 0 01-3-3v-3.6a6 6 0 013-5.2A6 6 0 016 5z"/>',
+  '<path d="M5.5 2.5H18.5M5.5 21.5H18.5"/>' +
+    '<path d="M7 2.5V4.9L12 12L17 4.9V2.5"/>' +
+    '<path d="M7 21.5V19.1L12 12L17 19.1V21.5"/>',
 );
 // The one-button activity control's Cancel face: a stop square. Filled — the
 // outline family reads as a checkbox at 16px, and stop-is-filled is the
@@ -108,6 +122,15 @@ export const ICON_HOURGLASS = svg(
 export const ICON_CANCEL = svg(
   "ui",
   '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
+);
+// The turn footer's Rewind: transport again, because the control's own name is a
+// transport verb, so it joins `ICON_CANCEL` and `ICON_PLAY` rather than starting a
+// second vocabulary. Filled for `ICON_CANCEL`'s reason — each triangle is ~6px
+// wide at --icon-ui, where a 1px outline around one is a sliver.
+export const ICON_REWIND = svg(
+  "ui",
+  '<polygon points="11 19 2 12 11 5 11 19" fill="currentColor" stroke="none"/>' +
+    '<polygon points="22 19 13 12 22 5 22 19" fill="currentColor" stroke="none"/>',
 );
 
 /* THE MODEL GLYPH — one `d`, two sizes, because it renders at both (20px in
@@ -162,6 +185,10 @@ export const ICON_GIT_DOWN_ARROW = svg("ui", '<path d="M12 5v14M5 12l7 7 7-7"/>'
 export const ICON_REFRESH =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>';
 
+// The funnel: this app's mark for a filter that NARROWS A LIST, and only that.
+// The file browser's changed-by-this-chat toggle is deliberately not a consumer —
+// it sets opacity on the rows the chat did not write and removes nothing, so the
+// funnel would claim an operation it does not perform (user ruling, 2026-09).
 export const ICON_FILTER =
   '<svg class="ic-hero" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
@@ -194,13 +221,16 @@ export const ICON_REPO_EMPTY =
   '<path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>' +
   "</svg>";
 
+// The pull-request glyph (Lucide "git-pull-request"), byte-identical to the one
+// the Pull requests TAB carries in static/index.html. It used to be a different
+// three-circle drawing, so the empty state rendered a second mark for the same
+// concept directly under the tab whose icon named it.
 export const ICON_PR_EMPTY =
   '<svg class="ic-hero" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<circle cx="6" cy="6" r="3"/>' +
-  '<circle cx="6" cy="18" r="3"/>' +
-  '<line x1="6" y1="9" x2="6" y2="15"/>' +
   '<circle cx="18" cy="18" r="3"/>' +
-  '<path d="M18 9a9 9 0 00-9-9"/>' +
+  '<circle cx="6" cy="6" r="3"/>' +
+  '<path d="M13 6h3a2 2 0 012 2v7"/>' +
+  '<line x1="6" y1="9" x2="6" y2="21"/>' +
   "</svg>";
 // Globe with meridian + equator stripes — used by the repo-picker for
 // "remote, not cloned" entries.
@@ -336,11 +366,18 @@ export function toolIcon(kind: ToolKind, title: string): string {
 // appearing beside the first.
 //
 // Road-sign silhouettes, SOLID fills, deliberately neither a checkmark nor an X.
-// Solid because these render at 14px, where a two-feature stroked shape (a wall
-// and a hole inside ~1.5 CSS px) keeps neither — the same reasoning the model
-// glyph's eyes record. The fill goes on the PATH, not on the `<svg>`: `svg()`
-// hard-codes `fill="none" stroke="currentColor"`, and a duplicate attribute
-// appended through `extra` LOSES to the first spelling in HTML parsing.
+// Solid because these render small, where a two-feature stroked shape (a wall and
+// a hole inside ~1.5 CSS px) keeps neither — the same reasoning the model glyph's
+// eyes record. The fill goes on the PATH, not on the `<svg>`: `svg()` hard-codes
+// `fill="none" stroke="currentColor"`, and a duplicate attribute appended through
+// `extra` LOSES to the first spelling in HTML parsing.
+//
+// THE FOOTPRINT IS THE TAB DOT'S, not the `ic-ui` box these sit in. A solid fill
+// spanning that box carries around three times the ink of the stroked glyph it
+// replaces, so it read as the heaviest mark on screen beside an 8px tab dot
+// reporting the same thing. The BOX is unchanged — shrinking it would move the
+// title next to it — and only the drawn shape is smaller. `12-tabs.css` owns both
+// numbers: `--dot-size` for a disc, and a diamond whose DIAGONAL matches it.
 //
 // `warn` and `denied` knock their bar OUT of the disc as one `fill-rule="evenodd"`
 // path rather than painting a second shape over it. A background-coloured bar
@@ -349,34 +386,39 @@ export function toolIcon(kind: ToolKind, title: string): string {
 // paint differently), and a `<mask>` needs an `id` — `iconEl` CLONES each glyph,
 // so N copies of one id would collide in the document.
 
-/** The shared circle: centre (12,12), r=10, so it spans 2..22 on both axes like
- *  the other 15 glyphs. Two semicircles, because a chord equal to the diameter
- *  makes the large-arc flag immaterial. */
-const OUTCOME_DISC = "M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20z";
+/** The shared circle: centre (12,12), r=6, which paints at `--dot-size`. Two
+ *  semicircles, because a chord equal to the diameter makes the large-arc flag
+ *  immaterial. */
+const OUTCOME_DISC = "M12 6a6 6 0 1 0 0 12a6 6 0 1 0 0-12z";
 
 const ICON_OUTCOME_OK = svg("ui", `<path d="${OUTCOME_DISC}" fill="currentColor" stroke="none"/>`);
 
-/** Apex up, base y=20.5 from x=2.5 to 21.5 — base 19, height 17, so near
- *  equilateral and unmistakable against the disc at a glance. */
+/** A DIAMOND, so a failure reads the same here as in the tab strip, and it is the
+ *  same construction as that rule rather than a lookalike: a 6px square with a
+ *  1.5px corner rotated 45 degrees, which is 9 and 2.25 units at this scale. The
+ *  greyscale argument behind the shape is `12-tabs.css`'s, at
+ *  `[data-status="failed"]`. The apex-up triangle it replaces was a second
+ *  failure silhouette for one reader to learn. */
 const ICON_OUTCOME_FAIL = svg(
   "ui",
-  '<path d="M12 3.5L21.5 20.5H2.5z" fill="currentColor" stroke="none"/>',
+  '<rect x="7.5" y="7.5" width="9" height="9" rx="2.25" transform="rotate(45 12 12)" fill="currentColor" stroke="none"/>',
 );
 
-/** Horizontal bar x 5.5..18.5, y 10.25..13.75. The disc's half-chord at y=13.75
- *  is 9.85, so the bar ends 3.35 units short of the rim and the outline stays
+/** Horizontal bar x 8.1..15.9, y 10.75..13.25. The disc's half-chord at y=13.25
+ *  is 5.87, so the bar ends 1.97 units short of the rim and the outline stays
  *  unbroken — which is what separates a stop from a plain disc. */
 const ICON_OUTCOME_WARN = svg(
   "ui",
-  `<path d="${OUTCOME_DISC}M5.5 10.25h13v3.5h-13z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
+  `<path d="${OUTCOME_DISC}M8.1 10.75h7.8v2.5h-7.8z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
 );
 
-/** The same bar at 45 degrees: length 16, thickness 3.5, centred on (12,12). All
- *  four corners sit 8.19 from the centre, so this disc's rim is unbroken too and
- *  only the bar's ANGLE separates a policy refusal from a stop. */
+/** The SAME bar at 45 degrees, so the ANGLE is the whole difference between a
+ *  policy refusal and a stop; its four corners sit 4.1 from the centre, inside the
+ *  rim like the one above. The pair used to differ in LENGTH as well (16 against
+ *  13), which made the angle the weaker of two channels. */
 const ICON_OUTCOME_DENIED = svg(
   "ui",
-  `<path d="${OUTCOME_DISC}M7.58 18.894L18.894 7.58L16.42 5.106L5.106 16.42z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
+  `<path d="${OUTCOME_DISC}M13.874 8.358L15.642 10.126L10.126 15.642L8.358 13.874z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
 );
 
 /** The states the glyph set covers. `ok` is here for the surfaces with no
@@ -506,9 +548,9 @@ export const ICON_TAB_FILES = svg(
   '<path d="M21 19a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h4l2 4h8a2 2 0 012 2z"/>',
 );
 export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
-/** The Kiro configuration browser: an open book. The freed spec-board toolbar
- *  slot, and the one glyph on the page — the categories are text, because a
- *  five-icon set for five word-labelled tabs teaches nothing. */
+/** The Kiro configuration browser: an open book. Also the sidebar button that
+ *  opens the page, which is pinned to this constant by `menu-icons.test.ts` — the
+ *  two used to draw different books. */
 export const ICON_TAB_DOCS = svg(
   "ui",
   '<path d="M2 4.5A2.5 2.5 0 014.5 2H9a2 2 0 012 2v16a1.5 1.5 0 00-1.5-1.5H4.5A2.5 2.5 0 012 16z"/><path d="M22 4.5A2.5 2.5 0 0019.5 2H15a2 2 0 00-2 2v16a1.5 1.5 0 011.5-1.5h5A2.5 2.5 0 0022 16z"/>',

@@ -181,9 +181,13 @@ type Runtime struct {
 	utility       *utilityLease
 	sessionReaper *kirosession.Reaper
 	sessionRefs   func(context.Context) (map[string]struct{}, bool)
-	lines         *buffer.LineTracker
-	agentTerms    *agentTerminals
-	hookStatus    *hookStatusCache
+	// sweepGate closes when this process has become the one SERVING its config
+	// dir, which the destructive session sweep waits for. Nil = no gate, which
+	// is every caller but the composition root. See WithSessionSweepGate.
+	sweepGate  <-chan struct{}
+	lines      *buffer.LineTracker
+	agentTerms *agentTerminals
+	hookStatus *hookStatusCache
 	// authLatch remembers the last outcome of vending a KAS access token, so
 	// readiness can report a dead sign-in without asking kiro-cli (see
 	// bridge_v3_auth.go).
@@ -311,6 +315,18 @@ func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[st
 	}
 }
 
+// WithSessionSweepGate holds the orphan-session sweep until gate closes, which the
+// composition root closes once the listener has SUCCESSFULLY bound.
+//
+// A bind is the cheapest ownership evidence available at boot, and the reaper's root
+// comes from $KIRO_HOME rather than from the config dir, so a boot pointed at the
+// wrong config dir reaps a live instance's session trees. The PERIODIC sweep only;
+// reap-on-delete is unaffected, because there a user gesture named the chat. Measured
+// side effect and the residuals: vibekit-runtime.md "That sweep waits".
+func WithSessionSweepGate(gate <-chan struct{}) Option {
+	return func(h *Runtime) { h.sweepGate = gate }
+}
+
 // New constructs a Runtime. Bridges spawn with a fixed kiro-cli acp arg set
 // (agent engine + model + effort); tool-call authorization is owned by
 // kiro-cli's native Cedar policy on v3, not by CLI trust flags.
@@ -422,6 +438,11 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	runs.translate = h.translator
 	h.dispatcher = command.New()
 	h.registerCommandHandlers()
+	// After the coordinator exists, and before initDispatch registers the run
+	// frames that reach it. The run surface opens a starting run's tab through
+	// it; the coordinator resolves a run's launching chat back through the run
+	// surface. Two directions, one edge each, so neither can be a literal.
+	runs.tabs = h.membership
 	h.initDispatch()
 	if lc.configDir != "" {
 		h.inbound.ignore = ignore.NewMatcher(lc.configDir, workDir)
@@ -533,13 +554,18 @@ func (rt *Runtime) Shutdown(ctx context.Context) error {
 	default:
 		close(rt.lifecycle.done)
 	}
-	rt.lifecycle.shutdownCancel()
 
 	// 1. Stop every bridge so in-flight Calls unblock.
 	bridges := rt.bridge.mgr.drain()
 	for _, sb := range bridges {
 		sb.bridge.Stop()
 	}
+
+	// 1a. Cancelled AFTER the drain, not with the tickers above: drain() empties
+	// the map before any Stop, so the death closer is skipped for every bridge
+	// this teardown kills. Cancelling first left a window where a bridge dying on
+	// its own reached that closer holding a dead context, on an untracked goroutine.
+	rt.lifecycle.shutdownCancel()
 
 	// 1b. There is no pending-write flush at shutdown any more. KAS holds the
 	// writes now, so no vibekit goroutine is parked waiting on a verdict.
@@ -659,12 +685,15 @@ func (rt *Runtime) refuseWhenDraining(next http.Handler) http.Handler {
 // its initial boot pass.
 const sweepSessionsInterval = 1 * time.Hour
 
-// sweepSessionsLoop runs an initial orphan-session sweep at startup, then
-// repeats every sweepSessionsInterval until shutdown. It reaps on-disk KAS
-// session state left behind by archived-chat purges, crashes, or a pre-v3
-// install.
+// sweepSessionsLoop runs an initial orphan-session sweep once this process owns
+// its config dir, then repeats every sweepSessionsInterval until shutdown. It
+// reaps on-disk KAS session state left behind by archived-chat purges, crashes,
+// or a pre-v3 install.
 func (rt *Runtime) sweepSessionsLoop() {
 	if rt.sessionReaper == nil || rt.sessionRefs == nil {
+		return
+	}
+	if !rt.awaitSweepGate() {
 		return
 	}
 	rt.sweepSessionsOnce()
@@ -677,6 +706,23 @@ func (rt *Runtime) sweepSessionsLoop() {
 		case <-ticker.C:
 			rt.sweepSessionsOnce()
 		}
+	}
+}
+
+// awaitSweepGate blocks until this process may reap, reporting false when
+// shutdown came first. A nil gate proceeds at once (WithSessionSweepGate).
+//
+// Waiting rather than skipping: the gate closes milliseconds after Build returns,
+// so a skip would trade a destructive boot for never reclaiming anything.
+func (rt *Runtime) awaitSweepGate() bool {
+	if rt.sweepGate == nil {
+		return true
+	}
+	select {
+	case <-rt.sweepGate:
+		return true
+	case <-rt.lifecycle.done:
+		return false
 	}
 }
 

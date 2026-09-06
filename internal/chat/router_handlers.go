@@ -99,11 +99,21 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 
 	// `draft` rides here as its own field, keeping the composer autosave
 	// off the SSE fan-out and off the list response.
+	//
+	// `turn_open` is the one thing in this payload the RECORD cannot supply, and
+	// it ships here rather than on a separate channel because the ordering IS the
+	// defect it fixes. The in-flight reply lives in the agent's in-memory buffer
+	// and is appended to the chat file once, at turn end, so a turn in flight has
+	// no carrier in `messages` — and a client deriving an outcome from that
+	// silence answers `unknown`, painting a terminal verdict during a window in
+	// which it provably cannot know one. Sending the liveness in the SAME response
+	// leaves no window between the transcript arriving and the verdict arriving.
 	webhttp.WriteJSON(w, map[string]any{
-		"chat":     c.Header(),
-		"messages": window,
-		"has_more": start > 0,
-		"draft":    c.Draft,
+		"chat":      c.Header(),
+		"messages":  window,
+		"has_more":  start > 0,
+		"draft":     c.Draft,
+		"turn_open": rt.store.TurnOpen(vibekit.ChatID(id)),
 	})
 }
 
@@ -127,9 +137,15 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID vib
 		httpreply.NotFound(w, errMsgChatNotFound)
 		return
 	}
-	// thinking=false: the store is the persisted record and knows nothing
-	// about a bridge being mid-turn.
-	webhttp.WriteJSON(w, map[string]any{"turns": projectTurnSummaries(c.Messages, false)})
+	// The store is still the persisted record and knows nothing about a bridge
+	// being mid-turn — the LIVENESS arrives injected (Store.TurnOpen, wired by
+	// composition), which is what this comment used to say was impossible. With a
+	// hardcoded false a mid-turn fetch reported the in-flight turn as `unknown`, so
+	// the timeline rail painted a neutral marker labelled "This turn's end could
+	// not be read" for a turn that was running. One predicate, both handlers.
+	webhttp.WriteJSON(w, map[string]any{
+		"turns": projectTurnSummaries(c.Messages, rt.store.TurnOpen(chatID)),
+	})
 }
 
 // handleSearch serves GET /api/chats/{id}/search?q=: a lexical scan of the

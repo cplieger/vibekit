@@ -105,6 +105,11 @@ type Buffer struct {
 	chunkSeq int64
 	mu       sync.Mutex
 	Started  bool
+	// segmented latches once the turn has been split mid-flight, so the closer
+	// knows an earlier segment already carries part of this turn's content.
+	// Reported on every TurnContent, because the closer reads the snapshot rather
+	// than the fields.
+	segmented bool
 	// muted is a turn whose frames must reach no client: a PRIME's. They still FOLD
 	// here — a revised binding hands this buffer to the agent's own turn, which
 	// unmutes it — but nothing published from them may reach a browser, or the
@@ -211,6 +216,14 @@ type TurnContent struct {
 	// them would change what Snapshot returns for a turn holding only a tool-use
 	// block, which is a wire question, not a locking one.
 	EmittedNothing bool
+	// Segmented is whether this turn was split mid-flight, so an earlier segment
+	// is already persisted as its own assistant message.
+	//
+	// The turn's closer reads it because a split turn can close with nothing left
+	// to persist — a reply that ended exactly at the split point — and its
+	// credits, elapsed and changed files then have no assistant message to be
+	// stamped on.
+	Segmented bool
 }
 
 // TakeTurn returns the turn's whole content as of one instant.
@@ -226,6 +239,67 @@ type TurnContent struct {
 func (buf *Buffer) TakeTurn() TurnContent {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
+	return buf.contentLocked()
+}
+
+// SplitSegment seals what the turn has produced so far into its own snapshot and
+// readies the buffer for the rest of the turn, so a boundary INSIDE a turn can be
+// a sibling message rather than only before or after the whole reply.
+//
+// Only the per-MESSAGE fields are reset: ChangedFiles is cumulative and the turn
+// footer merges it by path, Model is latched for the whole turn, and chunkSeq must
+// stay monotonic because a reconnecting client's turn_state watermark is compared
+// to it. A turn that emitted nothing is left untouched, Segmented included.
+func (buf *Buffer) SplitSegment() TurnContent {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	snap := buf.contentLocked()
+	// EmittedNothing rather than !Started: StartTurn mints the message id before any
+	// delta arrives, so a boundary landing in that window would seal an empty
+	// message and strand the id the streamed reply is still going out under.
+	if snap.EmittedNothing {
+		return snap
+	}
+	buf.segmented = true
+	snap.Segmented = true
+	buf.Content.Reset()
+	buf.Reasoning.Reset()
+	buf.ToolCalls = nil
+	buf.ToolCallIndex = nil
+	buf.Blocks = nil
+	buf.CodeReferences = nil
+	// Refusal describes the segment that recorded it, so it goes with that
+	// segment rather than being re-stamped on the rest of the turn.
+	buf.Refusal = nil
+	buf.Started = false
+	buf.MessageID = ""
+	return snap
+}
+
+// ToolsSettled reports whether every buffered tool call has reached a terminal
+// status. False is the condition that makes a mid-turn split unsafe: an update
+// for a call resolves against the CURRENT buffer, so a call still in flight when
+// the split happens can never be written back and its card stays a spinner in the
+// message that already went to disk.
+//
+// True for a buffer holding no tool calls at all.
+func (buf *Buffer) ToolsSettled() bool {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	for i := range buf.ToolCalls {
+		switch buf.ToolCalls[i].Status {
+		case vibekit.ToolCompleted, vibekit.ToolFailed:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// contentLocked is the one capture of a buffer's content, shared by TakeTurn and
+// SplitSegment so the two cannot report a turn differently. Must be called with
+// mu held.
+func (buf *Buffer) contentLocked() TurnContent {
 	var changed map[string]*vibekit.FileChange
 	if buf.ChangedFiles != nil {
 		changed = make(map[string]*vibekit.FileChange, len(buf.ChangedFiles))
@@ -249,6 +323,7 @@ func (buf *Buffer) TakeTurn() TurnContent {
 			buf.Reasoning.Len() == 0 &&
 			len(buf.ToolCalls) == 0 &&
 			len(buf.Blocks) == 0,
+		Segmented: buf.segmented,
 	}
 }
 

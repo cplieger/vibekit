@@ -33,6 +33,7 @@ package workflow
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/rpcerr"
@@ -46,6 +47,13 @@ import (
 // endpoint passes the whole tree through, so decoding a field here would create
 // a second definition of it that can only drift.
 type Node struct {
+	// Iteration is which pass of an enclosing `repeat` this node belongs to,
+	// present on a repeat's per-iteration container and on the steps beneath it.
+	//
+	// A POINTER, because iteration 0 is the FIRST pass and a plain int cannot tell
+	// it from absent — and the first pass is the one every non-looping run has, so
+	// a value type would silently mis-address the common case rather than an edge.
+	Iteration *int   `json:"iteration"`
 	NodeID    string `json:"nodeId"`
 	Type      string `json:"type"`
 	SessionID string `json:"sessionId"`
@@ -67,10 +75,21 @@ type InspectResult struct {
 	State *State `json:"state"`
 }
 
-// StepSession names one step node and the ACP session that executed it.
+// StepSession names one step node, the ACP session that executed it, and its
+// PATH within the run.
+//
+// The path is what addresses one EXECUTION, where the node id addresses a node: a
+// repeat's iterations share a node id, so two passes of one loop body are
+// indistinguishable by id alone. Every caller that has to name a single step —
+// the step-transcript endpoint, the client's own step rows — keys on the path for
+// that reason.
 type StepSession struct {
 	NodeID    string
 	SessionID string
+	// Path is the node path from the root down to this step, in the spelling KAS
+	// puts on the WIRE. See pathSegment for the one segment where the wire and the
+	// state tree disagree.
+	Path []string
 }
 
 // StepSessions walks a run's state tree depth-first and returns every step that
@@ -81,21 +100,79 @@ type StepSession struct {
 // ran concurrently, so their relative order is declaration order rather than a
 // claim about time.
 func StepSessions(s *State) []StepSession {
+	var out []StepSession
+	for _, st := range Steps(s) {
+		if st.SessionID != "" {
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
+// Steps walks a run's state tree depth-first and returns EVERY step node, in the
+// same order, whether or not it has run.
+//
+// The unfiltered door, and the distinction it draws is the one a reader needs:
+// StepSessions cannot tell "this run has no such step" from "that step has not
+// started", because both answer absent. A caller serving one step's transcript
+// has to say something different for each — a path naming nothing is a client
+// error, while a path naming a pending step is a real step with nothing to show —
+// so it asks this and reads SessionID itself.
+func Steps(s *State) []StepSession {
 	if s == nil || s.Root == nil {
 		return nil
 	}
 	var out []StepSession
-	walk(s.Root, &out)
+	walk(s.Root, nil, nil, &out)
 	return out
 }
 
-func walk(n *Node, out *[]StepSession) {
-	if n.Type == "step" && n.SessionID != "" {
-		*out = append(*out, StepSession{NodeID: n.NodeID, SessionID: n.SessionID})
+// walk visits the tree depth-first, carrying the parent (which decides this
+// node's path segment) and the trail above it.
+//
+// Each level allocates its path at EXACT capacity, so a child's own append
+// reallocates rather than writing into a sibling's backing array. A shared array
+// would make the last branch visited overwrite the paths already reported.
+func walk(n, parent *Node, trail []string, out *[]StepSession) {
+	path := make([]string, 0, len(trail)+1)
+	path = append(path, trail...)
+	path = append(path, pathSegment(n, parent))
+	if n.Type == "step" {
+		*out = append(*out, StepSession{NodeID: n.NodeID, SessionID: n.SessionID, Path: path})
 	}
 	for i := range n.Children {
-		walk(&n.Children[i], out)
+		walk(&n.Children[i], n, path, out)
 	}
+}
+
+// pathSegment is what KAS calls this node in a node PATH, which is not always what
+// it calls it in the state tree.
+//
+// ONE node kind diverges, and it is the one that matters: a repeat's
+// per-iteration container is `<repeatId>#<n>` in the state tree and `iter-<n>` on
+// the wire. Every other node contributes its own `nodeId` and the two spellings
+// agree.
+//
+// THREE implementations of this one spelling exist, and that is deliberate rather
+// than drift — the tree and the frame describe the path differently, so each side
+// of the join needs its own translation:
+//
+//   - this one, translating the STATE TREE into the wire spelling;
+//   - `internal/translate/workflow_step_content.go` runNodePath, which JOINS the
+//     path KAS already put on a frame;
+//   - `static-src/run-store.ts` nodePathSegment, the client's copy of this same
+//     translation, because the client also holds the tree and not the frame.
+//
+// Derived from the container's own `iteration` rather than by rewriting the `#`
+// suffix off the id, so nothing here depends on how KAS spells a generated id. A
+// repeat child carrying no iteration falls back to its node id, which is the same
+// call the two siblings above make when the fact they need is absent: a path in
+// the wrong place beats a step that cannot be addressed at all.
+func pathSegment(n, parent *Node) string {
+	if parent != nil && parent.Type == "repeat" && n.Iteration != nil {
+		return "iter-" + strconv.Itoa(*n.Iteration)
+	}
+	return n.NodeID
 }
 
 // unknownMethodMarker is how KAS reports a `_kiro/workflow/*` name it does not

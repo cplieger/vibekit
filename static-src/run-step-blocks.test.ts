@@ -68,7 +68,7 @@ function toolFrame(tc: ToolCall): RunStepPayload {
 }
 
 /** A fresh body per step path, so the stream's host contract is exercised rather
- *  than assumed: the run card hands out one element per node path. */
+ *  than assumed: the detail pane hands out one element per node path. */
 function harness(): { apply: (p: RunStepPayload) => void; body: (path: string) => HTMLElement } {
   const bodies = new Map<string, HTMLElement>();
   const stream = createRunStepStream((path) => {

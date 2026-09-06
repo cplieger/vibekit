@@ -61,7 +61,14 @@ vi.mock("./context-ui.js", () => ({ refreshContextUI: h.refreshContextUI }));
 
 // chat.ts's remaining first-hop dependencies, inert. The store is deliberately
 // NOT on this list: the subject is what its signals re-run.
-vi.mock("./store-load.js", () => ({ loadList: vi.fn(), loadMessages: vi.fn() }));
+// `confirmChatExists` is present-but-inert so real-ESM linking succeeds: `chat.ts`
+// imports it for the deep-link arm, and Browser Mode links for real rather than
+// reading properties off a namespace object. No case here reaches it.
+vi.mock("./store-load.js", () => ({
+  loadList: vi.fn(),
+  loadMessages: vi.fn(),
+  confirmChatExists: vi.fn(),
+}));
 vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
 vi.mock("./submit.js", () => ({ submitPrompt: vi.fn() }));
 vi.mock("./skeleton.js", () => ({ chatSkeleton: vi.fn(() => document.createElement("div")) }));
@@ -105,7 +112,7 @@ vi.mock("./actions/chat.js", () => ({
 }));
 
 import { installStoreSubscribers } from "./chat.js";
-import { setSessions, setActive, setThinking, setName } from "./store.js";
+import { setSessions, setActive, setThinking, setName, setTurnDone } from "./store.js";
 import type { Session } from "./types.js";
 
 function session(id: string, over: Partial<Session> = {}): Session {
@@ -200,6 +207,30 @@ describe("per-row effects write only their own row", () => {
     // pending ask lands on a's dot only, and b repaints its unchanged state.
     expect(h.setTabStatus).toHaveBeenCalledWith("tb_a", "input");
     expect(h.setTabStatus).not.toHaveBeenCalledWith("tb_b", "input");
+  });
+
+  // The other direction, and the one a mapping test structurally cannot see: the
+  // ask LEAVING has to re-run the row and write the recovered state. A workflow
+  // run's ask is filed under the LAUNCHING chat's key, so this row is the one that
+  // was reported stuck on `input` after the run's own sub-tab had recovered.
+  it("writes the recovered state when a background chat's ask is cleared", () => {
+    setSessions([session("a"), session("b")]);
+    setActive("b");
+    h.openRefs.value = ["a", "b"];
+    h.pendingAsks.add("a");
+    installStoreSubscribers();
+    // The launching turn ended when the run was created, so `done` is what a is
+    // waiting to go back to.
+    setTurnDone("a");
+    clearStripSpies();
+
+    h.pendingAsks.delete("a");
+    h.dockVersion.value = h.dockVersion.value + 1;
+
+    expect(h.setTabStatus.mock.calls).toEqual([
+      ["tb_a", "done"],
+      ["tb_b", "idle"],
+    ]);
   });
 });
 

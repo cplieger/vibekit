@@ -31,7 +31,7 @@ export interface SteerNoteData {
  *  workflow's report arrives on it beside the reader's own corrections — and with
  *  one label the report read as something they had typed. */
 const LABELS: Record<SteerOrigin, { read: string; dropped: string }> = {
-  user: { read: "Your mid-turn message", dropped: "Not delivered" },
+  user: { read: "Mid-turn message", dropped: "Not delivered" },
   agent: { read: "Workflow result", dropped: "Workflow result not delivered" },
 };
 

@@ -95,11 +95,29 @@ func opensHeaderlessTurn(m *vibekit.Message, prevClosed bool) bool {
 // A terminal answer beats isLive deliberately: `thinking` can still be
 // true for the last turn when the next turn's stream has opened, so
 // trusting it would repaint a finished failure as in-progress.
+//
+// The TAIL clause is the honest answer for a turn NOTHING closed, and it is
+// the reader half of one change: every close now persists its carrier
+// (persistOutcomeMarker), so an absent carrier is a fact rather than a gap.
+// Three sites reach it — a prompt refused after its user row landed, a cancel
+// during the spawn window, and a process death mid-turn — and all three
+// persist the user row and nothing else. `completed` reported every one of
+// them as a turn that answered.
+//
+// The predicate is "no ASSISTANT message", not "empty body", and that is what
+// keeps a legacy transcript honest: this chat file only ever gained an
+// assistant message at finalize, so a turn persisted before the outcome field
+// existed still carries one and still reads `completed`. It also catches the
+// event-only turn a mid-turn compaction leaves behind.
 func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome {
 	interrupted := false
 	sawUnknown := false
+	sawAssistant := false
 	for i := range body {
 		m := &body[i]
+		if m.Role == vibekit.RoleAssistant {
+			sawAssistant = true
+		}
 		if m.TurnOutcome == vibekit.TurnOutcomeUnknown {
 			// A fragment's non-verdict (see closesTurn); remembered as the
 			// fallback since the segment usually continues into the real
@@ -126,7 +144,7 @@ func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome 
 	if isLive {
 		return vibekit.TurnOutcomeRunning
 	}
-	if sawUnknown {
+	if sawUnknown || !sawAssistant {
 		return vibekit.TurnOutcomeUnknown
 	}
 	return vibekit.TurnOutcomeCompleted

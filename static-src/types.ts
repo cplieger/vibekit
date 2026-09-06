@@ -21,7 +21,9 @@ export type {
   EventKind,
   ForgeKind,
   PlanStatus,
+  ReadState,
   Role,
+  RunStepTranscriptState,
   SafetyStatus,
   SettledBy,
   SteerOrigin,
@@ -60,6 +62,10 @@ export type {
   ToolDiff,
   ToolLocation,
   Usage,
+  // GET /api/sessions: the two row kinds and the reply that carries their verdicts
+  ResumableSession,
+  WorkflowRun,
+  SessionListResponse,
   // SSE payloads
   ChatDeletedPayload,
   CodeReferencesPayload,
@@ -112,6 +118,8 @@ export type {
   RecipesResponse,
   RunLaunchRequest,
   RunLaunchedResponse,
+  // GET /api/runs/{id}/steps/{path...}: one step's transcript plus its verdict.
+  RunStepTranscript,
   SystemTool,
   SteerQueuedPayload,
   SteerInjectedPayload,
@@ -310,6 +318,21 @@ export interface Session {
   message_count: number;
   has_more: boolean;
   thinking: boolean;
+  /** The SERVER'S LAST STATEMENT about whether this chat has a turn open, from
+   *  `GET /api/chats/{id}`'s `turn_open`. NOT live state and deliberately not a
+   *  second `thinking`: `thinking` is this client's own memory of a stream it has
+   *  seen, and it starts false, so on a mid-turn reload the transcript paints
+   *  before any frame arrives and the newest turn's absent carrier reads as
+   *  `unknown` — a terminal verdict for a turn the server knows is running.
+   *
+   *  Optional-tolerant because it is: a server that predates the field, or a
+   *  proxy that strips it, decodes as absent and behaves exactly as this client
+   *  did before the field existed. Client and server ship in one image, so that
+   *  is a guard rather than a path.
+   *
+   *  Three writers and one deliberate non-writer; the table is on `turnLive` in
+   *  store.ts, which is the ONE reader. */
+  turn_open?: boolean;
   working_label: string;
   /** Agent-declared activity status from the KAS focus_update channel
    *  (chat_status SSE): "in_progress" | "waiting_on_user" | "completed" |
@@ -396,34 +419,8 @@ export interface Session {
   loadedEpoch?: number;
 }
 
-/** One resumable KAS session, from GET /api/sessions. Mirrors
- *  vibekit.ResumableSession. */
-export interface ResumableSessionRow {
-  session_id: string;
-  title: string;
-  agent_mode?: string;
-  status?: string;
-  description?: string;
-  /** Set when a vibekit chat already owns this session, so opening it is just
-   *  opening that chat rather than adopting it. */
-  chat_id?: string;
-  updated_at: number;
-  created_at?: number;
-}
-
-/** One previous workflow run, from GET /api/sessions. Mirrors
- *  vibekit.WorkflowRun. */
-export interface WorkflowRunRow {
-  workflow_id: string;
-  name: string;
-  status?: string;
-  parent_chat_id?: string;
-  /** Why a run BOUND stopped this run: "overran" (a wall clock) or "step_cap" (a
-   *  step's turn cap). Absent for every other ending, INCLUDING a user cancel —
-   *  which is the point of the field, since both bounds stop a run through the
-   *  same cancel a person uses and KAS reports `aborted` either way. */
-  end_reason?: string;
-  updated_at: number;
-  created_at?: number;
-  started_at?: number;
-}
+// GET /api/sessions' two row types are GENERATED (`ResumableSession`,
+// `WorkflowRun` in wire/types.gen.ts). They were hand-mirrored here, which is a
+// second declaration of one wire shape with nothing holding the two together —
+// and the response's own type now carries the per-list read verdicts the picker
+// reads, which a mirror of the rows alone could not.

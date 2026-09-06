@@ -42,7 +42,7 @@ import { iconEl } from "./icon-el.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
-import type { ResumableSessionRow, WorkflowRunRow } from "./types.js";
+import type { ResumableSession, SessionListResponse, WorkflowRun } from "./types.js";
 
 /** A chat row and a run row share the list, so they share a shape. */
 interface HistoryRow {
@@ -63,8 +63,8 @@ interface HistoryRow {
    *  entries are dropped by the builder, so a chat vibekit knows nothing about
    *  renders two lines like before rather than an empty strip. */
   facts: string[];
-  session?: ResumableSessionRow;
-  run?: WorkflowRunRow;
+  session?: ResumableSession;
+  run?: WorkflowRun;
 }
 
 /** The facts line for a chat row, from the chat record this client already holds.
@@ -118,7 +118,7 @@ function chatFacts(chatID: string): string[] {
 /** The facts line for a run row. KAS's run inventory is thin by comparison, so
  *  this is the run's shape rather than its cost: how long it took, and the status
  *  word when the glyph is not already carrying it. */
-function runFacts(r: WorkflowRunRow): string[] {
+function runFacts(r: WorkflowRun): string[] {
   const facts: string[] = [];
   const started = r.started_at ?? 0;
   const ended = r.updated_at;
@@ -212,12 +212,12 @@ const ROW_RENDER_INFO: ToolRenderInfo = {
  *  device's, held in localStorage, which is why the predicate lives on the
  *  client and reuses the tab store's own `hasTab` rather than a second one. A
  *  chat tab's id IS its chat id, so no mapping is needed. */
-function isOpenHere(s: ResumableSessionRow): boolean {
+function isOpenHere(s: ResumableSession): boolean {
   const chatID = s.chat_id ?? "";
   return chatID !== "" && hasTab("chat", chatID);
 }
 
-function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): HistoryRow[] {
+function toRows(sessions: ResumableSession[], runs: WorkflowRun[]): HistoryRow[] {
   const rows: HistoryRow[] = [];
   for (const s of sessions) {
     // A chat already open here is not history: its tab is one click away in the
@@ -438,7 +438,7 @@ class HistoryController {
       return;
     }
 
-    const rows = toRows(d.sessions ?? [], d.runs ?? []); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+    const rows = toRows(d.sessions, d.runs);
     // Drop any non-keyed sibling (skeleton / empty / error) before reconcile.
     for (const child of [...container.children]) {
       if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
@@ -446,9 +446,7 @@ class HistoryController {
       }
     }
     if (rows.length === 0) {
-      container.replaceChildren(
-        el("div", { className: "list-empty" }, "No previous sessions in this workspace."),
-      );
+      container.replaceChildren(emptyState(d));
       return;
     }
     reconcile(container, rows, { key: (r) => r.key, mount: (r) => buildRow(r) });
@@ -499,6 +497,37 @@ class HistoryController {
       retry,
     );
   }
+}
+
+/** The empty row, saying WHICH empty it is: the server answers 200 with an empty
+ *  list whether it read nothing or failed to read, so the two verdicts are the
+ *  only thing separating them. They degrade independently, so a half-failure
+ *  names the half that is missing. */
+function emptyState(d: SessionListResponse): HTMLElement {
+  const sessionsFailed = d.sessions_state === "unavailable";
+  const runsFailed = d.runs_state === "unavailable";
+  if (sessionsFailed && runsFailed) {
+    return el(
+      "div",
+      { className: "list-empty" },
+      "Couldn't read previous conversations or workflow runs.",
+    );
+  }
+  if (sessionsFailed) {
+    return el(
+      "div",
+      { className: "list-empty" },
+      "Couldn't read previous conversations. No workflow runs to show.",
+    );
+  }
+  if (runsFailed) {
+    return el(
+      "div",
+      { className: "list-empty" },
+      "Couldn't read workflow runs. No previous conversations to show.",
+    );
+  }
+  return el("div", { className: "list-empty" }, "No previous sessions in this workspace.");
 }
 
 /** Open a history row: a chat resumes, a run opens its read-only review.

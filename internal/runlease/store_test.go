@@ -1,6 +1,7 @@
 package runlease
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -405,5 +406,90 @@ func TestStore_WritesA0600File(t *testing.T) {
 	}
 	if got := fi.Mode().Perm(); got != 0o600 {
 		t.Errorf("%s stayed %v after a rewrite, so a widened mode survives every later write", FileName, got)
+	}
+}
+
+// TestStore_MarkTabOfferedIsSpentOnce pins the flag the tab offer keys on. Both
+// halves matter: the mark has to stick, because `run_start` re-fires on every
+// resume and each step frame retries the offer, and the repeat has to be a no-op
+// rather than an error, because the repeat is the normal case.
+func TestStore_MarkTabOfferedIsSpentOnce(t *testing.T) {
+	t.Parallel()
+	s := NewMemory()
+	const id = "wf_1"
+	if err := s.Put(t.Context(), &Lease{WorkflowID: id, Origin: OriginAgent, ChatID: "c-1"}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if got, _ := s.Get(id); got.TabOffered {
+		t.Fatal("a fresh lease already reports its tab offered, so no run would ever get one")
+	}
+
+	if err := s.MarkTabOffered(t.Context(), id); err != nil {
+		t.Fatalf("MarkTabOffered: %v", err)
+	}
+	if got, _ := s.Get(id); !got.TabOffered {
+		t.Error("the mark did not stick, so every resume would re-offer the tab")
+	}
+
+	if err := s.MarkTabOffered(t.Context(), id); err != nil {
+		t.Errorf("MarkTabOffered on an already-marked lease = %v, want nil", err)
+	}
+
+	if err := s.MarkTabOffered(t.Context(), "wf_gone"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("MarkTabOffered on a released lease = %v, want ErrNotFound", err)
+	}
+}
+
+// TestStore_TabOfferedSurvivesARestart is the reason the flag is durable rather
+// than a set in process memory: a reader's close of the tab has to stay final
+// across a restart, and the run outlives the process.
+func TestStore_TabOfferedSurvivesARestart(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := s.Put(t.Context(), &Lease{WorkflowID: "wf_1", Origin: OriginAgent, ChatID: "c-1"}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := s.MarkTabOffered(t.Context(), "wf_1"); err != nil {
+		t.Fatalf("MarkTabOffered: %v", err)
+	}
+
+	reopened, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	got, ok := reopened.Get("wf_1")
+	if !ok {
+		t.Fatal("the lease did not survive the restart")
+	}
+	if !got.TabOffered {
+		t.Error("the offer flag did not survive the restart, so a restart re-offers a closed tab")
+	}
+}
+
+// TestNewStore_APreUpgradeRowReadsAsUnoffered is the additive field's accepted
+// cost, stated: a lease written before the flag existed carries no `tab_offered`,
+// decodes false, and earns exactly one re-offer. The alternative — a version bump
+// — would discard the whole file at load and strip every live run of its deadline.
+func TestNewStore_APreUpgradeRowReadsAsUnoffered(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	const doc = `{"version":1,"leases":[{"workflow_id":"wf_1","recipe":"r","origin":"agent","chat_id":"c-1","unattended":false}]}`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(doc), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	got, ok := s.Get("wf_1")
+	if !ok {
+		t.Fatal("the pre-upgrade lease was discarded")
+	}
+	if got.TabOffered {
+		t.Error("an absent tab_offered decoded as true, so the run would never be offered a tab")
 	}
 }

@@ -12,7 +12,8 @@
 //   /docs                         Kiro configuration browser (Steering tab — canonical)
 //   /docs/{tab}                   browser sub-tab (skills | agents | specs | hooks | workflows)
 //   /history                      previous chats + workflow runs (full-page view)
-//   /run/{workflowId}             one workflow run (a review, or a launcher-owned live tab)
+//   /run/{workflowId}             one workflow run (a review, or a launcher-owned live tab),
+//                                 with optional #node=<path> for the step to focus
 //   /settings                     Settings (General tab)
 //   /settings/tools               Settings → Tools
 //   /settings/permissions         Settings → Permissions
@@ -79,6 +80,13 @@ interface RouteDocs {
 interface RouteRun {
   kind: "run";
   id: string;
+  /** The step this URL asks to be focused, as a node PATH.
+   *
+   *  A fragment rather than a path segment, for two reasons: a node path
+   *  contains `/` (`wf_1/iter-0/work`), and the tab's identity is
+   *  `(kind: run, ref: workflowId)`, which must not gain a second shape —
+   *  `subjectForRoute` drops this, so two nodes of one run are one tab. */
+  node?: string;
 }
 /** One SUBAGENT execution, read on its own page.
  *
@@ -143,7 +151,11 @@ export function parseRoute(pathname: string, hash: string = location.hash): Rout
     case "run": {
       const id = safeDecode(segments[1] ?? "");
       if (id !== "") {
-        return { kind: "run", id };
+        // Built conditionally, matching the `file` arm below:
+        // exactOptionalPropertyTypes forbids assigning `undefined` to an
+        // optional property.
+        const node = parseHashNode(hash);
+        return node !== undefined ? { kind: "run", id, node } : { kind: "run", id };
       }
       break;
     }
@@ -250,6 +262,21 @@ function parseHashLine(hash: string): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+/** The step a `/run/{id}` URL asks to be focused, off `#node=<path>`.
+ *
+ *  Through `safeDecode`, so a malformed percent sequence yields the raw value
+ *  rather than throwing — a hash reaches here straight off `location` and off
+ *  popstate. `#node=` with nothing after it answers `undefined`, so an empty
+ *  fragment is the same as no fragment. */
+function parseHashNode(hash: string): string | undefined {
+  const m = /^#node=(.*)$/.exec(hash);
+  if (m === null) {
+    return undefined;
+  }
+  const path = safeDecode(m[1] ?? "");
+  return path === "" ? undefined : path;
+}
+
 // --- Build a URL path from a Route ---
 
 export function buildPath(route: Route): string {
@@ -265,7 +292,11 @@ export function buildPath(route: Route): string {
       // Steering is the canonical default; omit the tab segment.
       return route.tab === "steering" ? "/docs" : `/docs/${route.tab}`;
     case "run":
-      return `/run/${encodeURIComponent(route.id)}`;
+      // The node rides as a fragment, and only when there is one: the absent
+      // case stays byte-identical to what every existing caller produces.
+      return route.node !== undefined && route.node !== ""
+        ? `/run/${encodeURIComponent(route.id)}#node=${encodeURIComponent(route.node)}`
+        : `/run/${encodeURIComponent(route.id)}`;
     case "subagent":
       return `/chat/${encodeURIComponent(route.chat)}/subagent/${encodeURIComponent(route.id)}`;
     case "files":
@@ -302,9 +333,23 @@ export function pushRoute(route: Route): void {
   }
   const target = buildPath(route);
   const current = location.pathname + location.hash;
-  if (target !== current) {
-    history.pushState(null, "", target);
+  if (target === current) {
+    return;
   }
+  // A push that only DROPS the current fragment REPLACES instead. A fragment here
+  // is a position inside the page its own route already names (`#node=` on a run,
+  // `#L<line>` on a file) and it is consumed on arrival: a cold load of
+  // `/run/x#node=y` focuses that step and then activates the tab, whose route
+  // carries no fragment, so a push would stack `/run/x` on top of the URL the
+  // reader opened and their first Back press would land on a location that renders
+  // identically — an entry that looks inert. The inverse still pushes: going from
+  // `/run/x` to `/run/x#node=y` is a real move to a position, and Back out of it
+  // means something.
+  if (target === location.pathname && location.hash !== "") {
+    history.replaceState(null, "", target);
+    return;
+  }
+  history.pushState(null, "", target);
 }
 
 export function replaceRoute(route: Route): void {

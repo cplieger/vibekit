@@ -15,15 +15,22 @@ vi.mock("../run-store.js", () => ({
   noteRunChat: vi.fn(),
   noteRunLive: vi.fn(),
   noteRunSettled: vi.fn(),
+  hasLiveRunForChat: vi.fn(() => false),
 }));
+// The launching chat's own liveness, for the orphan sweep's two gates. Mocked
+// because what this suite pins is WHEN the sweep fires, not how a chat comes to
+// be thinking.
+vi.mock("../store.js", () => ({ isThinking: vi.fn(() => false) }));
 vi.mock("../run-dots.js", () => ({ trackRun: vi.fn() }));
-// The proactive sub-tab opener, the completion auto-close, and the live step
-// transcript. Their own rules (nest under the launching chat, do not activate, do
-// not stop the run on close; close only an automatic tab, only on a clean ending,
-// never the tab on screen) are run-view's; what this suite pins is WHICH events
-// reach them and with what.
+// The app-opened MARKER, the completion auto-close, and the live step transcript.
+// Their own rules (record once per client, never a parentless run; close only an
+// app-opened tab, only on a clean ending, never the tab on screen) are run-view's;
+// what this suite pins is WHICH events reach them and with what.
+//
+// There is no opener among them any more, and that is the contract these cases
+// carry: a starting run's tab is opened server-side, so no run event may open one.
 vi.mock("../run-view.js", () => ({
-  openRunSubTab: vi.fn(),
+  noteAutoOpenedRun: vi.fn(),
   autoCloseRunSubTab: vi.fn(),
   applyRunStep: vi.fn(),
 }));
@@ -35,6 +42,8 @@ vi.mock("../toast.js", () => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() 
 vi.mock("../decision-dock.js", () => ({
   pushDecision: vi.fn(),
   collapseSettledRunInput: vi.fn(),
+  dropRunAsks: vi.fn(),
+  dropTurnDecisions: vi.fn(),
 }));
 vi.mock("../actions/runs.js", () => ({
   answerRunInput: { dispatch: vi.fn() },
@@ -45,11 +54,23 @@ vi.mock("../notify.js", () => ({ notifyIfHidden: vi.fn(), NOTIFY_TITLE: "Vibekit
 import "./run.js";
 import { dispatch, onBus, BUS_RUNS_CHANGED } from "../bus.js";
 import type { SSEPayloads } from "../bus.js";
-import { invalidateRun, noteRunChat, noteRunLive, noteRunSettled } from "../run-store.js";
+import {
+  invalidateRun,
+  noteRunChat,
+  noteRunLive,
+  noteRunSettled,
+  hasLiveRunForChat,
+} from "../run-store.js";
+import { isThinking } from "../store.js";
 import { trackRun } from "../run-dots.js";
-import { openRunSubTab, autoCloseRunSubTab, applyRunStep } from "../run-view.js";
+import { noteAutoOpenedRun, autoCloseRunSubTab, applyRunStep } from "../run-view.js";
 import { info, success, error } from "../toast.js";
-import { pushDecision, collapseSettledRunInput } from "../decision-dock.js";
+import {
+  pushDecision,
+  collapseSettledRunInput,
+  dropRunAsks,
+  dropTurnDecisions,
+} from "../decision-dock.js";
 import { answerRunInput, continueRunStep } from "../actions/runs.js";
 import { notifyIfHidden } from "../notify.js";
 
@@ -58,7 +79,7 @@ const noteChat = vi.mocked(noteRunChat);
 const noteLive = vi.mocked(noteRunLive);
 const noteSettled = vi.mocked(noteRunSettled);
 const track = vi.mocked(trackRun);
-const openSubTab = vi.mocked(openRunSubTab);
+const noteAutoOpened = vi.mocked(noteAutoOpenedRun);
 const autoClose = vi.mocked(autoCloseRunSubTab);
 const stepFrames = vi.mocked(applyRunStep);
 const toastInfo = vi.mocked(info);
@@ -66,6 +87,10 @@ const toastSuccess = vi.mocked(success);
 const toastError = vi.mocked(error);
 const enqueue = vi.mocked(pushDecision);
 const retireAsk = vi.mocked(collapseSettledRunInput);
+const dropAsks = vi.mocked(dropRunAsks);
+const sweepOrphans = vi.mocked(dropTurnDecisions);
+const chatThinking = vi.mocked(isThinking);
+const siblingRunLive = vi.mocked(hasLiveRunForChat);
 const answer = vi.mocked(answerRunInput.dispatch);
 const waive = vi.mocked(continueRunStep.dispatch);
 const notify = vi.mocked(notifyIfHidden);
@@ -90,7 +115,7 @@ beforeEach(() => {
   noteLive.mockClear();
   noteSettled.mockClear();
   track.mockClear();
-  openSubTab.mockClear();
+  noteAutoOpened.mockClear();
   autoClose.mockClear();
   stepFrames.mockClear();
   toastInfo.mockClear();
@@ -98,6 +123,12 @@ beforeEach(() => {
   toastError.mockClear();
   enqueue.mockClear();
   retireAsk.mockClear();
+  dropAsks.mockClear();
+  sweepOrphans.mockClear();
+  chatThinking.mockReset();
+  chatThinking.mockReturnValue(false);
+  siblingRunLive.mockReset();
+  siblingRunLive.mockReturnValue(false);
   answer.mockClear();
   waive.mockClear();
   notify.mockClear();
@@ -151,26 +182,30 @@ describe("run SSE handlers", () => {
     }
   });
 
-  // A run is initiated in a turn and then outlives it, so its tab has to appear
-  // without anyone going to look for it. The launching chat id comes off the
-  // envelope, which is what makes the tab a sub-tab of the right conversation.
-  it("opens the run's sub-tab proactively, under the chat that launched it", () => {
+  // A run's tab is the SERVER's to open, so what a start frame does here is record
+  // that the tab is the app's doing — the one fact the server cannot answer,
+  // because it knows it offered the tab and not whether this reader has since
+  // claimed it. The launching chat id comes off the envelope and is what keeps a
+  // parentless run out of the claim.
+  it("records the run's tab as app-opened, naming the chat that launched it", () => {
     send("run_started", { workflow_id: "wf_1", name: "publish" });
-    expect(openSubTab).toHaveBeenCalledWith("wf_1", "publish", "c1");
+    expect(noteAutoOpened).toHaveBeenCalledWith("wf_1", "c1");
   });
 
-  // `run_started` is not replayed to a client that connects mid-run, so the
-  // progress frames are the only door left for a run already going.
-  it("also opens it from a progress frame, for a client that joined mid-run", () => {
+  // A reader whose first sight of a run is a progress frame got the tab from the
+  // server's own `node_start` retry, and may equally have opened it themselves —
+  // the run events are not in the SSE replay ring, so this frame cannot tell the
+  // two apart. Claiming it would let the completion auto-close take the reader's.
+  it("claims nothing from a progress frame", () => {
     send("run_progress", { workflow_id: "wf_2", kind: "node_start" });
-    expect(openSubTab).toHaveBeenCalledWith("wf_2", "Workflow run", "c1");
+    expect(noteAutoOpened).not.toHaveBeenCalled();
   });
 
   // A tab appearing at the moment work ENDS is noise: there is nothing live to
   // watch, and History is the door to a finished run.
-  it("never opens one on the finish frame", () => {
+  it("claims nothing on the finish frame either", () => {
     send("run_finished", { workflow_id: "wf_3", status: "completed" });
-    expect(openSubTab).not.toHaveBeenCalled();
+    expect(noteAutoOpened).not.toHaveBeenCalled();
   });
 
   // Recorded on EVERY event including the finish, because it is what a later
@@ -209,12 +244,34 @@ describe("run SSE handlers", () => {
   // run in flight must not lose its transcript window. Both live-marking events
   // carry the chat — run_progress too, because run_started is not replayed to a
   // client that connects mid-run.
-  it("records the run LIVE with its chat on start and on progress", () => {
+  //
+  // Both say EXECUTING, and each knows it for its own reason: a start frame fires on
+  // the launch and on every resume, and a node-level progress frame is a step moving
+  // inside a run that is still going.
+  it("records the run LIVE and EXECUTING with its chat, on start and on progress", () => {
     send("run_started", { workflow_id: "wf_live", name: "publish" });
-    expect(noteLive).toHaveBeenCalledWith("wf_live", "c1");
+    expect(noteLive).toHaveBeenCalledWith("wf_live", "c1", true);
     send("run_progress", { workflow_id: "wf_live", kind: "node_start" });
+    expect(noteLive).toHaveBeenLastCalledWith("wf_live", "c1", true);
     expect(noteLive).toHaveBeenCalledTimes(2);
     expect(noteSettled).not.toHaveBeenCalled();
+  });
+
+  // The RUN-LEVEL pause folds into run_progress, so a progress frame is proof of
+  // life but not of execution. Reading every progress frame as executing would let a
+  // parked run keep its chat's whole message window resident on the strength of the
+  // very frame that parked it — a needInput park can sit for hours.
+  it("records a run-level pause as live but NOT executing", () => {
+    send("run_progress", { workflow_id: "wf_live", kind: "paused" });
+    expect(noteLive).toHaveBeenCalledWith("wf_live", "c1", false);
+    expect(noteSettled).not.toHaveBeenCalled();
+  });
+
+  // Its counterpart, and the reason the gate is the run-level kind rather than any
+  // pause: a node-level pause is one step waiting inside a run that is still going.
+  it("records a NODE-level pause as still executing", () => {
+    send("run_progress", { workflow_id: "wf_live", kind: "node_paused" });
+    expect(noteLive).toHaveBeenCalledWith("wf_live", "c1", true);
   });
 
   it("settles the run on every terminal finish, recognised or not", () => {
@@ -225,11 +282,94 @@ describe("run SSE handlers", () => {
     }
   });
 
-  it("keeps a PAUSED run live: it is stopped waiting, not over", () => {
+  it("keeps a PAUSED run live but stops calling it executing", () => {
     // The server's lease survives a pause the same way — presence means
-    // non-terminal, and a paused chat-parented run still exempts its chat.
+    // non-terminal, so the row stays and the dot painter keeps its run. What lapses
+    // is the eviction exemption: a policy stop (`onMaxIterations`) reports through
+    // this frame and writes nothing into the chat afterwards.
     send("run_finished", { workflow_id: "wf_pause", status: "paused" });
     expect(noteSettled).not.toHaveBeenCalled();
+    expect(noteLive).toHaveBeenCalledWith("wf_pause", "c1", false);
+  });
+
+  // The dock's queue is the third thing a terminal finish has to release. A run's
+  // ask is filed under the LAUNCHING chat's key, and `dropTurnDecisions` exempts a
+  // run-scoped ask on purpose (the run outlives the turn that launched it), so
+  // nothing else can reach it once the run is over — and `input` is the top rung of
+  // the tab dot, which left the launching chat amber for the life of the page.
+  it("drops the run's unanswered asks on every terminal finish", () => {
+    for (const status of ["completed", "failed", "aborted", "cancelled", "exploded"]) {
+      dropAsks.mockClear();
+      send("run_finished", { workflow_id: "wf_ask", status });
+      expect(dropAsks, status).toHaveBeenCalledWith("wf_ask");
+    }
+  });
+
+  it("leaves a PAUSED run's asks queued: that pause is what wants an answer", () => {
+    send("run_finished", { workflow_id: "wf_pause", status: "paused" });
+    expect(dropAsks).not.toHaveBeenCalled();
+  });
+
+  it("drops nothing on the frames that are not an ending", () => {
+    send("run_started", { workflow_id: "wf_ask", name: "publish" });
+    send("run_progress", { workflow_id: "wf_ask", kind: "node_complete" });
+    expect(dropAsks).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // The ORPHAN backstop, and the reason `dropRunAsks` above cannot be it.
+  //
+  // Every remover in the dock is keyed on `runID`, and a step's request-shaped ask
+  // reaches the client with `run_id` EMPTY whenever the step-session registry has
+  // not seen its sub-session. Such an ask is filed under the launching chat's id,
+  // so it lights that chat's tab dot, and it is invisible to the run sub-tab's
+  // dock, to `runPendingAsks` and to `dropRunAsks` alike — the sub-tab reads as
+  // answered while the parent stays amber for the life of the page.
+  //
+  // `dropTurnDecisions` is the sweep that CAN name it (it keeps only asks with a
+  // non-empty `runID`), and it had exactly one production caller: `turn_ended` on
+  // the launching chat. A step-driven turn's `turn_end` is dropped by the
+  // attribution gate, so no such frame arrives while the run is going. The missing
+  // piece was a TRIGGER, not a predicate — which is why every case here is about
+  // WHEN the sweep fires and none is about what it removes.
+  // ---------------------------------------------------------------------------
+  describe("a run's terminal frame sweeps the launching chat's orphaned asks", () => {
+    it("sweeps when the launching chat is idle and no sibling run is live", () => {
+      send("run_finished", { workflow_id: "wf_orphan", status: "completed" }, "c-parent");
+      expect(sweepOrphans).toHaveBeenCalledWith("c-parent");
+    });
+
+    it("leaves the chat's OWN live turn alone", () => {
+      // The user prompted the launching chat while its run was going, so that
+      // turn's permission ask is live and answerable — sweeping it would strand a
+      // JSON-RPC request nothing can answer.
+      chatThinking.mockReturnValue(true);
+      send("run_finished", { workflow_id: "wf_orphan", status: "completed" }, "c-parent");
+      expect(sweepOrphans).not.toHaveBeenCalled();
+    });
+
+    it("leaves a SIBLING run's orphan alone while that run is still executing", () => {
+      // Two runs launched from one chat share its queue key, and a sibling's
+      // orphaned step ask carries an empty runID too — indistinguishable from this
+      // run's. `noteRunSettled` has already run for THIS run by then, so the
+      // predicate answers about siblings only.
+      siblingRunLive.mockReturnValue(true);
+      send("run_finished", { workflow_id: "wf_orphan", status: "completed" }, "c-parent");
+      expect(sweepOrphans).not.toHaveBeenCalled();
+    });
+
+    it("does not sweep on a PAUSE: the run is still going and its step is waiting", () => {
+      send("run_finished", { workflow_id: "wf_orphan", status: "paused" }, "c-parent");
+      expect(sweepOrphans).not.toHaveBeenCalled();
+    });
+
+    it("sweeps nothing for a PARENTLESS run, which has no chat to sweep", () => {
+      // A manual or scheduled run's lifecycle frames are workspace-global (empty
+      // envelope chat id) and its asks are keyed to the synthetic `run:<id>`, which
+      // `dropRunAsks` already reaches.
+      send("run_finished", { workflow_id: "wf_orphan", status: "completed" }, "");
+      expect(sweepOrphans).not.toHaveBeenCalled();
+    });
   });
 
   // The finish frame's other half: the tab the run opened for itself goes away with

@@ -24,12 +24,14 @@ package translate
 // kiro-cli-research.md "v3 _kiro/* wire surface".
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"math"
 	"reflect"
+	"strings"
 
 	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/chat"
@@ -125,10 +127,45 @@ func (b *sessionInfoKiroBlock) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// turnEndBlock is the kind=="turn_end" sub-block. stopDetails is pinned upstream
-// and has never been observed, so it is not decoded — see the design's F2.
+// turnEndBlock is the kind=="turn_end" sub-block.
+//
+// StopDetails is the wire's own account of an abnormal stop and the ONLY channel
+// on this path that could carry one, so a `stopReason: "error"` turn had no cause
+// to persist and rendered as a red mark over an empty body. It is `json.RawMessage`
+// rather than a string because the field is declared optional upstream and has
+// never been observed on a live wire here: the shape is unknown, and a wrong
+// concrete type would fail the whole frame's decode rather than one field's.
+// stopDetailsText owns reading it.
 type turnEndBlock struct {
-	StopReason string `json:"stopReason"`
+	StopReason  string          `json:"stopReason"`
+	StopDetails json.RawMessage `json:"stopDetails"`
+}
+
+// stopDetailsText reads a human sentence out of turn_end's stopDetails, and
+// answers "" for anything it does not recognise so the caller falls through to the
+// outcome's own default rather than showing a reader a JSON fragment.
+//
+// Two shapes are accepted because the field is unmeasured and both are plausible
+// from a TypeScript producer: a bare string, and an object carrying one under a
+// name upstream already uses for prose elsewhere on this wire. An object with none
+// of those keys, an array, a number and a null all answer "".
+func stopDetailsText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return strings.TrimSpace(s)
+	}
+	var obj struct {
+		Message string `json:"message"`
+		Details string `json:"details"`
+		Reason  string `json:"reason"`
+	}
+	if json.Unmarshal(raw, &obj) != nil {
+		return ""
+	}
+	return strings.TrimSpace(cmp.Or(obj.Message, obj.Details, obj.Reason))
 }
 
 // promptTurnSummary is one metering line of a turn-end summary.
@@ -181,7 +218,15 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit
 		return
 	}
 	if e := u.Meta.Kiro.TurnEnd; e != nil {
-		t.turns.WireTurnEnd(ctx, chatID, vibekit.StopReason(e.StopReason))
+		details := stopDetailsText(e.StopDetails)
+		if details == "" && len(e.StopDetails) > 0 {
+			// The field arrived in a shape stopDetailsText does not read. Logged once per
+			// frame at Debug rather than dropped silently, because the field's shape is
+			// unmeasured and this line is the only thing that would ever tell us.
+			slog.Debug("turn_end carried stopDetails in an unread shape",
+				"chat_id", chatID, "stop_reason", e.StopReason, "bytes", len(e.StopDetails))
+		}
+		t.turns.WireTurnEnd(ctx, chatID, vibekit.StopReason(e.StopReason), details)
 		return
 	}
 	// Agent focus updates (title / description / status) ride here as

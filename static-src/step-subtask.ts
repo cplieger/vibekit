@@ -18,7 +18,9 @@ export interface StepSubtask {
  *  The PREFIX only, deliberately: a caller asking "is this the chat's own work"
  *  must answer yes for a malformed step id too, where `parseStepSubtask` returns
  *  null so the renderer can fall back to a delegate box rather than lose the
- *  block. The two questions differ, so they are two functions. */
+ *  block. The two questions differ, so they are two functions — a caller asking
+ *  instead whether the TRANSCRIPT draws the block wants `parseStepSubtask`, since
+ *  the delegate-box fallback is a real destination. */
 export function isStepSubtask(subtask: string): boolean {
   return subtask.startsWith(STEP_PREFIX);
 }

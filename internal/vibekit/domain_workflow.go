@@ -166,6 +166,65 @@ type RunStepPayload struct {
 	Delta      string      `json:"delta,omitempty"`
 }
 
+// RunStepTranscriptState is the verdict GET /api/runs/{id}/steps/{path...}
+// answers with. A registered wire enum, so the three values have one definition
+// across both languages and a client's branch over them is total.
+//
+// THREE values rather than a 200-with-an-empty-list, and the precedent is this
+// app's own: GET /api/config-template's `catalog` and GET /api/sessions'
+// `sessions_state`/`runs_state` exist because flattening several outcomes into one
+// empty answer makes every client policy a guess. Here the outcomes are genuinely
+// three and the reader says something different for each.
+type RunStepTranscriptState string
+
+// The three step-transcript verdicts.
+const (
+	// RunStepTranscriptReady: the transcript was read. Messages may still be
+	// EMPTY, which is its own fact — the step ran and produced no prose.
+	RunStepTranscriptReady RunStepTranscriptState = "ready"
+	// RunStepTranscriptGone: KAS no longer holds the step's session, so there is
+	// nothing to serve and never will be. A step that never started answers this
+	// too: it has no session to load.
+	RunStepTranscriptGone RunStepTranscriptState = "gone"
+	// RunStepTranscriptUnavailable: the read could not be completed — the RPC
+	// failed, the budget expired, or the utility bridge could not be reached. A
+	// TRANSIENT answer, and the only one a client may retry.
+	RunStepTranscriptUnavailable RunStepTranscriptState = "unavailable"
+)
+
+// RunStepTranscript is GET /api/runs/{id}/steps/{path...}'s reply: one workflow
+// step's transcript, read out of KAS on demand.
+//
+// It exists because a step's transcript is on no other endpoint. `inspect` returns
+// the node tree and a step's `capturedOutput`, which is what the step chose to
+// declare — not how it got there — and the live `run_step` channel is emitted for
+// PARENTLESS runs only and persisted by nobody. So a reader opening a finished
+// run's page could see the plan, the timings and the captures, and nothing of the
+// work.
+//
+// NOTHING IS PERSISTED BY THIS: the reply is projected from KAS's own replay per
+// request and dropped. A run has no chat, no message and no buffer, so there is
+// nowhere to accumulate it even if that were wanted — and accumulating a run's
+// content from events is what the run surface's invalidate-and-refetch contract
+// exists to forbid.
+//
+// NO `omitempty` on ANY field, deliberately and for EffectiveSettings' reason: the
+// generator emits a REQUIRED TypeScript field for a field without it, and a
+// required field is what stops a client inventing a fallback for the verdict. An
+// optional `state` would read as "assume ready", which is the one reading that
+// makes the three-valued answer pointless.
+type RunStepTranscript struct {
+	// Messages is the step's own transcript, projected from KAS's replay and
+	// filtered to the ASSISTANT rows. Empty on any state but ready, and legitimately
+	// empty on ready.
+	Messages []Message `json:"messages"`
+	// WorkflowID and NodePath echo what was asked for, so a client holding several
+	// reads in flight can tell the answers apart without correlating by request.
+	WorkflowID string                 `json:"workflow_id"`
+	NodePath   string                 `json:"node_path"`
+	State      RunStepTranscriptState `json:"state"`
+}
+
 // RunInputNeededPayload is the payload for type="run_input_needed": a workflow
 // STEP asked a question and the run is parked until somebody answers it.
 //
@@ -297,11 +356,39 @@ type RecipesResponse struct {
 // LiveRun is one row of GET /api/runs/live: a run vibekit's own lease registry
 // says is in flight, named with the chat whose agent launched it. ChatID is
 // empty for a parentless run (manual, scheduled) and for a lease written
-// before the field existed — both mean "no chat to exempt" to the consumer,
-// the client's eviction sweep.
+// before the field existed — both mean "no chat to launch a tab under".
+//
+// THREE consumers read this row and they ask three different questions, which is
+// why Executing is a field rather than a filter applied here: the client's
+// eviction sweep asks "are frames still arriving into this chat's transcript",
+// the tab-dot painter asks "which runs should this client paint a dot for" (every
+// run with an open tab, parked ones included), and the tab-parent resolver asks
+// "which chat launched this run", which is true of a run whatever its state. A
+// server that answered only the first would take the row away from the other two.
 type LiveRun struct {
 	WorkflowID string `json:"workflow_id"`
 	ChatID     string `json:"chat_id"`
+	// Executing reports whether THIS PROCESS is holding a deadline for the run,
+	// which is its own record of "I saw this run start and have not seen it park".
+	//
+	// It is deliberately NOT called `status` and does NOT carry one of KAS's five
+	// workflow statuses. Serving one would mean reading `_kiro/workflow/inspect`
+	// per lease, which is exactly what the endpoint's doc refuses (it sits on the
+	// client's boot path), so the honest field is the one the lease can answer for
+	// itself: a deadline is armed on every start and resume and PARKED on every
+	// pause, because the bound is on executing time (runlease.Lease.Deadline).
+	//
+	// Where it can disagree with KAS, and both directions are accepted:
+	//
+	//   - a lease read back from disk is parked by NewStore, so a run that was
+	//     executing when this process died reports false. That is the right answer
+	//     to the eviction question — the bridge carrying its frames died too — and
+	//     KAS reconciles such a run to `paused` on the next read anyway.
+	//   - `set_step_status` advances a parked step without re-arming, so a run
+	//     continued that way reports false while it executes. The client corrects
+	//     itself on the run's next progress frame; the endpoint is the reconciliation
+	//     at boot and after a transport gap, not the live channel.
+	Executing bool `json:"executing"`
 }
 
 // LiveRunsResponse is GET /api/runs/live's reply. An envelope rather than a

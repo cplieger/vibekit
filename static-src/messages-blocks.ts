@@ -16,6 +16,35 @@
 //                                           the subagent's own blocks, rendered
 //                                           by this same dispatcher — full parity)
 //
+// AUTO-COLLAPSE IS ONE REGISTRY, NOT A HOOK PER BLOCK TYPE. `MsgRender.autoCollapse`
+// holds the open, auto-collapsible things per CONTAINER; each registrant declares
+// what CONTINUES it and supplies its own collapse callback, and every append
+// consults that registry exactly once (`supersede`). A reasoning trace tolerates
+// nothing, which is what makes the first sibling text seal it; a tool group
+// tolerates a further tool CARD, which is what makes a run of consecutive tool
+// calls one box. `appendBlock` is the door for everything else, so a mounter added
+// later cannot forget the rule — it cannot reach the DOM without it. That totality
+// is the point: the reasoning half was already total, while the tool group's was
+// seven hand-written obligations that happened to all be right.
+//
+// The tolerated set is NOT the wire's block type, and `ContinuationKind` says why:
+// a todo checklist is a `tool_use` block that must still close a group, because it
+// is not a tool card. So the only non-null arrival any site names is `mountToolCard`'s.
+//
+// EXACTLY TWO THINGS REGISTER, and the list of what does not is a decision rather
+// than an omission: subagent boxes (`st.subagents`), pipeline boxes (`st.pipelines`),
+// run cards (`st.runs`), todo lists, plan messages and steer notes. None of them
+// registers, so none of them can start auto-collapsing. Enrolling any would be a
+// separate, argued change.
+//
+// A WORKFLOW STEP is the one block kind with NO destination: a block whose
+// `agent_subtask_id` parses as `wf:<workflowId>:<nodePath>` is DROPPED by
+// `placeBlock`. The run card is that run's RECORD — head, alert, one row per step,
+// foot — and each row is a door into `/run/<id>`, where the step's own transcript
+// is rendered. Dropping is explicit rather than a removed route, because a block
+// with no destination falls through to `blocksEl` and renders as loose top-level
+// content, which is worse than either.
+//
 // Blocks sharing a non-empty agent_subtask_id are grouped into one
 // SubagentBlock, whether or not they are adjacent: the card is keyed by subtask
 // id in a per-message Map that nothing closes, so a delegate's blocks join the
@@ -23,8 +52,8 @@
 // consequence worth knowing is ORDER, not grouping — the card is appended at the
 // subtask's FIRST appearance, so a parent block that arrived between two of a
 // delegate's blocks renders AFTER the whole card. (Tool GROUPS are the opposite
-// and deliberately so: `toolGroups` is keyed by container and any text block
-// closes it, so those really are contiguous runs.) The subagent's tool cards /
+// and deliberately so: a group is keyed by container and tolerates only further
+// tool calls, so those really are contiguous runs.) The subagent's tool cards /
 // reasoning / text render inside its card exactly as they do at the top level.
 // There is no separate legacy path and no text-preview fold.
 //
@@ -36,8 +65,8 @@
 // `invoke_subagent_<orchestrateToolCallId>_stage_<stageName>`, so the stage names
 // its parent and `indexPipelines` reads the join straight off it — no wire field
 // was added. The driver becomes the PIPELINE box's header and each stage's box is
-// appended into that box's body, which is the same one-invocation-hosts-N-children
-// shape the run card uses for workflow steps.
+// appended into that box's body: one invocation hosting N children, which is the
+// only two-level shape left in the transcript now that a run's steps are dropped.
 //
 // EXCEPT at exactly ONE stage, which renders no container: that stage's own card
 // is promoted where the container would have gone. See `pipelineHasContainer`.
@@ -83,7 +112,7 @@ import {
 // path (initToolCallbacks) — the same header renderer the block dispatcher uses.
 export { refreshGroupHeader };
 import { iconForSubagent, isSubagentInvocation, subagentLabel, subagentName } from "./roles.js";
-import { parseStepSubtask, type StepSubtask } from "./step-subtask.js";
+import { parseStepSubtask } from "./step-subtask.js";
 import { buildRunCard, type RunCardView } from "./fundamentals/run-card.js";
 import { invalidateRun, runState, forgetRun } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
@@ -134,12 +163,14 @@ export function initBlockRenderer(c: BlockCbs): void {
 //     that) leaves the earlier message's trailing bubble streaming until the
 //     turn finalizes — when the newer seals first, the CLEAR falls back to
 //     that older survivor by scanning the render map.
-//   - Delegate-hosted bubbles NEVER register. A subagent's or workflow step's
-//     live text streams inside a box that is collapsed by default, and
-//     `height: 0` + `overflow: hidden` clips that content without taking it
-//     out of layout — so it reports offsets the reader cannot see. With no
-//     top-level bubble streaming, null is the right answer: the document
-//     bottom is where the box's own rolling tail and its footer are.
+//   - Delegate-hosted bubbles NEVER register. A subagent's live text streams
+//     inside a box that is collapsed by default, and `height: 0` +
+//     `overflow: hidden` clips that content without taking it out of layout —
+//     so it reports offsets the reader cannot see. With no top-level bubble
+//     streaming, null is the right answer: the document bottom is where the
+//     box's own rolling tail and its footer are. A workflow step's live text
+//     registers nothing for a simpler reason: it is dropped, so no bubble for
+//     it is ever mounted.
 // ---------------------------------------------------------------------------
 
 let liveAnchor: { messageID: string; el: HTMLElement } | null = null;
@@ -147,13 +178,12 @@ let liveAnchor: { messageID: string; el: HTMLElement } | null = null;
 /** The element Following pins to, or null for the document bottom.
  *
  *  Self-healing: a mid-turn rebuild replaces a message's render, and the OLD
- *  bubble's seal belongs to the old render — so the slot can keep pointing at
- *  an element no longer in the transcript, whose offsetTop/offsetHeight read 0
- *  and pin the follow scroll to the TOP of the transcript. Measured live
- *  (2026-08-31): a mid-stream repaint snapped scrollTop 786 → 0 while the turn
- *  kept streaming. The registry is the truth: when the anchor is not its own
- *  message's CURRENT top-level live bubble, re-derive from the render map,
- *  exactly like clearLiveAnchor. */
+ *  bubble's seal belongs to the old render — so the slot can keep pointing at an
+ *  element no longer in the transcript, which reports no boxes at all (`scroll.ts`
+ *  answers that with the document bottom). Measured live (2026-08-31): a mid-stream
+ *  repaint snapped scrollTop 786 → 0 while the turn kept streaming. The registry is
+ *  the truth: when the anchor is not its own message's CURRENT top-level live
+ *  bubble, re-derive from the render map, exactly like clearLiveAnchor. */
 export function getLiveAnchor(): HTMLElement | null {
   if (liveAnchor !== null && renders.get(liveAnchor.messageID)?.topLiveEl !== liveAnchor.el) {
     liveAnchor = null;
@@ -190,20 +220,18 @@ function clearLiveAnchor(el: HTMLElement): void {
 // ---------------------------------------------------------------------------
 // The open-container registry: which collapsible containers are open RIGHT NOW.
 //
-// Maintained where the disclosure state changes (the subagent block's toggle,
-// the run card's, the run-step row's), so the resume counter's reachability
-// test is a set read instead of two querySelectorAll passes per paint. ONE Set,
-// three key shapes:
+// Maintained where the disclosure state changes (the subagent block's toggle), so
+// the resume counter's reachability test is a set read instead of two
+// querySelectorAll passes per paint. ONE Set, ONE key shape:
 //
 //   sub:<subtaskID>            an open delegate box
-//   run:<workflowID>           an open run card (mounts open, so registered at build)
-//   step:<workflowID>:<path>   an open step row inside that card
 //
-// A step's blocks need BOTH of its containers open — the card and the row —
-// which is why the derived view below joins `step:` against `run:` instead of
-// exposing raw keys. DETACHED renders (the subagent page) register nothing:
-// reachability is a property of the transcript, and an open box on another tab
-// contributes no document height here.
+// The run card's `run:` key and its step rows' `step:` keys are GONE with the
+// per-step bodies: a workflow step's blocks are dropped by the dispatcher, so no
+// disclosure state can make one reachable and the counter never counts one.
+// DETACHED renders (the subagent page) register nothing: reachability is a property
+// of the transcript, and an open box on another tab contributes no document height
+// here.
 // ---------------------------------------------------------------------------
 
 const openContainers = new Set<string>();
@@ -216,27 +244,20 @@ function setContainerOpen(key: string, open: boolean): void {
   }
 }
 
-/** The subtask ids whose container chain is open, in the id shape blocks carry:
- *  a delegate's uuid, or `wf:<workflowId>:<nodePath>` for a workflow step. */
+/** The subtask ids whose container is open, in the id shape blocks carry: a
+ *  delegate's uuid. A workflow step's `wf:` id is never a member — its blocks are
+ *  dropped, so they are unreachable however the card is folded. */
 export function openContainerKeys(): ReadonlySet<string> {
   const out = new Set<string>();
   for (const key of openContainers) {
     if (key.startsWith("sub:")) {
       out.add(key.slice(4));
-      continue;
-    }
-    if (key.startsWith("step:")) {
-      const rest = key.slice(5);
-      const sep = rest.indexOf(":");
-      if (sep > 0 && openContainers.has(`run:${rest.slice(0, sep)}`)) {
-        out.add(`wf:${rest}`);
-      }
     }
   }
   return out;
 }
 
-/** Drop a render's container keys. `runs` prefix-deletes its step rows too. */
+/** Drop a render's container keys. */
 function pruneContainers(st: MsgRender): void {
   if (st.detached) {
     return; // never registered
@@ -244,20 +265,43 @@ function pruneContainers(st: MsgRender): void {
   for (const subtask of st.subagents.keys()) {
     openContainers.delete(`sub:${subtask}`);
   }
-  for (const runID of st.runs.keys()) {
-    openContainers.delete(`run:${runID}`);
-    const prefix = `step:${runID}:`;
-    for (const key of openContainers) {
-      if (key.startsWith(prefix)) {
-        openContainers.delete(key);
-      }
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
 // Per-message render state
 // ---------------------------------------------------------------------------
+
+/** What a container is being told has arrived, from the point of view of the
+ *  things open in it — NOT the wire's `Block["type"]`, which is a bare `string`
+ *  and would answer the wrong question anyway: a todo checklist is a `tool_use`
+ *  block that must still CLOSE a tool group, because it is not a tool card.
+ *
+ *  `null` is "something no registrant tolerates" and is what `appendBlock` passes,
+ *  so it is the case for every mounter. `"tool_use"` is the one non-null value any
+ *  site produces (`mountToolCard`). The union is deliberately exactly that set: a
+ *  registrant declaring `continues: ["text"]` would be INERT, because nothing
+ *  names `"text"` at a supersede call — measured by planting exactly that and
+ *  watching the suite stay green. So adding a kind here is a TWO-part change,
+ *  widening this union AND teaching that kind's mounter to name itself, and the
+ *  type is what stops half of it compiling. */
+type ContinuationKind = "tool_use";
+
+/** One open, auto-collapsible thing in one block container.
+ *
+ *  Two registrants and only two: a reasoning trace tolerates nothing, and a tool
+ *  group tolerates further tool calls. Enrolling a third is a decision, not a
+ *  convenience — see this module's top-of-file rule comment for the list of block
+ *  kinds that deliberately do NOT register. */
+interface OpenCollapsible {
+  /** Arrivals that CONTINUE this registrant rather than superseding it. Empty
+   *  means the next element of any kind ends it, which is what makes the first
+   *  sibling text seal a reasoning trace. */
+  readonly continues: readonly ContinuationKind[];
+  /** Collapse or seal. MUST be idempotent — `supersede` drops the entry, but the
+   *  callback's own bookkeeping (a `toolGroups` entry) is the callback's to
+   *  clear. */
+  readonly collapse: () => void;
+}
 
 interface MsgRender {
   /** The chat whose messages this render belongs to.
@@ -297,11 +341,10 @@ interface MsgRender {
    *  Complete on arrival: the server writes `ToolCall.Input` on the create frame and
    *  never on an update, so there is no partial-input window. */
   pipelineDeclared: Map<string, number>;
-  /** workflow id → the run card THIS render hosts. Keyed by RUN, not by
-   *  subtask, because one card holds every step of one run — the step rows inside
-   *  it are keyed by node path (see `runContainerFor`). Only the HOST render of a
-   *  run has an entry (`runCardHosts`); a later message of the same chat routes
-   *  into the host's card and holds nothing here. */
+  /** workflow id → the run card THIS render hosts. Keyed by RUN, not by subtask,
+   *  because one card is the whole record of one run. Its only creator is the
+   *  launch tool call (`bindRunCard`), which belongs to exactly one message, so
+   *  there is at most one entry per run per transcript by construction. */
   runs: Map<string, RunCardView>;
   /** workflow id → the ARMED render effect's disposer, absent while the card is
    *  suspended (view parked). Beside `runs` rather than inside `disposers`
@@ -353,11 +396,25 @@ interface MsgRender {
    *  it to find the newest split-turn survivor. Delegate-hosted bubbles never
    *  set it. */
   topLiveEl: HTMLElement | null;
-  /** Every mounted reasoning handle (for finalize seal()). */
+  /** Every mounted reasoning handle (for finalize seal()). A different question
+   *  from `autoCollapse` below: this is the full list of traces this message ever
+   *  mounted, for the turn-end seal, not "which one is still open". */
   reasonings: ReasoningView[];
-  /** The still-open reasoning block per container (auto-collapse on sibling). */
-  openReasoning: Map<HTMLElement, ReasoningView>;
-  /** The open tool group per container (consecutive tool cards share one). */
+  /** container → the open, auto-collapsible things in it, in mount order.
+   *
+   *  ONE registry for the whole "collapse me when a foreign sibling arrives" rule,
+   *  consulted once per append by `supersede`. It REPLACED a per-type
+   *  `openReasoning` map plus seven hand-written `closeToolGroup` calls: the
+   *  reasoning rule was total (sealed at the append, so a mounter could not reach
+   *  the DOM without it) while the tool group's was a per-caller OBLIGATION, and
+   *  every one of those callers was correct while the next one added would have
+   *  forgotten. Two registrants — the reasoning trace and the tool group. */
+  autoCollapse: Map<HTMLElement, OpenCollapsible[]>;
+  /** The open tool group per container (consecutive tool cards share one).
+   *
+   *  NOT replaced by `autoCollapse`: this answers "where does the next tool card
+   *  get appended", which is a different question from "what does the next element
+   *  supersede". */
   toolGroups: Map<HTMLElement, HTMLDivElement>;
   /** Steer-mark ids already mounted into this message's block stream. This set
    *  is what makes `flushSteerNotes` idempotent: it is called from two places
@@ -367,14 +424,15 @@ interface MsgRender {
 
 const renders = new Map<string, MsgRender>();
 
-/** chat id → workflow id → the render whose message HOSTS that run's card.
- *
- *  The transcript-level half of `MsgRender.runs`: a run's frames span several
- *  messages, and this is what routes every later message's steps into the card
- *  the first one built. Claimed at build, released by the host's own disposer.
- *  Detached renders are never in it — the subagent page is its own surface, and
- *  adopting the transcript's card would move the DOM node out of it. */
-const runCardHosts = new Map<string, Map<string, MsgRender>>();
+/* `runCardHosts` is DELETED. It was a chat-level dedupe — chat id → workflow id →
+   the render hosting that run's card — and it existed because a run's LATER frames
+   arrive in a new assistant message per turn-segment, so a later message's step
+   blocks had to find the card the first one built rather than build a second. With
+   those blocks dropped at the dispatcher, the launch TOOL CALL is the only thing
+   that creates a card, and a tool call belongs to exactly one message — so the
+   dedupe has nothing left to dedupe. If a path is ever found where two resident
+   messages carry one run's launch, the registry comes back rather than the card
+   being built twice. */
 
 // ---------------------------------------------------------------------------
 // Public API (called by messages.ts)
@@ -421,7 +479,7 @@ function buildBody(
     liveBubble: null,
     topLiveEl: null,
     reasonings: [],
-    openReasoning: new Map(),
+    autoCollapse: new Map(),
     toolGroups: new Map(),
     steerNotes: new Set(),
   };
@@ -729,12 +787,25 @@ function renderRange(
 ): void {
   const blocks = m.blocks ?? [];
   const lastIdx = blocks.length - 1;
-  if (to > from) {
-    // A block is being appended, so whatever held the caret is no longer the
-    // tail. Seal it here rather than in mountText: the new tail may be a
-    // thinking block or a tool card, and the previous text block stops
-    // streaming either way. Idempotent — `end()` nulls its own stream and
-    // `classList.remove` is a no-op when the class is absent.
+  // A block is being appended, so whatever held the caret is no longer the
+  // tail. Seal it here rather than in mountText: the new tail may be a
+  // thinking block or a tool card, and the previous text block stops
+  // streaming either way. Idempotent — `end()` nulls its own stream and
+  // `classList.remove` is a no-op when the class is absent.
+  //
+  // A range whose every block is DROPPED must not seal, though: nothing is being
+  // placed, so ending the parent's caret would stop the reader's streaming reply
+  // for an arrival that renders nothing at all — and a workflow step's frames land
+  // in the launching chat by the dozen while its own turn streams.
+  let places = false;
+  for (let i = from; i < to; i++) {
+    const block = blocks[i];
+    if (block !== undefined && !isDroppedStep(block)) {
+      places = true;
+      break;
+    }
+  }
+  if (places) {
     sealLiveBubble(st);
   }
   for (let i = from; i < to; i++) {
@@ -789,11 +860,11 @@ function blockIsLive(blocks: readonly Block[], i: number, lastIdx: number): bool
  *  Idempotent by mark id, which is required rather than defensive: `renderRange`
  *  and `updateAssistantBody` both call it and their ranges overlap by design.
  *
- *  Closing the open reasoning trace AND the open tool group first is
- *  CORRECTNESS, not tidiness. A group is keyed by container and stays open until
- *  something closes it, so a steer landing mid tool-loop would otherwise be
- *  appended after the group's container while the later tool cards still went
- *  INTO that group — rendering them above the note that preceded them. */
+ *  Superseding the open trace AND the open tool group first is CORRECTNESS, not
+ *  tidiness — a steer landing mid tool-loop would otherwise be appended after the
+ *  group's container while the later tool cards still went INTO that group,
+ *  rendering them above the note that preceded them. `appendBlock` is what does it
+ *  now, so this mounter has nothing of its own to remember. */
 function flushSteerNotes(
   st: MsgRender,
   marks: readonly SteerMark[],
@@ -808,7 +879,6 @@ function flushSteerNotes(
     ) {
       continue;
     }
-    closeToolGroup(st, st.blocksEl);
     appendBlock(
       st,
       st.blocksEl,
@@ -840,28 +910,22 @@ function sealLiveBubble(st: MsgRender): void {
 }
 
 /** Resolve the container a block renders into: the top-level `.assistant-blocks`
- *  for parent-agent blocks, a run card's step row for a WORKFLOW STEP, or a
- *  SubagentBlock's body for a subagent's blocks.
+ *  for parent-agent blocks, or a SubagentBlock's body for a subagent's blocks.
  *
- *  Three destinations, and the middle one is the reason this is not a two-line
- *  function. A step's subtask id is `wf:<workflowId>:<nodePath>`, so it names TWO
- *  containers: the run, and the step within it. Resolving both is what puts a
- *  step's work inside the invocation that launched it rather than beside it.
+ *  TWO destinations. A WORKFLOW STEP was a third and is now dropped by `placeBlock`
+ *  before this runs, so no `wf:`-stamped block reaches here.
  *
- *  A PIPELINE STAGE is the same two-level shape reached a different way. Its
- *  subtask id is a bare uuid that names nothing, so the pair comes from
- *  `st.stagePipeline` (see `indexPipelines`): the pipeline, and the stage's own
- *  box within it. Without that lookup a stage box is appended to `blocksEl` as a
- *  FLAT SIBLING of the orchestrate call that started it, which is what put two
- *  unrelated boxes with two beating spinners on screen for one delegated task. */
+ *  A PIPELINE STAGE is the only two-level destination left, and it is the reason
+ *  this is not a two-line function. Its subtask id is a bare uuid
+ *  that names nothing, so the pair comes from `st.stagePipeline` (see
+ *  `indexPipelines`): the pipeline, and the stage's own box within it. Without that
+ *  lookup a stage box is appended to `blocksEl` as a FLAT SIBLING of the orchestrate
+ *  call that started it, which is what put two unrelated boxes with two beating
+ *  spinners on screen for one delegated task. */
 function containerFor(st: MsgRender, block: Block, live: boolean): HTMLElement {
   const subtask = block.agent_subtask_id ?? "";
   if (subtask === "") {
     return st.blocksEl;
-  }
-  const step = parseStepSubtask(subtask);
-  if (step !== null) {
-    return runContainerFor(st, step);
   }
   let sa = st.subagents.get(subtask);
   if (sa === undefined) {
@@ -877,12 +941,11 @@ function containerFor(st: MsgRender, block: Block, live: boolean): HTMLElement {
     });
     sa.root.dataset["subtask"] = subtask;
     st.subagents.set(subtask, sa);
-    // The box lands in its HOST (top level or a pipeline body), so the seal and
-    // the group close belong to the host: the delegate's card is the "something
-    // posted after" for whatever trace was open there, and a tool run the box
-    // interrupts must not keep collecting cards above it.
+    // The box lands in its HOST (top level or a pipeline body), so the supersede
+    // belongs to the host: the delegate's card is the "something posted after" for
+    // whatever trace was open there, and a tool run the box interrupts must not
+    // keep collecting cards above it. Both are `appendBlock`'s now.
     const host = stageHostFor(st, subtask, live);
-    closeToolGroup(st, host);
     appendBlock(st, host, sa.root);
   }
   return sa.body;
@@ -983,13 +1046,12 @@ function pipelineBoxFor(st: MsgRender, pipelineID: string, live: boolean): Subag
     .filter((v): v is SubagentView => v?.root.parentElement === st.blocksEl);
   const first = promoted[0];
   if (first === undefined) {
-    closeToolGroup(st, st.blocksEl);
     appendBlock(st, st.blocksEl, box.root);
   } else {
-    // Lands where the first adopted stage sat, keeping transcript order. Neither
-    // `appendBlock` nor `closeToolGroup`: nothing is posted after an open trace
-    // by swapping a node already in place, and that stage's append closed the
-    // group.
+    // Lands where the first adopted stage sat, keeping transcript order. NOT
+    // `appendBlock`: nothing is posted after an open collapsible by swapping a node
+    // already in place, and that stage's own append already superseded whatever was
+    // open there.
     first.root.replaceWith(box.root);
   }
   for (const v of promoted) {
@@ -1007,17 +1069,6 @@ function pipelineBoxFor(st: MsgRender, pipelineID: string, live: boolean): Subag
   return box;
 }
 
-/** The step row inside the run card, creating the card when the invocation has
- *  not been rendered yet.
- *
- *  A step's frame can arrive before the tool call that started it is in the store
- *  (out-of-order SSE), and after a refresh the invocation is persisted while the
- *  step blocks are not — so the card must be creatable from either side. Whichever
- *  arrives first builds it; the other finds it. */
-function runContainerFor(st: MsgRender, step: StepSubtask): HTMLElement {
-  return runCardFor(st, step.workflowID, "Workflow run").stepBody(step.nodePath);
-}
-
 /** Get or build the run card for one workflow id, and subscribe it to the store.
  *
  *  The subscription is the whole reason the card needs no event handling of its
@@ -1028,66 +1079,30 @@ function runCardFor(st: MsgRender, workflowID: string, name: string): RunCardVie
   if (existing !== undefined) {
     return existing;
   }
-  if (!st.detached) {
-    // ONE box per run per TRANSCRIPT, not per message. The server folds a run's
-    // later frames into a NEW assistant message per turn-segment, so a
-    // per-message key rebuilt the card in every segment — two boxes in the
-    // launching turn, two more each later turn, all reading one store cell.
-    // A later message routes into the first message's card instead; step rows
-    // are keyed by node path, so cross-message routing lands in the right row.
-    const hosted = runCardHosts.get(st.chatID)?.get(workflowID)?.runs.get(workflowID);
-    if (hosted !== undefined) {
-      return hosted;
-    }
-    let hosts = runCardHosts.get(st.chatID);
-    if (hosts === undefined) {
-      hosts = new Map();
-      runCardHosts.set(st.chatID, hosts);
-    }
-    hosts.set(workflowID, st);
-  }
   // The footer link re-opens the run's tab. Injected here rather than imported by
   // the card, so `fundamentals/` keeps pointing only downward — and lazily, because
   // `run-view.ts` reaches the whole run page and the transcript must not carry it.
-  const card = buildRunCard(
-    workflowID,
-    name,
-    (id, label) => {
-      void import("./run-view.js")
-        .then(({ openRunView }) => {
-          openRunView(id, label);
-        })
-        .catch(() => {
-          /* noop: the link degrades to its href on the next click */
-        });
-    },
-    st.detached
-      ? undefined
-      : (nodePath, open) => {
-          setContainerOpen(
-            nodePath === null ? `run:${workflowID}` : `step:${workflowID}:${nodePath}`,
-            open,
-          );
-        },
-  );
+  //
+  // It passes THIS render's chat as the parent, which the card sits in by
+  // definition, because the run store's own record of the launching chat is fed by
+  // SSE frames and answers nothing before the first one lands.
+  const chatID = st.chatID;
+  const card = buildRunCard(workflowID, name, (id, label, focusNode) => {
+    void import("./run-view.js")
+      .then(({ openRunView }) => {
+        // The third argument is what makes a step row a DOOR: the footer link calls
+        // this with two and means "the run", a row calls it with its own node path
+        // and means "the run, at this step".
+        openRunView(id, label, chatID, focusNode ?? "");
+      })
+      .catch(() => {
+        /* noop: the link degrades to its href on the next click */
+      });
+  });
   st.runs.set(workflowID, card);
-  if (!st.detached) {
-    // The card mounts OPEN and the disclosure reports only later flips.
-    openContainers.add(`run:${workflowID}`);
-  }
-  closeToolGroup(st, st.blocksEl);
   appendBlock(st, st.blocksEl, card.root);
   st.disposers.push(() => {
     disarmRunCard(st, workflowID, card);
-    // Release the host slot only when this render still holds it, so a card
-    // rebuilt under a new host survives its old host's late dispose.
-    const hosts = runCardHosts.get(st.chatID);
-    if (hosts?.get(workflowID) === st) {
-      hosts.delete(workflowID);
-      if (hosts.size === 0) {
-        runCardHosts.delete(st.chatID);
-      }
-    }
     // The store's only bound, and this is the one place that can apply it: three
     // surfaces read a run's cell and none of them is last on its own. A card
     // unmounting (chat switch, or the reconcile dropping its row) with no run tab
@@ -1145,16 +1160,29 @@ function recipeNameOf(tc: ToolCall): string {
 // it, so an idle transcript costs nothing.
 //
 // Holders are REFCOUNTED per workflow id: the same run can be on screen more than
-// once (a parked chat's card beside a subagent page's card of the same run), so a
-// release names WHICH card let go and the interval survives until the last one
-// does. A plain per-workflow slot let one surface's park stop the clock another
-// surface was still showing.
+// once (a parked chat's card beside a subagent page's card of the same run, or the
+// composer band's run bar beside either), so a release names WHICH holder let go
+// and the interval survives until the last one does. A plain per-workflow slot let
+// one surface's park stop the clock another surface was still showing.
 // ---------------------------------------------------------------------------
 
-const clockHolders = new Map<string, Set<RunCardView>>();
+/** What the clock needs of a holder, which is one method.
+ *
+ *  Narrower than `RunCardView` because the second consumer is not a card:
+ *  `run-bar.ts` renders one line per live run and re-derives its elapsed text on
+ *  the same tick. Widening the parameter rather than the holder set's element type
+ *  would let a release pass a value the set can never contain. */
+export interface RunClockHolder {
+  tick(): void;
+}
+
+const clockHolders = new Map<string, Set<RunClockHolder>>();
 let clockTimer: ReturnType<typeof setInterval> | undefined;
 
-function holdRunClock(workflowID: string, card: RunCardView): void {
+/** Tick this run's clock once a second while `holder` is showing it. Refcounted —
+ *  see the banner above; `releaseRunClock` is the other half and both are
+ *  idempotent. */
+export function holdRunClock(workflowID: string, card: RunClockHolder): void {
   let holders = clockHolders.get(workflowID);
   if (holders === undefined) {
     holders = new Set();
@@ -1170,7 +1198,8 @@ function holdRunClock(workflowID: string, card: RunCardView): void {
   }, 1000);
 }
 
-function releaseRunClock(workflowID: string, card: RunCardView): void {
+/** Stop ticking for one holder. The interval dies with the last one. */
+export function releaseRunClock(workflowID: string, card: RunClockHolder): void {
   const holders = clockHolders.get(workflowID);
   if (holders === undefined) {
     return;
@@ -1214,48 +1243,38 @@ function disarmRunCard(st: MsgRender, workflowID: string, card: RunCardView): vo
   releaseRunClock(workflowID, card);
 }
 
-/** A standalone run card for a COLLAPSED turn's face: a DUPLICATE of the
- *  in-body card, subscribed to the same store cell so the two cannot disagree,
- *  and visible exactly when the body's copy is not (the fold hides the body;
- *  unfolding removes the face). Deliberately outside the runCardHosts registry:
- *  that registry dedupes transcript cards, and this one exists BECAUSE the
- *  transcript's copy is hidden. */
-export function mountFaceRunCard(workflowID: string): { root: HTMLElement; dispose: () => void } {
-  const card = buildRunCard(
-    workflowID,
-    "Workflow run",
-    (id, label) => {
-      void import("./run-view.js")
-        .then(({ openRunView }) => {
-          openRunView(id, label);
-        })
-        .catch(() => {
-          /* noop: the link degrades to its href on the next click */
-        });
-    },
-    undefined,
-  );
-  const stop = effect(() => {
-    card.render(runState(workflowID), runPendingAsks(workflowID));
-  });
-  holdRunClock(workflowID, card);
-  invalidateRun(workflowID);
-  return {
-    root: card.root,
-    dispose: (): void => {
-      stop();
-      releaseRunClock(workflowID, card);
-    },
-  };
+/** Whether this block belongs to a WORKFLOW STEP, and is therefore not rendered
+ *  in the transcript at all.
+ *
+ *  Keyed on the PARSE, never on the `wf:` prefix: a malformed id parses to null and
+ *  keeps its existing delegate-box fallback, which is what stops a client older
+ *  than a future id shape from silently losing a delegate's whole transcript.
+ *
+ *  `store.ts` `droppedFrameCause` asks this same question through the same parse, so
+ *  the cheap render cause and the drop cover exactly one set of ids. */
+function isDroppedStep(block: Block): boolean {
+  return parseStepSubtask(block.agent_subtask_id ?? "") !== null;
 }
 
 function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: boolean): void {
+  // DROPPED, before `containerFor` runs. The run card is the RECORD of a run and
+  // renders no step content, so a step's blocks have no destination here — and the
+  // drop has to be explicit: merely removing the routing would let them fall through
+  // to `st.blocksEl` and render as loose top-level content in the launching turn,
+  // which is strictly worse than hosting them. The run tab renders them instead
+  // (`run-step-slice.ts` projects them straight out of the message store, so nothing
+  // is lost by not drawing them here).
+  //
+  // At the dispatch site rather than inside `containerFor`, because `containerFor`
+  // must return an element and "render nothing" is not an element.
+  if (isDroppedStep(block)) {
+    return;
+  }
   const container = containerFor(st, block, live);
   const subtask = block.agent_subtask_id ?? "";
 
   switch (block.type) {
     case "text": {
-      closeToolGroup(st, container);
       mountText(st, m.id, container, block, i, live);
       return;
     }
@@ -1316,7 +1335,9 @@ function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: bo
         members.add(tc.id);
       }
       if (isTodoTool(tc)) {
-        closeToolGroup(st, container);
+        // A todo checklist is a tool_use block that is NOT a tool card, so it
+        // supersedes an open group like any other element — via `appendBlock` in
+        // `mountTodo`, not via `mountToolCard`'s tool_use continuation.
         mountTodo(st, m.id, container, tc);
         return;
       }
@@ -1412,19 +1433,24 @@ function mountThinking(
   if (initial === "" && !live) {
     return; // an empty settled "Thinking completed" dropdown is worse than none
   }
-  // A trace interrupts a consecutive tool run. Without this, later tool calls
-  // kept joining the group element ABOVE the trace, which both mis-ordered the
-  // transcript and stacked every trace of a think→tool loop into one pile.
-  closeToolGroup(st, container);
   const view = buildReasoning(initial, live);
   st.reasonings.push(view);
   st.blockText.set(i, (full) => {
     view.setText(full);
   });
-  // Append (sealing any open predecessor) BEFORE registering the new view, or
-  // appendBlock would seal the trace being mounted.
+  // Append BEFORE registering, or the append's own supersede would seal the trace
+  // being mounted. The append is also what interrupts a consecutive tool run:
+  // without it, later tool calls kept joining the group element ABOVE the trace,
+  // which both mis-ordered the transcript and stacked every trace of a think→tool
+  // loop into one pile.
   appendBlock(st, container, view.root);
-  st.openReasoning.set(container, view);
+  // A trace tolerates NOTHING, which is what makes the first sibling text seal it.
+  register(st, container, {
+    continues: [],
+    collapse: () => {
+      view.seal();
+    },
+  });
   if (live && !st.detached) {
     const sig = ensureBlockThinkingSig(msgId, i, initial);
     const cleanup = effect(() => {
@@ -1437,6 +1463,10 @@ function mountThinking(
 }
 
 function mountToolCard(st: MsgRender, container: HTMLElement, tc: ToolCall): void {
+  // The one site that consults the registry explicitly, because a tool card is the
+  // one arrival an open group TOLERATES: it seals a reasoning trace and leaves the
+  // group it is about to join alone.
+  supersede(st, container, "tool_use");
   const group = toolGroupFor(st, container);
   const card = mountToolCallCard(st.chatID, tc);
   card.setAttribute(RECONCILE_KEY, tc.id);
@@ -1628,40 +1658,89 @@ function subagentSummary(st: MsgRender, subtask: string, invocation: ToolCall): 
 }
 
 // ---------------------------------------------------------------------------
-// Reasoning + tool-group per-container bookkeeping
+// The auto-collapse registry: one open, auto-collapsible thing per container
 // ---------------------------------------------------------------------------
 
-function sealReasoning(st: MsgRender, container: HTMLElement): void {
-  const view = st.openReasoning.get(container);
-  if (view !== undefined) {
-    view.seal();
-    st.openReasoning.delete(container);
+/** Enrol an open collapsible in its container's registry. */
+function register(st: MsgRender, container: HTMLElement, entry: OpenCollapsible): void {
+  const list = st.autoCollapse.get(container);
+  if (list === undefined) {
+    st.autoCollapse.set(container, [entry]);
+  } else {
+    list.push(entry);
   }
 }
 
-/** Append into a block container, closing the thinking block open there first.
+/** Collapse and deregister every registrant in `container` that does not tolerate
+ *  an arrival of `kind`. `null` is the arrival nobody tolerates.
  *
- *  The ONE door for the rule "anything posted after an open trace supersedes
- *  it". The wire carries no thinking-ended signal — a delta only extends the
- *  newest block of its own lane — so the next element's arrival IS the end
- *  signal (finalizeAssistantBody covers a trace nothing followed). Sealing at
- *  the append keeps the rule total: a mounter added later cannot forget it,
- *  because it cannot reach the DOM without it. */
+ *  The ONE consult door. Every registrant declares what continues it, so "a tool
+ *  group tolerates further tool calls" is a DECLARED property rather than an
+ *  accident of which append path a mounter happened to use. */
+function supersede(st: MsgRender, container: HTMLElement, kind: ContinuationKind | null): void {
+  const list = st.autoCollapse.get(container);
+  if (list === undefined) {
+    return;
+  }
+  const kept: OpenCollapsible[] = [];
+  for (const entry of list) {
+    if (kind !== null && entry.continues.includes(kind)) {
+      kept.push(entry);
+      continue;
+    }
+    entry.collapse();
+  }
+  if (kept.length === 0) {
+    st.autoCollapse.delete(container);
+  } else {
+    st.autoCollapse.set(container, kept);
+  }
+}
+
+/** Append into a block container, superseding whatever is open there first.
+ *
+ *  The ONE door for the rule "anything posted after an open collapsible ends it",
+ *  for BOTH registrants. The wire carries no thinking-ended signal and no
+ *  tool-run-ended signal — a delta only extends the newest block of its own lane —
+ *  so the next element's arrival IS the end signal (finalizeAssistantBody covers a
+ *  trace nothing followed). Superseding at the append keeps the rule total: a
+ *  mounter added later cannot forget it, because it cannot reach the DOM without
+ *  it. `null` because an element arriving through this door is by definition not a
+ *  tool_use continuation; `mountToolCard` is the one site that supersedes
+ *  explicitly, and it appends its shell directly.
+ *
+ *  TURN END IS ASYMMETRIC AND DELIBERATELY SO: `finalizeAssistantBody` seals every
+ *  reasoning trace and collapses no group. Turn end is not "the next element", and
+ *  a completed reasoning trace is machine-internal noise while a completed tool run
+ *  is the turn's result — the last thing the reader asked about. */
 function appendBlock(st: MsgRender, container: HTMLElement, el: HTMLElement): void {
-  sealReasoning(st, container);
+  supersede(st, container, null);
   container.appendChild(el);
 }
 
+/** The open tool group for a container, building and registering one if there is
+ *  none. Appends with a plain `appendChild`: the caller (`mountToolCard`) has
+ *  already run `supersede(…, "tool_use")`, and going through `appendBlock` would
+ *  supersede the group being created. */
 function toolGroupFor(st: MsgRender, container: HTMLElement): HTMLDivElement {
   let group = st.toolGroups.get(container);
   if (group === undefined) {
     group = buildToolGroupShell();
-    appendBlock(st, container, group);
+    container.appendChild(group);
     st.toolGroups.set(container, group);
+    register(st, container, {
+      continues: ["tool_use"],
+      collapse: () => {
+        closeToolGroup(st, container);
+      },
+    });
   }
   return group;
 }
 
+/** The tool group's collapse callback: drop the append-target entry, then fold the
+ *  box. Keyed by container, so a run of tool calls broken by anything that is not
+ *  a tool call becomes two groups. */
 function closeToolGroup(st: MsgRender, container: HTMLElement): void {
   const group = st.toolGroups.get(container);
   st.toolGroups.delete(container);

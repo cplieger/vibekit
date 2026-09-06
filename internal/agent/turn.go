@@ -28,6 +28,25 @@ const (
 // turn's own spend is the difference against it at finalize.
 type CreditBaseline float64
 
+// turnCarrier is the persisted message that carries a turn's outcome, plus the one
+// fact the lost-claim amend turns on.
+//
+// A struct rather than a `(string, bool)` pair returned side by side: the id and
+// the flag are read together at exactly one call site, and a transposed pair there
+// compiles and is silent in both directions.
+type turnCarrier struct {
+	// MessageID is the carrier's id. Empty when the turn persisted no carrier at
+	// all, which is a prime turn, an unstarted discard, and every turn closed
+	// before this was recorded.
+	MessageID string
+	// ReasonSupplied is whether a CLOSER supplied the carrier's reason, rather
+	// than it being defaulted from the outcome. THE specificity test, and it is
+	// two-valued and exact rather than a heuristic: reasonFor falls back to the
+	// default only when the closer supplied nothing, so the fact is available with
+	// no string comparison, no length measurement and no keyword list.
+	ReasonSupplied bool
+}
+
 // Turn is everything true of one turn, for its whole life, whoever opened it.
 //
 // Epoch, Chat, Opened, Source, Model, Credits, Buf and done are written once at
@@ -47,7 +66,11 @@ type Turn struct {
 	Opened time.Time
 	// Model is the model answering, captured at open for every source.
 	Model string
-	Chat  vibekit.ChatID
+	// carrier is the persisted message that ended up holding this turn's outcome,
+	// recorded at close so a closer that LOST the claim can still reach it. See
+	// amendLostReason.
+	carrier turnCarrier
+	Chat    vibekit.ChatID
 	// Interrupt is the first cause claimed for this turn.
 	Interrupt vibekit.InterruptCause
 	// result is immutable once done is closed.
@@ -135,6 +158,20 @@ func (r *turnRegistry) lifecycleFor(chatID vibekit.ChatID) *chatLifecycle {
 		r.chats[chatID] = lc
 	}
 	return lc
+}
+
+// lookup returns the chat's lifecycle WITHOUT creating one, reporting false when
+// the chat has none. The read-only twin of lifecycleFor, for a predicate that must
+// answer a question without recording that it was asked: an entry leaves the map
+// only through forget (bridge teardown or delete), so a caller on an HTTP read path
+// would otherwise leave a lifecycle and its `changed` channel behind for every chat
+// that never had a turn. HasLiveBridge is the sibling predicate that already reads
+// this way.
+func (r *turnRegistry) lookup(chatID vibekit.ChatID) (*chatLifecycle, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	lc, ok := r.chats[chatID]
+	return lc, ok
 }
 
 // forget drops a chat's lifecycle. A turn already open keeps the dropped one —
@@ -385,6 +422,41 @@ func (r *turnRegistry) openEpoch(chatID vibekit.ChatID) (vibekit.TurnEpoch, bool
 	return lc.cur.Epoch, true
 }
 
+// stepTurnEpoch reports the epoch of an open turn a workflow STEP opened, and
+// false when this chat's open turn is anything else or there is none. It is the
+// read a run's TERMINAL transition acts on: a step's own turn_end is dropped by
+// the workflow attribution gate, so the run ending is the only thing left that can
+// close such a turn.
+//
+// NOT displaceableEngineTurn, which is the predicate that already exists and the
+// wrong one here: that also matches TurnSourceWireTurnStart, and closing the
+// chat's OWN agent-initiated turn because some run ended would be a different
+// defect — that turn's subject is this chat, and its bracket is still coming.
+//
+// turnFinalizing answers false, matching openEpoch: the caller is about to act on
+// the turn, and a claimed turn's effects are already running.
+//
+// It reads through `lookup` rather than `lifecycleFor`, so asking cannot MINT a
+// lifecycle. This is asked once per terminal run frame — a run-lifecycle event,
+// not a turn one — and a chat with no entry has no turn, which is the same answer
+// with no entry and no `changed` channel left behind. hasOpenTurn reads this way
+// for the same reason.
+func (r *turnRegistry) stepTurnEpoch(chatID vibekit.ChatID) (vibekit.TurnEpoch, bool) {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return 0, false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.state != turnOpen || lc.cur == nil {
+		return 0, false
+	}
+	if lc.cur.Source != vibekit.TurnSourceWorkflowStep {
+		return 0, false
+	}
+	return lc.cur.Epoch, true
+}
+
 // currentEpoch reports which turn a chat's activity belongs to right now — the
 // turn that is open, or the one finalizing — and false when the chat is idle.
 // Wider than openEpoch on purpose: a turn whose effects are still running is
@@ -395,6 +467,36 @@ func (r *turnRegistry) currentEpoch(chatID vibekit.ChatID) (vibekit.TurnEpoch, b
 	defer lc.mu.Unlock()
 	facts, open := lc.openFactsLocked()
 	return facts.Epoch, open
+}
+
+// hasOpenTurn reports whether this chat has a turn the RECORD does not yet
+// describe. It is the fact the chat store's HTTP surface cannot know: the in-flight
+// reply lives in an in-memory buffer and is appended to the chat file once, at turn
+// end, so `GET /api/chats/{id}` carries no carrier for it and a reader deriving an
+// outcome from that silence answers `unknown` for a turn that is running.
+//
+// turnFinalizing counts as OPEN, which is openFactsLocked's own ruling and exactly
+// the state this predicate exists for: the carrier's persistence and broadcast have
+// not completed, so the record is still provisional.
+//
+// A PRIME turn answers false, matching replayTurnState's own stated exclusion — its
+// frames are vibekit's transcript replay and it persists no carrier, so a prime does
+// not make the record provisional.
+//
+// It reads the registry through `lookup` rather than `lifecycleFor`, because this is
+// the one predicate on an HTTP READ path: GET /api/chats/{id} and its /turns sibling
+// both call it, so creating a lifecycle here would record an entry for every chat a
+// reader merely OPENS and leave it until the next forget. A chat with no entry has no
+// turn, which is the same answer with no side effect.
+func (r *turnRegistry) hasOpenTurn(chatID vibekit.ChatID) bool {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	facts, open := lc.openFactsLocked()
+	return open && facts.Source != vibekit.TurnSourcePrime
 }
 
 // openTurnFacts is what a chat's open turn IS, taken in ONE acquisition: two
@@ -461,6 +563,35 @@ func (r *turnRegistry) interruptCause(t *Turn) vibekit.InterruptCause {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	return t.Interrupt
+}
+
+// recordCarrier remembers which persisted message carries t's outcome, under the
+// turn's OWN lifecycle for interruptCause's reason. Called by the closer that WON,
+// before finish publishes — which is what orders it ahead of a loser's read, since
+// a loser's claim parks in awaitNotFinalizing until that publish.
+func (r *turnRegistry) recordCarrier(t *Turn, carrier turnCarrier) {
+	lc := t.lc
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	t.carrier = carrier
+}
+
+// carrierOf reports the carrier one epoch's closer recorded, reporting false when
+// this chat has no record of that epoch or that turn wrote none.
+//
+// It reaches a RETAINED record as well as an open one, through the existing
+// turnLocked lookup, which is what makes it answerable at all: the winner has
+// already finalized by the time a loser asks, and finish keeps a record whose
+// completion handles are still outstanding.
+func (r *turnRegistry) carrierOf(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) (turnCarrier, bool) {
+	lc := r.lifecycleFor(chatID)
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	t := lc.turnLocked(epoch)
+	if t == nil || t.carrier.MessageID == "" {
+		return turnCarrier{}, false
+	}
+	return t.carrier, true
 }
 
 // stageTurnSummary accumulates one conversation turn_completion frame's duration

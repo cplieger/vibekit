@@ -140,6 +140,72 @@ func TestTryFastModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 	}
 }
 
+// The fast path CLOSES whatever turn is open before it swaps, which is what the
+// restart fallback has always done through its own flush.
+//
+// An engine-opened turn holds no admission reservation, so nothing refuses a
+// switch that lands mid-turn — a second device, or the client's queue draining
+// while a workflow step's turn folds onto the launching chat. The
+// `model_switched` row this path persists is not turn-terminal, so without the
+// flush it is written into the body of a turn the switch had nothing to do with.
+func TestTryFastModelSwitch_ClosesTheTurnInFlight(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	h.coord.StartTurn(ctx, "c1", vibekit.TurnSourceWireTurnStart)
+	buf := h.stageTurnBuffer(t, "c1")
+	buf.Started = true
+	buf.MessageID = newMessageID()
+	buf.Content.WriteString("the step's reply, still streaming")
+	if _, open := h.coord.turns.openEpoch("c1"); !open {
+		t.Fatal("the fixture left no turn open, so there is nothing for the switch to close")
+	}
+
+	if got := h.coord.TryFastModelSwitch(ctx, "c1", "m-new", ""); !got {
+		t.Fatalf("TryFastModelSwitch = %v, want true", got)
+	}
+
+	if epoch, open := h.coord.turns.openEpoch("c1"); open {
+		t.Errorf("turn %d is still open after the fast switch; the model_switched row lands in its body", epoch)
+	}
+	// The content already on every client's screen is persisted rather than
+	// discarded: the session survives the fast swap, so nothing licenses dropping
+	// a reply somebody else's turn produced.
+	if got := assistantMessages(t, cs, "c1"); len(got) != 1 {
+		t.Errorf("persisted %d assistant messages, want the displaced step's reply", len(got))
+	}
+}
+
+// The other side of that guard: the caller's OWN prompt turn survives the swap.
+//
+// The restart fallback discards an in-flight turn because the bridge goes with
+// it; the fast path keeps the session, so a turn that was going to finish still
+// finishes. Widening the guard to any open turn destroyed exactly this.
+func TestTryFastModelSwitch_LeavesThePromptsOwnTurnOpen(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	epoch := h.coord.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	buf := h.stageTurnBuffer(t, "c1")
+	buf.Started = true
+	buf.MessageID = newMessageID()
+	buf.Content.WriteString("the user's own reply, still streaming")
+
+	if got := h.coord.TryFastModelSwitch(ctx, "c1", "m-new", ""); !got {
+		t.Fatalf("TryFastModelSwitch = %v, want true", got)
+	}
+
+	if open, ok := h.coord.turns.openEpoch("c1"); !ok || open != epoch {
+		t.Errorf("open turn = %d (open %t), want the prompt's own %d", open, ok, epoch)
+	}
+}
+
 // A chat that has chosen no level sends no effort call: there is nothing to
 // re-assert, and the service's own reconciliation is the right answer.
 func TestTryFastModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {

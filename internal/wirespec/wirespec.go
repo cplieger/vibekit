@@ -59,6 +59,12 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.SessionMode](),
 	wiregen.TypeRef[vibekit.SessionModel](),
 	wiregen.TypeRef[vibekit.SessionEffortLevel](),
+	// Declared AFTER the three session types it references. Registered so the
+	// pre-session catalog fetch reads a GENERATED decoder rather than an
+	// unchecked apiGet cast: its `modes` field was typed required and read as
+	// `d.modes.length` with no decoder behind the claim, so a server answering
+	// `{}` or `modes: null` produced a TypeError inside the boot path.
+	wiregen.TypeRef[vibekit.ConfigTemplateResponse](),
 	wiregen.TypeRef[vibekit.ChatHeader](),
 	wiregen.TypeRef[vibekit.PermissionOption](),
 	wiregen.TypeRef[vibekit.ApprovalFile](),
@@ -123,6 +129,15 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.ToolCatalogInfo](),
 	wiregen.TypeRef[vibekit.Recipe](),
 	wiregen.TypeRef[vibekit.RecipesResponse](),
+	// GET /api/sessions, declared AFTER the two row types it references: the
+	// generator emits in slice order. Registered so the History picker reads the
+	// per-list verdicts through a GENERATED decoder rather than a hand-written
+	// mirror of the response — the rows were duplicated in types.ts, and the two
+	// verdicts had no client reader at all, so "nothing to resume" and "the read
+	// failed" rendered identically.
+	wiregen.TypeRef[vibekit.ResumableSession](),
+	wiregen.TypeRef[vibekit.WorkflowRun](),
+	wiregen.TypeRef[vibekit.SessionListResponse](),
 	// Declared BEFORE LiveRunsResponse, which references it: the generator
 	// emits in slice order.
 	wiregen.TypeRef[vibekit.LiveRun](),
@@ -139,6 +154,12 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.RunStepPayload](),
 	wiregen.TypeRef[vibekit.RunInputNeededPayload](),
 	wiregen.TypeRef[vibekit.RunInputSettledPayload](),
+	// GET /api/runs/{id}/steps/{path...}'s reply, declared AFTER Message, which it
+	// references: the generator emits in slice order. Registered so the client
+	// decodes the three-valued verdict through a GENERATED decoder — no field
+	// carries omitempty, so `state` is a REQUIRED TypeScript field and a reader
+	// cannot invent "assume ready" for a payload that failed to carry one.
+	wiregen.TypeRef[vibekit.RunStepTranscript](),
 	wiregen.TypeRef[vibekit.ToolJobChangedPayload](),
 	wiregen.TypeRef[vibekit.ToolJobOutputPayload](),
 	wiregen.TypeRef[vibekit.TerminalCreatedPayload](),
@@ -175,15 +196,27 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// (internal/chat's deriveTurnOutcome and turns.ts's), so a hand-written union
 	// on the client is a second enumeration of one vocabulary that the shared
 	// fixture pins the BEHAVIOUR of and nothing pins the SPELLING of.
-	"TurnOutcome":  {},
+	"TurnOutcome": {},
+	// TurnSeverity is registered for TurnOutcome's reason, one step stronger: it
+	// is the value five client surfaces BRANCH on (the tab dot, the favicon cue,
+	// the fold rule, the inline notice and the footer partition), and the
+	// derivation exists in both languages against one shared fixture. A
+	// hand-written union would be a second spelling of the vocabulary those
+	// branches must be total over.
+	"TurnSeverity": {},
 	"SafetyStatus": {},
 	// SteerOrigin is registered for TabKind's reason: the client's label switch
 	// over it must be TOTAL, and the two origins want different words.
-	"SteerOrigin":      {},
-	"RunProgressKind":  {},
-	"DecisionKind":     {},
-	"SettledBy":        {},
-	"AlwaysAllowBlock": {},
+	"SteerOrigin":     {},
+	"RunProgressKind": {},
+	// RunStepTranscriptState is registered for CatalogState's reason: the client
+	// BRANCHES on the verdict to decide what to say and whether to retry, so a value
+	// the server can send and the client has no case for is the failure the type has
+	// to prevent.
+	"RunStepTranscriptState": {},
+	"DecisionKind":           {},
+	"SettledBy":              {},
+	"AlwaysAllowBlock":       {},
 	// TabKind is registered so the nine kinds have exactly ONE definition
 	// across both languages: the const block in internal/vibekit/domain_tabs.go,
 	// discovered here and emitted as the TypeScript union. It was a hand-written
@@ -194,7 +227,19 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// this row TabSubject.kind is TabKind rather than string, so a subject
 	// carrying an unknown kind fails the generated decoder at the boundary
 	// instead of reaching the factory.
-	"TabKind":   {},
+	"TabKind": {},
+	// CatalogState and CatalogReason are registered for TabKind's reason: the
+	// client BRANCHES on the verdict to decide whether to retry and what to say,
+	// so a value the server can send and the client has no case for is the
+	// failure the type has to prevent.
+	"CatalogState":  {},
+	"CatalogReason": {},
+	// ReadState is registered for CatalogState's reason, and the reason it was
+	// left out arrives with its reader: the History picker now BRANCHES on each
+	// list's verdict to say whether there is nothing to resume or the read failed,
+	// so a value the server can send and the client has no case for is the failure
+	// the type has to prevent.
+	"ReadState": {},
 	"Transport": {Values: []string{"stdio", "http", "sse"}},
 }
 

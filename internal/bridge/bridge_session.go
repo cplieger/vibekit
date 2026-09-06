@@ -325,7 +325,11 @@ func (b *Bridge) applyInitialMode(ctx context.Context, sessionID, currentMode, w
 }
 
 func (b *Bridge) loadSession(ctx context.Context, opts *vibekit.StartOpts) error {
-	resp, err := b.Call(ctx, methodSessionLoad, b.withSessionMeta(map[string]any{
+	// CallAt rather than Call: KAS answers a load by REPLAYING the session as
+	// notifications that precede the result on the wire, so the caller adopting
+	// that replay has to know the position the result arrived at — the response
+	// alone says nothing about what the consumer has folded. See SessionLoadSeq.
+	resp, seq, err := b.CallAt(ctx, methodSessionLoad, b.withSessionMeta(map[string]any{
 		vibekit.KeySessionID: opts.SessionID, "cwd": b.workDir, "mcpServers": []any{},
 	}))
 	if err != nil {
@@ -333,6 +337,7 @@ func (b *Bridge) loadSession(ctx context.Context, opts *vibekit.StartOpts) error
 	}
 	b.adoptLoadedSession(opts.SessionID, opts.Model, resp)
 	b.mu.Lock()
+	b.loadSeq = seq
 	sid := string(b.sessionID)
 	b.mu.Unlock()
 

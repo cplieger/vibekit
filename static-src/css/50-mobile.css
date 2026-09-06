@@ -129,6 +129,31 @@
     padding: var(--sp-3) var(--sp-4) max(var(--sp-3), env(safe-area-inset-bottom, 0));
   }
 
+  /* THE INSET IS A CLEARANCE FOR THE NEAREST CONTROL, NOT PADDING FOR THE BAR,
+     so a bar whose last control is not its own last row must not pay it twice
+     over. Apple reserves 34pt at the bottom for the home indicator (portrait;
+     21pt landscape) and asks that no control enter it — its own bottom bars are
+     content plus that inset, tab bar 49+34=83pt, so the inset IS the gap between
+     the last control and the screen edge.
+     The composer is the one `.bottom-bar` with chrome of its own INSIDE the
+     inset: `.prompt-box`'s 1px border plus `.prompt-pills`' `--pill-inset`
+     (15-input.css) sit between the last pill and this padding box. Measured on
+     the 390x844 preset with the inset substituted at 34px: the box's border edge
+     landed at exactly 34px, and the pill inside it at 39px — 5px past the
+     standard, on the axis where the reader's thumb already has the least room.
+     Charging that chrome against the inset puts the pill on the boundary.
+     Floored at the house padding, so an inset-less device is unaffected, and
+     never negative because the floor is the larger term.
+     The other three bars (editor, file browser, run) put their controls directly
+     in the bar, so their last control IS the bar's last row and the rule above
+     is already right for them. */
+  [id="prompt-form"].bottom-bar {
+    padding-block-end: max(
+      var(--sp-3),
+      calc(env(safe-area-inset-bottom, 0) - var(--pill-inset) - 1px)
+    );
+  }
+
   /* There is no `.pill` or `#send-btn` sizing here. Both live in the unlayered
      15-input.css, so a declaration in this layer loses to it whatever its
      specificity, and the three rules that used to sit here (heights of

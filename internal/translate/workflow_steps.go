@@ -85,8 +85,9 @@ func (t *Translator) Attribute(chatID vibekit.ChatID, sessionID string, workflow
 // A chat-parented run executes on the launching chat's SESSION, so a step's
 // frames fold onto that chat and a turn opened for one is the RUN's rather than
 // the chat's — a distinction the client needs, because nothing closes such a turn
-// (the attribution gate drops a step's own turn_end) and a client reading it as
-// the chat working says so for the whole run.
+// through the BRACKET path (the attribution gate drops a step's own turn_end) and
+// a client reading it as the chat working says so for the whole run. What closes it
+// is the run's own terminal transition, on the run surface.
 func foldSource(step bool) vibekit.TurnOpenSource {
 	if step {
 		return vibekit.TurnSourceWorkflowStep
@@ -249,9 +250,16 @@ func (s *stepRegistry) refFor(sessionID string) StepRef {
 
 // forgetRun drops every step session and turn count of a terminated run.
 //
-// Bounds growth that would otherwise accumulate one entry per step forever.
-// `run_complete` is the hook because KAS's own notification bridge
-// unsubscribes on the same frame, so no later frame for that run can arrive.
+// Bounds growth that would otherwise accumulate one entry per step forever. The
+// hook is a TERMINAL `run_complete`, gated by the caller — see ForgetRunSteps.
+//
+// The status test is the whole correctness of the bound. KAS reports a step
+// parked on a question through this same frame with `status: paused`, seconds
+// after the ask and minutes before the run resumes, so wiping on every
+// `run_complete` empties the registry MID-RUN: the resumed run's next
+// `permission_needed` / `elicitation_needed` / `user_input_needed` then resolves
+// no run id at all, reaching the client with `run_id` empty — invisible to every
+// run-scoped surface while still lighting the launching chat's tab dot.
 func (s *stepRegistry) forgetRun(workflowID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -264,6 +272,24 @@ func (s *stepRegistry) forgetRun(workflowID string) {
 	}
 	delete(s.turnRun, workflowID)
 	delete(s.runTools, workflowID)
+}
+
+// ForgetRunSteps drops the step sessions, turn counts and in-flight step tool
+// calls of a run that has ENDED.
+//
+// Exported rather than driven off the `run_complete` frame this translator
+// already handles, because the gate is a status test and the status lives with
+// the run's own bounds: `terminalRunStatus` is `internal/agent`'s, and the
+// dependency runs that way, so the one branch that already makes this exact
+// decision for `forgetBounds` makes it for the registry too. The alternative was
+// a second copy of the predicate here, which is a second place to get `paused`
+// wrong.
+//
+// No empty-id guard: nothing files an entry under an empty workflow id (both
+// `record` doors refuse one), so an empty argument names an empty bucket and the
+// drop is already a no-op.
+func (t *Translator) ForgetRunSteps(workflowID string) {
+	t.steps.forgetRun(workflowID)
 }
 
 // RecordStepSession notes a step session learned from somewhere other than a
@@ -359,4 +385,22 @@ func (t *Translator) countStepTurn(wf *ACPWorkflowMeta, stepKey string) {
 	if turns := t.steps.countTurn(wf.WorkflowID, stepKey); turns == StepTurnCap {
 		t.runBounds.StepTurnCapExceeded(wf.WorkflowID, wf.NodeID, turns)
 	}
+}
+
+// reportRunProgress tells the host a run's step did something observable, which
+// is one of the two signals that roll its idle window forward (the other,
+// node_complete, is already wrapped on the host side).
+//
+// A tool call STARTING is the signal rather than one completing, because a step
+// wedged inside a long tool call is still a run making progress: the call landing
+// is the evidence KAS is producing frames at all, which is the only thing the
+// window asks about.
+//
+// The nil-meta guard is countStepTurn's, for the same reason — a frame carrying
+// no workflow block belongs to no run.
+func (t *Translator) reportRunProgress(wf *ACPWorkflowMeta) {
+	if wf == nil || wf.WorkflowID == "" {
+		return
+	}
+	t.runBounds.RunMadeProgress(wf.WorkflowID)
 }

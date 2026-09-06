@@ -23,6 +23,21 @@ type runRoutes struct{ runs *Runs }
 func (rr *runRoutes) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/runs/{id}", rr.handleRun)
 	mux.HandleFunc("GET /api/runs/live", rr.handleLiveRuns)
+	// ONE step's transcript, addressed by node PATH. The TRAILING wildcard is
+	// required rather than a style choice: a node path contains "/", and a
+	// single-segment {path} cannot match one. Percent-encoding the separators
+	// instead would be REFUSED by internal/server's canonicalAPIPath, which
+	// compares the DECODED path against what ServeMux would route — so raw slashes
+	// are the only spelling that works, and they are canonical (no dot segments),
+	// so that gate passes them.
+	//
+	// The EXACT form is registered beside the subtree deliberately: with only the
+	// subtree, ServeMux answers /api/runs/{id}/steps with a 307 to the trailing-slash
+	// form, which is the one redirect class canonicalAPIPath states it cannot see —
+	// and its doc rests on every vibekit subtree route also registering its exact
+	// form. Both land on the same handler, which 400s an empty path.
+	mux.HandleFunc("GET /api/runs/{id}/steps", rr.handleStepTranscript)
+	mux.HandleFunc("GET /api/runs/{id}/steps/{path...}", rr.handleStepTranscript)
 	mux.HandleFunc("POST /api/runs", rr.handleLaunch)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", rr.handleCancel)
 	mux.HandleFunc("POST /api/runs/{id}/pause", rr.handlePause)

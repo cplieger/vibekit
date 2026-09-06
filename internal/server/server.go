@@ -87,7 +87,11 @@ type Server struct {
 	// security middleware applies before the CSRF check (anti-DNS-rebinding;
 	// see internal/composition parseAllowedHosts). Nil/inactive = any Host
 	// accepted.
-	hostPolicy  *webhttp.HostPolicy
+	hostPolicy *webhttp.HostPolicy
+	// onListen fires after the listener has bound and before serving, once per
+	// successful bind. It is what tells the rest of the app this process is the one
+	// serving its config dir — see WithOnListen.
+	onListen    func()
 	acctUsage   acctUsageCache
 	cliTimeouts cliTimeouts
 	settingsMu  sync.Mutex
@@ -249,6 +253,17 @@ func WithTrustedProxies(trusted []*net.IPNet) Option {
 // pass-through (any Host accepted, the backward-compatible default).
 func WithHostPolicy(p *webhttp.HostPolicy) Option {
 	return func(s *Server) { s.hostPolicy = p }
+}
+
+// WithOnListen registers a callback fired once the listener has SUCCESSFULLY
+// bound, which is this app's evidence that this process — rather than another one
+// already on the port — is serving its config dir.
+//
+// A bind failure returns before it, so a boot that could not bind never fires it.
+// It runs on the bind goroutine ahead of serving, so it must not block; the one
+// caller closes a channel (see composition, the session-sweep gate).
+func WithOnListen(fn func()) Option {
+	return func(s *Server) { s.onListen = fn }
 }
 
 // New constructs a Server with the given options applied.
@@ -427,7 +442,13 @@ func (s *Server) ListenAndServe() error {
 	defer stop()
 
 	s.ready.Store(true)
-	slog.Info("Kiro Web UI listening", "port", port)
+	// AFTER the bind, so nothing downstream can read a failed bind as ownership.
+	if s.onListen != nil {
+		s.onListen()
+	}
+	// The bound ADDRESS rather than the port constant: a misdirected boot's own
+	// output is then enough to tell which listener it got.
+	slog.Info("Kiro Web UI listening", "addr", ln.Addr().String())
 	// DNS rebinding rides the victim's BROWSER, so it reaches even a
 	// loopback/private bind, and vibekit's HTTP surface (a PTY shell
 	// included) carries no auth of its own — the exact-Host allowlist is

@@ -36,11 +36,123 @@ const (
 	TurnOutcomeUnknown TurnOutcome = "unknown"
 )
 
+// TurnSeverity is HOW BADLY a turn ended, derived from its TurnOutcome by
+// SeverityOf and by nothing else.
+//
+// It exists because five surfaces each carried their own partial answer to one
+// question — is this turn broken — and disagreed. The tab dot and the favicon cue
+// read `interrupted` as nothing at all while the transcript divider, the collapsed
+// face and the footer glyph all read it as a failure, so a network error that
+// stopped a turn rendered as a hollow "nothing is happening here" ring beside an
+// inline error message about it. A severity is what a surface asks for; the
+// outcome is what the wire said, and nothing outside SeverityOf may enumerate it
+// again.
+//
+// CROSS-LANGUAGE CONTRACT, like TurnOutcome above: the identical table is
+// implemented in `static-src/turn-severity.ts` and both halves are pinned against
+// one shared fixture, `internal/vibekit/testdata/turn_severity.json`, read by this
+// package's TestTurnSeverityContract and by turn-severity.node.test.ts. The
+// fixture lives beside the function it pins rather than with TurnOutcome's; its
+// own _comment records that.
+type TurnSeverity string
+
+// TurnSeverityRunning and the following constants are the valid TurnSeverity
+// values. Four rather than three because `stopped` and `clean` want different
+// marks: a turn the user cancelled ended without an answer, which is not the
+// same as one that answered.
+const (
+	// TurnSeverityRunning is a turn in flight: no settled mark on any surface.
+	TurnSeverityRunning TurnSeverity = "running"
+	// TurnSeverityClean is a turn that answered. The ABSENCE of a mark is its
+	// treatment, which is why no surface paints anything for it.
+	TurnSeverityClean TurnSeverity = "clean"
+	// TurnSeverityStopped is a turn that produced no answer through no fault:
+	// the user cancelled it, or vibekit could not read how it ended. It must not
+	// read alarming and must not read clean.
+	TurnSeverityStopped TurnSeverity = "stopped"
+	// TurnSeverityBroken is a turn that failed. The single predicate every
+	// surface asks, and the one value that earns a red mark, an inline reason and
+	// a refusal to auto-fold.
+	TurnSeverityBroken TurnSeverity = "broken"
+)
+
+// SeverityOf grades a turn outcome. Total and MECE over the seven TurnOutcome
+// values, with NO default arm, so an eighth outcome is a compile error here
+// rather than a value that silently reads clean at five surfaces.
+//
+// The two rulings worth stating, because both were got wrong before this
+// function existed:
+//
+//   - `interrupted` is BROKEN. A fault nobody chose stopped the turn, and every
+//     other surface already said so; the tab dot's own latch is what disagreed.
+//   - `unknown` is STOPPED, never broken. ConcludeStopReason's own comment is the
+//     authority: an unmeasured stop reason "says nothing about whether the work
+//     succeeded", so grading it broken would report a working turn as failed. It
+//     is equally not clean — a status mark may fall back to ambiguous and may
+//     never fall back to reassuring.
+func SeverityOf(o TurnOutcome) TurnSeverity {
+	switch o {
+	case TurnOutcomeRunning:
+		return TurnSeverityRunning
+	case TurnOutcomeCompleted:
+		return TurnSeverityClean
+	case TurnOutcomeCancelled, TurnOutcomeUnknown:
+		return TurnSeverityStopped
+	case TurnOutcomeInterrupted, TurnOutcomeFailed, TurnOutcomeRefused:
+		return TurnSeverityBroken
+	}
+	// Unreachable for every declared TurnOutcome; an outcome added without a case
+	// above fails the exhaustiveness fixture rather than landing here. An empty or
+	// hand-edited value grades STOPPED for `unknown`'s reason.
+	return TurnSeverityStopped
+}
+
+// DefaultFailureReason is what a turn says when nothing upstream said anything:
+// the wire sent no stopDetails, or the record predates TurnFailureReason
+// entirely. One sentence per OUTCOME rather than per severity, because a reader
+// wants the distinction the severity throws away — a refusal and a network
+// interruption are both broken and want different words.
+//
+// Empty for every outcome that needs no account (`completed`, `running`), so a
+// caller can use the empty string as "there is nothing to say here" rather than
+// testing the severity again.
+//
+// CROSS-LANGUAGE, and the strings are pinned BYTE-IDENTICAL against
+// `internal/vibekit/testdata/turn_severity.json`: the client needs the same
+// fallback for every turn persisted before the reason field existed, and two
+// hand-written copies of one sentence is exactly the drift the fixture exists to
+// make impossible.
+func DefaultFailureReason(o TurnOutcome) string {
+	switch o {
+	case TurnOutcomeFailed:
+		return "The agent reported an error and the turn stopped."
+	case TurnOutcomeInterrupted:
+		return "The turn was interrupted before the agent finished."
+	case TurnOutcomeRefused:
+		return "The model declined to continue."
+	case TurnOutcomeCancelled:
+		return "The turn was cancelled."
+	case TurnOutcomeUnknown:
+		return "The turn ended for a reason vibekit could not read."
+	case TurnOutcomeCompleted, TurnOutcomeRunning:
+		return ""
+	}
+	return ""
+}
+
 // TurnConclusion is one wire stop reason, read. A struct rather than four returns
 // because it travels as a unit into the turn_ended payload and the three fields
 // persisted on the message, where a transposed pair is silent in both directions.
 type TurnConclusion struct {
 	Outcome TurnOutcome
+	// Reason is the user-facing account of an abnormal stop, in the words of
+	// whoever knows the cause: the wire's own stopDetails, the prompt failure's
+	// rendered prose, or a per-severity default. Persisted beside the outcome
+	// (Message.TurnFailureReason) so a reloaded transcript can SAY why a turn
+	// failed instead of showing a card with a red mark and an empty body — which
+	// is what a `failed` turn with no event message rendered as. Empty for a
+	// clean turn.
+	Reason string
 	// RawStop is the stop reason exactly as the wire sent it, kept whatever the
 	// outcome, so a value vibekit has not measured is still recoverable from the
 	// record rather than flattened into `unknown` and lost.

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -45,9 +46,9 @@ func undurableLeaseStore(t *testing.T) *runlease.Store {
 }
 
 // TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline is the runtime's HALF of
-// "one clock, two inputs": that the arm hands NextDeadline the lease's own slot
-// alongside the universal ceiling and the schedule floor, and stores what comes
-// back.
+// "one clock, three inputs": that the arm hands NextDeadline the lease's own slot
+// alongside the idle window, the backstop and the schedule floor, and stores what
+// comes back.
 //
 // The arithmetic itself belongs to runlease.NextDeadline and is tested exhaustively
 // there; the cases here are the three distinct answers the wiring can produce.
@@ -60,13 +61,24 @@ func undurableLeaseStore(t *testing.T) *runlease.Store {
 func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
 	for name, tc := range map[string]struct {
 		slotIn time.Duration
+		// spent seeds the run's accumulated executing time, which is the only
+		// input that can make the backstop the tightest of the three.
+		spent  time.Duration
 		wantIn time.Duration
 	}{
-		"no slot: the ceiling is the whole bound":      {0, runCeiling},
-		"a slot inside the ceiling wins":               {10 * time.Minute, 10 * time.Minute},
-		"a slot beyond the ceiling loses":              {24 * time.Hour, runCeiling},
-		"a slot inside the floor is floored up":        {30 * time.Second, minRunBudget},
-		"a slot already gone is floored, not honoured": {-time.Minute, minRunBudget},
+		"no slot: the idle window is the whole bound":  {0, 0, runIdleWindow},
+		"a slot inside the window wins":                {10 * time.Minute, 0, 10 * time.Minute},
+		"a slot beyond the window loses":               {24 * time.Hour, 0, runIdleWindow},
+		"a slot inside the floor is floored up":        {30 * time.Second, 0, minRunBudget},
+		"a slot already gone is floored, not honoured": {-time.Minute, 0, minRunBudget},
+		// The backstop only bites once nearly all of it is spent, which is the
+		// point: the absolute bound must never shorten a healthy run's window.
+		// The remainder is above minRunBudget deliberately — below it the floor
+		// answers and the case would prove nothing about the backstop.
+		"a nearly-spent backstop wins over the window": {0, runBackstop - 7*time.Minute, 7 * time.Minute},
+		// The one answer that is deliberately in the PAST: a spent backstop means
+		// the run is over, and the floor may not lift it back into the future.
+		"a spent backstop is honoured, not floored": {0, runBackstop + time.Hour, -time.Hour},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := &Runs{}
@@ -76,19 +88,46 @@ func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
 				o = scheduledLaunch("sched-1", time.Now().Add(tc.slotIn))
 			}
 			h.grantLease(t.Context(), id, "publish", o)
+			if tc.spent != 0 {
+				h.bounds.executed = map[string]time.Duration{id: tc.spent}
+			}
+			// A spent backstop stamps an instant already PAST, so its timer fires the
+			// moment the arm installs it — which is the behaviour, not a hazard. Taking
+			// the run's termination claim first makes that callback refuse, so the
+			// STAMPED VALUE can be read without racing the cancel it triggers; the
+			// cancel is TestCancelExpiredRun_TellsAStallFromASpentBackstop's subject.
+			if !h.claimTermination(id) {
+				t.Fatal("the fresh run already held a termination claim")
+			}
 
 			before := time.Now()
 			h.armDeadline(t.Context(), id)
-			l, ok := h.lease(id)
-			if !ok || !l.Bounded() {
-				t.Fatal("the run took no deadline, so nothing bounds it")
-			}
-
-			got := l.Deadline.Sub(before)
 			// A window rather than an equality: the arm reads its own clock.
-			if got < tc.wantIn-time.Second || got > tc.wantIn+time.Second {
-				t.Errorf("deadline is %v out, want ~%v", got.Round(time.Second), tc.wantIn)
+			inWindow := func(what string) {
+				t.Helper()
+				l, ok := h.lease(id)
+				if !ok || !l.Bounded() {
+					t.Fatalf("%s: the run holds no deadline, so nothing bounds it", what)
+				}
+				if got := l.Deadline.Sub(before); got < tc.wantIn-time.Second || got > tc.wantIn+time.Second {
+					t.Errorf("%s: deadline is %v out, want ~%v", what, got.Round(time.Second), tc.wantIn)
+				}
 			}
+			inWindow("the arm")
+
+			// The bound has to SURVIVE the run's own progress, which is the half an arm
+			// cannot show: every input but the idle window and the floor is an absolute
+			// instant, so a refill recomputes the bound already granted rather than
+			// granting a fresh one. A refill only spends a write when it would move the
+			// deadline by more than refillGranularity, so the stored deadline is aged by
+			// that much first — what a busy step's next minute of tool calls does to it.
+			aged, _ := h.lease(id)
+			if err := h.leaseStore().SetDeadline(t.Context(), id,
+				aged.Deadline.Add(-refillGranularity-time.Second)); err != nil {
+				t.Fatalf("age the stored deadline: %v", err)
+			}
+			h.refillDeadline(t.Context(), id)
+			inWindow("after a refill")
 		})
 	}
 }
@@ -474,8 +513,8 @@ func TestDisarmRunDeadline_ParksTheLeaseAndStopsTheTimer(t *testing.T) {
 // first. The version that did only the latter passed for an implementation granting
 // one nanosecond, and for every remainder bug — the two arms are microseconds apart
 // on a real clock, so "later" is true whatever the resume computed. What has to
-// hold is that the resumed budget is a FULL ceiling measured from the resume, and
-// that the pause left no deadline behind for a remainder to be computed from.
+// hold is that the resumed budget is a FULL idle window measured from the resume,
+// and that the pause left no deadline behind for a remainder to be computed from.
 func TestRunDeadline_ResumeGetsAFreshBudgetRatherThanARemainder(t *testing.T) {
 	h := &Runs{}
 	const id = "wf_1"
@@ -501,13 +540,13 @@ func TestRunDeadline_ResumeGetsAFreshBudgetRatherThanARemainder(t *testing.T) {
 	if !second.Bounded() {
 		t.Fatal("the resumed run took no deadline")
 	}
-	// A full ceiling from the RESUME. A window rather than an equality because the
-	// arm reads its own clock, but a window this tight excludes every remainder: the
-	// first arm's leftover budget, and any fraction of it.
-	if budget := second.Deadline.Sub(resumedAt); budget < runCeiling-time.Second || budget > runCeiling+time.Second {
+	// A full idle window from the RESUME. A window rather than an equality because
+	// the arm reads its own clock, but a window this tight excludes every
+	// remainder: the first arm's leftover budget, and any fraction of it.
+	if budget := second.Deadline.Sub(resumedAt); budget < runIdleWindow-time.Second || budget > runIdleWindow+time.Second {
 		t.Errorf("the resumed run got %v of budget, want a full %v measured from the resume; "+
 			"a resumed run must not inherit the remainder of the clock it parked with",
-			budget.Round(time.Millisecond), runCeiling)
+			budget.Round(time.Millisecond), runIdleWindow)
 	}
 	if !second.Deadline.After(first.Deadline) {
 		t.Errorf("the resume kept deadline %v (first was %v)", second.Deadline, first.Deadline)
@@ -603,14 +642,13 @@ func TestRunDeadline_FiresAndCancelsAtTheDeadline(t *testing.T) {
 // TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound is the
 // three-valued deadline the callback has to classify.
 //
-// NextDeadline answers with the ceiling, the slot, or the FLOOR — and the floor
-// outranks the slot deliberately, so a slot already gone or closer than
-// minRunBudget produces a deadline LATER than SlotAt. Testing equality with SlotAt
-// therefore classified exactly that case as a ceiling breach: the callback logged
-// `run exceeded its wall-clock ceiling` with `ceiling=1h` five minutes after the
-// arm, and skipped the schedule row entirely — so the row still read `started` for
-// a schedule whose run vibekit had just cancelled, which is the one failure the
-// outcome write exists to remove.
+// NextDeadline answers with the idle window, the slot, the backstop or the FLOOR
+// — and the floor outranks the slot deliberately, so a slot already gone or closer
+// than minRunBudget produces a deadline LATER than SlotAt. Testing equality with
+// SlotAt therefore classified exactly that case as vibekit's own bound: the
+// callback logged a stall five minutes after the arm and skipped the schedule row
+// entirely — so the row still read `started` for a schedule whose run vibekit had
+// just cancelled, which is the one failure the outcome write exists to remove.
 func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.T) {
 	logs := captureLogs(t)
 	h, _, br := newTestHub()
@@ -651,8 +689,8 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 			"still the slot, and the ceiling message would page the operator about the wrong "+
 			"thing. Got: %s", logMsgRunOverran, out)
 	}
-	if out := logs.String(); strings.Contains(out, logMsgRunCeiling) {
-		t.Errorf("the callback reported a ceiling breach for a run cancelled at its schedule "+
+	if out := logs.String(); strings.Contains(out, logMsgRunStalled) {
+		t.Errorf("the callback reported a stall for a run cancelled at its schedule "+
 			"bound: %s", out)
 	}
 	// The row, which is the half a reader actually sees.
@@ -702,8 +740,8 @@ func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *test
 		t.Errorf("a manual run yielding to a slot logged the schedule-failure message, which a "+
 			"homelab alert rule keys on: %s", out)
 	}
-	if strings.Contains(out, logMsgRunCeiling) {
-		t.Errorf("the ceiling message was logged for a run cancelled at its slot: %s", out)
+	if strings.Contains(out, logMsgRunStalled) {
+		t.Errorf("the stall message was logged for a run cancelled at its slot: %s", out)
 	}
 }
 
@@ -830,6 +868,71 @@ func TestForgetRunBounds_ClearsTheClaimOnATerminalRun(t *testing.T) {
 	// backstop never sees it and no timer can be armed against it again.
 	if _, held := h.lease(id); held {
 		t.Error("the terminal frame left the lease behind, so the recipe still reads as busy")
+	}
+}
+
+// refillingBus refills a run's deadline from INSIDE the teardown, which is the only
+// moment a progress frame can land between forgetBounds' first step and its last.
+//
+// settleAsksForRun's own broadcast is the seam, and it is a real one rather than a
+// contrivance: it is the slowest thing in that body, so it is where a concurrent
+// tool-call frame is likeliest to interleave.
+type refillingBus struct {
+	rs      *Runs
+	id      string
+	refills int
+}
+
+func (b *refillingBus) Broadcast(ctx context.Context, _ vibekit.ServerEvent) {
+	b.refills++
+	b.rs.refillDeadline(ctx, b.id)
+}
+
+// TestForgetRunBounds_ARefillInsideTheTeardownLeavesNoTimer pins the ORDER of that
+// teardown, which is the whole guard.
+//
+// A refill can only file a timer while the lease still reads Bounded(), so releasing
+// the lease FIRST is what makes the timer clear final. Clear the timer first instead
+// and the lease stays bounded for the rest of the body — so a frame landing in that
+// span stamps a deadline and installs a fresh tracked timer that nothing later
+// removes. bounds.timers has no eviction, unlike reasons with maxRunEndReasons, so
+// each occurrence is a permanent entry keyed by a workflow id that no longer exists.
+// The arm could never do this: it requires !l.Bounded(), and the refill's inverse
+// guard is what opens the window.
+func TestForgetRunBounds_ARefillInsideTheTeardownLeavesNoTimer(t *testing.T) {
+	h := &Runs{}
+	const id = "wf_1"
+	bus := &refillingBus{rs: h, id: id}
+	h.bus = bus
+	leased(t, h, id)
+	h.armDeadline(t.Context(), id)
+	// Near-expiry, so a refill landing mid-teardown would clear the throttle and
+	// genuinely install a timer rather than being refused for an unrelated reason.
+	if err := h.leaseStore().SetDeadline(t.Context(), id, time.Now().Add(time.Minute)); err != nil {
+		t.Fatalf("stage a near-expiry deadline: %v", err)
+	}
+	// One unanswered ask, or the teardown broadcasts nothing and the refill never
+	// runs — which would pass for the wrong reason.
+	if !h.asks.Add(askOf("c1", id, "a1", "review")) {
+		t.Fatal("the ask was not recorded, so nothing in the teardown broadcasts")
+	}
+
+	h.forgetBounds(t.Context(), id)
+
+	if bus.refills == 0 {
+		t.Fatal("the teardown broadcast nothing, so no refill was driven inside it")
+	}
+	h.mu.Lock()
+	_, mine := h.bounds.timers[id]
+	timers := len(h.bounds.timers)
+	h.mu.Unlock()
+	if mine || timers != 0 {
+		t.Errorf("the teardown left %d timers behind (this run's: %v); a refill filed one after "+
+			"the clear, and bounds.timers has no eviction — so that entry outlives the container",
+			timers, mine)
+	}
+	if _, held := h.lease(id); held {
+		t.Error("the teardown left the lease behind, so a later frame could bound the run again")
 	}
 }
 
@@ -1170,6 +1273,105 @@ func TestStepTurnCapExceeded_DoesNotConsumeTheDeadlineItLoses(t *testing.T) {
 	}
 }
 
+// recordingRunTranslator is noopRunTranslator plus a log of which runs had their
+// step sessions forgotten. The registry itself is package-private to
+// `internal/translate`, so the gate is observed through the ROLE — which is the
+// right level: observeComplete's job is routing and gating, not bookkeeping.
+type recordingRunTranslator struct {
+	noopRunTranslator
+	forgotten []string
+}
+
+func (r *recordingRunTranslator) ForgetRunSteps(workflowID string) {
+	r.forgotten = append(r.forgotten, workflowID)
+}
+
+// TestObserveComplete_ForgetsStepSessionsOnlyOnATerminalStatus is the root cause
+// of the reported parent-dot-stale symptom, at the level the decision is made.
+//
+// The step-session registry used to be wiped by the translator on EVERY
+// `run_complete`, and `paused` is the ordinary frame for a step parked on a
+// question — KAS sends it seconds after the ask and the run resumes minutes
+// later. So the registry emptied mid-run, and the resumed run's next
+// request-shaped ask resolved no run id: `refFor` missed, `omitempty` kept
+// `run_id` off the wire, and the ask landed under the launching chat's id where
+// no run-scoped surface could see it while it still lit that chat's tab dot.
+func TestObserveComplete_ForgetsStepSessionsOnlyOnATerminalStatus(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		status string
+		forget bool
+	}{
+		{"completed", true},
+		{"failed", true},
+		{"aborted", true},
+		{"cancelled", true},
+		// The one that matters: the run is still this process's to resume, so its
+		// step sessions have to survive or its next ask arrives unattributed.
+		{"paused", false},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			t.Parallel()
+			rec := &recordingRunTranslator{}
+			rs := &Runs{translate: rec}
+
+			rs.observeComplete(t.Context(), "c-1", runNotif(methodWFRunComplete, map[string]any{
+				"workflowId": "wf_1", "status": tc.status,
+			}))
+
+			want := []string(nil)
+			if tc.forget {
+				want = []string{"wf_1"}
+			}
+			if !slices.Equal(rec.forgotten, want) {
+				t.Errorf("forgotten = %v after status %q, want %v", rec.forgotten, tc.status, want)
+			}
+		})
+	}
+}
+
+// TestObserveComplete_ClearsAStepsPendingDecisionOnlyWhenTheRunEnds is the
+// server-side half of the reported symptom, driven end to end through the real
+// runtime rather than through the tracker alone.
+//
+// The client's own run-scoped sweep is session-scoped: it empties one page's dock
+// queue. The tracker is what the SSE connect replay reads, so without a matching
+// server-side clear the next connect re-offered a step's request-shaped ask for a
+// run that had ended, and the launching chat's dot lit again for a card no answer
+// could reach. `paused` must NOT clear, for `observeComplete`'s own reason: that
+// run is still this process's to resume, and a step really is still waiting.
+func TestObserveComplete_ClearsAStepsPendingDecisionOnlyWhenTheRunEnds(t *testing.T) {
+	for _, tc := range []struct {
+		status   string
+		survives bool
+	}{
+		{"completed", false},
+		{"paused", true},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			h, _, _ := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			const runID = "wf_1"
+			const launching vibekit.ChatID = "c-parent"
+			// A step's question, filed the way translate files one: keyed to the
+			// LAUNCHING chat (that is where the answer will arrive from) with the run
+			// stamped on the payload by the step-session registry.
+			h.bus.pendingPerms.Add(7, vibekit.NewEvent(vibekit.EventUserInputNeeded, launching,
+				vibekit.UserInputNeededPayload{RequestID: 7, RunID: runID, NodeID: "review"}))
+
+			h.runs.observeComplete(t.Context(), launching, runNotif(methodWFRunComplete, map[string]any{
+				"workflowId": runID, "status": tc.status,
+			}))
+
+			replayed := len(h.bus.pendingPerms.List("")) == 1
+			if replayed != tc.survives {
+				t.Errorf("the step's question replayable = %v after status %q, want %v",
+					replayed, tc.status, tc.survives)
+			}
+		})
+	}
+}
+
 // TestObserveRunComplete_DisarmsOnlyOnATerminalStatus pins the one distinction
 // this wrapper exists to make.
 //
@@ -1237,20 +1439,192 @@ func TestDecodeLifecycleFrame(t *testing.T) {
 	}
 }
 
-// TestRunCeiling_IsAConstantWithinCrewsClamp pins the number against the source
-// it was taken from, and against the rule that it stays a constant.
+// TestRunBoundConstants_HoldTheirRelationships pins the three numbers against the
+// relationships that make them mean what their names say, rather than against the
+// numbers themselves. Each is derived from something outside this file, so an edit
+// that breaks a relationship is the failure worth catching.
 //
-// D57: a backstop the user can raise stops being a backstop, so there is no
-// Settings key and no per-run override. Crew's configured value is clamped to
-// [60s, 6h]; vibekit's is fixed, and this asserts it sits inside the range that
-// clamp defines rather than merely being non-zero.
-func TestRunCeiling_IsAConstantWithinCrewsClamp(t *testing.T) {
+// A backstop the user can raise stops being a backstop, so there is no Settings
+// key and no per-run override either; these stay constants.
+func TestRunBoundConstants_HoldTheirRelationships(t *testing.T) {
 	t.Parallel()
-	const crewMin, crewMax = 60 * time.Second, 6 * time.Hour
-	if runCeiling < crewMin || runCeiling > crewMax {
-		t.Errorf("runCeiling = %v, outside Crew's [%v, %v]", runCeiling, crewMin, crewMax)
+
+	// The floor is the smallest budget any run may be handed, so a window below
+	// it would never be the answer NextDeadline returns and the stall bound would
+	// silently become minRunBudget.
+	if runIdleWindow <= minRunBudget {
+		t.Errorf("runIdleWindow = %v, not above the floor %v; the floor would swallow it",
+			runIdleWindow, minRunBudget)
 	}
-	if runCeiling != time.Hour {
-		t.Errorf("runCeiling = %v, want Crew's 3600s default", runCeiling)
+	// KAS's own StreamIdleTimeoutError fires at 300s and its stream_error_retry
+	// re-issues the stream emitting NOTHING on the wire, so a window at or below
+	// that would cancel runs KAS was in the middle of recovering. This is the
+	// window's derivation, not a coincidence.
+	if kasStreamIdle := 300 * time.Second; runIdleWindow <= kasStreamIdle {
+		t.Errorf("runIdleWindow = %v, not longer than KAS's own stream idle timeout %v; a "+
+			"stalled STREAM is KAS's to retry, and this window is about a stalled RUN",
+			runIdleWindow, kasStreamIdle)
+	}
+	// The backstop is the absolute bound, so it has to be the loosest of the
+	// three or it would be the bound that always fires.
+	if runBackstop <= runIdleWindow {
+		t.Errorf("runBackstop = %v, not above the idle window %v; it would fire first and no "+
+			"run could ever stall", runBackstop, runIdleWindow)
+	}
+	// The throttle skips a refill that would move the deadline by less than this,
+	// so a granularity at or above the window means no refill ever lands and the
+	// watchdog degrades to a fixed 15-minute run ceiling.
+	if refillGranularity >= runIdleWindow {
+		t.Errorf("refillGranularity = %v, not below the idle window %v; no refill could ever "+
+			"clear the throttle", refillGranularity, runIdleWindow)
+	}
+}
+
+// TestObserveComplete_ClosesTheStepDrivenTurnOnlyOnATerminalStatus is the third
+// thing that rides the terminal gate, and the only one whose subject is the
+// LAUNCHING CHAT rather than the run.
+//
+// A chat-parented run's step frames fold onto that chat and open a turn there, and
+// the bracket path cannot close it because the attribution gate drops a step's own
+// turn_end — so the run reaching terminal is the only closer it has. `paused` must
+// not do it: that run is still this process's to resume, and its next step folds
+// into the same turn.
+func TestObserveComplete_ClosesTheStepDrivenTurnOnlyOnATerminalStatus(t *testing.T) {
+	for _, tc := range []struct {
+		status    string
+		stillOpen bool
+	}{
+		{"completed", false},
+		{"failed", false},
+		// The one that matters: closing here would take the turn away from a run
+		// that is about to carry on folding into it.
+		{"paused", true},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			const launching vibekit.ChatID = "c-parent"
+			stagedStepTurn(t, h, cs, launching, "the step's reply")
+
+			h.runs.observeComplete(t.Context(), launching, runNotif(methodWFRunComplete, map[string]any{
+				"workflowId": "wf_1", "status": tc.status,
+			}))
+
+			if open := h.liveTurnBuffer(launching) != nil; open != tc.stillOpen {
+				t.Errorf("the step turn is still open = %v after status %q, want %v",
+					open, tc.status, tc.stillOpen)
+			}
+		})
+	}
+}
+
+// TestObserveComplete_LeavesAParentlessRunsChatIDAlone pins the guard that keeps a
+// PARENTLESS run's terminal frame out of the turn lifecycle.
+//
+// The empty chat id is reachable on every such run — run-bridge frames are
+// dispatched with one, which is the same distinction runStartLaunch makes — and a
+// run that folds onto no chat has no turn to close. The fixture has to MANUFACTURE
+// the turn to make the guard observable, because nothing in the run dispatch path
+// folds a step frame under that id; what is being pinned is that the terminal frame
+// does not reach the lifecycle at all, whatever happens to be keyed there.
+func TestObserveComplete_LeavesAParentlessRunsChatIDAlone(t *testing.T) {
+	for _, chatID := range []vibekit.ChatID{"", "run:wf_1"} {
+		t.Run(string(chatID), func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			stagedStepTurn(t, h, cs, chatID, "content keyed under a parentless run's id")
+
+			h.runs.observeComplete(t.Context(), chatID, runNotif(methodWFRunComplete, map[string]any{
+				"workflowId": "wf_1", "status": "completed",
+			}))
+
+			if h.liveTurnBuffer(chatID) == nil {
+				t.Errorf("a parentless run's terminal frame closed a turn keyed under %q", chatID)
+			}
+		})
+	}
+}
+
+// TestCancel_ReleasesTheLeaseOfAPausedRunThatSendsNoTerminalFrame is the whole
+// defect, driven through the PUBLIC verb rather than the reconcile.
+//
+// Everything is real except KAS: the cancel lands (`{}`), no `run_complete` is
+// ever delivered — which is exactly what a node-boundary cancel does to a run with
+// no in-flight node — and the inspect afterwards reports the run `aborted`. Before
+// releaseIfOver this left the lease on disk forever, and /api/runs/live kept
+// advertising a dead run.
+//
+// It also pins that the CONTRACT is unchanged: the cancel RPC still goes out, and
+// it goes out BEFORE the reconcile, because the owning process must live to the
+// node boundary to certify the cancelled state.
+func TestCancel_ReleasesTheLeaseOfAPausedRunThatSendsNoTerminalFrame(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
+		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "aborted", ""),
+	}
+	leased(t, h.runs, "wf_1")
+
+	if err := h.runs.Cancel(t.Context(), "wf_1"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+
+	if _, held := h.runs.lease("wf_1"); held {
+		t.Error("a landed cancel of a paused run left its lease behind, so the run stays " +
+			"advertised as live and its chat stays exempt from eviction")
+	}
+	log := br.callLog()
+	cancelAt := slices.Index(log, methodKiroWorkflowCancel)
+	inspectAt := slices.Index(log, methodKiroWorkflowInspect)
+	if cancelAt < 0 {
+		t.Fatalf("no cancel went out: %v", log)
+	}
+	if inspectAt >= 0 && inspectAt < cancelAt {
+		t.Errorf("the reconcile ran BEFORE the cancel: %v", log)
+	}
+}
+
+// TestCancel_LeavesTheLeaseOfARunThatIsStillRunning: the reconcile is a NO-OP for
+// a running run, because a cancel on one DOES reach a node boundary and KAS's own
+// terminal frame releases the lease through forgetBounds. Releasing here instead
+// would unbound a run that is still executing.
+func TestCancel_LeavesTheLeaseOfARunThatIsStillRunning(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowCancel: json.RawMessage(`{}`),
+		// The boundary has not been reached yet, which is what a client sees between
+		// the cancel and the frame.
+		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "running", ""),
+	}
+	leased(t, h.runs, "wf_1")
+
+	if err := h.runs.Cancel(t.Context(), "wf_1"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+
+	if _, held := h.runs.lease("wf_1"); !held {
+		t.Error("the reconcile released the lease of a run KAS still reports as running")
+	}
+}
+
+// TestCancel_ReconcilesNothingWhenTheCancelFAILED: a refused cancel means the run
+// did NOT stop, so its lease is still describing something live and no inspect is
+// worth issuing. The claim goes back instead, which is what keeps a later Cancel
+// from being silently refused.
+func TestCancel_ReconcilesNothingWhenTheCancelFAILED(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("bridge gone")}
+	leased(t, h.runs, "wf_1")
+
+	if err := h.runs.Cancel(t.Context(), "wf_1"); err == nil {
+		t.Fatal("Cancel reported success for a cancel that failed")
+	}
+
+	if _, held := h.runs.lease("wf_1"); !held {
+		t.Error("a FAILED cancel released the lease, stranding a live run with no clock " +
+			"and nothing to explain the row it blocks")
+	}
+	if slices.Contains(br.callLog(), methodKiroWorkflowInspect) {
+		t.Errorf("a failed cancel still paid for a reconcile: %v", br.callLog())
 	}
 }

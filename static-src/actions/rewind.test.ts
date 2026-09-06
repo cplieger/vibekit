@@ -8,15 +8,22 @@ vi.mock("../toast.js", () =>
 
 vi.mock("../transport.js", () => ({ send: vi.fn() }));
 
+// The refetch is the point of the success path, so the loader is a spy rather
+// than a real fetch: what matters is that the action asks for the page again.
+vi.mock("../store-load.js", () => ({ loadMessages: vi.fn(() => Promise.resolve(true)) }));
+
 import { send as transportSend } from "../transport.js";
+import { loadMessages } from "../store-load.js";
 import * as toast from "../toast.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 
 const mockSend = vi.mocked(transportSend);
+const mockLoadMessages = vi.mocked(loadMessages);
 
 beforeEach(() => {
   resetActionFramework();
   mockSend.mockReset();
+  mockLoadMessages.mockClear();
 });
 
 describe("rewind.revert", () => {
@@ -80,5 +87,32 @@ describe("rewind.revert", () => {
   it("exports no promote or discard action", async () => {
     const mod = await import("./rewind.js");
     expect(Object.keys(mod)).toEqual(["rewindChat"]);
+  });
+
+  // Nothing on the wire tells a client that messages were REMOVED: chat_updated
+  // carries only the header, and upsertHeader merges the count as Math.max, so a
+  // shrink is discarded. Without this refetch a successful rewind rolled the
+  // files back and truncated the record while the reader kept looking at the
+  // dropped turns until a reload.
+  it("refetches the chat's messages after a successful rewind", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+    const { rewindChat } = await import("./rewind.js");
+
+    await rewindChat.dispatch({ chatID: "c-1", messageID: "m-abc" });
+
+    expect(mockLoadMessages).toHaveBeenCalledTimes(1);
+    expect(mockLoadMessages).toHaveBeenCalledWith("c-1");
+  });
+
+  // A refusal left the record untouched server-side, so refetching would replace
+  // the reader's window with a byte-identical copy for nothing — and on the 409
+  // the transcript they are looking at is still the truth.
+  it("does not refetch when the rewind was refused", async () => {
+    mockSend.mockResolvedValue({ ok: false, status: 409, error: "no bridge" });
+    const { rewindChat } = await import("./rewind.js");
+
+    await rewindChat.dispatch({ chatID: "c-1", messageID: "m-abc" });
+
+    expect(mockLoadMessages).not.toHaveBeenCalled();
   });
 });

@@ -53,6 +53,10 @@ type bridgeChatRecords interface {
 	// Mutate is the single write primitive: load, apply, save, broadcast.
 	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error
 	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
+	// UpdateMessage amends ONE persisted message by id, and NO-OPS when that id is
+	// absent — which is what a truncation leaves and what makes the lost-claim
+	// reason upgrade unable to resurrect a turn (amendLostReason).
+	UpdateMessage(ctx context.Context, chatID vibekit.ChatID, msgID string, mutate func(*vibekit.Message)) error
 }
 
 // chatRecords is the runtime's field type: a UNION of the narrower views the
@@ -103,7 +107,7 @@ type pushService interface {
 // *bridge.Bridge satisfies the widest; every narrower one states what a
 // particular function may do with a bridge it was handed. Only the per-chat
 // sharedBridge — which starts a subprocess, prompts on it, switches its
-// model and reasoning effort, and stops it — needs all 15.
+// model and reasoning effort, and stops it — needs all 18.
 
 // acpSession names the ACP session an RPC is addressed to.
 type acpSession interface {
@@ -136,6 +140,27 @@ type acpStopper interface {
 // mutex.
 type acpSessionCaller interface {
 	acpCaller
+	acpSession
+
+	// CallAt is Call plus the read loop position at which the response
+	// arrived, for a caller that must order a LOCAL decision against
+	// notifications still queued behind that response. Two callers, and both
+	// are ordering against frames that PRECEDE their response on the wire: a
+	// turn settled from its response alone would decide the wire never closed
+	// it while the wire's turn_end sat unread, and a `session/load` replay
+	// settled on its result alone would adopt a partial transcript.
+	CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error)
+}
+
+// acpSessionResponder is what the utility session's forward goroutine needs of
+// the bridge it was started with: answer that bridge's inbound requests, and
+// name the session whose frames it may keep.
+//
+// It reads the id off the bridge PARAMETER rather than us.bridge, which is what
+// keeps forward off us.mu: stopLocked holds that mutex across <-forwardDone, so a
+// forward that took it would deadlock the whole subsystem.
+type acpSessionResponder interface {
+	acpResponder
 	acpSession
 }
 
@@ -187,9 +212,10 @@ type utilityBridge interface {
 	NotifCh() <-chan vibekit.Notification
 }
 
-// ACPBridge manages a single kiro-cli ACP subprocess for one chat: all 15
+// ACPBridge manages a single kiro-cli ACP subprocess for one chat: all 18
 // methods, because a per-chat bridge is started, prompted on, answered on,
-// model-switched, effort-switched and stopped. *bridge.Bridge satisfies it.
+// model-switched, effort-switched, positioned and stopped. *bridge.Bridge
+// satisfies it.
 // Methods are safe for concurrent use; Call and Notify serialize writes to
 // the subprocess stdin internally.
 type ACPBridge interface {
@@ -221,13 +247,13 @@ type ACPBridge interface {
 	// decoded that frame, so the observation costs one method call on a cold
 	// path rather than a second decode of every streaming delta.
 	ObserveEffort(level string)
-	// CallAt is Call plus the read loop position at which the response
-	// arrived, for a caller that must order a LOCAL decision against
-	// notifications still queued behind that response. The prompt paths
-	// are the only callers: a turn settled from its response alone would
-	// decide the wire never closed it while the wire's turn_end sat
-	// unread in the channel.
-	CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error)
+	// SessionLoadSeq returns the read loop position the `session/load`
+	// response arrived at — the position the forward goroutine must have
+	// folded up to before this session's replay is complete. Zero on a
+	// session/new, and zero is also a legal position, so the caller pairs it
+	// with the fact that the load returned rather than reading it as a
+	// sentinel. See agent/replay_drain.go.
+	SessionLoadSeq() uint64
 }
 
 // ACPBridgeFactory creates new ACPBridge instances. The runtime calls it

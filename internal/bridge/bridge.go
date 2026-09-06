@@ -141,12 +141,17 @@ type Bridge struct {
 	// published on the frame itself and on the reply to a pending request, never
 	// read across the boundary.
 	deliveredSeq uint64
-	nextID       atomic.Int64
-	stopOnce     sync.Once
-	mu           sync.Mutex
-	writeMu      sync.Mutex
-	pendingMu    sync.Mutex
-	enableHooks  bool
+	// loadSeq is the read-loop position the `session/load` response arrived at,
+	// published by SessionLoadSeq. Guarded by b.mu, unlike deliveredSeq above: it
+	// is written on the goroutine that issued the load and read on whichever
+	// goroutine orders a local decision against the replay.
+	loadSeq     uint64
+	nextID      atomic.Int64
+	stopOnce    sync.Once
+	mu          sync.Mutex
+	writeMu     sync.Mutex
+	pendingMu   sync.Mutex
+	enableHooks bool
 	// secretStorage gates the `_meta.kiro.secretStorage` declaration in
 	// initialize (StartOpts.SecretStorage). Immutable after Start, like
 	// enableHooks.
@@ -210,6 +215,21 @@ func (b *Bridge) SessionID() vibekit.SessionID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.sessionID
+}
+
+// SessionLoadSeq returns the read-loop position the `session/load` response
+// arrived at, which is the position a consumer must have folded up to before it
+// may treat that session's replay as complete. Safe to call from any goroutine.
+//
+// Set by `session/load` ONLY, so a session/new answers 0 — as does a bridge whose
+// load failed, since there is no replay to bound. 0 is also a legal position (the
+// sequence is stamped by a pre-increment, so the first frame is 1), which is why a
+// caller pairs this with the fact that the load returned rather than reading it as
+// a sentinel.
+func (b *Bridge) SessionLoadSeq() uint64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.loadSeq
 }
 
 // ModelID returns the currently-selected model id. Safe to call from

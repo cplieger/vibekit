@@ -52,21 +52,23 @@ func (bm *bridgeManager) orInsert(chatID vibekit.ChatID) (sb *sharedBridge, exis
 	return sb, false
 }
 
-// insert registers an ALREADY-STARTED bridge under chatID. The run-host path:
-// a run bridge's map key is its workflow id, which only `workflow/new`'s reply
-// knows, so the bridge is started first and registered once the key exists —
-// the inverse of orInsert's create-then-start. Replacing an existing entry
-// would orphan a live process, so insert refuses instead (the caller launched
-// the same run twice, which the single-run guard should have stopped).
-func (bm *bridgeManager) insert(chatID vibekit.ChatID, sb *sharedBridge) bool {
+// insert registers an ALREADY-STARTED bridge under chatID. The run-host path: a run
+// bridge's map key is its workflow id, which only `workflow/new`'s reply knows, so
+// the bridge is started first and registered once the key exists — the inverse of
+// orInsert's create-then-start. Replacing an entry would orphan a live process, so
+// insert refuses instead, answering the RESIDENT entry so a loser can reach the
+// winner's bridge rather than holding one that is in no map. See rehost.
+func (bm *bridgeManager) insert(
+	chatID vibekit.ChatID, sb *sharedBridge,
+) (resident *sharedBridge, inserted bool) {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
-	if _, exists := bm.bridges[chatID]; exists {
-		return false
+	if held, exists := bm.bridges[chatID]; exists {
+		return held, false
 	}
 	bm.bridges[chatID] = sb
 	slog.Info("bridge registered", "chat_id", chatID)
-	return true
+	return sb, true
 }
 
 // remove deletes chatID from the map and returns the removed bridge

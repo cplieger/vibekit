@@ -236,6 +236,10 @@ func (s stubMeteringStore) Mutate(context.Context, vibekit.ChatID, func(*vibekit
 	return s.mutateErr
 }
 
+func (s stubMeteringStore) UpdateMessage(context.Context, vibekit.ChatID, string, func(*vibekit.Message)) error {
+	return nil
+}
+
 // TestMutateUsage_TombstonedRefusalIsNotAnError pins the drop the tombstone was
 // designed for, on the metering write that moved here from internal/translate.
 //

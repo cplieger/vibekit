@@ -39,6 +39,17 @@ func (rt *Runtime) buildUtility() *utilityRuntime {
 			onHooksChanged:       rt.config.broadcastHooksChanged,
 			onGovernanceState:    rt.config.cacheGovernanceFromUtility,
 			onPolicyNotification: rt.forwardPolicyNotification,
+			// The step-transcript seam. A `session/load` of a workflow step's session
+			// on this bridge replays that session as `session/update` frames carrying
+			// ITS id, which the utility session correctly reads as foreign; these two
+			// hand the frames, and the folded position that ends the replay, to
+			// whoever asked for that step. Both are no-ops until a read is open.
+			onForeignUpdate: func(sessionID string, kind vibekit.ACPUpdateKind, update json.RawMessage) bool {
+				return rt.runs.stepReplays.ingest(sessionID, kind, update)
+			},
+			onFrameDrained: func(at drainPoint, force bool) {
+				rt.runs.stepReplays.settleConsumed(at, force)
+			},
 			presets: func(ctx context.Context) []string {
 				return securityPresets(ctx, rt.lifecycle.configDir)
 			},

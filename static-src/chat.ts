@@ -6,7 +6,7 @@
 // actions to server commands and renders the active session.
 // ---------------------------------------------------------------------------
 
-import type { ResumableSessionRow } from "./types.js";
+import type { ResumableSession } from "./types.js";
 import {
   getActiveId,
   get,
@@ -20,7 +20,7 @@ import {
   isEmptyChat,
   transcriptStale,
 } from "./store.js";
-import { loadList, loadMessages } from "./store-load.js";
+import { loadList, loadMessages, confirmChatExists } from "./store-load.js";
 import { effect, el } from "@cplieger/reactive";
 import type { ChatHeader, Session } from "./types.js";
 import { ensureBound } from "./banner-stack.js";
@@ -618,15 +618,91 @@ export async function openTangentChat(parentChatID: string): Promise<void> {
   setCurrentModel(model);
 }
 
-export function switchSession(id: string): void {
+/** Put the reader on this chat, OPENING its tab when it has none.
+ *
+ *  A deep link to a chat whose tab is closed used to be a silent dead end: this
+ *  function returned early on the missing tab id, so `applyRoute`'s chat branch did
+ *  nothing at all — no tab, no transcript, no error, the empty-state hero, and the
+ *  URL still naming the chat. Measured twice on the live instance. The five
+ *  singleton routes already opened their tab; only this one did not.
+ *
+ *  THE OPEN LIVES HERE rather than inlined in the router, and that is a deliberate
+ *  departure from the brief's sketch. This function is "put the reader on this
+ *  chat" and it has exactly one caller, so it is the honest owner; `applyRoute` is a
+ *  private function in the composition root with no test address, while
+ *  `chat.test.ts` can drive this against the complete `tabs.js` mock. What stays the
+ *  router's is the one arm that genuinely is the router's — rewriting a URL that
+ *  names no record.
+ *
+ *  `openChatTab` is the door every other kind already uses: `openTab` →
+ *  `actions/tabs.ts` `openTabCommand` → `POST /api/command` `open_tab` → the
+ *  membership coordinator. So all three invariants hold by construction — the
+ *  mutation is the server's, the tab set stays server-owned, and the coordinator
+ *  orders it against its own event — and a local-only row is never minted.
+ *  `openTab` is idempotent by subject and activates by default, which is what a
+ *  route means.
+ *
+ *  A REFUSAL IS NOT REPORTED HERE. `openTabCommand` declares its own `error`
+ *  message ("Couldn't open that tab", or the capacity remedy at 409), so the
+ *  framework has already toasted and a second notice would be two for one refusal.
+ *  The outcome is returned so the caller can canonicalize the URL. */
+export async function switchSession(id: string): Promise<OpenTabOutcome | "activated"> {
   // The chat id and its TAB id are different values now — the tab's is opaque and
   // server-minted — so reaching a chat's tab goes through the one lookup rather
   // than through the assumption that the two are the same string.
   const tabID = tabIdFor("chat", id);
-  if (tabID === "" || (id === getActiveId() && getActiveTabId() === tabID)) {
-    return;
+  if (tabID !== "") {
+    if (id === getActiveId() && getActiveTabId() === tabID) {
+      return "activated";
+    }
+    activateTab(tabID);
+    return "activated";
   }
-  activateTab(tabID);
+  // No tab. The caller has already established that the chat EXISTS — an id naming
+  // no record must land somewhere honest rather than opening a tab for nothing, and
+  // only the router can rewrite the URL — so this is the open.
+  return openChatTab(id, get(id)?.name ?? "Chat");
+}
+
+/** Settle a deep-linked chat id the store holds NO row for, by ASKING the server.
+ *
+ *  This is the other half of `switchSession`: that one puts the reader on a chat the
+ *  caller has already established exists, and this one establishes it. It exists
+ *  because the store's silence is not evidence — a successful `loadList` makes the
+ *  store authoritative at the instant it lands and stale from then on, so a chat
+ *  created on another device while this client's SSE is down or lagging is missing
+ *  from a store that is otherwise entitled to speak. Claiming such a conversation is
+ *  gone is a terminal verdict derived from data this client simply does not have
+ *  yet, which is the same class as reading an empty store as proof of deletion and as
+ *  reading a missing turn carrier as proof a turn ended.
+ *
+ *  Three answers, and only one of them is terminal:
+ *
+ *   - `opened` — the chat exists, so the deep link WORKS: `confirmChatExists` has
+ *     already adopted the header, and `switchSession` opens its tab. A refusal there
+ *     raises its own notice, so nothing is reported twice.
+ *   - `gone` — the server itself says there is no such chat. The caller may
+ *     canonicalize and say so; the URL rewrite stays the router's.
+ *   - `unresolved` — nobody answered (a 5xx, a dead network, an undecodable body).
+ *     The caller holds the URL and says nothing terminal, which is the shape the
+ *     failed-boot-load arm already uses for the analogous case.
+ *
+ *  THE STORE IS RE-READ AFTER THE AWAIT, and that is the ordering rule this owes:
+ *  the request is in flight for a round trip during which the `chat_created` frame
+ *  this client was missing can land, so a row that appeared meanwhile outranks a
+ *  verdict computed before it and the chat is opened rather than declared gone. The
+ *  reverse race — a row still present for a chat deleted after the GET answered —
+ *  resolves itself, because `chat_deleted` removes the row and the reader is left
+ *  looking at a tab rather than at a false claim. It lives here rather than in the
+ *  router for `switchSession`'s reason: `applyRoute` is a private function in the
+ *  composition root with no test address, while `chat.test.ts` can drive this. */
+export async function resolveUnknownChat(id: string): Promise<"opened" | "gone" | "unresolved"> {
+  const verdict = await confirmChatExists(id);
+  if (verdict === "exists" || get(id) !== undefined) {
+    await switchSession(id);
+    return "opened";
+  }
+  return verdict;
 }
 
 /** Attach workspace files to the active chat's next prompt. Each shows as a
@@ -680,7 +756,7 @@ export async function attachPathsToActiveChat(paths: readonly string[]): Promise
  *  "adopt a session" affordance would use, and it is still the only way a session
  *  vibekit does not own can become a chat. */
 export async function openPreviousSession(
-  row: ResumableSessionRow,
+  row: ResumableSession,
 ): Promise<"opened" | "gone" | "failed"> {
   const chatID = row.chat_id ?? "";
   if (chatID === "") {

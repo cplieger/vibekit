@@ -44,7 +44,7 @@
 //
 // DOM-free, and it reads only the two leaf stores (store.ts, run-store.ts) for
 // names. Both reads are untracked by construction — `store.get` is a peek and
-// `peekRunState` says so in its name — so materializing inside an effect cannot
+// `runLabelOf` documents itself as one — so materializing inside an effect cannot
 // subscribe the caller to every chat and every run.
 // ---------------------------------------------------------------------------
 
@@ -52,7 +52,7 @@ import type { TabKind, TabSubject } from "./types.js";
 import type { Route } from "./router.js";
 import { TAB_ICONS, TAB_VIEWS, type TabDotStatus, type TabViewSpec } from "./tab-view.js";
 import { get } from "./store.js";
-import { peekRunState } from "./run-store.js";
+import { runLabelOf } from "./run-store.js";
 import { FALLBACK_SUBAGENT_NAME, subagentLabel } from "./roles.js";
 import { findSubagentInvocation } from "./subagent-slice.js";
 
@@ -166,13 +166,8 @@ function chatName(chatID: string): string {
  *  `workflowName` the recipe's own name, in that order, which is the preference
  *  the transcript's run card already applies. */
 function runName(workflowID: string): string {
-  const state = peekRunState(workflowID);
-  const label = state?.runLabel ?? "";
-  if (label !== "") {
-    return label;
-  }
-  const recipe = state?.workflowName ?? "";
-  return recipe === "" ? FALLBACK_RUN_NAME : recipe;
+  const label = runLabelOf(workflowID);
+  return label === "" ? FALLBACK_RUN_NAME : label;
 }
 
 /** A file's tab label: its last path segment. Identical to what openEditorView

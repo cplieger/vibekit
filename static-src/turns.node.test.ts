@@ -4,9 +4,8 @@ import {
   projectTurns,
   turnLedger,
   turnAnchorID,
-  turnRunIDs,
   turnFaceProse,
-  turnFaceError,
+  turnFailureText,
   turnFoldHides,
   type Turn,
 } from "./turns.js";
@@ -123,6 +122,27 @@ describe("projectTurns", () => {
       expect(stopped[0]?.outcome).toBe("interrupted");
     });
 
+    // THE TWO DIRECTIONS of the liveness fix, over the record a mid-turn reload
+    // actually produces: the user's prompt persisted, the reply still in the
+    // server's in-memory buffer, so NO assistant message and no carrier.
+    //
+    // Absent-carrier has two meanings and only the caller can tell them apart, which
+    // is why `live` composes two facts (`store.ts` `turnLive`) rather than being the
+    // `thinking` flag. Both cases are one message list, so nothing but the liveness
+    // input separates them.
+    it("is running for a carrier-less newest turn while a turn is live", () => {
+      const turns = projectTurns([user("u1", "do the thing")], true);
+      expect(turns[0]?.outcome).toBe("running");
+    });
+
+    it("is unknown for a carrier-less newest turn when nothing is live", () => {
+      // The direction the fix must NOT erase: after a server restart mid-turn no
+      // turn is open, because the process died — so the newest turn genuinely is one
+      // nothing closed, and its neutral mark is honest.
+      const turns = projectTurns([user("u1", "do the thing")], false);
+      expect(turns[0]?.outcome).toBe("unknown");
+    });
+
     it("prefers failed over interrupted when a turn carries both", () => {
       const turns = projectTurns(
         [user("u1", "a"), event("e1", "cancelled"), event("e2", "infra_safety_blocked")],
@@ -176,6 +196,63 @@ describe("turnLedger", () => {
     const led = turnLedger(t!);
     expect(Object.keys(led.changedFiles).sort()).toEqual(["a.ts", "b.ts"]);
     expect(led.changedFiles["a.ts"]).toEqual({ lines_added: 5, lines_removed: 2 });
+  });
+
+  // A turn split at a COMPACTION point: the server seals what the model said
+  // before the boundary as its own message, so the summary sits between two
+  // assistant segments of one turn. The pre-compaction segment carries none of
+  // the turn's facts — exactly one message per turn may — so the ledger has to
+  // read through the event to reach the post-compaction segment that does.
+  it("reads a compaction-split turn's footer off the segment that carries it", () => {
+    const [t] = projectTurns(
+      [
+        user("u1", "a"),
+        assistant("a1"),
+        event("e1", "compacted"),
+        assistant("a2", {
+          turn_credits: 0.75,
+          turn_elapsed_ms: 2000,
+          turn_model: "opus-5",
+          changed_files: { "a.ts": { lines_added: 3, lines_removed: 1 } },
+        }),
+      ],
+      false,
+    );
+    expect(t?.body).toHaveLength(3);
+    const led = turnLedger(t!);
+    expect(led.credits).toBeCloseTo(0.75);
+    expect(led.elapsedMs).toBe(2000);
+    expect(led.models).toEqual(["opus-5"]);
+    expect(led.changedFiles["a.ts"]).toEqual({ lines_added: 3, lines_removed: 1 });
+  });
+
+  // A reply that ended exactly AT the compaction point closes with nothing after
+  // the split, so the turn's outcome marker is what carries its footer. The
+  // ledger reads an event row like any other message, which is what makes that
+  // carrier work.
+  it("reads a split turn's footer off its outcome marker when nothing followed the split", () => {
+    const [t] = projectTurns(
+      [
+        user("u1", "a"),
+        assistant("a1"),
+        event("e1", "compacted"),
+        {
+          id: "e2",
+          role: "event",
+          event_kind: "turn_outcome",
+          turn_outcome: "completed",
+          turn_credits: 0.5,
+          turn_elapsed_ms: 1200,
+          changed_files: { "a.ts": { lines_added: 2, lines_removed: 0 } },
+          ts: 2600,
+        } as unknown as Message,
+      ],
+      false,
+    );
+    const led = turnLedger(t!);
+    expect(led.credits).toBeCloseTo(0.5);
+    expect(led.elapsedMs).toBe(1200);
+    expect(led.changedFiles["a.ts"]).toEqual({ lines_added: 2, lines_removed: 0 });
   });
 
   // The model is the FOURTH aggregation strategy in this function, and it is
@@ -266,49 +343,6 @@ describe("turnLedger", () => {
     expect(led.commands).toBe(3);
     // Counted across every message in the turn; `edit` and `search` are neither.
     expect(led.reads).toBe(3);
-  });
-});
-
-// The launches inside a turn, which the fold rule needs so a turn holding a run
-// that is still going does not fold away. Exact rather than a heuristic: a launch
-// is the only tool call carrying a workflow id.
-describe("turnRunIDs", () => {
-  const withCalls = (calls: unknown[]): Message =>
-    assistant("a1", { tool_calls: calls } as Partial<Message>);
-
-  it("finds the launch's workflow id in the turn's body", () => {
-    const [t] = projectTurns(
-      [user("u1", "run it"), withCalls([{ id: "t1", workflow_id: "wf_1" }])],
-      false,
-    );
-    expect(turnRunIDs(t!)).toEqual(["wf_1"]);
-  });
-
-  it("is empty for a turn whose tool calls launched nothing", () => {
-    const [t] = projectTurns([user("u1", "read it"), withCalls([{ id: "t1" }])], false);
-    expect(turnRunIDs(t!)).toEqual([]);
-  });
-
-  it("is empty for a turn with no tool calls at all", () => {
-    const [t] = projectTurns([user("u1", "hello"), assistant("a1")], false);
-    expect(turnRunIDs(t!)).toEqual([]);
-  });
-
-  it("reports two launches once each, in order", () => {
-    // An agent can launch several runs in one turn, and the same call can be
-    // re-ingested (a tool_call then a tool_call_update), so duplicates must fold.
-    const [t] = projectTurns(
-      [
-        user("u1", "run both"),
-        withCalls([
-          { id: "t1", workflow_id: "wf_a" },
-          { id: "t2", workflow_id: "wf_b" },
-          { id: "t1", workflow_id: "wf_a" },
-        ]),
-      ],
-      false,
-    );
-    expect(turnRunIDs(t!)).toEqual(["wf_a", "wf_b"]);
   });
 });
 
@@ -578,34 +612,136 @@ describe("turnFoldHides", () => {
   });
 });
 
-describe("turnFaceError", () => {
-  it("takes the last event row's text on a failed turn", () => {
-    const msgs = [
-      user("u1", "q"),
-      { ...event("e1", "cancelled"), content: "the bridge died" } as Message,
-      assistant("a1", { turn_outcome: "failed" }),
-    ];
+describe("turnFailureText", () => {
+  function textOf(msgs: readonly Message[]): string {
     const t = projectTurns(msgs, false)[0];
-    expect(t === undefined ? "" : turnFaceError(t)).toBe("the bridge died");
+    if (t === undefined) {
+      throw new Error("the fixture produced no turn");
+    }
+    return turnFailureText(t);
+  }
+
+  it("prefers the newest INTERRUPTED event row's own prose", () => {
+    // The most specific source available, and the one the prompt-failure and
+    // bridge-death closers write. THIS is the half that makes the divider's own
+    // labelFn removable: the sentence still reaches the reader, on the durable
+    // card-level surface, instead of on both at once
+    // (messages-events.test.ts holds the divider's side of the rule).
+    expect(
+      textOf([
+        user("u1", "q"),
+        { ...event("e1", "interrupted"), content: "the bridge died" } as Message,
+        assistant("a1", { turn_outcome: "interrupted" }),
+      ]),
+    ).toBe("the bridge died");
   });
 
-  it("falls back to the event kind's own words when the row carries no prose", () => {
-    const msgs = [
-      user("u1", "q"),
-      event("e1", "compaction_failed"),
-      assistant("a1", { turn_outcome: "interrupted" }),
+  it("reads NO other event kind's content, however new", () => {
+    // Source 1 is scoped to `event_kind === "interrupted"`, because that is the only
+    // kind whose content is authored as the turn's stop account. Five others persist
+    // content that is not, and each one is its own wrong answer — the worst being
+    // `compacted`, whose content is the WHOLE conversation summary.
+    //
+    // Each case falls through to source 2 (absent here) and then to the outcome's
+    // default sentence, which is honest and does not duplicate the divider.
+    const cases: { kind: string; content: string }[] = [
+      { kind: "compacted", content: "A very long conversation summary about everything." },
+      { kind: "model_switched", content: "claude-opus-5" },
+      { kind: "step_notice", content: "Which branch should I target?" },
+      { kind: "compaction_failed", content: "context window exceeded during compaction" },
+      { kind: "infra_safety_blocked", content: "violated: no-prod-writes" },
     ];
-    const t = projectTurns(msgs, false)[0];
-    expect(t === undefined ? "" : turnFaceError(t)).toBe("Compaction failed");
+    for (const c of cases) {
+      const text = textOf([
+        user("u1", "q"),
+        { ...event("e1", c.kind), content: c.content } as Message,
+        assistant("a1", { turn_outcome: "failed" }),
+      ]);
+      expect(text, c.kind).not.toContain(c.content);
+      expect(text, c.kind).toBe("The agent reported an error and the turn stopped.");
+    }
   });
 
-  it("answers empty for a clean turn — the face shows the answer instead", () => {
-    const msgs = [
-      user("u1", "q"),
-      event("e1", "model_switched"),
-      assistant("a1", { turn_outcome: "completed" }),
-    ];
-    const t = projectTurns(msgs, false)[0];
-    expect(t === undefined ? "x" : turnFaceError(t)).toBe("");
+  it("reaches PAST a newer non-interrupted row to the interrupted one", () => {
+    // The scope is a filter, not an early stop: a plan row, a compaction watermark
+    // or a step notice can legitimately land after the interrupt divider inside one
+    // turn, and the interrupt is still the turn's account of itself.
+    expect(
+      textOf([
+        user("u1", "q"),
+        { ...event("e1", "interrupted"), content: "the bridge died" } as Message,
+        { ...event("e2", "model_switched"), content: "claude-opus-5" } as Message,
+        assistant("a1", { turn_outcome: "interrupted" }),
+      ]),
+    ).toBe("the bridge died");
+  });
+
+  it("falls back to the carrier's persisted reason when no divider was written", () => {
+    // `closeWithOutcome` writes no divider once the turn has streamed anything, so
+    // the message that finalized the turn is the only place the reason can live.
+    expect(
+      textOf([
+        user("u1", "q"),
+        assistant("a1", {
+          turn_outcome: "failed",
+          turn_failure_reason: "The upstream connection dropped.",
+        }),
+      ]),
+    ).toBe("The upstream connection dropped.");
+  });
+
+  it("speaks for a failed turn that recorded no reason at all", () => {
+    // THE SYMPTOM-1 SHAPE, taken from the reported chat file: a settled `failed`
+    // outcome on an assistant message with blocks, no event row, and no reason
+    // anywhere in the record. It rendered a red footer mark over an empty body, and
+    // the only account of the failure was a 12-second toast.
+    const text = textOf([user("u1", "q"), assistant("a1", { turn_outcome: "failed" })]);
+    expect(text).not.toBe("");
+    expect(text).toBe("The agent reported an error and the turn stopped.");
+  });
+
+  it("speaks for an empty turn whose only trace is an outcome marker", () => {
+    // Turn 2 of the same chat: a `turn_outcome` event carrying no content, which
+    // EVENT_RENDER_MAP skips, so the body rendered nothing whatsoever.
+    expect(
+      textOf([
+        user("u2", "resume"),
+        { ...event("e1", "turn_outcome"), turn_outcome: "failed" } as Message,
+      ]),
+    ).toBe("The agent reported an error and the turn stopped.");
+  });
+
+  it("distinguishes a refusal from a dropped connection", () => {
+    // Both are `broken`, and the default is keyed per OUTCOME precisely so the
+    // severity's own coarseness does not reach the reader.
+    const refused = textOf([user("u1", "q"), assistant("a1", { turn_outcome: "refused" })]);
+    const interrupted = textOf([user("u2", "q"), assistant("a2", { turn_outcome: "interrupted" })]);
+    expect(refused).not.toBe(interrupted);
+    expect(refused).toBe("The model declined to continue.");
+  });
+
+  it("answers empty for a clean turn — the card shows the answer instead", () => {
+    expect(
+      textOf([
+        user("u1", "q"),
+        event("e1", "model_switched"),
+        assistant("a1", { turn_outcome: "completed" }),
+      ]),
+    ).toBe("");
+  });
+
+  it("answers empty for a turn still running", () => {
+    const t = projectTurns([user("u1", "q"), assistant("a1")], true)[0];
+    expect(t?.outcome).toBe("running");
+    expect(t === undefined ? "x" : turnFailureText(t)).toBe("");
+  });
+
+  it("still speaks for a stopped turn, which is what the footer glyph cannot", () => {
+    // `cancelled` and `unknown` are `stopped`: not failures, but a footer glyph with
+    // no words beside it is the same silence one severity down. The notice tints
+    // itself yellow for these rather than red.
+    expect(textOf([user("u1", "q"), assistant("a1", { turn_outcome: "unknown" })])).toBe(
+      "The turn ended for a reason vibekit could not read.",
+    );
   });
 });

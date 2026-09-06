@@ -24,19 +24,16 @@ import (
 // CmdRewindChat reverts the chat to a past turn via KAS's own checkpoint
 // machinery, then truncates vibekit's record to match.
 //
-// The truncation is not redundant with the revert: vibekit's chat file
-// still holds the dropped turns, and mergeProjection deliberately
-// preserves anything newer than a replay's last message (KAS's log is not
-// fsynced, so an absent tail is normally a durability gap rather than an
-// intended deletion). A revert is the one case where the tail is gone on
-// purpose, and only vibekit knows that at this moment.
+// The truncation is not redundant with the revert: mergeProjection deliberately
+// preserves anything newer than a replay's last message, because an absent tail
+// is normally a durability gap rather than an intended deletion. A revert is the
+// one case where it is intended, and only vibekit knows that here.
 //
-// No session/load follows: the live session's context is already reverted
-// in place, and the tombstone covers every future load.
-//
-// Mid-turn is refused, not queued — KAS throws on a live turn and refuses
-// a concurrent revert per session, so vibekit forwards the reason instead
-// of reimplementing the guard.
+// A bridgeless chat is RESUMED rather than refused — opening a chat spawns no
+// bridge, so requiring a live one refused every reopened chat. No second
+// session/load follows the revert: the session is reverted in place and the
+// tombstone covers every future load. Mid-turn is KAS's own refusal, forwarded
+// rather than reimplemented.
 func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -55,11 +52,9 @@ func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, c
 		return nil, StatusError(http.StatusBadRequest, errRewindTargetNotFound)
 	}
 
-	bridge := bridges.Bridge(cmd.ChatID)
-	if bridge == nil {
-		// No live session to revert. The files and the transcript move together
-		// or not at all, so truncating the record alone is not an option.
-		return nil, StatusError(http.StatusConflict, errNoBridge)
+	bridge, err := resumeForRevert(ctx, bridges, cmd.ChatID, chat.ACPSessionID)
+	if err != nil {
+		return nil, err
 	}
 
 	result, status, err := revertToMessage(ctx, bridge, p.MessageID)
@@ -93,6 +88,52 @@ func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, c
 	return responseWith(map[string]any{
 		"restored_files": result.AffectedFiles,
 	}), nil
+}
+
+// resumeForRevert hands back a bridge whose session is the one the target
+// message lives in, and whose replay has already been adopted — the two
+// conditions under which truncating the record is safe. Every refusal it returns
+// is already a StatusError, and none of them has cut anything.
+//
+// `want` is the chat's session id read BEFORE the resume, because the resume can
+// retire it: a failed session/load falls through to session/new, which moves that
+// id into the prior chain, so a revert issued afterwards addresses a log that
+// never held the target.
+func resumeForRevert(ctx context.Context, bridges BridgeAccess, chatID vibekit.ChatID, want string) (Bridge, error) {
+	if want == "" {
+		return nil, StatusError(http.StatusConflict, errRewindNoSession)
+	}
+
+	// Empty model on purpose: spawnBridge then keeps the chat's own, so a rewind
+	// can never silently change which model the chat runs.
+	bridge, err := bridges.OpenBridge(ctx, chatID, "")
+	if err != nil || bridge == nil {
+		// The spawn's own error is logged, not forwarded: it names vibekit's
+		// internals, and the client renders the reason verbatim to the user.
+		slog.Warn("rewind: no bridge to revert on", "chat", chatID, keyError, err)
+		return nil, StatusError(http.StatusBadGateway, errRewindNoBridge)
+	}
+	if string(bridge.SessionID()) != want {
+		// The resume fell through to a fresh session, which holds none of this
+		// transcript: KAS would refuse the id or roll back the wrong thing.
+		slog.Warn("rewind: original session not resumed",
+			"chat", chatID, "want", want, "got", bridge.SessionID())
+		return nil, StatusError(http.StatusConflict, errRewindSessionNotResumed)
+	}
+
+	// A resume replays the transcript into a projection swapped in on the Forward
+	// goroutine, and mergeProjection returns its messages wholesale — so a swap
+	// landing after the truncation hands every reverted turn straight back. Wait
+	// for the adoption, and refuse when the wait does not complete: the retry
+	// meets a live bridge with no replay in flight and proceeds immediately.
+	if err := bridges.AwaitReplayAdopted(ctx, chatID); err != nil {
+		slog.Warn("rewind: replay not adopted, refusing to truncate",
+			"chat", chatID, keyError, err)
+		// One refusal for both causes: the other is the caller's own context, and
+		// a caller that walked away reads nothing anyway.
+		return nil, StatusError(http.StatusServiceUnavailable, errRewindReplayPending)
+	}
+	return bridge, nil
 }
 
 // revertResult is KAS's reply to a revert. affectedFiles are the paths it put

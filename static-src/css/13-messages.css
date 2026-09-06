@@ -6,6 +6,24 @@
   flex: 1;
   position: relative;
   min-height: 0;
+
+  /* THE GUTTER COLUMN, declared once on the box both its occupants position
+   * against: the timeline rail (29-turns.css) and the resume control docked at
+   * its foot. `--rail-inset-end` is the distance from this box's inline-END to
+   * the column, derived from the turn cards' own edge — see the rail, which
+   * carries the reasoning and the measurements. `--rail-inset-start` is the same
+   * column from the other side, and a control pinned there grows RIGHT into the
+   * gutter instead of back over the cards.
+   *
+   * The width is the rail's WIDEST ROW, which is a cluster RANGE and not a
+   * marker: `100-125` measures 42.67px at the cluster's 9px mono, against a
+   * three-digit marker's 25.88px. At the marker-sized 1.75rem every range past
+   * two digits per side was capped and wrapped onto two lines. It also sets the
+   * axis (`50%` of this column), so 29-turns.css's container query is derived
+   * from it. */
+  --rail-w: 2.75rem;
+  --rail-inset-end: calc(50% - var(--content-max-w) / 2 - var(--rail-w) - var(--sp-2));
+  --rail-inset-start: calc(100% - var(--rail-inset-end) - var(--rail-w));
 }
 
 /* THE HELPER OWNS EVERY MUTATION. Native CSS scroll anchoring is off here on
@@ -145,8 +163,23 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+
+  /* `safe center` and NOT `center`, and it is the whole fix for a clipped
+     heading. The card count is the model catalog's, not ours, so the column can
+     be taller than the overlay at any width — and a centred flex column that
+     overflows loses content at BOTH ends, so the first thing to go is the
+     "Choose a model" heading the reader needs to know what the grid is. `safe`
+     falls back to start alignment exactly when the content does not fit, which
+     is what makes the heading reachable by scrolling instead of gone. Paired
+     with the scroller below: centring alone cannot recover an overflow.
+
+     A browser that does not know the keyword drops the declaration and lands on
+     `normal`, which is start alignment — the overflow case, correctly, and the
+     fitting case top-aligned rather than centred. */
+  justify-content: safe center;
+  overflow-y: auto;
   gap: var(--sp-4);
+  padding-block: var(--sp-4);
   opacity: 1;
   transition: opacity var(--dur-enter);
 }
@@ -228,6 +261,32 @@
   & .picker-meta {
     font-size: var(--fs-xs);
     color: var(--c-text-secondary);
+  }
+}
+
+/* PHONE: THREE cards per row, from a grid rather than from the wrapping flex
+   line. `min-width: 10rem` is what pinned the phone to two per row — at 390px
+   the grid's content box is 342px after its own inline padding, so a third
+   160px card cannot fit and the catalog spends one row per two models. A
+   nine-model catalog was five rows plus the heading and the description, which
+   is the whole height of the overlay before the first card is even tall.
+
+   `minmax(0, 1fr)` rather than `1fr`: a grid track's automatic minimum is its
+   content, so a long model name would push the track past its share and the
+   three columns would stop being equal. The cards keep their equal HEIGHT for
+   free, because a grid row stretches its items. */
+@media (width <= 48rem) {
+  .picker-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    max-width: none;
+    inline-size: 100%;
+    padding-inline: var(--sp-3);
+  }
+
+  .picker-btn {
+    min-width: 0;
+    padding: var(--sp-2);
   }
 }
 
@@ -474,10 +533,10 @@
       color: var(--c-text-secondary);
     }
 
+    /* No radius here: `.code-wrap` draws the box this sits in. */
     & :where(pre) {
       background: var(--c-code-bg);
       padding: var(--sp-3);
-      border-radius: var(--r);
       overflow-x: auto;
       margin: var(--sp-2) 0;
       font-family: "Fira Code", "Cascadia Code", "JetBrains Mono", ui-monospace, monospace;
@@ -1279,24 +1338,13 @@
   }
 }
 
-/* ONE box, and the WRAPPER draws it.
- *
- * The head and the pre used to draw half each, and the two halves never met: the
- * head carried a 1px border with square bottom corners, the pre carried no
- * border and a 6px radius on all four, so the seam showed a notch on both sides
- * and the head's side lines stopped dead at it.
- *
- * The pre's top pair was meant to be squared by `.code-wrap > pre`, and that
- * override could never land. The prose skin's own `pre` defaults are nested
- * under `.message { &.assistant { … } }`, so `& :where(pre)` resolves to
- * `.message.assistant :where(pre)` at (0,2,0): `:where()` zeroes its own
- * argument but cannot lower what `&` inherits from the parent selector, and
- * `.code-wrap > pre` scores (0,2,0)'s inferior (0,1,1). Measured on the live
- * page, every corner of the pre read 6px.
- *
- * Clipping settles it without a specificity fight. `overflow: hidden` rounds
- * whatever radius a child carries, so the outline and the corners have one
- * owner, and the head needs only the hairline that separates it from the code. */
+/* ONE box, and the WRAPPER draws it: the border, the radius and the clip. The
+ * prose `pre` carries no radius, and the clip is not a substitute for that —
+ * `overflow: hidden` removes what falls outside the parent's rounded box and
+ * leaves a child's own corners rounded, so a 6px pre under the head painted a
+ * notch of card background at each end of the seam. Squaring it from here is
+ * unreachable anyway: the prose skin nests under `.message { &.assistant { … } }`,
+ * so `& :where(pre)` scores (0,2,0) and `.code-wrap > pre` an inferior (0,1,1). */
 .code-wrap {
   position: relative;
   margin: var(--sp-2) 0;
@@ -1457,7 +1505,7 @@
   justify-content: center;
   box-shadow:
     var(--shadow-ambient),
-    0 0.125rem 0.5rem oklch(0% 0 none / 30%);
+    0 0.125rem 0.375rem oklch(0% 0 none / 18%);
   z-index: 10;
   opacity: 1;
   transition:
@@ -1471,6 +1519,77 @@
 [id="scroll-bottom"]:hover {
   color: var(--c-text-primary);
   background: var(--c-bg-tertiary);
+}
+
+/* DOCKED AT THE FOOT OF THE TIMELINE RAIL, wherever the rail is shown. The
+   floating form above sits over the middle of the transcript, covering the last
+   lines of the very content the reader is behind on; the rail's column is empty
+   space beside the cards, and the rail's axis already ends at exactly this y
+   (both are `--sp-3` off the wrapper's bottom), so the control reads as the end
+   of the timeline it returns you to.
+
+   The threshold is the rail's own (29-turns.css), because it is the width at
+   which the gutter is proven wide enough to hold the column.
+
+   Pinned by its inline-START edge: that is what makes the label grow RIGHT into
+   the gutter rather than back over the cards, and it keeps the glyph on the axis
+   at every label length. `--sp-3` short of the wrapper's end because #chat-area
+   clips, so a long label would be cut rather than wrapped.
+
+   Both thresholds here track `--rail-w`: the gutter is `(width - cap) / 2`, so a
+   column 1rem wider needs 2rem more chat area for the same clearance. They read
+   55.5rem and 68rem while the column was 1.75rem. */
+@container chat-area (width >= 57.5rem) {
+  [id="scroll-bottom"] {
+    left: var(--rail-inset-start);
+    transform: none;
+    min-inline-size: var(--rail-w);
+    max-inline-size: max(var(--rail-w), calc(var(--rail-inset-end) + var(--rail-w) - var(--sp-3)));
+
+    /* Height is the app's button token, NOT `--rail-w`. Only the glyph COLUMN
+       below is bound to the column, because that is what puts the glyph on the
+       axis; a height read off the same token made this a square, which stopped
+       meaning anything once the column was sized for a cluster range rather
+       than for a marker. Base rule already says `--btn-h`, so there is no
+       override here. */
+    justify-content: flex-start;
+    gap: 0;
+    padding: 0;
+    border-radius: var(--r-sm);
+    box-shadow: none;
+    overflow: hidden;
+  }
+
+  /* The glyph takes the rail's own column, so it sits on the axis whether or not
+     the label is showing. `- 2px` is this button's two borders, which the column
+     width does not include; the svg's viewBox then centres the 14px drawing in
+     what is left. */
+  [id="scroll-bottom"] > svg {
+    flex: 0 0 calc(var(--rail-w) - 2px);
+  }
+
+  /* HIDDEN, not truncated, at a width the gutter cannot hold it: `setResumeLabel`
+     (scroll.ts) also writes the label to the tooltip, which the tooltip
+     controller publishes as this button's accessible description, so the count is
+     never the only copy. */
+  [id="scroll-bottom"] > span {
+    display: none;
+  }
+}
+
+/* The label pops out to the right of the glyph. 70rem is the width at which
+   `--rail-inset-end` reaches 6.75rem: the longest label this control writes is
+   about 5rem at `--fs-sm`, and the rest is the glyph column, its own end padding
+   and the `--sp-3` the box stops short of the window by. Past that the ellipsis
+   is the guard, for an agent-authored working label of any length. */
+@container chat-area (width >= 70rem) {
+  [id="scroll-bottom"] > span {
+    display: block;
+    min-width: 0;
+    padding-inline-end: var(--sp-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 
 /* Model-refusal callout (kiro-cli 2.13 refusal contract). The refusal
@@ -1562,11 +1681,6 @@
 .refusal-btn:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
-}
-
-.refusal-btn:disabled {
-  opacity: 0.55;
-  cursor: default;
 }
 
 /* ==========================================================================

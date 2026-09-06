@@ -26,12 +26,24 @@ func (b bridgeRole) Bridge(chatID vibekit.ChatID) command.Bridge {
 }
 
 // OpenBridge ensures a bridge exists for the chat.
+//
+// The nil check is the trap this type's doc comment names, and OpenBridge used
+// to be the one method missing it: a nil *sharedBridge returned as
+// command.Bridge is a NON-nil interface, so a caller's `bridge == nil` guard
+// reads false and the first method call panics.
 func (b bridgeRole) OpenBridge(ctx context.Context, chatID vibekit.ChatID, model string) (command.Bridge, error) {
 	sb, err := b.coord.OpenBridge(ctx, chatID, model)
-	if err != nil {
+	if err != nil || sb == nil {
 		return nil, err
 	}
 	return sb, nil
+}
+
+// AwaitReplayAdopted waits for a session/load replay this chat may have in
+// flight to be adopted into the record. A non-nil error means the caller must
+// not rewrite the transcript.
+func (b bridgeRole) AwaitReplayAdopted(ctx context.Context, chatID vibekit.ChatID) error {
+	return b.coord.AwaitReplayAdopted(ctx, chatID)
 }
 
 // CloseBridge tears down the bridge for a chat.

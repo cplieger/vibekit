@@ -343,11 +343,41 @@ func TestNodeStart_RecordsTheStepSession(t *testing.T) {
 	}
 }
 
-// TestRunComplete_ForgetsTheRunsStepSessions pins the registry's bound. A
+// TestRunComplete_LeavesTheStepSessionsToItsCaller pins where the registry's
+// bound is NOT.
+//
+// This frame carries a status, and `paused` is one of the values it carries: KAS
+// reports a step parked on a question through `run_complete` seconds after the
+// ask and minutes before the run resumes. So wiping the registry here emptied it
+// MID-RUN, and the resumed run's next ask resolved no run id at all. The gate is
+// the caller's (agent.observeComplete's `terminalRunStatus` branch, which already
+// makes the identical decision for the run's own bounds), so this handler forgets
+// nothing even for a status that IS terminal.
+func TestRunComplete_LeavesTheStepSessionsToItsCaller(t *testing.T) {
+	t.Parallel()
+	var events []vibekit.ServerEvent
+	tr := New(rolesOf(capturing(&events)))
+	tr.RecordStepSession("sess_a", "wf_1", "a")
+	tr.RecordStepSession("sess_b", "wf_1", "b")
+
+	tr.HandleRunComplete(t.Context(), testChat,
+		notif("_kiro/workflow/run_complete", map[string]any{"workflowId": "wf_1", "status": "completed"}))
+
+	for _, id := range []string{"sess_a", "sess_b"} {
+		if _, ok := tr.steps.lookup(id); !ok {
+			t.Errorf("%s was forgotten by the frame rather than by the gated caller", id)
+		}
+	}
+	// The frame's own job still happened.
+	if len(events) != 1 || events[0].Type != vibekit.EventRunFinished {
+		t.Errorf("events = %+v, want one run_finished", events)
+	}
+}
+
+// TestForgetRunSteps_DropsOneRunsSessions pins the bound at its new door. A
 // long-lived container running many workflows would otherwise hold one entry per
-// step forever; run_complete is the right hook because KAS's own notification
-// bridge unsubscribes on the same frame, so no later frame for that run arrives.
-func TestRunComplete_ForgetsTheRunsStepSessions(t *testing.T) {
+// step forever, and the drop has to stay scoped to the run that ended.
+func TestForgetRunSteps_DropsOneRunsSessions(t *testing.T) {
 	t.Parallel()
 	var events []vibekit.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
@@ -355,12 +385,11 @@ func TestRunComplete_ForgetsTheRunsStepSessions(t *testing.T) {
 	tr.RecordStepSession("sess_b", "wf_1", "b")
 	tr.RecordStepSession("sess_c", "wf_2", "c")
 
-	tr.HandleRunComplete(t.Context(), testChat,
-		notif("_kiro/workflow/run_complete", map[string]any{"workflowId": "wf_1", "status": "completed"}))
+	tr.ForgetRunSteps("wf_1")
 
 	for _, id := range []string{"sess_a", "sess_b"} {
 		if _, ok := tr.steps.lookup(id); ok {
-			t.Errorf("%s survived its run's completion", id)
+			t.Errorf("%s survived its run's end", id)
 		}
 	}
 	if _, ok := tr.steps.lookup("sess_c"); !ok {

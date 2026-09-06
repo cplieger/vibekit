@@ -64,23 +64,12 @@ const (
 	// workflow attribution gate, so nothing closes such a turn through the bracket
 	// path and a client that read it as the chat working would say so for the
 	// whole run. The RUN's own tab dot carries that liveness instead.
+	//
+	// What DOES close it is the RUN's own terminal transition (agent.Runs.observeComplete
+	// calls agent.BridgeCoordinator.CloseStepTurn). Whichever closer gets there, the
+	// content is persisted ahead of the trailing user rows: that choice reads EngineOpened.
 	TurnSourceWorkflowStep
 )
-
-// HasUserTrigger reports whether a turn opened by this source has a user message
-// of its own in the transcript, which is what decides whether an EMPTY turn needs
-// an outcome marker at all: a wireTurnStart turn has no trigger and no assistant
-// message, so a marker is the only record that it happened. emptyRetry counts
-// because it reuses the first prompt's user message, and both turns project into
-// that message's segment on reload.
-func (s TurnOpenSource) HasUserTrigger() bool {
-	switch s {
-	case TurnSourcePrompt, TurnSourceEmptyRetry, TurnSourceLocalShell:
-		return true
-	default:
-		return false
-	}
-}
 
 // PromptClass reports whether a turn opened by this source is a user prompt
 // vibekit dispatched — the holders a second prompt can reach with a steer once

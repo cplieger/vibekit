@@ -116,14 +116,25 @@
   cursor: pointer;
   white-space: nowrap;
   min-height: var(--btn-h);
-  transition:
-    background var(--dur-micro),
-    color var(--dur-micro) var(--ease-standard);
+  transition: background var(--dur-micro);
   position: relative;
 
+  /* HOVER MOVES THE BACKGROUND ONLY, and the ink stays --c-text-primary. This
+     used to also set `color: var(--c-accent)`, which took the label AND the
+     icon (it strokes in currentColor) to the pastel violet — the one
+     button-shaped control in the app that did that. Every other button either
+     keeps its ink or moves it TOWARD --c-text-primary on hover: .git-action-btn
+     and .list-row-btn say so outright, .pill / .chat-opt-btn / .picker-btn
+     change background alone, and .tab-close mixes toward the text colour. In
+     this app accent-on-hover is the TEXT-CONTROL idiom instead — .turn-req-more,
+     .ev-in-more, .steer-more, .steer-note-more, a.git-pr-row-title — so
+     spending it here made a primary action read as a link. `color` left the
+     transition list with the declaration: nothing else writes this element's
+     colour in any state (verified by a CSSOM walk over the whole bundle:
+     .sidebar-action-btn was the only other writer), so the entry animated
+     nothing. */
   &:hover {
     background: var(--c-bg-elevated);
-    color: var(--c-accent);
   }
 
   & svg {

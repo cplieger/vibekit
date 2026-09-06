@@ -398,3 +398,98 @@ describe("failure-notice retracts a notice that turned out to be wrong", () => {
     expect(toastCount()).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The chat on screen already carries the failure, so the toast stands down.
+//
+// The turn's own card now holds the reason durably — `turn_failure_reason` →
+// `.turn-notice`, present open and folded — so a corner overlay for the chat the
+// reader is looking at is a second copy of that text laid over the top of the
+// first. Off-screen it is the only surface that can report at all, which is why
+// this suppresses and never replaces.
+//
+// FOUR conjuncts, and every case below is one of them failing. Each conjunct
+// exists because dropping it silences a failure nobody would otherwise hear.
+// ---------------------------------------------------------------------------
+
+describe("a turn-scoped failure on the chat in front of you", () => {
+  /** The reader is on c1's tab AND the window is visible. */
+  function watching(): void {
+    mockActiveTabId.mockReturnValue("c1");
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  }
+
+  it("raises no toast at all", () => {
+    watching();
+    reportFailure("c1", "at capacity", undefined, true);
+    expect(toastCount()).toBe(0);
+  });
+
+  it("still raises one for a DIFFERENT chat, named and linked", () => {
+    // Conjunct 4a: the tab test. A background chat's failure has no surface on
+    // screen, so the toast is the only thing that can report it.
+    watching();
+    reportFailure("c2", "at capacity", undefined, true);
+    expect(toastCount()).toBe(1);
+    expect(lastToast()).toContain("Write the docs");
+    expect(lastAction()?.label).toBe("Open chat");
+  });
+
+  it("still raises one when the window is hidden", () => {
+    // Conjunct 4b: the visibility test, and tab-active alone is not enough. A
+    // notice suppressed because the tab is active, in a window nobody is looking
+    // at, is a report spent for nothing — the inline row is on a screen that is
+    // not being read.
+    mockActiveTabId.mockReturnValue("c1");
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    reportFailure("c1", "at capacity", undefined, true);
+    expect(toastCount()).toBe(1);
+  });
+
+  it("still raises one for a failure that ends no turn", () => {
+    // Conjunct 1. A `bridge_start_failed` or an `agent_config_error` has no
+    // transcript row to land in, so it keeps its toast whatever is on screen. This
+    // is the default, which is why every existing case in this file passes no flag.
+    watching();
+    reportFailure("c1", "the agent could not be started", undefined, false);
+    expect(toastCount()).toBe(1);
+  });
+
+  it("still raises one when the route carries its own remedy", () => {
+    // Conjunct 2, and the one that is real rather than defensive:
+    // `auth_token_unavailable` is BOTH turn-scoped and action-bearing. The inline
+    // row can say the runtime is signed out; it cannot offer Sign in.
+    watching();
+    const action = { label: "Sign in", onClick: vi.fn() };
+    reportFailure("c1", "no access token", action, true);
+    expect(toastCount()).toBe(1);
+    // On screen the remedy takes the STICKY entry point rather than the
+    // "Open chat" one — see `raise` — so it is `lastStickyAction` that carries it.
+    expect(lastStickyAction()?.label).toBe("Sign in");
+  });
+
+  it("still raises one for a workspace-global failure that names no chat", () => {
+    // Conjunct 3. An empty chat id has no inline home either, so there is nothing
+    // for the toast to be a duplicate of.
+    watching();
+    reportFailure("", "the tools engine is unreachable", undefined, true);
+    expect(toastCount()).toBe(1);
+  });
+
+  it("suppresses both channels, not just the first", () => {
+    // A failed prompt is reported twice by design — the POST's body and the SSE
+    // `error` frame carry the identical string. The dedupe latch is what collapses
+    // them, and it must not be the thing doing the work here: suppression happens
+    // BEFORE the latch is touched, so neither report raises anything.
+    watching();
+    reportFailure("c1", "at capacity", undefined, true);
+    reportFailure("c1", "at capacity", undefined, true);
+    expect(toastCount()).toBe(0);
+    // And the latch is genuinely untouched: moving to another tab must let the same
+    // reason report, rather than finding itself deduped against a toast that never
+    // existed.
+    mockActiveTabId.mockReturnValue("c2");
+    reportFailure("c1", "at capacity", undefined, true);
+    expect(toastCount()).toBe(1);
+  });
+});

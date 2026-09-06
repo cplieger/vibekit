@@ -30,11 +30,14 @@ export const RUN_STATUSES = ["running", "paused", "completed", "failed", "aborte
  *  every live run must offer a way out, and a finished run must not offer a stop
  *  that would do nothing.
  *
- *  A live run may still offer nothing: these verbs reach a run only through its
- *  own bridge, which an agent-launched run never has and a restarted server has
- *  lost. The server answers 409 in that case, which is why the buttons render
- *  from status alone and the reply is what tells the user the run is out of
- *  reach.
+ *  NOTHING here needs to reason about the carrier, and that is a property of the
+ *  server rather than a simplification. A run nothing holds is RE-HOSTED on
+ *  demand (`hostOrRehost`, run_host.go): pause, resume, retry and the step verbs
+ *  each start a process for the run and let KAS rehydrate it from disk, so a
+ *  container restart and a closed launching chat are no longer states a button
+ *  has to know about. A verb the run's own state refuses is answered 409 by KAS
+ *  itself, whose reason names the state — which is why the buttons render from
+ *  status alone.
  *
  *  An unknown status is ABSENT rather than mapped to an empty list, so a future
  *  KAS status degrades to a read-only view instead of a wrong control. */
@@ -47,7 +50,7 @@ export const RUN_CONTROLS: Record<string, readonly RunVerb[]> = {
   // completed work survives — unlike relaunching the recipe, which starts at
   // step one. It is legal exactly here, and exactly here vibekit has already
   // closed the run's bridge, which is why the server RE-HOSTS one rather than
-  // requiring it (run_host.go RetryRun).
+  // requiring it (run_host.go `Retry`).
   //
   // Offered only on a PARENTLESS run (user decision): an agent-parented run's
   // recovery is the agent's own, on a bridge it already holds. The gate is the
@@ -63,3 +66,36 @@ export const CONTROL_LABEL: Record<RunVerb, string> = {
   cancel: "Cancel",
   retry: "Retry failed steps",
 };
+
+/** The two RECOGNISED clean endings. Lives here rather than in `run-view.ts`
+ *  because this module is already the pure, DOM-free owner of the wire's status
+ *  vocabulary — which is what lets a test be exhaustive over `RUN_STATUSES` rather
+ *  than over whatever subset a table happens to name. */
+const CLEAN_ENDINGS: ReadonlySet<string> = new Set(["completed", "cancelled"]);
+
+/**
+ * Whether a run ended in a way that leaves a reader nothing to come back for.
+ *
+ * ONE OF FOUR CONDITIONS on the automatic sub-tab close (`run-view.ts`
+ * `autoCloseRunSubTab` holds the other three: the app opened the tab and this
+ * client still holds the claim, the run's DOT state is `done`, and the tab is not
+ * the one on screen). It is deliberately NARROWER than the dot: `runStatusFor`'s
+ * `default` arm answers `done` for any unrecognised terminal status, and a status
+ * this build has never seen is not one to close a tab on.
+ *
+ * `cancelled` is in, and stays in: the reader asked for the stop, so there is
+ * nothing they were waiting to read. `failed` and `aborted` are out because a
+ * failure is not noise — it is the run whose detail is worth the row.
+ *
+ * WHY THIS DOES NOT CONTRADICT AN OPEN RESULTS BOX. The exec page opens its
+ * results by default because a run's product is what a reader opens the page for;
+ * this closes a tab that shows it. The two never describe the same tab — the gates
+ * only reach tabs nobody claimed and nobody is looking at — and a close destroys
+ * no durable content: re-opening the run rebuilds the whole page from
+ * `GET /api/runs/{id}`, results included and open. The one thing a close loses is
+ * the LIVE step transcript, which is live-only either way and is lost by a refresh
+ * whether the tab closed or not.
+ */
+export function runEndedCleanly(status: string): boolean {
+  return CLEAN_ENDINGS.has(status);
+}

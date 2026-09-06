@@ -21,21 +21,43 @@ import (
 // the live session id. label prefixes error messages ("account usage
 // call: ...").
 func (us *utilitySession) rawCall(ctx context.Context, label, method string, params func(bridge acpSession) map[string]any) (json.RawMessage, error) {
+	raw, _, err := us.rawCallAt(ctx, label, method, params)
+	return raw, err
+}
+
+// rawCallAt is rawCall plus the read-loop position the response arrived at and the
+// session attachment it belongs to.
+//
+// Only a caller that has to ORDER a local decision against the frames still in
+// flight needs it, which is bridge.CallAt's own rule one layer up. The step
+// transcript read is the one caller: KAS replays the step's session as
+// notifications that PRECEDE the load result, so the result alone says nothing
+// about whether the forward goroutine has folded them.
+func (us *utilitySession) rawCallAt(ctx context.Context, label, method string, params func(bridge acpSession) map[string]any) (json.RawMessage, drainPoint, error) {
 	lease, err := us.acquire(ctx)
 	if err != nil {
-		return nil, err
+		return nil, drainPoint{}, err
 	}
-	resp, err := lease.bridge.Call(ctx, method, params(lease.bridge))
+	at := drainPoint{gen: lease.gen}
+	resp, seq, err := lease.bridge.CallAt(ctx, method, params(lease.bridge))
+	at.seq = seq
 	if err != nil {
-		// Bridge may be dead; reset (if still this generation) so the
-		// next call restarts it.
-		us.resetIf(lease.gen)
-		return nil, fmt.Errorf("%s: %w", label, err)
+		// A CALLER walking away is not evidence the bridge is unhealthy, so it
+		// must not reset. startLocked deliberately spawns on us.shutdownCtx, so
+		// an abort mid-handshake leaves a live session behind — and resetting on
+		// the request ctx's own cancellation stopped exactly the session that
+		// had just finished starting, making every later utility-backed
+		// endpoint pay the respawn. A DEADLINE still resets: a session that
+		// spent the whole budget without answering may genuinely be wedged.
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			us.resetIf(lease.gen)
+		}
+		return nil, at, fmt.Errorf("%s: %w", label, err)
 	}
 	if resp == nil {
-		return nil, errors.New(label + ": nil response")
+		return nil, at, errors.New(label + ": nil response")
 	}
-	return resp.Result, nil
+	return resp.Result, at, nil
 }
 
 // callerParams adapts a fixed, caller-supplied parameter map (no session

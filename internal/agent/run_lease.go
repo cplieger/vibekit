@@ -16,6 +16,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/schedule"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // launchOrigin is what a launch verb knows about the run it is about to start —
@@ -31,7 +32,8 @@ type launchOrigin struct {
 	// next slot, and zero for a manual launch of a recipe nothing schedules —
 	// but not for a manual launch as such: launch fills it in from the
 	// recipe's own enabled schedules, which is what stops a manual run from
-	// holding a scheduled recipe for the whole ceiling (see manualSlot).
+	// holding a scheduled recipe until it stalls or spends its backstop (see
+	// manualSlot).
 	slotAt     time.Time
 	scheduleID string
 	// chatID is the launching chat for an agent's run (runStartLaunch);
@@ -61,8 +63,9 @@ func scheduledLaunch(scheduleID string, slotAt time.Time) launchOrigin {
 //
 // The slot is an input to the ONE deadline every run gets
 // (runlease.NextDeadline), so a manual run finding its recipe's next slot here
-// is what makes it yield instead of taking the universal ceiling as its only
-// bound and holding the recipe for up to an hour.
+// is what makes it yield instead of holding the recipe for as long as it keeps
+// making progress — which, with an idle window rolled forward by every step, is
+// potentially the whole backstop.
 //
 // Matched on the launch SOURCE, the key both affordances share: a schedule row
 // and the Run button on the same Workflows row carry the same string. Two
@@ -76,7 +79,8 @@ func scheduledLaunch(scheduleID string, slotAt time.Time) launchOrigin {
 // fire from one missed while the container was down.)
 //
 // Zero when there is no schedule store, no enabled schedule for this source, or
-// no computable next slot. Such a run is bounded by the ceiling alone.
+// no computable next slot. Such a run is bounded by the idle window and the
+// backstop alone.
 func (rs *Runs) manualSlot(source string) time.Time {
 	if rs.schedules == nil || source == "" {
 		return time.Time{}
@@ -91,10 +95,10 @@ func (rs *Runs) manualSlot(source string) time.Time {
 		}
 		next, err := schedule.NextRunFrom(e.Spec, e.Anchor, now)
 		if err != nil {
-			// No slot input rather than a launch failure: the ceiling still
-			// bounds the run.
+			// No slot input rather than a launch failure: the idle window and
+			// the backstop still bound the run.
 			slog.Warn("schedule cannot name its next slot, so a manual run of its recipe "+
-				"is bounded by the ceiling alone", "schedule_id", e.ID, "error", err)
+				"is bounded by its idle window alone", "schedule_id", e.ID, "error", err)
 			continue
 		}
 		if earliest.IsZero() || next.Before(earliest) {
@@ -165,4 +169,20 @@ func (rs *Runs) releaseLease(ctx context.Context, workflowID string) {
 // lease reads a run's envelope.
 func (rs *Runs) lease(workflowID string) (runlease.Lease, bool) {
 	return rs.leaseStore().Get(workflowID)
+}
+
+// RunChat answers which chat's agent launched a run, satisfying
+// command.RunOwner so a run tab opened with no parent still nests under its
+// conversation. `ok` reports whether a lease exists at all, which differs from
+// an empty chat id: a parentless run HAS a lease and no chat.
+//
+// Lock order: the coordinator calls this holding its own operation lock, so the
+// order is Membership.mu -> Runs.mu -> the lease store's. Acyclic because
+// offerRunTab releases Runs.mu before it opens anything.
+func (rs *Runs) RunChat(workflowID string) (vibekit.ChatID, bool) {
+	l, ok := rs.lease(workflowID)
+	if !ok {
+		return "", false
+	}
+	return vibekit.ChatID(l.ChatID), true
 }

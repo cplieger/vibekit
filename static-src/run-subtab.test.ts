@@ -1,15 +1,16 @@
 // ---------------------------------------------------------------------------
-// Opening a run's tab: the automatic offer, and the re-open.
+// Opening a run's tab, and the marker that says who opened it.
 //
-// The two paths have OPPOSITE guards and that is the whole design. The automatic
-// offer fires once per run per client, because a run emits a `run_progress` per
-// node event and without the guard a reader who closed the tab would watch it
-// reappear within seconds, forever. The re-open has no guard at all, because a
-// reader clicking the run in its transcript is asking for it back and refusing them
-// would be the opposite of respecting the close.
+// There is ONE opener here, the manual one, and it has no guard at all: a reader
+// clicking the run in its transcript is asking for it back, and refusing them would
+// be the opposite of respecting the close. It nests under the launching chat with
+// `owns: false`, which is the close contract — the sub-tab's × stops watching, the
+// chat's × stops the run.
 //
-// Both nest under the launching chat with `owns: false`, which is the close
-// contract: the sub-tab's × stops watching, the chat's × stops the run.
+// The tab a starting run gets BY ITSELF is opened server-side, so the client's own
+// automatic offer is gone and `noteAutoOpenedRun` is what is left of it: a per-client
+// record of which tabs the app produced, which is the one thing the server cannot
+// answer and the only thing the completion auto-close may act on.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -61,6 +62,14 @@ vi.mock("./tabs.js", () => ({
     return Promise.resolve();
   }),
   getActiveTabId: vi.fn(() => m.active),
+  // Item 6's two additions to this graph, both inert here: the run tab's own
+  // persisted parent (the post-reload answer for a chat-parented run's launching
+  // chat) and the door the detail pane's "Open the conversation" link dispatches
+  // through. No case here paints a run — `runState` answers undefined — so neither
+  // is reached; they exist because a Browser-Mode mock is linked as real ESM.
+  parentChatRef: vi.fn(() => ""),
+  hasTab: vi.fn(() => false),
+  openTab: vi.fn(() => Promise.resolve("opened")),
 }));
 
 vi.mock("./decision-dock.js", () => ({
@@ -76,6 +85,15 @@ vi.mock("./run-store.js", () => ({
   invalidateRun: vi.fn(),
   runState: vi.fn(() => undefined),
   runChatID: vi.fn((id: string) => m.launchedBy.get(id) ?? ""),
+  // The write-back half of the pairing: `openRunView` teaches the store the chat it
+  // already knows, so a History-opened finished run has a launching chat for the rest
+  // of the session. Recorded into the same fake map `runChatID` reads, which is what
+  // makes the two consistent here the way they are in production.
+  noteRunChat: vi.fn((id: string, chatID: string) => {
+    if (id !== "" && chatID !== "") {
+      m.launchedBy.set(id, chatID);
+    }
+  }),
   // The rest are the run CARD's, which the tab renders now instead of hand-rolling
   // a node tree. Every derived question about a run is a FUNCTION over the cached
   // state rather than a field stored beside it (see run-store.ts), so a card that
@@ -99,7 +117,7 @@ vi.mock("./run-store.js", () => ({
   // the rest — `runState` answers undefined, so no alert is built — but it has to
   // EXIST, because a browser-mode mock is linked as real ESM: a name any module in
   // the graph reaches must be on the factory or collection fails outright.
-  isNeedInputPause: vi.fn(() => false),
+  isNeedInputPark: vi.fn(() => false),
 }));
 
 vi.mock("./run-dots.js", () => ({ refreshRunDots: vi.fn(), trackRun: vi.fn() }));
@@ -109,7 +127,10 @@ vi.mock("./actions/runs.js", () => {
   return { cancelRun: stub, pauseRun: stub, resumeRun: stub, retryRun: stub };
 });
 
-const { openRunSubTab, openRunView, autoCloseRunSubTab } = await import("./run-view.js");
+const { noteAutoOpenedRun, openRunView, autoCloseRunSubTab } = await import("./run-view.js");
+// The dock's own reader, mocked above: the auto-close asks it the same question the
+// tab-dot painter does, so a case that queues an ask drives it through here.
+const { runPendingAsks } = await import("./decision-dock.js");
 
 beforeEach(() => {
   m.opened.length = 0;
@@ -119,60 +140,70 @@ beforeEach(() => {
   m.active = "";
 });
 
-describe("the automatic offer", () => {
-  it("nests under the launching chat, without stealing focus, owning nothing", () => {
+describe("the automatic offer is the server's", () => {
+  // The whole point of moving it: a client reaction opened the tab only where one
+  // browser happened to be connected, hydrated and holding the launching chat's tab
+  // when a frame arrived, and `TabSubject.Parent` is immutable, so a wrong answer
+  // was permanent and differed per device. Nothing here may open a tab.
+  it("opens NOTHING, whatever the launching chat's tab looks like here", () => {
     m.tabs.add("c-1");
-    openRunSubTab("wf_1", "publish-pr", "c-1");
-    expect(m.opened).toEqual([
-      { id: "wf_1", name: "publish-pr", opts: { parent: "c-1", owns: false, activate: false } },
-    ]);
-  });
-
-  // The bug this exists for: a run emits a progress frame per node event, so a
-  // second offer would undo the reader's close over and over.
-  it("offers ONCE per run, so a close is final for the automatic path", () => {
-    m.tabs.add("c-1");
-    openRunSubTab("wf_2", "publish-pr", "c-1");
-    expect(m.opened).toHaveLength(1);
-
-    // The reader closes it. Every later frame must leave it closed.
-    m.tabs.delete("run:wf_2");
-    for (let i = 0; i < 5; i++) {
-      openRunSubTab("wf_2", "publish-pr", "c-1");
-    }
-    expect(m.opened).toHaveLength(1);
-  });
-
-  it("does nothing for a parentless run: there is no chat to nest under", () => {
-    openRunSubTab("wf_3", "nightly", "");
+    noteAutoOpenedRun("wf_1", "c-1");
+    noteAutoOpenedRun("wf_absent", "c-absent");
+    noteAutoOpenedRun("wf_none", "");
     expect(m.opened).toEqual([]);
   });
 
-  it("does nothing when the launching chat has no tab, and stays offerable", () => {
-    // A background chat on another device's arrangement. Marking it offered here
-    // would deny the run its tab for good once that chat does open.
-    openRunSubTab("wf_4", "publish-pr", "c-absent");
-    expect(m.opened).toEqual([]);
+  // The claim's one job: let the completion auto-close tell a tab the app produced
+  // from one the reader asked for. Proven through that rule rather than by reading
+  // the set, which is module-private.
+  it("claims the run's tab, so the completion auto-close may take it", () => {
+    m.tabs.add("c-1");
+    m.tabs.add("run:wf_claim");
+    noteAutoOpenedRun("wf_claim", "c-1");
+    autoCloseRunSubTab("wf_claim", "completed");
+    expect(m.closed).toEqual(["run:wf_claim"]);
+  });
 
-    m.tabs.add("c-absent");
-    openRunSubTab("wf_4", "publish-pr", "c-absent");
-    expect(m.opened).toHaveLength(1);
+  it("claims nothing for a run it was given no launching chat for", () => {
+    // A PARENTLESS run: the server offers it no tab, so the tab on screen is the
+    // one the Workflows tab's Run button opened for the reader.
+    m.tabs.add("run:wf_parentless");
+    noteAutoOpenedRun("wf_parentless", "");
+    autoCloseRunSubTab("wf_parentless", "completed");
+    expect(m.closed).toEqual([]);
   });
 
   it("ignores an empty workflow id", () => {
     m.tabs.add("c-1");
-    openRunSubTab("", "publish-pr", "c-1");
-    expect(m.opened).toEqual([]);
+    m.tabs.add("run:");
+    noteAutoOpenedRun("", "c-1");
+    autoCloseRunSubTab("", "completed");
+    expect(m.closed).toEqual([]);
+  });
+
+  // `run_start` re-fires on every resume, so without the once-per-client latch a
+  // resume would re-claim a tab the reader had deliberately re-opened, and the
+  // completion auto-close would then take it from them.
+  it("records once per client, so a resume cannot re-claim a re-opened tab", () => {
+    m.tabs.add("c-1");
+    m.launchedBy.set("wf_relatch", "c-1");
+    noteAutoOpenedRun("wf_relatch", "c-1");
+    // The reader asks for the run themselves. From here the tab is theirs.
+    openRunView("wf_relatch", "publish-pr");
+    // The run resumes: `run_started` fires again.
+    noteAutoOpenedRun("wf_relatch", "c-1");
+    autoCloseRunSubTab("wf_relatch", "completed");
+    expect(m.closed).toEqual([]);
   });
 });
 
 describe("the re-open", () => {
-  it("has no guard: it re-opens a run whose automatic tab was closed", () => {
+  it("has no guard: it re-opens a run whose app-opened tab was closed", () => {
+    // The tab the server offered, and the reader's close of it — so nothing here
+    // holds a `run:wf_5` row and the app has spent its one offer.
     m.tabs.add("c-1");
     m.launchedBy.set("wf_5", "c-1");
-    openRunSubTab("wf_5", "publish-pr", "c-1");
-    m.tabs.delete("run:wf_5");
-    m.opened.length = 0;
+    noteAutoOpenedRun("wf_5", "c-1");
 
     // What the card's "Open run" link does.
     openRunView("wf_5", "publish-pr");
@@ -185,22 +216,16 @@ describe("the re-open", () => {
   // already open. `openTab` activates an existing id unless told not to, and this
   // path deliberately does not tell it not to — unlike the automatic offer.
   it("focuses a tab that is already open rather than doing nothing", () => {
+    // The server's offer already landed, so the row is on the strip.
     m.tabs.add("c-1");
+    m.tabs.add("run:wf_open");
     m.launchedBy.set("wf_open", "c-1");
-    openRunSubTab("wf_open", "publish-pr", "c-1");
-    m.opened.length = 0;
 
     openRunView("wf_open", "publish-pr");
     // It reaches openRunTab again with no `activate: false`, which is what makes
     // openTab activate the existing tab instead of returning silently.
     expect(m.opened).toHaveLength(1);
     expect(m.opened[0]?.opts?.activate).toBeUndefined();
-  });
-
-  it("the automatic offer, by contrast, never steals focus from an open tab", () => {
-    m.tabs.add("c-1");
-    openRunSubTab("wf_quiet", "publish-pr", "c-1");
-    expect(m.opened[0]?.opts?.activate).toBe(false);
   });
 
   it("finds the launching chat in the store when the caller does not know it", () => {
@@ -242,16 +267,26 @@ describe("the re-open", () => {
 // The completion auto-close.
 //
 // The offer's counterpart, and it is narrower than "close a finished run's tab" in
-// three directions: only a tab this client opened by itself, only a clean ending,
-// and never the tab on screen. Each gate closes a way the app could take a tab
-// someone still wanted, which is the same rule the offer guard enforces from the
-// other side.
+// four directions: only a tab this client opened by itself, only a clean ending,
+// only a run whose tab DOT reads green, and never the tab on screen. Each gate
+// closes a way the app could take a tab someone still wanted, which is the same
+// rule the offer guard enforces from the other side.
 // ---------------------------------------------------------------------------
 
 describe("the completion auto-close", () => {
-  it("closes an automatic sub-tab once its run completes", () => {
+  /** The state after the server offered a run's tab and this client recorded the
+   *  claim: the launching chat's row, the run's own row, and the marker. Named
+   *  because every case below needs all three — a case missing the run's row would
+   *  pass for the wrong reason, since the auto-close drops a claim whose tab is
+   *  already gone. */
+  function appOpened(workflowID: string): void {
     m.tabs.add("c-1");
-    openRunSubTab("wf_ac1", "publish-pr", "c-1");
+    m.tabs.add(`run:${workflowID}`);
+    noteAutoOpenedRun(workflowID, "c-1");
+  }
+
+  it("closes an automatic sub-tab once its run completes", () => {
+    appOpened("wf_ac1");
     autoCloseRunSubTab("wf_ac1", "completed");
     expect(m.closed).toEqual(["run:wf_ac1"]);
   });
@@ -260,8 +295,7 @@ describe("the completion auto-close", () => {
   // not noise, so nothing folds it away. A failed run is the one whose detail is
   // worth the row.
   it.each(["failed", "aborted"])("keeps the tab when the run ended badly: %s", (status) => {
-    m.tabs.add("c-1");
-    openRunSubTab(`wf_bad_${status}`, "publish-pr", "c-1");
+    appOpened(`wf_bad_${status}`);
     autoCloseRunSubTab(`wf_bad_${status}`, status);
     expect(m.closed).toEqual([]);
   });
@@ -271,8 +305,7 @@ describe("the completion auto-close", () => {
   // a run that is still this process's to resume — and the claim has to SURVIVE it,
   // or the resumed run's real completion would find nothing to close.
   it("treats paused as no ending at all, and still closes on the real one", () => {
-    m.tabs.add("c-1");
-    openRunSubTab("wf_ac2", "publish-pr", "c-1");
+    appOpened("wf_ac2");
     autoCloseRunSubTab("wf_ac2", "paused");
     expect(m.closed).toEqual([]);
 
@@ -281,26 +314,54 @@ describe("the completion auto-close", () => {
   });
 
   it("keeps a tab whose status it cannot classify", () => {
-    m.tabs.add("c-1");
-    openRunSubTab("wf_ac3", "publish-pr", "c-1");
+    appOpened("wf_ac3");
     autoCloseRunSubTab("wf_ac3", "something-new-upstream");
     expect(m.closed).toEqual([]);
+  });
+
+  /** One queued ask, filed under `workflowID` and under no other run — the dock's
+   *  own answer shape, so the gate reads it exactly as production does. */
+  function asking(workflowID: string): void {
+    vi.mocked(runPendingAsks).mockImplementation((id) =>
+      id === workflowID
+        ? { count: 1, nodes: new Set(["publish"]), label: "Allow git push?" }
+        : { count: 0, nodes: new Set<string>(), label: "" },
+    );
+  }
+
+  // The ask is the dot's SECOND input, and the `run_finished` path retires none of
+  // them — they leave the dock queue on their own settle frames — so a run stopped
+  // while parked on one arrives here as a CLEAN ending with the ask still queued.
+  // The dot is amber, so the tab stays: the answer is still owed.
+  it("keeps the tab of a run stopped while parked on an ask", () => {
+    appOpened("wf_ask");
+    asking("wf_ask");
+    autoCloseRunSubTab("wf_ask", "cancelled");
+    expect(m.closed).toEqual([]);
+  });
+
+  // ...and the ask has to be THIS run's. The dock holds every run's, keyed two
+  // ways, so a gate that read the queue without naming the run would keep every
+  // automatic tab alive for as long as anything anywhere is blocked on a person.
+  it("closes the tab when the queued ask belongs to another run", () => {
+    appOpened("wf_ac8");
+    asking("wf_other");
+    autoCloseRunSubTab("wf_ac8", "completed");
+    expect(m.closed).toEqual(["run:wf_ac8"]);
   });
 
   // The moment a run's output becomes worth reading is the moment it finishes, so
   // this is exactly when the view must not be pulled away.
   it("never closes the tab the reader is looking at", () => {
-    m.tabs.add("c-1");
-    openRunSubTab("wf_ac4", "publish-pr", "c-1");
+    appOpened("wf_ac4");
     m.active = "run:wf_ac4";
     autoCloseRunSubTab("wf_ac4", "completed");
     expect(m.closed).toEqual([]);
   });
 
   it("leaves a tab the reader opened themselves alone, for good", () => {
-    m.tabs.add("c-1");
+    appOpened("wf_ac5");
     m.launchedBy.set("wf_ac5", "c-1");
-    openRunSubTab("wf_ac5", "publish-pr", "c-1");
     // The card's "Open run" link, or a /run/{id} deep link. From here the tab is
     // theirs.
     openRunView("wf_ac5", "publish-pr");
@@ -313,26 +374,31 @@ describe("the completion auto-close", () => {
   // whose × cancelled — so a launched run's tab is claimed by the reader exactly
   // like a re-opened one and this function cannot reach it either.
   it("leaves a launched run's own tab alone", () => {
-    m.tabs.add("c-1");
-    openRunSubTab("wf_ac6", "publish-pr", "c-1");
+    appOpened("wf_ac6");
     openRunView("wf_ac6", "publish-pr");
     autoCloseRunSubTab("wf_ac6", "completed");
     expect(m.closed).toEqual([]);
   });
 
-  // This is what keeps a TANGENT out without a filter naming one: only the run
-  // door above ever makes a tab closable here, so a forked chat's sub-tab — and
-  // any other tab in the strip — is unreachable from this function.
-  it("closes nothing for an id it never opened itself", () => {
+  // Only the run door above ever makes a tab closable here, which is what keeps a
+  // TANGENT out without a filter naming one. Three populations land in it, and the
+  // last two are a recorded DECISION rather than an oversight (see `autoOpened`):
+  // the server opens the tab for every device while the marker is per client, so a
+  // run no client saw start — and a reader who joined after the start frame, whose
+  // tab came from the server's own retry — keep it after a clean finish.
+  it.each([
+    ["a tangent, or any other tab this module never touched", "wf_elsewhere"],
+    ["a run whose start frame no connected client saw", "wf_nowitness"],
+    ["a reader who joined mid-run, after the start frame", "wf_joinedlate"],
+  ])("closes nothing for %s", (_population, workflowID) => {
     m.tabs.add("c-1");
-    m.tabs.add("run:wf_elsewhere");
-    autoCloseRunSubTab("wf_elsewhere", "completed");
+    m.tabs.add(`run:${workflowID}`);
+    autoCloseRunSubTab(workflowID, "completed");
     expect(m.closed).toEqual([]);
   });
 
   it("tolerates a tab the reader already closed", () => {
-    m.tabs.add("c-1");
-    openRunSubTab("wf_ac7", "publish-pr", "c-1");
+    appOpened("wf_ac7");
     m.tabs.delete("run:wf_ac7");
     autoCloseRunSubTab("wf_ac7", "completed");
     expect(m.closed).toEqual([]);

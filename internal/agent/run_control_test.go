@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,7 +160,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 	})
 
 	// The whole point of the change, asserted through the real verb: the RPC reaches
-	// KAS instead of the handler answering errRunNotHosted.
+	// KAS on the bridge the chat already holds, rather than through a needless re-host.
 	t.Run("Pause reaches KAS through the chat's bridge", func(t *testing.T) {
 		h, br := setup(t, "sess_owned", "sess_owned")
 		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
@@ -192,8 +193,9 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 	})
 }
 
-// pausedFrame builds a `_kiro/workflow/paused` notification: `{workflowId,
-// pauseReason}`, which is the whole payload KAS sends for a run-level pause.
+// pausedFrame builds a `_kiro/workflow/paused` notification carrying only
+// `{workflowId, pauseReason}` — the shape KAS sends for a pause it did NOT
+// classify: an interruption, a permanent failure, a need-input park.
 func pausedFrame(t *testing.T, workflowID, reason string) *vibekit.RPCResponse {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{
@@ -203,6 +205,65 @@ func pausedFrame(t *testing.T, workflowID, reason string) *vibekit.RPCResponse {
 		t.Fatalf("marshal paused frame: %v", err)
 	}
 	return &vibekit.RPCResponse{Params: params}
+}
+
+// pausedFrameWithDetail builds the run-level pause frame KAS sends when it
+// CLASSIFIED the fault: `{workflowId, pauseReason, pauseDetail}`.
+//
+// The detail is built as a raw map rather than from the `pauseDetail` struct, so
+// this fixture describes the WIRE rather than vibekit's decode of it — otherwise
+// a test asserting the field is read would be marshalling the very type it is
+// checking gets populated, and a renamed JSON tag would move both sides together.
+func pausedFrameWithDetail(t *testing.T, workflowID, reason, class, code string) *vibekit.RPCResponse {
+	t.Helper()
+	params, err := json.Marshal(map[string]any{
+		"workflowId":  workflowID,
+		"pauseReason": reason,
+		"pauseDetail": map[string]any{
+			"class": class, "code": code, "occurredAt": "2026-09-04T12:03:43.000Z",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal paused frame: %v", err)
+	}
+	return &vibekit.RPCResponse{Params: params}
+}
+
+// pausedDriftedDetail builds the pause frame KAS would send if `pauseDetail`
+// stopped being an object — the shape change the heal has to survive rather than
+// be blinded by.
+//
+// A STRING is used because it is the cheapest drift to write and the decoder
+// treats every non-object the same way; the decode test enumerates the rest.
+func pausedDriftedDetail(t *testing.T, workflowID, reason string) *vibekit.RPCResponse {
+	t.Helper()
+	params, err := json.Marshal(map[string]any{
+		"workflowId": workflowID, "pauseReason": reason,
+		"pauseDetail": "transient-error",
+	})
+	if err != nil {
+		t.Fatalf("marshal paused frame: %v", err)
+	}
+	return &vibekit.RPCResponse{Params: params}
+}
+
+// inspectDriftedDetail is the same drift on the INSPECT reply, so the heal's own
+// re-read agrees with the frame that scheduled it. Passing a drifted frame against
+// a clean inspect would assert that two gates disagree.
+func inspectDriftedDetail(t *testing.T, workflowID, reason string) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{
+		"workflowId": workflowID,
+		"state": map[string]any{
+			"status":      runStatusPaused,
+			"pauseReason": reason,
+			"pauseDetail": "transient-error",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal inspect: %v", err)
+	}
+	return raw
 }
 
 // TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt.
@@ -228,11 +289,16 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 
 	// A chat with a live bridge, its session owning wf_1, and a fake that answers
 	// the inspect the heal's own guard performs.
-	seed := func(t *testing.T, reason string) (*Runtime, *fakeBridge) {
+	//
+	// The inspect reply is passed in rather than composed from a reason, because the
+	// callback's re-read has to agree with the FRAME for the path to complete: a test
+	// driving a detail-carrying frame against a detail-less inspect would be asserting
+	// that two different gates disagree.
+	seedReply := func(t *testing.T, reply json.RawMessage) (*Runtime, *fakeBridge) {
 		t.Helper()
 		h, cs, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
-			methodKiroWorkflowInspect: inspectPaused(t, "wf_1", reason),
+			methodKiroWorkflowInspect: reply,
 			methodKiroWorkflowResume:  json.RawMessage(`{}`),
 		}
 		if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -246,6 +312,12 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 			t.Fatalf("OpenBridge: %v", err)
 		}
 		return h, br
+	}
+
+	// The ordinary shape, for the cases whose whole subject is the reason.
+	seed := func(t *testing.T, reason string) (*Runtime, *fakeBridge) {
+		t.Helper()
+		return seedReply(t, inspectPaused(t, "wf_1", reason))
 	}
 
 	// Deadline-bounded poll rather than a sleep: it fails closed with a diagnostic
@@ -276,6 +348,63 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		}
 		if !waitForResume(t, br) {
 			t.Fatalf("no resume was issued for an involuntary pause; calls were %v", br.callLog())
+		}
+	})
+
+	// The run this whole mechanism was rebuilt for: wf_b724fd55e6cea1e7,
+	// 2026-09-04, which paused on EAI_AGAIN inside a `parallel` branch and was
+	// never healed. A step inside a branch runs against a SHALLOW COPY of the run
+	// state, so the branch's own matching reason went into a throwaway object; what
+	// reached the run — and therefore this frame — is a wrapper sentence KAS
+	// composes FROM the detail, which no reason arm can match.
+	//
+	// It is an END-TO-END case rather than a predicate case on purpose: the
+	// predicate table cannot see a DROPPED WIRE FIELD, and dropping `pauseDetail`
+	// from the decode is exactly what the defect was. This test fails with a
+	// correct predicate and a two-field `pauseFrame`.
+	t.Run("a transient fault inside a parallel branch is resumed", func(t *testing.T) {
+		const wrapper = "Parallel 'phase1' is waiting on branch 'live-verify' " +
+			"(branch paused on transient error EAI_AGAIN)."
+		fastHeal(t)
+		h, br := seedReply(t, inspectPausedWithDetail(t, "wf_1", wrapper, transientDetail()))
+		heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
+		heal(t.Context(), "c1", pausedFrameWithDetail(t, "wf_1", wrapper, "transient-error", "EAI_AGAIN"))
+		if !waitForResume(t, br) {
+			t.Fatalf("no resume was issued for a transient fault parked inside a parallel "+
+				"branch; this is the wedge the detail arm exists to reach. calls were %v",
+				br.callLog())
+		}
+	})
+
+	// The DEGRADATION, end to end, and it is the half a decode test cannot reach:
+	// the frame and the inspect guard behind it must BOTH survive a detail whose
+	// wire shape has changed, or the heal passes the gate and is declined by the
+	// guard. A KAS release that reshapes `pauseDetail` then costs the branch
+	// population only — every pause whose REASON says involuntary still heals.
+	t.Run("a detail whose wire shape drifted still heals off the reason", func(t *testing.T) {
+		fastHeal(t)
+		h, br := seedReply(t, inspectDriftedDetail(t, "wf_1", interruptedPauseReason))
+		heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
+		heal(t.Context(), "c1", pausedDriftedDetail(t, "wf_1", interruptedPauseReason))
+		if !waitForResume(t, br) {
+			t.Fatalf("no resume was issued for an interrupted step whose pauseDetail arrived in "+
+				"a shape vibekit does not decode; discarding the whole frame there breaks the "+
+				"heal for EVERY pause, not just the branch ones. calls were %v", br.callLog())
+		}
+	})
+
+	// The other arm, kept beside it: a plain step's pause carries the matching
+	// PROSE and, for an interruption, no detail at all. Removing the reason arms
+	// once the detail arm exists would strand exactly this population, and nothing
+	// else in the suite would notice.
+	t.Run("a plain-step interruption with no detail is still resumed", func(t *testing.T) {
+		fastHeal(t)
+		h, br := seed(t, interruptedPauseReason)
+		heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
+		heal(t.Context(), "c1", pausedFrame(t, "wf_1", interruptedPauseReason))
+		if !waitForResume(t, br) {
+			t.Fatalf("no resume was issued for an interruption, which carries NO pauseDetail; "+
+				"the reason arms cover that population. calls were %v", br.callLog())
 		}
 	})
 
@@ -318,6 +447,50 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		time.Sleep(50 * time.Millisecond)
 		if slices.Contains(br.callLog(), methodKiroWorkflowResume) {
 			t.Error("resumed a run KAS now reports aborted")
+		}
+	})
+
+	// The one line that turns the next occurrence into a grep.
+	//
+	// This gate's decline used to be SILENT, and that silence is why the wedge it
+	// let through took a Loki investigation to attribute: `observePaused` writes
+	// nothing on its success path either, so with no line here the frame's very
+	// ARRIVAL had to be inferred from the `run_complete` beside it. The line's whole
+	// value is that it names the reason it refused, so that is what this asserts —
+	// not the sentence, which is prose.
+	t.Run("a declined pause names the reason it refused", func(t *testing.T) {
+		const parked = "Step requested user input via send_message."
+		fastHeal(t)
+		logs := captureLogs(t)
+		h, _ := seed(t, parked)
+		heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
+		heal(t.Context(), "c1", pausedFrame(t, "wf_1", parked))
+		out := logs.String()
+		if !strings.Contains(out, parked) {
+			t.Errorf("the declined pause reason is absent from the log; a decline nothing "+
+				"records is the silence that made this defect an investigation.\nlogs:\n%s", out)
+		}
+		if !strings.Contains(out, `"workflow_id":"wf_1"`) {
+			t.Errorf("the declined run is not named, so the line cannot be attributed to a "+
+				"run.\nlogs:\n%s", out)
+		}
+	})
+
+	// The other half, and the reason the assertion above is not enough on its own:
+	// a line that fires on EVERY pause buries the declines it exists to surface.
+	t.Run("a pause that IS resumed does not log a decline", func(t *testing.T) {
+		fastHeal(t)
+		logs := captureLogs(t)
+		h, br := seed(t, transient)
+		heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
+		heal(t.Context(), "c1", pausedFrame(t, "wf_1", transient))
+		if !waitForResume(t, br) {
+			t.Fatalf("no resume was issued, so this case is not exercising the accepted path; "+
+				"calls were %v", br.callLog())
+		}
+		if strings.Contains(logs.String(), "left alone") {
+			t.Errorf("a resumed pause logged a decline; the line must mark the refused path "+
+				"only.\nlogs:\n%s", logs.String())
 		}
 	})
 

@@ -10,49 +10,42 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// Runs owns the workflow-run surface: launch, cancel, retry, the durable
-// lease around a run KAS is executing, the deadline and turn-cap arms, the
-// recorded abnormal terminations, and the schedule store that drives unattended
-// launches.
+// Runs owns the workflow-run surface: launch, cancel, retry, the durable lease, the
+// deadline and turn-cap arms, the recorded abnormal terminations, and the schedule
+// store that drives unattended launches.
 //
-// It exists because that surface was 74 of Runtime's 223 methods over four
-// fields nothing outside it touches — leases, schedules, runBounds and the
-// mutex guarding them had zero non-run readers.
-//
-// It carries COLLABORATORS rather than a *Runtime back-pointer: run work
-// reaches the bridge manager, the coordinator, the utility runtime, the chat
-// store, the translator and the pending-permission tracker, so those arrive as
-// named dependencies. Three methods stay on Runtime regardless (dispatch,
-// dispatchRequest and closeFinishedBridge in run_host.go) because they are the
-// ACP request ladder for a run's bridge, and moving them would have meant
-// handing this type the chat-handler map and six responder methods.
-//
-// The lock protocol did not cross the new boundary: mu guards bounds, and the
-// one place two locks are held (claimExpiredDeadline takes mu then the lease
-// store's own) is entirely inside this type.
+// It carries COLLABORATORS rather than a *Runtime back-pointer. Three methods stay
+// on Runtime (dispatch, dispatchRequest, closeStoppedBridge) because they are the
+// ACP request ladder for a run's bridge. `mu` guards bounds, and the one place two
+// locks are held (claimExpiredDeadline) is entirely inside this type.
 type Runs struct {
 	chats     runChatReader
 	translate runTranslator
 	perms     runPermClaimer
 	bus       runBroadcaster
+	// tabs opens the tab a starting run offers its launching chat. REQUIRED, not
+	// optional: offerRunTab's nil check is for a bare &Runs{} in a test.
+	tabs      runTabOpener
 	schedules *schedule.Store `wiring:"optional"`
 	leases    *runlease.Store `wiring:"optional"`
 	bridges   *bridgeManager
 	coord     *BridgeCoordinator
 	utility   func() *utilityRuntime
 	lifecycle *lifetime
-	// asks holds the questions a workflow step has asked and nobody has answered.
-	// Its own registry rather than a share of pendingPerms — a run ask is durable
-	// and string-keyed where a permission is request-shaped and dies with its
-	// bridge. A VALUE, whose zero is usable, so a bare &Runs{} works; see
-	// run_ask.go.
-	//
-	// Ahead of bounds because fieldalignment says so: runBoundsState ends in a
-	// slice, whose length and capacity words are not pointers, so a pointer-bearing
-	// field placed after it pushes the GC's scan range past them.
-	asks   pendingRunAsks
-	bounds runBoundsState
-	mu     sync.Mutex
+	// asks holds the questions a step asked and nobody answered — its own registry
+	// because a run ask is durable where a permission dies with its bridge, and a
+	// VALUE so a bare &Runs{} works. Ahead of bounds for fieldalignment. run_ask.go.
+	asks pendingRunAsks
+	// stepReplays holds the step-transcript reads in flight (step_replay.go). HERE
+	// rather than on the utility session that feeds it, because the session must
+	// stay ignorant of workflows; buildUtility's two hooks are the seam.
+	stepReplays stepReplays
+	// carriers counts which run carriers a verb is holding right now — the one fact
+	// the kept-carrier bound cannot infer from a timeout (run_host.go). A VALUE like
+	// asks, so a bare &Runs{} works.
+	carriers carrierUse
+	bounds   runBoundsState
+	mu       sync.Mutex
 }
 
 // runChatReader is the chat store as the run surface uses it: one method, to
@@ -70,27 +63,34 @@ type runTranslator interface {
 	HandleRunStart(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse)
 	HandleRunComplete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse)
 	RecordRunSteps(raw json.RawMessage)
+	// ForgetRunSteps drops a run's step-session registry entries. The GATE is this
+	// side's, because `paused` reaches `run_complete` on a run still going — so the
+	// call belongs in observeComplete's terminal branch beside forgetBounds.
+	ForgetRunSteps(workflowID string)
 	// SessionNotifyAsk derives the ask a `_kiro/session/notify` frame carries, or
-	// reports false when the frame is not one. A DERIVATION rather than a handler:
-	// this surface owns the ask's whole lifecycle (record, replay, answer, settle),
-	// so it owns the broadcast too — see run_ask.go.
+	// reports false. A DERIVATION rather than a handler: this surface owns the ask's
+	// whole lifecycle, so it owns the broadcast too (run_ask.go).
 	SessionNotifyAsk(msg *vibekit.RPCResponse) (vibekit.RunInputNeededPayload, bool)
 }
 
-// runBroadcaster is the event fan-out as the run surface uses it: publish an
-// ask, and publish its settlement.
-//
-// The ask half is the only run event vibekit itself originates — every other one
-// is a translated KAS frame — because the answer path and the take-once claim are
-// both this surface's, so nothing upstream is in a position to announce them.
+// runBroadcaster is the event fan-out as the run surface uses it: publish an ask,
+// and publish its settlement. The ask half is the only run event vibekit itself
+// originates, because the answer path and the take-once claim are both this
+// surface's.
 type runBroadcaster interface {
 	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
 }
 
-// runPermClaimer is the pending-decision tracker as the unattended floor uses
-// it: claim a request so exactly one surface answers it.
+// runPermClaimer is the pending-decision tracker as the run surface uses it: claim
+// a request so exactly one surface answers it, and drop a run's unanswered
+// decisions when it ends.
+//
+// The run-terminal clear is here rather than on the chat-scoped door because a
+// step's ask is keyed to the LAUNCHING chat, which outlives the run — so nothing
+// chat-scoped bounds it and the connect replay would re-offer a dead card.
 type runPermClaimer interface {
 	TakePendingPerm(chatID vibekit.ChatID, requestID int64, settledBy vibekit.SettledBy) bool
+	ClearPendingPermsForRun(workflowID string)
 }
 
 // Runs exposes the run surface to the composition root, which starts the orphan

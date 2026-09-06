@@ -39,6 +39,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		Retention: func(ctx context.Context) bool {
 			return settings.RetentionEnabled(ctx, r.Workspace.ConfigDir)
 		},
+		Runs: r.Runs,
 	})
 
 	d.Register(vibekit.CmdCreateChat, bind1(mem, CmdCreateChat))

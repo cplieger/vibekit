@@ -9,7 +9,7 @@
 // mocked because a call into them is a command at the handler's boundary.
 // ---------------------------------------------------------------------------
 
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   setSessions,
   setActive,
@@ -18,8 +18,12 @@ import {
   steerCount,
   setAgentStatus,
   tabStatusFor,
+  relatchTurnVerdict,
+  upsertHeader,
 } from "../store.js";
-import type { Session } from "../types.js";
+import type { ChatHeader, Session } from "../types.js";
+import type { TurnOutcome } from "../wire/types.gen.js";
+import { severityOf } from "../turn-severity.js";
 import type * as TurnRail from "../turn-rail.js";
 
 type TurnRailModule = typeof TurnRail;
@@ -75,11 +79,22 @@ vi.mock("../failure-notice.js", () => ({
 // There is no isPermissionNeededEnabled to mock: the permission ask has no
 // per-kind switch, so the three ask handlers notify unconditionally and only the
 // master gate inside notifyIfHidden applies.
-const mockNotifyIfHidden = vi.fn();
+// A HOLDER rather than a constant, so the agent-finished notification can be driven
+// in its own block while staying off for every other case in this file — the
+// permission-class block below depends on that contrast to be non-vacuous.
+//
+// Through `vi.hoisted` because the factory below CLOSES OVER it: the mocker resolves
+// the factory above this file's own top-level initializers, so a plain `const` is in
+// its temporal dead zone at that moment and the whole file dies in module linking
+// with a generic "there was an error when mocking a module".
+const { mockNotifyIfHidden, notifyGate } = vi.hoisted(() => ({
+  mockNotifyIfHidden: vi.fn(),
+  notifyGate: { agentFinished: false },
+}));
 vi.mock("../notify.js", () => ({
   notifyIfHidden: mockNotifyIfHidden,
   setBadge: vi.fn(),
-  isAgentFinishedEnabled: () => false,
+  isAgentFinishedEnabled: () => notifyGate.agentFinished,
   NOTIFY_TITLE: "vibekit",
 }));
 
@@ -151,6 +166,10 @@ beforeEach(() => {
 });
 
 describe("ERROR_ROUTES", () => {
+  // A route carries a SURFACE and an optional in-app remedy, and nothing else. There
+  // is deliberately no turn-scoped field: whether a failure finalized a turn is a
+  // property of the emission, so the server states it per frame — see the two
+  // no-turn cases in the "error handler" block below for what a per-code answer cost.
   const expectedRoutes: [
     string,
     {
@@ -179,7 +198,17 @@ describe("ERROR_ROUTES", () => {
     // everything behind it will fail. The only fix is signing in, and there is no
     // Settings control for that — which is why the action is a discriminated
     // union rather than a Settings jump with a stretched meaning.
-    ["auth_token_unavailable", { surface: "toast", action: { kind: "sign-in", label: "Sign in" } }],
+    // The server marks this one turn-scoped AND it carries an action, which is the
+    // pair that keeps the suppression honest: the turn it failed holds the reason
+    // inline, and the toast is still raised because Sign in is reachable from
+    // nowhere else on screen.
+    [
+      "auth_token_unavailable",
+      {
+        surface: "toast",
+        action: { kind: "sign-in", label: "Sign in" },
+      },
+    ],
     ["rate_limit", { surface: "toast" }],
     ["compaction_failed", { surface: "toast" }],
     // The four failed-ATTEMPT codes. Each ends the turn and each leaves a
@@ -286,6 +315,23 @@ describe("turn_ended side effects", () => {
     expect(get("chat-1")?.thinking).toBe(false);
   });
 
+  // The server's own liveness statement, set FALSE because a closer ran: the record
+  // is final and the carrier's `message_appended` echo is already on its way. It has
+  // to be cleared here or `turnLive` keeps reporting the turn live off a stale
+  // `turn_open: true` until the next refetch, and the newest turn reads `running`
+  // instead of the outcome that just arrived.
+  //
+  // Written at the CALL SITE rather than inside `clearTurnState`, deliberately —
+  // that function also runs on `transport:gap`, where dropping the last server
+  // statement at the exact moment `thinking` is also cleared is the gap-path flash
+  // the field exists to remove.
+  it("marks the server's turn_open statement closed", () => {
+    setSessions([makeSession("chat-1", { thinking: true, turn_open: true })]);
+    setActive("chat-1");
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(get("chat-1")?.turn_open).toBe(false);
+  });
+
   // KAS clears its steering buffer at every turn boundary, and on the ordinary
   // path — every steer injected — it sends no steer_cleared because there was
   // nothing left to drop. So the handler has to clear locally or a delivered
@@ -337,15 +383,21 @@ describe("turn_ended side effects", () => {
     expect(tabStatusFor(get("chat-1"))).toBe("done");
   });
 
-  it("latches nothing for a CANCELLED turn, which finished nothing", () => {
-    // The same line the "Agent finished" notification already draws: a cancelled
-    // turn is not a finished one, and a green "turn finished" dot would be a claim
-    // about work the user stopped.
+  it("latches DONE for a CANCELLED turn, because a turn ended here", () => {
+    // The hollow `idle` ring means the chat has not initiated (user ruling,
+    // 2026-09-04), so a chat the reader watched work and then stopped may not
+    // paint it — that reads as "nothing has ever happened here". `done` is the
+    // transport's verdict that a turn FINISHED, not the agent's claim that it
+    // succeeded, which is why it is the honest answer for a stop.
+    //
+    // This REPLACES the earlier case here, which asserted `idle` on the grounds
+    // that a green dot over-claims success. That argument lost to the ring's own
+    // meaning; `runStatusFor` had already made the same call for a run's dot.
     setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
     setActive("chat-2");
 
     fireSSE("turn_ended", "chat-1", { stop_reason: "cancelled", outcome: "cancelled" });
-    expect(tabStatusFor(get("chat-1"))).toBe("idle");
+    expect(tabStatusFor(get("chat-1"))).toBe("done");
   });
 
   it("latches done for the chat the reader is watching too", () => {
@@ -385,14 +437,16 @@ describe("turn_ended side effects", () => {
     expect(tabStatusFor(get("chat-1"))).toBe("failed");
   });
 
-  it("latches neither for an outcome nothing could read", () => {
-    // `unknown` is a turn whose end vibekit had to infer. Claiming either a green
-    // finish or a red failure would be inventing a verdict the wire did not give.
+  it("latches DONE, not failed, for an outcome nothing could read", () => {
+    // `unknown` is a turn whose end vibekit had to infer, so a RED dot would
+    // invent a failure the wire never reported — that half of the old reasoning
+    // stands and is what this case pins. What changed is the other half: it can no
+    // longer fall to `idle` either, because the chat did run a turn.
     setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
     setActive("chat-2");
 
     fireSSE("turn_ended", "chat-1", { stop_reason: "who_knows", outcome: "unknown" });
-    expect(tabStatusFor(get("chat-1"))).toBe("idle");
+    expect(tabStatusFor(get("chat-1"))).toBe("done");
   });
 
   it("still prefers the agent's own verdict where it lands", () => {
@@ -417,6 +471,117 @@ describe("turn_ended side effects", () => {
     fireSSE("turn_ended", "chat-1", { stop_reason: "cancelled" });
     expect(mockDropTurnDecisions).toHaveBeenCalledWith("chat-1");
   });
+
+  it("latches FAILED for an interrupted turn, which a fault nobody chose stopped", () => {
+    // The mapping this handler used to get wrong, and the one that made the live
+    // page and the next reload of it disagree: `interrupted` latched nothing here
+    // while every other surface in the app already read it as a fault, so a turn a
+    // dropped connection killed showed idle's hollow ring until the reader
+    // refreshed, at which point the header seed painted a solid failed dot.
+    setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+    setActive("chat-2");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "interrupted", outcome: "interrupted" });
+    expect(tabStatusFor(get("chat-1"))).toBe("failed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The three producers of the turn verdict, side by side.
+//
+// A chat's dot can be set from three places, and they must not disagree: this
+// handler on a LIVE turn_ended, `relatchTurnVerdict` re-deriving from the loaded
+// TRANSCRIPT, and `latchFieldsFor` (through `upsertHeader`) deriving from the chat
+// HEADER a fresh browser rebuilds every Session from. All three read one table
+// now; each used to spell the mapping out for itself, and the live one graded
+// `interrupted` differently from the other two.
+//
+// This is the only file that can hold the comparison: it is the only one carrying
+// the mock set the live handler's module graph needs.
+// ---------------------------------------------------------------------------
+
+describe("the three turn-verdict producers agree", () => {
+  /** outcome -> the dot the LIVE handler paints. Hardcoded, never derived from
+   *  `outcomeLatch`: an expectation computed by the code under test passes for any
+   *  mapping, including the one that shipped the defect. */
+  const liveCases: [TurnOutcome, string][] = [
+    // A turn that ended: `done` unless it BROKE. Not one of these six may reach
+    // `idle`, because the hollow ring means the chat has not initiated.
+    ["completed", "done"],
+    ["failed", "failed"],
+    ["refused", "failed"],
+    ["interrupted", "failed"],
+    ["cancelled", "done"],
+    ["unknown", "done"],
+    // `running` is the one outcome that latches nothing, and it is also the one
+    // that cannot reach a turn_ended in practice — the server stamps it only on
+    // the API's live turn projection. So this row keeps the handler from claiming
+    // a verdict for a turn that has not ended, and the chat is not left hollow
+    // either: a live turn is `working` through `thinking`.
+    ["running", "idle"],
+  ];
+
+  beforeEach(() => {
+    setSessions([]);
+  });
+
+  for (const [outcome, want] of liveCases) {
+    it(`paints ${want} live for a turn that ended ${outcome}`, () => {
+      setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+      setActive("chat-2");
+
+      fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn", outcome });
+      expect(tabStatusFor(get("chat-1"))).toBe(want);
+    });
+  }
+
+  it("paints idle live for a turn_ended carrying no outcome at all", () => {
+    // A build older than the field, or a turn the server could not grade. Neither
+    // is evidence of a verdict.
+    setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+    setActive("chat-2");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(tabStatusFor(get("chat-1"))).toBe("idle");
+  });
+
+  for (const [outcome] of liveCases) {
+    it(`reaches one dot from all three doors for ${outcome}`, () => {
+      // LIVE: the turn_ended handler, on a chat mid-turn.
+      setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+      setActive("chat-2");
+      fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn", outcome });
+      const live = tabStatusFor(get("chat-1"));
+
+      // TRANSCRIPT: the same outcome persisted on the newest message, re-derived
+      // the way a message load does.
+      setSessions([
+        makeSession("chat-1", {
+          messages: [{ id: "m1", role: "assistant", ts: 1, turn_outcome: outcome } as never],
+        }),
+      ]);
+      relatchTurnVerdict("chat-1");
+      const transcript = tabStatusFor(get("chat-1"));
+
+      // HEADER: a chat this client has never seen live, rebuilt from the projection
+      // `GET /api/chats` serves — the door a brand-new browser session comes through.
+      setSessions([]);
+      upsertHeader({
+        id: "chat-1",
+        name: "chat-1",
+        message_count: 1,
+        last_turn_outcome: outcome,
+        usage: { context_pct: 0, context_size: 0, credits: 0, turns: 0, last_turn_ms: 0 },
+      } as unknown as ChatHeader);
+      const header = tabStatusFor(get("chat-1"));
+
+      expect({ live, transcript, header }).toStrictEqual({
+        live,
+        transcript: live,
+        header: live,
+      });
+    });
+  }
 });
 
 describe("error handler", () => {
@@ -430,7 +595,9 @@ describe("error handler", () => {
     setActive("chat-1");
     fireSSE("error", "chat-1", { code: "rate_limit", message: "slow down" });
     expect(get("chat-1")?.thinking).toBe(true);
-    expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "slow down", undefined);
+    // `false` is the turn-scoped flag: a rate-limit notice ends no turn, so it has
+    // no transcript row to duplicate and keeps its toast whatever is on screen.
+    expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "slow down", undefined, false);
     expect(mockSetAgentDown).not.toHaveBeenCalled();
   });
 
@@ -460,6 +627,7 @@ describe("error handler", () => {
       "chat-1",
       "bad agent front matter",
       expect.objectContaining({ label: "Open custom instructions" }),
+      false,
     );
     expect(mockSetAgentDown).not.toHaveBeenCalled();
   });
@@ -496,6 +664,7 @@ describe("error handler", () => {
     fireSSE("error", "chat-1", {
       code: "auth_token_unavailable",
       message: "kiro-cli: refresh token expired",
+      turn_scoped: true,
     });
 
     expect(mockReportFailure).toHaveBeenCalledWith(
@@ -504,6 +673,11 @@ describe("error handler", () => {
       // chain is dead, and no wording invented client-side is more specific.
       "kiro-cli: refresh token expired",
       expect.objectContaining({ label: "Sign in" }),
+      // TURN-SCOPED, off the FRAME, and still raised: the remedy is the half an
+      // inline row cannot offer, so failure-notice.ts never suppresses an
+      // action-bearing notice. This is the code where both conjuncts are true at
+      // once, which is what makes that clause real rather than defensive.
+      true,
     );
     const action = mockReportFailure.mock.calls[0]?.[2] as
       { label: string; onClick: () => void } | undefined;
@@ -524,11 +698,62 @@ describe("error handler", () => {
     (code) => {
       setSessions([makeSession("chat-1", { thinking: true })]);
       setActive("chat-1");
-      fireSSE("error", "chat-1", { code, message: "boom" });
-      expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "boom", undefined);
+      fireSSE("error", "chat-1", { code, message: "boom", turn_scoped: true });
+      expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "boom", undefined, true);
       expect(mockSetAgentDown).not.toHaveBeenCalled();
     },
   );
+
+  // ---------------------------------------------------------------------------
+  // TURN-SCOPEDNESS COMES OFF THE FRAME, NOT OFF THE CODE, and these two cases are
+  // the defect that made it move. The flag decides whether failure-notice.ts drops
+  // the toast for the chat the reader is already looking at, and it used to be a
+  // per-code entry in ERROR_ROUTES — so every `prompt_failed` was read as having a
+  // turn. Three of the five server emitters behind `prompt_failed` and
+  // `recovery_failed` open no turn at all (a held bridge slot, a zero epoch, a
+  // failed recovery respawn), and for those the toast is the ONLY surface: no turn
+  // card, no footer mark, and the prompt POST already acked at admission. Under the
+  // per-code flag they were suppressed on the active chat and reported nowhere.
+  // ---------------------------------------------------------------------------
+
+  it.each(["prompt_failed", "recovery_failed"])(
+    "reports a %s that opened NO turn, even on the chat in front of you",
+    (code) => {
+      setSessions([makeSession("chat-1", { thinking: true })]);
+      setActive("chat-1");
+      // No `turn_scoped` on the frame: the emitter finalized nothing, so there is
+      // no inline row for the toast to be a duplicate of.
+      fireSSE("error", "chat-1", { code, message: "The prompt could not start." });
+      expect(mockReportFailure).toHaveBeenCalledWith(
+        "chat-1",
+        "The prompt could not start.",
+        undefined,
+        false,
+      );
+    },
+  );
+
+  it.each(["prompt_failed", "recovery_failed"])(
+    "suppresses a %s that DID finalize a turn, because that turn says it",
+    (code) => {
+      setSessions([makeSession("chat-1", { thinking: true })]);
+      setActive("chat-1");
+      fireSSE("error", "chat-1", { code, message: "at capacity", turn_scoped: true });
+      expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "at capacity", undefined, true);
+    },
+  );
+
+  it("reads a frame carrying no turn_scoped field as NOT turn-scoped", () => {
+    // The compatibility direction, and the one that decides which way this fails
+    // safe. A server that predates the field, or an emitter that forgets it, must
+    // leave the failure REPORTED rather than trusting an inline row that is not
+    // there. `false` is therefore the answer for an absent field and for an
+    // explicit `false` alike.
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    fireSSE("error", "chat-1", { code: "compaction_failed", message: "nope" });
+    expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "nope", undefined, false);
+  });
 
   // NO error code touches the turn lifecycle: the server ends every turn exactly
   // once, so an error is a report.
@@ -564,8 +789,14 @@ describe("error handler", () => {
   it("reports a background chat's failure and spares its send button", () => {
     setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
     setActive("chat-2");
-    fireSSE("error", "chat-1", { code: "prompt_failed", message: "at capacity" });
-    expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "at capacity", undefined);
+    fireSSE("error", "chat-1", {
+      code: "prompt_failed",
+      message: "at capacity",
+      turn_scoped: true,
+    });
+    // Turn-scoped, and raised anyway: chat-2 is on screen, so chat-1's own card is
+    // not, and the toast is the only surface that can report at all.
+    expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "at capacity", undefined, true);
 
     mockReportFailure.mockClear();
     fireSSE("error", "chat-1", { code: "bridge_start_failed", message: "spawn failed" });
@@ -610,6 +841,97 @@ describe("the permission-class asks always notify", () => {
       files: [{ path: "a.go", action_id: "act-1" }],
     });
     expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "Review this turn's changes");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE OFF-SCREEN NOTIFICATION, per outcome.
+//
+// It gated on `stop_reason !== "cancelled"` and then said `Agent finished`
+// whatever had happened, so a turn that failed, was interrupted or was refused
+// pushed a claim of success to a reader who was not looking — the one channel
+// they had, saying the opposite of the truth. It reads the SEVERITY now.
+//
+// A distinct chat id per case, deliberately: the handler dedups within 2000ms per
+// chat, so seven frames on one id would measure the dedup window rather than the
+// mapping.
+// ---------------------------------------------------------------------------
+
+describe("the agent-finished notification reads the severity", () => {
+  /** outcome -> the notification body, or "" for a turn that says nothing.
+   *
+   *  Hardcoded rather than derived through `severityOf`/`defaultFailureReason`: an
+   *  expectation computed by the code under test passes for any mapping at all,
+   *  including the one that shipped the defect. */
+  const cases: [TurnOutcome, string][] = [
+    ["completed", "seeded: Agent finished"],
+    ["failed", "seeded: The agent reported an error and the turn stopped."],
+    ["interrupted", "seeded: The turn was interrupted before the agent finished."],
+    ["refused", "seeded: The model declined to continue."],
+    // STOPPED. A cancel is what the reader asked for, and an end vibekit could not
+    // read reports nothing about success, so neither earns a notification.
+    ["cancelled", ""],
+    ["unknown", ""],
+    // `running` cannot reach a turn_ended in practice; the row keeps the handler from
+    // claiming a verdict for a turn that has not ended.
+    ["running", ""],
+  ];
+
+  beforeEach(() => {
+    notifyGate.agentFinished = true;
+  });
+  afterEach(() => {
+    notifyGate.agentFinished = false;
+  });
+
+  for (const [outcome, want] of cases) {
+    it(`says ${want === "" ? "nothing" : `"${want}"`} for a turn that ended ${outcome}`, () => {
+      const chatID = `notify-${outcome}`;
+      setSessions([makeSession(chatID)]);
+      fireSSE("turn_ended", chatID, { stop_reason: "end_turn", outcome });
+      if (want === "") {
+        expect(mockNotifyIfHidden).not.toHaveBeenCalled();
+        return;
+      }
+      expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", want);
+    });
+  }
+
+  it("never claims a broken turn finished", () => {
+    // The property behind the rows above, and the direction the defect ran in: the
+    // wording matters less than never saying `Agent finished` over a failure.
+    for (const [outcome] of cases) {
+      if (severityOf(outcome) !== "broken") {
+        continue;
+      }
+      mockNotifyIfHidden.mockClear();
+      const chatID = `broken-${outcome}`;
+      setSessions([makeSession(chatID)]);
+      fireSSE("turn_ended", chatID, { stop_reason: "end_turn", outcome });
+      const body = String(mockNotifyIfHidden.mock.calls[0]?.[1] ?? "");
+      expect(body, `${outcome} notified nothing at all`).not.toBe("");
+      expect(body, `${outcome} claimed the agent finished`).not.toContain("Agent finished");
+    }
+  });
+
+  it("covers a broken outcome, or the property above passes vacuously", () => {
+    expect(cases.filter(([o]) => severityOf(o) === "broken").length).toBeGreaterThan(0);
+  });
+
+  it("still notifies nothing at all when the master switch is off", () => {
+    // The gate the plan required to survive the rewrite: severity decides WHAT is
+    // said, never WHETHER the user has asked to be told.
+    notifyGate.agentFinished = false;
+    setSessions([makeSession("gate-off")]);
+    fireSSE("turn_ended", "gate-off", { stop_reason: "end_turn", outcome: "failed" });
+    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
+  });
+
+  it("keeps the 2s dedup window, which an SSE replay burst needs", () => {
+    setSessions([makeSession("dedup")]);
+    fireSSE("turn_ended", "dedup", { stop_reason: "end_turn", outcome: "failed" });
+    fireSSE("turn_ended", "dedup", { stop_reason: "end_turn", outcome: "failed" });
+    expect(mockNotifyIfHidden).toHaveBeenCalledTimes(1);
   });
 });
 

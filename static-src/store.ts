@@ -28,7 +28,14 @@ import type {
   SteerOrigin,
   SteerAnchor,
   SteerMark,
+  ToolStatus,
 } from "./types.js";
+// Straight from the generated wire rather than through turns.ts, which imports
+// this module: a type-only import adds no runtime edge, but keeping the source
+// the same one turns.ts reads means there is one spelling of the enum.
+import type { TurnOutcome } from "./wire/types.gen.js";
+import { severityOf } from "./turn-severity.js";
+import { parseStepSubtask } from "./step-subtask.js";
 import {
   signal,
   computed,
@@ -73,14 +80,28 @@ const messagesVersionSigs = new SignalMap<number>();
  *   - `fact`: a transcript fact flipped (thinking, turn latches, refusal, run
  *     identity); full projection + reconcile (facts feed deriveOutcome/isLive).
  *   - `shape`: the message list's structure changed; the full pass.
+ *   - `load`: the window was REPLACED by a fetched page (`store-load.ts`, both
+ *     the newest page and an older-page prepend). The full pass, plus the one
+ *     fact the array cannot state — those rows are a REPLAY rather than a tail
+ *     that arrived here, so none of them is an arrival.
  *
  *  A store branch that mutates no rendered state declares NO cause: the
  *  unknown-chat and snapshot-dedup returns in appendChunk, the
  *  message-not-resident return in setCodeReferences, and setTurnSummary's
  *  changed === false arm. */
-export type RenderCause = "chunk" | "tool" | "fact" | "shape";
+export type RenderCause = "chunk" | "tool" | "fact" | "shape" | "load";
 
-const CAUSE_RANK: Record<RenderCause, number> = { chunk: 0, tool: 1, fact: 2, shape: 3 };
+/** `load` outranks `shape` even though both mean the full pass: shape's work is
+ *  contained in load's, while load's STATEMENT is not recoverable from the array,
+ *  so a merge that dropped it would read a refetched window as an appended tail
+ *  and animate every row of a reopened conversation. */
+const CAUSE_RANK: Record<RenderCause, number> = {
+  chunk: 0,
+  tool: 1,
+  fact: 2,
+  shape: 3,
+  load: 4,
+};
 
 /** The per-chat cause accumulator: what the NEXT flush will paint for.
  *  `msgID` survives only while every merged cause is `tool` for ONE message —
@@ -167,6 +188,24 @@ function scheduleMessages(chatID: string, cause: RenderCause, msgID?: string): v
       flushCause(chatID);
     }
   });
+}
+
+/** The cheap cause for a frame the transcript renders NOTHING for, or `shape`.
+ *
+ *  ONE predicate for the store's whole "will this be drawn" question, keyed on the
+ *  PARSE because that is what `messages-blocks.ts` `isDroppedStep` drops on — the
+ *  `wf:` PREFIX is a wider set (`wf::path`, `wf:id:`, a future id shape), and those
+ *  ids reach the delegate-box fallback and DO render, so treating one as dropped
+ *  would leave its box unmounted until an unrelated full pass arrived. `isStepSubtask`
+ *  answers the other question (is this the chat's own work) for `handlers/messages.ts`.
+ *
+ *  A dropped block needs no structural work, so the arms below take `chunk` rather
+ *  than scheduling a full projection plus reconcile per step frame — on the very
+ *  transcript the drop exists to make cheaper. The RUN TAB still repaints, because
+ *  `flushCause` bumps the same per-chat version its view effect reads whatever the
+ *  cause. */
+function droppedFrameCause(subtaskID: string): RenderCause {
+  return parseStepSubtask(subtaskID) !== null ? "chunk" : "shape";
 }
 
 // --- Model context sizes ---
@@ -295,7 +334,7 @@ function stampActivity(chatID: string): void {
 /** Externally-owned reasons a chat must not be evicted, registered by the
  *  composition root so this module stays a leaf (importing tabs.ts or
  *  run-store.ts from here would invert the dependency direction). app.ts
- *  registers the live-run and subagent-tab predicates; the parked-view
+ *  registers the executing-run and subagent-tab predicates; the parked-view
  *  predicate registers here when parked views land. Nothing registered means
  *  no external exemption — the predicate set defaults to false. */
 const evictionExemptions: ((chatID: string) => boolean)[] = [];
@@ -312,7 +351,7 @@ export function registerEvictionExemption(fn: (chatID: string) => boolean): () =
 }
 
 /** Whether the sweep may evict this chat's window. FIVE exemptions, each alone
- *  decisive: the active chat, a busy/streaming chat, a chat with a live run
+ *  decisive: the active chat, a busy/streaming chat, a chat with an EXECUTING run
  *  (registered predicate), a parked view, and an open subagent tab projecting
  *  the chat (both registered predicates). */
 function evictable(s: Session, now: number): boolean {
@@ -483,6 +522,12 @@ export function setThinking(id: string, v: boolean): void {
       delete next.agent_status_text;
       delete next.turn_failed;
       delete next.turn_done;
+      // The server's last liveness statement joins them, for the same reason: it
+      // described the PREVIOUS turn, and a new turn makes it stale. Left standing,
+      // a `turn_open: false` from before this turn started would make `turnLive`
+      // fall back to `thinking` alone, which is what this whole field exists to
+      // stop being the only input.
+      delete next.turn_open;
     }
     return next;
   });
@@ -491,13 +536,72 @@ export function setThinking(id: string, v: boolean): void {
   scheduleMessages(id, "fact");
 }
 
-/** Latch that this chat's last TURN failed — `turn_ended` carrying outcome
- *  `failed` or `refused`. Cleared by the next `setThinking(id, true)`, so there
- *  is no explicit unlatch — a failure stands until work resumes.
+/** Record the server's statement about whether this chat has a turn open.
  *
- *  A turn is the ONLY producer, and the two other callers re-derive that same
- *  verdict rather than widening it: `relatchTurnVerdict` off the persisted
- *  `turn_outcome`, and `chat.send_prompt` restoring the snapshot it took. The
+ *  Written by `store-load.ts` from `GET /api/chats/{id}`'s `turn_open` (newest page
+ *  only — an older-page fetch is a scroll-up and asserts nothing about liveness) and
+ *  by the `turn_ended` handler, which sets false because a closer ran, so the record
+ *  is final and the carrier's own persist echo is already on its way. */
+export function setTurnOpen(id: string, open: boolean): void {
+  const s = get(id);
+  if (s === undefined || s.turn_open === open) {
+    return; // no-op: do not churn the session signal on a repeated statement
+  }
+  sessions.update(id, (prev) => ({ ...prev, turn_open: open }));
+  // Transcript fact: it feeds `turnLive`, which is the projection's liveness input.
+  scheduleMessages(id, "fact");
+}
+
+/** Is a turn RUNNING on this chat, as far as anything here can know?
+ *
+ *  THE ONE READER of `turn_open`, and the projection's liveness input. It composes
+ *  two facts on two different clocks, which is why neither alone is the answer:
+ *  `thinking` is this client's own memory of a stream it has watched (true only once
+ *  a frame arrives, so false through every reload), and `turn_open` is the server's
+ *  last statement (a fact when it arrives, stale afterwards).
+ *
+ *  The defect it fixes: between `GET /api/chats/{id}` painting and the HELD
+ *  `turn_state` frame releasing, a turn whose reply is still in the server's
+ *  in-memory buffer reads `thinking: false`, derives `unknown` — "nothing closed this
+ *  turn" — and mounts a footer glyph plus a `.turn-notice` row before the running
+ *  frame corrects it. The client was deriving a TERMINAL verdict during a window in
+ *  which it provably could not know one. With liveness known, that window collapses
+ *  into `running`, which is the TRUTH, and `running`'s treatment already is "no
+ *  settled mark" on every surface — so nothing needed a suppression rule.
+ *
+ *  `turn_open`'s lifetime, three writers and one deliberate non-writer:
+ *
+ *   - `store-load.ts` `loadMessages`, newest page only: writes the response's value.
+ *     The statement arrives with the window it qualifies, which is what removes the
+ *     ordering — there is no gap between the transcript painting and the verdict
+ *     arriving, because they are one payload.
+ *   - `handlers/turn.ts` `turn_ended`: writes false. It goes at the CALL SITE rather
+ *     than inside `clearTurnState`, because that function also runs on
+ *     `transport:gap`.
+ *   - `setThinking(id, true)`: DELETES it, beside the two outcome latches, because a
+ *     new turn invalidates every verdict the previous turn left behind.
+ *   - the `transport:gap` handler: writes NOTHING, deliberately. Clearing it there
+ *     would drop the last server statement at the exact moment `thinking` is also
+ *     cleared, which is the gap-path flash this exists to remove; the refetch that
+ *     follows restates it.
+ *
+ *  Three residuals, each failing in the safe direction (no settled mark rather than a
+ *  wrong one): a resident window reactivated after a restart repaints from the store
+ *  with the previous `turn_open` for one round trip; a `turn_ended` lost to a gap
+ *  leaves it true until the next refetch, so the newest turn reads `running`; and an
+ *  older server sends no field, which decodes absent and behaves as before. */
+export function turnLive(s: Session): boolean {
+  return s.thinking || s.turn_open === true;
+}
+
+/** Latch that this chat's last TURN failed — an outcome `outcomeLatch` grades
+ *  `failed`. Cleared by the next `setThinking(id, true)`, so there is no explicit
+ *  unlatch — a failure stands until work resumes.
+ *
+ *  A turn is the ONLY producer, and the three other callers re-derive that same
+ *  verdict through that one table rather than widening it: `relatchTurnVerdict`
+ *  off the persisted `turn_outcome`, `latchFieldsFor` off the chat header, and
+ *  `chat.send_prompt` restoring the boolean snapshot it took. The
  *  `error` handler used to latch this for every frame naming the chat, and it
  *  stopped touching turn state when `endsTurn` was removed (handlers/turn.ts
  *  records that), so no `error`-frame producer remains — which is the breadth
@@ -534,10 +638,9 @@ export function clearTurnFailed(id: string): void {
  *  model calls its status tool. Without the latch, "this chat finished" held only
  *  for the turns where it did.
  *
- *  The only condition the caller applies is the stop reason (`handlers/turn.ts`:
- *  a cancelled turn finished nothing). It used to apply a second one — skip the
- *  chat the reader is watching — and that is what made a turn completing in front
- *  of you fall back to hollow `idle`. */
+ *  The only condition the caller applies is `outcomeLatch`'s grade. It used to
+ *  apply a second one — skip the chat the reader is watching — and that is what
+ *  made a turn completing in front of you fall back to hollow `idle`. */
 export function setTurnDone(id: string): void {
   const s = get(id);
   if (s === undefined || s.turn_done === true) {
@@ -569,6 +672,138 @@ export function clearTurnDone(id: string): void {
   scheduleMessages(id, "fact");
 }
 
+/** Map a persisted turn outcome onto the latch it sets, or "" for an outcome that
+ *  latches nothing.
+ *
+ *  ONE table, and ALL THREE producers of this verdict call it: the live
+ *  `turn_ended` handler (handlers/turn.ts), `relatchTurnVerdict` re-deriving from
+ *  the loaded TRANSCRIPT, and `latchFieldsFor` deriving from the chat HEADER. All
+ *  three used to spell the mapping out for themselves, and they disagreed — a
+ *  second enumeration of one vocabulary with nothing holding the copies together,
+ *  which is what put an interrupted turn on `idle` live and on `failed` after a
+ *  reload of the same chat. `attention.ts`'s favicon and title cue reads the dot
+ *  this feeds, so it inherits whatever the three agree on.
+ *
+ *  It DERIVES from `severityOf` rather than enumerating outcomes itself, and that
+ *  is the fix for a measured defect rather than tidiness. Every arm here used to be
+ *  hand-written, and `interrupted` landed in the default: so a turn stopped by a
+ *  network error — which `messages-events.ts` renders as a red divider,
+ *  `turnFailureText` puts in the turn's notice, `29-turns.css` gives a filled glyph
+ *  and a lead word, and `fold-state.ts` promises never to fold — latched nothing at
+ *  all, and `tabStatusFor` fell through `turn_failed` → `thinking` → `agent_status`
+ *  → `turn_done` to `idle`. `12-tabs.css` paints `idle` as a transparent disc with a
+ *  1.5px ring, so the reported symptom was a chat with a clear inline error message
+ *  showing an EMPTY CIRCLE beside it, and no favicon cue either.
+ *
+ *  THE HOLLOW RING MEANS THE CHAT HAS NOT INITIATED (user ruling, 2026-09-04),
+ *  which is what decides the last two arms. A chat that has run a turn may never
+ *  paint `idle` — whatever became of that turn — so only two things reach the
+ *  floor: a chat with no turn at all, and a record with no outcome to read (a
+ *  transcript written before the field existed, which the same ruling accepts,
+ *  because there is genuinely no state to pull).
+ *
+ *  So each severity, and note that THREE of the four latch:
+ *   - `clean` finished with an answer.
+ *   - `broken` did not, and someone should look.
+ *   - `stopped` — a cancel the user asked for, or an `unknown` stop reason —
+ *     latches DONE, because a turn ended here. `done` is the transport's verdict
+ *     that a turn FINISHED and never the agent's claim that it succeeded (see
+ *     `tabStatusFor`, and `tabs.ts`'s phrase for it, "turn finished"), so it is
+ *     the honest answer for a stop: `failed` would blame the user for cancelling,
+ *     and `idle` would report that nothing ever happened in a chat they watched
+ *     work. `runStatusFor` below already made this exact call for a run's dot,
+ *     with the same reasoning, so the two cannot disagree about what a
+ *     cancellation means. THIS SUPERSEDES an earlier ruling that a cancel
+ *     "finished nothing" and so should latch neither: that reasoning was about
+ *     whether green over-claims success, and it lost to the ring's own meaning —
+ *     the reader cannot tell a cancelled chat from one that never started.
+ *     It reaches the ATTENTION CUE as well, ratified separately on the same day:
+ *     `done` is a `CueStatus`, so both of these now raise the favicon variant and
+ *     the `(N)` title count on a device that has not observed them. See
+ *     `attention.ts`'s `CueStatus` for why that is one rule rather than two.
+ *   - `running` alone latches nothing, and does not reach the floor either: a
+ *     turn in flight is `working` through `thinking`. It cannot arrive here from
+ *     a persisted record at all (a stored message never carries it), so the arm
+ *     exists to keep a live-projection value from claiming a verdict. */
+export function outcomeLatch(outcome: TurnOutcome | undefined): "done" | "failed" | "" {
+  // ABSENCE is answered here and never by `severityOf`, which grades OUTCOMES: its
+  // default arm reads an unrecognised value as `stopped` so a value the wire adds
+  // later cannot read as a turn that worked, and `undefined` lands in that same arm
+  // without meaning the same thing. "The wire said something I cannot grade" is a
+  // turn that ran; "the record carries no outcome" is the one case the hollow ring
+  // is still correct for. Grading them alike latched `done` on every legacy record.
+  //
+  // `undefined` is the whole of absence and no empty-string arm is needed: the
+  // server drops the field with `omitempty`, and `TurnOutcome` is a generated
+  // closed union whose decoder rejects any value not in it, so `""` cannot arrive.
+  if (outcome === undefined) {
+    return "";
+  }
+  switch (severityOf(outcome)) {
+    case "clean":
+    case "stopped":
+      return "done";
+    case "broken":
+      return "failed";
+    case "running":
+      return "";
+  }
+}
+
+/** The latch fields to spread into a `Session` being rebuilt from a `ChatHeader`.
+ *
+ *  This is what makes a chat tab's dot survive a reconnect. The two latches are
+ *  CLIENT memory, so a fresh page load, a brand-new browser session and a
+ *  transport gap all arrive with nothing to derive them from — and every door that
+ *  rebuilds a Session from a header alone (`loadList` on boot and on every SSE
+ *  `connected`, `upsertHeader` on a `chat_created` / `chat_updated` frame) used to
+ *  produce a session with neither latch set, so `tabStatusFor` fell through to
+ *  `idle`. `idle` paints a hollow ring where `done` paints a solid fill, which is
+ *  the "empty circle" a finished turn came back as.
+ *
+ *  Three rules, in order, and the order is the whole content:
+ *
+ *   1. AN EXISTING LATCH IS CARRIED OVER UNCHANGED. It was set by a live
+ *      `turn_ended` on this page, so it is newer than anything a header read can
+ *      carry. Both are carried when both are somehow set, so this can only ever
+ *      preserve a latch and never clear one — which is what lets the caller spread
+ *      the result over an existing session safely.
+ *   2. A LIVE TURN SEEDS NOTHING. `thinking` invalidates every prior verdict, and
+ *      the header's outcome describes the turn BEFORE the one now running, so
+ *      seeding it would paint `done` over a working chat on a mid-turn reload.
+ *   3. OTHERWISE THE HEADER'S OUTCOME DECIDES, through `outcomeLatch`.
+ *
+ *  Built conditionally rather than with `undefined` values, because
+ *  `exactOptionalPropertyTypes` makes an explicit `undefined` a different thing
+ *  from an absent key — and an explicit `undefined` spread over an existing
+ *  session would DELETE the latch rule 1 exists to keep. */
+export function latchFieldsFor(
+  existing: Session | undefined,
+  h: ChatHeader,
+): { turn_done?: true; turn_failed?: true } {
+  if (existing?.turn_failed === true || existing?.turn_done === true) {
+    const carried: { turn_done?: true; turn_failed?: true } = {};
+    if (existing.turn_failed === true) {
+      carried.turn_failed = true;
+    }
+    if (existing.turn_done === true) {
+      carried.turn_done = true;
+    }
+    return carried;
+  }
+  if (existing?.thinking === true) {
+    return {};
+  }
+  switch (outcomeLatch(h.last_turn_outcome)) {
+    case "done":
+      return { turn_done: true };
+    case "failed":
+      return { turn_failed: true };
+    default:
+      return {};
+  }
+}
+
 /** Re-derive the outcome latches from the PERSISTED record: the newest message
  *  carrying a `turn_outcome` says how this chat's last turn ended, and the
  *  latches are re-set from it exactly as the live `turn_ended` handler would
@@ -585,8 +820,7 @@ export function clearTurnDone(id: string): void {
  *
  *  Refuses to overwrite: a live turn (`thinking`) invalidates every prior
  *  verdict, and a latch already set is newer than anything the page carries.
- *  `cancelled`/`interrupted`/`unknown` latch nothing, matching the live
- *  handler. */
+ *  Which outcome latches what is `outcomeLatch`'s to say, not this function's. */
 export function relatchTurnVerdict(id: string): void {
   const s = get(id);
   if (s === undefined || s.thinking || s.turn_done === true || s.turn_failed === true) {
@@ -597,9 +831,12 @@ export function relatchTurnVerdict(id: string): void {
     if (outcome === undefined) {
       continue;
     }
-    if (outcome === "completed") {
+    // Same table the header seed reads, so the transcript-derived and
+    // header-derived paths cannot disagree about what an outcome means.
+    const latch = outcomeLatch(outcome);
+    if (latch === "done") {
       setTurnDone(id);
-    } else if (outcome === "failed" || outcome === "refused") {
+    } else if (latch === "failed") {
       setTurnFailed(id);
     }
     return;
@@ -637,13 +874,15 @@ export function relatchTurnVerdict(id: string): void {
  *     types.ts for its clear discipline. Neither producer asks who is watching:
  *     a turn that completes on the tab in front of you paints green there too,
  *     which is the state web-terminal-kiro's engine latches the same way.
- *   - `idle` is the FLOOR for a real chat, not an absence. A chat tab always
- *     shows a dot, which is what keeps the strip's leading column aligned and
- *     what makes "nothing is happening here" readable rather than inferred.
- *     Only an unknown chat yields "". Note how NARROW it is now that `done`
- *     stands until the next turn: a chat reaches `idle` before its first turn,
- *     after a cancelled one, and after a transport gap drops the latches — not
- *     merely by being finished and read.
+ *   - `idle` MEANS THE CHAT HAS NOT INITIATED (user ruling, 2026-09-04), and it
+ *     is the FLOOR for a real chat rather than an absence — a chat tab always
+ *     shows a dot, which keeps the strip's leading column aligned and makes
+ *     "nothing has happened here" readable rather than inferred. Only an unknown
+ *     chat yields "". Exactly three things reach it now, and a turn's OUTCOME is
+ *     not among them whatever it was (`outcomeLatch` grades all six persisted
+ *     outcomes to a latch): a chat before its first turn, a record carrying no
+ *     outcome to read, and the window after a transport gap clears the latches
+ *     before `loadList` re-seeds them from the header.
  *
  *  `pendingAsk` is passed rather than read because the queue of unanswered
  *  decisions lives in `decision-dock.ts`, which imports this module — so the
@@ -672,33 +911,49 @@ export function tabStatusFor(s: Session | undefined, pendingAsk = false): TabDot
   return "idle";
 }
 
-/** The same dot vocabulary for a PARENTLESS run: one launched from the Workflows
- *  tab or by the scheduler, which owns a `run:<workflowId>` tab and no chat.
+/** The pause classes the dot vocabulary distinguishes.
+ *
+ *  A classified value rather than the raw `pauseReason`, so this module never learns
+ *  KAS's pause sentences OR its node signals: `run-store.ts` owns that rule
+ *  (`isNeedInputPark`, over the reason and the node tree both — its reason half is
+ *  pinned cross-language against the server's own predicate) and hands the answer over
+ *  already decided. */
+export type RunPauseClass = "" | "need_input";
+
+/** The same dot vocabulary for a workflow RUN, which owns a `run:<workflowId>` tab
+ *  and has no `Session` behind it.
  *
  *  Its own function rather than a branch inside `tabStatusFor` because the inputs
- *  share not one field: a run has no `Session`, no `thinking`, no `agent_status`
- *  and no `turn_*` latch. What it shares is the OUTPUT vocabulary and the
- *  precedence, which is why it lives here, next to its sibling, instead of in the
- *  run handler that calls it.
+ *  share not one field: a run has no `thinking`, no `agent_status` and no `turn_*`
+ *  latch. What it shares is the OUTPUT vocabulary and the precedence, which is why
+ *  it lives here, next to its sibling.
  *
- *  An AGENT-launched run deliberately gets nothing from this: it is parented on
- *  its launching chat's session, so that chat's own dot already reads `working`
- *  while the launching turn runs and `input` when a step raises an ask. A second
- *  dot for the same work would double-count it in a strip whose whole job is
- *  saying how many things are happening.
+ *  `pendingAsk` and `pause` are both passed rather than read, for the reason
+ *  `tabStatusFor`'s is: `decision-dock.ts` and `run-store.ts` both import this
+ *  module, so the reads have to happen at the call site.
  *
- *  `pendingAsk` is passed for the same reason it is above, and it means the same
- *  thing: `decision-dock.ts` imports this module, so the read has to happen at the
- *  call site. A run's asks are keyed two ways (`run_id` on the payload, or the
- *  synthetic `run:<workflowId>` chat id), and the dock already joins both.
+ *  THE FIVE STATES, and each mapping is a decision:
  *
- *  `paused` maps to `waiting` rather than `done`: a paused run is not finished, it
- *  is stopped waiting for a person, which is exactly what `waiting` means for a
- *  chat. `cancelled` is `done` rather than `failed` because the user asked for it,
- *  matching `toastCompletion`'s levels in handlers/run.ts. An unrecognised
- *  terminal status is `done` rather than `idle`: it is still an ending, and the
- *  toast names it verbatim. */
-export function runStatusFor(status: string | undefined, pendingAsk = false): TabDotState {
+ *   - `running` is the ONE state that holds a process, so it is the one that
+ *     spins.
+ *   - `paused` is `waiting` — stopped, not finished — EXCEPT for a step parked on
+ *     a person, which is `input`. That is the same dot an unanswered card raises,
+ *     because it is the same fact about the run; the two inputs exist because
+ *     either can be present without the other, and the park is the one that
+ *     survives a client that never received the card.
+ *   - `failed` and `aborted` are `failed`; `cancelled` and an unrecognised
+ *     terminal status are `done`, because the user asked for the first and the
+ *     second is still an ending the toast names verbatim.
+ *   - a status this client has not fetched paints NOTHING: not knowing yet is a
+ *     different thing from knowing nothing is happening.
+ *
+ *  The `pause` argument is consulted ONLY in the `paused` arm, which is what keeps
+ *  a stale reason on a finished run from painting it yellow. */
+export function runStatusFor(
+  status: string | undefined,
+  pendingAsk = false,
+  pause: RunPauseClass = "",
+): TabDotState {
   if (pendingAsk) {
     return "input";
   }
@@ -709,12 +964,53 @@ export function runStatusFor(status: string | undefined, pendingAsk = false): Ta
     case "running":
       return "working";
     case "paused":
-      return "waiting";
+      return pause === "need_input" ? "input" : "waiting";
     case "failed":
     case "aborted":
       return "failed";
     default:
       return "done";
+  }
+}
+
+/** The same dot vocabulary for a SUBAGENT, whose tab is a `subagent` sub-tab under
+ *  the chat that dispatched it.
+ *
+ *  A third function beside its two siblings rather than a branch inside either,
+ *  for the reason `runStatusFor` is one: a delegate shares the OUTPUT vocabulary
+ *  and nothing else. It has no `thinking`, no `agent_status`, no `turn_*` latch and
+ *  no `pauseReason` — its whole state is its INVOCATION TOOL CALL's `ToolStatus`,
+ *  which is a generated closed union, so the four arms below are exhaustive and no
+ *  `default` is needed to catch a value the decoder would have rejected.
+ *
+ *  `undefined` means THIS CLIENT HOLDS NO INVOCATION for the delegate, which is a
+ *  different statement from "it has not started": the invocation is persisted with
+ *  its `agent_subtask_id`, so absence here is a resident-window fact (a chat whose
+ *  messages have not been fetched, or a turn evicted from the paginated window)
+ *  rather than anything about the delegate. It answers "" for the same reason
+ *  `runStatusFor` answers "" for a run it has not fetched — not knowing is not the
+ *  same as knowing nothing is happening — and it is answered FIRST so no arm below
+ *  has to consider absence.
+ *
+ *  `pending` and `in_progress` are `isToolActive`'s pair, deliberately: that is
+ *  what the transcript's own delegate card spins for, so the dot and the card
+ *  cannot disagree about what in-flight means. `done` is the settled disc and
+ *  carries the transport's "it finished" rather than any claim that it succeeded,
+ *  exactly as it does for a chat and for a run. Nothing maps to `idle`: the hollow
+ *  ring means a chat has not initiated (see `outcomeLatch`), and a delegate someone
+ *  opened a tab for has certainly run. */
+export function subagentStatusFor(status: ToolStatus | undefined): TabDotState {
+  if (status === undefined) {
+    return "";
+  }
+  switch (status) {
+    case "pending":
+    case "in_progress":
+      return "working";
+    case "completed":
+      return "done";
+    case "failed":
+      return "failed";
   }
 }
 
@@ -1172,6 +1468,9 @@ export function upsertHeader(h: ChatHeader): void {
       } else {
         delete next.compaction_watermark;
       }
+      // AFTER the spread of `s`, so an already-set latch survives: the helper
+      // carries an existing one over and can only ever add, never clear.
+      Object.assign(next, latchFieldsFor(s, h));
       return next;
     });
     return;
@@ -1194,6 +1493,9 @@ export function upsertHeader(h: ChatHeader): void {
     has_more: h.message_count > 0,
     thinking: false,
     working_label: "Thinking",
+    // A chat this client has never seen live: the header's outcome is the ONLY
+    // thing that can tell its dot from a chat that has never run a turn.
+    ...latchFieldsFor(undefined, h),
   };
   if (h.compaction_watermark !== undefined) {
     s.compaction_watermark = h.compaction_watermark;
@@ -1341,16 +1643,35 @@ function mergeMessage(existing: Message, incoming: Message): Message {
   return merged;
 }
 
+/** Where a NEW message belongs in the array.
+ *
+ *  A row the server has PERSISTED goes before the in-flight turn's message,
+ *  because that is where the chat file has it: the server writes the file before
+ *  it broadcasts, and the reply is not in that file until turn_ended.
+ *
+ *  A row that OPENS a turn is exempt — `projectTurns` starts a turn on a user
+ *  message, and a prompt sent during a live reply genuinely follows it. */
+function insertIndexFor(s: Session, incoming: Message): number {
+  if (incoming.role === "user") {
+    return s.messages.length;
+  }
+  const liveID = liveTurnMessage(s.id);
+  if (liveID === undefined) {
+    return s.messages.length;
+  }
+  const at = msgIndex.get(s.id)?.get(liveID);
+  return at ?? s.messages.length;
+}
+
 /** Ingest a server-canonical message. message_created / message_appended /
  *  message_updated ALL route here. Upsert by id with a merge that never drops
  *  a message and never overwrites non-empty content with empty:
- *  - absent  → normalize (ensure blocks) + push.
+ *  - absent  → normalize (ensure blocks) + insert at insertIndexFor.
  *  - present → mergeMessage (adopt incoming's non-empty fields).
  *  Fixes the "final message never renders" (old append no-op), the
  *  "message_created wipes streamed content" (old blind replace), and the
- *  out-of-order chunk-before-created bugs. Internal — the public entry points
- *  are appendMessage / upsertMessage. */
-function ingestMessage(chatID: string, incoming: Message): void {
+ *  out-of-order chunk-before-created bugs. */
+function ingestMessage(chatID: string, incoming: Message, persisted: boolean): void {
   const s = get(chatID);
   if (s === undefined) {
     return;
@@ -1360,16 +1681,26 @@ function ingestMessage(chatID: string, incoming: Message): void {
   const idx = mi.get(incoming.id) ?? -1;
   if (idx === -1) {
     noteResidentMutation(s);
-    mi.set(incoming.id, s.messages.length);
-    s.messages.push(normalizeMessage(incoming));
+    const at = persisted ? insertIndexFor(s, incoming) : s.messages.length;
+    if (at === s.messages.length) {
+      mi.set(incoming.id, at);
+      s.messages.push(normalizeMessage(incoming));
+    } else {
+      s.messages.splice(at, 0, normalizeMessage(incoming));
+      // Every index at or past the splice point moved, so the map is rebuilt
+      // rather than patched.
+      rebuildMsgIndex(chatID, s.messages);
+    }
     s.message_count = Math.max(s.message_count, s.messages.length);
     bumpMessages(chatID);
-    if (incoming.role === "assistant") {
+    if (incoming.role === "assistant" && (incoming.plan ?? []).length === 0) {
       // A steer read before this turn produced anything is anchored at no
-      // message; this is the first moment there is an id to give it. AFTER the
-      // push, and through `sessions.update` rather than a version bump, because
-      // the anchor has to be readable off `activeSession` by the time the
-      // transcript repaints.
+      // message; this is the first moment there is an id to give it. A PLAN row is
+      // skipped though it is RoleAssistant too — the anchor means "the reply this
+      // steer was read into" — or it captures every pending mark and the reply's
+      // own message_created finds none left. AFTER the push, and through
+      // `sessions.update` rather than a version bump, because the anchor must be
+      // readable off `activeSession` by the time the transcript repaints.
       rebindPendingAnchors(chatID, incoming.id);
     }
     return;
@@ -1392,13 +1723,13 @@ export function appendMessage(chatID: string, msg: Message): void {
   if (liveTurnMessage(chatID) === msg.id) {
     clearLiveTurnMessage(chatID);
   }
-  ingestMessage(chatID, msg);
+  ingestMessage(chatID, msg, true);
 }
 
 /** message_created / message_updated → merge path (was a blind replace that
  *  wiped streamed content). */
 export function upsertMessage(chatID: string, msg: Message): void {
-  ingestMessage(chatID, msg);
+  ingestMessage(chatID, msg, false);
 }
 
 /** Stamp the just-ended turn's summary (credits / elapsed / changed files)
@@ -1407,7 +1738,11 @@ export function upsertMessage(chatID: string, msg: Message): void {
  *  DOM write in handlers/turn.ts that double-rendered on SSE replay and
  *  vanished on refresh. Applies to any chat (not just the active one) so a
  *  background turn's footer is present when the user switches to it. The
- *  server persists the same fields at flush time so it also survives reload. */
+ *  server persists the same fields at flush time so it also survives reload.
+ *
+ *  Skipped when a persisted row in the same turn body already carries the outcome:
+ *  the assistant message beside such a carrier is a SEGMENT of that turn, and
+ *  `turnLedger` sums across the body. */
 export function setTurnSummary(
   chatID: string,
   data: {
@@ -1421,12 +1756,35 @@ export function setTurnSummary(
   if (s === undefined) {
     return;
   }
+  // TRAILING user rows belong to a LATER turn that has produced nothing yet — a
+  // prompt persists its row before it asks for the chat's admission slot — so the
+  // walk steps over them and stops at the user row that OPENS the turn being
+  // summarised. What lies between is this turn's body.
   let target: Message | undefined;
+  let inBody = false;
   for (let i = s.messages.length - 1; i >= 0; i--) {
     const m = s.messages[i];
-    if (m?.role === "assistant") {
+    if (m === undefined) {
+      continue;
+    }
+    if (m.role === "user") {
+      if (inBody) {
+        break;
+      }
+      continue;
+    }
+    inBody = true;
+    // `target === undefined` is what keeps the veto INSIDE this turn. `projectTurns`
+    // closes a turn on an outcome-bearing row as well as on a user row, so a
+    // transcript ending [.., event(turn_outcome), assistant] has its carrier in the
+    // PREVIOUS turn; ungated, that vetoed the stamp for the new headerless turn and
+    // its live footer showed no credits until a reload. The sealed-then-empty case
+    // is unaffected: on a backwards walk its carrier is met before any assistant.
+    if (m.turn_outcome !== undefined && target === undefined) {
+      return;
+    }
+    if (m.role === "assistant" && target === undefined) {
       target = m;
-      break;
     }
   }
   if (target === undefined) {
@@ -1683,10 +2041,15 @@ export function appendChunk(
   }
 
   if (isNew) {
-    // A message the store has never seen: the renderer must mount its row.
+    // A message the store has never seen: the renderer must mount its row. Not
+    // exempted for a step below — a step's first frame really does open a new turn
+    // card in the launching chat, headerless and empty, and that card has to mount.
     scheduleMessages(chatID, "shape");
     return;
   }
+  // A WORKFLOW STEP's blocks are DROPPED by the dispatcher, so a delta for one needs
+  // no structural pass: there is nothing to mount and nothing to re-type.
+  const stepCause = droppedFrameCause(subtaskID);
   if (refusalStamped) {
     // Message-level FACT changed (not just a block's text): the refusal feeds
     // deriveOutcome and the callout mounts on a full pass.
@@ -1695,7 +2058,7 @@ export function appendChunk(
   if (newBlock || padRepaired) {
     // A new block pushed, or a pad's guessed kind corrected: block STRUCTURE
     // changed, and only the full pass mounts or re-types a block.
-    scheduleMessages(chatID, "shape");
+    scheduleMessages(chatID, stepCause);
   }
   // Fire the per-block signal (fine-grained — only the block at blockIndex
   // re-renders) before the legacy per-message signal.
@@ -1718,8 +2081,9 @@ export function appendChunk(
       scheduleMessages(chatID, "chunk");
     } else if (blockSig === undefined) {
       // Signal-absent fallback: nothing is mounted to carry the text, so the
-      // full pass is what puts it on screen.
-      scheduleMessages(chatID, "shape");
+      // full pass is what puts it on screen — unless nothing is MEANT to be, which
+      // is a dropped step.
+      scheduleMessages(chatID, stepCause);
     }
   } else {
     const sig = streamingTextSigs.get(messageID);
@@ -1728,7 +2092,7 @@ export function appendChunk(
       scheduleMessages(chatID, "chunk");
     } else if (blockSig === undefined) {
       // Signal-absent fallback, as above.
-      scheduleMessages(chatID, "shape");
+      scheduleMessages(chatID, stepCause);
     }
   }
 }
@@ -1801,6 +2165,18 @@ export function upsertToolCall(
   }
   msg.tool_calls ??= [];
   msg.blocks ??= [];
+  // The EXISTING-message arms below take the cheap cause for a call the transcript
+  // draws nothing for, exactly as `appendChunk` does for a delta. The
+  // `msg === undefined` arm above deliberately does not: a step's first frame really
+  // does open a turn card in the launching chat, and that card has to mount.
+  //
+  // The update path is what makes this load-bearing rather than symmetric. No card is
+  // mounted for a step's call, so `ensureToolCallSig` is never reached for one (the
+  // mount sites are `messages-tools.ts` and mountToolCard / mountTodo / bindSubagent
+  // in `messages-blocks.ts`) — so every `tool_call_update` for every step of every run
+  // falls into the signal-absent arm at the foot of this function. Before the drop the
+  // mounted card owned a signal and updates took the cheap `tool` cause.
+  const stepCause = droppedFrameCause(call.agent_subtask_id ?? "");
   const tcIdx = msg.tool_calls.findIndex((tc) => tc.id === call.id);
   if (tcIdx === -1) {
     msg.tool_calls.push(call);
@@ -1837,8 +2213,10 @@ export function upsertToolCall(
         ...subtaskField(call.agent_subtask_id),
       };
     }
-    // First sighting of this call: a new card mounts on the full pass.
-    scheduleMessages(chatID, "shape");
+    // First sighting of this call, and `stepCause` is what decides the pass: a
+    // drawn call needs the full one that mounts its card, a dropped step's needs
+    // none, because nothing mounts for it.
+    scheduleMessages(chatID, stepCause);
     return;
   }
   const prev = msg.tool_calls[tcIdx];
@@ -1848,11 +2226,12 @@ export function upsertToolCall(
   // translate/streaming_tools.go):
   //
   //  - a first `agent_subtask_id` decides container MEMBERSHIP (top-level list
-  //    vs subagent box vs run step), which is the BLOCK's field, and the tool
-  //    fast path never re-homes a card — so the block updates here and the
-  //    full pass re-homes. An id never changes once set.
-  //  - a first `workflow_id` changes `turnRunIDs`, a projection/fold input, so
-  //    the fold pass must run: `fact`.
+  //    vs subagent box), which is the BLOCK's field, and the tool fast path
+  //    never re-homes a card — so the block updates here and the full pass
+  //    re-homes. An id never changes once set. A `wf:` id has no destination to
+  //    be re-homed INTO, so it takes the cheap cause with the rest.
+  //  - a first `workflow_id` is what the block dispatcher keys a run card on, so
+  //    the card has to be built for a call that arrived without one: `fact`.
   const subtaskAttached =
     nonEmptyStr(call.agent_subtask_id) && !nonEmptyStr(prev?.agent_subtask_id);
   if (subtaskAttached) {
@@ -1860,7 +2239,7 @@ export function upsertToolCall(
     if (blk !== undefined) {
       Object.assign(blk, subtaskField(call.agent_subtask_id));
     }
-    scheduleMessages(chatID, "shape");
+    scheduleMessages(chatID, stepCause);
   }
   if (nonEmptyStr(call.workflow_id) && !nonEmptyStr(prev?.workflow_id)) {
     scheduleMessages(chatID, "fact");
@@ -1873,8 +2252,9 @@ export function upsertToolCall(
     scheduleMessages(chatID, "tool", messageID);
   } else {
     // Signal-absent fallback: nothing is mounted for this card, so the full
-    // pass is what puts its update on screen.
-    scheduleMessages(chatID, "shape");
+    // pass is what puts its update on screen — unless nothing is MEANT to be,
+    // which is a dropped step.
+    scheduleMessages(chatID, stepCause);
   }
 }
 

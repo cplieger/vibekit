@@ -80,6 +80,7 @@ type Store struct {
 	onPurge     func(chatID vibekit.ChatID, sessionChain []string)
 	isLive      func(chatID vibekit.ChatID) bool
 	hasOpenTab  func(chatID vibekit.ChatID) bool
+	turnOpen    func(chatID vibekit.ChatID) bool
 	tombstone   map[vibekit.ChatID]time.Time
 	archive     *archive.Service
 	locks       sync.Map
@@ -159,6 +160,32 @@ func WithLive(fn func(chatID vibekit.ChatID) bool) StoreOption {
 // makes retention opt-out for a chat left open forever, which is accepted).
 func WithOpenTab(fn func(chatID vibekit.ChatID) bool) StoreOption {
 	return func(s *Store) { s.hasOpenTab = fn }
+}
+
+// WithTurnOpen registers the runtime's turn-in-flight predicate, so this package's
+// HTTP surface can STATE whether a chat has a turn open instead of leaving a reader
+// to infer it from an absent carrier.
+//
+// It is the second injected runtime predicate here, after WithLive, and the same
+// construction cycle is why: the agent runtime needs the store, so the store cannot
+// import it and composition applies both post-construction.
+func WithTurnOpen(fn func(chatID vibekit.ChatID) bool) StoreOption {
+	return func(s *Store) { s.turnOpen = fn }
+}
+
+// TurnOpen reports whether chatID has a turn in flight, or false when no predicate
+// was injected.
+//
+// NIL-TOLERANT so an unwired Store — every test that constructs one, and any caller
+// that does not need liveness — reads exactly as it did before the predicate existed:
+// the record is taken as final. That is the safe direction for the one thing this
+// answers, because a client told "no turn is open" derives the outcome the record
+// supports rather than inventing one.
+func (s *Store) TurnOpen(chatID vibekit.ChatID) bool {
+	if s.turnOpen == nil {
+		return false
+	}
+	return s.turnOpen(chatID)
 }
 
 // WithOnPurge registers a callback fired after a retention purge removes a chat.

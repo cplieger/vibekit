@@ -109,11 +109,11 @@ func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
 	// window does not extend the budget past the slot it would collide with.
 	//
 	// DEFENSIVE and unreachable through the store today (Put validates the
-	// spec), left in so an uncomputable slot degrades to "bounded by the
-	// ceiling alone" rather than silently becoming unbounded.
+	// spec), left in so an uncomputable slot degrades to "bounded by the run's
+	// own idle window alone" rather than silently becoming unbounded.
 	slotAt, dErr := NextRun(e.Spec, due)
 	if dErr != nil {
-		slog.Warn("schedule cannot name its next slot, so its run is bounded by the ceiling alone",
+		slog.Warn("schedule cannot name its next slot, so its run is bounded by its idle window alone",
 			"id", e.ID, "source", e.Source, "error", dErr)
 		slotAt = time.Time{}
 	}

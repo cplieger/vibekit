@@ -27,9 +27,10 @@ interface ContextBarUpdate {
   lastTurnMs: number;
   model: string;
   /** The reasoning tier to name beside the model, or "" for the ordinary case.
-   *  Already resolved by context-ui.ts: empty means either the chat runs at the
-   *  model's own default or nothing knows what the default is. This module
-   *  renders it and decides nothing about it. */
+   *  Already resolved by context-ui.ts: empty means the chat runs at the model's
+   *  own default, or the level is one the service resolved and no default is known
+   *  to call it a departure from. This module renders it and decides nothing about
+   *  it. */
   effort?: string;
   metering?: MeteringItem[];
   msgCount?: number;

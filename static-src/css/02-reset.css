@@ -56,10 +56,6 @@
     color: var(--c-text-tertiary);
   }
 
-  :where(input, textarea, select) {
-    caret-color: var(--c-accent);
-  }
-
   :is(
     .steering-textarea,
     .auth-input,

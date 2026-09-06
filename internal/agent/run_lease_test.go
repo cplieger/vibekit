@@ -152,19 +152,25 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 	if l.SlotAt.Sub(wantSlot).Abs() > time.Minute {
 		t.Errorf("SlotAt = %v, want the schedule's own next slot %v", l.SlotAt, wantSlot)
 	}
-	// The bound is the SCHEDULE's, not the hour: on a 5-minute grid the next slot is
-	// always inside the ceiling, so the deadline is the slot — floored up to
+	// The bound is the SCHEDULE's, not the idle window: on a 5-minute grid the next
+	// slot is always inside the window, so the deadline is the slot — floored up to
 	// minRunBudget when the slot is nearer than that, since a bound too small to
 	// finish inside is no bound (runlease.NextDeadline, tested there).
-	want := runlease.NextDeadline(before, runCeiling, minRunBudget, l.SlotAt)
+	//
+	// A zero BackstopAt is what a run with no accumulated executing time gets, and
+	// it is right here rather than a simplification: the launch is this run's first
+	// arm, so the backstop cannot be the tightest input.
+	want := runlease.NextDeadline(before, runlease.Bounds{
+		SlotAt: l.SlotAt, Idle: runIdleWindow, Floor: minRunBudget,
+	})
 	if l.Deadline.Sub(want).Abs() > time.Second {
 		t.Errorf("deadline = %v, want the one derivation's answer %v for slot %v",
 			l.Deadline, want, l.SlotAt)
 	}
 	if budget := l.Deadline.Sub(before); budget > minRunBudget+time.Second {
 		t.Errorf("the manual run got %v of budget against a 5-minute schedule; it must not hold "+
-			"the recipe for the whole %v ceiling and refuse the slots underneath it",
-			budget.Round(time.Second), runCeiling)
+			"the recipe for the whole %v idle window and refuse the slots underneath it",
+			budget.Round(time.Second), runIdleWindow)
 	}
 	// Still a MANUAL run in every other respect: the slot bounds it, and nothing else
 	// about it changed.

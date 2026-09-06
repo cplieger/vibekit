@@ -2,6 +2,10 @@
 
 export type AlwaysAllowBlock = "unparseable";
 
+export type CatalogReason = "rpc" | "decode";
+
+export type CatalogState = "ready" | "empty" | "unavailable";
+
 export type DecisionKind = "permission" | "elicitation" | "user_input";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "model_not_served" | "auth_token_unavailable";
@@ -12,9 +16,13 @@ export type ForgeKind = "github" | "gitlab" | "gitea" | "codeberg";
 
 export type PlanStatus = "pending" | "in_progress" | "completed";
 
+export type ReadState = "ready" | "unavailable";
+
 export type Role = "user" | "assistant" | "event";
 
 export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "loop_iteration" | "watch_poll" | "paused" | "steps_queued";
+
+export type RunStepTranscriptState = "ready" | "gone" | "unavailable";
 
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
 
@@ -33,6 +41,8 @@ export type ToolStatus = "pending" | "in_progress" | "completed" | "failed";
 export type Transport = "stdio" | "http" | "sse";
 
 export type TurnOutcome = "running" | "completed" | "cancelled" | "interrupted" | "failed" | "refused" | "unknown";
+
+export type TurnSeverity = "running" | "clean" | "stopped" | "broken";
 
 /**
  * AccountUsage is the account/subscription usage snapshot for the
@@ -268,6 +278,25 @@ export interface ChatHeader {
  */
   effort?: string;
   /**
+ * LastTurnOutcome is how this chat's NEWEST finished turn ended, taken from the
+ * last message carrying a TurnOutcome. DERIVED on every read rather than stored:
+ * the outcome already lives on the message that finalized the turn, and a second
+ * copy on the chat record would be a second thing that can be wrong.
+ * //
+ * It is on the header because the header is the only projection that reaches
+ * every chat — the same reason Effort is here. The client's two outcome latches
+ * (`turn_done` / `turn_failed`) are client memory, so a fresh page load, a new
+ * browser session and a transport gap all had nothing to derive them from, and
+ * every chat tab's activity dot fell back to the hollow `idle` ring however its
+ * last turn had really ended.
+ * //
+ * Empty for a chat with no finished turn AND for a record written before
+ * Message.TurnOutcome existed, which is not backfilled (invariant 5 forbids the
+ * migration code). Never `running`: no persisted message carries that value —
+ * only the API turn projections derive it for the turn in flight.
+ */
+  last_turn_outcome?: TurnOutcome;
+  /**
  * EffortActive + EffortLevels mirror Chat's, for the same reason Effort does:
  * the control renders from the ACTIVE chat's header, and an empty chat never
  * fetches its full record.
@@ -327,6 +356,38 @@ export interface CodeReference {
 export interface CodeReferencesPayload {
   message_id: string;
   references: CodeReference[];
+}
+
+/**
+ * ConfigTemplateResponse is the GET /api/config-template reply: the pre-session
+ * mode + model catalog, plus the verdict that says which outcome produced it.
+ * //
+ * Named …Response rather than …Payload because it is bound to no SSE event;
+ * internal/wirespec's binding tests key on the Payload suffix, and
+ * auth.WhoamiResponse is the precedent.
+ */
+export interface ConfigTemplateResponse {
+  default_model?: string;
+  /**
+ * EffortActive is the `effortLevel` option's currentValue: the tier a
+ * fresh session would run at. Pre-session, this is the only evidence of
+ * a live level.
+ */
+  effort_active?: string;
+  /**
+ * Catalog carries NO omitempty deliberately: wiregen emits a required
+ * TypeScript field for a field without it, so a client cannot invent a
+ * fallback for the one value the whole retry policy reads.
+ */
+  catalog: CatalogState;
+  catalog_reason?: CatalogReason;
+  /**
+ * The three lists are non-null on every path, degrade branches included, so a
+ * generated decoder requiring an array cannot fail on a failure body.
+ */
+  modes: SessionMode[];
+  models: SessionModel[];
+  effort_levels: SessionEffortLevel[];
 }
 
 /**
@@ -577,6 +638,23 @@ export interface ElicitationRequestSchema {
 export interface ErrorPayload {
   code: ErrorCode;
   message: string;
+  /**
+ * TurnScoped reports that this failure finalized a turn which now carries
+ * this same Message durably, so the reason is already in that turn's card.
+ * //
+ * A property of the EMISSION, not of the Code, which is why it travels here
+ * rather than being derived client-side from a route table. Three of the five
+ * emitters behind ErrCodePromptFailed and ErrCodeRecoveryFailed never open a
+ * turn at all (a held bridge slot, a zero epoch, a failed recovery respawn),
+ * so one answer per code is wrong for whichever group it does not describe:
+ * too eager and a failure with no transcript row is reported nowhere, too shy
+ * and every turn failure is reported twice on the chat in front of the reader.
+ * //
+ * Absent means NO, which is the safe direction: a client that cannot read this
+ * field, or an emitter that does not set it, reports the failure rather than
+ * trusting an inline row that may not exist.
+ */
+  turn_scoped?: boolean;
 }
 
 /** FileChange tracks per-file change stats during a turn. */
@@ -742,12 +820,42 @@ export interface Label {
  * LiveRun is one row of GET /api/runs/live: a run vibekit's own lease registry
  * says is in flight, named with the chat whose agent launched it. ChatID is
  * empty for a parentless run (manual, scheduled) and for a lease written
- * before the field existed — both mean "no chat to exempt" to the consumer,
- * the client's eviction sweep.
+ * before the field existed — both mean "no chat to launch a tab under".
+ * //
+ * THREE consumers read this row and they ask three different questions, which is
+ * why Executing is a field rather than a filter applied here: the client's
+ * eviction sweep asks "are frames still arriving into this chat's transcript",
+ * the tab-dot painter asks "which runs should this client paint a dot for" (every
+ * run with an open tab, parked ones included), and the tab-parent resolver asks
+ * "which chat launched this run", which is true of a run whatever its state. A
+ * server that answered only the first would take the row away from the other two.
  */
 export interface LiveRun {
   workflow_id: string;
   chat_id: string;
+  /**
+ * Executing reports whether THIS PROCESS is holding a deadline for the run,
+ * which is its own record of "I saw this run start and have not seen it park".
+ * //
+ * It is deliberately NOT called `status` and does NOT carry one of KAS's five
+ * workflow statuses. Serving one would mean reading `_kiro/workflow/inspect`
+ * per lease, which is exactly what the endpoint's doc refuses (it sits on the
+ * client's boot path), so the honest field is the one the lease can answer for
+ * itself: a deadline is armed on every start and resume and PARKED on every
+ * pause, because the bound is on executing time (runlease.Lease.Deadline).
+ * //
+ * Where it can disagree with KAS, and both directions are accepted:
+ * //
+ *   - a lease read back from disk is parked by NewStore, so a run that was
+ *     executing when this process died reports false. That is the right answer
+ *     to the eviction question — the bridge carrying its frames died too — and
+ *     KAS reconciles such a run to `paused` on the next read anyway.
+ *   - `set_step_status` advances a parked step without re-arming, so a run
+ *     continued that way reports false while it executes. The client corrects
+ *     itself on the run's next progress frame; the endpoint is the reconciliation
+ *     at boot and after a transport gap, not the live channel.
+ */
+  executing: boolean;
 }
 
 /**
@@ -842,6 +950,25 @@ export interface Message {
  * `unknown`. No consumer may branch on it; TurnOutcome is what they read.
  */
   turn_stop_reason_raw?: StopReason;
+  /**
+ * TurnFailureReason is WHY the turn ended badly, stamped by the same code that
+ * stamps TurnOutcome, so exactly one persisted message per turn carries both.
+ * //
+ * It exists because the outcome was durable and the account of it was not. A
+ * prompt-failure close wrote its prose onto an EventInterrupted divider's
+ * Content; the OUTCOME close wrote no prose anywhere, and stamped no marker at
+ * all when the turn had streamed something — so a turn that failed on the
+ * wire's own `stopReason: "error"` persisted a red mark, a footer reading
+ * "Failed" and an empty body, with the cause reaching the user through a
+ * 12-second toast and nothing else. Measured on a live chat file: 26 blocks, a
+ * settled `failed` outcome, and no sentence anywhere in the record.
+ * //
+ * Sanitized and byte-capped at the write like every other untrusted upstream
+ * string, because its usual source is the agent's own text. Absent on every
+ * message persisted before this field existed, which is why the client keeps a
+ * per-outcome default (DefaultFailureReason).
+ */
+  turn_failure_reason?: string;
   /**
  * TurnModel is the model that answered this turn, stamped on the final
  * assistant message at turn_ended alongside TurnCredits / TurnElapsedMs
@@ -1275,6 +1402,35 @@ export interface Repo {
 }
 
 /**
+ * ResumableSession is one stored KAS session offered by the previous-session
+ * picker (GET /api/sessions). Adopts kiro-cli's own `--resume-picker`
+ * capability: KAS owns the inventory and the transcript, so vibekit carries no
+ * archive of its own. See agent/session_list.go for the wire provenance.
+ * //
+ * Field order is fieldalignment's, not the JSON's.
+ */
+export interface ResumableSession {
+  session_id: string;
+  title: string;
+  agent_mode?: string;
+  /** Status is KAS's own session status: idle | failed | waiting_on_user. */
+  status?: string;
+  /**
+ * Description is the agent's self-declared focus for that session, present
+ * on a minority of rows (88 of 399 measured).
+ */
+  description?: string;
+  /**
+ * ChatID names the vibekit chat that already owns this session, empty when
+ * no chat does. A claimed session is one the user can simply open, so the
+ * picker offers it differently rather than duplicating the chat.
+ */
+  chat_id?: string;
+  updated_at: number;
+  created_at?: number;
+}
+
+/**
  * RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step.
  * //
  * Text empty is a 400 rather than a waive. Continuing without an answer is a
@@ -1480,6 +1636,45 @@ export interface RunStepPayload {
 }
 
 /**
+ * RunStepTranscript is GET /api/runs/{id}/steps/{path...}'s reply: one workflow
+ * step's transcript, read out of KAS on demand.
+ * //
+ * It exists because a step's transcript is on no other endpoint. `inspect` returns
+ * the node tree and a step's `capturedOutput`, which is what the step chose to
+ * declare — not how it got there — and the live `run_step` channel is emitted for
+ * PARENTLESS runs only and persisted by nobody. So a reader opening a finished
+ * run's page could see the plan, the timings and the captures, and nothing of the
+ * work.
+ * //
+ * NOTHING IS PERSISTED BY THIS: the reply is projected from KAS's own replay per
+ * request and dropped. A run has no chat, no message and no buffer, so there is
+ * nowhere to accumulate it even if that were wanted — and accumulating a run's
+ * content from events is what the run surface's invalidate-and-refetch contract
+ * exists to forbid.
+ * //
+ * NO `omitempty` on ANY field, deliberately and for EffectiveSettings' reason: the
+ * generator emits a REQUIRED TypeScript field for a field without it, and a
+ * required field is what stops a client inventing a fallback for the verdict. An
+ * optional `state` would read as "assume ready", which is the one reading that
+ * makes the three-valued answer pointless.
+ */
+export interface RunStepTranscript {
+  /**
+ * Messages is the step's own transcript, projected from KAS's replay and
+ * filtered to the ASSISTANT rows. Empty on any state but ready, and legitimately
+ * empty on ready.
+ */
+  messages: Message[];
+  /**
+ * WorkflowID and NodePath echo what was asked for, so a client holding several
+ * reads in flight can tell the answers apart without correlating by request.
+ */
+  workflow_id: string;
+  node_path: string;
+  state: RunStepTranscriptState;
+}
+
+/**
  * SafetyPropertiesPayload is the payload for type="safety_properties",
  * translated from the v3 (KAS) _kiro/safety/propertiesChanged notification.
  * Reason is the KAS PropertyChangeReason (formalized/toggled/expired). Same
@@ -1607,6 +1802,21 @@ export interface SecurityProfile {
 export interface SessionEffortLevel {
   id: string;
   name?: string;
+}
+
+/**
+ * SessionListResponse is the GET /api/sessions reply.
+ * //
+ * The two lists degrade INDEPENDENTLY — separate verbs on the same bridge, so
+ * one can fail alone — which is why each carries its own verdict rather than the
+ * response carrying one. Neither verdict carries omitempty: a reader must not be
+ * able to read an absent field as success.
+ */
+export interface SessionListResponse {
+  sessions: ResumableSession[];
+  runs: WorkflowRun[];
+  sessions_state: ReadState;
+  runs_state: ReadState;
 }
 
 /**
@@ -2384,5 +2594,55 @@ export interface WhoamiResponse {
   startUrl?: string;
   region?: string;
   error?: string;
+}
+
+/**
+ * WorkflowRun is one previous workflow run, listed beside previous chats in
+ * the history surface (GET /api/sessions) and reviewable read-only.
+ * //
+ * Sourced from _kiro/workflow/list, NOT from session/list. session/list's
+ * workflow rows are STEP sessions — measured 93 of them across 6 runs, with
+ * one run's loop contributing 76 — and their status is idle regardless of the
+ * run's outcome, so they can be neither counted nor judged as runs.
+ */
+export interface WorkflowRun {
+  workflow_id: string;
+  name: string;
+  /** Status is run-level: paused / completed / failed. */
+  status?: string;
+  /**
+ * ParentChatID is the vibekit chat that launched the run, resolved through
+ * the launching session's chain. Empty for a run with no vibekit parent
+ * (launched from the TUI, or by a chat vibekit no longer keeps).
+ */
+  parent_chat_id?: string;
+  /**
+ * EndReason says why a run STOPPED when something other than the run itself
+ * decided that: "overran" (it blew the one deadline it gets — its schedule's
+ * next slot, its idle window with no progress in it, or its absolute
+ * executing-time backstop) or "step_cap" (one of its steps blew its turn cap).
+ * //
+ * The three "overran" causes are deliberately not distinguished on the wire: a
+ * fourth value would need its own client sentence, and the stall case is the
+ * one that reads worst as a result — the client says a run "ran past its time
+ * limit" when what it actually did was stop producing.
+ * //
+ * It exists because KAS's status cannot answer the question. Both bounds
+ * terminate a run through the same Cancel the Cancel button reaches, so the
+ * run reports `cancelled` either way and a reader cannot tell a backstop from
+ * a person. Recording the reason rather than wrapping the cancel in a timeout
+ * is deliberate for that reason: a plain timeout wrapper conflates "exceeded
+ * its ceiling" with "was cancelled", which is the conflation this removes.
+ * //
+ * A user cancel records NOTHING, so absence is the third value and no
+ * "cancelled_by_user" spelling is needed. Not KAS's field and not persisted:
+ * vibekit keeps it in memory for the runs it stopped in THIS process (see
+ * agent.runBoundsState), so a run stopped before a restart falls back to the
+ * plain status. Empty for every run that ended on its own terms.
+ */
+  end_reason?: string;
+  updated_at: number;
+  created_at?: number;
+  started_at?: number;
 }
 

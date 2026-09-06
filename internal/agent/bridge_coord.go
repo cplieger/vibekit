@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/cplieger/keyenc"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/durable"
 	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/translate"
@@ -351,7 +353,13 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	if bc.replayProjection != nil {
 		bc.replayProjection.OpenReplayProjection(chatID)
 	}
-	go bc.Forward(chatID, sb.bridge)
+	// The attachment is taken HERE rather than inside the goroutine, because the
+	// load's own read-loop position below is only comparable within one
+	// attachment: taken asynchronously, this goroutine would have to guess
+	// whether the position it records belongs to this forward or to the previous
+	// bridge's, still draining a closed channel. See replay_drain.go.
+	gen := bc.turns.attachForward(chatID)
+	go bc.forwardAt(chatID, sb.bridge, gen)
 	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), SessionID: acpSessionID, Model: model, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
@@ -382,11 +390,12 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		}
 		return false
 	}
-	// The load returned, which is the other half of the settle condition. The
-	// settle itself belongs to Forward — see load_projection.go's header for why
-	// this goroutine cannot safely decide the replay is drained.
+	// The load returned at a known read-loop position, which is the bound the
+	// replay's completion is measured against. Recorded WITH one settle attempt,
+	// because a replay Forward has already drained is complete at this instant and
+	// no later frame is coming to notice — see MarkReplayLoadedAt.
 	if bc.replayProjection != nil {
-		bc.replayProjection.MarkReplayLoadDone(chatID)
+		bc.replayProjection.MarkReplayLoadedAt(chatID, drainPoint{gen: gen, seq: sb.bridge.SessionLoadSeq()})
 	}
 	title := sb.bridge.SessionTitle()
 	if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
@@ -539,6 +548,16 @@ func (rt *Runtime) HasLiveBridge(chatID vibekit.ChatID) bool {
 	return rt.bridge.mgr.get(chatID) != nil
 }
 
+// HasOpenTurn reports whether a chat has a turn in flight — REAL app-facing
+// surface rather than a forward, because composition injects it into the chat store
+// (chat.WithTurnOpen) so `GET /api/chats/{id}` can state the fact instead of leaving
+// the client to guess it from an absent carrier. That is also the answer for the
+// delegate-only sweep: this is not a convenience for a collaborator, it is the one
+// door the HTTP layer has onto the turn registry.
+func (rt *Runtime) HasOpenTurn(chatID vibekit.ChatID) bool {
+	return rt.coord.turns.hasOpenTurn(chatID)
+}
+
 // CloseBridge stops a bridge and removes it from the map.
 func (bc *BridgeCoordinator) CloseBridge(chatID vibekit.ChatID) {
 	bc.bridge.mgr.close(chatID)
@@ -548,36 +567,40 @@ func (bc *BridgeCoordinator) CloseBridge(chatID vibekit.ChatID) {
 // coordinator drives. See agent/load_projection.go for the settle barrier.
 type replayProjector interface {
 	OpenReplayProjection(vibekit.ChatID)
-	MarkReplayLoadDone(vibekit.ChatID)
+	MarkReplayLoadedAt(chatID vibekit.ChatID, at drainPoint)
 	DiscardReplayProjection(vibekit.ChatID)
-	SettleReplayProjection(chatID vibekit.ChatID, buffered int, force bool)
+	SettleReplayProjection(chatID vibekit.ChatID, at drainPoint, force bool)
+	ReplaySettled(chatID vibekit.ChatID) <-chan struct{}
 }
 
 // Forward is the ACP notification → domain event translator, run as a
-// goroutine per bridge.
+// goroutine per bridge. It takes the chat's forward attachment itself, which is
+// every caller that has no local decision to order against that attachment.
 func (bc *BridgeCoordinator) Forward(chatID vibekit.ChatID, bridge ACPBridge) {
+	bc.forwardAt(chatID, bridge, bc.turns.attachForward(chatID))
+}
+
+// forwardAt is Forward on an attachment the CALLER already took, for the one
+// caller that has to name it: tryLoadSession orders the load's own read-loop
+// position against this goroutine's, so it cannot let the goroutine take the
+// attachment asynchronously and then guess which one the position belongs to.
+func (bc *BridgeCoordinator) forwardAt(chatID vibekit.ChatID, bridge ACPBridge, gen uint64) {
 	ch := bridge.NotifCh()
-	// This goroutine IS the folder, so the position it reports is the only one a
-	// local settle can order itself against. The generation is what keeps a
-	// straggler from the previous bridge — still draining a closed channel while
-	// this one attaches — from advancing a counter that restarted at zero.
-	gen := bc.turns.attachForward(chatID)
 	for n := range ch {
 		bc.consumeFrame(chatID, gen, n)
 		// Settle a session/load replay projection here rather than at Start's
-		// return: this goroutine is the one draining the frames, so its own
-		// view of the channel depth is the only sound completion signal.
-		// len() on a receive-only channel is the whole barrier — no timeout,
-		// no extra bridge API. Rationale in agent/load_projection.go.
+		// return: this goroutine is the one folding the frames, so the position
+		// it reports is the only one the completion condition can be measured
+		// against. Rationale in agent/replay_drain.go.
 		if bc.replayProjection != nil {
-			bc.replayProjection.SettleReplayProjection(chatID, len(ch), false)
+			bc.replayProjection.SettleReplayProjection(chatID, drainPoint{gen: gen, seq: n.Seq}, false)
 		}
 	}
-	// The channel closed, so no further frame can arrive to trigger the check
-	// above. Force the settle so a load whose trailing catalog frames never
-	// came still completes instead of leaking a projection.
+	// The channel closed, so no further frame can advance the position. Seal the
+	// settle so a load whose trailing catalog frames never came still completes
+	// instead of leaking a projection.
 	if bc.replayProjection != nil {
-		bc.replayProjection.SettleReplayProjection(chatID, 0, true)
+		bc.replayProjection.SettleReplayProjection(chatID, drainPoint{gen: gen}, true)
 	}
 	// No frame can advance the position now, so anything parked on one has to be
 	// told rather than left to its context. Before the death closer, so a woken
@@ -781,6 +804,41 @@ func (bc *BridgeCoordinator) persistTurn(ctx context.Context, chatID vibekit.Cha
 	}
 }
 
+// persistDisplacedTurn commits a turn a PROMPT displaced, ahead of the trailing
+// user rows the file already carries.
+//
+// A prompt persists its user row before it asks for admission, and an
+// engine-opened turn holds no reservation, so the prompt that ended this reply is
+// already on disk. A plain append records the reply as FOLLOWING it, which
+// projectTurns reads as a headerless turn below — while the client's array has it
+// above, since the broadcast carries the streamed message's id and merges in place.
+func (bc *BridgeCoordinator) persistDisplacedTurn(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) {
+	if msg.Ts == 0 {
+		msg.Ts = time.Now().UnixMilli()
+	}
+	var inserted bool
+	err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		at := len(c.Messages)
+		for at > 0 && c.Messages[at-1].Role == vibekit.RoleUser {
+			at--
+		}
+		c.Messages = slices.Insert(c.Messages, at, *msg)
+		inserted = true
+		return true
+	})
+	if err != nil {
+		slog.Error("persist displaced turn; the replay projection is the fallback",
+			"chat_id", chatID, "error", err)
+		return
+	}
+	if inserted {
+		bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg))
+	}
+}
+
 // TryFastModelSwitch attempts an in-session model swap via
 // session/set_config_option (configId "model") on the running bridge, then
 // re-applies effort so the swap does not carry the level away with it.
@@ -788,6 +846,18 @@ func (bc *BridgeCoordinator) TryFastModelSwitch(ctx context.Context, chatID vibe
 	sb := bc.bridge.mgr.get(chatID)
 	if sb == nil {
 		return false
+	}
+	// Close an ENGINE-opened turn first, the guard the restart fallback gets from
+	// its own flush: such a turn holds no admission reservation, so nothing refuses
+	// a switch landing inside one, and the model_switched row this path persists is
+	// not turn-terminal, so it would be written into that turn's body.
+	//
+	// Only an engine-opened one. The caller's OWN prompt turn keeps running, and
+	// keeps the model it was dispatched under; the restart fallback discards it
+	// because the bridge goes with it, which is not true here.
+	if displaced, ok := bc.displaceEngineTurn(ctx, chatID); ok {
+		slog.Info("a model switch displaced a live engine-opened turn",
+			"chat_id", chatID, "displaced_epoch", displaced, "model", model)
 	}
 	return bc.applyModelSwitch(ctx, chatID, sb, model, effort)
 }
@@ -1007,6 +1077,9 @@ func (bc *BridgeCoordinator) EffortForSwitch(ctx context.Context, chat *vibekit.
 // PersistModelSwitch records the switch event and updates the chat's
 // model + resets usage counters.
 func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID vibekit.ChatID, model string, contextSize int) {
+	// Both writes are one record of one switch: an event saying the model changed
+	// beside a record still naming the old one is worse than neither.
+	ctx = durable.Context(ctx)
 	evt := vibekit.Message{
 		ID:        newMessageID(),
 		Role:      vibekit.RoleEvent,
@@ -1091,6 +1164,10 @@ func assistantTurnMessage(snap *buffer.TurnContent, stats turnStats, model strin
 		TurnOutcome:       c.Outcome,
 		TurnStopReasonRaw: c.RawStop,
 		TurnTruncated:     c.Truncated,
+		// WHY it ended badly, beside how. The outcome was durable and the account of
+		// it was not: a `failed` close persisted a red mark and an empty body, and
+		// the cause reached the user through a transient toast alone.
+		TurnFailureReason: c.Reason,
 	}
 }
 
@@ -1146,8 +1223,34 @@ func (bc *BridgeCoordinator) WireTurnStart(ctx context.Context, chatID vibekit.C
 // bracket, and the fold-with-no-open-turn rule would manufacture a spurious
 // empty persisted turn out of it. A replayed bracket is filtered upstream, so
 // this is the live path only.
-func (bc *BridgeCoordinator) WireTurnEnd(ctx context.Context, chatID vibekit.ChatID, stop vibekit.StopReason) {
-	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerWireEnd, Stop: stop, AnyOpen: true})
+func (bc *BridgeCoordinator) WireTurnEnd(ctx context.Context, chatID vibekit.ChatID, stop vibekit.StopReason, details string) {
+	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerWireEnd, Stop: stop, Reason: details, AnyOpen: true})
+}
+
+// CloseStepTurn closes a turn a workflow STEP's frames opened on chatID, because
+// the run those steps belonged to has reached a terminal state and nothing else is
+// going to: the bracket path cannot, since the attribution gate drops a step's own
+// turn_end. A chat whose open turn is anything else, or which has none, is left
+// alone.
+//
+// Safe to call unconditionally and idempotent: the claim is first-wins, so a second
+// call after the first closed the turn finds nothing open to close.
+//
+// EPOCH-scoped rather than AnyOpen, which is the difference that matters. AnyOpen
+// describes the CHAT, so it would claim the chat's own live prompt turn if the user
+// prompted between the step turn being displaced and the run's end — which is a
+// conversation this run is not part of.
+//
+// tc.Reason is left EMPTY and the cause is applied inside finalizeTurn's switch,
+// matching closerWireDisplaced. That is what makes amendLostReason decline on its
+// `tc.Reason == ""` conjunct rather than stamping this sentence onto some other
+// closer's carrier.
+func (bc *BridgeCoordinator) CloseStepTurn(ctx context.Context, chatID vibekit.ChatID) {
+	epoch, ok := bc.turns.stepTurnEpoch(chatID)
+	if !ok {
+		return
+	}
+	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerRunComplete, Epoch: epoch})
 }
 
 // TurnFoldTarget returns the buffer this chat's frames fold into, opening a turn
@@ -1191,6 +1294,64 @@ func (bc *BridgeCoordinator) TurnFoldTarget(ctx context.Context, chatID vibekit.
 // turnRegistry.reclassify.
 func (bc *BridgeCoordinator) ReviseTurnBinding(ctx context.Context, chatID vibekit.ChatID) {
 	bc.turns.reclassify(ctx, chatID)
+}
+
+// SealTurnSegment persists the open turn's content so far as its own assistant
+// message, so a boundary INSIDE a turn — a compaction point — is the sibling
+// message every consumer already reads in array order. The rest of the turn
+// accumulates into a fresh message.
+//
+// It never OPENS a turn: a chat with none has no point inside a turn to seal at.
+// Declined-and-logged for an unsettled tool call, because an update resolves its
+// call against the CURRENT buffer and splitting freezes that card mid-flight.
+func (bc *BridgeCoordinator) SealTurnSegment(ctx context.Context, chatID vibekit.ChatID) bool {
+	buf, ok := bc.turns.foldTarget(chatID)
+	if !ok || buf == nil {
+		return false
+	}
+	if !buf.ToolsSettled() {
+		slog.Warn("turn segment not sealed: a tool call is still in flight, so the boundary lands after the turn",
+			"chat_id", chatID)
+		return false
+	}
+	// Settle a withheld steering-marker candidate into the segment that produced it,
+	// for settleBuffer's reason: the carry can hold the segment's only final text, so
+	// a content check taken before the flush reads that segment as empty.
+	translate.FlushSteerCarry(buf)
+	snap := buf.SplitSegment()
+	// Content, not Started: a turn whose id was minted before any delta has nothing
+	// to seal, and sealing it puts a blank assistant row above the boundary.
+	if snap.EmittedNothing {
+		return false
+	}
+	msg := segmentMessage(&snap)
+	// The seal's own detach, not persistTurn's: that helper is shared with the
+	// finalize path, so changing its body would change a closer's shutdown
+	// behaviour nobody reviewed.
+	bc.persistTurn(durable.Context(ctx), chatID, &msg)
+	return true
+}
+
+// segmentMessage builds the persisted assistant message for a SEGMENT of a turn:
+// assistantTurnMessage minus every field that describes the whole turn.
+//
+// The turn's credits, elapsed time, changed files, model and outcome belong to the
+// turn rather than to a part of it, and each has exactly one carrier — the turn's
+// closer stamps them on the last message it persists, or on an outcome marker when
+// there is none. A segment claiming any of them would open a second turn for both
+// projections and double the footer's numbers.
+func segmentMessage(snap *buffer.TurnContent) vibekit.Message {
+	return vibekit.Message{
+		ID:             snap.MessageID,
+		Role:           vibekit.RoleAssistant,
+		Ts:             time.Now().UnixMilli(),
+		Content:        snap.Content,
+		Reasoning:      snap.Reasoning,
+		ToolCalls:      snap.ToolCalls,
+		Blocks:         snap.Blocks,
+		CodeReferences: snap.CodeReferences,
+		Refusal:        snap.Refusal,
+	}
 }
 
 // closeTurnOnBridgeDeath is the third actor: after Forward has exited it closes

@@ -298,12 +298,22 @@ describe("the bodyless turn card is marked .is-bodyless", () => {
   });
 
   it("clears it when a FOOTER arrives under a still-empty body", async () => {
-    // A second prompt gives the first turn a rewind footer while its body stays
-    // empty. The body is no longer the card's last child, so the header keeps
-    // its border and `.turn-body:empty + .turn-footer` drops the footer's
-    // instead — marking here would erase the only line between the two bands.
+    // A second prompt gives the first turn a footer while its body stays empty
+    // (a rewind target, and an outcome to state). The body is no longer the
+    // card's last child, so the header keeps its border and
+    // `.turn-body:empty + .turn-footer` drops the footer's instead — marking
+    // here would erase the only line between the two bands.
+    //
+    // `thinking: true` because a prompt-only turn at the TAIL is a turn whose
+    // reply has not landed, and that is the only shape that reaches this state
+    // in production. It is load-bearing rather than incidental: `deriveOutcome`
+    // reads a settled tail turn with no assistant message as `unknown` (nothing
+    // closed it), whose severity earns a footer of its own — so with the flag
+    // off, neither prompt-only turn here is bodyless and the case cannot
+    // describe the footer half at all. `isLive` is `thinking && last`, so only
+    // the tail is live: turn 1 still settles the moment turn 2 arrives.
     const chat = "bodyless-footer";
-    const kids = mount(chat, [user("bf-u1", "one")], false);
+    const kids = mount(chat, [user("bf-u1", "one")], true);
     expect(kids[0]?.classList.contains("is-bodyless")).toBe(true);
 
     store.upsertMessage(chat, user("bf-u2", "two"));
@@ -315,5 +325,231 @@ describe("the bodyless turn card is marked .is-bodyless", () => {
     expect(cards[0]?.classList.contains("is-bodyless")).toBe(false);
     // The new prompt-only turn takes the mark instead.
     expect(cards[1]?.classList.contains("is-bodyless")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A WORKFLOW STEP's delta needs no structural pass, because the dispatcher DROPS
+// its blocks: there is nothing to mount and nothing to re-type. Nothing is mounted
+// to carry the text either, so it lands in `appendChunk`'s signal-absent arm — the
+// arm that otherwise schedules `shape`, which is a full projection plus reconcile
+// per step delta on the very transcript the drop exists to make cheaper.
+//
+// The pairing is the whole assertion: the same delta with an EMPTY subtask id still
+// classifies `shape`, so the exemption is keyed on the id rather than on the signal
+// being absent.
+// ---------------------------------------------------------------------------
+
+describe("a dropped workflow step's delta is bookkeeping-only", () => {
+  it("classifies chunk and runs zero projection, reconcile or per-turn work", async () => {
+    const chat = "cause-wfstep";
+    const kids = mount(
+      chat,
+      [user("wf-u1", "run the workflow"), assistant("wf-a1", "started")],
+      true,
+    );
+    expect(kids.length).toBe(1);
+    const before = seamCounts();
+
+    // Block index 1: a NEW block of the same message, which is the structural case
+    // — `newBlock` is what used to force `shape`.
+    store.appendChunk(chat, "wf-a1", "step output", false, 1, "wf:wf_1:wf_1/build");
+    await flushed();
+
+    expect(store.renderCauseOf(chat).cause).toBe("chunk");
+    expect(seamCounts()).toEqual(before);
+    const after = [...viewRoot().children];
+    expect(after.length).toBe(kids.length);
+    expect(after.every((el, i) => el === kids[i])).toBe(true);
+    // And nothing of it is on screen, which is what makes the skip free.
+    expect(viewRoot().textContent).not.toContain("step output");
+  });
+
+  it("still classifies shape for the same delta with no subtask id", async () => {
+    const chat = "cause-nostep";
+    mount(chat, [user("ns-u1", "hi"), assistant("ns-a1", "hello")], true);
+    const before = seamCounts();
+
+    store.appendChunk(chat, "ns-a1", "parent prose", false, 1, "");
+    await flushed();
+
+    expect(store.renderCauseOf(chat).cause).toBe("shape");
+    expect(vi.mocked(turnsMod.projectTurns).mock.calls.length).toBe(before["projectTurns"]! + 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The same exemption on a step's TOOL CALL, which is the frame class that
+// dominates: a workflow-heavy chat measured 2,250 of 2,367 tool calls as step
+// content, each reporting two or three status transitions.
+//
+// The UPDATE arm is the one that carries the weight. No card is mounted for a step's
+// call, so `ensureToolCallSig` is never reached for one and every `tool_call_update`
+// lands in the signal-absent arm at the foot of `upsertToolCall` — where a `shape`
+// runs a full projection plus reconcile to produce no DOM change at all.
+//
+// Two controls, and both are the point rather than symmetry. The same call with an
+// EMPTY subtask id still classifies `shape`, so the exemption is keyed on the id.
+// And a MALFORMED `wf:` id ALSO classifies `shape`, because the dispatcher keys its
+// drop on the PARSE and renders that one as a delegate box — one predicate, one set
+// of ids, checked from the store's side.
+// ---------------------------------------------------------------------------
+
+describe("a dropped workflow step's tool call is bookkeeping-only", () => {
+  const STEP = "wf:wf_1:wf_1/build";
+
+  function stepCall(status: string, subtask: string): ToolCall {
+    return {
+      id: "wf-tc-1",
+      title: "Run command",
+      kind: "execute",
+      status,
+      agent_subtask_id: subtask,
+    } as unknown as ToolCall;
+  }
+
+  /** An assistant message ALREADY carrying `tc` as a `subtask`-stamped tool_use
+   *  block, so the first `upsertToolCall` for it takes the update arm. */
+  function withStepTool(id: string, tc: ToolCall, subtask: string): Message {
+    return {
+      id,
+      role: "assistant",
+      ts: 2,
+      content: "",
+      blocks: [
+        { type: "text", text: "started" },
+        { type: "tool_use", tool_call_id: tc.id, agent_subtask_id: subtask },
+      ],
+      tool_calls: [tc],
+    } as unknown as Message;
+  }
+
+  it("classifies chunk on the FIRST sighting inside a mounted message", async () => {
+    const chat = "cause-wftool-new";
+    const kids = mount(chat, [user("wt-u1", "run it"), assistant("wt-a1", "started")], true);
+    expect(kids.length).toBe(1);
+    const before = seamCounts();
+
+    // Block index 1: a NEW block of an already-mounted message, which is the arm
+    // that used to force `shape` for every one of a run's tool calls.
+    store.upsertToolCall(chat, "wt-a1", stepCall("in_progress", STEP), 1);
+    await flushed();
+
+    expect(store.renderCauseOf(chat).cause).toBe("chunk");
+    expect(seamCounts()).toEqual(before);
+    const after = [...viewRoot().children];
+    expect(after.every((el, i) => el === kids[i])).toBe(true);
+    // And no card of it is on screen, which is what makes the skip free.
+    expect(viewRoot().textContent).not.toContain("Run command");
+  });
+
+  it("classifies chunk on an UPDATE, where no mounted card owns a signal", async () => {
+    const chat = "cause-wftool-upd";
+    const tc = stepCall("in_progress", STEP);
+    mount(chat, [user("wu-u1", "run it"), withStepTool("wu-a1", tc, STEP)], true);
+    // Leave the flushed cause at `shape` first, so the assertion below reads the
+    // UPDATE's own classification rather than a leftover from the create.
+    store.upsertMessage(chat, user("wu-u1", "RUN IT"));
+    await flushed();
+    expect(store.renderCauseOf(chat).cause).toBe("shape");
+    const before = seamCounts();
+
+    store.upsertToolCall(chat, "wu-a1", { ...tc, status: "completed" } as ToolCall, 1);
+    await flushed();
+
+    expect(store.renderCauseOf(chat).cause).toBe("chunk");
+    expect(seamCounts()).toEqual(before);
+  });
+
+  it("still classifies shape for the same call with no subtask id", async () => {
+    const chat = "cause-wftool-none";
+    mount(chat, [user("wn-u1", "run it"), assistant("wn-a1", "started")], true);
+    const before = seamCounts();
+
+    store.upsertToolCall(chat, "wn-a1", stepCall("in_progress", ""), 1);
+    await flushed();
+
+    expect(store.renderCauseOf(chat).cause).toBe("shape");
+    expect(vi.mocked(turnsMod.projectTurns).mock.calls.length).toBe(before["projectTurns"]! + 1);
+    // It mounted, which is why the pass was needed.
+    expect(viewRoot().textContent).toContain("Run command");
+  });
+
+  it("still classifies shape for a MALFORMED step id, which the dispatcher renders", async () => {
+    const chat = "cause-wftool-bad";
+    mount(chat, [user("wb-u1", "run it"), assistant("wb-a1", "started")], true);
+    const before = seamCounts();
+
+    // `wf:` prefix, no second colon: `parseStepSubtask` returns null, so the
+    // dispatcher takes its delegate-box fallback and the store must NOT skip.
+    store.upsertToolCall(chat, "wb-a1", stepCall("in_progress", "wf:no-node-path"), 1);
+    await flushed();
+
+    expect(store.renderCauseOf(chat).cause).toBe("shape");
+    expect(vi.mocked(turnsMod.projectTurns).mock.calls.length).toBe(before["projectTurns"]! + 1);
+    expect(viewRoot().querySelector(".subagent-block")).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The projection's LIVENESS input, pinned at the composition site.
+//
+// It lives in this file rather than its own because the harness is exactly what the
+// property needs and nothing else has it: the real store, the real `messages.ts`
+// paint, a spy on `projectTurns`, and a mounted view to read the rendered card off.
+//
+// The defect: `thinking` is client memory that starts false, so between
+// `GET /api/chats/{id}` painting and the HELD `turn_state` frame releasing, a turn
+// whose reply is still in the server's in-memory buffer read "not running". The
+// projection then derived `unknown` — "nothing closed this turn" — and mounted an
+// outcome mark and a `.turn-notice` row for a turn the server knew was running.
+//
+// The store composes the two facts (`turnLive`); this asserts `messages.ts` passes
+// the composition rather than the flag, and that the card goes quiet as a result.
+// ---------------------------------------------------------------------------
+
+/** A session carrying the server's own liveness statement. */
+function liveSession(id: string, msgs: Message[], over: Partial<Session>): Session {
+  return { ...session(id, msgs, false), ...over } as Session;
+}
+
+describe("the transcript passes composed liveness, not the thinking flag", () => {
+  it("paints NO outcome mark for a carrier-less newest turn the SERVER says is open", async () => {
+    // The mid-turn reload record: the prompt persisted, the reply still buffered, so
+    // no assistant message and no carrier. `thinking` is false because no frame has
+    // arrived yet — which is the whole window.
+    const chat = "live-open";
+    store.setSessions([liveSession(chat, [user("lo-u1", "do the thing")], { turn_open: true })]);
+    store.setActive(chat);
+    await flushed();
+
+    const calls = vi.mocked(turnsMod.projectTurns).mock.calls;
+    const last = calls.at(-1);
+    expect(last?.[1], "the projection's liveness input is the composed answer").toBe(true);
+
+    const card = viewRoot().querySelector(".turn");
+    expect(card, "the turn painted").not.toBeNull();
+    // The two surfaces the reported flash was measured on. `running`'s treatment
+    // already is "no settled mark", so this needed no suppression rule — which is
+    // why the fix is the derivation and not the renderer.
+    expect(card?.querySelector(".turn-notice"), "no failure notice on a live turn").toBeNull();
+    expect(
+      card?.querySelector(".turn-footer .turn-ledger-glyph"),
+      "no footer outcome glyph on a live turn",
+    ).toBeNull();
+  });
+
+  it("still paints the neutral mark when the server says NO turn is open", async () => {
+    // The direction the fix must not erase: after a server restart mid-turn no turn
+    // is open, because the process died — so the newest turn genuinely is one nothing
+    // closed, and its notice is honest.
+    const chat = "live-closed";
+    store.setSessions([liveSession(chat, [user("lc-u1", "do the thing")], { turn_open: false })]);
+    store.setActive(chat);
+    await flushed();
+
+    expect(vi.mocked(turnsMod.projectTurns).mock.calls.at(-1)?.[1]).toBe(false);
+    const card = viewRoot().querySelector(".turn");
+    expect(card?.querySelector(".turn-notice"), "an unreadable end still says so").not.toBeNull();
   });
 });

@@ -265,12 +265,8 @@ function inlineDisclosure(
 }
 
 describe("turn action overflow", () => {
-  it("renders the secondary actions inline with the More summary hidden on desktop", () => {
-    const details = inlineDisclosure(
-      "turn-actions-more",
-      "turn-actions-secondary",
-      "turn-action-btn",
-    );
+  it("renders the grouped actions inline with the More summary hidden on desktop", () => {
+    const details = inlineDisclosure("turn-actions-more", "turn-actions-group", "turn-action-btn");
     const slot = document.createElement("span");
     slot.className = "turn-actions-buttons";
     slot.appendChild(details);
@@ -280,7 +276,7 @@ describe("turn action overflow", () => {
 
     expect(details.open).toBe(false);
     expect(css(summary, "display")).toBe("none");
-    // Closed, summary-less, and NOT skipped: the four actions really render.
+    // Closed, summary-less, and NOT skipped: the grouped actions really render.
     expect(contentSkipped(details)).toBe(false);
   });
 });
@@ -429,7 +425,10 @@ describe("turn card header affordance", () => {
 });
 
 describe("folded turn face", () => {
-  function face(kind: "turn-face-prose" | "turn-face-error", lines: number): HTMLElement {
+  // `turn-notice` is a CARD-level sibling of the face rather than a child of it
+  // (29-turns.css), because it renders in both fold states; the fixture mounts it
+  // where production does so the no-clamp assertion measures the real box.
+  function face(kind: "turn-face-prose" | "turn-notice", lines: number): HTMLElement {
     const card = document.createElement("div");
     card.className = "turn";
     card.setAttribute("data-folded", "");
@@ -444,13 +443,16 @@ describe("folded turn face", () => {
         p.textContent = `line ${String(i)}`;
         content.appendChild(p);
       }
+      faceEl.appendChild(content);
+      card.appendChild(faceEl);
     } else {
       // The real shape: one text node, newlines rendered by pre-wrap.
       content.className = kind;
+      content.dataset["severity"] = "broken";
       content.textContent = Array.from({ length: lines }, (_, i) => `line ${String(i)}`).join("\n");
+      card.appendChild(faceEl);
+      card.appendChild(content);
     }
-    faceEl.appendChild(content);
-    card.appendChild(faceEl);
     mount(card);
     return content;
   }
@@ -461,7 +463,7 @@ describe("folded turn face", () => {
     // fold's compactness comes from hiding tool cards, reasoning and delegate
     // output. A turn with none of those offers no fold at all (data-no-fold),
     // so an unclamped face can no longer read as "collapse does not work".
-    for (const kind of ["turn-face-prose", "turn-face-error"] as const) {
+    for (const kind of ["turn-face-prose", "turn-notice"] as const) {
       const content = face(kind, 40);
       expect(content.scrollHeight, `${kind}: nothing clipped`).toBeLessThanOrEqual(
         content.clientHeight + 1,
@@ -582,7 +584,7 @@ describe("the mid-turn steer note's box", () => {
     head.className = "steer-note-head";
     const label = document.createElement("span");
     label.className = "steer-note-label";
-    label.textContent = "Your mid-turn message";
+    label.textContent = "Mid-turn message";
     head.append(label);
     const body = document.createElement("div");
     body.className = "steer-note-body";

@@ -43,7 +43,7 @@ func TestCloseOnWireEnd_StampsTheOutcomeOnTheAssistantMessage(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "here is half an answer")
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError)
+	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, "")
 
 	c, ok := cs.Get(t.Context(), "c1")
 	if !ok {
@@ -77,7 +77,7 @@ func TestCloseOnWireEnd_TruncationCompletesRatherThanFails(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "as much as the budget allowed")
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonMaxTokens)
+	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonMaxTokens, "")
 
 	c, _ := cs.Get(t.Context(), "c1")
 	for i := range c.Messages {
@@ -107,7 +107,7 @@ func TestCloseOnWireEnd_AnEmptyFailedTurnPersistsAMarker(t *testing.T) {
 	}
 	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError)
+	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, "")
 
 	c, _ := cs.Get(t.Context(), "c1")
 	var marker *vibekit.Message
@@ -124,15 +124,23 @@ func TestCloseOnWireEnd_AnEmptyFailedTurnPersistsAMarker(t *testing.T) {
 	}
 }
 
-// TestCloseOnWireEnd_AnEmptyCompletedPromptedTurnPersistsNothing is the other half
-// of the same rule, and what keeps the transcript clean.
+// TestCloseOnWireEnd_AnEmptyCompletedPromptedTurnPersistsItsMarkerToo is the
+// REVERSAL of a test that pinned the skip, kept rather than deleted because its own
+// argument is what stopped being true.
 //
-// The skip is SEMANTIC, not "the outcome is completed": a completed untruncated
-// marker states only what the derivation answers by default, so it is worth
-// omitting exactly where the transcript already carries a row that IS this turn —
-// and a prompted turn's user message is that row. See the agent-initiated twin
-// below for the case where nothing else represents the turn.
-func TestCloseOnWireEnd_AnEmptyCompletedPromptedTurnPersistsNothing(t *testing.T) {
+// It read: the skip is semantic rather than "the outcome is completed" — a completed
+// untruncated marker states only what the derivation answers BY DEFAULT, so it is
+// worth omitting where the transcript already carries a row that IS this turn.
+// Every word of that holds except the premise underneath it. The derivation's
+// default was the reader guessing, and the guess was only defensible because the
+// writer omitted the fact: a clean empty prompted turn and one a restart killed were
+// byte-identical on disk. So the writer stopped omitting it, the reader stopped
+// guessing (deriveTurnOutcome answers `unknown` for a carrier-less turn), and this
+// turn's marker is what tells the two apart.
+//
+// Cost, accepted: one invisible EventTurnOutcome row per clean empty prompted turn.
+// `turn_outcome` is `{kind: "skip"}` in EVENT_RENDER_MAP, so nothing renders.
+func TestCloseOnWireEnd_AnEmptyCompletedPromptedTurnPersistsItsMarkerToo(t *testing.T) {
 	h, cs, _ := newTestHub()
 	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
@@ -142,13 +150,21 @@ func TestCloseOnWireEnd_AnEmptyCompletedPromptedTurnPersistsNothing(t *testing.T
 	}
 	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn)
+	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn, "")
 
 	c, _ := cs.Get(t.Context(), "c1")
+	var marker *vibekit.Message
 	for i := range c.Messages {
 		if c.Messages[i].EventKind == vibekit.EventTurnOutcome {
-			t.Errorf("an empty COMPLETED prompted turn persisted a marker: %+v", c.Messages[i])
+			marker = &c.Messages[i]
 		}
+	}
+	if marker == nil {
+		t.Fatalf("an empty COMPLETED prompted turn persisted no carrier, so it is "+
+			"indistinguishable on disk from a turn nothing closed. messages=%d", len(c.Messages))
+	}
+	if marker.Role != vibekit.RoleEvent || marker.TurnOutcome != vibekit.TurnOutcomeCompleted {
+		t.Errorf("marker = %+v, want a RoleEvent carrying completed", marker)
 	}
 }
 
@@ -173,7 +189,7 @@ func TestCloseOnWireEnd_AnEmptyCompletedAgentTurnStillPersistsItsMarker(t *testi
 	// wireTurnStart turn, and nothing folds into it.
 	h.stageTurnBuffer(t, "c1")
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn)
+	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn, "")
 
 	c, _ := cs.Get(t.Context(), "c1")
 	var marker *vibekit.Message
@@ -217,7 +233,7 @@ func TestCloseOnWireEnd_APrimeBroadcastsAndPersistsNothing(t *testing.T) {
 	buf.MessageID = newMessageID()
 	buf.Content.WriteString("Caught up.")
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn)
+	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn, "")
 
 	if got := turnEndedStops(t, h); len(got) != 0 {
 		t.Errorf("a prime announced its end (%v); the client would render a turn it must not see", got)

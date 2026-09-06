@@ -106,6 +106,15 @@ type BridgeAccess interface {
 	// A note rather than a chat-record field: it describes one session's
 	// launch, is consumed by the next spawn, and does not survive a restart.
 	PrimeFromChat(chatID, sourceChatID vibekit.ChatID)
+	// AwaitReplayAdopted blocks until a session/load replay this chat may have
+	// in flight has been adopted into the record (or discarded), so a caller
+	// about to REWRITE the transcript cannot be undone by it. A nil error on a
+	// chat with no replay open.
+	//
+	// A non-nil error means DO NOT REWRITE, and it is bounded by the
+	// implementation's own budget as well as by ctx — the settle is triggered
+	// by the bridge's frame loop, which a caller cannot wait for indefinitely.
+	AwaitReplayAdopted(ctx context.Context, chatID vibekit.ChatID) error
 }
 
 // ChatStore is the chat store as the command handlers use it: read a chat,
@@ -377,6 +386,9 @@ type Roles struct {
 	// dir has no store to persist an arrangement to. The coordinator
 	// answers the tab half of every operation with a 503 in that state.
 	Tabs TabSet
+	// Runs answers which chat launched a run, so a run tab opened with no
+	// parent still nests under its conversation.
+	Runs RunOwner
 	// Lifecycle is the process lifetime: the turn context and the
 	// in-flight counter a shutdown waits on.
 	Lifecycle   LifecycleAccess

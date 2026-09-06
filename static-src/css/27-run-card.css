@@ -1,7 +1,10 @@
 /* ==========================================================================
-   The workflow run card — a run's home in the transcript AND the whole content
-   of the /run/{id} page. One component, two detail modes; the `full` variant at
-   the foot of this file is the page's.
+   The workflow run card — a run's RECORD in the transcript, and nothing else.
+   Head, alert, one row per step, foot. It renders no step CONTENT: each row is a
+   door into `/run/{id}` with that node selected, and the step's own transcript is
+   rendered there (`exec-view/detail.ts`). The `/run/{id}` page is a different
+   component (31-exec-view.css); the `full` detail mode that once made this one
+   serve both is long gone.
 
    Every rule is scoped under `.run-card`, which used to be a collision defence:
    the /run/{id} page owned its own `.run-*` vocabulary in 18-pages.css
@@ -12,12 +15,12 @@
    still visible in the TS: the head's status pill is `.run-state`, not
    `.run-status`, because the page had that name first.
 
-   The card is the DEEPEST nesting in the transcript, three boxes down: a turn
-   card holds it, it holds a step row, and the step row holds real tool cards.
-   So the radius ladder is spent all the way down — --r-lg at the card, --r at a
-   step, --r-sm inside — and each level's inline padding is what keeps the
-   concentric rule (`child-radius = parent-radius - parent-padding`, web.md).
-   Uncapped and unindented, like every other evidence block (see .tool-call).
+   Nesting is THREE boxes now, not four: a turn card holds this card, this card
+   holds a step row, and the row holds only its own spans. So the radius ladder
+   stops at --r — --r-lg at the card, --r at a step — and each level's inline
+   padding is what keeps the concentric rule (`child-radius = parent-radius -
+   parent-padding`, web.md). Uncapped and unindented, like every other evidence
+   block (see .tool-call).
    ========================================================================== */
 
 .run-card {
@@ -253,17 +256,6 @@
   min-width: 0;
 }
 
-/* An OPEN step is the one the reader is inside, so it earns a visible outline —
-   and it needs one: `--c-border` is a 16% wash off the ink, which disappears
-   against the body's own surface once the row is tall. Measured on the dark
-   theme, a five-step card with one row open read as that row having no box at
-   all, so a probe reporting identical widths disagreed with the eye.
-   Deliberately BEFORE the status rules: a running or failed border says more
-   than "this one is open", and both score (0,2,0) so source order decides. */
-.run-step:not(.collapsed) {
-  border-color: color-mix(in srgb, var(--c-text-primary) 28%, transparent);
-}
-
 /* A step that needs reading is the one a scan must find, so failure gets a rail
    of its own. Everything else stays quiet: twenty green rails would be noise. */
 .run-step[data-status="fail"] {
@@ -295,6 +287,12 @@
   opacity: 0.6;
 }
 
+/* THE ROW IS A DOOR, so its head is a real `<a href="/run/{id}">` — middle-click
+   and copy-link work, and a plain click is intercepted by the app's own routing.
+   It therefore has to opt OUT of link ink: the reset layer's `a { color:
+   var(--c-link) }` would reach it, and this app spends link ink on TEXT controls
+   (`.turn-req-more`, `.ev-in-more`, a PR row's title) while a NAVIGATOR row keeps
+   its own — `.tab` and `.ev-row-main` are the precedent. */
 .run-step-head {
   display: flex;
   align-items: center;
@@ -304,6 +302,8 @@
   cursor: pointer;
   user-select: none;
   min-width: 0;
+  color: inherit;
+  text-decoration: none;
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
@@ -407,34 +407,19 @@
   font-variant-numeric: tabular-nums;
 }
 
-.run-step-toggle {
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-
-  /* A control's label, not a hint (see --c-text-control in 01-tokens.css).
-     No background/border reset: this is a span, not a button. */
-  color: var(--c-text-control);
-  padding: 0 var(--sp-1);
-}
-
-.run-step:not(.collapsed) .run-step-toggle > .disclosure-chevron {
-  --chev-turn: 0deg;
-}
-
-/* A step's captured output is its RESULT, so it sits on the collapsed row rather
-   than behind the disclosure with its working transcript — the same rule the
-   delegated-work card's footer follows. Two lines, then it clamps: the full text
-   is on the run page.
+/* A step's captured output is its RESULT, so it sits on the row rather than behind
+   a disclosure with its working transcript — the same rule the delegated-work
+   card's footer follows. Two lines, then it clamps: the full text is on the run
+   page, which is where the row leads.
 
    THE TRAILING SPACE IS A MARGIN, NOT PADDING. `overflow: hidden` clips at the
    PADDING box, so a `-webkit-line-clamp` box with block-end padding paints the
    clipped line INSIDE that band — the ellipsis says two lines and a half-height
    third one renders under it (measured in Chromium 151: a 7px sliver in an 8px
    band). A margin is outside the clip region, and the visible gap inside
-   `.run-step` is unchanged: that row is `overflow: hidden`, so it establishes a
-   BFC and the margin cannot collapse out of it, and the following
-   `.run-step-body` is `height: 0; padding-block: 0` while collapsed. */
+   `.run-step` survives because that row is `overflow: hidden`: it establishes a BFC,
+   so the margin cannot collapse out of it, and the capture is the row's last
+   child. */
 .run-step-capture {
   padding: 0 var(--sp-2) 0 calc(var(--sp-2) + 1rem + var(--sp-2));
   margin-block-end: var(--sp-2);
@@ -449,43 +434,13 @@
   overflow: hidden;
 }
 
-/* The step's own transcript, rendered by the same block dispatcher as the main
-   one. Its gap matches the delegated-work card's body for the same reason: this
-   is a nested context, and a nested context compresses. */
-.run-step-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  padding: var(--sp-2);
-
-  /* Matches the open row's own border rather than the hairline `--c-border`, so
-     the seam between a step's identity and its transcript is as legible as the
-     box around them. */
-  border-block-start: 1px solid color-mix(in srgb, var(--c-text-primary) 28%, transparent);
-  min-width: 0;
-  overflow: hidden;
-  transition:
-    height var(--dur-standard) var(--ease-standard),
-    content-visibility var(--dur-standard) allow-discrete;
-}
-
-/* Lazy rendering of a closed step row. Same three choices, same reasoning, and
- * the reasoning is written out once beside `.subagent-body` in 14-tools.css:
- * `hidden` rather than `auto` so search and `scrollHeight` are untouched, keyed
- * on the row's `.collapsed` rather than this element's `aria-hidden` so the
- * controller's `scrollHeight` read still sees a laid-out box, and no
- * `contain-intrinsic-size` because the inline height already pins it to 0.
- *
- * A run's steps are where this pays most: the card mounts OPEN and every step row
- * mounts closed, so a finished workflow is a stack of collapsed transcripts. */
-.run-step.collapsed > .run-step-body {
-  content-visibility: hidden;
-}
-
-.run-step-body[aria-hidden="true"] {
-  padding-block: 0;
-  border-block-start: none;
-}
+/* `.run-step-body` is DELETED, and with it the `content-visibility: hidden` rule
+   that made a closed row cheap to lay out. It hosted the step's own transcript
+   through the same block dispatcher as the main one, and `content-visibility`
+   skips layout and paint but NOT construction — so every tool card and reasoning
+   trace of every step was built in the transcript whether or not a row was opened.
+   The row is a door into `/run/{id}` now and the step's transcript is rendered
+   there. Nothing replaces the rule: there is no closed region left to skip. */
 
 /* --------------------------------------------------------------------------
    Outputs — what the run produced

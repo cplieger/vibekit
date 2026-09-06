@@ -6,6 +6,7 @@ package translate
 // TOLD rather than what it does about it.
 
 import (
+	"slices"
 	"strconv"
 	"testing"
 
@@ -102,6 +103,84 @@ func TestStepTurnCap_CountsPerStepInstance(t *testing.T) {
 	if len(deps.stepCapBreaches) != 0 {
 		t.Errorf("three separate step instances at %d calls each tripped the cap %d times",
 			half, len(deps.stepCapBreaches))
+	}
+}
+
+// TestRunProgress_EveryStepToolCallReportsProgress is the tool-call half of the
+// idle window's progress signal, on the CHAT-parented path.
+//
+// Per FRAME, not per breach: the window asks whether the run is producing frames
+// at all, so every call is evidence, and reporting only at some threshold would
+// leave a healthy run's window to expire between thresholds. The run is named
+// because the window is keyed on the run.
+func TestRunProgress_EveryStepToolCallReportsProgress(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+	chatID := vibekit.ChatID("c1")
+	path := []string{"wf", "step-a"}
+
+	for i := range 3 {
+		tr.HandleToolCall(t.Context(), chatID,
+			mustJSON(t, stepToolFrame("tc-"+strconv.Itoa(i), "wf_1", "step-a", path)), FrameAttribution{})
+	}
+
+	if want := []string{"wf_1", "wf_1", "wf_1"}; !slices.Equal(deps.runProgress, want) {
+		t.Errorf("progress reported = %v, want %v: one report per step tool call, naming the run",
+			deps.runProgress, want)
+	}
+}
+
+// TestRunProgress_AHookAskStillRefillsTheWindow is the placement, and it is the one
+// property the report's position decides.
+//
+// A hook ask is a kind:"other" tool call, and hooks.showStatus off drops its CARD —
+// a transcript decision that says nothing about whether KAS is producing frames,
+// which is the only question the idle window asks. Reported under that drop instead,
+// a display preference decides a cancellation: a step whose frames are hook asks
+// stops refilling its run's window, and the run is cancelled as stalled while it is
+// working. The internal-tool drop below it is the same class.
+func TestRunProgress_AHookAskStillRefillsTheWindow(t *testing.T) {
+	base, _ := newEventCaptureDeps()
+	deps := &hookStatusDeps{baseDeps: base, enabled: false}
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+
+	frame := stepToolFrame("hook-ask-1", "wf_1", "step-a", []string{"wf", "step-a"})
+	meta := frame["_meta"].(map[string]any)["kiro"].(map[string]any)
+	meta["hookAsk"] = map[string]any{"kind": "pre-tool-use", "toolName": "fs_write"}
+	frame["kind"] = "other"
+
+	tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, frame), FrameAttribution{})
+
+	if want := []string{"wf_1"}; !slices.Equal(base.runProgress, want) {
+		t.Errorf("progress reported = %v, want %v: hooks.showStatus is a rendering setting, "+
+			"so it must not decide whether a run's idle window is refilled",
+			base.runProgress, want)
+	}
+	// The card itself still goes, because that half IS the setting's job.
+	if n := len(base.bufStore.GetOrInit(vibekit.ChatID("c1")).ToolCalls); n != 0 {
+		t.Errorf("buffered tool calls = %d, want 0: the hook-ask card is still suppressed", n)
+	}
+}
+
+// TestRunProgress_IgnoresANonStepToolCall: an ordinary chat tool call and a
+// SUBAGENT's carry no workflow block, so neither names a run whose window could be
+// refilled. A subagent's calls are the dangerous half — they arrive on a chat that
+// may well have a live run, and crediting them would keep a genuinely wedged run
+// alive on a different agent's work.
+func TestRunProgress_IgnoresANonStepToolCall(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+
+	tr.HandleToolCall(t.Context(), "c1", mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"title":      "Read a file",
+		"kind":       "read",
+		"status":     "pending",
+		"_meta":      map[string]any{"kiro": map[string]any{"agentSubtaskId": "sub-1"}},
+	}), FrameAttribution{})
+
+	if len(deps.runProgress) != 0 {
+		t.Errorf("a subagent's tool call reported progress for %v", deps.runProgress)
 	}
 }
 

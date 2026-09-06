@@ -27,6 +27,19 @@ export interface ErrorRoute {
   action?: ErrorAction;
 }
 
+// WHETHER A FAILURE ENDS A TURN IS NOT IN THIS TABLE, and a `turnScoped?: true`
+// flag lived here until it was measured wrong. It let `reportFailure` drop the
+// toast for a chat the reader is already looking at, on the grounds that the turn's
+// own card carries the same reason durably — but a route describes a CODE and
+// having-a-turn is a property of the EMISSION. Three of the five server emitters
+// behind `prompt_failed` and `recovery_failed` open no turn at all (a held bridge
+// slot, a zero epoch, a failed recovery respawn), so one answer per code silenced
+// those three on the chat in front of the reader with nothing else reporting them.
+//
+// The server states it per frame instead: `ErrorPayload.turn_scoped`, read by the
+// `error` handler in turn.ts and passed to `reportFailure`. Absent means no, which
+// is the direction that reports rather than trusts a row that may not exist.
+
 export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   agent_not_found: { surface: "toast" },
   // The payload names a `.kiro/agents` path, so the message is about authored
@@ -55,6 +68,11 @@ export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   // it will fail. Sticky, because nothing else on screen says the runtime is
   // signed out. The CTA is the login modal: the only action that fixes it is
   // signing in, and there is no Settings control for that.
+  //
+  // This is the code the server marks turn-scoped AND that carries an action, which
+  // is the pair making `failure-notice.ts`'s action clause load-bearing rather than
+  // theoretical: the turn it failed carries the reason inline, and the toast is
+  // still raised because Sign in is reachable from nowhere else on screen.
   auth_token_unavailable: {
     surface: "toast",
     action: { kind: "sign-in", label: "Sign in" },
@@ -69,6 +87,9 @@ export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   // is the one error whose meaning is "the automatic repair did not work".
   // `switch_failed` and `model_not_served` are the two halves of choosing a model,
   // refused before the wire and on it.
+  //
+  // Both are the codes whose emitters DISAGREE about turn-scopedness — three of the
+  // five open no turn — which is why the flag left this table; see the note above.
   prompt_failed: { surface: "toast" },
   recovery_failed: { surface: "toast" },
   switch_failed: { surface: "toast" },

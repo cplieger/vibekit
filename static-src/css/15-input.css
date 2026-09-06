@@ -5,6 +5,22 @@
 [id="prompt-form"] {
   display: flex;
   flex-direction: column;
+
+  /* ONE INSET FOR THE WHOLE BOX'S CHROME. The distance from .prompt-box's inner
+     edge to a control is the same on the left, on the right and at the bottom,
+     and the same as the gap BETWEEN controls, so the pill row reads as one
+     block rather than as three unrelated measurements. It was
+     `var(--sp-1) var(--sp-2)` — sides 8px, bottom 4px, gaps 4px — which is
+     three values where the eye expects one. Consumed by .prompt-pills and
+     .attachment-row; the textarea keeps its own roomier
+     padding, because text has no border of its own to sit behind.
+
+     Declared on the FORM rather than on the box, because the bar itself needs it
+     too: 50-mobile.css charges this inset plus the box's border against the
+     home-indicator inset, so the last pill lands on Apple's 34pt boundary rather
+     than 5px past it. A custom property inherits down, so .prompt-box and every
+     rule inside it read the same one declaration. */
+  --pill-inset: var(--sp-1);
 }
 
 .prompt-box {
@@ -16,16 +32,6 @@
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);
-
-  /* ONE INSET FOR THE WHOLE BOX'S CHROME. The distance from this box's inner
-     edge to a control is the same on the left, on the right and at the bottom,
-     and the same as the gap BETWEEN controls, so the pill row reads as one
-     block rather than as three unrelated measurements. It was
-     `var(--sp-1) var(--sp-2)` — sides 8px, bottom 4px, gaps 4px — which is
-     three values where the eye expects one. Consumed by .prompt-pills and
-     .attachment-row; the textarea keeps its own roomier
-     padding, because text has no border of its own to sit behind. */
-  --pill-inset: var(--sp-1);
 
   /* CONCENTRIC WITH THIS BOX, not a rung off the radius ladder.
      A border-radius corner is a quarter circle whose centre sits `radius` in
@@ -1174,6 +1180,12 @@
   justify-content: center;
   position: relative;
 
+  /* The streaming face's beat overlay sits BEHIND the glyph (`z-index: -1`), and
+     a negative layer escapes to the nearest ancestor stacking context — which
+     here is the prompt box, whose own background would hide it. This is that
+     context, so the overlay stays inside the control it belongs to. */
+  isolation: isolate;
+
   --send-hue: var(--c-accent);
   --send-depth: 38%;
 
@@ -1222,6 +1234,24 @@
     --send-hue: var(--c-red);
   }
 
+  /* THE BREATH — a slow swell of the hue while a turn runs, so a working agent
+     reads off the composer without the glyph. Opacity on a pre-painted overlay
+     whose amplitude is read off the DOCUMENT CLOCK (03-base.css): nothing is
+     animated here, so it beats in step with the tab dot of the chat it belongs
+     to, and reduced motion stops that one clock (--vk-beat rests at 0, leaving
+     this face identical to a still one). 8% of the hue is ~5 points of depth
+     wherever the ladder sits — 38 -> 43 resting, 46 -> 50 hovered, half the
+     rest-to-hover step. Radius 7 - 1 = 6px, concentric with the ring above. */
+  &:where(.streaming)::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border-radius: calc(var(--pill-radius) - 1px);
+    background: var(--send-hue);
+    opacity: calc(var(--vk-beat) * 0.08);
+  }
+
   /* Something failed, and the control is still CLICKABLE — the tooltip names the
      failure and the click is the retry, so this must not read as dead. */
   &:where(.failed) {
@@ -1254,6 +1284,15 @@
   .pill {
     padding: 0 var(--sp-3);
     font-size: var(--fs-sm);
+  }
+
+  /* No reasoning tier on a phone, at any level. The row is already full at
+     390px (the spacer measures 0), and the tier declares `flex-shrink: 0`, so
+     the model NAME is what pays for it: 36px of the 78px it asks for, rendering
+     `clau… · max`. Visual only — the button's aria-label still names the level
+     (status.ts), so a screen reader loses nothing. */
+  .pill-model-effort {
+    display: none;
   }
 
   .send-btn {

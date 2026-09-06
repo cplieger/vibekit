@@ -105,6 +105,9 @@ func TestHandleV3Summarization_CanceledIsBenign(t *testing.T) {
 // drives the completion path after injectContextRecovery was removed: exactly
 // one EventCompacted message carrying the summary is persisted and the
 // CompactionWatermark is set to that message's id — with no failure surface.
+//
+// It also pins the POSITION for the between-turns case: with no turn open there is
+// nothing to seal, so the event is the only message the frame appends.
 func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "evt-1" }))
@@ -118,6 +121,9 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	if msgs[0].Content != "history summary" {
 		t.Errorf("EventCompacted content = %q, want %q", msgs[0].Content, "history summary")
 	}
+	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != vibekit.RoleEvent {
+		t.Errorf("persisted roles = %v, want just the event (nothing to seal between turns)", got)
+	}
 	c, _ := store.Get(t.Context(), "c1")
 	if c.CompactionWatermark != "evt-1" {
 		t.Errorf("CompactionWatermark = %q, want %q (must equal the compacted event id)", c.CompactionWatermark, "evt-1")
@@ -127,6 +133,135 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	}
 	if p := errorPayloads(t, events); len(p) != 0 {
 		t.Errorf("EventError broadcasts = %+v, want none on success", p)
+	}
+}
+
+// roleOrder is the persisted messages' roles, in order — the shape a mid-turn
+// compaction is judged on, since where the summary sits is array position and
+// nothing else.
+func roleOrder(t *testing.T, store *testsupport.InMemoryChatStore, chatID vibekit.ChatID) []vibekit.Role {
+	t.Helper()
+	c, ok := store.Get(t.Context(), chatID)
+	if !ok {
+		t.Fatalf("chat %q not found", chatID)
+	}
+	roles := make([]vibekit.Role, 0, len(c.Messages))
+	for _, m := range c.Messages {
+		roles = append(roles, m.Role)
+	}
+	return roles
+}
+
+// A compaction that lands MID-TURN seals the turn first, so the summary sits
+// between what the model said before it and what it says after — the position the
+// compaction actually happened at.
+//
+// Without the seal the event is a sibling of the whole turn, and the two paths
+// disagree: live it appends AFTER the reply, because the assistant message is only
+// persisted at turn end, while a replay projects it BEFORE.
+func TestHandleV3Summarization_SealsTheSegmentBeforeTheEvent(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "evt-1" }))
+	// A turn in flight with two blocks buffered, as a reply mid-stream is.
+	buf := deps.bufStore.GetOrInit("c1")
+	buf.StartTurn("m-pre")
+	buf.AppendTextDelta("before the compaction", "")
+	buf.AppendThinkingDelta("thinking about it", "")
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
+
+	got := roleOrder(t, store, "c1")
+	want := []vibekit.Role{vibekit.RoleAssistant, vibekit.RoleEvent}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("persisted roles = %v, want %v (the sealed segment must precede the summary)", got, want)
+	}
+
+	c, _ := store.Get(t.Context(), "c1")
+	seg := c.Messages[0]
+	if seg.ID != "m-pre" {
+		t.Errorf("sealed segment id = %q, want the streamed message's %q", seg.ID, "m-pre")
+	}
+	if seg.Content != "before the compaction" || seg.Reasoning != "thinking about it" {
+		t.Errorf("sealed segment content = %q / reasoning = %q, want the pre-compaction pair",
+			seg.Content, seg.Reasoning)
+	}
+	if len(seg.Blocks) != 2 {
+		t.Errorf("sealed segment carried %d blocks, want the 2 buffered before the compaction", len(seg.Blocks))
+	}
+	// The TURN is not over, so the segment carries none of the turn's own facts:
+	// exactly one message per turn may claim the outcome, and a second carrier
+	// opens a spurious segment for both projections.
+	if seg.TurnOutcome != "" {
+		t.Errorf("sealed segment TurnOutcome = %q, want empty (the turn has not ended)", seg.TurnOutcome)
+	}
+	if c.CompactionWatermark != "evt-1" {
+		t.Errorf("CompactionWatermark = %q, want the event's id %q", c.CompactionWatermark, "evt-1")
+	}
+
+	// And the rest of the turn accumulates into a fresh message rather than
+	// re-extending the one already on disk.
+	if after := deps.bufStore.Get("c1").TakeTurn(); after.Content != "" || after.Started {
+		t.Errorf("after the seal the buffer holds %q with Started = %t, want empty and false",
+			after.Content, after.Started)
+	}
+}
+
+// A turn holding a tool call still in flight is NOT split, so the summary lands
+// after the turn instead.
+//
+// The alternative is worse than the wrong position: an update resolves its call
+// against the current buffer, so a call sealed mid-flight can never be written
+// back and its card renders as a permanent spinner in a message nothing rewrites.
+func TestHandleV3Summarization_DoesNotSealWithAToolInFlight(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	deps.sealRefusals = map[vibekit.ChatID]bool{"c1": true}
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "evt-1" }))
+	buf := deps.bufStore.GetOrInit("c1")
+	buf.StartTurn("m-pre")
+	buf.AppendTextDelta("before the compaction", "")
+	buf.AppendToolCall(&vibekit.ToolCall{ID: "t-1", Status: vibekit.ToolInProgress})
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
+
+	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != vibekit.RoleEvent {
+		t.Errorf("persisted roles = %v, want just the event (a declined split appends nothing else)", got)
+	}
+	// The turn keeps its content, so its closer still persists the whole reply.
+	if snap := deps.bufStore.Get("c1").TakeTurn(); snap.Content != "before the compaction" {
+		t.Errorf("after a declined split the buffer holds %q, want the turn's content intact", snap.Content)
+	}
+}
+
+// A compaction between turns appends the event and nothing else: there is no
+// position inside a turn to seal at.
+func TestHandleV3Summarization_NoTurnOpenAppendsOnly(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "evt-1" }))
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
+
+	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != vibekit.RoleEvent {
+		t.Errorf("persisted roles = %v, want just the event", got)
+	}
+}
+
+// A FAILED compaction is a notice rather than a boundary — nothing about the
+// context changed, so there is no point for it to sit at and the turn is left
+// whole.
+func TestHandleV3Summarization_FailureDoesNotSealTheTurn(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	buf := deps.bufStore.GetOrInit("c1")
+	buf.StartTurn("m-pre")
+	buf.AppendTextDelta("mid-reply", "")
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "error", ""), FrameAttribution{})
+
+	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != vibekit.RoleEvent {
+		t.Errorf("persisted roles = %v, want just the failed-compaction event", got)
+	}
+	if snap := deps.bufStore.Get("c1").TakeTurn(); snap.Content != "mid-reply" {
+		t.Errorf("after a failed compaction the buffer holds %q, want the turn's content intact", snap.Content)
 	}
 }
 

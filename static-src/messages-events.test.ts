@@ -97,7 +97,17 @@ describe("infra_safety_blocked event (Kiro Infrastructure-Safety enforce block)"
 });
 
 describe("interrupted event (turn cut short)", () => {
-  it("renders the server's own reason, not a generic label", () => {
+  // THE OWNERSHIP RULE, from the divider's side. Both of these cases used to
+  // assert the inverse — that the divider rendered the server's own reason — and
+  // that is exactly what put the sentence on screen TWICE about 50px apart:
+  // `turnFailureText`'s first source reads THIS row's content into the card-level
+  // `.turn-notice`, and the notice is the surface present in both fold states, so
+  // it is the one that keeps the prose. The divider marks the boundary and names
+  // its kind.
+  //
+  // Nothing is lost, and `turns.node.test.ts` is where that half is pinned: the
+  // notice still returns this row's content verbatim.
+  it("marks the boundary and does NOT repeat the notice's sentence", () => {
     const node = buildEvent({
       id: "i1",
       role: "event",
@@ -107,17 +117,14 @@ describe("interrupted event (turn cut short)", () => {
     } as Message);
     expect(node).not.toBeNull();
     expect(node?.className).toContain("boundary");
-    // The reason travelled on the wire and used to be discarded here, so the
-    // divider blamed a server restart whatever had actually happened.
-    expect(node?.textContent ?? "").toContain("Session refreshed, retrying");
+    expect(node?.textContent ?? "").toContain("Turn interrupted");
+    expect(node?.textContent ?? "").not.toContain("Session refreshed, retrying");
   });
 
-  // The 2026-08 case, and the reason the server stopped sending an empty content
-  // on the ordinary failure path: this is what a throttled or capacity-refused
-  // turn now reads as, on reload and on a chat nobody was watching. It used to
-  // render as the generic label below with the reason living only in a hover
-  // tooltip that the next page load discarded.
-  it("renders a model-backend failure reason", () => {
+  // The 2026-08 case — a throttled or capacity-refused turn — asserted the same
+  // way round. The reason is long, which is the second argument for one home: two
+  // copies of a 180-character upstream sentence in one card is a wall of it.
+  it("does not repeat a long model-backend failure reason either", () => {
     const node = buildEvent({
       id: "i0",
       role: "event",
@@ -127,9 +134,9 @@ describe("interrupted event (turn cut short)", () => {
         "retried; waiting a moment before resending is the only thing that helps. (request req-9)",
       ts: 0,
     } as Message);
-    expect(node?.textContent ?? "").toContain("Too many requests");
-    expect(node?.textContent ?? "").toContain("(request req-9)");
-    expect(node?.textContent ?? "").not.toContain("Turn interrupted");
+    expect(node?.textContent ?? "").not.toContain("Too many requests");
+    expect(node?.textContent ?? "").not.toContain("(request req-9)");
+    expect(node?.textContent ?? "").toContain("Turn interrupted");
   });
 
   it("falls back to a generic label when the event carries no content", () => {

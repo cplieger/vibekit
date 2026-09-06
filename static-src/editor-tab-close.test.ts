@@ -99,7 +99,11 @@ vi.mock("./composer-state.js", () => ({
   initComposerState: vi.fn(),
   _resetComposerStateForTest: vi.fn(),
 }));
-vi.mock("./run-store.js", () => ({ peekRunState: vi.fn(() => undefined) }));
+vi.mock("./run-store.js", () => ({
+  // The tab factory's name read. Inert here; a Browser-Mode mock is linked as
+  // real ESM, so a name any module in the graph reaches has to exist on it.
+  runLabelOf: vi.fn(() => ""),
+}));
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 vi.mock("./editor-conflict.js", () => ({

@@ -114,3 +114,35 @@ describe("an inner box is never rounder than the box holding it", () => {
     expect(radiusOf(input)).toBeLessThanOrEqual(radiusOf(form) + 0.5);
   });
 });
+
+describe("a box with a header at its top has ONE radius owner", () => {
+  it("leaves a code block's pre square so its wrapper draws every corner", () => {
+    // The prose skin gave the pre `--r` on all four, and the wrapper's
+    // `overflow: hidden` does not square a child's own corners — it removes only
+    // what falls outside — so the top pair painted a notch of card background at
+    // each end of the head's seam. An override on `.code-wrap > pre` cannot fix
+    // it: `.message.assistant :where(pre)` scores (0,2,0) against its (0,1,1),
+    // which is why the radius is deleted at the prose skin instead.
+    const msg = document.createElement("div");
+    msg.className = "message assistant";
+    const wrap = document.createElement("div");
+    wrap.className = "code-wrap";
+    const head = document.createElement("div");
+    head.className = "code-head";
+    const pre = document.createElement("pre");
+    wrap.append(head, pre);
+    msg.appendChild(wrap);
+    host.appendChild(msg);
+
+    expect(radiusOf(wrap), "the wrapper draws the box").toBeCloseTo(6, 1);
+    const s = getComputedStyle(pre);
+    for (const [corner, value] of Object.entries({
+      "top-left": s.borderTopLeftRadius,
+      "top-right": s.borderTopRightRadius,
+      "bottom-right": s.borderBottomRightRadius,
+      "bottom-left": s.borderBottomLeftRadius,
+    })) {
+      expect(parseFloat(value), `pre ${corner} must be square`).toBe(0);
+    }
+  });
+});

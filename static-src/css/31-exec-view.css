@@ -21,8 +21,13 @@
 .ev-page {
   display: flex;
   flex-direction: column;
-  flex: 1 1 0;
-  min-height: 0;
+
+  /* SIZES TO CONTENT, so the page's own scroller (`.page-content`, 18-pages.css)
+     has something taller than itself to scroll. `flex: 1 1 0; min-height: 0` made
+     this column exactly the free space of that box, so `scrollHeight ===
+     clientHeight` and no scrollbar could ever appear — every region below was
+     crushed into a cage that scrolled on its own instead. */
+  flex: 1 0 auto;
   gap: var(--sp-3);
 
   /* A CONTAINER spaces its children and a child never spaces itself
@@ -72,18 +77,39 @@
   white-space: nowrap;
 }
 
+/* ONE TRIO FOR THE STATE VOCABULARY, and it is the transcript's rather than the
+   alert palette's (2026-09). Every state-keyed ink in this file — this header
+   glyph, the tree row's mark, the detail pane's word, the timeline bar, the alert
+   accent and the failure box — is the same vocabulary `exec-view/status.ts`
+   declares and the same glyph set a tool card paints, so it reads
+   `--c-green`/`--c-red`/`--c-yellow` exactly as `.tool-icon.is-*` does. It used to
+   take green from there and red and yellow from `--c-danger`/`--c-warning`, so ONE
+   status trio was spelled out of two palettes and `ok` agreed with a tool card
+   while `fail` and `warn` did not.
+
+   The swap is what the measurement wanted anyway: `--c-danger` reads 2.70:1 on this
+   pane's own hovered group head in dark and 2.65:1 on a selected row, and
+   `--c-warning` 2.88:1 on a selected row in light — three WCAG 1.4.11 failures,
+   against 3.73:1 and 3.52:1 for the trio, whose worst case over every fill either
+   palette touches is 3.08:1. `--c-danger` and `--c-warning` keep their ~50 other
+   consumers; they are the destructive-action palette, not a run's outcome.
+
+   The TAB DOT stays on the `--c-dot-*` family and that is not this fork: its
+   values are web-terminal-kiro's, adopted so a reader moving between the two apps
+   learns one signal, and that reason stops at the tab strip because the sibling app
+   has no transcript. `01-tokens.css` owns it. */
 .ev-page[data-state="ok"] .ev-h-icon {
   color: var(--c-green);
 }
 
 .ev-page[data-state="fail"] .ev-h-icon {
-  color: var(--c-danger);
+  color: var(--c-red);
 }
 
 .ev-page[data-state="warn"] .ev-h-icon,
 .ev-page[data-state="input"] .ev-h-icon,
 .ev-page[data-state="waiting"] .ev-h-icon {
-  color: var(--c-warning);
+  color: var(--c-yellow);
 }
 
 .ev-h-meta {
@@ -167,7 +193,41 @@
   margin: 0;
   min-width: 0;
   color: var(--c-text-secondary);
+}
+
+/* THE CLAMP. Three lines, then a show-more, and the opener is a SIBLING of the
+   clipped box rather than inside it — the exact `.turn-req` shape, for the same
+   reason: a `-webkit-line-clamp` box is `overflow: hidden`, so a button inside it
+   would be clipped away at the moment it becomes needed.
+
+   `overflow-wrap` moved here off `.ev-in-v`, because the clamp has to own the
+   wrap: an input can be a path with no spaces in it. */
+.ev-in-text {
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.ev-in-text[data-clamped] {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* `.turn-req-more`'s skin: a text control, not a button-shaped one. */
+.ev-in-more {
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+
+  &:hover {
+    color: var(--c-accent);
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -178,15 +238,15 @@
   flex: 0 0 auto;
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r);
-  border-inline-start: 0.1875rem solid var(--c-warning);
-  background: color-mix(in srgb, var(--c-warning) 10%, transparent);
+  border-inline-start: 0.1875rem solid var(--c-yellow);
+  background: color-mix(in srgb, var(--c-yellow) 10%, transparent);
   font-size: var(--fs-sm);
   color: var(--c-text-primary);
 }
 
 .ev-alert[data-kind="failed"] {
-  border-inline-start-color: var(--c-danger);
-  background: color-mix(in srgb, var(--c-danger) 10%, transparent);
+  border-inline-start-color: var(--c-red);
+  background: color-mix(in srgb, var(--c-red) 10%, transparent);
 }
 
 /* A deliberate stop is not a fault, so it takes the quiet treatment: the reader
@@ -201,6 +261,12 @@
    Timeline — where the time went, and what overlapped
    -------------------------------------------------------------------------- */
 
+/* The ONE capped region left, deliberately, now that the page scrolls. This is a
+   fixed-size READOUT (one bar per leaf plus one scale number), not a content
+   region: uncapped it puts ~700px of chart above the tree on a fifty-step run, so
+   the tree and the detail pane would be unreachable without scrolling past it.
+   Nothing is clipped by it — a chart inside its own viewport is not trapped
+   content. Two lines reverse it if that trade ever changes. */
 .ev-tl {
   flex: 0 0 auto;
   max-block-size: 11rem;
@@ -297,12 +363,12 @@
 }
 
 .ev-tl-lane[data-state="fail"] .ev-tl-bar {
-  background: var(--c-danger);
+  background: var(--c-red);
 }
 
 .ev-tl-lane[data-state="warn"] .ev-tl-bar,
 .ev-tl-lane[data-state="input"] .ev-tl-bar {
-  background: var(--c-warning);
+  background: var(--c-yellow);
 }
 
 .ev-tl-lane[data-state="waiting"] .ev-tl-bar {
@@ -337,16 +403,19 @@
    -------------------------------------------------------------------------- */
 
 .ev-panes {
-  flex: 1 1 0;
-
-  /* A FLOOR, not just `min-height: 0`. The panes are the primary content and the
-     results disclosure below them is a flex sibling, so opening a run with three
-     reports crushed the tree and the detail pane to ~90px — measured, and it made
-     the page unusable at the moment a reader was trying to read it. The floor is
-     what makes results borrow height from the timeline first and from nothing else. */
-  min-block-size: 16rem;
+  /* SIZES TO CONTENT, like every other region now that the page scrolls. The
+     `min-block-size: 16rem` floor that used to sit here existed because the
+     results disclosure was a flex sibling competing for a fixed height and
+     crushed the panes to ~90px when opened; with nothing clamped to the
+     scrollport, nothing crushes anything and there is no competition to floor. */
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: minmax(0, 22rem) minmax(0, 1fr);
+
+  /* Each pane shrink-wraps its own content instead of stretching to the taller
+     sibling's height — a short tree beside a long transcript would otherwise be
+     a mostly-empty box the height of the page. */
+  align-items: start;
   gap: var(--sp-3);
 }
 
@@ -358,11 +427,11 @@
 @container exec-view (width < 52rem) {
   .ev-panes {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-  }
 
-  .ev-pane-tree {
-    max-block-size: 14rem;
+    /* Both rows size to content: the page is the scroller, so a stacked tree
+       keeps its full height rather than being capped into a 14rem scrollport
+       above the detail. */
+    grid-template-rows: auto auto;
   }
 }
 
@@ -372,7 +441,7 @@
    wants — the page's whole point is that the thing being read gets the room. */
 .ev-panes.ev-panes-flat {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto;
 }
 
 /* The detail pane's own name row goes with the tree, and that is the same
@@ -389,10 +458,12 @@
   display: none;
 }
 
+/* NO `overflow` on either axis. A pane used to be its own scrollport, which is
+   what made a fifty-step tree and a long transcript two boxes to scroll inside a
+   page that could not scroll at all; the page owns scrolling now. `min-width: 0`
+   stays — it is the grid track's, not a scroll concern. */
 .ev-pane {
   min-width: 0;
-  min-height: 0;
-  overflow-y: auto;
   padding: var(--sp-3);
   background: var(--c-bg-secondary);
   border-radius: var(--r-lg);
@@ -402,10 +473,13 @@
    Tree — the structure, containers included
    -------------------------------------------------------------------------- */
 
+/* Real separation between top-level entries, because a top-level container is a
+   BORDERED BOX now and two boxes a hairline apart read as one. Rows INSIDE a box
+   stay tight — `.ev-kids` keeps its own hairline gap. */
 .ev-tree {
   display: flex;
   flex-direction: column;
-  gap: 0.0625rem;
+  gap: var(--sp-2);
 }
 
 .ev-kids {
@@ -415,6 +489,61 @@
 }
 
 .ev-kids[hidden] {
+  display: none;
+}
+
+/* THE GROUP BOX: a top-level container (a `sequence` / `repeat` / `parallel` /
+   `watch` with children) is a bordered box whose own row is its filled header, and
+   its children sit inside it with NO indent — the box IS the hierarchy, which is
+   the whole point of the grouping. Same skin as `.run-step` in the transcript card,
+   so a reader learns one shape.
+
+   A top-level LEAF gets no box, which is the common case: `runToExec` unwraps a
+   sequential root, so a flat workflow is all depth-0 leaves and renders exactly as
+   before. Confirm this item against a run whose recipe has a `repeat` or a
+   `parallel`. */
+.ev-row.ev-group {
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-primary);
+  overflow: hidden;
+}
+
+/* The filled header. Radius 0 because the box's `overflow: hidden` clips the
+   corners, while `.ev-row-main` carries its own `--r` for the un-boxed case. */
+.ev-row.ev-group > .ev-row-main {
+  background: var(--c-bg-tertiary);
+  border-radius: 0;
+}
+
+/* Hovering a coloured fill MIXES TOWARD THE INK (vibekit-ui.md, the tab-close
+   pattern): the plain `:hover` rule sets `--c-bg-tertiary`, which is a no-op on a
+   head already filled with it. */
+.ev-row.ev-group > .ev-row-main:hover {
+  background: color-mix(in srgb, var(--c-text-primary) 8%, var(--c-bg-tertiary));
+}
+
+/* So the last child row does not sit flush on the box edge. */
+.ev-row.ev-group > .ev-kids {
+  padding-block-end: var(--sp-1);
+}
+
+/* The NESTING MARKER for a sub-sub-item, `ICON_TAB_SUBTAB` — the same glyph and the
+   same carrier the tab strip's sub-tab row uses (`.tab .tab-nest`, 12-tabs.css), so
+   nesting reads one way across the app. `aria-hidden`: the row's `aria-label`
+   already carries the structure.
+
+   The `[hidden]` companion is REQUIRED, not defensive — there is no author
+   `[hidden]` rule in this tree, so the UA sheet's loses the specificity tie to the
+   bare class above, exactly as `.ev-inputs[hidden]` records. */
+.ev-nest {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  color: var(--c-text-tertiary);
+}
+
+.ev-nest[hidden] {
   display: none;
 }
 
@@ -437,7 +566,13 @@
 
   /* The indent is the row's, from its own depth, so a nested container needs no
      wrapper with padding — which is what keeps the reconcile an ordering pass over
-     flat elements rather than a tree of boxes to rebuild. */
+     flat elements rather than a tree of boxes to rebuild.
+
+     `--ev-depth` is now ZERO for depth 0 AND depth 1 (`tree.ts` writes
+     `depth >= 2 ? depth - 1 : 0`): a direct child of a top-level group is inside
+     that group's box, and the box is the hierarchy, so indenting it too would say
+     the same thing twice. Only a sub-sub-item indents, one step per level past 1,
+     and it also takes the `↳` glyph. */
   padding-block: 0.1875rem;
   padding-inline: calc(var(--sp-1) + var(--ev-depth, 0) * var(--sp-3)) var(--sp-1);
   border-radius: var(--r);
@@ -533,12 +668,12 @@
 }
 
 .ev-row[data-state="fail"] > .ev-row-main > .ev-state {
-  color: var(--c-danger);
+  color: var(--c-red);
 }
 
 .ev-row[data-state="warn"] > .ev-row-main > .ev-state,
 .ev-row[data-state="input"] > .ev-row-main > .ev-state {
-  color: var(--c-warning);
+  color: var(--c-yellow);
 }
 
 /* Running and waiting carry no character, so the RING is the glyph and the two
@@ -548,8 +683,22 @@
 .ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before {
   content: "";
   display: block;
-  inline-size: 0.6875rem;
-  block-size: 0.6875rem;
+
+  /* `--dot-size`, so this column is ONE size: the two in-flight rings, the
+     pending ring below and the three settled marks (`icons.ts` `outcomeIcon`, now
+     drawn at the tab dot's footprint) all measure 8px. It was 11px against their
+     8, which made the state a reader is waiting on the largest mark in the pane
+     and left the column at three sizes.
+
+     The BAND is what still separates a ring from the hollow one below: 2px here
+     against the 0.0938rem the pending ring declares, which Chromium snaps to 1px
+     because a border width is an integer — so the rendered separation is heavy
+     ring against hairline, wider than the authored numbers suggest. Band width is
+     the same channel `12-tabs.css` relies on for its reduced-motion donut, so it
+     is a separation this app already reads rather than one invented here; motion
+     then carries `running` off `waiting`. */
+  inline-size: var(--dot-size);
+  block-size: var(--dot-size);
   border: 0.125rem solid var(--c-accent);
   border-radius: 50%;
 }
@@ -574,8 +723,8 @@
 .ev-row[data-state="pending"] > .ev-row-main > .ev-state::before {
   content: "";
   display: block;
-  inline-size: 0.5rem;
-  block-size: 0.5rem;
+  inline-size: var(--dot-size);
+  block-size: var(--dot-size);
   border: 0.0938rem solid var(--c-text-tertiary);
   border-radius: 50%;
   opacity: 0.7;
@@ -704,7 +853,7 @@
 }
 
 .ev-detail[data-state="fail"] .ev-d-state {
-  color: var(--c-danger);
+  color: var(--c-red);
 }
 
 .ev-detail[data-state="ok"] .ev-d-state {
@@ -713,7 +862,7 @@
 
 .ev-detail[data-state="input"] .ev-d-state,
 .ev-detail[data-state="warn"] .ev-d-state {
-  color: var(--c-warning);
+  color: var(--c-yellow);
 }
 
 .ev-d-dur {
@@ -763,8 +912,8 @@
 .ev-d-fail {
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r);
-  border-inline-start: 0.1875rem solid var(--c-danger);
-  background: color-mix(in srgb, var(--c-danger) 10%, transparent);
+  border-inline-start: 0.1875rem solid var(--c-red);
+  background: color-mix(in srgb, var(--c-red) 10%, transparent);
   font-size: var(--fs-sm);
   color: var(--c-text-primary);
   overflow-wrap: anywhere;
@@ -841,13 +990,64 @@
   display: none;
 }
 
+/* The note's ACTION slot: a door beside the sentence, for the one empty state that
+   has somewhere to send a reader (a chat-parented run's steps live in the
+   launching conversation). The companion [hidden] rule is required for the reason
+   every display-declaring .ev-* rule here carries one: there is no author [hidden]
+   rule in this tree, so the UA rule loses the specificity tie. */
+.ev-d-empty-action {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-block-start: var(--sp-2);
+}
+
+.ev-d-empty-action[hidden] {
+  display: none;
+}
+
+/* The link, copied from `.run-open` / `.run-open:hover` / `.run-open-icon`
+   (css/27-run-card.css) into the `ev-` vocabulary. Copied rather than shared
+   because that file is scoped under `.run-card` on purpose; the `min-height` plus
+   `padding-inline` are what supply the 24px hit target on a small-type row
+   (web.md hit targets). */
+.ev-d-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+  color: var(--c-text-secondary);
+  text-decoration: none;
+  font-size: var(--fs-sm);
+  min-height: 1.5rem;
+  padding-inline: var(--sp-1);
+  border-radius: var(--r-sm);
+  transition:
+    color var(--dur-micro),
+    background var(--dur-micro) var(--ease-standard);
+}
+
+.ev-d-link:hover {
+  color: var(--c-text-primary);
+  background: color-mix(in srgb, var(--c-text-primary) 8%, transparent);
+}
+
+.ev-d-link-icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
 /* --------------------------------------------------------------------------
    Results — what the execution produced, rolled up
    -------------------------------------------------------------------------- */
 
-/* A DISCLOSURE at the foot, collapsed by default. A report is thousands of
-   characters and the panes above are what a live execution is watched through, so
-   shut it costs one row; open it is what a review of a finished one is for. */
+/* A DISCLOSURE at the foot, OPEN by default. A run's product is what a reader opens
+   the page for, and with the page scrolling an open roll-up costs page height rather
+   than pane height — which is what made it collapsed before.
+
+   `overflow: hidden` clips the box's own rounded corners while the disclosure
+   animates its height. It is NOT a content cage: nothing inside is capped. */
 .ev-results {
   flex: 0 0 auto;
   background: var(--c-bg-secondary);
@@ -911,19 +1111,16 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* FULL NATURAL HEIGHT. The `max-block-size: 12rem` + `overflow-y: auto` that used
+   to sit here was a peek sized for scanning, and it existed because this region
+   competed with the panes for a fixed page height. The page scrolls now, so a
+   report renders whole and the reader scrolls the document. `transition: height`
+   stays — that is the disclosure animating, not a cap. */
 .ev-r-body {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
+  gap: var(--sp-2);
   padding: 0 var(--sp-3) var(--sp-3);
-
-  /* A PEEK with its own scrollport, deliberately small. This region is a roll-up —
-     "what did the run produce", as an index — and the place to READ one report at
-     length is the detail pane, where a node's own output has the full width and no
-     competition. Sizing it for reading is what took the panes' height away, so it is
-     sized for scanning instead and scrolls for the rest. */
-  max-block-size: 12rem;
-  overflow-y: auto;
   transition: height var(--dur-standard) var(--ease-standard);
 }
 
@@ -931,40 +1128,92 @@
   padding-block-end: 0;
 }
 
-.ev-r-key {
+/* ONE BOX PER CAPTURE, collapsible, `.run-step`'s skin in the `ev-` vocabulary —
+   the same bordered-box-with-a-filled-header shape the transcript card uses, so a
+   reader learns one idiom. */
+.ev-r-item {
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-primary);
+  overflow: hidden;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.ev-r-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  min-block-size: var(--btn-h);
+  cursor: pointer;
+  user-select: none;
+  min-width: 0;
+  transition: background var(--dur-micro) var(--ease-standard);
+
+  &:hover {
+    background: var(--c-hover);
+  }
+
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset-inset);
+  }
+}
+
+/* `.ev-r-twist`'s box without its `align-self: center`: this head is
+   `align-items: center`, so the grid box is already centred. */
+.ev-r-item-twist {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  inline-size: 1rem;
+  color: var(--c-text-control);
+}
+
+/* Keyed on the TRIGGER's own `aria-expanded`, like every other disclosure here. */
+.ev-r-item-head[aria-expanded="true"] > .ev-r-item-twist > .disclosure-chevron {
+  --chev-turn: 0deg;
+}
+
+.ev-r-item-key {
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
-  margin-block-start: var(--sp-2);
-}
-
-/* The radius rung below the region's own, per the concentric rule: `--r-lg` outside
-   with `--sp-3` of inline padding leaves `--r` here. */
-.ev-r-val {
-  padding: var(--sp-2) var(--sp-3);
-  background: var(--c-bg-primary);
-  border-radius: var(--r);
   min-width: 0;
-
-  /* BOTH axes stated, because `overflow-x: auto` alone was not doing what it read
-     as: a `visible` sibling axis computes to `auto`, so this box was already a
-     scroll container in the block axis, and a scroll container's automatic minimum
-     size is 0. Its parent is a flex column capped at 12rem, so every one of these
-     shrank to nothing and the 8px padding was all that was left — measured: 16px
-     tall holding 331px of report, a 0px content box, so the text rendered clipped
-     through the middle of its glyphs. `flex-shrink: 0` is what the cap above always
-     meant: the BODY scrolls, the rows do not collapse.
-
-     Then a per-row ceiling, because the region is an INDEX: unshrunk, one 674px
-     report filled the whole 12rem window and buried the other three keys, which
-     costs the roll-up the thing it is for. About four lines each, and each row
-     scrolls its own remainder. */
-  overflow: auto;
-  flex-shrink: 0;
-  max-block-size: 4.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.ev-r-empty {
+/* NO `overflow` declaration here, and that is load-bearing rather than an omission:
+   an `auto` on either axis makes this a scroll container with a per-row ceiling to
+   fight, which is exactly the defect the retired `.ev-r-val` recorded (a 331px
+   report rendered in a 16px box, clipped through the middle of its glyphs).
+
+   It still COMPUTES to `hidden`, from `.uip-disclosure-region` in the ui-primitives
+   base — that is the height animation's clip, shared by every disclosure in the app
+   including `.ev-r-body`. It costs nothing now that nothing above is capped:
+   measured on the live page, all four regions report `scrollHeight ===
+   clientHeight`, with the tallest report at 913px. */
+.ev-r-item-body {
+  padding: var(--sp-2) var(--sp-3);
+  min-width: 0;
+  transition: height var(--dur-standard) var(--ease-standard);
+}
+
+/* A closed box is its header and nothing else. The disclosure takes the region's
+   HEIGHT to 0 and the padding survives it, so without this a collapsed box carries
+   a 16px empty strip under its head — measured. Same rule and same reason as
+   `.run-body[aria-hidden="true"]` (27-run-card.css) and
+   `.ev-r-body[aria-hidden="true"]` above. */
+.ev-r-item-body[aria-hidden="true"] {
+  padding-block: 0;
+}
+
+/* An empty capture is a FACT — a source writes a key only for a node that
+   captured — so it gets a box like any other and says why it is empty. */
+.ev-r-item-empty {
   font-size: var(--fs-sm);
   color: var(--c-text-tertiary);
 }

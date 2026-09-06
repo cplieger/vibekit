@@ -110,6 +110,41 @@ func (t *pendingPermsTracker) ClearForChat(chatID vibekit.ChatID) {
 	t.mu.Unlock()
 }
 
+// ClearForRun drops every unresolved decision a workflow RUN raised, wherever it
+// is filed.
+//
+// The counterpart to the client's run-scoped sweep, and the reason it exists: a
+// step's permission / elicitation / user_input is request-shaped and dies with its
+// bridge, but it is tracked HERE for the connect-time replay — so a client that
+// dropped the card locally when the run ended was re-offered it on the next SSE
+// connect, and the launching chat lit up again for a run that is over.
+//
+// The run comes off the PAYLOAD because the key does not carry one (see permKey).
+// An empty id is refused: `RunID` is empty on every ordinary chat ask too, so it
+// would match the whole tracker rather than one run.
+//
+// It does NOT announce. `SettledByMoot` is the only settlement that fits a
+// nobody-answered retirement and its own contract restricts it to a run ask — a
+// request-shaped ask is claimed by whoever answers its JSON-RPC request, so there
+// is no third party to retire it out from under them. The precedent for a silent
+// drop is ClearForChat above, which retires a chat's entries at teardown the same
+// way. Accepted cost, stated: another client currently RENDERING one of these
+// cards keeps it until its next reload. What the clear buys is the durable half —
+// the replay stops re-offering it, and a late answer is correctly refused by
+// TakeIfPresent.
+func (t *pendingPermsTracker) ClearForRun(workflowID string) {
+	if workflowID == "" {
+		return
+	}
+	t.mu.Lock()
+	for k, evt := range t.perms {
+		if vibekit.DecisionRunID(evt.Payload) == workflowID {
+			delete(t.perms, k)
+		}
+	}
+	t.mu.Unlock()
+}
+
 // List returns a snapshot of the unresolved permission events, optionally
 // filtered to a single chat. This feeds the connect-time replay, and it returns
 // every tracked entry: the set it offers is exactly the set TakeIfPresent will
@@ -156,6 +191,12 @@ func (t *pendingPermsTracker) List(chatFilter vibekit.ChatID) []vibekit.ServerEv
 // by chatID.
 func (b *bus) ClearPendingPermsForChat(chatID vibekit.ChatID) {
 	b.pendingPerms.ClearForChat(chatID)
+}
+
+// ClearPendingPermsForRun drops every unresolved decision a run raised, at the
+// run's terminal transition. See ClearForRun for why it is silent.
+func (b *bus) ClearPendingPermsForRun(workflowID string) {
+	b.pendingPerms.ClearForRun(workflowID)
 }
 
 // TakePendingPerm claims an unanswered decision so exactly one surface can

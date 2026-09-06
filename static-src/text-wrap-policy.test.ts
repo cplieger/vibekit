@@ -52,10 +52,26 @@ describe("text-wrap policy", () => {
     // optimization on every keystroke, so a draft visibly re-wrapped while
     // typing. With the body rule gone there is nothing to undo, and a reset that
     // resets a default is the line that rots.
-    const reset = loadCSS("02-reset.css");
-    const control = allRules(reset).find((r) => r.selector === ":where(input, textarea, select)");
-    expect(control, "the caret-color rule is still there").toBeDefined();
-    expect(control?.body).not.toMatch(/text-wrap/);
+    //
+    // A SWEEP over every form-control selector rather than a lookup of one rule.
+    // It used to key on `:where(input, textarea, select)` and assert that rule
+    // existed, which tied this guard to whatever ELSE that rule happened to
+    // carry: the anchor was a `caret-color` declaration with nothing to do with
+    // text-wrap, so deleting that unrelated line took the guard's subject with
+    // it. Sweeping also covers a carve-out re-added under a different selector or
+    // in a different sheet, which the lookup could not see.
+    const offenders: string[] = [];
+    for (const name of ownSheets()) {
+      for (const rule of allRules(loadCSS(name))) {
+        if (!/\b(input|textarea|select)\b/.test(rule.selector)) {
+          continue;
+        }
+        if (/text-wrap/.test(rule.body)) {
+          offenders.push(`${name} { ${rule.selector} }`);
+        }
+      }
+    }
+    expect(offenders, "no form-control rule sets text-wrap").toEqual([]);
   });
 
   it("leaves `balance` alone", () => {

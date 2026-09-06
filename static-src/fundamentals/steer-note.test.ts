@@ -40,11 +40,11 @@ describe("the read state", () => {
 
     expect(n.dataset["state"]).toBe("read");
     expect(n.dataset["origin"]).toBe("user");
-    expect(textOf(n, ".steer-note-label")).toBe("Your mid-turn message");
+    expect(textOf(n, ".steer-note-label")).toBe("Mid-turn message");
     expect(textOf(n, ".steer-note-text")).toBe("actually target main");
     // The label and the glyph are both visual, so the state has to be in the
     // accessible name too.
-    expect(n.getAttribute("aria-label")).toBe("Your mid-turn message: actually target main");
+    expect(n.getAttribute("aria-label")).toBe("Mid-turn message: actually target main");
   });
 
   // What the agent said it did, on the row where the course actually changed.
@@ -56,7 +56,7 @@ describe("the read state", () => {
     // identifiable as the thing that was sent.
     expect(textOf(n, ".steer-note-text")).toBe("actually target main");
     expect(n.getAttribute("aria-label")).toBe(
-      "Your mid-turn message: actually target main. The agent did: rebased onto main instead",
+      "Mid-turn message: actually target main. The agent did: rebased onto main instead",
     );
   });
 
@@ -65,7 +65,7 @@ describe("the read state", () => {
   it("renders no account line when the agent said nothing about it", () => {
     const n = note({ text: "one" });
     expect(n.querySelector(".steer-note-ack")).toBeNull();
-    expect(n.getAttribute("aria-label")).toBe("Your mid-turn message: one");
+    expect(n.getAttribute("aria-label")).toBe("Mid-turn message: one");
   });
 
   // A message the agent has already read cannot be unsent, so there is no control
@@ -187,7 +187,7 @@ describe("the message keeps its shape", () => {
     // as one string and the ack is a one-line verdict.
     expect(textOf(n, ".steer-note-ack")).toBe("did the thing");
     expect(n.getAttribute("aria-label")).toBe(
-      "Your mid-turn message: first line second line. The agent did: did the thing",
+      "Mid-turn message: first line second line. The agent did: did the thing",
     );
   });
 });

@@ -119,13 +119,19 @@ describe("chat.cancel_turn", () => {
 });
 
 describe("chat.load_sessions", () => {
+  /** The reply as the server sends it. The two per-list verdicts carry no
+   *  omitempty on the Go side, so they are REQUIRED in the generated decoder this
+   *  action now reads through — a reader must not be able to take an absent
+   *  verdict for success. */
+  const empty = { sessions: [], runs: [], sessions_state: "ready", runs_state: "ready" };
+
   it("GETs /api/sessions and dedupes concurrent calls", async () => {
     vi.useFakeTimers();
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
           setTimeout(() => {
-            r(new Response(JSON.stringify({ sessions: [], runs: [] }), { status: 200 }));
+            r(new Response(JSON.stringify(empty), { status: 200 }));
           }, 50),
         ),
     );
@@ -134,10 +140,20 @@ describe("chat.load_sessions", () => {
     const p2 = loadSessions.dispatch(undefined);
     await vi.advanceTimersByTimeAsync(50);
     const [r1, r2] = await Promise.all([p1, p2]);
-    expect(r1).toEqual({ sessions: [], runs: [] });
+    expect(r1).toEqual(empty);
     expect(r1).toEqual(r2);
     expect(mockFetch).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
+  });
+
+  it("reports a reply missing a read verdict as a failure, not as an empty list", async () => {
+    // The decoder is what makes the verdicts load-bearing: without it "the read
+    // failed" and "nothing to resume" are the same 200 with an empty array, which
+    // is the conflation the History picker now branches on.
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ sessions: [], runs: [] })));
+    const { loadSessions } = await import("./chat.js");
+
+    expect(await loadSessions.dispatch(undefined)).toBe(null);
   });
 });
 

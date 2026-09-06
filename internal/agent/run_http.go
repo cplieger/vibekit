@@ -1,31 +1,15 @@
 package agent
 
-// The run read surface: GET /api/runs/{id}.
+// The run surface: the two reads, and the routes that forward to KAS's own control
+// verbs. vibekit adds no control of its own — no scheduling, no retry policy.
 //
-// ONE route. KAS's `state` and `nodePlan` pass through VERBATIM: the node tree
-// is KAS's structure, it already carries every execution fact a reader wants,
-// and a projected copy here would be a second representation of a thing
-// vibekit does not own.
-//
-// TWO routes an earlier design specified are absent:
-//
-//   - `GET /api/runs` (the cross-chat list): the run board it served is
-//     deleted, and the history surface already lists runs from the same
-//     `_kiro/workflow/list` call beside previous chats.
-//   - `GET /api/runs/{id}/steps/{nodeId}` (a step's own transcript): cannot be
-//     served without new bridge machinery, and a live step's content already
-//     reaches the launching chat's transcript correctly attributed while a
-//     finished step's product is its `capturedOutput`, which `inspect`
-//     returns.
-//
-// The mutations here are the four run-control verbs: cancel, pause, resume and
-// retry. All four are KAS's own; this file only routes to them. Earlier
-// guidance withheld all controls on the theory that offering one meant
-// BUILDING one; the 2.16.1 sweep established every verb is already a live
-// handler in the pinned binary, so the choice was route-or-not, and withholding
-// the route left a paused run with no way forward except deleting the chat.
-// vibekit adds no control of its own, no scheduling, no retry policy and no
-// delete beyond what each route forwards to one native verb.
+// The RUN read passes `state` and `nodePlan` through VERBATIM: a projected copy
+// would be a second representation of a structure vibekit does not own.
+
+// The STEP read is what passthrough cannot answer, since `inspect` carries only
+// what a step chose to DECLARE. It loads that step's own KAS session and projects
+// the replay (step_transcript.go), and its three-valued verdict is what makes a
+// LIVE step and a reclaimed one distinguishable — see vibekit.md, `run_step`.
 
 import (
 	"context"
@@ -34,6 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/rpcerr"
@@ -44,13 +29,10 @@ import (
 
 // handleRun: GET /api/runs/{workflowId} → one run's full state.
 //
-// Two things happen besides the passthrough:
-//
-//  1. The step sessions in the returned tree are recorded — the only recovery
-//     path for step-frame attribution after a container restart empties that
-//     registry while the run carries on.
-//  2. A missing VERB is distinguished from a missing RUN, so "this build has
-//     no workflow engine" doesn't report as "your run was deleted".
+// Two things happen besides the passthrough. The step sessions in the returned tree
+// are RECORDED, the only recovery path for step-frame attribution after a restart
+// empties that registry mid-run; and a missing VERB is distinguished from a missing
+// RUN, so a build with no workflow engine does not report as a deleted run.
 func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -85,17 +67,54 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	httpreply.WriteRawJSON(w, raw)
 }
 
+// handleStepTranscript: GET /api/runs/{id}/steps/{path...} → one step's transcript.
+//
+// The path arrives with RAW separators and decoded segments, so it is compared
+// against the joined `StepSession.Path` as it stands; a node id containing a `/` is
+// therefore not addressable. The workflow id is its FIRST segment and the mismatch is
+// ASSERTED, or a path from another run would 404 confidently. EVERY 4xx here is
+// SETTLED — asking again cannot change it — so a `gone` or `unavailable` verdict is a
+// 200 instead: those answer ABOUT the transcript, where a 5xx is transient.
+func (rr *runRoutes) handleStepTranscript(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpreply.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		httpreply.BadRequest(w, "missing workflow id")
+		return
+	}
+	nodePath := r.PathValue("path")
+	if nodePath == "" {
+		httpreply.BadRequest(w, "missing step path")
+		return
+	}
+	if first, _, _ := strings.Cut(nodePath, "/"); first != id {
+		httpreply.BadRequest(w, "the step path does not belong to this run")
+		return
+	}
+	out, err := rr.runs.StepTranscript(r.Context(), id, nodePath)
+	if err != nil {
+		if errors.Is(err, errStepUnknown) {
+			httpreply.NotFound(w, errStepUnknown.Error())
+			return
+		}
+		slog.Warn("step transcript failed", "workflow_id", id, "node_path", nodePath,
+			"error", err, "detail", rpcerr.Details(err))
+		httpreply.InternalError(w, errors.New("step transcript unavailable"))
+		return
+	}
+	webhttp.WriteJSON(w, out)
+}
+
 // handleLiveRuns: GET /api/runs/live → every live lease, projected to
-// `{workflow_id, chat_id}`.
+// `{workflow_id, chat_id, executing}`.
 //
-// PRESENCE-based, over vibekit-local state only: a lease exists if and only if
-// vibekit put the run on the wire and no terminal transition released it, so
-// no KAS call is needed to serve it. The consumer is the client's eviction
-// sweep, which must not evict a chat whose agent still has a run in flight.
-//
-// Staleness errs toward keeping: a missed terminal frame leaves the lease live
-// until the next boot sweep releases it, which costs memory only, never
-// correctness.
+// PRESENCE-based over vibekit-local state, so it costs no KAS call: `executing` is
+// Lease.Bounded(), and a real status would mean one `inspect` per lease behind a
+// page load. Why a field rather than a filter here: vibekit.LiveRun. Staleness errs
+// toward KEEPING, which costs memory and not correctness.
 func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -107,23 +126,20 @@ func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, r *http.Request) {
 		out.Runs = append(out.Runs, vibekit.LiveRun{
 			WorkflowID: held[i].WorkflowID,
 			ChatID:     held[i].ChatID,
+			Executing:  held[i].Bounded(),
 		})
 	}
 	webhttp.WriteJSON(w, out)
 }
 
-// status reads one run's current status via `_kiro/workflow/inspect`.
-// Returns "" when the run is unknown, which the caller turns into a 404.
-//
-// Its own inspect call rather than a shared cache: a control decision must be
-// made against the status as of NOW, not the older status the client rendered
-// its buttons from.
+// status reads one run's current status via `_kiro/workflow/inspect`, or "" when the
+// run is unknown, which the caller turns into a 404. Its own call rather than a
+// shared cache: a control decision is made against the status as of NOW.
 func (rr *runRoutes) status(ctx context.Context, workflowID string) (string, error) {
 	raw, err := rr.runs.rawInspect(ctx, workflowID)
 	if err != nil {
-		// An unknown run and an unavailable engine are both "no status to gate
-		// on" rather than a fault to report: the caller 404s, and the verb is
-		// not attempted.
+		// An unknown run and an unavailable engine are both "no status to gate on"
+		// rather than a fault: the caller 404s and the verb is not attempted.
 		if errors.Is(err, workflow.ErrUnknownMethod) {
 			return "", nil
 		}
@@ -185,20 +201,15 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, vibekit.RunLaunchedResponse{WorkflowID: id, Name: name})
 }
 
-// handleCancel: POST /api/runs/{id}/cancel → ask the run to stop. The
-// response confirms the ASK, not the stop: cancel is a node-boundary verb, so
-// the terminal run_complete (and the run_finished SSE it becomes) follows at
-// the in-flight node's end.
+// handleCancel: POST /api/runs/{id}/cancel → ask the run to stop. The response
+// confirms the ASK, not the stop: cancel is a node-boundary verb, so the terminal
+// frame follows at the in-flight node's end.
 func (rr *runRoutes) handleCancel(w http.ResponseWriter, r *http.Request) {
 	rr.controlHandler(w, r, runVerbCancel)
 }
 
-// handlePause / handleResume are the two run-control verbs added once the
-// sweep established they were already live server-side. Each is the same shape as
-// cancel; the difference is which statuses permit them, which runVerb carries.
-//
-// Retry is absent by design -- see run_host.go, where the reason lives with the
-// mechanism that causes it.
+// handlePause / handleResume are cancel's shape; the difference is which statuses
+// permit them, which runVerb carries.
 func (rr *runRoutes) handlePause(w http.ResponseWriter, r *http.Request) {
 	rr.controlHandler(w, r, runVerbPause)
 }
@@ -211,19 +222,16 @@ func (rr *runRoutes) handleRetry(w http.ResponseWriter, r *http.Request) {
 	rr.controlHandler(w, r, runVerbRetry)
 }
 
-// handleDelete: DELETE /api/runs/{id} — the History row's delete. Removes the
-// run from KAS (its directory included) and drops vibekit's lease, timer and
-// recorded end reason. Not recoverable, which is why it is the one run verb the
-// client confirms before sending.
+// handleDelete: DELETE /api/runs/{id} — the History row's delete. Removes the run
+// from KAS and drops vibekit's lease, timer and recorded end reason. Not
+// recoverable, which is why the client confirms it before sending.
 func (rr *runRoutes) handleDelete(w http.ResponseWriter, r *http.Request) {
 	rr.controlHandler(w, r, runVerbDelete)
 }
 
-// handleStepStatus: POST /api/runs/{id}/step — mark an IN-FLIGHT step
-// completed or failed so a wedged run advances.
-//
-// Its own handler rather than a runVerb because it carries a body (which step,
-// which status) and the verb table's issue signature is id-only.
+// handleStepStatus: POST /api/runs/{id}/step — mark a step completed, failed or
+// running so a wedged run advances. Its own handler rather than a runVerb because it
+// carries a body, where the verb table's issue signature is id-only.
 func (rr *runRoutes) handleStepStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -242,26 +250,33 @@ func (rr *runRoutes) handleStepStatus(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "invalid step-status payload")
 		return
 	}
-	if err := rr.runs.SetStepStatus(r.Context(), id, body.NodeID, body.Status); err != nil {
-		if errors.Is(err, errRunNotHosted) {
-			httpreply.Conflict(w, err.Error())
-			return
-		}
-		httpreply.BadRequest(w, err.Error())
-		return
+	// Three arms, because the re-host put a SERVER fault on a path that had only ever
+	// carried a caller's own mistake: `errRunHostStart` is a failed spawn here, and
+	// answering 400 with its text tells the reader they asked wrongly and hands them an
+	// internal path to read. `errStepStatusRefused` covers every state-of-the-world
+	// refusal and takes the 409 the answer route's own do — a KAS decline, and vibekit
+	// withholding a write it cannot address. Everything else is a validation refusal or
+	// a KAS throw: 400.
+	err := rr.runs.SetStepStatus(r.Context(), id, body.NodeID, body.Status)
+	switch {
+	case err == nil:
+		webhttp.Ok(w)
+	case errors.Is(err, errRunHostStart):
+		slog.Warn("run step status: could not host the run", "workflow_id", id,
+			"node_id", body.NodeID, "error", err)
+		httpreply.InternalError(w, errors.New("step status update failed"))
+	case errors.Is(err, errStepStatusRefused):
+		httpreply.Conflict(w, rpcerr.Text(err))
+	default:
+		httpreply.BadRequest(w, rpcerr.Text(err))
 	}
-	webhttp.Ok(w)
 }
 
 // handleAnswer: POST /api/runs/{id}/answer — answer a step parked on a question.
+// Its own handler for handleStepStatus's reason: it carries a body.
 //
-// Its own handler rather than a runVerb, for handleStepStatus's reason: it carries
-// a body (which ask, and the words), where the verb table's issue signature is
-// id-only.
-//
-// A REST call on the run surface rather than a `/api/command` envelope, because
-// every other run mutation is REST and this ask is not chat-scoped — a parentless
-// run's ask has no chat id to put in that envelope.
+// REST rather than an `/api/command` envelope, because every other run mutation is
+// REST and a parentless run's ask has no chat id to put in that envelope.
 func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -282,11 +297,19 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		webhttp.Ok(w)
 	case errors.Is(err, errAskAlreadySettled):
 		// A state of the world rather than a fault: another surface got there
-		// first, or the step moved on. The client retires its card on the
-		// `run_input_settled` frame either way.
+		// first. The client retires its card on `run_input_settled` either way.
 		httpreply.Conflict(w, err.Error())
-	case errors.Is(err, errRunNotHosted):
+	case errors.Is(err, errRunNotParked):
+		// Also a state of the world, and the one refusal the reader can ACT on: the
+		// card is back (restoreAsk re-offered it), so 409 carries the retry sentence
+		// rather than a 400 telling them they asked wrongly.
 		httpreply.Conflict(w, err.Error())
+	case errors.Is(err, errRunHostStart):
+		// handleStepStatus's arm, same reason: a failed spawn is this server's
+		// fault, so it must not read as the caller's.
+		slog.Warn("run answer: could not host the run", "workflow_id", id,
+			"ask_id", body.AskID, "error", err)
+		httpreply.InternalError(w, errors.New("answer failed"))
 	default:
 		slog.Warn("run answer failed", "workflow_id", id, "ask_id", body.AskID,
 			"error", err, "detail", rpcerr.Details(err))
@@ -294,25 +317,18 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// runVerb describes one run-control verb: how to issue it, and which run
-// statuses it is legal from.
+// runVerb describes one run-control verb: how to issue it, and which run statuses
+// it is legal from.
 //
-// The status gate exists because KAS's own refusals are throws that surface as
-// a -32603 with the reason buried in `error.data`, and two of them are
-// ordinary user timing rather than faults. Gating here turns those into a 409
-// naming the current status, and leaves -32603 to mean something actually went
-// wrong.
-//
-// KAS remains the authority: this is a pre-check against a status read one
-// round trip earlier, so a run that changes state in between still gets KAS's
-// refusal, forwarded verbatim.
+// The gate exists because KAS's refusals are throws surfacing as -32603 with the
+// reason buried in `error.data`, and two of them are ordinary user timing. Gating
+// here turns those into a 409 naming the status and leaves -32603 meaning a fault.
+// KAS remains the authority — this is a pre-check one round trip stale.
 type runVerb struct {
 	name  string
 	issue func(*Runs, context.Context, string) error
-	// method is the HTTP method the verb answers. Set EXPLICITLY on every verb
-	// rather than defaulting to POST when empty: four of the five are POSTs and
-	// the fifth is a DELETE, so an implicit default would make the odd one out the
-	// only verb whose method is stated, which is the wrong way round.
+	// method is set EXPLICITLY on every verb rather than defaulting to POST: an
+	// implicit default would leave the one DELETE as the only stated method.
 	method string
 	// from lists the statuses the verb is legal from. Empty means unrestricted.
 	from []string
@@ -387,16 +403,27 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 		}
 	}
 	if err := verb.issue(rr.runs, r.Context(), id); err != nil {
-		// A run with no live bridge here is a state of the world, not a fault,
-		// so it earns a 409 naming the situation rather than a 500.
-		if errors.Is(err, errRunNotHosted) {
-			slog.Info("run control unavailable: run not hosted here",
-				"verb", verb.name, "workflow_id", id)
-			httpreply.Conflict(w, err.Error())
-			return
-		}
 		slog.Warn("run control failed",
 			"verb", verb.name, "workflow_id", id, "error", err, "detail", rpcerr.Details(err))
+		// A START failure is tested FIRST, and the order is the whole point: a
+		// re-host whose handshake KAS itself refused puts an *RPCError UNDER
+		// errRunHostStart, so the type test below matches it and would report this
+		// server's failed spawn as a state of the run, carrying KAS's session-door
+		// text. The two body-carrying routes test it first for the same reason.
+		if errors.Is(err, errRunHostStart) {
+			httpreply.InternalError(w, errors.New(verb.name+" failed"))
+			return
+		}
+		// KAS's OWN refusal reaches the client, because the re-host made it the
+		// answer a reader gets most often: the `from` gate is one round trip stale,
+		// so a verb reaching a run whose state has since moved is refused BY KAS,
+		// and "pause failed" names neither the run's state nor a remedy. 409 for
+		// the same reason the gate above uses it — a state of the world, not a
+		// fault.
+		if _, fromKAS := errors.AsType[*vibekit.RPCError](err); fromKAS {
+			httpreply.Conflict(w, rpcerr.Text(err))
+			return
+		}
 		httpreply.InternalError(w, errors.New(verb.name+" failed"))
 		return
 	}

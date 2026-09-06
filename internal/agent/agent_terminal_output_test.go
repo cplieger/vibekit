@@ -755,7 +755,7 @@ func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 	stageTerminal(h, "agent-bg", "c1")
 
 	// It ends on the wire's own bracket — no prompt wrapper anywhere on this path.
-	h.coord.WireTurnEnd(ctx, "c1", vibekit.StopReasonEndTurn)
+	h.coord.WireTurnEnd(ctx, "c1", vibekit.StopReasonEndTurn, "")
 
 	// The user's next turn, with a command of its own.
 	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)

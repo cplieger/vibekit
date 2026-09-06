@@ -9,11 +9,15 @@
 // promise a distance that does not exist — the reader resumes expecting N new
 // blocks and lands on the view they parked at.
 //
-// Both directions are asserted, for both container kinds:
+// Both directions are asserted for the one container kind that has them:
 //   - a COLLAPSED delegate's blocks are not counted; expanding its card counts
-//     the same blocks;
-//   - a workflow step's blocks need BOTH containers open (the run card AND the
-//     step row inside it), because either one shut hides the step's body.
+//     the same blocks.
+//
+// A WORKFLOW STEP is the other half and it has no directions at all: its blocks
+// are DROPPED by the dispatcher, so nothing renders them and folding the run card
+// either way changes nothing. That used to be a four-case describe about needing
+// BOTH containers open (the card and the step row inside it); it is one case now,
+// asserting the count does not move.
 //
 // Reachability is the renderer's open-container registry now (messages-blocks
 // maintains it where the disclosures toggle), so the containers here are the
@@ -176,40 +180,53 @@ describe("the resume label counts only blocks the reader can reach", () => {
   });
 });
 
-describe("a workflow step needs BOTH of its containers open", () => {
+describe("a workflow step's blocks are never reachable", () => {
   const STEP = "wf:wf_1:wf_1/build";
+  // The launch, so the card exists to fold: it is the card's only creator now.
+  const launch = {
+    id: "t1",
+    title: "Run Workflow",
+    kind: "other",
+    status: "completed",
+    workflow_id: "wf_1",
+  };
   const stepBlocks = (): Block[] => [
     block("parent"),
+    { type: "tool_use", tool_call_id: "t1" } as Block,
     block("step out", STEP),
     block("step err", STEP),
   ];
   const cardHead = '.run-card[data-run="wf_1"] > .run-head';
-  const buildRow = '.run-step[data-node="wf_1/build"] > .run-step-head';
 
-  it("does not count a step whose ROW is collapsed, even with the card open", () => {
-    parkThenLand(stepBlocks());
-    // This is the mount state: a run card opens, its step rows do not.
-    expect(lastLabel()).toBe("1 new block");
-  });
+  /** Park, then land a message whose card is the launch and whose step blocks are
+   *  dropped. Same flow as `parkThenLand`, plus the tool call the card needs. */
+  function landWithLaunch(): string {
+    const chat = `c-wf-${String(Date.now())}${String(Math.random()).slice(2, 8)}`;
+    store.setSessions([session(chat)]);
+    store.setActive(chat);
+    scrollMock.readingState.mockReturnValue("reading");
+    onReading("reading");
+    store.appendMessage(chat, {
+      id: `m-wf-${String(Math.random()).slice(2, 8)}`,
+      role: "assistant",
+      ts: 2,
+      content: "",
+      blocks: stepBlocks(),
+      tool_calls: [launch],
+    } as unknown as Message);
+    return chat;
+  }
 
-  it("does not count a step whose CARD is collapsed, even with the row open", () => {
-    const chat = parkThenLand(stepBlocks());
-    toggleAndRepaint(chat, cardHead); // close the card (it mounts open)
-    toggleAndRepaint(chat, buildRow); // open the row inside it
-    expect(lastLabel()).toBe("1 new block");
-  });
-
-  it("counts the step's blocks when the card AND the row are open", () => {
-    const chat = parkThenLand(stepBlocks());
-    toggleAndRepaint(chat, buildRow);
-    expect(lastLabel()).toBe("3 new blocks");
-  });
-
-  it("keys a step by its own node path, not by its run", () => {
-    // A SECOND step of the same run: opening its row must not vouch for the
-    // build step's blocks — `wf:<run>:<node>` keys the row, not the run.
-    const chat = parkThenLand([...stepBlocks(), block("lint out", "wf:wf_1:wf_1/lint")]);
-    toggleAndRepaint(chat, '.run-step[data-node="wf_1/lint"] > .run-step-head');
+  // ONE case, both card states, because the count no longer depends on either: a
+  // step's blocks are DROPPED by the dispatcher, so nothing on the page renders them
+  // and no disclosure can make them reachable. The parent block and the tool_use
+  // block that became the card are the two the reader can reach.
+  it("counts neither with the card open nor with it closed", () => {
+    const chat = landWithLaunch();
+    expect(lastLabel()).toBe("2 new blocks");
+    toggleAndRepaint(chat, cardHead); // the card mounts open, so this closes it
+    expect(lastLabel()).toBe("2 new blocks");
+    toggleAndRepaint(chat, cardHead); // and open again
     expect(lastLabel()).toBe("2 new blocks");
   });
 });

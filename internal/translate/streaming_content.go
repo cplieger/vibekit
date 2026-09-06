@@ -11,6 +11,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/chat"
+	"github.com/cplieger/vibekit/internal/durable"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -246,7 +247,7 @@ func (t *Translator) HandlePlan(ctx context.Context, chatID vibekit.ChatID, raw 
 		Ts:   time.Now().UnixMilli(),
 		Plan: p.Entries,
 	}
-	err := t.chats.UpsertTurnPlan(ctx, chatID, &msg)
+	err := t.chats.UpsertTurnPlan(durable.Context(ctx), chatID, &msg)
 	if errors.Is(err, chat.ErrTombstoned) {
 		return
 	}

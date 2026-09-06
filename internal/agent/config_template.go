@@ -29,6 +29,11 @@ import (
 // configTemplateTimeout bounds the template round-trip: first call may
 // lazily spin up the utility bridge, so this matches hookCallTimeout
 // rather than a bare read timeout.
+//
+// The CLIENT's bound for this endpoint is deliberately LONGER (fetchModelsFromREST
+// in static-src/app.ts), or this budget can never be spent: the library default is
+// 30s, so a boot fetch aborted every cold start — spawn, unpack the KAS runtime,
+// handshake — before the server had finished. Move the two together.
 const configTemplateTimeout = 45 * time.Second
 
 // kasConfigTemplate is the _kiro/config/template result shape. Modes
@@ -76,22 +81,11 @@ type kasConfigChoice struct {
 	} `json:"_meta"`
 }
 
-// configTemplateResponse is the GET /api/config-template reply.
-type configTemplateResponse struct {
-	DefaultModel string `json:"default_model,omitempty"`
-	// EffortActive is the `effortLevel` option's currentValue: the tier a
-	// fresh session would run at. Pre-session, this is the only evidence of
-	// a live level.
-	EffortActive string                       `json:"effort_active,omitempty"`
-	Modes        []vibekit.SessionMode        `json:"modes"`
-	Models       []vibekit.SessionModel       `json:"models"`
-	EffortLevels []vibekit.SessionEffortLevel `json:"effort_levels"`
-}
-
 // handleConfigTemplate: GET /api/config-template → the pre-session mode +
-// model catalog. Degrades to empty lists on any failure, matching the old
-// /api/models contract: the client keeps its static fallbacks and the
-// authoritative per-session catalog arrives with the first bridge.
+// model catalog, and the verdict saying which outcome produced it. Every path
+// answers 200 with non-null lists (the client keeps its static fallbacks and
+// the authoritative per-session catalog arrives with the first bridge); what
+// separates them is vibekit.ConfigTemplateResponse.Catalog.
 func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) {
 	u := rt.utility.get()
 	cctx, cancel := context.WithTimeout(r.Context(), configTemplateTimeout)
@@ -99,23 +93,39 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 	raw, err := u.session.configTemplateRaw(cctx)
 	if err != nil {
 		slog.Warn("config template failed", "error", err)
-		webhttp.WriteJSON(w, configTemplateResponse{Modes: []vibekit.SessionMode{}, Models: []vibekit.SessionModel{}})
+		webhttp.WriteJSON(w, unavailableTemplate(vibekit.CatalogReasonRPC))
 		return
 	}
 	var tpl kasConfigTemplate
 	if uErr := json.Unmarshal(raw, &tpl); uErr != nil {
 		slog.Warn("config template decode failed", "error", uErr)
-		webhttp.WriteJSON(w, configTemplateResponse{Modes: []vibekit.SessionMode{}, Models: []vibekit.SessionModel{}})
+		webhttp.WriteJSON(w, unavailableTemplate(vibekit.CatalogReasonDecode))
 		return
 	}
 	webhttp.WriteJSON(w, templateToResponse(&tpl))
+}
+
+// unavailableTemplate is the body for a read that produced no catalog. ONE
+// builder for both failure branches: they used to construct the literal
+// separately and leave EffortLevels nil, so the two degrade paths emitted
+// `"effort_levels": null` where the success path emits `[]` — one response type
+// with two shapes, and a decoder requiring an array would have failed on the
+// failure path alone.
+func unavailableTemplate(reason vibekit.CatalogReason) vibekit.ConfigTemplateResponse {
+	return vibekit.ConfigTemplateResponse{
+		Catalog:       vibekit.CatalogUnavailable,
+		CatalogReason: reason,
+		Modes:         []vibekit.SessionMode{},
+		Models:        []vibekit.SessionModel{},
+		EffortLevels:  []vibekit.SessionEffortLevel{},
+	}
 }
 
 // templateToResponse flattens the KAS template into the client-facing
 // catalog: modes with their source tag (bundled | global — the template
 // carries no workspace entries), and the model catalog with the same
 // [Deprecated]/[Legacy] filtering the per-session paths apply.
-func templateToResponse(tpl *kasConfigTemplate) configTemplateResponse {
+func templateToResponse(tpl *kasConfigTemplate) vibekit.ConfigTemplateResponse {
 	modes := make([]vibekit.SessionMode, 0, len(tpl.Modes.AvailableModes))
 	for i := range tpl.Modes.AvailableModes {
 		m := &tpl.Modes.AvailableModes[i]
@@ -129,7 +139,12 @@ func templateToResponse(tpl *kasConfigTemplate) configTemplateResponse {
 			Source:      m.Meta.Kiro.Source,
 		})
 	}
-	out := configTemplateResponse{
+	out := vibekit.ConfigTemplateResponse{
+		// Empty until a `model` option turns up. The verdict is the option's
+		// PRESENCE, never len(out.Models): KAS omits the option when its cache
+		// holds nothing, and a present option whose every entry the
+		// [Deprecated] filter drops is still a catalog KAS answered with.
+		Catalog:      vibekit.CatalogEmpty,
 		Modes:        modes,
 		Models:       []vibekit.SessionModel{},
 		EffortLevels: []vibekit.SessionEffortLevel{},
@@ -138,6 +153,7 @@ func templateToResponse(tpl *kasConfigTemplate) configTemplateResponse {
 		opt := &tpl.ConfigOptions[i]
 		switch opt.ID {
 		case vibekit.ConfigOptionModel:
+			out.Catalog = vibekit.CatalogReady
 			_ = json.Unmarshal(opt.CurrentValue, &out.DefaultModel) // string; ignore non-string
 			out.Models = flattenTemplateModels(opt.Options)
 		case vibekit.ConfigOptionEffort:

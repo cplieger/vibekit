@@ -124,11 +124,16 @@ func (t *Translator) HandleRunStart(ctx context.Context, chatID vibekit.ChatID, 
 }
 
 // HandleRunComplete translates _kiro/workflow/run_complete → the run_finished
-// SSE, and forgets the run's step sessions.
+// SSE.
 //
 // Terminal covers more than success: a cancel, a failure and an
 // `onMaxIterations: "pause"` policy stop all arrive here, which is why the
 // status travels rather than being inferred from the event's existence.
+//
+// It deliberately does NOT forget the run's step sessions. `paused` reaches this
+// frame on a run that is still going, so the registry's bound has to test the
+// status — and the caller already does, for the run's own bounds. The hook is
+// agent.observeComplete's terminal branch, through ForgetRunSteps.
 func (t *Translator) HandleRunComplete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[kasRunComplete](msg, "workflow/run_complete")
 	if !ok || p.WorkflowID == "" {
@@ -136,7 +141,6 @@ func (t *Translator) HandleRunComplete(ctx context.Context, chatID vibekit.ChatI
 	}
 	logAgentRun("agent-launched workflow run finished", p.WorkflowID, p.FinalState.WorkflowName,
 		cmp.Or(p.ParentSessionID, p.FinalState.ParentSessionID), "status", p.Status)
-	t.steps.forgetRun(p.WorkflowID)
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunFinished, chatID, vibekit.RunFinishedPayload{
 		WorkflowID: p.WorkflowID,
 		Status:     p.Status,

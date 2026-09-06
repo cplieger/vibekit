@@ -11,11 +11,37 @@
 //
 // A membership omission in a shared selector list cannot be caught by testing the
 // member; it can only be caught by asserting the membership. So that is what these
-// cases do, plus the three rules that make the page a page rather than a tall box.
+// cases do, plus the rules that make the page a page rather than a tall box.
+//
+// The SECOND defect pinned here is of the same family and needed a different
+// mechanism: one selector carried two contradictory blocks in one file at equal
+// specificity, so the later declaration silently won and `ruleBody` — which returns
+// the first match — could not see it. Counting occurrences is the only thing that
+// can, so `allRules` is used for that pair rather than `ruleBody`.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect } from "vitest";
-import { loadCSS, ruleBody } from "./__test-helpers__/css-rules.js";
+import { loadCSS, ruleBody, allRules } from "./__test-helpers__/css-rules.js";
+
+/** A rule's DECLARATIONS, with its comments stripped. Required by every negative
+ *  assertion below: `ruleBody` returns the authored text, and each of these rules
+ *  explains in prose which declaration it no longer carries — so a bare
+ *  `not.toMatch(/overflow: hidden/)` reads the comment and fails on the fix. */
+function decls(css: string, selector: string): string {
+  return ruleBody(css, selector).replace(/\/\*[\s\S]*?\*\//g, " ");
+}
+
+/** Every `overflow*` declaration a rule carries, in source order.
+ *
+ *  The EXACT set rather than a substring match, because both defects this pins are
+ *  invisible to one: `overflow: hidden` is a prefix of `overflow: hidden auto`, so a
+ *  negative substring assertion fails on the correct value, and two competing
+ *  declarations in one rule is precisely the shape that shipped. */
+function overflowDecls(css: string, selector: string): string[] {
+  return [...decls(css, selector).matchAll(/^\s*(overflow[a-z-]*\s*:[^;]+);/gm)].map((m) =>
+    (m[1] ?? "").replace(/\s+/g, " ").trim(),
+  );
+}
 
 describe("the run page claims its height", () => {
   // The omission itself. Every full-page view is in this list; a new one that is
@@ -47,36 +73,84 @@ describe("the run page claims its height", () => {
     expect(/min-height:\s*0/.test(body)).toBe(true);
   });
 
-  // The page wrapper is NOT the scroller: each pane scrolls itself, so the header,
-  // the timeline and the results row hold their positions while the tree and the
-  // detail move independently. Two nested scrollports would fight.
-  it("scrolls the panes, not the page wrapper", () => {
-    const pages = ruleBody(loadCSS("18-pages.css"), '[id="run-view"] .page-content');
-    expect(/overflow:\s*hidden/.test(pages)).toBe(true);
-    expect(pages).not.toMatch(/overflow-y:\s*auto/);
+  // THE PAGE SCROLLS, and it is `.page-content` that scrolls rather than the view,
+  // because `.run-bottom-bar` is pinned outside it. Inverted from what this case used
+  // to assert: the panes each carried their own scrollport, which is what crushed a
+  // run's content into fixed cages and trapped it there.
+  it("scrolls the page wrapper, not the panes", () => {
+    // `overflow: hidden auto` is the two-value shorthand: `hidden` across, `auto`
+    // down. Exactly one declaration, so the retired `overflow: hidden` cannot be
+    // sitting beside it.
+    expect(overflowDecls(loadCSS("18-pages.css"), '[id="run-view"] .page-content')).toEqual([
+      "overflow: hidden auto",
+    ]);
 
-    const pane = ruleBody(loadCSS("31-exec-view.css"), ".ev-pane");
-    expect(/overflow-y:\s*auto/.test(pane)).toBe(true);
+    // A pane with an `overflow` on either axis is a scroll container again, and a
+    // scroll container's automatic minimum size is 0 — the defect the retired
+    // `.ev-r-val` recorded.
+    expect(overflowDecls(loadCSS("31-exec-view.css"), ".ev-pane")).toEqual([]);
   });
 
-  // The page has to be a column that FILLS, or the panes below have nothing to grow
-  // inside and the whole chain is inert.
-  it("makes the exec page a filling column", () => {
+  // The second consumer of the same exec page. It has no bottom bar, so it could
+  // have scrolled the view instead — but leaving it `overflow: hidden` while
+  // `.ev-page` stops clamping itself would clip a delegate's transcript outright.
+  it("scrolls the subagent page too", () => {
+    expect(overflowDecls(loadCSS("18-pages.css"), '[id="subagent-view"] .page-content')).toEqual([
+      "overflow: hidden auto",
+    ]);
+  });
+
+  // THE GUARD for the defect this batch fixed: `[id="run-view"] .page-content` carried
+  // TWO contradictory blocks 63 lines apart — `overflow: hidden` with a comment reading
+  // "NOT the scroller", then `overflow-y: auto` calling itself "this scroller" — at
+  // equal specificity in one file, so the later declaration silently won.
+  //
+  // `ruleBody` cannot catch this: it returns the FIRST rule with that selector line,
+  // which is why the contradiction never failed a test. Counting the occurrences is
+  // the only mechanism that would have, and it will catch the next one.
+  it.each(['[id="run-view"] .page-content', '[id="subagent-view"] .page-content'])(
+    "declares %s exactly once",
+    (selector) => {
+      const hits = allRules(loadCSS("18-pages.css")).filter((r) => r.selector === selector);
+      expect(hits).toHaveLength(1);
+    },
+  );
+
+  // The page must SIZE TO CONTENT, or the scroller above has nothing taller than
+  // itself to scroll: `flex: 1 1 0` plus `min-height: 0` made this column exactly the
+  // free space of its parent, so `scrollHeight === clientHeight` and no scrollbar
+  // could ever appear.
+  it("makes the exec page a content-sized column", () => {
     const page = ruleBody(loadCSS("31-exec-view.css"), ".ev-page");
     expect(/display:\s*flex/.test(page)).toBe(true);
     expect(/flex-direction:\s*column/.test(page)).toBe(true);
-    expect(/flex:\s*1 1 0/.test(page)).toBe(true);
-    expect(/min-height:\s*0/.test(page)).toBe(true);
+    expect(/flex:\s*1 0 auto/.test(page)).toBe(true);
   });
 
-  // The panes are the primary content and the results disclosure below them is a flex
-  // sibling, so without a FLOOR opening a run with three reports crushed the tree and
-  // the detail pane to ~90px — measured, and it made the page unusable at the moment a
-  // reader was trying to read it.
-  it("floors the panes so the results region cannot crush them", () => {
-    const panes = ruleBody(loadCSS("31-exec-view.css"), ".ev-panes");
-    expect(/min-block-size:\s*\d/.test(panes)).toBe(true);
-    expect(/flex:\s*1 1 0/.test(panes)).toBe(true);
+  // The floor this replaced (`min-block-size: 16rem`) existed because the results
+  // disclosure competed with the panes for a fixed page height and crushed them to
+  // ~90px when opened. With nothing clamped to the scrollport there is no
+  // competition, so the panes size to content and each shrink-wraps its own.
+  it("sizes the panes to their content rather than flooring them", () => {
+    const panes = decls(loadCSS("31-exec-view.css"), ".ev-panes");
+    expect(/flex:\s*0 0 auto/.test(panes)).toBe(true);
+    expect(panes).not.toMatch(/min-block-size:/);
+    expect(/align-items:\s*start/.test(panes)).toBe(true);
+  });
+
+  // The roll-up is the run's PRODUCT, so it renders whole and the page scrolls. A
+  // `max-block-size` here was a peek sized for scanning, and it only existed because
+  // the region was competing for a fixed height.
+  it("uncages the results region", () => {
+    expect(decls(loadCSS("31-exec-view.css"), ".ev-r-body")).not.toMatch(/max-block-size:/);
+    expect(overflowDecls(loadCSS("31-exec-view.css"), ".ev-r-body")).toEqual([]);
+  });
+
+  // A per-result box may carry NO `overflow` on either axis: an `auto` on one side
+  // makes it a scroll container, whose automatic minimum size is 0, which is exactly
+  // how a 331px report ended up rendered in a 16px box.
+  it("leaves a per-result box's overflow at its initial value", () => {
+    expect(overflowDecls(loadCSS("31-exec-view.css"), ".ev-r-item-body")).toEqual([]);
   });
 
   // A container's state is a ROLL-UP of its children and must never repaint them.
@@ -92,12 +166,14 @@ describe("the run page claims its height", () => {
     }
   });
 
-  // `#run-body` sits between the wrapper and the page, so it has to pass the height
-  // through rather than sizing to content.
-  it("passes the height through the run body host", () => {
-    const host = ruleBody(loadCSS("18-pages.css"), '[id="run-body"]');
-    expect(/flex:\s*1 1 0/.test(host)).toBe(true);
-    expect(/min-height:\s*0/.test(host)).toBe(true);
+  // `#run-body` sits between the scroller and the page, so it has to SIZE TO CONTENT
+  // like everything else below the scroller. `flex: 1 0 auto` is this file's
+  // established page-scrolling shape (see the `[id="git-view"] > .page-content`
+  // group); `flex-basis: 0` plus `min-height: 0` is what pinned it to the scrollport.
+  it.each(['[id="run-body"]', '[id="subagent-body"]'])("sizes %s to its content", (selector) => {
+    const host = decls(loadCSS("18-pages.css"), selector);
+    expect(/flex:\s*1 0 auto/.test(host)).toBe(true);
+    expect(host).not.toMatch(/min-height:\s*0/);
   });
 
   // The page is not prose, so it gets its own measure — and a BOUNDED one, because

@@ -13,31 +13,71 @@
 //
 // ONE CLOCK: a live execution takes minutes and a paused one emits no frames at
 // all, so one interval drives all three panes and stops when nothing moves.
+//
+// TWO REGIONS ARE SIGNATURE-GUARDED, the inputs and the results, and for the same
+// reason `detail.ts`'s `renderOutput` is: `render` runs on every store
+// invalidation — dozens of times a minute on a live execution — so rebuilding
+// either would discard the reader's expansion and their scroll position.
 
 import { el } from "@cplieger/reactive";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { chevronEl } from "../chevron.js";
+import { attachClamp } from "../clamp-text.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN } from "../icons.js";
 import { buildAssistantBubble } from "../fundamentals/text-bubble.js";
 import { formatElapsed } from "../strings.js";
-import { counters, leaves, window as execWindow, type ExecRun } from "./model.js";
+import { counters, leaves, window as execWindow, type ExecNode, type ExecRun } from "./model.js";
 import { STATE_WORD } from "./status.js";
 import { buildExecTree, nodeAt, attentionRank, type ExecTreeView } from "./tree.js";
 import { buildExecTimeline, type ExecTimelineView } from "./timeline.js";
-import { buildExecDetail, type ExecDetailView, type EmptyNote } from "./detail.js";
+import {
+  buildExecDetail,
+  type ExecDetailView,
+  type EmptyAction,
+  type EmptyNote,
+} from "./detail.js";
 
 export interface ExecPageOpts {
   /** What a node with a transcript host but no content yet should say; the
    *  consumer's call (a workflow run has three reasons, a subagent tab its own). */
   emptyNote: EmptyNote;
+  /** An affordance to render beside that note. Optional: a consumer with nowhere
+   *  to send anyone passes none and the slot stays empty. */
+  emptyAction?: EmptyAction;
   /** The execution's controls, rebuilt per state. Returns null for a state with no
    *  verbs, so the row disappears rather than rendering empty. */
   controls?: (run: ExecRun) => HTMLElement | null;
   /** The header's identity glyph. Defaults to the workflow one; a subagent page
    *  passes the agent hexagon. */
   icon?: string;
+  /** Fired when the node the DETAIL PANE is showing changes, OR when that node's
+   *  state moves, so a consumer can act on the reader's attention — arming an
+   *  on-demand fetch for the step now on screen is the case it exists for.
+   *
+   *  It is the only way a consumer can learn which node is shown: selection lives
+   *  here, and `emptyNote`/`emptyAction` must NOT be used to discover it. Both are
+   *  documented pure and cheap and are called on EVERY render, dozens of times a
+   *  minute on a live execution, so side-effecting one would fire a fetch per
+   *  repaint.
+   *
+   *  The STATE is part of that guard because a consumer's answer can depend on it:
+   *  a step's session cannot be read while it is in flight, and `select()` PINS the
+   *  selection, so a path-only guard never fires again for a step the reader clicked
+   *  while it was running — leaving the one node they are looking at as the one node
+   *  never acted on. A state is a small closed vocabulary and a node walks it a
+   *  handful of times, so this stays per-attention rather than per-repaint.
+   *
+   *  Additive and optional, exactly like `emptyAction`, so a consumer that needs
+   *  none passes none. */
+  onShowNode?: (node: ExecNode | undefined) => void;
 }
+
+/** The instructions clamp, in the shape `fundamentals/turn-header.ts` states it:
+ *  the line count the STYLESHEET clamps to, plus the character threshold used only
+ *  while the element is detached and cannot be measured. Both numbers in one place,
+ *  so the CSS and the fallback cannot drift apart. */
+const CLAMP = { lines: 3, fallbackChars: 220 } as const;
 
 export interface ExecPageView {
   readonly root: HTMLElement;
@@ -85,6 +125,13 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
    *  work (a running or failed node opens without a click); after a click it
    *  stops moving. */
   let userPicked = false;
+  /** The path the detail pane is currently showing, so `onShowNode` fires on a
+   *  change of ATTENTION rather than on every repaint. "" means none. */
+  let shownPath = "";
+  /** That node's state at the last notification, the second half of the same guard:
+   *  a node settling under the reader's cursor is a change of attention too, and it
+   *  is the only one a pinned selection can produce. "" means none. */
+  let shownState = "";
   /** The last `ExecRun.focus` honoured. Recorded rather than consumed once,
    *  because one page instance serves every tab of its kind: a subagent tab
    *  switching delegates arrives as a render with a different `focus`, which
@@ -93,7 +140,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
 
   const tree: ExecTreeView = buildExecTree(select);
   const timeline: ExecTimelineView = buildExecTimeline(select);
-  const detail: ExecDetailView = buildExecDetail(opts.emptyNote);
+  const detail: ExecDetailView = buildExecDetail(opts.emptyNote, opts.emptyAction);
 
   const treePane = el("div", { className: "ev-pane ev-pane-tree" }, tree.root);
   const panes = el(
@@ -107,7 +154,9 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   // the detail pane's per-node output ("what did this step do" vs "what did the
   // run produce"). Mirrors the transcript run card's `.run-outputs` pattern.
   //
-  // Collapsed by default: a report can be thousands of characters.
+  // OPEN by default: a run's product is what a reader opens the page for, and with
+  // the page scrolling (18-pages.css) an open roll-up costs page height rather than
+  // pane height — which is the whole reason it used to be shut.
   const resultsCount = el("span", { className: "ev-r-count" });
   const resultsBody = el("div", { className: "ev-r-body" });
   // The disclosure glyph LEADS, as the app's other section headers do. A span
@@ -121,14 +170,9 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     el("span", { className: "ev-r-title" }, "Results"),
     resultsCount,
   );
-  const results = el(
-    "div",
-    { className: "ev-results collapsed", hidden: true },
-    resultsHead,
-    resultsBody,
-  );
+  const results = el("div", { className: "ev-results", hidden: true }, resultsHead, resultsBody);
   createDisclosure(resultsHead, resultsBody, {
-    open: false,
+    open: true,
     onToggle: (open) => {
       results.classList.toggle("collapsed", !open);
     },
@@ -180,7 +224,64 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       tree.render(run.nodes, selected);
     }
     timeline.render(run.nodes, selected, run.live);
-    detail.render(nodeAt(run.nodes, selected));
+    const node = nodeAt(run.nodes, selected);
+    detail.render(node);
+    // AFTER the pane has been told, so a consumer reacting synchronously finds the
+    // host it is about to write into already created. Guarded on the shown node's
+    // PATH and STATE: `repaint` runs on every store invalidation and on every
+    // selection, so notifying unconditionally would fire per repaint rather than per
+    // attention — while a path-only guard misses a node that settles where it
+    // stands, which `select()`'s pin makes the common shape rather than an edge.
+    const path = node?.path ?? "";
+    const state = node?.state ?? "";
+    if (path !== shownPath || state !== shownState) {
+      shownPath = path;
+      shownState = state;
+      opts.onShowNode?.(node);
+    }
+  }
+
+  /** The header's instructions list — what this execution was ASKED to do — rebuilt
+   *  only when the SET changed.
+   *
+   *  The signature guard is REQUIRED, not an optimisation: `render` runs on every
+   *  store invalidation, so an unguarded `replaceChildren` would discard the
+   *  reader's show-more expansion and rebuild every clamp dozens of times a minute
+   *  on a live run. Same idiom and same reason as `renderResults` below and
+   *  `detail.ts`'s `renderOutput`. */
+  function renderInputs(run: ExecRun): void {
+    const entries = Object.entries(run.inputs ?? {});
+    if (entries.length === 0) {
+      inputs.hidden = true;
+      delete inputs.dataset["sig"];
+      inputs.replaceChildren();
+      return;
+    }
+    inputs.hidden = false;
+    const sig = entries.map(([k, v]) => `${k}\u0001${v}`).join("\u0002");
+    if (inputs.dataset["sig"] === sig) {
+      return;
+    }
+    inputs.dataset["sig"] = sig;
+    inputs.replaceChildren(
+      ...entries.flatMap(([k, v]) => {
+        const text = el("div", { className: "ev-in-text" }, v);
+        const more = el("button", {
+          type: "button",
+          className: "ev-in-more",
+        }) as HTMLButtonElement;
+        // Overflow is MEASURED (`clamp-text.ts` runs one shared `ResizeObserver`
+        // over every clamped element and compares `scrollHeight` against
+        // `clientHeight`), so a short instruction is never offered an opener that
+        // opens nothing. The character threshold is only the pre-layout guess for
+        // the frame in which the element is still detached, corrected before paint.
+        attachClamp(text, more, CLAMP);
+        return [
+          el("dt", { className: "ev-in-k" }, k),
+          el("dd", { className: "ev-in-v" }, text, more),
+        ];
+      }),
+    );
   }
 
   /** The results roll-up, rebuilt only when the SET changed (guarded by
@@ -201,24 +302,39 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       return;
     }
     resultsBody.dataset["sig"] = sig;
-    resultsBody.replaceChildren(
-      ...entries.flatMap(([key, value]) => {
-        const rows = [el("div", { className: "ev-r-key" }, key)];
-        // An empty value is a fact, not an absence: a source writes a key only
-        // for a node that captured, so empty distinguishes "finished silently"
-        // from "never ran".
-        rows.push(
-          value.trim() === ""
-            ? el(
-                "div",
-                { className: "ev-r-empty" },
-                "This step finished without producing any text.",
-              )
-            : el("div", { className: "ev-r-val" }, buildAssistantBubble(value, false).root),
-        );
-        return rows;
-      }),
+    resultsBody.replaceChildren(...entries.map(([key, value]) => resultItem(key, value)));
+  }
+
+  /** One capture as its own collapsible box, at full natural height.
+   *
+   *  OPEN by default, matching the region around it and the run card's rule for the
+   *  thing a reader just asked to see. The head is the trigger and the chevron is a
+   *  SPAN: `createDisclosure` writes `role="button"` and `tabindex="0"` on a
+   *  non-`<button>` trigger itself, and a real control nested inside that role is
+   *  axe's `nested-interactive`, which `aria-hidden` does not clear. */
+  function resultItem(key: string, value: string): HTMLElement {
+    const head = el(
+      "div",
+      { className: "ev-r-item-head" },
+      el("span", { className: "ev-r-item-twist", "aria-hidden": "true" }, chevronEl()),
+      el("span", { className: "ev-r-item-key" }, key === "" ? "Output" : key),
     );
+    // An empty value is a fact, not an absence: a source writes a key only for a
+    // node that captured, so empty distinguishes "finished silently" from "never
+    // ran" — and it still earns a box, because that is the fact.
+    const body = el(
+      "div",
+      { className: "ev-r-item-body" },
+      value.trim() === ""
+        ? el(
+            "div",
+            { className: "ev-r-item-empty" },
+            "This step finished without producing any text.",
+          )
+        : buildAssistantBubble(value, false).root,
+    );
+    createDisclosure(head, body, { open: true });
+    return el("div", { className: "ev-r-item" }, head, body);
   }
 
   function setClock(live: boolean): void {
@@ -267,14 +383,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       const win = execWindow(run.nodes, run.live);
       clock.textContent = win === undefined ? "" : formatElapsed(win.span);
 
-      const entries = Object.entries(run.inputs ?? {});
-      inputs.hidden = entries.length === 0;
-      inputs.replaceChildren(
-        ...entries.flatMap(([k, v]) => [
-          el("dt", { className: "ev-in-k" }, k),
-          el("dd", { className: "ev-in-v" }, v),
-        ]),
-      );
+      renderInputs(run);
 
       alert.hidden = run.alert === undefined;
       if (run.alert !== undefined) {
@@ -287,6 +396,15 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
 
       renderResults(run);
 
+      // A render carrying NO focus clears the watermark, so the next assertion of
+      // the same path is honoured. Without it a door could name a node only once
+      // per page instance: the reader moves in the tree, clicks the same door
+      // again, and it is a control that does nothing. The clear is safe because a
+      // focus-free render is also one that asserts nothing — `userPicked` still
+      // holds whatever the reader last chose.
+      if (run.focus === undefined) {
+        focused = "";
+      }
       // A door that NAMES a node is a choice: honoured like a click, and it stops
       // the auto-follow. Guarded on the value having changed, or re-asserting the
       // same focus on every invalidation would fight a reader who clicked

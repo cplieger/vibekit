@@ -555,3 +555,90 @@ func TestHandleConfigOptionUpdate_EffortOnlyFrameKeepsTheModelCatalog(t *testing
 		t.Errorf("EffortActive = %q, want high (the effort half still applied)", c.EffortActive)
 	}
 }
+
+// TestHandleSessionInfoUpdate_TurnEndCarriesStopDetails pins the ONE channel that
+// can explain an abnormal wire close.
+//
+// `turnEndBlock` decoded `stopReason` and nothing else, on the recorded grounds
+// that stopDetails "has never been observed" — so a `stopReason: "error"` turn
+// arrived with no cause at all, and the reader's only account of the failure was a
+// transient toast. The field is optional and its shape is unmeasured, which is why
+// the decode is deliberately tolerant and why the shapes it does NOT read answer ""
+// rather than leaking a JSON fragment into a transcript row.
+func TestHandleSessionInfoUpdate_TurnEndCarriesStopDetails(t *testing.T) {
+	tests := []struct {
+		name    string
+		details any
+		want    string
+	}{
+		{
+			name:    "a bare string, the simplest thing a TypeScript producer sends",
+			details: "  The upstream model dropped the stream.  ",
+			want:    "The upstream model dropped the stream.",
+		},
+		{
+			name:    "an object naming its prose `message`",
+			details: map[string]any{"message": "Rate limit exceeded."},
+			want:    "Rate limit exceeded.",
+		},
+		{
+			name:    "an object naming it `details`, which is what -32603 frames use",
+			details: map[string]any{"details": "ClientThrottleError"},
+			want:    "ClientThrottleError",
+		},
+		{
+			name:    "an object naming it `reason`",
+			details: map[string]any{"reason": "capacity"},
+			want:    "capacity",
+		},
+		{
+			// A shape the decode does not read. It must answer "" so the closer falls
+			// through to the outcome's own sentence: showing a reader `[1,2,3]` as the
+			// reason for a failed turn is worse than showing them a generic one.
+			name:    "a shape with no prose in it at all",
+			details: []any{1, 2, 3},
+			want:    "",
+		},
+		{
+			name:    "an object carrying only fields we do not read",
+			details: map[string]any{"code": 42, "retryable": true},
+			want:    "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps, _, _ := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+			raw := mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
+				"kind":    "turn_end",
+				"turnEnd": map[string]any{"stopReason": "error", "stopDetails": tt.details},
+			}}})
+
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", raw, FrameAttribution{})
+
+			want := []turnBracket{
+				{chat: "c1", kind: "end", stop: vibekit.StopReasonError, details: tt.want},
+			}
+			if !slices.Equal(deps.brackets, want) {
+				t.Errorf("brackets = %+v, want %+v", deps.brackets, want)
+			}
+		})
+	}
+}
+
+// TestHandleSessionInfoUpdate_TurnEndWithoutStopDetailsSaysNothing is the control,
+// and it is the case every measured build actually sends. The closer supplies the
+// outcome's default sentence for it, so "" here is the correct answer rather than a
+// gap: inventing wording in the translator would put two sources of that prose in
+// the tree.
+func TestHandleSessionInfoUpdate_TurnEndWithoutStopDetailsSaysNothing(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", turnBracketInfo(t, "turn_end"), FrameAttribution{})
+
+	want := []turnBracket{{chat: "c1", kind: "end", stop: vibekit.StopReason("end_turn")}}
+	if !slices.Equal(deps.brackets, want) {
+		t.Errorf("brackets = %+v, want %+v", deps.brackets, want)
+	}
+}

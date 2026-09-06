@@ -113,6 +113,15 @@ func (t *Translator) forwardRunToolCall(ctx context.Context, workflowID string, 
 	if json.Unmarshal(raw, &tc) != nil || tc.ToolCallID == "" {
 		return
 	}
+	// The idle window's tool-call signal for the PARENTLESS population, and the only
+	// site that reaches it: countStepTurn's is chat-parented, so a manual or scheduled
+	// run's step frames pass through here and nowhere else — without it node_complete
+	// is the sole signal and one legitimately long step reads as a stall. (Its turn CAP
+	// stays unenforced here; that is pre-existing and needs a step key for a
+	// path-addressed frame.) ABOVE EVERY GUARD BELOW: those are RENDERING decisions and
+	// this is ENFORCEMENT, so sat under them a display preference decides a cancellation
+	// — hooks.showStatus off would stop a step's hook asks refilling the window.
+	t.reportRunProgress(tc.Meta.Kiro.Workflow)
 	// The same hook-status suppression the chat path applies: a hook ask is a
 	// kind:"other" call tagged `_meta.kiro.hookAsk`, and turning hook status off
 	// is not meant to exempt runs.

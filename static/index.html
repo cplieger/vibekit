@@ -139,7 +139,7 @@
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 9.5l2.5 2.5L8 14.5"/><path d="M13 15h4"/></svg>
         </button>
         <button type="button" id="docs-btn" class="icon-btn" data-tooltip="Kiro docs" aria-label="Kiro docs">
-          <svg class="icon-book ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 5.5A2.5 2.5 0 015.5 3H9a3 3 0 013 3v1"/><path d="M3 5.5V16.5A2.5 2.5 0 005.5 19H9a3 3 0 013 2"/><path d="M21 5.5A2.5 2.5 0 0018.5 3H15a3 3 0 00-3 3v1"/><path d="M21 5.5V16.5A2.5 2.5 0 0118.5 19H15a3 3 0 00-3 2"/></svg>
+          <svg class="icon-book ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5A2.5 2.5 0 014.5 2H9a2 2 0 012 2v16a1.5 1.5 0 00-1.5-1.5H4.5A2.5 2.5 0 012 16z"/><path d="M22 4.5A2.5 2.5 0 0019.5 2H15a2 2 0 00-2 2v16a1.5 1.5 0 011.5-1.5h5A2.5 2.5 0 0022 16z"/></svg>
         </button>
         <button type="button" id="history-btn" class="icon-btn" data-tooltip="History" aria-label="History">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
@@ -201,13 +201,26 @@
                than a composer feature because a workflow-run tab has no
                composer and still has to be able to ask. -->
           <div id="decision-dock" class="decision-dock hidden" role="group" aria-label="Waiting for your decision"></div>
+          <!-- The live workflow runs this chat launched, one line each. A SIBLING
+               of .prompt-box like the two regions around it, sharing the band's
+               measure, and BETWEEN them because the ordering rule is by scope:
+               the dock blocks the turn, the run bar spans turns, the steer stack
+               is scoped to the current turn, the box is what comes next. A run
+               outlives the turn that started it (run_workflow returns as soon as
+               the run is created), so this is the surface that persists across
+               turns and across a reload while the invocation card scrolls away.
+               Same mechanical property as the dock (see 26-dock.css): the bar
+               GROWS upward and #messages-wrap shrinks by exactly this region's
+               height, so nothing is covered. -->
+          <ul id="run-bar" class="run-bar hidden" aria-label="Workflow runs from this chat"></ul>
           <!-- Mid-turn messages KAS is holding, oldest at the top: a new one
                appears at the bottom and pushes the older ones up. A SIBLING of
                .prompt-box for the same reason the dock is one — these are
                messages already SENT, so they belong beside the box rather than
                inside it, and the bar grows upward to expose them. Below the dock
-               on purpose: a permission ask blocks the turn, so it outranks a
-               record of what has already gone. -->
+               and the run bar on purpose: a permission ask blocks the turn and a
+               run spans turns, so both outrank a record of what has already gone
+               in THIS turn. -->
           <ul id="steer-stack" class="steer-stack hidden" aria-label="Messages sent to the running turn"></ul>
           <div id="prompt-box" class="prompt-box">
             <!-- No top-edge drag handle here. The message box sizes itself:
@@ -744,11 +757,11 @@
                 <span class="settings-tab-label">Skills</span>
               </button>
               <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="agents" aria-label="Agents">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
+                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5"/></svg>
                 <span class="settings-tab-label">Agents</span>
               </button>
               <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="specs" aria-label="Specs">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
                 <span class="settings-tab-label">Specs</span>
               </button>
               <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="hooks" aria-label="Hooks">
@@ -756,7 +769,7 @@
                 <span class="settings-tab-label">Hooks</span>
               </button>
               <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="workflows" aria-label="Workflows">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/></svg>
                 <span class="settings-tab-label">Workflows</span>
               </button>
             </nav>

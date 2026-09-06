@@ -15,6 +15,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		Chats:       rt.chatStore,
 		Bus:         rt.bus,
 		Tabs:        tabSetOrNil(rt.tabs),
+		Runs:        rt.runs,
 		Teardown:    rt,
 		Perms:       rt.bus,
 		Terminals:   rt.agentTerms,

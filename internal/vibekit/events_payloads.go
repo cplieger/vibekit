@@ -192,6 +192,29 @@ func DecisionKindForEvent(t EventType) (DecisionKind, bool) {
 	}
 }
 
+// DecisionRunID reads the workflow run a tracked decision's payload belongs to,
+// answering "" for a payload that is not one of the three or carries no run.
+//
+// The run dimension the pending-decision tracker's key does NOT carry: it is
+// keyed {chat, requestID}, because that pair is what an ANSWER arrives naming. A
+// run-scoped clear therefore has to read the payload, which is the same join the
+// client's own run-scoped remover makes on `runID`.
+//
+// All three are matched as VALUES, which is how they are stored — each *_needed
+// event is broadcast with a payload literal, never a pointer.
+func DecisionRunID(payload any) string {
+	switch p := payload.(type) {
+	case PermissionNeededPayload:
+		return p.RunID
+	case ElicitationNeededPayload:
+		return p.RunID
+	case UserInputNeededPayload:
+		return p.RunID
+	default:
+		return ""
+	}
+}
+
 // MessageChunkPayload is the payload for type="message_chunk" (assistant
 // streaming deltas). IsReasoning distinguishes reasoning deltas from
 // regular content deltas — both flow through the same SSE event but
@@ -296,6 +319,21 @@ const (
 type ErrorPayload struct {
 	Code    ErrorCode `json:"code"`
 	Message string    `json:"message"`
+	// TurnScoped reports that this failure finalized a turn which now carries
+	// this same Message durably, so the reason is already in that turn's card.
+	//
+	// A property of the EMISSION, not of the Code, which is why it travels here
+	// rather than being derived client-side from a route table. Three of the five
+	// emitters behind ErrCodePromptFailed and ErrCodeRecoveryFailed never open a
+	// turn at all (a held bridge slot, a zero epoch, a failed recovery respawn),
+	// so one answer per code is wrong for whichever group it does not describe:
+	// too eager and a failure with no transcript row is reported nowhere, too shy
+	// and every turn failure is reported twice on the chat in front of the reader.
+	//
+	// Absent means NO, which is the safe direction: a client that cannot read this
+	// field, or an emitter that does not set it, reports the failure rather than
+	// trusting an inline row that may not exist.
+	TurnScoped bool `json:"turn_scoped,omitempty"`
 }
 
 // WorkingLabelPayload is the payload for type="working_label". Sent when

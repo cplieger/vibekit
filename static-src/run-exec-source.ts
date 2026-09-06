@@ -28,7 +28,7 @@
 // ---------------------------------------------------------------------------
 
 import { truncate } from "./strings.js";
-import { isNeedInputPause, nodePathSegment, type RunNode, type RunState } from "./run-store.js";
+import { isNeedInputPark, nodePathSegment, type RunNode, type RunState } from "./run-store.js";
 import type { RunAsks } from "./fundamentals/run-card.js";
 import { stateOf, withAsk, inFlight, type ExecState, type WireStatus } from "./exec-view/status.js";
 import type { ExecFact, ExecKind, ExecNode, ExecRun } from "./exec-view/model.js";
@@ -327,7 +327,7 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
     // the question is the run card's "Continue without answering", which is in the
     // dock beside the answer box.
     const bits = [
-      isNeedInputPause(state.pauseReason)
+      isNeedInputPark(state)
         ? "A step is waiting for your answer \u2014 Resume alone will park it again; " +
           "answer or waive it in the dock"
         : state.pauseReason === undefined || state.pauseReason === ""
@@ -360,12 +360,18 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
 /** Fold KAS's `inspect` reply into the exec view's model.
  *
  *  `plan` is the raw `nodePlan`; `asks` is the dock's answer about which node is
- *  blocked on a person, which no source's status can carry. */
+ *  blocked on a person, which no source's status can carry. `focus` is the node a
+ *  DOOR named — the transcript card's step row is one — and it is the workflow's
+ *  first use of `ExecRun.focus`, which the subagent adapter has always set. Empty
+ *  means "no door named one", so the field is withheld rather than sent blank:
+ *  `undefined` is what tells `exec-view/page.ts` to follow the work, and an
+ *  optional property may not carry `undefined` under exactOptionalPropertyTypes. */
 export function runToExec(
   workflowID: string,
   state: RunState,
   plan: unknown,
   asks: RunAsks,
+  focus = "",
 ): ExecRun {
   const plans = indexPlan(plan);
   // The root is a container KAS names after the workflow itself, so its children
@@ -408,6 +414,9 @@ export function runToExec(
   const alert = alertOf(state, asks, nodes);
   if (alert !== undefined) {
     out.alert = alert;
+  }
+  if (focus !== "") {
+    out.focus = focus;
   }
   return out;
 }

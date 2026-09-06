@@ -90,6 +90,69 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 	}
 }
 
+// TestEmitTurnEnded_PushReadsTheSeverity is item 4's server half: the push may not
+// claim success over a failure.
+//
+// It gated on `stopReason != cancelled` and sent agentFinishedBodyFrom — the agent's
+// last self-declared description of what it was DOING — so a turn that failed pushed
+// that description as what it had finished. Worse than the literal it replaced: the
+// off-screen reader got the agent's own words for work that did not land.
+//
+// The bodies are hardcoded rather than read back through DefaultFailureReason: an
+// expectation computed by the code under test passes for any mapping.
+func TestEmitTurnEnded_PushReadsTheSeverity(t *testing.T) {
+	cases := []struct {
+		name string
+		stop vibekit.StopReason
+		want string // "" means no push at all
+	}{
+		{name: "clean", stop: vibekit.StopReasonEndTurn, want: "Wiring the PR status poller"},
+		{name: "failed", stop: vibekit.StopReasonError, want: "The agent reported an error and the turn stopped."},
+		{name: "refused", stop: vibekit.StopReasonRefusal, want: "The model declined to continue."},
+		// STOPPED: the reader asked for the cancel, and an unreadable end reports
+		// nothing about success. `cancelled` is the arm that subsumes the old gate.
+		{name: "cancelled", stop: vibekit.StopReasonCancelled, want: ""},
+		{name: "unknown", stop: vibekit.StopReasonUnknown, want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := newFakeChatStore()
+			fp := &recordingPush{sends: make(chan string, 4)}
+			h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+			cs.Bus = h
+			h.mcpRegistry.SignalReady()
+			ctx := t.Context()
+			_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+			// Present for every case, so the clean arm's body is the agent's own line and
+			// a broken arm leaking it is a visible failure rather than an absence.
+			h.bus.chatStatus.Set("c1", vibekit.ChatStatusPayload{
+				Status: "in_progress", Description: "Wiring the PR status poller",
+			})
+
+			epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+			h.SettleTurnOnResponse(ctx, "c1", epoch, 0,
+				&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": string(tc.stop)})})
+
+			if tc.want == "" {
+				select {
+				case body := <-fp.sends:
+					t.Errorf("a %q turn pushed %q; a turn that merely stopped reports nothing", tc.stop, body)
+				case <-time.After(200 * time.Millisecond):
+				}
+				return
+			}
+			select {
+			case body := <-fp.sends:
+				if body != tc.want {
+					t.Errorf("push body = %q, want %q", body, tc.want)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatalf("a %q turn pushed nothing", tc.stop)
+			}
+		})
+	}
+}
+
 // TestEmitTurnEnded_PushSubjectIsTheChat pins the reuse of the per-chat coalescing
 // tag through the generalised subject: a chat notification must still travel as a
 // chat subject, not as a bare key.

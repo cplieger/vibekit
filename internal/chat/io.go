@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -97,31 +98,58 @@ func readChatHeader(path, label string) (*vibekit.ChatHeader, error) {
 	if err := json.Unmarshal(data, &h); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	h.MessageCount = countJSONArrayElements(h.Messages)
+	h.MessageCount, h.LastTurnOutcome = scanMessagesArray(h.Messages)
 	return &h.ChatHeader, nil
 }
 
-// countJSONArrayElements counts top-level elements in a JSON array without
-// materializing them: each element is token-skipped via jsoncap, so
-// counting never allocates per-element buffers. Returns 0 for
-// nil/empty/invalid input.
+// outcomeProbe is the ONE field this scan reads off a message. Every other key
+// is skipped by encoding/json's own unknown-field handling, which allocates
+// nothing for what it discards.
+type outcomeProbe struct {
+	TurnOutcome vibekit.TurnOutcome `json:"turn_outcome"`
+}
+
+// scanMessagesArray walks a chat file's raw messages array once and answers both
+// header facts it carries: how many messages there are, and the NEWEST turn
+// outcome any of them stamped (see vibekit.ChatHeader.LastTurnOutcome). Returns
+// (0, "") for nil/empty/invalid input, and keeps the outcome empty on any decode
+// failure so a malformed file still yields a usable header.
 //
-// NOTE: internal/chat/archive/helpers.go carries an aligned copy (archive
-// cannot import chat); keep the two in sync.
-func countJSONArrayElements(raw json.RawMessage) int {
+// One pass rather than two, because the count already required walking every
+// element: the outcome is read from the element the walk is at instead of
+// discarding it.
+//
+// An element that is not an object is COUNTED and contributes no outcome. That
+// is why the element is consumed with Decode rather than jsoncap's Object: a
+// non-object element leaves Object's Open('{') mid-token — for a nested array it
+// consumes only the '[' — which desynchronises the count for the rest of the
+// array. Decode reads one complete value and advances past it before it
+// unmarshals, so an UnmarshalTypeError still leaves the stream positioned on the
+// next element. A SYNTAX error does not, so the walk stops there.
+func scanMessagesArray(raw json.RawMessage) (count int, last vibekit.TurnOutcome) {
 	if len(raw) == 0 {
-		return 0
+		return 0, ""
 	}
 	dec := jsoncap.NewDecoder(bytes.NewReader(raw), 0)
 	if ok, err := dec.Open('['); err != nil || !ok {
-		return 0
+		return 0, ""
 	}
-	count := 0
 	for dec.More() {
-		if err := dec.Skip(); err != nil {
-			break
+		var probe outcomeProbe
+		err := dec.Decode(&probe)
+		var typeErr *json.UnmarshalTypeError
+		switch {
+		case err == nil:
+			if probe.TurnOutcome != "" {
+				last = probe.TurnOutcome
+			}
+		case errors.As(err, &typeErr):
+			// A non-object element: consumed and skipped past, so counting
+			// stays correct and there is no outcome to read.
+		default:
+			return count, last
 		}
 		count++
 	}
-	return count
+	return count, last
 }

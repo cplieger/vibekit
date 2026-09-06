@@ -53,10 +53,18 @@ type Lease struct {
 	// only; nothing branches on it.
 	StartedAt time.Time `json:"started_at"`
 	// Deadline is the ONE instant at which this run is cancelled, and it is
-	// MUTABLE: it is re-stamped on every start and cleared on every pause,
-	// because the bound is on EXECUTING time. A run deliberately parked for a
-	// week must not be cancelled for having been parked, so a deadline computed
-	// once at admission would be the wrong semantic (that is wall time).
+	// MUTABLE in two ways: it is re-stamped on every start, cleared on every
+	// pause, and rolled FORWARD by the run's own observable progress, because the
+	// primary bound is on time spent making none. A run deliberately parked for a
+	// week must not be cancelled for having been parked, and a run producing
+	// steps for nine hours must not be cancelled for being long — so a deadline
+	// computed once at admission would be the wrong semantic twice over (that is
+	// wall time, and it cannot be rolled forward).
+	//
+	// The instant it holds is therefore whichever of three inputs is tighter (see
+	// Bounds): the idle window from the last progress, the run's own next slot,
+	// and the absolute executing-time backstop that stops a runaway loop from
+	// refreshing the window forever.
 	//
 	// ZERO means vibekit is not currently bounding the run — it is parked, or it
 	// was read back from disk, where a deadline is a fact about a process that no
@@ -93,6 +101,14 @@ type Lease struct {
 	// scheduled` because the two are different claims: the origin says who
 	// launched the run, this says whether a human is watching it.
 	Unattended bool `json:"unattended"`
+	// TabOffered records that the run's tab has been offered to its launching
+	// chat, so it is offered exactly once for the life of the run.
+	//
+	// DURABLE rather than process memory: `run_start` re-fires on every resume
+	// and a restart re-reads the lease, and a reader's close has to stay final
+	// across both. Additive at Version 1 — absent decodes false, so a lease
+	// written before this field earns one re-offer.
+	TabOffered bool `json:"tab_offered,omitempty"`
 }
 
 // Bounded reports whether vibekit is currently bounding the run — that is,
@@ -121,27 +137,81 @@ func (l *Lease) expired(now time.Time) bool {
 	return l.Bounded() && !now.Before(l.Deadline)
 }
 
-// NextDeadline computes the ONE deadline a run gets, from the two bounds that
-// used to be two independent mechanisms.
+// Bounds is the input set NextDeadline composes into one deadline.
 //
-//	min(now+ceiling, slotAt)   — never outlive your own slot
-//	max(that, now+floor)       — never hand a run an absurd budget
+// A STRUCT rather than four positional parameters: `ceiling, floor` were already
+// an undetectable transposition — two same-typed adjacent durations whose swap
+// compiles and produces a plausible-looking answer — and a third duration makes
+// that strictly worse. A keyed literal names each value at the call site.
 //
-// The order is the meaning. `min` is what makes a manual run of a scheduled
-// recipe yield to the schedule instead of holding it for the whole ceiling, and
-// `max` is what stops a slot that fired late, or an interval edited below the
-// schedule's own floor, from producing a two-minute run budget. The floor
-// therefore WINS over the slot when they conflict: a bound too small to finish
-// anything in is not a bound, it is a guaranteed failure on every slot.
+// Field order is govet fieldalignment's: the times first, each carrying a
+// *Location in its tail.
+type Bounds struct {
+	// SlotAt is the instant the run's own next scheduled slot comes due. Zero
+	// means "no slot to respect", not "due at the epoch".
+	SlotAt time.Time
+	// BackstopAt is the instant the run's absolute EXECUTING-time budget is
+	// spent. Zero means "this input does not bound the run".
+	//
+	// An INSTANT rather than a remaining duration, for SlotAt's reason: the zero
+	// value has to mean "absent", and an omitted duration would read as "already
+	// spent" — which OUTRANKS the floor, so a keyed literal that forgot the field
+	// would cancel every run the instant it was armed.
+	BackstopAt time.Time
+	// Idle is how long a run may execute without observable progress. It is the
+	// input a refill rolls forward, which is what makes the primary bound a
+	// STALL bound rather than a total-duration one.
+	Idle time.Duration
+	// Floor is the smallest budget any run may be handed. It outranks the idle
+	// window and the slot, and it does NOT outrank ANY BackstopAt tighter than the
+	// composed value — a backstop already spent is the sharpest instance, not the
+	// only one: with BackstopAt at now+2m and this floor at 5m the answer is now+2m.
+	// A floor answers "this bound is too small to finish anything inside", which is a
+	// claim about how much budget a run should get, and the backstop answers how much
+	// it has left. The remainder wins even when it is smaller than any useful budget.
+	Floor time.Duration
+}
+
+// NextDeadline computes the ONE deadline a run gets, from the three inputs that
+// bound it. They are composed here rather than enforced separately because a run
+// gets one timer, and a timer can only be armed for one instant.
 //
-// A zero slotAt means "no slot to respect", not "due at the epoch".
-func NextDeadline(now time.Time, ceiling, floor time.Duration, slotAt time.Time) time.Time {
-	deadline := now.Add(ceiling)
-	if !slotAt.IsZero() && slotAt.Before(deadline) {
-		deadline = slotAt
+//	min(now+Idle, SlotAt?)   — the tighter of the two bounds a run can work its way past
+//	max(that, now+Floor)     — never hand a run an absurd budget
+//	min(that, BackstopAt?)   — and never one that outlives its absolute budget
+//
+// THE ORDER IS THE PRECEDENCE, and the backstop is last because it outranks the
+// floor. `min` on the slot is what makes a manual run of a scheduled recipe yield
+// to the schedule instead of holding it for the whole idle window. `max` is what
+// stops a slot that fired late, or an interval edited below the schedule's own
+// floor, from producing a two-minute run budget — a bound too small to finish
+// anything in is a guaranteed failure on every slot, and the floor is derived from
+// the tightest schedule interval this app accepts, so the SLOT is the input it
+// exists to answer for.
+//
+// A BACKSTOP ALREADY SPENT IS A STATEMENT THAT THE RUN IS OVER, so no floor may
+// lift a deadline back above one: an instant in the past is returned AS ITSELF, and
+// the timer armed for it fires immediately. Let the floor answer instead and the
+// composed value is now+Floor on EVERY stamp, so each progress frame hands out a
+// fresh floor, the refill throttle admits the later instant, and the absolute bound
+// degrades into an unbounded rolling window — the one thing the backstop exists to
+// stop. The clamp binds on any backstop TIGHTER than the composed value, of which a
+// spent one is only the sharpest case.
+//
+// Clamping last is also what makes the backstop terminal ONCE IT BINDS: from that
+// stamp on the answer is BackstopAt, which is fixed for the whole executing stretch,
+// so every later stamp computes the same instant. Before it binds the answer is the
+// idle window and the backstop is inert.
+func NextDeadline(now time.Time, b Bounds) time.Time {
+	deadline := now.Add(b.Idle)
+	if !b.SlotAt.IsZero() && b.SlotAt.Before(deadline) {
+		deadline = b.SlotAt
 	}
-	if minimum := now.Add(floor); deadline.Before(minimum) {
+	if minimum := now.Add(b.Floor); deadline.Before(minimum) {
 		deadline = minimum
+	}
+	if !b.BackstopAt.IsZero() && b.BackstopAt.Before(deadline) {
+		deadline = b.BackstopAt
 	}
 	return deadline
 }

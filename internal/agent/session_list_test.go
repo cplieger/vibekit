@@ -2,6 +2,9 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"testing"
 
@@ -390,5 +393,75 @@ func TestToWorkflowRuns_KeepsOnlyParentlessRuns(t *testing.T) {
 			t.Errorf("%s carries parent_chat_id %q: every surviving run is parentless",
 				got[i].WorkflowID, got[i].ParentChatID)
 		}
+	}
+}
+
+// TestHandleSessionList_SaysWhichListFailed pins the endpoint's honesty about a
+// degraded read. It answered 200 with `[]` for a failed read AND for a workspace
+// with nothing to resume — a shape copied from /api/config-template, whose own
+// comment here named it as the pattern followed — so the History picker had no
+// way to tell a first boot from a dead bridge.
+//
+// The two lists are asserted INDEPENDENTLY because they are separate verbs on the
+// same bridge: one failing must neither blank nor discredit the other.
+func TestHandleSessionList_SaysWhichListFailed(t *testing.T) {
+	cases := map[string]struct {
+		arm          func(*fakeBridge)
+		wantSessions vibekit.ReadState
+		wantRuns     vibekit.ReadState
+	}{
+		"both reads land": {
+			arm: func(br *fakeBridge) {
+				br.callResults = map[string]json.RawMessage{
+					vibekit.MethodSessionList: json.RawMessage(`{"sessions":[]}`),
+					methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
+				}
+			},
+			wantSessions: vibekit.ReadReady,
+			wantRuns:     vibekit.ReadReady,
+		},
+		"the session read fails": {
+			arm: func(br *fakeBridge) {
+				br.callResults = map[string]json.RawMessage{
+					methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
+				}
+				br.callErrs = map[string]error{vibekit.MethodSessionList: errors.New("kas gone")}
+			},
+			wantSessions: vibekit.ReadUnavailable,
+			wantRuns:     vibekit.ReadReady,
+		},
+		"the run read fails": {
+			arm: func(br *fakeBridge) {
+				br.callResults = map[string]json.RawMessage{
+					vibekit.MethodSessionList: json.RawMessage(`{"sessions":[]}`),
+				}
+				br.callErrs = map[string]error{methodKiroWorkflowList: errors.New("kas gone")}
+			},
+			wantSessions: vibekit.ReadReady,
+			wantRuns:     vibekit.ReadUnavailable,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_ = captureLogs(t)
+			h, _, br := newTestHub()
+			tc.arm(br)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+			rec := httptest.NewRecorder()
+			h.handleSessionList(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: a picker is an affordance, so a failed read "+
+					"must not break the view", rec.Code)
+			}
+			var got vibekit.SessionListResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode reply %q: %v", rec.Body.String(), err)
+			}
+			if got.SessionsState != tc.wantSessions || got.RunsState != tc.wantRuns {
+				t.Errorf("states = %q/%q, want %q/%q", got.SessionsState, got.RunsState,
+					tc.wantSessions, tc.wantRuns)
+			}
+		})
 	}
 }

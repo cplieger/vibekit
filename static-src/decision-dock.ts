@@ -291,7 +291,71 @@ export function dropRunDecisions(): void {
   }
 }
 
+/** Drop every unanswered ask belonging to this RUN, wherever it is filed, WITHOUT
+ *  submitting an answer.
+ *
+ *  ALL FOUR kinds are run-scoped and all four are reached by this filter.
+ *  `handlers/turn.ts` stamps `runID: p.run_id ?? ""` on `permission`,
+ *  `elicitation` and `user_input` alike — a step's ask carries its run whichever
+ *  of the three doors it came through — and `handlers/run.ts` stamps
+ *  `runID: p.workflow_id` on `run_input`. So the filter is broader than a
+ *  request-shaped question: a step's permission and its elicitation have no other
+ *  remover either, because `collapseSettledRunInput` matches on kind plus ask id
+ *  so it cannot name one, and all three carry a `runID`, which is exactly what
+ *  `dropTurnDecisions` deliberately exempts.
+ *
+ *  For `run_input` this is a second, idempotent pass: that kind is already retired
+ *  server-side on the run's terminal transition (`forgetBounds` ->
+ *  `settleAsksForRun` -> `run_input_settled`).
+ *
+ *  Not answering is safe because a terminal run has no step left to consume an
+ *  answer. The server clears its own `pendingPerms` on the same transition
+ *  (`forgetBounds` -> `ClearPendingPermsForRun`), so the SSE connect replay no
+ *  longer re-offers the question and this clear is not the only thing standing.
+ *  The residual is narrow and stated: another client currently RENDERING one of
+ *  these cards keeps it until its next reload, because the server drops those
+ *  entries silently — `SettledByMoot` is restricted to a run ask by its own
+ *  contract.
+ *
+ *  Matches the same join `runPendingAsks` makes, so the predicate that says a run
+ *  is waiting and the one that clears the wait cannot disagree about which asks
+ *  belong to a run. Refuses an empty id, which `runID` is on every ordinary chat
+ *  ask. */
+export function dropRunAsks(workflowID: string): void {
+  if (workflowID === "") {
+    return;
+  }
+  const runKey = `${RUN_CHAT_PREFIX}${workflowID}`;
+  // The run is over, so every ask it owns is too — including one whose per-ask
+  // settle never arrived, which is the path `collapseSettledRunInput` cannot cover.
+  heldAnswers.delete(workflowID);
+  let dropped = false;
+  for (const [chatID, q] of queues) {
+    const rest = q.filter((d) => d.runID !== workflowID && d.chatID !== runKey);
+    if (rest.length === q.length) {
+      continue;
+    }
+    dropped = true;
+    if (rest.length === 0) {
+      queues.delete(chatID);
+    } else {
+      queues.set(chatID, rest);
+    }
+  }
+  if (dropped) {
+    bump();
+  }
+}
+
 /** Drop the decisions a TURN owned, leaving a workflow run's alone.
+ *
+ *  TWO triggers, and the second is what reaches a run's ORPHANS. `turn_ended` on a
+ *  chat is the obvious one. The other is a run's own TERMINAL frame, gated on the
+ *  launching chat being idle with no sibling run live (`handlers/run.ts`): a step's
+ *  request-shaped ask can arrive with `run_id` empty, which puts it outside every
+ *  run-scoped remover's reach and inside this one's, and no `turn_ended` fires for
+ *  that chat while the run is going because the attribution gate drops a
+ *  step-driven turn's `turn_end`.
  *
  *  A permission, an elicitation and a question all BLOCK the turn that raised
  *  them, so a turn that has ended cannot still be waiting on one: it was
@@ -306,7 +370,8 @@ export function dropRunDecisions(): void {
  *  turn that launched it (a goal run ends its turn immediately and then runs),
  *  and its asks are queued under that chat's id. Dropping those would strand the
  *  run waiting for an answer no surface is offering any more, which is the exact
- *  failure the dock's queue was built to end. */
+ *  failure the dock's queue was built to end. `dropRunAsks` above is what ends the
+ *  exemption once the RUN itself is over. */
 export function dropTurnDecisions(chatID: string): void {
   const q = queues.get(chatID);
   if (q === undefined) {
@@ -508,6 +573,9 @@ export function collapseSettledRunInput(
   if (workflowID === "" || askID === "") {
     return;
   }
+  // Ahead of the scan and unconditional: the ask is over whether or not a card for
+  // it is still queued here, so held words for it have stopped being wanted.
+  forgetHeldAnswer(workflowID, askID);
   for (const [chatID, q] of queues) {
     const i = q.findIndex(
       (d) => d.kind === "run_input" && d.askID === askID && d.payload.workflow_id === workflowID,
@@ -524,6 +592,55 @@ export function collapseSettledRunInput(
     }
     bump();
     return;
+  }
+}
+
+/** The words a reader typed into a run-input card, held by the ask they answer.
+ *
+ *  `settle` splices the entry BEFORE the answer goes out, so the card carrying the
+ *  text is already gone by the time the server can refuse it — and the one refusal
+ *  that is RETRYABLE re-offers the SAME ask on a fresh `run_input_needed`
+ *  (`errRunNotParked`: the run is momentarily between steps). Without this the
+ *  reader got their question back with an empty box and retyped, which is short of
+ *  the condition invariant 2 grants the optimistic dock its one carve-out on: a
+ *  refusal rolls the row back AND returns the text, so nothing vanishes unreplaced.
+ *
+ *  Per ask rather than one slot, so answering a second parked step cannot silently
+ *  evict the first one's words. NESTED by run rather than keyed on a composite,
+ *  because the two things that end an ask end it at those two granularities:
+ *  `collapseSettledRunInput` per ask and `dropRunAsks` per run, which between them
+ *  are every path an ask can leave by — so the map is bounded by the open-ask
+ *  population. The chat-scoped sweeps need no hook of their own: deleting a chat
+ *  cancels its runs server-side, and that terminal transition settles their asks. */
+const heldAnswers = new Map<string, Map<string, string>>();
+
+/** The text this ask is holding, or "" — what a rebuilt card seeds its box with. */
+function heldAnswer(d: RunInputDecision): string {
+  return heldAnswers.get(d.payload.workflow_id)?.get(d.askID) ?? "";
+}
+
+/** Hold the words being sent, so a retryable refusal returns them with the ask.
+ *  A `null` text is CONTINUE WITHOUT ANSWERING, which retires the question rather
+ *  than answering it, so whatever was held is dropped instead. */
+function holdAnswer(d: RunInputDecision, text: string | null): void {
+  if (text === null) {
+    forgetHeldAnswer(d.payload.workflow_id, d.askID);
+    return;
+  }
+  const byAsk = heldAnswers.get(d.payload.workflow_id) ?? new Map<string, string>();
+  byAsk.set(d.askID, text);
+  heldAnswers.set(d.payload.workflow_id, byAsk);
+}
+
+/** Forget one ask's held words, and the run's bucket once it holds none. */
+function forgetHeldAnswer(workflowID: string, askID: string): void {
+  const byAsk = heldAnswers.get(workflowID);
+  if (byAsk === undefined) {
+    return;
+  }
+  byAsk.delete(askID);
+  if (byAsk.size === 0) {
+    heldAnswers.delete(workflowID);
   }
 }
 
@@ -869,8 +986,11 @@ function buildCard(d: Decision): HTMLElement {
         });
       });
     case "run_input":
-      return buildRunInputCard(d.payload, (text) => {
+      // The hold goes INSIDE settle's callback, so an ask another surface already
+      // answered leaves nothing behind: settle refuses and the callback never runs.
+      return buildRunInputCard(d.payload, heldAnswer(d), (text) => {
         settle(d, () => {
+          holdAnswer(d, text);
           d.submit(text);
         });
       });
@@ -889,6 +1009,7 @@ export function _resetForTest(): void {
     endPhase(h);
   }
   queues.clear();
+  heldAnswers.clear();
   hosts.length = 0;
   queueVersion.value = 0;
 }

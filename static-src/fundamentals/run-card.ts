@@ -7,18 +7,25 @@
 // card among a conversation's turns is a glance, the page is the review.
 //
 // Four regions: HEAD (what/how/how-long, always) / ALERT (an ask, pause,
-// stop or failure) / BODY (per-step rows hosting each step's live blocks) /
+// stop or failure) / BODY (one row per step, each a DOOR into the run tab) /
 // FOOT (outcome + link to the full tree).
+//
+// THE CARD IS THE RECORD AND IT RENDERS NO STEP CONTENT. A step row states what
+// the step is, how it ended, how long it took and what it captured; clicking it
+// opens `/run/<id>` with that node selected, which is where the step's own
+// transcript lives. It used to HOST that transcript behind a per-row disclosure,
+// and on a workflow-heavy chat that made the transcript build every one of a run's
+// tool cards and reasoning traces — with their effects and subscriptions —
+// whether or not a row was ever opened, because `content-visibility` skips layout
+// and paint and not construction.
 //
 // OPEN BY DEFAULT — the inverse of the delegated-work card, deliberately:
 // there is exactly one run card per launch and it runs for minutes, where
-// the delegate card's N-at-once reasoning does not apply. Step rows ARE
-// collapsed, which is where that reasoning belongs.
+// the delegate card's N-at-once reasoning does not apply.
 //
 // Renders from `inspect`, never from accumulated events: `run-store.ts` owns
 // the fetch, this file is a pure view. The invocation tool call is persisted
-// in its launching turn, so the card refills itself on refresh; only the
-// nested live blocks (belonging to a turn vibekit never finalizes) are lost.
+// in its launching turn, so the card refills itself on refresh.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
@@ -27,16 +34,18 @@ import { STATE_WORD, paintStateMark, stateOf, withAsk } from "../exec-view/statu
 import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN, ICON_EXTERNAL } from "../icons.js";
+import { buildPath } from "../router.js";
 import { formatElapsed, truncate } from "../strings.js";
 import type { ToolStatus } from "../types.js";
 import {
-  isNeedInputPause,
+  isNeedInputPark,
   leafNodes,
-  nodePathOf,
+  nodeAddressOf,
   runCounters,
   runElapsedMs,
   runIsLive,
   elapsedMs,
+  type NodeAddress,
   type RunNode,
   type RunState,
 } from "../run-store.js";
@@ -66,7 +75,7 @@ export interface RunAsks {
 
 const NO_ASKS: RunAsks = { count: 0, nodes: new Set<string>(), label: "" };
 
-/** The pause reason as a sentence a reader can act on.
+/** The pause as a sentence a reader can act on.
  *
  *  The two `need_input` literals get replaced rather than quoted. KAS writes
  *  `Step requested user input via send_message.` for a step's own question and
@@ -74,13 +83,18 @@ const NO_ASKS: RunAsks = { count: 0, nodes: new Set<string>(), label: "" };
  *  both name a TOOL and a mechanism where what the reader needs to know is that
  *  somebody owes an answer. The arm ABOVE this one already renders the question
  *  itself whenever the ask reached the dock, so this is the case where it did not —
- *  a restart lost the text, or this client has not been handed it yet. */
-function pauseSentence(reason: string | undefined): string {
+ *  a restart lost the text, or this client has not been handed it yet.
+ *
+ *  It takes the STATE rather than the reason, because a park inside a parallel branch
+ *  is only in the node tree: the reason KAS composes onto the run for that case names
+ *  a branch, so quoting it tells the reader nothing to act on. */
+function pauseSentence(state: RunState | undefined): string {
+  if (isNeedInputPark(state)) {
+    return "A step is waiting for your answer";
+  }
+  const reason = state?.pauseReason;
   if (reason === undefined || reason === "") {
     return "Waiting";
-  }
-  if (isNeedInputPause(reason)) {
-    return "A step is waiting for your answer";
   }
   return `Waiting: ${reason}`;
 }
@@ -110,21 +124,13 @@ function runWord(status: RunState["status"]): string {
 export interface RunCardView {
   readonly root: HTMLDivElement;
   /** Re-render every region from a fresh state. Idempotent, and safe on
-   *  every invalidation: rows are reconciled in place, so a step's open
-   *  disclosure and its blocks survive.
+   *  every invalidation: rows are reconciled in place.
    *
    *  `asks` defaults to the last one given, so an internal re-render
    *  (`setLaunch`) does not have to restate it. */
   render(state: RunState | undefined, asks?: RunAsks): void;
   /** Advance the clocks only, on a 1s tick while the run is live. */
   tick(): void;
-  /** The container a step's own blocks render into, creating the row when the
-   *  state has not arrived yet.
-   *
-   *  Out-of-order is the normal case: a step's first frame can beat the
-   *  `inspect` fetch that describes it, so a row must be creatable from a
-   *  node path alone and filled in later. */
-  stepBody(nodePath: string): HTMLElement;
   /** Fold in the LAUNCH tool call's own status and output — a launch that
    *  failed created no run, so `inspect` has nothing to report and the tool
    *  call is the only witness. Silent on a successful launch, since the
@@ -139,7 +145,6 @@ interface StepRow {
   name: HTMLElement;
   meta: HTMLElement;
   dur: HTMLElement;
-  body: HTMLElement;
   /** Live while the step runs, so the clock ticks; cleared once it settles. */
   startedAt?: string;
   endedAt?: string;
@@ -147,21 +152,28 @@ interface StepRow {
 
 /** Build a run card. `name` is the best label at creation (recipe name from
  *  the invocation, or generic); later renders prefer the run's own
- *  `runLabel`. `onOpen` (the footer link) and `onOpenChange` (disclosure
- *  flips, keyed by node path / null for the card) are injected so this
- *  `fundamentals/` view avoids importing the feature module that owns run
- *  tabs and its open-container bookkeeping. Card mounts open; rows closed. */
+ *  `runLabel`. `onOpen` is injected so this `fundamentals/` view avoids
+ *  importing the feature module that owns run tabs; its third argument is the
+ *  node a STEP ROW names, absent for the footer link, which means "the run".
+ *  Card mounts open. */
 export function buildRunCard(
   workflowID: string,
   name: string,
-  onOpen: (id: string, label: string) => void,
-  onOpenChange?: (nodePath: string | null, open: boolean) => void,
+  onOpen: (id: string, label: string, focusNode?: string) => void,
 ): RunCardView {
   const root = el("div", {
     className: "run-card",
     "data-run": workflowID,
     "data-status": "starting",
   }) as HTMLDivElement;
+  /** The run's own route — what the FOOT link means, which is "the run" rather
+   *  than any step in it, so it carries no node.
+   *
+   *  Through `buildPath` rather than a hand-built literal: `router.ts` has zero
+   *  imports, so a `fundamentals/` view reaching it still points strictly
+   *  downward, and the producer then cannot spell the route differently from the
+   *  parser (`messages-blocks.ts` already does this for the subagent href). */
+  const runHref = buildPath({ kind: "run", id: workflowID });
 
   // --- head -----------------------------------------------------------------
   const icon = el("span", { className: "run-icon", "aria-hidden": "true" }, iconEl(ICON_TAB_RUN));
@@ -205,7 +217,7 @@ export function buildRunCard(
   // `fundamentals/` view must not import `run-view.ts`'s feature module.
   const open = el(
     "a",
-    { className: "run-open", href: `/run/${encodeURIComponent(workflowID)}` },
+    { className: "run-open", href: runHref },
     "Open run",
     el("span", { className: "run-open-icon", "aria-hidden": "true" }, iconEl(ICON_EXTERNAL)),
   );
@@ -225,7 +237,6 @@ export function buildRunCard(
     open: true,
     onToggle: (isOpen) => {
       root.classList.toggle("collapsed", !isOpen);
-      onOpenChange?.(null, isOpen);
     },
   });
 
@@ -239,7 +250,33 @@ export function buildRunCard(
   let lastState: RunState | undefined;
   let lastAsks: RunAsks = NO_ASKS;
 
-  function stepRow(nodePath: string): StepRow {
+  /** One step's row: a DOOR into the run tab with that node selected.
+   *
+   *  A real anchor, so middle-click and copy-link work, with a click handler that
+   *  yields to a modified click — the pattern `.run-open` above already uses. Its
+   *  children are SPANS only and it carries no `role` and no `tabindex`: an anchor
+   *  inside a `role="button"` host is axe's `nested-interactive`, which
+   *  `aria-hidden` plus `tabindex="-1"` does not clear, so the disclosure role and
+   *  its chevron went with the body they belonged to.
+   *
+   *  Space does not activate it, deliberately: a link is Enter-activated by
+   *  convention, and the Space handling went with `createDisclosure`.
+   *
+   *  `aria-label` stays `"<step>, <state word>"` (written by `paintRow`). The ROLE
+   *  is what says the row opens something, so a second sentence in the name would
+   *  restate it.
+   *
+   *  Its `href` carries this row's NODE as a `#node=` fragment, so a copied or
+   *  middle-clicked row link lands on the step rather than on whatever the page
+   *  auto-follows. The plain click still goes through `onOpen`, because that is
+   *  what activates the tab in place instead of reloading the app.
+   *
+   *  An UNPLACED address carries no node on either channel: the bare `/run/{id}`
+   *  is honest, where a focus path nothing in the plan matches leaves a pending
+   *  focus for the life of the page. Read at creation, because the row's KEY is
+   *  that path, so a node that becomes placeable takes a different key. */
+  function stepRow(addr: NodeAddress): StepRow {
+    const nodePath = addr.path.join("/");
     let row = rows.get(nodePath);
     if (row !== undefined) {
       return row;
@@ -252,31 +289,27 @@ export function buildRunCard(
     const nameEl2 = el("span", { className: "run-step-name" }, label);
     const meta = el("span", { className: "run-step-meta" });
     const dur = el("span", { className: "run-step-dur" });
-    const chev = el("span", { className: "run-step-toggle", "aria-hidden": "true" }, chevronEl());
     const rowHead = el(
-      "div",
-      { className: "run-step-head", role: "button", tabindex: "0" },
+      "a",
+      {
+        className: "run-step-head",
+        href: addr.placed ? buildPath({ kind: "run", id: workflowID, node: nodePath }) : runHref,
+      },
       glyph,
       nameEl2,
       meta,
       dur,
-      chev,
     );
-    const rowBody = el("div", { className: "run-step-body" });
-    const rowRoot = el(
-      "div",
-      { className: "run-step collapsed", "data-node": nodePath },
-      rowHead,
-      rowBody,
-    );
-    createDisclosure(rowHead, rowBody, {
-      open: false,
-      onToggle: (isOpen) => {
-        rowRoot.classList.toggle("collapsed", !isOpen);
-        onOpenChange?.(nodePath, isOpen);
-      },
+    rowHead.addEventListener("click", (e) => {
+      // A modified click is a deliberate escape from the app's own routing.
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || (e as MouseEvent).button !== 0) {
+        return;
+      }
+      e.preventDefault();
+      onOpen(workflowID, nameEl.textContent, addr.placed ? nodePath : undefined);
     });
-    row = { root: rowRoot, head: rowHead, glyph, name: nameEl2, meta, dur, body: rowBody };
+    const rowRoot = el("div", { className: "run-step", "data-node": nodePath }, rowHead);
+    row = { root: rowRoot, head: rowHead, glyph, name: nameEl2, meta, dur };
     rows.set(nodePath, row);
     steps.appendChild(rowRoot);
     return row;
@@ -346,7 +379,7 @@ export function buildRunCard(
     } else if (cap?.dataset["text"] !== text) {
       const next = el("div", { className: "run-step-capture", "data-text": text }, text);
       if (cap === null) {
-        row.root.insertBefore(next, row.body);
+        row.root.appendChild(next);
       } else {
         cap.replaceWith(next);
       }
@@ -354,21 +387,17 @@ export function buildRunCard(
   }
 
   function renderSteps(state: RunState | undefined, asks: RunAsks): void {
-    const leaves = leafNodes(state?.root);
-    for (const node of leaves) {
-      const path = nodePathOf(state?.root, node).join("/");
-      paintRow(stepRow(path), node, asks);
+    const painted: StepRow[] = [];
+    for (const node of leafNodes(state?.root)) {
+      const row = stepRow(nodeAddressOf(state?.root, node));
+      paintRow(row, node, asks);
+      painted.push(row);
     }
-    // Order to match the plan; a row created by a live frame the state
-    // doesn't describe yet keeps its arrival position (dropping it would
-    // delete the blocks rendered inside it).
+    // Order to match the plan: a pure ordering pass over what this render just
+    // painted. `stepRow` always inserts, so every leaf has a row here and the
+    // second walk needs no lookup and no absent case.
     let anchor: Element | null = null;
-    for (const node of leaves) {
-      const path = nodePathOf(state?.root, node).join("/");
-      const row = rows.get(path);
-      if (row === undefined) {
-        continue;
-      }
+    for (const row of painted) {
       const want: Element | null =
         anchor === null ? steps.firstElementChild : anchor.nextElementSibling;
       if (row.root !== want) {
@@ -412,7 +441,7 @@ export function buildRunCard(
       }
     } else if (state?.status === "paused") {
       kind = "paused";
-      parts.push(pauseSentence(state.pauseReason));
+      parts.push(pauseSentence(state));
       const code = state.pauseDetail?.code;
       if (code !== undefined && code !== "") {
         parts.push(`after a transient error (${code})`);
@@ -564,9 +593,6 @@ export function buildRunCard(
     root,
     render,
     tick,
-    stepBody(nodePath: string): HTMLElement {
-      return stepRow(nodePath).body;
-    },
     setLaunch(status: ToolStatus, output: string | undefined): void {
       if (status !== "failed") {
         return;

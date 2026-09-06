@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/chat"
+	"github.com/cplieger/vibekit/internal/durable"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/rpcerr"
 	"github.com/cplieger/vibekit/internal/settings"
@@ -130,7 +131,7 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 	defer outcome.ReleaseTurnReservation(chatID)
 	slog.Warn("empty turn detected, recreating session", "chat_id", chatID)
 	refreshRetrySession(ctx, bridges, chats, chatID)
-	retryEmptyTurnPrompt(ctx, bridges, bus, outcome, chatID, p, params)
+	retryEmptyTurnPrompt(ctx, bridges, chats, bus, outcome, chatID, p, params)
 }
 
 // refreshRetrySession abandons the session that answered nothing: close
@@ -160,14 +161,36 @@ func refreshRetrySession(ctx context.Context, bridges BridgeAccess, chats ChatSt
 
 // retryEmptyTurnPrompt respawns the bridge and re-sends the prompt as a turn of
 // its own. The caller holds the retry's admission reservation.
-func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, bus Broadcaster, outcome TurnOutcomeAccess, chatID vibekit.ChatID, p *vibekit.PromptCommand, params map[string]any) {
+func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, outcome TurnOutcomeAccess, chatID vibekit.ChatID, p *vibekit.PromptCommand, params map[string]any) {
 	sb2, err2 := bridges.OpenBridge(ctx, chatID, p.Model)
 	if err2 != nil {
 		slog.Error("empty turn: respawn failed",
 			"chat_id", chatID, keyError, err2)
+		reason := "Session refresh failed: " + rpcerr.Text(err2)
+		// Correct the transcript before reporting. refreshRetrySession has already
+		// written "Session refreshed, retrying" onto this turn, so without this the
+		// record claims a retry is in flight that will never happen — and the toast
+		// carrying the correction is gone in twelve seconds. It is APPENDED below
+		// that row rather than replacing it, so the reader sees two consecutive
+		// dividers — acceptable for a log, and the turn's own notice cannot carry
+		// it because recoverEmptyTurn only runs on end_turn, leaving the turn
+		// settled `completed` and turnFailureText silent.
+		//
+		// No turn to close: the empty turn was finalized before recovery began and
+		// the retry's epoch is never opened, so a divider is the only durable
+		// surface this failure has. That is also why the error frame below is NOT
+		// turn-scoped for suppression purposes — the reason is on the transcript but
+		// no turn carries it as an outcome, so the toast stays the primary report.
+		evt := vibekit.Message{
+			ID: ids.NewMessageID(), Role: vibekit.RoleEvent, Ts: time.Now().UnixMilli(),
+			EventKind: vibekit.EventInterrupted, Content: reason,
+		}
+		if err := chats.AppendMessage(durable.Context(ctx), chatID, &evt); err != nil {
+			slog.Error("empty turn: append respawn-failure event", "chat_id", chatID, keyError, err)
+		}
 		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 			Code:    vibekit.ErrCodeRecoveryFailed,
-			Message: "Session refresh failed: " + rpcerr.Text(err2),
+			Message: reason,
 		}))
 		return
 	}
@@ -208,9 +231,12 @@ func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, bus Broadca
 		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
 		reason := promptFailureReason(retryErr)
 		outcome.AbandonInFlightTurn(ctx, chatID, retryEpoch, reason)
+		// Turn-scoped: the retry ran as a turn of its own and the abandon above
+		// stamped this reason on it, so that card carries the cause.
 		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
-			Code:    vibekit.ErrCodeRecoveryFailed,
-			Message: "Retry prompt failed: " + reason,
+			Code:       vibekit.ErrCodeRecoveryFailed,
+			Message:    "Retry prompt failed: " + reason,
+			TurnScoped: true,
 		}))
 		return
 	}
@@ -497,8 +523,11 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit
 	// Started == true, so the next prompt's ensureTurnStarted no-ops and
 	// extends this dead turn's blocks under this dead turn's message id.
 	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, epoch, reason)
+	// Turn-scoped: the abandon above stamps this same reason on the turn's
+	// carrier, so the card says it durably and a toast for the chat on screen
+	// would be a second copy of it.
 	roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID,
-		vibekit.ErrorPayload{Code: code, Message: reason}))
+		vibekit.ErrorPayload{Code: code, Message: reason, TurnScoped: true}))
 }
 
 // BuildPromptParams constructs the full session/prompt parameter map.

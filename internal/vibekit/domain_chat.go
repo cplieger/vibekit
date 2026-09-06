@@ -454,6 +454,23 @@ type Message struct {
 	// not measured is recoverable from the record instead of flattened into
 	// `unknown`. No consumer may branch on it; TurnOutcome is what they read.
 	TurnStopReasonRaw StopReason `json:"turn_stop_reason_raw,omitempty"`
+	// TurnFailureReason is WHY the turn ended badly, stamped by the same code that
+	// stamps TurnOutcome, so exactly one persisted message per turn carries both.
+	//
+	// It exists because the outcome was durable and the account of it was not. A
+	// prompt-failure close wrote its prose onto an EventInterrupted divider's
+	// Content; the OUTCOME close wrote no prose anywhere, and stamped no marker at
+	// all when the turn had streamed something — so a turn that failed on the
+	// wire's own `stopReason: "error"` persisted a red mark, a footer reading
+	// "Failed" and an empty body, with the cause reaching the user through a
+	// 12-second toast and nothing else. Measured on a live chat file: 26 blocks, a
+	// settled `failed` outcome, and no sentence anywhere in the record.
+	//
+	// Sanitized and byte-capped at the write like every other untrusted upstream
+	// string, because its usual source is the agent's own text. Absent on every
+	// message persisted before this field existed, which is why the client keeps a
+	// per-outcome default (DefaultFailureReason).
+	TurnFailureReason string `json:"turn_failure_reason,omitempty"`
 	// TurnModel is the model that answered this turn, stamped on the final
 	// assistant message at turn_ended alongside TurnCredits / TurnElapsedMs
 	// below. It belongs on the MESSAGE and not only on the Chat because the
@@ -593,6 +610,61 @@ type SessionModel struct {
 type SessionEffortLevel struct {
 	ID   string `json:"id"`
 	Name string `json:"name,omitempty"`
+}
+
+// CatalogState is GET /api/config-template's verdict on the pre-session model
+// catalog, which used to flatten four outcomes into one byte-identical 200 body.
+//
+// Three-valued, and the ceiling is KAS's: it omits the `model` config option
+// identically for an unresolved cache and for an account entitled to nothing, so
+// CatalogEmpty can state no cause and copy over it must not claim one. Same fact
+// bounds the retry — `_kiro/config/template` is a pure cache read, so retrying
+// converges on CatalogUnavailable and never on CatalogEmpty.
+type CatalogState string
+
+const (
+	// CatalogReady means a `model` config option was decoded. Its entry list may
+	// still be empty after the [Deprecated]/[Legacy] filter — KAS answered with a
+	// catalog either way, which is what separates this from CatalogEmpty.
+	CatalogReady CatalogState = "ready"
+	// CatalogEmpty means the reply decoded and carried no `model` option at all.
+	CatalogEmpty CatalogState = "empty"
+	// CatalogUnavailable means vibekit never got an answer it could read.
+	CatalogUnavailable CatalogState = "unavailable"
+)
+
+// CatalogReason discriminates the two ways a read fails, on CatalogUnavailable
+// only. They are categorically different — one says try again, the other says the
+// contract moved — and the flattened body could say neither.
+type CatalogReason string
+
+const (
+	CatalogReasonRPC    CatalogReason = "rpc"
+	CatalogReasonDecode CatalogReason = "decode"
+)
+
+// ConfigTemplateResponse is the GET /api/config-template reply: the pre-session
+// mode + model catalog, plus the verdict that says which outcome produced it.
+//
+// Named …Response rather than …Payload because it is bound to no SSE event;
+// internal/wirespec's binding tests key on the Payload suffix, and
+// auth.WhoamiResponse is the precedent.
+type ConfigTemplateResponse struct {
+	DefaultModel string `json:"default_model,omitempty"`
+	// EffortActive is the `effortLevel` option's currentValue: the tier a
+	// fresh session would run at. Pre-session, this is the only evidence of
+	// a live level.
+	EffortActive string `json:"effort_active,omitempty"`
+	// Catalog carries NO omitempty deliberately: wiregen emits a required
+	// TypeScript field for a field without it, so a client cannot invent a
+	// fallback for the one value the whole retry policy reads.
+	Catalog       CatalogState  `json:"catalog"`
+	CatalogReason CatalogReason `json:"catalog_reason,omitempty"`
+	// The three lists are non-null on every path, degrade branches included, so a
+	// generated decoder requiring an array cannot fail on a failure body.
+	Modes        []SessionMode        `json:"modes"`
+	Models       []SessionModel       `json:"models"`
+	EffortLevels []SessionEffortLevel `json:"effort_levels"`
 }
 
 // Chat is the full persisted chat. Serialized as <dir>/<id>.json.
@@ -770,6 +842,24 @@ func (c *Chat) RecordSession(id string) {
 	}
 }
 
+// lastTurnOutcome returns the newest persisted turn outcome in msgs — the
+// TurnOutcome of the last message carrying one — or "" when none does.
+//
+// Walks BACKWARDS and stops at the first hit, because the newest outcome is the
+// only one that describes how this chat's LAST turn ended, and rows persisted
+// after the carrier (a plan row, a compaction event) carry none of their own and
+// so must not hide it.
+func lastTurnOutcome(msgs []Message) TurnOutcome {
+	// Index-only range: Message is far past gocritic's rangeValCopy threshold, so
+	// binding the element would copy a whole transcript row per iteration.
+	for i := range slices.Backward(msgs) {
+		if o := msgs[i].TurnOutcome; o != "" {
+			return o
+		}
+	}
+	return ""
+}
+
 // Header returns the chat's metadata without messages. Used for list
 // endpoints and SSE broadcasts when messages are not needed.
 func (c *Chat) Header() ChatHeader {
@@ -781,6 +871,7 @@ func (c *Chat) Header() ChatHeader {
 		PriorACPSessionIDs:  c.PriorACPSessionIDs,
 		CurrentModeID:       c.CurrentModeID,
 		Effort:              c.Effort,
+		LastTurnOutcome:     lastTurnOutcome(c.Messages),
 		AvailableModes:      c.AvailableModes,
 		AvailableModels:     c.AvailableModels,
 		EffortLevels:        c.EffortLevels,
@@ -808,6 +899,23 @@ type ChatHeader struct {
 	// is the only path that reaches every chat. Chat.Draft is deliberately NOT
 	// mirrored — see the comment on that field.
 	Effort string `json:"effort,omitempty"`
+	// LastTurnOutcome is how this chat's NEWEST finished turn ended, taken from the
+	// last message carrying a TurnOutcome. DERIVED on every read rather than stored:
+	// the outcome already lives on the message that finalized the turn, and a second
+	// copy on the chat record would be a second thing that can be wrong.
+	//
+	// It is on the header because the header is the only projection that reaches
+	// every chat — the same reason Effort is here. The client's two outcome latches
+	// (`turn_done` / `turn_failed`) are client memory, so a fresh page load, a new
+	// browser session and a transport gap all had nothing to derive them from, and
+	// every chat tab's activity dot fell back to the hollow `idle` ring however its
+	// last turn had really ended.
+	//
+	// Empty for a chat with no finished turn AND for a record written before
+	// Message.TurnOutcome existed, which is not backfilled (invariant 5 forbids the
+	// migration code). Never `running`: no persisted message carries that value —
+	// only the API turn projections derive it for the turn in flight.
+	LastTurnOutcome TurnOutcome `json:"last_turn_outcome,omitempty"`
 	// EffortActive + EffortLevels mirror Chat's, for the same reason Effort does:
 	// the control renders from the ACTIVE chat's header, and an empty chat never
 	// fetches its full record.
@@ -857,6 +965,33 @@ type ResumableSession struct {
 	CreatedAt int64  `json:"created_at,omitempty"`
 }
 
+// ReadState is one list read's outcome on GET /api/sessions, which copied the
+// flatten-to-empty shape above: the History picker could not tell "nothing to
+// resume" from "the read failed", and both were a 200 with `[]`.
+//
+// Two-valued, because a list read CAN distinguish empty from unavailable — an
+// empty answer is an empty array rather than an omitted field, so `empty` stays
+// derivable from the list's own length. That is what CatalogState lacks.
+type ReadState string
+
+const (
+	ReadReady       ReadState = "ready"
+	ReadUnavailable ReadState = "unavailable"
+)
+
+// SessionListResponse is the GET /api/sessions reply.
+//
+// The two lists degrade INDEPENDENTLY — separate verbs on the same bridge, so
+// one can fail alone — which is why each carries its own verdict rather than the
+// response carrying one. Neither verdict carries omitempty: a reader must not be
+// able to read an absent field as success.
+type SessionListResponse struct {
+	Sessions      []ResumableSession `json:"sessions"`
+	Runs          []WorkflowRun      `json:"runs"`
+	SessionsState ReadState          `json:"sessions_state"`
+	RunsState     ReadState          `json:"runs_state"`
+}
+
 // WorkflowRun is one previous workflow run, listed beside previous chats in
 // the history surface (GET /api/sessions) and reviewable read-only.
 //
@@ -874,8 +1009,14 @@ type WorkflowRun struct {
 	// (launched from the TUI, or by a chat vibekit no longer keeps).
 	ParentChatID string `json:"parent_chat_id,omitempty"`
 	// EndReason says why a run STOPPED when something other than the run itself
-	// decided that: "overran" (it blew a wall clock — its schedule's next slot or
-	// the universal ceiling) or "step_cap" (one of its steps blew its turn cap).
+	// decided that: "overran" (it blew the one deadline it gets — its schedule's
+	// next slot, its idle window with no progress in it, or its absolute
+	// executing-time backstop) or "step_cap" (one of its steps blew its turn cap).
+	//
+	// The three "overran" causes are deliberately not distinguished on the wire: a
+	// fourth value would need its own client sentence, and the stall case is the
+	// one that reads worst as a result — the client says a run "ran past its time
+	// limit" when what it actually did was stop producing.
 	//
 	// It exists because KAS's status cannot answer the question. Both bounds
 	// terminate a run through the same Cancel the Cancel button reaches, so the

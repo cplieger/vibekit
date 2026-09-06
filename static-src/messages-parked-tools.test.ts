@@ -41,6 +41,9 @@ vi.mock("./api-client.js", () => ({
   apiGet: apiGetMock,
   apiPost: vi.fn(),
   apiGetTyped: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds: `store-load.ts` reaches it for
+  // the deep-link confirmation, and this graph includes that module.
+  apiGetTypedOrError: vi.fn(),
 }));
 
 const store = await import("./store.js");

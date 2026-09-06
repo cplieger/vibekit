@@ -198,6 +198,105 @@ func TestProjection_CompactionKeepsTheOriginals(t *testing.T) {
 	}
 }
 
+// A separator arriving MID-TURN splits that turn, so the summary is projected
+// between what the model said before the compaction and what it said after.
+//
+// This is what makes the replay agree with the live path, which seals the same
+// boundary itself (agent.BridgeCoordinator.SealTurnSegment): the two must produce
+// the same array or a chat's transcript changes shape on reload. The separator
+// carries no message id, so its POSITION is the only thing the wire can mean.
+func TestProjection_MidTurnSeparatorSplitsTheTurn(t *testing.T) {
+	p := NewProjection(seqIDs())
+	ingestAll(p, [][2]any{
+		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true})),
+		pair(replayFrame(t, vibekit.ACPUpdateAgentChunk, "before", "", map[string]any{
+			"messageId": "m-pre", "timestamp": "2026-08-02T10:00:00.000Z",
+		})),
+		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summarization_separator",
+			map[string]any{"summarizationSeparator": true})),
+		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
+			"summaryMessage": map[string]any{"content": "the summary"},
+		})),
+		pair(replayFrame(t, vibekit.ACPUpdateAgentChunk, "after", "", map[string]any{
+			"messageId": "m-post", "timestamp": "2026-08-02T10:00:05.000Z",
+		})),
+		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_end", nil)),
+	})
+	got := p.Messages()
+
+	type want struct {
+		role    vibekit.Role
+		content string
+		kind    vibekit.EventKind
+	}
+	expect := []want{
+		{role: vibekit.RoleAssistant, content: "before"},
+		{role: vibekit.RoleEvent, content: "the summary", kind: vibekit.EventCompacted},
+		{role: vibekit.RoleAssistant, content: "after"},
+	}
+	if len(got) != len(expect) {
+		t.Fatalf("projected %d messages, want %d:\n%s", len(got), len(expect), dumpMessages(got))
+	}
+	for i, w := range expect {
+		if got[i].Role != w.role || got[i].Content != w.content || got[i].EventKind != w.kind {
+			t.Errorf("message %d = {role:%s content:%q kind:%s}, want {role:%s content:%q kind:%s}",
+				i, got[i].Role, got[i].Content, got[i].EventKind, w.role, w.content, w.kind)
+		}
+	}
+	if p.Watermark != got[1].ID {
+		t.Errorf("Watermark = %q, want the compaction event's id %q", p.Watermark, got[1].ID)
+	}
+	// The event inherits the segment it summarises, so it sorts where the
+	// compaction happened rather than at the load's wall clock.
+	if got[1].Ts != got[0].Ts {
+		t.Errorf("event Ts = %d, want segment 1's %d", got[1].Ts, got[0].Ts)
+	}
+}
+
+// The complement of the case above, and the reason both are pinned: whether KAS
+// replays a mid-turn separator at its chronological POSITION is unmeasured. The
+// twice-compacted capture shows one at a turn BOUNDARY replayed where it happened,
+// so the wire may deliver a mid-turn one after that turn's turn_end instead. This
+// pins what the projection then does — it reconstructs no boundary the wire did not
+// state — so a future change that started splitting a turn on a tail separator, or
+// stopped splitting on a mid-turn one, fails one of the two rather than surprising
+// a reader.
+func TestProjection_TailSeparatorLeavesTheTurnWhole(t *testing.T) {
+	p := NewProjection(seqIDs())
+	ingestAll(p, [][2]any{
+		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true})),
+		pair(replayFrame(t, vibekit.ACPUpdateAgentChunk, "before", "", map[string]any{
+			"messageId": "m-say", "timestamp": "2026-08-02T10:00:00.000Z",
+		})),
+		pair(replayFrame(t, vibekit.ACPUpdateAgentChunk, " and after", "", map[string]any{
+			"messageId": "m-say", "timestamp": "2026-08-02T10:00:05.000Z",
+		})),
+		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_end", nil)),
+		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summarization_separator",
+			map[string]any{"summarizationSeparator": true})),
+		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
+			"summaryMessage": map[string]any{"content": "the summary"},
+		})),
+	})
+	got := p.Messages()
+
+	if len(got) != 2 {
+		t.Fatalf("projected %d messages, want 2 (one whole turn, then the event):\n%s",
+			len(got), dumpMessages(got))
+	}
+	if got[0].Role != vibekit.RoleAssistant || got[0].Content != "before and after" {
+		t.Errorf("message 0 = {role:%s content:%q}, want the whole reply in one assistant message",
+			got[0].Role, got[0].Content)
+	}
+	if got[1].Role != vibekit.RoleEvent || got[1].EventKind != vibekit.EventCompacted {
+		t.Errorf("message 1 = {role:%s kind:%s}, want the compaction event",
+			got[1].Role, got[1].EventKind)
+	}
+	if p.Watermark != got[1].ID {
+		t.Errorf("Watermark = %q, want the compaction event's id %q", p.Watermark, got[1].ID)
+	}
+}
+
 // TestProjection_ToolCallLandsComplete pins that a replayed tool call arrives
 // finished rather than stuck in_progress.
 //

@@ -230,8 +230,14 @@ type UserInputResponseCommand struct {
 //
 // A message id, not a turn index, because that is what KAS's revert verb
 // addresses — and it must name a USER message, which KAS enforces (a non-user
-// target comes back `success:false` naming the type it found). Vibekit resolves
-// a click on any turn to its nearest preceding user message before sending.
+// target comes back `success:false` naming the type it found).
+//
+// Vibekit resolves a turn footer's Rewind to the FOLLOWING turn's user message
+// (`turns.ts` sends `turns[i+1].trigger`), never to the clicked turn's own: KAS
+// drops the addressed message inclusive, so keeping turn N means addressing
+// turn N+1. A reader who assumed the nearest PRECEDING user message would
+// conclude a rewind reverts to the start of the clicked turn, which is one turn
+// too far back.
 type RewindChatCommand struct {
 	MessageID string `json:"message_id"`
 }

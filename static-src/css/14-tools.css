@@ -129,14 +129,39 @@
   animation: none;
 }
 
-/* Rows sit tighter than standalone cards: a member's claim line is one of
- * several, not a card of its own. The dense tier's floor, for the reason the
- * standalone floor exists (see `.tool-header`): without one, a member row is its
- * own line box plus this padding, so a run of twelve reads as twelve slightly
- * different heights. */
-.tool-group-body > .tool-call .tool-header {
+/* A MEMBER ROW READS THE SAME HEIGHT FLOOR AS THE HEADER ABOVE IT. This rule
+ * declared `min-height: var(--ctl-h-dense)`, which put the group header at 36px
+ * (fine) / 44px (coarse) and each member row 4px short of it on both tiers — a
+ * box whose own header disagreed with every row inside it. It now declares NO
+ * floor and inherits `.tool-header`'s `--btn-h`, so there is ONE declaration and
+ * one token for both sides rather than two tiers that have to be kept 0 apart.
+ * Measured 32→36 fine, 40→44 coarse.
+ *
+ * The header is what could not move: it is `role="button"` + `tabindex="0"`, so
+ * `61-mcp-tools.css`'s hit-target floor matches it, and its own `min-height` beats
+ * that zero-specificity rule — dropping it to the dense tier would put an
+ * interactive header at 40px on touch, under WCAG 2.5.5 and under this app's own
+ * declared floor, silently. Every other box header in the app already reads
+ * `--btn-h` (`.tool-header`, `.tool-group-header`, `.subagent-header`, `.run-head`,
+ * `.run-step-head`), so this row was the sole exception and the fix is a deletion.
+ *
+ * `padding-block: var(--sp-1)` STAYS, because it is the genuine density difference
+ * — but it is scoped OFF the bare state, which is the same delete-the-exception
+ * shape. A bare group is a lone call with no list around it, so the ROW idiom does
+ * not apply to it: it takes `.tool-header`'s own `padding: var(--sp-2) 0.75rem` and
+ * comes out byte-identical to a standalone `.tool-call`. Measured with the real
+ * builder: 42px bare and 42px standalone, against 36px for a member of a real
+ * group, and the scoping is what closed a 6px gap the synthetic fixture hid.
+ * Accepted cost, stated: the first card SHRINKS 6px when the second lands — in the
+ * same frame as the header appearing (refreshGroupHeader toggles the class
+ * synchronously with the append), so it is one reflow inside a change that is
+ * already adding 37px of header.
+ *
+ * The negation is wrapped in `:where()` so it costs no specificity: the chain is
+ * already at this file's `selector-max-specificity` cap without it, and the scoping
+ * is a structural question rather than a cascade fight. */
+.tool-group:not(:where(.tool-group-bare)) > .tool-group-body > .tool-call .tool-header {
   padding-block: var(--sp-1);
-  min-height: var(--ctl-h-dense);
 }
 
 .tool-group-header {
@@ -161,6 +186,25 @@
   transition:
     background var(--dur-micro),
     color var(--dur-micro) var(--ease-standard);
+}
+
+/* A lone tool call has no header. `display: none`, not `visibility: hidden` and
+ * not `aria-hidden`: it is the only one of the three that takes the header out of
+ * the accessibility tree AND out of tab order, so a hidden `role="button"` with
+ * `tabindex="0"` cannot become a dead tab stop announcing a state nobody can
+ * change. See `tool-group.ts`'s CLS_BARE. */
+.tool-group-bare > .tool-group-header {
+  display: none;
+}
+
+/* …and with no header, the first row's hairline is a stray line across the top of
+ * the box rather than a separator. Dropping it is HALF of what makes a bare group
+ * identical to a standalone `.tool-call`; the `padding-block` scoping above is the
+ * other half, and the identity needs BOTH. Do NOT "simplify" `.tool-group` away on
+ * the strength of that identity — the chrome has to be on the group, or a
+ * two-member group would have none. */
+.tool-group-bare > .tool-group-body > .tool-call:first-child {
+  border-top: 0;
 }
 
 .tool-group-header:hover {
@@ -194,11 +238,13 @@
  * heights, both short of the group header directly above them, which is the
  * "some boxes are the wrong height and it looks random" report.
  *
- * `--btn-h` is the standalone tier (a header that stands alone in its row);
- * `--ctl-h-dense` is the tier a member row inside a `.tool-group-body` takes,
- * declared with that group's tighter padding above. Two tiers rather than one
- * because the density difference between a card and a row is deliberate; what
- * was not deliberate is having no floor in either. */
+ * `--btn-h` is the tier, and it is the ONE tier here: a member row inside a
+ * `.tool-group-body` reads this same declaration and adds only the tighter
+ * `padding-block` (see that rule above). The two-tier split this used to describe
+ * was CARD vs ROW, and it separated a header-row from the member rows under it,
+ * which is a pair it never meant to divide — those are one component. Density for
+ * a member comes from the flattened chrome (no border, no radius, no background),
+ * not from 4px of height. */
 .tool-header {
   display: flex;
   align-items: center;
@@ -354,16 +400,48 @@
    of twelve searches shows a verdict and not a magnifier; the KIND is named in
    the summary text instead.
 
-   THE SQUARE IS RESERVED ON PURPOSE. A running group has no child at all, so
-   without a fixed box the counted summary beside it shifts the moment the group
-   settles. That is what the old text slot's fixed width bought, kept here as an
-   icon slot's own size. */
+   THE SQUARE IS SIZED HERE, never by whatever it holds. That is what keeps the
+   counted summary beside it from shifting when the group settles, and it is the box
+   the running ring below is centred in. It is the old text slot's fixed width, kept
+   as an icon slot's own size. */
 .tool-group-icon {
   display: grid;
   place-items: center;
   inline-size: 0.875rem;
   block-size: 0.875rem;
   flex-shrink: 0;
+}
+
+/* A RUNNING GROUP HAS NO VERDICT YET, AND THIS RING IS WHAT SAYS SO. The slot stood
+   empty for the whole run, which read as a gap beside a settled group's dot.
+
+   HOLLOW, because all four settled marks are solid: the shape carries the state and
+   the tint is never the only channel (WCAG 1.4.1). STILL, not spinning — every
+   running member below carries its own `.tool-spinner`, so a ring turning here would
+   be a second claim of work for one run of calls, the rule `.subagent-icon` records
+   for a container. Drawn in CSS rather than added to `outcomeIcon` for the reason
+   `exec-view/status.ts` draws its own in-flight rings there: that silhouette set is
+   the SETTLED vocabulary.
+
+   The DIAMETER is derived, never authored: the two states share one slot, so a
+   hand-picked length resizes the header's mark at the moment the group settles. A
+   settled silhouette is an `--icon-ui` glyph whose disc spans 12 of 24 units
+   (`icons.ts` OUTCOME_DISC), so half that token is its painted diameter and it tracks
+   the pointer tier — 8px fine, 9px coarse. `tool-group-mark-css.test.ts` measures the
+   equality against the RENDERED glyph rather than restating the ratio, so a change to
+   the disc's radius fails there instead of drifting here. The 1.5px weight is
+   `.tab-status-dot[data-status="idle"]`'s, whose 8px hollow dot this matches exactly.
+
+   `box-sizing` is stated because the reset's `*` does not reach a pseudo-element, so
+   the default is content-box and the border would land OUTSIDE the diameter. */
+.tool-group-icon.is-running::before {
+  content: "";
+  display: block;
+  box-sizing: border-box;
+  inline-size: calc(var(--icon-ui) / 2);
+  block-size: calc(var(--icon-ui) / 2);
+  border: 1.5px solid currentcolor;
+  border-radius: 50%;
 }
 
 /* THE DISCLOSURE CHEVRON'S BUTTON. Named `.tool-disclosure`, not
@@ -556,13 +634,16 @@
   display: contents;
 }
 
-/* The delegated-work card — a subagent's or a workflow step's box. The body
- * hosts the delegate's OWN blocks (real tool cards, reasoning, text) rendered
- * by the same dispatcher, full parity with the main transcript. COLLAPSED BY
- * DEFAULT, always: the expanded state is worth nothing when N delegates
- * stream at once, and the result is read from the footer. A rolling tail
- * (last 3 lines) answers "which are progressing" while running + collapsed.
- * Uncapped and unindented — see .tool-call. */
+/* The delegated-work card — a subagent's box, and the container a pipeline puts
+ * over its stages. The body hosts the delegate's OWN blocks (real tool cards,
+ * reasoning, text) rendered by the same dispatcher, full parity with the main
+ * transcript. COLLAPSED BY DEFAULT, always: the expanded state is worth nothing
+ * when N delegates stream at once, and the result is read from the footer. A
+ * rolling tail (last 3 lines) answers "which are progressing" while running +
+ * collapsed. Uncapped and unindented — see .tool-call.
+ *
+ * A WORKFLOW STEP does not reach this card: a well-formed `wf:` id is dropped by
+ * the dispatcher, so only a MALFORMED one lands on the delegate-box fallback. */
 .subagent-block {
   background: var(--c-bg-secondary);
   border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);

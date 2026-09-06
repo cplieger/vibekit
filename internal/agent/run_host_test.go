@@ -329,15 +329,20 @@ func TestCloseFinishedRunBridge_TerminalOnly(t *testing.T) {
 }
 
 // TestBridgeManagerInsert_RefusesReplacement pins that inserting over a live
-// entry fails rather than orphaning the process the entry holds.
+// entry fails rather than orphaning the process the entry holds, AND that the
+// refusal hands back the incumbent — rehost's loser has no other way to reach it.
 func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 	h, _, br := newTestHub()
 	first := &sharedBridge{bridge: br, state: bridgeIdle}
-	if !h.bridge.mgr.insert("run:wf_1", first) {
+	if _, inserted := h.bridge.mgr.insert("run:wf_1", first); !inserted {
 		t.Fatal("first insert refused")
 	}
-	if h.bridge.mgr.insert("run:wf_1", &sharedBridge{bridge: br, state: bridgeIdle}) {
+	resident, inserted := h.bridge.mgr.insert("run:wf_1", &sharedBridge{bridge: br, state: bridgeIdle})
+	if inserted {
 		t.Error("second insert over a live entry succeeded")
+	}
+	if resident != first {
+		t.Error("the refused insert did not answer the incumbent entry")
 	}
 	if got := h.bridge.mgr.get("run:wf_1"); got != first {
 		t.Error("the original entry did not survive the refused insert")
@@ -416,14 +421,14 @@ func TestKillForTurn_NothingOpenIsANoOp(t *testing.T) {
 	}
 }
 
-// TestRetryRun_SuccessClearsTheOldTerminalReason is finding 9 on the hosted
+// TestRetry_SuccessClearsTheOldTerminalReason is finding 9 on the hosted
 // branch, end to end through the verb.
 //
 // Retry reuses the workflow id, so a run stopped as `overran` carried that reason
 // into its retry — and history.ts deliberately lets a recognised end_reason
 // outrank live status, so the running retry rendered as aborted and stayed that way
 // after it succeeded.
-func TestRetryRun_SuccessClearsTheOldTerminalReason(t *testing.T) {
+func TestRetry_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowRetry: json.RawMessage(`{}`)}
@@ -448,11 +453,11 @@ func TestRetryRun_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	}
 }
 
-// TestRetryRun_FailureKeepsTheOldTerminalReason is the other half, and the reason
+// TestRetry_FailureKeepsTheOldTerminalReason is the other half, and the reason
 // the clear happens AFTER the RPC rather than before it: a retry KAS refused
 // re-drove nothing, so the previous terminal reason is still the truth about that
 // run and its row must keep saying so.
-func TestRetryRun_FailureKeepsTheOldTerminalReason(t *testing.T) {
+func TestRetry_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
@@ -472,20 +477,15 @@ func TestRetryRun_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	}
 }
 
-// TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable is the
-// interleaving that shipped the defect, forced deterministically.
+// TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable is the
+// interleaving that shipped the defect, forced deterministically. The lease was
+// granted AFTER the retry call, so `run_start` landing first found none, the
+// observer inferred OriginAgent from that absence, and the agent exclusion made the
+// run permanently unsweepable — blocking every later launch of the recipe.
 //
-// A retry re-hosts a PARENTLESS run, and its first lifecycle frame can arrive before
-// the retry call returns — the code says so itself. The lease was granted after that
-// call, so `run_start` landing first found no lease and the observer, inferring
-// origin from lease ABSENCE, stamped OriginAgent on a run no chat owns. The rearm
-// then saw a lease and kept it, and the agent exclusion made that run permanently
-// unsweepable: if its bridge died or vibekit restarted, its restart-paused row was
-// never cleared and blocked every later launch of the recipe forever.
-//
-// The fake bridge's blockOn seam holds the retry call open, so the frame is delivered
-// strictly INSIDE the window rather than near it.
-func TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testing.T) {
+// The fake bridge's blockOn seam holds the retry call open, so the frame is
+// delivered strictly INSIDE the window rather than near it.
+func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
@@ -539,16 +539,14 @@ func TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *tes
 	}
 }
 
-// TestRetryRun_ReHostedRunTakesItsRecipeFromTheRunList is the re-hosting branch —
-// the one retry's legality window actually implies, since `closeFinishedBridge`
-// tears the bridge down on exactly the statuses retry is legal from.
+// TestRetry_ReHostedRunTakesItsRecipeFromTheRunList is the re-hosting branch — the
+// one retry's legality window implies, since `closeStoppedBridge` tears the bridge
+// down on every stop.
 //
 // Its lease used to be minted with an EMPTY recipe, on the reasoning that a
-// re-hosted run's recipe is unknowable here. It is knowable: KAS's own run list
-// reports it, and that is the same string the single-run rule compares against. The
-// guess cost something real — a nameless lease cannot be recognised as the run
-// holding its own recipe, so the admission backstop could not explain it.
-func TestRetryRun_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
+// re-hosted run's recipe is unknowable here. KAS's own run list reports it, and a
+// nameless lease cannot be recognised as the run holding its own recipe.
+func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
@@ -582,11 +580,11 @@ func TestRetryRun_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	}
 }
 
-// TestRetryRun_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused: the lease is now
+// TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused: the lease is now
 // granted BEFORE the verb, so a refusal has to put it back. A lease left behind for
 // a run that never re-drove would make its recipe read as busy to the admission
 // backstop and hand a wall clock to a run that is not executing.
-func TestRetryRun_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) {
+func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
@@ -905,4 +903,127 @@ func TestCancelForChat_ReportsARunListItCouldNotRead(t *testing.T) {
 			t.Errorf("a close that read the run list fine reported it as unavailable: %s", out)
 		}
 	})
+}
+
+// TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts.
+//
+// `decodePauseFrame` used to discard the WHOLE frame on any unmarshal error, so a
+// `pauseDetail` whose wire shape stopped matching would have broken the heal for
+// EVERY pause rather than only the branch ones — and broken it silently, because
+// an empty workflow id makes `healPaused` return before the line that reports a
+// decline. Two halves of the same defect, and this pins the survivable one: what
+// the reason arms need must reach them whatever the detail turned into.
+//
+// `encoding/json` finishes the object on a type mismatch and reports the earliest
+// one, so keeping what decoded is not a guess — the sibling fields genuinely
+// decoded. What is NOT kept is a syntax error's leftovers, which is the other case
+// here: there the bytes are not JSON and nothing may be read off them.
+func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
+	frame := func(t *testing.T, params string) pauseFrame {
+		t.Helper()
+		return decodePauseFrame(&vibekit.RPCResponse{Params: json.RawMessage(params)})
+	}
+
+	// Every shape a `pauseDetail` change can arrive as, against a reason the heal
+	// DOES act on. `workflowId` and `pauseReason` must survive all of them, or the
+	// heal has gone blind rather than degraded.
+	for name, params := range map[string]string{
+		"the detail became a string": `{"workflowId":"wf_1","pauseReason":"` +
+			interruptedPauseReason + `","pauseDetail":"transient-error"}`,
+		"the detail became a number": `{"workflowId":"wf_1","pauseReason":"` +
+			interruptedPauseReason + `","pauseDetail":7}`,
+		"the detail became an array": `{"workflowId":"wf_1","pauseReason":"` +
+			interruptedPauseReason + `","pauseDetail":["transient-error"]}`,
+		"class became an object": `{"workflowId":"wf_1","pauseReason":"` +
+			interruptedPauseReason + `","pauseDetail":{"class":{"kind":"transient-error"}}}`,
+		// Key order matters to a streaming decoder, so the drifted key is placed
+		// BEFORE the two fields that must survive it as well as after.
+		"the drifted detail comes first": `{"pauseDetail":"transient-error","workflowId":"wf_1",` +
+			`"pauseReason":"` + interruptedPauseReason + `"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := frame(t, params)
+			if f.WorkflowID != "wf_1" {
+				t.Errorf("WorkflowID = %q, want %q; a drifted detail took the run's identity "+
+					"with it, so healPaused returns at its addressing gate and logs nothing",
+					f.WorkflowID, "wf_1")
+			}
+			if f.PauseReason != interruptedPauseReason {
+				t.Errorf("PauseReason = %q, want %q; the reason arms are what the heal degrades "+
+					"TO, so losing the reason is what turns a degradation into blindness",
+					f.PauseReason, interruptedPauseReason)
+			}
+			// The whole point of keeping the frame: the reason arm still decides.
+			if !resumablePause(f.PauseReason, f.PauseDetail) {
+				t.Error("resumablePause = false for an interrupted step whose detail drifted; " +
+					"the reason arm must still answer")
+			}
+		})
+	}
+
+	// The OTHER half of the fix, and the one the tolerance above cannot substitute
+	// for: `occurredAt` came OFF this type, so its wire shape cannot reach this
+	// decode at all and a numeric one is not even a drift to be tolerated.
+	//
+	// Asserted as behaviour rather than as a field list — a raw `json.Unmarshal`
+	// against `pauseFrame` must return NO error — because that is the property
+	// declaring the field would take away. Tolerance is a GUARD; this is the shrink,
+	// and a shape KAS controls is better off unable to arrive than caught on arrival.
+	t.Run("occurredAt's wire type cannot reach the predicate path", func(t *testing.T) {
+		var f pauseFrame
+		body := []byte(`{"workflowId":"wf_1","pauseReason":"` + interruptedPauseReason +
+			`","pauseDetail":{"class":"transient-error","code":"EAI_AGAIN",` +
+			`"occurredAt":1730000000}}`)
+		if err := json.Unmarshal(body, &f); err != nil {
+			t.Errorf("json.Unmarshal returned %v; a field no predicate reads must not be able "+
+				"to produce a decode error at all — declaring it on pauseDetail puts KAS's "+
+				"timestamp shape back on the heal's path", err)
+		}
+		if f.PauseDetail == nil || f.PauseDetail.Class != transientErrorClass {
+			t.Fatalf("PauseDetail = %+v, want the class decoded", f.PauseDetail)
+		}
+	})
+
+	// A CLASS the predicate does not accept is not a drift and must not be read as
+	// one: the frame decodes cleanly and the detail arm declines, which is the
+	// ordinary negative case rather than a degradation.
+	t.Run("an unknown class is decoded, not tolerated", func(t *testing.T) {
+		f := frame(t, `{"workflowId":"wf_1","pauseReason":"Paused by user request",`+
+			`"pauseDetail":{"class":"permanent","code":"ENOTFOUND"}}`)
+		if f.PauseDetail == nil || f.PauseDetail.Class != "permanent" {
+			t.Fatalf("PauseDetail = %+v, want the class decoded", f.PauseDetail)
+		}
+		if resumablePause(f.PauseReason, f.PauseDetail) {
+			t.Error("resumablePause = true for a permanent fault nobody's arm accepts")
+		}
+	})
+
+	// The line the tolerance may not cross, and it is asserted at the HELPER because
+	// the frame cannot show it: `json.Unmarshal` validates the whole document before
+	// it decodes anything, so a syntax error leaves the destination untouched and the
+	// frame is the zero value whether the error is tolerated or not. Measured — a
+	// frame-level assertion here survives a mutant that tolerates everything, which
+	// makes it a test that cannot fail.
+	//
+	// What IS observable is the helper's own verdict, and that is where the rule
+	// lives: a type drift is a partial answer, bytes that are not JSON are not, and
+	// `encoding/json` only promises the UnmarshalTypeError when nothing more serious
+	// happened. `rs.inspect` hands this an unguarded RPC payload, so the empty
+	// document is a reachable input rather than a hypothetical.
+	for name, body := range map[string]string{
+		"a truncated object": `{"workflowId":"wf_1","pauseReason":"x"`,
+		"not JSON at all":    `wf_1`,
+		"an empty document":  ``,
+	} {
+		t.Run(name+" is not a partial answer", func(t *testing.T) {
+			var f pauseFrame
+			if unmarshalKeepingReadable([]byte(body), &f) {
+				t.Errorf("unmarshalKeepingReadable(%q) = true; a syntax error is not a type "+
+					"drift, and nothing may be read off bytes that are not JSON", body)
+			}
+			if f != (pauseFrame{}) {
+				t.Errorf("frame = %+v, want the zero frame", f)
+			}
+		})
+	}
 }

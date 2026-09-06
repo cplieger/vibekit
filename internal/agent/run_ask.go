@@ -435,13 +435,19 @@ const (
 	waitingForNextMessage = "' is waiting for the next user message."
 )
 
-// needInputPause reports whether a pause reason means a step is waiting on a
-// person.
+// needInputSignal is KAS's node-level completionSignal for a step waiting on a person
+// — the machine-readable half of the four pause sites that write the reasons above.
+// It is what a parallel branch's park can still be recognised by; see needInputParked.
+const needInputSignal = "need_input"
+
+// needInputPause reports whether a pause reason means a step is waiting on a person.
 //
-// Pure and reason-only, like resumablePause beside it, so the table test is the
-// reason list rather than a set of RPC fixtures. The re-park sentence is matched
-// by its two ends because KAS interpolates the node id into it; both spellings are
-// specific enough that no involuntary pause reason can reach them.
+// Pure and reason-only, like resumablePause beside it, so the table test is a reason
+// list rather than RPC fixtures; the re-park sentence is matched by its two ends
+// because KAS interpolates the node id into it. It cannot see a park inside a PARALLEL
+// BRANCH and must not be widened to the wrapper sentence KAS composes there —
+// needInputParked is that arm, and vibekit-acp.md carries why that sentence
+// discriminates nothing and why the RESUME side may never read it.
 func needInputPause(reason string) bool {
 	if reason == needInputPauseReason {
 		return true
@@ -465,23 +471,38 @@ func needInputPause(reason string) bool {
 // the wire names, so declaration order means nothing here.
 type askInspect struct {
 	State *struct {
-		PauseDetail *struct {
-			OccurredAt string `json:"occurredAt"`
-		} `json:"pauseDetail"`
-		Root        *askNode `json:"root"`
-		Status      string   `json:"status"`
-		PauseReason string   `json:"pauseReason"`
+		PauseDetail *askPauseDetail `json:"pauseDetail"`
+		Root        *askNode        `json:"root"`
+		Status      string          `json:"status"`
+		PauseReason string          `json:"pauseReason"`
 	} `json:"state"`
 }
 
-// askNode is one node of the state tree, decoded to what naming a parked step
-// needs: which node, which session answers it, and who is running it.
+// askPauseDetail is the ONE field this reconcile reads off `state.pauseDetail`:
+// when the step started waiting.
+//
+// Its own shape rather than the package's `pauseDetail` (run_host.go), and the split
+// is the point: that type is what the resume and cancel PREDICATES decode, so every
+// field on it is another way a change to this wire object can reach the heal, and
+// `occurredAt` has no predicate reading it. Do not fold the two back together.
+type askPauseDetail struct {
+	OccurredAt string `json:"occurredAt"`
+}
+
+// askNode is one node of the state tree, decoded to what naming a step needs: which
+// node, what KIND it is, which session answers it, who runs it, and WHY it parked.
+//
+// CompletionSignal is the pause's machine-readable half, per-NODE, so it survives a
+// parallel branch where the run-level pauseReason does not (needInputParked). Type has
+// ONE reader, statusUpdateTarget, because KAS considers `type: "step"` nodes alone.
 type askNode struct {
-	NodeID    string    `json:"nodeId"`
-	Status    string    `json:"status"`
-	SessionID string    `json:"sessionId"`
-	AgentName string    `json:"agentName"`
-	Children  []askNode `json:"children"`
+	NodeID           string    `json:"nodeId"`
+	Type             string    `json:"type"`
+	Status           string    `json:"status"`
+	SessionID        string    `json:"sessionId"`
+	AgentName        string    `json:"agentName"`
+	CompletionSignal string    `json:"completionSignal"`
+	Children         []askNode `json:"children"`
 }
 
 // reconcileNeedInput mints an ask for a run that is parked on a person with
@@ -512,14 +533,23 @@ func (rs *Runs) reconcileNeedInput(ctx context.Context, workflowID string, raw j
 	if json.Unmarshal(raw, &res) != nil || res.State == nil {
 		return
 	}
-	if res.State.Status != runStatusPaused || !needInputPause(res.State.PauseReason) {
+	if res.State.Status != runStatusPaused {
+		return
+	}
+	// TWO ARMS, because one reason cannot answer for every park. The signal arm leads:
+	// it reaches a park inside a parallel branch, whose reason the run never keeps, and
+	// where it fires it also NAMES the step, so it wins over pausedLeaf's first match.
+	leaf, path := needInputParked(res.State.Root, nil)
+	if leaf == nil {
+		if !needInputPause(res.State.PauseReason) {
+			return
+		}
+		leaf, path = pausedLeaf(res.State.Root, nil)
+	}
+	if leaf == nil {
 		return
 	}
 	if rs.asks.HasRun(workflowID) {
-		return
-	}
-	leaf, path := pausedLeaf(res.State.Root, nil)
-	if leaf == nil {
 		return
 	}
 	askedAt := ""
@@ -562,6 +592,30 @@ func (rs *Runs) askChatID(ctx context.Context, workflowID string) vibekit.ChatID
 		return chatID
 	}
 	return runChatID(workflowID)
+}
+
+// needInputParked finds a PAUSED node whose own completion signal says it is waiting
+// on a person, with its node path.
+//
+// The arm that reaches a park inside a PARALLEL BRANCH, which no pause reason can:
+// executeParallel copies the run STATE and not the node records, so the signal
+// survives where the reason does not (vibekit-acp.md carries the bundle read and the
+// live measurement). It also NAMES the right step where pausedLeaf's first
+// depth-first match cannot.
+func needInputParked(n *askNode, trail []string) (leaf *askNode, path []string) {
+	if n == nil {
+		return nil, nil
+	}
+	here := append(append([]string{}, trail...), n.NodeID)
+	if n.Status == "paused" && n.CompletionSignal == needInputSignal {
+		return n, here
+	}
+	for i := range n.Children {
+		if leaf, path := needInputParked(&n.Children[i], here); leaf != nil {
+			return leaf, path
+		}
+	}
+	return nil, nil
 }
 
 // pausedLeaf finds the paused LEAF a run is waiting at, with its node path.

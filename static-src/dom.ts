@@ -159,6 +159,11 @@ class Elements {
   get attachmentRow(): HTMLUListElement {
     return byId("attachment-row");
   }
+  /** The bottom-bar region between the dock and the steer stack: one line per live
+   *  workflow run this chat launched. */
+  get runBar(): HTMLUListElement {
+    return byId("run-bar");
+  }
   get steerStack(): HTMLUListElement {
     return byId("steer-stack");
   }

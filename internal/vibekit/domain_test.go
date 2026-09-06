@@ -317,3 +317,124 @@ func TestSessionChain(t *testing.T) {
 		})
 	}
 }
+
+// TestChatHeader_LastTurnOutcome pins the header's newest-outcome derivation.
+//
+// The dot state every chat tab shows after a reconnect comes from this field, so
+// the three shapes that matter are the ordinary turn (the outcome is on the last
+// assistant message), the turn that emitted nothing (an EventTurnOutcome marker
+// carries it instead), and the rows the agent persists DURING a turn, which land
+// after the carrier and carry no outcome of their own.
+func TestChatHeader_LastTurnOutcome(t *testing.T) {
+	cases := []struct {
+		name string
+		msgs []Message
+		want TurnOutcome
+	}{
+		{name: "a chat with no messages has no outcome", msgs: nil, want: ""},
+		{
+			name: "a record written before the field existed reports nothing",
+			msgs: []Message{{ID: "m1", Role: RoleUser}, {ID: "m2", Role: RoleAssistant}},
+			want: "",
+		},
+		{
+			name: "the ordinary successful turn",
+			msgs: []Message{
+				{ID: "m1", Role: RoleUser},
+				{ID: "m2", Role: RoleAssistant, TurnOutcome: TurnOutcomeCompleted},
+			},
+			want: TurnOutcomeCompleted,
+		},
+		{
+			name: "the newest outcome wins over an older one",
+			msgs: []Message{
+				{ID: "m1", Role: RoleAssistant, TurnOutcome: TurnOutcomeCompleted},
+				{ID: "m2", Role: RoleAssistant, TurnOutcome: TurnOutcomeFailed},
+			},
+			want: TurnOutcomeFailed,
+		},
+		{
+			name: "an outcome on an event row is found",
+			msgs: []Message{
+				{ID: "m1", Role: RoleUser},
+				{ID: "m2", Role: RoleEvent, EventKind: EventTurnOutcome, TurnOutcome: TurnOutcomeFailed},
+			},
+			want: TurnOutcomeFailed,
+		},
+		{
+			name: "rows persisted after the carrier do not hide it",
+			msgs: []Message{
+				{ID: "m1", Role: RoleAssistant, TurnOutcome: TurnOutcomeCompleted},
+				{ID: "m2", Role: RoleAssistant, Plan: []PlanEntry{{Content: "step"}}},
+				{ID: "m3", Role: RoleEvent, EventKind: EventCompacted},
+			},
+			want: TurnOutcomeCompleted,
+		},
+		{
+			name: "an empty outcome string is not a carrier",
+			msgs: []Message{
+				{ID: "m1", Role: RoleAssistant, TurnOutcome: TurnOutcomeCompleted},
+				{ID: "m2", Role: RoleAssistant, TurnOutcome: ""},
+			},
+			want: TurnOutcomeCompleted,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Chat{ID: "c1", Messages: tc.msgs}
+			if got := c.Header().LastTurnOutcome; got != tc.want {
+				t.Errorf("Chat.Header().LastTurnOutcome = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestChatHeader_LastTurnOutcomeReportsWhatWasPersisted pins the derivation as a
+// pure read of the record: whatever a message carries comes back out, and every
+// outcome a real finalize can produce survives the trip.
+//
+// Which matters because the tab dot after a reconnect IS this field, so an
+// outcome the header silently dropped or rewrote would paint the wrong dot on
+// every device at once.
+//
+// The reachable set is taken from the PRODUCER (ConcludeStopReason over every
+// wire stop reason) rather than hand-listed, which is what makes the `running`
+// half checkable. `running` describes a turn in flight and only the client can
+// know it, so a persisted one would make a finished chat paint a live-turn dot;
+// the guarantee lives in the finalize path, and this asks that path rather than
+// asserting a literal against a list beside it.
+func TestChatHeader_LastTurnOutcomeReportsWhatWasPersisted(t *testing.T) {
+	// Honesty first: the derivation does not filter, so even a hand-planted
+	// `running` comes back out. That is the contract — the field reports the
+	// record, and keeping `running` off the record is the writer's job below.
+	planted := &Chat{ID: "c1", Messages: []Message{
+		{ID: "m1", Role: RoleAssistant, TurnOutcome: TurnOutcomeRunning},
+	}}
+	if got := planted.Header().LastTurnOutcome; got != TurnOutcomeRunning {
+		t.Errorf("LastTurnOutcome = %q, want the derivation to report what the record holds", got)
+	}
+
+	// Every stop reason the wire declares, plus the two open-enum inputs
+	// ConcludeStopReason answers itself: an empty reason and an unrecognised one.
+	// A member added to the enum and forgotten here narrows coverage, but no
+	// assertion below can pass for the wrong reason, because the subject of each
+	// one is what the producer RETURNED rather than what this list says.
+	stops := []StopReason{
+		StopReasonEndTurn, StopReasonCancelled, StopReasonInterrupted,
+		StopReasonRefusal, StopReasonUnknown, StopReasonError,
+		StopReasonContentFiltered, StopReasonMaxTokens, StopReasonMaxTurnRequests,
+		"", "a reason nobody has shipped yet",
+	}
+	for _, stop := range stops {
+		outcome := ConcludeStopReason(stop).Outcome
+		if outcome == TurnOutcomeRunning {
+			t.Errorf("ConcludeStopReason(%q) = %q; a finalize must never persist a live-turn outcome", stop, outcome)
+			continue
+		}
+		got := (&Chat{Messages: []Message{{TurnOutcome: outcome}}}).Header().LastTurnOutcome
+		if got != outcome {
+			t.Errorf("LastTurnOutcome for %q (from stop %q) = %q, want it carried through", outcome, stop, got)
+		}
+	}
+}

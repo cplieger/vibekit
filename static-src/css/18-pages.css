@@ -1064,20 +1064,32 @@ button.list-row-name:focus-visible {
   flex: 1 1 0;
   min-height: 0;
 
-  /* NOT the scroller. The card is a column that fills this box and its own body
-     scrolls, so the run's identity row and its outcome ledger stay on screen while
-     the steps move under them — which is the whole difference between a page and a
-     tall box. Two nested scrollports would also fight each other. */
-  overflow: hidden;
+  /* THE ONE SCROLLER, and it is this element rather than the VIEW because
+     `.run-bottom-bar` is pinned OUTSIDE it — which is why `16-login.css` leaves
+     `#run-view` out of its view-scrolls group. Everything below sizes to content
+     (`#run-body`, `.ev-page`, `.ev-panes`), so the page scrolls as one document
+     instead of crushing its regions into fixed cages that each scroll alone.
+
+     ONE rule, deliberately: this selector carried two contradictory blocks 63
+     lines apart (`overflow: hidden` above, `overflow-y: auto` below), and the
+     later declaration silently won. `run-page-layout.test.ts` now counts the
+     occurrences.
+
+     The two-value shorthand is `overflow-x` then `overflow-y`, so this is
+     `hidden` across and `auto` down. Written as the shorthand because stylelint's
+     `declaration-block-no-redundant-longhand-properties` requires it. */
+  overflow: hidden auto;
 }
 
-/* The run body is the page's growing region, so `#run-body` has to pass the
-   height through rather than sizing to content. */
+/* The run body passes the SCROLLER's width through and sizes to its content, so
+   the page's own height is the sum of its regions. `flex: 1 0 auto` is this
+   file's established page-scrolling shape (see the `[id="git-view"] >
+   .page-content` group at the top); `flex-basis: 0` plus `min-height: 0` is what
+   pinned it to the scrollport and made a scrollbar unreachable. */
 [id="run-body"] {
   display: flex;
   flex-direction: column;
-  flex: 1 1 0;
-  min-height: 0;
+  flex: 1 0 auto;
 }
 
 /* --- The subagent page ---------------------------------------------------- */
@@ -1100,17 +1112,18 @@ button.list-row-name:focus-visible {
   flex: 1 1 0;
   min-height: 0;
 
-  /* NOT the scroller. The exec page is a column that fills this box and its detail
-     pane scrolls, so the delegate's identity row stays on screen while its
-     transcript moves under it. Two nested scrollports would fight. */
-  overflow: hidden;
+  /* THE SCROLLER, for the same reason the run page's is: `.ev-page` no longer
+     clamps itself to this box, so leaving this `overflow: hidden` would clip the
+     delegate's transcript outright. There is no pinned bar here, so the view
+     could have scrolled instead — this element keeps it so both consumers of the
+     exec page have one scroller in the same place. `hidden` across, `auto` down. */
+  overflow: hidden auto;
 }
 
 [id="subagent-body"] {
   display: flex;
   flex-direction: column;
-  flex: 1 1 0;
-  min-height: 0;
+  flex: 1 0 auto;
 }
 
 /* --- The run tab's bottom bar --------------------------------------------- */
@@ -1119,15 +1132,9 @@ button.list-row-name:focus-visible {
    the "one dock, two hosts" contract. No composer: there is nobody to type to,
    which is exactly why the dock is a bottom-bar region rather than a composer
    feature. The column shape the pinned bar needs, and the `flex: 1` that gives
-   this scroller a parent height to fill, both come from the shared view group in
-   16-login.css — a `flex-basis: 0` scroller under a content-sized parent
-   collapses, so the two cannot be separated. */
-[id="run-view"] .page-content {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow-y: auto;
-}
-
+   the scroller above a parent height to fill, both come from the shared view
+   group in 16-login.css — a `flex-basis: 0` scroller under a content-sized
+   parent collapses, so the two cannot be separated. */
 .run-bottom-bar {
   flex: 0 0 auto;
 

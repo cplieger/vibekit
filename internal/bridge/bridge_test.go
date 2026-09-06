@@ -1402,7 +1402,11 @@ func driveSessionCall(
 		}
 		b.pendingMu.Unlock()
 		if ch != nil {
-			ch <- pendingReply{resp: answer}
+			// Stamped with the bridge's own delivered count, exactly as dispatch
+			// stamps a real reply. A test that pre-sets deliveredSeq is then saying
+			// "this many notifications preceded the response on the wire", which is
+			// the position loadSession records.
+			ch <- pendingReply{resp: answer, seq: b.deliveredSeq}
 			answer = &vibekit.RPCResponse{Result: json.RawMessage(`{}`)}
 			continue
 		}
@@ -1955,6 +1959,42 @@ func TestLoadSession_AppliesParsedResult(t *testing.T) {
 	}
 	if got := b.ModelID(); got != "parsed-model" {
 		t.Errorf("loadSession ModelID() = %q, want %q (parsed result must be applied, not fallback)", got, "parsed-model")
+	}
+}
+
+// loadSession records the read-loop POSITION its response arrived at, and that is
+// the only thing a consumer can order a replay against.
+//
+// KAS answers a load by replaying the session as notifications that precede the
+// result on the wire, so the result's own arrival says nothing about how far the
+// consumer has folded. Recording 0 here — or reading the position off the bridge
+// afterwards instead of off the reply — would make the consumer's completion
+// condition trivially true and adopt a partial transcript.
+func TestLoadSession_RecordsTheResponsePosition(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	// Seven replay frames delivered before the result, which is what a real
+	// session/load of a short transcript looks like.
+	b.deliveredSeq = 7
+	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
+	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
+		t.Fatalf("loadSession returned error: %v", err)
+	}
+	if got := b.SessionLoadSeq(); got != 7 {
+		t.Errorf("SessionLoadSeq() = %d, want 7 (the position the load result arrived at)", got)
+	}
+}
+
+// A session/new leaves the load position at zero: there is no replay to bound, so
+// a consumer must not be handed a number that looks like one.
+func TestNewSession_LeavesTheLoadPositionUnset(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	b.deliveredSeq = 7
+	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"fresh"}`)}
+	if _, err := runNewSession(t, b, &vibekit.StartOpts{}, resp); err != nil {
+		t.Fatalf("newSession returned error: %v", err)
+	}
+	if got := b.SessionLoadSeq(); got != 0 {
+		t.Errorf("SessionLoadSeq() = %d after session/new, want 0", got)
 	}
 }
 

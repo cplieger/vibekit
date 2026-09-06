@@ -18,7 +18,12 @@ import {
 } from "./tab-materialize.js";
 
 vi.mock("./store.js", () => ({ get: vi.fn(() => undefined) }));
-vi.mock("./run-store.js", () => ({ peekRunState: vi.fn(() => undefined) }));
+vi.mock("./run-store.js", () => ({
+  // The run's label, resolved by the STORE: which of `runLabel` and `workflowName`
+  // wins is a precedence over cached run state, so it lives there and is pinned in
+  // run-store.test.ts. What the factory owns is the placeholder for `""`.
+  runLabelOf: vi.fn(() => ""),
+}));
 
 // The five singleton loaders are reached through a lazy import, so a mock of each
 // module is what lets a test call `onShow` without pulling a page's worth of DOM
@@ -49,7 +54,7 @@ vi.mock("./docs.js", () => ({
 }));
 
 import { get } from "./store.js";
-import { peekRunState } from "./run-store.js";
+import { runLabelOf } from "./run-store.js";
 import { loadDocsView, showDocsView } from "./docs.js";
 import { loadFileBrowser, resetFileBrowser } from "./files.js";
 import { loadGitRepos } from "./git.js";
@@ -103,7 +108,7 @@ function register(dot: TabDotStatus | "" = ""): void {
 beforeEach(() => {
   _resetTabOpenersForTest();
   vi.mocked(get).mockReturnValue(undefined);
-  vi.mocked(peekRunState).mockReturnValue(undefined);
+  vi.mocked(runLabelOf).mockReturnValue("");
 });
 
 // --- Totality ---
@@ -330,22 +335,16 @@ describe("names", () => {
     expect(materializeTab(subject({ kind: "chat", ref: "c-1" })).name).toBe("New conversation");
   });
 
-  it("prefers a run's launcher label over the recipe's name", () => {
+  it("names a run from the store's label", () => {
     register();
-    vi.mocked(peekRunState).mockReturnValue({
-      workflowId: "wf-1",
-      runLabel: "nightly sweep",
-      workflowName: "sweep.yaml",
-    });
+    vi.mocked(runLabelOf).mockReturnValue("nightly sweep");
     expect(materializeTab(subject({ kind: "run", ref: "wf-1" })).name).toBe("nightly sweep");
   });
 
-  it("uses the recipe's name when the launcher gave none", () => {
-    register();
-    vi.mocked(peekRunState).mockReturnValue({ workflowId: "wf-1", workflowName: "sweep.yaml" });
-    expect(materializeTab(subject({ kind: "run", ref: "wf-1" })).name).toBe("sweep.yaml");
-  });
-
+  // The one half of the run's name this module owns. The store answers `""` for a
+  // run nothing has been fetched for, which is the normal state at the instant the
+  // server's own tab offer arrives — so a row built then would be called nothing
+  // at all without this.
   it("falls back for a run this client has fetched nothing for", () => {
     register();
     expect(materializeTab(subject({ kind: "run", ref: "wf-1" })).name).toBe("Workflow run");
@@ -392,6 +391,17 @@ describe("subjectForRoute inverts the factory's route", () => {
     [{ kind: "files", path: "a/b" } as Route, "files"],
   ])("drops a singleton's sub-position: %o", (route, kind) => {
     expect(subjectForRoute(route)).toEqual({ kind, ref: "" });
+  });
+
+  // Same rule one axis along: a run route's `#node=` fragment names a POSITION
+  // inside the tab, not a different tab, so it is dropped exactly like a
+  // singleton's sub-tab. This is what keeps applyRoute's history-origin guard
+  // honest — a Back press onto another node of an OPEN run must resolve to that
+  // tab, not read as a tab nobody has open.
+  it("drops a run route's node fragment", () => {
+    const subject = { kind: "run", ref: "wf_1" };
+    expect(subjectForRoute({ kind: "run", id: "wf_1", node: "wf_1/lint" })).toEqual(subject);
+    expect(subjectForRoute({ kind: "run", id: "wf_1" })).toEqual(subject);
   });
 
   // The default "/" route names no chat, so it resolves to a subject nothing can

@@ -53,6 +53,16 @@
    * transcript for the state that needs no marker. Same reasoning as the
    * header dot and the footer glyph hiding themselves on a clean turn. The
    * card keeps the uniform 1px border declared above. */
+
+  /* The rail's landing ring, TRANSPARENT at rest so only its colour ever moves
+     (see `.turn[data-rail-target]` below). Declared here rather than in that rule
+     because an `outline-style` of `none` is discrete: with no outline at rest the
+     ring would pop in and out whatever the transition says. An outline paints
+     outside the border box and participates in no layout, so a permanently
+     transparent one costs nothing and shifts nothing. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color var(--dur-standard) var(--ease-standard);
 }
 
 /* Entry animation moved from `.msg-wrap` to the card: a turn arrives as one
@@ -163,7 +173,22 @@
   background: var(--c-text-tertiary);
 }
 
-.turn-header[data-outcome="completed"] .turn-dot {
+/* HUE COMES OFF THE SEVERITY, NOT THE OUTCOME, on all four mark surfaces in this
+ * file (this dot, the footer wash, the footer glyph, the rail marker and cluster).
+ * Each one used to carry its own per-outcome colour table, so a severity ruling had
+ * to be re-applied by hand in four places — and `interrupted` was measured painting
+ * YELLOW here while the card's own `.turn-notice`, the one surface that already read
+ * the shared table, painted RED. One outcome, two hues, on one card.
+ *
+ * `data-severity` is written from `severityOf` (turn-severity.ts) by the same
+ * function that writes `data-outcome`, and `turn-outcome-attr.test.ts` pins the
+ * writers in a real DOM — a rule keyed on an attribute nothing writes paints nothing
+ * and fails silently.
+ *
+ * `data-outcome` STAYS, and carries two things severity cannot: the words
+ * (OUTCOME_LABEL / OUTCOME_TOOLTIP / OUTCOME_LEAD), and the ONE stated hue
+ * exception below. */
+.turn-header[data-severity="clean"] .turn-dot {
   display: none;
 }
 
@@ -184,39 +209,41 @@
  * `translateX(-100%)`, so this IS the off-screen-work case the ruling carves
  * out. Motion is also what separates `running` from a still outcome without
  * relying on hue, the same WCAG 1.4.1 posture 12-tabs.css states for the strip. */
-.turn-header[data-outcome="running"] .turn-dot {
+.turn-header[data-severity="running"] .turn-dot {
   background: var(--c-dot-working);
   opacity: calc(1 - var(--vk-beat) * 0.6);
 }
 
-.turn-header[data-outcome="interrupted"] .turn-dot {
+/* A cancel is a stop the USER asked for and an unreadable end is a stop nobody
+ * chose; neither is a failure, and the label and tooltip are what separate the two
+ * — the same reading `.tool-icon.is-warn` takes for a stopped run. */
+.turn-header[data-severity="stopped"] .turn-dot {
   background: var(--c-yellow);
 }
 
-/* A cancel is a stop the USER asked for, so it joins interrupted's family rather
- * than earning a hue of its own — the same reading `.tool-icon.is-warn` takes for
- * a stopped run. The label and tooltip are what separate the two. */
-.turn-header[data-outcome="cancelled"] .turn-dot {
-  background: var(--c-yellow);
-}
-
-.turn-header[data-outcome="failed"] .turn-dot {
+/* RED, and `interrupted` IS IN HERE BY RULING. A fault nobody chose stopped the
+ * turn, so an interrupted turn reads as a failure in this product — the reported
+ * chat was expected to paint a red mark, and the tab dot's own latch already graded
+ * it `failed`. `refused` takes the refusal callout's hue (see `.refusal-callout` in
+ * 13-messages.css) rather than the amber a POLICY refusal gets: the model made a
+ * decision, nothing malfunctioned. Sharing one hue at 0.5rem is fine, because the
+ * words carry the distinction. */
+.turn-header[data-severity="broken"] .turn-dot {
   background: var(--c-red);
 }
 
-/* A model refusal takes the refusal callout's own hue (see `.refusal-callout` in
- * 13-messages.css), which is red for the model declining and NOT the amber a
- * POLICY refusal gets — the model made a decision, the tool did not fail to run.
- * Sharing failed's hue is fine at 0.5rem: the header's label and tooltip carry the
- * distinction in words, which is the same reason completed hides its dot. */
-.turn-header[data-outcome="refused"] .turn-dot {
-  background: var(--c-red);
-}
-
-/* `unknown` keeps the neutral dot ON PURPOSE, and states it so the next reader
- * knows it was decided rather than forgotten: an end vibekit could not read has no
- * honest hue, and the meaningful contrast is against completed, which hides the dot
- * entirely. Something not-clean happened here and nothing explains it. */
+/* THE ONE EXCEPTION, and it is stated at every surface that takes it: `unknown`
+ * keeps a NEUTRAL mark, because an end vibekit could not read has no honest hue.
+ * `severityOf` grades it `stopped` alongside `cancelled`, so a pure severity
+ * partition would paint it yellow — which overturns a ruling this file already made
+ * and `turn-outcome-css.test.ts` already pins. The meaningful contrast is against
+ * `completed`, which hides the dot entirely: something not-clean happened here and
+ * nothing explains it.
+ *
+ * Placed AFTER the severity rules on purpose. Both selectors score (0,3,0), so
+ * SOURCE ORDER is the whole tiebreak; `no-descending-specificity` is null in
+ * .stylelintrc.json, and reaching for `:not([data-outcome="unknown"])` on each arm
+ * instead would spend an extra attribute and a pseudo-class for nothing. */
 .turn-header[data-outcome="unknown"] .turn-dot {
   background: var(--c-text-tertiary);
 }
@@ -234,10 +261,9 @@
  * device attribute to key on, and `turn-dot-visibility-css.test.ts` asserts the
  * two queries stay equal instead.
  *
- * Only `display` is gated. The per-outcome rules above stay at top level because
- * they are the vocabulary, and `.turn-header[data-outcome="completed"]
- * .turn-dot` (0,3,0) still outranks this (0,1,0), so a clean turn hides its dot
- * in here too. */
+ * Only `display` is gated. The severity rules above stay at top level because they
+ * are the vocabulary, and `.turn-header[data-severity="clean"] .turn-dot` (0,3,0)
+ * still outranks this (0,1,0), so a clean turn hides its dot in here too. */
 @media (width <= 48rem) {
   .turn-dot {
     display: block;
@@ -257,7 +283,18 @@
   flex-shrink: 0;
 }
 
+/* REWIND: glyph plus word on desktop, glyph alone on a narrow row. It keeps its
+   border where the four action buttons beside it have none, because it is the
+   destructive control at the far edge and the box is what separates it.
+
+   `justify-content: center` is not decoration: the hit-target floor
+   (61-mcp-tools.css) lifts this box to --hit-floor, and a floor-widened
+   icon-only button renders its glyph visibly off-centre without it. */
 .turn-rewind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
   background: none;
@@ -268,6 +305,18 @@
   transition:
     background var(--dur-micro) var(--ease-standard),
     border-color var(--dur-micro) var(--ease-standard);
+}
+
+/* The word drops at the width the footer's own actions collapse behind their
+   `…` overflow (61-mcp-tools.css `.turn-actions-more`). ONE decision about ONE
+   row: below it the footer cannot hold the ledger, the time, five labelled
+   controls and a word, so the actions fold and Rewind keeps the glyph alone.
+   Nothing but their equality couples the two numbers — there is no device
+   attribute to key on — so `turn-rewind-css.test.ts` asserts they stay equal. */
+@media (width <= 40rem) {
+  .turn-rewind-label {
+    display: none;
+  }
 }
 
 .turn-rewind:hover {
@@ -452,14 +501,18 @@
  * bracketed. There is no separate status rail: the footer IS the rail. Moved
  * here from 61-mcp-tools.css, where it sat because the footer used to be a
  * per-message node rather than part of a card. */
-/* Three columns: the ledger on the left, the turn actions (copy / source /
-   export) right-aligned beside it, Rewind at the far edge. The file list spans
-   all columns beneath. Grid rather than a wrapper element so every `:scope >`
-   selector the footer's own JS uses keeps working. The row is IDENTICAL open
-   and folded — the footer is the one region that survives the fold. */
+/* Four columns: the ledger on the left, the turn's own TIME right-aligned beside
+   it, then the turn actions (copy / source / export), then Rewind at the far edge.
+   The file list spans all columns beneath. Grid rather than a wrapper element so
+   every `:scope >` selector the footer's own JS uses keeps working. The row is
+   IDENTICAL open and folded — the footer is the one region that survives the fold.
+
+   The time took a column of its own because it used to be the sixth of up to seven
+   `·`-separated parts inside the ledger string, buried in a line that otherwise
+   reports cost. */
 .turn-footer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
 
   /* Fades in when it lands (the ledger is stamped at turn end, so the footer
@@ -488,7 +541,7 @@
 }
 
 .turn-footer > .turn-actions-buttons {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 1;
   justify-self: end;
   /* The footer's inline gap, carried by the element it separates rather than by
@@ -497,10 +550,70 @@
 }
 
 .turn-footer > .turn-rewind {
-  grid-column: 3;
+  grid-column: 4;
   grid-row: 1;
   justify-self: end;
   margin-inline-start: var(--sp-2);
+}
+
+/* HOW LONG THE TURN TOOK, right-aligned in its own column, in a box that is
+   RESERVED at rest.
+   
+   Reserved is the load-bearing word: the reveal below is `opacity` alone, never a
+   geometric expansion, so the card's height cannot move. A growing footer would
+   change `#messages`' `scrollHeight`, which feeds `scrollableBy()` — the timeline
+   rail's own navigability gate at MIN_SCROLL_PX — so on a short chat sitting near
+   that threshold, hovering a turn could flip the rail on and off. It would also
+   push every card below the hovered one, which is the layout shift this reveal was
+   required not to cause.
+
+   So never `display: none` and never `visibility: hidden`: both take the box with
+   them and the row's right edge would move the moment a pointer arrived.
+
+   The inline gap is this element's OWN margin, not a grid `column-gap`, for the
+   reason recorded on `.turn-actions-buttons` above and measured on this exact row:
+   a column gap is charged between tracks even when the next one is EMPTY, so every
+   footer without a Rewind held its readout 8px off the card's gutter. */
+.turn-footer > .turn-elapsed {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  margin-inline-start: var(--sp-2);
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The reveal. Gated on `any-hover`, NEVER on `hover`: those queries report only
+   the PRIMARY input, and iPadOS answers `hover: none` with a trackpad attached, so
+   a `hover: hover` gate silently drops the rule on every touch-primary device.
+   Outside this query the time is simply always visible, because a touch device has
+   no hover to reveal it with — which is the right default rather than a fallback.
+
+   `:focus-within` is not decoration: a keyboard user tabbing into the ledger button
+   or a file row must see the time, and hover alone would hide it from them
+   permanently.
+
+   Reduced motion is covered by 40-a11y.css's global sweep, which zeroes the
+   transition duration — so the time appears instantly rather than not at all. A
+   second rule here would be redundant. */
+/* Scoped to a TURN CARD's own footer (`> .turn-footer` is a direct child of
+   `.turn`), which is what leaves the DELEGATE footer's copy alone. That footer is
+   `turn-footer.ts` reused inside `.subagent-foot` (14-tools.css), it only exists
+   once its card is expanded, and a delegate box is itself a disclosure — so hiding
+   its duration behind a second hover would take away a value that is visible today
+   and give nothing back. The layout rules above stay unscoped for the same reason:
+   both footers want the slot in column 2. */
+@media (any-hover: hover) {
+  .turn > .turn-footer > .turn-elapsed {
+    opacity: 0;
+    transition: opacity var(--dur-standard) var(--ease-standard);
+  }
+
+  .turn:hover > .turn-footer > .turn-elapsed,
+  .turn:focus-within > .turn-footer > .turn-elapsed {
+    opacity: 1;
+  }
 }
 
 .turn-footer > .turn-ledger-files {
@@ -518,10 +631,14 @@
    longer has to move above a second row of five controls. */
 
 /* The collapsed turn's FACE: input in the header (laid out exactly as when
-   open), output here — run-card duplicates above the prose, the final answer
-   IN FULL (real markdown, default type, no clamp: the fold hides the WORK,
-   never the answer — user ruling, 2026-08-31), and a failed turn's error
-   text. A CARD-level child sitting where the body was, so the ledger footer
+   open), output here — the final answer and nothing else, IN FULL (real
+   markdown, default type, no clamp: the fold hides the WORK, never the answer —
+   user ruling, 2026-08-31). A live run the turn launched is NOT here either: the
+   composer band's run bar carries it (26-dock.css), which is per-chat and
+   survives the fold, so the face no longer mounts a duplicate run card. A failed
+   turn's reason is NOT here: it is `.turn-notice` below, a sibling, so it shows
+   in both fold states.
+   A CARD-level child sitting where the body was, so the ledger footer
    below it keeps its open-state layout and credits/model/duration survive the
    fold. Its background is the body's, which is what separates it from the
    tinted header above and ledger strip below. */
@@ -554,15 +671,56 @@
   border-end-end-radius: calc(var(--r) - 1px);
 }
 
-/* No clamp on the face: the fold's compactness comes from hiding the turn's
-   WORK (tool cards, reasoning, delegate output), never from shortening its
-   answer. A 3-line clamp shipped here once and was overruled — the folded turn
-   keeps the whole final reply, ellipsis-free, and a turn whose face would
-   equal its body offers no fold at all (data-no-fold). */
-.turn-face-error {
+/* WHY a turn that did not end cleanly ended that way: one card-level row, in the
+   body's slot, present in BOTH fold states. It replaced `.turn-face-error`, which
+   lived inside the face — and `syncTurnFace` early-returns for an unfolded card,
+   so an open failed turn showed nothing while a broken turn is precisely the turn
+   that never auto-folds. A reader got the reason only by folding the card that had
+   just failed in front of them.
+
+   No clamp, for the face's own reason: the fold's compactness comes from hiding the
+   turn's WORK, never from shortening what it has to say. `pre-wrap` because the
+   text is upstream prose that may carry its own newlines.
+
+   TINTED BY SEVERITY so it never overstates. Red is the default because `broken` is
+   the population this exists for; `stopped` takes the same yellow its footer glyph
+   takes, because a cancel the user asked for and a stop reason vibekit could not
+   read are not failures. Colour is never the only channel: the footer glyph, the
+   rail marker and the tab dot all carry the same fact by shape. */
+.turn-notice {
+  padding-block: var(--sp-2);
+  padding-inline: var(--sp-3);
   color: var(--c-red);
   font-size: var(--fs-sm);
   white-space: pre-wrap;
+  background: var(--c-turn-body);
+}
+
+.turn-notice[data-severity="stopped"] {
+  color: var(--c-yellow);
+}
+
+/* The `unknown` exception, now UNIFORM across all five outcome surfaces in this
+ * file. It was the odd one out in the other direction: this is the surface that
+ * always read the severity table, so `unknown` was the only outcome painting yellow
+ * here and neutral on the header dot, the footer glyph and the rail. An end vibekit
+ * could not read has no honest hue on a mark, and it has none in prose either.
+ *
+ * MEASURED before adopting it, because this surface is PROSE at `--fs-sm` rather
+ * than an 8px mark, so the AA floor is the one that binds: `--c-text-tertiary` on
+ * `--c-turn-body` reads 4.771:1 dark / 5.410:1 light (scripts/css-contrast.py pair),
+ * clear of 4.5:1 in both themes. `syncTurnNotice` (messages.ts) writes the outcome
+ * beside the severity for exactly this rule. */
+.turn-notice[data-outcome="unknown"] {
+  color: var(--c-text-tertiary);
+}
+
+/* The notice sits between the body (or face) and the ledger, so on a card with no
+   ledger footer it is the last child and owns the card's bottom corners — the same
+   rule `.turn-face:last-child` carries, for the same reason. */
+.turn-notice:last-child {
+  border-end-start-radius: calc(var(--r) - 1px);
+  border-end-end-radius: calc(var(--r) - 1px);
 }
 
 /* A no-fold turn offers no fold affordance: the newest turn (nothing after it
@@ -575,29 +733,32 @@
   display: none;
 }
 
-.turn-footer[data-outcome="interrupted"] {
+/* The footer wash, on SEVERITY like the header dot above. A cancel and an
+ * interrupt used to share this yellow because "both stopped rather than
+ * finished" — which is exactly the reading the shared table rejects for
+ * `interrupted`, and the ledger's own words are what separate the two members
+ * that DO belong together. */
+.turn-footer[data-severity="stopped"] {
   background: color-mix(in srgb, var(--c-yellow) 12%, var(--c-bg-tertiary));
   color: var(--c-text-secondary);
 }
 
-/* A cancel washes like an interrupt: both are a turn that stopped rather than
- * finished, and the ledger's own words say which. */
-.turn-footer[data-outcome="cancelled"] {
-  background: color-mix(in srgb, var(--c-yellow) 12%, var(--c-bg-tertiary));
-  color: var(--c-text-secondary);
-}
-
-.turn-footer[data-outcome="failed"] {
+/* RED, `interrupted` included by ruling — see the header dot's broken arm. */
+.turn-footer[data-severity="broken"] {
   background: color-mix(in srgb, var(--c-red) 12%, var(--c-bg-tertiary));
   color: var(--c-text-secondary);
 }
 
-/* A model refusal takes the refusal callout's quiet red wash rather than the
- * amber a POLICY refusal gets: the model decided, nothing malfunctioned, and the
- * remedy is a different prompt or a different model. */
-.turn-footer[data-outcome="refused"] {
-  background: color-mix(in srgb, var(--c-red) 12%, var(--c-bg-tertiary));
-  color: var(--c-text-secondary);
+/* The `unknown` exception, on this surface for the FIRST time: it had no wash rule
+ * at all, so its footer was byte-identical to a clean turn's while the other two
+ * `stopped` surfaces painted it neutral — the two members of one severity
+ * disagreeing with each other. Restating the base `.turn-footer` background is
+ * deliberately what "keeps today's untinted footer"; inventing a neutral tint would
+ * be a fresh visual decision inside a hue-consistency fix. `color` needs no restate:
+ * the base already declares `var(--c-text-secondary)`, which is what both severity
+ * arms above set it to. Same specificity, same source-order tiebreak as the dot. */
+.turn-footer[data-outcome="unknown"] {
+  background: var(--c-bg-tertiary);
 }
 
 /* The ledger's depth ladder: aggregate row, per-file rows, click into a diff.
@@ -681,36 +842,31 @@
  * The LEDGER is untouched, and the mount gate in messages.ts with it: a running
  * turn that has already run a command still shows its counts, it just stops
  * painting a status ring over them. */
-.turn-footer[data-outcome="completed"] .turn-ledger-glyph,
-.turn-footer[data-outcome="running"] .turn-ledger-glyph {
+.turn-footer[data-severity="clean"] .turn-ledger-glyph,
+.turn-footer[data-severity="running"] .turn-ledger-glyph {
   display: none;
 }
 
-.turn-footer[data-outcome="interrupted"] .turn-ledger-glyph {
+/* FILLED, so the shape differs from a clean turn's ring as well as the hue. */
+.turn-footer[data-severity="stopped"] .turn-ledger-glyph {
   border-color: var(--c-yellow);
   background: var(--c-yellow);
 }
 
-.turn-footer[data-outcome="cancelled"] .turn-ledger-glyph {
-  border-color: var(--c-yellow);
-  background: var(--c-yellow);
-}
-
-.turn-footer[data-outcome="failed"] .turn-ledger-glyph {
-  border-color: var(--c-red);
-  background: var(--c-red);
-}
-
-.turn-footer[data-outcome="refused"] .turn-ledger-glyph {
+/* RED, `interrupted` included by ruling — see the header dot's broken arm. This is
+ * the surface the defect was REPORTED on: the notice above the glyph read red while
+ * the glyph and the wash under it read yellow, on one card, for one outcome. */
+.turn-footer[data-severity="broken"] .turn-ledger-glyph {
   border-color: var(--c-red);
   background: var(--c-red);
 }
 
 /* FILLED and neutral, not the default green ring. The glyph's resting state is a
- * green ring meaning "clean", so before this rule an unknown, cancelled or refused
- * turn carried the mark of a clean one — the one direction a status glyph must
- * never fail in. Neutral because an end vibekit could not read has no honest hue,
- * and filled because the ring is reserved for a turn that finished cleanly. */
+ * green ring meaning "clean", so with no rule an unknown turn would carry the mark
+ * of a clean one — the one direction a status glyph must never fail in. Neutral
+ * because an end vibekit could not read has no honest hue (the exception stated at
+ * the header dot); filled because the ring is reserved for a turn that finished
+ * cleanly. */
 .turn-footer[data-outcome="unknown"] .turn-ledger-glyph {
   border-color: var(--c-text-tertiary);
   background: var(--c-text-tertiary);
@@ -859,21 +1015,23 @@
    ========================================================================== */
 
 .turn-rail {
-  --rail-w: 1.75rem;
-
   position: absolute;
 
   /* One `--sp-3`, top and bottom. The rail lives in `#messages-wrap-outer`,
-   * which is inside the view and so already below the title bar, leaving nothing
-   * here to clear. It read `--below-chat-toolbar` while that bar was a floating
-   * pill at z-index 10 anchored to this same corner, which put the first two
-   * markers underneath it — measured at 1440 wide, marker #1 (y 12..36) inside
-   * the bar's 12..54 band, invisible and unclickable. The bar is in flow now, so
-   * that clearance is 60px of dead offset instead. */
+   * which sits INSIDE the view and so already below the title bar, so there is
+   * nothing here to clear. It used to read `--below-chat-toolbar` because the bar
+   * was a floating pill at z-index 10 anchored to this same corner, which put the
+   * first two markers underneath it — measured at 1440 wide, marker #1 (y 12..36)
+   * inside the bar's 12..54 band, invisible and unclickable. The bar is in flow
+   * now, so that clearance became 60px of dead offset. */
   inset-block: var(--sp-3);
 
-  /* STUCK TO THE TURN CARDS' EDGE, not to the window's. `50% - --content-max-w /
-   * 2` is the distance from this wrapper's inline-end to the column's right
+  /* STUCK TO THE TURN CARDS' EDGE, not to the window's. The column's width and
+   * inset live on `#messages-wrap-outer` (13-messages.css), because the resume
+   * control docks at the foot of this rail and has to land in the same column.
+   * `--rail-inset-end` is `50% - --content-max-w / 2 - --rail-w - --sp-2`, whose
+   * first term is the distance from that wrapper's inline-end to the column's
+   * right
    * edge, and the scrollbar terms cancel exactly rather than being ignored: the
    * scroller reserves a stable gutter of `--scrollbar-w` and gives the same
    * width back out of its own inline-end padding (13-messages.css), so the
@@ -885,11 +1043,11 @@
    * it read as a floating column of numbers with nothing to do with the
    * transcript — 158px of empty space between the cards and the rail at 1440.
    * There is deliberately no clamp on this value: the container query below is
-   * what guarantees the gutter can hold the rail (at its 55.5rem threshold the
-   * leftover is 2.75rem against this rail's 1.75rem plus the 0.5rem gap), and a
+   * what guarantees the gutter can hold the rail (at its 57.5rem threshold the
+   * leftover is 3.75rem against this rail's 2.75rem plus the 0.5rem gap), and a
    * clamp would quietly put the rail back on top of the cards instead of
    * hiding it. */
-  inset-inline-end: calc(50% - var(--content-max-w) / 2 - var(--rail-w) - var(--sp-2));
+  inset-inline-end: var(--rail-inset-end);
   z-index: 4;
   display: flex;
   flex-direction: column;
@@ -958,6 +1116,11 @@
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   line-height: 1;
+
+  /* A row is ONE line. `--rail-w` is sized for the widest range the code can
+     produce, so this only bites past four digits a side, where overflowing the
+     column by a hair beats stacking a range onto two lines in a 24px box. */
+  white-space: nowrap;
   cursor: pointer;
   transition:
     background var(--dur-micro) var(--ease-standard),
@@ -985,31 +1148,105 @@
  * reader glancing between the strip and the rail saw two colours for one state.
  * Measured on this marker's own surface: 9.258:1 dark / 5.428:1 light against
  * `--c-bg-primary`, clear of the 4.5:1 floor an 11px glyph needs. */
-.rail-marker[data-outcome="running"] {
+.rail-marker[data-severity="running"] {
   color: var(--c-dot-working);
 }
 
-.rail-marker[data-outcome="interrupted"],
-.rail-cluster[data-outcome="interrupted"],
-.rail-marker[data-outcome="cancelled"],
-.rail-cluster[data-outcome="cancelled"] {
+.rail-marker[data-severity="stopped"],
+.rail-cluster[data-severity="stopped"] {
   color: var(--c-yellow);
 }
 
-.rail-marker[data-outcome="failed"],
-.rail-cluster[data-outcome="failed"],
-.rail-marker[data-outcome="refused"],
-.rail-cluster[data-outcome="refused"] {
+/* RED, `interrupted` included by ruling — see the header dot's broken arm. It used
+ * to be grouped INTO `cancelled`'s rule here, which is how one edit to a severity
+ * ruling had to be remembered in four places in this file.
+ *
+ * A CLUSTER reads this too, so `turn-rail.ts`'s own SEVERITY rank table has to agree
+ * with the partition: it ranks a cluster's worst member, and with `interrupted`
+ * ranked below `unknown` a range holding both painted neutral while the interrupted
+ * turn's own marker painted red. That table says so at its declaration. */
+.rail-marker[data-severity="broken"],
+.rail-cluster[data-severity="broken"] {
   color: var(--c-red);
 }
 
-/* The current turn's marker is distinct — filled and outlined — so position in
- * the session is readable without scrolling to find out. */
-.rail-marker[data-current] {
+/* The `unknown` exception, stated rather than inherited — it had no rule at all
+ * once, so an end vibekit could not read painted in the resting tertiary ink, which
+ * is byte-identical to a clean turn's and therefore looked like a decision nobody
+ * had made. `completed` still has no rule and still falls through to that same
+ * resting ink; the separation is carried by the marker's WORDS (the tooltip and the
+ * accessible name both name the state — rail-labels.ts) and by the header dot at the
+ * widths it renders.
+ *
+ * BEFORE the `[data-current]` / `[data-selected]` fill below, not after it: those
+ * selectors are also (0,2,0), so an override placed later would beat the selection
+ * fill and the rail would stop marking the reader's position on an unknown turn. */
+.rail-marker[data-outcome="unknown"],
+.rail-cluster[data-outcome="unknown"] {
+  color: var(--c-text-tertiary);
+}
+
+/* The turn the rail CLAIMS the reader is at is distinct — filled and outlined — so
+ * position in the session is readable without scrolling to find out.
+ *
+ * ONE RULE FOR BOTH ATTRIBUTES, because they carry one treatment: `data-current` is
+ * the scroll-derived position, `data-selected` is the reader's own pick, and the
+ * rail says "you are here" the same way whichever one it is. They stay separate
+ * attributes because they answer different QUESTIONS — where the scroll puts you,
+ * versus which turn you chose — so a future rule can tell them apart and a test can
+ * prove a click registered. Two copies of the four declarations is what this
+ * replaced, and the comment there already claimed they shared a rule.
+ *
+ * Only ONE of the two is ever written per render (`turn-rail.ts` `rowNode`), which
+ * is what keeps the rail from painting two filled markers and claiming two
+ * positions. Doing that split in the renderer rather than in the cascade is also
+ * what keeps this selector at (0,2,0): the version that demoted the loser in CSS
+ * needed three attribute selectors and (0,5,0), over this stylesheet's own
+ * `selector-max-attribute` and `selector-max-specificity` ceilings.
+ *
+ * NOT an outline ring, which was the first draft. `--focus-ring` is
+ * `2px solid var(--c-accent)`, so a permanent ring on the marked marker is
+ * indistinguishable from `:focus-visible`, and a keyboard user tabbing the rail
+ * would lose the one thing telling them where focus is. `css-tokens.node.test.ts`
+ * catches the literal; the a11y problem is why the fix is a different treatment
+ * rather than the same ring spelled as the token.
+ *
+ * Measured, `--c-on-accent` on `--c-accent`: 7.736:1 dark / 6.918:1 light, clear of
+ * the 4.5:1 floor an 11px glyph needs. */
+.rail-marker[data-current],
+.rail-marker[data-selected] {
   background: var(--c-accent);
   border-color: var(--c-accent);
   color: var(--c-on-accent);
   font-weight: var(--fw-semibold);
+}
+
+/* A cluster containing the current turn, marked as a SUBDUED variant of the
+ * marker's fill rather than the fill itself. Past capacity every turn is inside a
+ * cluster, so without this a long session's rail showed no position at all — but a
+ * cluster is a RANGE, and claiming the reader is "at" nine turns with the same
+ * emphasis a single turn gets overstates it. A tinted wash plus the accent border,
+ * keeping the ink readable, is the honest middle. */
+/* The tint is DERIVED rather than a token, so it re-resolves per theme by
+ * construction: both inputs are already themed, which is the same reason
+ * `--c-tab-active-bg` is written this way. No phantom `--c-accent-subtle` — that
+ * token no longer exists, and a `var()` with nothing behind it resolves to the
+ * property's initial value, which here would be a transparent background.
+ *
+ * MEASURED, both themes, with `scripts/css-contrast.py pair` (the same
+ * implementation the ratios above were measured with, so a derived colour is
+ * resolved rather than estimated): `--c-text-primary` on this background is
+ * 14.545:1 dark / 12.415:1 light, and the accent border reads 6.401:1 / 4.746:1
+ * against the fill and 8.666:1 / 6.628:1 against the page. The label is 9px, the
+ * smallest text in the app, so the 4.5:1 floor is the one that applies and both
+ * themes clear it by a wide margin. The fill's own separation from the page is only
+ * 1.354:1 / 1.397:1 — deliberately, since a range is not a turn — which is why the
+ * accent BORDER carries the boundary and why the mark also travels in words
+ * (`rail-labels.ts` puts "Contains the current turn" in the label). */
+.rail-cluster[data-current] {
+  background: color-mix(in oklch, var(--c-accent) 22%, var(--c-bg-primary));
+  border-color: var(--c-accent);
+  color: var(--c-text-primary);
 }
 
 /* A turn the user did not trigger reads as a non-user marker rather than
@@ -1072,9 +1309,9 @@
 /* Shown only when the chat area is wide enough to hold the rail BESIDE the
  * content column, never inside it. The transcript and the composer share one
  * measure (`--sp-4` of side inset plus the `--content-max-w` cap), so the rail
- * gets the space left over and nothing else: at 55.5rem of chat area the column
- * has stopped growing and the leftover gutter is 2.75rem, which clears the
- * rail's 1.75rem plus its 0.5rem gap from the cards by 0.5rem. Below that there
+ * gets the space left over and nothing else: at 57.5rem of chat area the column
+ * has stopped growing and the leftover gutter is 3.75rem, which clears the
+ * rail's 2.75rem plus its 0.5rem gap from the cards by 0.5rem. Below that there
  * is no room, so it hides — the same trade already accepted on phones, where
  * content search is how a reader navigates. This replaces a viewport-keyed hide
  * at 40rem plus an inline-end padding reservation on `#messages`: the
@@ -1088,7 +1325,7 @@
  * Keyed on the `chat-area` container (12-chat.css), not the viewport, because
  * the sidebar's width is what decides how much of the window the transcript
  * actually gets. */
-@container chat-area (width < 55.5rem) {
+@container chat-area (width < 57.5rem) {
   .turn-rail {
     display: none;
   }
@@ -1171,6 +1408,27 @@
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
   border-radius: var(--r-sm);
+}
+
+/* THE LANDING FLASH: which card a rail click just took you to.
+ *
+ * A click on a turn already fully on screen scrolls nowhere, so on the transcript
+ * side the click produced nothing observable at all — and a reader looking at the
+ * cards rather than at the rail is exactly who needs the answer. The attribute is
+ * held for one window by `turn-rail.ts` and then removed.
+ *
+ * `outline`, never `border` or `padding`: this fires on a card in the middle of a
+ * transcript, so it must shift no layout — an outline is painted outside the box
+ * and participates in none. `outline-offset` puts it clear of the card's own
+ * 1px border instead of sitting on top of it.
+ *
+ * Reduced motion is covered by 40-a11y.css's global sweep, which zeroes the
+ * transition duration; a second rule here would be redundant. Worth stating
+ * because the degradation is not the obvious one: a zeroed transition still RUNS,
+ * so the ring appears and disappears instantly rather than being suppressed, which
+ * is the correct behaviour — the ring is the ANSWER to the click, not decoration. */
+.turn[data-rail-target] {
+  outline-color: var(--c-accent);
 }
 
 /* Search-match count on a turn's header. Empty unless a search is running, so

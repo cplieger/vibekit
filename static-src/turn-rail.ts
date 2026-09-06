@@ -29,8 +29,10 @@
 
 import { el } from "@cplieger/reactive";
 import { apiGet } from "./api-client.js";
-import { jumpTo, scrollableBy, getScrollEl } from "./scroll.js";
-import { turnAnchorID, type TurnOutcome } from "./turns.js";
+import { jumpTo, scrollableBy, getScrollEl, onReaderGesture } from "./scroll.js";
+import { clusterLabel, markerLabel, zoomOutLabel } from "./rail-labels.js";
+import { severityOf } from "./turn-severity.js";
+import type { TurnOutcome } from "./turns.js";
 import { searchHitTurns } from "./chat-search.js";
 import { get, syncEpoch } from "./store.js";
 
@@ -64,16 +66,29 @@ const MARKER_MIN_PX = 24;
  *  rather than keeping a second copy of the pitch that can drift from this one. */
 export const ROW_PITCH_PX = MARKER_MIN_PX + 4;
 
-/** Outcome severity, worst first. A cluster reports its worst member, because a
- *  range containing one failure is a range you want to look at. */
+/** Outcome severity as a total ORDER, worst first. A cluster reports its worst
+ *  member, because a range containing one failure is a range you want to look at.
+ *
+ *  A RANK IS NOT A GRADE, which is why this cannot be derived from `severityOf`:
+ *  that table's four buckets carry no order, and three outcomes share `broken`
+ *  while two share `stopped`. So this stays, and it stays hand-written.
+ *
+ *  What it MAY NOT DO is contradict the hue partition, and it did: `interrupted`
+ *  used to rank BELOW `unknown`, so a cluster holding an interrupted turn and an
+ *  unknown one painted the neutral ink of an unreadable end while the interrupted
+ *  turn's own marker painted red. A cluster must not read calmer than its worst
+ *  member. Every `broken` outcome therefore outranks every `stopped` one here. */
 const SEVERITY: Record<TurnOutcome, number> = {
   failed: 6,
   // A refusal is not a malfunction, so it ranks below `failed` — but it is a turn
   // that produced no work, so it outranks every state that did.
   refused: 5,
+  // BROKEN, and above `unknown` for that reason: the hue partition paints it red,
+  // so a cluster containing it may not fall through to a neutral range.
   interrupted: 4,
   // An end vibekit could not read is not a success, and it is the one state a
-  // reader should look at BECAUSE nothing explains it.
+  // reader should look at BECAUSE nothing explains it — but it is graded `stopped`,
+  // so it sits below the three broken outcomes.
   unknown: 3,
   cancelled: 2,
   running: 1,
@@ -122,6 +137,40 @@ function recordCurrent(id: string): boolean {
 
 let chatID = "";
 let currentN = 0;
+/** The turn the READER picked, held by its OPENING-MESSAGE ID, which outranks the
+ *  scroll-derived `currentN` until they say otherwise.
+ *
+ *  THIS IS THE FIX FOR A CLICK THAT DID NOTHING. `currentN` had exactly one writer
+ *  — the geometry pick — so clicking a marker for a turn already fully on screen
+ *  produced no observable change anywhere: `scrollIntoView` is a no-op when the
+ *  target is where the reader already is, so no scroll event fired, no intersection
+ *  changed, no pick ran and no render happened. And because dominance is by visible
+ *  PIXELS, with turns 2 and 3 both on screen the taller one keeps the mark, so the
+ *  rail actively contradicted the reader's own choice.
+ *
+ *  BY ID, not by number, for the reason `visible` is keyed that way: the id is the
+ *  turn's identity and the number is a derived value the index can restate. A
+ *  rewind truncates the session and a server-side renumbering moves the numbers
+ *  under a held pick, so a number-keyed pick either names a turn that no longer
+ *  exists — leaving the rail with NO position marked on any row, since `render`
+ *  withholds `data-current` while a pick stands — or, worse, silently names a
+ *  different turn than the one clicked.
+ *
+ *  INVARIANT, enforced at both writers: this is only ever a turn the index carries.
+ *  The click reads it off a summary, and `setSummaries` drops it when the new index
+ *  no longer names it.
+ *
+ *  Two attributes rather than one, because they mean different things and the
+ *  stylesheet has to be able to tell them apart: `data-current` stays the
+ *  scroll-derived position, `data-selected` is the intent. `aria-current` moves to
+ *  whichever is marked — exactly one element carries it, which is what that
+ *  attribute means.
+ *
+ *  RECORDED CONSEQUENCE: while a selection is held the rail stops tracking a
+ *  streaming turn. That is the point — the intent is supposed to win — and any
+ *  reader gesture hands tracking straight back, a request for the live edge
+ *  included. */
+let selectedID: string | undefined;
 /** The range the rail is zoomed into, set by clicking a cluster. */
 let zoom: { from: number; to: number } | undefined;
 let observer: IntersectionObserver | undefined;
@@ -133,12 +182,30 @@ let observed = new Set<Element>();
 /** Turn numbers whose jump is waiting on a fetch, so the marker can say so. */
 const pending = new Set<number>();
 /** Mounted cards currently intersecting the transcript viewport, keyed by the
- *  absolute turn number. The map persists across observer callbacks because an
- *  IntersectionObserver callback is a DELTA, not a complete visible set. The
- *  element stays here so every scroll frame can measure exact visible height;
- *  storing the last observer ratio would go stale while two cards remain
- *  intersecting. */
-const visible = new Map<number, Element>();
+ *  card's OPENING-MESSAGE ID — its `data-reconcile-key`, the identity that never
+ *  changes — with the absolute turn number resolved at pick time.
+ *
+ *  The map persists across observer callbacks because an IntersectionObserver
+ *  callback is a DELTA, not a complete visible set. The element stays here so
+ *  every scroll frame can measure exact visible height; storing the last observer
+ *  ratio would go stale while two cards remain intersecting.
+ *
+ *  KEYED BY ID RATHER THAN BY NUMBER, and that is the fix for a marker stuck on
+ *  the previous turn for a whole session. The number is not known until the
+ *  session index carries the card's id, and the index is refetched at only three
+ *  moments — turn end, chat activation, a transport gap — none of them turn
+ *  START. So for the entire duration of a running turn the newest card resolves
+ *  to no number, and `onIntersect` used to DISCARD every entry for it. Nothing
+ *  recovered: the observer reports membership CHANGES only, `observeTurns` keeps
+ *  the card in `observed` so it is never re-observed, and the pick re-measures
+ *  only what is already in this map. The card entered it only by leaving the
+ *  viewport and coming back, so on the common shape — the newest turn fully on
+ *  screen and staying there — the rail marked the PREVIOUS turn active until the
+ *  reader scrolled. Storing the element under a key that is knowable now and
+ *  resolving the number per frame is the same discipline `pickDominant` already
+ *  applies to geometry, for the same reason: a remembered derived value goes
+ *  stale, and this one is derived from a fetch that has not landed yet. */
+const visible = new Map<string, Element>();
 
 /** Treat subpixel geometry as a tie so fractional layout cannot make the marker
  *  flicker between two otherwise equal cards. */
@@ -175,10 +242,22 @@ function navigable(): boolean {
  *  re-render and the overwhelming majority that do not cost one comparison. */
 let renderedNavigable = false;
 
-/** The one writer of `summaries`, so the id index can never drift from it. */
+/** The one writer of `summaries`, so the id index can never drift from it — and the
+ *  one place the reader's pick is reconciled against that index, for the same
+ *  reason: this is the moment the mapping moves.
+ *
+ *  A pick the new index does not carry is DROPPED rather than left to resolve to
+ *  nothing. The producer is a rewind, which truncates the session from the turn
+ *  footer two clicks away from a marker; without the drop the rail marks no
+ *  position on any row — not a wrong one, none — because `rowNode` withholds
+ *  `data-current` while a pick stands and matches `data-selected` on a turn that is
+ *  gone. */
 function setSummaries(next: TurnSummary[]): void {
   summaries = next;
   summaryByID = new Map(next.map((s) => [s.id, s]));
+  if (selectedID !== undefined && !summaryByID.has(selectedID)) {
+    selectedID = undefined;
+  }
 }
 
 /** Mount the rail into the transcript's positioned outer wrapper. Idempotent. */
@@ -195,6 +274,18 @@ export function mountTurnRail(host: HTMLElement): void {
   // Re-measure the members once per animation frame while the transcript moves
   // so two cards that remain intersecting can exchange dominance accurately.
   getScrollEl().addEventListener("scroll", schedulePick, { passive: true });
+  // A READER GESTURE revokes the selection; nothing else does. That covers both
+  // ways the reader states a position — a scroll, and a request for the live edge
+  // (the resume control, End, and a turn they just sent, all of which scroll
+  // through the controller and so produce no reader scroll event).
+  //
+  // Not `onReadingStateChange`: that fires on state TRANSITIONS, and a reader
+  // scrolling within Following never transitions, so the gesture that should hand
+  // tracking back would not. And deliberately not `pickDominant` noticing a
+  // different dominant turn: a streaming turn's own growth moves dominance with no
+  // gesture behind it at all, which would drop the selection while the reader sits
+  // perfectly still.
+  onReaderGesture(clearSelection);
   // The rail is responsive and the gap rows are data-dependent, so capacity has
   // to be measured rather than assumed. A resize also changes visible-height
   // geometry, so re-pick the current turn in the same callback.
@@ -225,9 +316,10 @@ export function pointTurnRail(id: string): void {
   if (id === chatID) {
     return;
   }
-  // A different chat: drop the previous session's zoom and pending jumps rather
-  // than carrying a stale range onto unrelated turns.
+  // A different chat: drop the previous session's zoom, selection and pending
+  // jumps rather than carrying a stale range onto unrelated turns.
   zoom = undefined;
+  selectedID = undefined;
   pending.clear();
   // Records for chats the store no longer holds are dead weight (closed tabs,
   // deleted chats), and a re-point is the cheap moment to drop them — including
@@ -290,6 +382,12 @@ export async function refreshTurnRail(id: string): Promise<void> {
   }
   setSummaries(turns);
   render();
+  // AFTER the render, because the pick renders again only when it moves the
+  // marker. The index is what turns an already-visible card into a placeable one,
+  // and no other trigger is coming: an IntersectionObserver reports membership
+  // CHANGES, and a card sitting still on screen has none. Without this the
+  // just-ended turn's marker waits for a scroll frame that may never arrive.
+  pickDominant();
 }
 
 export function resetTurnRail(): void {
@@ -297,10 +395,12 @@ export function resetTurnRail(): void {
   setSummaries([]);
   records.clear();
   currentN = 0;
+  selectedID = undefined;
   zoom = undefined;
   renderedNavigable = false;
   pending.clear();
   visible.clear();
+  clearRailTarget();
   if (pickFrame !== 0) {
     cancelAnimationFrame(pickFrame);
     pickFrame = 0;
@@ -366,7 +466,14 @@ export function observeTurns(cards: Iterable<HTMLElement>): void {
     // `unobserve` fires NO callback, so a departed card would stay in the
     // geometry map forever and could keep winning after its DOM left. Delete it
     // here; the chat-level `visible.clear()` sites cover every index reset.
-    visible.delete(numberOf(c));
+    //
+    // By KEY, for the reason the map is keyed that way: deleting by resolved
+    // number silently deleted key 0 for any card the index does not name yet,
+    // leaving the real entry in the map to keep winning from a detached node.
+    const key = keyOf(c);
+    if (key !== "") {
+      visible.delete(key);
+    }
   }
   for (const c of next) {
     if (!observed.has(c)) {
@@ -385,18 +492,23 @@ export function observeTurns(cards: Iterable<HTMLElement>): void {
 }
 
 /** Fold one DELTA of intersection changes into `visible`, then re-pick.
- *  Module scope so the observer is constructed once. */
+ *  Module scope so the observer is constructed once.
+ *
+ *  UNCONDITIONAL: a card whose id the index does not carry yet is recorded all the
+ *  same, because this callback is the only notification it will ever get and the
+ *  number it is missing arrives later on a different channel. See `visible`. */
 function onIntersect(entries: IntersectionObserverEntry[]): void {
   for (const e of entries) {
-    const n = numberOf(e.target);
-    if (n === 0) {
-      // A card whose id is not in the index yet; it cannot be placed.
+    const key = keyOf(e.target);
+    if (key === "") {
+      // No reconcile key at all: not a turn card, so there is nothing to place it
+      // by, now or later.
       continue;
     }
     if (e.isIntersecting) {
-      visible.set(n, e.target);
+      visible.set(key, e.target);
     } else {
-      visible.delete(n);
+      visible.delete(key);
     }
   }
   pickDominant();
@@ -432,7 +544,14 @@ function pickDominant(): void {
   let bestPixels = -1;
   let bestFooter = false;
 
-  for (const [n, card] of visible) {
+  for (const [key, card] of visible) {
+    // Resolved per frame, never remembered: the card was recorded before the
+    // session index knew its number, so an unresolvable candidate is SKIPPED here
+    // and stays in the map, ready for the frame after the index lands.
+    const n = summaryByID.get(key)?.n ?? 0;
+    if (n === 0) {
+      continue;
+    }
     const rect = card.getBoundingClientRect();
     const pixels = Math.max(
       0,
@@ -471,14 +590,16 @@ function footerFullyVisible(card: Element, viewportTop: number, viewportBottom: 
   );
 }
 
-/** A card's absolute turn number, resolved through the server's index so the
- *  rail and the transcript agree even though the store holds only a window. */
-function numberOf(card: Element): number {
-  const id = card.getAttribute("data-reconcile-key");
-  if (id === null) {
-    return 0;
-  }
-  return summaryByID.get(id)?.n ?? 0;
+/** A card's stable identity: the id of the turn's OPENING MESSAGE, which is both
+ *  the transcript's reconcile key (`messages.ts` `turnSpec.key`) and the server
+ *  index's `TurnSummary.id`. That shared value is the one join between the rail's
+ *  session-absolute numbering and the transcript's window-local numbering, and it
+ *  is used in BOTH directions: here to place a visible card on the rail, and in
+ *  `turnCard` to find the card a marker jumps to.
+ *
+ *  "" for an element carrying no key, which is not a turn card. */
+function keyOf(card: Element): string {
+  return card.getAttribute("data-reconcile-key") ?? "";
 }
 
 // ---------------------------------------------------------------------------
@@ -591,7 +712,7 @@ function render(): void {
   const rows = railRows(summaries, root.clientHeight || fallbackHeight(), zoom);
   const nodes: HTMLElement[] = [];
   if (zoom !== undefined) {
-    nodes.push(zoomOutButton());
+    nodes.push(zoomOutButton(zoom));
   }
   for (const row of rows) {
     nodes.push(rowNode(row));
@@ -613,64 +734,135 @@ function rowNode(row: Row): HTMLElement {
     return el("div", { className: "rail-gap", "aria-hidden": "true" }, formatGap(row.ms));
   }
   if (row.kind === "cluster") {
+    // A cluster holding the reader's position is marked too. Past capacity —
+    // roughly 32 rows on a 900px rail — EVERY turn is inside a cluster, so
+    // without this the rail showed no current position at all on a long session,
+    // and the same held for any zoom range excluding `currentN`.
+    const containsCurrent = markedN() >= row.from && markedN() <= row.to;
+    const label = clusterLabel(row, { containsCurrent });
     const btn = el(
       "button",
       {
         className: "rail-cluster",
         type: "button",
-        title: `Turns ${String(row.from)}\u2013${String(row.to)} (${String(row.count)})`,
-        "aria-label": `Zoom to turns ${String(row.from)} to ${String(row.to)}`,
+        "data-tooltip": label.tooltip,
+        "aria-label": label.ariaLabel,
       },
       `${String(row.from)}\u2013${String(row.to)}`,
     );
     btn.dataset["outcome"] = row.outcome;
+    btn.dataset["severity"] = severityOf(row.outcome);
+    if (containsCurrent) {
+      btn.dataset["current"] = "";
+    }
     btn.addEventListener("click", () => {
       zoom = { from: row.from, to: row.to };
+      // A range is not a turn, so zooming into one cannot stand as a pick of any
+      // turn inside it.
+      selectedID = undefined;
       render();
     });
     return btn;
   }
   const s = row.s;
+  const hit = searchHitTurns().has(s.n);
+  const isPending = pending.has(s.n);
+  // ONE composer for both channels, and NO native `title`: a UA tooltip misses the
+  // styled `.uip-tooltip` treatment every other hover in the app uses, and it
+  // publishes no `aria-describedby`, so it reached mouse users only.
+  const label = markerLabel(s, { pending: isPending, hit });
   const btn = el(
     "button",
     {
       className: "rail-marker",
       type: "button",
-      // Hover shows the first line of the request — the "I talked about this
-      // around turn 5" affordance made real.
-      title:
-        s.first_line !== undefined && s.first_line !== "" ? s.first_line : `Turn ${String(s.n)}`,
-      "aria-label": `Go to turn ${String(s.n)}`,
+      "data-tooltip": label.tooltip,
+      "aria-label": label.ariaLabel,
     },
     String(s.n),
   );
   btn.dataset["outcome"] = s.outcome;
-  if (s.n === currentN) {
-    btn.dataset["current"] = "";
+  btn.dataset["severity"] = severityOf(s.outcome);
+  // EXACTLY ONE of the two, on exactly one marker: the rail claims ONE position, so
+  // the scroll-derived mark is withheld while the reader holds a pick. Writing both
+  // would paint two filled markers, and demoting the loser in CSS needed three
+  // attribute selectors and a specificity this stylesheet's own ceilings refuse.
+  // They stay separate attributes because they answer different questions — where
+  // the scroll puts you, versus which turn you chose.
+  if (selectedID === undefined) {
+    if (s.n === currentN) {
+      btn.dataset["current"] = "";
+    }
+  } else if (s.id === selectedID) {
+    btn.dataset["selected"] = "";
+  }
+  // One element carries it, and it names the turn the rail is CLAIMING — the
+  // reader's pick when they have made one, the dominant turn otherwise.
+  if (s.n === markedN()) {
     btn.setAttribute("aria-current", "true");
   }
   if (s.agent_initiated === true) {
     btn.dataset["trigger"] = "system";
   }
-  if (pending.has(s.n)) {
+  if (isPending) {
     btn.dataset["pending"] = "";
   }
   // A search hit marks the rail, which is the fastest possible read of WHERE in
   // the session the answer lives — a match in a turn 200 rows up is visible
   // before the reader goes looking for it.
-  if (searchHitTurns().has(s.n)) {
+  if (hit) {
     btn.dataset["hit"] = "";
   }
   btn.addEventListener("click", () => {
+    // BEFORE the jump and unconditionally, which is the whole point: the jump is
+    // allowed to do nothing, and the click still has to produce a reaction. The id
+    // comes off the summary this row was built from, which is what makes the pick's
+    // invariant hold at this writer: it is in the index by construction.
+    selectedID = s.id;
+    render();
     void jumpToTurn(s);
   });
   return btn;
 }
 
-function zoomOutButton(): HTMLElement {
+/** The turn the rail claims the reader is at: their own pick while they hold one,
+ *  the dominant turn otherwise.
+ *
+ *  The pick's number is RESOLVED rather than remembered, the same discipline
+ *  `pickDominant` applies, so a renumbering moves the mark with the turn instead of
+ *  leaving it on whatever now wears that number. The fallback is unreachable while
+ *  the pick's invariant holds (`setSummaries` drops a pick the index has lost); it
+ *  degrades to the scroll-derived position rather than to no position at all, which
+ *  is the failure this whole shape exists to prevent. */
+function markedN(): number {
+  if (selectedID === undefined) {
+    return currentN;
+  }
+  return summaryByID.get(selectedID)?.n ?? currentN;
+}
+
+/** Drop the reader's pick and repaint, if there was one to drop. */
+function clearSelection(): void {
+  if (selectedID === undefined) {
+    return;
+  }
+  selectedID = undefined;
+  render();
+}
+
+/** The row that leaves a zoomed range. Takes the range as a parameter rather than
+ *  reading `zoom`, so the one caller's own narrowing is what proves a range exists —
+ *  this row is rendered only while the rail is zoomed. */
+function zoomOutButton(range: { from: number; to: number }): HTMLElement {
+  const label = zoomOutLabel(range);
   const btn = el(
     "button",
-    { className: "rail-zoom-out", type: "button", "aria-label": "Show the whole session" },
+    {
+      className: "rail-zoom-out",
+      type: "button",
+      "data-tooltip": label.tooltip,
+      "aria-label": label.ariaLabel,
+    },
     "all",
   );
   btn.addEventListener("click", () => {
@@ -731,12 +923,27 @@ export function initTurnRailCallbacks(cbs: {
  *  build happens under a folded card, so it changes no height the jump could
  *  care about, and the jump itself stays instant. The turn is NOT opened —
  *  a jump onto a resident turn today lands on its folded row, and this keeps
- *  that exactly. */
+ *  that exactly.
+ *
+ *  THE TARGET IS RESOLVED BY MESSAGE ID, NOT BY `#turn-{n}`, and that is the fix
+ *  for a click landing on the wrong turn. There are two numbering spaces both
+ *  spelled `turn-{n}`: `TurnSummary.n` is SESSION-ABSOLUTE (the server owns it —
+ *  `internal/vibekit/turns.go`) while a card's `id` is WINDOW-LOCAL (`Turn.n`, an
+ *  ordinal within the paginated store — `turns.ts`). So addressing the card by the
+ *  marker's number landed on the card whose WINDOW ordinal matched, missing by
+ *  exactly the number of turns paged out — zero on a short chat and growing with
+ *  every page loaded, which is why it read as intermittent. It also swallowed the
+ *  fetch: a wrong-but-resident card resolved, so an off-window turn scrolled to a
+ *  neighbour instead of paging history in, and the pending marker never appeared
+ *  for the one case it exists for.
+ *
+ *  `keyOf` already joined the two spaces in the other direction. This is the same
+ *  join, so the rail now has ONE mapping between them and runs it both ways. */
 async function jumpToTurn(s: TurnSummary): Promise<void> {
-  // A turn permalink is addressable, so a ledger row, a run's launch record and
-  // a search hit can all link to a precise point.
-  const anchor = turnAnchorID(s.n);
-  if (scrollToAnchor(anchor)) {
+  const resident = turnCard(s.id);
+  if (resident !== null) {
+    scrollToCard(resident);
+    markRailTarget(resident);
     await mountTurnBody(chatID, s.id);
     return;
   }
@@ -750,7 +957,13 @@ async function jumpToTurn(s: TurnSummary): Promise<void> {
     if (loaded) {
       // One frame for the appended cards to lay out before scrolling to one.
       await nextFrame();
-      scrollToAnchor(anchor);
+      // Re-resolved rather than remembered: the card did not exist when this
+      // jump started, and pagination is what created it.
+      const landed = turnCard(s.id);
+      if (landed !== null) {
+        scrollToCard(landed);
+        markRailTarget(landed);
+      }
       await mountTurnBody(chatID, s.id);
     }
   } finally {
@@ -792,26 +1005,79 @@ async function loadUntilResident(s: TurnSummary): Promise<boolean> {
   }
 }
 
-function scrollToAnchor(anchor: string): boolean {
-  // Within the active view when one is wired: `#turn-{n}` repeats once per
-  // resident view, and document.getElementById answers in document order,
-  // which can be a PARKED view's card. The document fallback keeps rail
-  // fixtures (and the pre-multiplexer boot instant) working unscoped.
-  const root = activeView();
-  const target =
-    root !== null
-      ? root.querySelector<HTMLElement>(`[id="${CSS.escape(anchor)}"]`)
-      : document.getElementById(anchor);
-  if (target === null) {
-    return false;
+/** The mounted card for the turn whose opening message is `id`, or null when it is
+ *  not resident.
+ *
+ *  Scoped to the ACTIVE transcript view, because `data-reconcile-key` repeats once
+ *  per resident view under the multiplexer and a document-wide query answers in
+ *  document order — which can be a PARKED view's card. The document fallback keeps
+ *  the rail fixtures, and the pre-multiplexer boot instant, working unscoped. */
+function turnCard(id: string): HTMLElement | null {
+  if (id === "") {
+    return null;
   }
+  const selector = `[data-reconcile-key="${CSS.escape(id)}"]`;
+  const root = activeView();
+  return (root ?? document).querySelector<HTMLElement>(selector);
+}
+
+/** How long the landing card wears its ring. Long enough to be seen after an
+ *  instant scroll, short enough not to read as a persistent selected state — the
+ *  rail's own marker is what carries that. */
+const RAIL_TARGET_MS = 1000;
+
+/** The card currently wearing `data-rail-target`, and the timer that removes it.
+ *  Module-level and single-slot: a second click has to reset the first's timer, or
+ *  the earlier deadline would strip the ring off the card the reader just landed
+ *  on. */
+let railTarget: HTMLElement | undefined;
+let railTargetTimer = 0;
+
+/** Flash the ring on the card a jump landed on.
+ *
+ *  A click on a turn already fully on screen scrolls nowhere, so the marker's own
+ *  `data-selected` is the only thing that moves — and a reader watching the
+ *  TRANSCRIPT rather than the rail would see nothing at all. The ring is what
+ *  answers "which one did I just pick" on the surface they are reading.
+ *
+ *  `outline`/`box-shadow` only in the stylesheet, never `border` or `padding`: this
+ *  fires on a card mid-transcript and must shift no layout. */
+function markRailTarget(card: HTMLElement): void {
+  clearRailTarget();
+  railTarget = card;
+  card.dataset["railTarget"] = "";
+  railTargetTimer = window.setTimeout(() => {
+    railTargetTimer = 0;
+    clearRailTarget();
+  }, RAIL_TARGET_MS);
+}
+
+function clearRailTarget(): void {
+  if (railTargetTimer !== 0) {
+    clearTimeout(railTargetTimer);
+    railTargetTimer = 0;
+  }
+  if (railTarget !== undefined) {
+    delete railTarget.dataset["railTarget"];
+    railTarget = undefined;
+  }
+}
+
+function scrollToCard(target: HTMLElement): void {
   // The scroll module owns both halves: it parks the reader (so a streaming turn
   // cannot yank the view back down) and it decides whether this jump moves them
   // off the live edge at all. A one-turn chat that does not overflow cannot
   // scroll, and claiming otherwise raised the `Latest` control over a transcript
-  // that had not moved. Same call as find-in-chat's.
-  jumpTo(target, { block: "start", behavior: "smooth" });
-  return true;
+  // that had not moved.
+  //
+  // INSTANT, and deliberately not find-in-chat's `smooth`. A smooth scroll freezes
+  // its target at flight start, so the fold batch a landing releases never moves
+  // it; and its ~50 intermediate events carry no self-scroll marker, so scroll.ts
+  // reads every one as a reader gesture — which arms the user-scroll debounce, re-
+  // derives the reading state, and (since item 5) revokes the selection the click
+  // just made. That is the same mechanism behind the measured `2600 against a real
+  // maximum of 4600` the resume control already fixed by going instant.
+  jumpTo(target, { block: "start", behavior: "instant" });
 }
 
 function nextFrame(): Promise<void> {

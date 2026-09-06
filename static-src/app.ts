@@ -7,13 +7,7 @@
 // local mutations.
 // ---------------------------------------------------------------------------
 
-import type {
-  ServerEvent,
-  ModelInfo,
-  SessionEffortLevel,
-  SessionMode,
-  SessionModel,
-} from "./types.js";
+import type { ServerEvent, ModelInfo, SessionModel } from "./types.js";
 import { setCatalogModes } from "./roles.js";
 import {
   MODEL_CONTEXT_SIZES,
@@ -29,6 +23,7 @@ import {
   startEvictionSweep,
 } from "./store.js";
 import { loadList } from "./store-load.js";
+import { settleDeepLinkedChat } from "./deep-link.js";
 import { computed, effect, touch } from "@cplieger/reactive";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_TRANSPORT_GAP } from "./bus.js";
 import { findGlyph } from "./icons.js";
@@ -46,8 +41,9 @@ import {
   initPostAuthUI,
   setUserEmail,
 } from "./settings.js";
-import { apiGet, apiGetTyped } from "./api-client.js";
-import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
+import { apiGetTyped } from "./api-client.js";
+import { decodeConfigTemplateResponse, decodeWhoamiResponse } from "./wire/decoders.gen.js";
+import type { ConfigTemplateResponse } from "./wire/types.gen.js";
 import {
   setOnEmpty,
   activateRestoredTab,
@@ -63,16 +59,22 @@ import { markBootDone } from "./view-swap.js";
 import { ingestTabsChanged, listTabs } from "./tabs-sync.js";
 import { parseRoute, replaceRoute, onPopState, suppressPush } from "./router.js";
 import type { Route } from "./router.js";
-import { refreshPickerIfVisible, setPickerModels, initModelPicker } from "./picker.js";
+import {
+  refreshPickerIfVisible,
+  setPickerModels,
+  initModelPicker,
+  setCatalogPhase,
+} from "./picker.js";
+import { refreshCatalog, CATALOG_REQUEST_TIMEOUT_MS } from "./model-catalog.js";
 import { setStatus, refreshRuntimeLine, initStatusVersions } from "./status.js";
 import { initShellPanel } from "./shell.js";
 import { showLoginModal, hideLoginModal, initLoginModal } from "./modals.js";
 import { initEditor } from "./editor-core.js";
 import { openFile, activateFile, closeEditorFile } from "./editor-openers.js";
 import { registerTabOpeners } from "./tab-materialize.js";
-import { showRun } from "./run-view.js";
+import { runTabProjectsChat, showRun } from "./run-view.js";
 import { showSubagent, subagentTabProjectsChat } from "./subagent-view.js";
-import { hasLiveRunForChat, rebuildLiveRuns, runChatID } from "./run-store.js";
+import { hasExecutingRunForChat, rebuildLiveRuns, runChatID } from "./run-store.js";
 import { openAtLine } from "./navigate.js";
 import { initAttachmentPillCallbacks } from "./attachment-pill.js";
 import { initFileBrowser, restoreFileBrowser } from "./files.js";
@@ -112,6 +114,7 @@ import { initGovernance } from "./governance.js";
 import { initPromptInput, sendComposer } from "./prompt-input.js";
 import { initComposerState } from "./composer-state.js";
 import { initPendingSteers } from "./pending-steers.js";
+import { initRunBar } from "./run-bar.js";
 import { initChatOptions } from "./chat-options.js";
 import { mountDecisionDock } from "./decision-dock.js";
 import { initRuntimeHealth } from "./runtime-health.js";
@@ -129,6 +132,7 @@ import "./handlers/open-external-url.js";
 import "./handlers/safety.js";
 import "./handlers/run.js";
 import { installRunDotSubscriber } from "./run-dots.js";
+import { installSubagentDotSubscriber } from "./subagent-dots.js";
 import "./handlers/steer.js";
 import { initPushMessages } from "./handlers/push-message.js";
 import { cancelTurn } from "./actions/chat.js";
@@ -244,6 +248,12 @@ function init(): void {
   // unopened tab has no spec to park a dot state on, so the effect's own sweep is
   // what picks it up once it exists.
   installRunDotSubscriber();
+
+  // The same dot for a SUBAGENT's row, from its invocation tool call's status.
+  // Here for the reason the call above is here: an effect running at import would
+  // paint against a strip that has not been restored yet, and its tab-set
+  // dependency is what picks a row up once it exists.
+  installSubagentDotSubscriber();
 
   // The out-of-page attention surfaces: the tab-title count, the installed app's
   // icon badge and the tab icon, all folded from the chat tabs' dots. Wired here,
@@ -627,12 +637,34 @@ function initPostAuth(): void {
   // The live-runs inventory: boot is one of its two rebuild triggers (the
   // other is transport:gap, wired in handlers/system.ts). It feeds the
   // eviction sweep's live-run exemption, registered here beside the
-  // subagent-tab one because store.ts is a leaf and must not import
+  // subagent-tab and run-tab ones because store.ts is a leaf and must not import
   // run-store.ts or tabs.ts — the composition root wires what it may not.
+  //
+  // The third is the narrower half of the first: `hasExecutingRunForChat` exempts a
+  // chat with a run that is still EXECUTING, while a run's SUB-TAB projects its
+  // steps out of the launching chat's window for as long as it is open — including
+  // long after the run finished, which is exactly when the executing exemption has
+  // already lapsed.
+  //
+  // The first is the EXECUTING predicate rather than the any-live-run one: a run
+  // parked on a question writes nothing into the transcript, so exempting its chat
+  // pinned that whole message window for the life of the page. `run-store.ts` keeps
+  // both readers because the ask sweep genuinely wants the wider one.
   void rebuildLiveRuns();
-  registerEvictionExemption(hasLiveRunForChat);
+  registerEvictionExemption(hasExecutingRunForChat);
   registerEvictionExemption(subagentTabProjectsChat);
+  registerEvictionExemption(runTabProjectsChat);
   startEvictionSweep();
+  // Re-read the pre-session catalog after a gap: the server may have restarted,
+  // so the utility session is new and the answer can genuinely differ. HERE
+  // rather than beside the boot fetch because that site sits past
+  // checkAuthAndStart's unauthenticated return, which would leave a page session
+  // that came in through the login modal — the one whose boot read is most likely
+  // to have degraded — with no re-probe for its whole life. Declined while a
+  // bounded loop is live, which is already asking the same endpoint.
+  onBus(BUS_TRANSPORT_GAP, () => {
+    void fetchModelsFromREST();
+  });
 }
 
 function onLoginSuccess(): void {
@@ -647,7 +679,11 @@ function onLoginSuccess(): void {
   // Fetch the pre-conversation catalog so the picker is populated
   // before the first chat's session/new arrives. Session-sourced
   // updates overwrite this the moment a bridge spawns.
-  void fetchModelsFromREST();
+  //
+  // RESETS a live boot loop rather than being refused by it: a login is exactly
+  // the new information that may have fixed the read, so refusing it would leave
+  // it contributing nothing until a 180s loop exhausts.
+  void fetchModelsFromREST({ reset: true });
   if (getSessions().length === 0) {
     // DETACHED: this is the post-login starter chat, and nothing below reads it.
     // `markBootDone()` must not wait on a round trip — it only flips the flag that
@@ -680,7 +716,7 @@ function toModelInfo(m: SessionModel): ModelInfo {
   };
 }
 
-async function fetchModelsFromREST(): Promise<void> {
+function fetchModelsFromREST(opts: { readonly reset?: boolean } = {}): Promise<void> {
   // Pre-conversation catalog: kiro-cli 2.14's session-less
   // _kiro/config/template, surfaced via /api/config-template on the
   // utility bridge. One fetch seeds BOTH pickers before any chat
@@ -691,34 +727,60 @@ async function fetchModelsFromREST(): Promise<void> {
   // /api/workspace/kiro-config inside the role picker). Once a
   // session/new response lands, the per-session path below overwrites
   // with the authoritative catalog for that chat.
-  const d = await apiGet<{
-    modes: SessionMode[];
-    models: SessionModel[];
-    default_model?: string;
-    effort_levels?: SessionEffortLevel[];
-    effort_active?: string;
-  }>("/api/config-template");
-  if (d === null) {
-    return;
-  }
-  // Pre-session effort vocabulary: a chat with no bridge has no session catalog,
-  // so without this the effort control has neither its tier list nor the level
-  // the next session would run at.
-  setCatalogEfforts(d.effort_levels ?? [], d.effort_active ?? "");
-  if (d.modes.length > 0) {
-    setCatalogModes(d.modes);
-  }
-  if (d.models.length > 0) {
-    populatePickerModels(d.models.map(toModelInfo), "");
-  }
-  // The model pill names a non-default reasoning tier, and it can only know
-  // which tier is default from the catalog this fetch just landed. Nothing else
-  // repaints the pill on this path (the per-session feed below has its own
-  // refresh), so without this the tier stays unnamed until the next store emit.
-  const active = getActive();
-  if (active !== undefined) {
-    refreshContextUI(active);
-  }
+
+  // model-catalog.ts owns the POLICY; what stays here is the endpoint and the
+  // surfaces it feeds.
+  return refreshCatalog<ConfigTemplateResponse>(
+    {
+      // Read through the GENERATED decoder. The inline `apiGet<{modes: …}>` this
+      // replaced was a CLAIM rather than a check — apiGet runs no decoder — so a
+      // server answering `{}` or `modes: null` produced a TypeError inside the
+      // boot path at `d.modes.length`.
+      read: (signal) =>
+        apiGetTyped(
+          "/api/config-template",
+          decodeConfigTemplateResponse,
+          signal,
+          CATALOG_REQUEST_TIMEOUT_MS,
+        ),
+      // Only a USABLE answer gets here, which is what gates the whole
+      // application on the verdict: an `unavailable` template emits an empty
+      // effort list by construction, so a login-triggered fetch that degraded
+      // used to replace the tiers a successful boot fetch had landed.
+      apply: (d) => {
+        // ONE rule over all three: an EMPTY list is the absence of a vocabulary
+        // rather than a value, so it never replaces one an earlier answer landed.
+        // Per list rather than per verdict because each arrives empty on its own —
+        // the effort tiers ride the model, and KAS resolves its model list
+        // asynchronously, so the server reports a merely COLD cache as `empty`
+        // (config_template.go) — and the transport-gap re-probe below reads a
+        // RESTARTED server's cold cache, which is how that arrives in practice.
+        if (d.effort_levels.length > 0) {
+          // A chat with no bridge has no session catalog, so without this the
+          // effort control has neither its tier list nor the level the next
+          // session would run at.
+          setCatalogEfforts(d.effort_levels, d.effort_active ?? "");
+        }
+        if (d.modes.length > 0) {
+          setCatalogModes(d.modes);
+        }
+        if (d.models.length > 0) {
+          populatePickerModels(d.models.map(toModelInfo), "");
+        }
+        // The model pill names a non-default reasoning tier, and it can only know
+        // which tier is default from the catalog this fetch just landed. Nothing
+        // else repaints the pill on this path (the per-session feed below has its
+        // own refresh), so without this the tier stays unnamed until the next
+        // store emit.
+        const active = getActive();
+        if (active !== undefined) {
+          refreshContextUI(active);
+        }
+      },
+      setPhase: setCatalogPhase,
+    },
+    opts,
+  );
 }
 
 function fetchModelsFromSession(): void {
@@ -819,12 +881,16 @@ function setupInput(): void {
   // only the selection callback is injected, because it lives in
   // model-switcher.ts, which imports picker.ts. pickModel, not applyLocalModel:
   // a hero-picker pick must PERSIST like a pill pick, or the next header echo
-  // clobbers it back (user report, 2026-08-31).
-  initModelPicker(pickModel);
+  // clobbers it back (user report, 2026-08-31). The Retry is injected for the same
+  // reason: without it an `unavailable` catalog is a keyboard dead end, and its
+  // promise is RETURNED so picker.ts can announce the answer it settles on.
+  initModelPicker(pickModel, () => fetchModelsFromREST());
   // The role picker owns the prompt-bar role pill (expand, list, selection).
   initRolePicker();
   // Queued-prompt chips (pending sends buffered while a turn is in flight).
   initPendingSteers();
+  // The composer band's live-run rows; a pure projection of the run store.
+  initRunBar();
   initChatOptions();
   // The interaction dock: permission asks, elicitation forms and agent
   // questions. Hosted by the chat's bottom bar; it takes its host as an
@@ -883,7 +949,24 @@ function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): void {
   switch (route.kind) {
     case "chat":
       if (route.id !== "" && get(route.id) !== undefined) {
-        switchSession(route.id);
+        // The chat EXISTS, so `switchSession` either activates its tab or OPENS one
+        // — the door every other kind already used. Voided: a refusal has already
+        // raised its own notice through `openTabCommand`'s declared error message,
+        // and a second one here would be two notices for one refusal.
+        void switchSession(route.id);
+      } else if (route.id !== "") {
+        // The id names NO ROW, which is where this arm used to derive a terminal
+        // verdict from a store that is authoritative only at the instant a list
+        // lands. Everything that decision needs — whether asking the server can be
+        // answered at all, what its answer licenses, whether a verdict that arrived
+        // a round trip late still describes the screen, and whether an unanswered
+        // ask is this reader's first notice or their second — lives in
+        // `deep-link.ts`. None of it is routing, and none of it had a test address
+        // while it sat here.
+        //
+        // Voided: every outcome is returned rather than thrown, and the module
+        // raises whatever notice its own evidence licenses.
+        void settleDeepLinkedChat(route.id);
       } else if (getActiveId() !== "") {
         replaceRoute({ kind: "chat", id: getActiveId() });
       }
@@ -950,7 +1033,12 @@ function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): void {
           // launching chat when this client knows which one it was — openRunView
           // consults the run store for that, so a shared link lands beside the
           // conversation rather than at the end of the strip.
-          openRunView(route.id, route.id);
+          //
+          // The fourth argument is what makes a COPIED STEP LINK land on the step:
+          // the run card's row href carries the node as `#node=<path>`, and this is
+          // where a cold load spends it. `""` for a plain `/run/{id}`, which means
+          // "the run" and lets the page auto-follow.
+          openRunView(route.id, route.id, "", route.node ?? "");
         })
         .catch(() => {
           /* noop */

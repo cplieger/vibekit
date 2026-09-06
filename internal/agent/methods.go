@@ -140,12 +140,19 @@ const (
 // calling chat's session — so no session→chat resolution is needed. Translated
 // to three SSE events; see api/domain_workflow.go for why three and not six.
 const (
-	methodWFRunStart      = "_kiro/workflow/run_start"      // {workflowId, workflowName, inputs, nodeTree[], parentSessionId?}
-	methodWFRunComplete   = "_kiro/workflow/run_complete"   // {workflowId, status, finalState}
-	methodWFNodeStart     = "_kiro/workflow/node_start"     // {workflowId, nodeId, nodePath[], type, agentName?, sessionId?, iteration?, branchId?}
-	methodWFNodeComplete  = "_kiro/workflow/node_complete"  // {workflowId, nodeId, nodePath[], status, artifacts?, capturedOutput?}
-	methodWFNodePaused    = "_kiro/workflow/node_paused"    // {workflowId, nodeId, nodePath[], reason} — note `reason`, not `pauseReason`
-	methodWFPaused        = "_kiro/workflow/paused"         // {workflowId, pauseReason}
+	methodWFRunStart     = "_kiro/workflow/run_start"     // {workflowId, workflowName, inputs, nodeTree[], parentSessionId?}
+	methodWFRunComplete  = "_kiro/workflow/run_complete"  // {workflowId, status, finalState}
+	methodWFNodeStart    = "_kiro/workflow/node_start"    // {workflowId, nodeId, nodePath[], type, agentName?, sessionId?, iteration?, branchId?}
+	methodWFNodeComplete = "_kiro/workflow/node_complete" // {workflowId, nodeId, nodePath[], status, artifacts?, capturedOutput?}
+	methodWFNodePaused   = "_kiro/workflow/node_paused"   // {workflowId, nodeId, nodePath[], reason} — note `reason`, not `pauseReason`
+	// methodWFPaused carries `pauseDetail` too, and the heal READS it: the
+	// reason is prose a second KAS code path can re-render (a pause parked
+	// inside a parallel branch arrives as a wrapper sentence composed FROM
+	// this detail), while `{class, code, occurredAt}` is correct in both the
+	// plain-step and the branch cases. Present only when KAS classified the
+	// pause — absent for an interruption, a permanent failure and a
+	// need-input park.
+	methodWFPaused        = "_kiro/workflow/paused"         // {workflowId, pauseReason, pauseDetail?}
 	methodWFLoopIteration = "_kiro/workflow/loop_iteration" // {workflowId, loopId, iteration, stopConditionMet}
 	methodWFWatchPoll     = "_kiro/workflow/watch_poll"     // {workflowId, nodeId, nodePath[], outcome, at}
 	methodWFStepsQueued   = "_kiro/workflow/steps_queued"   // {workflowId, pendingSteps[], resolution?}

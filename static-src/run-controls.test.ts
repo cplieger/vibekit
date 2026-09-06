@@ -26,7 +26,7 @@ describe("run control gating", () => {
 
   // Retry IS offered, and only where KAS accepts it. The carrier objection that
   // kept it out is answered by re-hosting: retry is legal exactly when a run's
-  // own bridge has been closed, so RetryRun starts one rather than requiring one.
+  // own bridge has been closed, so `Retry` starts one rather than requiring one.
   // A `completed` run still offers nothing — KAS throws there.
   it("offers retry only on the terminal statuses that accept it", () => {
     expect(RUN_CONTROLS["failed"]).toContain("retry");

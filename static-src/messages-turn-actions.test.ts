@@ -156,19 +156,46 @@ describe("mountTurnFooterActions", () => {
     expect(buttons(f.footer)).toHaveLength(5);
   });
 
-  it("keeps copy direct and groups the four secondary actions under More", () => {
+  it("groups every action under More, Copy included, so the phone row holds one trigger", () => {
     const f = fixture(assistant());
     mountTurnFooterActions(f.footer, f.card, f.turn);
 
     const slot = f.footer.querySelector<HTMLElement>(".turn-actions-buttons")!;
     const more = slot.querySelector<HTMLDetailsElement>(".turn-actions-more")!;
-    expect(slot.querySelectorAll(":scope > button.turn-action-btn")).toHaveLength(1);
+    // Nothing sits beside the overflow. Copy used to, which left a phone row
+    // carrying two targets where the point of the overflow is one.
+    expect(slot.querySelectorAll(":scope > button.turn-action-btn")).toHaveLength(0);
     expect(more.querySelector(":scope > summary")?.getAttribute("aria-label")).toBe(
       "More turn actions",
     );
     expect(
-      more.querySelectorAll(":scope > .turn-actions-secondary > button.turn-action-btn"),
-    ).toHaveLength(4);
+      more.querySelectorAll(":scope > .turn-actions-group > button.turn-action-btn"),
+    ).toHaveLength(5);
+  });
+
+  // The menu closes on the gesture, so the button carrying the 1.5s `.copied`
+  // flash is off screen before it can be read and the toast is the only channel
+  // left. Everywhere else the flash is the feedback and a toast beside it would
+  // be a second rendering of one fact.
+  it("lets the copy toast through when the click came from the open overflow", () => {
+    const f = fixture(assistant({ content: "**bold**" }), "bold");
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    const more = f.footer.querySelector<HTMLDetailsElement>(".turn-actions-more")!;
+
+    more.querySelector<HTMLElement>(":scope > summary")!.click();
+    expect(more.open).toBe(true);
+    buttons(f.footer)[0]?.click();
+    expect(dispatch).toHaveBeenLastCalledWith("bold", expect.objectContaining({ silent: false }));
+  });
+
+  it("suppresses the copy toast while the overflow is inline, where the flash is visible", () => {
+    const f = fixture(assistant({ content: "**bold**" }), "bold");
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    const more = f.footer.querySelector<HTMLDetailsElement>(".turn-actions-more")!;
+
+    expect(more.open).toBe(false);
+    buttons(f.footer)[0]?.click();
+    expect(dispatch).toHaveBeenLastCalledWith("bold", expect.objectContaining({ silent: true }));
   });
 
   it("closes the mobile overflow after an action", () => {

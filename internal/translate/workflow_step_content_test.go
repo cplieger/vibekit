@@ -11,6 +11,7 @@ package translate
 import (
 	"encoding/json"
 	"maps"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -154,6 +155,100 @@ func TestHandleRunStepFrame_FoldsAToolUpdate(t *testing.T) {
 	// create recorded.
 	if got[1].NodePath != "seq/coder" {
 		t.Errorf("node_path = %q, want seq/coder", got[1].NodePath)
+	}
+}
+
+// TestHandleRunStepFrame_ReportsRunProgress is the progress signal for the
+// population that has no other one, and it is here rather than only on the chat
+// path because that asymmetry is the whole reason this call site exists.
+//
+// A manual or scheduled run's step frames arrive on its own bridge and reach
+// forwardRunToolCall, never the chat path's countStepTurn site. So without this,
+// an unattended run's only progress signal would be `node_complete` — and one
+// legitimately long step, which is exactly the shape a fifteen-minute idle window
+// exists to tolerate, would read as a stall and be cancelled. That population is
+// the one the watchdog exists for.
+//
+// The UPDATE deliberately reports nothing: a status change on a call already
+// counted is not new evidence the run is producing frames, and crediting it would
+// let one wedged tool call refill the window forever by re-reporting itself.
+func TestHandleRunStepFrame_ReportsRunProgress(t *testing.T) {
+	t.Parallel()
+	deps := newBaseDeps()
+	tr := New(rolesOf(deps))
+
+	tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call", "wf_1",
+		[]string{"seq", "coder"}, map[string]any{
+			"toolCallId": "t1",
+			"title":      "Read a file",
+			"kind":       "read",
+			"status":     "pending",
+		}))
+	tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call_update", "wf_1",
+		[]string{"seq", "coder"}, map[string]any{
+			"toolCallId": "t1",
+			"status":     "completed",
+		}))
+
+	if want := []string{"wf_1"}; !slices.Equal(deps.runProgress, want) {
+		t.Errorf("progress reported = %v, want %v: the create is the evidence, the update is "+
+			"not — a parentless run's tool calls are its only progress signal besides a "+
+			"completed node, and a re-reported call is not a new frame", deps.runProgress, want)
+	}
+}
+
+// TestHandleRunStepFrame_ReportsProgressAboveTheRenderGuards is the report's
+// PLACEMENT on the population that has no other progress signal, which is what makes
+// it the sharper half of the same property.
+//
+// Both guards below it are rendering decisions — do not draw a hook card, and there
+// is no row to put content in — and neither says anything about whether KAS is
+// producing frames, which is the only question the idle window asks. Reported under
+// them, hooks.showStatus off cancels an unattended run whose step is asking a hook
+// gate, as stalled, while it works.
+func TestHandleRunStepFrame_ReportsProgressAboveTheRenderGuards(t *testing.T) {
+	t.Parallel()
+	for name, meta := range map[string]map[string]any{
+		// A hook ask with hooks.showStatus off: the card is dropped, the run is not.
+		"a hook ask whose card is suppressed": {
+			"workflow": map[string]any{
+				"workflowId": "wf_1",
+				"nodeId":     "coder",
+				"nodePath":   []string{"seq", "coder"},
+				"type":       "step",
+			},
+			"hookAsk": map[string]any{"kind": "pre-tool-use", "toolName": "fs_write"},
+		},
+		// A workflow block naming the run but no node: there is no step row to render
+		// into, and the run is still producing frames.
+		"a step frame with no address to render at": {
+			"workflow": map[string]any{"workflowId": "wf_1", "type": "step"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			base := newBaseDeps()
+			deps := &hookStatusDeps{baseDeps: base, enabled: false}
+			tr := New(rolesOf(deps))
+
+			tr.HandleRunStepFrame(t.Context(), "wf_1", mustJSON(t, map[string]any{
+				"sessionId": "sess_step",
+				"update": map[string]any{
+					"sessionUpdate": "tool_call",
+					"toolCallId":    "t1",
+					"title":         "Run hook",
+					"kind":          "other",
+					"status":        "pending",
+					"_meta":         map[string]any{"kiro": meta},
+				},
+			}))
+
+			if want := []string{"wf_1"}; !slices.Equal(base.runProgress, want) {
+				t.Errorf("progress reported = %v, want %v: a frame a run's card cannot render is "+
+					"still evidence the run is producing frames, and it is the only evidence a "+
+					"parentless run has besides a completed node", base.runProgress, want)
+			}
+		})
 	}
 }
 

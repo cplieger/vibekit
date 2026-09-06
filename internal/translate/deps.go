@@ -32,18 +32,29 @@ type BufferAccess interface {
 }
 
 // TurnBoundary is the wire's own turn bracket, which KAS emits for every
-// turn, agent-initiated included.
+// turn, agent-initiated included — plus the one MID-turn boundary vibekit
+// declares itself, at a compaction point.
 type TurnBoundary interface {
 	// WireTurnStart binds the bracket to the pending pre-open, or closes a
 	// turn whose own end never arrived and opens one the engine started.
 	WireTurnStart(ctx context.Context, chatID vibekit.ChatID)
 	// WireTurnEnd closes the chat's open turn with the wire's own
-	// outcome. A no-op when no turn is open.
-	WireTurnEnd(ctx context.Context, chatID vibekit.ChatID, stop vibekit.StopReason)
+	// outcome. A no-op when no turn is open. `details` is the wire's own
+	// account of the stop, empty on every build that sends none, and it is
+	// the only channel that could explain a `stopReason: "error"` turn.
+	WireTurnEnd(ctx context.Context, chatID vibekit.ChatID, stop vibekit.StopReason, details string)
 	// ReviseTurnBinding undoes a provisional binding on a frame carrying
 	// agentInitiated: the started turn was the agent's, and the pre-open
 	// is still owed its own bracket.
 	ReviseTurnBinding(ctx context.Context, chatID vibekit.ChatID)
+	// SealTurnSegment persists what the open turn has produced so far as its
+	// own assistant message and lets the rest of the turn accumulate into a
+	// fresh one, so a boundary inside a turn can be represented as a sibling
+	// message. Reports whether a segment was sealed; false for a chat with no
+	// open turn, a turn that emitted nothing, and a turn holding an unsettled
+	// tool call, all of which leave the boundary to land as a sibling of the
+	// whole turn instead.
+	SealTurnSegment(ctx context.Context, chatID vibekit.ChatID) bool
 }
 
 // LineRecorder is the consumer-side interface for line tracking, narrowed
@@ -322,15 +333,29 @@ type RunOriginAccess interface {
 	IsScheduled(workflowID string) bool
 }
 
-// RunBoundsAccess reports a workflow step that blew its turn cap.
+// RunBoundsAccess reports a workflow step that blew its turn cap, and the
+// observable progress that rolls a run's idle window forward.
 //
 // Takes the breach rather than asking permission for it: counting
 // belongs here (the step's tool frames pass through this package), while
 // enforcement belongs on the host (it owns the bridges and the only stop
 // verb, which is run-scoped). The host is expected to cancel the whole
 // run, since no per-step stop verb exists on the wire.
+//
+// Both methods are the same split applied twice — this package sees the
+// frames, the host owns the bounds — which is why progress is a second
+// method here rather than a new role.
 type RunBoundsAccess interface {
 	StepTurnCapExceeded(workflowID, nodeID string, turns int)
+	// RunMadeProgress reports that a run's step did something observable, so
+	// the run's idle window may be rolled forward.
+	//
+	// FIRE-AND-FORGET and idempotent: it is called once per tool-call frame,
+	// so it must be cheap, and it must no-op for a run with no lease, a
+	// parked run and a run this process is not bounding. Keyed on the RUN
+	// rather than the node, because the window is a property of the run —
+	// a node id would invite a per-node window nothing enforces.
+	RunMadeProgress(workflowID string)
 }
 
 // TurnInterruptAccess ends a turn kiro-cli has abandoned without

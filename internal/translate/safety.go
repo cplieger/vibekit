@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/chat"
+	"github.com/cplieger/vibekit/internal/durable"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -100,9 +101,12 @@ func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID vibek
 // as a permanent inline event message on the chat. Chat-scoped:
 // statusChanged carries no sessionId and its toolId is a tool name, so
 // the refusal annotates the chat, not a specific tool card.
+//
+// Deliberately not gated on the turn's mute, unlike HandlePlan: a refused change
+// is a fact about the SESSION rather than turn content, so it survives a prime.
 func (t *Translator) persistSafetyBlock(ctx context.Context, chatID vibekit.ChatID, p v3SafetyStatusChanged) {
 	evt := t.newEventMessage(vibekit.EventInfraSafetyBlocked, safetyBlockContent(p))
-	err := t.chats.AppendMessage(ctx, chatID, &evt)
+	err := t.chats.AppendMessage(durable.Context(ctx), chatID, &evt)
 	if errors.Is(err, chat.ErrTombstoned) {
 		return
 	}

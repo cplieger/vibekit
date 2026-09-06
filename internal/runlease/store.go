@@ -209,6 +209,29 @@ func (s *Store) SetDeadline(ctx context.Context, workflowID string, deadline tim
 	return s.persistLocked(ctx)
 }
 
+// MarkTabOffered records that the run's tab has been offered, so nothing offers
+// it a second time. Already-marked is a no-op and not an error: the offer is
+// retried on each step's frame, so the repeat is the normal case.
+//
+// The error reports DURABILITY, not the mutation, exactly as SetDeadline's does:
+// whenever the lease exists the in-memory flag IS set by the time this returns,
+// so a caller reading a non-nil error as "not recorded" would re-offer the tab.
+// ErrNotFound is the one error meaning nothing was stored.
+func (s *Store) MarkTabOffered(ctx context.Context, workflowID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l, ok := s.leases[workflowID]
+	if !ok {
+		return ErrNotFound
+	}
+	if l.TabOffered {
+		return nil
+	}
+	l.TabOffered = true
+	s.leases[workflowID] = l
+	return s.persistLocked(ctx)
+}
+
 func (s *Store) persistLocked(ctx context.Context) error {
 	if s.path == "" {
 		return nil

@@ -25,6 +25,9 @@ export const scrollMock = {
   // Inert registration: nothing in a mocked scroller mutates, so the callback
   // never fires. Returns the unregister the real hook contract promises.
   onTranscriptMutate: vi.fn(() => () => undefined),
+  // Same shape, same reason: a mocked scroller produces no reader gesture, so a
+  // suite that needs one drives the registered callback itself.
+  onReaderGesture: vi.fn(() => () => undefined),
   setAnchorProvider: vi.fn(),
   setResumeLabel: vi.fn(),
   // The compensation helpers run their mutation, so a mocked scroll module does

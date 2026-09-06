@@ -150,10 +150,16 @@
 
 /* A sub-tab's dot RESERVES its slot even with no state to show, which the
    leading chat dot never has to: a chat is always in some state (idle is one),
-   while a run has none until its first frame lands, and an `idle` ring there
-   would claim one it cannot support. Without this the name sat 17px left and
-   then jumped sideways the moment the run reported — the same defect the failed
-   diamond's re-derived margin exists to prevent, one element over. */
+   while the two kinds that nest here can both be stateless for a while — a run
+   until its first frame lands, a subagent until its invocation is resident — and
+   an `idle` ring would claim a state neither can support. Without this the name
+   sat 17px left and then jumped sideways the moment the state arrived, which is
+   the same defect the failed diamond's re-derived margin exists to prevent, one
+   element over.
+
+   BOTH consumers write through this slot now (run-dots.ts and subagent-dots.ts),
+   so it is a hidden gap only until the first state lands rather than forever —
+   which is what the subagent kind lacked when it had no writer at all. */
 .tab.tab-child .tab-status-dot:not([data-status]) {
   display: block;
   visibility: hidden;

@@ -53,6 +53,19 @@ type kiroRuntime struct {
 	// rescan re-derives the active version from disk without downloading, or nil
 	// when there is no manager. It backs the loopback repair hook.
 	rescan func(context.Context) (bool, error)
+	// installed is closed once a version is ACTIVE, and nil when no install can
+	// ever complete (no pins, or pins the manager refused). It exists for the boot
+	// work that needs a kiro-cli and must not block the listener on one: a utility
+	// bridge cannot start before this closes, so anything driven by an RPC at boot
+	// either happens after it or does not happen at all. The orphan sweep is the
+	// one such caller today (composition.go startOrphanSweep), and it is why the
+	// channel reports SUCCESS rather than "the installer stopped trying": a
+	// retry after an exhausted install would ask a bridge that still cannot start.
+	//
+	// A channel rather than the manager's own Ready(), which is a POLL — nothing
+	// wakes on it, so a consumer would have to invent an interval and a ceiling for
+	// an event the installer already knows the instant it happens.
+	installed <-chan struct{}
 	// stop cancels the background install AND waits for it to finish, so a caller
 	// that reshapes or removes the tools tree afterwards cannot race the
 	// installer. Bare cancellation would return while EnsureWithRetry was still
@@ -124,18 +137,24 @@ func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 	}
 	ensureCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
+	installed := make(chan struct{})
 	go func() {
 		defer close(done)
-		// The error is already logged by EnsureWithRetry, with the attempt count
-		// and the in-container repair hint, and there is nothing here that could
-		// act on it: the server stays up either way.
-		_ = mgr.EnsureWithRetry(ensureCtx)
+		// The error is not ACTED on here — EnsureWithRetry has already logged it
+		// with the attempt count and the in-container repair hint, and the server
+		// stays up either way — but it is READ, because it is the one signal that
+		// separates "a version is active" from "the installer gave up", and the
+		// boot work waiting on `installed` needs a kiro-cli rather than an ending.
+		if err := mgr.EnsureWithRetry(ensureCtx); err == nil {
+			close(installed)
+		}
 	}()
 	return kiroRuntime{
-		cliPath: mgr.Path,
-		env:     mgr.PathEnv,
-		ready:   mgr.Ready,
-		rescan:  mgr.Rescan,
+		cliPath:   mgr.Path,
+		env:       mgr.PathEnv,
+		ready:     mgr.Ready,
+		rescan:    mgr.Rescan,
+		installed: installed,
 		stop: func() {
 			cancel()
 			// Bounded, because stop runs on the shutdown path: EnsureWithRetry

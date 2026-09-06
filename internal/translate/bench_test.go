@@ -27,6 +27,10 @@ type baseDeps struct {
 	// assert the per-step turn cap fired once and named the right step without a
 	// agent behind it.
 	stepCapBreaches []stepCapBreach
+	// runProgress records the workflow id of every RunMadeProgress call, in
+	// order, so a test can assert a step's frame refilled its run's idle window
+	// without a lease store behind it.
+	runProgress []string
 	// foldSources records the turn source every fold site stated, in order, so a
 	// test can assert a workflow step's frame would open the RUN's turn rather
 	// than the chat's.
@@ -56,6 +60,9 @@ type baseDeps struct {
 	// in for the host's ledger of what vibekit itself sent. Absent means the
 	// agent's, which is the real ledger's answer too.
 	userSteers map[string]bool
+	// sealRefusals are the chats whose SealTurnSegment declines, standing in for
+	// the host refusing to split a turn holding an unsettled tool call.
+	sealRefusals map[vibekit.ChatID]bool
 }
 
 // termRendered is one terminal's rendered output in the stub registry.
@@ -138,12 +145,48 @@ func (d *baseDeps) WireTurnStart(_ context.Context, chatID vibekit.ChatID) {
 	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "start"})
 }
 
-func (d *baseDeps) WireTurnEnd(_ context.Context, chatID vibekit.ChatID, stop vibekit.StopReason) {
-	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "end", stop: stop})
+func (d *baseDeps) WireTurnEnd(
+	_ context.Context,
+	chatID vibekit.ChatID,
+	stop vibekit.StopReason,
+	details string,
+) {
+	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "end", stop: stop, details: details})
 }
 
 func (d *baseDeps) ReviseTurnBinding(_ context.Context, chatID vibekit.ChatID) {
 	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "revise"})
+}
+
+// SealTurnSegment stands in for the host's mid-turn seal: it persists the chat's
+// buffered content as an assistant message and clears the buffer, which is the
+// PROPERTY this package's caller depends on — the segment reaches the store before
+// the event that follows it. The host's own decline conditions are its to test;
+// here the double declines exactly when the buffer has nothing to seal, and
+// `sealRefusals` stages the in-flight-tool decline as an input.
+func (d *baseDeps) SealTurnSegment(ctx context.Context, chatID vibekit.ChatID) bool {
+	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "seal"})
+	if d.sealRefusals[chatID] {
+		return false
+	}
+	buf := d.bufStore.Get(chatID)
+	if buf == nil {
+		return false
+	}
+	snap := buf.SplitSegment()
+	if !snap.Started {
+		return false
+	}
+	msg := vibekit.Message{
+		ID:        snap.MessageID,
+		Role:      vibekit.RoleAssistant,
+		Content:   snap.Content,
+		Reasoning: snap.Reasoning,
+		ToolCalls: snap.ToolCalls,
+		Blocks:    snap.Blocks,
+	}
+	_ = d.AppendMessage(ctx, chatID, &msg)
+	return true
 }
 
 // turnBracket is one recorded turn-lifecycle call.
@@ -151,6 +194,11 @@ type turnBracket struct {
 	chat vibekit.ChatID
 	kind string
 	stop vibekit.StopReason
+	// details is the wire's own account of the stop, from turn_end's stopDetails.
+	// Recorded because it is the ONLY channel that can explain a `stopReason:
+	// "error"` turn, and it reached the closer as "" for as long as nobody decoded
+	// it — which is why a failed turn persisted a mark and no words.
+	details string
 }
 
 // turnBuffers stands in for the host's per-turn buffers: one buffer per chat,
@@ -197,6 +245,10 @@ type stepCapBreach struct {
 
 func (d *baseDeps) StepTurnCapExceeded(workflowID, nodeID string, turns int) {
 	d.stepCapBreaches = append(d.stepCapBreaches, stepCapBreach{workflowID, nodeID, turns})
+}
+
+func (d *baseDeps) RunMadeProgress(workflowID string) {
+	d.runProgress = append(d.runProgress, workflowID)
 }
 
 // turnInterrupt is one recorded InterruptTurn call.

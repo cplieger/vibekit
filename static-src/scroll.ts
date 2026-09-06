@@ -124,6 +124,21 @@ class ScrollController {
    *  container instead of one per consumer: find-in-chat's live re-run used to
    *  duplicate it wholesale. */
   private mutateListeners: (() => void)[] = [];
+  /** Callbacks fired when the READER says where they want to be, and only then.
+   *
+   *  Separate from `stateListeners` because a state listener fires on
+   *  TRANSITIONS: a reader scrolling within Following never transitions, so a
+   *  consumer that has to react to the gesture itself would never hear about it.
+   *
+   *  TWO publishers, because the reader has two ways of saying it. The scroll
+   *  listener's reader-gesture branch is one, and it is already this module's
+   *  definition of "the reader moved this" — everything the controller writes goes
+   *  through `scrollSelfTo` and is excused above it. `pinToLiveEdge` is the other:
+   *  a click on the resume control, End, and a turn the reader just sent all ask
+   *  for the live edge, and they reach the scroller through `scrollSelfTo` too, so
+   *  the scroll branch cannot see them. Missing that half is what let the timeline
+   *  rail keep its accent fill on the turn the reader had just left. */
+  private readerGestureListeners: (() => void)[] = [];
   /** Supplies the element Following should keep visible while a turn streams.
    *  Null (or a null return) falls back to the document bottom. */
   private anchorProvider: (() => HTMLElement | null) | null = null;
@@ -141,9 +156,9 @@ class ScrollController {
    *  not the document bottom, so deriving the state from a self-inflicted scroll
    *  declared the reader Reading — and Reading is what makes
    *  `autoScrollIfAnchored` return early, so the auto-scroll latched off for the
-   *  rest of the session. Measured in a real browser: an anchor 200px tall at
-   *  offsetTop 1500 in a 400px viewport with a 900px tool card below it pins to
-   *  1350 against a maximum of 2200, which is 850px from the bottom, so the
+   *  rest of the session. Measured in a real browser: an anchor 200px tall,
+   *  1500px down the transcript, in a 400px viewport with a 900px tool card below
+   *  it pins to 1350 against a maximum of 2200 — 850px from the bottom, so the
    *  controller's own pin failed its own `isAtBottom` check by 750px. The reader
    *  saw the transcript stop following and the `Latest` control appear without
    *  having touched anything.
@@ -210,6 +225,9 @@ class ScrollController {
         }
         this.userScrollingUntil = Date.now() + USER_SCROLL_DEBOUNCE_MS;
         this.setState(this.isAtBottom() ? "following" : "reading");
+        // AFTER the state, so a listener asking `readingState()` sees the verdict
+        // this same event produced rather than the previous one's.
+        this.publishReaderGesture();
         this.maybeLoadMore();
       },
       { passive: true },
@@ -348,6 +366,31 @@ class ScrollController {
     };
   }
 
+  /** Register `cb` for a gesture in which the READER states where they want to be
+   *  — a scroll, or a request for the live edge; returns the unregister.
+   *
+   *  A consumer holding an intent the reader can revoke needs the gesture rather
+   *  than a state change, and it needs it distinguished from the controller's own
+   *  pin: a streaming turn writes a scroll position several times a second and none
+   *  of those is the reader changing their mind. Named for the reader rather than
+   *  for the scroll because a live-edge request is one of the two publishers and
+   *  produces no reader scroll event at all. */
+  onReaderGesture(cb: () => void): () => void {
+    this.readerGestureListeners.push(cb);
+    return () => {
+      const at = this.readerGestureListeners.indexOf(cb);
+      if (at >= 0) {
+        this.readerGestureListeners.splice(at, 1);
+      }
+    };
+  }
+
+  private publishReaderGesture(): void {
+    for (const cb of this.readerGestureListeners) {
+      cb();
+    }
+  }
+
   setAnchorProvider(fn: (() => HTMLElement | null) | null): void {
     this.anchorProvider = fn;
   }
@@ -361,6 +404,13 @@ class ScrollController {
     if (label !== null) {
       label.textContent = text;
     }
+    // The label is HIDDEN in two places — docked in the rail's column on a window
+    // whose gutter cannot hold it (css/13-messages.css) and on the phone
+    // (50-mobile.css) — so the tooltip carries it. The tooltip controller also
+    // publishes its text as the button's accessible DESCRIPTION, which is where a
+    // count belongs beside a static name: the `aria-label` wins over the button's
+    // own text, so the span alone reaches nobody.
+    btn.dataset["tooltip"] = text;
   }
 
   /** Return to Following: pin to the live edge and flush deferred mutations. */
@@ -407,7 +457,20 @@ class ScrollController {
     // are unit-tested against the DOM they build.
     const fn = (target as { scrollIntoView?: (o?: ScrollIntoViewOptions) => void }).scrollIntoView;
     if (typeof fn === "function") {
+      const before = this.scrollEl.scrollTop;
       fn.call(target, { block: "start", behavior: "smooth", ...opts });
+      // A landing this module reached is recorded like every write it makes, or
+      // the event it produces is read as the READER stating a position — which
+      // published a reader gesture and revoked the pick the rail's own click had
+      // just set, on every jump that actually moved. READ rather than predicted:
+      // `scrollIntoView` honours `scroll-margin` (find-in-chat's hits carry 20vh
+      // of it) and arithmetic here would not. A move that has already happened is
+      // an instant scroll; a smooth one has not moved yet, so its ~50 unmarked
+      // events stay the reader's — the asymmetry the rail asks for by name.
+      const landed = this.scrollEl.scrollTop;
+      if (landed !== before) {
+        this.selfScrollTop = landed;
+      }
     }
   }
 
@@ -418,17 +481,20 @@ class ScrollController {
    *  scroller's only landing is 0, and 0 is also its bottom. */
   private landsAtLiveEdge(target: HTMLElement, block: ScrollLogicalPosition): boolean {
     const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
-    // Read off rects so the answer holds whatever the offsetParent turns out to
-    // be — the transcript's scroller is a positioned ancestor, its column is not.
-    const top =
-      this.scrollEl.scrollTop +
-      (target.getBoundingClientRect().top - this.scrollEl.getBoundingClientRect().top);
-    const room = this.scrollEl.clientHeight - target.offsetHeight;
-    let wanted = top;
+    const box = this.scrollFrameRect(target);
+    if (box === null) {
+      // No box means no landing, so the jump moves the reader nowhere — and this
+      // function's own default is that a jump with nowhere to go keeps them
+      // Following rather than raising a resume control over a transcript that
+      // did not move.
+      return true;
+    }
+    const room = this.scrollEl.clientHeight - (box.bottom - box.top);
+    let wanted = box.top;
     if (block === "center") {
-      wanted = top - room / 2;
+      wanted = box.top - room / 2;
     } else if (block === "end") {
-      wanted = top - room;
+      wanted = box.top - room;
     }
     const landing = Math.max(0, Math.min(wanted, max));
     return landing >= max - BOTTOM_TOLERANCE_PX;
@@ -505,6 +571,14 @@ class ScrollController {
     this.pinUntil = Date.now() + PIN_SETTLE_MS;
     this.pinLiveEdgeNow();
     this.queuePinFrame();
+    // A request for the live edge is the reader saying where they want to be, so it
+    // publishes like a scroll would — and it has to be published HERE, because
+    // every write above goes through `scrollSelfTo` and the scroll listener
+    // therefore excuses all of them. AFTER the landing, matching the scroll
+    // branch's order: a listener asking where the reader is sees the answer this
+    // call produced. The re-assert frames publish nothing; the gesture happened
+    // once.
+    this.publishReaderGesture();
   }
 
   private queuePinFrame(): void {
@@ -549,7 +623,10 @@ class ScrollController {
    *  position the state means. */
   private followTarget(): number {
     const anchor = this.anchorProvider?.() ?? null;
-    return anchor === null ? this.scrollEl.scrollHeight : this.anchorTop(anchor);
+    const pin = anchor === null ? null : this.anchorTop(anchor);
+    // An anchor with no box to measure is the same answer as no anchor at all:
+    // there is no position to follow, so Following means the document bottom.
+    return pin ?? this.scrollEl.scrollHeight;
   }
 
   private cancelPinPass(): void {
@@ -789,11 +866,12 @@ class ScrollController {
    *  write produces is recognised as this controller's own.
    *
    *  The clamp is not tidiness: the marker has to be the position the browser
-   *  will actually reach, and both callers pass values the platform clamps for
-   *  them (`scrollHeight` is a whole viewport past the maximum, and an anchor
-   *  inside a collapsed disclosure reports offsets that overflow the document
-   *  it no longer contributes height to). An unclamped marker never matches the
-   *  event, which is the same as having no marker at all. */
+   *  will actually reach, and `scrollHeight` — the no-anchor follow target — is a
+   *  whole viewport past the maximum. An unclamped marker never matches the
+   *  event, which is the same as having no marker at all. (A collapsed
+   *  disclosure is NOT a producer of an overflowing offset, contrary to what this
+   *  comment used to claim: measured in Chromium, a `height: 0; overflow: hidden`
+   *  box reports its child's offsets correctly.) */
   private scrollSelfTo(top: number, behavior: ScrollBehavior): void {
     const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
     const landing = Math.max(0, Math.min(top, max));
@@ -801,11 +879,55 @@ class ScrollController {
     this.scrollEl.scrollTo({ top: landing, behavior });
   }
 
-  /** The scrollTop that puts `anchor`'s bottom at the viewport's bottom, never
-   *  scrolling backwards (the anchor grows downward as text streams in). */
-  private anchorTop(anchor: HTMLElement): number {
-    const wanted =
-      anchor.offsetTop + anchor.offsetHeight - this.scrollEl.clientHeight + BOTTOM_TOLERANCE_PX / 2;
+  /** Where `el` sits in the SCROLLER'S scroll frame — the frame `scrollTop`,
+   *  `clientHeight` and `scrollHeight` are already expressed in — or null when it
+   *  has no box to report.
+   *
+   *  Rects, never `offsetTop`: that is measured against `offsetParent`, and a
+   *  transcript bubble's offsetParent is its own `.msg-row`, because
+   *  `content-visibility: auto` (css/13-messages.css) implies `contain: paint`
+   *  and a paint-containing box is a containing block, which is where the
+   *  offsetParent walk stops. Measured in Chromium: a live block whose true
+   *  position was 2203 reported `offsetTop: 0`, so the follow target resolved to
+   *  the top of turn 1.
+   *
+   *  `clientTop` is the scroller's top border — 0 today, included so the reading
+   *  is against the padding edge by construction rather than by that staying
+   *  true. Null covers a detached element and any subtree the engine reports no
+   *  boxes for.
+   *
+   *  Rects carry ancestor TRANSFORMS where `offsetTop` did not, and only one
+   *  strictly BETWEEN the scroller and `el` skews the reading: a common
+   *  ancestor's cancels against the scroller's own rect. The live pair is the
+   *  entry animation — `.turn[data-chat-entry]` translates 16px and
+   *  `.msg-wrap[data-chat-entry]` a further 4px — so 20px measured, DOWNWARD,
+   *  decaying to 0 across the 250ms entry (12.5px after one frame, 2px by
+   *  125ms). Accepted rather than unwound: it biases the pin toward the bottom,
+   *  which is where Following already wants to be, at a fifth of
+   *  BOTTOM_TOLERANCE_PX and under the half of it `anchorTop` already adds, and
+   *  the live-edge case is clamped away entirely. `landsAtLiveEdge` spends the
+   *  same 20px as slack at its own threshold, resolving toward Following. */
+  private scrollFrameRect(el: HTMLElement): { top: number; bottom: number } | null {
+    if (!el.isConnected || el.getClientRects().length === 0) {
+      return null;
+    }
+    const rect = el.getBoundingClientRect();
+    const origin = this.scrollEl.getBoundingClientRect().top + this.scrollEl.clientTop;
+    return {
+      top: this.scrollEl.scrollTop + (rect.top - origin),
+      bottom: this.scrollEl.scrollTop + (rect.bottom - origin),
+    };
+  }
+
+  /** The scrollTop that puts `anchor`'s BOTTOM at the viewport's bottom, read in
+   *  the scroller's own scroll frame and clamped to a real scroll position. Null
+   *  when the anchor has no box to measure. */
+  private anchorTop(anchor: HTMLElement): number | null {
+    const box = this.scrollFrameRect(anchor);
+    if (box === null) {
+      return null;
+    }
+    const wanted = box.bottom - this.scrollEl.clientHeight + BOTTOM_TOLERANCE_PX / 2;
     return Math.max(0, Math.min(wanted, this.scrollEl.scrollHeight));
   }
 
@@ -968,6 +1090,9 @@ export function onReadingStateChange(cb: (s: ReadingState) => void): void {
 }
 export function onTranscriptMutate(cb: () => void): () => void {
   return getInstance().onTranscriptMutate(cb);
+}
+export function onReaderGesture(cb: () => void): () => void {
+  return getInstance().onReaderGesture(cb);
 }
 export function setAnchorProvider(fn: (() => HTMLElement | null) | null): void {
   getInstance().setAnchorProvider(fn);

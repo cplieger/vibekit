@@ -3,20 +3,11 @@ package agent
 // Restart orphans: the runs vibekit launched, whose owning process died, and
 // which nothing else would ever clear.
 //
-// The failure this closes is permanent: KAS reconciles a dead owner's run to
-// `paused`, the resume sweep only reaches runs inside a chat's session chain
-// (and a scheduled run is parentless), and `paused` is not terminal — so the
-// single-run rule refused every later slot of that recipe forever.
-//
-// TWO clearing paths for one condition, because they answer different
-// questions. The BOOT sweep answers "is this system idle"; the ADMISSION
-// backstop answers "may this run start" — a run can be orphaned without a
-// restart, because its own bridge can die mid-session and nothing else would
-// notice. They share one release function.
-//
-// NO AUTOMATIC RELAUNCH (user decision). The stated recovery is a manual run
-// before the next slot; auto-relaunching would carry work forward across a
-// restart, which the closed-loop ruling rejects.
+// TWO clearing paths for one condition, because they answer different questions.
+// The BOOT sweep answers "is this system idle"; the ADMISSION backstop answers
+// "may this run start", for a bridge that died without a restart. They share one
+// release function, and there is NO automatic relaunch (user decision).
+// Reasoning and the five-conjunct predicate: vibekit-runtime.md.
 
 import (
 	"context"
@@ -32,25 +23,26 @@ import (
 // first half of the orphan predicate.
 const runStatusPaused = "paused"
 
-// orphanSweepBudget bounds the whole boot sweep.
-//
-// The per-call timeout is not enough on its own: the sweep issues one
-// `inspect` per candidate lease, sequentially, on one utility bridge whose
-// own timeout is 45s — so a wedged bridge could hold a boot goroutine for
-// minutes.
+// runStatusRunning is KAS's executing status. Read on NODES rather than on runs, by
+// statusUpdateTarget (run_host.go), whose running-first precedence is the resolver's.
+const runStatusRunning = "running"
+
+// orphanSweepBudget bounds the whole boot sweep. The per-call timeout is not
+// enough on its own: one sequential `inspect` per candidate lease on one utility
+// bridge whose own timeout is 45s could hold a boot goroutine for minutes.
 const orphanSweepBudget = 2 * time.Minute
 
-// SweepOrphaned clears every lease whose run a dead process left paused, so
-// that after boot nothing reads as live unless it genuinely is.
-//
-// Runs in the background on the runtime's own shutdown context. The whole
-// sweep is best-effort: skipping an orphan costs one stale row until the next
-// launch attempt releases it, while cancelling a live run destroys work.
-// Every branch resolves in that direction.
-func (rs *Runs) SweepOrphaned(ctx context.Context) {
+// SweepOrphaned clears every lease whose run a dead process left paused, so that
+// after boot nothing reads as live unless it genuinely is. Best-effort throughout:
+// skipping an orphan costs one stale row, cancelling a live run destroys work, and
+// every branch resolves that way. It reports whether it REACHED KAS, the one
+// failure its caller can act on.
+func (rs *Runs) SweepOrphaned(ctx context.Context) (reached bool) {
 	held := rs.leaseStore().List()
 	if len(held) == 0 {
-		return
+		// No leases is not a failure to reach KAS — there was nothing to ask
+		// about, and a retry would find the same emptiness.
+		return true
 	}
 	cctx, cancel := context.WithTimeout(ctx, orphanSweepBudget)
 	defer cancel()
@@ -60,7 +52,7 @@ func (rs *Runs) SweepOrphaned(ctx context.Context) {
 		// Leave every lease alone. The admission backstop is the second chance,
 		// and it runs with a bridge that answered.
 		slog.Warn("boot: run list unavailable, skipping the orphan sweep", "error", err)
-		return
+		return false
 	}
 	status := make(map[string]string, len(runs))
 	for i := range runs {
@@ -86,17 +78,42 @@ func (rs *Runs) SweepOrphaned(ctx context.Context) {
 			rs.clearOrphaned(cctx, &l)
 		}
 	}
+	return true
 }
 
-// clearBlockingOrphan is the admission backstop: it answers whether a row
-// blocking a launch is an orphan vibekit itself owns, and clears it if so.
+// releaseIfOver releases a run's lease when KAS says the run is over, for the one
+// caller that asked a run to stop and got no confirmation that it did.
 //
-// This is the whole reason admission still reads KAS's run list rather than
-// the leases: that list is the only thing that sees the populations vibekit
-// does not launch — an agent's run and the TUI's. A lease-only admission
-// would make both invisible to the single-run rule. What the lease adds is
-// the ability to EXPLAIN a row admission would otherwise have to refuse
-// blindly.
+// TWO CONDITIONS, no third: restartPaused's identity guard, then terminalRunStatus.
+// Unknown-to-KAS needs none, because a LANDED cancel proved KAS resolved the id —
+// that argument's residual `kind: "gone"` arm and the defect this closes are in
+// vibekit-acp.md and vibekit-runtime.md. A run that cannot be READ is left alone,
+// and this is a NO-OP for a running run.
+func (rs *Runs) releaseIfOver(ctx context.Context, workflowID string) {
+	if workflowID == "" {
+		return
+	}
+	if _, held := rs.lease(workflowID); !held {
+		// Already released — the terminal frame won the race, or another stop
+		// path got there first. Skipping the inspect is the whole reason this
+		// check is here rather than inside the release.
+		return
+	}
+	res, ok := rs.inspect(ctx, workflowID)
+	if !ok || res.WorkflowID != workflowID || !terminalRunStatus(res.State.Status) {
+		return
+	}
+	slog.Info("releasing the lease of a run that stopped without a terminal frame",
+		"workflow_id", workflowID, "status", res.State.Status)
+	rs.releaseLease(ctx, workflowID)
+}
+
+// clearBlockingOrphan is the admission backstop: is a row blocking a launch an
+// orphan vibekit itself owns, and clear it if so.
+//
+// Admission reads KAS's run LIST rather than the leases, because that list is the
+// only thing that sees the runs vibekit did not launch; the lease is what lets a
+// blocking row be EXPLAINED rather than refused blindly.
 func (rs *Runs) clearBlockingOrphan(ctx context.Context, workflowID, status string) bool {
 	if status != runStatusPaused {
 		// A running row is not an orphan, whatever else is true of it.
@@ -115,29 +132,14 @@ func (rs *Runs) clearBlockingOrphan(ctx context.Context, workflowID, status stri
 	return rs.clearOrphaned(ctx, &l)
 }
 
-// clearOrphaned is the release both paths share: claim the termination,
-// re-confirm the run is still an orphan, cancel, and only then say so and
-// give up the lease.
+// clearOrphaned is the release both paths share: claim, re-confirm, cancel, and only
+// then record the reason and give up the lease.
 //
-// The lease is released only when the cancel LANDED. A failed cancel leaves
-// the KAS row paused, and freeing the lease then would strand that row with
-// nothing left to explain it.
-//
-// The REASON is recorded only after the cancel landed, opposite the order
-// finishTermination uses: an orphan's failed cancel means the run did NOT
-// end, and recording `orphaned` there would make History claim an ending
-// that never happened.
-//
-// THE CHECK-TO-CANCEL WINDOW is accepted rather than closed. KAS exposes no
-// compare-and-cancel, so no amount of re-reading makes the test and the
-// cancel atomic. What makes the residual window safe is that the population
-// which could resume inside it is EMPTY in practice: the sweep only ever
-// touches a lease vibekit minted (excluding TUI and agent-launched runs),
-// vibekit owns no verb that can resume a bridge-less run, and the
-// chat-parented resume sweep is scoped to a chat's session chain, which a
-// parentless run is not in. Do not "fix" this by widening the predicate or
-// dropping the auto-cancel without first checking whether KAS has gained a
-// conditional cancel.
+// That order AGREES with finishTermination's: neither records an outcome a refused
+// cancel has not reached. What still differs is narrower — the disarm runs BEFORE the
+// cancel here (inert: runlease.NewStore parks every disk-loaded lease) and a refusal
+// schedules no ladder. THE CHECK-TO-CANCEL WINDOW is accepted, not closed — do not
+// widen it or drop the auto-cancel without a compare-and-cancel (vibekit-runtime.md).
 func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 	if !rs.claimTermination(l.WorkflowID) {
 		// Something is already ending it. Not this path's run to clear, and not a
@@ -154,43 +156,29 @@ func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 		return false
 	}
 	rs.disarmDeadline(ctx, l.WorkflowID)
-	if err := rs.cancelRPC(ctx, l.WorkflowID); err != nil {
+	if err := rs.cancelRPC(ctx, l.WorkflowID, nil); err != nil {
 		rs.releaseTermination(l.WorkflowID)
 		slog.Error("could not cancel a restart-orphaned run; its recipe stays busy until the next try",
 			"workflow_id", l.WorkflowID, "error", err)
 		return false
 	}
 	rs.recordEnd(l.WorkflowID, runEndOrphaned)
-	// ERROR for the same reason the other two bounds log at ERROR: an unattended
-	// run cut off by a restart is a failure a homelab Loki rule should be able to
-	// key on, and the schedule row only tells the user once they look.
+	// ERROR for the reason the other two bounds are: a homelab Loki rule keys on
+	// logMsgRunOrphaned, and the schedule row only tells the user once they look.
 	slog.Error(logMsgRunOrphaned, "workflow_id", l.WorkflowID, "recipe", l.Recipe,
 		"origin", string(l.Origin), "schedule_id", l.ScheduleID)
 	rs.releaseLease(ctx, l.WorkflowID)
 	return true
 }
 
-// restartPaused reports whether KAS says a run's owning PROCESS died, as
-// opposed to the run having been paused for any of the other reasons that
-// share the `paused` status.
+// restartPaused reports whether KAS says a run's owning PROCESS died, as opposed to
+// any of the other reasons that share the `paused` status.
 //
-// THREE conditions on one reply, and every one of them is load-bearing.
-//
-// The pause REASON is where the process-died distinction lives — a
-// deliberate pause, a policy stop, a step waiting for input and a torn plan
-// all read `paused` too, and every one of them must be left alone. This is
-// the same gate involuntarilyPaused reads, inverted in action.
-//
-// The STATUS is read off the same reply rather than inherited from the
-// caller's older `workflow/list` row, because a pause reason outlives the
-// pause.
-//
-// The IDENTITY check refuses a reply naming a different run — the one
-// unacceptable failure in this mechanism — since the caller cancels the
-// workflow id from the LEASE.
-//
-// FALSE on any RPC failure, never "assume dead": a skipped orphan costs one
-// stale row, a wrongly cancelled run costs the work.
+// THREE conditions on one reply, every one load-bearing. The REASON is BYTE-EQUAL and
+// never reads `pauseDetail` — the asymmetry with involuntarilyPaused, which resumes
+// where this CANCELS. The STATUS comes off the same reply, because a pause reason
+// outlives the pause. The IDENTITY check refuses a reply naming another run, and any
+// RPC failure is FALSE rather than "assume dead".
 func (rs *Runs) restartPaused(ctx context.Context, workflowID string) bool {
 	if workflowID == "" {
 		return false
@@ -207,10 +195,8 @@ func (rs *Runs) restartPaused(ctx context.Context, workflowID string) bool {
 // involuntarilyPaused reports whether a paused run stopped for a cause nobody
 // chose, and is therefore vibekit's to resume without being asked.
 //
-// The resume-side sibling of restartPaused: only the reason predicate is
-// wider, and resumablePause (run_host.go) is where that asymmetry is argued.
-//
-// FALSE on any RPC failure, same as its sibling.
+// restartPaused's resume-side sibling: only the PAUSE predicate is wider, and
+// resumablePause is where that asymmetry is argued. FALSE on any RPC failure.
 func (rs *Runs) involuntarilyPaused(ctx context.Context, workflowID string) bool {
 	if workflowID == "" {
 		return false
@@ -221,17 +207,19 @@ func (rs *Runs) involuntarilyPaused(ctx context.Context, workflowID string) bool
 	}
 	return res.WorkflowID == workflowID &&
 		res.State.Status == runStatusPaused &&
-		resumablePause(res.State.PauseReason)
+		resumablePause(res.State.PauseReason, res.State.PauseDetail)
 }
 
-// inspectRunState is the part of `_kiro/workflow/inspect`'s reply the orphan
-// predicate reads: `{workflowId, state, nodePlan}` with the run status,
-// inputs, artifacts and node tree on `state`. Deliberately its own minimal
-// decode — the full structure passes through GET /api/runs/{id} verbatim.
+// inspectRunState is the part of `_kiro/workflow/inspect`'s reply the pause
+// predicates read — its own minimal decode, since the full structure passes through
+// GET /api/runs/{id} verbatim. The DETAIL is read here because this is the re-read
+// the heal decides on: a field pauseFrame's gate can see and this guard cannot would
+// pass a run and then decline it. Pointer first for govet's fieldalignment.
 type inspectRunState struct {
 	State struct {
-		Status      string `json:"status"`
-		PauseReason string `json:"pauseReason"`
+		PauseDetail *pauseDetail `json:"pauseDetail"`
+		Status      string       `json:"status"`
+		PauseReason string       `json:"pauseReason"`
 	} `json:"state"`
 	WorkflowID string `json:"workflowId"`
 }
@@ -246,16 +234,14 @@ func (rs *Runs) inspect(ctx context.Context, workflowID string) (inspectRunState
 		return inspectRunState{}, false
 	}
 	var res inspectRunState
-	if json.Unmarshal(raw, &res) != nil {
+	if !unmarshalKeepingReadable(raw, &res) {
 		return inspectRunState{}, false
 	}
 	return res, true
 }
 
-// rawInspect issues `_kiro/workflow/inspect` for one run and TYPES its failure
-// at the boundary: an unregistered verb comes back wrapping
-// workflow.ErrUnknownMethod, so callers ask errors.Is instead of re-reading
-// KAS's error text.
+// rawInspect issues `_kiro/workflow/inspect` for one run and TYPES its failure at
+// the boundary, so callers ask errors.Is rather than re-reading KAS's error text.
 func (rs *Runs) rawInspect(ctx context.Context, workflowID string) (json.RawMessage, error) {
 	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)

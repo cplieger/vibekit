@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -513,5 +514,196 @@ func TestReap_NonCanonicalWorkspaceRootsStillMatch(t *testing.T) {
 		if exists(t, filepath.Join(root, "h", id)) {
 			t.Errorf("%s survived: a trailing slash made the same root read as a different one", id)
 		}
+	}
+}
+
+// stepRecord is a workflow STEP session's own session.json, in the shape measured
+// on the live volume: workspacePaths beside a `_meta.kiro.workflow` block whose
+// workflowId names the run that created the step.
+func stepRecord(workflowID string) string {
+	return `{"workspacePaths":["` + testWorkspace + `"],` +
+		`"_meta":{"kiro":{"workflow":{"workflowId":"` + workflowID + `",` +
+		`"nodeId":"implement","nodePath":["` + workflowID + `","loop","iter-0","implement"],"type":"step"}}}}`
+}
+
+// makeRunDir creates the run-state directory KAS keeps a workflow run in, inside
+// one workspace-hash bucket.
+func makeRunDir(t *testing.T, root, hash, workflowID string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, hash, workflowsDirName, workflowID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSweep_SparesAStepSessionWhoseRunStillExists is the prerequisite for reading
+// a step's transcript back at all.
+//
+// A step session is referenced by no chat and is no bridge's own session, so it
+// is an orphan from the moment KAS creates it — measured on the live volume, the
+// hourly sweep was reaping step sessions MID-RUN once they passed the guard. The
+// four cases below are the whole rule: spared while its run is on disk, reaped
+// once the run is gone, and neither answer changes for a session that is not a
+// step at all.
+func TestSweep_SparesAStepSessionWhoseRunStillExists(t *testing.T) {
+	old := 30 * time.Minute
+	for _, tc := range []struct {
+		desc    string
+		record  string
+		makeRun bool
+		want    bool // want reaped
+	}{
+		{
+			desc:    "a step session whose run directory exists is SPARED",
+			record:  stepRecord("wf_live"),
+			makeRun: true,
+			want:    false,
+		},
+		{
+			desc:   "the same step session with no run directory is reaped",
+			record: stepRecord("wf_gone"),
+			want:   true,
+		},
+		{
+			desc:   "a session with no _meta block is reaped as before",
+			record: `{"workspacePaths":["` + testWorkspace + `"]}`,
+			want:   true,
+		},
+		{
+			// The `_meta` block is present but the workflow id is empty, which is
+			// what a non-step session carrying other kiro metadata looks like. An
+			// unconditional run-dir stat would spare it, because
+			// `<bucket>/workflows/` itself exists as soon as any run has ever run.
+			desc:    "an empty workflowId is not a step, so the run tree does not spare it",
+			record:  `{"workspacePaths":["` + testWorkspace + `"],"_meta":{"kiro":{"workflow":{"workflowId":""}}}}`,
+			makeRun: true,
+			want:    true,
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			root := t.TempDir()
+			makeSessionIn(t, root, "h", "sess_step", old, tc.record)
+			if tc.makeRun {
+				makeRunDir(t, root, "h", "wf_live")
+			}
+
+			n := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}})
+
+			gone := !exists(t, filepath.Join(root, "h", "sess_step"))
+			if gone != tc.want {
+				t.Errorf("reaped = %v, want %v (Sweep reported %d)", gone, tc.want, n)
+			}
+			// The sidecar goes with the dir and stays with it, or a spared step
+			// session loses the history half of its state anyway.
+			hist := exists(t, filepath.Join(root, "cli", "sess_step.history"))
+			if hist == tc.want {
+				t.Errorf("sidecar present = %v, want %v", hist, !tc.want)
+			}
+		})
+	}
+}
+
+// TestSweep_AStepSessionIsNotSparedByARunInAnotherBucket pins the containment
+// half. A workspace-hash bucket is one workspace's tree, so a run directory in
+// somebody else's bucket says nothing about whether this step's run still exists —
+// and looking across buckets would let a foreign volume's run pin our disk
+// indefinitely.
+func TestSweep_AStepSessionIsNotSparedByARunInAnotherBucket(t *testing.T) {
+	root := t.TempDir()
+	makeSessionIn(t, root, "h", "sess_step", 30*time.Minute, stepRecord("wf_live"))
+	makeRunDir(t, root, "elsewhere", "wf_live")
+
+	if n := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}}); n != 1 {
+		t.Errorf("Sweep() = %d, want 1", n)
+	}
+	if exists(t, filepath.Join(root, "h", "sess_step")) {
+		t.Error("a step session was spared by a same-named run in another workspace bucket")
+	}
+}
+
+// TestSweep_AStepSessionInAForeignWorkspaceIsStillNotOurs pins the ORDER of the
+// two questions orphanReapable asks off one read: the workspace check comes first,
+// so the spare can never widen ownership. A foreign step session is skipped
+// either way, and it must be skipped for the workspace reason.
+func TestSweep_AStepSessionInAForeignWorkspaceIsStillNotOurs(t *testing.T) {
+	root := t.TempDir()
+	makeSessionIn(t, root, "h", "sess_theirs", 30*time.Minute,
+		`{"workspacePaths":["/other"],"_meta":{"kiro":{"workflow":{"workflowId":"wf_x"}}}}`)
+
+	if n := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}}); n != 0 {
+		t.Errorf("Sweep() = %d, want 0", n)
+	}
+	if !exists(t, filepath.Join(root, "h", "sess_theirs")) {
+		t.Error("another workspace's step session was deleted")
+	}
+}
+
+// TestReap_StillTakesAStepSession pins that the spare is the SWEEP's alone.
+// Deleting a chat must still reap that chat's sessions, and the direct path is
+// also what a run delete would use — so a spare there would make a step session
+// unreclaimable by any gesture.
+func TestReap_StillTakesAStepSession(t *testing.T) {
+	root := t.TempDir()
+	makeSessionIn(t, root, "h", "sess_step", 0, stepRecord("wf_live"))
+	makeRunDir(t, root, "h", "wf_live")
+
+	New(root, testWorkspace).Reap("sess_step")
+
+	if exists(t, filepath.Join(root, "h", "sess_step")) {
+		t.Error("a direct Reap spared a step session: the spare belongs to the sweep only")
+	}
+}
+
+// TestReadSessionRecord pins the decode itself, including the two shapes the
+// sweep's two answers come apart on.
+func TestReadSessionRecord(t *testing.T) {
+	for _, tc := range []struct {
+		desc      string
+		record    string
+		wantPaths []string
+		wantWfID  string
+		wantOK    bool
+	}{
+		{desc: "no file", record: "", wantOK: false},
+		{desc: "undecodable", record: `{`, wantOK: false},
+		{
+			desc:      "an ordinary session",
+			record:    `{"workspacePaths":["/ws"]}`,
+			wantPaths: []string{"/ws"},
+			wantOK:    true,
+		},
+		{
+			desc:      "a step session",
+			record:    stepRecord("wf_7"),
+			wantPaths: []string{testWorkspace},
+			wantWfID:  "wf_7",
+			wantOK:    true,
+		},
+		{
+			// Decodable and present, with no paths at all: ok is true and the
+			// CALLER decides, which is what keeps doubt-retains a policy rather
+			// than a decode outcome.
+			desc:   "readable but empty",
+			record: `{}`,
+			wantOK: true,
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.record != "" {
+				if err := os.WriteFile(filepath.Join(dir, sessionRecordName), []byte(tc.record), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			paths, wfID, ok := readSessionRecord(dir)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+			}
+			if !slices.Equal(paths, tc.wantPaths) {
+				t.Errorf("workspacePaths = %v, want %v", paths, tc.wantPaths)
+			}
+			if wfID != tc.wantWfID {
+				t.Errorf("workflowID = %q, want %q", wfID, tc.wantWfID)
+			}
+		})
 	}
 }

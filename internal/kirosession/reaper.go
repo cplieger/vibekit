@@ -23,6 +23,7 @@
 // On-disk layout (verified against KAS 2.12):
 //
 //	$KIRO_HOME/sessions/<workspace-hash>/sess_<id>/   — the KAS session dir
+//	$KIRO_HOME/sessions/<workspace-hash>/workflows/<workflowId>/ — a run's state
 //	$KIRO_HOME/sessions/cli/sess_<id>.history         — its history sidecar
 //	$KIRO_HOME/sessions/cli/<uuid>.{json,jsonl,lock}  — dead v2-engine files
 //
@@ -58,6 +59,11 @@ const defaultGuard = 10 * time.Minute
 // Its workspacePaths list is the subject record every removal here is checked
 // against.
 const sessionRecordName = "session.json"
+
+// workflowsDirName is the per-bucket directory KAS keeps a workflow RUN's state
+// in: sessions/<workspace-hash>/workflows/<workflowId>/. A step session's spare
+// check below asks whether its own run is still there.
+const workflowsDirName = "workflows"
 
 // Reaper removes on-disk KAS session state under sessionsDir, for the one
 // workspace it is entitled to reap.
@@ -97,22 +103,55 @@ func New(sessionsDir, workspaceRoot string) *Reaper {
 // one $KIRO_HOME and never read the hash, so no collision is required for a reap
 // to cross workspaces — a `docker exec kiro-cli` at another cwd is enough.
 func (r *Reaper) belongsToWorkspace(sessionDir string) bool {
-	data, err := os.ReadFile(filepath.Join(sessionDir, sessionRecordName))
-	if err != nil {
+	paths, _, ok := readSessionRecord(sessionDir)
+	if !ok {
 		return false
 	}
-	var rec struct {
-		WorkspacePaths []string `json:"workspacePaths"`
-	}
-	if json.Unmarshal(data, &rec) != nil {
-		return false
-	}
-	for _, p := range rec.WorkspacePaths {
-		if p != "" && filepath.Clean(p) == r.workspaceRoot {
+	return namesRoot(paths, r.workspaceRoot)
+}
+
+// namesRoot reports whether a decoded workspacePaths list names root. Split out
+// so the sweep's one-read path (orphanReapable) applies the SAME rule as
+// belongsToWorkspace rather than a second copy of it.
+func namesRoot(paths []string, root string) bool {
+	for _, p := range paths {
+		if p != "" && filepath.Clean(p) == root {
 			return true
 		}
 	}
 	return false
+}
+
+// readSessionRecord decodes the two facts this package reads out of a session's
+// own session.json: the workspace roots it claims, and the workflow RUN it was
+// created for (empty for every session that is not a workflow step). ok is false
+// when the file is absent, unreadable or undecodable.
+//
+// ONE reader for both answers, because the orphan sweep needs both about the same
+// candidate and two reads of one file could disagree while a KAS write lands
+// between them. Both fields are measured against the live volume: a step
+// session's record carries `_meta.kiro.workflow.workflowId` beside
+// `workspacePaths: ["/workspace"]`, and every other session omits the `_meta`
+// block entirely.
+func readSessionRecord(sessionDir string) (workspacePaths []string, workflowID string, ok bool) {
+	data, err := os.ReadFile(filepath.Join(sessionDir, sessionRecordName))
+	if err != nil {
+		return nil, "", false
+	}
+	var rec struct {
+		WorkspacePaths []string `json:"workspacePaths"`
+		Meta           struct {
+			Kiro struct {
+				Workflow struct {
+					WorkflowID string `json:"workflowId"`
+				} `json:"workflow"`
+			} `json:"kiro"`
+		} `json:"_meta"`
+	}
+	if json.Unmarshal(data, &rec) != nil {
+		return nil, "", false
+	}
+	return rec.WorkspacePaths, rec.Meta.Kiro.Workflow.WorkflowID, true
 }
 
 // Reap removes all on-disk state for a single session id, immediately and
@@ -149,6 +188,11 @@ func (r *Reaper) Reap(sessionID string) {
 // v2-engine files (bare-uuid, no sess_ prefix) older than the guard. Returns
 // the number of sessions reaped. A no-op when the reaper is nil or the sessions
 // dir is absent.
+//
+// ONE exception, and it is not a liveness test either: a workflow STEP session
+// whose run's own directory is still on disk is spared, because such a session is
+// referenced by no chat and would otherwise be reaped mid-run. See
+// orphanReapable.
 //
 // `referenced` must be the COMPLETE keep-list — every session in every active
 // and archived chat's chain, unioned with every live bridge's session. Age is
@@ -275,13 +319,16 @@ func (r *Reaper) reapOrphanSessionDir(sub string, sd os.DirEntry, referenced map
 		return false // spare young orphans (create race)
 	}
 	path := filepath.Join(sub, name)
-	// The sweep enumerates every bucket, so a session belonging to another
-	// workspace root under this $KIRO_HOME is unreferenced by construction. Its
-	// own record is what tells the two apart.
-	if !r.belongsToWorkspace(path) {
+	switch r.spareReason(sub, path) {
+	case spareForeignWorkspace:
 		slog.Debug("kirosession sweep: skipped a session that does not name this workspace",
 			"path", path, "workspace", r.workspaceRoot)
 		return false
+	case spareLiveRun:
+		slog.Debug("kirosession sweep: spared a workflow step session whose run still exists",
+			"path", path)
+		return false
+	case spareNone:
 	}
 	if err := os.RemoveAll(path); err != nil {
 		slog.Warn("kirosession sweep: remove session dir", "path", path, "error", err)
@@ -289,6 +336,69 @@ func (r *Reaper) reapOrphanSessionDir(sub string, sd os.DirEntry, referenced map
 	}
 	r.removeCLISidecars(name)
 	return true
+}
+
+// sweepSpare names why the orphan sweep must leave a session alone, or
+// spareNone when it may be reaped. A typed reason rather than a bool because two
+// callers report it differently and a bare false made them indistinguishable —
+// and rather than a string, because a slog message must be a constant for an
+// attribute-keyed log filter to find it.
+type sweepSpare int
+
+const (
+	// spareNone: the sweep may reap this session.
+	spareNone sweepSpare = iota
+	// spareForeignWorkspace: its own record does not name this workspace, or
+	// could not be read at all (doubt retains, this package's posture).
+	spareForeignWorkspace
+	// spareLiveRun: it is a workflow step of a run whose state is still on disk.
+	spareLiveRun
+)
+
+// spareReason answers both questions the sweep asks of an aged, unreferenced
+// candidate, off ONE read of its own session.json: does it name this workspace,
+// and is it a workflow STEP whose run is still on disk.
+//
+// A step session is referenced by no chat (ReferencedSessionIDs reads chat
+// records' session chains) and is no bridge's own session, so it is an orphan by
+// construction from the moment KAS creates it — measured on the live volume, the
+// hourly sweep was reaping step sessions MID-RUN once they passed the 10-minute
+// guard. Since a step's transcript can only be read back out of its session
+// directory, that made every step of every run unreadable within the hour, which
+// is why this spare is a prerequisite for serving one rather than an
+// optimisation.
+//
+// THE BOUND IS THE RUN'S OWN RETENTION, and it is honest rather than open-ended:
+// KAS prunes the workflows tree for nobody, so a spared step session lives as
+// long as `sessions/<hash>/workflows/<workflowId>/` does, and what reclaims it is
+// the reader's own `DELETE /api/runs/{id}`, which removes that directory. Measured
+// cost on this volume: 83 run directories over ~9 days, and step sessions are the
+// bulk of the session tree.
+//
+// The run directory is looked for in the candidate's OWN bucket, which is both
+// the layout KAS uses and the right containment: a step session in one
+// workspace-hash bucket may not be spared by a same-named run in another's.
+//
+// No RPC is added — the sweep stays a zero-process filesystem walk, which is the
+// property this package's comment protects.
+//
+// The workspace question is asked FIRST, so the spare can only ever narrow what
+// is reaped and never widen who this reaper answers for.
+func (r *Reaper) spareReason(sub, path string) sweepSpare {
+	paths, workflowID, ok := readSessionRecord(path)
+	// The sweep enumerates every bucket, so a session belonging to another
+	// workspace root under this $KIRO_HOME is unreferenced by construction. Its
+	// own record is what tells the two apart.
+	if !ok || !namesRoot(paths, r.workspaceRoot) {
+		return spareForeignWorkspace
+	}
+	if workflowID == "" {
+		return spareNone
+	}
+	if info, sErr := os.Stat(filepath.Join(sub, workflowsDirName, workflowID)); sErr == nil && info.IsDir() {
+		return spareLiveRun
+	}
+	return spareNone
 }
 
 // sweepCLI reaps orphaned/dead files under sessions/cli/: v3 sess_<id>.*
@@ -353,6 +463,12 @@ func (r *Reaper) reapOrphanCLIFile(cliDir string, e os.DirEntry, referenced map[
 // Without this the workspace guard would be half a guard: the dir sweep would
 // spare a foreign session while this loop deleted its history sidecar, which is
 // the same lost transcript by a narrower route.
+//
+// It asks spareReason rather than belongsToWorkspace for exactly that reason,
+// generalised: EVERY reason the dir sweep spares a session is a reason to keep its
+// sidecar, so a step session spared while its run exists keeps its history too. A
+// workspace check alone spared the directory and deleted the history file beside
+// it, which is the same half-guard one rule further on.
 func (r *Reaper) sidecarReapable(sessionID string) bool {
 	dirs, _ := filepath.Glob(filepath.Join(r.sessionsDir, "*", sessionID))
 	stranded := true
@@ -361,7 +477,7 @@ func (r *Reaper) sidecarReapable(sessionID string) bool {
 			continue
 		}
 		stranded = false
-		if r.belongsToWorkspace(d) {
+		if r.spareReason(filepath.Dir(d), d) == spareNone {
 			return true
 		}
 	}

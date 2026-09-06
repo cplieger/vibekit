@@ -154,3 +154,43 @@ export function formatElapsed(ms: number): string {
   }
   return `${(ms / 1000).toFixed(1)}s`;
 }
+
+/** The same span as an ISO 8601 duration, for a `<time datetime>`.
+ *
+ *  Beside `formatElapsed` rather than in the footer that renders it, because the two
+ *  are the machine and human spellings of ONE value and a `<time>` element is wrong
+ *  unless they agree: `datetime` must be a machine-readable form of the element's
+ *  own CONTENTS, not of some more precise value behind them.
+ *
+ *  So every component follows `formatElapsed`'s split exactly — a tenth of a second
+ *  below a minute, whole seconds below an hour, and NO seconds at or above one,
+ *  where the text reads `1h 1m`. Keeping the seconds up there made the attribute
+ *  more precise than the words beside it (`PT1H1M1S` against `1h 1m`), which is the
+ *  one thing this pairing exists to prevent.
+ *
+ *  `PT0.0S` for zero, which is a valid duration; a caller that does not want to
+ *  show a zero span checks before asking. */
+export function isoDuration(ms: number): string {
+  const total = Math.max(0, ms);
+  const hours = Math.floor(total / 3_600_000);
+  const minutes = Math.floor((total % 3_600_000) / 60_000);
+  const seconds = (total % 60_000) / 1000;
+  let out = "PT";
+  if (hours > 0) {
+    out += `${String(hours)}H`;
+  }
+  if (minutes > 0) {
+    out += `${String(minutes)}M`;
+  }
+  if (total >= 3_600_000) {
+    // `1h 0m` is a whole hour spelled `PT1H`, and a duration with no seconds
+    // component is still a conforming duration.
+    return out;
+  }
+  // Whole seconds above a minute, a tenth below it — `formatElapsed`'s own split,
+  // so `PT2M31S` sits beside "2m 31s" and `PT0.4S` beside "0.4s".
+  if (seconds > 0 || out === "PT") {
+    out += `${total >= 60_000 ? String(Math.floor(seconds)) : seconds.toFixed(1)}S`;
+  }
+  return out;
+}

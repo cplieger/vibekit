@@ -635,18 +635,38 @@ registerTabsTarget(target);
 
 // --- Activation (this device's alone) ---
 
-/** Activate an existing tab. */
+/** Dismiss the phone drawer, because the reader asked for a DESTINATION.
+ *
+ *  This is the one thing that closes it, and it belongs to a navigation gesture
+ *  rather than to a view change. `showView` used to do it, and `showView` runs
+ *  from the view effect on EVERY projection mutation — so closing any tab from
+ *  the drawer, background tabs included, dismissed the drawer under the reader's
+ *  finger. A close is not navigation: the reader is still working in the strip
+ *  and expects it to stay put. On desktop the class is absent, so every call
+ *  here is a state no-op. */
+function revealActiveView(): void {
+  $.sidebar.classList.remove("open");
+}
+
+/** Activate an existing tab, and reveal it: this is the reader picking a
+ *  destination. Every gesture door lands here — a row tap, Enter on a focused
+ *  row, and `openTab`, which is what the five singleton buttons dispatch. */
 export function activateTab(id: string): void {
+  revealActiveView();
+  activateTabQuietly(id);
+}
+
+/** Activate a tab WITHOUT dismissing the drawer: the app moved the view, the
+ *  reader did not. Two callers, and both are consequences rather than gestures —
+ *  a close handing the view to its successor, and a rollback restoring the tab a
+ *  refused close had already taken away. Boot's one activation goes through it
+ *  too, where the drawer is closed anyway and there is nothing to reveal. */
+function activateTabQuietly(id: string): void {
   const row = rowOfID(id);
   if (row === undefined) {
     return;
   }
   if (state.active === id) {
-    // The row is still an action on phone: its transcript is already active,
-    // but the drawer sits over it. Treat the tap as "show this tab" and reveal
-    // the already-selected view by closing the drawer. On desktop the class is
-    // absent, so this remains a state no-op.
-    $.sidebar.classList.remove("open");
     return;
   }
   state.active = id;
@@ -670,7 +690,7 @@ function activateSuccessor(local: boolean): void {
   const next = recent !== "" ? recent : (state.tabs[0]?.subject.id ?? "");
   if (next !== "") {
     state.active = "";
-    activateTab(next);
+    activateTabQuietly(next);
     return;
   }
   state.active = "";
@@ -692,10 +712,10 @@ export function activateRestoredTab(): void {
   if (id === "") {
     return;
   }
-  // Cleared so activateTab's already-active guard does not swallow the onShow
-  // that is the whole point of this call.
+  // Cleared so the already-active guard does not swallow the onShow that is the
+  // whole point of this call.
   state.active = "";
-  activateTab(id);
+  activateTabQuietly(id);
 }
 
 // --- Mutations: every one is a dispatch ---
@@ -962,7 +982,7 @@ function rollbackClose(c: CapturedClose): void {
   }
   emit();
   if (c.activeTabID !== "" && hasRow(c.activeTabID)) {
-    activateTab(c.activeTabID);
+    activateTabQuietly(c.activeTabID);
   } else if (c.storeActive !== "" && getActiveId() === "") {
     setActive(c.storeActive);
     retargetComposer(c.storeActive);
@@ -1088,36 +1108,53 @@ export function renameTab(id: string, name: string): void {
   emit();
 }
 
-/** What each dot state is CALLED. This is not decoration: the dot is a 9px
- *  graphical object, and a screen-reader user gets nothing at all from it, so
- *  the phrase is the state's only channel for them — which matters most here,
- *  because the whole feature exists for tabs you are not looking at.
+/** What a kind's OUTCOME states are about. The dot is `aria-hidden`, so the phrase
+ *  is a screen-reader user's only channel — and three producers write these states
+ *  about three subjects (`tabStatusFor` a turn, `runStatusFor` a run,
+ *  `subagentStatusFor` a delegate), so one state-keyed phrase named the wrong thing
+ *  on two of them. Each noun is the one the app already shows a reader.
  *
- *  One table feeding both the announced name and the hover tooltip, so what a
- *  sighted user reads and what a screen reader hears cannot drift. Exhaustive
- *  over TabDotStatus by type, so a new state cannot ship unnamed. */
-const DOT_PHRASE: Readonly<Record<TabDotStatus, string>> = {
+ *  The last six kinds have no producer. Their nouns read oddly on purpose: that is
+ *  the signal to whoever adds one, and it beats falling through to a turn. */
+const DOT_SUBJECT: Readonly<Record<TabKind, string>> = {
+  chat: "turn",
+  run: "workflow run",
+  subagent: "subagent",
+  editor: "file",
+  settings: "settings",
+  git: "git",
+  files: "file browser",
+  history: "history",
+  docs: "docs",
+};
+
+/** The five states that say nothing about a subject, so one wording serves every
+ *  kind. Keyed by the states that are NOT subject-bearing, so a new TabDotStatus
+ *  member has to be classified here or in `dotPhrase` rather than shipping
+ *  unnamed. */
+const NEUTRAL_PHRASE: Readonly<Record<Exclude<TabDotStatus, "done" | "failed">, string>> = {
   idle: "idle",
   working: "working",
   waiting: "waiting for you",
   input: "needs a decision",
-  // The latch behind this state has ONE live producer: `turn_ended` carrying
-  // outcome `failed` or `refused` (handlers/turn.ts → store.ts `setTurnFailed`).
-  // Its two other callers re-derive the same verdict — `relatchTurnVerdict` off
-  // the persisted `turn_outcome`, and the send action restoring the snapshot it
-  // took. So a turn is the only thing that can set it, and the phrase says so.
-  //
-  // It used to read "last operation failed" for a breadth the code no longer has:
-  // the `error` handler set this latch for every frame naming the chat,
-  // `switch_failed` and `bridge_start_failed` among them, and it stopped touching
-  // turn state when `endsTurn` was removed (handlers/turn.ts records that). This
-  // is the only channel a screen-reader user has here, so it must claim exactly
-  // what its producer supports — which now means the narrower word, not the
-  // wider one.
-  failed: "turn failed",
-  done: "turn finished",
   dirty: "unsaved changes",
 };
+
+/** The ONE resolver, so the tooltip and the announced word are one string and
+ *  cannot drift per kind.
+ *
+ *  A phrase claims exactly what its producer supports (`store.ts` `outcomeLatch`
+ *  records what each latch's producers are): `failed` must not widen back toward
+ *  "last operation failed", and neither outcome may drop its subject. */
+function dotPhrase(kind: TabKind, status: TabDotStatus): string {
+  if (status === "done") {
+    return `${DOT_SUBJECT[kind]} finished`;
+  }
+  if (status === "failed") {
+    return `${DOT_SUBJECT[kind]} failed`;
+  }
+  return NEUTRAL_PHRASE[status];
+}
 
 const CLS_DOT = "tab-status-dot";
 const CLS_DOT_SR = "tab-status-sr";
@@ -1138,9 +1175,9 @@ function elementOf(id: string): HTMLElement | null {
  *  An empty status removes the attribute rather than setting it empty, so
  *  `[data-status]` alone is the CSS reveal condition and there is no second flag
  *  to keep in sync. */
-function paintDot(row: HTMLElement, status: TabDotStatus | ""): void {
-  const dot = row.querySelector<HTMLElement>(`.${CLS_DOT}`);
-  const sr = row.querySelector<HTMLElement>(`.${CLS_DOT_SR}`);
+function paintDot(node: HTMLElement, kind: TabKind, status: TabDotStatus | ""): void {
+  const dot = node.querySelector<HTMLElement>(`.${CLS_DOT}`);
+  const sr = node.querySelector<HTMLElement>(`.${CLS_DOT_SR}`);
   if (dot === null || sr === null) {
     return;
   }
@@ -1150,7 +1187,7 @@ function paintDot(row: HTMLElement, status: TabDotStatus | ""): void {
     sr.textContent = "";
     return;
   }
-  const phrase = DOT_PHRASE[status];
+  const phrase = dotPhrase(kind, status);
   dot.dataset["status"] = status;
   dot.title = phrase;
   sr.textContent = `, ${phrase}`;
@@ -1164,12 +1201,21 @@ function paintDot(row: HTMLElement, status: TabDotStatus | ""): void {
  *  `emit()`: a dot is not a structural change, so it must not queue a re-render,
  *  and the paint below is the whole visible effect. */
 export function setTabStatus(id: string, status: TabDotStatus | ""): void {
-  recordDotStatus(id, status);
+  // The ROW is what knows the kind, and the phrase is per kind, so the row is
+  // resolved once here rather than by each of the two writes below. A row that has
+  // left the projection returns early even when its element is still in the DOM
+  // playing its exit animation: painting a departing row's dot is worth nothing,
+  // and inventing a kind for it is the one place this could not be honest.
+  const row = rowOfID(id);
+  if (row === undefined) {
+    return;
+  }
+  recordDotStatus(row, status);
   const node = elementOf(id);
   if (node === null) {
     return;
   }
-  paintDot(node, status);
+  paintDot(node, row.subject.kind, status);
 }
 
 /** Mark an editor tab as having unsaved changes (a steady accent disc).
@@ -1183,11 +1229,7 @@ export function setTabDirty(id: string, dirty: boolean): void {
 /** Park a dot state on its row. "" means no state, which is an ABSENT field
  *  rather than an empty string, so `createTabEl` can tell "nothing was ever
  *  painted" from "painted, then cleared" with one `?? default`. */
-function recordDotStatus(id: string, status: TabDotStatus | ""): void {
-  const row = rowOfID(id);
-  if (row === undefined) {
-    return;
-  }
+function recordDotStatus(row: TabRow, status: TabDotStatus | ""): void {
   const before = row.dotStatus;
   if (status === "") {
     delete row.dotStatus;
@@ -1302,6 +1344,25 @@ export function activeChatRef(): string {
   return row?.subject.kind === "chat" ? row.subject.ref : "";
 }
 
+/** The chat ref of the tab `tabID` hangs under, or "" when it has no parent or
+ *  its parent is not a chat.
+ *
+ *  It exists because it is the only client-side answer for the common
+ *  post-reload case: a restored run tab whose run has FINISHED has no lease, so
+ *  `run-store.ts` `runChatID` answers "" (that map is fed by SSE frames and by
+ *  `GET /api/runs/live`, both live-only), while `TabSubject.Parent` is persisted
+ *  in the collection and was filled server-side from the run's lease at open time
+ *  (`Membership.fillRunParent`). `Parent` is immutable after open, so the answer
+ *  cannot go stale. */
+export function parentChatRef(tabID: string): string {
+  const parentID = rowOfID(tabID)?.subject.parent ?? "";
+  if (parentID === "") {
+    return "";
+  }
+  const parent = rowOfID(parentID);
+  return parent?.subject.kind === "chat" ? parent.subject.ref : "";
+}
+
 /** The chat refs with an open tab, deduplicated (an owning tab and a view tab
  *  can project one chat), as a TRACKED read: an effect calling this re-runs on
  *  every projection mutation and never on a dot write. The strip's per-row
@@ -1316,6 +1377,24 @@ export function openChatRefs(): string[] {
     }
   }
   return refs;
+}
+
+/** The subagent tabs' refs, as a TRACKED read: an effect calling this re-runs
+ *  when a subagent tab lands or leaves, which is the dependency `subagent-dots.ts`
+ *  needs — a delegate's page is opened from a card's link or a deep link, so its
+ *  row can arrive long after the invocation it names is resident.
+ *
+ *  REFS rather than ids, because the ref is what carries the two halves the dot
+ *  needs (`<chatID>/<subtaskID>` — see tab-materialize.ts) while an id is opaque
+ *  and says nothing; the id is recovered from the ref with `tabIdFor`.
+ *
+ *  No dedupe, unlike `openChatRefs`: that one exists because an owning tab and a
+ *  view tab can project one chat, and a subagent tab is always a view of exactly
+ *  one `(kind, ref)`. */
+export function openSubagentRefs(): string[] {
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+  stateVersion.value;
+  return state.tabs.filter((t) => t.subject.kind === "subagent").map((t) => t.subject.ref);
 }
 
 /** The chat tabs and their current dot states, for the out-of-page attention
@@ -1553,8 +1632,11 @@ function showView(row: TabRow): void {
   // while this span was a mobile-only afterthought beside a floating menu.
   setPageTitle(row.name, row.subject.kind);
 
-  // Close mobile sidebar after switching.
-  $.sidebar.classList.remove("open");
+  // The phone drawer is NOT dismissed here. This function runs from the view
+  // effect, which re-runs on every projection mutation, so a dismissal here fired
+  // for a rename, a dot change and — the reported defect — a tab CLOSE, including
+  // a background tab's. `revealActiveView` belongs to the navigation gesture; see
+  // activateTab.
 
   syncSidebarButtons(row.subject.kind);
 
@@ -1757,11 +1839,15 @@ function createTabEl(row: TabRow): HTMLElement {
     // `tab-child` with, so the indent and the marker cannot disagree. Safe to
     // decide once at creation: `Parent` is set at open and never reassigned.
     node.append(nest, statusDot, name, statusSR, pin, close);
-    // The `idle` floor is the chat rule below, and it does not generalize: a run
-    // sub-tab has no state until its first frame lands, and an idle ring there
-    // would claim one. 12-tabs.css reserves the slot instead, so the name does
-    // not move when the real state arrives.
-    paintDot(node, row.dotStatus ?? (kind === "chat" ? "idle" : ""));
+    // The `idle` floor is the CHAT rule below and it generalizes to neither other
+    // kind that can sit here, for the same reason in both: the hollow ring means
+    // the row has not initiated (store.ts `outcomeLatch`), and a run with no frame
+    // yet and a delegate whose invocation is not resident are both cases of "no
+    // state to show" rather than "nothing has happened". So both start blank and
+    // 12-tabs.css reserves the slot for them, which is what keeps the name from
+    // moving when the real state lands — a run's from `run-dots.ts`, a subagent's
+    // from `subagent-dots.ts`.
+    paintDot(node, kind, row.dotStatus ?? (kind === "chat" ? "idle" : ""));
   } else if (kind === "chat") {
     // A chat tab LEADS with its activity dot, in the slot the per-mode role glyph
     // used to hold. That is the replacement, not a supplement: the strip exists
@@ -1772,7 +1858,7 @@ function createTabEl(row: TabRow): HTMLElement {
     // is seeded at all rather than left blank for the store effect to fill: the
     // effect paints on a later tick, so an unseeded dot would leave the row one
     // frame narrower and shift its name.
-    paintDot(node, row.dotStatus ?? "idle");
+    paintDot(node, kind, row.dotStatus ?? "idle");
   } else {
     // Every other kind keeps its glyph — none of them has an activity concept —
     // and uses the same element in the trailing slot for the editor's unsaved
@@ -1780,7 +1866,7 @@ function createTabEl(row: TabRow): HTMLElement {
     // to show.
     const icon = el("span", { className: "tab-icon" }, iconEl(TAB_ICONS[kind]));
     node.append(icon, name, statusSR, pin, statusDot, close);
-    paintDot(node, row.dotStatus ?? "");
+    paintDot(node, kind, row.dotStatus ?? "");
   }
   // A sub-tab is not independently draggable: its position is its parent's.
   // attachTabInteraction wires click/keyboard AND drag, so the flag rides along.
@@ -2051,10 +2137,10 @@ function setSingletonRoute(kind: TabKind, route: Route): void {
  *  sub-tab REMOVES A VIEW and stops nothing at all, while the launching chat's ×
  *  is what cancels. A launcher-OWNED run keeps `owns: true`, so its × means stop.
  *
- *  The offer-once guard is NOT here and must not move here. It is a fact about
- *  this client's history — whether this reader has already been offered this
- *  run's tab — and it lives at `openRunSubTab` (run-view.ts) where that history
- *  is kept. */
+ *  Every caller is a reader asking for the run — a Run button, a footer link, a
+ *  deep link, a History row. The tab a run gets BY ITSELF is opened server-side
+ *  (`internal/agent/run_tabs.go`) and arrives as a `tabs_changed` frame, which is
+ *  what makes "an automatic offer never steals the screen" structural. */
 export async function openRunTab(
   workflowID: string,
   name: string,

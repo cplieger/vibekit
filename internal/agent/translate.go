@@ -81,9 +81,10 @@ func (rt *Runtime) initDispatch() {
 	} {
 		rt.chatHandlers[method] = rt.translator.RunProgressHandler(kind)
 	}
-	// A run-level pause stops the clock (each arm is a ceiling of EXECUTING
-	// time; a run parked on purpose must not be cancelled for it). Node-level
-	// pauses keep the clock running. TWO wrappers composed rather than
+	// A run-level pause stops the clock (each arm opens a stretch of EXECUTING
+	// time; a run parked on purpose must not be cancelled for it, and the park is
+	// what stops the backstop charging for the wait). Node-level pauses keep the
+	// clock running. TWO wrappers composed rather than
 	// merged, since they read different collaborators: observePaused reaches
 	// the bounds, healPaused reaches the bridges and chat store. Order is
 	// load-bearing — the clock must be parked before anything can decide to
@@ -94,6 +95,10 @@ func (rt *Runtime) initDispatch() {
 	// A completed node is the only honest evidence a pause has cleared, so
 	// it returns the run's heal budget.
 	rt.chatHandlers[methodWFNodeComplete] = rt.runs.healProgress(rt.chatHandlers[methodWFNodeComplete])
+	// The tab offer's retry, for a run whose launching chat had no tab when it
+	// started: the offer is left unspent in that case, and one frame per step
+	// is enough to catch the chat opening later. See run_tabs.go.
+	rt.chatHandlers[methodWFNodeStart] = rt.runs.offerOnProgress(rt.chatHandlers[methodWFNodeStart])
 	// v3 methods recognised but intentionally ignored (feature flags, catalogs
 	// vibekit sources via REST). Listed to keep them out of the unhandled-debug log.
 	rt.noopMethods = map[string]struct{}{

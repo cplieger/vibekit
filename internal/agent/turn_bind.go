@@ -42,8 +42,10 @@ func (r *turnRegistry) bindPending(chatID vibekit.ChatID) (bound bool, displaced
 // displaceableEngineTurn reports the epoch of an open turn the ENGINE started,
 // which a prompt-shaped open must close before taking the chat. A prompt source
 // CAN meet one: an engine-opened turn holds no prompt slot, so admission control
-// never refused it, and no closer can claim it — displacing it without closing it
-// loses content already broadcast to every client. Only an engine-opened turn
+// never refused it, and no closer can claim it through the BRACKET path —
+// displacing it without closing it loses content already broadcast to every client.
+// A step turn's own closer, the run's terminal transition, may not have run yet, so
+// the displacement rule is unaffected by it. Only an engine-opened turn
 // (Source.EngineOpened): a local shell turn already refuses to begin while a turn
 // is open.
 //

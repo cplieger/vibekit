@@ -15,7 +15,7 @@ import {
   setEffort,
   setModel,
 } from "./store.js";
-import { $ } from "./dom.js";
+import { $, setBusy } from "./dom.js";
 import { humanName } from "./strings.js";
 import { switchModel } from "./actions/chat.js";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
@@ -25,7 +25,13 @@ import {
   getLastEffortFor,
   setLastEffort,
 } from "./session-context.js";
-import { refreshPickerIfVisible, getCachedModels } from "./picker.js";
+import {
+  refreshPickerIfVisible,
+  getCachedModels,
+  catalogNotice,
+  retryCatalog,
+  RETRY_LABEL,
+} from "./picker.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import {
   bindLoadingState,
@@ -131,6 +137,10 @@ class ModelSwitchController {
     const scroll = this.ensureScroll(list);
     const session = getActive();
     if (session === undefined) {
+      // This branch mounts no options, so the scroller is not a listbox — same
+      // rule as syncCatalogNotice below, applied to the one path that skips it.
+      scroll.removeAttribute("role");
+      scroll.removeAttribute("aria-label");
       reconcile(scroll, [] as ModelInfo[], {
         key: () => "",
         mount: () => el("div"),
@@ -148,6 +158,7 @@ class ModelSwitchController {
       this.removeEffortRow();
     }
 
+    this.syncCatalogNotice(scroll);
     reconcile(scroll, getCachedModels(), {
       key: (m: ModelInfo) => m.model_id,
       mount: (m: ModelInfo) => this.buildModelOption(m),
@@ -158,9 +169,72 @@ class ModelSwitchController {
     this.modelNav?.refresh();
   }
 
+  /** Say something when there is no model list. With an empty cache this scroller
+   *  mounted ZERO children, so the card opened on an effort row above an empty
+   *  `role="listbox"` labelled "Available models" and said nothing at all.
+   *
+   *  The role goes with the OPTIONS: a listbox holding one line of prose
+   *  advertises a choice that is not there. The copy is picker.ts's, so the two
+   *  surfaces cannot drift. */
+  private syncCatalogNotice(scroll: HTMLElement): void {
+    this.noticeRow?.remove();
+    this.noticeRow = null;
+    this.noticeRetry?.remove();
+    this.noticeRetry = null;
+    const notice = catalogNotice();
+    if (notice === null) {
+      scroll.setAttribute("role", "listbox");
+      scroll.setAttribute("aria-label", "Available models");
+      scroll.removeAttribute("aria-busy");
+      return;
+    }
+    scroll.removeAttribute("role");
+    scroll.removeAttribute("aria-label");
+    setBusy(scroll, notice.busy);
+    // `.list-empty` is the app's canonical empty-state shell, so this row needs no
+    // stylesheet of its own. Prepended rather than appended: reconcile owns the
+    // scroller's keyed children and inserts each newest row after every unkeyed
+    // sibling, so a notice appended here would sort BELOW the first real model the
+    // moment a catalog arrived mid-render.
+    this.noticeRow = el("div", { className: "list-empty" }, notice.text) as HTMLDivElement;
+    scroll.prepend(this.noticeRow);
+    if (notice.retry) {
+      this.noticeRetry = this.buildRetryRow();
+      // AFTER the notice and still ahead of every keyed row, for the reason above.
+      // The scroller is a stretched flex column, so `.btn-small` needs no rule.
+      this.noticeRow.after(this.noticeRetry);
+    }
+  }
+
+  /** The pill card's Retry: its own markup (a column of rows, not a grid of cards)
+   *  over `picker.ts`'s `retryCatalog`, so both surfaces ask the same way and
+   *  announce the same thing. `stopPropagation` as every control here does — the
+   *  click would otherwise reach the pill trigger and collapse the answer. */
+  private buildRetryRow(): HTMLButtonElement {
+    const btn = el(
+      "button",
+      { type: "button", className: "btn-small pill-model-retry", "aria-label": RETRY_LABEL },
+      "Retry",
+    ) as HTMLButtonElement;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      retryCatalog();
+    });
+    return btn;
+  }
+
   private modelNav: RovingFocusController | null = null;
 
   private modelScroll: HTMLDivElement | null = null;
+
+  /** The stand-in row for "there is no model list", removed the moment there is
+   *  one. Held rather than queried so it can never be confused with a real row. */
+  private noticeRow: HTMLDivElement | null = null;
+
+  /** The Retry that row offers when asking again can change the answer. Its own
+   *  field for `noticeRow`'s reason, and because the notice outlives it: `unknown`
+   *  carries a row and no button. */
+  private noticeRetry: HTMLButtonElement | null = null;
 
   private effortRow: HTMLDivElement | null = null;
 
@@ -181,11 +255,9 @@ class ModelSwitchController {
    *  too. Created once; reconcile owns its keyed children from then on. */
   private ensureScroll(list: HTMLElement): HTMLElement {
     if (this.modelScroll === null) {
-      this.modelScroll = el("div", {
-        className: "pill-model-scroll",
-        role: "listbox",
-        "aria-label": "Available models",
-      }) as HTMLDivElement;
+      // The listbox role and its label are written by syncCatalogNotice, not here:
+      // they belong to the OPTIONS, and this element exists before any arrive.
+      this.modelScroll = el("div", { className: "pill-model-scroll" }) as HTMLDivElement;
       list.appendChild(this.modelScroll);
     }
     return this.modelScroll;

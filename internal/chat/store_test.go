@@ -1857,3 +1857,37 @@ func TestHandleExport_SuccessfulMarkdownWriteIsQuiet(t *testing.T) {
 		t.Errorf("a successful export logged a write failure; logs = %q", got)
 	}
 }
+
+// TestMutate_RefusesACancelledContext pins the guard at Mutate's entry, untested
+// until now, and it is the negative that keeps the durable-write decision
+// enforceable from this side.
+//
+// Deleting the guard is the cheap way to stop a shutdown discarding an assistant
+// turn, and it opens nine request-context sites at once: a rewind truncation, a
+// user message, a membership change would all persist for a POST the client
+// abandoned. The caller detaches instead — only it can tell the two apart.
+func TestMutate_RefusesACancelledContext(t *testing.T) {
+	s, b := newTestStore(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	var mutatorRan bool
+	err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+		mutatorRan = true
+		c.Name = "written for a request nobody is waiting on"
+		return true
+	})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Mutate on a cancelled context = %v, want context.Canceled", err)
+	}
+	if mutatorRan {
+		t.Error("the mutator ran, so the guard sits below the load rather than at the entry")
+	}
+	if _, exists := s.Get(t.Context(), "c1"); exists {
+		t.Error("a refused Mutate created the chat anyway")
+	}
+	if events := b.snapshot(); len(events) != 0 {
+		t.Errorf("a refused Mutate broadcast %d events, want none", len(events))
+	}
+}

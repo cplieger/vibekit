@@ -19,6 +19,9 @@ import { linkifyPaths } from "../linkify.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_COPY } from "../icons.js";
 import { buildAttachmentPill, type AttachmentRef } from "../attachment-pill.js";
+// The dot's words, shared with the timeline rail's marker — see turn-severity.ts.
+// Colour is never the sole channel (WCAG 1.4.1), and these are that channel.
+import { OUTCOME_LABEL, OUTCOME_TOOLTIP, severityOf } from "../turn-severity.js";
 import type { TurnOutcome } from "../turns.js";
 
 export interface TurnHeaderData {
@@ -33,29 +36,6 @@ export interface TurnHeaderData {
    *  read-only (a sent attachment cannot be un-sent), and OUTSIDE the clamp. */
   attachments: readonly AttachmentRef[];
 }
-
-/** Human label per outcome, for the dot's accessible name (colour is never
- *  the sole channel — WCAG 1.4.1). */
-const OUTCOME_LABEL: Record<TurnOutcome, string> = {
-  running: "Running",
-  completed: "Completed",
-  cancelled: "Cancelled",
-  interrupted: "Interrupted",
-  refused: "Refused",
-  unknown: "Unknown",
-  failed: "Failed",
-};
-
-/** Hover text for the dot — what the state MEANS, not the one-word label. */
-const OUTCOME_TOOLTIP: Record<TurnOutcome, string> = {
-  running: "This turn is still running",
-  completed: "This turn finished normally",
-  cancelled: "You stopped this turn",
-  interrupted: "This turn was interrupted before it finished",
-  refused: "The model declined to continue",
-  unknown: "This turn's end could not be read",
-  failed: "This turn failed",
-};
 
 /** The clamp's shape: three lines, and a 220-character guess for the frame
  *  before the card is laid out. The machinery is `clamp-text.ts`'s, shared with
@@ -161,6 +141,9 @@ function buildCopyButton(header: HTMLElement): HTMLButtonElement {
  *  next repaint to fold it back). */
 export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   header.dataset["outcome"] = d.outcome;
+  // Hue comes off the shared severity table; `data-outcome` keeps the words and
+  // the one stated exception. See turn-footer.ts's own write for the split.
+  header.dataset["severity"] = severityOf(d.outcome);
 
   const num = header.querySelector<HTMLElement>(":scope > .turn-head-row > .turn-n");
   if (num !== null) {

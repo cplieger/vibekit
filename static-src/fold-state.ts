@@ -1,22 +1,22 @@
 // ---------------------------------------------------------------------------
 // Progressive collapse: which turns are open.
 //
-// EXACTLY TWO TURNS OPEN by default — the current turn and the one before the
-// user's last input. Two rather than one because the previous turn is usually
-// the context for the current request, so folding it forces an expand on nearly
-// every read.
+// ONE TURN OPEN by default — the newest, which is the one being read. A turn
+// auto-collapses when the next turn starts and not before; see OPEN_TAIL.
 //
 // Everything older folds to its merged header/footer row. The fold is what pays
 // for the turn unit: a resident page of ~23 older turns becomes ~23 one-line
 // rows, which is the difference between a transcript and an archive.
 //
-// THREE THINGS NEVER AUTO-FOLD, and the first is the important one:
+// FOUR THINGS NEVER AUTO-FOLD, and the first is the important one:
 //
-//   - A turn that FAILED or was INTERRUPTED. Errors are the last thing that
-//     should hide themselves.
+//   - A turn whose severity is BROKEN. Errors are the last thing that should hide
+//     themselves, and the reason this rule is worth stating twice is that it was
+//     promised here and absent from the code — see isTurnOpen's own note.
 //   - A turn the user opened by hand. That choice persists per chat, so it
 //     survives a reload and a chat switch.
-//   - The two newest turns.
+//   - The newest turn, whose fold toggle is hidden.
+//   - A turn still running.
 //
 // Pure and DOM-free: the renderer asks whether a turn is open, and this module
 // answers from the projection plus the user's own overrides.
@@ -24,6 +24,7 @@
 
 import { LS_TURN_FOLDS_KEY } from "./ls-keys.js";
 import { readPerChat, writePerChat } from "./per-chat-store.js";
+import { severityOf } from "./turn-severity.js";
 import type { Turn } from "./turns.js";
 
 /** How many trailing turns stay open regardless of anything else. ONE: a turn
@@ -133,9 +134,27 @@ export function isTurnOpen(chatID: string, t: Turn, index: number, total: number
   if (searchOpened.get(chatID)?.has(t.id) === true) {
     return true;
   }
-  // No sticky-open for failed turns and no sticky-open for live runs: the
-  // collapsed face carries both (the error text as the turn's output, and a
-  // duplicate run card above the prose), so folding hides neither.
+  // A BROKEN turn never auto-folds, which is what this module's own header comment
+  // has always promised and what the code did not do. The justification the old
+  // `return false` carried — "the collapsed face carries the error text as the
+  // turn's output" — was measured FALSE for the case it matters most in: the face's
+  // error row came from a face-only lookup, which scanned backwards for an `event`
+  // message, and a turn that failed on the wire's own turn_end carries none. So a
+  // failed turn folded to a header, an empty body and a footer, and the collapsed
+  // face mounted nothing at all (`syncTurnFace`'s `childElementCount === 0` arm).
+  //
+  // Below the explicit override deliberately, unlike the running and newest-turn
+  // rules above it: a reader who folded a failed turn has read it and said so, and
+  // reopening it under them would be the control lying in the other direction.
+  if (severityOf(t.outcome) === "broken") {
+    return true;
+  }
+  // Everything else folds, a turn holding a LIVE workflow run included. Its reason
+  // moved with the surface: the composer band's run bar (`run-bar.ts`) is now the
+  // persistent readout for a live run — per chat, across turns, across a reload —
+  // so folding takes away no signal a reader is watching, and the invocation card
+  // is one unfold away. The collapsed face used to carry a duplicate card and does
+  // not any more; that duplicate is what this line used to cite.
   return false;
 }
 
