@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
-// What a range of ordinals is worth in PIXELS: the height unmounted space holds,
-// so the document's height cannot depend on the window. Measured at the DROP,
-// which suffices: everything ABOVE the reader has been mounted and dropped once.
+// What a range of ordinals is worth in PIXELS: the height unmounted space holds, so the
+// document's height cannot depend on the window. Measured at the DROP, which suffices:
+// everything ABOVE the reader has been mounted and dropped once.
 // ---------------------------------------------------------------------------
 
 import { sliceTurn, turnCost, type BlockRange, type TurnRange } from "./block-window.js";
@@ -58,11 +58,10 @@ function estimateOf(m: Message, i: number): number {
   }
 }
 
-/** What `range` of `m`'s own blocks is worth, the gaps BETWEEN those blocks
- *  included — so a caller adds only the gaps between whole rows. The row number is
- *  preferred where a measurement covered exactly this range: a reconcile drops a row
- *  and measures it once, while a boundary row's drop measures each block it removes.
- */
+/** What `range` of `m`'s own blocks is worth, the gaps BETWEEN those blocks included — so a
+ *  caller adds only the gaps between whole rows. The row number is preferred where a
+ *  measurement covered exactly this range: a reconcile drops a row and measures it once, while
+ *  a boundary row's drop measures each block it removes. */
 function rangeHeight(m: Message, range: BlockRange): number {
   const row = rowHeights.get(m.id);
   if (row?.range.from === range.from && row.range.to === range.to) {

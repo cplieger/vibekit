@@ -204,11 +204,10 @@ function clearLiveAnchor(el: HTMLElement): void {
 }
 
 // ---------------------------------------------------------------------------
-// The open-container registry: what the reader left each collapsible container
-// at, keyed by its own id under `sub:`, `pipe:`, `run:`, `step:` and `tool:`.
-// Read at MOUNT too — a window drop keeps these keys, so a creation site
-// restores the reader's choice, not its own default. A DETACHED render (the
-// subagent page) neither registers nor restores.
+// The open-container registry: what the reader left each collapsible container at, keyed under
+// `sub:`, `pipe:`, `run:`, `step:` and `tool:`. Read at MOUNT too — a window drop keeps these
+// keys, so a creation site restores the reader's choice rather than its own default. A DETACHED
+// render neither registers nor restores.
 // ---------------------------------------------------------------------------
 
 const openContainers = new Map<string, boolean>();
@@ -350,11 +349,10 @@ interface MsgRender {
    *  the card's final dispose, and resume has to re-arm exactly what pause
    *  stopped. */
   runEffects: Map<string, () => void>;
-  /** Cleanups that outlive the TURN, bucketed by block index with `-1` for the
-   *  message's own: a window drop drains only the buckets it removed, `disposeAll`
-   *  drains them all. Separate from `pushStreamingEffect`, which is disposed at turn
-   *  end — right for a caret, wrong for a run card, whose run carries on for minutes
-   *  after `run_workflow` returns. */
+  /** Cleanups that outlive the TURN, bucketed by block index with `-1` for the message's own:
+   *  a window drop drains only the buckets it removed, `disposeAll` drains them all. Separate
+   *  from `pushStreamingEffect`, disposed at turn end — right for a caret, wrong for a run card
+   *  whose run carries on for minutes after `run_workflow` returns. */
   disposers: Map<number, (() => void)[]>;
   /** subtask id → the tool-call ids routed into that box, for the footer's
    *  ledger (commands, reads, changed files). The INVOCATION call is not a
@@ -992,11 +990,8 @@ export function dropTail(m: Message, keep: BlockRange, marks: readonly SteerMark
   dropBlockRange(st, m, { from: st.window.from, to: keep.to }, marks);
 }
 
-/** Release everything the mounted indices OUTSIDE `keep` own, and leave no effect
- *  subscribed to a detached node.
- *
- *  Reached only through `dropHead` and `dropTail`, never as one two-sided call.
- *  `openContainers` keys deliberately SURVIVE: a drop is a window move, not a
+/** Release everything the mounted indices OUTSIDE `keep` own, and leave no effect subscribed to
+ *  a detached node. `openContainers` keys deliberately SURVIVE: a drop is a window move, not a
  *  render dispose, so a box the reader opened comes back open. */
 function dropBlockRange(
   st: MsgRender,
@@ -1069,11 +1064,9 @@ function resolveRunCardFate(st: MsgRender, runID: string, card: RunCardView): vo
   }
 }
 
-/** Release one block: its measured height into the cache, its disclosure state, its
- *  element, its text sink, its streaming signals and its block-lifetime cleanups.
- *
- *  Answers with the run card the block hosted, whose fate its caller decides once the
- *  whole range is gone. */
+/** Release one block: its measured height into the cache, its disclosure state, its element,
+ *  its text sink, its streaming signals and its block-lifetime cleanups. Answers with the run
+ *  card the block hosted, whose fate its caller decides once the whole range is gone. */
 function dropBlock(
   st: MsgRender,
   m: Message,
@@ -1125,13 +1118,10 @@ function dropBlock(
   return hosted;
 }
 
-/** Whether `el` is a CONTAINER whose lifetime this render owns somewhere other than the
- *  block that stamped it: a run card (the range's own claim resolution), or a delegate or
- *  pipeline box (`pruneEmptyContainers`, once nothing is left inside it).
- *
- *  Released like an ordinary block, such an element records the whole box's height
- *  against one ordinal, seals live bubbles belonging to blocks that are still mounted, and
- *  removes the box out from under them while `st.window` still counts them. */
+/** Whether `el` is a CONTAINER whose lifetime this render owns somewhere other than the block
+ *  that stamped it: a run card, or a box `pruneEmptyContainers` removes once nothing is left
+ *  inside it. Released like an ordinary block it prices the whole box against one ordinal and
+ *  removes it out from under blocks `st.window` still counts as mounted. */
 function isContainerRoot(st: MsgRender, el: HTMLElement, card: RunCardView | undefined): boolean {
   if (el === card?.root) {
     return true;
@@ -1165,11 +1155,10 @@ function hostedRun(
   return card === undefined ? undefined : { runID, card };
 }
 
-/** The render holding mounted blocks INSIDE `card`, and the lowest such ordinal. `st`
- *  is a candidate like any other: a step frame folding into the still-open launching turn
- *  leaves ONE message holding both the launch and blocks inside the card. DOM order
- *  decides between several, which is what "earliest" means: `renders` is keyed in BUILD
- *  order and a scroll up builds earlier messages last. */
+/** The render holding mounted blocks INSIDE `card`, and the lowest such ordinal. `st` is a
+ *  candidate like any other: a step frame folding into the still-open launching turn leaves ONE
+ *  message holding both the launch and blocks inside the card. DOM order decides between several,
+ *  because `renders` is keyed in BUILD order and a scroll up builds earlier messages last. */
 function liveRunClaimant(
   st: MsgRender,
   card: RunCardView,
@@ -1218,13 +1207,10 @@ function seatAbove(
   return null;
 }
 
-/** Re-subscribe every box the drop left STANDING whose invocation block it took.
- *  That block's cleanup released the binding, and no path re-binds an existing box —
- *  so without this a delegate whose own blocks are still in window keeps a frozen
- *  header, status and footer ledger until its invocation re-mounts.
- *
- *  `live` is `false` because it cannot be reached: every box here exists, so neither
- *  binder passes it to a creation. */
+/** Re-subscribe every box the drop left STANDING whose invocation block it took. That block's
+ *  cleanup released the binding and no path re-binds an existing box, so without this a delegate
+ *  whose own blocks are still in window keeps a frozen header, status and footer ledger until its
+ *  invocation re-mounts. `live` is false because every box here already exists. */
 function rebindSurvivingBoxes(st: MsgRender): void {
   for (const [subtask, sa] of st.subagents) {
     const inv = st.tools.find(
@@ -1644,12 +1630,9 @@ function runCardFor(st: MsgRender, workflowID: string, name: string, owner = fal
   return card;
 }
 
-/** Give up this render's claim on `workflowID`'s card: its effect, its clock hold,
- *  the host slot, and the store's cell.
- *
- *  Reached at MESSAGE lifetime by the render's own disposal and at BLOCK lifetime by
- *  a window drop of the launch block, and idempotent either way — which is what lets
- *  the two lifetimes share one function. */
+/** Give up this render's claim on `workflowID`'s card: its effect, its clock hold, the host
+ *  slot, and the store's cell. Idempotent, which is what lets the message lifetime and the
+ *  block lifetime share one function. */
 function releaseRunCard(st: MsgRender, workflowID: string, card: RunCardView): void {
   disarmRunCard(st, workflowID, card);
   // Slot and cell together, and only while this render holds the claim: a re-homed
@@ -1669,11 +1652,9 @@ function releaseRunCard(st: MsgRender, workflowID: string, card: RunCardView): v
   }
 }
 
-/** Move `workflowID`'s card out of `host` and into `st`, claim and all; `seat` is the node
- *  to place it before, absent meaning the mount position. Reached from both halves of one
- *  rule — the owning message mounting its launch block, or its window DROPPING it and the
- *  earliest render still holding blocks inside the card taking over. Moving the NODE keeps
- *  the element, so no effect churns and no entry animation replays. */
+/** Move `workflowID`'s card out of `host` and into `st`, claim and all; `seat` is the node to
+ *  place it before, absent meaning the mount position. Moving the NODE keeps the element, so no
+ *  effect churns and no entry animation replays. */
 function adoptRunCard(
   st: MsgRender,
   host: MsgRender,
@@ -1715,13 +1696,10 @@ function hostsRunCard(st: MsgRender, workflowID: string): boolean {
   return host === undefined || host === st;
 }
 
-/** Adopt the launch tool call into its run's card, and answer with the card's
- *  root: the recipe name from the call's input as a placeholder label, and a
- *  failed launch reported on the card rather than lost.
- *
- *  A launch that FAILED never created a run, so `GET /api/runs/{id}` has nothing
- *  and the card would sit at "starting" forever. The tool call is the only witness
- *  in that case, which is why its status is folded in here. */
+/** Adopt the launch tool call into its run's card, and answer with the card's root: the recipe
+ *  name from the call's input as a placeholder label, and a failed launch reported rather than
+ *  lost. A launch that FAILED never created a run, so `GET /api/runs/{id}` has nothing and the
+ *  card would sit at "starting" forever with the tool call its only witness. */
 function bindRunCard(st: MsgRender, workflowID: string, tc: ToolCall): HTMLElement {
   const card = runCardFor(st, workflowID, recipeNameOf(tc), true);
   card.setLaunch(tc.status, tc.output);
@@ -2337,11 +2315,11 @@ function appendBlock(st: MsgRender, container: HTMLElement, el: HTMLElement): vo
   placeInContainer(st, container, el);
 }
 
-/** Place `el` in `container`: before the insertion reference while a head extension
- *  is in flight, at the end otherwise. The reference is the container's first child
- *  when the extension first touches it, captured HERE because every creation path
- *  reaches a container through this one function. It does not move as the extension
- *  proceeds, which is what keeps the inserted ordinals ascending. */
+/** Place `el` in `container`: before the insertion reference while a head extension is in
+ *  flight, at the end otherwise. The reference is the container's first child when the extension
+ *  first touches it, captured HERE because every creation path reaches a container through this
+ *  function, and it does not move as the extension proceeds — which keeps the inserted ordinals
+ *  ascending. */
 function placeInContainer(st: MsgRender, container: HTMLElement, el: HTMLElement): void {
   const refs = captureInsertRef(st, container);
   if (refs === null) {
@@ -2365,11 +2343,10 @@ function captureInsertRef(
   return refs;
 }
 
-/** Bring an ALREADY-MOUNTED node down to the ordinal being inserted, and step the
- *  reference past it. The reference is the boundary between inserted and pre-existing
- *  content, so only a node at or BELOW it moves: a card the insertion itself placed is
- *  above it, and moving that one carries it past every ordinal mounted since. A step
- *  card's launch is the reachable case, and the anchor ladder reads DOM order. */
+/** Bring an ALREADY-MOUNTED node down to the ordinal being inserted, and step the reference
+ *  past it. The reference is the boundary between inserted and pre-existing content, so only a
+ *  node at or BELOW it moves: a card the insertion itself placed is above it, and moving that one
+ *  carries it past every ordinal mounted since. A step card's launch is the reachable case. */
 function reseatInserted(st: MsgRender, container: HTMLElement, el: HTMLElement): void {
   const refs = captureInsertRef(st, container);
   if (refs === null) {
@@ -2388,14 +2365,12 @@ function reseatInserted(st: MsgRender, container: HTMLElement, el: HTMLElement):
   refs.set(container, el.nextElementSibling as HTMLElement | null);
 }
 
-/** Place a lazily-created CONTAINER where the STORE puts it: above the first mounted
- *  ordinal after `at`, the index establishing it. Seating it by the RANGE instead would
- *  leave it under ordinals the store puts after it — one run split into two groups, and
- *  one window reached two ways two documents. `at` absent appends.
- *
- *  This seats a box; it does not own the box's position for the rest of its life. Two
- *  paths move one afterwards: `runCardFor` reseats a step-built run card down to its
- *  launch ordinal, and `pipelineBoxFor`'s adoption arm replaces the element outright. */
+/** Place a lazily-created CONTAINER where the STORE puts it: above the first mounted ordinal
+ *  after `at`, the index establishing it. Seating it by the RANGE instead would leave it under
+ *  ordinals the store puts after it — one run split into two groups, and one window reached two
+ *  ways two documents. `at` absent appends. This seats a box and does not own its position for
+ *  life: `runCardFor` reseats a step-built card down to its launch ordinal, and
+ *  `pipelineBoxFor`'s adoption arm replaces the element outright. */
 function placeContainer(
   st: MsgRender,
   host: HTMLElement,
@@ -2443,11 +2418,10 @@ function toolGroupFor(
  *  per-card question is "what came before me in my own container", and
  *  re-classifying every earlier block is quadratic on one long tool loop. */
 interface GroupIndex {
-  /** container key → ascending indices at which a new run may START: one past a
-   *  block that closed the container, a steer note's own anchor, or one past the
-   *  block at which a nested container's box is ESTABLISHED. Every position is the
-   *  STORE's, so one block answers one run start under any range — which a group's key
-   *  needs, because the group outlives the pass that built it. */
+  /** container key → ascending indices at which a new run may START: one past a block that
+   *  closed the container, a steer note's own anchor, or one past the block establishing a nested
+   *  container's box. Every position is the STORE's, so one block answers one run start under any
+   *  range — which a group's key needs, because the group outlives the pass that built it. */
   readonly starts: ReadonlyMap<string, number[]>;
   /** container key → the last block index that posts anything into it, in the
    *  STORE: a trace is finished by a successor the store holds, whether or not
