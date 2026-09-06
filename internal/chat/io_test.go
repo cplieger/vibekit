@@ -211,9 +211,9 @@ func TestReadChatHeader_CostDoesNotScaleWithMessageBytes(t *testing.T) {
 
 	allocated := after.TotalAlloc - before.TotalAlloc
 	// Twice the file, and the two implementations sit either side of it: streaming
-	// measured 1.04x (the token churn of skipping every message, none of it
-	// retained), while reading the file whole measures 3.0x — the byte slice, the
-	// RawMessage copy of the messages array, and the same token churn on top.
+	// measured 1.04x (the token churn of skipping every message, none retained),
+	// against 4.32x for a whole-file read — the byte slice, the string copy, and
+	// the same token churn on top. Both numbers are red-check measurements.
 	bound := 2 * uint64(size)
 	if allocated > bound {
 		t.Errorf("readChatHeader over a %d-byte chat allocated %d bytes (%.2fx), want under %d: "+

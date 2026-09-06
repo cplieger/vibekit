@@ -37,7 +37,6 @@ func pointCgroupAt(t *testing.T, v2, v1 string) {
 // a test that only wrote values could not tell "no limit set" from "no cgroup".
 // Serial, not parallel: it swaps the package's cgroup paths.
 func TestResolveChatFileCap(t *testing.T) {
-	const giB = 1 << 30
 	cases := []struct {
 		name string
 		v2   string
@@ -53,16 +52,18 @@ func TestResolveChatFileCap(t *testing.T) {
 		{"v1 int64 sentinel is unlimited", "", "9223372036854771712", 0},
 		{"v1 minus one is unlimited", "", "-1", 0},
 		{"unparseable is unlimited", "", "not-a-number", 0},
-		// A real limit: 1 GiB reproduces the 32 MiB constant this store shipped
-		// with, which is the divisor's justification.
-		{"v2 one gibibyte derives 32 MiB", "1073741824", "", giB / memLimitDivisor},
-		{"v1 one gibibyte derives the same", "", "1073741824", giB / memLimitDivisor},
-		{"v2 four gibibytes derive 128 MiB", "4294967296", "", 4 * giB / memLimitDivisor},
+		// A real limit, and the numbers are LITERAL: deriving them from
+		// memLimitDivisor would make the assertion self-referential, so changing
+		// the divisor would move both sides and the case would pass.
+		// 1 GiB reproduces the 32 MiB constant this store shipped with.
+		{"v2 one gibibyte derives 32 MiB", "1073741824", "", 32 << 20},
+		{"v1 one gibibyte derives the same", "", "1073741824", 32 << 20},
+		{"v2 four gibibytes derive 128 MiB", "4294967296", "", 128 << 20},
 		// Below 256 MiB the divisor would go under the floor.
-		{"a small container gets the floor", "134217728", "", minChatFileCap},
-		{"a tiny container still gets the floor", "16777216", "", minChatFileCap},
+		{"a small container gets the floor", "134217728", "", 8 << 20},
+		{"a tiny container still gets the floor", "16777216", "", 8 << 20},
 		// v2 present and readable wins, so a stale v1 file cannot override it.
-		{"v2 wins over v1", "1073741824", "16777216", giB / memLimitDivisor},
+		{"v2 wins over v1", "1073741824", "16777216", 32 << 20},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
