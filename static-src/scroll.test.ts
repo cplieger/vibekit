@@ -1012,6 +1012,44 @@ describe("the anchor's coordinate space", () => {
     expect(bubbleIn(row, 200).offsetParent).toBe(row);
   });
 
+  it("keeps Following when the anchor above the fold asks for a negative scrollTop", async () => {
+    // The other edge of the same arithmetic, and the one no case reached: an anchor within
+    // one viewport of the document's top makes the pin's target NEGATIVE. Three things the
+    // fixture has to carry or it cannot fail. The anchor's bottom must sit above
+    // `clientHeight − BOTTOM_TOLERANCE_PX / 2`, or the target is positive. The write has
+    // to come from a MUTATION rather than a resume, because `pinLiveEdgeNow` clamps before
+    // it calls through while `autoScrollIfAnchored` does not. And the reader must be at a
+    // NON-ZERO scrollTop: at 0 the clamped write moves nothing, so no scroll event is
+    // delivered and there is no marker comparison left to get wrong.
+    const wrap = scroll.getScrollEl();
+    const streaming = bubbleIn(msgRow(), 200);
+    block(3000);
+    scroll.setAnchorProvider(() => streaming);
+    await land();
+
+    // A gesture landing inside the tolerance band keeps Following, which is how a reader
+    // gets to the live edge while the anchor still owes a negative pin. Long enough for
+    // that gesture's own debounce to expire, or the mutation's write is skipped.
+    wrap.scrollTop = wrap.scrollHeight - wrap.clientHeight;
+    await land(220);
+    expect({ at: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      at: 2800,
+      state: "following",
+    });
+
+    streaming.appendChild(document.createTextNode("a streamed chunk"));
+    await land();
+
+    // −150 asked for (a 200px anchor bottom, a 400px viewport, half a 100px band), so 0
+    // is the reachable landing. The state is the assertion that bites: an unclamped marker
+    // leaves the event at 0 unexplained, the listener reads a 2800px scroll UP, and the
+    // reader is parked for the rest of the turn.
+    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      scrollTop: 0,
+      state: "following",
+    });
+  });
+
   it("pins the anchor's own bottom, not its offset inside its row", async () => {
     block(1500);
     const streaming = bubbleIn(msgRow(), 200);
