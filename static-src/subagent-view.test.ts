@@ -156,3 +156,58 @@ describe("a delegate's prose while the transcript holds no sink", () => {
     });
   });
 });
+
+// A switch drops the previous delegate's page. It has to drop that page's RENDER with
+// it, or the render outlives its DOM with its text sinks intact and the repaint gate
+// keeps answering "still mounted" for blocks nobody can see — one full transcript pass
+// per delta, which is the exact cost the gate exists to remove.
+describe("switching delegates releases the page's render", () => {
+  it("stops answering the repaint gate for the delegate the reader left", async () => {
+    const chat = "c-switch";
+    const msgID = "m-switch";
+    store.setSessions([
+      session(chat, [
+        {
+          id: msgID,
+          role: "assistant",
+          ts: 1,
+          content: "",
+          blocks: [
+            { type: "text", text: "parent prose" },
+            { type: "text", text: "first delegate", agent_subtask_id: "sw-A" },
+            { type: "text", text: "second delegate", agent_subtask_id: "sw-B" },
+          ],
+        } as Message,
+      ]),
+    ]);
+    const host = document.getElementById("subagent-body") as HTMLElement;
+
+    showSubagent(chat, "sw-A");
+    await vi.waitFor(() => {
+      expect(host.textContent).toContain("first delegate");
+    });
+
+    // The SWITCH is the property. One delegate cannot express it: the release only asks
+    // for the wrong pair where the page's own key and the visible subtask disagree,
+    // which is true for exactly one paint after a switch.
+    showSubagent(chat, "sw-B");
+    await vi.waitFor(() => {
+      expect(host.textContent).toContain("second delegate");
+    });
+    expect(host.textContent).not.toContain("first delegate");
+
+    // Two premises, or the assertion below passes for someone else's reason. No
+    // transcript view exists here, so nothing files a sink under the store's own message
+    // id; and A's block has no per-block signal, so the gate is the only thing left that
+    // can schedule a pass for it.
+    expect(mountedWindow(msgID)).toBeUndefined();
+    expect(blockTextSigs.get(blockKey(msgID, 1))).toBeUndefined();
+
+    const version = store.messagesVersionOf(chat);
+    const before = version.peek();
+    store.appendChunk(chat, msgID, " more from A", false, 1, "sw-A");
+    await Promise.resolve();
+
+    expect(version.peek()).toBe(before);
+  });
+});

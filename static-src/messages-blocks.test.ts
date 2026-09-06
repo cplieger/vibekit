@@ -2636,6 +2636,39 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
     expect(wrap.querySelectorAll(".run-card")).toHaveLength(1);
   });
 
+  it("seats a container BELOW the launch above the card, not after it", () => {
+    // The LAUNCH ordinal answers `seatAbove` with the run card, which it began doing when
+    // the launch block started stamping. The answer differs in one shape: a container whose
+    // establishing block sits BELOW the launch, built by a TAIL extension so no captured
+    // insertion boundary decides the position instead, and with nothing above the launch
+    // mounted. The walk used to find no element there and fall through to the tail, putting
+    // a box the store places FIRST after the card.
+    const wf = {
+      id: "l-seat",
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      workflow_id: "wf-seat2",
+    } as unknown as ToolCall;
+    const blocks = [
+      text("delegate prose", "sub-S"),
+      toolUse("l-seat"),
+      text("more prose", "sub-S"),
+    ];
+    const first = renderRange(blocks, [wf], { id: "m-seat", range: { from: 1, to: 2 } });
+    const order = (wrap: HTMLElement): string[] =>
+      [...(wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) =>
+        e.classList.contains("run-card")
+          ? "run"
+          : `card(${String((e as HTMLElement).dataset["subtask"])})`,
+      );
+    expect(order(first.wrap)).toEqual(["run"]);
+
+    updateAssistantBody(first.wrap, first.m, CHAT_ID, false, [], { from: 1, to: 3 });
+
+    expect(order(first.wrap)).toEqual(["card(sub-S)", "run"]);
+  });
+
   it("keeps a re-seated card ABOVE the ordinals inserted after it", () => {
     // The same insertion where the card IS the reference the extension captured, which
     // it is whenever the step block that built it opened the window. Re-seating it

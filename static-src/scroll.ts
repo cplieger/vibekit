@@ -938,15 +938,11 @@ class ScrollController {
     });
   }
 
-  /** Move the scroller and record where it will LAND, so the `scroll` event the
-   *  write produces is recognised as this controller's own.
-   *
-   *  The clamp is not tidiness: the marker has to be the position the browser
-   *  will actually reach, and both callers pass values the platform clamps for
-   *  them (`scrollHeight` is a whole viewport past the maximum, and an anchor
-   *  inside a collapsed disclosure measures a bottom that overflows the document
-   *  it no longer contributes height to). An unclamped marker never matches the
-   *  event, which is the same as having no marker at all. */
+  /** Move the scroller and record where it will LAND, so the write's own `scroll` event is
+   *  recognised as this controller's. The marker has to be the position the browser
+   *  reaches, and callers pass targets out of range in BOTH directions: `scrollHeight` is
+   *  a viewport past the maximum, and an anchor within one viewport of the top asks for a
+   *  negative scrollTop. An unclamped marker never matches, which parks the reader. */
   private scrollSelfTo(top: number, behavior: ScrollBehavior): void {
     const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
     const landing = Math.max(0, Math.min(top, max));
