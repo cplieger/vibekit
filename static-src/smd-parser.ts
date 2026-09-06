@@ -81,8 +81,9 @@
 //
 // PRODUCT DECISION: the table ships as a LAZILY IMPORTED CHUNK, so the supported
 // set is unchanged and the initial payload no longer carries it. Measured
-// 297,269 → 285,456 gzipped bytes, 11,813 off first paint (4.0%), the chunk itself
-// 11,639. Numeric references and the five XML predefined names decode INLINE
+// 297,269 → 285,456 gzipped bytes, ~11.8 KB off first paint (4.0%), the chunk
+// itself 11,639, and total JS DOWN, which is what says the table moved rather
+// than was copied. Numeric references and the five XML predefined names decode INLINE
 // (`smd-entity-refs.ts`) and never wait on it, which is what keeps the two security
 // rules above independent of the network. A chunk that never arrives leaves every
 // other named reference literal — this parser's own invalid-reference rule, and the
