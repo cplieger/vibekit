@@ -1,44 +1,9 @@
-// ---------------------------------------------------------------------------
-// Find in Chat (Ctrl-F / Cmd-F): an in-chat message search overlay.
-//
-// Scoped to the ACTIVE chat's rendered messages (`#messages`).
-//
-// THE DOM_MESSAGE_CAP CLAIM THIS COMMENT USED TO MAKE WAS FALSE. It said the
-// list is "DOM-capped at 50 nodes (see scroll.ts DOM_MESSAGE_CAP)"; no such
-// constant has ever existed and scroll.ts never trims the DOM. The 50 was a
-// message CAP on one page — pagination, not eviction, and not even the budget
-// that cuts a page (store-load.ts's is in bytes) — and the wrong provenance
-// propagated out of here into a design document before it was caught.
-//
-// The WALKER itself is find-engine.ts now, shared with the editor's find over a
-// diff pane or rendered markdown — the same problem, one implementation. What
-// stays here is the transcript's own half: the server pre-pass, the counter, the
-// streaming re-run, and the popup.
-//
-// The real blind spots are three, and they are why the enumeration moves
-// server-side rather than being patched in that walker: non-resident pages;
-// resident content whose `content-visibility: auto` makes checkVisibility report
-// false while rendering is skipped — the prose rows AND the four cards that hold
-// a transcript's mass (css/14-tools.css), so most of it; and hidden or collapsed
-// subtrees, which progressive collapse adds a third time.
-//
-// Native-find override policy (researched against 2024-2026 a11y/UX guidance):
-//   - Overriding Ctrl-F is only acceptable because we provide an EQUIVALENT
-//     in-page find: highlight, an aria-live "N of M" counter, next/prev
-//     stepping, and scroll-into-view. Like native find, it never restructures
-//     page content — it only wraps matches in <mark> and cleanly unwraps on
-//     close.
-//   - The override is NARROW: it only fires when the chat view is the active
-//     context. Over the editor, shell, settings, git, or files views the
-//     browser's native find is left untouched.
-//   - Escape hatch: a SECOND Ctrl-F while our find field already has focus
-//     falls through to the browser's native find (no preventDefault).
-//   - No focus trap: Tab moves through the widget and back out to the page.
-//     Escape closes and restores focus to wherever it was before opening.
-//
-// The keydown listener arrives through find-dispatch.ts from app.ts (the composition
-// root). Nothing below that imports this module, so its own imports cannot cycle.
-// ---------------------------------------------------------------------------
+// Find in Chat (Ctrl-F) over the ACTIVE chat: the server pre-pass, the counter, the streaming
+// re-run and the popup. The walker is find-engine.ts; find-dispatch.ts owns which tab the chord
+// reaches. Enumeration is SERVER-side because the DOM cannot answer it: non-resident pages,
+// collapsed subtrees, and the rows and cards whose `content-visibility: auto` makes
+// checkVisibility report false. Overriding the chord stays defensible only while this keeps its
+// half — <mark>, an aria-live count, next/prev, no focus trap.
 
 import { el } from "@cplieger/reactive";
 import { createPopup } from "@cplieger/ui-primitives/popup";
@@ -350,7 +315,7 @@ function teardown(): void {
   });
   serverHits = [];
   hitCursor = -1;
-  resetServerSearch(getActiveId());
+  resetServerSearch();
   updateCounter("");
 }
 
@@ -646,15 +611,10 @@ function messageRowEl(messageID: string): HTMLElement | null {
   );
 }
 
-/** The rendered container of the hit's SEGMENT, from the renderer's own per-block
- *  map, for every segment kind. NOT scoped to the hit's row: a run card holds every
- *  later message's steps, so a mounted card can sit in an EARLIER message's row.
- *
- *  Every block kind that mounts an element stamps it, so null means nothing is mounted
- *  for this hit — no block index, a block the store no longer has, an ordinal outside the
- *  mounted window, an element that has left the document, or a block whose own arm
- *  renders nothing (an unknown tool call, a suppressed internal one). The caller falls
- *  back to the row. */
+/** The rendered container of the hit's SEGMENT, from the renderer's own per-block map, for every
+ *  segment kind. NOT scoped to the hit's row: a run card holds every later message's steps, so a
+ *  mounted card can sit in an EARLIER message's row. Every kind that mounts an element stamps it,
+ *  so null means nothing is mounted and the caller falls back to the row. */
 function resolveSegmentEl(hit: SearchHit): HTMLElement | null {
   const bi = hit.block_index;
   if (bi === undefined) {

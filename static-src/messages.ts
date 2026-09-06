@@ -889,11 +889,10 @@ let demandPin: { chatID: string; turnID: string; at: number; until: number } | u
  *  needs a clock, while the reveal's end is an event `chat-search.ts` fires. */
 let demandWalk: { chatID: string; turnIDs: Set<string> } | undefined;
 
-/** The ordinals somebody explicitly ASKED for inside `t`: the pin while its chat
- *  matches and `Date.now() <= until`, else the walk while its set holds `t.id`.
- *  One overscan each side of the position asked for, which is the floor the window
- *  guarantees around its own anchor, so arrival is a handover; it grows no window
- *  and moves no anchor. The PIN outranks the WALK, which asked for no ordinal. */
+/** The ordinals somebody explicitly ASKED for inside `t`: the pin while its chat matches and
+ *  `Date.now() <= until`, else the walk while its set holds `t.id`. One overscan each side of the
+ *  position asked for — the floor the window guarantees around its own anchor, so arrival is a
+ *  handover. The PIN outranks the WALK, which asked for no ordinal. */
 function demandRange(chatID: string, t: Turn): TurnRange | undefined {
   const span = turnCost(t).blocks;
   const pin = demandPin;
@@ -922,20 +921,17 @@ const turnByID = new Map<string, Turn>();
  *  that vanished is caught by the builder's own "card gone" guards. */
 let lastTurns: readonly Turn[] = [];
 
-// The anchor ladder. COORDINATES: every level compares `el.offsetTop` against
-// `scrollTop`, valid only because `#messages-wrap` is `position: absolute`
-// (css/13-messages.css) and nothing below it is positioned — adding
-// `position: relative` to a card type breaks this silently. PICK: the last entry at
-// or above the viewport top, or the first; descend only while the entry's own box
-// still holds that top, over children laid out inside it. That containment test is
-// also what answers a collapsed disclosure, laid out normally and clipped.
+// The anchor ladder. COORDINATES: every level compares `el.offsetTop` against `scrollTop`,
+// valid only because `#messages-wrap` is `position: absolute` (css/13-messages.css) and nothing
+// below it is positioned — adding `position: relative` to a card type breaks this silently.
+// PICK: the last entry at or above the viewport top, or the first; descend only while the
+// entry's own box still holds that top. That containment test is also what answers a collapsed
+// disclosure, laid out normally and clipped.
 
-/** Where the reader is, or `undefined` for the live edge.
- *
- *  Membership is the STORE predicate, never the card's `data-folded`: that is the
- *  last APPLIED plan, so through a deferral a turn that left `openable` is still
- *  bodied on screen, and seeding there hands back an ordinal `planResidency` cannot
- *  place — the absent-turn fallback then unmounts the body under the reader. */
+/** Where the reader is, or `undefined` for the live edge. Membership is the STORE predicate,
+ *  never the card's `data-folded`: that is the last APPLIED plan, so through a deferral a turn
+ *  that left `openable` is still bodied on screen, and seeding there hands back an ordinal
+ *  `planResidency` cannot place — the absent-turn fallback then unmounts it under the reader. */
 function residencyAnchor(openable: readonly Turn[]): ResidencyAnchor | undefined {
   // PRECEDENCE 1, outranking every DOM read: Following MEANS pinned to the live
   // edge, which is what `undefined` says. Measuring instead reads a body that is
@@ -1550,11 +1546,11 @@ type BodyRow =
 const SPACER_HEAD_KEY = "__space_head__";
 const SPACER_TAIL_KEY = "__space_tail__";
 
-/** The rows a body may hold over `range`: the ONE function that turns a range into
- *  a row list, and where the spacers are born. A spacer standing in for at least one
- *  ordinal is floored at 1px, so ordinals behind it are never priced out of the
- *  document — reachable on an all-`padBlocks` turn, whose estimates are all zero;
- *  one standing in for NO ordinal is not emitted, so a covered turn is unchanged. */
+/** The rows a body may hold over `range`: the ONE function that turns a range into a row list,
+ *  and where the spacers are born. A spacer standing in for at least one ordinal is floored at
+ *  1px, so ordinals behind it are never priced out of the document — reachable on an
+ *  all-`padBlocks` turn, whose estimates are all zero. One standing in for NO ordinal is not
+ *  emitted. */
 function bodyRows(t: Turn, range: TurnRange): BodyRow[] {
   const rows: BodyRow[] = [];
   const span = turnCost(t).blocks;
@@ -1574,12 +1570,10 @@ function bodyRows(t: Turn, range: TurnRange): BodyRow[] {
   return rows;
 }
 
-/** What one spacer is worth, floored at 1px.
- *
- *  Read when a change is COLLECTED, deliberately: pricing the same batch's own drops
- *  from the measurements that batch takes moved the reader 19x further on the
- *  700-block fixture (−47px of drift became −909px), because the compensation's error
- *  over the tail extension no longer cancels. The estimate reads HIGH, which is the
+/** What one spacer is worth, floored at 1px. Read when a change is COLLECTED, deliberately:
+ *  pricing the same batch's own drops from the measurements that batch takes moved the reader
+ *  19x further on the 700-block fixture (−47px of drift became −909px), because the
+ *  compensation's error over the tail extension no longer cancels. The estimate reads HIGH, the
  *  safe direction, and the next window move re-prices it. */
 function spacerPx(t: Turn, range: TurnRange, side: "head" | "tail"): number {
   return Math.max(1, spacerHeight(t, range, side));
@@ -1723,13 +1717,11 @@ interface FoldChange {
   readonly fn: () => void;
 }
 
-/** Apply the plan to every card: fold, unfold, and the ordinals each body holds.
- *
- *  DEFERRED WHILE READING and COMPENSATED, both mandatory — content vanishing from
- *  above the reader is the failure this guards. `immediate` is the WINDOW pass, which
- *  skips the deferral only: a scrolling reader is Reading by definition. Every HEAD
- *  change runs before every TAIL one, so ONE compensation wraps them; the tail runs
- *  BARE, because compensating a delta below the reader drags their view. */
+/** Apply the plan to every card: fold, unfold, and the ordinals each body holds. DEFERRED
+ *  WHILE READING and COMPENSATED, both mandatory — content vanishing from above the reader is
+ *  the failure this guards. `immediate` is the WINDOW pass, which skips the deferral only: a
+ *  scrolling reader is Reading by definition. Every HEAD change runs before every TAIL one, so
+ *  ONE compensation wraps them; the tail runs BARE, or it drags the reader's view. */
 function applyFoldPass(
   turns: readonly Turn[],
   cards: readonly HTMLElement[],
@@ -2605,7 +2597,14 @@ export function endWalkReveal(chatID: string): void {
 
 function startDemandBuild(chatID: string, turnID: string): Promise<void> {
   const t = turnByID.get(turnID);
-  const want = t === undefined ? WHOLE_TURN : (demandRange(chatID, t) ?? WHOLE_TURN);
+  // BOUNDED even where the last pass has no projection for this turn: `buildTurnBodyBatches`
+  // re-projects per batch, so a whole-turn grant written here can find the turn by its first
+  // slice and mount all 700 blocks of it. The head range is the walk's own grant, and the
+  // asker's range replaces it on the next pass.
+  const want = (t === undefined ? undefined : demandRange(chatID, t)) ?? {
+    from: 0,
+    to: 2 * OVERSCAN_BLOCKS,
+  };
   // Written EARLY, not owned: the builder slices against `wantedWindow` per slice,
   // so a build starting inside this call would resolve with the requested row
   // unmounted. The next pass recomputes it from the asker this caller recorded.
