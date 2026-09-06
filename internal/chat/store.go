@@ -60,12 +60,6 @@ const (
 	chatFileSuffix = ".json"
 )
 
-// maxChatFileBytes caps the size of a single chat file loaded by `load`.
-// Well above any realistic chat (hundreds of KB even with dense history)
-// and well below typical container memory limits, so a corrupted or
-// runaway file can't OOM the process via List() walking every chat.
-const maxChatFileBytes = 32 * 1024 * 1024 // 32 MiB
-
 // Store owns the chat directory. Each chat has its own mutex so different
 // chats never block each other; same-chat mutations serialize.
 //
@@ -84,6 +78,7 @@ type Store struct {
 	archive     *archive.Service
 	locks       sync.Map
 	dir         string
+	fileCap     chatFileCap
 	archiveOnce sync.Once
 	tombMu      sync.Mutex
 }
@@ -130,8 +125,11 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 	slog.Info("chat store: opened", "dir", dir, "mode", mode)
 	s := &Store{
 		dir:       dir,
+		fileCap:   resolveChatFileCap(),
 		tombstone: make(map[vibekit.ChatID]time.Time),
 	}
+	// Options land AFTER the derivation so WithChatFileCap overrides it, and the
+	// derivation's own log line still records what the container asked for.
 	for _, opt := range opts {
 		opt(s)
 	}

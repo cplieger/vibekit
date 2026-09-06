@@ -108,8 +108,16 @@ func TestTranscript_BigOutputIsWindowedFromBothEnds(t *testing.T) {
 	if !got.HasFull {
 		t.Fatal("has_full = false, want true for a windowed output")
 	}
-	if got.OutputBytes != len(full) {
-		t.Errorf("output_bytes = %d, want %d (the FULL output's length)", got.OutputBytes, len(full))
+	// output_bytes is what the REVEAL will fetch, which is the persisted length,
+	// because the store bounded this output before the preview ever saw it. The
+	// original is on Truncated, and only there.
+	if got.Truncated == nil || got.Truncated.OutputBytes != len(full) {
+		t.Errorf("truncated = %+v, want OutputBytes = %d (the length before the store cut it)",
+			got.Truncated, len(full))
+	}
+	if got.OutputBytes >= len(full) || got.OutputBytes <= len(got.Output) {
+		t.Errorf("output_bytes = %d, want the persisted length: above the previewed %d and below the original %d",
+			got.OutputBytes, len(got.Output), len(full))
 	}
 	if len(got.Output) >= len(full) {
 		t.Errorf("output is %d bytes, want fewer than the full %d", len(got.Output), len(full))
@@ -134,9 +142,9 @@ func TestTranscript_OneEnormousLineIsStillBounded(t *testing.T) {
 	if !got.HasFull {
 		t.Fatal("has_full = false, want true")
 	}
-	if len(got.Output) > toolPreviewBytes+1 {
+	if len(got.Output) > previewBudget.outputBytes+1 {
 		t.Errorf("output is %d bytes, want at most %d — a single line walked through the budget",
-			len(got.Output), toolPreviewBytes+1)
+			len(got.Output), previewBudget.outputBytes+1)
 	}
 }
 
@@ -159,16 +167,23 @@ func TestTranscript_PreviewedOutputCarriesNoSpans(t *testing.T) {
 // truncated: it is a before/after pair the client runs its own line diff over,
 // so half a pair renders hunks describing an edit nobody made.
 func TestTranscript_OversizeDiffIsDroppedWholesale(t *testing.T) {
+	// Sized between the two budgets, so the STORE keeps both diffs and the
+	// PREVIEW is the layer that drops one. The store's own drop is
+	// TestStoreBound_OversizeDiffIsDroppedNotTruncated.
+	half := previewBudget.diffBytes
 	got := windowedCall(t, []vibekit.Message{callMessage(vibekit.ToolCall{
 		ID: "tc1", Title: "Edit", Kind: vibekit.ToolKindEdit,
 		Status: vibekit.ToolCompleted,
 		Diffs: []vibekit.ToolDiff{
 			{Path: "small.go", OldText: "a", NewText: "b"},
-			{Path: "huge.go", OldText: strings.Repeat("o", 40_000), NewText: strings.Repeat("n", 40_000)},
+			{Path: "big.go", OldText: strings.Repeat("o", half), NewText: strings.Repeat("n", half)},
 		},
 	})})
 	if !got.HasFull {
 		t.Fatal("has_full = false, want true")
+	}
+	if got.Truncated != nil {
+		t.Errorf("truncated = %+v, want nil: the store kept both diffs", got.Truncated)
 	}
 	if got.DiffCount != 2 {
 		t.Errorf("diff_count = %d, want 2 (the FULL count)", got.DiffCount)
@@ -194,8 +209,10 @@ func TestTranscript_InputKeepsItsSmallMembers(t *testing.T) {
 		ID: "tc1", Title: "Write", Kind: vibekit.ToolKindWrite,
 		Status: vibekit.ToolCompleted, Input: in,
 	})})
-	if !got.HasFull {
-		t.Fatal("has_full = false, want true")
+	// Over BOTH budgets, so the store dropped `text` first and the preview found
+	// nothing left to cut. Either layer keeps the claim line, which is the point.
+	if got.Truncated == nil || got.Truncated.InputBytes != len(in) {
+		t.Errorf("truncated = %+v, want InputBytes = %d", got.Truncated, len(in))
 	}
 	var kept map[string]any
 	if err := json.Unmarshal(got.Input, &kept); err != nil {
@@ -232,9 +249,9 @@ func TestTranscript_AWideInputIsBoundedInAggregate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup: marshal input: %v", err)
 	}
-	if len(in) <= toolPreviewInputTotalBytes {
+	if len(in) <= previewBudget.inputTotal {
 		t.Fatalf("Setup: fixture is %d bytes, needs to exceed the %d-byte object budget "+
-			"or this test asserts nothing", len(in), toolPreviewInputTotalBytes)
+			"or this test asserts nothing", len(in), previewBudget.inputTotal)
 	}
 
 	got := windowedCall(t, []vibekit.Message{callMessage(vibekit.ToolCall{
@@ -248,10 +265,10 @@ func TestTranscript_AWideInputIsBoundedInAggregate(t *testing.T) {
 	// The budget is a BOUND on the marshalled bytes, not a target near them. It used
 	// to be asserted at 2x, which a sum-of-contents accounting satisfied while the
 	// object json.Marshal produced ran over by every quote, colon and comma.
-	if len(got.Input) > toolPreviewInputTotalBytes {
+	if len(got.Input) > previewBudget.inputTotal {
 		t.Errorf("preview input marshals to %d bytes, over the %d-byte budget by %d: the "+
 			"aggregate cut charged the members' contents and not the JSON around them",
-			len(got.Input), toolPreviewInputTotalBytes, len(got.Input)-toolPreviewInputTotalBytes)
+			len(got.Input), previewBudget.inputTotal, len(got.Input)-previewBudget.inputTotal)
 	}
 	var kept map[string]any
 	if err := json.Unmarshal(got.Input, &kept); err != nil {
@@ -295,11 +312,11 @@ func TestTranscript_TheAggregateBudgetChargesJSONsOwnSyntax(t *testing.T) {
 	if !got.HasFull {
 		t.Fatal("has_full = false for an input the transcript did not carry whole")
 	}
-	if len(got.Input) > toolPreviewInputTotalBytes {
+	if len(got.Input) > previewBudget.inputTotal {
 		t.Errorf("preview input marshals to %d bytes, over the %d-byte budget by %d: the "+
 			"aggregate cut charged the members' contents and not the quotes, colons and "+
-			"commas around them", len(got.Input), toolPreviewInputTotalBytes,
-			len(got.Input)-toolPreviewInputTotalBytes)
+			"commas around them", len(got.Input), previewBudget.inputTotal,
+			len(got.Input)-previewBudget.inputTotal)
 	}
 	// And it is not bounded by dropping everything: the budget still has to fit a
 	// claim line's worth of members, or "bounded" would be satisfied by "empty".
@@ -310,7 +327,7 @@ func TestTranscript_TheAggregateBudgetChargesJSONsOwnSyntax(t *testing.T) {
 	if len(kept) < 100 {
 		t.Errorf("kept %d of %d members in a %d-byte budget, want most of what fits: the "+
 			"charge per member is too high, not too low", len(kept), members,
-			toolPreviewInputTotalBytes)
+			previewBudget.inputTotal)
 	}
 }
 
@@ -328,7 +345,7 @@ func TestTranscript_TheAggregateCutIsTheSameEveryTime(t *testing.T) {
 	first := ""
 	for range 8 {
 		kept := maps.Clone(members)
-		if !trimInputToTotal(kept, 40*3_010) {
+		if !trimInputToTotal(kept, 40*3_010, previewBudget) {
 			t.Fatal("Setup: the fixture did not exceed the object budget")
 		}
 		names := slices.Sorted(maps.Keys(kept))
@@ -345,7 +362,9 @@ func TestTranscript_TheAggregateCutIsTheSameEveryTime(t *testing.T) {
 
 // TestToolBulk_ServesTheWholeCall is the other half of the ladder.
 func TestToolBulk_ServesTheWholeCall(t *testing.T) {
-	full := strings.Repeat("q", 30_000)
+	// Between the two budgets: the store keeps this whole, the preview cuts it,
+	// so the ladder's second rung has something to serve.
+	full := strings.Repeat("q", previewBudget.outputBytes+1_000)
 	in := json.RawMessage(`{"command":"build"}`)
 	s := storeWith(t, []vibekit.Message{callMessage(vibekit.ToolCall{
 		ID: "tc1", Title: "Execute", Kind: vibekit.ToolKindExecute,
@@ -458,24 +477,24 @@ func TestPreviewInput_TheAggregateBudgetChargesWhatEscapingCosts(t *testing.T) {
 	// json.Marshal escaped the fixture on the way in, so hand the function the
 	// unescaped spelling a writer other than encoding/json would produce.
 	unescaped := unescapeUnicode(t, raw)
-	if len(unescaped) <= toolPreviewInputBytes {
+	if len(unescaped) <= previewBudget.inputMember {
 		t.Fatalf("Setup: fixture is %d bytes, needs to exceed %d or previewInput returns "+
-			"early and this test asserts nothing", len(unescaped), toolPreviewInputBytes)
+			"early and this test asserts nothing", len(unescaped), previewBudget.inputMember)
 	}
-	if len(unescaped) > toolPreviewInputTotalBytes {
+	if len(unescaped) > previewBudget.inputTotal {
 		t.Fatalf("Setup: fixture is %d raw bytes, over the %d-byte object budget already, "+
-			"so a raw accounting would trim it too", len(unescaped), toolPreviewInputTotalBytes)
+			"so a raw accounting would trim it too", len(unescaped), previewBudget.inputTotal)
 	}
 
-	got, cut := previewInput(unescaped)
+	got, cut := boundInput(unescaped, previewBudget)
 	if !cut {
 		t.Fatal("cut = false for an input that marshals to over twice the object budget")
 	}
-	if len(got) > toolPreviewInputTotalBytes {
+	if len(got) > previewBudget.inputTotal {
 		t.Errorf("preview input marshals to %d bytes, over the %d-byte budget by %d: the "+
 			"aggregate cut charged the values' raw bytes and not the escapes encoding/json "+
-			"writes for them", len(got), toolPreviewInputTotalBytes,
-			len(got)-toolPreviewInputTotalBytes)
+			"writes for them", len(got), previewBudget.inputTotal,
+			len(got)-previewBudget.inputTotal)
 	}
 	var kept map[string]any
 	if err := json.Unmarshal(got, &kept); err != nil {
@@ -505,12 +524,12 @@ func TestPreviewInput_TheMemberCapChargesWhatEscapingCosts(t *testing.T) {
 		t.Fatalf("Setup: marshal input: %v", err)
 	}
 	unescaped := unescapeUnicode(t, raw)
-	if len(unescaped) <= toolPreviewInputBytes {
+	if len(unescaped) <= previewBudget.inputMember {
 		t.Fatalf("Setup: fixture is %d bytes, needs to exceed %d or previewInput returns "+
-			"early", len(unescaped), toolPreviewInputBytes)
+			"early", len(unescaped), previewBudget.inputMember)
 	}
 
-	got, cut := previewInput(unescaped)
+	got, cut := boundInput(unescaped, previewBudget)
 	if !cut {
 		t.Fatal("cut = false for an object holding a member that marshals to 6 KiB")
 	}
@@ -521,7 +540,7 @@ func TestPreviewInput_TheMemberCapChargesWhatEscapingCosts(t *testing.T) {
 	if _, ok := kept["escaped"]; ok {
 		t.Errorf("the `escaped` member survived: it is 1,002 raw bytes and 6,002 "+
 			"marshalled, so the cap measured the wrong one and one member alone can "+
-			"marshal to %d bytes", 6*toolPreviewInputBytes)
+			"marshal to %d bytes", 6*previewBudget.inputMember)
 	}
 	if kept["plain"] != strings.Repeat("x", 3_100) {
 		t.Error("the `plain` member was dropped: it is LARGER raw than the escaped one " +
@@ -546,26 +565,26 @@ func TestPreviewInput_TheEarlyOutGateChargesWhatEscapingCosts(t *testing.T) {
 	// budgets, and 4,010 bytes raw — inside the 4,096-byte per-member cap, so the
 	// gate is what decides whether anything is measured at all.
 	unescaped := json.RawMessage(`{"text":"` + strings.Repeat("<", 4_000) + `"}`)
-	if len(unescaped) > toolPreviewInputBytes {
+	if len(unescaped) > previewBudget.inputMember {
 		t.Fatalf("Setup: fixture is %d raw bytes, over the %d-byte cap already, so the "+
 			"raw gate would have cut it and this test asserts nothing",
-			len(unescaped), toolPreviewInputBytes)
+			len(unescaped), previewBudget.inputMember)
 	}
 	wire := inputWireBytes(unescaped)
-	if len(wire) <= toolPreviewInputTotalBytes {
+	if len(wire) <= previewBudget.inputTotal {
 		t.Fatalf("Setup: fixture marshals to %d bytes, inside the %d-byte object budget, "+
-			"so nothing is over budget", len(wire), toolPreviewInputTotalBytes)
+			"so nothing is over budget", len(wire), previewBudget.inputTotal)
 	}
 
-	got, cut := previewInput(unescaped)
+	got, cut := boundInput(unescaped, previewBudget)
 	if !cut {
 		t.Fatalf("cut = false for an input that marshals to %d bytes: the gate measured "+
 			"the %d raw bytes and returned before either budget ran",
 			len(wire), len(unescaped))
 	}
-	if len(got) > toolPreviewInputTotalBytes {
+	if len(got) > previewBudget.inputTotal {
 		t.Errorf("preview input marshals to %d bytes, over the %d-byte budget",
-			len(got), toolPreviewInputTotalBytes)
+			len(got), previewBudget.inputTotal)
 	}
 }
 
@@ -583,12 +602,12 @@ func TestPreviewInput_AnAlreadyEscapedInputWithinBudgetIsUntouched(t *testing.T)
 	if err != nil {
 		t.Fatalf("Setup: marshal: %v", err)
 	}
-	if len(wire) > toolPreviewInputBytes {
+	if len(wire) > previewBudget.inputMember {
 		t.Fatalf("Setup: fixture is %d wire bytes, over the %d-byte gate, so it cannot "+
-			"exercise the pass-through", len(wire), toolPreviewInputBytes)
+			"exercise the pass-through", len(wire), previewBudget.inputMember)
 	}
 
-	if got, cut := previewInput(wire); cut || got != nil {
+	if got, cut := boundInput(wire, previewBudget); cut || got != nil {
 		t.Errorf("previewInput cut an input of %d wire bytes (got %q): a value already in "+
 			"its wire form is idempotent under the conversion", len(wire), got)
 	}
@@ -627,7 +646,7 @@ func TestPreviewMessage_LeavesASmallMessageAlone(t *testing.T) {
 func TestPreviewOutput_CutsOnARuneBoundary(t *testing.T) {
 	// One long line of 3-byte runes, so every candidate byte cut lands mid-rune.
 	full := strings.Repeat("\u4e16", 20_000)
-	got, cut := previewOutput(full)
+	got, cut := boundOutput(full, previewBudget)
 	if !cut {
 		t.Fatal("cut = false, want true")
 	}

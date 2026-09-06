@@ -80,7 +80,7 @@ func (s *Store) SearchAll(ctx context.Context, query string) SearchAllResult {
 
 	found := make([]Match, len(entries))
 	scanned := parallel.Bounded(ctx, entries, searchWorkers, func(idx int, ce chatEntry) {
-		found[idx] = searchOneChat(ce, query)
+		found[idx] = searchOneChat(ce, query, s.fileCap)
 	})
 
 	matches := make([]Match, 0, 16)
@@ -114,8 +114,13 @@ func (s *Store) SearchAll(ctx context.Context, query string) SearchAllResult {
 
 // searchOneChat scans one chat file, returning a zero Match when it does not
 // match or cannot be read.
-func searchOneChat(ce chatEntry, query string) Match {
-	c, err := readChatFile(ce.path, "chat "+ce.id)
+//
+// This is the one full-chat read that is NOT serialised behind a per-chat lock:
+// searchWorkers of them run at once, so an unlimited cap bounds this fan-out by
+// nothing but the chats on disk. Streaming it needs the message CONTENT, which
+// is a different projection from the header's.
+func searchOneChat(ce chatEntry, query string, fileCap chatFileCap) Match {
+	c, err := readChatFile(ce.path, "chat "+ce.id, fileCap)
 	if err != nil {
 		// A concurrent delete is normal; anything else means a chat that
 		// exists was not searched.

@@ -146,7 +146,7 @@ func TestReadCappedFile_RefusesASymlink(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlinks unsupported here: %v", err)
 	}
-	if _, err := readCappedFile(link, "chat link"); err == nil {
+	if _, err := readCappedFile(link, "chat link", 0); err == nil {
 		t.Error("readCappedFile followed a symlink at a chat file name")
 	}
 }
