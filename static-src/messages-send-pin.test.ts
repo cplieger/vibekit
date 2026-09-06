@@ -235,13 +235,8 @@ async function park(top: number): Promise<void> {
   wrap.scrollTop = top;
   await until(
     () => {
-      // RE-ASSERT until it sticks. `quiet()` cannot prove no pin frame is queued:
-      // the pin pass re-writes the SAME position every rAF for PIN_SETTLE_MS, so
-      // positional stability reads identically to nothing writing at all. A frame
-      // queued before this write lands after it and takes the scroller back to the
-      // live edge, and with a one-shot write nothing ever puts it back — which is
-      // this wait expiring under load. A reader holding a drag writes every frame
-      // too, so re-asserting is the honest shape rather than a workaround.
+      // Re-assert until it sticks: the pin re-writes the SAME position every rAF,
+      // so `quiet()`'s positional stability cannot prove no frame is still queued.
       if (wrap.scrollTop !== top) {
         wrap.scrollTop = top;
         return false;
@@ -326,11 +321,11 @@ describe("the live-edge pin a turn mount asks for", () => {
     const seen = vi.fn();
     const off = scroll.onReaderGesture(seen);
     store.appendMessage(chat, user("u4"));
-    // The card first, then the landing: `scrollToBottom` runs inside `buildTurn`,
-    // BEFORE reconcile has inserted the card, so the pin's own re-assert frames are
-    // what carry the scroller to the height the new card added.
     await until(() => cardFor("u4") !== null, "the sent turn's card to mount");
-    await until(atLiveEdge, "the pin to settle at the live edge");
+    // Settle before unsubscribing so a second publish is caught. Not a live-edge
+    // wait: `pinToLiveEdge` also sets Following, so `autoScrollIfAnchored` reaches
+    // the bottom without the pin and that wait cannot fail.
+    await quiet();
     off();
 
     expect(seen).toHaveBeenCalledTimes(1);
