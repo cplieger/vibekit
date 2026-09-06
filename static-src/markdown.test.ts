@@ -39,7 +39,28 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
     "java&#115cript:alert(1)",
     "java\tscript:alert(1)",
     "&NewLine;javascript:alert(1)",
+    "&#1;javascript:alert(1)",
+    "&#x01;javascript:alert(1)",
+    "&#31;javascript:alert(1)",
+    "&#32;&#1;&#32;javascript:alert(1)",
   );
+
+  /** An attribute value as the browser's URL parser will read it: the parser's own
+   *  first two steps are to remove every leading and trailing C0 control or space
+   *  and then every tab and newline. Normalizing the way `isSafeUrl` does instead
+   *  makes any gap between the gate and the browser invisible by construction,
+   *  which is what let a decoded `&#1;` lead ship once already. */
+  const asBrowserReads = (attrValue: string): string =>
+    attrValue
+      .replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, "") // eslint-disable-line no-control-regex
+      .replace(/[\t\n\r]/g, "")
+      .toLowerCase();
+
+  /** Every `href`/`src` the render emitted, unwrapped. */
+  const attrValues = (html: string): string[] =>
+    (html.match(/(?:href|src)="([^"]*)"/g) ?? []).map((attr) =>
+      attr.replace(/^(?:href|src)="/, "").replace(/"$/, ""),
+    );
 
   it("never produces javascript: URIs in href/src attributes", () => {
     // Generate markdown with links that attempt javascript: injection.
@@ -50,13 +71,12 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
     fc.assert(
       fc.property(mdWithLink, (input) => {
         const html = renderMarkdown(input);
-        const attrMatches = html.match(/(?:href|src)="([^"]*)"/g) ?? [];
-        for (const attr of attrMatches) {
-          const val = attr.replace(/^(?:href|src)="/, "").replace(/"$/, "");
+        const values = attrValues(html);
+        for (const val of values) {
           // The renderer replaces blocked schemes with "#"
-          expect(val).not.toMatch(/^javascript:/i);
+          expect(asBrowserReads(val)).not.toMatch(/^javascript:/);
         }
-        expect(attrMatches.length).toBeGreaterThan(0);
+        expect(values.length).toBeGreaterThan(0);
       }),
       { numRuns: 200 },
     );
@@ -84,17 +104,14 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
     fc.assert(
       fc.property(mdWithAutolink, (input) => {
         const html = renderMarkdown(input);
-        const attrMatches = html.match(/(?:href|src)="([^"]*)"/g) ?? [];
-        for (const attr of attrMatches) {
-          const val = attr.replace(/^(?:href|src)="/, "").replace(/"$/, "");
-          expect(val.toLowerCase().replace(/\s/g, "")).not.toMatch(
-            /^(?:javascript|data|vbscript|file):/,
-          );
+        const values = attrValues(html);
+        for (const val of values) {
+          expect(asBrowserReads(val)).not.toMatch(/^(?:javascript|data|vbscript|file):/);
         }
         // Every one of these IS a well-formed autolink, so an href must have been
         // emitted — without this the property would also hold if autolinks were
         // recognised nowhere at all.
-        expect(attrMatches.length).toBeGreaterThan(0);
+        expect(values.length).toBeGreaterThan(0);
         expect(html.toLowerCase()).not.toContain("<script");
         expect(html).not.toMatch(/<[^>]+\son\w+\s*=/i);
       }),
@@ -118,10 +135,13 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
   });
 
   it("never produces data: URIs in href/src attributes", () => {
-    // Generate markdown with images/links that attempt data: injection
+    // The label is restricted to text that cannot break the image syntax, so the
+    // emitted-src guard below is available here too: a random byte generating a
+    // stray `]` would satisfy the invariant by parsing no image at all.
+    const safeText = fc.stringMatching(/^[a-zA-Z0-9 ]{1,20}$/);
     const mdWithDataUri = fc
       .tuple(
-        fc.string({ minLength: 1, maxLength: 50 }),
+        safeText,
         fc.constantFrom(
           "data:text/html,<script>alert(1)</script>",
           "data:image/svg+xml,<svg onload=alert(1)>",
@@ -129,6 +149,8 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
           "data&#58;text/html,<script>alert(1)</script>",
           "&#100;ata:text/html,x",
           "&#x64;ata:image/svg+xml,<svg onload=alert(1)>",
+          "&#1;data:text/html,x",
+          "&#x1f;data:image/svg+xml,<svg onload=alert(1)>",
         ),
       )
       .map(([text, url]) => `![${text}](${url})`);
@@ -136,14 +158,11 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
     fc.assert(
       fc.property(mdWithDataUri, (input) => {
         const html = renderMarkdown(input);
-        const attrMatches = html.match(/(?:href|src)="([^"]*)"/g) ?? [];
-        for (const attr of attrMatches) {
-          const val = attr.replace(/^(?:href|src)="/, "").replace(/"$/, "");
-          expect(val.toLowerCase().replace(/\s/g, "")).not.toMatch(/^data:/);
+        const values = attrValues(html);
+        for (const val of values) {
+          expect(asBrowserReads(val)).not.toMatch(/^data:/);
         }
-        // We do not assert the image parsed successfully — fast-check can
-        // generate random bytes that break markdown syntax (stray ], etc.).
-        // The XSS invariant is: *if* an href/src is emitted, it must not be data:.
+        expect(values.length).toBeGreaterThan(0);
       }),
       { numRuns: 200 },
     );
@@ -157,19 +176,19 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
       "vbscript:Execute",
       "vbscript&#58;msgbox",
       "&#118;bscript:msgbox",
+      "&#1;vbscript:msgbox",
     );
     const mdWithVbscript = fc.tuple(safeText, vbUrl).map(([text, url]) => `[${text}](${url})`);
 
     fc.assert(
       fc.property(mdWithVbscript, (input) => {
         const html = renderMarkdown(input);
-        const attrMatches = html.match(/(?:href|src)="([^"]*)"/g) ?? [];
-        for (const attr of attrMatches) {
-          const val = attr.replace(/^(?:href|src)="/, "").replace(/"$/, "");
+        const values = attrValues(html);
+        for (const val of values) {
           // The renderer replaces blocked schemes with "#"
-          expect(val).not.toMatch(/^vbscript:/i);
+          expect(asBrowserReads(val)).not.toMatch(/^vbscript:/);
         }
-        expect(attrMatches.length).toBeGreaterThan(0);
+        expect(values.length).toBeGreaterThan(0);
       }),
       { numRuns: 200 },
     );
@@ -1450,6 +1469,29 @@ describe("renderMarkdown character references", () => {
     {
       name: "an encoded colon does not smuggle a data scheme",
       input: "![a](data&#58;text/html,x)",
+      expected: '<p><img alt="a" src="#"></p>',
+    },
+    // The URL parser removes every leading C0 control or space before it reads a
+    // scheme, so a decoded control in front of one is `javascript:` to the browser.
+    // Decoding is what makes that lead spellable in printable ASCII.
+    {
+      name: "a decoded control does not smuggle a javascript scheme",
+      input: "[a](&#1;javascript:alert(1))",
+      expected: `<p>${A} href="#">a</a></p>`,
+    },
+    {
+      name: "a hex-encoded control does not smuggle a javascript scheme",
+      input: "[a](&#x1f;javascript:alert(1))",
+      expected: `<p>${A} href="#">a</a></p>`,
+    },
+    {
+      name: "a decoded control between decoded spaces does not smuggle a javascript scheme",
+      input: "[a](&#32;&#1;&#32;javascript:alert(1))",
+      expected: `<p>${A} href="#">a</a></p>`,
+    },
+    {
+      name: "a decoded control does not smuggle a data scheme",
+      input: "![a](&#1;data:text/html,x)",
       expected: '<p><img alt="a" src="#"></p>',
     },
     {

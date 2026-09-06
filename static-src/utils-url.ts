@@ -5,13 +5,17 @@
 import { isViewableImage } from "./file-extensions.js";
 
 /** URL safety predicate: blocks javascript:, vbscript:, data:, file: schemes.
- *  Strips internal whitespace before checking to prevent bypass via embedded
- *  tabs/newlines (e.g. "java\tscript:alert(1)"). */
+ *
+ *  Strips every C0 control, then trims — at least what the WHATWG URL parser
+ *  strips before it reads a scheme (every LEADING C0 control or space, and every
+ *  tab and newline anywhere). Normalize less and `\x01javascript:` reaches the
+ *  browser as a live scheme. The control pass runs BEFORE the trim, or a control
+ *  between two spaces survives both. */
 export function isSafeUrl(url: string): boolean {
   const lower = url
-    .trim()
     // eslint-disable-next-line no-control-regex
-    .replace(/[\t\n\r\x00]/g, "")
+    .replace(/[\x00-\x1f]/g, "")
+    .trim()
     .toLowerCase();
   return !(
     lower.startsWith("javascript:") ||
