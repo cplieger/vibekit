@@ -71,6 +71,18 @@ import {
 } from "./smd-parser-types.js";
 import { NAMED_ENTITIES, MAX_ENTITY_NAME_LENGTH } from "./smd-entities.js";
 
+/** The five names XML predefines, held here rather than in the generated table.
+ *  `apos` is the one that needs it: HTML 4.01 does not define it, so the table
+ *  cannot carry it. The other four are the spellings escaping turns on, and
+ *  owning them here means no regeneration of that file can drop them. */
+const XML_ENTITIES: Readonly<Record<string, string>> = {
+  amp: "&",
+  apos: "'",
+  gt: ">",
+  lt: "<",
+  quot: '"',
+};
+
 /** Everything a delimiter row may contain. One character outside this set rules
  *  the line out, which is what bounds the held candidate to two lines. Must stay
  *  a superset of what `is_delimiter_row` accepts, or a row the test would take
@@ -126,7 +138,21 @@ function decode_entity(body: string): string | null {
     const dec = body.slice(1);
     return dec === "" ? null : scalar_or_replacement(parseInt(dec, 10));
   }
-  return NAMED_ENTITIES[body] ?? null;
+  return lookup_named(body);
+}
+
+/** The character `body` names, or null when nothing names it — which is the
+ *  stays-literal answer.
+ *
+ *  `body` is author text and both maps are object literals, so the own-member
+ *  test is what keeps this total: a bare index answers `&constructor;` with the
+ *  inherited `Object` constructor. Guarding the READ rather than each table means
+ *  a regenerated `smd-entities.ts` cannot reintroduce it. */
+function lookup_named(body: string): string | null {
+  if (Object.hasOwn(XML_ENTITIES, body)) {
+    return XML_ENTITIES[body] ?? null;
+  }
+  return Object.hasOwn(NAMED_ENTITIES, body) ? (NAMED_ENTITIES[body] ?? null) : null;
 }
 
 /** Every reference in a COMPLETE string, decoded. For a link destination and a

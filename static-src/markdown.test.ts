@@ -1387,13 +1387,8 @@ describe("renderMarkdown character references", () => {
     },
     {
       name: "the longest name in the table",
-      input: "&CounterClockwiseContourIntegral;",
-      expected: "<p>∳</p>",
-    },
-    {
-      name: "a name whose value is two code points",
-      input: "&NotEqualTilde;",
-      expected: "<p>≂̸</p>",
+      input: "&thetasym;",
+      expected: "<p>ϑ</p>",
     },
     { name: "a no-break space", input: "a&nbsp;b", expected: "<p>a&nbsp;b</p>" },
     { name: "a reference in a heading", input: "## &amp; head", expected: "<h2>&amp; head</h2>" },
@@ -1433,6 +1428,25 @@ describe("renderMarkdown character references", () => {
       name: "an unknown name",
       input: "&nosuchentity; text",
       expected: "<p>&amp;nosuchentity; text</p>",
+    },
+    // A name WHATWG defines and HTML 4.01 does not is invalid here, and
+    // CommonMark's own rule for an invalid reference is that it stays literal.
+    // These two are the membership boundary: both resolve in the 2,125-name
+    // table this parser deliberately does not ship.
+    {
+      name: "a WHATWG-only name",
+      input: "&NotNestedGreaterGreater; text",
+      expected: "<p>&amp;NotNestedGreaterGreater; text</p>",
+    },
+    {
+      name: "a short WHATWG-only name",
+      input: "&nvinfin; text",
+      expected: "<p>&amp;nvinfin; text</p>",
+    },
+    {
+      name: "a WHATWG-only name in a destination",
+      input: "[a](http://e.com/?a=&nvinfin;)",
+      expected: `<p>${A} href="http://e.com/?a=&amp;nvinfin;">a</a></p>`,
     },
     { name: "a name with no semicolon", input: "&amp x", expected: "<p>&amp;amp x</p>" },
     { name: "a bare ampersand", input: "a & b", expected: "<p>a &amp; b</p>" },
@@ -1508,6 +1522,54 @@ describe("renderMarkdown character references", () => {
 
   it.each(cases)("$name", ({ input, expected }) => {
     expect(renderMarkdown(input)).toBe(expected);
+  });
+
+  // Every named reference measured in use across this workspace's markdown:
+  // 839 files scanned, these nine names and nothing else. They are what the
+  // HTML 4.01 membership rule has to cover, so each one is pinned by name here
+  // rather than left to the table's own size.
+  const measured: { name: string; input: string; expected: string }[] = [
+    { name: "&mdash;", input: "a &mdash; b", expected: "<p>a — b</p>" },
+    { name: "&gt;", input: "7 &gt; 6", expected: "<p>7 &gt; 6</p>" },
+    { name: "&lt;", input: "5 &lt; 6", expected: "<p>5 &lt; 6</p>" },
+    { name: "&nbsp;", input: "a&nbsp;b", expected: "<p>a&nbsp;b</p>" },
+    { name: "&amp;", input: "a &amp; b", expected: "<p>a &amp; b</p>" },
+    { name: "&quot;", input: "say &quot;hi&quot;", expected: '<p>say "hi"</p>' },
+    { name: "&middot;", input: "a &middot; b", expected: "<p>a · b</p>" },
+    { name: "&copy;", input: "&copy; 2026", expected: "<p>© 2026</p>" },
+    { name: "&ndash;", input: "1&ndash;2", expected: "<p>1–2</p>" },
+  ];
+
+  it.each(measured)("decodes the measured name $name", ({ input, expected }) => {
+    expect(renderMarkdown(input)).toBe(expected);
+  });
+
+  // `&apos;` is the one name the table cannot carry: HTML 4.01 does not define
+  // it, so it is inline with the other four XML predefined names.
+  it("decodes &apos;, which HTML 4.01 does not define", () => {
+    expect(renderMarkdown("it&apos;s")).toBe("<p>it's</p>");
+  });
+
+  // Both maps are object literals, so a bare index would answer these with an
+  // inherited member and render this parser's own `Object` source. Every name
+  // here is alphanumeric, so the streaming hold and the destination path both
+  // accept it as a candidate.
+  const inherited = [
+    "constructor",
+    "toString",
+    "valueOf",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toLocaleString",
+  ];
+
+  it.each(inherited)("leaves &%s; literal, like any absent name", (name) => {
+    expect(renderMarkdown(`&${name};`)).toBe(`<p>&amp;${name};</p>`);
+  });
+
+  it("leaves an inherited member literal in a link destination too", () => {
+    expect(renderMarkdown("[a](&constructor;)")).toBe(`<p>${A} href="&amp;constructor;">a</a></p>`);
   });
 
   // Code is code: no reference is recognised inside a code span, a fence or an
