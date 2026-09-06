@@ -79,8 +79,9 @@ export function formatCount(
  *  script/style, already-wrapped hits, structurally-hidden subtrees (hidden
  *  attr, .hidden class, aria-hidden, closed <details>), the live-streaming
  *  bubble (its markdown writer owns those nodes), and — in a real browser —
- *  anything hidden by CSS via Element.checkVisibility(). The structural checks
- *  work where `checkVisibility` is absent (it is optional and skipped there). */
+ *  anything hidden by CSS via Element.checkVisibility(), a boxless element
+ *  excepted (`rendersWithoutBox`). The structural checks work where
+ *  `checkVisibility` is absent (it is optional and skipped there). */
 function isSearchableElement(elem: Element): boolean {
   const tag = elem.tagName;
   if (tag === "SCRIPT" || tag === "STYLE" || tag === "MARK") {
@@ -100,14 +101,25 @@ function isSearchableElement(elem: Element): boolean {
     return false;
   }
   const cv = (elem as { checkVisibility?: (opts?: unknown) => boolean }).checkVisibility;
-  if (typeof cv === "function") {
-    return cv.call(elem, {
+  if (
+    typeof cv === "function" &&
+    !cv.call(elem, {
       contentVisibilityAuto: true,
       visibilityProperty: true,
       opacityProperty: false,
-    });
+    })
+  ) {
+    return rendersWithoutBox(elem);
   }
   return true;
+}
+
+/** Whether `elem` has no box of its own while its children still render.
+ *  `display: contents` is the one shape `checkVisibility` calls invisible that is
+ *  not hidden, so the walker descends THROUGH it. Text directly under a boxless
+ *  element that IS hidden therefore leaks; no shipped region puts text there. */
+function rendersWithoutBox(elem: Element): boolean {
+  return getComputedStyle(elem).display === "contents";
 }
 
 /** Wrap each occurrence of `needle` (length `needleLen`) in `node` with a
