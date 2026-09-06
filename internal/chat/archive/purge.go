@@ -15,15 +15,13 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// purgeEntry is a chat file's (id, full path) pair gathered during a
-// purge scan.
+// purgeEntry is a chat file's (id, full path) pair gathered during a scan.
 type purgeEntry struct {
 	name string
 	path string
 }
 
-// purgeOutcome is the per-entry result of a purge attempt, aggregated
-// into the pass counts.
+// purgeOutcome is the per-entry result of a purge attempt.
 type purgeOutcome int
 
 const (
@@ -35,12 +33,9 @@ const (
 
 // PurgeResult reports one pass, and is what the scheduler times its next wake-up
 // from. NextDeadline is the earliest instant a chat this pass KEPT ON AGE becomes
-// purgeable, zero when the pass has nothing to wait for.
-//
-// Only age-kept chats contribute: an EXEMPT chat (live bridge, open tab, unsent
-// draft) is pinned outside the age test while the exemption holds, so a wake-up
-// derived from its age has already passed and can never arrive again. An age-kept
-// deadline is in the future by construction, so a timer aimed at it cannot spin.
+// purgeable, zero when the pass has nothing to wait for. Only age-kept chats
+// contribute: an exempt chat's age deadline is already past, so a timer aimed at
+// it would spin.
 type PurgeResult struct {
 	NextDeadline time.Time
 	Purged       int
@@ -51,10 +46,9 @@ type PurgeResult struct {
 // Purge deletes chats whose last activity is older than maxAge, and reports the
 // pass so the caller can time the next one.
 //
-// It scans the MAIN chat directory, because chats no longer move: "archived" is
-// computed from a chat's age against the retention window rather than stored as
-// a state. So the same directory holds live and expired chats, and the age test
-// plus the live-chat exemption are what separate them.
+// It scans the MAIN chat directory: "archived" is computed from age against the
+// retention window, never stored, so live and expired chats share a directory
+// and only the age test plus the exemptions separate them.
 func (s *Service) Purge(ctx context.Context, maxAge time.Duration) PurgeResult {
 	dir := s.store.Dir()
 	entries, err := os.ReadDir(dir)
@@ -72,8 +66,7 @@ func (s *Service) Purge(ctx context.Context, maxAge time.Duration) PurgeResult {
 
 	cutoff := time.Now().Add(-maxAge)
 	const maxWorkers = 8
-	// Per-index results, reduced serially below: a worker writes only its own slot,
-	// so the fan-out needs no lock at all.
+	// Per-index slots, reduced serially below, so the fan-out needs no lock.
 	outcomes := make([]purgeOutcome, len(valid))
 	deadlines := make([]time.Time, len(valid))
 	parallel.Bounded(ctx, valid, maxWorkers, func(i int, entry purgeEntry) {
@@ -99,9 +92,8 @@ func (s *Service) Purge(ctx context.Context, maxAge time.Duration) PurgeResult {
 	return res
 }
 
-// collectPurgeEntries filters a directory listing down to valid chat
-// files eligible for purging (skips dirs, non-.json files, and files
-// whose trimmed name is not a valid chat id).
+// collectPurgeEntries filters a directory listing down to chat files whose
+// trimmed name is a valid chat id.
 func collectPurgeEntries(entries []os.DirEntry, dir string) []purgeEntry {
 	var valid []purgeEntry
 	for _, e := range entries {
@@ -117,37 +109,19 @@ func collectPurgeEntries(entries []os.DirEntry, dir string) []purgeEntry {
 	return valid
 }
 
-// purgeOne removes a single chat when its last activity is older than cutoff, and
-// reports when it becomes purgeable if it does not: the returned deadline is
-// non-zero only for a chat kept by AGE, and an exempt chat contributes none (see
-// PurgeResult).
-//
-// Holds the per-chat mutex across the stat+remove so a concurrent mutate cannot
-// race the delete.
+// purgeOne removes a single chat when its last activity is older than cutoff.
+// The returned deadline is non-zero only for a chat kept by AGE; an exempt chat
+// contributes none (see PurgeResult). Holds the per-chat mutex across the
+// stat+remove so a concurrent mutate cannot race the delete.
 func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time, maxAge time.Duration) (purgeOutcome, time.Time) {
-	// A chat someone is USING is never purged, regardless of age. This is a
-	// hard rule, not a heuristic: a chat open in a tab with a live bridge is
-	// active work, and retention is about abandoned work. Without it, a
-	// long-running conversation older than the window would be deleted out
-	// from under its own tab.
+	// A live bridge means active work; retention is about abandoned work.
 	if s.isLive != nil && s.isLive(vibekit.ChatID(entry.name)) {
 		return purgeKept, time.Time{}
 	}
-	// The second exemption: a chat with an OPEN TAB is never purged either. Same
-	// rule, different fact — a reader can have a chat open on the strip with no
-	// bridge running at all, and that reader is exactly who the age test cannot
-	// see, because reading a chat stamps nothing.
-	//
-	// Checked BEFORE the record lock, deliberately, and it is what keeps the lock
-	// order acyclic: the coordinator's operation lock is taken ahead of a chat
-	// record lock everywhere else, so a predicate that reached it from inside one
-	// would invert the order. (It reads the tab set under neither.)
-	//
-	// It makes retention OPT-OUT for a chat left open forever, which is accepted:
-	// that is the honest reading of "in use", it is what a reader expects from a
-	// tab they deliberately kept, and the alternative is closing a tab under
-	// someone to satisfy a timer. The draft exemption below has the same shape and
-	// the same answer.
+	// An open tab with no bridge is the reader the age test cannot see, because
+	// reading stamps nothing. Checked BEFORE the record lock to keep the lock order
+	// acyclic: the coordinator's operation lock precedes a chat record lock
+	// everywhere else.
 	if s.hasOpenTab != nil && s.hasOpenTab(vibekit.ChatID(entry.name)) {
 		return purgeKept, time.Time{}
 	}
@@ -162,21 +136,12 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time, maxAge time.Durat
 		slog.Warn("chat purge: stat", "name", entry.name, "error", err)
 		return purgeErr, time.Time{}
 	}
-	// Age from the chat's own UpdatedAt, with mtime only as the unreadable-file
-	// fallback (see purgeReferenceTime). Capture the chain BEFORE the remove:
-	// onPurge fires afterwards, when the file is gone and the session ids are
-	// no longer readable.
+	// Capture the chain BEFORE the remove: onPurge fires once the file is gone and
+	// the session ids are no longer readable.
 	refTime, chain, drafting := s.purgeReferenceTime(entry, info.ModTime())
-	// A chat holding an unsent draft is being WORKED IN, and the age test cannot
-	// see it: Store.SetDraft deliberately does not stamp UpdatedAt (a 600ms
-	// autosave would push the cutoff out a whole window per keystroke), so a
-	// paragraph typed into a month-old chat leaves it looking abandoned right up
-	// to the moment the reaper deletes it and the words with it. The exemption is
-	// the other half of that decision rather than a second rule: authored content
-	// nobody has sent is exactly what a retention window does not mean.
-	//
-	// The design's second predicate — skip a chat with an open TAB — is above,
-	// where it needs no chat load and cannot invert the lock order.
+	// An unsent draft is invisible to the age test: Store.SetDraft deliberately
+	// does not stamp UpdatedAt, or a 600ms autosave would push the cutoff out a
+	// whole window per keystroke.
 	if drafting {
 		m.Unlock()
 		return purgeKept, time.Time{}
@@ -198,13 +163,12 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time, maxAge time.Durat
 }
 
 // purgeReferenceTime returns the time a purge decision ages from, the chat's
-// session chain, and whether it holds an unsent draft — all three from ONE projected
-// read. Caller holds the per-chat mutex.
+// session chain, and whether it holds an unsent draft, from ONE projected read.
+// Caller holds the per-chat mutex.
 //
-// The reference time is the chat's own UpdatedAt, falling back to the file mtime when
-// the chat cannot be read: mtime moves for reasons that are not activity, so a purge
-// aging from it would keep resetting its own clock. An unreadable chat reports no
-// draft, the safe direction — nobody could recover a draft the store cannot decode.
+// UpdatedAt, falling back to file mtime only when the chat cannot be read: mtime
+// moves for reasons that are not activity, so aging from it resets its own clock.
+// An unreadable chat reports no draft.
 func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) (refTime time.Time, sessionChain []string, drafting bool) {
 	h, err := s.store.LoadRetentionHeader(vibekit.ChatID(entry.name))
 	if err != nil {
@@ -216,8 +180,7 @@ func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) (refTime
 	return time.UnixMilli(h.UpdatedAt), h.SessionChain, h.Drafting
 }
 
-// logPurgeResult emits the end-of-pass summary at Warn when any entry
-// errored, otherwise at Info.
+// logPurgeResult emits the end-of-pass summary, at Warn when any entry errored.
 func logPurgeResult(res PurgeResult, maxAge time.Duration) {
 	if res.Errors > 0 {
 		slog.Warn("chat purge: pass complete with errors",
@@ -230,31 +193,24 @@ func logPurgeResult(res PurgeResult, maxAge time.Duration) {
 		"max_age", maxAge)
 }
 
-// PurgeScheduler owns the retention-purge lifecycle. Uses a dedicated
-// goroutine with a trigger channel for true collapse semantics.
-//
-// It holds NO context. The scheduler's context arrives at Start, the method that
-// runs the loop, and is threaded down as a parameter from there — which is the
-// shape the fleet's rule asks for wherever a component has a run method, and it
-// is what makes the loop's two exit conditions (ctx cancelled, Stop called)
-// readable at the one place both are selected on.
+// PurgeScheduler owns the retention-purge lifecycle: one goroutine with a
+// trigger channel, so concurrent triggers collapse. Holds no context; Start
+// takes it and threads it down.
 type PurgeScheduler struct {
 	svc       *Service
 	retention func() time.Duration
 	triggerCh chan struct{}
 	stopCh    chan struct{}
 	done      chan struct{}
-	// idleWait is the current back-off for a pass with nothing to wait for. Owned
-	// by the loop goroutine (and by a test calling purgeAndReschedule directly),
-	// never read from anywhere else, so it needs no lock.
+	// idleWait is the back-off for a pass with nothing to wait for. Owned by the
+	// loop goroutine alone, so it needs no lock.
 	idleWait time.Duration
 	once     sync.Once
 	started  bool
 	mu       sync.Mutex
 }
 
-// NewPurgeScheduler builds a scheduler that runs purges based on the
-// retention value returned by `retention`.
+// NewPurgeScheduler builds a scheduler that purges against retention().
 func NewPurgeScheduler(svc *Service, retention func() time.Duration) *PurgeScheduler {
 	return &PurgeScheduler{
 		svc:       svc,
@@ -324,31 +280,21 @@ func (p *PurgeScheduler) loop(ctx context.Context) {
 	}
 }
 
-// stopTimer stops t if it is non-nil. A no-op for the nil timer the loop
-// starts with.
+// stopTimer stops t if it is non-nil, for the nil timer the loop starts with.
 func stopTimer(t *time.Timer) {
 	if t != nil {
 		t.Stop()
 	}
 }
 
-// purgeBudget bounds one pass. A pass is bounded work — one projected read and
-// at most one unlink per chat — so overrunning this means the filesystem is
-// wedged, and the loop is better off re-evaluating than waiting.
+// purgeBudget bounds one pass. A pass is one projected read plus at most one
+// unlink per chat, so overrunning it means the filesystem is wedged and
+// re-evaluating beats waiting.
 const purgeBudget = 5 * time.Minute
 
-// purgeAndReschedule runs one purge pass (when retention is positive)
-// and always returns an armed timer, so the loop can never go dark.
-//
-// It used to return (nil, nil) whenever it had nothing to schedule, which is
-// reachable two ways: retention <= 0, and an EMPTY chat directory. Both are
-// ordinary states, and both left the loop with a nil timer channel whose only
-// remaining wake-up was Trigger() — which has exactly one production caller,
-// Start. So a fresh container booted with no chats, armed nothing, and never
-// purged again for the life of the process; and toggling retention through 0
-// and back killed purging permanently, because the toggle path does not
-// Trigger. Neither failure was observable: no log, no metric, just a chat
-// directory that grows forever while the setting says otherwise.
+// purgeAndReschedule runs one purge pass (when retention is positive) and always
+// returns an armed timer: a nil timer channel leaves Trigger as the loop's only
+// wake-up, and its one production caller is Start.
 func (p *PurgeScheduler) purgeAndReschedule(ctx context.Context) (timer *time.Timer, timerC <-chan time.Time) {
 	retention := p.retention()
 	var res PurgeResult
@@ -364,28 +310,23 @@ func (p *PurgeScheduler) purgeAndReschedule(ctx context.Context) (timer *time.Ti
 	return t, t.C
 }
 
-// Wait bounds. minWait floors a deadline that is nearly upon us, maxWait ceilings
-// everything: it is how stale an armed wake-up can be after a retention change
-// (the settings path does not Trigger), and the re-check interval when retention
-// is off. idleBase is the first wait after a pass with nothing to wait for, and
-// it doubles per consecutive such pass up to maxWait.
+// Wait bounds. maxWait is how stale an armed wake-up can be after a retention
+// change (the settings path does not Trigger), and the re-check interval when
+// retention is off. idleBase doubles per consecutive idle pass, up to maxWait.
 const (
 	minWait  = 5 * time.Second
 	maxWait  = 1 * time.Hour
 	idleBase = 1 * time.Minute
 )
 
-// armWait is how long the loop sleeps before its next pass, and where the spin
-// lived. Two rules prevent one. The wake-up comes from the PASS, never from the
-// directory: it used to be the oldest chat FILE's mtime plus the window floored at
-// 5s, and an exempt chat holds that floor in the past permanently, so the loop
-// re-scanned every 5 seconds forever. And a pass with nothing to wait for BACKS OFF
-// rather than re-asking a question only an unobserved change can answer
-// differently; a purge resets it, being evidence the store is in use.
+// armWait is how long the loop sleeps before its next pass. Two rules keep it
+// from spinning: the wake-up comes from the PASS, never from the directory (an
+// exempt chat's mtime-derived deadline is permanently past), and an idle pass
+// backs off, since only an unobserved change can answer it differently.
 func (p *PurgeScheduler) armWait(retention time.Duration, res PurgeResult) time.Duration {
 	if retention <= 0 {
-		// Keep-forever. Re-check on the ceiling rather than going dark, so turning
-		// retention back on takes effect within one interval.
+		// Keep-forever: re-check on the ceiling so turning retention back on takes
+		// effect within one interval.
 		p.idleWait = 0
 		return maxWait
 	}

@@ -24,11 +24,8 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, st)
 }
 
-// collectStatus answers one repository's status in TWO git invocations: the status
-// call that reports the branch, ahead/behind, the stash count and the file list
-// together (porcelain.go), plus `remote get-url origin` for the URL v2 omits.
-// `doFetch=false` skips the network fetch, for the dashboard where fetching N
-// repos in parallel would be costly and noisy.
+// collectStatus answers one repository's status. doFetch=false skips the network
+// fetch, for the dashboard where fetching N repos in parallel is costly.
 //
 // Order is load-bearing: the fetch runs BEFORE the status call, so ahead/behind is
 // measured against the refreshed remote ref.
@@ -43,20 +40,15 @@ func collectStatus(ctx context.Context, dir string, timeouts gitTimeouts, fetchF
 	if doFetch {
 		fetchStatus(ctx, dir, timeouts.Fetch, fetchFlight)
 	}
-	// A failed status leaves the zero counts: the row still says the repo exists,
-	// which is what keeps one wedged repository from blanking the dashboard. The
-	// BRANCH survives a failure too, read off .git/HEAD rather than from the spawn
-	// the collapse removed — see readStatus.
+	// A failed status leaves the zero counts, so one wedged repository cannot blank
+	// the dashboard; readStatus still reports the branch, read off .git/HEAD.
 	ps, _ := readStatus(ctx, dir)
 	st.Branch = ps.Branch
 	st.Ahead = ps.Ahead
 	st.Behind = ps.Behind
 	st.Stashes = ps.Stashes
-	// Never let Files marshal to JSON null: the wire contract (and the client's
-	// GitRepoStatus.files) is a non-nullable array. The parser returns nil for a
-	// clean repo or a failed call, and a nil slice marshals to `null`, which makes
-	// the Changes tab's `for (const f of r.files)` throw "r.files is not iterable"
-	// and blanks the whole git page.
+	// The wire contract is a non-nullable array: a nil slice marshals to `null`, and
+	// the Changes tab's `for (const f of r.files)` then throws and blanks the page.
 	st.Files = ps.Files
 	if st.Files == nil {
 		st.Files = []gitFile{}
@@ -65,10 +57,8 @@ func collectStatus(ctx context.Context, dir string, timeouts gitTimeouts, fetchF
 	return st
 }
 
-// fetchStatus runs a best-effort `git fetch --quiet`, deduped per-dir via
-// the shared singleflight group. A failure is logged at debug and
-// otherwise ignored — a status read must not fail because the network is
-// down or the remote is unreachable.
+// fetchStatus runs a best-effort `git fetch --quiet`, deduped per-dir. A failure is
+// logged at debug and ignored: a status read must not fail on an unreachable remote.
 func fetchStatus(ctx context.Context, dir string, timeout time.Duration, fetchFlight *singleflight.Group) {
 	fetchCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -157,11 +147,8 @@ func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	dir := h.repoDir(body.Repo)
-	// Unstage the requested paths first: `checkout --` restores the
-	// worktree FROM THE INDEX, so a staged modification silently survived
-	// "Discard all", and a staged NEW file (no index-vs-worktree diff)
-	// made checkout error with "pathspec did not match". Best-effort —
-	// paths with nothing staged are a no-op for reset.
+	// Unstage first: `checkout --` restores the worktree FROM THE INDEX, so a staged
+	// modification survives the discard and a staged NEW file makes checkout error.
 	if out, err := gitCmd(ctx, dir, append([]string{subReset, "-q", refHEAD, "--"}, files...)...); err != nil {
 		slog.Debug("git discard: reset before discard failed (continuing)",
 			"repo", body.Repo, "error", err, "out", scrubAuth(out))

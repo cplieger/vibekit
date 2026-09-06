@@ -1,12 +1,8 @@
 package agent
 
-// Tests for the run read handler's own guards.
-//
-// The passthrough is not tested here — there is nothing to assert about `raw in,
-// raw out` that is not a restatement — and the step-session seeding it performs is
-// tested where the registry lives (translate.RecordRunSteps), because that is
-// where the assertion can be about the observable consequence rather than about a
-// map reached through a test-only accessor.
+// Tests for the run read handler's own guards. The passthrough is not tested here —
+// nothing about `raw in, raw out` is assertable without restating it — and its
+// step-session seeding is tested where the registry lives (translate.RecordRunSteps).
 
 import (
 	"bytes"
@@ -24,9 +20,8 @@ import (
 	"github.com/cplieger/vibekit/internal/workflow"
 )
 
-// TestHandleRun_RejectsNonGET pins that the surface is read-only at the method
-// level too. Runs have no controls at all (user decision), so a POST here is not
-// a missing feature to route somewhere.
+// TestHandleRun_RejectsNonGET pins that the surface is read-only at the method level too:
+// runs have no controls, so a POST here is not a missing feature to route somewhere.
 func TestHandleRun_RejectsNonGET(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
@@ -39,15 +34,13 @@ func TestHandleRun_RejectsNonGET(t *testing.T) {
 func TestHandleRun_RejectsAMissingID(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
-	// No path value set: the route cannot match this, but a hand-built request
-	// can, and answering 400 beats calling KAS with an empty id.
+	// The route cannot match this, but a hand-built request can: 400 beats calling KAS.
 	h.runRoutes.handleRun(rec, httptest.NewRequest(http.MethodGet, "/api/runs/", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("GET with no id = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
 
-// getLiveRuns serves GET /api/runs/live off rr and decodes the envelope.
 func getLiveRuns(t *testing.T, rr *runRoutes) vibekit.LiveRunsResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -71,10 +64,9 @@ func TestHandleLiveRuns_RejectsNonGET(t *testing.T) {
 	}
 }
 
-// TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat is the projection's
-// contract: a chat-parented run carries the chat its `run_start` frame arrived
-// on, a parentless run carries none, and the whole thing is served off
-// vibekit-local state — no KAS round trip, no utility-bridge spawn.
+// TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat is the projection's contract: a
+// chat-parented run carries the chat its `run_start` frame arrived on, a parentless run
+// carries none, and it is served off vibekit-local state — no KAS round trip.
 func TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat(t *testing.T) {
 	h, _, br := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
@@ -107,9 +99,8 @@ func TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat(t *testing.T) {
 	}
 }
 
-// TestHandleLiveRuns_ATerminalRunLeavesTheProjection: the terminal frame
-// releases the lease (forgetBounds), so presence stays the non-terminal claim
-// the eviction exemption needs it to be.
+// TestHandleLiveRuns_ATerminalRunLeavesTheProjection: the terminal frame releases the
+// lease, so presence stays the non-terminal claim the eviction exemption needs.
 func TestHandleLiveRuns_ATerminalRunLeavesTheProjection(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
@@ -129,18 +120,10 @@ func TestHandleLiveRuns_ATerminalRunLeavesTheProjection(t *testing.T) {
 	}
 }
 
-// OVERTURNED with History's parentless-only filter. This used to assert that the
-// live-runs projection had NOT widened History — that a chat-parented run appears
-// in /api/runs/live and is dropped by toWire — on the premise that "that
-// conversation's work already renders in the chat's transcript". That premise
-// holds only while the transcript is open and resident (session_list.go's toWire
-// carries the reasoning), so History lists the run now too.
-//
-// What still separates the two surfaces is worth pinning, and it is the answer
-// each one is FOR: /api/runs/live projects the run with the chat it belongs to,
-// because its consumer is the chat's own eviction exemption, while History
-// attributes the run to that chat so the row's door can nest the run's tab under
-// it. Same run, two answers, neither of which is a copy of the other.
+// Both surfaces carry a chat-parented run, and what separates them is the answer each is
+// FOR: /api/runs/live projects the run with the chat it belongs to, because its consumer
+// is that chat's eviction exemption, while History attributes the run to the chat so the
+// row's door can nest the run's tab under it.
 func TestHandleLiveRuns_AndHistoryBothCarryAChatParentedRun(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
@@ -175,11 +158,9 @@ func TestHandleLiveRuns_AndHistoryBothCarryAChatParentedRun(t *testing.T) {
 	}
 }
 
-// TestHandleLiveRuns_ServesPersistedLeasesAcrossARestart is the reload story:
-// a chat-parented run survives a vibekit restart inside KAS, its lease
-// survives in runs.json, and the projection must serve it from those persisted
-// bytes with ZERO frames observed — a paused run emits nothing until it is
-// resumed, and its chat must be exempt from eviction the whole time.
+// TestHandleLiveRuns_ServesPersistedLeasesAcrossARestart is the reload story: the lease
+// survives in runs.json and the projection must serve it from those persisted bytes with
+// ZERO frames observed — a paused run emits nothing, and its chat stays exempt.
 func TestHandleLiveRuns_ServesPersistedLeasesAcrossARestart(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -193,8 +174,7 @@ func TestHandleLiveRuns_ServesPersistedLeasesAcrossARestart(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	// The restart: a fresh store over the same directory, wired into a fresh
-	// run surface. Nothing has replayed a frame.
+	// The restart: a fresh store over the same directory. Nothing has replayed a frame.
 	reopened, err := runlease.NewStore(dir)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
@@ -207,10 +187,9 @@ func TestHandleLiveRuns_ServesPersistedLeasesAcrossARestart(t *testing.T) {
 	}
 }
 
-// TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat: a version-1 file
-// written before Lease.ChatID existed still loads (the field is additive), and
-// its rows project with an empty chat_id — "no chat to exempt", exactly what
-// the parentless launch verbs mint.
+// TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat: a version-1 file written
+// before Lease.ChatID existed still loads (the field is additive), and its rows project
+// with an empty chat_id — "no chat to exempt".
 func TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -235,13 +214,9 @@ func TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat(t *testing.T) {
 	}
 }
 
-// TestHandleControls serves the affordance route and pins its envelope.
-//
-// The endpoint exists because the CLIENT cannot answer the question it replaces:
-// it was deciding the control row from a status table plus a map of which chat
-// launched which run, and that map is written only by SSE frames — so every client
-// that had reloaded found no entry, read a chat-parented run as parentless, and
-// drew the parentless row for it.
+// TestHandleControls serves the affordance route and pins its envelope. The endpoint
+// exists because the CLIENT cannot answer the question: it decided the control row from a
+// map written only by SSE frames, so a reloaded client read every run as parentless.
 func TestHandleControls(t *testing.T) {
 	controlsReq := func(id string) *http.Request {
 		req := httptest.NewRequest(http.MethodGet, "/api/runs/"+id+"/controls", nil)
@@ -267,10 +242,8 @@ func TestHandleControls(t *testing.T) {
 		}
 	})
 
-	// The whole answer for the reported run: aborted, chat-parented, its chat open.
-	// Retry is offered — that is the ruling — and the parent chat travels with it,
-	// because the run page's step-transcript note asks the same question and used to
-	// answer it from the same empty cache.
+	// Retry is offered and the parent chat travels with it, because the run page's
+	// step-transcript note asks the same question.
 	t.Run("an aborted chat-parented run offers retry and names its parent chat", func(t *testing.T) {
 		h, _ := seedChatParentedRun(t, true)
 		rec := httptest.NewRecorder()
@@ -315,8 +288,8 @@ func TestHandleControls(t *testing.T) {
 
 	t.Run("an unreadable run is a 404 rather than an empty row", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
-		// An engine with no workflow verb: rr.status reports "" rather than an
-		// error, which means "no status to gate on".
+		// An engine with no workflow verb: rr.status reports "" rather than an error,
+		// which means "no status to gate on".
 		br.setCallErr(methodKiroWorkflowInspect, workflow.ErrUnknownMethod)
 		rec := httptest.NewRecorder()
 		h.runRoutes.handleControls(rec, controlsReq("wf_1"))
@@ -327,8 +300,6 @@ func TestHandleControls(t *testing.T) {
 	})
 }
 
-// answerReq builds a POST /api/runs/{id}/answer request with its path value set,
-// which the handler reads rather than parsing the URL.
 func answerReq(t *testing.T, id, askID, text string) *http.Request {
 	t.Helper()
 	body, err := json.Marshal(vibekit.RunAnswerRequest{AskID: askID, Text: text})
@@ -341,9 +312,8 @@ func answerReq(t *testing.T, id, askID, text string) *http.Request {
 	return req
 }
 
-// TestHandleAnswer pins the endpoint's own guards and the ONE status that is not
-// a fault: a 409 means another surface answered first or the step moved on, which
-// is a state of the world rather than something the reader can redo.
+// TestHandleAnswer pins the endpoint's own guards and the ONE status that is not a fault:
+// a 409 means another surface answered first or the step moved on, not a retryable error.
 func TestHandleAnswer(t *testing.T) {
 	t.Run("it refuses a non-POST", func(t *testing.T) {
 		h, _, _ := newTestHub()
@@ -431,9 +401,8 @@ func TestSetStepStatus(t *testing.T) {
 		if err := h.runs.SetStepStatus(t.Context(), "wf_1", "review", runStepRunning); err != nil {
 			t.Fatalf("SetStepStatus(running) = %v, want nil", err)
 		}
-		// `running` clears KAS's completionSignal and re-drives the step with its
-		// DEFAULT continuation, so whatever it asked is no longer answerable and
-		// every surface still showing that card has to be told.
+		// `running` clears KAS's completionSignal and re-drives the step with its DEFAULT
+		// continuation, so what it asked is no longer answerable and every surface is told.
 		if h.runs.asks.HasRun("wf_1") {
 			t.Error("continuing the step left its question live")
 		}
@@ -441,9 +410,8 @@ func TestSetStepStatus(t *testing.T) {
 		if len(settled) != 1 {
 			t.Fatalf("run_input_settled events = %d, want 1", len(settled))
 		}
-		// SettledByUser HERE, unlike the node-completion door: this verb is only ever
-		// reached by a reader clicking Continue-without-answering, so it IS their
-		// decision and another window is correctly told a person made it.
+		// SettledByUser HERE, unlike the node-completion door: this verb is only reached by
+		// a reader clicking Continue-without-answering, so it IS their decision.
 		if got := settled[0]["settled_by"]; got != string(vibekit.SettledByUser) {
 			t.Errorf("settled_by = %q, want %q", got, vibekit.SettledByUser)
 		}
@@ -459,10 +427,8 @@ func TestSetStepStatus(t *testing.T) {
 
 	t.Run("a chat-parented run resolves the launching chat's bridge", func(t *testing.T) {
 		h, cs, br := newTestHub()
-		// An AGENT-launched run has no bridge of its own and never will: KAS parents
-		// it on the calling chat's session. Keyed on `run:<id>` alone this whole
-		// population answered errRunNotHosted unconditionally, which is exactly the
-		// population an agent creates.
+		// An AGENT-launched run has no bridge of its own: KAS parents it on the calling
+		// chat's session, so keying on `run:<id>` alone answers errRunNotHosted always.
 		cs.Chats["c1"] = &vibekit.Chat{ID: "c1", ACPSessionID: "sess_parent"}
 		h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
 		br.callResults = map[string]json.RawMessage{

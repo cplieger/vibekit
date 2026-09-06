@@ -8,15 +8,10 @@ import (
 	"testing"
 )
 
-// Record builders, so a table case reads as its record type, status pair and
-// path rather than as eight filler fields.
-//
-// The mode and object-id fields are inert to the parser — it reads the record's
-// TYPE, its XY pair and the last field — but the COUNT of them is the whole
-// grammar, which is why the builders spell them out and why every shape here is
-// also exercised against real git output in TestReadStatus_* below. A builder
-// with the wrong field count would agree with a parser that had the same bug;
-// real git output is what cannot.
+// Record builders. The mode and object-id fields are inert to the parser, but their
+// COUNT is the whole grammar, which is why the builders spell them out and why every
+// shape is also exercised against real git output below: a builder with the wrong
+// field count would agree with a parser that had the same bug.
 const (
 	oid  = "0000000000000000000000000000000000000000"
 	oid2 = "1111111111111111111111111111111111111111"
@@ -64,15 +59,13 @@ func TestParsePorcelainV2_Entries(t *testing.T) {
 		{"untracked", nul("? newfile.go"), []gitFile{
 			{Path: "newfile.go", Status: "?", Display: "Untracked"},
 		}},
-		// A rename's origin arrives as a second NUL record. Path is the CURRENT
-		// path (what stage, discard and diff need); OrigPath carries where it came
-		// from, so the panel can say "new.go ← old.go".
+		// A rename's origin arrives as a second NUL record. Path is the CURRENT path,
+		// which is what stage, discard and diff need.
 		{"rename keeps new path, carries origin", nul(renamed("R.", "R100", "new.go", "old.go")), []gitFile{
 			{Path: "new.go", Status: "R", Display: "Renamed", Staged: true, OrigPath: "old.go"},
 		}},
-		// The worktree half of a staged rename describes an ordinary edit to the
-		// file at its NEW path, so it carries no origin: the move is the staged
-		// entry's fact, not this one's.
+		// The worktree half of a staged rename carries no origin: the move is the
+		// staged entry's fact, not this one's.
 		{"rename plus worktree modify emits two entries", nul(renamed("RM", "R096", "renamed.go", "orig.go")), []gitFile{
 			{Path: "renamed.go", Status: "R", Display: "Renamed", Staged: true, OrigPath: "orig.go"},
 			{Path: "renamed.go", Status: "M", Display: "Modified", Staged: false},
@@ -88,8 +81,7 @@ func TestParsePorcelainV2_Entries(t *testing.T) {
 		{"rename with a missing origin record", []byte(renamed("R.", "R100", "new.go", "")[:len(renamed("R.", "R100", "new.go", ""))-1]), []gitFile{
 			{Path: "new.go", Status: "R", Display: "Renamed", Staged: true},
 		}},
-		// 'T' (typechange) used to fall through statusLabel's default and render
-		// as "Unknown". Measured on git 2.x: `rm f && ln -s /tmp f`.
+		// 'T' (typechange), which git reports for `rm f && ln -s /tmp f`.
 		{"unstaged typechange", nul(changed(".T", "link.txt")), []gitFile{
 			{Path: "link.txt", Status: "T", Display: "Typechange"},
 		}},
@@ -103,8 +95,8 @@ func TestParsePorcelainV2_Entries(t *testing.T) {
 		{"staged non-ascii rename", nul(renamed("R.", "R100", "café-new.txt", "café-old.txt")), []gitFile{
 			{Path: "café-new.txt", Status: "R", Display: "Renamed", Staged: true, OrigPath: "café-old.txt"},
 		}},
-		// A path is the record's LAST field, so spaces inside it survive, and a
-		// literal " -> " is not a rename separator in this format at all.
+		// A path is the record's LAST field, so spaces survive and a literal " -> " is
+		// not a rename separator in this format.
 		{"spaced filename with arrow-like substring", nul(changed(".M", "foo -> bar.txt")), []gitFile{
 			{Path: "foo -> bar.txt", Status: "M", Display: "Modified"},
 		}},
@@ -119,9 +111,8 @@ func TestParsePorcelainV2_Entries(t *testing.T) {
 		{"directory entry skipped", nul("? somedir/", "? real.txt"), []gitFile{
 			{Path: "real.txt", Status: "?", Display: "Untracked"},
 		}},
-		// Short, truncated and unknown records are skipped rather than failing the
-		// parse: that is also what makes git's own stderr noise harmless, since
-		// CombinedOutput folds it into the same bytes.
+		// Skipped rather than failing the parse, which is also what makes git's own
+		// stderr harmless: CombinedOutput folds it into the same bytes.
 		{"malformed records skipped", nul("1 .M", "x", changed(".M", "file.go"), "warning: something"), []gitFile{
 			{Path: "file.go", Status: "M", Display: "Modified"},
 		}},
@@ -165,9 +156,8 @@ func TestParsePorcelainV2_Headers(t *testing.T) {
 				"# branch.upstream origin/main", "# branch.ab +2 -3", "# stash 4"),
 			wantBranch: "main", wantAhead: 2, wantBehind: 3, wantStashes: 4,
 		},
-		// No upstream: git omits both branch.upstream and branch.ab, so the counts
-		// stay 0 — the same answer being in sync gives, which is the distinction
-		// this shape deliberately does not make.
+		// No upstream: git omits branch.upstream and branch.ab, so the counts stay 0 —
+		// the same answer being in sync gives, a distinction this shape does not make.
 		"no upstream leaves the counts at zero": {
 			in:         nul("# branch.head feature/x"),
 			wantBranch: "feature/x",
@@ -205,9 +195,8 @@ func TestParsePorcelainV2_Headers(t *testing.T) {
 	}
 }
 
-// Conflicted is the record TYPE, not a reading of the letters, which is what
-// makes a both-added conflict (`AA`, no U on either side) visible without a table
-// of pairs.
+// Conflicted is the record TYPE, not a reading of the letters, which is what makes a
+// both-added conflict (`AA`, no U on either side) visible without a table of pairs.
 func TestParsePorcelainV2_ConflictedIsTheRecordType(t *testing.T) {
 	for _, xy := range []string{"UU", "AA", "DD", "AU", "UD", "UA", "DU"} {
 		if !parsePorcelainV2(nul(unmerged(xy, "p.txt"))).Conflicted {
@@ -283,13 +272,9 @@ func TestReadStatus_ReadsTheWholeStatusFromOneInvocation(t *testing.T) {
 	}
 }
 
-// Paths git C-quotes in its default output — non-ASCII bytes, embedded spaces,
-// and a staged rename to such a name — arrive verbatim.
-//
-// This is the end-to-end half of the -z decision: under a newline parser these
-// came back double-quoted with C-escapes (café.txt → "caf\303\251.txt"), which
-// the panel displayed AND fed back to git, where `git add -- '"caf\303\251.txt"'`
-// matched nothing and every operation on the file failed.
+// Paths git C-quotes in its default output arrive verbatim. This is the end-to-end
+// half of the -z decision: a quoted path (café.txt → "caf\303\251.txt") is displayed
+// AND fed back to git, where it matches nothing and every operation on the file fails.
 func TestReadStatus_UnquotesSpecialFilenames(t *testing.T) {
 	skipNoGit(t)
 	dir := t.TempDir()
@@ -346,15 +331,11 @@ func TestReadStatus_ReportsAFailureOnANonRepo(t *testing.T) {
 	}
 }
 
-// A failed status still answers the BRANCH. Collapsing five invocations into two
-// took `branch --show-current` with it, and that spawn could succeed where
-// `status` failed — so a wedged repository's dashboard row lost its counts AND its
-// branch, where before it lost only the counts.
-//
-// The failure is induced by corrupting the index, which is a real shape (a wedged
-// repository) and leaves .git/HEAD intact. Corruption rather than a mode change:
-// root reads a 0000 file, so a permission-based injection would skip here and only
-// ever run on the unprivileged CI runner.
+// A failed status still answers the BRANCH: the branch no longer comes from its own
+// spawn, so without this a wedged repository's dashboard row loses its branch as well
+// as its counts. The failure is induced by corrupting the index rather than by a mode
+// change, because root reads a 0000 file and a permission-based injection would skip
+// here and only ever run on the unprivileged CI runner.
 func TestReadStatus_AFailedReadStillAnswersTheBranch(t *testing.T) {
 	skipNoGit(t)
 	dir := t.TempDir()
@@ -420,10 +401,9 @@ func TestHeadBranch(t *testing.T) {
 	})
 }
 
-// The ref-name check is what makes the file read safe on a repository this server
-// did not write: a `.git` file may point its `gitdir:` anywhere, so a document that
-// is not a HEAD must answer nothing rather than putting an unrelated file's first
-// line on the dashboard as a branch name.
+// The ref-name check makes the file read safe on a repository this server did not
+// write: a `.git` file may point its `gitdir:` anywhere, so a document that is not a
+// HEAD must answer nothing rather than a stranger's first line as a branch name.
 func TestParseHeadRef(t *testing.T) {
 	tests := map[string]struct {
 		doc  string
@@ -476,9 +456,8 @@ func FuzzParsePorcelainV2(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
 		st := parsePorcelainV2(data)
-		// The invariants a caller depends on, beyond not panicking: every row
-		// carries a path and a label, and no row's path is a directory (the panel
-		// stages paths, and a directory would be staged wholesale).
+		// Beyond not panicking: every row carries a path and a label, and no row's path
+		// is a directory, which the panel would stage wholesale.
 		for _, file := range st.Files {
 			if file.Path == "" {
 				t.Fatalf("row with an empty path from %q: %+v", data, file)

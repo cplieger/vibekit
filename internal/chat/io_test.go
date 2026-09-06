@@ -13,19 +13,13 @@ import (
 	"github.com/cplieger/vibekit/internal/ids"
 )
 
-// TestReadCappedFilePathGuard pins the path guard readCappedFile runs
-// before it opens anything, and pins what that guard does NOT do.
-//
-// The guard is two refusals: absoluteness (filepath.IsAbs) and a ".."
-// component (pathinside.HasDotDot), both applied to the CLEANED value.
-// The behavioural delta from the substring test this replaced is one
-// direction only — names holding two adjacent dots are no longer refused.
-// Nothing that was refused for traversal became acceptable.
+// TestReadCappedFilePathGuard pins the path guard readCappedFile runs before it opens
+// anything, and pins what that guard does NOT do: two refusals on the CLEANED value,
+// absoluteness (filepath.IsAbs) and a ".." component (pathinside.HasDotDot).
 func TestReadCappedFilePathGuard(t *testing.T) {
 	dir := t.TempDir()
 
-	// Every accepted case must find a real file, so the only thing that
-	// can fail is the guard.
+	// Every accepted case must find a real file, so only the guard can fail.
 	write := func(name string) string {
 		t.Helper()
 		p := filepath.Join(dir, name)
@@ -45,10 +39,8 @@ func TestReadCappedFilePathGuard(t *testing.T) {
 		path   string
 		reject bool
 	}{
-		// Relative input, where an absolute store path is expected.
-		// Refused by the IsAbs gate on the cleaned value. This is the
-		// half of the guard that actually fires, and the ".."-shaped
-		// inputs below land here rather than on the traversal test.
+		// Relative input where an absolute store path is expected: refused by the
+		// IsAbs gate, which is the half of the guard that actually fires.
 		{"relative name", "c1.json", true},
 		{"relative nested", "chats/c1.json", true},
 		{"bare parent", "..", true},
@@ -56,9 +48,7 @@ func TestReadCappedFilePathGuard(t *testing.T) {
 		{"dot", ".", true},
 		{"empty", "", true},
 
-		// Names that merely hold or begin with two dots. A ".." SUBSTRING
-		// test refused all of these; a ".." COMPONENT test reads them.
-		// This is the whole behavioural change at this site.
+		// Names that merely hold or begin with two dots: a COMPONENT test reads them.
 		{"dots inside the name", dotted, false},
 		{"three dots", tripleDot, false},
 		{"name beginning with two dots", leadingDots, false},
@@ -87,26 +77,12 @@ func TestReadCappedFilePathGuard(t *testing.T) {
 	}
 }
 
-// TestReadCappedFileTraversalTestIsVacuousAfterClean pins the documented
-// vacuity of the guard's traversal half, so nobody reads the
-// pathinside.HasDotDot call as containment enforcement.
-//
-// filepath.Clean collapses every ".." and clamps at the filesystem root,
-// so an absolute path that reaches the predicate can never hold a ".."
-// component and the predicate can never fire. An absolute path WRITTEN
-// with a traversal therefore passes the guard and is opened at whatever
-// it cleans down to — true before this adoption and unchanged by it.
-//
-// Containment at this boundary is structural, not lexical: every caller
-// builds the path from store.Dir() plus an ids.ValidChatID-checked id,
-// and that character set ([A-Za-z0-9_-]) admits neither a separator nor
-// a dot, so no chat id can contribute a traversal segment. The assertion
-// on ValidChatID is here rather than in internal/ids because it is
-// THIS guard's missing half; if it ever loosens, this test is the one
-// that should fail.
-//
-// A future hardening (canonicalise ConfigDir at load, then judge the raw
-// path) is expected to break the first half of this test deliberately.
+// TestReadCappedFileTraversalTestIsVacuousAfterClean pins the vacuity of the guard's
+// traversal half, so nobody reads pathinside.HasDotDot as containment: filepath.Clean
+// collapses every ".." before the predicate can see one. Containment here is structural
+// — every caller builds the path from store.Dir() plus an ids.ValidChatID-checked id,
+// and that character set admits neither a separator nor a dot. The ValidChatID
+// assertion lives here because it is THIS guard's missing half.
 func TestReadCappedFileTraversalTestIsVacuousAfterClean(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "c1.json")
@@ -114,8 +90,7 @@ func TestReadCappedFileTraversalTestIsVacuousAfterClean(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	// A written traversal that cleans back to a file inside dir is read,
-	// not refused: the guard never saw the "..".
+	// A written traversal that cleans back inside dir is read: the guard never saw it.
 	data, err := readCappedFile(dir+"/sub/../c1.json", "chat vacuity", 0)
 	if err != nil {
 		t.Fatalf("readCappedFile with a written traversal error = %v, want nil (Clean defused it)", err)
@@ -124,8 +99,7 @@ func TestReadCappedFileTraversalTestIsVacuousAfterClean(t *testing.T) {
 		t.Error("readCappedFile returned no data")
 	}
 
-	// The real gate: a chat id can carry neither a separator nor a dot,
-	// so store.Dir() + id cannot compose a traversal in the first place.
+	// The real gate: store.Dir() + id cannot compose a traversal in the first place.
 	for _, id := range []string{"..", ".", "a/b", `a\b`, "a.json", "..extras", ""} {
 		if ids.ValidChatID(id) {
 			t.Errorf("ids.ValidChatID(%q) = true; readCappedFile's guard relies on this being false", id)
@@ -136,11 +110,8 @@ func TestReadCappedFileTraversalTestIsVacuousAfterClean(t *testing.T) {
 	}
 }
 
-// TestReadCappedFileRejectionNamesTheInput pins that the refusal quotes
-// the path AS THE CALLER PASSED IT, not the cleaned form. An operator
-// diagnosing a rejected read needs to see the string their own code
-// built; echoing the cleaned value would hide the spelling that caused
-// the refusal.
+// TestReadCappedFileRejectionNamesTheInput pins that the refusal quotes the path AS THE
+// CALLER PASSED IT: echoing the cleaned value would hide the spelling that caused it.
 func TestReadCappedFileRejectionNamesTheInput(t *testing.T) {
 	raw := "chats/../../etc/passwd"
 	_, err := readCappedFile(raw, "chat probe", 0)
@@ -155,13 +126,8 @@ func TestReadCappedFileRejectionNamesTheInput(t *testing.T) {
 	}
 }
 
-// seedFatChat writes a valid chat file whose MESSAGES dwarf its header, and
-// returns the path and the file's size.
-//
-// The fixture must CONTAIN many messages whose combined bytes are far larger
-// than any header, and each one small, so the property under test is the total
-// rather than one big token: a whole-file reader allocates the total, a streaming
-// reader allocates one message at a time and keeps none.
+// seedFatChat writes a chat whose MESSAGES dwarf its header, each message small, so the
+// property under test is the total rather than one big token.
 func seedFatChat(t *testing.T, msgBytes, msgCount int) (path string, size int64) {
 	t.Helper()
 	var b strings.Builder
@@ -186,12 +152,10 @@ func seedFatChat(t *testing.T, msgBytes, msgCount int) (path string, size int64)
 	return path, st.Size()
 }
 
-// TestReadChatHeader_CostDoesNotScaleWithMessageBytes is the property that makes
-// an unlimited cap survivable: readHeadersParallel runs this at 8 workers per
-// chat, so the header read must not hold the transcript.
-//
-// Measured rather than asserted structurally, because "streams" is not something
-// a return value can show: the whole-file version returned the same header.
+// TestReadChatHeader_CostDoesNotScaleWithMessageBytes is the property that makes an
+// unlimited cap survivable: readHeadersParallel runs this at 8 workers per chat, so the
+// header read must not hold the transcript. Measured, because a return value cannot
+// show "streams": the whole-file version returned the same header.
 func TestReadChatHeader_CostDoesNotScaleWithMessageBytes(t *testing.T) {
 	path, size := seedFatChat(t, 4<<10, 1_100)
 	const minSize = 4 << 20
@@ -211,9 +175,7 @@ func TestReadChatHeader_CostDoesNotScaleWithMessageBytes(t *testing.T) {
 
 	allocated := after.TotalAlloc - before.TotalAlloc
 	// Twice the file, and the two implementations sit either side of it: streaming
-	// measured 1.04x (the token churn of skipping every message, none retained),
-	// against 4.32x for a whole-file read — the byte slice, the string copy, and
-	// the same token churn on top. Both numbers are red-check measurements.
+	// measured 1.04x against 4.32x for a whole-file read.
 	bound := 2 * uint64(size)
 	if allocated > bound {
 		t.Errorf("readChatHeader over a %d-byte chat allocated %d bytes (%.2fx), want under %d: "+
@@ -229,19 +191,16 @@ func TestReadChatHeader_CostDoesNotScaleWithMessageBytes(t *testing.T) {
 }
 
 // TestReadChatHeader_ScanBoundAppliesWhenTheCapIsUnlimited pins the second gate:
-// maxHeaderScanBytes is independent of the chat cap, so no memory limit does not
-// mean no bound on one sidebar refresh.
-//
-// Allocating 512 MiB to cross the scan bound is not acceptable in a test, so what
-// varies is the INJECTED cap; the scan bound is asserted positive, which is what
-// makes it a bound at all under an unlimited cap.
+// maxHeaderScanBytes is independent of the chat cap, so no memory limit does not mean no
+// bound on one sidebar refresh. Allocating 512 MiB to cross the scan bound is not
+// acceptable in a test, so what varies is the INJECTED cap and the bound is asserted
+// positive instead.
 func TestReadChatHeader_ScanBoundAppliesWhenTheCapIsUnlimited(t *testing.T) {
 	if maxHeaderScanBytes <= 0 {
 		t.Fatal("maxHeaderScanBytes must be positive or the scan is unbounded under an unlimited cap")
 	}
-	// A capped store bounds the header read at the cap; an unlimited one still
-	// bounds it at the scan bound. Both must refuse, so neither branch is the
-	// only thing standing between List() and an unbounded stream.
+	// Both branches must bound the read, or one of them is all that stands between
+	// List() and an unbounded stream.
 	path, size := seedFatChat(t, 1<<10, 8)
 	for _, tc := range []struct {
 		name    string
@@ -270,10 +229,9 @@ func TestReadChatHeader_ScanBoundAppliesWhenTheCapIsUnlimited(t *testing.T) {
 	}
 }
 
-// TestDecodeChatHeader_MessagesMemberIsNeverCaptured pins the one key the scan
-// must recognise instead of capturing, in the case that proves it: a `messages`
-// member spelled with a capital, which encoding/json matches case-insensitively.
-// Capturing it would put the whole transcript in the header map.
+// TestDecodeChatHeader_MessagesMemberIsNeverCaptured pins the one key the scan must
+// recognise instead of capturing, in the case that proves it: a capitalised `messages`,
+// which encoding/json matches case-insensitively.
 func TestDecodeChatHeader_MessagesMemberIsNeverCaptured(t *testing.T) {
 	body := `{"id":"c1","Messages":[{"id":"m1"},{"id":"m2"}],"name":"n"}`
 	h, err := decodeChatHeader(strings.NewReader(body))

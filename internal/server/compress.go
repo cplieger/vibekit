@@ -11,34 +11,22 @@ import (
 	"strings"
 )
 
-// compressMinBytes is the body size at which gzip starts paying for itself.
-// Below it the framing and the CPU cost outweigh the saving, and a small JSON
-// reply already fits one segment.
+// compressMinBytes is the body size at which gzip starts paying for itself: below it
+// the framing and CPU cost outweigh the saving.
 const compressMinBytes = 1024
 
-// compressSkipPaths are answered without wrapping at all, decided BEFORE the
-// handler runs rather than by a heuristic on its output.
-//
-// A response whose whole contract is that each write reaches the client
-// immediately cannot be buffered to measure it, and these two are the
-// long-lived streams: server-sent events and the shell's WebSocket upgrade.
-// compressWriter degrades on Flush and on Hijack as a backstop; a stream that
-// never reaches the wrapper cannot be broken by a later change to that
-// backstop.
+// compressSkipPaths are answered without wrapping at all, decided BEFORE the handler
+// runs: a response whose contract is that each write reaches the client immediately
+// cannot be buffered to measure it. compressWriter degrades on Flush and Hijack as a
+// backstop, but a stream that never reaches the wrapper cannot be broken by a later
+// change to that backstop.
 var compressSkipPaths = []string{"/api/events", "/api/shell/ws"}
 
 // compressJSON negotiates Content-Encoding: gzip for JSON response bodies over
-// compressMinBytes.
-//
-// webhttp.WriteJSON negotiates nothing, so /api/chats and a transcript
-// response crossed the wire uncompressed and the app could not tell whether
-// anything in front of it compressed them. Measured with gzip -6: /api/chats
-// 4.8x, the largest transcript 3.8x.
-//
-// Three conditions, all required: the request offers gzip, the response's
-// Content-Type is JSON, and the body reaches the threshold. The Content-Type
-// gate is also what keeps webhttp.StaticHandler's precompressed assets out —
-// they arrive carrying their own Content-Encoding, which gzipCandidate refuses.
+// compressMinBytes. Three conditions, all required: the request offers gzip, the
+// Content-Type is JSON, and the body reaches the threshold. The Content-Type gate is
+// also what keeps precompressed static assets out — they carry their own
+// Content-Encoding, which gzipCandidate refuses.
 func compressJSON(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isCompressSkipped(r.URL.Path) {
@@ -47,12 +35,9 @@ func compressJSON(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Announced for every response this middleware negotiates, decided
-		// BEFORE the outcome is known — a below-threshold body and a `gzip;q=0`
-		// refusal were both selected on Accept-Encoding just as much as a
-		// compressed one was, and a shared cache cannot see that from the body.
-		// Announcing it only from startGzip described the outcome instead of the
-		// negotiation.
+		// Announced before the outcome is known: a below-threshold body and a
+		// `gzip;q=0` refusal were selected on Accept-Encoding just as much as a
+		// compressed one, and a shared cache cannot see that from the body.
 		w.Header().Add("Vary", "Accept-Encoding")
 		if !acceptsGzip(r.Header.Get("Accept-Encoding")) {
 			next.ServeHTTP(w, r)
@@ -64,8 +49,8 @@ func compressJSON(next http.Handler) http.Handler {
 	})
 }
 
-// isCompressSkipped reports whether path is one of the streaming surfaces the
-// wrapper must not see.
+// isCompressSkipped reports whether path is a streaming surface the wrapper must not
+// see.
 func isCompressSkipped(path string) bool {
 	for _, p := range compressSkipPaths {
 		if path == p || strings.HasPrefix(path, p+"/") {
@@ -75,11 +60,9 @@ func isCompressSkipped(path string) bool {
 	return false
 }
 
-// acceptsGzip reports whether an Accept-Encoding header allows gzip.
-//
-// A `gzip;q=0` is a REFUSAL rather than an offer (RFC 9110 section 12.5.3),
-// and a bare `*` with no gzip entry is an offer. Both spellings are reachable
-// here because the caller is whatever browser or probe is pointed at the port.
+// acceptsGzip reports whether an Accept-Encoding header allows gzip. A `gzip;q=0` is a
+// REFUSAL rather than an offer (RFC 9110 section 12.5.3), and a bare `*` with no gzip
+// entry is an offer.
 func acceptsGzip(header string) bool {
 	wildcard := false
 	for part := range strings.SplitSeq(header, ",") {
@@ -119,12 +102,10 @@ func qZero(params string) bool {
 }
 
 // isJSONMediaType reports whether a Content-Type names JSON: exactly
-// application/json, or a structured `+json` suffix (RFC 6839).
-//
-// Deliberately NOT a substring test. application/x-ndjson contains "json" and
-// is a STREAM — the git-clone progress endpoint writes one line per flush and
-// the flush is its liveness signal — so a substring match would buffer the one
-// JSON-shaped response that must not be buffered.
+// application/json, or a structured `+json` suffix (RFC 6839). Deliberately NOT a
+// substring test — application/x-ndjson contains "json" and is a STREAM whose flush
+// is its liveness signal, so a substring match would buffer the one JSON-shaped
+// response that must not be buffered.
 func isJSONMediaType(ct string) bool {
 	mt, _, err := mime.ParseMediaType(ct)
 	if err != nil {
@@ -141,8 +122,8 @@ func isJSONMediaType(ct string) bool {
 type compressMode int
 
 const (
-	// modeBuffering holds the body back until it is big enough to be worth
-	// compressing. The status line is held back with it.
+	// modeBuffering holds the body, and the status line with it, until the size is
+	// worth compressing.
 	modeBuffering compressMode = iota
 	// modePlain passes every write through untouched.
 	modePlain
@@ -150,12 +131,10 @@ const (
 	modeGzip
 )
 
-// compressWriter decides per response whether to gzip it.
-//
-// The decision needs the Content-Type, known at WriteHeader, AND the body
-// size, known only as the body arrives — so the status line is held back until
-// either the threshold is crossed or the handler returns. Everything the
-// handler can do in between (flush, hijack, write nothing) resolves to a plain
+// compressWriter decides per response whether to gzip it. The decision needs the
+// Content-Type, known at WriteHeader, AND the body size, known only as the body
+// arrives, so the status line is held back until the threshold is crossed or the
+// handler returns. Everything the handler can do in between resolves to a plain
 // pass-through.
 type compressWriter struct {
 	http.ResponseWriter
@@ -163,23 +142,20 @@ type compressWriter struct {
 	buf    bytes.Buffer
 	status int
 	mode   compressMode
-	// headerWritten records that the HANDLER has committed a status, which is
-	// what makes a second WriteHeader the no-op net/http's own writer makes it.
+	// headerWritten records that the HANDLER committed a status, making a second
+	// WriteHeader the no-op net/http's own writer makes it.
 	headerWritten bool
-	// committed records that the status line reached the underlying writer — a
-	// different question: while buffering, the handler has committed and the
-	// wire has not.
+	// committed records that the status line reached the underlying writer, which
+	// while buffering is not the same question.
 	committed bool
 }
 
-// Unwrap exposes the wrapped writer to http.ResponseController, so a handler
-// reaching Flush or SetWriteDeadline through the controller finds the real
-// implementation instead of failing on an unsupported wrapper.
+// Unwrap exposes the wrapped writer to http.ResponseController, so a handler reaching
+// Flush or SetWriteDeadline through it finds the real implementation.
 func (cw *compressWriter) Unwrap() http.ResponseWriter { return cw.ResponseWriter }
 
-// WriteHeader records the status and decides whether this response is a gzip
-// candidate at all. A candidate's status line is held back until Write or
-// finish settles the size question.
+// WriteHeader records the status and decides whether this response is a gzip candidate
+// at all. A candidate's status line is held back until Write or finish settles size.
 func (cw *compressWriter) WriteHeader(code int) {
 	if cw.headerWritten {
 		return
@@ -246,12 +222,9 @@ func (cw *compressWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// startGzip switches a buffering response over to gzip, announcing the
-// encoding and replaying whatever is already buffered.
-//
-// Content-Length is dropped rather than recomputed: the value a handler
-// declared describes the identity representation, and the encoded length is
-// unknown until the body ends.
+// startGzip switches a buffering response over to gzip, replaying what is buffered.
+// Content-Length is dropped rather than recomputed: the handler's value describes the
+// identity representation, and the encoded length is unknown until the body ends.
 func (cw *compressWriter) startGzip() {
 	h := cw.Header()
 	gz, err := gzip.NewWriterLevel(cw.ResponseWriter, gzip.DefaultCompression)
@@ -272,12 +245,9 @@ func (cw *compressWriter) startGzip() {
 	}
 }
 
-// Flush resolves a still-undecided response as plain before flushing.
-//
-// A handler that flushes is telling the client to expect these bytes now,
-// which is the one claim buffering cannot honour. The path skip above already
-// covers the streams vibekit ships; this is what stops a new one being
-// silently buffered.
+// Flush resolves a still-undecided response as plain first: a handler that flushes is
+// telling the client to expect these bytes now, which is the one claim buffering
+// cannot honour. compressSkipPaths covers the known streams; this catches a new one.
 func (cw *compressWriter) Flush() {
 	if cw.mode == modeBuffering {
 		cw.passThrough()
@@ -288,9 +258,8 @@ func (cw *compressWriter) Flush() {
 	_ = http.NewResponseController(cw.ResponseWriter).Flush()
 }
 
-// Hijack hands the raw connection over, giving up on encoding first. A
-// hijacked connection is no longer HTTP framing, so nothing this wrapper does
-// can apply to it.
+// Hijack gives up on encoding first: a hijacked connection is no longer HTTP framing,
+// so nothing this wrapper does can apply to it.
 func (cw *compressWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	hj, ok := cw.ResponseWriter.(http.Hijacker)
 	if !ok {
@@ -300,9 +269,8 @@ func (cw *compressWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return hj.Hijack()
 }
 
-// finish closes out whichever mode the response ended in. Called from the
-// middleware's defer, so a panicking handler still leaves a consistent
-// response for the recoverer above it.
+// finish closes out whichever mode the response ended in. Called from the middleware's
+// defer, so a panicking handler still leaves a consistent response for the recoverer.
 func (cw *compressWriter) finish() {
 	switch cw.mode {
 	case modeGzip:

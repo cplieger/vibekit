@@ -1,11 +1,8 @@
-// ONE `git status` invocation per repository, plus its parser.
-//
-// It replaced five spawns per repo: `branch --show-current`, `rev-list` for the
-// ahead/behind counts, `status --porcelain=v1`, `stash list`, and a second
-// `status` for the tracked/untracked split. Porcelain v2 adds all of those as
-// header records beside the file list; only `remote get-url origin` survives,
-// because v2 reports the upstream REF and the panel needs the URL. Format
-// reference: gitstatus(1) "Porcelain Format Version 2".
+// ONE `git status` invocation per repository, plus its parser. Porcelain v2
+// carries the branch, ahead/behind and stash counts as header records beside the
+// file list; the panel still spawns `remote get-url origin` separately, because v2
+// reports the upstream REF and not the URL. Format reference: gitstatus(1)
+// "Porcelain Format Version 2".
 
 package git
 
@@ -21,22 +18,17 @@ import (
 	"github.com/cplieger/vibekit/internal/logsafe"
 )
 
-// statusArgs is the one status invocation. `-z` for NUL-delimited records (git
-// never quotes a path in that form — see parsePorcelainV2), and `-uall` so
-// untracked files inside a new directory are listed individually instead of
-// collapsing to the directory, which the entry walk skips.
+// statusArgs is the one status invocation. `-z` for NUL-delimited records (see
+// parsePorcelainV2) and `-uall` so untracked files inside a new directory are
+// listed individually rather than collapsing to a directory the walk skips.
 var statusArgs = []string{
 	"status", "--porcelain=v2", "--branch", "--show-stash", "-z", "-uall",
 }
 
-// porcelainStatus is everything one status invocation reports.
-//
-// Branch is empty for a detached HEAD, as `branch --show-current` answered. Ahead
-// and Behind are both 0 when the branch tracks nothing (git omits the header),
-// which this shape deliberately does not distinguish from being in sync.
-// Conflicted is v2's own answer rather than a reading of the letters: an unmerged
-// path is its own RECORD TYPE, so the seven XY pairs the short format had to
-// classify by hand are one prefix here.
+// porcelainStatus is everything one status invocation reports. Branch is empty for
+// a detached HEAD. Ahead and Behind are 0 when the branch tracks nothing (git
+// omits the header), deliberately indistinguishable from being in sync.
+// Conflicted comes from v2's unmerged RECORD TYPE, not from reading XY letters.
 type porcelainStatus struct {
 	Branch     string
 	Files      []gitFile
@@ -48,23 +40,16 @@ type porcelainStatus struct {
 
 // readStatus runs the status invocation in dir and parses it.
 //
-// The error survives because the three callers want different things from a
-// failure: the dashboard degrades to a row with empty counts, a discard refuses to
-// act on a status it does not have, and pull-all must treat an unreadable tree as
-// unsafe rather than clean.
-//
-// A FAILED read still answers the branch, read off .git/HEAD rather than from a
-// second spawn. Collapsing five invocations into two made the branch a casualty of
-// a failed status: `branch --show-current` used to be its own process and could
-// succeed where `status` failed, so the dashboard row for a wedged repository lost
-// its one piece of orientation along with its counts. The file read costs no
-// process at all, which is cheaper than what it replaces.
+// The error survives because the callers want different things from a failure: the
+// dashboard degrades to empty counts, a discard refuses to act on a status it does
+// not have, and pull-all must treat an unreadable tree as unsafe rather than clean.
+// A FAILED read still answers the branch, read off .git/HEAD, so a wedged
+// repository's row keeps its one piece of orientation.
 func readStatus(ctx context.Context, dir string) (porcelainStatus, error) {
 	raw, err := gitExec(ctx, dir, statusArgs...).CombinedOutput()
 	if err != nil {
-		// Cancellation (per-repo budget, server shutdown) SIGKILLs the subprocess —
-		// an expected partial result, not a git failure; keep WARN for genuine
-		// errors only so a busy dashboard doesn't flood the log with kill noise.
+		// Cancellation SIGKILLs the subprocess: an expected partial result, so WARN
+		// stays for genuine errors and a busy dashboard logs no kill noise.
 		if ctx.Err() != nil {
 			slog.Debug("git status canceled", "repo", logsafe.Field(dir), "cause", ctx.Err())
 			return porcelainStatus{Branch: headBranch(dir)}, err
@@ -80,14 +65,13 @@ func readStatus(ctx context.Context, dir string) (porcelainStatus, error) {
 // is a detached HEAD (a bare object id) or not a HEAD document at all.
 const headRefPrefix = "ref: refs/heads/"
 
-// headDocMaxBytes bounds the HEAD and .git reads. A HEAD document is one line and
-// a .git file is one `gitdir:` line, so this is the hostile-content bound. The
-// entry's own name is gitDirName (repos.go).
+// headDocMaxBytes bounds the HEAD and .git reads. Both documents are one line, so
+// this is purely the hostile-content bound.
 const headDocMaxBytes = 4 << 10
 
 // headBranch reads the checked-out branch straight off .git/HEAD, with no
-// subprocess. Empty for a detached HEAD — which is what `branch --show-current`
-// answered too — and empty for anything it cannot read or does not recognise.
+// subprocess. Empty for a detached HEAD, and for anything it cannot read or
+// recognise.
 func headBranch(dir string) string {
 	gitPath := filepath.Join(dir, gitDirName)
 	info, err := os.Stat(gitPath) // #nosec G703 -- dir is resolved through repoDir, which refuses ".." and absolute paths
@@ -95,8 +79,8 @@ func headBranch(dir string) string {
 		return ""
 	}
 	if !info.IsDir() {
-		// A linked worktree or a submodule: .git is a FILE naming the real git
-		// directory, and HEAD lives there rather than beside this file.
+		// A linked worktree or submodule: .git is a FILE naming the real git
+		// directory, and HEAD lives there.
 		gitPath = resolveGitDirFile(dir, gitPath)
 		if gitPath == "" {
 			return ""
@@ -106,8 +90,8 @@ func headBranch(dir string) string {
 }
 
 // resolveGitDirFile reads a `.git` FILE and returns the git directory it names,
-// resolving a relative pointer against the directory holding the file (git's own
-// rule). Empty when the file is not a gitdir pointer.
+// resolving a relative pointer against the file's own directory (git's rule).
+// Empty when the file is not a gitdir pointer.
 func resolveGitDirFile(dir, gitFile string) string {
 	target, ok := strings.CutPrefix(strings.TrimSpace(readSmallFile(gitFile)), "gitdir:")
 	if !ok {
@@ -123,9 +107,9 @@ func resolveGitDirFile(dir, gitFile string) string {
 	return filepath.Join(dir, target)
 }
 
-// readSmallFile reads at most headDocMaxBytes of path, answering "" for anything
-// it cannot read. Capped rather than os.ReadFile so a file that is not the
-// one-liner this expects cannot be pulled into memory whole.
+// readSmallFile reads at most headDocMaxBytes of path, answering "" for anything it
+// cannot read. Capped rather than os.ReadFile so a file that is not the expected
+// one-liner cannot be pulled into memory whole.
 func readSmallFile(path string) string {
 	f, err := os.Open(path) // #nosec G703 -- see headBranch; the value is only used when it parses as a HEAD document
 	if err != nil {
@@ -139,13 +123,10 @@ func readSmallFile(path string) string {
 	return string(raw)
 }
 
-// parseHeadRef extracts the branch name from a .git/HEAD document.
-//
-// Empty for a detached HEAD (a bare object id) and for anything that is neither
-// form. The ref-name check is what makes the recovery safe on a repository this
-// server did not write: a `.git` file can point its `gitdir:` anywhere, so
-// requiring the exact prefix plus a valid ref name means an unrelated file's first
-// line answers nothing rather than reaching the dashboard as a branch.
+// parseHeadRef extracts the branch name from a .git/HEAD document, empty for a
+// detached HEAD or any other content. The ref-name check is load-bearing: a `.git`
+// file can point its `gitdir:` anywhere, so requiring the prefix AND a valid ref
+// name keeps an unrelated file's first line off the dashboard.
 func parseHeadRef(doc string) string {
 	name, ok := strings.CutPrefix(strings.TrimSpace(doc), headRefPrefix)
 	if !ok || !isValidGitRef(name) {
@@ -166,14 +147,11 @@ const (
 	unmergedFields = 11
 )
 
-// parsePorcelainV2 parses the status output. A pure function, so the record
-// grammar is testable without git.
-//
-// Records are NUL-separated, headers included. -z is deliberate: git never quotes
-// a path in that form, where the newline form C-quotes anything non-ASCII
-// (café.txt → "caf\303\251.txt") and those strings were shown verbatim AND fed
-// back to git, matching nothing. Malformed records are skipped, which also makes
-// the stderr CombinedOutput folds in harmless.
+// parsePorcelainV2 parses the status output; pure, so the grammar is testable
+// without git. Records are NUL-separated, headers included: git never quotes a path
+// in the -z form, where the newline form C-quotes non-ASCII (café.txt →
+// "caf\303\251.txt") and those strings match nothing when fed back to git.
+// Malformed records are skipped, which also makes CombinedOutput's stderr harmless.
 func parsePorcelainV2(raw []byte) porcelainStatus {
 	var st porcelainStatus
 	records := strings.Split(string(raw), "\x00")
@@ -188,8 +166,8 @@ func parsePorcelainV2(raw []byte) porcelainStatus {
 		case '1':
 			st.appendEntry(rec, changedFields, "")
 		case '2':
-			// Take the origin path and skip it, whether or not the entry parses: a
-			// record left behind would be walked as its own entry next iteration.
+			// Consume the origin path even when the entry does not parse, or it would
+			// be walked as its own entry next iteration.
 			orig := ""
 			if i+1 < len(records) {
 				orig = records[i+1]
@@ -200,12 +178,10 @@ func parsePorcelainV2(raw []byte) porcelainStatus {
 			st.Conflicted = true
 			st.appendEntry(rec, unmergedFields, "")
 		case '?':
-			// `? <path>`: no XY pair of its own, so it carries v1's spelling of
-			// untracked into the shared row builder.
+			// `? <path>` has no XY pair, so it carries v1's spelling of untracked.
 			st.appendPath('?', '?', rec[2:], "")
 		case '!':
-			// Ignored files. Only emitted with --ignored, which statusArgs does not
-			// pass, so this arm is the format's completeness rather than a live path.
+			// Ignored files: only emitted with --ignored, which statusArgs omits.
 		}
 	}
 	return st
@@ -219,8 +195,7 @@ func (st *porcelainStatus) applyHeader(rec string) {
 	}
 	switch key {
 	case "branch.head":
-		// git spells a detached HEAD "(detached)"; the wire contract's empty branch
-		// is what the panel renders for it, and what `branch --show-current` gave.
+		// git spells a detached HEAD "(detached)"; the wire contract spells it empty.
 		if val != "(detached)" {
 			st.Branch = val
 		}
@@ -250,11 +225,10 @@ func (st *porcelainStatus) appendEntry(rec string, fields int, orig string) {
 }
 
 // appendPath appends the rows for one status pair through the shared row builder,
-// which is where a status letter's meaning for the UI lives.
+// which owns what a status letter means to the UI.
 func (st *porcelainStatus) appendPath(x, y byte, path, orig string) {
-	// A path ending in "/" is a directory, which git reports when it collapses an
-	// untracked tree. -uall stops that, so this is the guard for a git that does
-	// not honour it rather than an expected record.
+	// A trailing "/" is a collapsed untracked tree, which -uall already prevents;
+	// this guards a git that does not honour it.
 	if path == "" || strings.HasSuffix(path, "/") {
 		return
 	}
@@ -270,9 +244,8 @@ func unchangedToSpace(c byte) byte {
 	return c
 }
 
-// parseAheadBehind parses a `# branch.ab` value ("+1 -2"). Both counts are 0 for
-// anything that does not parse, which is the answer the panel showed before this
-// header existed.
+// parseAheadBehind parses a `# branch.ab` value ("+1 -2"), answering 0, 0 for
+// anything that does not parse.
 func parseAheadBehind(val string) (ahead, behind int) {
 	parts := strings.Fields(val)
 	if len(parts) != 2 {

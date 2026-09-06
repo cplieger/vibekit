@@ -88,18 +88,14 @@ func (s *Store) save(chatID vibekit.ChatID, chat *vibekit.Chat) error {
 	return s.writeChat(chatID, chat)
 }
 
-// writeChat atomically writes chat to chatID's file, leaving UpdatedAt
-// exactly as the caller left it. The caller holds the per-chat mutex, so
-// atomicfile's own locking is unnecessary. WithMkdirMode auto-creates the
-// parent dir (0o700: chat files may carry secrets).
+// writeChat atomically writes chat to chatID's file, leaving UpdatedAt exactly
+// as the caller left it — which is what SetDraft needs. The caller holds the
+// per-chat mutex, so atomicfile's own locking is unnecessary; the parent dir is
+// created 0o700 because chat files may carry secrets.
 //
-// Split out of save for SetDraft, whose whole point is a write that does
-// not move the retention clock.
-//
-// THE DESTINATION IS THE ARGUMENT, and the object's own id is verified
-// against it: a chat file whose stored id is not its filename would
-// otherwise be written over the file that id names, under the requested
-// id's lock — one chat silently overwriting another.
+// THE DESTINATION IS THE ARGUMENT, and the object's own id is verified against
+// it: a chat whose stored id is not its filename would otherwise overwrite the
+// file that id names, under the requested id's lock.
 func (s *Store) writeChat(chatID vibekit.ChatID, chat *vibekit.Chat) error {
 	path, err := s.pathFor(chatID)
 	if err != nil {

@@ -15,10 +15,8 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// The projection round-trips what the store WROTE. This is the whole claim behind
-// choosing a projection over a header file beside the chat: there is one record,
-// so the reader cannot report a stamp, a chain or a draft the writer did not
-// store.
+// The projection round-trips what the store WROTE: one record, so the reader
+// cannot report a stamp, a chain or a draft the writer did not store.
 func TestLoadRetentionHeader_ReadsWhatTheStoreWrote(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := t.Context()
@@ -55,14 +53,10 @@ func TestLoadRetentionHeader_ReadsWhatTheStoreWrote(t *testing.T) {
 	}
 }
 
-// Drafting is the DRAFT's presence and nothing else, read back through the
-// composer writers that produce it. This is what the purge's draft exemption
-// rests on.
-//
-// Staged attachments are the row that matters: they are paths to files that exist
-// on disk in their own right, so purging the chat loses a reference rather than
-// the content, and the exemption is deliberately narrower than "the composer
-// holds something".
+// Drafting is the DRAFT's presence and nothing else, which is what the purge's
+// draft exemption rests on. Staged attachments are the row that matters: they are
+// paths to files that exist on disk in their own right, so the exemption is
+// narrower than "the composer holds something".
 func TestLoadRetentionHeader_DraftingRoundTripsTheComposer(t *testing.T) {
 	cases := map[string]struct {
 		draft        string
@@ -105,14 +99,9 @@ func TestLoadRetentionHeader_DraftingRoundTripsTheComposer(t *testing.T) {
 	}
 }
 
-// An empty draft PRESENT on disk defends nothing.
-//
-// It needs its own fixture because the store cannot write one: Chat.Draft carries
-// `omitempty`, so clearing a draft removes the key entirely and the round-trip
-// test above never reaches the emptiness test at all (verified by mutation — with
-// `Drafting = true` hardcoded in the projection, every row of that table still
-// passes). A chat written by another build or edited by hand can carry the key,
-// and an empty draft is how a sent or abandoned message clears, so reading it as
+// An empty draft PRESENT on disk defends nothing. It needs a hand-written fixture
+// because Chat.Draft carries `omitempty`, so the store cannot write the key at all
+// and the round-trip test above never reaches emptiness. Reading an empty draft as
 // work in progress would make every chat that ever had one permanent.
 func TestLoadRetentionHeader_AnExplicitEmptyDraftDefendsNothing(t *testing.T) {
 	s, _ := newTestStore(t)
@@ -130,20 +119,12 @@ func TestLoadRetentionHeader_AnExplicitEmptyDraftDefendsNothing(t *testing.T) {
 	}
 }
 
-// The projection matches keys the way encoding/json does, CASE-INSENSITIVELY, and
-// the draft row is the one that loses data when it does not.
-//
-// encoding/json is the other reader of this same file — the store's full load — so a
-// key whose case differs from the struct tag is one the two readers disagree about,
-// silently. A missed `updated_at` falls back to the file mtime, which the purge
-// already documents as its unreadable-file path, and a missed `acp_session_id`
-// leaves a KAS session directory unreaped; a missed `draft` returns Drafting =
-// false, and the reaper then UNLINKS a chat with unsent words in it.
-//
-// vibekit writes the lower-case tag, so nothing in the fleet produces this today.
-// It is worth pinning anyway because this projection already reasons about foreign
-// files: the sibling test above hand-writes its fixture precisely because a chat
-// written by another build or edited by hand can carry the key.
+// The projection matches keys the way encoding/json does, CASE-INSENSITIVELY,
+// because encoding/json is the other reader of this same file (the store's full
+// load) and a key the two disagree about loses data silently: a missed
+// `updated_at` falls back to the file mtime, a missed `acp_session_id` leaves a
+// KAS session directory unreaped, and a missed `draft` lets the reaper UNLINK a
+// chat with unsent words in it.
 func TestLoadRetentionHeader_MatchesKeysTheWayEncodingJSONDoes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -200,10 +181,9 @@ func TestLoadRetentionHeader_MatchesKeysTheWayEncodingJSONDoes(t *testing.T) {
 	}
 }
 
-// The premise the test above rests on, asserted rather than assumed: encoding/json
-// really does fold these keys. Without it, "the two readers disagree" is a claim
-// about the standard library that nothing here checks, and a Go release that
-// tightened field matching would make the folding above wrong rather than red.
+// The premise the test above rests on, asserted rather than assumed:
+// encoding/json really does fold these keys. A Go release that tightened field
+// matching would otherwise make the folding above wrong rather than red.
 func TestUnmarshalFoldsAChatsFieldNames(t *testing.T) {
 	var c vibekit.Chat
 	body := `{"Draft":"unsent words","Updated_At":1730000000000,"ACP_Session_ID":"sess_new"}`
@@ -221,19 +201,13 @@ func TestUnmarshalFoldsAChatsFieldNames(t *testing.T) {
 	}
 }
 
-// The messages array is SKIPPED, not decoded, and this is the assertion that can
-// tell the difference: a message whose fields do not fit vibekit.Message fails a
-// full decode and is invisible to the projection. Replace the projection with a
-// full load and this test goes red.
-//
-// It is also the behavior that matters operationally — a chat file a newer build
-// wrote, or one somebody edited, stays retention-managed instead of falling back
-// to its mtime forever.
+// The messages array is SKIPPED, not decoded: replace the projection with a full
+// load and this test goes red. Operationally it is what keeps a chat file a newer
+// build wrote retention-managed instead of falling back to its mtime forever.
 func TestLoadRetentionHeader_SkipsMessagesRatherThanDecodingThem(t *testing.T) {
 	s, _ := newTestStore(t)
 	path := filepath.Join(s.dir, "c1"+chatFileSuffix)
-	// Valid JSON, invalid vibekit.Message: role is a number and the block carries
-	// a field of the wrong type.
+	// Valid JSON, invalid vibekit.Message: role is a number, block field mistyped.
 	body := `{
   "id": "c1",
   "name": "odd",
@@ -266,9 +240,9 @@ func TestLoadRetentionHeader_SkipsMessagesRatherThanDecodingThem(t *testing.T) {
 	}
 }
 
-// A chat that records no activity stamp reports zero, which is what makes
-// purgeOne fall back to the file mtime. A projection that invented a stamp here —
-// or errored — would either date the chat to the epoch or make it unpurgeable.
+// A chat with no activity stamp reports zero, which is what makes purgeOne fall
+// back to the file mtime. An invented stamp would date the chat to the epoch; an
+// error would make it unpurgeable.
 func TestLoadRetentionHeader_AbsentFieldsAreZero(t *testing.T) {
 	s, _ := newTestStore(t)
 	path := filepath.Join(s.dir, "c1"+chatFileSuffix)
@@ -307,11 +281,9 @@ func TestLoadRetentionHeader_RejectsMalformedJSON(t *testing.T) {
 	}
 }
 
-// The projection opens through atomicfile.OpenRegular for the reason
-// readCappedFile does: a FIFO at a chat file name blocks in open(2) with no
-// deadline able to rescue it, and the purge reads EVERY chat file on every pass —
-// so this is the one read that would wedge retention permanently, from one
-// command in the agent's own shell.
+// A FIFO at a chat file name blocks in open(2) with no deadline able to rescue it,
+// and the purge reads EVERY chat file on every pass, so this is the one read that
+// would wedge retention permanently.
 func TestLoadRetentionHeader_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 	s, _ := newTestStore(t)
 	id := mkfifoChat(t, s.dir)

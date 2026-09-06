@@ -2,24 +2,12 @@ package agent
 
 // What may be done to one run, and why not for the rest.
 //
-// ONE table, and it is the server's. Two used to face each other — the client's
-// status→verbs map and this package's per-verb `from` lists — and neither could
-// see the third input, whether anything in this process still holds the run. So
-// the pair could agree perfectly and still draw a button whose only possible
-// outcome was a refusal.
-//
-// The client's other input was worse than stale: it derived a run's parentage
-// from a map fed only by SSE frames, so every client that reloaded read a
-// chat-parented run as parentless. Parentage is a durable property of the run
-// and the chat store answers it with no RPC, which is why the answer is computed
-// here.
-//
-// THE PARENTLESS-ONLY RULE IS GONE rather than moved here. It rested on "an
-// agent-parented run's recovery is the agent's own", and that is false for
-// exactly the statuses retry is legal from: kiro-cli's own restore pass
-// considers a `running` or `paused` run only, so an aborted chat-parented run
-// has no recovery path in either product. Withholding retry from it left it
-// unreachable; offering it is the point.
+// ONE table, and it is the server's: the client's status→verbs map could not see
+// the third input, whether anything in this process still holds the run, so it
+// could draw a button whose only possible outcome was a refusal. Retry is offered
+// on an agent-parented run too — kiro-cli's own restore pass considers only a
+// `running` or `paused` run, so an aborted one has no recovery path in either
+// product and withholding retry left it unreachable.
 
 import (
 	"context"
@@ -29,9 +17,8 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// The run-control verb names, as the affordance answer and the routes spell
-// them. Named rather than repeated as literals because the table below, the
-// route handlers and the client's label map all key on the same words.
+// The run-control verb names. Named because this table, the route handlers and
+// the client's label map all key on the same words.
 const (
 	verbPause  = "pause"
 	verbResume = "resume"
@@ -39,62 +26,44 @@ const (
 	verbRetry  = "retry"
 )
 
-// runStatusVerbs maps KAS's WorkflowStatusSchema to the verbs each status
-// accepts, mirroring what KAS itself does: retry throws for anything
-// non-terminal, pause sets a flag that means nothing once a run has stopped,
-// resume re-drives a paused one.
-//
-// Cancel is absent from the terminal statuses and present on both live ones:
-// every live run must offer a way out, and a finished run must not offer a stop
-// that would do nothing.
-//
-// An UNKNOWN status is absent rather than mapped to an empty list, so a future
-// KAS status degrades to a read-only view instead of a wrong control.
+// runStatusVerbs maps KAS's WorkflowStatusSchema to the verbs each status accepts,
+// mirroring KAS itself: retry throws for anything non-terminal, pause sets a flag
+// that means nothing once a run has stopped, resume re-drives a paused one. Cancel
+// is on both live statuses and neither terminal one. An UNKNOWN status is absent
+// rather than mapped to an empty list, so a future KAS status degrades to a
+// read-only view instead of a wrong control.
 var runStatusVerbs = map[string][]string{
 	"running":       {verbPause, verbCancel},
 	runStatusPaused: {verbResume, verbCancel},
 	// A completed run is a record: nothing to retry, nothing to stop.
 	"completed": {},
-	// Retry resets the failed and aborted nodes plus their ancestors, so the
-	// completed work survives — unlike relaunching the recipe, which starts at
-	// step one.
+	// Retry resets the failed and aborted nodes plus their ancestors, so completed
+	// work survives — unlike relaunching, which starts at step one.
 	"failed":  {verbRetry},
 	"aborted": {verbRetry},
 }
 
-// hostedOnlyVerbs need the process that holds the run's registry entry, and
-// cannot re-host one.
-//
-// KAS's pause reaches `registry.require`, which throws for a run not in the live
-// in-memory registry and does not rehydrate from disk. Resume executes, so the
-// utility bridge is no carrier for it either — a text-only session denies every
-// permission request and errors every fs call, so a run resumed there would
-// grind through its steps with no tools.
-//
-// Retry is deliberately NOT here: it loads the run into a fresh process first,
-// which is what makes it the one verb that reaches a run nothing hosts.
+// hostedOnlyVerbs need the process that holds the run's registry entry and cannot
+// re-host one: KAS's pause reaches `registry.require`, which throws for a run not
+// in the live in-memory registry and does not rehydrate from disk. Resume executes,
+// so the utility bridge is no carrier either — a text-only session denies every
+// permission request and errors every fs call. Retry is deliberately NOT here: it
+// loads the run into a fresh process first.
 var hostedOnlyVerbs = []string{verbPause, verbResume}
 
 // runAffordance answers what may be done to one run.
 type runAffordance struct {
-	// Refused maps a verb this run does not offer to one sentence for the reader.
-	// It carries only a verb whose absence would otherwise be unexplained: a
-	// status that plainly excludes a verb already says so through the state word
-	// beside the row.
+	// Refused maps a verb this run does not offer to one sentence for the reader,
+	// and carries only a verb whose absence would otherwise be unexplained.
 	Refused map[string]string
 	// ParentChat is the chat whose agent launched the run, "" when parentless.
-	//
-	// Part of the answer rather than a second lookup, and for two reasons: it is
-	// what the refusal sentences are ABOUT, and the run page asks the same question
-	// to say where a step's live transcript went. Resolving it twice would pay for
-	// the run inventory twice.
+	// Part of the answer rather than a second lookup: it is what the refusal
+	// sentences are ABOUT, and resolving it twice would pay for the run inventory
+	// twice.
 	ParentChat vibekit.ChatID
-	// Recipe is the run's recipe name off KAS's inventory, "" when unknown.
-	//
-	// Here for ParentChat's reason and off the same read: retry needs it for the
-	// lease it re-arms, and the inventory that carries the parent session carries
-	// the name one field away. Not part of the wire answer — handleControls maps
-	// the three fields the client asked for, and this is not one of them.
+	// Recipe is the run's recipe name off KAS's inventory, "" when unknown. Retry
+	// needs it for the lease it re-arms, and it sits one field from the parent
+	// session on the same read. Not part of the wire answer.
 	Recipe string
 	// Verbs are the offered controls, in the order a row presents them.
 	Verbs []string
@@ -113,16 +82,14 @@ func (a runAffordance) refusal(verb string) string {
 
 // runFacts is what an affordance is decided from: the status the caller read, the
 // recipe and parent session off KAS's run inventory, the chat owning that session
-// off the chat store, and hosting off the bridge map. affordance owns what
-// gathering them costs.
+// off the chat store, and hosting off the bridge map.
 type runFacts struct {
 	// status is the run's own status, as `inspect` reports it.
 	status string
 	// parentChat is the chat whose agent launched the run, "" when parentless.
 	parentChat vibekit.ChatID
-	// parentName is that chat's display name, for the refusal sentence. Empty
-	// for an unnamed chat, which the sentence then omits rather than quoting
-	// nothing.
+	// parentName is that chat's display name, for the refusal sentence. Empty for
+	// an unnamed chat, which the sentence then omits rather than quoting nothing.
 	parentName string
 	// recipe is the run's recipe name, off the same read as the parent session.
 	recipe string
@@ -136,8 +103,8 @@ type runFacts struct {
 func affordanceOf(f runFacts) runAffordance {
 	byStatus, known := runStatusVerbs[f.status]
 	if !known {
-		// An unrecognised status degrades to a read-only view. The parent chat still
-		// travels: the page's step-transcript note needs it whatever the status is.
+		// The parent chat still travels: the page's step-transcript note needs it
+		// whatever the status is.
 		return runAffordance{ParentChat: f.parentChat, Recipe: f.recipe}
 	}
 	out := runAffordance{
@@ -159,12 +126,9 @@ func affordanceOf(f runFacts) runAffordance {
 }
 
 // notHostedRefusal is the sentence a hosted-only verb gets when nothing in this
-// process holds the run.
-//
-// It names the launching chat when there is one, because that is the reader's
-// remedy: opening that chat respawns its bridge and brings the run back within
-// reach. A parentless run has no such door, so its sentence says what state the
-// run is in and which verb still works.
+// process holds the run. It names the launching chat when there is one, because
+// that is the reader's remedy: opening that chat respawns its bridge. A parentless
+// run has no such door, so its sentence says which verb still works.
 func notHostedRefusal(verb string, parentChat vibekit.ChatID, parentName string) string {
 	if parentChat != "" {
 		return "This run is driven by an agent in " + chatLabel(parentChat, parentName) +
@@ -175,9 +139,8 @@ func notHostedRefusal(verb string, parentChat vibekit.ChatID, parentName string)
 		" from here. A run from before the last restart is in this state; Cancel still works."
 }
 
-// chatLabel names a chat for a sentence a person reads: its name when it has
-// one, its id otherwise. A chat created and never named carries an empty Name,
-// and quoting that would leave the reader with a sentence naming nothing.
+// chatLabel names a chat for a sentence a person reads: its name when it has one,
+// its id otherwise, because quoting an empty name names nothing.
 func chatLabel(chatID vibekit.ChatID, name string) string {
 	if name == "" {
 		return "chat " + strconv.Quote(string(chatID))
@@ -185,9 +148,8 @@ func chatLabel(chatID vibekit.ChatID, name string) string {
 	return strconv.Quote(name)
 }
 
-// pastTense spells a verb the way the refusal sentence needs it. Two of the four
-// verbs are irregular enough that appending "d" is wrong, so the mapping is
-// explicit and falls back to the verb itself rather than guessing.
+// pastTense spells a verb the way the refusal sentence needs it. Explicit because
+// two of the four are irregular enough that appending "d" is wrong.
 func pastTense(verb string) string {
 	switch verb {
 	case verbPause:
@@ -206,10 +168,8 @@ func pastTense(verb string) string {
 //
 // status is passed in rather than read here: every caller has already made that
 // `inspect` call, and one decision must rest on one status read, not two that can
-// disagree.
-//
-// Costs ONE out-of-process read, listedRun's `workflow/list`, which carries both
-// the parent session and the recipe: a verb acting on this answer spends no list.
+// disagree. Costs ONE out-of-process read, listedRun's `workflow/list`, which
+// carries both the parent session and the recipe.
 func (rs *Runs) affordance(ctx context.Context, workflowID, status string) runAffordance {
 	listed := rs.listedRun(ctx, workflowID)
 	f := runFacts{status: status, recipe: listed.Name}
@@ -219,18 +179,14 @@ func (rs *Runs) affordance(ctx context.Context, workflowID, status string) runAf
 	return affordanceOf(f)
 }
 
-// chatForSession resolves a run's parent SESSION to the chat that owns it, from
-// the chat store alone.
+// chatForSession resolves a run's parent SESSION to the chat that owns it, from the
+// chat store alone.
 //
 // Matched against the whole session CHAIN, not the current id: a chat changes
 // session on a failed session/load, a model-switch fallback and empty-turn
-// recovery, so the current id alone would leave a run launched before such a
-// change looking parentless — which is the population this whole answer exists
-// to get right.
-//
-// Unlike hostBridgeChat this does NOT require the chat to have a live bridge:
-// naming the chat is what makes a refusal actionable, and a closed chat is
-// exactly when the reader needs to be told which one to open.
+// recovery, so the current id alone would leave a run launched before such a change
+// looking parentless. Unlike hostBridgeChat this does NOT require a live bridge — a
+// closed chat is exactly when the reader needs to be told which one to open.
 func (rs *Runs) chatForSession(
 	ctx context.Context, sessionID string,
 ) (chatID vibekit.ChatID, name string) {

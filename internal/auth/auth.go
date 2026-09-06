@@ -1,7 +1,5 @@
-// Package auth wires the /api/whoami, /api/login, /api/logout endpoints
-// that shell out to the bundled kiro-cli binary for identity operations.
-// No state persists in the package beyond the CLI path resolved at
-// construction time.
+// Package auth serves /api/whoami, /api/login and /api/logout by shelling out to
+// the bundled kiro-cli binary. It persists no state of its own.
 package auth
 
 import (
@@ -22,9 +20,7 @@ import (
 	"github.com/cplieger/vibekit/internal/sanitize"
 )
 
-// Config holds per-instance timeout configuration. Tests construct
-// a Handler with short timeouts directly via WithConfig; production
-// passes a config built by the composition layer's ConfigFromEnv.
+// Config holds per-instance timeouts, supplied through WithConfig.
 type Config struct {
 	LoginURLTimeout time.Duration
 	LoginTimeout    time.Duration
@@ -40,80 +36,57 @@ var DefaultConfig = Config{
 	WhoamiTimeout:   5 * time.Second,
 }
 
-// Scanner caps for scanLoginOutput: a generous per-line limit guards
-// against accidental overflows from debug dumps embedded in the login
-// banner, and maxLoginLines bounds total memory.
+// Scanner caps for scanLoginOutput: the per-line limit absorbs debug dumps in
+// the login banner, and maxLoginLines bounds total memory.
 const (
 	maxScanLineBytes = 256 * 1024
 	maxLoginLines    = 200
 )
 
-// Subprocess output caps. Legitimate whoami output is ~150 bytes of JSON;
-// the 64 KiB cap catches a pathological/malicious kiro-cli replacement
-// trying to OOM the container via unbounded stdout. The logout cap
-// matches in spirit.
+// Subprocess stdout caps: legitimate whoami output is ~150 bytes of JSON, so
+// these exist to stop a hostile kiro-cli replacement OOMing the container.
 const (
 	whoamiMaxOutput = buffer.DefaultOutputCap
 	logoutMaxOutput = 1 << 20 // 1 MiB
 
-	// stderrCap bounds subprocess stderr capture across every handler.
-	// A hostile or runaway kiro-cli can otherwise OOM the container via
-	// unbounded stderr on any endpoint.
+	// stderrCap bounds stderr capture on every endpoint, for the same reason.
 	stderrCap = 32 * 1024
 )
 
-// Maximum byte lengths for login request fields. A well-formed start URL
-// is under ~200 bytes; the 2048 ceiling matches browser URL limits.
+// Maximum byte lengths for login request fields; 2048 matches browser URL limits.
 const (
 	maxProviderLen = 2048
 	maxRegionLen   = 32
 )
 
-// childWaitDelay bounds how long Wait may spend past the context's deadline
-// on a child that has not exited or has left its I/O pipes held open. It is
-// a BACKSTOP, not the mechanism — boundChild's Cancel kills the whole
-// process group, which closes the pipes at once — so this is only reached
-// by a descendant that escaped the group or a process in an uninterruptible
-// sleep.
+// childWaitDelay bounds Wait past the context's deadline. A BACKSTOP only:
+// boundChild's Cancel kills the process group, so this is reached solely by a
+// descendant that escaped the group or sits in uninterruptible sleep.
 const childWaitDelay = time.Second
 
-// awsRegionRe matches AWS region ids across all partitions: commercial
-// (us-east-1), China (cn-north-1), GovCloud (us-gov-west-1), ISO
-// (us-iso-east-1, us-isob-east-1, eu-isoe-west-1). Format is a
-// two-letter partition, one or more lowercase-alpha groups joined by
-// single hyphens, then a trailing digit. Each interior segment must be
-// non-empty (the `+` quantifier on `[a-z]+`) so `us--east-1` still
-// fails. Rejects flag-smuggling (`--help`), shell metacharacters,
-// whitespace, uppercase, and empty interior segments.
+// awsRegionRe matches AWS region ids in every partition (us-east-1,
+// cn-north-1, us-gov-west-1, us-isob-east-1). Interior segments must be
+// non-empty, so it also rejects flag smuggling, shell metacharacters,
+// whitespace, uppercase and `us--east-1`.
 var awsRegionRe = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-\d+$`)
 
 // Handler is the /api/whoami + /api/login + /api/logout endpoint bundle.
-// It shells out to kiro-cli for identity operations; no state persists
-// beyond the CLI path. `loginSem` serialises login subprocesses for the
-// full device-flow lifetime: vibekit is single-user, and a browser
-// double-click or LAN probe would otherwise spawn duplicate kiro-cli
-// subprocesses each pinning their own AWS device code for the full
-// LoginTimeout (16m). The semaphore is released by the reap
-// goroutine when cmd.Wait returns (user completes flow, or hard cap
-// fires), not when the HTTP handler returns — so a second POST that
-// arrives after the first URL has been emitted but while the first
-// subprocess is still alive still gets 409.
+//
+// loginSem serialises login subprocesses for the whole device-flow lifetime, so
+// a double-click cannot pin two AWS device codes at once. The reap goroutine
+// releases it when cmd.Wait returns, not when the handler returns, so a second
+// POST arriving after the first URL was emitted still gets 409.
 type Handler struct {
 	loginSem chan struct{}
-	// identity is what /api/whoami answers from. See identityCache: the
-	// endpoint fires on every page load and every SSE reconnect, so the read
-	// behind it happens on a timer and on the sign-in/sign-out transitions,
-	// never on a request.
+	// identity is what /api/whoami answers from, so the endpoint's page-load and
+	// SSE-reconnect traffic never triggers a read (see identityCache).
 	identity *identityCache
-	// cliPath resolves the kiro-cli binary at CALL time. It is a function
-	// because the install manager selects the active version after the listener
-	// binds and can switch it later, so a path captured at construction would
-	// pin whoami/login/logout to whatever was installed first — and on a first
-	// boot that is nothing at all.
+	// cliPath resolves the binary at CALL time: the install manager picks the
+	// active version after the listener binds and can switch it later, and on a
+	// first boot there is nothing installed yet.
 	cliPath func() string
-	// trusted is the reverse-proxy network set passed to
-	// webhttp.ClientIP when recording the client IP in the login/logout
-	// audit logs. Nil (unconfigured) = log the unspoofable socket peer.
+	// trusted is the reverse-proxy set handed to webhttp.ClientIP for the
+	// login/logout audit logs. Nil = log the unspoofable socket peer.
 	trusted []*net.IPNet
 	cfg     Config
 }
@@ -121,52 +94,41 @@ type Handler struct {
 // Option configures a Handler at construction time.
 type Option func(*Handler)
 
-// WithConfig overrides the default timeout configuration. Called
-// from the composition layer with env-derived config and from tests
-// with shorter timeouts. Having ONE construction-time config-injection
-// path, exercised by both production and tests, keeps deadcode happy
-// and ensures tests exercise the same wiring production uses.
+// WithConfig overrides the default timeout configuration.
 func WithConfig(cfg Config) Option {
 	return func(h *Handler) { h.cfg = cfg }
 }
 
-// WithTrustedProxies sets the reverse-proxy networks trusted when
-// resolving the client IP for the login/logout audit logs via
-// webhttp.ClientIP. Empty/nil trusts nothing, so the unspoofable
-// socket-peer host is logged (the spoof-safe default for a
-// directly-exposed deployment).
+// WithTrustedProxies sets the reverse-proxy networks trusted when resolving the
+// client IP for the login/logout audit logs. Empty or nil trusts nothing, so the
+// unspoofable socket peer is logged.
 func WithTrustedProxies(trusted []*net.IPNet) Option {
 	return func(h *Handler) { h.trusted = trusted }
 }
 
-// NewHandler returns an auth handler that shells out to the kiro-cli binary
-// cliPath resolves to for whoami / login / logout operations. The resolver is
-// consulted per call, never cached (see Handler.cliPath).
+// NewHandler returns an auth handler that shells out to whatever binary cliPath
+// resolves to. The resolver is consulted per call, never cached.
 func NewHandler(cliPath func() string, opts ...Option) *Handler {
 	h := &Handler{cliPath: cliPath, loginSem: make(chan struct{}, 1), cfg: DefaultConfig}
 	for _, o := range opts {
 		o(h)
 	}
-	// After the options, not before: the cache captures the read budget, and
-	// WithConfig is what sets it.
+	// After the options: the cache captures the read budget WithConfig sets.
 	h.identity = newIdentityCache(h.readIdentity, h.cfg.WhoamiTimeout)
 	return h
 }
 
-// RegisterRoutes wires the auth handler's HTTP endpoints onto mux:
-//   - GET  /api/whoami — current kiro-cli identity
-//   - POST /api/login  — device-code login flow
-//   - POST /api/logout — clear local credentials
+// RegisterRoutes wires GET /api/whoami, POST /api/login and POST /api/logout
+// onto mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/whoami", h.handleWhoami)
 	mux.HandleFunc("/api/login", h.handleLogin)
 	mux.HandleFunc("/api/logout", h.handleLogout)
 }
 
-// stderrAttr returns slog key/value attributes for a captured stderr
-// buffer, omitting the "stderr" key entirely when the buffer is empty —
-// emitting `stderr=""` for a timeout would give the false impression stderr
-// was empty-but-captured rather than empty-and-unavailable.
+// stderrAttr returns slog attributes for captured stderr, omitting the key when
+// the buffer is empty: `stderr=""` would read as captured-and-empty rather than
+// unavailable.
 func stderrAttr(stderr *procout.Buffer) []any {
 	s := sanitize.Output(strings.TrimSpace(stderr.String()))
 	if s == "" {
@@ -176,29 +138,18 @@ func stderrAttr(stderr *procout.Buffer) []any {
 }
 
 // boundChild makes a subprocess honour ITS CONTEXT'S deadline rather than the
-// child's own lifetime.
-//
-// exec.CommandContext's default cancellation SIGKILLs the parent PID only.
-// Every kiro-cli invocation here is a bun/Node wrapper that forks helpers
-// inheriting the stdout/stderr pipe write ends, so cmd.Run does not return
-// until the LAST descendant exits.
-//
-// Measured on go1.27.0 against a fake CLI running `sleep 10` under a 50ms
-// context: Run returned after 10.001s with the default cancellation AND with
-// Setpgid alone (the group kill in both handlers ran only after Run
-// returned). With a group-killing Cancel plus WaitDelay it returned after
-// 50ms; WaitDelay alone came back at 1.051s. Both halves are load-bearing.
-//
-// /api/whoami fires on every page load and every SSE reconnect, which is
-// what makes this an exhaustion path: one pinned handler goroutine per page
-// load for as long as some grandchild happens to live.
+// child's own lifetime. exec.CommandContext's cancellation SIGKILLs the parent
+// PID only, and every kiro-cli invocation forks helpers inheriting the pipe write
+// ends, so Wait blocks until the LAST descendant exits. Group-killing Cancel and
+// WaitDelay are both load-bearing: under a 50ms context against a child running
+// `sleep 10`, either alone returned in 10.0s and 1.05s, the pair in 50ms.
 func boundChild(cmd *exec.Cmd) {
 	setProcGroup(cmd)
 	cmd.Cancel = func() error {
 		err := killGroup(cmd)
-		// Mirror os.Process.Kill's own mapping so an already-reaped child leaves
-		// Wait's error untouched: exec treats a Cancel error equivalent to
-		// os.ErrProcessDone as "nothing to report".
+		// exec treats os.ErrProcessDone from Cancel as nothing to report, so
+		// mirroring os.Process.Kill's mapping keeps Wait's error untouched for an
+		// already-reaped child.
 		if errors.Is(err, syscall.ESRCH) {
 			return os.ErrProcessDone
 		}
@@ -207,16 +158,12 @@ func boundChild(cmd *exec.Cmd) {
 	cmd.WaitDelay = childWaitDelay
 }
 
-// loginReap bundles the state handed off from handleLogin to the reap
-// goroutine. Ownership transfers atomically: after the go statement, the
-// reap goroutine is the sole owner of ctx cancellation, cmd.Wait, stderrBuf
-// reads, and the waitDone close.
+// loginReap is the state handleLogin hands to the reap goroutine, which becomes
+// sole owner of ctx cancellation, cmd.Wait, stderrBuf and the waitDone close.
 //
-// stdoutDone is closed by the scanner goroutine after it finishes reading
-// the stdout pipe. The reap goroutine waits on this channel before calling
-// cmd.Wait — per Go's exec.Cmd docs, "it is incorrect to call Wait before
-// all reads from the pipe have completed" because Wait closes the pipe and
-// races a concurrent reader.
+// It must wait for stdoutDone (closed by the scanner) before calling cmd.Wait:
+// exec.Cmd forbids Wait before every pipe read has completed, because Wait
+// closes the pipe under the reader.
 type loginReap struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -226,9 +173,8 @@ type loginReap struct {
 	waitDone   chan struct{}
 }
 
-// lineRing holds the first N and last N lines pushed into it, capping each
-// line at perLineCap bytes. Used for the line-cap diagnostic log in
-// scanLoginOutput.
+// lineRing holds the first N and last N lines pushed into it, each capped at
+// perLineCap bytes.
 type lineRing struct {
 	first      []string
 	last       []string
@@ -245,8 +191,8 @@ func newLineRing(halfCap, perLineCap int) *lineRing {
 	}
 }
 
-// Push appends line to the ring, truncating at perLineCap bytes so an
-// adversarial CLI can't blow up a single structured log attribute.
+// Push appends line, truncating at perLineCap bytes so an adversarial CLI cannot
+// blow up one log attribute.
 func (r *lineRing) Push(line string) {
 	if len(line) > r.perLineCap {
 		line = line[:r.perLineCap]
@@ -261,8 +207,8 @@ func (r *lineRing) Push(line string) {
 	}
 }
 
-// Sample returns the concatenation of the first-N and last-N slices
-// for a single slog attribute.
+// Sample returns the first-N and last-N lines concatenated, for one slog
+// attribute.
 func (r *lineRing) Sample() []string {
 	return slices.Concat(r.first, r.last)
 }

@@ -1,8 +1,6 @@
 package agent
 
-// The one path every terminal step takes: each step is a CLOSER handed to
-// finalizeTurn, which claims the turn first-wins, runs that closer's effects with
-// no lock held, and publishes the result.
+// Every terminal step is a CLOSER handed to finalizeTurn.
 
 import (
 	"cmp"
@@ -15,9 +13,8 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// turnCloser names the local step ending a turn. The finalizer takes it rather
-// than a stop reason because the steps resolve an in-flight partial in genuinely
-// different directions.
+// turnCloser names the local step ending a turn, rather than a stop reason,
+// because the steps resolve an in-flight partial in different directions.
 type turnCloser int
 
 const (
@@ -25,26 +22,24 @@ const (
 	closerPromptResponse turnCloser = iota
 	// closerPromptFailure is the prompt call failing before the turn could end.
 	closerPromptFailure
-	// closerModelSwitch is a bridge restart DISCARDING the turn: the user asked
-	// for a different answer, so the partial is moot.
+	// closerModelSwitch is a bridge restart DISCARDING the turn: the user asked for
+	// a different answer, so the partial is moot.
 	closerModelSwitch
 	// closerLocalShell is a `!cmd` turn vibekit ran itself.
 	closerLocalShell
-	// closerBridgeDeath is the third actor: the agent process exited with a turn
-	// still open, so nothing else is going to close it.
+	// closerBridgeDeath is the agent process exiting with a turn still open, so
+	// nothing else is going to close it.
 	closerBridgeDeath
-	// closerWireEnd is the engine's own turn_end bracket. The ONLY closer that
-	// sets WireEnded, which is what the empty-turn recovery gates on.
+	// closerWireEnd is the engine's own turn_end bracket, and the ONLY closer that
+	// sets WireEnded — what the empty-turn recovery gates on.
 	closerWireEnd
-	// closerWireDisplaced is a turn_start arriving with a turn still open and
-	// nothing pending to bind: the previous turn's end never came, so it closes
-	// `unknown` before the new one opens.
+	// closerWireDisplaced is a turn_start arriving over a still-open turn whose end
+	// never came, so it closes `unknown` before the new one opens.
 	closerWireDisplaced
 )
 
-// deathInterruptCause is what the transcript says when the agent process exited
-// mid-turn. A constant because it is the divider's label and the only durable
-// record of that cause.
+// deathInterruptCause is the divider's label when the agent process exited
+// mid-turn, and the only durable record of that cause.
 const deathInterruptCause = "The agent process exited before the turn finished."
 
 // turnClose is what a closer knows about the stop it is reporting.
@@ -55,42 +50,36 @@ type turnClose struct {
 	Reason string
 	// Stop is the wire's own stop reason, on closerWireEnd only.
 	Stop vibekit.StopReason
-	// Epoch names the ONE turn an epoch-scoped closer may end. Left zero only by a
-	// closer that sets AnyOpen; see it.
+	// Epoch names the ONE turn an epoch-scoped closer may end, left zero only by a
+	// closer that sets AnyOpen.
 	Epoch vibekit.TurnEpoch
-	// Seq is the read loop position the response arrived at, on
-	// closerPromptResponse only: the settle waits for the folder to reach it before
-	// deciding the wire never closed this turn. Zero skips the wait.
+	// Seq is the read loop position the response arrived at, on closerPromptResponse
+	// only: the settle waits for the folder to reach it before deciding the wire
+	// never closed this turn. Zero skips the wait.
 	Seq uint64
-	// AnyOpen is the EXPLICIT spelling of "close whatever is open", for a closer
-	// that describes the CHAT rather than one turn. Explicit rather than a zero
-	// Epoch, because zero is ALSO what StartTurn returns when ctx died while the chat
-	// was finalizing. Never set alongside Epoch.
+	// AnyOpen closes whatever is open, for a closer describing the CHAT rather than
+	// one turn. Spelled explicitly because a zero Epoch ALSO means ctx died in
+	// StartTurn. Never set alongside Epoch.
 	AnyOpen bool
 	Closer  turnCloser
 }
 
-// turnStats is a finished turn's two measurements, both DERIVED from the record.
-// A struct rather than an adjacent `creditsDelta, elapsedMs float64` pair: a
-// transposition compiles, is silent in both directions, and both values are
-// persisted on the message.
+// turnStats is a finished turn's two measurements, both DERIVED from the record. A
+// struct rather than two adjacent float64 parameters, where a transposition would
+// compile and be silent in both directions.
 type turnStats struct {
 	CreditsDelta float64
 	ElapsedMs    float64
 }
 
-// StartTurn opens chatID's turn, run at bridge-ready immediately before the ACP
-// call so everything true of the turn is stamped with the bridge live: the
-// answering model, and the credit baseline its spend is measured against
-// (spawn, prime and MCP wait excluded). Admission is NOT here — the
-// reservation was taken synchronously (turn_admission.go), and the priming
-// turn's own open/finalize runs between the two untouched. Returns the epoch,
-// on which the caller holds a completion handle until ReleaseTurn; zero means
-// ctx died while the chat was finalizing. WAITS out a finalize in progress,
-// and a prompt-shaped source finding a turn the ENGINE started CLOSES it
-// first — no closer can claim that turn, so opening over it would drop
-// content already streamed to clients. That covers a workflow step's turn
-// as well as an agent-initiated one; both are the engine's.
+// StartTurn opens chatID's turn immediately before the ACP call, so the model and
+// the credit baseline are stamped with the bridge live (spawn, prime and MCP wait
+// excluded). It returns the epoch, on which the caller holds a completion handle
+// until ReleaseTurn; zero means ctx died while the chat was finalizing.
+//
+// It WAITS out a finalize in progress, and a prompt-shaped source CLOSES a turn the
+// engine started first: no closer can claim that turn, and opening over it would
+// drop content already streamed to clients.
 func (bc *BridgeCoordinator) StartTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch {
 	if source.Acknowledgeable() {
 		if displaced, ok := bc.turns.displaceableEngineTurn(chatID); ok {
@@ -105,17 +94,17 @@ func (bc *BridgeCoordinator) StartTurn(ctx context.Context, chatID vibekit.ChatI
 		return 0
 	}
 	if model != "" {
-		// Latch the model here: the streaming handler stamps it on the first frame,
-		// which can be seconds later and so can pick up a fast in-session switch.
+		// Latched here: the streaming handler stamps it on the first frame, seconds
+		// later, where a fast in-session switch would be picked up instead.
 		t.Buf.SetModel(model)
 	}
 	return t.Epoch
 }
 
 // AwaitTurn blocks until the turn named by epoch has finalized and reports what it
-// did, so a caller deciding something about its OWN turn reads the turn's account
-// rather than state the finalize has consumed. It runs on the caller's goroutine:
-// moving the decision into the finalizer deadlocks against the close it awaits.
+// did, so a caller reads the turn's account rather than state the finalize has
+// consumed. It runs on the CALLER's goroutine: deciding inside the finalizer
+// deadlocks against the close it awaits.
 func (bc *BridgeCoordinator) AwaitTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch) (vibekit.TurnResult, error) {
 	return bc.turns.await(ctx, chatID, epoch)
 }
@@ -127,9 +116,8 @@ func (bc *BridgeCoordinator) ReleaseTurn(chatID vibekit.ChatID, epoch vibekit.Tu
 }
 
 // turnOpenFacts reads the two facts a turn records at open. The model comes from
-// the chat record rather than from the bridge: the record IS the bridge's reported
-// model, and a resumed session's own accessors answer the zero value for whatever
-// session/load omitted, which routinely includes the model.
+// the chat record, which IS the bridge's reported model: a resumed session answers
+// the zero value for whatever session/load omitted, routinely the model.
 func (bc *BridgeCoordinator) turnOpenFacts(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) (string, CreditBaseline) {
 	ch, ok := bc.chatStore.Get(ctx, chatID)
 	if !ok {
@@ -142,16 +130,13 @@ func (bc *BridgeCoordinator) turnOpenFacts(ctx context.Context, chatID vibekit.C
 	return ch.Model, credits
 }
 
-// finalizeTurn claims chatID's turn and runs one closer's effects.
-//
-// Claim first, effects second, publish third — and the mutex is held for none of
-// the effects. Finalizing an epoch twice therefore broadcasts once: the second
-// caller loses the claim and returns.
+// finalizeTurn claims chatID's turn and runs one closer's effects: claim first,
+// effects second, publish third, with the mutex held for none of the effects. So
+// finalizing an epoch twice broadcasts once — the second caller loses the claim.
 func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID vibekit.ChatID, tc turnClose) {
-	// The wait comes BEFORE the claim: claiming first puts the chat in
-	// turnFinalizing, where a fold waits, so the settle would be waiting for a
-	// folder it had blocked itself. False means the position can no longer be
-	// reached, so the bridge-death closer owns whatever is still open.
+	// The wait comes BEFORE the claim: claiming puts the chat in turnFinalizing,
+	// where a fold waits, so the settle would block the folder it waits for. False
+	// means the position is unreachable, and the bridge-death closer owns the turn.
 	if tc.Seq > 0 && !bc.turns.awaitPosition(ctx, chatID, tc.Epoch, tc.Seq) {
 		return
 	}
@@ -177,19 +162,17 @@ func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID vibekit.Ch
 		result = bc.closeOnLocalShell(ctx, t)
 	}
 	bc.turns.finish(t, result)
-	// Published by the closer that WON: an agent-initiated turn has no prompt
-	// wrapper to advance anything, and a loser would advance a boundary it did not
-	// cross.
+	// Published by the closer that WON: an agent-initiated turn has no prompt wrapper
+	// to advance, and a loser would advance a boundary it did not cross.
 	if bc.onTurnClosed != nil {
 		bc.onTurnClosed(t.Chat, t.Epoch)
 	}
 }
 
-// claimForCloser claims the turn a closer is ending. An EPOCH claims exactly that
-// turn; AnyOpen takes whatever is open, because it describes the chat. Neither
-// OPENS a turn to close it, or a bracket for an already-closed turn makes a
-// phantom. A ZERO epoch closes nothing — that is what StartTurn returns when ctx
-// died, so falling through would let a prompt failure claim a turn it never opened.
+// claimForCloser claims the turn a closer is ending: an EPOCH claims exactly that
+// turn, AnyOpen whatever is open. Neither OPENS a turn to close it, or a bracket for
+// an already-closed turn makes a phantom. A ZERO epoch closes nothing, so a prompt
+// failure cannot claim a turn StartTurn never opened.
 func (bc *BridgeCoordinator) claimForCloser(ctx context.Context, chatID vibekit.ChatID, tc turnClose) (*Turn, bool) {
 	if tc.AnyOpen {
 		return bc.turns.claimOpen(ctx, chatID)
@@ -211,12 +194,11 @@ func (bc *BridgeCoordinator) turnStatsFor(ctx context.Context, t *Turn) turnStat
 	return st
 }
 
-// settleBuffer flushes what the steering filter was withholding and THEN takes the
-// turn's content in one guarded read. The ORDER is the invariant: the carry can
-// hold a turn's only final text — a reply ending in `[` looks like the start of a
-// steering acknowledgement — so an emptiness check taken before the flush reads an
-// ordinary turn as empty and the empty-turn recovery re-prompts an answered
-// question. A nil buffer means no frame ever arrived.
+// settleBuffer flushes what the steering filter withheld and THEN takes the turn's
+// content in one guarded read. The ORDER is the invariant: the carry can hold a
+// turn's only final text (a reply ending in `[` looks like a steering
+// acknowledgement), so checking emptiness first makes the recovery re-prompt an
+// answered question. A nil buffer means no frame ever arrived.
 func settleBuffer(buf *buffer.Buffer) buffer.TurnContent {
 	if buf == nil {
 		return buffer.TurnContent{EmittedNothing: true}
@@ -225,9 +207,8 @@ func settleBuffer(buf *buffer.Buffer) buffer.TurnContent {
 	return buf.TakeTurn()
 }
 
-// closeOnPromptResponse finalizes a turn on the response that settled it — the
-// LOCAL fallback, running only when the wire's own turn_end never arrived, so its
-// outcome can be nothing richer than end_turn or cancelled.
+// closeOnPromptResponse finalizes a turn on the response that settled it: the LOCAL
+// fallback, so its outcome is never richer than end_turn or cancelled.
 func (bc *BridgeCoordinator) closeOnPromptResponse(ctx context.Context, t *Turn, resp *vibekit.RPCResponse) vibekit.TurnResult {
 	return bc.closeWithOutcome(ctx, t, extractStopReason(resp), false)
 }
@@ -239,15 +220,14 @@ func (bc *BridgeCoordinator) closeOnWireEnd(ctx context.Context, t *Turn, stop v
 }
 
 // closeWithOutcome persists the turn's assistant message with its DURABLE outcome,
-// announces the end with the turn's stats, and pushes. A PRIME turn does none of
-// it: its frames are vibekit's own transcript replay, so persisting them would put
-// the priming preamble in the conversation and broadcasting them shows text that
-// vanishes on the next reload.
+// announces the end with the turn's stats, and pushes. A PRIME turn does none of it:
+// its frames are vibekit's own transcript replay, so persisting them would put the
+// preamble in the conversation and broadcasting them shows text that vanishes.
 func (bc *BridgeCoordinator) closeWithOutcome(ctx context.Context, t *Turn, stopReason vibekit.StopReason, wireEnded bool) vibekit.TurnResult {
 	chatID := t.Chat
 	c := bc.concludeStop(chatID, stopReason)
-	// Read BEFORE the turn_ended broadcast below: emit() clears the chat's status as
-	// that event goes out, so a read at the push site finds nothing.
+	// Read BEFORE the turn_ended broadcast: emit() clears the chat's status as that
+	// event goes out, so a read at the push site finds nothing.
 	statusDesc := bc.statusDescription(chatID)
 	stats := bc.turnStatsFor(ctx, t)
 
@@ -255,14 +235,13 @@ func (bc *BridgeCoordinator) closeWithOutcome(ctx context.Context, t *Turn, stop
 	var refusal *vibekit.RefusalInfo
 	model := t.Model
 	silent := t.Source == vibekit.TurnSourcePrime
-	// Whether an assistant message CARRIES the outcome. Not `!EmittedNothing`:
-	// Started means a message id went out, so a fully-withheld turn still persists
-	// an empty message, and that message is the carrier.
+	// Not `!EmittedNothing`: Started means a message id went out, so a fully-withheld
+	// turn still persists an empty message and that message is the carrier.
 	carried := false
 
-	// Fail the tools BEFORE the content is taken, so the persisted message carries
-	// their final statuses rather than the spinners a reload would render. A prime's
-	// are left alone: this broadcast bypasses the fold-time mute.
+	// Before the content is taken, so the persisted message carries final tool
+	// statuses rather than spinners. A prime's are left alone: this broadcast
+	// bypasses the fold-time mute.
 	if buf := t.Buf; buf != nil && !silent && stopReason == stopReasonCancelled {
 		bc.failInFlightTools(ctx, chatID, buf)
 	}
@@ -282,8 +261,8 @@ func (bc *BridgeCoordinator) closeWithOutcome(ctx context.Context, t *Turn, stop
 	if stopReason == stopReasonCancelled {
 		bc.appendEventMessage(ctx, chatID, vibekit.EventCancelled, "", carrierFor(&c, carried))
 	} else if !carried {
-		// No assistant message to stamp, so a marker carries the outcome. Skipped
-		// above for a cancel, whose own event message is already this turn's marker.
+		// No assistant message to stamp, so a marker carries the outcome; a cancel's
+		// own event message is already that marker.
 		bc.persistOutcomeMarker(ctx, t, c)
 	}
 
@@ -306,9 +285,8 @@ func (bc *BridgeCoordinator) closeWithOutcome(ctx context.Context, t *Turn, stop
 	return vibekit.TurnResult{Stop: stopReason, EmittedNothing: snap.EmittedNothing, WireEnded: wireEnded}
 }
 
-// concludeStop reads a stop reason and logs an unmapped one ONCE per distinct
-// value, so a wire vibekit has not seen is discoverable without a line per turn.
-// The mapping itself computes and stays silent; the finalizer is the supervisor.
+// concludeStop reads a stop reason and logs an unmapped one ONCE per distinct value,
+// so an unseen wire reason is discoverable without a line per turn.
 func (bc *BridgeCoordinator) concludeStop(chatID vibekit.ChatID, stop vibekit.StopReason) vibekit.TurnConclusion {
 	c := vibekit.ConcludeStopReason(stop)
 	if !c.Known {
@@ -321,10 +299,9 @@ func (bc *BridgeCoordinator) concludeStop(chatID vibekit.ChatID, stop vibekit.St
 }
 
 // persistOutcomeMarker records how a turn that emitted NOTHING ended: with no
-// assistant message this is the outcome's only carrier, and a turn with no user
-// message is its only persisted trace at all. Skipped only when it adds nothing — a
-// completed, untruncated outcome on a turn the transcript already represents
-// through its own user message.
+// assistant message it is the outcome's only carrier, and for a turn with no user
+// message its only persisted trace. Skipped when it adds nothing — a completed,
+// untruncated outcome the transcript already shows through its user message.
 func (bc *BridgeCoordinator) persistOutcomeMarker(ctx context.Context, t *Turn, c vibekit.TurnConclusion) {
 	if c.Outcome == vibekit.TurnOutcomeCompleted && !c.Truncated && t.Source.HasUserTrigger() {
 		return

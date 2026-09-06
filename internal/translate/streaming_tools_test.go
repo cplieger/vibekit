@@ -79,11 +79,8 @@ func newLineCaptureDeps() (*lineDeps, *lineRec, *[]vibekit.ServerEvent) {
 	return &lineDeps{baseDeps: base, rec: rec}, rec, events
 }
 
-// primeToolCall builds an event-capturing translator with a recording
-// LineTracker, registers one in-flight tool call "tc-1" (status pending,
-// no diffs/locations/output, empty SubSessionID), then clears the
-// captured events and recorder so the subsequent update is observed in
-// isolation.
+// primeToolCall registers one in-flight tool call "tc-1" on an event-capturing
+// translator, then clears the captured events so the next update is seen in isolation.
 func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]vibekit.ServerEvent, vibekit.ChatID) {
 	t.Helper()
 	deps, rec, events := newLineCaptureDeps()
@@ -111,15 +108,11 @@ func stashCreatedThenClear(t *testing.T, deps *lineDeps, events *[]vibekit.Serve
 	*events = nil
 }
 
-// lastToolCallUpdate folds every tool_call_update DELTA in events onto the tool
-// call the buffer started from, and returns the reconstructed whole object.
-//
-// The frame is a delta now, so no single event carries the answer. Folding the
-// stream is also the ORACLE for the delta shape: the fold below is the inverse of
-// toolCallDelta, and the cross-check against the buffer's own accumulated value
-// is what keeps this from being a second copy of the emitter's rules agreeing with
-// itself. A delta stream that loses a field fails here even when every assertion
-// in the calling test would have passed.
+// lastToolCallUpdate folds every tool_call_update DELTA onto the tool call the buffer
+// started from and returns the reconstructed whole, because no single event carries it.
+// The fold is also the ORACLE for the delta shape — it is toolCallDelta's inverse, and
+// the cross-check against the buffer's own accumulated value is what keeps it from
+// being the emitter's rules agreeing with themselves.
 func lastToolCallUpdate(t *testing.T, deps *lineDeps, events *[]vibekit.ServerEvent) (vibekit.ToolCall, bool) {
 	t.Helper()
 	// Seeded from the create primeToolCall consumed. A create frame still in the
@@ -230,12 +223,9 @@ func hasToolCallEvent(events *[]vibekit.ServerEvent) bool {
 	return false
 }
 
-// TestHandleToolCall_HookAskSuppression pins the M4 fix. On v3 (KAS) a
-// pre-tool-use hook's ask-permission gate arrives as a kind:"other" tool
-// call tagged _meta.kiro.hookAsk (there is no ToolKind "hook" in v3's
-// zToolKind). When hooks.showStatus is off (IsHookStatusEnabled false)
-// the hook-ask card is suppressed; when on, it renders. A normal tool
-// call is never suppressed regardless of the setting.
+// TestHandleToolCall_HookAskSuppression: a pre-tool-use hook's ask-permission gate
+// arrives as a kind:"other" call tagged _meta.kiro.hookAsk, because v3's zToolKind has
+// no "hook". Its card follows hooks.showStatus; a normal call never does.
 func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 	hookAsk := map[string]any{
 		"toolCallId": "hook-ask-1",
@@ -609,13 +599,10 @@ func TestRelPath(t *testing.T) {
 		// the absolute path to the client.
 		{name: "DotDotPrefixedDirIsRelative", workDir: "/work", abs: "/work/..drafts/x.go", want: "..drafts/x.go"},
 		{name: "ParentEscapeReturnsAbs", workDir: "/work", abs: "/x.go", want: "/x.go"},
-		// BF14. KAS sends some tool-call paths as file:// URIs (measured: a
-		// shell-written file arrived as "file:///workspace/hello.sh"). Every
-		// consumer treats the value as a path, so the URI has to be gone by the
-		// time it leaves here. filepath.Clean turns "file:///work/x.go" into the
-		// RELATIVE "file:/work/x.go", so filepath.Rel errored and the raw URI
-		// passed straight through into the turn footer's label and into
-		// GET /api/file?path=…, which denied it as outside the granted roots.
+		// KAS sends some tool-call paths as file:// URIs, and every consumer treats
+		// the value as a path, so the URI must be gone by the time it leaves here.
+		// filepath.Clean turns "file:///work/x.go" into the RELATIVE "file:/work/x.go",
+		// which makes filepath.Rel error and passes the raw URI through to consumers.
 		{name: "FileURIBecomesRelative", workDir: "/work", abs: "file:///work/sub/file.go", want: "sub/file.go"},
 		{name: "FileURIIsPercentDecoded", workDir: "/work", abs: "file:///work/hello%20world.sh", want: "hello world.sh"},
 		// Normalising FIRST is what keeps the outside-the-workspace branch from
@@ -628,11 +615,9 @@ func TestRelPath(t *testing.T) {
 		// resolved against the local filesystem.
 		{name: "RemoteAuthorityIsLeftAlone", workDir: "/work", abs: "file://host/share/x.go", want: "file://host/share/x.go"},
 		{name: "NonFileSchemeIsLeftAlone", workDir: "/work", abs: "https://example.com/x.go", want: "https://example.com/x.go"},
-		// A filename may legitimately contain "://", which trips the cheap gate
-		// but parses to NO scheme, so it must come back through as a path. The
-		// duplicate slashes collapse because filepath.Clean does that to every
-		// path this function handles — pre-existing and orthogonal to the URI
-		// branch, which is what this case is pinning.
+		// A filename may legitimately contain "://", which trips the cheap gate but
+		// parses to NO scheme, so it comes back through as a path; the duplicate
+		// slashes collapse because filepath.Clean does that to every path here.
 		{name: "PathContainingSchemeSeparator", workDir: "/work", abs: "/work/weird:///name.go", want: "weird:/name.go"},
 		// An unparseable reference is returned as-is rather than mangled.
 		{name: "MalformedURIIsLeftAlone", workDir: "/work", abs: "file://%zz/x.go", want: "file://%zz/x.go"},
@@ -648,12 +633,9 @@ func TestRelPath(t *testing.T) {
 	}
 }
 
-// TestHandleToolCall_IsNewFileFlag pins the isNew computation that feeds
-// TrackFileChanges: a tool call is treated as a new-file creation only
-// when it is BOTH an edit kind AND pending status
-// (tc.Kind == edit && tc.Status == pending). The verdict is observable
-// on buf.ChangedFiles[path].IsNewFile. A pending edit marks the diffed
-// file new; a completed edit (same kind, different status) does not.
+// TestHandleToolCall_IsNewFileFlag pins the isNew computation feeding TrackFileChanges:
+// a call counts as a new-file creation only when it is BOTH an edit kind AND pending,
+// observable on buf.ChangedFiles[path].IsNewFile.
 func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 	t.Run("PendingEditMarksNewFile", func(t *testing.T) {
 		deps, _, _ := newLineCaptureDeps()
@@ -703,16 +685,11 @@ func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 
 // --- _meta.kiro.checkpoint: KAS's snapshot mapping ---
 
-// TestToolCallUpdate_CheckpointFromWire drives the two shapes a real
-// kiro-cli emits (probed 2026-08-02 against 2.16.0) through the actual JSON
-// decode, so the `_meta.kiro.checkpoint` NESTING is pinned and not just the
-// merge logic. A misplaced struct tag compiles cleanly and silently yields
-// nothing — the same trap that bit `_meta.title` — and here the symptom
-// would be "Rewind shows no diff", with nothing in any log.
-//
-// The create case is the one worth the table: KAS sends NO `original` for a
-// file it just created, so a consumer that requires all three keys breaks on
-// the first file the agent writes.
+// TestToolCallUpdate_CheckpointFromWire drives two shapes a real kiro-cli emits through
+// the actual JSON decode, so the `_meta.kiro.checkpoint` NESTING is pinned and not just
+// the merge logic: a misplaced struct tag compiles cleanly, yields nothing, and the
+// symptom is "Rewind shows no diff" with nothing in any log. The create case is why the
+// table exists — KAS sends NO `original` for a file it just created.
 func TestToolCallUpdate_CheckpointFromWire(t *testing.T) {
 	const (
 		origURI = "kiro-snapshot-v2://sess_51d58124:5c1bae6d/?originalPath%3Dexisting.txt"
@@ -757,12 +734,10 @@ func TestToolCallUpdate_CheckpointFromWire(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_CheckpointMergeIsPerField pins that a later frame with
-// a narrower key set cannot erase a value an earlier frame supplied.
-//
-// Not hypothetical: the key set genuinely varies frame to frame for one tool
-// call, so a wholesale struct replacement would drop `original` and take the
-// pre-image — the only thing a diff actually needs — with it.
+// TestToolCallUpdate_CheckpointMergeIsPerField pins that a later frame with a narrower
+// key set cannot erase a value an earlier one supplied. The key set genuinely varies
+// frame to frame for one tool call, so a wholesale struct replacement drops `original`
+// and takes the pre-image — the only thing a diff needs — with it.
 func TestToolCallUpdate_CheckpointMergeIsPerField(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	send := func(cp map[string]any) {
@@ -862,13 +837,11 @@ func TestToolCallUpdate_TitleAndKindAppliedOnlyWhenPresent(t *testing.T) {
 	}
 }
 
-// A tool call's subtask attribution can arrive on an UPDATE rather than the
-// create, so it is adopted late — but only into an empty slot, and workflow
-// identity outranks the plain id when a frame carries both. The three rules
-// together are what keep a step's card grouped under the step: adopting over a
-// held value re-parents a card mid-flight, refusing to adopt leaves it in the
-// parent agent's block, and preferring the plain id files it under a uuid the
-// workflow view does not address.
+// A subtask attribution can arrive on an UPDATE, so it is adopted late — into an empty
+// slot only, and workflow identity outranks the plain id. All three rules keep a step's
+// card under the step: adopting over a held value re-parents it mid-flight, refusing to
+// adopt leaves it in the parent's block, and the plain id files it under a uuid the
+// workflow view cannot address.
 func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 	workflowMeta := map[string]any{
 		"workflow": map[string]any{"workflowId": "wf_1", "nodeId": "build"},
@@ -944,15 +917,11 @@ func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 	})
 }
 
-// TestToolCallUpdate_WorkflowIDFromRawOutput pins the one field this client reads
-// out of `rawOutput`, which KAS types as `unknown`.
-//
-// `run_workflow` reports the id of the run it just created there, and that id is
-// the ONLY structural link from the invocation to its run: a step's frames name
-// their run, and without this the invocation named nothing, so the transcript
-// could not render a run's steps inside the call that launched them. Every case
-// below is a shape KAS really sends on some tool, and none of them may panic or
-// contaminate the field.
+// TestToolCallUpdate_WorkflowIDFromRawOutput pins the one field this client reads out of
+// `rawOutput`, which KAS types as `unknown`. `run_workflow` reports the id of the run it
+// created there, and it is the ONLY structural link from the invocation to its run, so
+// without it the transcript cannot render a run's steps inside the call that launched
+// them. Every case is a shape KAS really sends, and none may panic or contaminate it.
 func TestToolCallUpdate_WorkflowIDFromRawOutput(t *testing.T) {
 	t.Parallel()
 
@@ -1023,12 +992,10 @@ func TestToolCallUpdate_WorkflowIDIsAdoptedOnce(t *testing.T) {
 const remoteJSONSchemaReason = "Cannot use this tool to write a Remote JSON Schema in Supervised mode. " +
 	"Switch to Autopilot mode to allow this write."
 
-// TestHandleToolCallUpdate_FailedTakesReasonFromRawOutput drives the frame the
-// guard really produces: status failed, the reason as a bare JSON string in
-// rawOutput, and a diff block whose path is "" because the throw beat resolveFile.
-// KAS's edit arm puts a diff in the content blocks and the reason in none of them,
-// so rawOutput is the only channel the reason travels on — without the fold the
-// card's details region opens onto nothing at all.
+// TestHandleToolCallUpdate_FailedTakesReasonFromRawOutput drives the frame the guard
+// really produces: status failed, the reason as a bare JSON string in rawOutput, and a
+// diff block with an empty path because the throw beat resolveFile. KAS's edit arm puts
+// the reason in no content block, so rawOutput is the only channel it travels on.
 func TestHandleToolCallUpdate_FailedTakesReasonFromRawOutput(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -1240,17 +1207,11 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 	})
 }
 
-// TestParseToolUpdateContent_UnmodelledType pins today's BEHAVIOUR for a content
-// block vibekit does not decode — nothing rendered — and the two Debug lines that
-// make the drop findable.
-//
-// This is the surface kiro-cli 2.19.2's structuredContent lands on, and vibekit
-// deliberately does not adopt it: there is no renderer, and shipping a decode with
-// nothing behind it is how a UI over an unusable store gets built. What the release
-// DOES owe is a way to tell that a payload was discarded, because the symptom
-// otherwise is a claim-only card with an empty details region and no signal
-// anywhere.
-//
+// TestParseToolUpdateContent_UnmodelledType pins the BEHAVIOUR for a content block
+// vibekit does not decode — nothing rendered — and the two Debug lines that make the
+// drop findable, since the symptom is otherwise a claim-only card with an empty details
+// region and no signal anywhere. This is the surface kiro-cli's structuredContent lands
+// on, deliberately not adopted while there is no renderer behind it.
 // Serial (no t.Parallel): captureSlog swaps the process-wide slog default.
 func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 	deps, _ := newEventCaptureDeps()

@@ -7,7 +7,6 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// seedChats writes n readable chats and returns their ids.
 func seedChats(t *testing.T, s *Store, ids ...string) {
 	t.Helper()
 	for _, id := range ids {
@@ -20,14 +19,9 @@ func seedChats(t *testing.T, s *Store, ids ...string) {
 	}
 }
 
-// A scan the fan-out never finished must report itself INCOMPLETE, which is the
-// property the session reaper's fail-closed guard rests on.
-//
-// parallel.Bounded abandons the items it has not started when the context ends,
-// and it leaves their result slots untouched. Unless an unvisited slot reads as
-// lost, a cancelled scan answers with a subset of the chats while claiming to
-// have read them all — and ReferencedSessionIDs then hands the reaper a keep-list
-// that omits real chats, which authorises deleting their KAS session directories.
+// A scan the fan-out never finished must report itself INCOMPLETE: the session
+// reaper derives its keep-list from it, so a partial list marked complete
+// authorises deleting a live chat's KAS sessions.
 func TestReadHeadersParallel_CancelledScanIsNotComplete(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedChats(t, s, "a", "b", "c")
@@ -46,13 +40,9 @@ func TestReadHeadersParallel_CancelledScanIsNotComplete(t *testing.T) {
 	}
 }
 
-// The SHARED scan is not owned by whichever caller opened the singleflight slot.
-//
-// The client's own boot fires two GET /api/chats reads and the second ABORTS the
-// first, so the request holding the slot is routinely cancelled while a second
-// request is already waiting on its answer — and both then received a truncated
-// list. Measured symptom: after a forced restart some open tabs came up with no
-// store row at all and stayed blank until the page was reloaded.
+// A cancelled caller must not truncate the SHARED scan: the client's boot fires two
+// GET /api/chats reads and the second aborts the first, so the request holding the
+// singleflight slot is routinely cancelled while another is waiting on its answer.
 func TestListWithCompleteness_ACancelledCallerStillGetsEveryChat(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedChats(t, s, "a", "b", "c")

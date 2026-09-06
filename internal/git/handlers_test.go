@@ -192,16 +192,10 @@ func TestHandleShow_Rejections(t *testing.T) {
 	}
 }
 
-// BF15, half one. A workspace root that is not itself a repository has no
-// committed revision of anything, and that is not a git FAILURE — it is the
-// absence of a base. The two used to be one kind: `git show` ran in the
-// non-repo directory, errored with "fatal: not a git repository", and the
-// handler reported show_failed. A client cannot act on that: the honest answer
-// is "no repo owns this path", which renders as an all-add diff.
-//
-// The distinction is what keeps a REAL git failure legible. Fold them and a
-// broken object database renders as "this file is brand new", silently claiming
-// every line was added.
+// A workspace root that is not itself a repository has no committed revision of
+// anything, which is the absence of a base rather than a git FAILURE. The distinction is
+// what keeps a real failure legible: folded together, a broken object database renders
+// as "this file is brand new" and silently claims every line was added.
 func TestHandleShow_PathOutsideEveryRepoIsNotAFailure(t *testing.T) {
 	h := NewHandler(t.TempDir()) // no .git anywhere
 	req := httptest.NewRequest(http.MethodGet, "/api/git/show?path=nonexistent", nil)
@@ -219,14 +213,11 @@ func TestHandleShow_PathOutsideEveryRepoIsNotAFailure(t *testing.T) {
 	}
 }
 
-// BF15, half two, and the one with a user-visible wrong ANSWER rather than a
-// wrong label. An absent `repo` used to default to the workspace root, so a file
-// living in a SUBDIRECTORY repo was shown from the wrong repository: `git show
-// HEAD:sub/tracked.txt` finds nothing there, the base came back empty, and the
-// diff claimed every line had just been added. Every caller that holds only a
-// workspace-relative path is in this shape — a turn's changed-file ledger, a
-// tool card's filename — because translate.relPath strips the workspace prefix
-// and knows nothing about repos.
+// An absent `repo` must resolve the OWNING repo, not default to the workspace root: for
+// a file in a subdirectory repo, `git show HEAD:sub/tracked.txt` there finds nothing, the
+// base comes back empty and the diff claims every line was added. Every caller holding
+// only a workspace-relative path is in this shape — a turn's changed-file ledger, a tool
+// card's filename — because translate.relPath knows nothing about repos.
 func TestHandleShow_ResolvesTheOwningRepoWhenNoneIsNamed(t *testing.T) {
 	work := t.TempDir()
 	// The workspace root is a repo too, so this cannot pass by accident: the
@@ -574,15 +565,11 @@ func TestDecodePostBodyOptional_EmptyBodyIgnored(t *testing.T) {
 	}
 }
 
-// TestSyncHandlers_OversizeBodyRefusedBeforeGit pins the refusal on the four
-// handlers whose body is advisory. An oversize body means the server stopped
-// reading before Repo arrived, and a zero Repo resolves to the WORKSPACE ROOT
-// (resolveRepoDir), so waving it through runs push/pull/stash against the wrong
-// tree and answers 200 with a success shape.
-//
-// The status is what proves git was not reached: every git result on these paths
-// goes out through writeCmdResult, which writes 200 whether the command
-// succeeded or failed, so a 413 can only come from the decode refusal.
+// TestSyncHandlers_OversizeBodyRefusedBeforeGit pins the refusal on the four handlers
+// whose body is advisory: an oversize body means the server stopped reading before Repo
+// arrived, and a zero Repo resolves to the WORKSPACE ROOT, so waving it through runs
+// push/pull/stash against the wrong tree and answers 200. The status is what proves git
+// was never reached — writeCmdResult answers 200 either way, so only the decode refuses.
 func TestSyncHandlers_OversizeBodyRefusedBeforeGit(t *testing.T) {
 	body := `{"repo":"` + strings.Repeat("A", int(webhttp.MaxJSONBody)) + `"}`
 
@@ -678,20 +665,13 @@ func TestWriteCmdResult_ScrubsAuthInErrorOutput(t *testing.T) {
 
 // --- gitExec env hardening regression pin ---
 
-// TestGitExec_ScrubsInheritedEnv pins the env block + cmdline -c
-// hardening in gitExec that defends against credential-prompt
-// hijacking, runtime gitconfig injection (GIT_CONFIG_COUNT/KEY/VALUE
-// + GIT_CONFIG_PARAMETERS), and ext:: transport re-enabling. Each
-// guarantee is load-bearing; dropping any of them re-opens a
-// CVE-class exposure (CVE-2017-1000117 and kin).
-//
-// Note on shape: an earlier version of this code pinned
-// GIT_CONFIG_GLOBAL=/dev/null and GIT_CONFIG_SYSTEM=/dev/null. That
-// also disabled the credential.helper line `gh auth setup-git`
-// writes to ~/.gitconfig, which broke HTTPS clones of private repos.
-// The fix moved the ext:: hardening to a command-line `-c
-// protocol.ext.allow=never` flag (which always wins over gitconfig)
-// and let gitconfig files load again.
+// TestGitExec_ScrubsInheritedEnv pins gitExec's env scrub plus its cmdline -c hardening
+// against credential-prompt hijacking, runtime gitconfig injection
+// (GIT_CONFIG_COUNT/KEY/VALUE, GIT_CONFIG_PARAMETERS) and ext:: transport re-enabling;
+// dropping any of them re-opens CVE-2017-1000117 and kin. The ext:: guard is a
+// `-c protocol.ext.allow=never` flag, which always wins over gitconfig, rather than
+// GIT_CONFIG_GLOBAL=/dev/null — that also disabled the credential.helper line
+// `gh auth setup-git` writes, breaking HTTPS clones of private repos.
 func TestGitExec_ScrubsInheritedEnv(t *testing.T) {
 	// Simulate a compromised parent env attempting every known
 	// runtime-injection path. The scrub must win via os/exec's
@@ -2143,19 +2123,12 @@ func TestHandleReclone_RejectsNonStandardScheme(t *testing.T) {
 	}
 }
 
-// TestHandleReclone_RefusesAnIntermediateSymlinkEscape pins the second
-// destructive site on the pinned-parent removal.
-//
-// The bait is one the unguarded code takes. Unlinking by name,
-// {"repo":"link/victim"} passes every guard reclone has — it is not empty, not
-// ".", not the workspace root, `<dir>/.git` exists through the symlink, origin
-// resolves, and the scheme is allowed — and the delete then destroys a repo
-// outside the workspace. So the surviving victim tree is the assertion that
-// matters: revert handleReclone to os.RemoveAll and this test fails on it.
-//
-// The positive control lives next door: TestHandleReclone_RejectsNonStandardScheme
-// drives a plain in-workspace repo all the way to the scheme check, so the guard
-// added here is not refusing everything.
+// TestHandleReclone_RefusesAnIntermediateSymlinkEscape: {"repo":"link/victim"} passes
+// every other guard reclone has — non-empty, not ".", not the workspace root, `.git`
+// exists through the symlink, origin resolves, scheme allowed — so an unlink by name
+// destroys a repo outside the workspace. The surviving victim tree is the assertion.
+// TestHandleReclone_RejectsNonStandardScheme is the positive control that this guard is
+// not refusing everything.
 func TestHandleReclone_RefusesAnIntermediateSymlinkEscape(t *testing.T) {
 	// Requires a real git binary to set up the fixture.
 	if _, err := exec.LookPath("git"); err != nil {
@@ -3663,16 +3636,12 @@ func TestHandleBranchName_CleanTreeUsesCommits(t *testing.T) {
 	}
 }
 
-// swappedAncestor stages the race a pinned parent exists for: a repo path whose
-// directory component was a real, empty directory when the caller resolved it, and
-// is an IN-WORKSPACE symlink to a protected tree by the time the remove runs. The
-// path is computed before the swap, which is what makes the window deterministic.
-//
-// In-workspace deliberately: the confined root follows an in-root symlink by
-// design, so this is the case confinement alone does not answer and only the
-// pinned descent does.
-//
-// It returns the repo name to remove and the on-disk path that must survive.
+// swappedAncestor stages the race a pinned parent exists for, returning the repo name to
+// remove and the on-disk path that must survive: a path whose directory component was a
+// real empty directory when the caller resolved it and is an IN-WORKSPACE symlink to a
+// protected tree by the time the remove runs. Computing the path before the swap makes
+// the window deterministic, and in-workspace is deliberate — a confined root follows an
+// in-root symlink by design, so only the pinned descent answers this case.
 func swappedAncestor(t *testing.T, workDir string) (repo, victim string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(workDir, "store"), 0o750); err != nil {

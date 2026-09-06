@@ -1,7 +1,6 @@
 package agent
 
-// Test fakes: in-memory implementations of ACPBridge and ChatStore
-// interfaces for use across agent package tests.
+// In-memory ACPBridge and ChatStore fakes shared across the agent package's tests.
 
 import (
 	"context"
@@ -18,27 +17,21 @@ import (
 
 type fakeBridge struct {
 	notifCh chan vibekit.Notification
-	// deliveredSeq stamps each delivered frame, the way the real read loop does, so
-	// a test can drive the sequence the parked settle waits for.
+	// deliveredSeq drives the sequence a parked settle waits for.
 	deliveredSeq uint64
 	callResults  map[string]json.RawMessage
 	callErrs     map[string]error
-	// callRPCErrs makes Call return a REPLY carrying a JSON-RPC error, which is
-	// how KAS actually refuses: the transport succeeds and the reason travels
-	// in-band. callErrs is the other channel — the transport itself failing.
+	// callRPCErrs is how KAS refuses in-band; callErrs is the transport failing.
 	callRPCErrs  map[string]*vibekit.RPCError
 	lastParams   map[string]map[string]any
 	callDeadline map[string]bool
 	chunksOnCall map[string][]string
-	// blockOn optionally makes Call block (after recording the call) until
-	// the method's channel is closed — for tests proving concurrency
-	// properties (e.g. RPC reads completing while a text turn is in flight).
+	// blockOn parks Call, after recording it, until the method's channel is closed.
 	blockOn   map[string]chan struct{}
 	sessionID string
 	modelID   string
 	effort    string
-	// observedEffort is the last level ObserveEffort was handed — the level the
-	// SESSION reported, which the real bridge folds into its differs-only cache.
+	// observedEffort is the level the SESSION reported, not the one asked for.
 	observedEffort string
 	currentMode    string
 	servedModels   []string
@@ -46,23 +39,18 @@ type fakeBridge struct {
 	models         []vibekit.SessionModel
 	sessionTitle   string
 	calls          []string
-	// startOpts records the StartOpts of the most recent Start, so a test can
-	// assert what a spawn was actually handed (e.g. that the utility bridge
-	// gets no operator launch flags).
+	// startOpts records what the most recent spawn was actually handed.
 	startOpts *vibekit.StartOpts
-	// startGate, when non-nil, parks Start until closed — the seam that holds a
-	// spawn OPEN, so a test of the bridge-ready transition is not saved by the
+	// startGate holds a spawn OPEN, so a bridge-ready test is not saved by the
 	// forward-attach wake racing an instantaneous Start.
 	startGate chan struct{}
-	// notifsOnStart is the transcript a session/load replays. Start pushes these
-	// BEFORE it returns, which is the ordering the real bridge has and the one
-	// the settle barrier's correctness depends on — see Start.
+	// notifsOnStart is the transcript a session/load replays; Start owns the
+	// push-before-return ordering it depends on.
 	notifsOnStart []*vibekit.RPCResponse
 	mu            sync.Mutex
 	responds      int
-	// setModelFailures makes the next N SetModel calls fail. The switch-by-restart
-	// fallback is only reachable when the fast path fails, so a test that wants it
-	// arms this with 1.
+	// setModelFailures fails the next N SetModel calls, the only route to the
+	// switch-by-restart fallback.
 	setModelFailures int
 	stopped          bool
 	started          bool
@@ -96,17 +84,11 @@ func (b *fakeBridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 	notifs := b.notifsOnStart
 	b.mu.Unlock()
 
-	// A replay belongs to session/load, so these ride a Start that NAMES a
-	// session and never a session/new — otherwise the utility bridge, which
-	// shares this factory, would replay a transcript of its own.
-	//
-	// Pushing before the return is what makes the fake honest, not a detail:
-	// the settle barrier (bridge_coord.go's Forward) treats an empty channel
-	// plus a recorded load result as "the replay is fully drained", which is
-	// sound ONLY because every replay frame was pushed before that result. A
-	// fake that returns first and lets the test push afterwards inverts that,
-	// and the barrier then settles on frame 1, deletes the projection, and
-	// drops the rest of the transcript.
+	// A replay rides a Start that NAMES a session, or the utility bridge sharing this
+	// factory would replay a transcript of its own. Pushing before the return is
+	// load-bearing: the settle barrier reads an empty channel plus a recorded load
+	// result as fully drained, so a fake that pushed afterwards would make it settle
+	// on frame 1, delete the projection and drop the rest of the transcript.
 	if opts.SessionID == "" {
 		return nil
 	}
@@ -161,8 +143,8 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*vibe
 	chunks := b.chunksOnCall[method]
 	blocker := b.blockOn[method]
 	b.mu.Unlock()
-	// Block OUTSIDE the fake's mutex so concurrent Calls on other methods
-	// proceed (mirrors the real bridge, whose Call blocks per-request).
+	// Blocked OUTSIDE the mutex so concurrent Calls on other methods proceed, which is
+	// the real bridge's per-request behaviour.
 	if blocker != nil {
 		select {
 		case <-blocker:
@@ -170,19 +152,16 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*vibe
 			return nil, ctx.Err()
 		}
 	}
-	// Deliver configured response chunks on notifCh AFTER unlocking so they
-	// arrive after the caller's Call begins (the forward goroutine moves them
-	// to responseCh). notifCh is buffered, so this doesn't block.
+	// Delivered after unlocking so the chunks arrive after the caller's Call begins.
+	// notifCh is buffered, so this does not block.
 	for _, text := range chunks {
 		b.deliver(newChunkMsg(text))
 	}
 	return &vibekit.RPCResponse{Result: res}, nil
 }
 
-// deliver stamps the next sequence on a frame and pushes it, exactly as the real
-// read loop does. Stamping in the fake rather than counting on the far side is
-// the same reason production does it here: a counter incremented on receipt skews
-// silently.
+// deliver stamps the next sequence and pushes, as the real read loop does: a counter
+// incremented on receipt instead would skew silently.
 func (b *fakeBridge) deliver(msg *vibekit.RPCResponse) {
 	b.mu.Lock()
 	b.deliveredSeq++
@@ -240,17 +219,10 @@ func (b *fakeBridge) callLog() []string {
 	return out
 }
 
-// setCallResult re-arms one method's canned reply under the fake's own mutex.
-//
-// Needed rather than assigning into callResults directly, because a test that
-// has already opened a bridge shares this fake with a LIVE goroutine: OpenBridge
-// spawns tryLoadSession, which reaches resumeInterruptedRuns and calls back into
-// Call, and Call reads every one of these maps under b.mu. An unguarded write
-// from the test goroutine is then a genuine data race, and the detector reported
-// it as one.
-//
-// Assigning the whole map before OpenBridge stays fine and is what the seed
-// helpers do; this is for re-arming a reply AFTER the bridge is running.
+// setCallResult re-arms one method's canned reply under the fake's own mutex, which a
+// direct assignment cannot do: once OpenBridge has run, its resume sweep calls back
+// into Call, which reads these maps under b.mu, so a test-goroutine write is a real
+// race. Assigning the whole map BEFORE OpenBridge stays fine.
 func (b *fakeBridge) setCallResult(method string, res json.RawMessage) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -260,11 +232,8 @@ func (b *fakeBridge) setCallResult(method string, res json.RawMessage) {
 	b.callResults[method] = res
 }
 
-// setCallErr re-arms one method's TRANSPORT failure under the fake's own mutex,
-// and setCallRPCErr its in-band JSON-RPC refusal. Both exist for setCallResult's
-// reason and it applies to every one of these maps: Call reads all of them under
-// b.mu, so once a bridge is open an unguarded write from the test goroutine races
-// the resume sweep OpenBridge spawned. The detector reported exactly that.
+// setCallErr re-arms one method's TRANSPORT failure and setCallRPCErr its in-band
+// refusal, both for setCallResult's reason.
 func (b *fakeBridge) setCallErr(method string, err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -313,26 +282,23 @@ func (b *fakeBridge) ModelID() vibekit.ModelID {
 	return vibekit.ModelID(b.modelID)
 }
 
-// CurrentMode reports the mode the SESSION ended up in, which is not necessarily
-// the one StartOpts asked for: applyInitialMode warns and continues when
-// session/set_mode is refused. Settable so a test can simulate that divergence.
+// CurrentMode is the mode the SESSION ended up in, not necessarily the one StartOpts
+// asked for, and is settable so a test can simulate that divergence.
 func (b *fakeBridge) CurrentMode() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.currentMode
 }
 
-// SessionTitle reports KAS's own session title. The fake returns the value
-// tests set on it so the bridge_coord adoption guard can be exercised.
+// SessionTitle returns whatever a test set, so the adoption guard can be exercised.
 func (b *fakeBridge) SessionTitle() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.sessionTitle
 }
 
-// Modes and Models report what the fake session advertises. Nil by default,
-// which is what a FRESHLY constructed bridge answers for anything a session/load
-// result omitted — the shape applyLoadedSessionFacts has to survive.
+// Modes and Models are nil by default, which is what a freshly constructed bridge
+// answers for anything a session/load result omitted.
 func (b *fakeBridge) Modes() []vibekit.SessionMode {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -345,9 +311,8 @@ func (b *fakeBridge) Models() []vibekit.SessionModel {
 	return b.models
 }
 
-// ServedModels reports the ids this fake session advertises. Nil by default, which
-// vibekit.ModelServed reads as "entitlement unknowable" and allows — so a test that
-// does not care about entitlement is unaffected, and one that does sets it.
+// ServedModels is nil by default, which reads as "entitlement unknowable" and is
+// allowed, so a test that does not care about entitlement is unaffected.
 func (b *fakeBridge) ServedModels() []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -358,10 +323,8 @@ func (b *fakeBridge) SetModel(_ context.Context, modelID string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.calls = append(b.calls, "session/set_config_option")
-	// setModelFailures makes the first N swaps fail, which is the only way to reach
-	// the switch-by-restart fallback: the fast path is what has to fail for the
-	// restart to run at all, and the RETRY on the reopened session is the behaviour
-	// under test.
+	// The fast path has to fail for the restart to run at all; the RETRY on the
+	// reopened session is the behaviour under test.
 	if b.setModelFailures > 0 {
 		b.setModelFailures--
 		return errors.New("fake: model swap refused")
@@ -378,10 +341,9 @@ func (b *fakeBridge) EnsureEffort(_ context.Context, level string) error {
 	return nil
 }
 
-// ObserveEffort records the level handed over WITHOUT making EnsureEffort
-// differs-only. Deliberate: the real bridge's cache rule has one implementation
-// and a second one here would drift, and the tests over healEffort assert what the
-// HEAL decided to call, not what the cache would have suppressed.
+// ObserveEffort records the level WITHOUT making EnsureEffort differs-only: a second
+// copy of the real cache rule would drift, and the healEffort tests assert what the
+// heal decided to call, not what a cache would have suppressed.
 func (b *fakeBridge) ObserveEffort(level string) {
 	b.mu.Lock()
 	b.observedEffort = level
@@ -406,8 +368,7 @@ func (b *fakeBridge) lastEffort() string {
 
 func (b *fakeBridge) NotifCh() <-chan vibekit.Notification { return b.notifCh }
 
-// newNoopBridge returns a zero-value fakeBridge suitable for benchmarks
-// where the bridge is never actually called. Replaces the former stubBridge type.
+// newNoopBridge is for benchmarks where the bridge is never called.
 func newNoopBridge() ACPBridge { return &fakeBridge{notifCh: make(chan vibekit.Notification)} }
 
 // --- Fake ChatStore (delegates to testsupport.RecordingChatStore) ---

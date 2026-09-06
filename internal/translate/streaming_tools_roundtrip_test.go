@@ -10,29 +10,14 @@ import (
 	"pgregory.net/rapid"
 )
 
-// The round-trip property `toolCallDelta` claims: apply the frame to the value
-// the fold started from and you get the value the fold produced.
-//
-// It is the whole reason the client keeps no rules of its own about which fields
-// accumulate, and until this file it was asserted by a comment naming a test that
-// did not exist. The per-field tests in streaming_tools_delta_test.go check the
-// BUILDER against a hand-written expectation, which cannot catch the builder and
-// an applier drifting apart — that is a different question and it needs both
-// sides in one assertion.
-//
-// applyDelta below is the SPECIFICATION of the wire contract, not a copy of
-// production code: nothing in the server applies a delta (the buffer holds the
-// whole object), so the only production applier is `foldToolCallDelta` in
-// static-src/store.ts, in another language. So the contract is pinned twice —
-// here against this spec over rapid-generated fold sequences, and in
-// static-src/tool-call-delta.node.test.ts, which reads the same fixture this file
-// writes its cases from and drives the real client fold.
+// The round-trip property `toolCallDelta` claims: apply the frame to the value the
+// fold started from and you get the value the fold produced.
 
 // applyDelta is the wire contract: every omitted field means unchanged, output
-// appends unless replaced, diffs append, everything else is assigned.
-//
-// It deliberately mirrors the CLIENT's fold rather than any Go code, because the
-// client is the only consumer a delta has.
+// appends unless replaced, diffs append, everything else is assigned. It is a
+// SPECIFICATION, not a copy of production code — nothing in the server applies a
+// delta, so it mirrors the client fold in static-src/store.ts, the only consumer a
+// delta has.
 func applyDelta(before vibekit.ToolCall, d *vibekit.ToolCallUpdatePayload) vibekit.ToolCall {
 	out := before
 	if d.Title != "" {
@@ -86,16 +71,10 @@ func applyDelta(before vibekit.ToolCall, d *vibekit.ToolCallUpdatePayload) vibek
 	return out
 }
 
-// TestToolCallDelta_RoundTripsOverAFoldSequence draws a sequence of LEGAL folds
-// and asserts each step's frame reconstructs that step's result.
-//
-// Legal is load-bearing, and it is the property's real precondition. `omitempty`
-// means no field can express a reset to its zero, so the round trip holds only
-// for the transitions the server's fold can actually produce: status, title and
-// kind are set to non-empty values, output appends or is replaced wholesale, diffs
-// append, the four identity ids and the three metadata blocks are set once. A
-// generator free to blank a field would falsify the property by asking the wire
-// for something the fold never does — which is why each step below is one of the
+// Each step's frame must reconstruct that step's result. LEGAL folds are the
+// property's precondition: `omitempty` means no field can express a reset to its
+// zero, so a generator free to blank a field would falsify the property by asking
+// the wire for something the fold never does. Hence every step below is one of the
 // folds applyToolCallUpdate performs and nothing else.
 func TestToolCallDelta_RoundTripsOverAFoldSequence(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -114,8 +93,7 @@ func TestToolCallDelta_RoundTripsOverAFoldSequence(t *testing.T) {
 				t.Fatalf("round trip lost a change\nbefore = %+v\ndelta  = %+v\nfolded = %+v\nwant   = %+v",
 					before, d, got, tc)
 			}
-			// The frame must also name the call it addresses, or a client cannot
-			// find anything to apply it to.
+			// A frame that names no call gives the client nothing to apply it to.
 			if d.ToolCallID != tc.ID || d.MessageID != "msg-1" {
 				t.Fatalf("delta address = (%q, %q), want (%q, %q)",
 					d.MessageID, d.ToolCallID, "msg-1", tc.ID)
@@ -136,9 +114,8 @@ func foldStep(rt *rapid.T, tc *vibekit.ToolCall) {
 	case 1:
 		tc.Output += rapid.StringN(1, 40, 40).Draw(rt, "chunk")
 	case 2:
-		// adoptTerminalOutput: at completion a terminal's full stream replaces the
-		// ACP fragments already accumulated, which can shorten or rewrite them.
-		// This is the one fold a pure-append wire cannot express.
+		// adoptTerminalOutput replaces the accumulated ACP fragments wholesale:
+		// the one fold a pure-append wire cannot express.
 		tc.Output = rapid.StringN(0, 40, 40).Draw(rt, "terminalOutput")
 	case 3:
 		tc.Diffs = append(tc.Diffs, vibekit.ToolDiff{
@@ -157,9 +134,8 @@ func foldStep(rt *rapid.T, tc *vibekit.ToolCall) {
 			Attrs: uint16(rapid.IntRange(1, 8).Draw(rt, "spanAttrs")),
 		}}
 	case 6:
-		// The four late identity attachments, each adopted once and never
-		// overwritten — so a step that finds one already set changes nothing,
-		// which is itself a case worth generating.
+		// Adopted once, never overwritten, so a step finding one already set
+		// changes nothing — itself a case worth generating.
 		id := rapid.StringMatching(`[a-z]{4,8}`).Draw(rt, "attachID")
 		switch rapid.IntRange(0, 3).Draw(rt, "which") {
 		case 0:
@@ -192,9 +168,8 @@ func foldStep(rt *rapid.T, tc *vibekit.ToolCall) {
 	}
 }
 
-// sameToolCall compares two tool calls by their JSON, which is the representation
-// the contract is about — and which treats a nil and an empty slice as equal, as
-// the wire does.
+// Comparing by JSON is what the contract is about, and it treats nil and an empty
+// slice as equal, as the wire does.
 func sameToolCall(a, b *vibekit.ToolCall) bool {
 	ja, errA := json.Marshal(a)
 	jb, errB := json.Marshal(b)
@@ -210,13 +185,9 @@ type deltaFixture struct {
 	After  vibekit.ToolCall              `json:"after"`
 }
 
-// TestToolCallDelta_SharedFixture pins the BUILDER against the same cases
-// static-src/tool-call-delta.node.test.ts drives the client fold with.
-//
-// The fixture is the contract; neither language owns a private table. A case added
-// to one side's expectations only would let the two folds diverge on exactly the
-// transition it describes, which is what the round-trip property above cannot see
-// across a language boundary.
+// The BUILDER is pinned against the same cases static-src/tool-call-delta.node.
+// test.ts drives the client fold with: the fixture is the contract, so neither
+// language owns a private table the other's fold could diverge from.
 func TestToolCallDelta_SharedFixture(t *testing.T) {
 	path := filepath.Join("testdata", "tool_call_delta.json")
 	raw, err := os.ReadFile(path)
@@ -244,9 +215,8 @@ func TestToolCallDelta_SharedFixture(t *testing.T) {
 				t.Errorf("toolCallDelta(%q, before, after) = %s, want %s",
 					c.Delta.MessageID, gotJSON, wantJSON)
 			}
-			// And the same case must round-trip, so a fixture whose `after` does
-			// not follow from `before` + `delta` fails here rather than teaching
-			// the client half a wrong expectation.
+			// A fixture whose `after` does not follow from `before` + `delta`
+			// fails here rather than teaching the client half a wrong expectation.
 			if folded := applyDelta(c.Before, &c.Delta); !sameToolCall(&folded, &c.After) {
 				t.Errorf("applyDelta(before, delta) = %+v, want %+v", folded, c.After)
 			}

@@ -12,12 +12,8 @@ import (
 	"github.com/cplieger/webhttp/v2/sse"
 )
 
-// emit is the single path for broadcasting an event to SSE clients. It
-// records a chat_status before publishing (apply-before-publish keeps a
-// connect snapshot >= the ring content a new client just replayed), then
-// marshals once and hands it to the shared sse hub, which assigns the
-// monotonic ID, appends to the replay ring, and fans out to subscribed
-// clients (topic = chat ID; events with an empty ChatID are global).
+// emit records chat_status BEFORE publishing, so a connect snapshot is never
+// behind the ring content a new client just replayed.
 
 // Broadcast publishes evt to every connected client.
 func (b *bus) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
@@ -47,20 +43,16 @@ func (b *bus) emit(evt vibekit.ServerEvent) {
 	b.fanout.Publish(sse.Event{Topic: string(evt.ChatID), Data: data})
 }
 
-// handleSSE is the /api/events handler: opens a long-lived server-sent
-// events stream for the connected browser. The transport (headers,
-// Last-Event-ID replay, keepalives, slow-client eviction, drain gate) is
-// the sse library's; vibekit owns the draining envelope, the connected
-// handshake carrying the replay bounds, and the initial per-client state
-// replay (pending permissions, staged writes, per-turn trust).
+// handleSSE opens the /api/events stream. The sse library owns the transport
+// (headers, Last-Event-ID replay, keepalives, slow-client eviction); vibekit owns
+// the connected handshake and the initial per-client state replay.
 func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	chatFilter := vibekit.ChatID(r.URL.Query().Get("chat_id"))
 	lastRaw := adoptCursorParam(r)
 	slog.Info("SSE connected", "chat_filter", logsafe.Field(string(chatFilter)), "last_event_id", logsafe.Field(lastRaw))
 
-	// A reconnect (any Last-Event-ID) reloads push preferences from disk so
-	// settings edited while SSE was down take effect without a restart
-	// (deduplicated via singleflight inside the push service).
+	// A reconnect reloads push preferences from disk so settings edited while SSE
+	// was down take effect without a restart.
 	if lastRaw != "" && rt.push != nil {
 		rt.push.ReloadPreferences(r.Context())
 	}
@@ -78,14 +70,11 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 // cannot ask for.
 const cursorParam = "last_event_id"
 
-// adoptCursorParam resolves the replay cursor and returns it, promoting
-// ?last_event_id= into the Last-Event-ID header when the header is absent.
-//
-// The header always WINS: only the browser sets it, and only it knows what its own
-// EventSource last delivered. The parameter covers the resume it cannot express — it
-// sends the header on its own retry and nothing else, so every reconnect vibekit
-// drove itself got no replay. Promoted rather than parsed here so the sse library
-// stays the one replay implementation; digits only, so a mangled value never logs.
+// adoptCursorParam resolves the replay cursor, promoting ?last_event_id= into the
+// Last-Event-ID header when the header is absent. The header WINS: only the browser
+// knows what its own EventSource last delivered. Promoted rather than parsed so the
+// sse library stays the one replay implementation; digits only, so nothing mangled
+// reaches the parser or the log.
 func adoptCursorParam(r *http.Request) string {
 	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
 		return raw
@@ -103,17 +92,13 @@ func adoptCursorParam(r *http.Request) string {
 	return raw
 }
 
-// maxCursorDigits bounds the parameter at what a uint64 can spell, so an
-// arbitrarily long digit string never reaches the parser or the log.
+// maxCursorDigits bounds the parameter at what a uint64 can spell.
 const maxCursorDigits = 20
 
-// streamInitialState writes the connected handshake and then replays the
-// client's outstanding state — unanswered permission requests and the
-// in-flight turn — so a reconnecting browser rebuilds its UI exactly as it
-// was. A turn approval rides the permission channel and needs nothing of
-// its own. ConnectedPayload carries the ring-buffer floor/head so the client
-// can detect a replay gap, and the workspace root, the one server fact the
-// client cannot derive and needs before opening a file by relative path.
+// streamInitialState writes the connected handshake, then replays this client's
+// outstanding state so a reconnecting browser rebuilds its UI as it was.
+// ConnectedPayload carries the ring floor/head so the client can detect a replay
+// gap, plus the workspace root, the one server fact the client cannot derive.
 func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter vibekit.ChatID) error {
 	connectedEvt := vibekit.NewEvent(vibekit.EventConnected, "", vibekit.ConnectedPayload{
 		Workspace: rt.lifecycle.workDir,
@@ -129,8 +114,7 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFi
 		return err
 	}
 
-	// writeEvent serializes one replayed state event to the stream (no id:
-	// replayed state is synthesized, not part of the event sequence).
+	// No id: replayed state is synthesized, not part of the event sequence.
 	writeEvent := func(evt vibekit.ServerEvent) error {
 		data, err := json.Marshal(evt)
 		if err != nil {
@@ -139,46 +123,30 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFi
 		return sw.Event(0, "", data)
 	}
 
-	// Replay any pending permissions that may have fallen out of the ring
-	// buffer, so permission dialogs survive reconnects.
 	if err := rt.replayPendingPermissions(writeEvent, chatFilter); err != nil {
 		return err
 	}
 
-	// Then the questions a workflow STEP is parked on. Beside the permissions
-	// rather than folded into them because the two registries have different
-	// lifetimes — see run_ask.go — but the replay reason is identical and stronger
-	// here: a parked run has no deadline of its own, so an ask this client saw an
-	// hour ago is still the only thing between that run and its next step.
+	// Beside the permissions rather than folded into them: the two registries have
+	// different lifetimes (run_ask.go), and a parked run has no deadline of its own.
 	if err := rt.replayPendingRunAsks(writeEvent, chatFilter); err != nil {
 		return err
 	}
 
-	// Synthesize turn_state for every chat with an OPEN TURN: the in-flight
-	// assistant message accumulated so far plus the authoritative busy signal, so
-	// a client connecting mid-turn renders the streaming transcript immediately
-	// and never has to guess at thinking state.
-	//
 	// ONE read of the open-turn set serves both replays below, so the busy chats
 	// the second one skips are exactly the chats the first one described.
 	open := rt.coord.turns.openTurns()
 	if err := rt.replayTurnState(writeEvent, chatFilter, open); err != nil {
 		return err
 	}
-	// Then the chats that are NOT busy but are waiting on a person. turn_state
-	// cannot carry those: its client handler sets `thinking`, which is false for a
-	// chat whose turn has ended.
+	// turn_state cannot carry a chat that is waiting on a person: its client
+	// handler sets `thinking`, false once the turn has ended.
 	return rt.replayWaitingStatus(writeEvent, chatFilter, open)
 }
 
 // replayWaitingStatus emits a chat_status event for every chat the agent left
-// waiting on a person, skipping chats replayTurnState already covered.
-//
-// The client renders waiting_on_user as a dot that outlives the turn; without
-// this a reader who refreshed, or a second device joining later, saw a blank
-// dot on the one chat that actually wanted them. Replays a real chat_status
-// rather than stretching turn_state, since turn_state asserts a turn is
-// RUNNING — a different claim.
+// waiting on a person, skipping chats replayTurnState already covered. A real
+// chat_status rather than a stretched turn_state, which asserts a turn is RUNNING.
 func (rt *Runtime) replayWaitingStatus(
 	writeFn func(vibekit.ServerEvent) error,
 	chatFilter vibekit.ChatID,
@@ -189,8 +157,7 @@ func (rt *Runtime) replayWaitingStatus(
 			continue
 		}
 		// A PRIME's chat is skipped here too, even though turn_state withholds it:
-		// the turn is genuinely running, so re-asserting a status the agent declared
-		// before it would describe the wrong turn.
+		// its turn is genuinely running, so an older status describes the wrong turn.
 		if _, busy := open[id]; busy {
 			continue
 		}
@@ -205,12 +172,10 @@ func (rt *Runtime) replayWaitingStatus(
 }
 
 // replayTurnState emits one synthesized turn_state event per chat with an open
-// turn. An absent snapshot still goes out as a bare busy signal.
-//
-// Reading the TURN rather than the prompt slot is what makes an agent-initiated
-// turn visible at all — that turn holds no slot. A PRIME turn is never served:
-// its frames are a transcript replay vibekit sent itself, so serving them
-// would render the preamble as conversation and then lose it on reload.
+// turn; an absent snapshot still goes out as a bare busy signal. Reading the TURN
+// rather than the prompt slot is what makes an agent-initiated turn visible at all.
+// A PRIME turn is never served: its frames are a transcript replay vibekit sent
+// itself, so serving them would render the preamble as conversation.
 func (rt *Runtime) replayTurnState(
 	writeFn func(vibekit.ServerEvent) error,
 	chatFilter vibekit.ChatID,
@@ -227,10 +192,8 @@ func (rt *Runtime) replayTurnState(
 		payload := vibekit.TurnStatePayload{
 			Status:      status.Status,
 			Description: status.Description,
-			// A step-driven turn is EMITTED and MARKED rather than skipped: the
-			// snapshot is the only copy of the in-flight step transcript, so skipping
-			// it would lose that content on every refresh, while an unmarked one makes
-			// the launching chat read as busy for the whole run.
+			// Emitted AND marked: the snapshot is the only copy of the in-flight step
+			// transcript, but unmarked it makes the launching chat read as busy.
 			WorkflowStep: facts.Source == vibekit.TurnSourceWorkflowStep,
 		}
 		if msg, seq, ok := facts.Buf.Snapshot(); ok {
@@ -246,13 +209,10 @@ func (rt *Runtime) replayTurnState(
 	return nil
 }
 
-// replayPendingPermissions sends the unresolved permission_needed events to
-// a newly connected SSE client, so permission dialogs survive reconnects
-// even when the ring buffer has wrapped. EVERY unresolved request is
-// replayed, however old: the agent server holds a session/request_permission
-// open until answered or cancelled with no deadline of its own, so an old
-// card is still a live question. List returns exactly the set
-// TakeIfPresent will still accept, in the order the agent asked.
+// replayPendingPermissions sends the unresolved permission_needed events to a newly
+// connected client, so dialogs survive a reconnect that outlived the ring buffer.
+// EVERY unresolved request goes, however old: the agent server holds
+// session/request_permission open until answered, so an old card is a live question.
 func (rt *Runtime) replayPendingPermissions(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
 	for _, evt := range rt.bus.pendingPerms.List(chatFilter) {
 		if err := writeFn(evt); err != nil {
@@ -263,13 +223,9 @@ func (rt *Runtime) replayPendingPermissions(writeFn func(vibekit.ServerEvent) er
 }
 
 // replayPendingRunAsks sends every unanswered workflow-step question to a newly
-// connected client, so a reload, a second device and a transport gap all
-// converge on the same set with no client-side accumulation.
-//
-// The client's dock de-duplicates a re-delivered ask by its id, so the replay is
-// idempotent by construction — which is what lets the eager clear a
-// `transport:gap` performs be followed by this burst rather than reconciled
-// against it.
+// connected client, so a reload, a second device and a transport gap converge on the
+// same set. The client's dock de-duplicates by ask id, which is what lets a
+// `transport:gap` clear eagerly and be followed by this burst.
 func (rt *Runtime) replayPendingRunAsks(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
 	for _, evt := range rt.runs.asks.List(chatFilter) {
 		if err := writeFn(evt); err != nil {

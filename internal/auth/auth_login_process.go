@@ -15,11 +15,8 @@ import (
 	"github.com/cplieger/vibekit/internal/sanitize"
 )
 
-// classifyLoginStartErr maps a cmd.Start error to an HTTP status code for
-// the "login unavailable" sentinel. fs.ErrNotExist catches fork/exec ENOENT;
-// exec.ErrNotFound catches LookPath failures. Both surface as 503 so
-// Grafana can distinguish "binary missing" from a transient fork failure
-// (500).
+// classifyLoginStartErr maps a cmd.Start error to an HTTP status: 503 when the
+// binary is missing (fork/exec ENOENT or a LookPath failure), 500 otherwise.
 func classifyLoginStartErr(err error, cliPath string) int {
 	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
 		slog.Error("login: kiro-cli binary not found",
@@ -31,15 +28,12 @@ func classifyLoginStartErr(err error, cliPath string) int {
 	return http.StatusInternalServerError
 }
 
-// reapLoginProcess waits for the login subprocess to exit, escalates the
-// process-group kill on hard-cap expiry, releases the semaphore, and
-// closes waitDone. Owns the semaphore release to preserve the "one login
-// at a time for the full device-flow window" invariant.
+// reapLoginProcess waits for the login subprocess to exit, then releases the
+// semaphore and closes waitDone. Owning that release is what preserves the "one
+// login at a time for the full device-flow window" invariant.
 func (h *Handler) reapLoginProcess(r loginReap) {
-	// Watch for ctx expiry and escalate to a process-group kill.
-	// CommandContext's default cancel only SIGKILLs the parent PID; any
-	// child helper survives and holds the stdout pipe open, blocking
-	// cmd.Wait.
+	// CommandContext's cancel only SIGKILLs the parent PID; a surviving child
+	// helper holds the stdout pipe open and blocks cmd.Wait.
 	killOnDeadline := make(chan struct{})
 	go func() {
 		select {
@@ -50,14 +44,12 @@ func (h *Handler) reapLoginProcess(r loginReap) {
 		case <-killOnDeadline:
 		}
 	}()
-	// Wait for the scanner+drain goroutine to finish reading stdout before
-	// calling cmd.Wait, which closes the pipe as it returns; a concurrent
-	// reader would see "file already closed".
+	// cmd.Wait closes the stdout pipe as it returns; a concurrent reader would
+	// see "file already closed".
 	<-r.stdoutDone
 	werr := r.cmd.Wait()
 	close(killOnDeadline)
-	// If we somehow raced the watcher goroutine, belt-and-braces the
-	// group kill.
+	// Redundant unless we raced the watcher goroutine above.
 	if errors.Is(r.ctx.Err(), context.DeadlineExceeded) {
 		killProcessGroup(r.cmd)
 	}
@@ -73,28 +65,22 @@ func (h *Handler) reapLoginProcess(r loginReap) {
 	default:
 		slog.Debug("login: cmd wait returned", "error", werr)
 	}
-	// Release the semaphore AFTER the subprocess has fully exited so a
-	// second POST during the browser-flow window still gets 409.
+	// AFTER the subprocess has fully exited, so a second POST during the
+	// browser-flow window still gets 409.
 	<-h.loginSem
 	close(r.waitDone)
-	// LAST, and that position is load-bearing twice over. The flow is over
-	// whichever way it went, so the cached identity is now a claim about the
-	// past — and it is re-READ rather than assumed, because a clean exit is not
-	// proof of a sign-in (the user may have abandoned the browser step while the
-	// CLI tidied up) and a dirty one is not proof of a failure. But the read
-	// forks kiro-cli for up to WhoamiTimeout, so doing it above would hold the
-	// login semaphore across it (the next login answers 409 for 5s more) and
-	// hold waitDone shut (handleLogin's timeout branch waits on it).
+	// A clean exit is not proof of a sign-in and a dirty one is not proof of a
+	// failure, so the identity is re-read rather than inferred. LAST because the
+	// read forks kiro-cli for up to WhoamiTimeout: above here it would hold the
+	// login semaphore across that fork and hold waitDone shut, which
+	// handleLogin's timeout branch waits on.
 	h.identity.refresh()
 }
 
-// extractAuthURL pulls an auth URL out of a single already-stripped
-// login-output line. Returns "" when the line carries no URL. An explicit
-// "Open this URL:" prefix anchors the search to the tail after the prefix,
-// so a legitimate CLI banner mentioning a secondary URL on the same line
-// never shadows the primary. A non-https scheme after the prefix yields ""
-// — defense-in-depth against a compromised kiro-cli emitting
-// scheme-injection payloads.
+// extractAuthURL returns the auth URL in one already-stripped login-output line,
+// or "" when there is none. An "Open this URL:" prefix anchors the search to the
+// tail after it, so a banner naming a secondary URL never shadows the primary.
+// Only https:// tokens qualify, so a scheme-injection payload yields "".
 func extractAuthURL(line string) string {
 	if after, found := strings.CutPrefix(line, "Open this URL:"); found {
 		for word := range strings.FieldsSeq(after) {
@@ -114,11 +100,9 @@ func extractAuthURL(line string) string {
 	return ""
 }
 
-// scanLoginOutputWithDrain runs scanLoginOutput and then keeps reading
-// stdout to io.Discard until the subprocess closes the pipe. The drain is
-// what lets kiro-cli keep writing progress banners after we emitted the
-// URL — without it the pipe fills and kiro-cli blocks on write(2) until
-// the hard cap fires.
+// scanLoginOutputWithDrain runs scanLoginOutput, then drains stdout to
+// io.Discard until the pipe closes. Without the drain, the progress banners
+// kiro-cli writes after the URL fill the pipe and block it on write(2).
 func scanLoginOutputWithDrain(stdout io.ReadCloser, urlCh chan<- map[string]string) {
 	scanLoginOutput(stdout, urlCh)
 	if _, err := io.Copy(io.Discard, stdout); err != nil {
@@ -126,22 +110,16 @@ func scanLoginOutputWithDrain(stdout io.ReadCloser, urlCh chan<- map[string]stri
 	}
 }
 
-// scanLoginOutput reads lines from r until it finds an auth URL (either in
-// an explicit "Open this URL: …" line or as the first bare https:// token).
-// Sends the discovered URL + optional "Code:" into urlCh. On EOF with no
-// URL, on a scanner error, or when the line cap is hit, sends an error map.
-// urlCh MUST be buffered so this function never blocks after the caller's
-// select has already moved on.
-//
-// Memory is bounded at O(maxScanLineBytes); a small ring of the first/last
-// 5 lines is kept for the line-cap log so operators can diagnose kiro-cli
-// output-format drift.
+// scanLoginOutput reads lines from r until it finds an auth URL and sends it,
+// with any "Code:", into urlCh; on EOF without one, on a scanner error, or at the
+// line cap it sends an error map instead. urlCh MUST be buffered so this never
+// blocks after the caller's select has moved on. Memory is bounded at
+// O(maxScanLineBytes).
 func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 4096), maxScanLineBytes)
-	// Bounded ring: keep first-5 and last-5 lines for operator
-	// diagnostics on the line-cap branch. Lines capped at 128 bytes
-	// before storage so an adversarial CLI can't blow up the log event.
+	// Lines are capped before storage so an adversarial CLI cannot blow up the
+	// line-cap log event.
 	ring := newLineRing(5, 128)
 	var code, authURL string
 	var lineCount int
@@ -149,9 +127,8 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 		line := strings.TrimSpace(sanitize.StripANSI(scanner.Text()))
 		lineCount++
 		ring.Push(line)
-		// Fast path: kiro-cli refuses a fresh login when a session
-		// already exists. Surface a dedicated error key rather than
-		// the generic "no auth URL" sentinel.
+		// kiro-cli refuses a fresh login when a session exists; that gets its own
+		// error key rather than the generic "no auth URL" sentinel.
 		if strings.Contains(strings.ToLower(line), "already logged in") {
 			urlCh <- httpreply.ErrorJSON("already_logged_in")
 			return
@@ -170,8 +147,8 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 			return
 		}
 		if lineCount >= maxLoginLines {
-			// Warn, not Error: output-format drift or a user-cancel is
-			// recoverable and user-visible, not an SRE page.
+			// Warn, not Error: format drift or a user cancel is recoverable and
+			// user-visible.
 			slog.Warn("login: output line cap hit without auth URL",
 				"lines", lineCount,
 				"first_and_last_sample", ring.Sample())
@@ -180,14 +157,12 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		// Warn, not Error: EOF after killProcessGroup and a network flake
-		// both land here.
+		// Warn, not Error: EOF after killProcessGroup lands here too.
 		slog.Warn("login: scanner failed before URL",
 			"error", err, "lines_read", lineCount)
 		urlCh <- httpreply.ErrorJSON("scanner error: " + err.Error())
 		return
 	}
-	// Clean EOF without a URL. handleLogin's URL-timeout branch already
-	// surfaces the failure with richer context.
+	// handleLogin's URL-timeout branch surfaces this with richer context.
 	urlCh <- httpreply.ErrorJSON("no auth URL found in CLI output")
 }

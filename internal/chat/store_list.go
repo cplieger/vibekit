@@ -15,9 +15,8 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// sfDo is a typed wrapper around singleflight.Group.Do that eliminates
-// the need for a type assertion on the result. The closure always
-// returns a listResult, so the assertion is guaranteed by construction.
+// sfDo wraps singleflight.Group.Do so the result needs no type assertion at
+// each call site.
 func sfDo(sf *singleflight.Group, key string, fn func() listResult) listResult {
 	v, _, _ := sf.Do(key, func() (any, error) { return fn(), nil })
 	r, _ := v.(listResult)
@@ -25,37 +24,26 @@ func sfDo(sf *singleflight.Group, key string, fn func() listResult) listResult {
 }
 
 // List returns every chat's header (no messages) sorted by UpdatedAt desc.
-// Files that fail to parse or read are logged and skipped — one bad file
-// must not hide the rest from the sidebar. Always returns a non-nil
-// slice so JSON encoders emit `[]` for an empty registry rather than
-// `null` (which the wire decoder rejects as a type error).
+// Unreadable files are logged and skipped: one bad file must not hide the rest.
+// Never nil, so JSON encoders emit `[]` rather than the `null` the wire decoder
+// rejects.
 func (s *Store) List(ctx context.Context) []vibekit.ChatHeader {
 	headers, _ := s.listWithCompleteness(ctx)
 	return headers
 }
 
-// listResult pairs a header scan with whether it read every chat that
-// exists, so both travel through one singleflight slot.
+// listResult carries a scan and its completeness through one singleflight slot.
 type listResult struct {
 	headers  []vibekit.ChatHeader
 	complete bool
 }
 
-// ReferencedSessionIDs returns every ACP session id still referenced by a
-// chat vibekit keeps, and reports whether that set is COMPLETE.
+// ReferencedSessionIDs returns every ACP session id in any kept chat's CHAIN,
+// not just its current one, and reports whether that set is COMPLETE.
 //
-// One list, because chats no longer move: there is no archive directory to
-// union in.
-//
-// It backs the orphan session sweep: any on-disk KAS session not in this
-// set is treated as reapable, which makes an incomplete answer here a
-// data-loss bug. Every id in a chat's CHAIN counts, not just its current
-// one — a chat routinely changes session and each abandoned directory
-// still holds that period's transcript.
-//
-// It FAILS CLOSED: `complete` is false when any chat file that exists
-// could not be read. A chat that vanished mid-scan (ENOENT) is not a
-// failure — it genuinely has no sessions to keep.
+// It backs the orphan session sweep, which reaps any session absent from the
+// set, so it FAILS CLOSED: complete is false when a chat file that exists could
+// not be read. A chat that vanished mid-scan (ENOENT) is not a failure.
 func (s *Store) ReferencedSessionIDs(ctx context.Context) (refs map[string]struct{}, complete bool) {
 	refs = make(map[string]struct{})
 	headers, complete := s.listWithCompleteness(ctx)
@@ -67,23 +55,13 @@ func (s *Store) ReferencedSessionIDs(ctx context.Context) (refs map[string]struc
 	return refs, complete
 }
 
-// listWithCompleteness is List plus the read-completeness flag the sweep
-// needs. List itself stays best-effort for the UI, where showing most of
-// the sidebar beats showing none of it. Coalesces concurrent sidebar
-// refreshes into a single directory scan.
+// listWithCompleteness is List plus the read-completeness flag the sweep needs,
+// coalescing concurrent refreshes into one directory scan.
 //
-// The shared scan runs under a context stripped of the caller's cancellation,
-// because that coalescing is what makes one caller's lifetime everybody's. The
-// client's own boot fires two /api/chats reads and the second ABORTS the first,
-// so the request that opened the singleflight slot is routinely cancelled while a
-// second request is already waiting on its answer — and the answer both then got
-// was a truncated header list. Values are kept; only the deadline and the
-// cancellation are dropped.
-//
-// The scan is bounded by the chat count and by one bounded read per file, and a
-// read already blocks past cancellation on a wedged mount, so what this gives up
-// is the ability to skip work that has not started yet. That is cheap next to
-// answering a caller with a subset of its chats.
+// The shared scan drops the caller's cancellation (values are kept) because
+// coalescing makes one caller's lifetime everybody's: the request that opens the
+// slot is routinely aborted by a second one already waiting on its answer, and
+// both then received a truncated header list.
 func (s *Store) listWithCompleteness(ctx context.Context) ([]vibekit.ChatHeader, bool) {
 	scanCtx := context.WithoutCancel(ctx)
 	r := sfDo(&s.listSF, "list", func() listResult {
@@ -100,11 +78,9 @@ func (s *Store) listOnce(ctx context.Context) ([]vibekit.ChatHeader, bool) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		slog.Error("chat list", "dir", s.dir, "error", err)
-		// The directory itself is unreadable, so nothing is known about what
-		// chats exist. Never report that as a complete keep-list.
+		// Nothing is known about what chats exist, so never report complete.
 		return []vibekit.ChatHeader{}, false
 	}
-	// Collect valid filenames first.
 	var valid []chatEntry
 	for _, e := range entries {
 		name := e.Name()
@@ -123,19 +99,15 @@ func (s *Store) listOnce(ctx context.Context) ([]vibekit.ChatHeader, bool) {
 		return []vibekit.ChatHeader{}, true
 	}
 
-	// Bounded-parallel header reads. Workers read from a shared index;
-	// no per-chat lock needed because readChatHeader is read-only and
-	// writes use atomic temp+rename (readers always see a complete file).
+	// No per-chat lock: reads are read-only and writes land by temp+rename, so a
+	// reader always sees a complete file.
 	headers, complete := readHeadersParallel(ctx, valid, s.fileCap)
 	slices.SortFunc(headers, func(a, b vibekit.ChatHeader) int {
 		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
 	})
 	if !complete {
-		// The one state this scan can be in that nothing downstream shows a
-		// person: List drops the flag, so the sidebar and the tab strip simply
-		// come up short with no error anywhere. Said here, at the point it is
-		// detected, because a truncated answer is indistinguishable from a
-		// reader having fewer chats than they thought.
+		// Warned here because List drops the flag: downstream a truncated
+		// sidebar is indistinguishable from having fewer chats.
 		slog.Warn("chat list: incomplete scan; some chats that exist were not read",
 			"dir", s.dir, "found", len(valid), "returned", len(headers))
 	}
@@ -147,46 +119,34 @@ func (s *Store) listOnce(ctx context.Context) ([]vibekit.ChatHeader, bool) {
 	return headers, complete
 }
 
-// primeHistoryCap bounds the transcript BuildHistory returns.
-//
-// The prime is the DEGRADED path: it runs only when a model switch fell
-// back to a new session or a reload could not `session/load`. Bytes rather
-// than tokens because vibekit cannot count tokens at prime time (the
-// context ring reads usage from KAS's `usage_update`, which does not
-// exist yet), and a byte budget is the same proxy `MaxInlineTurnBytes` and
-// `pushBodyCap` already use.
+// primeHistoryCap bounds the transcript BuildHistory returns. Bytes rather than
+// tokens because no token count exists at prime time: usage arrives later, from
+// KAS's usage_update.
 const primeHistoryCap = 64 << 10
 
-// primeOmissionNotice tells the model its own input was clipped. Without it a
-// truncated prime is indistinguishable from a short conversation, so the model
-// answers confidently about a history it was never given.
+// primeOmissionNotice tells the model its own input was clipped; without it a
+// truncated prime reads as a short conversation.
 const primeOmissionNotice = "[%d earlier message(s) omitted to fit the priming budget]\n"
 
-// BuildHistory returns a plain-text transcript used for prime priming,
-// bounded to primeHistoryCap. Returns "" if the chat is missing or empty.
-//
-// Trimming drops WHOLE MESSAGES, oldest first: cutting mid-message would
-// hand the model half a sentence with no way to know it. The newest
-// messages are kept, since a resumed conversation continues from its end.
-//
-// The last message always survives. If it alone exceeds the budget its
-// content is truncated with a marker charged INSIDE the cap.
+// BuildHistory returns a plain-text transcript for priming, bounded to
+// primeHistoryCap, or "" if the chat is missing or empty. Trimming drops WHOLE
+// messages, oldest first, so the model is never handed half a sentence. The last
+// message always survives; if it alone busts the budget its content is truncated
+// with a marker charged INSIDE the cap.
 func (s *Store) BuildHistory(ctx context.Context, chatID vibekit.ChatID) string {
 	c, ok := s.Get(ctx, chatID)
 	if !ok || len(c.Messages) == 0 {
 		return ""
 	}
 
-	// Render first, measure second: each message's rendered form is what
-	// costs budget, so selecting on raw fields would mis-count role
-	// prefixes and tool-call lines.
+	// Render before measuring: role prefixes and tool-call lines cost budget too.
 	rendered := make([]string, len(c.Messages))
 	for i := range c.Messages {
 		rendered[i] = renderPrimeMessage(&c.Messages[i], chatID)
 	}
 
-	// Reserve the omission notice's bytes BEFORE selecting, so it can never
-	// push an already-admitted message over the cap.
+	// Reserved before selecting, so the notice can never push an admitted
+	// message over the cap.
 	budget := primeHistoryCap - len(fmt.Sprintf(primeOmissionNotice, len(rendered)))
 	first, total := selectPrimeWindow(rendered, budget)
 	if first == len(rendered) {
@@ -204,9 +164,8 @@ func (s *Store) BuildHistory(ctx context.Context, chatID vibekit.ChatID) string 
 		if line == "" {
 			continue
 		}
-		// The single-message overflow case, reachable only for the last message:
-		// every earlier one was admitted under `budget`, which already excluded
-		// the notice.
+		// Reachable only for the last message: every earlier one was admitted
+		// under budget, which already excluded the notice.
 		if b.Len()+len(line) > primeHistoryCap {
 			capped, _ := runesafe.SanitizeCapped(line, max(primeHistoryCap-b.Len(), 0), "...")
 			b.WriteString(capped)
@@ -217,13 +176,10 @@ func (s *Store) BuildHistory(ctx context.Context, chatID vibekit.ChatID) string 
 	return b.String()
 }
 
-// selectPrimeWindow picks the newest run of rendered messages that fits
-// budget, returning the index of the oldest one kept and their total size.
-// `first == len(rendered)` means nothing was renderable.
-//
-// The last message is admitted unconditionally, guaranteeing a prime
-// always carries the turn the conversation resumes from; the caller
-// truncates it if it alone busts the cap.
+// selectPrimeWindow picks the newest run of rendered messages that fits budget,
+// returning the index of the oldest one kept and their total size;
+// first == len(rendered) means nothing was renderable. The last message is
+// admitted unconditionally, so the caller truncates it if it alone busts the cap.
 func selectPrimeWindow(rendered []string, budget int) (first, total int) {
 	first = len(rendered)
 	last := len(rendered) - 1
@@ -240,8 +196,8 @@ func selectPrimeWindow(rendered []string, budget int) (first, total int) {
 	return first, total
 }
 
-// countRenderable counts the messages that would have produced output, so the
-// omission notice reports messages the model lost rather than array slots.
+// countRenderable counts messages that produced output, so the omission notice
+// reports what the model lost rather than array slots.
 func countRenderable(rendered []string) int {
 	n := 0
 	for _, r := range rendered {
