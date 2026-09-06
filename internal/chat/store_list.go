@@ -126,7 +126,7 @@ func (s *Store) listOnce(ctx context.Context) ([]vibekit.ChatHeader, bool) {
 	// Bounded-parallel header reads. Workers read from a shared index;
 	// no per-chat lock needed because readChatHeader is read-only and
 	// writes use atomic temp+rename (readers always see a complete file).
-	headers, complete := readHeadersParallel(ctx, valid)
+	headers, complete := readHeadersParallel(ctx, valid, s.fileCap)
 	slices.SortFunc(headers, func(a, b vibekit.ChatHeader) int {
 		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
 	})

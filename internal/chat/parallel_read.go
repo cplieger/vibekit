@@ -22,9 +22,13 @@ type chatEntry struct {
 //
 // Workers read from a shared index channel; no per-chat lock is needed
 // because readChatHeader is read-only and writes use atomic temp+rename.
+//
+// This is the 8x multiplier readChatHeader streams for: whatever one header
+// costs, a sidebar refresh pays it eight times at once.
 func readHeadersParallel(
 	ctx context.Context,
 	valid []chatEntry,
+	fileCap chatFileCap,
 ) (headersOut []vibekit.ChatHeader, complete bool) {
 	if len(valid) == 0 {
 		return nil, true
@@ -40,7 +44,7 @@ func readHeadersParallel(
 	results := make([]result, len(valid))
 
 	ran := parallel.Bounded(ctx, valid, maxWorkers, func(idx int, ce chatEntry) {
-		h, err := readChatHeader(ce.path, "chat "+ce.id)
+		h, err := readChatHeader(ce.path, "chat "+ce.id, fileCap)
 		if err != nil {
 			// ENOENT is a concurrent delete: the chat is genuinely gone.
 			// Anything else means a chat that exists is missing from the

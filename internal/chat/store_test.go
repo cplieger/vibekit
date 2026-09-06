@@ -67,6 +67,39 @@ func newTestStore(t *testing.T) (*Store, *fakeBroadcaster) {
 	return s, b
 }
 
+// newCappedTestStore is newTestStore with an injected chat-file cap, so the
+// size-refusal paths are reachable at a few KiB instead of the derived cap.
+func newCappedTestStore(t *testing.T, capBytes int64) *Store {
+	t.Helper()
+	s, err := NewStore(t.TempDir(), WithChatFileCap(capBytes))
+	if err != nil {
+		t.Fatalf("NewStore(WithChatFileCap(%d)): %v", capBytes, err)
+	}
+	return s
+}
+
+// writeOversizeChat writes a VALID chat file whose encoded size exceeds
+// capBytes, so a refusal can only come from the size gate.
+//
+// Real bytes rather than a sparse os.Truncate: the header path now streams and
+// parses, so a sparse file of NUL bytes would be refused as malformed JSON and
+// the test would pass without the size gate existing.
+func writeOversizeChat(t *testing.T, path string, capBytes int64) {
+	t.Helper()
+	id := strings.TrimSuffix(filepath.Base(path), chatFileSuffix)
+	c := &vibekit.Chat{ID: id, Name: strings.Repeat("n", int(capBytes)+1)}
+	data, err := json.Marshal(c)
+	if err != nil {
+		t.Fatalf("Setup: marshal oversize chat: %v", err)
+	}
+	if int64(len(data)) <= capBytes {
+		t.Fatalf("Setup: fixture is %d bytes, needs to exceed the %d-byte cap", len(data), capBytes)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("Setup: write oversize chat: %v", err)
+	}
+}
+
 // ageChat backdates a chat so it is eligible for purge, writing BOTH its
 // UpdatedAt and its mtime. Purge ages from the chat's own UpdatedAt — its last
 // activity — so aging the mtime alone does not make an entry purgeable; mtime is
@@ -1201,21 +1234,12 @@ func TestNewStore_MkdirFailurePropagatesError(t *testing.T) {
 // --- Size cap on load ---
 
 func TestGet_RejectsOversizeChatFile(t *testing.T) {
-	// 32 MiB cap is a security control: a corrupted or adversarial
-	// chat file must not OOM the process via List walking every chat.
-	// Sparse-file via os.Truncate avoids writing 32 MiB of real bytes
-	// while still triggering the st.Size() > maxChatFileBytes branch.
-	s, _ := newTestStore(t)
+	// The cap is a security control: a corrupted or adversarial chat file must
+	// not OOM the process. The cap is INJECTED at 2 KiB so the refusal branch is
+	// reachable without a multi-MiB fixture.
+	s := newCappedTestStore(t, 2<<10)
 	path := filepath.Join(s.dir, "big.json")
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	_ = f.Close()
-	// One byte over the cap so the branch strictly triggers.
-	if err := os.Truncate(path, int64(maxChatFileBytes)+1); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
+	writeOversizeChat(t, path, 2<<10)
 	if _, ok := s.Get(t.Context(), "big"); ok {
 		t.Error("Get on oversize chat file returned ok=true, want false")
 	}
@@ -1224,17 +1248,9 @@ func TestGet_RejectsOversizeChatFile(t *testing.T) {
 func TestList_SkipsOversizeChatFile(t *testing.T) {
 	// The same guardrail must keep one oversize file from erasing the
 	// sidebar for every other chat. List should log-and-skip, not fail.
-	s, _ := newTestStore(t)
+	s := newCappedTestStore(t, 2<<10)
 	_ = s.Mutate(t.Context(), "good", func(c *vibekit.Chat, _ bool) bool { c.Name = "ok"; return true })
-	path := filepath.Join(s.dir, "big.json")
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	_ = f.Close()
-	if err := os.Truncate(path, int64(maxChatFileBytes)+1); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
+	writeOversizeChat(t, filepath.Join(s.dir, "big.json"), 2<<10)
 	headers := s.List(t.Context())
 	if len(headers) != 1 || headers[0].ID != "good" {
 		t.Errorf("List() = %+v, want only the good chat (oversize skipped)", headers)

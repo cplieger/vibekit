@@ -45,6 +45,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.ToolDenialRule](),
 	wiregen.TypeRef[vibekit.ToolDenial](),
 	wiregen.TypeRef[vibekit.TextSpan](),
+	wiregen.TypeRef[vibekit.ToolTruncation](),
 	wiregen.TypeRef[vibekit.ToolCall](),
 	// GET /api/chats/{id}/tools/{toolCallID}'s response, after ToolDiff and
 	// TextSpan, which it references. No `Payload` suffix, so

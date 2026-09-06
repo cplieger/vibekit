@@ -2,15 +2,18 @@ package chat
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
-// FuzzCountJSONArrayElementsCorrectness targets the JSON array element
-// counter that determines MessageCount on headers. Bug class: incorrect
-// count when given malformed JSON, nested arrays, or deeply escaped
-// content — a wrong count causes sidebar message-count drift vs actual
-// messages. Verifies count matches stdlib's json.Unmarshal for valid arrays.
-func FuzzCountJSONArrayElementsCorrectness(f *testing.F) {
+// FuzzDecodeChatHeaderMessageCount targets the streaming header decoder's message
+// count, which is what the sidebar shows. Bug class: a count disagreeing with
+// what the full read path loads, so the sidebar claims messages the transcript
+// does not have.
+//
+// The oracle is encoding/json over the same bytes: the streaming count must equal
+// stdlib's element count, and what stdlib refuses must be refused here too.
+func FuzzDecodeChatHeaderMessageCount(f *testing.F) {
 	f.Add([]byte(`[1,2,3]`))
 	f.Add([]byte(`[]`))
 	f.Add([]byte(`null`))
@@ -22,34 +25,34 @@ func FuzzCountJSONArrayElementsCorrectness(f *testing.F) {
 	f.Add([]byte(``))            // empty
 	f.Add([]byte(`[null,null]`)) // null elements
 
-	f.Fuzz(func(t *testing.T, data []byte) {
-		count := countJSONArrayElements(json.RawMessage(data))
+	f.Fuzz(func(t *testing.T, messages []byte) {
+		body := `{"id":"c1","name":"n","messages":` + string(messages) + `}`
 
-		// Invariant 1: count must be non-negative.
-		if count < 0 {
-			t.Fatalf("countJSONArrayElements returned negative: %d", count)
+		h, err := decodeChatHeader(strings.NewReader(body))
+
+		var probe struct {
+			Messages []json.RawMessage `json:"messages"`
 		}
+		stdlibOK := json.Unmarshal([]byte(body), &probe) == nil
 
-		// Invariant 2: if data is a valid JSON array, count must equal
-		// the actual number of top-level elements.
-		var arr []json.RawMessage
-		if json.Unmarshal(data, &arr) == nil {
-			if count != len(arr) {
-				t.Fatalf("countJSONArrayElements(%q) = %d, want %d (valid array)",
-					data, count, len(arr))
+		if err != nil {
+			// Refusing what stdlib reads would drop the chat out of the sidebar
+			// while the transcript still opens it.
+			if stdlibOK {
+				t.Fatalf("decodeChatHeader(%q) = error %v, want it read like encoding/json", messages, err)
 			}
+			return
 		}
-
-		// Invariant 3: for non-array valid JSON, count must be 0.
-		var probe any
-		if err := json.Unmarshal(data, &probe); err == nil {
-			if _, ok := probe.([]any); !ok {
-				// Valid JSON but not an array (object, string, number, null, bool).
-				if count != 0 {
-					t.Fatalf("countJSONArrayElements(%q) = %d for non-array JSON, want 0",
-						data, count)
-				}
-			}
+		if !stdlibOK {
+			t.Fatalf("decodeChatHeader(%q) accepted a body encoding/json rejects", messages)
+		}
+		if h.MessageCount != len(probe.Messages) {
+			t.Fatalf("decodeChatHeader(%q).MessageCount = %d, want %d",
+				messages, h.MessageCount, len(probe.Messages))
+		}
+		if h.ID != "c1" || h.Name != "n" {
+			t.Fatalf("decodeChatHeader(%q) header = {ID:%q Name:%q}, want {ID:\"c1\" Name:\"n\"}",
+				messages, h.ID, h.Name)
 		}
 	})
 }

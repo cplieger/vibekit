@@ -4,12 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/jsoncap/v2"
-	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/chat/archive"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -33,7 +30,7 @@ func (s *Store) LoadRetentionHeader(chatID vibekit.ChatID) (archive.RetentionHea
 	if err != nil {
 		return archive.RetentionHeader{}, err
 	}
-	return readRetentionHeader(path, "chat "+string(chatID))
+	return readRetentionHeader(path, "chat "+string(chatID), s.fileCap)
 }
 
 // readRetentionHeader streams a chat file and decodes ONLY the retention fields,
@@ -44,23 +41,20 @@ func (s *Store) LoadRetentionHeader(chatID vibekit.ChatID) (archive.RetentionHea
 // is not the chat's. The walk does not stop at the last field it wants, though
 // write order would allow it — a later `draft` key would be missed and a chat
 // somebody is typing in purged.
-func readRetentionHeader(path, label string) (archive.RetentionHeader, error) {
-	clean := filepath.Clean(path)
-	if !filepath.IsAbs(clean) || pathinside.HasDotDot(clean) {
-		return archive.RetentionHeader{}, fmt.Errorf("%s: rejected unsafe path %q", label, path)
-	}
-	// OpenRegular, not os.Open, for the reason readCappedFile documents: a FIFO at
-	// a chat file name blocks in open(2) with no deadline able to rescue it.
-	f, info, err := atomicfile.OpenRegular(clean)
+func readRetentionHeader(path, label string, fileCap chatFileCap) (archive.RetentionHeader, error) {
+	// openChatFile carries the path guard and the OpenRegular reasoning.
+	f, info, err := openChatFile(path, label)
 	if err != nil {
 		return archive.RetentionHeader{}, err
 	}
 	defer func() { _ = f.Close() }()
-	if info.Size() > maxChatFileBytes {
-		return archive.RetentionHeader{}, fmt.Errorf("%s: %d bytes exceeds the %d-byte cap",
-			label, info.Size(), maxChatFileBytes)
+	if info.Size() > maxHeaderScanBytes {
+		return archive.RetentionHeader{}, errFileTooLarge(label, info.Size(), maxHeaderScanBytes)
 	}
-	h, err := decodeRetentionHeader(bufio.NewReader(io.LimitReader(f, maxChatFileBytes)))
+	if !fileCap.unlimited() && info.Size() > int64(fileCap) {
+		return archive.RetentionHeader{}, errFileTooLarge(label, info.Size(), int64(fileCap))
+	}
+	h, err := decodeRetentionHeader(bufio.NewReader(io.LimitReader(f, maxHeaderScanBytes)))
 	if err != nil {
 		return archive.RetentionHeader{}, fmt.Errorf("parse %s: %w", label, err)
 	}
