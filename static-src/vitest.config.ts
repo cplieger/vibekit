@@ -1,4 +1,4 @@
-// Vitest 4.1 configuration for vibekit TypeScript unit tests.
+// Vitest 5 configuration for vibekit TypeScript unit tests.
 //
 // Two projects, and the DEFAULT is the browser. A test file runs in a real
 // headless Chromium unless its name opts out, because the browser is the
@@ -49,7 +49,8 @@ import { resolve } from "node:path";
 //
 // One never-matching anchor route per context keeps the count above zero, so the
 // toggle never fires again. Upstream is vitest-dev/vitest#8339 — open, root-
-// caused with CDP traces in the thread, and NOT fixed in 4.1.11 or on main, so
+// caused with CDP traces in the thread, and NOT fixed in 4.1.11 nor in 5.0.0
+// (re-read off the installed provider: `createContext` still routes nothing), so
 // there is no version to wait for.
 //
 // Measured over this 233-file browser project: 69.6s without, 71.2s with. The
@@ -97,6 +98,21 @@ const actionsInternals = resolve(__dirname, "node_modules/@cplieger/actions/dist
 // REPLACES the root one rather than adding to it.
 const sharedExclude = [...configDefaults.exclude, "../static/**", "**/.stryker-tmp/**"];
 
+// Trace view records a DOM snapshot per browser interaction, and the recording is
+// only readable through a reporter that serves it. VITEST_TRACE=1 turns on both
+// halves together, so one variable produces something openable:
+//
+//   VITEST_TRACE=1 npx vitest run --project browser turn-residency.test.ts
+//   then open .vitest/index.html
+//
+// Off by default because the snapshots cost time on every one of the ~233 browser
+// test files and CI has nowhere to publish them. `singleFile` inlines the UI
+// assets so the report is one file to open or attach to an issue, rather than a
+// directory that needs `vite preview` to serve it. This adds no devDependency:
+// the html reporter's @vitest/ui is a hard dependency of @vitest/browser, which is
+// already declared.
+const traceView = process.env["VITEST_TRACE"] === "1";
+
 export default defineConfig({
   resolve: {
     alias: [
@@ -120,6 +136,7 @@ export default defineConfig({
     },
   },
   test: {
+    ...(traceView ? { reporters: ["default", ["html", { singleFile: true }]] as const } : {}),
     projects: [
       {
         // `extends` is a key of the PROJECT, not of its `test` block. Written
@@ -170,6 +187,7 @@ export default defineConfig({
           browser: {
             enabled: true,
             headless: true,
+            traceView,
             provider: playwrightWithAlwaysOnInterception({
               launchOptions: {
                 channel: "chromium",
@@ -242,8 +260,8 @@ export default defineConfig({
     testTimeout: 5000,
     hookTimeout: 5000,
 
-    // Flag tests slower than 100ms. Root-only: vitest 4 does not accept
-    // slowTestThreshold per project.
+    // Flag tests slower than 100ms. Root-only: `slowTestThreshold` is a
+    // NonProjectOption, so vitest rejects it inside a project.
     slowTestThreshold: 100,
 
     // Reproducible ordering. hooks: "stack" = afterEach/afterAll run in
@@ -269,7 +287,7 @@ export default defineConfig({
     // and CI). Vitest's built-in typecheck is experimental and redundant here.
     // typecheck: { enabled: false } is the default; omitted for clarity.
 
-    // V8 coverage with AST-accurate remapping (Vitest 4, as good as Istanbul).
+    // V8 coverage with AST-accurate remapping, as good as Istanbul.
     coverage: {
       provider: "v8",
 
