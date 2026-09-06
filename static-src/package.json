@@ -41,7 +41,7 @@
     "@cplieger/reactive": "2.1.0",
     "@cplieger/ui-primitives": "3.0.7",
     "@cplieger/web-terminal-engine": "5.0.9",
-    "@cplieger/web-terminal-ui": "7.0.5"
+    "@cplieger/web-terminal-ui": "7.0.6"
   },
   "overrides": {
     "qs": "^6.15.2"
