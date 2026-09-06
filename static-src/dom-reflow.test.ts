@@ -8,6 +8,7 @@
 // would pass vacuously anywhere else.
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { forceReflow } from "./dom.js";
+import { framesBudgetMs, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 
 const ANIM = "reflow-probe";
 
@@ -53,7 +54,7 @@ function nextFrame(): Promise<void> {
   });
 }
 
-describe("forceReflow", () => {
+describe("forceReflow", { timeout: testTimeoutFor(framesBudgetMs(10)) }, () => {
   it("restarts an animation that a bare remove-then-add does not", async () => {
     const withoutFlush = mountProbe();
     withoutFlush.el.classList.add(`${ANIM}-on`);

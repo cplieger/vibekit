@@ -21,6 +21,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ModelInfo, Session, SessionEffortLevel } from "./types.js";
+import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 
 // The catalog and the seed are the staged inputs. Mutable module state rather
 // than per-test factories, because the real modules are read through a live
@@ -185,18 +186,24 @@ async function nextFrame(): Promise<void> {
 /** The pill's rendered tier, once this case's own paint has landed. */
 async function tier(): Promise<{ text: string; hidden: boolean }> {
   const el = document.getElementById("ctx-effort-pill")!;
-  await vi.waitFor(() => {
-    expect(el.textContent).not.toBe(UNPAINTED);
-  });
+  await vi.waitFor(
+    () => {
+      expect(el.textContent).not.toBe(UNPAINTED);
+    },
+    { timeout: FRAME_BUDGET_MS },
+  );
   return { text: el.textContent ?? "", hidden: el.classList.contains("hidden") };
 }
 
 /** The pill's rendered model name, once this case's own paint has landed. */
 async function modelName(): Promise<string> {
   const el = document.getElementById("ctx-model-pill")!;
-  await vi.waitFor(() => {
-    expect(el.textContent).not.toBe(UNPAINTED);
-  });
+  await vi.waitFor(
+    () => {
+      expect(el.textContent).not.toBe(UNPAINTED);
+    },
+    { timeout: FRAME_BUDGET_MS },
+  );
   return el.textContent ?? "";
 }
 
