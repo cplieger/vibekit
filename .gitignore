@@ -18,6 +18,9 @@ static-src/node_modules/
 static-src/node_modules/.vite/
 static-src/node_modules/.vite-temp/
 .vitest-cache/
+# vitest 5's shared artifact root: the html report VITEST_TRACE=1 writes, plus any
+# attachments or blob reports. One entry covers all of them.
+.vitest/
 # static/ holds a few hand-authored assets (index.html, manifest, icons) beside
 # the bundler's output, and that output is JavaScript plus its sourcemaps. Ignore
 # those by EXTENSION at any depth rather than by naming the directories the
