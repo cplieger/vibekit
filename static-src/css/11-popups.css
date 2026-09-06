@@ -2,6 +2,14 @@
    Popups (shared)
    ========================================================================== */
 
+/* THE POPUP RUNG IS --c-bg-secondary, one step off the page — never the ramp's
+   top rung, which is the tempting choice and wrong in both themes for opposite
+   reasons. The ramp steps AWAY from the page background, so in light
+   --c-bg-elevated is the DEEPEST surface in the app: two menus shipped there at
+   L 80% over their own footer band's 86%, a slab darker than what it floats over.
+   In dark it only costs ink, --c-text-secondary 4.561:1 against 8.062:1 here.
+   Read by this component, .pill-expand-content (15-input.css), and the collapsed
+   toolbar menus in 61-mcp-tools.css and 19-files.css. */
 .popup {
   position: absolute;
   top: calc(100% + 0.25rem);
