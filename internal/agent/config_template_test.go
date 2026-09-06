@@ -64,8 +64,7 @@ func TestTemplateToResponseEmpty(t *testing.T) {
 	if got.DefaultModel != "" || len(got.Modes) != 0 || len(got.Models) != 0 {
 		t.Errorf("empty template must yield empty catalog: %+v", got)
 	}
-	// The JSON contract keeps arrays non-null so the client can index
-	// without null checks.
+	// The JSON contract keeps arrays non-null so the client can index without null checks.
 	b, err := json.Marshal(got)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -76,15 +75,9 @@ func TestTemplateToResponseEmpty(t *testing.T) {
 	}
 }
 
-// TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo covers the endpoint's
-// contract in all three directions, because the degradation is what makes the other
-// two matter.
-//
-// The client keeps static fallbacks for a 200 carrying empty lists, so a failure
-// here is INVISIBLE in the UI — the picker simply shows the built-in defaults. The
-// log line is therefore the only evidence, which also means a guard flipped so it
-// fires on success reports a broken catalog on every page load while the real
-// failures look identical.
+// The client keeps static fallbacks for a 200 carrying empty lists, so a failure here is
+// INVISIBLE in the UI: the log line is the only evidence, which also means a guard flipped
+// to fire on success reports a broken catalog on every page load.
 func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 	const goodReply = `{
 	  "modes": {"currentModeId": "vibe", "availableModes": [
@@ -168,10 +161,8 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 		}
 	})
 
-	// A live session's report beats the session-less template, per list. This is
-	// the endpoint the client's ONLY copy of the vocabulary now comes from, so
-	// serving the weaker of the two would lose both the workspace agents and the
-	// shadowing KAS already resolved.
+	// A live session's report beats the session-less template, per list: this endpoint is the
+	// client's only copy of the vocabulary, so the weaker of the two loses the workspace agents.
 	t.Run("a live catalog wins over the template", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
@@ -197,8 +188,7 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 		}
 	})
 
-	// A template outage must not hide a catalog vibekit already holds: this is now
-	// the client's only source for it.
+	// A template outage must not hide a catalog vibekit already holds.
 	t.Run("a live catalog survives a template outage", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callErrs = map[string]error{methodKiroConfigTemplate: errors.New("kas gone")}

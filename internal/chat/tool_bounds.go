@@ -11,32 +11,27 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// toolBudget is how much of one tool call's three bulky fields a consumer
-// keeps. Two exist, and the ORDER between them is the contract: the transcript
-// preview must never be bigger than what the store persisted, or the card would
-// promise a reveal the record cannot serve.
+// toolBudget is how much of one tool call's three bulky fields a consumer keeps. Two exist,
+// and the ORDER between them is the contract: the preview must never be bigger than what the
+// store persisted, or the card promises a reveal the record cannot serve.
 type toolBudget struct {
-	// outputLines is kept from each END of the output, which is where the
-	// information is: a command's first lines say what it did and its last say
-	// how it ended. A prefix would lose the error.
+	// outputLines is kept from each END: a command's first lines say what it did and its last
+	// say how it ended, so a prefix would lose the error.
 	outputLines int
 	outputBytes int
 	// diffBytes bounds the diffs, which are kept WHOLE or not at all.
 	diffBytes int
-	// inputMember bounds ONE member of the input object; the claim line is built
-	// from the small members (`path`, `command`, `query`) and the bulk is a
-	// file's whole `text` or an edit's `oldStr`/`newStr`.
+	// inputMember bounds ONE member of the input object: the claim line is built from the small
+	// members, and the bulk is a file's whole `text` or an edit's `oldStr`/`newStr`.
 	inputMember int
-	// inputTotal bounds the object as a WHOLE, because the per-member cap does
-	// not: a hundred members of 3 KiB each is 300 KiB with nothing over budget.
+	// inputTotal bounds the object as a WHOLE: a hundred 3 KiB members clear the per-member cap.
 	inputTotal int
 }
 
-// previewBudget is what the transcript carries at rest, set by what the card
-// SHOWS: output windowed to 20 lines each end (`strings.ts` windowOutput) and a
-// diff to 24 hunk rows (`diff.ts` windowHunks), so twice that depth satisfies
-// every resting card. The byte caps are what bound the preview whatever the
-// content's shape: a single 3.8 MB line walks through a line budget untouched.
+// previewBudget is what the transcript carries at rest, set by what the card SHOWS: output
+// windowed to 20 lines each end (`strings.ts` windowOutput) and a diff to 24 hunk rows
+// (`diff.ts` windowHunks), so twice that depth satisfies every resting card. The byte caps
+// bound the preview whatever the shape: a single 3.8 MB line walks through a line budget.
 var previewBudget = toolBudget{
 	outputLines: 40,
 	outputBytes: 8 << 10,
@@ -46,14 +41,10 @@ var previewBudget = toolBudget{
 	inputTotal: 4 * (4 << 10),
 }
 
-// persistBudget is what the RECORD keeps forever, and the only bound on what one
-// turn ADDS: it holds one call to about 112 KiB of bulk. It does not bound the
-// CHAT, which is writeChat's O(n)-per-turn marshal.
-//
-// Every number floors at its previewBudget twin, or the reveal would show less than
-// the resting card. Output and input take 2x, degrading gracefully. Diffs take 4x
-// because a ToolDiff cannot be shortened, so a budget under one deletes it:
-// measured, every diff-bearing call carries one diff of median 26,480 bytes.
+// persistBudget is what the RECORD keeps forever, and the only bound on what one turn ADDS:
+// one call to about 112 KiB of bulk. It does not bound the CHAT. Every number floors at its
+// previewBudget twin, or the reveal would show less than the resting card; diffs take 4x
+// because a ToolDiff cannot be shortened, and the median measured diff is 26,480 bytes.
 var persistBudget = toolBudget{
 	outputLines: 2 * previewBudget.outputLines,
 	outputBytes: 2 * previewBudget.outputBytes,
@@ -62,11 +53,8 @@ var persistBudget = toolBudget{
 	inputTotal:  2 * previewBudget.inputTotal,
 }
 
-// storeChat returns chat bounded to persistBudget, copy-on-write.
-//
-// Copy-on-write all the way down, so the common chat is written from the value
-// the caller already holds with no clone at all, and a caller that keeps its own
-// Message (AppendMessage broadcasts one) never sees the cut.
+// storeChat returns chat bounded to persistBudget, copy-on-write all the way down: the common
+// chat is written with no clone at all, and a caller holding its own Message never sees the cut.
 func storeChat(chat *vibekit.Chat) *vibekit.Chat {
 	var bounded []vibekit.Message
 	for i := range chat.Messages {
@@ -87,13 +75,9 @@ func storeChat(chat *vibekit.Chat) *vibekit.Chat {
 	return &out
 }
 
-// storeToolCall returns tc bounded to persistBudget with its Truncated record
-// set, and whether anything was cut.
-//
-// Idempotent across rewrites: every mutation loads the persisted chat and writes
-// it back, so an already-bounded call arrives here again. mergeTruncation keeps
-// the FIRST measurement, or the second pass would report the truncated length as
-// the original.
+// storeToolCall returns tc bounded to persistBudget with its Truncated record set, and whether
+// anything was cut. It must stay idempotent: every mutation loads the persisted chat and writes
+// it back, so an already-bounded call arrives here again.
 func storeToolCall(tc *vibekit.ToolCall) (vibekit.ToolCall, bool) {
 	out, cut := boundToolCall(tc, persistBudget)
 	if cut == (vibekit.ToolTruncation{}) {
@@ -117,12 +101,8 @@ func mergeTruncation(prior *vibekit.ToolTruncation, cut vibekit.ToolTruncation) 
 	return &merged
 }
 
-// boundMessage returns m with every tool call bound by f, or m unchanged when
-// nothing needed cutting.
-//
-// Copy-on-write: the common message carries no tool call over budget and is
-// returned as-is, so the projection costs one pass and no allocation for the
-// conversations that were never the problem.
+// boundMessage returns m with every tool call bound by f, or m unchanged when nothing needed
+// cutting: copy-on-write, so a message with nothing over budget costs one pass and no allocation.
 func boundMessage(m *vibekit.Message, f func(*vibekit.ToolCall) (vibekit.ToolCall, bool)) (vibekit.Message, bool) {
 	var bounded []vibekit.ToolCall
 	for i := range m.ToolCalls {
@@ -143,10 +123,9 @@ func boundMessage(m *vibekit.Message, f func(*vibekit.ToolCall) (vibekit.ToolCal
 	return out, true
 }
 
-// boundToolCall returns a copy of tc bounded to b, and what it cut: a zero
-// ToolTruncation means nothing was over budget. It sets no marker of its own —
-// the two callers publish different ones, because the bytes are fetchable for
-// one of them and gone for the other.
+// boundToolCall returns a copy of tc bounded to b, and what it cut: a zero ToolTruncation means
+// nothing was over budget. It sets no marker of its own, because the two callers publish
+// different ones — the bytes are fetchable for one of them and gone for the other.
 func boundToolCall(tc *vibekit.ToolCall, b toolBudget) (vibekit.ToolCall, vibekit.ToolTruncation) {
 	out := *tc
 	var cut vibekit.ToolTruncation
@@ -168,13 +147,10 @@ func boundToolCall(tc *vibekit.ToolCall, b toolBudget) (vibekit.ToolCall, vibeki
 	return out, cut
 }
 
-// boundOutput windows an output to its first and last b.outputLines lines,
-// hard-capped at b.outputBytes.
-//
-// The caller drops OutputSpans with the cut, deliberately: TextSpan offsets are
-// UTF-16 code units into the WHOLE output, so remapping them onto a two-slice
-// window is a second implementation of the client's windowSpans in another offset
-// unit, for the ~0.25% of outputs carrying an escape sequence.
+// boundOutput windows an output to its first and last b.outputLines lines, hard-capped at
+// b.outputBytes. The caller drops OutputSpans with the cut deliberately: TextSpan offsets are
+// UTF-16 code units into the WHOLE output, so remapping them onto a two-slice window would be a
+// second implementation of the client's windowSpans in another offset unit.
 func boundOutput(s string, b toolBudget) (text string, cut bool) {
 	if len(s) <= b.outputBytes {
 		return "", false
@@ -188,9 +164,8 @@ func boundOutput(s string, b toolBudget) (text string, cut bool) {
 			return s, true
 		}
 	}
-	// Still over budget, so the content is not line-shaped — a single enormous
-	// line, or forty of them. Cut on a rune boundary from each end rather than
-	// mid-character, which would put a replacement glyph on screen.
+	// Still over budget, so the content is not line-shaped. Cut on a rune boundary from each end
+	// rather than mid-character, which would put a replacement glyph on screen.
 	half := b.outputBytes / 2
 	return cutRunes(s[:half]) + "\n" + cutRunesFront(s[len(s)-half:]), true
 }
@@ -239,8 +214,7 @@ func cutRunes(s string) string {
 	return s
 }
 
-// cutRunesFront trims leading continuation bytes off s, the same cut from the
-// other end.
+// cutRunesFront trims leading continuation bytes off s, the same cut from the other end.
 func cutRunesFront(s string) string {
 	for s != "" && !utf8.RuneStart(s[0]) {
 		s = s[1:]
@@ -248,8 +222,7 @@ func cutRunesFront(s string) string {
 	return s
 }
 
-// diffsBytes is what a diff slice costs in content, the measure boundDiffs
-// spends and ToolTruncation.DiffBytes reports.
+// diffsBytes is what a diff slice costs in content, the measure boundDiffs spends.
 func diffsBytes(diffs []vibekit.ToolDiff) int {
 	total := 0
 	for i := range diffs {
@@ -258,18 +231,15 @@ func diffsBytes(diffs []vibekit.ToolDiff) int {
 	return total
 }
 
-// boundDiffs keeps the leading diffs that fit b.diffBytes, whole.
-//
-// Whole or not at all: a ToolDiff is a before/after pair the client runs its own
-// line-diff over, so a truncated pair yields hunks describing an edit that never
-// happened — worse than no preview, because it looks like one.
+// boundDiffs keeps the leading diffs that fit b.diffBytes, WHOLE or not at all: a ToolDiff is a
+// before/after pair the client runs its own line-diff over, so a truncated pair yields hunks
+// describing an edit that never happened.
 func boundDiffs(diffs []vibekit.ToolDiff, b toolBudget) ([]vibekit.ToolDiff, bool) {
 	spent := 0
 	for i := range diffs {
 		size := len(diffs[i].Path) + len(diffs[i].OldText) + len(diffs[i].NewText)
 		if spent+size > b.diffBytes {
-			// Capacity clipped so the returned slice cannot append into the
-			// persisted chat's backing array.
+			// Capacity clipped so the returned slice cannot append into the persisted chat's array.
 			return diffs[:i:i], true
 		}
 		spent += size
@@ -277,19 +247,13 @@ func boundDiffs(diffs []vibekit.ToolDiff, b toolBudget) ([]vibekit.ToolDiff, boo
 	return nil, false
 }
 
-// boundInput drops the members of an input object that are over budget, keeping
-// every small one, then drops the largest of what is left until the object fits.
-//
-// Per MEMBER rather than per object, because the claim line is built from the small
-// members — `pickFilePath` reads `path`/`targetFile`/`sourcePath` — while the bulk
-// is one member: a write's whole `text`, or an edit's `oldStr`/`newStr`. Dropping
-// the object wholesale would blank the claim line to save the same bytes. A
-// non-object input is kept or dropped whole on the same budget.
+// boundInput drops the members of an input object that are over budget, keeping every small one,
+// then drops the largest of what is left until the object fits. Per MEMBER rather than per
+// object because the claim line is built from the small members while the bulk is one, so
+// dropping the object wholesale would blank the claim line to save the same bytes.
 func boundInput(raw json.RawMessage, b toolBudget) (json.RawMessage, bool) {
-	// Measured as the ENCODER will write it, because a raw length bounds neither
-	// direction: encoding/json compacts a RawMessage and HTML-escapes it, so an
-	// unescaped `<` is six times shorter raw. Gating on raw bytes let a
-	// 4,010-byte object of `<` through at roughly 24 KiB on the wire. The
+	// Measured as the ENCODER will write it, because a raw length bounds neither direction: gating
+	// on raw bytes let a 4,010-byte object of `<` through at roughly 24 KiB on the wire. The
 	// conversion is idempotent, so one Marshal serves the gate and the walk.
 	raw = inputWireBytes(raw)
 	if len(raw) <= b.inputMember {
@@ -297,16 +261,13 @@ func boundInput(raw json.RawMessage, b toolBudget) (json.RawMessage, bool) {
 	}
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
-		// Not an object, and over budget: nothing here can name a part of it to
-		// keep, so it goes whole and the bulk carries it.
+		// Not an object and over budget: nothing here can name a part of it to keep.
 		return json.RawMessage("null"), true
 	}
 	kept := make(map[string]json.RawMessage, len(obj))
 	cut := false
-	// The enclosing braces, less the comma inputMemberBytes charges to the last
-	// member: for a non-empty object the members' costs then sum to EXACTLY the
-	// marshalled length, so both budgets below bound the bytes that go on the wire
-	// rather than the sum of the members' contents.
+	// The enclosing braces, less the comma inputMemberBytes charges to the last member: for a
+	// non-empty object the members' costs then sum to EXACTLY the marshalled length.
 	spent := len("{}") - len(",")
 	for k, v := range obj {
 		v = inputWireBytes(v)
@@ -326,39 +287,30 @@ func boundInput(raw json.RawMessage, b toolBudget) (json.RawMessage, bool) {
 	}
 	out, err := json.Marshal(kept)
 	if err != nil {
-		// Re-marshalling values that were just unmarshalled cannot fail; answer
-		// with no input rather than the oversized original.
+		// Cannot fail on values just unmarshalled; answer with no input, not the oversized original.
 		return json.RawMessage("null"), true
 	}
 	return out, true
 }
 
-// inputWireBytes is v as it will appear in the marshalled object.
-//
-// encoding/json compacts a RawMessage on the way out AND HTML-escapes it: `<`, `>`
-// and `&` go from one byte to six, U+2028 and U+2029 from three to six, so a raw
-// length is not an upper bound on what a value costs. Handing the measurement to the
-// encoder is what stops the budget and the encoder disagreeing again; the conversion
-// is idempotent, so the object the caller marshals afterwards is byte-identical to
-// what was measured here.
+// inputWireBytes is v as it will appear in the marshalled object. encoding/json compacts a
+// RawMessage on the way out AND HTML-escapes it — `<`, `>` and `&` go from one byte to six,
+// U+2028 and U+2029 from three to six — so a raw length is no upper bound on what a value costs.
+// The conversion is idempotent, so what the caller marshals is byte-identical to what was
+// measured here.
 func inputWireBytes(v json.RawMessage) json.RawMessage {
 	out, err := json.Marshal(v)
 	if err != nil {
-		// Unreachable: v came out of a successful Unmarshal, so it is valid JSON.
-		// Leave it raw and let the caller's own Marshal answer with no input.
+		// Unreachable: v came out of a successful Unmarshal, so leave it raw for the caller's Marshal.
 		return v
 	}
 	return out
 }
 
-// inputMemberBytes is what one member costs in the MARSHALLED object: its key as
-// JSON, the colon, the value, and the comma before the next member.
-//
-// Without this accounting the aggregate budget bounded the sum of the CONTENTS,
-// and the object json.Marshal produced from them exceeded it by every quote,
-// colon and comma — four bytes a member. The key is marshalled here and the
-// value already converted by inputWireBytes, both for the same reason: escaped is
-// longer than raw.
+// inputMemberBytes is what one member costs in the MARSHALLED object: its key as JSON, the
+// colon, the value, and the comma before the next member. Without the punctuation the aggregate
+// budget bounds the sum of the CONTENTS and the object Marshal produces exceeds it by four bytes
+// a member. The key is marshalled here for the same reason: escaped is longer than raw.
 func inputMemberBytes(k string, v json.RawMessage) int {
 	key, err := json.Marshal(k)
 	if err != nil {
@@ -368,14 +320,10 @@ func inputMemberBytes(k string, v json.RawMessage) int {
 	return len(key) + len(":,") + len(v)
 }
 
-// trimInputToTotal drops members of kept, largest first, until the object they
-// marshal to fits b.inputTotal. Reports whether it dropped any.
-//
-// Largest first so the members the claim line reads are the ones that survive: a
-// `path` is tens of bytes and whatever pushed the object over is not. The name
-// breaks a size tie, so two requests over one input cut the same members —
-// otherwise map iteration order would decide, and a card would gain and lose
-// fields between reloads.
+// trimInputToTotal drops members of kept, largest first, until the object they marshal to fits
+// b.inputTotal, and reports whether it dropped any. Largest first so the small members the claim
+// line reads survive; the name breaks a size tie so two requests over one input cut the same
+// members, instead of map iteration order making a card gain and lose fields between reloads.
 func trimInputToTotal(kept map[string]json.RawMessage, spent int, b toolBudget) bool {
 	if spent <= b.inputTotal {
 		return false

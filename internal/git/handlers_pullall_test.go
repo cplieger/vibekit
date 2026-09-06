@@ -1,9 +1,7 @@
 package git
 
-// The Pull-all pre-flight, tested against real repositories rather than fakes:
-// every predicate here answers a question about git's own on-disk state, so a
-// fake would only assert that this file and the fixture agree about a format
-// neither of them owns.
+// Tested against real repositories, not fakes: every predicate here answers a
+// question about git's own on-disk state.
 
 import (
 	"context"
@@ -17,8 +15,6 @@ import (
 	"time"
 )
 
-// pullAllRepos drives the handler over workDir and returns its rows keyed by
-// repo, which is how every assertion below reads them.
 func pullAllRepos(t *testing.T, workDir string) map[string]pullResult {
 	t.Helper()
 	h := NewHandler(workDir)
@@ -40,17 +36,11 @@ func pullAllRepos(t *testing.T, workDir string) map[string]pullResult {
 	return out
 }
 
-// behindClone builds a workspace holding one repo named `work` that is one
-// commit behind its origin, and returns the workspace root and that repo's dir.
-//
-// The remote is served over git's dumb HTTP rather than being a local path,
-// because the pull runs through the production exec path and that sets
-// GIT_PROTOCOL_FROM_USER=0 — which is exactly what makes git refuse the `file`
-// transport. serveFixtureRepo is the existing answer to that; what this adds is
-// a workspace root the handler can discover, holding only the clone.
-//
-// The seed and the served bare repo live OUTSIDE that root, so discovery finds
-// one repo and the assertions below need no filtering.
+// behindClone builds a workspace holding one repo named `work` one commit behind
+// its origin. The remote is dumb HTTP rather than a local path because the pull
+// runs through the production exec path, which sets GIT_PROTOCOL_FROM_USER=0 and
+// so makes git refuse the `file` transport. The seed and the served bare repo
+// live OUTSIDE workDir, so discovery finds exactly one repo.
 func behindClone(t *testing.T) (workDir, repoDir string) {
 	t.Helper()
 	skipNoGit(t)
@@ -66,9 +56,8 @@ func behindClone(t *testing.T) (workDir, repoDir string) {
 	runGit(t, workDir, "clone", "-q", remote, "work")
 	repoDir = filepath.Join(workDir, "work")
 
-	// Advance the served remote, then refresh the info files dumb HTTP reads for
-	// ref discovery. The clone is left un-fetched: measuring `behind` is the
-	// pass's own job, so a fixture that fetched for it would hide a missing fetch.
+	// The clone is left un-fetched: measuring `behind` is the pass's own job, so a
+	// fixture that fetched for it would hide a missing fetch.
 	writeCommit(t, seed, "upstream.txt", "from upstream\n", "add upstream file")
 	runGit(t, seed, "push", "-q", bare, "HEAD:main")
 	runGit(t, bare, "update-server-info")
@@ -86,16 +75,14 @@ func TestPullAll_FastForwardsARepoThatIsOnlyBehind(t *testing.T) {
 	if got.Verdict != verdictPulled {
 		t.Fatalf("verdict = %q (reason %q, detail %q), want pulled", got.Verdict, got.Reason, got.Detail)
 	}
-	// The pull is what the verdict claims, so assert on the tree rather than on
-	// the word: the upstream commit's file has to be on disk.
+	// Assert on the tree, not on the word the verdict used.
 	if _, err := os.Stat(filepath.Join(repoDir, "upstream.txt")); err != nil {
 		t.Errorf("upstream file absent after a pulled verdict: %v", err)
 	}
 }
 
-// The pass is idempotent: running it twice pulls once and then reports nothing
-// to do. Asserted by running it rather than by hand-merging the fixture, so what
-// is checked is the transition the pass itself produces.
+// The pass is idempotent: the second run is driven, never hand-merged, so what is
+// checked is the transition the pass itself produces.
 func TestPullAll_SkipsARepoItHasAlreadyPulled(t *testing.T) {
 	workDir, _ := behindClone(t)
 	if first := pullAllRepos(t, workDir)["work"]; first.Verdict != verdictPulled {
@@ -109,9 +96,8 @@ func TestPullAll_SkipsARepoItHasAlreadyPulled(t *testing.T) {
 	}
 }
 
-// A repo with local commits of its own has no fast-forward, which is the hazard
-// a reader most needs named: `--ff-only` refuses, and the pass must say why
-// rather than leaving the repo silently un-pulled.
+// `--ff-only` refuses a diverged repo, so the pass owes a reason rather than a
+// silently un-pulled repo.
 func TestPullAll_BlocksADivergedRepoAndNamesTheCommitCount(t *testing.T) {
 	workDir, repoDir := behindClone(t)
 	writeCommit(t, repoDir, "local.txt", "mine\n", "local work")
@@ -129,9 +115,8 @@ func TestPullAll_BlocksADivergedRepoAndNamesTheCommitCount(t *testing.T) {
 	}
 }
 
-// The overlap check: a local edit to a file the incoming commits also rewrite.
-// git would refuse this, and the reason has to name the file — that is the whole
-// point of computing the intersection rather than letting the pull fail.
+// The reason must name the file, which is why the pass computes the intersection
+// instead of letting the pull fail.
 func TestPullAll_BlocksWhenALocalEditWouldBeOverwritten(t *testing.T) {
 	workDir, repoDir := behindClone(t)
 	if err := os.WriteFile(filepath.Join(repoDir, "upstream.txt"), []byte("mine\n"), 0o600); err != nil {
@@ -147,9 +132,8 @@ func TestPullAll_BlocksWhenALocalEditWouldBeOverwritten(t *testing.T) {
 	}
 }
 
-// A local edit to a file the incoming commits do NOT touch is not a hazard, and
-// this is the case the whole intersection exists to keep pullable: git
-// fast-forwards happily with unrelated work in the tree.
+// The case the intersection exists to keep pullable: git fast-forwards happily
+// with unrelated work in the tree.
 func TestPullAll_PullsWithALocalEditTheIncomingCommitsDoNotTouch(t *testing.T) {
 	workDir, repoDir := behindClone(t)
 	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("edited\n"), 0o600); err != nil {
@@ -162,8 +146,8 @@ func TestPullAll_PullsWithALocalEditTheIncomingCommitsDoNotTouch(t *testing.T) {
 	}
 }
 
-// An operation stopped part-way is the state where pulling is most obviously
-// wrong, and where git's own refusal names the symptom rather than the cause.
+// The pass pre-checks because git's own refusal here names the symptom, not the
+// cause.
 func TestPullAll_BlocksWhileAnOperationIsInProgress(t *testing.T) {
 	workDir, repoDir := behindClone(t)
 	gitDir, err := gitCmd(t.Context(), repoDir, "rev-parse", "--absolute-git-dir")
@@ -184,9 +168,8 @@ func TestPullAll_BlocksWhileAnOperationIsInProgress(t *testing.T) {
 	}
 }
 
-// A repo tracking nothing has nothing to pull, and it must not read as an error:
-// a status read answers (0, 0) for both this and being in sync, which is exactly
-// why upstreamDivergence reports ok separately.
+// A status read answers (0, 0) both for no upstream and for being in sync, which
+// is why upstreamDivergence reports ok separately.
 func TestPullAll_SkipsARepoWithNoUpstream(t *testing.T) {
 	skipNoGit(t)
 	workDir := t.TempDir()
@@ -202,14 +185,10 @@ func TestPullAll_SkipsARepoWithNoUpstream(t *testing.T) {
 	}
 }
 
-// A row with no verdict would reach the client as an unclassifiable repo, so the
-// zero value has to be a real answer rather than the absence of one.
-//
-// Driven with an already-cancelled context, because that is the ONLY way the
-// early return is reachable: the whole-pass budget is seconds, so a fixture
-// going through the handler always reassigns the verdict on its way out and
-// would report green with the zero value removed. (It was written that way
-// first, and the red check caught it.)
+// A row with no verdict reaches the client as an unclassifiable repo, so the zero
+// value must be a real answer. The context is pre-cancelled because that is the
+// only way the early return is reachable: a fixture going through the handler
+// always reassigns the verdict on its way out, and would pass without it.
 func TestPullOne_CarriesAVerdictWhenTheBudgetIsAlreadySpent(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -221,12 +200,10 @@ func TestPullOne_CarriesAVerdictWhenTheBudgetIsAlreadySpent(t *testing.T) {
 	}
 }
 
-// Every discovered repository gets a verdict on the ordinary path too, which is
-// the same invariant one layer out.
+// The same invariant one layer out: every discovered repo carries a verdict.
 func TestPullAll_EveryRowCarriesAVerdict(t *testing.T) {
 	workDir, _ := behindClone(t)
-	// A plain directory beside the clone: discovery skips a non-repo, so the only
-	// thing this asserts is that nothing in the response is unclassified.
+	// A non-repo beside the clone, which discovery skips.
 	if err := os.Mkdir(filepath.Join(workDir, "notrepo"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -279,9 +256,8 @@ func TestPlural_AgreesWithTheCount(t *testing.T) {
 	}
 }
 
-// A rename's ORIGIN path counts as dirty too: a fast-forward touching either end
-// is refused, and the origin arrives as its own NUL field rather than in the
-// record the status letters are on.
+// A rename's ORIGIN path counts as dirty too, and it arrives as its own NUL field
+// rather than in the record the status letters are on.
 func TestWorktreeState_TakesBothEndsOfARenameAsDirty(t *testing.T) {
 	skipNoGit(t)
 	dir := t.TempDir()
@@ -303,16 +279,10 @@ func TestWorktreeState_TakesBothEndsOfARenameAsDirty(t *testing.T) {
 	}
 }
 
-// The parse this exists for: a real conflict, read from a real repo, so the
-// assertion is against git's output rather than against a hand-written record.
-//
-// The identity goes in the repo's OWN config, because the merge below runs
-// through the production exec path and that carries no identity env — so on a
-// machine with no global git identity (a CI runner) the merge aborts at 128
-// before touching the index, no conflict exists, and the test fails for a reason
-// that has nothing to do with the parse. `runGit` supplies an identity per
-// invocation and cannot help here; the ambient environment was the fixture, so
-// this makes it part of the fixture instead.
+// The identity goes in the repo's OWN config because the merge below runs through
+// the production exec path, which carries no identity env: on a machine with no
+// global git identity the merge would abort at 128 before touching the index, so
+// no conflict would exist. `runGit`'s per-invocation identity cannot reach it.
 func TestWorktreeState_ReportsARealMergeConflict(t *testing.T) {
 	skipNoGit(t)
 	dir := t.TempDir()
@@ -324,9 +294,8 @@ func TestWorktreeState_ReportsARealMergeConflict(t *testing.T) {
 	writeCommit(t, dir, "shared.txt", "theirs\n", "theirs")
 	runGit(t, dir, "checkout", "main")
 	writeCommit(t, dir, "shared.txt", "ours\n", "ours")
-	// Expected to fail: the point is the conflicted index it leaves behind. The
-	// output is read so a merge that failed for ANOTHER reason (no identity, a
-	// dirty tree) is reported as itself rather than as a parse miss.
+	// Expected to fail: the conflicted index it leaves behind is the fixture. The
+	// output is read so a merge that failed for another reason reports as itself.
 	out, err := gitCmd(t.Context(), dir, "merge", "other")
 	if err == nil {
 		t.Fatalf("merge succeeded; the fixture produced no conflict:\n%s", out)
@@ -345,22 +314,15 @@ func TestWorktreeState_ReportsARealMergeConflict(t *testing.T) {
 }
 
 // A both-added conflict is the case a per-side letter parse loses: git's short
-// format spells it `AA`, with no U on either side, so a reader that classified
-// letters had to know that pair by heart and a reader that split the pair into
-// rows saw a plain staged add. Porcelain v2 gives an unmerged path its own record
-// type, so this asserts the conflict is seen without anything classifying letters.
-//
-// The identity goes in the repo's OWN config, because the merge below runs through
-// the production exec path and that carries no identity env — on a machine with no
-// global git identity the merge would abort at 128 before touching the index, and
-// the test would fail for a reason that has nothing to do with the status read.
+// format spells it `AA` with no U on either side, while porcelain v2 gives an
+// unmerged path its own record type. The repo-config identity below is the same
+// requirement as TestWorktreeState_ReportsARealMergeConflict.
 func TestWorktreeState_ReportsABothAddedConflict(t *testing.T) {
 	skipNoGit(t)
 	dir := t.TempDir()
 	initFixtureRepo(t, dir)
 	runGit(t, dir, "config", "user.email", "test@example.com")
 	runGit(t, dir, "config", "user.name", "test")
-	// Two branches from the same base, each ADDING the same path.
 	runGit(t, dir, "checkout", "-b", "other")
 	writeCommit(t, dir, "added.txt", "theirs\n", "theirs adds it")
 	runGit(t, dir, "checkout", "main")

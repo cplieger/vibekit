@@ -109,9 +109,7 @@ func skipIfNotUnix(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// scanLoginOutput tests (pre-review, preserved)
-// ---------------------------------------------------------------------------
+// --- scanLoginOutput ---
 
 // fakeErrReader returns its canned error on the first Read so
 // bufio.Scanner surfaces it via scanner.Err() without producing
@@ -305,9 +303,7 @@ func TestScanLoginOutput(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// humanizeAccountType tests (cycle 1 t-1)
-// ---------------------------------------------------------------------------
+// --- humanizeAccountType ---
 
 func TestHumanizeAccountType(t *testing.T) {
 	tests := []struct {
@@ -337,9 +333,7 @@ func TestHumanizeAccountType(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// whoamiInfo tests (cycle 1 t-2)
-// ---------------------------------------------------------------------------
+// --- whoamiInfo ---
 
 func TestWhoamiInfo(t *testing.T) {
 	tests := []struct {
@@ -531,9 +525,7 @@ func TestWhoamiInfo(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// validateProvider / validateRegion tests (cycle 1 security findings)
-// ---------------------------------------------------------------------------
+// --- validateProvider / validateRegion ---
 
 func TestValidateProvider(t *testing.T) {
 	tests := []struct {
@@ -598,9 +590,7 @@ func TestValidateRegion(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// HandleWhoami tests (cycle 1 t-3, fake-CLI harness)
-// ---------------------------------------------------------------------------
+// --- HandleWhoami, over the fake-CLI harness ---
 
 func TestHandleWhoami_ServesThePrimedIdentity(t *testing.T) {
 	skipIfNotUnix(t)
@@ -726,9 +716,7 @@ func TestHandleWhoami_RejectsNonGET(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// HandleLogin tests (cycle 1 t-4 method gates + cycle 2 happy paths)
-// ---------------------------------------------------------------------------
+// --- HandleLogin ---
 
 func TestHandleLogin_RejectsNonPOST(t *testing.T) {
 	h := NewHandler(fixedPath("/does-not-exist-will-not-be-called"))
@@ -868,9 +856,7 @@ func TestHandleLogin_TimesOutWhenCLIProducesNoURL(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// HandleLogout tests (cycle 1 t-4 method gate + t-5 happy/error paths)
-// ---------------------------------------------------------------------------
+// --- HandleLogout ---
 
 func TestHandleLogout_RejectsNonPOST(t *testing.T) {
 	h := NewHandler(fixedPath("/does-not-exist-will-not-be-called"))
@@ -917,9 +903,7 @@ func TestHandleLogout_Success(t *testing.T) {
 // TestHandleLogout_CLIFails moved to TestHandleLogout_CLIFailsReturnsGenericSentinel
 // (below) with a stricter sentinel + guardrail against err.Error() leakage.
 
-// ---------------------------------------------------------------------------
-// RegisterRoutes smoke test (cycle 1 t-6)
-// ---------------------------------------------------------------------------
+// --- RegisterRoutes ---
 
 func TestRegisterRoutes_WiresAllEndpoints(t *testing.T) {
 	h := NewHandler(fixedPath("/bin/false"))
@@ -950,9 +934,7 @@ func TestRegisterRoutes_WiresAllEndpoints(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// killProcessGroup tests (cycle 2 test-c2-5)
-// ---------------------------------------------------------------------------
+// --- killProcessGroup ---
 
 func TestKillLoginProcess_NilProcess(t *testing.T) {
 	cmd := exec.Command("/bin/true")
@@ -977,9 +959,7 @@ func TestKillLoginProcess_AlreadyExited(t *testing.T) {
 	killProcessGroup(cmd)
 }
 
-// ---------------------------------------------------------------------------
-// NewHandler smoke test (pre-review, preserved)
-// ---------------------------------------------------------------------------
+// --- NewHandler ---
 
 func TestNewHandler(t *testing.T) {
 	h := NewHandler(fixedPath("/bin/true"))
@@ -991,9 +971,7 @@ func TestNewHandler(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// readIdentity failure classification (cycle 3 t-2)
-// ---------------------------------------------------------------------------
+// --- readIdentity failure classification ---
 
 func TestReadIdentity_TimesOutWhenCLIHangs(t *testing.T) {
 	skipIfNotUnix(t)
@@ -1010,8 +988,7 @@ func TestReadIdentity_TimesOutWhenCLIHangs(t *testing.T) {
 	defer cancel()
 	got := h.readIdentity(ctx)
 
-	// The defect this arm exists for: a timeout used to be indistinguishable
-	// from a sign-out, so a hiccup rendered a sign-in prompt.
+	// A timeout read as a sign-out puts a sign-in prompt over a working session.
 	if got.State != WhoamiUnavailable {
 		t.Fatalf("State = %q, want %q on a timeout", got.State, WhoamiUnavailable)
 	}
@@ -1044,9 +1021,7 @@ func TestReadIdentity_BinaryMissingIsUnavailable(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// handleLogout 504/503 branches (cycle 3 t-4)
-// ---------------------------------------------------------------------------
+// --- handleLogout 504/503 branches ---
 
 func TestHandleLogout_TimesOut(t *testing.T) {
 	skipIfNotUnix(t)
@@ -1134,9 +1109,7 @@ func TestHandleLogout_CLIFailsReturnsGenericSentinel(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// handleLogin generic-sentinel error paths (cycle 3 F1/F2)
-// ---------------------------------------------------------------------------
+// --- handleLogin generic-sentinel error paths ---
 
 func TestHandleLogin_BinaryMissingReturns503(t *testing.T) {
 	// Path that doesn't exist and isn't on PATH — triggers
@@ -1229,27 +1202,19 @@ func TestHandleLogin_ConcurrentAttemptReturns409(t *testing.T) {
 	}
 }
 
-// TestHandleLogin_SecondAttemptAfterURLEmittedReturns409 exercises the
-// real-world race the cycle-2 semaphore fix addresses: the first
-// handler emits a URL and returns, but the kiro-cli subprocess is
-// still alive pinning a device code. A second POST arriving during
-// that window must still get 409 — otherwise a LAN probe or a user
-// retry spawns a second subprocess and pins a second device code.
-// Before the fix, the semaphore was released by a defer on handler
-// return, so the second POST succeeded. Now it's released by the reap
-// goroutine when cmd.Wait returns.
+// The first handler emits a URL and returns while the kiro-cli subprocess is still
+// alive pinning a device code, so the semaphore has to be held by the reap
+// goroutine rather than a defer on handler return: a second POST in that window
+// would otherwise spawn a second subprocess and pin a second device code.
 func TestHandleLogin_SecondAttemptAfterURLEmittedReturns409(t *testing.T) {
 	skipIfNotUnix(t)
-	// Fake CLI that emits a URL then sleeps. The first handler
-	// returns 200 on the URL; the subprocess stays alive. We keep
-	// LoginURLTimeout at its default (10s) so the first request
-	// returns via the URL-found path, not the timeout path.
+	// Default LoginURLTimeout, so the first request returns via the URL-found
+	// path rather than the timeout path.
 	path := writeFakeCLIScript(t,
 		"echo 'Open this URL: https://example.com/auth'\n"+
 			"sleep 30\n")
-	// Shrink LoginTimeout so the test doesn't hold the
-	// subprocess for 16 minutes. The sleep is 30s; a 500ms hard
-	// cap forces the reap goroutine to SIGKILL long before.
+	// A 500ms hard cap makes the reap goroutine SIGKILL the 30s sleep rather than
+	// the test holding a subprocess for 16 minutes.
 	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: DefaultConfig.LoginURLTimeout,
 		LoginTimeout:    500 * time.Millisecond,
@@ -1275,10 +1240,7 @@ func TestHandleLogin_SecondAttemptAfterURLEmittedReturns409(t *testing.T) {
 		t.Fatalf("first url = %q, want https://example.com/auth", body1["url"])
 	}
 
-	// Second request, arriving after the first handler returned
-	// but while the subprocess is still alive. Before the fix,
-	// this would succeed and spawn a second subprocess. After the
-	// fix, the reap goroutine still holds the semaphore.
+	// Arriving after the first handler returned, while the subprocess is alive.
 	req2 := httptest.NewRequest(http.MethodPost, "/api/login",
 		strings.NewReader(`{}`))
 	req2.Header.Set("Content-Type", "application/json")
@@ -1297,10 +1259,8 @@ func TestHandleLogin_SecondAttemptAfterURLEmittedReturns409(t *testing.T) {
 		t.Errorf("second error = %q, want %q", body2["error"], "login in progress")
 	}
 
-	// Wait for the reap goroutine to release the sem (hard cap
-	// fires at 500ms, SIGKILL, cmd.Wait returns, sem released).
-	// Bounded acquire+release select — fails fast on regression
-	// rather than polling at a 50ms quantum.
+	// A bounded acquire+release fails fast on a regression rather than polling:
+	// the hard cap fires, SIGKILL lands, cmd.Wait returns, the sem is released.
 	select {
 	case h.loginSem <- struct{}{}:
 		<-h.loginSem
@@ -1309,13 +1269,7 @@ func TestHandleLogin_SecondAttemptAfterURLEmittedReturns409(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// scanLoginOutput already-logged-in fast path (cycle 3 t-5)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// whoamiInfo capital-Email fallback (cycle 3 t-3)
-// ---------------------------------------------------------------------------
+// --- whoamiInfo capital-Email fallback ---
 
 func TestWhoamiInfo_CapitalEmailFallback(t *testing.T) {
 	tests := []struct {
@@ -1347,9 +1301,7 @@ func TestWhoamiInfo_CapitalEmailFallback(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// killGroup nil-process early return (cycle 3 t-6)
-// ---------------------------------------------------------------------------
+// --- killGroup nil-process early return ---
 
 func TestLoginKill_NilProcessReturnsESRCH(t *testing.T) {
 	skipIfNotUnix(t)
@@ -1361,9 +1313,7 @@ func TestLoginKill_NilProcessReturnsESRCH(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// extractAuthURL unit tests (cycle 3 Q3)
-// ---------------------------------------------------------------------------
+// --- extractAuthURL ---
 
 func TestExtractAuthURL(t *testing.T) {
 	tests := []struct {
@@ -1390,9 +1340,7 @@ func TestExtractAuthURL(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// buildLoginArgs unit tests (cycle 3 Q4)
-// ---------------------------------------------------------------------------
+// --- buildLoginArgs ---
 
 func TestBuildLoginArgs(t *testing.T) {
 	tests := []struct {
@@ -1448,9 +1396,7 @@ func TestBuildLoginArgs(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// classifyLoginStartErr unit tests (cycle 1 test-u5c1-f1)
-// ---------------------------------------------------------------------------
+// --- classifyLoginStartErr ---
 
 // TestClassifyLoginStartErr pins the ErrNotFound-vs-generic mapping.
 // Current integration coverage only hits the ErrNotFound branch via
@@ -1503,11 +1449,7 @@ func TestClassifyLoginStartErr(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// slog-capture helpers + log/branch assertions
-// (folded from the retired gremlins_kill_vibekit_u28 micro-file;
-//  invariants live in the test names below)
-// ---------------------------------------------------------------------------
+// --- slog-capture helpers, and the log assertions that use them ---
 
 // captureSlogJSON swaps the default slog logger for a JSON handler writing
 // to an in-memory buffer at the given level, runs fn, restores the previous

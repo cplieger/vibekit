@@ -13,10 +13,9 @@ import (
 // startGroupWithMember starts a head in its own process group plus a second member
 // of that group owned by the TEST, and returns the group id and the member.
 //
-// The member is a direct child of the test binary rather than a descendant forked
-// inside the head, for the reason TestKill_ReapsTheWholeTree records: a descendant
-// is orphaned the moment the head exits, so whether it is reaped at all would
-// depend on the ambient reaper, and this container's PID 1 is vibekit.
+// The member is a direct child of the test binary, not a descendant forked inside the
+// head: a descendant orphans the moment the head exits, leaving its reaping to the
+// ambient reaper, and vibekit is PID 1 with no reaper.
 func startGroupWithMember(t *testing.T) (pgid int, member *exec.Cmd) {
 	t.Helper()
 	head := exec.Command("sh", "-c", "echo $$; exec sleep 60")
@@ -51,8 +50,7 @@ func startGroupWithMember(t *testing.T) (pgid int, member *exec.Cmd) {
 		_ = member.Process.Kill()
 		_ = member.Wait()
 	})
-	// Without this the fixture is vacuous: a member that failed to join leaves the
-	// group empty and every assertion passes for the wrong reason.
+	// Without this the fixture is vacuous: a member that failed to join leaves the group empty.
 	got, gErr := syscall.Getpgid(member.Process.Pid)
 	if gErr != nil {
 		t.Fatalf("Setup: Getpgid(member): %v", gErr)
@@ -63,10 +61,9 @@ func startGroupWithMember(t *testing.T) (pgid int, member *exec.Cmd) {
 	return leader, member
 }
 
-// WaitGone must not answer "gone" while the group still holds a running process.
-// That is the whole claim: a teardown reads its return as the FACT that the
-// command's tree has stopped, so a false positive is a caller told a build tool
-// finished while it is still writing files.
+// WaitGone must not answer "gone" while the group still holds a running process: a
+// teardown reads its return as the FACT that the command's tree has stopped, so a false
+// positive is a caller told a build tool finished while it is still writing files.
 func TestWaitGone_RefusesWhileAMemberIsRunning(t *testing.T) {
 	pgid, _ := startGroupWithMember(t)
 
@@ -84,8 +81,7 @@ func TestWaitGone_RefusesWhileAMemberIsRunning(t *testing.T) {
 // rather than burning the budget.
 func TestWaitGone_ReturnsWhenTheGroupEmpties(t *testing.T) {
 	pgid, member := startGroupWithMember(t)
-	// Kill the whole group, then reap the one member this test owns. The head is
-	// reaped by the cleanup startGroupWithMember registered.
+	// Kill the group, then reap the one member this test owns; cleanup reaps the head.
 	if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
 		t.Fatalf("Setup: kill group: %v", err)
 	}
@@ -100,16 +96,10 @@ func TestWaitGone_ReturnsWhenTheGroupEmpties(t *testing.T) {
 	}
 }
 
-// A ZOMBIE member counts as gone, and this is the case that decides whether
-// WaitGone reads /proc or polls kill(-pgid, 0).
-//
-// An exited-but-unreaped process is still signallable, so the null-signal probe
-// answers "present" for as long as nothing reaps it — and vibekit is PID 1 with no
-// reaper, which is exactly that case. The cheap probe would therefore burn the full
-// budget on every teardown that WORKED.
-//
-// The fixture makes the zombie deterministic: the group member is killed and
-// deliberately NOT waited, so this test owns an unreaped child for the duration.
+// A ZOMBIE member counts as gone. An exited-but-unreaped process is still signallable, so
+// the null-signal probe answers "present" for as long as nothing reaps it — and vibekit is
+// PID 1 with no reaper, so that probe would burn the full budget on every teardown that
+// WORKED.
 func TestWaitGone_AnUnreapedMemberCountsAsGone(t *testing.T) {
 	pgid, member := startGroupWithMember(t)
 	pid := member.Process.Pid
@@ -128,8 +118,7 @@ func TestWaitGone_AnUnreapedMemberCountsAsGone(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	// The premise: an unreaped member is still a signallable group member, so the
-	// probe WaitGone deliberately does not use still answers "present".
+	// The premise: an unreaped member is still signallable, so the cheap probe says "present".
 	if err := syscall.Kill(-pgid, syscall.Signal(0)); err != nil {
 		t.Fatalf("Setup: kill(-%d, 0) = %v, want nil; without a signallable zombie this test asserts nothing", pgid, err)
 	}
@@ -171,8 +160,7 @@ func TestGroupOf(t *testing.T) {
 		t.Errorf("GroupOf(leader) = (%d, %v), want (%d, true)", pgid, ok, own.Process.Pid)
 	}
 
-	// No Setpgid: the child inherits the TEST binary's group, so it leads none and
-	// GroupOf must refuse it — waiting on that group would wait on the test.
+	// No Setpgid: the child inherits the TEST binary's group, so waiting on it waits on the test.
 	inherited := exec.Command("sleep", "60")
 	if err := inherited.Start(); err != nil {
 		t.Fatalf("Setup: start inheritor: %v", err)
@@ -185,8 +173,7 @@ func TestGroupOf(t *testing.T) {
 		t.Errorf("GroupOf(non-leader) = (%d, true), want ok=false; a caller would wait on its own group", pgid)
 	}
 
-	// A reaped process answers ESRCH from getpgid, which is why the pgid has to be
-	// read before the signal rather than after it.
+	// A reaped process answers ESRCH from getpgid, so the pgid must be read before the signal.
 	reaped := exec.Command("true")
 	reaped.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := reaped.Start(); err != nil {
@@ -201,14 +188,12 @@ func TestGroupOf(t *testing.T) {
 	}
 }
 
-// statPgrpState counts its fields from the last ')' because field 2 is the
-// executable name in parentheses and may itself contain spaces and parens. A
-// whitespace split puts state and pgrp at the wrong index for exactly that
-// process, and the symptom is a group that never reports gone.
+// statPgrpState counts its fields from the last ')' because field 2 is the executable name
+// in parentheses and may itself contain spaces and parens. A whitespace split puts state
+// and pgrp at the wrong index, and the symptom is a group that never reports gone.
 func TestStatPgrpState_ReadsPastAnExecutableNameWithSpacesAndParens(t *testing.T) {
 	dir := t.TempDir()
-	// A command whose argv[0] basename carries both, so /proc/<pid>/stat's comm
-	// field does too (comm is the basename, truncated to 15 bytes).
+	// comm is argv[0]'s basename truncated to 15 bytes, so a name with parens puts them there.
 	name := "s (p) x"
 	script := dir + "/" + name
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 60\n"), 0o700); err != nil {

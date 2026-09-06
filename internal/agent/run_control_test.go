@@ -10,15 +10,12 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// WHICH statuses a verb is legal from is no longer pinned here: run_affordance.go
-// holds the one table and run_affordance_test.go covers it over all three inputs.
-// A `from` list on each runVerb was half of the twinned matrix whose two tests
-// proved the copies agreed while neither could express the third input.
+// WHICH statuses a verb is legal from is pinned by run_affordance_test.go, over the one
+// table run_affordance.go holds.
 
-// TestRunVerbsAreWired guards the halves that can silently drift apart: a verb
-// with no issuer would 200 without doing anything, a verb with no name would log
-// and error as the empty string, and cancel losing its unrestricted status would
-// turn closing a tab whose run just finished into an error toast.
+// TestRunVerbsAreWired guards the halves that can silently drift apart: a verb with no
+// issuer would 200 without doing anything, a verb with no name would log and error as the
+// empty string, and cancel losing its unrestricted status would error on a tab close.
 func TestRunVerbsAreWired(t *testing.T) {
 	for _, verb := range []runVerb{runVerbCancel, runVerbPause, runVerbResume, runVerbDelete} {
 		if verb.name == "" {
@@ -28,10 +25,8 @@ func TestRunVerbsAreWired(t *testing.T) {
 			t.Errorf("run verb %q has no issuer: the route would answer ok without calling KAS", verb.name)
 		}
 	}
-	// Cancel and delete must never consult the affordance. Cancel is the
-	// tab-close gesture and must never be the verb that fails (KAS is idempotent
-	// on an already-terminal run); delete is the only way a row leaves History,
-	// so it has to work from any status.
+	// Cancel is the tab-close gesture and must never be the verb that fails (KAS is
+	// idempotent on a terminal run); delete is the only way a row leaves History.
 	for _, verb := range []runVerb{runVerbCancel, runVerbDelete} {
 		if verb.gated {
 			t.Errorf("run verb %q is gated; it must reach a run from any status", verb.name)
@@ -39,23 +34,11 @@ func TestRunVerbsAreWired(t *testing.T) {
 	}
 }
 
-// TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat.
-//
-// A run vibekit launched has a bridge under its synthetic `run:<id>` chat id, and
-// that path is exercised by every launch test. An AGENT-launched run has none and
-// never will: KAS parents it on the calling chat's session, so the LAUNCHING CHAT's
-// bridge is the process that registered the run. Until 2026-08-26 hostedControl
-// only knew the synthetic id, so every pause and resume against an agent-launched
-// run answered 409 whatever state the run was in — the population with no recovery
-// door was exactly the population an agent creates.
-//
-// The negative cases matter as much as the positive one: resolving a chat with no
-// live bridge, or falling back to the utility bridge, would hand the verb a carrier
-// that cannot execute the run (a text-only session denies every permission ask and
-// errors every fs call), which is worse than refusing.
+// An AGENT-launched run has no bridge of its own and never will: KAS parents it on the
+// calling chat's session, so the LAUNCHING CHAT's bridge is the process that registered
+// the run. The negative cases matter as much as the positive one: falling back to the
+// utility bridge would hand the verb a text-only carrier that cannot execute the run.
 func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
-	// Seeds a chat carrying `sessions` as its chain, opens its bridge, and points
-	// the fake `workflow/list` at one run parented on `parentSession`.
 	setup := func(t *testing.T, parentSession string, sessions ...string) (*Runtime, *fakeBridge) {
 		t.Helper()
 		h, cs, br := newTestHub()
@@ -88,10 +71,8 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 		}
 	})
 
-	// A chat changes session on a failed session/load, a model-switch fallback and
-	// empty-turn recovery, so a run launched before such a change is parented on a
-	// RETIRED id. Matching only the current one would strand exactly the runs a
-	// rough session produced.
+	// A chat changes session on a failed load, a model-switch fallback and empty-turn
+	// recovery, so a run launched before such a change is parented on a RETIRED id.
 	t.Run("a run parented on a RETIRED session in the chain still resolves", func(t *testing.T) {
 		h, _ := setup(t, "sess_old", "sess_old", "sess_current")
 		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {

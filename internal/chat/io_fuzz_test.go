@@ -6,12 +6,8 @@ import (
 	"testing"
 )
 
-// FuzzDecodeChatHeaderMessageCount targets the streaming header decoder's message
-// count, which is what the sidebar shows. Bug class: a count disagreeing with
-// what the full read path loads, so the sidebar claims messages the transcript
-// does not have.
-//
-// The oracle is encoding/json over the same bytes: the streaming count must equal
+// FuzzDecodeChatHeaderMessageCount pins the streaming header decoder against
+// encoding/json over the same bytes: the streaming message count must equal
 // stdlib's element count, and what stdlib refuses must be refused here too.
 func FuzzDecodeChatHeaderMessageCount(f *testing.F) {
 	f.Add([]byte(`[1,2,3]`))

@@ -1,21 +1,15 @@
 package git
 
-// The git panel's row shape and the status-letter rules, plus path validation.
-// Separated from HTTP scaffolding and subprocess delegates so the domain logic is
-// testable without either. The status FORMAT and its one invocation are
-// porcelain.go's; this file owns what an entry means for the UI.
+// porcelain.go owns the status FORMAT and its one git invocation; this file owns what an
+// entry means for the UI.
 
 import (
 	"context"
 )
 
-// gitFile represents a single row the git panel renders for one path, built from
-// a porcelain status entry (see porcelain.go).
-//
-// OrigPath is set only on a rename or copy entry, carrying the path the
-// content came FROM. Every other field describes the path it is at now.
-// It is omitted from the JSON when empty, so an ordinary entry costs no
-// wire bytes for it.
+// gitFile is one row the git panel renders for one path, built from a porcelain status
+// entry. OrigPath is set only on a rename or copy entry, carrying the path the content came
+// FROM; every other field describes the path it is at now.
 type gitFile struct {
 	Path     string `json:"path"`
 	Display  string `json:"display"`
@@ -24,12 +18,9 @@ type gitFile struct {
 	Staged   bool   `json:"staged"`
 }
 
-// statusLabels covers every status character a porcelain status entry
-// emits. 'T' (typechange — a regular file replaced by a symlink or the
-// reverse) was missing and therefore rendered as "Unknown": measured on
-// git 2.x, `rm f && ln -s /tmp f` reports " T f" unstaged and "T  f"
-// staged, so it is an ordinary status a working tree reaches, not a
-// hypothetical.
+// statusLabels covers every status character a porcelain status entry emits, 'T'
+// (typechange) included: on git 2.x, `rm f && ln -s /tmp f` reports " T f" unstaged and
+// "T  f" staged, so it is an ordinary status a working tree reaches.
 var statusLabels = map[byte]string{
 	'M': "Modified",
 	'T': "Typechange",
@@ -45,22 +36,17 @@ func statusLabel(c byte) string {
 	if label, ok := statusLabels[c]; ok {
 		return label
 	}
-	// Reachable only if git evolves the porcelain format; returning a fixed
-	// label avoids leaking control bytes into the UI.
+	// Reachable only if git evolves the porcelain format; a fixed label keeps control bytes out of the UI.
 	return "Unknown"
 }
 
-// appendStatusEntries appends the gitFile rows for one porcelain XY
-// status pair + path. A path that is BOTH staged (X) and changed in the
-// worktree (Y) yields two rows — one staged, one unstaged — so the git
-// panel can stage/discard each side independently. Any caller counting
-// CHANGED FILES therefore has to count distinct paths rather than
-// entries (git-types.ts changedPathCount is the client's).
+// appendStatusEntries appends the gitFile rows for one porcelain XY status pair + path. A
+// path that is BOTH staged (X) and changed in the worktree (Y) yields two rows, one per
+// side, so a caller counting CHANGED FILES must count distinct paths rather than entries.
 //
-// orig is the rename/copy origin path, empty for every other entry. It
-// rides only the row whose status letter is the R or C, because the
-// other side of a partially-staged rename describes an ordinary edit to
-// the file at its new path and did not come from anywhere.
+// orig is the rename/copy origin path, empty for every other entry, and it rides only the
+// row whose status letter is the R or C: the other side of a partially-staged rename is an
+// ordinary edit to the file at its new path.
 func appendStatusEntries(files []gitFile, x, y byte, path, orig string) []gitFile {
 	f := gitFile{Path: path}
 	switch {
@@ -95,14 +81,9 @@ func appendStatusEntries(files []gitFile, x, y byte, path, orig string) []gitFil
 	return files
 }
 
-// splitTrackedUntracked partitions the given file list into tracked
-// (checkout --) and untracked (clean -fd) buckets based on the current
-// git status.
-//
-// It reads through the same one status invocation the dashboard uses, so the
-// tree carries a single status format and a single row builder. A failed call
-// yields two empty buckets, which is what makes the discard a no-op rather than
-// a guess.
+// splitTrackedUntracked partitions the given file list into tracked (checkout --) and
+// untracked (clean -fd) buckets based on the current git status. A failed status call
+// yields two empty buckets, which makes the caller's discard a no-op rather than a guess.
 func splitTrackedUntracked(ctx context.Context, dir string, files []string) (tracked, untracked []string) {
 	st, err := readStatus(ctx, dir)
 	if err != nil {

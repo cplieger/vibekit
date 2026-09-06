@@ -28,10 +28,8 @@ func TestSwitchModel_ChatNotFound(t *testing.T) {
 	}
 }
 
-// Fast path: session/load succeeds, context preserved, no priming.
-// The command carries a new model so isSwitch=true; without an
-// override the command is a bare-restart and does NOT emit a
-// model_switched event (see TestSwitchModel_BareRestart_NoEvent).
+// Fast path: session/load succeeds, context preserved, no priming. The command
+// carries a new model, so isSwitch=true.
 func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -91,10 +89,7 @@ func TestSwitchModel_WithModelOverride(t *testing.T) {
 	}
 }
 
-// TestSwitchModel_PreservesContextSize: switching to a new model
-// preserves the chat's context_size while resetting credit counters.
-// Uses an explicit model override so isSwitch=true (no-op same-model
-// commands don't touch Usage — see TestSwitchModel_BareRestart_NoEvent).
+// A new model preserves the chat's context_size while resetting credit counters.
 func TestSwitchModel_PreservesContextSize(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -121,10 +116,8 @@ func TestSwitchModel_PreservesContextSize(t *testing.T) {
 	}
 }
 
-// TestSwitchModel_BareRestart_NoEvent: switch_model with no model or
-// the same model restarts the bridge (wedged-session recovery) but
-// must NOT emit a model_switched event and must NOT reset the Usage
-// counters. Those side effects are reserved for a real model change.
+// No model, or the same model, restarts the bridge for wedged-session recovery but
+// emits no event and resets no Usage counters: those are for a real model change.
 func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -170,10 +163,8 @@ func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 	}
 }
 
-// TestSwitchModel_RejectsInvalidModel: the model field is validated
-// at the command boundary; a bad value returns 400 without mutating
-// chat state. Previously a bad model landed in chat.Model via
-// persistModelSwitch before bridge.Start rejected it downstream.
+// The model field is validated at the command boundary: a bad value returns 400
+// without mutating chat state.
 func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -254,12 +245,9 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	}
 }
 
-// TestSwitchModel_RefusesAModelTheAccountDoesNotServe pins the entitlement gate.
-//
-// kiro-cli accepts a model id it cannot serve: the set_config_option succeeds and
-// only the SERVICE rejects it, mid-prompt, on every later turn. Before this gate
-// the id reached the wire, the fast path failed, and the fallback then tore down a
-// working bridge to respawn on the same rejected id.
+// kiro-cli accepts a model id it cannot serve — set_config_option succeeds and only
+// the SERVICE rejects it, mid-prompt, on every later turn — so the gate has to refuse
+// before the id reaches the wire.
 func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -288,9 +276,8 @@ func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 	}
 }
 
-// TestSwitchModel_AllowsWhenEntitlementIsUnknowable pins both fail-open cases,
-// which are the ones that would turn this gate into an outage: a backend that
-// advertises no catalog must behave exactly as it did before the gate existed.
+// Both fail-open cases, which are the ones that would turn this gate into an outage:
+// a backend advertising no catalog must behave as it did before the gate existed.
 func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -319,14 +306,9 @@ func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 	}
 }
 
-// TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes is the case that
-// decides whether this gate was safe to add at all.
-//
-// The picker's list (the workspace Catalog, Bridge.Models) drops [Deprecated] and
-// [Legacy] entries for display. Validating against THAT list would refuse a model
-// the account can still run, converting a working session into a client-side
-// refusal — worse than the defect the gate prevents. The gate must read the
-// unfiltered served set, so a deprecated id present there is allowed.
+// The picker's display list drops [Deprecated] and [Legacy] entries, so validating
+// against it would refuse a model the account can still run — worse than the defect
+// the gate prevents. The gate reads the unfiltered served set.
 func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -348,15 +330,11 @@ func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
 	}
 }
 
-// TestSwitchModel_TheLiveSessionsSetOutranksTheChatsRecord pins which evidence the
-// entitlement gate believes when both exist, in both directions.
-//
-// The chat's recorded set is a snapshot from whenever it was last written, so it
-// goes stale the moment the account's entitlements change — a model added to the
-// plan would stay refused until the record caught up. The live session's set is the
-// current answer, and it only counts when the session actually advertised one:
-// treating an empty advertisement as authoritative would replace the gate with a
-// pass-through, which is the outage the fail-open case exists to avoid.
+// Which evidence the entitlement gate believes when both exist, in both directions.
+// The chat's recorded set is a snapshot that goes stale the moment entitlements
+// change, so the live session's set is the current answer — but only when the session
+// actually advertised one, or an empty advertisement would make the gate a
+// pass-through.
 func TestSwitchModel_TheLiveSessionsSetOutranksTheChatsRecord(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -408,20 +386,17 @@ func TestSwitchModel_TheLiveSessionsSetOutranksTheChatsRecord(t *testing.T) {
 }
 
 // The switch-by-restart fallback must land the pick on the RESUMED session.
-//
-// session/load restores KAS's own persisted model and the session/new door does
-// not run on that path, so the swap had to be retried or it silently did not
-// happen: PersistModelSwitch wrote the new id onto the chat while the old model
-// kept answering, and the load's config_option_update then raced that write back
-// to the old id, so the pill snapped back and the pick was lost.
+// session/load restores KAS's own persisted model and the session/new door does not
+// run on that path, so without a retry the chat records the new id while the old
+// model keeps answering and the load's config_option_update races it back.
 func TestSwitchModel_RestartFallback_AppliesThePickToTheResumedSession(t *testing.T) {
 	h, cs, br := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old-acp"
 		c.Model = "m-old"
-		// A tier chosen under m-old: it must NOT ride onto m-new (user report,
-		// 2026-08-31) — the switch resolves against the TARGET model instead.
+		// A tier chosen under m-old must NOT ride onto m-new: the switch resolves
+		// against the TARGET model instead.
 		c.Effort = "max"
 		return true
 	})
@@ -457,16 +432,10 @@ func TestSwitchModel_RestartFallback_AppliesThePickToTheResumedSession(t *testin
 	}
 }
 
-// A fresh session gets no retry: the model and the level already rode _meta.kiro
-// on session/new, so re-sending them would be two round trips that change
-// nothing.
-//
-// A chat that has never had a bridge is the only way to reach that branch. Opening
-// one stamps its session id onto the record (persistNewSessionMetadata), after
-// which every reopen is a session/load.
-// A chat that has never had a bridge NOR a session reaches this branch only with
-// history on the record (a `!cmd` shell chat): a truly empty chat takes the
-// pre-session persist instead (TestSwitchModel_PreSessionPickPersistsWithoutABridge).
+// A fresh session gets no retry: the model and the level already rode _meta.kiro on
+// session/new. Reaching that branch needs a chat with history but no session id (a
+// `!cmd` shell chat) — an opened bridge stamps a session id, after which every reopen
+// is a session/load, and a truly empty chat takes the pre-session persist instead.
 func TestSwitchModel_RestartFallback_SendsNoRetryOnAFreshSession(t *testing.T) {
 	h, cs, br := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -501,10 +470,9 @@ func TestSwitchModel_RestartFallback_SendsNoRetryOnAFreshSession(t *testing.T) {
 	}
 }
 
-// A pick on a chat that has never run is a PREFERENCE: it persists on the record
-// with no bridge, no session and no event row, so the header echo carries the
-// pick and a later set_effort auto-persist cannot clobber it back (user report,
-// 2026-08-31: picking an effort after picking a model reverted the model).
+// A pick on a chat that has never run is a PREFERENCE: it persists on the record with
+// no bridge, no session and no event row, so a later set_effort auto-persist cannot
+// clobber it back.
 func TestSwitchModel_PreSessionPickPersistsWithoutABridge(t *testing.T) {
 	h, cs, br := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {

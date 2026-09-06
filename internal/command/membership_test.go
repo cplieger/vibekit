@@ -1,12 +1,9 @@
 package command
 
-// The membership coordinator's contract: the ordering that makes a chat without
-// its tab, or a tab without its chat, unreachable.
-//
-// Every case here drives the coordinator over a REAL tabs.Store, because the
-// properties are the store's behaviour under the coordinator's lock — the version
-// a mutation produced, the order it left behind, one event per committed mutation.
-// A fake store would let both halves agree while being wrong together.
+// The ordering that makes a chat without its tab, or a tab without its chat,
+// unreachable. Driven over a REAL tabs.Store: the properties are the store's
+// behaviour under the coordinator's lock, and a fake would let both halves agree
+// while being wrong together.
 
 import (
 	"context"
@@ -22,28 +19,18 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// flakyTabs is a real tab store with two things bolted on: Close can be made to
-// fail a set number of times, and a hook can run at the moment a close is about
-// to happen.
-//
-// It embeds the real store rather than reimplementing one, so every case that is
-// not about the failure exercises production behaviour. The two knobs are what no
-// real store can offer: a persist failure that is TRANSIENT (which is what the
-// retry rule is about) and an observation point INSIDE the coordinator's critical
-// section.
+// flakyTabs embeds the real store rather than reimplementing one, so every case
+// that is not about the failure exercises production behaviour. Its two knobs are
+// what no real store offers: a TRANSIENT persist failure, and an observation point
+// inside the coordinator's critical section.
 type flakyTabs struct {
 	*tabs.Store
-	// beforeClose runs before each Close. It is what lets a test observe the state
-	// between the record removal and the tab close — the window the delete
-	// ordering exists to make harmless.
+	// beforeClose observes the state between the record removal and the tab close.
 	beforeClose func()
 	mu          sync.Mutex
-	// failCloses is how many of the next Close calls fail. Counted down, so
-	// failCloses:1 is the transient failure the retry is supposed to absorb and a
-	// large number is the permanent one that has to emit anyway.
+	// failCloses counts down, so 1 is the transient failure the retry absorbs.
 	failCloses int
-	// failOpens is how many of the next Open calls fail, which is the only way to
-	// reach the state a create retry has to repair: chat written, tab not.
+	// failOpens reaches the state a create retry repairs: chat written, tab not.
 	failOpens int
 }
 
@@ -65,7 +52,6 @@ func (f *flakyTabs) Close(ctx context.Context, id string) ([]vibekit.TabSubject,
 	return f.Store.Close(ctx, id)
 }
 
-// newFlakyMembership is newTabbedMembership with the failure-injecting store.
 func newFlakyMembership(t *testing.T, chats ChatStore) (*Membership, *flakyTabs, *tabBus) {
 	t.Helper()
 	st, err := tabs.NewStore(t.TempDir())
@@ -78,9 +64,8 @@ func newFlakyMembership(t *testing.T, chats ChatStore) (*Membership, *flakyTabs,
 	return NewMembership(&MembershipDeps{Chats: chats, Tabs: flaky, Bus: bus, Teardown: teardown}), flaky, bus
 }
 
-// recordingTeardown is the delete path's teardown seam. The ordering tests
-// assert nothing on it — they are about the two STORES — while the close
-// escalation's tests read back which grade ran and what chain travelled.
+// recordingTeardown is the delete path's teardown seam: the escalation cases read
+// back which grade ran and what chain travelled.
 type recordingTeardown struct {
 	deleted        []vibekit.ChatID
 	deletedByChain map[vibekit.ChatID][]string
@@ -109,7 +94,6 @@ func (r *recordingTeardown) CloseChatState(_ context.Context, id vibekit.ChatID)
 	r.closed = append(r.closed, id)
 }
 
-// createChat is the ordinary create every case starts from.
 func createChat(t *testing.T, mem *Membership, opID string) ChatOpened {
 	t.Helper()
 	opened, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
@@ -122,8 +106,6 @@ func createChat(t *testing.T, mem *Membership, opID string) ChatOpened {
 	return opened
 }
 
-// tabIDsFor is every tab in the store showing this chat, which is the population
-// "a chat has a tab" and "a chat's tabs are gone" are claims about.
 func tabIDsFor(st *tabs.Store, chatID vibekit.ChatID) []string {
 	open, _ := st.List()
 	var out []string
@@ -135,8 +117,7 @@ func tabIDsFor(st *tabs.Store, chatID vibekit.ChatID) []string {
 	return out
 }
 
-// TestCreateChatAndOpen_WritesTheChatThenItsTab is the create half of the gate:
-// both stores hold the new chat afterwards, and the response names both.
+// The create half of the gate: both stores hold the new chat afterwards.
 func TestCreateChatAndOpen_WritesTheChatThenItsTab(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, bus := newTabbedMembership(t, store)
@@ -167,13 +148,10 @@ func TestCreateChatAndOpen_WritesTheChatThenItsTab(t *testing.T) {
 	}
 }
 
-// TestCreateChatAndOpen_ReplayFinishesAMissingTabWrite is the requirement the
-// stage-1b ledger did not have: a retry of an op whose FIRST attempt created the
-// chat and then failed its tab write must finish that write, not answer with a
-// chat that has no tab.
-//
-// The first attempt's failure is injected, because that is the only way to reach
-// the state — and it is a state a real deployment reaches on a full disk.
+// A retry of an op whose FIRST attempt created the chat and then failed its tab
+// write must finish that write, not answer with a chat that has no tab. The
+// failure is injected because that is the only way to reach the state, which a
+// real deployment reaches on a full disk.
 func TestCreateChatAndOpen_ReplayFinishesAMissingTabWrite(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, flaky, bus := newFlakyMembership(t, store)
@@ -222,10 +200,8 @@ func TestCreateChatAndOpen_ReplayFinishesAMissingTabWrite(t *testing.T) {
 	}
 }
 
-// TestCreateChatAndOpen_AtTheLimitLeavesTheChatStoreUnchanged is the capacity
-// reservation, and the orphan it prevents is the whole reason the reservation runs
-// before the mint. Reversed, the refusal lands after the record is written and the
-// gesture leaves a chat nothing can ever open.
+// The capacity reservation runs before the mint. Reversed, the refusal lands after
+// the record is written and the gesture leaves a chat nothing can ever open.
 func TestCreateChatAndOpen_AtTheLimitLeavesTheChatStoreUnchanged(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, bus := newTabbedMembership(t, store)
@@ -254,10 +230,8 @@ func TestCreateChatAndOpen_AtTheLimitLeavesTheChatStoreUnchanged(t *testing.T) {
 	}
 }
 
-// TestOpenTab_AtTheLimitIsRefusedAndTheChatStoreIsUntouched is open_tab's half of
-// the same limit. open_tab NEVER mints, so the chat store must be exactly as it
-// was — asserted rather than assumed, because "open_tab does not create a chat" is
-// the split this whole design rests on.
+// open_tab NEVER mints, so the chat store must be exactly as it was — the split
+// this whole design rests on, so it is asserted rather than assumed.
 func TestOpenTab_AtTheLimitIsRefusedAndTheChatStoreIsUntouched(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, _ := newTabbedMembership(t, store)
@@ -283,9 +257,8 @@ func TestOpenTab_AtTheLimitIsRefusedAndTheChatStoreIsUntouched(t *testing.T) {
 	}
 }
 
-// TestOpenTab_IsIdempotentAndSaysSo is why `created` is on the response at all: a
-// second open of one subject commits nothing, so it emits nothing, so a caller
-// waiting for an event would wait forever.
+// Why `created` is on the response at all: a second open commits nothing, so it
+// emits nothing, so a caller waiting for an event would wait forever.
 func TestOpenTab_IsIdempotentAndSaysSo(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, _, bus := newTabbedMembership(t, store)
@@ -317,9 +290,8 @@ func TestOpenTab_IsIdempotentAndSaysSo(t *testing.T) {
 	}
 }
 
-// TestOpenTab_ForAChatThatIsGoneIsRefused is the delete ordering seen from the
-// open side. The record is the gate, so an open for a chat that is not there is a
-// 404 rather than a tab pointing at nothing.
+// The delete ordering seen from the open side: the record is the gate, so this is
+// a 404 rather than a tab pointing at nothing.
 func TestOpenTab_ForAChatThatIsGoneIsRefused(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, _ := newTabbedMembership(t, store)
@@ -337,10 +309,9 @@ func TestOpenTab_ForAChatThatIsGoneIsRefused(t *testing.T) {
 	}
 }
 
-// TestCloseTab_AParentAndItsChildrenAreOneMutation is the reason the event carries
-// removed_ids as a LIST and the reason there is one event type rather than two: a
-// singular per-tab event would have forced either several frames sharing one
-// version (the second reads as a duplicate) or several bumps for one mutation.
+// Why removed_ids is a LIST: a singular per-tab event would force either several
+// frames sharing one version (the second reads as a duplicate) or several bumps
+// for one mutation.
 func TestCloseTab_AParentAndItsChildrenAreOneMutation(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, bus := newTabbedMembership(t, store)
@@ -385,8 +356,8 @@ func TestCloseTab_AParentAndItsChildrenAreOneMutation(t *testing.T) {
 	}
 }
 
-// TestCloseTab_AnIdThatIsNotOpenIsNotAnError: two devices can close the same tab,
-// and an empty closed list already says nothing happened.
+// Two devices can close the same tab, and an empty closed list already says
+// nothing happened.
 func TestCloseTab_AnIdThatIsNotOpenIsNotAnError(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, bus := newTabbedMembership(t, store)
@@ -408,9 +379,8 @@ func TestCloseTab_AnIdThatIsNotOpenIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestCloseTab_AChatTabRunsTheTeardownAndKeepsTheRecord is what close_chat became.
 // The × kills the work; the record survives, because a closed chat is a chat
-// without a tab and reopening it session/loads everything back.
+// without a tab and reopening it loads everything back.
 func TestCloseTab_AChatTabRunsTheTeardownAndKeepsTheRecord(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	st, err := tabs.NewStore(t.TempDir())
@@ -436,17 +406,9 @@ func TestCloseTab_AChatTabRunsTheTeardownAndKeepsTheRecord(t *testing.T) {
 	}
 }
 
-// Closing a chat tab WAKES RETENTION, because the tab was the exemption.
-//
-// A chat with an open tab is pinned outside the purge's age test, and an exempt
-// chat contributes no wake-up deadline — so a pass that saw only exempt chats lands
-// on a back-off doubling to an hour, and archive.PurgeScheduler.Trigger had exactly
-// one production caller (Start). Closing the last tab of a month-old chat therefore
-// woke nothing, and the chat could outlive its window by up to that hour.
-//
-// Wired as a setter and read per call, so a build with no scheduler is a nil wake
-// rather than a panic — asserted below, because that is the shape every test in
-// this package other than this one runs in.
+// Closing a chat tab WAKES RETENTION, because the tab was the exemption. An exempt
+// chat contributes no wake-up deadline, so a pass that saw only exempt chats backs
+// off to an hour and a month-old chat can outlive its window by that much.
 func TestCloseTab_AChatTabCloseWakesRetention(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	st, err := tabs.NewStore(t.TempDir())
@@ -476,8 +438,8 @@ func TestCloseTab_AChatTabCloseWakesRetention(t *testing.T) {
 	}
 }
 
-// No scheduler wired is the shape every other test in this package runs in, and it
-// must be a no-op rather than a nil call.
+// The scheduler is read per call, so no scheduler wired — the shape every other
+// test in this package runs in — must be a no-op rather than a nil call.
 func TestCloseTab_AChatTabCloseWithNoSchedulerWiredIsSafe(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, _, _ := newTabbedMembership(t, store)
@@ -488,13 +450,9 @@ func TestCloseTab_AChatTabCloseWithNoSchedulerWiredIsSafe(t *testing.T) {
 	}
 }
 
-// TestDeleteChatAndCloseTabs_TheRecordLeads is the delete half of the gate.
-//
-// The observation happens INSIDE the coordinator's critical section, via the
-// store's own close hook, because that is the only place the intermediate state
-// exists. Two things are asserted from there: the record is already gone, and an
-// Open issued at that moment is refused — it queues on the operation lock, finds
-// no chat when it runs, and leaves nothing behind.
+// The delete half of the gate. The observation happens inside the coordinator's
+// critical section, via the store's close hook, because that is the only place the
+// intermediate state exists.
 func TestDeleteChatAndCloseTabs_TheRecordLeads(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, flaky, _ := newFlakyMembership(t, store)
@@ -529,10 +487,8 @@ func TestDeleteChatAndCloseTabs_TheRecordLeads(t *testing.T) {
 	}
 }
 
-// TestDeleteChatAndCloseTabs_RetriesAFailedCloseWithoutARestart is the gap the
-// store alone cannot close. Prune only runs at load, so a tab close that fails
-// after the record is gone would otherwise leave a live tab for a chat nothing can
-// open until the process restarts.
+// Prune only runs at load, so a tab close that fails after the record is gone would
+// otherwise leave a live tab for an unopenable chat until the process restarts.
 func TestDeleteChatAndCloseTabs_RetriesAFailedCloseWithoutARestart(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, flaky, bus := newFlakyMembership(t, store)
@@ -552,14 +508,9 @@ func TestDeleteChatAndCloseTabs_RetriesAFailedCloseWithoutARestart(t *testing.T)
 	}
 }
 
-// TestDeleteChatAndCloseTabs_AnnouncesTheRemovalEvenWhenTheCloseKeepsFailing is
-// the second half of that rule. When the retry fails too, the removal is emitted
-// anyway: the authoritative fact is that the chat is gone, and a client still
-// showing the tab is showing a chat nothing can open.
-//
-// The frame is stamped one PAST the store's version, because a client discards
-// anything at or below its local one — stamping the unchanged version would make
-// the frame silently useless, which is the whole point of emitting it.
+// When the retry fails too, the removal is emitted anyway: the chat is gone either
+// way. The frame is stamped one PAST the store's version because a client discards
+// anything at or below its local one, so the unchanged version would be useless.
 func TestDeleteChatAndCloseTabs_AnnouncesTheRemovalEvenWhenTheCloseKeepsFailing(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, flaky, bus := newFlakyMembership(t, store)
@@ -587,9 +538,8 @@ func TestDeleteChatAndCloseTabs_AnnouncesTheRemovalEvenWhenTheCloseKeepsFailing(
 	}
 }
 
-// TestRetentionClose_ClosesWhatThePredicateRaced. Retention skips a chat that has
-// an open tab, so this path exists only for a tab opened between that check and the
-// remove — and it resolves it in the same pass rather than at the next restart.
+// Retention skips a chat with an open tab, so this path exists only for a tab
+// opened between that check and the remove, and resolves it in the same pass.
 func TestRetentionClose_ClosesWhatThePredicateRaced(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, bus := newTabbedMembership(t, store)
@@ -614,9 +564,8 @@ func TestRetentionClose_ClosesWhatThePredicateRaced(t *testing.T) {
 	}
 }
 
-// TestHasOpenTab_IsRetentionsSecondPredicate. Two facts, one for each direction,
-// because a predicate that answered true for everything would also make retention
-// opt-out and pass a one-sided test.
+// Both directions, because a predicate that answered true for everything would make
+// retention opt-out and still pass a one-sided test.
 func TestHasOpenTab_IsRetentionsSecondPredicate(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, _, _ := newTabbedMembership(t, store)
@@ -644,10 +593,8 @@ func TestHasOpenTab_IsRetentionsSecondPredicate(t *testing.T) {
 	}
 }
 
-// TestReorderTabs_AcceptedWhileAnUnrelatedPinBumpedTheVersion is the drag an
-// earlier revision would have discarded. The exact-set check is the whole
-// precondition; a version precondition would refuse this, because a pin elsewhere
-// bumps the version without changing the order.
+// The exact-set check is the whole precondition: a version precondition would refuse
+// this drag, because a pin elsewhere bumps the version without changing the order.
 func TestReorderTabs_AcceptedWhileAnUnrelatedPinBumpedTheVersion(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, _ := newTabbedMembership(t, store)
@@ -676,9 +623,8 @@ func TestReorderTabs_AcceptedWhileAnUnrelatedPinBumpedTheVersion(t *testing.T) {
 	}
 }
 
-// TestReorderTabs_RefusalShapes walks every way an order can fail to name the open
-// set. All four are one sentinel and one status, because the client's answer to all
-// of them is identical: re-list, never re-send.
+// All four refusals share one sentinel and one status, because the client's answer to
+// every one of them is identical: re-list, never re-send.
 func TestReorderTabs_RefusalShapes(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, _ := newTabbedMembership(t, store)
@@ -719,8 +665,7 @@ func TestReorderTabs_RefusalShapes(t *testing.T) {
 	}
 }
 
-// TestReorderTabs_AnIdenticalOrderCommitsNothing: a tab dragged back where it
-// started is not news, so it bumps no version and emits no frame.
+// A tab dragged back where it started is not news: no version bump, no frame.
 func TestReorderTabs_AnIdenticalOrderCommitsNothing(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, bus := newTabbedMembership(t, store)
@@ -742,9 +687,8 @@ func TestReorderTabs_AnIdenticalOrderCommitsNothing(t *testing.T) {
 	}
 }
 
-// TestSetPinned_IdempotentInBothDirections, plus the refusal for an id that is not
-// open — which a close does NOT report, because a pin is a statement about a tab
-// and answering success would claim a tab that does not exist is pinned.
+// An unopen id is refused here but not on close, because answering success would
+// claim a tab that does not exist is pinned.
 func TestSetPinned_IdempotentInBothDirections(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, bus := newTabbedMembership(t, store)
@@ -785,8 +729,8 @@ func TestSetPinned_IdempotentInBothDirections(t *testing.T) {
 
 // --- fixture helpers ---
 
-// openFails makes the next n Opens fail. A method on the fixture rather than a
-// field write at the call site so the mutex is not somebody else's business.
+// openFails is a method rather than a field write at the call site so the mutex is
+// not somebody else's business.
 func (f *flakyTabs) openFails(n int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -807,8 +751,7 @@ func (f *flakyTabs) setBeforeClose(fn func()) {
 	f.beforeClose = fn
 }
 
-// Open fails the first failOpens calls, which is how a create reaches the state
-// its retry has to repair: chat written, tab not.
+// Open fails the first failOpens calls.
 func (f *flakyTabs) Open(ctx context.Context, spec vibekit.OpenTab) (vibekit.TabSubject, bool, uint64, error) {
 	f.mu.Lock()
 	fail := f.failOpens > 0
@@ -822,12 +765,9 @@ func (f *flakyTabs) Open(ctx context.Context, spec vibekit.OpenTab) (vibekit.Tab
 	return f.Store.Open(ctx, spec)
 }
 
-// seedRecord puts a chat in the store without opening a tab for it, which is what
-// every chat the user has closed looks like.
-//
-// Named apart from rewind_test.go's seedChat deliberately: that one seeds a
-// four-message transcript because a rewind needs turns to revert to, and these
-// cases care only that the record exists.
+// seedRecord puts a chat in the store without a tab, which is what every chat the
+// user has closed looks like. Distinct from rewind_test.go's seedChat, which seeds a
+// transcript a rewind can revert to.
 func seedRecord(t *testing.T, store *testsupport.InMemoryChatStore, id vibekit.ChatID) {
 	t.Helper()
 	if err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
@@ -838,7 +778,6 @@ func seedRecord(t *testing.T, store *testsupport.InMemoryChatStore, id vibekit.C
 	}
 }
 
-// openChild opens a chat tab hanging under parentTab.
 func openChild(t *testing.T, mem *Membership, store *testsupport.InMemoryChatStore, id vibekit.ChatID, parentTab string) TabOpened {
 	t.Helper()
 	seedRecord(t, store, id)
@@ -851,7 +790,7 @@ func openChild(t *testing.T, mem *Membership, store *testsupport.InMemoryChatSto
 }
 
 // fillTabs opens n EDITOR tabs, which need no chat record, so a capacity test is
-// about capacity rather than about seeding chats.
+// about capacity.
 func fillTabs(t *testing.T, mem *Membership, n int) {
 	t.Helper()
 	open, _ := mem.tabs.List()

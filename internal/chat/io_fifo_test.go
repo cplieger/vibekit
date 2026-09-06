@@ -12,20 +12,10 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// withinBudget runs fn on its own goroutine and fails the test if it has not
-// returned inside budget.
-//
-// A DEADLINE rather than a plain call, because the defect these tests pin does
-// not fail — it HANGS. os.Open on a FIFO blocks in open(2) until a writer
-// appears and no context deadline can rescue it, so reverting the OpenRegular
-// adoption in readCappedFile makes each of these run to the go-test timeout
-// instead of reporting a failure. That is the strongest evidence available for
-// this class, and it is why the assertion is on elapsed time and not only on
-// the error.
-//
-// The goroutine is deliberately abandoned on expiry: it is parked in the kernel
-// and nothing can reclaim it. One leaked goroutine in a failing test run is the
-// price of reporting the failure at all.
+// withinBudget runs fn on its own goroutine and fails the test if it has not returned
+// inside budget: the defect these tests pin HANGS rather than failing, because os.Open on a
+// FIFO blocks in open(2) until a writer appears and no context deadline can rescue it. The
+// goroutine is abandoned on expiry — it is parked in the kernel and nothing can reclaim it.
 func withinBudget(t *testing.T, budget time.Duration, fn func() error) error {
 	t.Helper()
 	done := make(chan error, 1)
@@ -55,10 +45,8 @@ func mkfifoChat(t *testing.T, dir string) vibekit.ChatID {
 	return id
 }
 
-// TestGet_RefusesAFifoInsteadOfBlockingForever is the load-bearing one: a FIFO
-// at <chats>/<valid-chat-id>.json is a one-command permanent wedge of every chat
-// read, and the /config volume is reachable both by the operator (invariant 6
-// invites reshaping it) and by the agent's own shell.
+// A FIFO at <chats>/<valid-chat-id>.json is a one-command permanent wedge of every chat
+// read, and the /config volume is reachable both by the operator and by the agent's shell.
 func TestGet_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 	s, _ := newTestStore(t)
 	id := mkfifoChat(t, s.dir)
@@ -96,10 +84,9 @@ func withinBudgetGet(t *testing.T, s *Store, id vibekit.ChatID) (*vibekit.Chat, 
 	}
 }
 
-// TestList_SurvivesAFifoAndReportsTheScanIncomplete pins the fan-out half. List
-// reads with 8 workers inside one singleflight slot, so a blocking open wedged
-// every concurrent GET /api/chats behind it — and the completeness flag is what
-// makes the session sweep fail closed over the file it could not read.
+// List reads with 8 workers inside one singleflight slot, so a blocking open wedges every
+// concurrent GET /api/chats behind it, and the completeness flag is what makes the session
+// sweep fail closed over the file it could not read.
 func TestList_SurvivesAFifoAndReportsTheScanIncomplete(t *testing.T) {
 	s, _ := newTestStore(t)
 	if err := s.Mutate(t.Context(), "good", func(c *vibekit.Chat, _ bool) bool {
@@ -133,9 +120,8 @@ func TestList_SurvivesAFifoAndReportsTheScanIncomplete(t *testing.T) {
 	}
 }
 
-// TestReadCappedFile_RefusesASymlink closes the smaller hole in the same open: a
-// link at <chats>/<id>.json made another file's bytes reachable through the chat
-// read, the header projection and both search paths.
+// A link at <chats>/<id>.json makes another file's bytes reachable through the chat read,
+// the header projection and both search paths.
 func TestReadCappedFile_RefusesASymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target.json")

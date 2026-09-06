@@ -12,10 +12,8 @@ var at = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 
 const atRFC = "2026-03-04T05:06:07Z"
 
-// TestRunProgress_NodeFramesCarryTheNodesState is the change that removes the
-// refetch: the client applies these rather than answering each one with a
-// `GET /api/runs/{id}` — a JSON-RPC round trip to KAS for the whole state tree,
-// up to five concurrently per burst of node events.
+// A node frame must carry the node's state, so the client applies it instead of
+// answering each one with a `GET /api/runs/{id}` refetch.
 func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -72,10 +70,8 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 			},
 		},
 		{
-			// A poll re-states `running` and stamps no clock. It carries the status
-			// rather than nothing: a frame that states nothing is a frame the
-			// client cannot apply, so it spent a tree rebuild and a re-render
-			// arriving at a value the node already held.
+			// A poll re-states running rather than nothing: a frame the client cannot
+			// apply costs a tree rebuild and a re-render for a value it already held.
 			name: "watch_poll names its node and re-states running, stamping neither end",
 			kind: vibekit.RunProgressWatchPoll,
 			frame: kasRunNode{
@@ -101,10 +97,8 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 	}
 }
 
-// TestRunProgress_ShapeChangingKindsCarryNoNodePath is the signal that keeps the
-// invalidation contract exactly where it is still needed: an empty node path is
-// what tells the client to refetch, and these three cannot be expressed as a
-// per-node patch.
+// An empty node path is what tells the client to refetch, and these three kinds
+// cannot be expressed as a per-node patch.
 func TestRunProgress_ShapeChangingKindsCarryNoNodePath(t *testing.T) {
 	cases := []struct {
 		kind  vibekit.RunProgressKind
@@ -147,9 +141,8 @@ func TestRunProgress_ShapeChangingKindsCarryNoNodePath(t *testing.T) {
 	}
 }
 
-// TestRunProgress_FallsBackToTheNodeIDWithNoPath: an empty path means "refetch",
-// so a node frame that arrived without one must not silently join the run-level
-// kinds — a row in the wrong place beats content that vanishes.
+// An empty path means refetch, so a node frame arriving without one must not
+// silently join the run-level kinds.
 func TestRunProgress_FallsBackToTheNodeIDWithNoPath(t *testing.T) {
 	f := kasRunNode{WorkflowID: "wf1", NodeID: "coder"}
 	got := runProgress(vibekit.RunProgressNodeStart, "coder", &f, at)

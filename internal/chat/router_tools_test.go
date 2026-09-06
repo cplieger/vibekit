@@ -548,18 +548,13 @@ func TestPreviewInput_TheMemberCapChargesWhatEscapingCosts(t *testing.T) {
 	}
 }
 
-// The EARLY-OUT gate charges escaping as well, which is what makes the three
-// measures one measure.
+// The EARLY-OUT gate charges escaping too, which is what makes the three measures
+// one measure: a gate on `len(raw)` over budgets that count what encoding/json
+// writes lets an object under the per-member cap RAW return before either budget
+// sees it, and 4,010 bytes of unescaped `<` marshal to roughly 24 KiB.
 //
-// The gate ran on `len(raw)` while both budgets below it ran on what encoding/json
-// writes, so an object under the per-member cap RAW returned before either budget
-// saw it and shipped at six times its measured size. A 4,010-byte object of
-// unescaped `<` marshals to roughly 24 KiB, over the per-member cap and over the
-// object budget, and used to go through whole.
-//
-// UNREACHABLE through the one production caller, which reads values the store
-// persisted through encoding/json and therefore already escaped: this is the
-// budgets agreeing on a measure, not a live leak.
+// Not reachable through the one production caller, which reads store values already
+// escaped by encoding/json: this pins the budgets agreeing, not a live leak.
 func TestPreviewInput_TheEarlyOutGateChargesWhatEscapingCosts(t *testing.T) {
 	// One member of 4,000 unescaped `<`: 24,006 bytes marshalled, well over both
 	// budgets, and 4,010 bytes raw — inside the 4,096-byte per-member cap, so the

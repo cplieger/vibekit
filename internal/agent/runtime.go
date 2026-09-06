@@ -1,18 +1,11 @@
-// Package agent coordinates the server's per-chat runtime: SSE fan-out,
-// ACP bridge lifecycle, and POST /api/command dispatch — plus the
-// service surfaces that ride the shared utility bridge (knowledge,
-// specs, hooks, governance, account usage, policy), checkpoint HTTP,
-// agent terminals, the browser PTY shell shim, and the MCP runtime
-// registry.
+// Package agent coordinates the server's per-chat runtime: SSE fan-out, ACP bridge
+// lifecycle, and POST /api/command dispatch — plus the service surfaces that ride
+// the shared utility bridge (knowledge, specs, hooks, governance, account usage,
+// policy), checkpoint HTTP, agent terminals, the browser PTY shell shim, and the
+// MCP runtime registry.
 //
-// This file defines Runtime and its top-level wiring. Command dispatch is
-// hosted via internal/command (adapters in command_deps.go), ACP
-// translation via internal/translate (adapters in translate_deps.go),
-// SSE transport in sse.go, bridge lifecycle in bridge_lifecycle.go and
-// bridge_coord.go, the shell shim in shell.go, agent terminals in
-// agent_terminal.go, utility-bridge services in knowledge.go / spec.go /
-// hooks.go / governance.go / account_usage.go / permissions_policy.go,
-// and checkpoint HTTP in checkpoint_http.go.
+// This file defines Runtime and its top-level wiring; command dispatch is hosted
+// via internal/command and ACP translation via internal/translate.
 package agent
 
 import (
@@ -44,57 +37,41 @@ import (
 const (
 	replayBufSize = 1024
 
-	// keepaliveInterval is the shared interval for SSE keepalive
-	// comments and WebSocket pings. iOS Safari kills idle connections
-	// after ~30s in background; 15s keeps both transports alive.
+	// keepaliveInterval is the shared interval for SSE keepalive comments and
+	// WebSocket pings. iOS Safari kills idle connections after ~30s in background.
 	keepaliveInterval = 15 * time.Second
 
 	// reconnectDelay is the stream's advertised `retry:` field, governing the
-	// reconnect the BROWSER performs after a transient drop. transport.ts's own
-	// backoff ladder never sees that case — it fires only on readyState CLOSED —
-	// so without this the delay is whatever the browser defaults to, and the two
-	// disagree (3s Chrome, 5s Firefox). Deliberately not lower: a connection to a
-	// DOWN server retries on this same timer, and the SSE spec permits but does
-	// not require a user agent to back off above it.
+	// reconnect the BROWSER performs after a transient drop — transport.ts's own
+	// backoff never sees that case. Without it the delay is the browser default and
+	// the two disagree (3s Chrome, 5s Firefox). Not lower: a DOWN server retries on it.
 	reconnectDelay = 1500 * time.Millisecond
 
-	// outputBufferLimit is the byte budget for subprocess output ring
-	// buffers (agent terminals and the PTY shell scrollback). 64 KB
-	// covers a full terminal screen at 200 cols × 50 rows with
-	// generous ANSI escapes.
+	// outputBufferLimit is the byte budget for subprocess output rings. 64 KB covers
+	// a full terminal screen at 200 cols × 50 rows with generous ANSI escapes.
 	outputBufferLimit = buffer.DefaultOutputCap
 )
 
 // lifetime groups Runtime fields related to process lifecycle,
 // shutdown coordination, and workspace paths.
 type lifetime struct {
-	// shutdownCtx is the runtime's own cancellable child of the lifetime
-	// context New requires. Shutdown() cancels it, so the runtime can be torn
-	// down on its own without the app's lifetime ending.
+	// shutdownCtx is the runtime's own cancellable child of the lifetime context New
+	// requires, so the runtime can be torn down without the app's lifetime ending.
 	shutdownCtx    context.Context
 	done           chan struct{}
 	shutdownCancel context.CancelFunc
-	// workRoot is the kernel-confined handle on workDir: every operation
-	// named through this root has each of its components re-resolved by the
-	// kernel at the moment it runs, so an ancestor directory swapped for a
-	// symlink after the check redirects nothing outside the tree. See
-	// confineInWorkDir.
-	//
-	// Deliberately NOT closed: the one path that ends the lifetime this
-	// handle is scoped to is process exit, which reclaims the descriptor.
-	//
-	// nil when workDir could not be opened. The fs handlers then REFUSE
-	// rather than falling back to ambient os calls.
+	// workRoot is the kernel-confined handle on workDir: every operation named
+	// through this root has each component re-resolved by the kernel as it runs, so
+	// an ancestor swapped for a symlink after the check redirects nothing outside the
+	// tree. Deliberately NOT closed — the lifetime it is scoped to ends at process
+	// exit. nil when workDir could not be opened, and the fs handlers then REFUSE.
 	workRoot  *os.Root
 	workDir   string
 	configDir string
 	inflight  sync.WaitGroup
-	// loops covers the background goroutines that exit on done: the two New
-	// starts, plus the MCP registry's debounced notifier.
-	//
-	// A SEPARATE group from inflight: Shutdown waits on inflight only after
-	// every bridge has been stopped, and the two groups are reported apart so
-	// a shutdown that times out names a wedged handler or a wedged loop.
+	// loops covers the background goroutines that exit on done. A SEPARATE group
+	// from inflight, because Shutdown waits on inflight only after every bridge is
+	// stopped, and the two are reported apart so a timeout names which one wedged.
 	loops    sync.WaitGroup
 	mu       sync.Mutex
 	draining atomic.Bool
@@ -106,21 +83,14 @@ func (lt *lifetime) derivedContext() (context.Context, context.CancelFunc) {
 	return context.WithCancel(lt.shutdownCtx)
 }
 
-// TurnContext returns the context a turn runs under, plus the teardown its
-// handler must defer.
+// TurnContext returns the context a turn runs under, plus the teardown its handler
+// must defer.
 //
-// The turn is DETACHED from reqCtx's cancellation while keeping its values:
-// the prompt POST's context dies when the handler returns, and a turn that
-// died with it failed before it could finalize and persist the assistant
-// buffer, even though kiro-cli kept running the turn to completion.
-// Cancellation is re-attached to the shutdown context via AfterFunc so the
-// turn still dies on shutdown; the returned cancel tears it down on handler
-// return and unregisters that AfterFunc so it cannot leak.
-//
-// This mirrors the pattern in agent_terminal.go, which runs agent-spawned
-// subprocesses under context.WithCancel(context.WithoutCancel(ctx)) +
-// AfterFunc(shutdownCtx, cancel) for the same reason: a per-request ctx must not
-// tear down longer-lived work.
+// The turn is DETACHED from reqCtx's cancellation while keeping its values: the
+// prompt POST's context dies when the handler returns, and a turn that died with
+// it failed before it could finalize and persist the assistant buffer, even though
+// kiro-cli kept running it. Cancellation is re-attached to the shutdown context
+// via AfterFunc, and the returned cancel unregisters it so it cannot leak.
 func (lt *lifetime) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.WithoutCancel(reqCtx))
 	stop := context.AfterFunc(lt.shutdownCtx, cancel)
@@ -146,17 +116,15 @@ type bridges struct {
 	mgr     *bridgeManager
 }
 
-// bus groups Runtime fields related to SSE transport, replay,
-// and pending permissions. The transport (fan-out, replay
-// ring, Last-Event-ID resume, keepalives, eviction) is webhttp/sse's agent;
-// vibekit layers chat-topic filtering and pending-state replay on top.
+// bus groups Runtime fields related to SSE transport, replay, and pending
+// permissions. The transport is webhttp/sse's agent; vibekit layers chat-topic
+// filtering and pending-state replay on top.
 type bus struct {
 	fanout       *sse.Hub
 	pendingPerms *pendingPermsTracker
-	// chatStatus holds each chat's last self-declared status, the one
-	// turn_state input that lives on no message and in no replay
-	// (chat_status.go). The in-flight MESSAGE comes from the assistant
-	// buffer, not from a replica.
+	// chatStatus holds each chat's last self-declared status, the one turn_state
+	// input that lives on no message and in no replay (chat_status.go). The in-flight
+	// MESSAGE comes from the assistant buffer, not from a replica.
 	chatStatus *chatStatusCache
 }
 
@@ -169,9 +137,8 @@ type Runtime struct {
 
 	push      pushService
 	chatStore chatRecords
-	// catalog is the workspace's ONE mode + model vocabulary. Both lists used to
-	// be stamped onto every chat record and every ChatHeader — 93.1% and 5.5% of a
-	// 1.25 MiB /api/chats response, identical across all 29 chats. See Catalog.
+	// catalog is the workspace's ONE mode + model vocabulary, served once rather
+	// than stamped onto every chat record and header. See Catalog.
 	catalog            *Catalog
 	mcpConfig          mcpNameSets
 	mcpRegistry        *mcpRegistry
@@ -185,8 +152,7 @@ type Runtime struct {
 	// config owns the KAS configuration surface (knowledge, hooks, governance,
 	// policy), all of it over the utility bridge. See config_plane.go.
 	config *Settings
-	// runs owns the workflow-run surface: 74 methods and the four fields only it
-	// touched (see run_plane.go). Runtime reaches it like any collaborator.
+	// runs owns the workflow-run surface (run_plane.go), reached like any collaborator.
 	runs          *Runs
 	runRoutes     *runRoutes
 	inbound       *inbound
@@ -198,32 +164,25 @@ type Runtime struct {
 	agentTerms    *agentTerminals
 	hookStatus    *hookStatusCache
 	// authLatch remembers the last outcome of vending a KAS access token, so
-	// readiness can report a dead sign-in without asking kiro-cli (see
-	// bridge_v3_auth.go).
+	// readiness can report a dead sign-in without asking kiro-cli.
 	authLatch *authTokenLatch
 
-	// secrets holds the credential blobs KAS asks vibekit to persist on its
-	// behalf (_kiro/secret/*, bridge_v3_secret.go). ONE store for every
-	// bridge: KAS's key namespace is global, so sharing it is what lets a
-	// second bridge reuse the first one's MCP registration. Nil in tests and
-	// when no configDir is set → the handlers report "absent", which degrades
-	// to the pre-capability behaviour rather than failing an MCP connect.
+	// secrets holds the credential blobs KAS asks vibekit to persist on its behalf
+	// (_kiro/secret/*). ONE store for every bridge: KAS's key namespace is global, so
+	// sharing it is what lets a second bridge reuse the first's MCP registration. Nil
+	// when no configDir is set, and the handlers then report "absent".
 	secrets *secretstore.Store
 
-	// tabs is the open-tab set, and membership is the coordinator over it and the
-	// chat store. Both are nil when no store is wired (no config dir), which the
-	// coordinator answers as unavailable rather than pretending an arrangement was
-	// saved.
-	//
-	// The runtime holds the coordinator only to hand it to retention's two hooks;
-	// every other caller is a command handler, which receives it at registration.
+	// tabs is the open-tab set, and membership the coordinator over it and the chat
+	// store. Both nil when no store is wired, which the coordinator answers as
+	// unavailable rather than pretending an arrangement was saved. The runtime holds
+	// the coordinator only to hand it to retention's two hooks.
 	tabs       *tabs.Store
 	membership *command.Membership
 
-	// steerLedger records the mid-turn steers this server sent, which is the
-	// only thing that tells the user's own words from a workflow reporting into
-	// the same KAS buffer. Written by the steer command, read by the translate
-	// layer, cleared at a chat's teardown.
+	// steerLedger records the mid-turn steers this server sent, the only thing that
+	// tells the user's own words from a workflow reporting into the same KAS buffer.
+	// Written by the steer command, read by translate, cleared at a chat's teardown.
 	steerLedger *command.SteerLedger
 
 	// Embedded ahead of the scalars below to keep govet fieldalignment happy:
@@ -232,10 +191,9 @@ type Runtime struct {
 	// Code-intelligence activation inputs + in-flight guard (code_intel.go).
 	ciGate func() bool
 	ciPath string
-	// acpArgs are the filtered operator kiro-cli launch flags
-	// (VIBEKIT_KIRO_ACP_ARGS via WithACPArgs). Chat bridges only. Ordered last
-	// among the pointer-bearing fields for govet fieldalignment: a slice is 8
-	// of 24 pointer bytes, less dense than a string's 8 of 16.
+	// acpArgs are the filtered operator kiro-cli launch flags (VIBEKIT_KIRO_ACP_ARGS
+	// via WithACPArgs). Chat bridges only. Last among the pointer-bearing fields for
+	// govet fieldalignment: a slice is 8 of 24 pointer bytes, a string 8 of 16.
 	acpArgs []string
 	ciBusy  atomic.Bool
 }
@@ -308,15 +266,13 @@ func WithKiroCLIPath(resolve func() string, env func() []string) Option {
 	return func(h *Runtime) { h.kiroToken = kiroauth.NewCLISource(resolve, env) }
 }
 
-// WithSessionReaper wires the KAS session reaper and the referenced-session
-// thunk. The reaper removes on-disk kiro-cli/KAS session state: promptly on
-// chat delete (via cleanupChatState) and via a periodic orphan sweep that
-// spares any session id refs reports as still referenced by a chat.
-// Unset in tests → session reaping is a no-op.
+// WithSessionReaper wires the KAS session reaper and the referenced-session thunk.
+// The reaper removes on-disk kiro-cli/KAS session state: promptly on chat delete,
+// and via a periodic orphan sweep that spares any session refs reports as still
+// referenced. Unset in tests → session reaping is a no-op.
 //
-// refs returns (set, complete). A false `complete` means the keep-list could
-// not be fully determined, and the sweep is SKIPPED rather than run against a
-// partial one — see sweepSessionsOnce.
+// refs returns (set, complete). A false `complete` means the keep-list could not
+// be fully determined, and the sweep is SKIPPED rather than run against a partial.
 func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[string]struct{}, bool)) Option {
 	return func(h *Runtime) {
 		h.sessionReaper = r
@@ -324,22 +280,14 @@ func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[st
 	}
 }
 
-// New constructs a Runtime. Bridges spawn with a fixed kiro-cli acp arg set
-// (agent engine + model + effort); tool-call authorization is owned by
-// kiro-cli's native Cedar policy on v3, not by CLI trust flags.
+// New constructs a Runtime. Bridges spawn with a fixed kiro-cli acp arg set (agent
+// engine + model + effort); tool-call authorization is kiro-cli's native Cedar
+// policy on v3, not CLI trust flags.
 //
-// ctx is the runtime's LIFETIME and is required: the runtime has no run
-// method to take it, so there is deliberately no nil check and no
-// WithLifetime option — a nil ctx panics in context.WithCancel below, which
-// is the refusal, and an option would be a default wearing a nicer name.
-//
-// New does NOT take ownership of ctx's cancellation. Shutdown cancels the
-// runtime's own child of it, so the caller may tear the runtime down first
-// and end the app's lifetime afterwards.
-//
-// chatStore is REQUIRED, on the same terms as ctx: requireWired refuses it
-// at construction, before a nil one could build a runtime that cannot serve
-// a single chat and defer the crash to the first ACP frame.
+// ctx is the runtime's LIFETIME and is required: there is deliberately no nil check
+// and no WithLifetime option — a nil ctx panics in context.WithCancel below, which
+// is the refusal. New does NOT take ownership of ctx's cancellation, so the caller
+// may tear the runtime down first. chatStore is REQUIRED on the same terms.
 func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStore chatRecords, opts ...Option) *Runtime {
 	sseHub := sse.NewHub(
 		sse.WithReplay(replayBufSize),
@@ -496,18 +444,14 @@ func (rt *Runtime) MCPSnapshot() []vibekit.MCPSnapshotServer {
 // tracks the live integration set.
 func (rt *Runtime) SetMCPOnChange(fn func()) { rt.mcpRegistry.SetOnChange(fn) }
 
-// SetPreBridgeSpawn wires a callback fired right before any kiro-cli bridge
-// starts. Used to refresh `environment.md` so the latest per-repo steering
-// inventory is on disk by the time kiro-cli reads it during session
-// creation.
+// SetPreBridgeSpawn wires a callback fired right before any kiro-cli bridge starts.
+// Used to refresh `environment.md` so the latest steering inventory is on disk by
+// the time kiro-cli reads it during session creation.
 //
-// The callback receives the per-request context so it can short-circuit on
-// client disconnection; it runs synchronously on the spawn path, so it must
-// be fast.
-//
-// The hook lives on the coordinator — its one reader — because a copy held
-// here would be captured by newBridgeCoordinator before the composition
-// root has called this, and a nil captured at construction is permanent.
+// The callback receives the per-request context so it can short-circuit on client
+// disconnection; it runs synchronously on the spawn path, so it must be fast. The
+// hook lives on the coordinator — its one reader — because a copy held here would
+// be captured by newBridgeCoordinator before the composition root has called this.
 func (rt *Runtime) SetPreBridgeSpawn(fn func(context.Context)) { rt.coord.preBridgeSpawn = fn }
 
 // RegisterRoutes wires /api/events (SSE), /api/command (POST), and
@@ -650,18 +594,14 @@ func (rt *Runtime) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
 	rt.bus.emit(evt)
 }
 
-// refuseWhenDraining answers 503 once Shutdown has flipped draining, for the
-// two routes that must stop accepting work before the HTTP drain begins:
-// commands and the event stream.
+// refuseWhenDraining answers 503 once Shutdown has flipped draining, for the two
+// routes that must stop accepting work before the HTTP drain begins: commands and
+// the event stream.
 //
-// It is a ROUTE wrapper, not a member of the global middleware chain,
-// because the chain covers /api/health, /api/version and static assets too,
-// and none of those should start failing while the process winds down.
-//
-// It is needed at all because webhttp's own drain gate flips LATER: draining
-// goes true at the start of agent.Shutdown, the library's gate when
-// srv.Shutdown begins, and the window between the two is the
-// last-instant-reconnect race.
+// A ROUTE wrapper, not a member of the global middleware chain, because the chain
+// covers /api/health, /api/version and static assets too. It is needed at all
+// because webhttp's own drain gate flips LATER, and the window between the two is
+// the last-instant-reconnect race.
 func (rt *Runtime) refuseWhenDraining(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if rt.lifecycle.draining.Load() {
@@ -698,17 +638,14 @@ func (rt *Runtime) sweepSessionsLoop() {
 	}
 }
 
-// sweepSessionsOnce runs one orphan-session sweep. The keep-list is every
-// session in every chat's CHAIN union every LIVE session, and both halves
-// are needed: age is not evidence that a session is disposable.
+// sweepSessionsOnce runs one orphan-session sweep. The keep-list is every session
+// in every chat's CHAIN union every LIVE session, and both halves are needed: age
+// is not evidence that a session is disposable.
 //
-// The live half exempts any bridge holding a session no chat references —
-// without it the sweep deletes on-disk KAS state from under a live
-// subprocess once it ages past the 10-minute create-race guard.
-//
-// A sweep is SKIPPED entirely when the keep-list is incomplete: sweeping
-// with a partial list deletes the sessions of whatever chat could not be
-// read.
+// The live half exempts any bridge holding a session no chat references — without
+// it the sweep deletes on-disk KAS state from under a live subprocess. A sweep is
+// SKIPPED entirely when the keep-list is incomplete, since sweeping with a partial
+// list deletes the sessions of whatever chat could not be read.
 func (rt *Runtime) sweepSessionsOnce() {
 	ctx, cancel := rt.lifecycle.derivedContext()
 	defer cancel()

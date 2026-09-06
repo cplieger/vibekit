@@ -3,20 +3,9 @@ package agent
 import "net/http"
 
 // runRoutes is the HTTP surface over the run lifecycle: the /api/runs and
-// /api/recipes endpoints plus the schedule CRUD.
-//
-// A deliberate adapter rather than a further split of Runs. Runs was 75
-// methods, well over the widest stdlib receiver, but the obvious cut — the
-// clock and the claims away from the executor — does NOT hold: the expiry path
-// has to issue the cancel, so the extracted type would call back into Runs
-// while Runs calls fifteen of its methods, and Google's coupling test answers
-// a mutual pair by combining, not separating.
-//
-// The transport IS separable, because the dependency runs one way: every
-// handler here parses a request, calls one domain method and writes a
-// response, and nothing in the domain calls a handler.
-//
-// It holds nothing but its subject, which is what an adapter should hold.
+// /api/recipes endpoints plus the schedule CRUD. A transport adapter only —
+// every handler parses a request, calls one Runs method and writes a response,
+// and nothing in Runs calls back into a handler.
 type runRoutes struct{ runs *Runs }
 
 // register mounts every run and schedule endpoint.

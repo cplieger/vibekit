@@ -17,18 +17,11 @@ import (
 )
 
 // gitDirName is the entry that marks a working tree: a DIRECTORY in an ordinary
-// clone and a regular FILE holding a `gitdir:` pointer in a linked worktree or a
-// submodule. Both readers of that fact key on this name (IsRepo and headBranch).
+// clone, a FILE holding a `gitdir:` pointer in a linked worktree or submodule.
 const gitDirName = ".git"
 
-// IsRepo reports whether dir contains a .git entry (directory for
-// regular repos, regular file for worktrees and submodules, or a
-// symlink to either — os.Stat follows symlinks).
-//
-// Exported for internal/steering, whose environment.md generator enumerates the
-// workspace's repositories. It was internal/fileutil.IsGitRepo, sharing a
-// package with two mode-enforcement functions on the strength of the word
-// "file"; git knowledge belongs with the git package.
+// IsRepo reports whether dir contains a .git entry, in any of its forms or as a
+// symlink to one (os.Stat follows symlinks).
 func IsRepo(ctx context.Context, dir string) bool {
 	if ctx.Err() != nil {
 		return false
@@ -37,9 +30,8 @@ func IsRepo(ctx context.Context, dir string) bool {
 	return err == nil
 }
 
-// maxRepoEntries caps the number of top-level directory entries scanned
-// for git repos. Prevents pathological workspaces from blocking the
-// handler indefinitely.
+// maxRepoEntries caps the top-level entries scanned, so a pathological workspace
+// cannot block the handler indefinitely.
 const maxRepoEntries = 1024
 
 // repoEntry is a discovered git repository with its name and absolute path.
@@ -48,9 +40,8 @@ type repoEntry struct {
 	Dir  string
 }
 
-// discoverRepos scans workDir for git repositories. Returns "." first
-// if workDir itself is a repo, then all immediate subdirectories that
-// are repos (sorted by name). Caps the scan at maxRepoEntries.
+// discoverRepos scans workDir for git repositories: "." first when workDir itself
+// is one, then every immediate subdirectory that is, sorted by name.
 func discoverRepos(ctx context.Context, workDir string) []repoEntry {
 	var repos []repoEntry
 	if IsRepo(ctx, workDir) {
@@ -73,12 +64,9 @@ func discoverRepos(ctx context.Context, workDir string) []repoEntry {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(8)
 	for _, e := range entries {
-		// Skip only ".git" itself — a dot-NAMED repo (".github", ".kiro")
-		// is a legitimate clone target; hiding every dot-dir made such a
-		// clone succeed on disk yet stay invisible to /api/git/repos and
-		// status-all, so the Sources row kept offering Clone (which then
-		// failed on the non-empty dir). Hidden non-repo dirs (.cache,
-		// .venv) cost one IsRepo stat and are skipped by its result.
+		// Only ".git" itself: a dot-NAMED repo (".github", ".kiro") is a legitimate
+		// clone target, and skipping every dot-dir made such a clone invisible here
+		// while the Sources row kept offering Clone into the non-empty directory.
 		if !e.IsDir() || e.Name() == ".git" {
 			continue
 		}
@@ -99,8 +87,8 @@ func discoverRepos(ctx context.Context, workDir string) []repoEntry {
 	return repos
 }
 
-// cachedDiscoverRepos wraps discoverRepos in a singleflight so
-// concurrent callers (multi-tab, SSE reconnect) share one scan.
+// cachedDiscoverRepos wraps discoverRepos in a singleflight, so concurrent callers
+// (multi-tab, SSE reconnect) share one scan.
 func (h *Handler) cachedDiscoverRepos(ctx context.Context) []repoEntry {
 	v, _, _ := h.repoFlight.Do("discover", func() (any, error) {
 		return discoverRepos(ctx, h.workDir), nil
@@ -109,19 +97,14 @@ func (h *Handler) cachedDiscoverRepos(ctx context.Context) []repoEntry {
 	return r
 }
 
-// ownerOf resolves which discovered repository owns a WORKSPACE-relative
-// path, returning the repo name and the path rewritten repo-relative.
-// ok is false when no repo owns it.
+// ownerOf resolves which discovered repository owns a WORKSPACE-relative path,
+// returning the repo name and the path rewritten repo-relative; ok is false when
+// no repo owns it. Longest name first, so a nested repo wins over its ancestor,
+// and the workspace-root repo (".") owns whatever no subdirectory repo claims.
 //
-// This lives on the server because the server owns the repo inventory. The
-// client cannot do the split without a second copy of this rule, and the one
-// place it tried (git-status-store.ts, which composed "<repoName>/<relPath>"
-// keys and then looked them up with absolute paths) got it wrong and silently
-// showed no status at all. One rule, one owner.
-//
-// Longest name first, so a repo nested inside another wins over its ancestor.
-// The workspace-root repo (".") owns everything no subdirectory repo claims,
-// which reproduces the previous default without making it the only answer.
+// Server-side because the server owns the repo inventory: a client-side split
+// needs a second copy of this rule, and the one that existed got it wrong and
+// showed no status at all.
 func (h *Handler) ownerOf(ctx context.Context, relPath string) (repo, inRepo string, ok bool) {
 	repos := h.cachedDiscoverRepos(ctx)
 	best := -1

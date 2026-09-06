@@ -1,12 +1,5 @@
 package agent
 
-// The two translate roles that are genuinely ADAPTERS rather than forwards:
-// mcpRecorder narrows five unexported registry methods to an exported contract,
-// and Output renders a terminal's raw ring on demand. Every plain forward that
-// used to live here (ChatRecords, ParentACPSession, WorkDir, PendingPermsAdd,
-// NotifyPush, BufferStore, LineTracker, IsHookStatusEnabled) was deleted rather
-// than moved once translate.Roles went flat and each field named its own owner.
-
 import (
 	"reflect"
 
@@ -14,23 +7,17 @@ import (
 	"github.com/cplieger/vibekit/internal/translate"
 )
 
-// IsScheduled reports whether a run was launched by a schedule.
-//
-// The run's LEASE already records that — it is what gates the deny-fast
-// permission floor — so this exports the fact rather than tracking it twice.
-// Granted between `new` and `invoke` in launch, before the first lifecycle
-// frame can arrive, so a run_start reaching translate always sees the origin
-// its launch recorded.
+// IsScheduled reports whether a run was launched by a schedule, reading the LEASE
+// that already records it. The lease is granted between `new` and `invoke`, before
+// the first lifecycle frame, so a run_start reaching translate sees the origin.
 func (rs *Runs) IsScheduled(workflowID string) bool {
 	l, ok := rs.lease(workflowID)
 	return ok && l.Origin == runlease.OriginScheduled
 }
 
-// translateRoles is the translate wiring, named so it can be asserted rather
-// than only executed. Every field points at its OWNER, read HERE at
-// construction so each owner must already exist — requireWired enforces that,
-// catching a missing owner with the field's name instead of as a nil-receiver
-// panic on the first session update.
+// translateRoles is the translate wiring, named so it can be asserted rather than
+// only executed. Every field is read HERE at construction, so its owner must already
+// exist; requireWired names the missing field instead of panicking on the first frame.
 func (rt *Runtime) translateRoles() *translate.Roles {
 	return requireWired(&translate.Roles{
 		Bus:   rt.bus,
@@ -40,8 +27,8 @@ func (rt *Runtime) translateRoles() *translate.Roles {
 		Buffers: rt.coord,
 		Turns:   rt.coord,
 		Lines:   rt.lines,
-		// The ledger of steers this server sent — the whole discriminator between
-		// the user's own words and a workflow reporting into the same buffer.
+		// The ledger of steers this server sent — the discriminator between the
+		// user's own words and a workflow reporting into the same buffer.
 		Steers:       rt.steerLedger,
 		PendingPerms: rt.bus,
 		// rt, not the coordinator: BridgeRespond resolves the reply bridge from
@@ -64,13 +51,10 @@ func (rt *Runtime) translateRoles() *translate.Roles {
 	})
 }
 
-// requireWired panics unless every role in r has an owner.
-//
-// A PANIC, not a logged warning: a nil role is a programming mistake in this
-// package's own constructor, fixable only by editing the constructor — the
-// alternative is a server that boots and dies on the first frame of the first
-// turn. Reflection rather than a hand-written field list, so a newly added
-// field is checked without anyone remembering to edit a list.
+// requireWired panics unless every role in r has an owner. A panic, not a warning: a
+// nil role is a mistake in this package's own constructor, and the alternative is a
+// server that boots and dies on the first frame. Reflection so a new field is checked
+// without anyone remembering a list.
 func requireWired(r *translate.Roles) *translate.Roles {
 	v := reflect.ValueOf(r).Elem()
 	for i := range v.NumField() {
@@ -82,8 +66,7 @@ func requireWired(r *translate.Roles) *translate.Roles {
 			}
 		case reflect.Interface:
 			// A role assigned from a nil *T is a non-nil INTERFACE holding a nil
-			// pointer, so IsNil() on the field is false while the receiver is
-			// still nil. Reaching through with Elem() is what catches it.
+			// pointer, so only reaching through with Elem() catches it.
 			if f.IsNil() {
 				panic("agent: translate role " + name + " is nil at construction — its owner is " +
 					"assigned after the roles literal in agent.New")

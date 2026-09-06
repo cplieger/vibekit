@@ -1,8 +1,7 @@
 package translate
 
-// Tests for the terminal link on a tool call: where the id comes from, WHEN it
-// is adopted relative to the status fold, and what happens when the output it
-// names is gone.
+// The terminal link on a tool call: where the id comes from, WHEN it is adopted
+// relative to the status fold, and what happens when the output it names is gone.
 
 import (
 	"bytes"
@@ -13,15 +12,11 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// BF5. A single frame can carry both the type:"terminal" content block and
-// `completed`. With the status fold running first, that frame's adoption looked
-// up an id the tool call did not yet have — and never would, because the update
-// carrying the link had already gone by. The measured symptom was a finished
-// command whose card persisted an empty output.
-//
-// This is the test that fails if the two folds are ever reordered: the link and
-// the terminal status arrive in ONE frame, which is the only arrangement that
-// can tell the difference.
+// A single frame can carry both the type:"terminal" content block and `completed`,
+// so the link must be set before adoption runs — with the status fold first,
+// adoption looks up an id the tool call does not yet have and never will, and the
+// card persists an empty output. One frame carrying both is the only arrangement
+// that can tell the two orderings apart.
 func TestAdoptTerminalOutput_LinkAndCompletionInOneFrame(t *testing.T) {
 	const termID = "term-1"
 	tr, _, deps, events, chatID := primeToolCall(t)
@@ -64,8 +59,7 @@ func TestAdoptTerminalOutput_LinkOnAnEarlierFrame(t *testing.T) {
 		"toolCallId": "tc-1", "status": "in_progress",
 		"content": []map[string]any{{"type": "terminal", "terminalId": termID}},
 	}), FrameAttribution{})
-	// An in_progress frame must NOT adopt: the command is still running, so the
-	// bytes are provisional and the live stream owns them.
+	// No adoption while the command runs: the live stream owns those bytes.
 	if tc, ok := lastToolCallUpdate(t, deps, events); ok && tc.Output != "" {
 		t.Errorf("output = %q on an in_progress frame, want it empty until completion", tc.Output)
 	}
@@ -82,11 +76,9 @@ func TestAdoptTerminalOutput_LinkOnAnEarlierFrame(t *testing.T) {
 	}
 }
 
-// The terminal's output WINS over anything already on the tool call. Two things
-// can have put text there: an earlier ACP content block (a fragment of what the
-// terminal holds in full), or KAS's synthesized explanation for a command that
-// never spawned — and the second only happens when there is no terminal, so it
-// never reaches this path. Preferring the tool call would persist the fragment.
+// The terminal's output WINS over anything already on the tool call, because what
+// is already there is an earlier ACP content block — a fragment of what the
+// terminal holds in full — and preferring the tool call would persist it.
 func TestAdoptTerminalOutput_TerminalWinsOverAnEarlierFragment(t *testing.T) {
 	const termID = "term-3"
 	tr, _, deps, events, chatID := primeToolCall(t)
@@ -128,12 +120,10 @@ func TestParseToolUpdateContent_TerminalBlockContributesNoOutput(t *testing.T) {
 	}
 }
 
-// The signal that makes this whole adoption path diagnosable: a terminal link
-// that resolves to no record. An empty card is otherwise indistinguishable from
-// a command that printed nothing — which is exactly how agent output stayed
-// invisible for the whole life of the feature. The benign cases must stay silent
-// or the signal is worthless, and the most common benign case by far is a
-// command that legitimately printed nothing.
+// A terminal link resolving to no record is the only signal that makes this path
+// diagnosable, since an empty card is otherwise indistinguishable from a command
+// that printed nothing. The benign cases must stay silent or the signal is
+// worthless.
 //
 // Not parallel: captureSlog swaps the process-global slog default.
 func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
@@ -142,9 +132,8 @@ func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
 		name string
 		// terminal, when non-nil, is registered under the id the tool call links.
 		terminal *termRendered
-		// priorOutput, when set, arrives on an earlier in_progress frame — the
-		// fold applies a same-frame content block AFTER adoption, so this is the
-		// only way to have text on the call before the miss.
+		// priorOutput arrives on an earlier in_progress frame: a same-frame block
+		// folds AFTER adoption, so it cannot be on the call before the miss.
 		priorOutput  string
 		linkTerminal bool
 		wantWarn     bool
@@ -201,9 +190,8 @@ func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
 			if !tt.wantWarn {
 				return
 			}
-			// The line has to be actionable: the terminal id is the only handle on
-			// the runtime-side record, and the byte count is what separates an empty
-			// card from a surviving fragment.
+			// The terminal id is the only handle on the runtime-side record, and the
+			// byte count separates an empty card from a surviving fragment.
 			for _, want := range []string{
 				"terminal_id=" + termID, "tool_call_id=tc-1",
 				"chat_id=" + string(chatID), tt.wantBytes,
@@ -216,9 +204,8 @@ func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
 	}
 }
 
-// The link is also taken from the INITIAL tool_call frame, which is what lets the
-// card subscribe to the live stream from its first paint rather than waiting for
-// an update.
+// The link is also taken from the INITIAL tool_call frame, so the card can
+// subscribe to the live stream from its first paint rather than after an update.
 func TestHandleToolCall_TakesTheTerminalLinkFromTheCreateFrame(t *testing.T) {
 	deps, _, events := newLineCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "tc-mid" }))
@@ -243,17 +230,13 @@ func TestHandleToolCall_TakesTheTerminalLinkFromTheCreateFrame(t *testing.T) {
 	t.Fatal("no tool_call event was broadcast")
 }
 
-// TestApplyToolCallStatus_SecondTerminalFrameKeepsTheFirstDuration is the
-// call-site guard for the destructive duration read.
-//
 // buffer.ComputeDuration CONSUMES its start time, so it answers 0 on a second
 // read, and KAS can send more than one terminal status frame for one tool call.
-// Assigning it unconditionally wrote that 0 over a correct duration; the SSE
-// carried it, the turn-end persist made it durable, and chat/export_md.go then
-// dropped the Duration line entirely because it is gated on a positive value.
+// Assigning it unconditionally writes that 0 over a correct duration, which the
+// turn-end persist then makes durable.
 //
-// The start time is staged rather than slept for, so the expected duration is a
-// fixed number instead of whatever the clock happened to do.
+// The start time is staged rather than slept for, so the expectation is a fixed
+// number rather than whatever the clock did.
 func TestApplyToolCallStatus_SecondTerminalFrameKeepsTheFirstDuration(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	buf := deps.bufStore.GetOrInit(chatID)

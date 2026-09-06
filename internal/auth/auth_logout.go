@@ -16,34 +16,26 @@ import (
 	"github.com/cplieger/webhttp/v2"
 )
 
-// handleLogout shells out to `kiro-cli logout`, feeding "y\n" on stdin to
-// acknowledge the confirmation prompt, and returns the stdout+stderr as
-// "output". Command failures surface with status codes that let Grafana
-// distinguish timeout vs CLI failure vs missing binary: 504 for the
-// LogoutTimeout backstop, 503 when kiro-cli is missing, 502 for any other
-// non-zero exit.
+// handleLogout shells out to `kiro-cli logout`, feeding "y\n" on stdin to acknowledge the
+// confirmation prompt, and returns stdout+stderr as "output". The failure statuses tell the
+// causes apart: 504 for the LogoutTimeout backstop, 503 when kiro-cli is missing, 502 otherwise.
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	// Audit trail: record every /api/logout POST. See handleLogin for the
-	// rationale; whoami is intentionally skipped since it fires on every
-	// page load and SSE reconnect.
+	// Audit trail: every /api/logout POST is recorded; handleLogin owns the rationale.
 	slog.Info("logout: request received",
 		"client_ip", webhttp.ClientIP(r, h.trusted...),
 		"user_agent", r.Header.Get("User-Agent"))
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.LogoutTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, h.cliPath(), "logout") //nolint:gosec // G204: binary path from config
-	// Honour LogoutTimeout rather than the child's lifetime — see
-	// boundChild.
+	// Honour LogoutTimeout rather than the child's lifetime; boundChild owns how.
 	boundChild(cmd)
 	cmd.Stdin = strings.NewReader("y\n")
-	// Bounded combined stdout+stderr capture so a runaway CLI can't OOM
-	// the container. One procout.Buffer for both streams: os/exec drains
-	// them through one pipe with one goroutine when they are the same
-	// value.
+	// Bounded capture so a runaway CLI cannot OOM the container. One Buffer for both streams:
+	// os/exec drains them through one pipe with one goroutine when they are the same value.
 	buf := procout.NewBuffer(logoutMaxOutput)
 	cmd.Stdout = buf
 	cmd.Stderr = buf
@@ -53,8 +45,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
-			// boundChild's Cancel has already killed the group by the
-			// time Run returns.
+			// boundChild's Cancel has already killed the group by the time Run returns.
 			slog.Warn("logout: kiro-cli timed out",
 				"timeout", h.cfg.LogoutTimeout, "output_bytes", len(out))
 			result["error"] = "logout timed out"
@@ -67,9 +58,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, result)
 			return
 		default:
-			// Log err details server-side; return a generic sentinel
-			// so filesystem paths / OS messages don't leak to the
-			// client.
+			// A generic sentinel to the client, so filesystem paths and OS messages do not leak.
 			slog.Warn("logout: kiro-cli failed",
 				"error", err, "output_bytes", len(out))
 			result["error"] = "logout failed"
@@ -78,19 +67,16 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	slog.Info("logout: completed", "output_bytes", len(out))
-	// Published rather than re-read: a clean `kiro-cli logout` exit IS the
-	// answer, so forking a second kiro-cli to be told what we just did would
-	// only add a window in which the sidebar still shows the old identity.
+	// Published rather than re-read: a clean `kiro-cli logout` exit IS the answer, and forking a
+	// second kiro-cli would only add a window in which the sidebar still shows the old identity.
 	signedOut := signedOutIdentity()
 	h.identity.publish(&signedOut)
 	webhttp.WriteJSON(w, result)
 }
 
-// killProcessGroup sends SIGKILL to the entire process group of a kiro-cli
-// subprocess. kiro-cli is a bun/Node wrapper that may spawn helper children;
-// killing only the parent leaves orphans pinning the stdout pipe open. See
-// procgroup_unix.go / procgroup_other.go for the platform split. Idempotent:
-// calling after the process has already been reaped is a no-op.
+// killProcessGroup SIGKILLs the whole process group of a kiro-cli subprocess: kiro-cli is a
+// bun/Node wrapper that may spawn helper children, and killing only the parent leaves orphans
+// pinning the stdout pipe open. Idempotent — a call after the process was reaped is a no-op.
 func killProcessGroup(cmd *exec.Cmd) {
 	if cmd.Process == nil {
 		return
@@ -99,9 +85,8 @@ func killProcessGroup(cmd *exec.Cmd) {
 	if err == nil {
 		return
 	}
-	// Both the group kill and single-PID fallback can race with cmd.Wait
-	// reaping the subprocess. procgroup.AlreadyGone owns which errors mean
-	// "already gone".
+	// Both the group kill and the single-PID fallback can race with cmd.Wait reaping the
+	// subprocess; procgroup.AlreadyGone owns which errors mean "already gone".
 	if procgroup.AlreadyGone(err) {
 		slog.Debug("auth: kill group no-op (already reaped)",
 			"group_err", err)

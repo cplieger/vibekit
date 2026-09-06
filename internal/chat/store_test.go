@@ -78,12 +78,10 @@ func newCappedTestStore(t *testing.T, capBytes int64) *Store {
 	return s
 }
 
-// writeOversizeChat writes a VALID chat file whose encoded size exceeds
-// capBytes, so a refusal can only come from the size gate.
-//
-// Real bytes rather than a sparse os.Truncate: the header path now streams and
-// parses, so a sparse file of NUL bytes would be refused as malformed JSON and
-// the test would pass without the size gate existing.
+// writeOversizeChat writes a VALID chat file whose encoded size exceeds capBytes, so a
+// refusal can only come from the size gate. Real bytes rather than a sparse os.Truncate:
+// the header path streams and parses, so a file of NUL bytes would be refused as
+// malformed JSON and the test would pass with no size gate at all.
 func writeOversizeChat(t *testing.T, path string, capBytes int64) {
 	t.Helper()
 	id := strings.TrimSuffix(filepath.Base(path), chatFileSuffix)
@@ -219,16 +217,9 @@ func TestMutate_RejectsBadChatID(t *testing.T) {
 
 // --- Broadcaster contract ---
 
-// BroadcasterContractTest verifies that a Broadcaster implementation
-// satisfies the expected semantics under concurrent Broadcast calls:
-//  1. Events appear in the order they were submitted (when serialised
-//     by a single goroutine) — i.e. the implementation is linearisable
-//     from a single-writer perspective.
-//  2. Broadcast never blocks indefinitely (completes within a timeout).
-//
-// The test is parameterised so it can be reused against any Broadcaster
-// implementation (fakeBroadcaster today, SSE broadcaster in integration
-// tests later).
+// BroadcasterContractTest checks a Broadcaster against two semantics, parameterised so
+// any implementation can be driven through it: events submitted by a single goroutine
+// appear in submission order, and Broadcast never blocks indefinitely.
 func BroadcasterContractTest(t *testing.T, newBroadcaster func() broadcaster) {
 	t.Helper()
 
@@ -337,21 +328,11 @@ func TestGet_MissingChat(t *testing.T) {
 
 // --- List ---
 
-// TestList_SortsByUpdatedAtDesc runs in a synctest bubble, which is what lets it
-// assert the gap between the two timestamps EXACTLY rather than nudge a real
-// clock and hope.
-//
-// The two `time.Sleep(2 * time.Millisecond)` calls this replaces were class (b)
-// — advancing a real clock the test could not fake — and their comment said so:
-// "nudge the wall clock so the UpdatedAt ms timestamps don't collide on fast
-// machines". Inside the bubble the clock is synthetic, so the nudge is exact and
-// the ordering is deterministic by construction instead of by resolution.
-//
-// Measured: atomicfile.WriteFile's real filesystem work (mkdir walk, fsync,
-// rename, parent fsync) is fine in here. That is the documented boundary —
-// TRANSIENT file I/O reaches a durably-blocked state afterwards, so the clock
-// still advances; only a goroutine parked indefinitely on an external FD defeats
-// a bubble.
+// TestList_SortsByUpdatedAtDesc runs in a synctest bubble so the gap between the two
+// UpdatedAt stamps is EXACT rather than a wall-clock nudge that collides on a fast
+// machine. atomicfile.WriteFile's real filesystem work is fine inside one: TRANSIENT
+// file I/O reaches a durably-blocked state afterwards, so the synthetic clock still
+// advances, and only a goroutine parked indefinitely on an external FD defeats a bubble.
 func TestList_SortsByUpdatedAtDesc(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s, _ := newTestStore(t)
@@ -732,22 +713,12 @@ func TestHandleOne_ReturnsChatAndMessages(t *testing.T) {
 	}
 }
 
-// TestHandleOne_PaginationSurvivesUnorderedTimestamps pins the two states that
-// made the previous `?before=<ts>` cursor lose a page, because both are reachable
-// on the real wire and neither is exotic.
-//
-// The cursor resolved a millisecond timestamp with sort.Search, which needs
-// Message.Ts to be non-decreasing across the slice. Nothing makes that true:
-// render order is array position, and translate.newEventMessage stamps Ts at
-// CONSTRUCTION, outside the per-chat lock AppendMessage takes, so two writers can
-// stamp in one order and append in the other. Separately,
-// projection.applySummary gives a compaction event its predecessor's exact Ts on
-// purpose, so a tie group always exists after a replayed compaction.
-//
-// Both cases assert the same property: paging back from the newest window returns
-// the messages immediately before it, in array order, with none skipped. Run
-// against the old cursor, the tie case returns "a" only (the whole tie group is
-// excluded at once) and the inverted case returns an arbitrary window.
+// TestHandleOne_PaginationSurvivesUnorderedTimestamps: paging back from the newest
+// window must return the messages immediately before it, in array order, with none
+// skipped. A timestamp cursor cannot promise that, because nothing makes Message.Ts
+// non-decreasing across the slice — render order is array position, Ts is stamped at
+// CONSTRUCTION outside the per-chat lock, and projection.applySummary deliberately
+// gives a compaction event its predecessor's exact Ts, so tie groups always exist.
 func TestHandleOne_PaginationSurvivesUnorderedTimestamps(t *testing.T) {
 	cases := []struct {
 		name     string

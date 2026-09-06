@@ -68,21 +68,11 @@ func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 // readKiroSettings answers GET /api/kiro-settings?keys=a,b,c — or every
 // allowlisted key when the parameter is absent — as {"settings": {key: value}}.
 //
-// ONE SUBPROCESS FOR THE WHOLE ANSWER. It used to read one key per request off
-// `kiro-cli settings <key>`, so the Settings → General panel opened three
-// concurrent requests and three spawns of a 3 s budget each; `settings list`
-// answers every key at once (see settingsListArgs for the measurement).
-//
-// A key the list read does not answer falls back to the per-key invocation
-// rather than reporting no value: `settings list` is what the installed 2.20.2
-// serves, and a build pinned to something older must still fill the panel.
-//
-// ONE DEADLINE FOR THE WHOLE READ, set here and shared by every spawn, which is
-// what bounds that fallback: the per-key reads are sequential and an absent ?keys=
-// names the entire allowlist, so a per-spawn budget made a degraded read cost N ×
-// cliTimeouts.Settings — six keys is 18 s of the client's 30 s API timeout for one
-// panel. A key the deadline arrives before answers "", which the client renders as
-// the control's default.
+// One `settings list` spawn answers the whole read, falling back to the per-key
+// invocation for a key it does not carry — a build older than 2.20.2 must still
+// fill the panel. ONE DEADLINE covers every spawn, which is what bounds that
+// fallback: the per-key reads are sequential and an absent ?keys= names the whole
+// allowlist. A key the deadline beats answers "", rendered as the default.
 func (s *Server) readKiroSettings(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	if unknownKiroSettingsQuery(q) {

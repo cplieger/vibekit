@@ -8,34 +8,22 @@ import (
 )
 
 // Catalog is the workspace's mode and model catalog: what KAS says this
-// workspace can run, held once.
-//
-// It exists because the same two lists used to be stamped onto every chat
-// record and onto every ChatHeader. Per-field measurement of the 1.25 MiB
-// /api/chats response: available_modes 1,236,118 B (93.1%), available_models
-// 73,090 B (5.5%), everything else under 1% — 59 modes repeated across 29
-// chats, identical in all of them, fetched twice per boot. They are a
-// workspace fact wearing a per-chat costume.
-//
-// What stays per-chat is the chat's CHOICE: CurrentModeID, Model, Effort. Those
-// differ between chats; the vocabulary they are chosen from does not.
+// workspace can run, held once for the whole workspace rather than per chat. A
+// chat owns only its CHOICE (CurrentModeID, Model, Effort), not the vocabulary.
 //
 // The stored modes are the ones KAS reported, so the shadowing between a
 // workspace agent and a bundled mode of the same id arrives already resolved.
-// A client must not re-derive that.
+// A client must not re-derive it.
 type Catalog struct {
 	modes  []vibekit.SessionMode
 	models []vibekit.SessionModel
 	mu     sync.Mutex
 }
 
-// SetModes replaces the mode vocabulary, reporting whether it changed.
-//
-// An EMPTY list is ignored, and that is the same rule applyLoadedSessionFacts
-// needed when these lived on the chat: session/load omits the catalog routinely
-// (KAS resolves it asynchronously), and modes have no repair channel — a live
-// config_option_update carries models, never modes. So an emptied mode list
-// would stay empty for the rest of the session.
+// SetModes replaces the mode vocabulary, reporting whether it changed. An EMPTY
+// list is ignored: session/load routinely omits the catalog while KAS resolves
+// it, and modes have no repair channel (config_option_update carries models
+// only), so an emptied mode list would stay empty for the whole session.
 func (c *Catalog) SetModes(modes []vibekit.SessionMode) bool {
 	if len(modes) == 0 {
 		return false
@@ -64,11 +52,9 @@ func (c *Catalog) SetModels(models []vibekit.SessionModel) bool {
 	return true
 }
 
-// Modes returns the mode vocabulary, or nil before anything has reported one.
-//
-// A clone, because the caller is a JSON encoder or a picker and the holder's
-// slice must not be reachable from either. SessionMode holds only strings, so
-// one level of copy is the whole value.
+// Modes returns a clone of the mode vocabulary, or nil before anything has
+// reported one. SessionMode holds only strings, so one level of copy is the
+// whole value.
 func (c *Catalog) Modes() []vibekit.SessionMode {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -84,12 +70,8 @@ func (c *Catalog) Models() []vibekit.SessionModel {
 }
 
 // DefaultEffortFor returns the model's own default reasoning tier, or "" when
-// the catalog does not know that model.
-//
-// Here rather than at the caller because the catalog is the only thing that
-// knows: the caller (a model switch) has an id and needs the tier that id runs
-// at, and reaching into a cloned slice to look it up would copy the whole
-// catalog to read one field.
+// the catalog does not know that model. Here rather than at the caller so a
+// lookup of one field does not clone the whole catalog.
 func (c *Catalog) DefaultEffortFor(model string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()

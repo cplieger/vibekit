@@ -20,20 +20,12 @@ import (
 // the header scan must recognise rather than capture.
 const keyMessages = "messages"
 
-// openChatFile opens path for reading, with the FileInfo the open produced.
-//
-// atomicfile.OpenRegular, NOT os.Open: os.Open on a FIFO blocks in open(2) with no
-// deadline able to rescue it (measured on go1.27.0, past 2s), and this directory
-// is on the /config volume the agent's own shell can reach, so
-// `mkfifo <chats>/<valid-chat-id>.json` was a one-command permanent wedge for
-// every serialised reader. OpenRegular refuses a non-regular file and a
-// final-component symlink on the open itself.
+// openChatFile opens path for reading, with the FileInfo the open produced. OpenRegular and NOT
+// os.Open: os.Open on a FIFO blocks in open(2) with no deadline able to rescue it (go1.27.0),
+// and this directory is writable by the agent's own shell, so one mkfifo wedges every reader.
 func openChatFile(path, label string) (*os.File, os.FileInfo, error) {
-	// The guard exists to make the safety property visible to CodeQL's
-	// go/path-injection analyzer, which does not follow ValidChatID across
-	// packages. KNOWN VACUITY, deliberately preserved: it runs on the CLEANED
-	// value, so no ".." component can survive and the traversal test cannot fire.
-	// Judging the raw value would refuse a legal KIRO_CONFIG_DIR holding "..".
+	// For CodeQL's go/path-injection analyzer, which does not follow ValidChatID across packages.
+	// KNOWN VACUITY: it runs on the CLEANED value, so the traversal test cannot fire.
 	clean := filepath.Clean(path)
 	if !filepath.IsAbs(clean) || pathinside.HasDotDot(clean) {
 		return nil, nil, fmt.Errorf("%s: rejected unsafe path %q", label, path)
@@ -41,25 +33,18 @@ func openChatFile(path, label string) (*os.File, os.FileInfo, error) {
 	return atomicfile.OpenRegular(clean)
 }
 
-// readCappedFile reads a whole file at path under fileCap, plus the TOCTOU
-// grow-during-read guard. Returns the raw bytes.
-//
-// Whole-file is correct HERE and only here: readChatFile runs one chat at a
-// time under that chat's own lock. The header path carries the 8x
-// readHeadersParallel multiplier and streams instead.
+// readCappedFile reads a whole file at path under fileCap, plus the TOCTOU grow-during-read
+// guard. Whole-file is correct HERE and only here: readChatFile runs one chat at a time under
+// that chat's own lock, while the header path carries an 8x multiplier and streams instead.
 func readCappedFile(path, label string, fileCap chatFileCap) ([]byte, error) {
 	f, info, err := openChatFile(path, label)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	// ReadBoundedFile is the size cap AND the grow-during-read guard: it stats
-	// the descriptor, refuses over the bound, and refuses again if the file grew
-	// past it while being read. chatFileCap.readBound says what an unlimited cap
-	// passes and why the guard survives it.
-	// context.Background() because no read path here carries one — threading
-	// one through would change the archive interface for a bound that is
-	// already enforced.
+	// ReadBoundedFile is the size cap AND the grow-during-read guard: it stats the descriptor,
+	// refuses over the bound, and refuses again if the file grew past it while being read.
+	// context.Background() because no read path here carries one.
 	data, err := atomicfile.ReadBoundedFile(context.Background(), f, fileCap.readBound(info.Size()))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", label, err)
@@ -81,20 +66,16 @@ func readChatFile(path, label string, fileCap chatFileCap) (*vibekit.Chat, error
 	return &c, nil
 }
 
-// chatHeaderOnDisk is the header projection's decode target. Embeds
-// vibekit.ChatHeader so a new header field flows through with no mapping step
-// here; MessageCount is not on the wire and is counted separately.
+// chatHeaderOnDisk is the header projection's decode target. Embedding ChatHeader means a new
+// header field flows through with no mapping step; MessageCount is counted separately.
 type chatHeaderOnDisk struct {
 	vibekit.ChatHeader
 }
 
 // readChatHeader STREAMS a chat file and returns only its header fields, because
-// readHeadersParallel runs this at 8 workers per chat: reading first cost 8x the
-// largest chats at once, and nothing here holds a message byte.
-//
-// Two independent gates: maxHeaderScanBytes bounds the scan even when fileCap is
-// unlimited, and fileCap refuses what the full read would refuse anyway, so the
-// sidebar and the transcript agree about which chats exist.
+// readHeadersParallel runs this at 8 workers per chat. Two independent gates: maxHeaderScanBytes
+// bounds the scan even when fileCap is unlimited, and fileCap refuses what the full read would
+// refuse anyway, so the sidebar and the transcript agree about which chats exist.
 func readChatHeader(path, label string, fileCap chatFileCap) (*vibekit.ChatHeader, error) {
 	f, info, err := openChatFile(path, label)
 	if err != nil {
@@ -114,19 +95,16 @@ func readChatHeader(path, label string, fileCap chatFileCap) (*vibekit.ChatHeade
 	return h, nil
 }
 
-// decodeChatHeader is the projection itself, over any reader, so the parsing
-// contract is testable without a file. Every member except `messages` is captured
-// RAW and handed to encoding/json in one object, which keeps chatHeaderOnDisk's
-// field mapping automatic where a case per key would make a new ChatHeader field
-// an edit here.
+// decodeChatHeader is the projection itself, over any reader, so the parsing contract is testable
+// without a file. Every member except `messages` is captured RAW and handed to encoding/json in
+// one object, which keeps chatHeaderOnDisk's field mapping automatic.
 func decodeChatHeader(r io.Reader) (*vibekit.ChatHeader, error) {
 	head := make(map[string]json.RawMessage)
 	count := 0
 	dec := jsoncap.NewDecoder(r, 0)
 	err := dec.Object(func(key string) error {
-		// EqualFold for the reason readRetentionHeader documents: encoding/json
-		// matches a field tag case-insensitively and is the OTHER reader of this
-		// same file, so a chat carrying "Messages" must not be captured whole.
+		// EqualFold because encoding/json matches a field tag case-insensitively and is the OTHER
+		// reader of this same file, so a chat carrying "Messages" must not be captured whole.
 		if strings.EqualFold(key, keyMessages) {
 			n, cerr := countStreamedArrayElements(dec)
 			count = n
@@ -154,12 +132,10 @@ func decodeChatHeader(r io.Reader) (*vibekit.ChatHeader, error) {
 	return &h.ChatHeader, nil
 }
 
-// countStreamedArrayElements consumes one JSON array from dec, counting its
-// top-level elements and materializing none of them. A JSON null counts 0; any
-// other non-array value is an error, which is stricter than the whole-file read
-// this replaced and agrees with readChatFile — a `messages` member that is not
-// an array fails json.Unmarshal into vibekit.Chat, so tolerating it here listed
-// a chat in the sidebar that could not be opened.
+// countStreamedArrayElements consumes one JSON array from dec, counting its top-level elements
+// and materializing none of them. A JSON null counts 0; any other non-array value is an error,
+// which agrees with readChatFile — a `messages` member that is not an array fails Unmarshal into
+// vibekit.Chat, so tolerating it here listed a chat in the sidebar that could not be opened.
 func countStreamedArrayElements(dec *jsoncap.Decoder) (int, error) {
 	ok, err := dec.Open('[')
 	if err != nil || !ok {

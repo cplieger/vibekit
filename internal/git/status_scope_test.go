@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-// mkRepo creates a git repository at name under workDir and returns its path.
 func mkRepo(t *testing.T, workDir, name string) string {
 	t.Helper()
 	dir := filepath.Join(workDir, name)
@@ -21,8 +20,7 @@ func mkRepo(t *testing.T, workDir, name string) string {
 	return dir
 }
 
-// snapshotRepos is the repository names the holder currently answers with, sorted
-// so an assertion does not depend on scan order.
+// snapshotRepos sorts, so an assertion does not depend on scan order.
 func snapshotRepos(h *Handler, key string) []string {
 	snap, _ := h.statusCache.read(key)
 	names := make([]string, 0, len(snap.rows()))
@@ -33,8 +31,6 @@ func snapshotRepos(h *Handler, key string) []string {
 	return names
 }
 
-// waitForRepoRow polls the holder until the row for repo carries the marker a
-// scoped scan would have produced: a dirty working tree.
 func waitForRepoRow(t *testing.T, h *Handler, key, repo string, wantDirty bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -55,27 +51,18 @@ func waitForRepoRow(t *testing.T, h *Handler, key, repo string, wantDirty bool) 
 
 // A scoped read rescans ONLY the repositories owning the named paths and MERGES the
 // result, so every other row survives.
-//
-// This is the whole point of `?paths=`: a single-file edit costs one repository's two
-// git subprocesses rather than the whole tree's, which is what makes a refresh per
-// edit affordable at all. The fixture makes both halves falsifiable — one repo is
-// dirtied and the other is not, and the untouched row is a SEEDED name that exists
-// in no workspace, so a full rescan would delete it.
 func TestHandleStatusAll_ScopedReadRescansOnlyTheOwningRepo(t *testing.T) {
 	skipNoGit(t)
 	workDir := t.TempDir()
 	scanned := mkRepo(t, workDir, "scanned")
 	skipped := mkRepo(t, workDir, "skipped")
 	h := NewHandler(workDir)
-	// A snapshot in which both real repos are clean, plus a row for a repository
-	// that does not exist. A full rescan cannot reproduce the third row.
+	// The seeded row exists in no workspace, so a full rescan could not reproduce it.
 	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{
 		repoRow("scanned"), repoRow("skipped"), repoRow("seeded"),
 	}, time.Now())
-	// BOTH repos are dirtied on disk. That is what makes the scope falsifiable: the
-	// snapshot says both are clean, so a scan that looked at `skipped` would report
-	// it dirty, and only a scan that did not look leaves its seeded row alone. With
-	// `skipped` genuinely clean the assertion would pass under a full rescan too.
+	// Both are dirtied so the scope is falsifiable: were `skipped` clean, the
+	// assertion would pass under a full rescan too.
 	for _, dir := range []string{scanned, skipped} {
 		if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("x"), 0o600); err != nil {
 			t.Fatalf("Setup: write in %s: %v", dir, err)
@@ -93,8 +80,6 @@ func TestHandleStatusAll_ScopedReadRescansOnlyTheOwningRepo(t *testing.T) {
 		t.Errorf("snapshot repos = %v, want all three kept; the scoped result REPLACED "+
 			"the snapshot instead of merging into it", names)
 	}
-	// The row the scan did not look at keeps the snapshot's answer, dirty tree and
-	// all — and "seeded" is the row no scan could recreate.
 	snap, _ := h.statusCache.read(statusKeyPoll)
 	for _, r := range snap.rows() {
 		if r.Repo == "skipped" && len(r.Files) != 0 {
@@ -104,23 +89,16 @@ func TestHandleStatusAll_ScopedReadRescansOnlyTheOwningRepo(t *testing.T) {
 	}
 }
 
-// The snapshot's timestamp does NOT move on a scoped merge.
-//
-// `at` answers "when was the WHOLE tree last known", which is the question `age_ms`
-// and stale() ask. A scoped refresh answers it for one repository out of fifty-five,
-// so moving the stamp would claim the other fifty-four were rescanned AND would
-// suppress the periodic full refresh for as long as edits kept arriving — an
-// unscoped read would find a snapshot that never looks stale.
+// The snapshot's timestamp does NOT move on a scoped merge: `at` answers "when was
+// the WHOLE tree last known", and moving it suppresses the periodic full refresh.
 func TestHandleStatusAll_AScopedMergeDoesNotFreshenTheSnapshot(t *testing.T) {
 	skipNoGit(t)
 	workDir := t.TempDir()
 	repo := mkRepo(t, workDir, "one")
 	h := NewHandler(workDir)
 	old := time.Now().Add(-time.Minute)
-	// Seeded CLEAN and then dirtied, so the merged row differs from the seeded one.
-	// Without that difference there is nothing to wait for and the assertion below
-	// would read the pre-merge snapshot — passing whatever the merge does to the
-	// stamp.
+	// Seeded CLEAN then dirtied: with no difference, the wait below reads the
+	// pre-merge snapshot and passes whatever the merge does to the stamp.
 	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{repoRow("one")}, old)
 	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("Setup: write: %v", err)
@@ -141,12 +119,9 @@ func TestHandleStatusAll_AScopedMergeDoesNotFreshenTheSnapshot(t *testing.T) {
 	}
 }
 
-// A path no repository owns is DROPPED, and a request whose every path is
-// unowned scans nothing at all.
-//
-// Both halves matter. Erroring would break the caller that sends a turn's changed
-// files, which legitimately include paths outside every worktree; falling through to
-// a full scan would make an unresolvable path the most expensive kind of request.
+// A path no repository owns is DROPPED, and a request whose every path is unowned
+// scans nothing at all: erroring would break the caller that sends a turn's changed
+// files, and a full scan would make an unresolvable path the costliest request.
 func TestHandleStatusAll_AnUnownedPathScansNothing(t *testing.T) {
 	workDir := t.TempDir()
 	mkRepo(t, workDir, "one")
@@ -164,13 +139,8 @@ func TestHandleStatusAll_AnUnownedPathScansNothing(t *testing.T) {
 	}
 }
 
-// A COLD read carrying paths falls through to the FULL scan, because there is no
-// snapshot to merge a partial result into.
-//
-// Publishing a two-repo result as though it were a whole scan is the harm: every
-// later read answers from it, `age_ms` says it is fresh, and no field can say it
-// covered two repositories out of fifty-five. So the first read of a process pays
-// for the tree once and every scoped read after it is cheap.
+// A COLD read carrying paths falls through to the FULL scan: there is no snapshot to
+// merge a partial result into, and no field could say the answer covered two repos.
 func TestHandleStatusAll_AColdScopedReadScansTheWholeTree(t *testing.T) {
 	skipNoGit(t)
 	workDir := t.TempDir()
@@ -187,12 +157,8 @@ func TestHandleStatusAll_AColdScopedReadScansTheWholeTree(t *testing.T) {
 }
 
 // A scoped read that finds a scan already running records its repositories as
-// PENDING, and the running refresh drains them.
-//
-// Without this the one-at-a-time rule loses work: the joining read returns having
-// scanned nothing, and if the scan it joined was scoped to a different repository,
-// its own repository stays stale until the next full scan — which is the defect
-// scoping was added to fix, arriving through the slot instead of through the timer.
+// PENDING, and the running refresh drains them; otherwise the one-at-a-time rule
+// loses the joining read's work until the next full scan.
 func TestStatusCache_AScopedReadJoiningAScanIsNotDropped(t *testing.T) {
 	var c statusCache
 	seedSnapshot(&c, statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")}, time.Now())
@@ -209,7 +175,6 @@ func TestStatusCache_AScopedReadJoiningAScanIsNotDropped(t *testing.T) {
 		t.Error("the joining read got a different channel; it would wait on a refresh nobody runs")
 	}
 
-	// The first pass merges "a" and is handed "b" to go round again.
 	next, run := c.finish(statusKeyPoll, []allRepoStatus{{Repo: "a", IsRepo: true, Files: []gitFile{{Path: "x"}}}})
 	if !run {
 		t.Fatal("finish ended the chain with a scope still recorded; the joining read's " +
@@ -225,19 +190,16 @@ func TestStatusCache_AScopedReadJoiningAScanIsNotDropped(t *testing.T) {
 	default:
 		t.Error("finish left the waiters blocked on a channel it replaced")
 	}
-	// And the slot is STILL claimed, so a third read joins this chain rather than
-	// starting a second concurrent scan.
+	// The slot is STILL claimed, so a third read joins this chain.
 	if _, again := c.claim(statusKeyPoll, map[string]struct{}{"a": {}}); again {
 		t.Error("the slot opened between passes; a third read would start a concurrent scan")
 	}
-	// That third read's scope is drained too, so the chain runs one more pass.
 	third, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("b")})
 	if !run || len(third) != 1 {
 		t.Fatalf("finish returned (%v, %v) after a read joined between passes, want its "+
 			"scope drained", third, run)
 	}
 
-	// The last pass finds nothing recorded, so it releases.
 	if last, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a")}); run {
 		t.Errorf("finish returned %v after an idle pass, want the chain to end", last)
 	}
@@ -246,15 +208,8 @@ func TestStatusCache_AScopedReadJoiningAScanIsNotDropped(t *testing.T) {
 	}
 }
 
-// The MIRROR of the test above: an unscoped read that joins a SCOPED scan is not
-// dropped either, and the pass it asked for runs.
-//
-// This is the direction the pending set could not express. A scoped scan covers a
-// fraction of the tree and deliberately leaves `at` where it was, so the whole-tree
-// read is answered from a snapshot that stays stale and — with no timer left on the
-// client — its scan would wait for the next unscoped gesture rather than for a
-// clock. `run` with a nil scope is what says "scan everything", and only a full pass
-// moves `at`.
+// An unscoped read that joins a SCOPED scan is not dropped either: `run` with a nil
+// scope says "scan everything", and only a full pass moves `at`.
 func TestStatusCache_AFullReadJoiningAScopedScanIsNotDropped(t *testing.T) {
 	var c statusCache
 	old := time.Now().Add(-time.Minute)
@@ -282,7 +237,6 @@ func TestStatusCache_AFullReadJoiningAScopedScanIsNotDropped(t *testing.T) {
 		t.Errorf("snapshot at = %v, want the original %v after a SCOPED pass", snap.at, old)
 	}
 
-	// And that full pass publishes: `at` moves, and the chain then ends.
 	if _, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")}); run {
 		t.Error("the chain did not end after the full pass")
 	}
@@ -300,13 +254,8 @@ func TestStatusCache_AFullReadJoiningAScopedScanIsNotDropped(t *testing.T) {
 }
 
 // A write landing BEHIND a running full scan's cursor is rescanned, because a full
-// scan's coverage is not its timing.
-//
-// scanRepos fans out over the whole inventory under one budget, so a repository is
-// read at an unspecified point inside that window and a scoped read arriving after
-// that point is not answered by the rows the scan publishes — they predate the write
-// that triggered it. Treating coverage as an answer left that write invisible until
-// the next unscoped gesture. Honouring it costs ONE repository's scan.
+// scan's coverage is not its timing: a repository is read at an unspecified point in
+// the window, so rows published after that point can predate the triggering write.
 func TestStatusCache_AWriteBehindAFullScansCursorIsStillRescanned(t *testing.T) {
 	var c statusCache
 	if _, started := c.claim(statusKeyPoll, nil); !started {
@@ -326,8 +275,7 @@ func TestStatusCache_AWriteBehindAFullScansCursorIsStillRescanned(t *testing.T) 
 			"was dropped by the full scan it arrived behind", next)
 	}
 
-	// And the follow-up pass is SCOPED, so it merges rather than republishing — the
-	// full scan's `at` is the newer of the two and must survive.
+	// The follow-up pass is SCOPED, so the full scan's newer `at` must survive.
 	published, _ := c.read(statusKeyPoll)
 	if _, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a")}); run {
 		t.Error("the chain did not end after the scoped follow-up pass")
@@ -343,13 +291,8 @@ func TestStatusCache_AWriteBehindAFullScansCursorIsStillRescanned(t *testing.T) 
 	}
 }
 
-// A whole-tree read joining a whole-tree scan records NOTHING, and that is the one
-// window the holder leaves open on purpose.
-//
-// Recorded, it would chain a SECOND whole-tree scan — the ~275-subprocess cost the
-// whole holder exists to pay once — for a read that a scan already covering every
-// repository answers within one window's staleness. The scoped direction above is
-// recorded because it costs one repo; this one is not because it costs the sweep.
+// A whole-tree read joining a whole-tree scan records NOTHING on purpose: recording
+// it would chain a second whole-tree sweep for a read the running scan already covers.
 func TestStatusCache_AFullReadJoiningAFullScanChainsNothing(t *testing.T) {
 	var c statusCache
 	if _, started := c.claim(statusKeyPoll, nil); !started {
@@ -396,12 +339,9 @@ func TestStatusCache_AScopedMergeAppendsAnUnknownRepo(t *testing.T) {
 	}
 }
 
-// The cold wait matches the SCAN's budget, not the per-repo one.
-//
-// A read that gives up before the scan it is waiting on answers `{repos: [],
-// scanning: true}`, and a client reading `repos` renders "no repositories" — a claim
-// about the tree rather than about the read. The old value was the 10s per-repo
-// budget against a 30s scan, which on a ~55-repo tree is not obviously enough.
+// The cold wait matches the SCAN's budget, not the per-repo one: a read that gives up
+// first answers an empty list, which a client renders as "no repositories" — a claim
+// about the tree rather than about the read.
 func TestStatusAll_ColdWaitCoversTheWholeScan(t *testing.T) {
 	if statusColdWait < statusScanBudget {
 		t.Errorf("statusColdWait = %v, want at least the scan budget %v: a cold read can "+
@@ -412,21 +352,18 @@ func TestStatusAll_ColdWaitCoversTheWholeScan(t *testing.T) {
 	if got := h.coldWait(nil, false); got != statusColdWait {
 		t.Errorf("coldWait(cold, poll) = %v, want %v", got, statusColdWait)
 	}
-	// And a read that HAS a snapshot never waits: that is what makes the poll cheap.
+	// A read that HAS a snapshot never waits: that is what makes the poll cheap.
 	if got := h.coldWait(&statusSnapshot{at: time.Now()}, false); got != 0 {
 		t.Errorf("coldWait(warm, poll) = %v, want 0", got)
 	}
 }
 
-// statusScope resolves the query into repository names, and this is the table for
-// what it accepts. Driven through the handler's own resolver rather than the HTTP
-// surface so each rule fails on its own.
+// statusScope resolves the query into repository names; this is the table for what it
+// accepts, driven through the resolver rather than HTTP so each rule fails on its own.
 func TestStatusScope(t *testing.T) {
 	workDir := t.TempDir()
 	// The WORKSPACE ROOT is a repository too, which is what makes the traversal case
-	// below mean anything: "." owns every path no subdirectory repo claims, so
-	// without the escape check `../etc/passwd` resolves to it and a file outside the
-	// tree scopes the refresh to the root repo.
+	// below mean anything: "." owns every path no subdirectory repo claims.
 	for _, name := range []string{".", "alpha", "beta"} {
 		if err := os.MkdirAll(filepath.Join(workDir, name, ".git"), 0o750); err != nil {
 			t.Fatalf("Setup: mkdir %s: %v", name, err)
@@ -470,10 +407,7 @@ func TestStatusScope(t *testing.T) {
 			wantRepos:  []string{"alpha", "beta"},
 		},
 		{
-			// A path that escapes the workspace is owned by nothing HERE. Checked
-			// before ownerOf because the workspace-root repo (".") owns every path no
-			// subdirectory repo claims, so this would otherwise scope the refresh to
-			// the root repo for a file outside the tree.
+			// Checked before ownerOf, or "." would own a path outside the tree.
 			name:       "a traversal is owned by nothing",
 			query:      "?paths=../etc/passwd",
 			snap:       warm,
@@ -515,9 +449,7 @@ func TestStatusScope(t *testing.T) {
 }
 
 // The path count is capped, so one request cannot make the server resolve an
-// unbounded list. A scoped refresh exists to scan FEWER repositories than a full
-// one, so a caller naming more paths than the workspace has repos is asking for the
-// full scan by a longer route.
+// unbounded list.
 func TestStatusScope_CapsThePathCount(t *testing.T) {
 	workDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workDir, "last", ".git"), 0o750); err != nil {

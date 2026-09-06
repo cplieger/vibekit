@@ -1,49 +1,5 @@
 package command
 
-// The membership coordinator: every operation that spans the chat store and
-// the open-tab set, under one operation lock.
-//
-// Two documents — chats/<id>.json and tabs.json — with an atomic rewrite
-// protecting one file, not a transaction, so the correctness property comes
-// from ordering plus this lock rather than from the storage layer.
-//
-// The chat record is the gate: it leads on create and leads on delete. On
-// create the chat is written first and its tab second, so a crash between
-// them leaves a closed chat (benign — indistinguishable from a chat the user
-// closed). On delete the record is removed first and its tabs second, so an
-// open racing the delete finds no chat and is refused (OpenTab's gate). The
-// reverse order is wrong both ways: a tab minted before its chat renders for
-// a chat that may never exist, and tabs closed first leave a window where an
-// open succeeds and its tab outlives the chat until the next restart.
-//
-// The retention-off close escalation (CloseTab) is close-first instead: the
-// tab close is the commit point and the record delete follows inside the
-// same lock hold. Safe because this lock is the race argument — OpenTab
-// takes the same mutex, so no open can land between the tab close and the
-// record delete.
-//
-// Capacity is reserved before anything mints: a create ends by opening a
-// tab, so a full set must refuse before the record is written, or the
-// refusal lands after the chat exists and the gesture leaves an orphan.
-//
-// Lock order: Membership.mu -> chat record lock -> tabs.Store writeMu.
-// Acyclic because no tabs.Store method calls into the chat store and no
-// chat.Store method calls into the tab set; the retention purge checks its
-// predicates before taking a record lock and fires onPurge after releasing
-// it, and chat.Store.Mutate's broadcast reaches the SSE hub, never this
-// type.
-//
-// Every tab mutation comes through here, even pin_tab and reorder_tabs
-// which touch only tabs.Store: that store deliberately emits no events of
-// its own (returns the version a mutation committed, leaves the caller to
-// broadcast it before starting the next mutation), and this lock is the
-// serialization that makes mutate-and-emit atomic against every other
-// operation. Routed straight at the store, two commits could race each
-// other to the hub and put frames out of version order.
-//
-// The one writer that does not hold this lock is Prune, run once at load
-// before the listener serves anything.
-
 import (
 	"context"
 	"errors"
@@ -63,23 +19,17 @@ var (
 	errTabsFull = errors.New("too many tabs are open; close a tab first")
 	// errTabsUnavailable is the 503 for a build with no tab store wired.
 	errTabsUnavailable = errors.New("the tab store is unavailable")
-	// errOpenChatUnknown is the 404 an open_tab for a chat that does not
-	// exist gets — the delete-ordering gate's refusal.
+	// errOpenChatUnknown is the 404 for an open_tab naming a chat that is gone.
 	errOpenChatUnknown = errors.New("that chat no longer exists")
-	// errTabUnknown is the 404 for a pin naming an id the set does not
-	// hold. Not used for a close, which treats an absent id as nothing to
-	// do; only pin_tab reports it, since a pin is a statement about a tab.
+	// errTabUnknown is the 404 for a pin naming an id the set does not hold.
 	errTabUnknown = errors.New("that tab is not open")
 )
 
-// TabSet is the open-tab set as this package uses it: the four mutations
-// plus the paired reads. Declared here, at the consumer, since internal/tabs
-// exports no interface of its own — *tabs.Store satisfies it.
-//
-// List is included beyond reading because the capacity reservation needs
-// the count and every event needs the expanded order, which no mutation
-// returns. Subtree is the close escalation's read — what a Close of this id
-// will remove, asked before the close commits.
+// TabSet is the open-tab set as this package uses it, declared at the consumer
+// since internal/tabs exports no interface of its own. List is here beyond the
+// mutations because the capacity reservation needs the count and every event
+// needs the expanded order, which no mutation returns; Subtree is what a Close
+// of an id will remove, asked before that close commits.
 type TabSet interface {
 	Open(ctx context.Context, spec vibekit.OpenTab) (subject vibekit.TabSubject, created bool, version uint64, err error)
 	Close(ctx context.Context, id string) ([]vibekit.TabSubject, uint64, error)
@@ -89,45 +39,39 @@ type TabSet interface {
 	Subtree(id string) []vibekit.TabSubject
 }
 
-// chatCloser is the tab-close teardown for a chat tab: cancel the turn,
-// cancel the chat's runs, tear the bridge down, and keep the record.
-//
-// A function seam rather than three more role interfaces, since what the
-// coordinator needs is one decision ("this chat's work stops now"). Bound in
+// chatCloser is the tab-close teardown for a chat tab: cancel the turn, cancel
+// the chat's runs, tear the bridge down, keep the record. Bound in
 // RegisterDefaults.
 type chatCloser func(ctx context.Context, chatID vibekit.ChatID)
 
-// chatDeleter is the delete grade of the same teardown, for a chat the
-// close escalation has already erased: the session chain travels in,
-// captured before the commit.
+// chatDeleter is the delete grade of the same teardown, for a chat the close
+// escalation has already erased; the captured session chain travels in.
 type chatDeleter func(ctx context.Context, chatID vibekit.ChatID, sessionChain []string)
 
-// retentionRead answers whether chat retention is on — whether a closed
-// chat's record is kept. Must fail toward keeping; a nil read means
-// retention on, the same safe direction.
+// retentionRead answers whether a closed chat's record is kept. A nil read means
+// retention on — the fail-toward-keeping direction.
 type retentionRead func(ctx context.Context) bool
 
-// doomedChat is one chat a retention-off close will delete: the record's
-// id and the KAS session chain, both captured under the lock while the
-// record was still readable — nothing that runs after the record delete
-// may re-read it.
+// doomedChat is one chat a retention-off close will delete, captured under the
+// lock while the record was still readable: nothing after the record delete may
+// re-read it.
 type doomedChat struct {
 	chatID vibekit.ChatID
 	chain  []string
 }
 
-// closeTeardownBudget bounds the close escalation's post-commit work. The
-// teardown runs on a context detached from the HTTP request, since a
-// client that walks away must not cancel roll-forward.
+// closeTeardownBudget bounds the close escalation's post-commit work, which runs
+// detached from the request so a client walking away cannot cancel roll-forward.
 const closeTeardownBudget = time.Minute
 
-// Membership owns every operation that spans the chat store and the tab
-// set.
+// Membership owns every operation that spans the chat store and the tab set.
 //
-// Safe for concurrent use; the zero value is not usable, construct with
-// NewMembership. A nil TabSet means no tab store was wired: the chat half
-// of every operation still runs and the tab half reports
-// errTabsUnavailable.
+// Those two documents share no transaction, so ordering plus this type's one lock
+// is the whole correctness argument: the chat record leads, written first on create
+// and removed first on delete, so a crash leaves a closed chat rather than a tab
+// for a chat that never exists. Every tab mutation goes through here, pin and
+// reorder included, since tabs.Store emits no events of its own. Safe for
+// concurrent use; construct with NewMembership. A nil TabSet is errTabsUnavailable.
 type Membership struct {
 	chats      ChatStore
 	tabs       TabSet
@@ -136,25 +80,19 @@ type Membership struct {
 	closeChat  chatCloser
 	deleteChat chatDeleter
 	retention  retentionRead
-	// retentionWake asks the purge scheduler to run a pass now. OPTIONAL: nil
-	// leaves the scheduler on its own timer, which is what a build with no
-	// scheduler wired wants — see SetRetentionWake for why closing a tab is the
-	// event that owes it.
+	// retentionWake asks the purge scheduler for a pass now; nil leaves its timer.
 	retentionWake func()
-	// ops is the create ledger: op_id -> chat id, so a retry resolves to the chat
-	// its first attempt made. It lives HERE rather than in the handlers because
-	// resolving an op and reserving a tab slot have to happen in the same
-	// critical section — see CreateChatAndOpen.
+	// ops is the create ledger, op_id -> chat id, so a retry resolves to the chat
+	// its first attempt made. Here rather than in the handlers because resolving
+	// an op and reserving a tab slot must happen in the same critical section.
 	ops *createLedger
-	// mu is THE operation lock. It is held across the capacity reservation, the
-	// mint, both durable writes and the event, which is what makes each of those
-	// pairs atomic against every other operation.
+	// mu is THE operation lock, held across the reservation, the mint, both
+	// durable writes and the event. Order: mu -> chat record lock -> tabs writeMu.
 	mu sync.Mutex
 }
 
-// MembershipDeps is Membership's constructor argument. Every field is
-// required except Tabs, DeleteChat and Retention — the last two default to
-// the safe direction (no escalation, retention on).
+// MembershipDeps is Membership's constructor argument. Every field is required
+// except Tabs, DeleteChat and Retention, which default to the safe direction.
 type MembershipDeps struct {
 	Chats      ChatStore
 	Tabs       TabSet
@@ -182,31 +120,26 @@ func NewMembership(deps *MembershipDeps) *Membership {
 // ChatCreate is one create-and-open request: what to write on the new
 // record, and where its tab goes.
 type ChatCreate struct {
-	// Init fills the new record's fields. Called inside chat.Store.Mutate,
-	// under that chat's record lock, and must not reach either store. Not
-	// called at all when the record already exists.
+	// Init fills the new record's fields, called inside chat.Store.Mutate under
+	// that chat's record lock; it must not reach either store.
 	Init func(c *vibekit.Chat)
-	// OpID correlates every attempt of one create gesture. A repeat
-	// resolves to the chat the first attempt made instead of minting a
-	// second one, and finishes a missing tab write.
+	// OpID correlates every attempt of one create gesture, so a repeat resolves
+	// to the chat the first attempt made instead of minting a second one.
 	OpID string
-	// ChatID is the id the envelope supplied, or empty to mint one. A
-	// supplied id bypasses the ledger: Mutate's exists branch is already
-	// idempotent for it.
+	// ChatID is the id the envelope supplied, or empty to mint one. A supplied id
+	// bypasses the ledger: Mutate's exists branch is already idempotent for it.
 	ChatID vibekit.ChatID
-	// ParentChat names the chat whose tab the new tab hangs under, empty
-	// for a top-level tab (the tangent is the only create that nests).
-	//
-	// A chat id rather than a tab id, so the resolution happens inside the
-	// operation lock — resolving it outside would let a parent tab close
-	// in between leave a Parent naming nothing.
+	// ParentChat names the chat whose tab the new tab hangs under, empty for a
+	// top-level tab. A chat id rather than a tab id, so it resolves inside the
+	// operation lock; outside it, a parent tab closing would leave Parent naming
+	// nothing.
 	ParentChat vibekit.ChatID
 }
 
 // ChatOpened is what a create answers with.
 type ChatOpened struct {
-	// Chat is read back from the store rather than assembled from what was
-	// written: a replayed op resolves to a chat this request did not write.
+	// Chat is read back from the store, since a replay resolves to a chat this
+	// request did not write.
 	Chat *vibekit.Chat
 	// Subject is the tab. Zero-valued only when no tab store is wired.
 	Subject vibekit.TabSubject
@@ -219,31 +152,25 @@ type ChatOpened struct {
 type TabOpened struct {
 	Subject vibekit.TabSubject
 	Version uint64
-	// Created is false for an already-open (Kind, Ref), which mutates
-	// nothing and emits no event — a caller waiting on that event would
-	// wait forever, so it resolves from the response instead.
+	// Created is false for an already-open (Kind, Ref), which mutates nothing and
+	// emits no event, so a caller waiting on that event would wait forever.
 	Created bool
 }
 
-// CreateChatAndOpen writes a chat record and opens its tab as one
-// operation, under the operation lock so the final slot cannot be consumed
-// between minting and opening and a concurrent delete cannot land between
-// the two writes.
+// CreateChatAndOpen writes a chat record and opens its tab as one operation,
+// under the operation lock so the final slot cannot be consumed between minting
+// and opening and no delete can land between the two writes.
 //
-// Returns errTabsFull (409) at MaxOpenTabs, and errChatNotCreated (409)
-// when the record is absent after a Mutate that reported no error (a
-// tombstoned id the caller supplied).
-//
-// A tab write that fails leaves the chat created and returns the error —
-// the record is the gate, and only delete_chat removes a chat; a retry
-// carrying the same op_id finishes the tab write.
+// Returns errTabsFull (409) at MaxOpenTabs, and errChatNotCreated (409) when the
+// record is absent after a Mutate that reported no error. A failed tab write
+// leaves the chat created and returns the error; a retry carrying the same op_id
+// finishes the tab write.
 func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (ChatOpened, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Reserve before anything mints. peek rather than resolve, because a
-	// repeat whose tab is already open needs no slot — refusing that at
-	// the limit would strand the chat with no way to finish it.
+	// Reserve before anything mints. peek rather than resolve: a repeat whose tab
+	// is already open needs no slot, and refusing it would strand the chat.
 	prior, replay := m.priorChat(req)
 	if err := m.reserveSlot(vibekit.TabKindChat, string(prior)); err != nil {
 		return ChatOpened{}, err
@@ -270,9 +197,8 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (Cha
 		return ChatOpened{}, StatusError(http.StatusConflict, errChatNotCreated)
 	}
 
-	// The tab second. Unconditional, including on a replay, to finish a
-	// tab write the first attempt did not — Open is idempotent by
-	// (Kind, Ref).
+	// The tab second, unconditional including on a replay, to finish a tab write
+	// the first attempt did not: Open is idempotent by (Kind, Ref).
 	if m.tabs == nil {
 		return ChatOpened{Chat: c, Replay: replay}, nil
 	}
@@ -287,19 +213,17 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (Cha
 	return ChatOpened{Chat: c, Subject: opened.Subject, Version: opened.Version, Replay: replay}, nil
 }
 
-// ResolvedChat reports the chat an op_id has already created, without
-// minting one. Exists for fork_chat: a fork's record cannot be built until
-// KAS has answered session/fork, and that round trip must not happen under
-// the operation lock (a bridge Call has no client-side timeout).
+// ResolvedChat reports the chat an op_id has already created, without minting
+// one. Exists for fork_chat: a fork's record cannot be built until KAS answers
+// session/fork, and that round trip must not happen under the operation lock
+// (a bridge Call has no client-side timeout).
 func (m *Membership) ResolvedChat(opID string) (vibekit.ChatID, bool) {
 	return m.ops.peek(opID)
 }
 
-// OpenTab opens a tab for something that already exists; it never mints a
-// chat. For a chat tab it gates on the record existing — the other half of
-// the delete ordering — with the check and open in one critical section.
-// The capacity refusal comes from the tab store, since nothing has been
-// minted here to strand.
+// OpenTab opens a tab for something that already exists; it never mints a chat.
+// For a chat tab it gates on the record existing — the other half of the delete
+// ordering — with the check and the open in one critical section.
 func (m *Membership) OpenTab(ctx context.Context, spec vibekit.OpenTab, opID string) (TabOpened, error) {
 	if m.tabs == nil {
 		return TabOpened{}, StatusError(http.StatusServiceUnavailable, errTabsUnavailable)
@@ -314,25 +238,14 @@ func (m *Membership) OpenTab(ctx context.Context, spec vibekit.OpenTab, opID str
 	return m.openTab(ctx, spec, opID)
 }
 
-// CloseTab closes a tab and its descendants, then tears down what an owned
-// tab showed — and, with retention off, deletes each chat the close left
-// tabless.
+// CloseTab closes a tab and its descendants, then tears down what an owned tab
+// showed — and, with retention off, deletes each chat the close left tabless. An id
+// that is not open closes nothing and is not an error: two devices can close one.
 //
-// An id that is not open closes nothing and is not an error: two devices
-// can close the same tab.
-//
-// Escalation, ordered, under the operation lock: (a) decide the doomed set
-// — the close's subtree × remaining refs × the retention predicate × a
-// record that exists — capturing each doomed chat's {id, session chain}
-// while the record is still readable; (b) tabs.Close, the commit point —
-// from here the response answers success, and a failed Close means nothing
-// committed; (c) chats.Delete each doomed record, tombstone and
-// chat_deleted broadcast inside Delete, after the tabs frame.
-//
-// After the commit point there is no rollback, only roll-forward: a record
-// delete or teardown failure logs ERROR and the close still answers
-// success. Post-commit work runs under a context detached from the request
-// with its own bound.
+// Escalation, ordered, under the operation lock: decide the doomed set, capturing
+// each chat's {id, session chain} while its record is still readable; then
+// tabs.Close, the COMMIT POINT; then chats.Delete each doomed record. Past the
+// commit there is no rollback, only roll-forward on a detached context.
 func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []vibekit.TabSubject, version uint64, err error) {
 	if m.tabs == nil {
 		return nil, 0, StatusError(http.StatusServiceUnavailable, errTabsUnavailable)
@@ -361,16 +274,11 @@ func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []vi
 	deleted := m.deleteDoomedRecords(rollCtx, doomed)
 	m.mu.Unlock()
 
-	// The teardown runs after the lock is released and after the
-	// membership fact is published: it issues a session/cancel over the
-	// bridge with no client-side timeout, so holding the lock across it
-	// would let one wedged process block every other tab mutation. And a
-	// failed teardown cannot un-close a tab the user already closed.
-	//
-	// Exactly one grade per chat: delete grade for a chat whose record
-	// went with this close (driven from the captured chain, since the
-	// record is gone), close grade for every other chat tab. A doomed chat
-	// whose record delete failed is demoted to the close grade.
+	// The teardown runs after the lock is released and after the membership fact is
+	// published: it issues a session/cancel over the bridge with no client-side
+	// timeout, so holding the lock across it would let one wedged process block every
+	// other tab mutation. Exactly one grade per chat: delete grade for a chat whose
+	// record went with this close, close grade for every other chat tab.
 	dispatched := make(map[vibekit.ChatID]bool, len(deleted))
 	chatTabClosed := false
 	for _, t := range closed {
@@ -391,29 +299,20 @@ func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []vi
 		}
 	}
 	if chatTabClosed {
-		// The tab that just closed may have been the last thing holding an expired
-		// chat outside retention's age test, so ask the purge to reconsider now
-		// instead of at the end of an idle back-off that doubles to an hour
-		// (SetRetentionWake carries the measurement). Unconditional on the chats'
-		// ages: which chats are expired is the purge's own question, and answering
-		// it here would be a second copy of it.
-		//
-		// After the lock, because the wake reads a field guarded by it.
+		// The tab that just closed may have been the last thing holding an expired chat
+		// outside retention's age test, so ask the purge to reconsider now instead of at
+		// the end of an idle back-off that doubles to an hour (SetRetentionWake carries
+		// the measurement). After the lock, because the wake reads a field it guards.
 		m.wakeRetention()
 	}
 	return closed, version, nil
 }
 
-// doomedChats decides what a retention-off close of id will delete: every
-// chat whose open tabs all lie inside the closing subtree, whose record
-// exists, with the KAS session chain captured off that record — under the
-// lock, before the commit, since nothing after the record delete may
-// re-read it.
-//
-// Recordless chats are skipped: no chats.Delete and no chat_deleted for an
-// id no device knows.
-//
-// Caller holds mu.
+// doomedChats decides what a retention-off close of id will delete: every chat
+// whose open tabs all lie inside the closing subtree, whose record exists, with the
+// KAS session chain captured off that record — under the lock, before the commit,
+// since nothing after the record delete may re-read it. Recordless chats are
+// skipped: no chats.Delete and no chat_deleted for an id no device knows. Holds mu.
 func (m *Membership) doomedChats(ctx context.Context, id string) []doomedChat {
 	if m.deleteChat == nil || m.retention == nil {
 		// Escalation unwired: a close can only close. Retention defaults
@@ -540,15 +439,13 @@ func (m *Membership) SetPinned(ctx context.Context, id string, pinned bool, opID
 	return version, nil
 }
 
-// DeleteChatAndCloseTabs is the delete path: tear the chat's work down,
-// remove the record, then close its tabs.
+// DeleteChatAndCloseTabs is the delete path: tear the chat's work down, remove the
+// record, then close its tabs.
 //
-// The record leads: once it is gone every later open is refused, and any
-// open that landed before the delete has its tab in the set that
-// closeTabsFor then walks.
-//
-// The teardown runs before the lock (the run cancel must precede the
-// bridge going down) and outside the lock since it reaches the bridge.
+// The record leads: once it is gone every later open is refused, and any open that
+// landed before the delete has its tab in the set closeTabsFor then walks. The
+// teardown runs before the lock (the run cancel must precede the bridge going down)
+// and outside it, since it reaches the bridge.
 func (m *Membership) DeleteChatAndCloseTabs(ctx context.Context, chatID vibekit.ChatID, opID string) error {
 	m.teardown.DeleteChatState(ctx, chatID)
 	m.mu.Lock()
@@ -561,21 +458,12 @@ func (m *Membership) DeleteChatAndCloseTabs(ctx context.Context, chatID vibekit.
 	return nil
 }
 
-// RetentionClose closes the tabs of a chat the retention purge has already
-// removed.
+// RetentionClose closes the tabs of a chat the retention purge has already removed.
 //
-// Normally a no-op, and that is the point: retention's own predicate skips a
-// chat that HAS an open tab (see HasOpenTab), so reaching this with tabs to close
-// means one was opened between the predicate and the remove. It exists so that
-// race resolves in the same pass rather than at the next restart.
-//
-// Called from the purge's onPurge hook, which fires after the per-chat record
-// lock is released — see the lock order on this file.
-// RetentionClose closes the tabs of a chat the retention purge has already
-// removed. Normally a no-op — retention's own predicate skips a chat with
-// an open tab, so reaching this with tabs to close means one was opened
-// between the predicate and the remove; this closes that race in the same
-// pass rather than at the next restart.
+// Normally a no-op, and that is the point: retention's own predicate skips a chat
+// that HAS an open tab (see HasOpenTab), so reaching this with tabs to close means
+// one was opened between the predicate and the remove. Called from the purge's
+// onPurge hook, after the per-chat record lock is released.
 func (m *Membership) RetentionClose(ctx context.Context, chatID vibekit.ChatID) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -583,25 +471,13 @@ func (m *Membership) RetentionClose(ctx context.Context, chatID vibekit.ChatID) 
 }
 
 // SetRetentionWake registers the callback that asks the retention purge to run a
-// pass now. Called once by the composition root, which owns both ends.
+// pass now. A SETTER rather than a constructor field because the coordinator is
+// built during Runtime construction and the purge scheduler after it.
 //
-// A SETTER rather than a constructor field because the coordinator is built
-// during Runtime construction and the purge scheduler is built after it, from the
-// same chat store — the same reason forgesHTTP.SetOnChange is a setter.
-//
-// CLOSING A TAB IS THE EVENT THAT OWES THIS. HasOpenTab pins an expired chat
-// outside the age test for as long as its tab is open, and an exempt chat
-// contributes no wake-up deadline (archive.PurgeResult says why: its age is
-// already past the cutoff, so a timer aimed at it fires immediately, purges
-// nothing and re-arms forever). So a pass that saw only exempt chats backs off,
-// doubling to a one-hour ceiling, and Trigger had exactly one production caller
-// (Start) — closing the last tab of a month-old chat woke nothing and the chat
-// could outlive its window by up to that hour. The clearing path is what knows
-// the exemption is gone.
-//
-// It does not wake for the DRAFT exemption, and does not need to: clearing a
-// draft either sends it, which stamps the chat's activity and starts a fresh
-// window, or leaves the chat with a tab still open and therefore still exempt.
+// CLOSING A TAB IS THE EVENT THAT OWES THIS: HasOpenTab pins an expired chat
+// outside the age test while its tab is open, and an exempt chat contributes no
+// wake-up deadline, so a pass that saw only exempt chats backs off to a one-hour
+// ceiling and the chat could outlive its window by that much.
 func (m *Membership) SetRetentionWake(wake func()) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -619,12 +495,9 @@ func (m *Membership) wakeRetention() {
 }
 
 // HasOpenTab reports whether any tab shows this chat — retention's second
-// predicate. This makes retention opt-out for a chat left open forever,
-// which is accepted: closing a tab under someone to satisfy a timer is
-// worse.
-//
-// Takes no operation lock: it is a read, and the lock exists to order
-// writes against their events.
+// predicate. This makes retention opt-out for a chat left open forever, which is
+// accepted: closing a tab under someone to satisfy a timer is worse. Takes no
+// operation lock: it is a read, and the lock orders writes against their events.
 func (m *Membership) HasOpenTab(chatID vibekit.ChatID) bool {
 	if m.tabs == nil {
 		return false
@@ -651,18 +524,13 @@ func (m *Membership) openTab(ctx context.Context, spec vibekit.OpenTab, opID str
 }
 
 // closeTabsFor closes every tab showing chatID, and is the one place the
-// live-repair rule lives.
+// live-repair rule lives. Caller holds mu.
 //
-// A close that fails after the chat record is already gone is retried
-// once, and if that fails too the removal is emitted anyway — the
-// authoritative fact is that the chat is gone, which is worse to leave
-// unstated than a tab set this process failed to write.
-//
-// The emit-anyway frame is stamped one past the current version, so it
-// costs the next real mutation being read as a duplicate — the price of
-// telling clients the truth about the chat.
-//
-// Caller holds mu.
+// A close that fails after the chat record is already gone is retried once, and if
+// that fails too the removal is emitted anyway — the authoritative fact is that the
+// chat is gone, which is worse to leave unstated than a tab set this process failed
+// to write. The emit-anyway frame is stamped one past the current version, so it
+// costs the next real mutation being read as a duplicate.
 func (m *Membership) closeTabsFor(ctx context.Context, chatID vibekit.ChatID, opID string) {
 	if m.tabs == nil {
 		return

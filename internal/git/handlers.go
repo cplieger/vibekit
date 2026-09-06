@@ -21,8 +21,7 @@ type Handler struct {
 	fetchFlight singleflight.Group
 	repoFlight  singleflight.Group
 	pullFlight  singleflight.Group
-	// statusCache is the dashboard's snapshot holder. It replaced a singleflight
-	// slot every caller queued behind — see status_cache.go.
+	// statusCache is the dashboard's snapshot holder; see status_cache.go.
 	statusCache statusCache
 	workDir     string
 	timeouts    gitTimeouts
@@ -61,16 +60,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/git/pr-fetch", h.handlePRFetch)
 }
 
-// resolveRepoDir resolves a client-supplied repo name against a workDir,
-// rejecting attempts to escape the workspace root via a `..` component or
-// an absolute path. Falls back to workDir for empty / "." / invalid
-// inputs so the workspace root is the default "repo".
+// resolveRepoDir resolves a client-supplied repo name against a workDir, rejecting
+// escape via a `..` component or an absolute path. Empty, "." and rejected inputs
+// fall back to workDir, so the workspace root is the default "repo".
 //
-// The traversal test is pathinside.HasDotDot: the name is judged AS
-// WRITTEN, before it is joined onto anything, since there is no root to
-// compare against yet. It is component-precise, so a directory whose
-// NAME merely contains two adjacent dots ("foo..bar") resolves as the
-// repo it is instead of falling back to workDir.
+// HasDotDot judges the name AS WRITTEN, before it is joined onto anything, because
+// there is no root to compare against yet. It is component-precise, so a directory
+// whose name merely contains two adjacent dots ("foo..bar") still resolves.
 func resolveRepoDir(workDir, repo string) string {
 	if repo == "" || repo == "." || pathinside.HasDotDot(repo) || filepath.IsAbs(repo) {
 		return workDir
@@ -80,14 +76,10 @@ func resolveRepoDir(workDir, repo string) string {
 
 // repoDir resolves repo against h.workDir; see resolveRepoDir.
 //
-// Symlinks inside workDir are NOT resolved: users may symlink a real
-// git repo into the workspace and expect the UI to address it by its
-// symlink name. Git itself doesn't follow symlinks into .git/, so
-// this is safe for the read operations this package performs; the
-// runtime's fs bridge resolves symlinks via EvalSymlinks for writes,
-// which has stricter requirements. The check here is deliberately
-// LEXICAL-ONLY: an os.Root would refuse the symlinked repos that are
-// a feature of this surface.
+// The check is deliberately LEXICAL-ONLY, so symlinks inside workDir are not
+// resolved: a symlinked repo addressed by its symlink name is a feature of this
+// surface, and an os.Root would refuse it. Git does not follow symlinks into
+// .git/, so this is safe for the reads this package performs.
 func (h *Handler) repoDir(repo string) string {
 	return resolveRepoDir(h.workDir, repo)
 }
@@ -109,11 +101,9 @@ type gitStatusResp struct {
 	HasDirty bool      `json:"has_dirty"`
 }
 
-// handlePRFetch fetches a pull request's head ref into a local branch
-// named "pr-<number>" (or body.Head, if set). Works for GitHub + Gitea
-// family (both expose pull/{n}/head refs); GitLab's equivalent is
-// merge-requests/{n}/head — prRefShape derives the ref shape from the
-// remote URL.
+// handlePRFetch fetches a pull request's head ref into a local branch named
+// "pr-<number>", or body.Head when set. prRefShape owns which ref shape the
+// remote uses.
 func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
 		return
@@ -131,9 +121,8 @@ func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "invalid PR number")
 		return
 	}
-	// body.Head is optional; when set it's used as a local branch name,
-	// so apply the same validation as handleCheckout via the shared
-	// isValidGitRef helper to block flag smuggling and ref-injection.
+	// body.Head becomes a local branch name, so it needs handleCheckout's ref
+	// validation against flag smuggling and ref injection.
 	if body.Head != "" && !isValidGitRef(body.Head) {
 		slog.Warn("git pr-fetch: invalid head rejected", "repo", body.Repo, "number", body.Number, "head", body.Head)
 		httpreply.BadRequest(w, "invalid head name")
@@ -157,14 +146,11 @@ func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 	writeCmdResult(w, out, err)
 }
 
-// prRefShape picks the right ref-spec template based on the origin
-// URL host. GitHub + Gitea/Gogs/Forgejo expose "refs/pull/<n>/head";
-// GitLab uses "refs/merge-requests/<n>/head". We match on the host
-// segment only (not the full URL) so a GitHub-hosted repo whose path
-// contains the substring "gitlab" (e.g. github.com/gitlab/tooling)
-// still picks the GitHub shape. For unknown or unparseable remotes
-// we default to the GitHub shape — it's the most common and a failed
-// fetch surfaces a clear error to the user.
+// prRefShape picks the ref-spec template for the origin URL's host: GitLab uses
+// "refs/merge-requests/<n>/head", the GitHub and Gitea family "refs/pull/<n>/head",
+// which is also the default for an unknown or unparseable remote. Matching the host
+// segment only keeps a GitHub-hosted repo whose path contains "gitlab" on the
+// GitHub shape.
 func prRefShape(remote string) string {
 	host := parseRemoteHost(remote)
 	if strings.Contains(host, "gitlab") {

@@ -12,11 +12,6 @@ import (
 
 // handleToolCall serves GET /api/chats/{id}/tools/{toolCallID}: the whole of one
 // tool call's input, output and diffs.
-//
-// Sub-resource rather than a wider transcript response, because the depth ladder
-// is the point: a collapsed card is a claim line, and the bulk is only worth
-// bytes once a reader asks for it. It is the same ladder the UI already
-// implements against content it had already paid to receive.
 func (rt *Router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID, toolCallID string) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -26,9 +21,8 @@ func (rt *Router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID 
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
-	// Same gate a message id passes: this value is echoed back and is the key of
-	// a linear scan, so an unbounded or exotic one is refused rather than
-	// searched for.
+	// Echoed back and used as a linear-scan key, so an unbounded or exotic value is
+	// refused rather than searched for.
 	if !ids.ValidMessageID(toolCallID) {
 		httpreply.BadRequest(w, "invalid tool_call_id")
 		return
@@ -53,11 +47,6 @@ func (rt *Router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID 
 }
 
 // findToolCall locates a tool call by id, newest message first.
-//
-// A scan rather than an index, and newest-first because that is where a reader's
-// reveal lands: the whole chat is already in memory to answer the transcript, and
-// an index over tool-call ids would be a second structure to keep in step with
-// the append path for one lookup per user click.
 func findToolCall(msgs []vibekit.Message, id string) (*vibekit.ToolCall, bool) {
 	for i := range slices.Backward(msgs) {
 		for j := range msgs[i].ToolCalls {
@@ -79,10 +68,8 @@ func previewMessage(m *vibekit.Message) vibekit.Message {
 // previewToolCall returns a copy of tc bounded to previewBudget, and whether
 // anything was cut.
 //
-// HasFull covers all three fields together because the client fetches one bulk
-// for all three: a card that lost only its input still needs the same request to
-// render its diff. It is a promise the bulk endpoint can serve the rest, which is
-// why ToolTruncation is a separate record: the store's own cut is not fetchable.
+// HasFull covers input, output and diffs together because the client fetches one
+// bulk for all three.
 func previewToolCall(tc *vibekit.ToolCall) (vibekit.ToolCall, bool) {
 	out, cut := boundToolCall(tc, previewBudget)
 	if cut == (vibekit.ToolTruncation{}) {
