@@ -4,6 +4,7 @@
   "exclude": [
     "vitest*.config.ts",
     "fc-strict-setup.ts",
+    "waitfor-budget-setup.ts",
     "**/__test-helpers__/**",
     "**/*.test.ts",
     "**/*.fuzz.test.ts",
