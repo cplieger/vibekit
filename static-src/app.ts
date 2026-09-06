@@ -136,6 +136,7 @@ import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
 import { subscribeToActions } from "./actions/index.js";
 import { initActions } from "./actions/boot.js";
+import { entitiesReady } from "./smd-entity-refs.js";
 import { error as toastError } from "./toast.js";
 // Register the conflict SSE handler at startup so badges land
 // without the user having to first open the chat that triggered
@@ -443,6 +444,13 @@ async function checkAuthAndStart(): Promise<void> {
   // continues so the app is usable and the failure is recoverable by a reload.
   // Inventing values here is what the client-side default mirrors used to do.
   const settings = await loadSettings();
+  // The named-entity table, whose fetch markdown.ts started at module scope, so
+  // this runs concurrently with the settings round trip above rather than after
+  // it. Every markdown render in the app is downstream of this line — restoreAll
+  // below, then loadList, listTabs and every route-driven view — which is what
+  // makes a named reference decode on first paint. It never rejects, so a chunk
+  // that 404s costs the table, not boot.
+  await entitiesReady();
   if (settings !== null) {
     restoreLastModel(settings.last_model);
     restoreLastEffort(settings.last_effort, settings.last_effort_model);
