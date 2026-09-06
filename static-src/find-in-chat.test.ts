@@ -736,14 +736,13 @@ describe("server-hit navigation", () => {
     storeLoad = await import("./store-load.js");
     scroll = await import("./scroll.js");
     blocks = await import("./messages-blocks.js");
-    // The renderer's map, stood in for by the fixtures' own `data-block-index`
-    // stamps: each fixture stamps the element its four mount sites would have
-    // registered, and the lookup is keyed by (message, INDEX) exactly as the real
-    // one is. Resolved per call, because a reveal mounts its DOM after this.
+    // The renderer's map, stood in for by the fixtures' own stamps: each carries the
+    // two coordinates `stampBlock` writes, read DOCUMENT-WIDE because the real map is
+    // keyed by (message, index), not by the row. Per call: a reveal mounts DOM later.
     vi.mocked(blocks.blockElement).mockImplementation(
       (messageID, blockIndex) =>
         document.querySelector<HTMLElement>(
-          `[data-reconcile-key="${messageID}"] [data-block-index="${String(blockIndex)}"]`,
+          `[data-block-msg="${messageID}"][data-block-index="${String(blockIndex)}"]`,
         ) ?? undefined,
     );
   });
@@ -830,6 +829,18 @@ describe("server-hit navigation", () => {
     });
   }
 
+  /** Wire a fixture tool card through the REAL disclosure primitive, the way
+   *  tool-card.ts wires it: the output region collapsed, so it carries the
+   *  `aria-hidden` + `inert` the walker prunes until the chevron is activated. */
+  function wireToolCard(card: HTMLElement): void {
+    const toggle = card.querySelector<HTMLElement>(".tool-disclosure");
+    const details = card.querySelector<HTMLElement>(".tool-details");
+    if (toggle === null || details === null) {
+      throw new Error("fixture card missing toggle/details");
+    }
+    createDisclosure(toggle, details, { open: false });
+  }
+
   async function openAndSearch(query: string): Promise<void> {
     onHotkey(ctrlF());
     typeAndEnter(query);
@@ -883,7 +894,7 @@ describe("server-hit navigation", () => {
             <div class="assistant-blocks">
               <div class="subagent-block collapsed" data-subtask="sub-1">
                 <div class="subagent-header">Subagent</div>
-                <div class="subagent-body"><div class="message assistant" data-block-index="1">delegate found the retry backoff</div></div>
+                <div class="subagent-body"><div class="message assistant" data-block-msg="a1" data-block-index="1">delegate found the retry backoff</div></div>
               </div>
             </div>
           </div>`;
@@ -940,7 +951,7 @@ describe("server-hit navigation", () => {
       `<div data-reconcile-key="a1" class="msg-row"><div class="assistant-blocks">${mounted
         .map(
           (i) =>
-            `<details class="reasoning-block msg-reasoning" data-block-index="${String(i)}">
+            `<details class="reasoning-block msg-reasoning" data-block-msg="a1" data-block-index="${String(i)}">
                <summary class="reasoning-summary">Reasoning</summary>
                <blockquote class="reasoning-body">${traces[i] ?? ""}</blockquote>
              </details>`,
@@ -990,7 +1001,7 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
          <div class="assistant-blocks" style="content-visibility: hidden">
-           <div class="msg-row" data-block-index="0">
+           <div class="msg-row" data-block-msg="a1" data-block-index="0">
              <div class="message assistant">see the retry backoff here</div>
            </div>
          </div>
@@ -1043,7 +1054,7 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
          <div class="assistant-blocks">
-           <div class="msg-row" data-block-index="2">
+           <div class="msg-row" data-block-msg="a1" data-block-index="2">
              <div class="message assistant">and once more</div>
            </div>
          </div>
@@ -1078,7 +1089,7 @@ describe("server-hit navigation", () => {
       // step through to reach the element the flash belongs on.
       `<div data-reconcile-key="a1" class="msg-row">
          <div class="assistant-blocks">
-           <div class="msg-row" data-block-index="0">
+           <div class="msg-row" data-block-msg="a1" data-block-index="0">
              <div class="message assistant">see docs for more</div>
            </div>
          </div>
@@ -1133,7 +1144,7 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row" style="content-visibility: auto; contain-intrinsic-size: auto 2.5rem">
          <div class="assistant-blocks">
-           <div class="msg-row" data-block-index="0">
+           <div class="msg-row" data-block-msg="a1" data-block-index="0">
              <div class="message assistant">see the retry backoff here</div>
            </div>
          </div>
@@ -1186,7 +1197,7 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
          <div class="assistant-blocks" style="content-visibility: hidden">
-           <div class="msg-row" data-block-index="0">
+           <div class="msg-row" data-block-msg="a1" data-block-index="0">
              <div class="message assistant">see the retry backoff here</div>
            </div>
          </div>
@@ -1213,6 +1224,64 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(countText()).toBe("1 of 1 in chat \u00b7 not rendered yet");
     });
+  });
+
+  it("steps into a tool card mounted in ANOTHER message's row", async () => {
+    // Run-card hosting: `runCardFor` routes every later message's step blocks into the
+    // FIRST message's card, so a2's tool card is mounted inside a1's row — where the
+    // row-scoped query this replaced could not see it.
+    stageChat([
+      { id: "u1", role: "user", content: "q" },
+      { id: "a1", role: "assistant", blocks: [{ type: "tool_use", tool_call_id: "t-launch" }] },
+      { id: "a2", role: "assistant", blocks: [{ type: "tool_use", tool_call_id: "t-step" }] },
+    ]);
+    mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row">
+         <div class="assistant-blocks">
+           <div class="run-card" data-block-msg="a1" data-block-index="0">
+             <div class="run-steps">
+               <div class="tool-call" data-tool-id="t-step" data-block-msg="a2" data-block-index="0">
+                 <div class="tool-summary">
+                   <span class="tool-title">Read notes</span>
+                   <button type="button" class="tool-disclosure"></button>
+                 </div>
+                 <div class="tool-details">
+                   <div class="tool-output">bump the retry backoff to 30s</div>
+                 </div>
+               </div>
+             </div>
+           </div>
+         </div>
+       </div>
+       <div data-reconcile-key="a2" class="msg-row"><div class="assistant-blocks"></div></div>`,
+    );
+    const card = document.querySelector<HTMLElement>('[data-tool-id="t-step"]');
+    wireToolCard(card as HTMLElement);
+    stageHits([
+      serverHit({
+        message_id: "a2",
+        excerpt: "bump the retry backoff to 30s",
+        segment_kind: "tool_output",
+        block_index: 0,
+        offset: 9,
+        segment_len: 29,
+      }),
+    ]);
+
+    // The output is behind the card's own disclosure, so the walker marks nothing
+    // and the counter carries the server's figure: navigation is the only path
+    // that resolves an element.
+    await openAndSearch("retry");
+    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
+
+    typeAndEnter("retry");
+    await vi.waitFor(() => {
+      expect(card?.querySelector("mark.find-hit-current")).not.toBeNull();
+    });
+    // The walk now reaches what the server matched, so the two figures agree and
+    // the counter carries one.
+    expect(countText()).toBe("1 of 1");
   });
 
   it("navigates a message hit to the message container (scroll + brief highlight)", async () => {
@@ -1269,7 +1338,7 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
          <div class="assistant-blocks">
-           <details class="reasoning-block msg-reasoning" data-block-index="0">
+           <details class="reasoning-block msg-reasoning" data-block-msg="a1" data-block-index="0">
              <summary class="reasoning-summary">Reasoning</summary>
              <blockquote class="reasoning-body"></blockquote>
            </details>
@@ -1322,7 +1391,7 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
          <div class="assistant-blocks">
-           <details class="reasoning-block msg-reasoning" data-block-index="0">
+           <details class="reasoning-block msg-reasoning" data-block-msg="a1" data-block-index="0">
              <summary class="reasoning-summary">Reasoning</summary>
              <blockquote class="reasoning-body"></blockquote>
            </details>
@@ -1368,7 +1437,7 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
          <div class="assistant-blocks">
-           <details class="reasoning-block msg-reasoning" data-block-index="0">
+           <details class="reasoning-block msg-reasoning" data-block-msg="a1" data-block-index="0">
              <summary class="reasoning-summary">Reasoning</summary>
              <blockquote class="reasoning-body">the retry lives here in this trace</blockquote>
            </details>

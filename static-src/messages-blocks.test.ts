@@ -477,6 +477,18 @@ describe("one run card per transcript, not per message", () => {
     expect(b.wrap.querySelector('.run-step[data-node="wf_home/test"]')).not.toBeNull();
   });
 
+  it("makes the launch block's element the card it opened", () => {
+    const a = renderMsg([toolUse("t-stamp")], [launch("t-stamp", "wf_stamp")]);
+    // Every other kind stamps the element its ordinal names. The launch stamped
+    // nothing, so a search hit on the launch call resolved to no element at all and
+    // the reader was handed the whole message instead of the run's box.
+    expect(blockElement(a.id, 0)).toBe(a.wrap.querySelector(".run-card"));
+  });
+
+  // A drop of the launch block must NOT release the card as that block's element;
+  // "prices a block measured while DETACHED at its estimate, not at zero" below is
+  // what fails when it does, at 150 instead of 124.
+
   it("names a card built for an out-of-window launch from the launch CALL", () => {
     const wrap = document.createElement("div");
     const id = `m-lazy-${String(Math.random())}`;

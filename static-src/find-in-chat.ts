@@ -534,7 +534,7 @@ async function navigateToHit(hit: SearchHit): Promise<void> {
     }
     return;
   }
-  const target = resolveSegmentEl(row, hit) ?? row;
+  const target = resolveSegmentEl(hit) ?? row;
   openDisclosureChain(row, target, hit);
   // Re-walk now that the chain is open: the marks inside it exist only after
   // the walker can see the text.
@@ -646,15 +646,11 @@ function messageRowEl(messageID: string): HTMLElement | null {
   );
 }
 
-/**
- * The rendered container of the hit's SEGMENT: a tool segment by its call's id
- * (`data-tool-id`, scoped to the row because one call can hold several slots), a text
- * or reasoning block through the renderer's own per-block map. Null — the caller falls
- * back to the message row — for a legacy blockless hit, for anything unmounted, and
- * for a mounted tool slot the row scope cannot see: a run card hosts every later
- * message's steps, so those sit in the FIRST message's row until a drop re-homes it.
- */
-function resolveSegmentEl(row: HTMLElement, hit: SearchHit): HTMLElement | null {
+/** The rendered container of the hit's SEGMENT, from the renderer's own per-block
+ *  map, for every segment kind. NOT scoped to the hit's row: a run card holds every
+ *  later message's steps, so a mounted card can sit in an EARLIER message's row.
+ *  Null when the hit resolves to no element; the caller falls back to the row. */
+function resolveSegmentEl(hit: SearchHit): HTMLElement | null {
   const bi = hit.block_index;
   if (bi === undefined) {
     return null;
@@ -663,17 +659,6 @@ function resolveSegmentEl(row: HTMLElement, hit: SearchHit): HTMLElement | null 
   if (block === undefined) {
     return null;
   }
-  if (hit.segment_kind === "tool_title" || hit.segment_kind === "tool_output") {
-    const tid = block.tool_call_id ?? "";
-    if (tid === "") {
-      return null;
-    }
-    return row.querySelector<HTMLElement>(`[data-tool-id="${CSS.escape(tid)}"]`);
-  }
-  // content | reasoning: the block INDEX, keyed by message, because the mounted
-  // window can start anywhere and a same-kind ordinal counted from 0 in the store
-  // then names a different element. A subtree query cannot answer either: a
-  // `.run-card` in this row can host another message's blocks at the same index.
   const stamped = blockElement(hit.message_id, bi);
   // A map can name an element that has LEFT the document, where the subtree query this
   // replaced could not; `navigateToHit` exits silently on one, so decline it here.
