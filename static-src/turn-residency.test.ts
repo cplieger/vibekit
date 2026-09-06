@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { userEvent } from "@vitest/browser/context";
+import { userEvent } from "vitest/browser";
 
 // The render graph reaches the shared DOM registry, which throws on a missing app
 // root. Every id has to exist before the imports below are evaluated.
