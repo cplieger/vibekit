@@ -8,15 +8,8 @@
 //
 // Only the 2125 semicolon-terminated references are here: CommonMark accepts
 // `&amp;` and not `&amp`, which excludes the list's legacy semicolon-less forms.
-//
-// This module is LAZY, and has exactly one importer: the dynamic `import()` in
-// `smd-entity-refs.ts`. Nothing may import it statically — a static edge from any
-// module the initial payload reaches puts the table back on first paint. Measured
-// as its own chunk: 11,639 gzipped bytes.
-//
-// `MAX_ENTITY_NAME_LENGTH` is derived from the table below, so this file owns the
-// fact; `smd-entity-refs.ts` mirrors the value inline (the parser's hold length
-// cannot wait on a fetch) and a test asserts the two agree.
+// Measured wire cost at cmd/bundle's minify settings: 11,561 gzipped bytes, 4.3%
+// of the app's 269,433.
 //
 // Regenerate with:
 //   curl -sSo /tmp/entities-whatwg.json https://html.spec.whatwg.org/entities.json

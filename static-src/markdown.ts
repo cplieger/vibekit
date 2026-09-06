@@ -26,19 +26,10 @@
 import { el } from "@cplieger/reactive";
 import { parser, parser_end, parser_write } from "./smd-parser.js";
 import type { Parser } from "./smd-parser.js";
-import { entitiesReady } from "./smd-entity-refs.js";
 import { domRenderer } from "./smd-renderer.js";
 import { linkifyPaths } from "./linkify.js";
 import { decorateCodeBlocks, decorateStreamingCodeTail } from "./code-blocks.js";
 import { renderSvgBlock } from "./svg-block.js";
-
-// Start the named-entity table's fetch at module evaluation, which is the
-// earliest moment available: `text-bubble.ts` imports this module statically, so
-// this runs while `app.js` evaluates, before DOMContentLoaded and therefore
-// before boot. The three entry points below stay synchronous — their callers read
-// the DOM on the next line — so what closes the window is `app.ts`'s single boot
-// await, not an await here.
-void entitiesReady();
 
 /** Incremental-write flush throttle while streaming: buffered deltas are
  *  fed to the append-only streaming parser at most once per interval.
