@@ -4,7 +4,7 @@
 // read lands — `loadSteeringDoc` is fired by the same tab activation that reveals
 // the panel, so the window is real. The read is what unlocks the box.
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
-import { userEvent } from "@vitest/browser/context";
+import { userEvent } from "vitest/browser";
 
 const H = vi.hoisted(() => ({
   apiGet: vi.fn(),
