@@ -72,12 +72,24 @@
 // character is NEVER re-parsed — it goes straight to the text buffer — so no
 // reference can synthesise markup ("an encoded asterisk does not emphasise").
 //
-// THE ENTITY TABLE IS THE FULL WHATWG SET, 2,125 names, because CommonMark 6.2
-// defines a valid named reference as membership in it — the table IS the rule, and
-// a subset is a second, private one no reader can discover. 11,561 gzipped bytes,
-// 4.3% of the app. Both alternatives carry their measured numbers so neither comes
-// back as a guess: a 243-name subset is 1,455 and gives up the rule; front-coding
-// the full table is 10,353, buying 0.4% for an encoding nobody can diff.
+// THE NAMED-REFERENCE SET IS HTML 4.01's, published as three entity blocks
+// (https://www.w3.org/TR/html4/sgml/entities.html): 252 names, of which
+// `smd-entities.ts` carries 248 and the parser owns `amp gt lt quot apos`
+// inline — `apos` because HTML 4.01 alone does not define it. A published
+// standard is the membership rule, so it is discoverable without reading this
+// file. CommonMark 6.2 makes WHATWG's 2,125 names the rule, so this is a
+// DECLINED conformance, on a premise anyone can re-measure: across 839 markdown
+// files in this workspace, 9 distinct named references are in use (`mdash gt lt
+// nbsp amp quot middot copy ndash`, 24 files), every one inside HTML 4.01's set,
+// and 1.4 MB of agent output over 3,794 messages contains none. A user's own
+// message never reaches this parser (turn-header.ts sets it with `textContent`),
+// so the three consumers are assistant text and rendered markdown FILES.
+// Unrecognised names stay literal, which is CommonMark's own rule for an invalid
+// reference. Rejected alternative, with its number so it does not return as a
+// guess: the full WHATWG table, measured at 11,561 gzipped (4.3% of the app),
+// declined because 2,116 of its names answer no measured demand — not because of
+// the bytes. A lazy chunk for that table was built and measured at −11,797
+// gzipped off the initial payload, then made unnecessary by shrinking the table.
 //
 // THE AUTOLINK CARVE-OUT is the only exception to escaping `<` wholesale. Only
 // CommonMark 6.5's absolute-URI and email forms are recognised, both route
