@@ -147,8 +147,8 @@ class ScrollController {
    *  not the document bottom, so deriving the state from a self-inflicted scroll
    *  declared the reader Reading — and Reading is what makes
    *  `autoScrollIfAnchored` return early, so the auto-scroll latched off for the
-   *  rest of the session. Measured in a real browser: an anchor 200px tall at
-   *  offsetTop 1500 in a 400px viewport with a 900px tool card below it pins to
+   *  rest of the session. Measured in a real browser: a 200px anchor 1500px into
+   *  the transcript, in a 400px viewport with a 900px tool card below it, pins to
    *  1350 against a maximum of 2200, which is 850px from the bottom, so the
    *  controller's own pin failed its own `isAtBottom` check by 750px. The reader
    *  saw the transcript stop following and the `Latest` control appear without
@@ -558,11 +558,7 @@ class ScrollController {
    *  scroller's only landing is 0, and 0 is also its bottom. */
   private landsAtLiveEdge(target: HTMLElement, block: ScrollLogicalPosition): boolean {
     const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
-    // Read off rects so the answer holds whatever the offsetParent turns out to
-    // be — the transcript's scroller is a positioned ancestor, its column is not.
-    const top =
-      this.scrollEl.scrollTop +
-      (target.getBoundingClientRect().top - this.scrollEl.getBoundingClientRect().top);
+    const top = this.inScrollSpace(target.getBoundingClientRect().top);
     const room = this.scrollEl.clientHeight - target.offsetHeight;
     let wanted = top;
     if (block === "center") {
@@ -948,7 +944,7 @@ class ScrollController {
    *  The clamp is not tidiness: the marker has to be the position the browser
    *  will actually reach, and both callers pass values the platform clamps for
    *  them (`scrollHeight` is a whole viewport past the maximum, and an anchor
-   *  inside a collapsed disclosure reports offsets that overflow the document
+   *  inside a collapsed disclosure measures a bottom that overflows the document
    *  it no longer contributes height to). An unclamped marker never matches the
    *  event, which is the same as having no marker at all. */
   private scrollSelfTo(top: number, behavior: ScrollBehavior): void {
@@ -958,12 +954,22 @@ class ScrollController {
     this.scrollEl.scrollTo({ top: landing, behavior });
   }
 
-  /** The scrollTop that puts `anchor`'s bottom at the viewport's bottom, never
-   *  scrolling backwards (the anchor grows downward as text streams in). */
+  /** A `getBoundingClientRect` edge as a scrollTop in the scroller's own space.
+   *  Rects rather than an `offsetTop` walk: `.msg-row` carries
+   *  `content-visibility: auto` (13-messages.css), so the row — not the scroller —
+   *  is the offsetParent of the bubble inside it. */
+  private inScrollSpace(viewportY: number): number {
+    return viewportY - this.scrollEl.getBoundingClientRect().top + this.scrollEl.scrollTop;
+  }
+
+  /** The scrollTop that puts `anchor`'s bottom half the tolerance band above the
+   *  viewport's bottom. Unclamped; every caller clamps to a reachable landing. */
   private anchorTop(anchor: HTMLElement): number {
-    const wanted =
-      anchor.offsetTop + anchor.offsetHeight - this.scrollEl.clientHeight + BOTTOM_TOLERANCE_PX / 2;
-    return Math.max(0, Math.min(wanted, this.scrollEl.scrollHeight));
+    return (
+      this.inScrollSpace(anchor.getBoundingClientRect().bottom) -
+      this.scrollEl.clientHeight +
+      BOTTOM_TOLERANCE_PX / 2
+    );
   }
 
   private maybeLoadMore(force = false): void {

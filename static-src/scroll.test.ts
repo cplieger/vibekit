@@ -541,13 +541,9 @@ describe("scrollToBottom", () => {
 describe("the streaming auto-scroll", () => {
   beforeEach(resetBetween);
 
-  /** An element with the layout the anchor arithmetic reads. */
-  function fakeAnchor(offsetTop: number, offsetHeight: number): HTMLElement {
-    const anchor = document.createElement("div");
-    Object.defineProperty(anchor, "offsetTop", { configurable: true, get: () => offsetTop });
-    Object.defineProperty(anchor, "offsetHeight", { configurable: true, get: () => offsetHeight });
-    return anchor;
-  }
+  // The anchored pin is measured under REAL LAYOUT below ("the anchor's coordinate
+  // space"): it reads the anchor's rect against the scroller's, and a fake whose
+  // `scrollTop` moves no box double-counts the second pin of a burst.
 
   it("pins to the document bottom when no anchor is offered", async () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 100 });
@@ -569,39 +565,6 @@ describe("the streaming auto-scroll", () => {
   // already Following. "the resume control > is shown while Reading and hidden
   // on the return to Following" pins that invariant by driving the real
   // transition instead.
-
-  // The bug this exists for: a tall diff card renders BELOW the sentence being
-  // streamed, and pinning to scrollHeight scrolls that sentence off the top.
-  // 1000 + 200 - 500 + 100/2 puts the anchor's bottom at the viewport's bottom.
-  it("puts the anchor's bottom at the viewport's bottom", async () => {
-    const s = fakeScroller({ scrollHeight: 4000, clientHeight: 500, scrollTop: 0 });
-    const anchor = fakeAnchor(1000, 200);
-    scroll.setAnchorProvider(() => anchor);
-    messagesEl.appendChild(anchor);
-    await settle();
-    expect(s.scrollTop).toBe(750);
-  });
-
-  it("never scrolls to a negative offset for an anchor above the fold", async () => {
-    // 0 + 100 - 500 + 50 is -350, which is not a scroll position.
-    const s = fakeScroller({ scrollHeight: 4000, clientHeight: 500, scrollTop: 0 });
-    const anchor = fakeAnchor(0, 100);
-    scroll.setAnchorProvider(() => anchor);
-    messagesEl.appendChild(anchor);
-    await settle();
-    expect(s.scrollTop).toBe(0);
-  });
-
-  it("never scrolls past the end of the content", async () => {
-    // 9000 + 100 - 500 + 50 is past a 1000px transcript, so the landing is the
-    // maximum scrollTop a 500px viewport over 1000px of content has.
-    const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
-    const anchor = fakeAnchor(9000, 100);
-    scroll.setAnchorProvider(() => anchor);
-    messagesEl.appendChild(anchor);
-    await settle();
-    expect(s.scrollTop).toBe(500);
-  });
 
   // One frame per burst of mutations, but the guard has to re-arm or the second
   // chunk of a stream never scrolls.
@@ -1012,6 +975,59 @@ describe("a large tool card below the streaming block", () => {
     // Two distinct pin positions, not two landings on a clamped maximum: the
     // 900px card below keeps both pins short of the document's end.
     expect([first, wrap.scrollTop]).toEqual([1550, 1750]);
+  });
+});
+
+// The anchor in its PRODUCTION wrapper. Every fixture above appends the bubble
+// straight into the transcript column, where the scroller is the offsetParent and an
+// offsetTop walk is right by accident; production seats it in a `.msg-row`, whose
+// `content-visibility: auto` (13-messages.css) makes the row that offsetParent.
+describe("the anchor's coordinate space", () => {
+  beforeEach(realLayoutReset);
+
+  /** The shipped `.msg-row` declarations that decide this geometry; the
+   *  containment is what moves the offsetParent onto the row. */
+  function msgRow(): HTMLElement {
+    const row = block(0);
+    row.style.cssText =
+      "display:flex;align-items:flex-end;flex-shrink:0;content-visibility:auto;contain-intrinsic-size:auto 3rem;";
+    return row;
+  }
+
+  /** The live bubble as `mountText` seats it: inside the row, and positioned,
+   *  which is the shape the shipped `.message` rule gives it. */
+  function bubbleIn(row: HTMLElement, px: number): HTMLElement {
+    const streaming = document.createElement("div");
+    streaming.className = "message assistant streaming";
+    streaming.style.cssText = `position:relative;height:${String(px)}px;width:100%;`;
+    row.appendChild(streaming);
+    return streaming;
+  }
+
+  // The fixture's own premise, so a layout change that hands the bubble a
+  // different offsetParent turns the case below into one that cannot fail rather
+  // than leaving it green for the wrong reason.
+  it("seats the bubble in a row that is its offsetParent", () => {
+    const row = msgRow();
+    expect(bubbleIn(row, 200).offsetParent).toBe(row);
+  });
+
+  it("pins the anchor's own bottom, not its offset inside its row", async () => {
+    block(1500);
+    const streaming = bubbleIn(msgRow(), 200);
+    block(900);
+    scroll.setAnchorProvider(() => streaming);
+    await land();
+
+    streaming.appendChild(document.createTextNode("a streamed chunk"));
+    await land();
+
+    // The contract in the reader's own units. A gap rather than a scrollTop, so
+    // the c-v render the pin itself triggers cannot make the expected number a
+    // function of which frame settled last.
+    const wrap = scroll.getScrollEl();
+    const gap = wrap.getBoundingClientRect().bottom - streaming.getBoundingClientRect().bottom;
+    expect({ gap, state: scroll.readingState() }).toEqual({ gap: 50, state: "following" });
   });
 });
 
