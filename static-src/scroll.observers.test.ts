@@ -179,6 +179,15 @@ function fakeGeometry(
   return state;
 }
 
+/** The reader's own scroll, in the two events a device produces: the INPUT that
+ *  says WHOSE scroll it is, then the `scroll` the browser delivers. A bare `scroll`
+ *  event is the PLATFORM's shape — a `content-visibility` clamp — which the
+ *  controller deliberately refuses to read as intent. */
+function readerScroll(el: HTMLElement): void {
+  el.dispatchEvent(new WheelEvent("wheel", { deltaY: 1 }));
+  el.dispatchEvent(new Event("scroll"));
+}
+
 /** Drain the MutationObserver microtask, the queued animation frame, and a
  *  smooth scroll's deferred write. */
 async function settle(): Promise<void> {
@@ -318,14 +327,16 @@ describe("the scroller's resize observer", () => {
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     expect([
       h.scroll.readingState(),
       document.getElementById("scrollBottom")?.classList.contains("hidden"),
     ]).toEqual(["reading", false]);
 
     g.scrollHeight = 1500;
-    now.mockReturnValue(1200);
+    // Past READER_CONTROL_MS (300), or the reader still owns the scroller and the
+    // layout's answer does not get to overrule theirs.
+    now.mockReturnValue(1400);
     h.ro.fire();
     expect([
       h.scroll.readingState(),
@@ -340,7 +351,7 @@ describe("the scroller's resize observer", () => {
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
     vi.spyOn(Date, "now").mockReturnValue(1000);
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     g.scrollHeight = 1500;
     h.ro.fire();
     expect(h.scroll.readingState()).toBe("reading");
@@ -350,7 +361,7 @@ describe("the scroller's resize observer", () => {
     // ONE-DIRECTIONAL. Following pins to the ANCHOR, not the document bottom, so
     // tall evidence rendering below the pin legitimately leaves the controller
     // hundreds of pixels from the end — a demotion here would switch the
-    // auto-scroll off mid-turn, which is the defect `selfScrollTop` exists for.
+    // auto-scroll off mid-turn. Only a reader's INPUT may enter Reading.
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 600, clientHeight: 500, scrollTop: 100 });
     expect(h.scroll.readingState()).toBe("following");
@@ -499,7 +510,7 @@ describe("what the mutation callback may read", () => {
     vi.spyOn(Date, "now").mockReturnValue(1000);
     // A real gesture parks the reader — and publishes the edge state, which is
     // what the callback below is entitled to consume.
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     expect(h.scroll.readingState()).toBe("reading");
     await settle();
 
@@ -521,13 +532,13 @@ describe("what the mutation callback may read", () => {
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     expect(h.scroll.readingState()).toBe("reading");
 
     // The content shrinks to where the reader already is, and a gesture-free
-    // publish says the edge is in view again.
+    // publish says the edge is in view again. Past READER_CONTROL_MS (300).
     g.scrollHeight = 1500;
-    now.mockReturnValue(1200);
+    now.mockReturnValue(1400);
     h.ro.fire();
     expect(h.scroll.readingState()).toBe("following");
   });
@@ -566,7 +577,7 @@ describe("the live-edge publisher", () => {
     const h = await freshModule();
     fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     expect(h.scroll.readingState()).toBe("reading");
 
     now.mockReturnValue(2000); // past the gesture window
@@ -581,7 +592,7 @@ describe("the live-edge publisher", () => {
     const h = await freshModule();
     fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     now.mockReturnValue(2000);
 
     // Reached the edge and left it again: the reader is away.
@@ -626,7 +637,7 @@ describe("the live-edge publisher", () => {
     const row = document.createElement("div");
     h.messagesEl.appendChild(row);
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     await settle();
     expect(h.scroll.readingState()).toBe("reading");
 
@@ -740,31 +751,35 @@ describe("the auto-scroll frame guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The debounce window is what stops the auto-scroll fighting a gesture still in
-// flight. Its end is EXCLUSIVE: a chunk arriving on the deadline is a chunk
-// arriving after the gesture, and must move the transcript.
+// The reader's control window stops the auto-scroll fighting a gesture still in
+// flight. Its end is EXCLUSIVE: a chunk arriving on the deadline arrives after the
+// gesture, and must move the transcript. Both cases GROW the document, because at
+// the live edge the suppressed write and the one that lands are the same number and
+// a fixture that does not grow it cannot fail.
 // ---------------------------------------------------------------------------
-describe("the user-scroll debounce window", () => {
+describe("the reader's control window", () => {
   it("scrolls a chunk that arrives exactly at the end of the window", async () => {
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     expect(h.scroll.readingState()).toBe("following");
-    // USER_SCROLL_DEBOUNCE_MS is 150, so 1150 is the first instant no longer
-    // inside the gesture.
-    now.mockReturnValue(1150);
+    // READER_CONTROL_MS is 300, so 1300 is the first instant no longer inside the
+    // gesture.
+    now.mockReturnValue(1300);
+    g.scrollHeight = 3000;
     h.messagesEl.appendChild(document.createElement("div"));
     await settle();
-    expect(g.scrollTop).toBe(1500);
+    expect(g.scrollTop).toBe(2500);
   });
 
   it("holds a chunk that arrives one millisecond earlier", async () => {
     const h = await freshModule();
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
-    h.scrollEl.dispatchEvent(new Event("scroll"));
-    now.mockReturnValue(1149);
+    readerScroll(h.scrollEl);
+    now.mockReturnValue(1299);
+    g.scrollHeight = 3000;
     h.messagesEl.appendChild(document.createElement("div"));
     await settle();
     expect(g.scrollTop).toBe(1500);
@@ -782,7 +797,7 @@ describe("pagination's skeleton", () => {
    *  for a page. */
   function startLoad(h: Harness, load: () => void): void {
     h.scroll.setLoadMore(load, true);
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
   }
 
   it("prepends the skeleton when there is no button left to replace", async () => {
@@ -795,7 +810,7 @@ describe("pagination's skeleton", () => {
     document.getElementById("load-more-skeleton")?.remove();
     await settle();
     g.scrollTop = 0;
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     expect(h.messagesEl.firstElementChild?.id).toBe("load-more-skeleton");
   });
 
@@ -830,7 +845,7 @@ describe("pagination's safety timeout", () => {
     const load = vi.fn();
     useLoadTimeout();
     h.scroll.setLoadMore(load, true);
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     expect(document.getElementById("load-more-skeleton")).not.toBeNull();
 
     vi.advanceTimersByTime(15_000);
@@ -839,7 +854,7 @@ describe("pagination's safety timeout", () => {
     // top asks again.
     expect(document.getElementById("load-more-skeleton")).toBeNull();
     g.scrollTop = 0;
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     expect(load).toHaveBeenCalledTimes(2);
   });
 
@@ -851,7 +866,7 @@ describe("pagination's safety timeout", () => {
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     useLoadTimeout();
     h.scroll.setLoadMore(() => undefined, true);
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     g.scrollHeight = 1500;
 
     vi.advanceTimersByTime(15_000);
@@ -868,7 +883,7 @@ describe("pagination's safety timeout", () => {
     const load = vi.fn();
     useLoadTimeout();
     h.scroll.setLoadMore(load, true);
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     document.getElementById("load-more-skeleton")?.remove();
     g.scrollHeight = 1400;
     await settleFrames();
@@ -877,7 +892,7 @@ describe("pagination's safety timeout", () => {
     // first load's deadline falls INSIDE the second load's flight.
     vi.advanceTimersByTime(14_000);
     g.scrollTop = 0;
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     expect(load).toHaveBeenCalledTimes(2);
     expect(document.getElementById("load-more-skeleton")).not.toBeNull();
 
@@ -886,7 +901,7 @@ describe("pagination's safety timeout", () => {
     // The second fetch is still the one in flight: its furniture is untouched and
     // nothing else may be started.
     g.scrollTop = 0;
-    h.scrollEl.dispatchEvent(new Event("scroll"));
+    readerScroll(h.scrollEl);
     expect([
       document.getElementById("load-more-skeleton") === null,
       load.mock.calls.length,
