@@ -54,6 +54,7 @@
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
+import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
 import { outcomeIcon } from "./icons.js";
 import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
@@ -172,7 +173,13 @@ export function buildToolGroupShell(): HTMLDivElement {
   const group = el("div", { className: `tool-group ${CLS_BARE}` }) as HTMLDivElement;
   const header = el(
     "div",
-    { className: "tool-group-header", role: "button", tabindex: "0", "aria-expanded": "true" },
+    {
+      className: "tool-group-header",
+      role: "button",
+      tabindex: "0",
+      "aria-expanded": "true",
+      [CHROME_ATTR]: "",
+    },
     // The shared disclosure chevron, replacing a `content: "▸ "` that appeared
     // ONLY when the group was collapsed — so an expanded group advertised
     // nothing and the affordance had to be discovered. It is present in both

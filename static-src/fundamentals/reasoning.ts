@@ -10,6 +10,7 @@
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
+import { CHROME_ATTR } from "../chrome-attr.js";
 import { preserveReadingPosition } from "../scroll.js";
 
 /** One whitespace character. No `g` flag, so `test` stays stateless. */
@@ -67,7 +68,13 @@ export function buildReasoning(initial: string, live: boolean): ReasoningView {
   // rename. Hidden permanently (not just while live), since a screen reader
   // needs the label's STATE, not a footnote it costs nothing to miss.
   count.setAttribute("aria-hidden", "true");
-  const summary = el("summary", { className: "reasoning-summary" }, chevronEl(), label, count);
+  const summary = el(
+    "summary",
+    { className: "reasoning-summary", [CHROME_ATTR]: "" },
+    chevronEl(),
+    label,
+    count,
+  );
   const body = el("blockquote", { className: "reasoning-body" }, initial);
   root.append(summary, body);
   if (live) {

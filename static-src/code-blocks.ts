@@ -22,6 +22,7 @@ import { el } from "@cplieger/reactive";
 import { highlightByLang, normalizeLang } from "./highlight.js";
 import { ICON_COPY, ICON_PLAY } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { CHROME_ATTR } from "./chrome-attr.js";
 
 const SHELL_LANGS = new Set(["", "sh", "bash", "zsh", "shell", "console", "terminal"]);
 
@@ -105,7 +106,7 @@ function wrapBlock(pre: HTMLElement): HTMLElement {
   );
   const head = el(
     "div",
-    { className: "code-head" },
+    { className: "code-head", [CHROME_ATTR]: "" },
     el("span", { className: "code-lang" }, extractLang(pre, pre.querySelector("code"))),
     actions,
   );

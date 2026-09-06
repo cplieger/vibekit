@@ -895,6 +895,25 @@ describe("a pipeline's stages render inside the orchestrate call that started th
     expect(moved?.querySelector(":scope > .subagent-body")?.textContent).toContain("early work");
   });
 
+  it("re-homes a stage whose pipeline became known after its box was placed", () => {
+    // A stage's text can reach the dispatcher before its invocation is in the store,
+    // so its box starts at the top level and `rehomeStages` has to move it.
+    const wrap = renderThenGrow(
+      { blocks: [toolUse("d-ooo"), text("planning", "u-ooo-a")], calls: [driver("d-ooo", 2)] },
+      {
+        blocks: [toolUse(stageID("d-ooo", "code"), "u-ooo-b")],
+        calls: [stage("d-ooo", "plan", "u-ooo-a"), stage("d-ooo", "code", "u-ooo-b")],
+      },
+    );
+    expect(shape(wrap)).toEqual(["pipeline(d-ooo)"]);
+    expect(nested(wrap)).toEqual(["u-ooo-a", "u-ooo-b"]);
+    // A RE-PARENT, not a rebuild: the stranded box's streamed text came with it.
+    const moved = wrap.querySelector(
+      '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-ooo-a"]',
+    );
+    expect(moved?.querySelector(":scope > .subagent-body")?.textContent).toContain("planning");
+  });
+
   it("still renders a box for a driver that settled having dispatched no stage", () => {
     // The one case where a promoted-count driver keeps its box: nothing stands in
     // for it, and a block that renders nothing is a lost block. Deferred to the

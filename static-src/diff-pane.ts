@@ -19,6 +19,7 @@
 import { lineDiff, wordMarks, type CharRange, type DiffLine } from "./diff.js";
 import { highlightMarked, resolveLangHint } from "./highlight.js";
 import { el } from "@cplieger/reactive";
+import { CHROME_ATTR } from "./chrome-attr.js";
 
 export interface DiffPaneOpts {
   /** Optional max rows. When set, rows beyond the limit are dropped and a
@@ -240,7 +241,11 @@ function finishPane(
   const extra = Math.max(0, lines.length - rowCount);
   if (extra > 0) {
     container.appendChild(
-      el("div", { className: "diff-more" }, `+${String(extra)} more line${extra === 1 ? "" : "s"}`),
+      el(
+        "div",
+        { className: "diff-more", [CHROME_ATTR]: "" },
+        `+${String(extra)} more line${extra === 1 ? "" : "s"}`,
+      ),
     );
   }
   return container;
@@ -263,14 +268,16 @@ function makeUnifiedRow(
     // The NEW number where there is one, else the old: a unified row belongs to
     // the post-change file except for deletions, which only exist in the pre.
     const no = line.kind === "del" ? line.oldNo : line.newNo;
-    row.appendChild(el("span", { className: "diff-gutter" }, no > 0 ? String(no) : ""));
+    row.appendChild(
+      el("span", { className: "diff-gutter", [CHROME_ATTR]: "" }, no > 0 ? String(no) : ""),
+    );
   }
   const marker = line.kind === "add" ? "+" : line.kind === "del" ? "-" : " ";
   row.appendChild(
     el(
       "span",
       { className: "diff-content" },
-      el("span", { className: "diff-marker" }, marker),
+      el("span", { className: "diff-marker", [CHROME_ATTR]: "" }, marker),
       lineText(line, lang, marks),
     ),
   );
@@ -370,14 +377,20 @@ function populateRow(
 ): void {
   row.classList.add(`diff-row-${kind}`);
   if (lineNumbers) {
-    row.appendChild(el("span", { className: "diff-gutter" }, lineNo > 0 ? String(lineNo) : ""));
+    row.appendChild(
+      el("span", { className: "diff-gutter", [CHROME_ATTR]: "" }, lineNo > 0 ? String(lineNo) : ""),
+    );
   }
   // Marker glyph so colour-blind users still parse the row kind.
   row.appendChild(
     el(
       "span",
       { className: "diff-content" },
-      el("span", { className: "diff-marker" }, kind === "add" ? "+" : kind === "del" ? "-" : " "),
+      el(
+        "span",
+        { className: "diff-marker", [CHROME_ATTR]: "" },
+        kind === "add" ? "+" : kind === "del" ? "-" : " ",
+      ),
       text ?? el("span", { className: "diff-line-text" }),
     ),
   );

@@ -35,7 +35,7 @@
    "has a toggle" with "how much output", hiding a toggle that still existed in
    the accessibility tree, and denying an edit card any way to expand at all. */
 
-/* Second claim fact for search / fetch / generic kinds. */
+/* Second claim fact for search / fetch / generic / output kinds. */
 .tool-subtitle {
   padding: 0 0.75rem var(--sp-2);
   font-size: var(--fs-xs);

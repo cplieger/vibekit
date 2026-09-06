@@ -21,6 +21,24 @@ import { outcomeIcon } from "../icons.js";
 import { iconEl } from "../icon-el.js";
 import { CHUNK_ENTER_ATTR } from "../smd-renderer.js";
 
+// The real chrome producers the tail cases below build from reach `scroll.ts`,
+// which resolves the transcript scroller at module load and throws on a missing id.
+for (const id of [
+  "messages",
+  "messages-wrap",
+  "messages-wrap-outer",
+  "chat-view",
+  "scroll-bottom",
+]) {
+  const d = document.createElement("div");
+  d.id = id;
+  document.body.appendChild(d);
+}
+const { buildReasoning } = await import("./reasoning.js");
+const { buildToolGroupShell, groupBody } = await import("../tool-group.js");
+const { buildToolCard } = await import("../tool-card.js");
+const { updateToolCall } = await import("../messages-tools.js");
+
 const iconSlot = (root: HTMLElement): HTMLElement =>
   root.querySelector(".subagent-icon") as HTMLElement;
 
@@ -232,6 +250,109 @@ describe("the tail", () => {
     await new Promise((r) => setTimeout(r, 20));
     const lines = [...sa.root.querySelectorAll(".subagent-tail-line")].map((n) => n.textContent);
     expect(lines).toEqual(["I am creating a workflow"]);
+    sa.root.remove();
+  });
+
+  // Built from the REAL producers rather than hand-rolled markup: a hand-rolled
+  // fixture would pass against a filter keyed on the wrong element.
+  it("takes a reasoning trace's text and neither its label nor its word count", async () => {
+    const sa = buildSubagentBlock("Subagent", "in_progress");
+    document.body.appendChild(sa.root);
+    sa.body.appendChild(buildReasoning("I need to check the build first.", true).root);
+    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    await new Promise((r) => setTimeout(r, 20));
+    const lines = [...sa.root.querySelectorAll(".subagent-tail-line")].map((n) => n.textContent);
+    expect(lines).toEqual(["I need to check the build first."]);
+    sa.root.remove();
+  });
+
+  it("takes a nested delegate's text and none of its card chrome", async () => {
+    const sa = buildSubagentBlock("Subagent", "in_progress");
+    document.body.appendChild(sa.root);
+    const inner = buildSubagentBlock("context-gatherer", "in_progress", {
+      open: { href: "/chat/c/subagent/u", open: () => undefined },
+    });
+    inner.setSummary({ commands: 2, reads: 1, changedFiles: {}, elapsedMs: 4000 });
+    inner.body.appendChild(document.createTextNode("scanning the tree"));
+    sa.body.appendChild(inner.root);
+    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    await new Promise((r) => setTimeout(r, 20));
+    // `:scope >` because the nested card has a tail of its own, and this case is
+    // about what the OUTER one harvested.
+    const lines = [
+      ...sa.root.querySelectorAll(":scope > .subagent-tail > .subagent-tail-line"),
+    ].map((n) => n.textContent);
+    expect(lines).toEqual(["scanning the tree"]);
+    sa.root.remove();
+  });
+
+  it("takes a tool group's cards and not the header sentence it computed", async () => {
+    const sa = buildSubagentBlock("Subagent", "in_progress");
+    document.body.appendChild(sa.root);
+    const group = buildToolGroupShell();
+    const count = group.querySelector(".tool-group-count");
+    if (count !== null) {
+      count.textContent = "Ran 12 commands · 1 failed";
+    }
+    groupBody(group).appendChild(document.createTextNode("go build ./..."));
+    sa.body.appendChild(group);
+    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    await new Promise((r) => setTimeout(r, 20));
+    const lines = [...sa.root.querySelectorAll(".subagent-tail-line")].map((n) => n.textContent);
+    expect(lines).toEqual(["go build ./..."]);
+    sa.root.remove();
+  });
+
+  // The other half of the rule: this tail keeps the delegate's output and its
+  // tools' claim lines, minus UI text about the UI. A shell card's claim line
+  // carries the command, because the tool-input <pre> holding it is marked chrome.
+  it("takes a running shell card's command and none of the JSON that also holds it", async () => {
+    const sa = buildSubagentBlock("Subagent", "in_progress");
+    document.body.appendChild(sa.root);
+    sa.body.appendChild(
+      buildToolCard({
+        id: "t-cmd",
+        title: "Run Command",
+        kind: "execute",
+        status: "in_progress",
+        input: { command: "go build ./..." },
+        live: true,
+      }),
+    );
+    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    await new Promise((r) => setTimeout(r, 20));
+    const text = [...sa.root.querySelectorAll(".subagent-tail-line")]
+      .map((n) => n.textContent)
+      .join("\n");
+    expect(text).toContain("go build ./...");
+    for (const json of ["{", "}", '"command":']) {
+      expect(text, `the tool-input JSON stays excluded (${json})`).not.toContain(json);
+    }
+    sa.root.remove();
+  });
+
+  it("takes a failed card's output and not the Explain-this-error button under it", async () => {
+    const sa = buildSubagentBlock("Subagent", "in_progress");
+    document.body.appendChild(sa.root);
+    const card = buildToolCard({
+      id: "t-explain",
+      title: "Execute Bash",
+      kind: "execute",
+      status: "in_progress",
+      live: true,
+    });
+    sa.body.appendChild(card);
+    const tc = { id: "t-explain", title: "Execute Bash", kind: "execute" as const, ts: 0 };
+    // The output has to land BEFORE the failed frame: `applyStatusUpdate` reads
+    // `.tool-output` to decide, so one frame carrying both builds no button.
+    const out = "build failed\nexit status 2";
+    updateToolCall(card, { ...tc, status: "in_progress", output: out }, "c-tail");
+    updateToolCall(card, { ...tc, status: "failed" }, "c-tail");
+    expect(card.querySelector(".tool-explain-btn")).not.toBeNull();
+    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    await new Promise((r) => setTimeout(r, 20));
+    const lines = [...sa.root.querySelectorAll(".subagent-tail-line")].map((n) => n.textContent);
+    expect(lines.at(-1)).toBe("exit status 2");
     sa.root.remove();
   });
 

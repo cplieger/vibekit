@@ -31,6 +31,7 @@ import { toolCardOptsFor } from "./tool-card-opts.js";
 import { windowOutput, windowSpans, humanName } from "./strings.js";
 import { renderOutput, appendOutput as appendOutputChunk } from "./output-render.js";
 import { linkifyPaths } from "./linkify.js";
+import { CHROME_ATTR } from "./chrome-attr.js";
 import { bindLoadingState } from "./actions/index.js";
 
 // ---------------------------------------------------------------------------
@@ -633,7 +634,7 @@ function applyStatusUpdate(
       if (output.trim() !== "") {
         const btn = el(
           "button",
-          { type: "button", className: "tool-explain-btn" },
+          { type: "button", className: "tool-explain-btn", [CHROME_ATTR]: "" },
           "Explain this error",
         ) as HTMLButtonElement;
         _pushBind(
@@ -718,7 +719,7 @@ export function applyOutputUpdate(
   if (shown.elided > 0) {
     const reveal = el(
       "button",
-      { type: "button", className: "tool-output-reveal" },
+      { type: "button", className: "tool-output-reveal", [CHROME_ATTR]: "" },
       `Show ${String(shown.elided)} more line${shown.elided === 1 ? "" : "s"}`,
     );
     reveal.addEventListener("click", (e: Event) => {
