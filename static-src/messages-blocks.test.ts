@@ -482,12 +482,15 @@ describe("one run card per transcript, not per message", () => {
     // the run's step blocks in ONE message, so the render losing the launch is also the
     // render holding blocks inside the card. The claimant search has to consider it: the
     // sibling case above cannot express this, because its claimant is a second message.
-    // The fixture needs the step BELOW the dropped launch and a top-level ordinal below
-    // the step, so the card has a real seat to land above rather than the tail.
+    // The fixture needs a top-level ordinal BETWEEN the dropped launch and the step, so
+    // the card's seat genuinely moves — placed at the launch it sits above that ordinal,
+    // and the store puts it below — plus one below the step, so the seat is a real node
+    // rather than the tail.
     const blocks = [
       toolUse("t10"),
+      text("prose above the step"),
       text("step work", "wf:wf_self:wf_self/build"),
-      text("prose after the step"),
+      text("prose below the step"),
     ];
     const calls = [launch("t10", "wf_self")];
     const a = renderMsg(blocks, calls);
@@ -497,7 +500,7 @@ describe("one run card per transcript, not per message", () => {
 
     dropHead(
       { id: a.id, role: "assistant", content: "", blocks, tool_calls: calls } as unknown as Message,
-      { from: 1, to: 3 },
+      { from: 1, to: 4 },
       [],
     );
 
@@ -506,13 +509,14 @@ describe("one run card per transcript, not per message", () => {
     // renders past `window.to`, so a removed card never comes back.
     expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
     expect(a.wrap.querySelector('.run-step[data-node="wf_self/build"]')).toBe(step);
-    expect(mountedWindow(a.id)).toEqual({ from: 1, to: 3 });
-    // And it kept its seat above the ordinal the store puts after it.
+    expect(mountedWindow(a.id)).toEqual({ from: 1, to: 4 });
+    // And it moved to the seat its earliest surviving member asks for: the launch
+    // ordinal that put it at the top is gone.
     expect(
       [...(a.wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) =>
         e.classList.contains("run-card") ? "run" : String(e.textContent).trim(),
       ),
-    ).toEqual(["run", "prose after the step"]);
+    ).toEqual(["prose above the step", "run", "prose below the step"]);
     // The claim is still THIS render's, so a later frame routes into this card rather
     // than building a second one.
     const c = renderMsg([text("later frame", "wf:wf_self:wf_self/test")]);
@@ -2677,6 +2681,70 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
     expect(wrap.querySelector('[data-block-index="0"]')).toBeNull();
     // A WINDOW move, so the blocks it kept are untouched.
     expect(blockElement("m-drop", 1)).not.toBeUndefined();
+  });
+
+  it("leaves a DELEGATE box standing when the drop takes the invocation that opened it", () => {
+    // The invocation block's element is the box, a container `pruneEmptyContainers` owns
+    // and removes only once nothing is left inside it. Released like an ordinary block it
+    // takes the delegate's own still-mounted prose out of the document, seals its bubble,
+    // and records the whole box's height against one ordinal. The fixture needs a delegate
+    // block BELOW the invocation and inside the box, or the removal is correct anyway.
+    const blocks = [
+      toolUse("inv-d", "sub-K"),
+      text("delegate prose", "sub-K"),
+      text("prose below the box"),
+    ];
+    const calls = [subagentCall("inv-d", "sub-K")];
+    const { wrap, m } = renderRange(blocks, calls, { id: "m-boxdrop" });
+    const box = wrap.querySelector<HTMLElement>(".subagent-block");
+    // The stamp is the premise: without it the drop finds no element and the guard below
+    // has nothing to refuse.
+    expect(blockElement("m-boxdrop", 0)).toBe(box);
+    expect(box?.textContent).toContain("delegate prose");
+
+    dropHead(m, { from: 1, to: 3 }, []);
+
+    expect(wrap.querySelector(".subagent-block")).toBe(box);
+    expect(box?.parentElement?.classList.contains("assistant-blocks")).toBe(true);
+    // The delegate's own block is what the removal would have taken with it, while
+    // `st.window` went on counting it mounted.
+    expect(box?.contains(blockElement("m-boxdrop", 1) ?? null)).toBe(true);
+    expect(mountedWindow("m-boxdrop")).toEqual({ from: 1, to: 3 });
+  });
+
+  it("leaves a PIPELINE box standing when the drop takes the driver that opened it", () => {
+    // Same rule, the other container kind: the driver's block element is the pipeline box,
+    // and a stage's box lives inside it.
+    const driver = {
+      id: "d-drop",
+      title: "Orchestrate Sub-agent",
+      kind: "other",
+      status: "completed",
+      input: { stages: [{}, {}] },
+    } as unknown as ToolCall;
+    const stage = {
+      id: "invoke_subagent_d-drop_stage_plan",
+      title: "Sub-agent: plan",
+      kind: "other",
+      status: "completed",
+      agent_subtask_id: "u-drop",
+    } as unknown as ToolCall;
+    const blocks = [
+      toolUse("d-drop"),
+      text("stage prose", "u-drop"),
+      text("prose below the pipeline"),
+    ];
+    const { wrap, m } = renderRange(blocks, [driver, stage], { id: "m-pipedrop" });
+    const box = wrap.querySelector<HTMLElement>(".subagent-container");
+    expect(blockElement("m-pipedrop", 0)).toBe(box);
+    expect(box?.textContent).toContain("stage prose");
+
+    dropHead(m, { from: 1, to: 3 }, []);
+
+    expect(wrap.querySelector(".subagent-container")).toBe(box);
+    expect(box?.parentElement?.classList.contains("assistant-blocks")).toBe(true);
+    expect(box?.contains(blockElement("m-pipedrop", 1) ?? null)).toBe(true);
+    expect(mountedWindow("m-pipedrop")).toEqual({ from: 1, to: 3 });
   });
 
   it("prices a block whose element has NO BOX at its estimate, not at zero", () => {
