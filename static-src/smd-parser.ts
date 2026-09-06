@@ -72,6 +72,13 @@
 // character is NEVER re-parsed — it goes straight to the text buffer — so no
 // reference can synthesise markup ("an encoded asterisk does not emphasise").
 //
+// THE ENTITY TABLE IS THE FULL WHATWG SET, 2,125 names, because CommonMark 6.2
+// defines a valid named reference as membership in it — the table IS the rule, and
+// a subset is a second, private one no reader can discover. 11,561 gzipped bytes,
+// 4.3% of the app. Both alternatives carry their measured numbers so neither comes
+// back as a guess: a 243-name subset is 1,455 and gives up the rule; front-coding
+// the full table is 10,353, buying 0.4% for an encoding nobody can diff.
+//
 // THE AUTOLINK CARVE-OUT is the only exception to escaping `<` wholesale. Only
 // CommonMark 6.5's absolute-URI and email forms are recognised, both route
 // through the same `isSafeUrl` gate as every other href, and one inside a link
