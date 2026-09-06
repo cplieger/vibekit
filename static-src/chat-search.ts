@@ -136,7 +136,7 @@ export async function runServerSearch(
   caseSensitive = false,
 ): Promise<SearchHit[]> {
   if (chatID === "" || query.trim() === "") {
-    resetServerSearch(chatID);
+    resetServerSearch();
     return [];
   }
   // `case=1` only when asked. The server treats an absent parameter as
@@ -191,23 +191,26 @@ export async function runServerSearch(
 
 /** Drop the reveal and the hit marks.
  *
- *  A search must not permanently rearrange the transcript as a side effect, so
- *  turns opened BY SEARCH re-fold here. Turns the reader opened by hand carry a
- *  persisted override and are left alone. */
-export function resetServerSearch(chatID: string): void {
+ *  A search must not permanently rearrange the transcript as a side effect, so turns opened
+ *  BY SEARCH re-fold here. Turns the reader opened by hand carry a persisted override and are
+ *  left alone. Keyed on the chat this module SEARCHED and takes no chat argument: the box
+ *  closes AFTER a tab change has moved the active id, so an active-keyed teardown re-folded
+ *  nothing and left the searched chat's turns open. */
+export function resetServerSearch(): void {
   hitTurns = new Set<number>();
   countsByTurn = new Map<number, number>();
   hitTotal = 0;
+  const searched = searchedChatID;
+  searchedChatID = "";
   // Unconditional: the reveal is over whatever the fold set says. Inside the
   // branch below the grants would outlive a `searchOpened` some other path
   // emptied first, with no gesture left to end them.
-  endWalkReveal(searchedChatID);
-  searchedChatID = "";
-  if (chatID !== "" && clearSearchOpened(chatID)) {
+  endWalkReveal(searched);
+  if (searched !== "" && clearSearchOpened(searched)) {
     // The re-fold is a shape change too: turns the reveal opened fold back, and
     // the ones it pinned resident past the paint's block budget unmount
     // (`block-window.ts`).
-    bumpMessages(chatID, "shape");
+    bumpMessages(searched, "shape");
   }
 }
 

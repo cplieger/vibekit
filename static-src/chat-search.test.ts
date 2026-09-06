@@ -62,7 +62,7 @@ beforeEach(() => {
   apiGet.mockReset();
   apiGet.mockResolvedValue({ hits: [] });
   initSearchRevealBuilder(reveal, forWalk, endWalk);
-  resetServerSearch("c1");
+  resetServerSearch();
   endWalk.mockClear();
 });
 
@@ -163,7 +163,7 @@ describe("runServerSearch: the reveal", () => {
     apiGet.mockResolvedValue({ hits: [hit({ turn: 2 })] });
     await runServerSearch("c1", "retry");
     bumpMessages.mockClear();
-    resetServerSearch("c1");
+    resetServerSearch();
     expect([...searchHitTurns()]).toEqual([]);
     expect(searchHitCount(2)).toBe(0);
     expect(clearSearchOpened).toHaveBeenCalledWith("c1");
@@ -181,19 +181,27 @@ describe("runServerSearch: the reveal", () => {
     await runServerSearch("c1", "retry");
     clearSearchOpened.mockReturnValue(false);
     endWalk.mockClear();
-    resetServerSearch("c1");
+    resetServerSearch();
     expect(endWalk).toHaveBeenCalledExactlyOnceWith("c1");
   });
 
-  it("releases the grants in the chat the SEARCH ran in, not the one active at close", async () => {
-    // The close path names whichever chat is ACTIVE, so a chat switch with the find box
-    // open closes against the new one. Keyed to that, the previous chat keeps 48
-    // granted ordinals at every hit turn's head with no search running.
+  it("undoes the reveal in the chat the SEARCH ran in, whatever is active at close", async () => {
+    // The close path runs after a tab change has already moved the ACTIVE chat, so a
+    // teardown keyed on that re-folded nothing: the searched chat kept 48 granted ordinals at
+    // every hit turn's head AND its search-opened turns stayed open, with no search running.
+    // The function takes no chat argument now, so no caller can name the wrong one; what
+    // this pins is that all THREE effects name the chat the search ran in.
     apiGet.mockResolvedValue({ hits: [hit({ turn: 2 })] });
     await runServerSearch("c1", "retry");
     endWalk.mockClear();
-    resetServerSearch("c2");
+    clearSearchOpened.mockClear();
+    bumpMessages.mockClear();
+
+    resetServerSearch();
+
     expect(endWalk).toHaveBeenCalledExactlyOnceWith("c1");
+    expect(clearSearchOpened).toHaveBeenCalledExactlyOnceWith("c1");
+    expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
   });
 
   it("records the session-wide total, which is what the counter reports", async () => {
@@ -212,7 +220,7 @@ describe("runServerSearch: the reveal", () => {
     apiGet.mockResolvedValue({ hits: [hit({ turn: 1 })] });
     await runServerSearch("c1", "x");
     expect(searchHitTotal()).toBe(1);
-    resetServerSearch("c1");
+    resetServerSearch();
     // Zero rather than stale: the counter falls back to the DOM number, which is
     // the honest answer once there is no server opinion standing.
     expect(searchHitTotal()).toBe(0);
