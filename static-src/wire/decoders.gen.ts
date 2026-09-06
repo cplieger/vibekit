@@ -1016,10 +1016,10 @@ export const decodeRunStepPayload: Decoder<RunStepPayload> = (v) => {
 export const decodeRunStepTranscript: Decoder<RunStepTranscript> = (v) => {
   const o = asObject(v, "$.run_step_transcript");
   const out: RunStepTranscript = {
-    messages: o["messages"] === null ? [] : decodeArray(o["messages"], decodeMessage, "$.run_step_transcript.messages"),
     workflow_id: reqStr(o, "workflow_id", "$.run_step_transcript"),
     node_path: reqStr(o, "node_path", "$.run_step_transcript"),
     state: reqOneOf(o, "state", RUN_STEP_TRANSCRIPT_STATES, "$.run_step_transcript"),
+    messages: o["messages"] === null ? [] : decodeArray(o["messages"], decodeMessage, "$.run_step_transcript.messages"),
   };
   return out;
 };
@@ -1115,10 +1115,10 @@ export const decodeSessionEffortLevel: Decoder<SessionEffortLevel> = (v) => {
 export const decodeSessionListResponse: Decoder<SessionListResponse> = (v) => {
   const o = asObject(v, "$.session_list_response");
   const out: SessionListResponse = {
-    sessions: o["sessions"] === null ? [] : decodeArray(o["sessions"], decodeResumableSession, "$.session_list_response.sessions"),
-    runs: o["runs"] === null ? [] : decodeArray(o["runs"], decodeWorkflowRun, "$.session_list_response.runs"),
     sessions_state: reqOneOf(o, "sessions_state", READ_STATES, "$.session_list_response"),
     runs_state: reqOneOf(o, "runs_state", READ_STATES, "$.session_list_response"),
+    sessions: o["sessions"] === null ? [] : decodeArray(o["sessions"], decodeResumableSession, "$.session_list_response.sessions"),
+    runs: o["runs"] === null ? [] : decodeArray(o["runs"], decodeWorkflowRun, "$.session_list_response.runs"),
   };
   return out;
 };
