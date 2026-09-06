@@ -229,30 +229,16 @@ method (*cappedBuffer).Write
 
 
 # --- 17. Test-isolation seam, same shape as sections 13 and 14. The per-chat
-# file cap is DERIVED from the cgroup memory limit, so the refusal paths it
-# guards are unreachable in a test without an override: reaching them for real
-# means allocating hundreds of MiB to cross a cap sized off the container's own
-# budget. WithChatFileCap is how internal/chat's tests point that cap at a few
-# bytes instead. A functional option rather than a package var for section 13's
-# reason: an argument is visible at the construction, a global override has to
-# be remembered at every call site. Option ordering is load-bearing and
-# store.go's own comment states it — options land AFTER the derivation, so this
-# overrides it rather than being silently overwritten by it.
+# file cap is DERIVED from the cgroup memory limit, so its refusal paths are
+# unreachable in a test without an override: crossing a cap sized off the
+# container's own budget means allocating hundreds of MiB. WithChatFileCap is how
+# internal/chat's tests point that cap at a few bytes instead.
 function WithChatFileCap
 
-# --- 18. http.ResponseWriter wrapper methods, reached only through the
-# interfaces net/http discovers by type assertion. internal/server's
-# compressWriter wraps the real writer for gzip negotiation:
-#   Unwrap  -> http.ResponseController unwraps to find the real implementation,
-#              so a handler reaching Flush or SetWriteDeadline through the
-#              controller does not fail on the wrapper. Named by the stdlib's
-#              own unwrap convention, never called directly.
-#   Flush   -> http.Flusher. This one is load-bearing for the SSE hub: a
-#              handler that flushes is claiming these bytes go now, which is the
-#              one promise buffering cannot keep, so Flush resolves a still
-#              undecided response as plain BEFORE flushing. Deleting it would
-#              make every event stream silently buffer.
-# Same category as sections 8 and 9 (ServeHTTP, the io.Writer implementations):
-# punused cannot see a call arriving through an interface.
+# --- 18. http.ResponseWriter wrapper methods on internal/server's
+# compressWriter, reached only through interfaces net/http discovers by type
+# assertion — the same blind spot as sections 8 and 9. Unwrap serves
+# http.ResponseController; Flush serves http.Flusher and is load-bearing for the
+# SSE hub, because deleting it would make every event stream silently buffer.
 method (*compressWriter).Unwrap
 method (*compressWriter).Flush
