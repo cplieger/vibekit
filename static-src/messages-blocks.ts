@@ -2328,10 +2328,13 @@ function reseatInserted(st: MsgRender, container: HTMLElement, el: HTMLElement):
 }
 
 /** Place a lazily-created CONTAINER where the STORE puts it: above the first mounted
- *  ordinal after `at`, the index establishing it. The mount position is the RANGE's and
- *  nothing moves a box later, so a range reaching the container BELOW that index would
+ *  ordinal after `at`, the index establishing it. Seating it by the RANGE instead would
  *  leave it under ordinals the store puts after it — one run split into two groups, and
- *  one window reached two ways two documents. `at` absent appends. */
+ *  one window reached two ways two documents. `at` absent appends.
+ *
+ *  This seats a box; it does not own the box's position for the rest of its life. Two
+ *  paths move one afterwards: `runCardFor` reseats a step-built run card down to its
+ *  launch ordinal, and `pipelineBoxFor`'s adoption arm replaces the element outright. */
 function placeContainer(
   st: MsgRender,
   host: HTMLElement,
