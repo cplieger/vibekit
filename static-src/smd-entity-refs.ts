@@ -63,9 +63,14 @@ export function decodeNumericRef(body: string): string | null {
 
 /** The character `name` stands for, or null when nothing in the installed table
  *  names it. Null is the stays-literal answer, so a name the absent chunk would
- *  have resolved renders as the text that was typed. */
+ *  have resolved renders as the text that was typed.
+ *
+ *  `name` is author text, and both tables are object literals, so the own-member
+ *  test is what keeps this total: a bare index answers `&constructor;` with the
+ *  inherited `Object` constructor. Owning it here rather than in the tables means
+ *  a later table source cannot reintroduce it. */
 export function lookupNamedRef(name: string): string | null {
-  return namedRefs[name] ?? null;
+  return Object.hasOwn(namedRefs, name) ? (namedRefs[name] ?? null) : null;
 }
 
 /** Whether the full WHATWG table is installed. False means only the five XML

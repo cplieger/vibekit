@@ -79,6 +79,26 @@ describe("character references with the lazy table absent", () => {
     expect(render("&nosuchname;")).toBe("<p>&amp;nosuchname;</p>");
   });
 
+  it("leaves a name only Object.prototype carries literal", () => {
+    // A bare index into either table answers with an INHERITED member, so
+    // `&constructor;` would render this parser's own `Object` constructor source
+    // as text. Every name here is alphanumeric, so both `decode_entities`' regex
+    // and `can_continue_entity` accept it as a candidate.
+    expect(render("&constructor;")).toBe("<p>&amp;constructor;</p>");
+    expect(render("&toString;")).toBe("<p>&amp;toString;</p>");
+    expect(render("&valueOf;")).toBe("<p>&amp;valueOf;</p>");
+    expect(render("&hasOwnProperty;")).toBe("<p>&amp;hasOwnProperty;</p>");
+    expect(render("&isPrototypeOf;")).toBe("<p>&amp;isPrototypeOf;</p>");
+    expect(render("&propertyIsEnumerable;")).toBe("<p>&amp;propertyIsEnumerable;</p>");
+    expect(render("&toLocaleString;")).toBe("<p>&amp;toLocaleString;</p>");
+  });
+
+  it("leaves an inherited member literal in a link destination too", () => {
+    // The whole-string path has its own reader, `decode_entities`, and writes its
+    // answer into an attribute rather than a text node.
+    expect(render("[a](&constructor;)")).toBe(`<p>${A} href="&amp;constructor;">a</a></p>`);
+  });
+
   // -------------------------------------------------------------------------
   // Numeric decoding is complete without the chunk: it is arithmetic plus
   // CommonMark 6.2's scalar rules, and consults no table.
@@ -171,6 +191,9 @@ describe("character references with the lazy table absent", () => {
     expect(namedEntitiesLoaded()).toBe(true);
     expect(render("&copy; 2026")).toBe("<p>© 2026</p>");
     expect(render("&CounterClockwiseContourIntegral;")).toBe("<p>∳</p>");
+    // The installed table is a second object literal, so it inherits the same
+    // members the inline map does.
+    expect(render("&constructor;")).toBe("<p>&amp;constructor;</p>");
     const table = await import("./smd-entities.js");
     expect(MAX_ENTITY_NAME_LENGTH).toBe(table.MAX_ENTITY_NAME_LENGTH);
   });
