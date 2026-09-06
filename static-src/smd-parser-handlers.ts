@@ -69,7 +69,7 @@ import {
   TITLE,
   MAYBE_ENTITY,
 } from "./smd-parser-types.js";
-import { NAMED_ENTITIES, MAX_ENTITY_NAME_LENGTH } from "./smd-entities.js";
+import { decodeNumericRef, lookupNamedRef, MAX_ENTITY_NAME_LENGTH } from "./smd-entity-refs.js";
 
 /** Everything a delimiter row may contain. One character outside this set rules
  *  the line out, which is what bounds the held candidate to two lines. Must stay
@@ -105,28 +105,12 @@ function can_continue_entity(pending: string, char: string): boolean {
   return pending.length < 1 + MAX_ENTITY_NAME_LENGTH && (is_ascii_alpha(cc) || is_digit(cc));
 }
 
-/** CommonMark 6.2: a code point that is not a valid Unicode scalar decodes to
- *  U+FFFD rather than failing. */
-function scalar_or_replacement(cp: number): string {
-  if (cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
-    return "\ufffd";
-  }
-  return String.fromCodePoint(cp);
-}
-
 /** Decode one reference body — everything between the `&` and the `;` — or null
  *  when it names nothing. A lookup miss is exactly the "an invalid reference
- *  stays literal" rule, so no extra guard is needed for it. */
+ *  stays literal" rule, so no extra guard is needed for it — including the miss a
+ *  name gets while the lazy table is absent (`smd-entity-refs.ts`). */
 function decode_entity(body: string): string | null {
-  if (body.startsWith("#x") || body.startsWith("#X")) {
-    const hex = body.slice(2);
-    return hex === "" ? null : scalar_or_replacement(parseInt(hex, 16));
-  }
-  if (body.startsWith("#")) {
-    const dec = body.slice(1);
-    return dec === "" ? null : scalar_or_replacement(parseInt(dec, 10));
-  }
-  return NAMED_ENTITIES[body] ?? null;
+  return body.startsWith("#") ? decodeNumericRef(body) : lookupNamedRef(body);
 }
 
 /** Every reference in a COMPLETE string, decoded. For a link destination and a

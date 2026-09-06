@@ -7,7 +7,7 @@
 // Key invariant: tokens[0] === DOCUMENT always, len never goes negative,
 // and parser_end never throws regardless of input.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import fc from "fast-check";
 import {
   parser,
@@ -23,6 +23,14 @@ import {
 } from "./smd-parser.js";
 import { TOKEN_ARRAY_CAP } from "./smd-parser-types.js";
 import type { Parser } from "./smd-parser.js";
+import { entitiesReady } from "./smd-entity-refs.js";
+
+// Same reason as smd-parser-handlers.test.ts: this file reaches the parser
+// directly, so the lazy entity table is installed here to put the chunked-input
+// properties in the state a real page is in.
+beforeAll(async () => {
+  await entitiesReady();
+});
 
 /** No-op renderer — we only inspect parser state. */
 function nullRenderer() {
