@@ -17,7 +17,6 @@
     /* The turn's prose plane; header and footer stay tertiary and bracket it. */
     --c-turn-body: var(--c-bg-secondary);
     --c-bg-tertiary: oklch(35.5% 0.038 283.7deg);
-
     --c-bg-elevated: oklch(42.5% 0.044 283.6deg);
 
     /* ---- SEEDS: ink -------------------------------------------------------- */
@@ -58,7 +57,6 @@
      * pane's lightness and spend CHROMA instead. */
     --c-diff-add-bg: oklch(22% 0.05 142.7deg);
     --c-diff-del-bg: oklch(22% 0.09 2.8deg);
-
     --c-blue: oklch(76.6% 0.111 259.9deg);
     --c-teal: oklch(84.1% 0.13 168.3deg);
     --c-danger: oklch(66.8% 0.16 22.4deg);
@@ -180,7 +178,6 @@
     --c-press: color-mix(in oklch, var(--c-text-primary) 25%, transparent);
     --layer-hover: linear-gradient(var(--c-hover) 0 100%);
     --layer-press: linear-gradient(var(--c-press) 0 100%);
-
     --opacity-disabled: 0.4;
 
     /* ---- Selection: ONE treatment, three channels ------------------------ *
@@ -237,9 +234,7 @@
     --fw-normal: 400;
     --fw-medium: 500;
     --fw-semibold: 600;
-
     --fw-bold: 700;
-
     --sp-05: 0.125rem;
     --hairline: 1px;
     --sp-1: 0.25rem;
@@ -468,7 +463,6 @@
     --c-term-bright-magenta: #b11cb2;
     --c-term-bright-cyan: #097272;
     --c-term-bright-white: #666;
-
     --c-term-black-bg: #e5e5e5;
     --c-term-red-bg: #f8dfdf;
     --c-term-green-bg: #c1f1ba;

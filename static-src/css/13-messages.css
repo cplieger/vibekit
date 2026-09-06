@@ -1272,7 +1272,6 @@
  * app error. */
 .refusal-callout {
   max-width: var(--content-max-w);
-
   margin: 0;
   padding: var(--sp-2) var(--sp-3);
   /* A symmetric tinted ring, no state-coloured left edge (the decision
