@@ -581,3 +581,112 @@ func TestReplayTurnState_MarksAStepDrivenTurnAsTheRunsOwn(t *testing.T) {
 		})
 	}
 }
+
+// replayedTurnState drives replayTurnState over one chat and returns its single
+// turn_state payload. The two cap tests below differ only in how much the buffer
+// holds, so the drive belongs in one place.
+func replayedTurnState(t *testing.T, h *Runtime, chatID vibekit.ChatID) vibekit.TurnStatePayload {
+	t.Helper()
+	var got []vibekit.TurnStatePayload
+	err := h.replayTurnState(func(evt vibekit.ServerEvent) error {
+		if evt.Type != vibekit.EventTurnState {
+			return nil
+		}
+		p, ok := evt.Payload.(vibekit.TurnStatePayload)
+		if !ok {
+			t.Fatalf("turn_state payload = %T, want vibekit.TurnStatePayload", evt.Payload)
+		}
+		got = append(got, p)
+		return nil
+	}, chatID, h.coord.turns.openTurns())
+	if err != nil {
+		t.Fatalf("replayTurnState: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("turn_state events = %d, want 1", len(got))
+	}
+	return got[0]
+}
+
+// openBigTurn opens a turn on chatID and fills its buffer past every dimension of
+// connectSnapshotCaps. The deltas go through the buffer's own Append* methods, so
+// the flat-field/Blocks duplication is real: a cap reaching only one carrier
+// halves the payload where it must divide it.
+func openBigTurn(t *testing.T, h *Runtime, chatID vibekit.ChatID) {
+	t.Helper()
+	h.translateACPEvent(chatID, newChunkMsg("the reply opens here"))
+	facts, ok := h.coord.turns.openTurns()[chatID]
+	if !ok {
+		t.Fatal("no open turn after a chunk; the fixture cannot exercise the cap")
+	}
+	facts.Buf.AppendThinkingDelta(strings.Repeat("r", 3<<20), "")
+	facts.Buf.AppendTextDelta(strings.Repeat("c", 1<<20), "")
+	for i := range 20 {
+		facts.Buf.AppendToolCall(&vibekit.ToolCall{
+			ID:     fmt.Sprintf("tool-%d", i),
+			Output: strings.Repeat("o", 100<<10),
+		})
+	}
+}
+
+// TestReplayTurnState_MarksACappedSnapshotTruncated pins the marker to the CUT.
+// Without it a client renders the tail of a 10 MB turn as the whole reply, which
+// is the mistake design.md §3 retracted — the cap is admissible only because the
+// payload says it happened.
+func TestReplayTurnState_MarksACappedSnapshotTruncated(t *testing.T) {
+	h, cs, _ := newTestHub()
+	const chatID vibekit.ChatID = "c1"
+	_ = cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	openBigTurn(t, h, chatID)
+
+	got := replayedTurnState(t, h, chatID)
+	if got.Message == nil {
+		t.Fatal("the snapshot was withheld; a bounded snapshot is the point, not no snapshot")
+	}
+	if !got.Truncated {
+		t.Error("truncated = false over a turn holding 3 MiB of reasoning; the client reads the tail as complete")
+	}
+	// The cap reached BOTH carriers of the turn's text. Reasoning is stored in
+	// buf.Reasoning and in Blocks[i].Thinking, so a flat-field-only cap leaves
+	// megabytes on the wire while reporting a bound.
+	if got := len(got.Message.Reasoning); got > connectSnapshotCaps.ReasoningBytes {
+		t.Errorf("reasoning = %d bytes, want <= %d", got, connectSnapshotCaps.ReasoningBytes)
+	}
+	blockText := 0
+	for _, b := range got.Message.Blocks {
+		blockText += len(b.Text) + len(b.Thinking)
+	}
+	if blockText > connectSnapshotCaps.BlockTextBytes {
+		t.Errorf("block text = %d bytes, want <= %d; the second copy of the turn is uncapped",
+			blockText, connectSnapshotCaps.BlockTextBytes)
+	}
+	if n := len(got.Message.ToolCalls); n > connectSnapshotCaps.ToolCalls {
+		t.Errorf("tool calls = %d, want <= %d", n, connectSnapshotCaps.ToolCalls)
+	}
+	for _, tc := range got.Message.ToolCalls {
+		if len(tc.Output) > connectSnapshotCaps.ToolOutputBytes {
+			t.Errorf("%s output = %d bytes, want <= %d", tc.ID, len(tc.Output), connectSnapshotCaps.ToolOutputBytes)
+		}
+	}
+}
+
+// TestReplayTurnState_ASmallTurnIsNotMarkedTruncated is the other direction, and
+// it is the one that keeps the marker meaningful: a client that sees `truncated`
+// on every reconnect learns to ignore it.
+func TestReplayTurnState_ASmallTurnIsNotMarkedTruncated(t *testing.T) {
+	h, cs, _ := newTestHub()
+	const chatID vibekit.ChatID = "c1"
+	_ = cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	h.translateACPEvent(chatID, newChunkMsg("a short reply"))
+
+	got := replayedTurnState(t, h, chatID)
+	if got.Message == nil {
+		t.Fatal("the snapshot was withheld for a turn well inside every cap")
+	}
+	if got.Truncated {
+		t.Error("truncated = true for a 13-byte reply; the client would show a withheld-output note for nothing")
+	}
+	if got.Message.Content != "a short reply" {
+		t.Errorf("content = %q, want it untouched", got.Message.Content)
+	}
+}

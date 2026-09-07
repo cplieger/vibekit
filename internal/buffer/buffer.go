@@ -526,31 +526,15 @@ func (buf *Buffer) MarkCancelledToolsFailed() (messageID string, changed []vibek
 	return buf.MessageID, changed
 }
 
-// Snapshot returns the in-flight turn as a vibekit.Message plus the chunk-sequence watermark,
-// for a client that connects mid-turn and needs the accumulated transcript rather than only the
-// next delta. This is the buffer serving its own cross-goroutine read. Reports false when the
+// Snapshot returns the WHOLE in-flight turn as a vibekit.Message plus the chunk-sequence
+// watermark, for a caller that needs the accumulated transcript rather than only the next
+// delta. This is the buffer serving its own cross-goroutine read. Reports false when the
 // turn has produced nothing yet, which the caller sends as a bare busy signal.
+//
+// One call into SnapshotCapped with no caps, so there is ONE implementation of the read and
+// the unbounded path cannot drift from the bounded one. A caller writing to a bounded
+// channel — the SSE connect replay is the one in tree — uses SnapshotCapped directly.
 func (buf *Buffer) Snapshot() (vibekit.Message, int64, bool) {
-	buf.mu.Lock()
-	defer buf.mu.Unlock()
-	if buf.MessageID == "" {
-		return vibekit.Message{}, 0, false
-	}
-	if buf.Content.Len() == 0 && buf.Reasoning.Len() == 0 && len(buf.ToolCalls) == 0 {
-		return vibekit.Message{}, buf.chunkSeq, false
-	}
-	// Field-for-field the shape bridge_coord assembles at turn end, so a mid-turn snapshot
-	// renders byte-equivalently to the turn that follows it. Slices are copied: the caller
-	// reads them off this goroutine while the dispatch loop keeps appending.
-	return vibekit.Message{
-		ID:             buf.MessageID,
-		Role:           vibekit.RoleAssistant,
-		Ts:             time.Now().UnixMilli(),
-		Content:        buf.Content.String(),
-		Reasoning:      buf.Reasoning.String(),
-		ToolCalls:      slices.Clone(buf.ToolCalls),
-		Blocks:         slices.Clone(buf.Blocks),
-		CodeReferences: slices.Clone(buf.CodeReferences),
-		Refusal:        buf.Refusal,
-	}, buf.chunkSeq, true
+	msg, seq, _, ok := buf.SnapshotCapped(SnapshotCaps{})
+	return msg, seq, ok
 }
