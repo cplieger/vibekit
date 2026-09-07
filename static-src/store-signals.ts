@@ -11,12 +11,6 @@ import { join } from "@cplieger/keyenc";
 
 // --- Signal registry instances ---
 
-/** Per-message-id streaming text signal. */
-export const streamingTextSigs = new SignalMap<string>();
-
-/** Per-message-id reasoning signal. */
-export const streamingReasoningSigs = new SignalMap<string>();
-
 /** One per-block streaming write: the block's accumulated text plus the growth
  *  this write carries, so a consumer can append `delta` instead of re-deriving
  *  the tail from an ever-longer `full`.
@@ -63,14 +57,6 @@ export function toolCallSigKey(chatID: string, toolID: string): string {
 }
 
 // --- Public accessors ---
-
-export function ensureStreamingSig(messageID: string, initial: string): Signal<string> {
-  return streamingTextSigs.ensure(messageID, initial);
-}
-
-export function ensureReasoningSig(messageID: string, initial: string): Signal<string> {
-  return streamingReasoningSigs.ensure(messageID, initial);
-}
 
 export function ensureToolCallSig(
   chatID: string,
@@ -127,14 +113,6 @@ export function ensureBlockThinkingSig(
   const key = blockKey(messageID, blockIndex);
   noteBlockKey(messageID, key);
   return blockThinkingSigs.ensure(key, { full: initial, delta: "" });
-}
-
-export function clearStreamingSig(messageID: string): void {
-  streamingTextSigs.clear(messageID);
-}
-
-export function clearReasoningSig(messageID: string): void {
-  streamingReasoningSigs.clear(messageID);
 }
 
 export function clearToolCallSig(chatID: string, toolID: string): void {
