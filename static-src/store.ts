@@ -36,8 +36,6 @@ import {
   type Signal,
 } from "@cplieger/reactive";
 import {
-  streamingTextSigs,
-  streamingReasoningSigs,
   blockTextSigs,
   blockThinkingSigs,
   blockKey,
@@ -380,8 +378,6 @@ export function stopEvictionSweep(): void {
 function clearMessageSignals(chatID: string, messages: readonly Message[]): void {
   for (const m of messages) {
     clearBlockSigsFor(m.id);
-    streamingTextSigs.clear(m.id);
-    streamingReasoningSigs.clear(m.id);
     for (const tc of m.tool_calls ?? []) {
       toolCallSigs.clear(toolCallSigKey(chatID, tc.id));
     }
@@ -1653,29 +1649,12 @@ export function appendChunk(
     // refreshes tail bookkeeping only.
     scheduleMessages(chatID, "chunk");
   }
-  // The signal-absent fallback is for a MOUNTED block whose liveness was misjudged:
-  // the pass re-reads it through `syncMountedText`. For an unmounted one the pass
-  // paints nothing either, so a parked reader would pay a full pass per delta.
-  const mounted = mountedBlockProbe(messageID, blockIndex);
-  if (isReasoning) {
-    const sig = streamingReasoningSigs.get(messageID);
-    if (sig !== undefined) {
-      sig.value = msg.reasoning ?? "";
-      scheduleMessages(chatID, "chunk");
-    } else if (blockSig === undefined && mounted) {
-      // Signal-absent fallback: the mounted sink is re-read by the full pass — unless nothing
-      // is MEANT to be drawn, which is a delegate's block.
-      scheduleMessages(chatID, dropCause);
-    }
-  } else {
-    const sig = streamingTextSigs.get(messageID);
-    if (sig !== undefined) {
-      sig.value = msg.content ?? "";
-      scheduleMessages(chatID, "chunk");
-    } else if (blockSig === undefined && mounted) {
-      // Signal-absent fallback, as above.
-      scheduleMessages(chatID, dropCause);
-    }
+  // The block-signal-absent fallback, for a MOUNTED block whose liveness was misjudged:
+  // the pass re-reads it through `syncMountedText`. For an unmounted one the pass paints
+  // nothing either, so a parked reader would pay a full pass per delta. Nothing is MEANT to
+  // be drawn for a delegate's block, which is what the cheap cause carries.
+  if (blockSig === undefined && mountedBlockProbe(messageID, blockIndex)) {
+    scheduleMessages(chatID, dropCause);
   }
 }
 

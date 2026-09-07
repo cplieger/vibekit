@@ -18,7 +18,7 @@ import {
   registerEvictionExemption,
   turnLive,
 } from "./store.js";
-import { clearStreamingSig, clearReasoningSig, clearBlockSigsFor } from "./store-signals.js";
+import { clearBlockSigsFor } from "./store-signals.js";
 import { effect, el, touch } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { CHAT_SKELETON_ID } from "./skeleton.js";
@@ -493,8 +493,6 @@ function disposeStreamingEffect(id: string): void {
   if (per !== undefined) {
     disposeBlockEffects(id, [...per.keys()]);
   }
-  clearStreamingSig(id);
-  clearReasoningSig(id);
 }
 
 /** Per-BLOCK cleanups: message id → block index → cleanups. Beside

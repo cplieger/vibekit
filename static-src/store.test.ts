@@ -929,66 +929,29 @@ describe("Store setName", () => {
 // ---------------------------------------------------------------------------
 
 import { appendChunk, upsertToolCall } from "./store.js";
-import {
-  ensureStreamingSig,
-  streamingTextSigs,
-  clearStreamingSig,
-  ensureReasoningSig,
-  streamingReasoningSigs,
-  clearReasoningSig,
-  ensureToolCallSig,
-  clearToolCallSig,
-} from "./store-signals.js";
+import { ensureToolCallSig, clearToolCallSig } from "./store-signals.js";
 import type { ToolCall } from "./types.js";
 
-describe("streaming signals", () => {
-  it("appendChunk routes content vs reasoning to separate signals", () => {
+describe("streaming accumulation", () => {
+  it("appendChunk keeps content and reasoning in separate fields", () => {
     resetStore("chat-1");
-    // First chunk creates the message + bumps global; signals are
-    // created lazily by callers (mountContentBubble / mountReasoningBlock).
     appendChunk("chat-1", "m1", "hello", false, 0, "");
     const session = get("chat-1")!;
     expect(session.messages[0]?.content).toBe("hello");
     expect(session.messages[0]?.reasoning ?? "").toBe("");
 
-    // Subscribe a content signal so subsequent content chunks route here.
-    const contentSig = ensureStreamingSig("m1", "hello");
     appendChunk("chat-1", "m1", " world", false, 0, "");
-    expect(contentSig.value).toBe("hello world");
     expect(session.messages[0]?.content).toBe("hello world");
     expect(session.messages[0]?.reasoning ?? "").toBe("");
 
-    // Subscribe a reasoning signal; reasoning chunks route there.
-    const reasoningSig = ensureReasoningSig("m1", "");
     appendChunk("chat-1", "m1", "let me think", true, 1, "");
-    expect(reasoningSig.value).toBe("let me think");
     expect(session.messages[0]?.reasoning).toBe("let me think");
     expect(session.messages[0]?.content).toBe("hello world");
-
-    clearStreamingSig("m1");
-    clearReasoningSig("m1");
   });
 
-  it("ensure*Sig returns the same signal on repeated calls", () => {
-    const a = ensureStreamingSig("m-id", "init");
-    const b = ensureStreamingSig("m-id", "ignored");
-    expect(a).toBe(b);
-    clearStreamingSig("m-id");
-  });
-
-  it("clearStreamingSig + getStreamingSig: signal is gone after clear", () => {
-    ensureStreamingSig("m-x", "x");
-    expect(streamingTextSigs.get("m-x")).toBeDefined();
-    clearStreamingSig("m-x");
-    expect(streamingTextSigs.get("m-x")).toBeUndefined();
-  });
-
-  it("clearReasoningSig + getReasoningSig: signal is gone after clear", () => {
-    ensureReasoningSig("m-y", "y");
-    expect(streamingReasoningSigs.get("m-y")).toBeDefined();
-    clearReasoningSig("m-y");
-    expect(streamingReasoningSigs.get("m-y")).toBeUndefined();
-  });
+  // The three per-message-signal cases were here. That registry is gone: the per-BLOCK
+  // signals (`blockTextSigs` / `blockThinkingSigs`) superseded it, nothing ever created a
+  // message-level one, and the store's read of it could not execute.
 });
 
 describe("per-tool signal", () => {
@@ -2342,28 +2305,16 @@ describe("Store appendChunk blocks", () => {
 });
 
 // ---------------------------------------------------------------------------
-// appendChunk's repaint discipline: a mounted signal carries the TEXT, so the
-// version bump it schedules declares cause `chunk` — the renderer's tail-
-// bookkeeping-only branch; with nothing mounted the list is the only channel,
-// so the bump declares `shape` (the full pass is what puts the text on
-// screen). Getting this backwards is either a dropped delta or a transcript
-// that re-projects per character.
+// appendChunk's repaint discipline. A mounted per-BLOCK signal carries the TEXT, so the
+// version bump it schedules declares cause `chunk` — the renderer's tail-bookkeeping-only
+// branch; with nothing mounted the list is the only channel, so the bump declares `shape`
+// (the full pass is what puts the text on screen). Getting this backwards is either a
+// dropped delta or a transcript that re-projects per character.
 // ---------------------------------------------------------------------------
 
 describe("Store appendChunk repaint discipline", () => {
-  it("declares a chunk-cause bump when a streaming signal is carrying the text", async () => {
-    resetStore("ar-1");
-    appendChunk("ar-1", "m-1", "hello", false, 0, "");
-    await tick();
-    const sig = ensureStreamingSig("m-1", "hello");
-    const before = messagesVersionOf("ar-1").peek();
-    appendChunk("ar-1", "m-1", " world", false, 0, "");
-    await tick();
-    expect(sig.value).toBe("hello world");
-    expect(messagesVersionOf("ar-1").peek()).toBe(before + 1);
-    expect(renderCauseOf("ar-1")).toEqual({ cause: "chunk" });
-    clearStreamingSig("m-1");
-  });
+  // The message-level-signal case was here; that channel no longer exists. The per-block
+  // equivalent is covered by the mounted-block cases in this same describe.
 
   it("repaints the list when nothing is mounted to carry the text", async () => {
     resetStore("ar-2");
@@ -2440,17 +2391,14 @@ describe("Store appendChunk repaint discipline", () => {
     resetStore("ar-6");
     appendChunk("ar-6", "m-1", "I can't", false, 0, "");
     await tick();
-    const sig = ensureStreamingSig("m-1", "I can't");
     const before = messagesVersionOf("ar-6").peek();
     appendChunk("ar-6", "m-1", " help with that", false, 0, "", 0, { category: "policy" });
     await tick();
     expect(get("ar-6")?.messages[0]?.refusal).toEqual({ category: "policy" });
-    // The delta still rides the signal, as it would without a refusal...
-    expect(sig.value).toBe("I can't help with that");
-    // ...but the per-block signal carries text only, so a message-level callout
-    // needs the keyed reconcile as well.
+    expect(get("ar-6")?.messages[0]?.content).toBe("I can't help with that");
+    // A block signal carries text only, so a message-level callout needs the keyed
+    // reconcile as well.
     expect(messagesVersionOf("ar-6").peek()).toBe(before + 1);
-    clearStreamingSig("m-1");
   });
 
   it("stamps a refusal once, so a later frame cannot restate it", async () => {
@@ -2721,22 +2669,16 @@ describe("Store steer projection, frame by frame", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A message the store has not seen before has to reach the LIST, whatever is
-// already mounted.
-//
-// The signal maps are module-global and keyed by message id, so a signal can
-// outlive the row that created it — a paginated window drops resident messages,
-// and a re-created message keeps its id. When the row itself is new, feeding
-// that leftover signal is not enough: nothing has mounted the row, so the only
-// channel that can put it on screen is the keyed reconcile behind the chat's
-// version signal. This is the one case where the "a mounted signal carries
-// the delta, so stay off the list" discipline above does NOT apply.
+// A message the store has not seen before has to reach the LIST, whatever is already
+// mounted: nothing has mounted the row, so the only channel that can put it on screen is
+// the keyed reconcile behind the chat's version signal. This is the one case where the
+// "a mounted signal carries the delta, so stay off the list" discipline above does NOT
+// apply, and it is why `isNew` takes `shape` before any cause is derived.
 // ---------------------------------------------------------------------------
 
 describe("Store appendChunk on a first sighting", () => {
-  it("repaints the list even when a signal for that id is already mounted", async () => {
+  it("repaints the list on a first content delta", async () => {
     resetStore("fs-1");
-    const sig = ensureStreamingSig("m-unseen", "");
     const before = messagesVersionOf("fs-1").peek();
 
     appendChunk("fs-1", "m-unseen", "hello", false, 0, "");
@@ -2744,14 +2686,11 @@ describe("Store appendChunk on a first sighting", () => {
 
     expect(get("fs-1")?.messages[0]?.content).toBe("hello");
     expect(messagesVersionOf("fs-1").peek()).toBe(before + 1);
-    // The leftover signal is not the channel for a row that has yet to mount.
-    expect(sig.value).toBe("");
-    clearStreamingSig("m-unseen");
+    expect(renderCauseOf("fs-1")).toEqual({ cause: "shape" });
   });
 
-  it("repaints for a first reasoning delta with a mounted reasoning signal", async () => {
+  it("repaints the list on a first reasoning delta", async () => {
     resetStore("fs-2");
-    const sig = ensureReasoningSig("m-unseen-r", "");
     const before = messagesVersionOf("fs-2").peek();
 
     appendChunk("fs-2", "m-unseen-r", "why", true, 0, "");
@@ -2759,8 +2698,7 @@ describe("Store appendChunk on a first sighting", () => {
 
     expect(get("fs-2")?.messages[0]?.reasoning).toBe("why");
     expect(messagesVersionOf("fs-2").peek()).toBe(before + 1);
-    expect(sig.value).toBe("");
-    clearReasoningSig("m-unseen-r");
+    expect(renderCauseOf("fs-2")).toEqual({ cause: "shape" });
   });
 });
 

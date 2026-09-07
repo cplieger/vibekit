@@ -35,11 +35,7 @@ import {
   blockKey,
   ensureBlockTextSig,
   ensureBlockThinkingSig,
-  ensureStreamingSig,
-  ensureReasoningSig,
   ensureToolCallSig,
-  streamingTextSigs,
-  streamingReasoningSigs,
   toolCallSigs,
   toolCallSigKey,
 } from "./store-signals.js";
@@ -282,8 +278,6 @@ describe("the signal leak", () => {
     ensureBlockTextSig("m1", 0, "x");
     ensureBlockThinkingSig("m1", 1, "y");
     ensureBlockTextSig("m2", 0, "z");
-    ensureStreamingSig("m1", "x");
-    ensureReasoningSig("m1", "y");
     ensureToolCallSig("c1", "t1", { id: "t1" } as ToolCall);
 
     evictChatMessages("c1");
@@ -291,8 +285,6 @@ describe("the signal leak", () => {
     expect(blockTextSigs.get(blockKey("m1", 0))).toBeUndefined();
     expect(blockThinkingSigs.get(blockKey("m1", 1))).toBeUndefined();
     expect(blockTextSigs.get(blockKey("m2", 0))).toBeUndefined();
-    expect(streamingTextSigs.get("m1")).toBeUndefined();
-    expect(streamingReasoningSigs.get("m1")).toBeUndefined();
     expect(toolCallSigs.get(toolCallSigKey("c1", "t1"))).toBeUndefined();
   });
 
@@ -304,14 +296,12 @@ describe("the signal leak", () => {
     setSessions([session("c1", { messages: [withTool] })]);
     ensureBlockTextSig("m1", 0, "x");
     ensureBlockThinkingSig("m1", 0, "y");
-    ensureStreamingSig("m1", "x");
     ensureToolCallSig("c1", "t1", { id: "t1" } as ToolCall);
 
     removeChat("c1");
 
     expect(blockTextSigs.get(blockKey("m1", 0))).toBeUndefined();
     expect(blockThinkingSigs.get(blockKey("m1", 0))).toBeUndefined();
-    expect(streamingTextSigs.get("m1")).toBeUndefined();
     expect(toolCallSigs.get(toolCallSigKey("c1", "t1"))).toBeUndefined();
   });
 
