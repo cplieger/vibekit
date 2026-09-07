@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -335,5 +336,33 @@ func TestRegistry_DeclaresNoTypeOrDecoderMappings(t *testing.T) {
 	if len(r.DecoderMappings) != 0 {
 		t.Errorf("Registry().DecoderMappings has %d entries, want 0; same rule: %v",
 			len(r.DecoderMappings), r.DecoderMappings)
+	}
+}
+
+// TestTurnStatePayload_TruncatedIsRequiredOnTheWire mirrors
+// internal/settings' TestEffectiveSettings_EveryFieldIsSettable discipline on
+// the one field the connect-time snapshot cap depends on.
+//
+// wiregen emits an OPTIONAL TypeScript member for a Go field carrying
+// omitempty, and an optional member is exactly what lets a reader invent a
+// fallback — at which point an ABSENT marker reads as "the payload is
+// complete", which is false for every capped snapshot. Required makes that
+// drift class unrepresentable instead of tested for, so the tag is the
+// contract and this is what holds it.
+func TestTurnStatePayload_TruncatedIsRequiredOnTheWire(t *testing.T) {
+	rt := reflect.TypeFor[vibekit.TurnStatePayload]()
+	f, ok := rt.FieldByName("Truncated")
+	if !ok {
+		t.Fatal("TurnStatePayload has no Truncated field; a capped snapshot then reaches the client unmarked")
+	}
+	tag := f.Tag.Get("json")
+	name, _, _ := strings.Cut(tag, ",")
+	if name != "truncated" {
+		t.Errorf("TurnStatePayload.Truncated json name = %q, want %q", name, "truncated")
+	}
+	if strings.Contains(tag, "omitempty") {
+		t.Errorf("TurnStatePayload.Truncated carries omitempty (tag %q); that generates an OPTIONAL "+
+			"TypeScript member, so a client can supply a fallback and read an absent marker as a "+
+			"complete payload", tag)
 	}
 }

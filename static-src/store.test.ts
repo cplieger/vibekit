@@ -34,6 +34,10 @@ import {
   transcriptStale,
   setTurnOpen,
   turnLive,
+  noteTruncatedSnapshot,
+  isTruncatedSnapshot,
+  clearTruncatedSnapshot,
+  clearTruncatedSnapshots,
 } from "./store.js";
 import type { Block, ChatHeader, Message, Session } from "./types.js";
 import type { TurnOutcome } from "./wire/types.gen.js";
@@ -906,6 +910,108 @@ describe("Store steer origin", () => {
     resetStore("chat-1");
     recordSteerSent("chat-1", "m-42", "actually use tabs");
     expect(get("chat-1")?.steers?.[0]?.origin).toBe("user");
+  });
+});
+
+// A mark's anchor records where the steer WAS read, which is durable intent worth
+// keeping as written. Where it can be DRAWN is a different question — one about
+// the window that exists NOW — and `steerMarks` is the reader that answers it,
+// because the renderer sees one message at a time and cannot tell an ORPHANED
+// anchor from a foreign one.
+//
+// What orphans an anchor: the in-flight assistant message lives in the server's
+// in-memory buffer until `turn_ended`, so it is absent from
+// `GET /api/chats/{id}` and a refetch drops it (store-load.test.ts pins that);
+// eviction plus a refetch does the same to a whole window. Every rebuild path
+// carries `steer_marks` over, so the mark itself always survives.
+describe("Store steer anchor resolution", () => {
+  it("leaves an anchor that names a resident message untouched", () => {
+    chatWithTurn("chat-1", 2);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs", origin: "user" });
+    promoteSteer("chat-1", "steer-1", "use tabs", "user");
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 2 });
+  });
+
+  it("rewrites an anchor naming an absent message to the newest assistant message", () => {
+    chatWithTurn("chat-1", 2);
+    promoteSteer("chat-1", "steer-1", "the correction", "user");
+    // The window the reader comes back to: the anchored message is gone and a
+    // LATER assistant message is what the page holds, with three blocks of its own.
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        messages: [
+          { id: "u-1", role: "user", ts: 1, content: "do the thing" },
+          { id: "a-9", role: "assistant", ts: 3, blocks: turnBlocks(3) },
+        ],
+        steer_marks: [...steerMarks("chat-1")],
+      },
+    ]);
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-9", blockIndex: 3 });
+  });
+
+  // `anchorFor` records the empty anchor when the turn has produced nothing, and
+  // `rebindPendingAnchors` only fires for a message ARRIVING. A window refetched
+  // with the reply already in it never sees that arrival.
+  it("resolves the empty anchor produced by a turn that had output nothing", () => {
+    resetStore("chat-1");
+    promoteSteer("chat-1", "steer-1", "read before any output", "user");
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "", blockIndex: 0 });
+
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        messages: [{ id: "a-1", role: "assistant", ts: 2, blocks: turnBlocks(1) }],
+        steer_marks: [...steerMarks("chat-1")],
+      },
+    ]);
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 1 });
+  });
+
+  // A window holding only the user's prompt is the common shape after a mid-turn
+  // refetch: the reply was never persisted. The note still has to render, so the
+  // newest message of ANY role is the fallback.
+  it("falls back to the newest message of any role when no assistant message is resident", () => {
+    chatWithTurn("chat-1", 2);
+    promoteSteer("chat-1", "steer-1", "the correction", "user");
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        messages: [{ id: "u-1", role: "user", ts: 1, content: "do the thing" }],
+        steer_marks: [...steerMarks("chat-1")],
+      },
+    ]);
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "u-1", blockIndex: 0 });
+  });
+
+  // Nothing to resolve against, so the mark keeps the anchor it was written with
+  // and the renderer's own tail fallback is what draws it.
+  it("leaves the anchor alone when the window is empty", () => {
+    chatWithTurn("chat-1", 2);
+    promoteSteer("chat-1", "steer-1", "the correction", "user");
+    setSessions([{ ...makeSession("chat-1"), steer_marks: [...steerMarks("chat-1")] }]);
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 2 });
+  });
+
+  // The resolution is a READ, so the stored intent is unchanged: a window that
+  // regains the message it lost draws the note where the steer was actually read.
+  it("does not write the resolved anchor back onto the session", () => {
+    chatWithTurn("chat-1", 2);
+    promoteSteer("chat-1", "steer-1", "the correction", "user");
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        messages: [{ id: "a-9", role: "assistant", ts: 3, blocks: turnBlocks(3) }],
+        steer_marks: [...steerMarks("chat-1")],
+      },
+    ]);
+    expect(steerMarks("chat-1")[0]?.anchor.msgID, "the read resolves").toBe("a-9");
+    expect(get("chat-1")?.steer_marks?.[0]?.anchor.msgID, "the record does not move").toBe("a-1");
+  });
+
+  it("answers with no marks for a chat it does not hold", () => {
+    resetStore("chat-1");
+    expect(steerMarks("nonexistent")).toEqual([]);
   });
 });
 
@@ -3437,5 +3543,91 @@ describe("subagentStatusFor maps a delegate's tool status to its dot state", () 
     // knowing is different from knowing nothing is happening, which is the same
     // call `runStatusFor` makes for a run it has not fetched.
     expect(subagentStatusFor(undefined)).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The capped-snapshot marker.
+//
+// A connect-time turn_state can carry only the TAIL of a big in-flight turn, and
+// this set is what lets the renderer say so. It is the CONSUMER the wire's
+// required `truncated` field exists for: without one the cap would be the mistake
+// design.md §3 retracted, a client reading a bounded payload as complete.
+// ---------------------------------------------------------------------------
+describe("truncated snapshot markers", () => {
+  it("records and reads one message id", () => {
+    clearTruncatedSnapshots("chat-1");
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
+    noteTruncatedSnapshot("chat-1", "m1");
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(true);
+  });
+
+  // PER-CHAT, so a capped snapshot in a background chat cannot put a
+  // withheld-output note on the reply the reader is looking at. Two chats can be
+  // mid-turn at once and the connect replay caps each independently.
+  it("is per chat", () => {
+    clearTruncatedSnapshots("chat-1");
+    clearTruncatedSnapshots("chat-2");
+    noteTruncatedSnapshot("chat-1", "m1");
+    expect(isTruncatedSnapshot("chat-2", "m1")).toBe(false);
+    noteTruncatedSnapshot("chat-2", "m2");
+    expect(isTruncatedSnapshot("chat-1", "m2")).toBe(false);
+    expect(isTruncatedSnapshot("chat-2", "m2")).toBe(true);
+  });
+
+  // A SET rather than a flag: a reconnect names whichever message is in flight
+  // then, so two ids can carry the marker across the life of one chat view.
+  it("holds several ids for one chat, and clears them one at a time", () => {
+    clearTruncatedSnapshots("chat-1");
+    noteTruncatedSnapshot("chat-1", "m1");
+    noteTruncatedSnapshot("chat-1", "m2");
+    clearTruncatedSnapshot("chat-1", "m1");
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
+    expect(isTruncatedSnapshot("chat-1", "m2")).toBe(true);
+  });
+
+  // What `clearTurnState` calls on both its doors (turn_ended and
+  // transport:gap). The turn is over, so either the whole message arrived or the
+  // replay ring no longer covers what was missed — the note has nothing left to
+  // be true about, and left standing it claims output is still coming.
+  it("clearTruncatedSnapshots empties the whole chat's set", () => {
+    noteTruncatedSnapshot("chat-1", "m1");
+    noteTruncatedSnapshot("chat-1", "m2");
+    clearTruncatedSnapshots("chat-1");
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
+    expect(isTruncatedSnapshot("chat-1", "m2")).toBe(false);
+  });
+
+  // The HEAL, driven through the real ingest path: message_appended is the
+  // persist echo, so it carries the whole message and the tail the cap left is
+  // replaced. A `message_updated` for the same id is NOT a heal and must leave
+  // the marker standing — `turn_state`'s own handler upserts right after setting
+  // it, so a clear on the shared merge path would erase it in the same tick.
+  it("message_appended clears the marker; upsertMessage does not", () => {
+    setSessions([makeSession("chat-1")]);
+    clearTruncatedSnapshots("chat-1");
+    noteTruncatedSnapshot("chat-1", "m1");
+
+    upsertMessage("chat-1", { id: "m1", role: "assistant", ts: 1, content: "tail only" });
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(true);
+
+    appendMessage("chat-1", { id: "m1", role: "assistant", ts: 2, content: "the whole reply" });
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
+  });
+
+  it("removeChat drops the chat's markers", () => {
+    setSessions([makeSession("chat-1")]);
+    noteTruncatedSnapshot("chat-1", "m1");
+    removeChat("chat-1");
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
+  });
+
+  // Nothing to key a marker on. Guarded so a malformed frame cannot seed a set
+  // under the empty chat id, where nothing would ever clear it.
+  it("ignores an empty chat id or message id", () => {
+    noteTruncatedSnapshot("", "m1");
+    noteTruncatedSnapshot("chat-1", "");
+    expect(isTruncatedSnapshot("", "m1")).toBe(false);
+    expect(isTruncatedSnapshot("chat-1", "")).toBe(false);
   });
 });

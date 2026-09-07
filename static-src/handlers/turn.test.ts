@@ -20,6 +20,8 @@ import {
   tabStatusFor,
   relatchTurnVerdict,
   upsertHeader,
+  noteTruncatedSnapshot,
+  isTruncatedSnapshot,
 } from "../store.js";
 import type { ChatHeader, Session } from "../types.js";
 import type { TurnOutcome } from "../wire/types.gen.js";
@@ -328,6 +330,21 @@ describe("turn_ended side effects", () => {
     setActive("chat-1");
     fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
     expect(get("chat-1")?.turn_open).toBe(false);
+  });
+
+  // The withheld-output note's teardown, at the door that ends the turn. The cap
+  // sends only the TAIL of a big in-flight turn and the note says so; once the turn
+  // is over `message_appended` has delivered the whole message, so a note left
+  // standing claims output is still coming for a turn that finished. The clear is
+  // inside `clearTurnState`, so the GAP door gets it too.
+  it("clears the capped-snapshot markers on turn end", () => {
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    noteTruncatedSnapshot("chat-1", "m1");
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(true);
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
   });
 
   // KAS clears its steering buffer at every turn boundary, and on the ordinary

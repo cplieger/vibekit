@@ -206,6 +206,18 @@ type TurnStatePayload struct {
 	Description string `json:"description,omitempty"`
 	// ChunkSeq is the last delta folded into Message (see MessageChunkPayload.Seq).
 	ChunkSeq int64 `json:"chunk_seq,omitempty"`
+	// Truncated reports that the connect-time cap withheld part of Message: the payload
+	// carries the TAIL of the in-flight turn, not the whole of it. A client that needs the
+	// rest refetches through loadMessages when the turn ends, where message_appended
+	// delivers the whole persisted message.
+	//
+	// NEVER `omitempty`. wiregen emits a REQUIRED TypeScript field for a field without it,
+	// so a consumer cannot supply a fallback for a marker the type says is always present,
+	// and an absent marker can never be read as "complete" — which is the whole reason the
+	// cap is not the mistake design.md §3 retracted. It is a property of THIS TRANSFER, so
+	// it lives here and never on vibekit.Message, which is persisted verbatim into chat
+	// files where the flag would be meaningless and permanent.
+	Truncated bool `json:"truncated"`
 	// WorkflowStep marks a turn a workflow RUN opened on the launching chat's session.
 	// Contract: APPLY the snapshot, do NOT set thinking. The snapshot is the only copy of
 	// an in-flight step's transcript, so the event must still be emitted — but the chat's

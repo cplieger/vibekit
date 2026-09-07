@@ -50,7 +50,8 @@ const {
 const { blockKey, blockTextSigs, blockThinkingSigs, ensureBlockTextSig, clearAllBlockSigs } =
   await import("./store-signals.js");
 const { forgetHeights, spacerHeight } = await import("./block-heights.js");
-const { setActive } = await import("./store.js");
+const { setActive, noteTruncatedSnapshot, clearTruncatedSnapshot, clearTruncatedSnapshots } =
+  await import("./store.js");
 const { outcomeIcon } = await import("./icons.js");
 const { iconEl } = await import("./icon-el.js");
 
@@ -2901,4 +2902,131 @@ describe("blockElement resolves a block's own element", () => {
   // to another's subtree and the collision has no shape. `blockElement` still resolves per
   // render — the cases above pin what it answers with — but nothing now pins that it must
   // not be a subtree query, because no fixture can make the two disagree.
+});
+
+// ---------------------------------------------------------------------------
+// The withheld-output note: the CONSUMER that makes a capped connect snapshot
+// admissible.
+//
+// A connect-time turn_state carries only the TAIL of a big in-flight turn, so
+// without a note the reader takes that tail for the whole reply — the mistake
+// design.md §3 retracted. It is a STATIC line and never a show-more: the withheld
+// bytes are not on the wire, and `#vibekit-ui` forbids a control that does
+// nothing.
+// ---------------------------------------------------------------------------
+describe("truncated-snapshot note", () => {
+  const NOTE = ".msg-truncated-note";
+
+  beforeEach(() => {
+    resetBlockRenders();
+    clearTruncatedSnapshots(CHAT_ID);
+  });
+
+  function bodyFor(id: string): HTMLElement {
+    const wrap = document.createElement("div");
+    buildAssistantBody(
+      wrap,
+      {
+        id,
+        role: "assistant",
+        content: "",
+        blocks: [text("the tail of a long reply")],
+      } as unknown as Message,
+      CHAT_ID,
+      false,
+    );
+    return wrap;
+  }
+
+  it("is absent for an untruncated message", () => {
+    expect(bodyFor("m-clean").querySelector(NOTE)).toBeNull();
+  });
+
+  it("mounts FIRST in the body of a truncated message", () => {
+    noteTruncatedSnapshot(CHAT_ID, "m-cut");
+    const wrap = bodyFor("m-cut");
+    const note = wrap.querySelector(NOTE);
+    expect(note).not.toBeNull();
+    // First child: a preface to the body, not a footnote to whatever mounted last.
+    expect(wrap.firstElementChild).toBe(note);
+    // It says what is missing AND when it arrives — a reader's next move, not a
+    // byte count they cannot act on.
+    expect(note?.textContent ?? "").toMatch(/not shown/i);
+    expect(note?.textContent ?? "").toMatch(/turn ends/i);
+  });
+
+  it("carries no control: the withheld bytes are not on the wire", () => {
+    noteTruncatedSnapshot(CHAT_ID, "m-cut");
+    const note = bodyFor("m-cut").querySelector(NOTE);
+    expect(note?.querySelectorAll("button, a, [role='button'], [tabindex]")).toHaveLength(0);
+  });
+
+  // The two lifetimes do not line up: the marker is set on the connect frame and
+  // cleared by `message_appended` at turn end, and neither moment rebuilds the
+  // body. So the update path has to ask again — a note left standing claims
+  // output is still coming for a turn that is over.
+  it("drops on the next update once the marker is cleared", () => {
+    noteTruncatedSnapshot(CHAT_ID, "m-cut");
+    const wrap = bodyFor("m-cut");
+    expect(wrap.querySelector(NOTE)).not.toBeNull();
+
+    clearTruncatedSnapshot(CHAT_ID, "m-cut");
+    updateAssistantBody(
+      wrap,
+      {
+        id: "m-cut",
+        role: "assistant",
+        content: "",
+        blocks: [text("the tail of a long reply"), text("and the rest")],
+      } as unknown as Message,
+      CHAT_ID,
+      false,
+    );
+    expect(wrap.querySelector(NOTE)).toBeNull();
+  });
+
+  // The other direction: a marker that arrives after the body was built (the
+  // connect frame lands on a chat already rendered) still reaches the reader.
+  it("appears on the next update when the marker arrives late", () => {
+    const wrap = bodyFor("m-late");
+    expect(wrap.querySelector(NOTE)).toBeNull();
+
+    noteTruncatedSnapshot(CHAT_ID, "m-late");
+    updateAssistantBody(
+      wrap,
+      {
+        id: "m-late",
+        role: "assistant",
+        content: "",
+        blocks: [text("the tail of a long reply")],
+      } as unknown as Message,
+      CHAT_ID,
+      false,
+    );
+    expect(wrap.querySelectorAll(NOTE)).toHaveLength(1);
+  });
+
+  // A DETACHED render is the subagent page, which shows one delegate's blocks
+  // while the cap is a property of the whole message's transfer — so the claim
+  // belongs in the transcript. What enforces it is the SYNTHETIC id such a render
+  // uses, not a guard, so this pins that mechanism: route the real id and the note
+  // appears on a delegate's page.
+  it("is withheld from a detached render", () => {
+    noteTruncatedSnapshot(CHAT_ID, "m-cut");
+    const wrap = document.createElement("div");
+    buildDetachedBody(
+      wrap,
+      {
+        id: "m-cut",
+        role: "assistant",
+        content: "",
+        blocks: [text("delegate prose")],
+      } as unknown as Message,
+      CHAT_ID,
+      "sub-A",
+      false,
+      [],
+    );
+    expect(wrap.querySelector(NOTE)).toBeNull();
+  });
 });

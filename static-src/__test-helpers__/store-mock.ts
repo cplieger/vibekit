@@ -124,6 +124,13 @@ export const storeMock = {
   setCodeReferences: vi.fn(),
   setSnapshotSeq: vi.fn(),
   clearSnapshotSeq: vi.fn(),
+  // The capped-snapshot marker. The READER answers the empty case, which is what a
+  // mock owes: one claiming a message is truncated would make a renderer test pass
+  // for a reason production did not supply.
+  noteTruncatedSnapshot: vi.fn(),
+  isTruncatedSnapshot: vi.fn(() => false),
+  clearTruncatedSnapshot: vi.fn(),
+  clearTruncatedSnapshots: vi.fn(),
 
   setCurrentMode: vi.fn(),
   setSupervisedMode: vi.fn(),
