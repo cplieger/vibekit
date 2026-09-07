@@ -114,10 +114,9 @@ describe("a terminal frame carrying the failure AND its output", () => {
 
 describe("a live call that has produced nothing YET", () => {
   it("has no chevron while the region is empty", () => {
-    // The wire status is not evidence about the region. It used to be: an
-    // in-progress card was granted the affordance up front, and because both
-    // production call sites pass `live: true`, a REPLAYED in-progress call kept an
-    // empty disclosure with no later frame to take it away.
+    // The wire status is not evidence about the region: both production call sites
+    // pass `live: true`, so a REPLAYED in-progress call is indistinguishable from
+    // one still filling.
     const card = liveCard("st-inflight-bare");
     expect(card.querySelector(".tool-disclosure")).toBeNull();
     card.remove();

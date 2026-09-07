@@ -299,17 +299,11 @@
   background: var(--c-hover);
 }
 
-/* The absolute chevron spans the summary rather than the title row, so a
-   two-line search/fetch card centres it against the whole clickable box. The
-   header reserves its hit target plus the normal trailing gutter.
-
-   Keyed on HAVING a details region rather than on `has-disclosure`, because the
-   chevron comes and goes within one card's life (`refreshToolDisclosure`) while
-   the region is built once: a gutter that came and went with the button moved the
-   title row 32px on every transition, so a bare card ran that far right of its
-   siblings in the same group. A claim-only card has no region and reserves
-   nothing. The pointer affordance stays on the dynamic class above — a bare card
-   must not advertise a control it does not have. */
+/* The absolute chevron spans the summary rather than the title row, so a two-line
+   search/fetch card centres it against the whole clickable box. Keyed on HAVING a
+   region rather than on `has-disclosure`: the chevron comes and goes within one
+   card's life, and a gutter that went with it moved the title row 32px off its
+   siblings. The pointer affordance stays on the dynamic class above. */
 .tool-call:has(> .tool-details) > .tool-summary > .tool-header {
   padding-inline-end: calc(0.75rem + 1.5rem + var(--sp-2));
 }
