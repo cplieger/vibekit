@@ -340,23 +340,19 @@ func narrowedConnectCaps(remaining int) buffer.SnapshotCaps {
 	return caps
 }
 
-// replayTurnState emits one synthesized turn_state event per chat with an open turn
-// that a client can actually SHOW, under a per-connect snapshot budget. Reading the
-// TURN rather than the prompt slot is what makes an agent-initiated turn visible at
-// all. A PRIME turn is never served: its frames are a transcript replay vibekit sent
-// itself, so serving them would render the preamble as conversation.
+// turnStateCandidates is the chats the connect replay will describe, in WIRE ORDER:
+// the two filters applied, then sorted.
 //
-// Two filters compose, and they answer different questions. A busy chat with NO OPEN
-// TAB gets nothing at all — there is no row in the strip, so there is no dot to feed
-// and no transcript to draw. An open chat the client did not DECLARE as on-screen
-// gets the bare busy signal, which is what makes the payload O(1) in the number of
-// busy chats: the snapshot is the expensive part and only a visible chat needs it.
-func (rt *Runtime) replayTurnState(
-	writeFn func(vibekit.ServerEvent) (int, error),
+// A DETERMINISTIC order is required, not a nicety. Go randomises map iteration, so
+// without the sort a short budget picks arbitrary winners and the same fixture
+// measures a different payload on every run — which makes every byte assertion over
+// this path flaky. Declared chats lead so the chats a reader is actually looking at
+// get the full per-snapshot cap; the rest follow by chat id.
+func (rt *Runtime) turnStateCandidates(
 	chatFilter vibekit.ChatID,
 	open map[vibekit.ChatID]openTurnFacts,
 	declared map[vibekit.ChatID]struct{},
-) error {
+) []turnCandidate {
 	candidates := make([]turnCandidate, 0, len(open))
 	for id, facts := range open {
 		if chatFilter != "" && id != chatFilter {
@@ -374,11 +370,6 @@ func (rt *Runtime) replayTurnState(
 		_, isDeclared := declared[id]
 		candidates = append(candidates, turnCandidate{id: id, facts: facts, declared: isDeclared})
 	}
-	// A DETERMINISTIC order is required, not a nicety. Go randomises map iteration, so
-	// without the sort a short budget picks arbitrary winners and the same fixture
-	// measures a different payload on every run — which makes every byte assertion
-	// over this path flaky. Declared chats lead so the chats a reader is actually
-	// looking at get the full per-snapshot cap; the rest follow by chat id.
 	slices.SortFunc(candidates, func(a, b turnCandidate) int {
 		if a.declared != b.declared {
 			if a.declared {
@@ -388,7 +379,27 @@ func (rt *Runtime) replayTurnState(
 		}
 		return cmp.Compare(a.id, b.id)
 	})
+	return candidates
+}
 
+// replayTurnState emits one synthesized turn_state event per chat with an open turn
+// that a client can actually SHOW, under a per-connect snapshot budget. Reading the
+// TURN rather than the prompt slot is what makes an agent-initiated turn visible at
+// all. A PRIME turn is never served: its frames are a transcript replay vibekit sent
+// itself, so serving them would render the preamble as conversation.
+//
+// Two filters compose, and they answer different questions. A busy chat with NO OPEN
+// TAB gets nothing at all — there is no row in the strip, so there is no dot to feed
+// and no transcript to draw. An open chat the client did not DECLARE as on-screen
+// gets the bare busy signal, which is what makes the payload O(1) in the number of
+// busy chats: the snapshot is the expensive part and only a visible chat needs it.
+func (rt *Runtime) replayTurnState(
+	writeFn func(vibekit.ServerEvent) (int, error),
+	chatFilter vibekit.ChatID,
+	open map[vibekit.ChatID]openTurnFacts,
+	declared map[vibekit.ChatID]struct{},
+) error {
+	candidates := rt.turnStateCandidates(chatFilter, open, declared)
 	remaining := connectSnapshotBudget
 	snapshots, bare, truncated := 0, 0, 0
 	for _, cand := range candidates {

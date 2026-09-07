@@ -973,37 +973,40 @@ func TestParseSnapshotChats(t *testing.T) {
 	cases := []struct {
 		name string
 		// query is the raw parameter VALUE, already decoded, or absent when nil.
+		// A pointer because an ABSENT parameter and a present-and-empty one are
+		// different inputs that happen to produce the same result; new(x) is Go
+		// 1.27's address-of-an-expression.
 		query *string
 		want  []vibekit.ChatID
 	}{
 		{name: "absent, which reads as declare nothing", query: nil, want: nil},
-		{name: "present but empty", query: ptr(""), want: nil},
-		{name: "one chat", query: ptr("c-1"), want: []vibekit.ChatID{"c-1"}},
+		{name: "present but empty", query: new(""), want: nil},
+		{name: "one chat", query: new("c-1"), want: []vibekit.ChatID{"c-1"}},
 		{
 			name:  "several chats",
-			query: ptr("c-1,c-2,c-3"),
+			query: new("c-1,c-2,c-3"),
 			want:  []vibekit.ChatID{"c-1", "c-2", "c-3"},
 		},
 		{
 			name:  "a malformed entry is dropped and the rest still declared",
-			query: ptr("c-1,../etc/passwd,c-2"),
+			query: new("c-1,../etc/passwd,c-2"),
 			want:  []vibekit.ChatID{"c-1", "c-2"},
 		},
 		{
 			name: "every entry malformed reads as declare nothing rather than failing the connect",
 			// The stream is the client's only recovery channel, so a mangled parameter
 			// must not be the thing that keeps it closed.
-			query: ptr("../,,%00"),
+			query: new("../,,%00"),
 			want:  nil,
 		},
 		{
 			name:  "a blank between separators is dropped",
-			query: ptr("c-1,,c-2"),
+			query: new("c-1,,c-2"),
 			want:  []vibekit.ChatID{"c-1", "c-2"},
 		},
 		{
 			name:  "over the cap, truncated to the first entries",
-			query: ptr(strings.Join(overCap, ",")),
+			query: new(strings.Join(overCap, ",")),
 			want:  wantOverCap,
 		},
 	}
@@ -1028,7 +1031,3 @@ func TestParseSnapshotChats(t *testing.T) {
 		})
 	}
 }
-
-// ptr is the address-of helper the table above needs to tell an ABSENT parameter from
-// a present-and-empty one; the two are different inputs with the same result.
-func ptr[T any](v T) *T { return &v }
