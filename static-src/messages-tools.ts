@@ -642,12 +642,10 @@ function applyStatusUpdate(
   }
   if (status === "failed") {
     // Failed tools open their details so the error output is visible without
-    // a click; the disclosure controller flips the chevron + ARIA itself. Gated on
-    // the chevron surviving the refresh above: a card with no error text has
-    // nothing to put in front of anyone, so opening it strands an empty region.
-    if (card.querySelector(".tool-disclosure") !== null) {
-      expandToolDetails(card);
-    }
+    // a click; the disclosure controller flips the chevron + ARIA itself. A card
+    // the refresh above left bare is refused by `expandToolDetails`, so there is
+    // no gate here — one enforcement point, whatever the caller.
+    expandToolDetails(card);
     if (card.querySelector(".tool-explain-btn") === null) {
       const output = card.querySelector(".tool-output")?.textContent ?? "";
       if (output.trim() !== "") {
