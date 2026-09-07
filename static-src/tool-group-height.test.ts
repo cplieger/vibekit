@@ -21,11 +21,8 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { framesBudgetMs, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 
-/** Every case here awaits `rendered()`'s three frames per `run()`, and the widest
- *  builds two groups, so six frames is the worst case. That is fine at 60Hz and
- *  6.1s once this browser throttles rAF to 1Hz partway through a full run
- *  (`__test-helpers__/frame-budget.ts`) — which is what failed the four
- *  two-group cases against vitest's 5s default while every one-group case passed. */
+/** Worst case is six frames: `rendered()`'s three per `run()`, twice. Past this
+ *  suite's rAF throttle that is 6.1s, over vitest's 5s default. */
 const GROUP_TIMEOUT_MS = testTimeoutFor(framesBudgetMs(6));
 
 // The card builder's import graph reaches the shared DOM registry, which throws on
