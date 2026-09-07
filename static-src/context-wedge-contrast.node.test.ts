@@ -1,11 +1,10 @@
 // THE COMPACTION BAND, measured rather than asserted about.
 //
 // The band conveys information and carries no text and no shape, so its
-// separation from the track it sits on is the whole of its legibility. It shipped
-// at 2.07:1 in the light theme, under WCAG 1.4.11's 3:1 — the floor
-// `01-tokens.css` already enforces on the --c-dot-* family. Measuring the TOKEN
-// NAME is what keeps this honest: the script resolves it per theme out of that
-// stylesheet, so a retune moves these numbers rather than leaving them behind.
+// separation from the track it sits on is the whole of its legibility. Measuring
+// the TOKEN NAME is what keeps this honest: the script resolves it per theme out
+// of `01-tokens.css`, so a retune moves these numbers rather than leaving them
+// behind.
 
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
