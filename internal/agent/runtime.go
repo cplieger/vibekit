@@ -118,6 +118,11 @@ type bus struct {
 	// chatStatus holds each chat's last self-declared status, the one turn_state
 	// input that lives on no message and in no replay (chat_status.go).
 	chatStatus *chatStatusCache
+	// lastPublishAt is the unix-nano instant something last reached the fan-out,
+	// read by the heartbeat's idle gate (heartbeat.go). An atomic rather than a
+	// mutexed field because emit is on every broadcast path and the heartbeat
+	// goroutine only ever reads it.
+	lastPublishAt atomic.Int64
 }
 
 // Runtime is the central coordinator.
@@ -378,6 +383,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	requireCollaborators(h)
 	lc.loops.Go(h.cullIdleUtilityBridge)
 	lc.loops.Go(h.sweepSessionsLoop)
+	lc.loops.Go(h.heartbeatLoopEvery(heartbeatInterval))
 	return h
 }
 

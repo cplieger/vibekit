@@ -46,6 +46,10 @@ func (b *bus) emit(evt vibekit.ServerEvent) {
 		return
 	}
 	b.fanout.Publish(sse.Event{Topic: string(evt.ChatID), Data: data})
+	// After the publish, never before: a marshal failure returned above reached the
+	// fan-out with nothing, and the heartbeat's idle gate reads this as proof the
+	// stream carried bytes.
+	b.notePublish()
 }
 
 // handleSSE opens the /api/events stream. The sse library owns the transport
