@@ -7,25 +7,11 @@
 
 import { el, effect, touch } from "@cplieger/reactive";
 import { bindLoadingState } from "./actions/index.js";
-import {
-  closeTab,
-  getActiveTabId,
-  hasTab,
-  openRunTab,
-  openTab,
-  parentChatRef,
-  tabIdFor,
-} from "./tabs.js";
+import { hasTab, openRunTab, openTab, parentChatRef, tabIdFor } from "./tabs.js";
 import { mountRunDecisionDock, rerenderDocks, runPendingAsks } from "./decision-dock.js";
 import { cancelRun, pauseRun, resumeRun, retryRun } from "./actions/runs.js";
-import {
-  CONTROL_LABEL,
-  offeredVerbs,
-  refusalSentences,
-  runEndedCleanly,
-  type RunVerb,
-} from "./run-controls.js";
-import { get, isThinking, messagesVersionOf, runStatusFor } from "./store.js";
+import { CONTROL_LABEL, offeredVerbs, refusalSentences, type RunVerb } from "./run-controls.js";
+import { get, isThinking, messagesVersionOf } from "./store.js";
 import { blockTextSigs, blockThinkingSigs } from "./store-signals.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight, neverRan } from "./exec-view/status.js";
@@ -56,7 +42,6 @@ import { refreshRunDots, trackRun } from "./run-dots.js";
 import { buildPath } from "./router.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_EXTERNAL } from "./icons.js";
-import { classifyRunStatus } from "./run-status.js";
 import { parseStepSubtask } from "./step-subtask.js";
 import type { RunStepPayload } from "./types.js";
 
@@ -227,11 +212,6 @@ function installViewEffect(): void {
  *  is fetched for it). Every other door passes the chat it already holds, and
  *  `runChatID` covers the caller that genuinely has none.
  *
- *  NO offer guard here, unlike `noteAutoOpenedRun`. This is the MANUAL path — the
- *  Workflows tab's Run button, the run card's footer link, a `/run/{id}` deep link —
- *  and a reader who closed the automatic tab and then asked for the run is asking for
- *  it back; refusing them would be the opposite of respecting the close.
- *
  *  It absorbed `openLiveRunView`, which differed only in `owns: true`. With the ×
  *  disarmed there was nothing left to distinguish, and a launcher-opened run is
  *  parentless so it lands top-level through this door too.
@@ -247,10 +227,6 @@ export function openRunView(
   parentChatID = "",
   focusNode = "",
 ): void {
-  // From here on this tab is the READER's, so the completion auto-close leaves it
-  // alone. Same reasoning as the offer guard, pointing the other way: a tab
-  // someone asked for must not be taken away on a schedule of the app's choosing.
-  autoOpened.delete(workflowID);
   // Replaces any earlier request outright: the last door clicked is the one the
   // reader is waiting on, and two pending picks for one run is a state nothing
   // could resolve honestly.
@@ -285,110 +261,6 @@ export function openRunView(
  *  Keyed by run, so a request made for one run cannot be spent on another: the
  *  shared `#run-body` serves every run tab. */
 let focusRequest: { workflowID: string; path: string } | undefined;
-
-/** The runs this client has already recorded as app-opened, so it records each
- *  one once.
- *
- *  It must never be un-recorded, which is why it is not the same set as
- *  `autoOpened` below even though the two start identical: `run_start` re-fires on
- *  every resume, so without this latch a resume would re-claim a tab the reader
- *  had deliberately re-opened in the meantime and the completion auto-close would
- *  then take it from them. */
-const offered = new Set<string>();
-
-/** The runs whose tab this client marked as the APP's doing, and therefore the only
- *  tabs it may close by itself. A reader who re-opens the run through `openRunView`
- *  takes it out, and from then on the tab is theirs.
- *
- *  Membership is per CLIENT while the open is global, so a run whose `run_started`
- *  frame no connected client saw, and a reader who joined mid-run and took the tab
- *  from the server's `node_start` retry, both keep it after a clean finish. Accepted:
- *  closing a tab nobody claimed would be the app arguing with its reader. */
-const autoOpened = new Set<string>();
-
-/** Record that a run's tab is the APP's doing rather than the reader's, and open
- *  nothing. The tab itself is the server's (`internal/agent/run_tabs.go`); the
- *  MARKER has to live here, because "did the app produce this one" is per-client and
- *  the server knows only that it offered the tab, not whether this reader has since
- *  claimed it back.
- *
- *  `parentChatID` keeps a PARENTLESS run out: the server offers no tab for one, so
- *  claiming its tab would let the auto-close take the reader's own. */
-export function noteAutoOpenedRun(workflowID: string, parentChatID: string): void {
-  if (workflowID === "" || parentChatID === "" || offered.has(workflowID)) {
-    return;
-  }
-  offered.add(workflowID);
-  autoOpened.add(workflowID);
-}
-
-/** Close a run's automatic sub-tab now that the run has ended cleanly.
- *
- *  A run's sub-tab is closed automatically only when ALL FOUR of these hold, and
- *  each one closes a way this could take a tab someone still wanted:
- *
- *   1. THE APP OPENED IT AND THIS CLIENT STILL HOLDS THE CLAIM. The tab is the
- *      server's (`internal/agent/run_tabs.go` `offerRunTab`, spent on the run's
- *      lease); the marker is per client, because only the client knows whether this
- *      reader has since claimed the tab back. A tab reached from History, from the
- *      run card's footer link or from a `/run/{id}` deep link goes through
- *      `openRunView`, which deletes the marker — so every tab a reader chose to
- *      look at survives, results open. A TANGENT is out by construction rather than
- *      by a filter: nothing but the run door above ever puts an id in this set.
- *   2. THE RUN'S DOT STATE IS `done` — the green dot. Read through `runStatusFor`
- *      with BOTH the inputs `run-dots.ts` paints the tab dot with, so the rule is
- *      "green dot only" rather than a hand-maintained list that happens to agree
- *      with the dot. Consequences, all wanted: `failed` and `aborted` map to
- *      `failed` and keep the tab; `paused` maps to `waiting` and keeps it, which
- *      matters because KAS reports an `onMaxIterations` policy stop through the
- *      same `run_finished` frame and such a run is still this process's to resume;
- *      an unanswered ask maps to `input` and keeps it. The ask is the second
- *      input, and passing it is what makes that last consequence real: nothing in
- *      the `run_finished` path retires a run's ask (they leave the dock queue on
- *      `decision_settled` / `run_input_settled` / `dropDecisions`), so a run
- *      cancelled while parked on one arrives here as a CLEAN ending with the ask
- *      still queued — an amber dot whose tab the one-argument call closed.
- *   3. THE WIRE STATUS IS A RECOGNISED CLEAN ENDING (`run-controls.ts`
- *      `runEndedCleanly`), which is narrower than condition 2 on purpose.
- *   4. NEVER THE TAB ON SCREEN. The moment a run finishes is the moment its output
- *      becomes worth reading, so the view must not be pulled out from under someone
- *      watching it. They can close it themselves; this exists for the tabs nobody
- *      is looking at.
- *
- *  Every connected client runs this independently and `closeTab` tolerates an id
- *  that is already gone, so the races between them are not a case to handle. */
-export function autoCloseRunSubTab(workflowID: string, status: string): void {
-  // The dock scan is inlined in the LAST condition on purpose: the two cheap
-  // membership tests reject every call for a run this client never claimed, so the
-  // queue is walked only for a run that is otherwise about to lose its tab.
-  if (
-    !autoOpened.has(workflowID) ||
-    !runEndedCleanly(status) ||
-    runStatusFor(classifyRunStatus(status), runPendingAsks(workflowID).count > 0) !== "done"
-  ) {
-    return;
-  }
-  const tabID = tabIdFor("run", workflowID);
-  if (tabID === "") {
-    // The reader already closed it. Drop the claim so nothing here holds a run
-    // whose tab is gone.
-    autoOpened.delete(workflowID);
-    return;
-  }
-  if (tabID === getActiveTabId()) {
-    return;
-  }
-  autoOpened.delete(workflowID);
-  void closeTab(tabID);
-}
-
-/* `openLiveRunView` is DELETED, and it left no behaviour behind. Its whole
-   difference from `openRunView` was `owns: true` — the × cancels — and with a run tab
-   always a VIEW there is nothing left to distinguish: it nested nowhere the other
-   does not (a launcher-opened run is parentless, so `runChatID` answers "" and
-   `openRunView` goes top-level anyway). Two doors that behave identically are two
-   things to keep in step, so the Workflows tab's Run button opens `openRunView` like
-   every other door. */
 
 /** The page, built once and re-pointed. `exec-view/` knows nothing about
  *  workflows: `run-exec-source.ts` folds KAS's reply into its model, so a subagent

@@ -363,9 +363,6 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	runs.translate = h.translator
 	h.dispatcher = command.New()
 	h.registerCommandHandlers()
-	// After the coordinator exists and before initDispatch registers the run frames
-	// that reach it. Two directions, one edge each, so neither can be a literal.
-	runs.tabs = h.membership
 	h.initDispatch()
 	if lc.configDir != "" {
 		h.inbound.ignore = ignore.NewMatcher(lc.configDir, workDir)

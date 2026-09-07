@@ -76,9 +76,6 @@ func (rt *Runtime) initDispatch() {
 	)
 	// A completed node is the only honest evidence a pause has cleared.
 	rt.chatHandlers[methodWFNodeComplete] = rt.runs.healProgress(rt.chatHandlers[methodWFNodeComplete])
-	// The tab offer's retry: an offer left unspent because the launching chat had no tab
-	// yet, and one frame per step is enough to catch that chat opening later.
-	rt.chatHandlers[methodWFNodeStart] = rt.runs.offerOnProgress(rt.chatHandlers[methodWFNodeStart])
 	// Recognised but intentionally ignored; listed to keep them out of the Debug log.
 	rt.noopMethods = map[string]struct{}{
 		methodV3SessionsChanged:    {},

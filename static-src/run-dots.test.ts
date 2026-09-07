@@ -415,46 +415,22 @@ describe("the live-runs rebuild reaches the dot, which a boot-restored run needs
 });
 
 // ---------------------------------------------------------------------------
-// The COUPLING between the dot's vocabulary and the auto-close's.
+// The dot's status vocabulary, read against the REAL `store.js`.
 //
-// This file is the right home for it because it already imports the REAL
-// `store.js` (it mocks `tabs.js`, `decision-dock.js` and `run-store.js`, not the
-// store), so both vocabularies can be read at once against production code rather
-// than against a fake.
-//
-// The auto-close's rule reads "green dot only" (`run-view.ts`
-// `autoCloseRunSubTab`), and that only stays true while the two agree. It is
-// asserted ONE-DIRECTIONALLY on purpose: an unrecognised status is green AND not a
-// clean ending, which is exactly the third condition of the rule.
+// This file is the right home for it because it already imports that store (it
+// mocks `tabs.js`, `decision-dock.js` and `run-store.js`, not the store), so the
+// vocabulary is read against production code rather than against a fake.
 // ---------------------------------------------------------------------------
 
-const { runEndedCleanly, RUN_STATUSES } = await import("./run-controls.js");
+const { RUN_STATUSES } = await import("./run-controls.js");
 const { runStatusFor } = await import("./store.js");
 const { classifyRunStatus } = await import("./run-status.js");
 
-describe("a clean ending is always a green dot", () => {
+describe("an unanswered ask outranks the wire's own word for the run", () => {
   // Exhaustive over the WIRE's own words rather than over whatever subset a table
-  // names, plus a status this build has never seen.
-  it.each([...RUN_STATUSES, "cancelled", "something-new-upstream"])(
-    "agrees about %s",
-    (status: string) => {
-      // The implication stated as its one FORBIDDEN combination, so every case
-      // asserts and a failure names both readings. `something-new-upstream`
-      // classifies as `unknown`, which paints NO dot and is not a clean ending —
-      // the third condition of the auto-close rule doing its job.
-      expect({
-        status,
-        clean: runEndedCleanly(status),
-        green: runStatusFor(classifyRunStatus(status)) === "done",
-      }).not.toEqual({ status, clean: true, green: false });
-    },
-  );
-
-  // The vocabulary's SECOND input, and the reason the auto-close gate has to pass
-  // it rather than read the status alone: an unanswered ask outranks every word on
-  // this list, so no ask-bearing run is green and its tab survives whatever the
-  // wire called the ending. The gate's own half of this is behavioural, in
-  // `run-subtab.test.ts` — a vocabulary case cannot see the call.
+  // names, plus a status this build has never seen: an ask is the vocabulary's
+  // SECOND input and it wins over every one of them, so a run waiting on a person
+  // is amber even when the wire says it finished.
   it.each([...RUN_STATUSES, "cancelled", "something-new-upstream"])(
     "reads an unanswered ask on %s as amber rather than green",
     (status: string) => {

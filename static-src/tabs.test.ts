@@ -352,8 +352,8 @@ describe("openTab", () => {
     expect(await rowRefs()).toEqual(["a", "b"]);
   });
 
-  // `activate: false` is what the automatic offers pass: the strip is the
-  // reader's, so a tab a progress frame opened must not steal the screen.
+  // `activate: false` is what a bulk restore passes: the strip is the reader's,
+  // so restoring the saved set must not move the active tab.
   it("leaves the active tab alone when told not to activate", async () => {
     expect.assertions(2);
     await openChat("a");

@@ -106,36 +106,3 @@ export function retryOutcomeNotice(count: number): { level: "success" | "error";
     text: `Retrying ${String(count)} ${count === 1 ? "step" : "steps"}`,
   };
 }
-
-/** The two RECOGNISED clean endings. Lives here rather than in `run-view.ts`
- *  because this module is already the pure, DOM-free owner of the wire's status
- *  vocabulary — which is what lets a test be exhaustive over `RUN_STATUSES` rather
- *  than over whatever subset a table happens to name. */
-const CLEAN_ENDINGS: ReadonlySet<string> = new Set(["completed", "cancelled"]);
-
-/**
- * Whether a run ended in a way that leaves a reader nothing to come back for.
- *
- * ONE OF FOUR CONDITIONS on the automatic sub-tab close (`run-view.ts`
- * `autoCloseRunSubTab` holds the other three: the app opened the tab and this
- * client still holds the claim, the run's DOT state is `done`, and the tab is not
- * the one on screen). It is deliberately NARROWER than the dot: `runStatusFor`'s
- * `default` arm answers `done` for any unrecognised terminal status, and a status
- * this build has never seen is not one to close a tab on.
- *
- * `cancelled` is in, and stays in: the reader asked for the stop, so there is
- * nothing they were waiting to read. `failed` and `aborted` are out because a
- * failure is not noise — it is the run whose detail is worth the row.
- *
- * WHY THIS DOES NOT CONTRADICT AN OPEN RESULTS BOX. The exec page opens its
- * results by default because a run's product is what a reader opens the page for;
- * this closes a tab that shows it. The two never describe the same tab — the gates
- * only reach tabs nobody claimed and nobody is looking at — and a close destroys
- * no durable content: re-opening the run rebuilds the whole page from
- * `GET /api/runs/{id}`, results included and open. The one thing a close loses is
- * the LIVE step transcript, which is live-only either way and is lost by a refresh
- * whether the tab closed or not.
- */
-export function runEndedCleanly(status: string): boolean {
-  return CLEAN_ENDINGS.has(status);
-}

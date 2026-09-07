@@ -100,13 +100,13 @@ function repaint(): void {
     // files a parentless run's asks under; the tab's is opaque and server-minted.
     const id = tabIdFor("run", workflowID);
     if (id === "") {
-      // No tab YET — the automatic offer's open_tab round trip is still in
-      // flight — or none any more. KEEP the id: the effect depends on the tab
-      // set's version, so the dot paints the moment the row lands. The old
-      // sweep DELETED the id here, which raced that round trip: `trackRun`
-      // bumps only for a first-seen id, so a run that emitted no later frame
-      // (a paused run emits none at all) was swept out before its tab existed
-      // and its dot stayed blank until an unrelated dock churn repainted it.
+      // No tab YET — an `open_tab` round trip is still in flight — or none any
+      // more. KEEP the id: the effect depends on the tab set's version, so the
+      // dot paints the moment the row lands. The old sweep DELETED the id here,
+      // which raced that round trip: `trackRun` bumps only for a first-seen id,
+      // so a run that emitted no later frame (a paused run emits none at all)
+      // was swept out before its tab existed and its dot stayed blank until an
+      // unrelated dock churn repainted it.
       continue;
     }
     // The SAME join the other two run surfaces make (the transcript's card and the

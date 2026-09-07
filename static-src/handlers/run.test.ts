@@ -30,18 +30,12 @@ vi.mock("../run-store.js", () => ({
 // be thinking.
 vi.mock("../store.js", () => ({ isThinking: vi.fn(() => false) }));
 vi.mock("../run-dots.js", () => ({ trackRun: vi.fn() }));
-// The app-opened MARKER, the completion auto-close, and the live step transcript.
-// Their own rules (record once per client, never a parentless run; close only an
-// app-opened tab, only on a clean ending, never the tab on screen) are run-view's;
-// what this suite pins is WHICH events reach them and with what.
+// The live step transcript, whose own placement rules are run-view's; what this
+// suite pins is which events reach it and with what.
 //
-// There is no opener among them any more, and that is the contract these cases
-// carry: a starting run's tab is opened server-side, so no run event may open one.
-vi.mock("../run-view.js", () => ({
-  noteAutoOpenedRun: vi.fn(),
-  autoCloseRunSubTab: vi.fn(),
-  applyRunStep: vi.fn(),
-}));
+// There is no OPENER and no CLOSER among the run-view names this file reaches, and
+// that is the contract these cases carry: no run event opens or closes a tab.
+vi.mock("../run-view.js", () => ({ applyRunStep: vi.fn() }));
 vi.mock("../toast.js", () => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
 // A parked step's question. The DOCK is mocked because its queue, settle-once
 // guard and two hosts are `decision-dock.test.ts`'s subject; what this suite pins
@@ -73,7 +67,7 @@ import {
 } from "../run-store.js";
 import { isThinking } from "../store.js";
 import { trackRun } from "../run-dots.js";
-import { noteAutoOpenedRun, autoCloseRunSubTab, applyRunStep } from "../run-view.js";
+import { applyRunStep } from "../run-view.js";
 import { info, success, error } from "../toast.js";
 import {
   pushDecision,
@@ -91,8 +85,6 @@ const noteChat = vi.mocked(noteRunChat);
 const noteLive = vi.mocked(noteRunLive);
 const noteSettled = vi.mocked(noteRunSettled);
 const track = vi.mocked(trackRun);
-const noteAutoOpened = vi.mocked(noteAutoOpenedRun);
-const autoClose = vi.mocked(autoCloseRunSubTab);
 const stepFrames = vi.mocked(applyRunStep);
 const toastInfo = vi.mocked(info);
 const toastSuccess = vi.mocked(success);
@@ -128,8 +120,6 @@ beforeEach(() => {
   noteLive.mockClear();
   noteSettled.mockClear();
   track.mockClear();
-  noteAutoOpened.mockClear();
-  autoClose.mockClear();
   stepFrames.mockClear();
   toastInfo.mockClear();
   toastSuccess.mockClear();
@@ -234,32 +224,6 @@ describe("run SSE handlers", () => {
       expect(track).toHaveBeenCalledTimes(i + 1);
       expect(track).toHaveBeenLastCalledWith("wf_1");
     }
-  });
-
-  // A run's tab is the SERVER's to open, so what a start frame does here is record
-  // that the tab is the app's doing — the one fact the server cannot answer,
-  // because it knows it offered the tab and not whether this reader has since
-  // claimed it. The launching chat id comes off the envelope and is what keeps a
-  // parentless run out of the claim.
-  it("records the run's tab as app-opened, naming the chat that launched it", () => {
-    send("run_started", { workflow_id: "wf_1", name: "publish" });
-    expect(noteAutoOpened).toHaveBeenCalledWith("wf_1", "c1");
-  });
-
-  // A reader whose first sight of a run is a progress frame got the tab from the
-  // server's own `node_start` retry, and may equally have opened it themselves —
-  // the run events are not in the SSE replay ring, so this frame cannot tell the
-  // two apart. Claiming it would let the completion auto-close take the reader's.
-  it("claims nothing from a progress frame", () => {
-    send("run_progress", { workflow_id: "wf_2", kind: "node_start" });
-    expect(noteAutoOpened).not.toHaveBeenCalled();
-  });
-
-  // A tab appearing at the moment work ENDS is noise: there is nothing live to
-  // watch, and History is the door to a finished run.
-  it("claims nothing on the finish frame either", () => {
-    send("run_finished", { workflow_id: "wf_3", status: "completed" });
-    expect(noteAutoOpened).not.toHaveBeenCalled();
   });
 
   // Recorded on EVERY event including the finish, because it is what a later
@@ -424,26 +388,6 @@ describe("run SSE handlers", () => {
       send("run_finished", { workflow_id: "wf_orphan", status: "completed" }, "");
       expect(sweepOrphans).not.toHaveBeenCalled();
     });
-  });
-
-  // The finish frame's other half: the tab the run opened for itself goes away with
-  // it. The STATUS travels because the decision needs it — a failed run keeps its
-  // tab — and this suite only pins that the frame reaches the rule with the run's
-  // own verdict rather than a boolean this handler derived.
-  it("hands the finish frame's status to the auto-close", () => {
-    send("run_finished", { workflow_id: "wf_5", status: "completed" });
-    expect(autoClose).toHaveBeenCalledWith("wf_5", "completed");
-  });
-
-  it("routes a bad ending to it too, verdict intact, and decides nothing itself", () => {
-    send("run_finished", { workflow_id: "wf_6", status: "failed" });
-    expect(autoClose).toHaveBeenCalledWith("wf_6", "failed");
-  });
-
-  it("leaves the auto-close out of the frames that are not an ending", () => {
-    send("run_started", { workflow_id: "wf_7", name: "publish" });
-    send("run_progress", { workflow_id: "wf_7", kind: "node_complete" });
-    expect(autoClose).not.toHaveBeenCalled();
   });
 });
 

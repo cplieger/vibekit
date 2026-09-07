@@ -532,7 +532,7 @@ func (rs *Runs) forgetBounds(ctx context.Context, workflowID string) {
 }
 
 // clearRunPerms drops a run's unanswered request-shaped decisions, tolerating the bare
-// &Runs{} a bounds test builds — offerRunTab carries the same guard.
+// &Runs{} a bounds test builds.
 func (rs *Runs) clearRunPerms(workflowID string) {
 	if rs.perms == nil {
 		return
@@ -742,15 +742,13 @@ func runStartLaunch(chatID vibekit.ChatID) launchOrigin {
 // `run_start` is the arming point covering the launch path vibekit does not own: KAS
 // creates and invokes an agent-launched run internally, so this frame is the FIRST
 // thing vibekit sees of it and the lease for that population is minted HERE. It also
-// re-arms a RESUMED run, since a pause parks the deadline. The tab offer runs before
-// the translator, so the tab exists by the time `run_started` reaches the client.
+// re-arms a RESUMED run, since a pause parks the deadline.
 func (rs *Runs) observeStart(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" {
 		if _, held := rs.lease(f.WorkflowID); !held {
 			rs.grantLease(ctx, f.WorkflowID, f.WorkflowName, runStartLaunch(chatID))
 		}
 		rs.armDeadline(ctx, f.WorkflowID)
-		rs.offerRunTab(ctx, chatID, f.WorkflowID)
 	}
 	rs.translate.HandleRunStart(ctx, chatID, msg)
 }
