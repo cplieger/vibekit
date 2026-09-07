@@ -23,7 +23,8 @@ import { byId } from "./dom.js";
 import { reconcile } from "./reconcile.js";
 import { showToast } from "./toast.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { apiGetTyped, CancellableSlot, fetchKiroSetting, type Decoder } from "./api-client.js";
+import { apiGetTyped, CancellableSlot, type Decoder } from "./api-client.js";
+import { decodeEffectiveSettings } from "./wire/decoders.gen.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { addKnowledge, removeKnowledge } from "./actions/knowledge.js";
 import { ICON_PLUS_16, ICON_TRASH_14 } from "./icons.js";
@@ -76,7 +77,6 @@ const decodeList: Decoder<{ contexts: KnowledgeContext[] }> = (v) => {
 
 // --- Fetch + poll state ---
 
-const KNOWLEDGE_FLAG = "chat.enableKnowledge";
 /** Poll cadence while any base is still indexing. */
 const POLL_MS = 1500;
 /**
@@ -175,19 +175,26 @@ export function loadKnowledge(fromPoll = false): void {
       loadKnowledge(true);
     }, POLL_MS);
   });
-  // The enable-hint reads a kiro-cli setting (a subprocess shell-out), so only
-  // refresh it on a user/SSE-triggered load — not on every poll tick.
+  // The setting behind the hint cannot change under a poll tick, so read it only
+  // on a user-triggered load.
   if (!fromPoll) {
-    void refreshHint();
+    void refreshHint(signal);
   }
 }
 
-/** Show/hide the "knowledge is off" hint based on the chat.enableKnowledge
- *  flag. Management works regardless of the flag; the hint just explains that
- *  the agent won't consult these bases during chats while it's off. */
-async function refreshHint(): Promise<void> {
-  const enabled = await fetchKiroSetting(KNOWLEDGE_FLAG, (raw) => raw === "true", true);
-  byId<HTMLParagraphElement>("knowledge-hint").hidden = enabled;
+/** Show/hide the "knowledge is off" hint from vibekit's own knowledge_enabled
+ *  setting (the General toggle), which is what gates the agent's knowledge tool —
+ *  kiro-cli's own knowledge flag drives its TUI and index builder, not a vibekit
+ *  chat. Management works either way; the hint only explains that the agent won't
+ *  consult these bases during chats while it's off. */
+async function refreshHint(signal: AbortSignal): Promise<void> {
+  const s = await apiGetTyped("/api/settings", decodeEffectiveSettings, signal);
+  if (s === null) {
+    // Network, non-2xx, abort or a rejected payload — none of which means
+    // "knowledge is off", so leave the hint as it stands.
+    return;
+  }
+  byId<HTMLParagraphElement>("knowledge-hint").hidden = s.knowledge_enabled;
 }
 
 // --- Rendering ---

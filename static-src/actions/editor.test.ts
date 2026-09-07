@@ -28,7 +28,6 @@ vi.mock("../api-client.js", () => ({
   apiPostTyped: vi.fn(),
   apiPutOrError: vi.fn(),
   apiGetOrError: vi.fn(),
-  fetchKiroSetting: vi.fn(),
 }));
 // Every name in `transport.ts`, listed rather than spread from `importOriginal`.
 // This mock used to call it, and that is what turned a broken ESM link elsewhere
