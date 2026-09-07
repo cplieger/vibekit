@@ -74,44 +74,78 @@ const MaxDocumentBytes = 10 * 1024 * 1024
 // MaxDocumentBytes cannot be this gate: base64 inflates by 4/3, invisible
 // to any check that measures file bytes.
 //
-// kiro-cli replays the full conversation history on every turn, so a
-// payload the backend refuses sits at a fixed history index and re-sends
-// every later turn, wedging the session permanently — only a rewind or a
-// new chat escapes it.
-//
 // The number is inferred, not measured: 5 MiB is the figure KiroCrew read
 // off its own backend's refusal text for an image over that size. Both
 // products front the same vendor's catalogue, and erring low ships a
-// smaller image while erring high wedges the session.
+// smaller image while erring high can persist a rejected user image.
 const MaxInlineEncodedBytes = 5 * 1024 * 1024
 
 // MaxInlineTurnEncodedBytes caps the total encoded bytes one prompt may
-// inline. A per-attachment cap is not enough: kiro-cli replays history on
-// every turn, so several near-limit files individually under cap can still
-// put a fixed history index's worth of payload into every later turn.
-//
-// Counted in encoded bytes since that is what the history carries.
+// inline. Counted in encoded bytes since that is what the request carries.
 const MaxInlineTurnEncodedBytes = 15 * 1024 * 1024
+
+// MaxHistoryInlineImages caps user-prompt images still present after the last
+// compaction. The value is inferred from the backend's approximately 20-image
+// rejection point. Paths count even when an earlier size gate refused them, and
+// a session change can leave stale paths; both errors fail closed.
+const MaxHistoryInlineImages = 16
 
 // BuildPromptBlocks constructs the ACP prompt content array: a leading text
 // block followed by one block per attachment. On v3 (KAS) a supported
 // document type is always inlined as an embedded `resource` block;
 // everything else becomes a text path reference.
-func BuildPromptBlocks(ctx context.Context, text string, attachments []vibekit.Attachment, resolve func(string) (string, error)) []map[string]any {
+func BuildPromptBlocks(ctx context.Context, text string, attachments []vibekit.Attachment, historyImages int, resolve func(string) (string, error)) []map[string]any {
 	blocks := []map[string]any{vibekit.TextBlock(text)}
-	// budget is the turn's remaining inline allowance in encoded bytes,
-	// spent by each attachment actually read — threaded rather than
-	// global since it describes this prompt alone.
 	budget := MaxInlineTurnEncodedBytes
+	imageAllowance := max(MaxHistoryInlineImages-historyImages, 0)
 	for _, att := range attachments {
 		if ctx.Err() != nil {
 			return blocks
 		}
-		block, spent := attachmentBlock(att, resolve, budget)
+		block, spent := attachmentBlock(att, resolve, budget, imageAllowance > 0)
 		budget -= spent
 		blocks = append(blocks, block)
+		imageAllowance -= inlineImageBlockCount([]map[string]any{block})
 	}
 	return blocks
+}
+
+func historyInlineImageCount(c *vibekit.Chat, currentMessageID string) int {
+	if c == nil {
+		return MaxHistoryInlineImages
+	}
+	count := 0
+	for i := range c.Messages {
+		msg := &c.Messages[i]
+		if msg.ID == c.CompactionWatermark {
+			count = 0
+			continue
+		}
+		if msg.ID == currentMessageID || msg.Role != vibekit.RoleUser {
+			continue
+		}
+		for _, att := range msg.Attachments {
+			if isImageAttachment(att) {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func isImageAttachment(att vibekit.Attachment) bool {
+	_, ok := imageExts[strings.ToLower(filepath.Ext(att.Path))]
+	return ok
+}
+
+func inlineImageBlockCount(blocks []map[string]any) int {
+	count := 0
+	for _, block := range blocks {
+		if block[keyType] == "image" {
+			count++
+		}
+	}
+	return count
 }
 
 // attachmentBlock builds the single ACP content block for one attachment. A
@@ -119,7 +153,7 @@ func BuildPromptBlocks(ctx context.Context, text string, attachments []vibekit.A
 // image as an `image` block; everything else becomes a path reference.
 // Returns the encoded bytes this block consumed from the turn's inline
 // budget (zero for a path-reference block).
-func attachmentBlock(att vibekit.Attachment, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
+func attachmentBlock(att vibekit.Attachment, resolve func(string) (string, error), budget int, allowImage bool) (block map[string]any, spentBytes int) {
 	displayName := filepath.Base(att.Path)
 	ext := strings.ToLower(filepath.Ext(att.Path))
 
@@ -127,7 +161,7 @@ func attachmentBlock(att vibekit.Attachment, resolve func(string) (string, error
 		return inlineResourceBlock(att, displayName, mime, resolve, budget)
 	}
 	if mime, isImg := imageExts[ext]; isImg {
-		return inlineImageBlock(att, displayName, mime, resolve, budget)
+		return inlineImageBlock(att, displayName, mime, resolve, budget, allowImage)
 	}
 
 	// Path-reference branch: validate containment, then hand the agent the
@@ -149,7 +183,7 @@ func attachmentBlock(att vibekit.Attachment, resolve func(string) (string, error
 // document rides the blob variant of EmbeddedResourceResource). On any
 // failure it returns a descriptive text block instead.
 func inlineResourceBlock(att vibekit.Attachment, displayName, mime string, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
-	abs, data, fallback := readForInline(att, displayName, mime, resolve, budget)
+	abs, data, fallback := readForInline(att, displayName, mime, resolve, budget, true)
 	if fallback != nil {
 		return fallback, 0
 	}
@@ -170,8 +204,8 @@ func inlineResourceBlock(att vibekit.Attachment, displayName, mime string, resol
 //
 // The block carries `data` and `mimeType`, deliberately no `uri`: KAS's
 // toDataUrl returns a present uri instead of building the base64 data URL.
-func inlineImageBlock(att vibekit.Attachment, displayName, mime string, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
-	_, data, fallback := readForInline(att, displayName, mime, resolve, budget)
+func inlineImageBlock(att vibekit.Attachment, displayName, mime string, resolve func(string) (string, error), budget int, allowImage bool) (block map[string]any, spentBytes int) {
+	_, data, fallback := readForInline(att, displayName, mime, resolve, budget, allowImage)
 	if fallback != nil {
 		return fallback, 0
 	}
@@ -196,6 +230,7 @@ func readForInline(
 	displayName, mime string,
 	resolve func(string) (string, error),
 	budget int,
+	allowImage bool,
 ) (abs string, data []byte, fallback map[string]any) {
 	isImage := strings.HasPrefix(mime, "image/")
 	// text/csv is the one documentExts member whose bytes a file tool
@@ -259,6 +294,12 @@ func readForInline(
 		}
 		return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
 			" (too large to inline — read it with your file tools)")
+	}
+	if isImage && !allowImage {
+		slog.Warn("attachment: replayed image history budget exhausted, sending a path reference",
+			"path", displayName, "cap", MaxHistoryInlineImages)
+		return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
+			" (not inlined: this chat's replayed image history budget is spent — read it with your file tools)")
 	}
 	return abs, data, nil
 }

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -269,11 +270,10 @@ func TestModels_ReturnedSliceIsDefensiveCopy(t *testing.T) {
 	if len(first) != 2 {
 		t.Fatalf("first Models() len = %d, want 2", len(first))
 	}
-	// Verify the slice is consistent across calls (same pointer —
-	// no allocation on the read path).
+	first[0].Name = "mutated"
 	second := b.Models()
-	if &first[0] != &second[0] {
-		t.Errorf("Models() returned different backing arrays; expected same frozen slice")
+	if second[0].Name != "Alpha" {
+		t.Errorf("second Models()[0].Name = %q, want %q", second[0].Name, "Alpha")
 	}
 }
 
@@ -2061,8 +2061,8 @@ func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
 	if _, err := runNewSession(t, b, &vibekit.StartOpts{}, seeded); err != nil {
 		t.Fatalf("seeding newSession returned error: %v", err)
 	}
-	if len(b.Models()) != 1 || len(b.ServedModels()) != 2 || len(b.Modes()) != 1 {
-		t.Fatalf("seed did not take: models=%v served=%v modes=%v", b.Models(), b.ServedModels(), b.Modes())
+	if len(b.Models()) != 1 || len(b.Catalog()) != 2 || len(b.Modes()) != 1 {
+		t.Fatalf("seed did not take: models=%v catalog=%v modes=%v", b.Models(), b.Catalog(), b.Modes())
 	}
 
 	// Two resume shapes, because ABSENT and PRESENT-BUT-EMPTY are guarded by
@@ -2090,8 +2090,8 @@ func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
 			if got := b.Models(); len(got) != 1 || got[0].ID != "seeded-model" {
 				t.Errorf("Models() = %v, want the seeded catalog kept (an absent option is not an empty one)", got)
 			}
-			if got := b.ServedModels(); len(got) != 2 {
-				t.Errorf("ServedModels() = %v, want the seeded served set kept: it gates entitlement, so emptying it refuses a model the account holds", got)
+			if got := b.Catalog(); len(got) != 2 {
+				t.Errorf("Catalog() = %v, want the seeded unfiltered catalog kept: ApplyServedModels derives the entitlement set from it, so emptying it refuses a model the account holds", got)
 			}
 			if got := b.Modes(); len(got) != 1 || got[0].ID != "vibe" {
 				t.Errorf("Modes() = %v, want the seeded mode list kept; nothing refreshes modes afterwards, so this loss is permanent for the session", got)
@@ -3053,5 +3053,65 @@ This is a WIRE change, not a refactor. If it is deliberate, regenerate with:
 %s
 +++ got
 %s`, name, initializeGoldenCmd, wantLines[i], gotLines[i])
+	}
+}
+
+func TestInitialize_RetainsKiroAgentCapabilities(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{
+		"agentCapabilities":{"_meta":{"kiro":{
+			"extensionMethods":["_kiro/one","_kiro/two"],
+			"replayMarking":true,
+			"futureCapability":{"enabled":true}
+		}}}
+	}`)}
+	if _, err := driveSessionCall(t, b, resp, b.initialize); err != nil {
+		t.Fatalf("initialize = %v, want nil", err)
+	}
+
+	got := b.AgentKiroCapabilities()
+	if !slices.Equal(got.ExtensionMethods, []string{"_kiro/one", "_kiro/two"}) {
+		t.Errorf("AgentKiroCapabilities().ExtensionMethods = %v, want [_kiro/one _kiro/two]", got.ExtensionMethods)
+	}
+	if !got.ReplayMarking {
+		t.Error("AgentKiroCapabilities().ReplayMarking = false, want true")
+	}
+	if string(got.Raw["futureCapability"]) != `{"enabled":true}` {
+		t.Errorf("AgentKiroCapabilities().Raw[futureCapability] = %s, want retained JSON", got.Raw["futureCapability"])
+	}
+}
+
+func TestInitialize_MissingKiroAgentCapabilitiesIsZeroValue(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{"protocolVersion":1}`)}
+	if _, err := driveSessionCall(t, b, resp, b.initialize); err != nil {
+		t.Fatalf("initialize = %v, want nil", err)
+	}
+
+	got := b.AgentKiroCapabilities()
+	if len(got.ExtensionMethods) != 0 || got.ReplayMarking || len(got.Raw) != 0 {
+		t.Errorf("AgentKiroCapabilities() = %+v, want zero value", got)
+	}
+}
+
+func TestForwardStderr_TruncatesOneLineAndContinues(t *testing.T) {
+	logs := capture.Default(t)
+	b := New("/nonexistent", "/work")
+	b.lifecycleCtx = t.Context()
+	first := strings.Repeat("x", stderrLineCap+128)
+
+	b.forwardStderr(strings.NewReader(first + "\nsecond line\n"))
+
+	lines := logs.AttrValuesExact("kiro-cli stderr", "line")
+	if len(lines) != 2 {
+		t.Fatalf("forwardStderr logged %d lines, want 2", len(lines))
+	}
+	const marker = "... [truncated]"
+	if len(lines[0]) > stderrLineCap || !strings.HasSuffix(lines[0], marker) {
+		t.Errorf("first forwarded line has length %d and suffix %q, want at most %d bytes ending in %q",
+			len(lines[0]), lines[0][max(0, len(lines[0])-len(marker)):], stderrLineCap, marker)
+	}
+	if lines[1] != "second line" {
+		t.Errorf("second forwarded line = %q, want %q", lines[1], "second line")
 	}
 }

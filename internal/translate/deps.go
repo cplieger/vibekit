@@ -11,6 +11,9 @@ import (
 
 // BufferAccess resolves the buffer a frame's content folds into.
 type BufferAccess interface {
+	// OpenTurnBuffer returns the chat's open turn without opening one, for a frame
+	// that may fold into a turn but must never start one.
+	OpenTurnBuffer(chatID vibekit.ChatID) (*buffer.Buffer, bool)
 	// TurnFoldTarget returns the chat's open turn's buffer, opening one of the
 	// given source when none is open. Never nil; source is read only on the open.
 	TurnFoldTarget(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) *buffer.Buffer
@@ -197,11 +200,10 @@ type Translator struct {
 	turnInterrupt TurnInterruptAccess
 	metering      TurnMetering
 	newMsgID      func() string
-	// steps maps a workflow step's ACP session id to its run and node.
-	steps *stepRegistry
-	// suppressed holds the tool-call ids of dropped internal-tool frames.
-	suppressed *suppressedTools
-	workDir    string // last for fieldalignment, as in Roles
+	// steps maps a workflow step's ACP session id to its run and node, fed from the
+	// wire (node_start) and from an inspect read.
+	steps   *stepRegistry
+	workDir string // last for fieldalignment, as in Roles
 }
 
 // New constructs a Translator over the roles the host supplies.
@@ -228,7 +230,6 @@ func New(r *Roles, opts ...Option) *Translator {
 		turnInterrupt: r.TurnInterrupt,
 		metering:      r.Metering,
 		steps:         newStepRegistry(),
-		suppressed:    newSuppressedTools(),
 	}
 	for _, o := range opts {
 		o(t)
@@ -295,13 +296,15 @@ type RunBoundsAccess interface {
 	RunMadeProgress(workflowID string)
 }
 
-// TurnInterruptAccess ends a turn kiro-cli has abandoned without answering.
-//
-// Same split as RunBoundsAccess: detection belongs here (the sentinel arrives as an
-// assistant text chunk), termination on the host, which owns the in-flight prompt's
-// cancel func. reason travels because only the detector knows which sentinel
-// matched. Advisory: the host may decline if no turn is in flight.
+// TurnInterruptAccess carries the terminal signals that arrive without a response
+// frame. Same split as RunBoundsAccess: detection belongs here (the sentinel arrives
+// as an assistant text chunk), termination on the host, which owns the in-flight
+// prompt's cancel func. reason travels because only the detector knows which
+// sentinel matched. Advisory: the host may decline if no turn is in flight, and a
+// compaction failure does not prove the turn ended, so the host bounds silence
+// before it interrupts.
 type TurnInterruptAccess interface {
+	CompactionFailed(chatID vibekit.ChatID, detail string)
 	InterruptTurn(chatID vibekit.ChatID, reason string)
 }
 

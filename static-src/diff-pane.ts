@@ -52,13 +52,6 @@ export interface DiffPaneOpts {
    *  through from an inline preview landed on a flatter rendering than the peek
    *  that sent them. Both shapes highlight both sides now. */
   lang?: string;
-  /** Callback for "Ask about this" button on diff hunks. Receives the
-   *  hunk text (old + new lines). If not set, no button is shown. */
-  onAskAbout?: (hunkText: string) => void;
-  /** Callback for per-hunk accept. Receives hunk index and the new lines. */
-  onAcceptHunk?: (hunkIndex: number, newLines: string[]) => void;
-  /** Callback for per-hunk reject. Receives hunk index. */
-  onRejectHunk?: (hunkIndex: number) => void;
   /** Source texts. When supplied, the pane grows a "Ignore whitespace"
    *  toggle in the header that re-diffs and re-renders in place. If
    *  omitted, the toggle is hidden — callers that pre-computed their
@@ -157,81 +150,11 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
     wireSyncScroll(leftCol, rightCol);
   }
 
-  // Per-hunk action buttons (accept/reject/ask).
-  const hasHunkActions =
-    opts.onAcceptHunk !== undefined ||
-    opts.onRejectHunk !== undefined ||
-    opts.onAskAbout !== undefined;
-  if (hasHunkActions) {
-    const hunks = identifyHunks(lines);
-    for (const hunk of hunks) {
-      const toolbar = el("div", { className: "diff-hunk-toolbar" });
-
-      if (opts.onAcceptHunk !== undefined) {
-        const acceptCb = opts.onAcceptHunk;
-        const idx = hunk.index;
-        const newLines = hunk.lines.filter((l) => l.kind === "add").map((l) => l.text);
-        const btn = el(
-          "button",
-          { type: "button", className: "diff-hunk-btn accept" },
-          "\u2713 Accept",
-        ) as HTMLButtonElement;
-        btn.addEventListener("click", () => {
-          acceptCb(idx, newLines);
-          btn.disabled = true;
-          const sib = toolbar.querySelector<HTMLButtonElement>(".diff-hunk-btn.reject");
-          if (sib) {
-            sib.disabled = true;
-          }
-        });
-        toolbar.appendChild(btn);
-      }
-
-      if (opts.onRejectHunk !== undefined) {
-        const rejectCb = opts.onRejectHunk;
-        const idx = hunk.index;
-        const btn = el(
-          "button",
-          { type: "button", className: "diff-hunk-btn reject" },
-          "\u2717 Reject",
-        ) as HTMLButtonElement;
-        btn.addEventListener("click", () => {
-          rejectCb(idx);
-          btn.disabled = true;
-          const sib = toolbar.querySelector<HTMLButtonElement>(".diff-hunk-btn.accept");
-          if (sib) {
-            sib.disabled = true;
-          }
-        });
-        toolbar.appendChild(btn);
-      }
-
-      if (opts.onAskAbout !== undefined) {
-        const askCb = opts.onAskAbout;
-        const hunkText = hunk.lines
-          .filter((l) => l.kind === "add" || l.kind === "del")
-          .map((l) => `${l.kind === "del" ? "-" : "+"}${l.text}`)
-          .join("\n");
-        if (hunkText !== "") {
-          const btn = el("button", { type: "button", className: "diff-ask-btn" }, "Ask");
-          btn.addEventListener("click", () => {
-            askCb(hunkText);
-          });
-          toolbar.appendChild(btn);
-        }
-      }
-
-      container.appendChild(toolbar);
-    }
-  }
-
   return container;
 }
 
 /** Append the "+N more lines" footer when rows were dropped, and return the
- *  pane. Shared by both shapes; the hunk toolbars are two-pane only (they belong
- *  to conflict resolution and the pending-diff editor, neither of which renders
- *  unified). */
+ *  pane. Shared by both shapes. */
 function finishPane(
   container: HTMLDivElement,
   lines: DiffLine[],
@@ -301,34 +224,6 @@ function lineText(
   const wordClass = line.kind === "del" ? "diff-word-del" : "diff-word-add";
   text.innerHTML = highlightMarked(line.text, lang, spans, wordClass);
   return text;
-}
-
-/** Identify contiguous hunks (groups of add/del lines separated by context). */
-function identifyHunks(lines: DiffLine[]): { index: number; lines: DiffLine[] }[] {
-  const hunks: { index: number; lines: DiffLine[] }[] = [];
-  let current: DiffLine[] = [];
-  let hunkIdx = 0;
-  for (const line of lines) {
-    if (line.kind === "add" || line.kind === "del") {
-      current.push(line);
-    } else if (current.length > 0) {
-      hunks.push({ index: hunkIdx++, lines: current });
-      current = [];
-    }
-  }
-  if (current.length > 0) {
-    hunks.push({ index: hunkIdx, lines: current });
-  }
-  return hunks;
-}
-
-/** Count the number of hunks in a diff. Useful for the pending-diff
- *  toolbar, which enables Apply-selected only once every hunk has
- *  been explicitly decided. Exported so callers don't have to
- *  duplicate the hunk-segmentation logic from identifyHunks — they
- *  share the same definition of what a hunk is. */
-export function countHunks(lines: DiffLine[]): number {
-  return identifyHunks(lines).length;
 }
 
 function appendRow(
@@ -441,10 +336,9 @@ function buildWhitespaceToggle(container: HTMLDivElement, opts: DiffPaneOpts): H
       const freshDiffOpts: DiffPaneOpts = freshOpts;
       const fresh = lineDiff(source.oldText, source.newText, { ignoreWhitespace: ignore });
       const rerendered = renderDiffPane(fresh, freshDiffOpts);
-      // Replace everything after the header (body + hunk toolbars +
-      // "+N more" footer). Hunk toolbars are siblings of the body,
-      // not children, so replacing only .diff-pane-body left stale
-      // toolbar buttons referencing old hunk indices.
+      // Replace every sibling after the header: the body, and the
+      // "+N more" footer, which is a sibling of the body rather than
+      // a child of it.
       const header = container.querySelector(".diff-pane-header");
       const insertionPoint = header !== null ? header.nextSibling : container.firstChild;
       while (

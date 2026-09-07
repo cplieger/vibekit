@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -339,5 +340,50 @@ func TestHandlePermissionRequest_PersistableTrueIsNotBlocked(t *testing.T) {
 	if got.AlwaysAllowBlocked != "" {
 		t.Errorf("AlwaysAllowBlocked = %q, want empty for an explicit persistableConsent:true",
 			got.AlwaysAllowBlocked)
+	}
+}
+
+func TestHandlePermissionRequest_CarriesVerifiedMCPIdentity(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+	id := int64(4243)
+
+	tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+		ID: &id,
+		Params: mustJSON(t, map[string]any{
+			"sessionId": "sess_x",
+			"toolCall": map[string]any{
+				"toolCallId": "tc-mcp",
+				"title":      "model-authored title",
+				"kind":       "other",
+			},
+			"options": []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
+			"_meta": map[string]any{"kiro": map[string]any{
+				"mcpTool": map[string]any{
+					"version":  1,
+					"identity": map[string]any{"serverName": "issues", "toolName": "create_issue"},
+				},
+			}},
+		}),
+	})
+
+	got, ok := findPermissionNeeded(t, events)
+	if !ok {
+		t.Fatal("no permission_needed event broadcast")
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	mcp, ok := payload["mcp_tool"].(map[string]any)
+	if !ok {
+		t.Fatalf("mcp_tool = %T, want an object", payload["mcp_tool"])
+	}
+	if mcp["server_name"] != "issues" || mcp["tool_name"] != "create_issue" {
+		t.Errorf("mcp_tool = %+v, want issues/create_issue", mcp)
 	}
 }

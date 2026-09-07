@@ -170,6 +170,10 @@ type PendingPermAccess interface {
 	// says who answered. The chat is part of the claim because a request id is unique
 	// only within one bridge: every bridge mints ids from zero.
 	TakePendingPerm(chatID vibekit.ChatID, requestID int64, settledBy vibekit.SettledBy) bool
+	// TakePendingPermissionOption retains an off-list request and reports it as
+	// pending but not offered. A successful result validates and claims in one
+	// operation, so another surface cannot answer between those steps.
+	TakePendingPermissionOption(chatID vibekit.ChatID, requestID int64, optionID string, settledBy vibekit.SettledBy) (pending, offered bool)
 }
 
 // TerminalAccess is the interrupt's process half: a turn cancel must reach
@@ -231,15 +235,6 @@ type MCPPendingSummary struct {
 	// AwaitingAuth is the servers waiting for an authorization nobody has
 	// completed.
 	AwaitingAuth []string
-}
-
-// TokenSource is the vended KAS credential as this package uses it: one
-// method, called when the backend rejects the token vibekit successfully
-// vended.
-type TokenSource interface {
-	// Invalidate withdraws the cached credential from the reuse window, so
-	// the next vend re-asks the CLI.
-	Invalidate()
 }
 
 // AdmissionOutcome is ReserveTurnForPrompt's answer.
@@ -349,16 +344,15 @@ type Roles struct {
 	// Steers records the steers this server sent, so the translate layer can
 	// tell the user's own words from a workflow reporting into the same buffer.
 	Steers SteerRecorder
-	// Tokens is the KAS credential cache, and it may also be nil: a
-	// runtime built without WithKiroCLIPath vends no token at all.
-	Tokens TokenSource
+	// AuthReadiness carries prompt authentication outcomes to readiness.
+	AuthReadiness *AuthReadiness
 	// Workspace is last for fieldalignment (a trailing length word stops
 	// the leading-pointer count early).
 	Workspace Workspace
 }
 
-// promptRoles is the prompt path's six roles, threaded through the shell
-// interception as well. Passed by pointer, built once at registration.
+// promptRoles holds the prompt path's collaborators and is shared with shell
+// interception. It is built once at registration.
 type promptRoles struct {
 	bridges BridgeAccess
 	chats   ChatStore
@@ -367,7 +361,6 @@ type promptRoles struct {
 	lifecycle   LifecycleAccess
 	mcp         MCPAccess
 	turnOutcome TurnOutcomeAccess
-	// tokens may be nil, as in Roles.
-	tokens    TokenSource
-	workspace Workspace // last for fieldalignment, as in Roles
+	auth        *AuthReadiness
+	workspace   Workspace // last for fieldalignment, as in Roles
 }

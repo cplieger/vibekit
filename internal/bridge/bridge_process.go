@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -187,11 +188,9 @@ func (b *Bridge) Stop() {
 // being a backstop, and no caller supplies one. It is a var rather than a const
 // only so a test can shorten it; nothing in production writes either budget.
 //
-// Sized for the one component of that window vibekit does not bound and cannot:
-// on a first chat after a kiro-cli version change, the KAS runtime tree (~240 MB)
-// is unpacked during this handshake, on a container volume. The 15s SSO-OIDC
-// token refresh vibekit itself answers on the same critical path
-// (_kiro/auth/getAccessToken) plus the four appliers sit inside it too.
+// Sized for the first chat after a version change, when the KAS runtime tree
+// is unpacked during this handshake. The relay's credential refresh and the
+// four config appliers also sit inside this window.
 //
 // Deliberately NOT sized against the MCP-server initialization KiroCrew's own 90s
 // floor was chosen for: vibekit sends `mcpServers: []` and KAS reads the user's
@@ -271,32 +270,13 @@ func localeEnv() []string {
 	return []string{localeEnvVar + "=C.UTF-8"}
 }
 
-// buildACPArgs assembles the kiro-cli `acp` invocation arguments. Kept
-// pure (no process side effects) so the arg shaping is unit-testable.
-//
-// The arg set is the engine and nothing else. vibekit passes no
-// permission/trust flags: tool-call authorization on v3 (KAS) is owned by
-// kiro-cli's native Cedar policy engine, which ignores the legacy
-// --trust-all-tools / --trust-tools flags (confirmed inert on the v3 acp
-// wire — the permission prompt fires regardless).
-//
-// It carries NO --model and NO --effort either, because kiro-cli REFUSES both
-// alongside --agent-engine=v3 and exits before it answers initialize:
-//
-//	error: the following arguments are not supported with --agent-engine=v3: --model, --effort
-//
-// Measured against 2.17.0 and 2.18.0; `-v` is the only other flag v3 accepts.
-// So a launch flag was never how a v3 session got its model, and emitting one
-// killed the process: see bridge_session.go applyInitialModel /
-// applyInitialEffort for the config-option path that replaces it.
+// buildACPArgs assembles the kiro-cli ACP invocation. The relay owns
+// authentication, so KAS never sends the access-token request to vibekit.
 func buildACPArgs(engine string) []string {
-	// Default to v3 (KAS); vibekit is v3-only. v3 requires the host to
-	// answer the _kiro/auth/getAccessToken + _kiro/terminal/shell_type
-	// callbacks (see internal/agent/bridge_v3_auth.go).
 	if engine == "" {
 		engine = vibekit.AgentEngineV3
 	}
-	return []string{"acp", "--agent-engine", engine}
+	return []string{"acp", "--agent-engine", engine, "--auth-method", "cli"}
 }
 
 func (b *Bridge) startProcess(engine string) error {
@@ -425,22 +405,55 @@ func (b *Bridge) startProcess(engine string) error {
 //     (requires trailing colon or bracket to avoid false positives
 //     like "0 errors found").
 //
-// Line cap is stderrLineCap; longer lines are truncated by the
-// scanner (bufio.Scanner silently drops the tail on cap hit), which
-// is acceptable for log lines. The goroutine exits naturally when
-// cmd.Wait closes the pipe on process exit.
+// Lines longer than stderrLineCap are marked as truncated and drained through
+// their newline so one oversized diagnostic cannot stop later lines from being
+// forwarded. The goroutine exits naturally when cmd.Wait closes the pipe.
 func (b *Bridge) forwardStderr(r io.Reader) {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 4096), stderrLineCap)
-	for sc.Scan() {
-		line := sc.Text()
+	br := bufio.NewReaderSize(r, stderrLineCap+1)
+	for {
+		line, ok, err := readStderrLine(br)
+		if err != nil || !ok {
+			return
+		}
 		lvl := classifyStderrLevel(line)
 		slog.Log(b.lifecycleCtx, lvl, "kiro-cli stderr",
 			"source", "kiro_cli_stderr",
 			"line", line)
 	}
-	// Scanner error (pipe closed on process exit) is the expected
-	// terminal condition; no need to log.
+}
+
+const stderrTruncationMarker = "... [truncated]"
+
+func readStderrLine(r *bufio.Reader) (line string, ok bool, err error) {
+	buf := make([]byte, 0, 4096)
+	truncated := false
+	for {
+		fragment, readErr := r.ReadSlice('\n')
+		if readErr != bufio.ErrBufferFull {
+			fragment = bytes.TrimSuffix(fragment, []byte{'\n'})
+			fragment = bytes.TrimSuffix(fragment, []byte{'\r'})
+		}
+		remaining := stderrLineCap - len(buf)
+		if len(fragment) > remaining {
+			fragment = fragment[:remaining]
+			truncated = true
+		}
+		buf = append(buf, fragment...)
+		if readErr == bufio.ErrBufferFull {
+			continue
+		}
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return "", false, readErr
+		}
+		if errors.Is(readErr, io.EOF) && len(buf) == 0 && len(fragment) == 0 {
+			return "", false, nil
+		}
+		if truncated {
+			buf = buf[:stderrLineCap-len(stderrTruncationMarker)]
+			buf = append(buf, stderrTruncationMarker...)
+		}
+		return string(buf), true, nil
+	}
 }
 
 // jsonLevelMap maps structured JSON "level" field values to slog levels.

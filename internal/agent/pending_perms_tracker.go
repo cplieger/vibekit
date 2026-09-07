@@ -59,6 +59,26 @@ func (t *pendingPermsTracker) TakeIfPresent(chatID vibekit.ChatID, id int64) (vi
 	return evt, true
 }
 
+// TakePermissionOption validates one advertised option and claims the request
+// in the same critical section. An off-list answer leaves the request pending.
+func (t *pendingPermsTracker) TakePermissionOption(chatID vibekit.ChatID, id int64, optionID string) (evt vibekit.ServerEvent, pending, offered bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	k := permKey{chat: chatID, id: id}
+	evt, pending = t.perms[k]
+	if !pending {
+		return vibekit.ServerEvent{}, false, false
+	}
+	payload, ok := evt.Payload.(vibekit.PermissionNeededPayload)
+	if !ok || !slices.ContainsFunc(payload.Options, func(option vibekit.PermissionOption) bool {
+		return option.OptionID == optionID
+	}) {
+		return evt, true, false
+	}
+	delete(t.perms, k)
+	return evt, true, true
+}
+
 // ClearForChat drops every unresolved permission_needed entry owned by chatID.
 func (t *pendingPermsTracker) ClearForChat(chatID vibekit.ChatID) {
 	if chatID == "" {
@@ -140,18 +160,32 @@ func (b *bus) TakePendingPerm(chatID vibekit.ChatID, requestID int64, settledBy 
 	if !ok {
 		return false
 	}
+	b.announceDecisionSettled(evt, requestID, settledBy)
+	return true
+}
+
+// TakePendingPermissionOption validates and claims a permission response.
+func (b *bus) TakePendingPermissionOption(chatID vibekit.ChatID, requestID int64, optionID string, settledBy vibekit.SettledBy) (pending, offered bool) {
+	evt, pending, offered := b.pendingPerms.TakePermissionOption(chatID, requestID, optionID)
+	if offered {
+		b.announceDecisionSettled(evt, requestID, settledBy)
+	}
+	return pending, offered
+}
+
+// announceDecisionSettled retires a claimed decision on every other surface.
+func (b *bus) announceDecisionSettled(evt vibekit.ServerEvent, requestID int64, settledBy vibekit.SettledBy) {
 	kind, known := vibekit.DecisionKindForEvent(evt.Type)
 	if !known {
 		// Only the three *_needed events are tracked, so this is tracker misuse, not
 		// the wire. The claim stands; only an unactionable announcement is skipped.
 		slog.Error("sse: tracked decision has no kind, cannot announce it",
 			"type", evt.Type, "request_id", requestID)
-		return true
+		return
 	}
 	b.emit(vibekit.NewEvent(vibekit.EventDecisionSettled, evt.ChatID, vibekit.DecisionSettledPayload{
 		RequestID: requestID,
 		Kind:      kind,
 		SettledBy: settledBy,
 	}))
-	return true
 }

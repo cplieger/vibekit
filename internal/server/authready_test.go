@@ -36,12 +36,11 @@ func TestAuthReasonIsTheClientContract(t *testing.T) {
 	}
 }
 
-// TestHealthReportsTheSignInLeg covers the whole point of the latch: readiness
-// reports a dead sign-in, it reports it BEHIND the kiro-cli leg (the envelope
-// carries one reason, and an uninstalled runtime is the superset failure), and it
-// reads a value rather than probing — a health handler that spawned kiro-cli
-// would hand a monitor's poll a process-launch lever, and kiroauth.Token can
-// block up to 15s on an SSO-OIDC refresh.
+// TestHealthReportsTheSignInLeg: readiness reports a dead sign-in, it reports it
+// BEHIND the kiro-cli leg (the envelope carries one reason, and an uninstalled
+// runtime is the superset failure), and it reads a value rather than probing — a
+// health handler that spawned kiro-cli would hand a monitor's poll a
+// process-launch lever.
 func TestHealthReportsTheSignInLeg(t *testing.T) {
 	ready := func() (bool, pinstall.Reason) { return true, pinstall.ReasonReady }
 	installing := func() (bool, pinstall.Reason) { return false, pinstall.ReasonInstalling }

@@ -171,44 +171,20 @@ func TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode(t *testing.T) {
 	}
 }
 
-// tokenSpy counts the credential invalidations the prompt path asks for.
-type tokenSpy struct{ calls int }
-
-func (s *tokenSpy) Invalidate() { s.calls++ }
-
-// A prompt that failed because the backend rejected the TOKEN also withdraws that
-// token from the vend cache.
-//
-// The banner alone is not the remedy. The credential was accepted at the vend and
-// rejected at the backend, which is what switching the active kiro-cli account
-// looks like — invalidated without being expired — so the cache would keep serving
-// it for up to (expiry - reuseLeeway) and the user's sign-in would change nothing
-// until it aged out. Withdrawing it makes the next auth callback re-ask the CLI.
-//
-// The two controls are the point: the class this keys on is the same one that
-// picks the sign-in code, so anything wider would spend a subprocess on every
-// refused payload.
-func TestCmdPrompt_AnAuthFailureInvalidatesTheCachedToken(t *testing.T) {
+func TestReportPromptFailure_AuthClassLatchesForReadiness(t *testing.T) {
 	cases := map[string]struct {
 		callErr error
-		want    int
+		want    bool
 	}{
-		"the token was rejected": {
+		"backend_rejects_credential": {
 			callErr: rpcErr(t, vibekit.RPCCodeInternal, "Authentication failed. Please sign in again.", nil),
-			want:    1,
+			want:    true,
 		},
-		"a refused payload": {
+		"non_auth_failure": {
 			callErr: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "PromptTooLong",
 			}),
-			want: 0,
-		},
-		"an entitlement refusal is not a sign-in problem": {
-			callErr: rpcErr(t, vibekit.RPCCodeBridgeExited, "this account does not have access to them.", mappedErrorData{
-				ErrorType:      "ModelRegistryAccessDeniedError",
-				RetryErrorType: "CLIENT_ERROR",
-			}),
-			want: 0,
+			want: false,
 		},
 	}
 	for name, tc := range cases {
@@ -217,11 +193,11 @@ func TestCmdPrompt_AnAuthFailureInvalidatesTheCachedToken(t *testing.T) {
 				hostDouble: newTestHost(t, testsupport.NewInMemoryChatStore()),
 				bridge:     &recordingBridge{callErr: tc.callErr},
 			}
-			tokens := &tokenSpy{}
+			readiness := new(AuthReadiness)
 			roles := promptRolesOf(spy)
 			roles.bridges = spy
 			roles.bus = spy
-			roles.tokens = tokens
+			roles.auth = readiness
 			join := &promptJoin{}
 			roles.lifecycle = join
 
@@ -230,9 +206,33 @@ func TestCmdPrompt_AnAuthFailureInvalidatesTheCachedToken(t *testing.T) {
 			}
 			join.join()
 
-			if tokens.calls != tc.want {
-				t.Errorf("Invalidate called %d times, want %d", tokens.calls, tc.want)
+			if got := readiness.Unavailable(); got != tc.want {
+				t.Errorf("AuthReadiness.Unavailable() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestReportPromptSuccess_ClearsAuthLatch(t *testing.T) {
+	spy := &promptBridgeSpy{
+		hostDouble: newTestHost(t, testsupport.NewInMemoryChatStore()),
+		bridge:     &recordingBridge{},
+	}
+	readiness := new(AuthReadiness)
+	readiness.Record(errors.New("backend rejected the credential"))
+	roles := promptRolesOf(spy)
+	roles.bridges = spy
+	roles.bus = spy
+	roles.auth = readiness
+	join := &promptJoin{}
+	roles.lifecycle = join
+
+	if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
+		t.Fatalf("CmdPrompt = %v, want the early ack", err)
+	}
+	join.join()
+
+	if readiness.Unavailable() {
+		t.Error("AuthReadiness stayed unavailable after a completed prompt")
 	}
 }

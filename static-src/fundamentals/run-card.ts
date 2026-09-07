@@ -41,6 +41,7 @@ import {
   isNeedInputPark,
   leafNodes,
   nodeAddressOf,
+  pauseDetailPhrase,
   runCounters,
   runElapsedMs,
   runIsLive,
@@ -115,7 +116,11 @@ function runWord(status: RunState["status"]): string {
       return "failed";
     case "aborted":
       return "stopped";
-    default:
+    case "cancelled":
+      return "cancelled";
+    case "unknown":
+      return "unknown";
+    case undefined:
       return "starting";
   }
 }
@@ -454,9 +459,9 @@ export function buildRunCard(
     } else if (state?.status === "paused") {
       kind = "paused";
       parts.push(pauseSentence(state));
-      const code = state.pauseDetail?.code;
-      if (code !== undefined && code !== "") {
-        parts.push(`after a transient error (${code})`);
+      const detail = pauseDetailPhrase(state.pauseDetail);
+      if (detail !== undefined) {
+        parts.push(detail);
       }
     } else if (state?.status === "failed") {
       kind = "failed";

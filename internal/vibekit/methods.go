@@ -162,11 +162,9 @@ const ContentTypeText = "text"
 // task-based selection". Used by bridge, agent, and model-switch logic.
 const ModelAuto = "auto"
 
-// AgentEngineV3 is the only agent engine vibekit speaks:
-// `kiro-cli acp --agent-engine v3` (KAS). It requires the host to answer
-// _kiro/auth/getAccessToken + _kiro/terminal/shell_type and emits the
-// reshaped _kiro/* extension set. The legacy v1/v2 identifiers were
-// removed with the v2 wire — vibekit is v3-only (resolveAgentEngine).
+// AgentEngineV3 is the only agent engine vibekit speaks. The relay owns
+// authentication, while vibekit answers the shell-type request and the
+// reshaped extension set. The legacy engines are unsupported.
 const AgentEngineV3 = "v3"
 
 // Session config-option ids for session/set_config_option (v3/KAS). Model

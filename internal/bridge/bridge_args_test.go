@@ -11,8 +11,8 @@ func TestBuildACPArgs(t *testing.T) {
 		engine string
 		want   []string
 	}{
-		{name: "bare defaults to v3", want: []string{"acp", "--agent-engine", "v3"}},
-		{name: "explicit v3 engine", engine: "v3", want: []string{"acp", "--agent-engine", "v3"}},
+		{name: "bare defaults to v3", want: []string{"acp", "--agent-engine", "v3", "--auth-method", "cli"}},
+		{name: "explicit v3 engine", engine: "v3", want: []string{"acp", "--agent-engine", "v3", "--auth-method", "cli"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

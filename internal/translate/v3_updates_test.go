@@ -605,3 +605,41 @@ func TestHandleSessionInfoUpdate_TurnEndWithoutStopDetailsSaysNothing(t *testing
 		t.Errorf("brackets = %+v, want %+v", deps.brackets, want)
 	}
 }
+
+func TestHandleConfigOptionUpdate_RefreshesTheEntitlementSet(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	_ = store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		c.ServedModelIDs = []string{"old-a", "old-b"}
+		return true
+	})
+
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelUpdate(t, "new-a", []map[string]any{
+		{"value": "new-a", "name": "New A"},
+		{"value": "new-b", "name": "New B"},
+		{"value": "new-c", "name": "New C"},
+		{"value": "new-d", "name": "New D"},
+	}))
+
+	c, _ := store.Get(t.Context(), "c1")
+	if !slices.Equal(c.ServedModelIDs, []string{"new-a", "new-b", "new-c", "new-d"}) {
+		t.Errorf("ServedModelIDs = %v, want refreshed four-model set", c.ServedModelIDs)
+	}
+}
+
+// An end-of-life id stays in the entitlement set: the picker's own filtering is the
+// bridge's, and dropping the id here would refuse a model the account can still run.
+func TestHandleConfigOptionUpdate_KeepsEndOfLifeIDsInTheServedSet(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelUpdate(t, "new", []map[string]any{
+		{"value": "old", "name": "Old", "description": "[Deprecated]"},
+		{"value": "new", "name": "New"},
+	}))
+
+	c, _ := store.Get(t.Context(), "c1")
+	if !slices.Equal(c.ServedModelIDs, []string{"old", "new"}) {
+		t.Errorf("ServedModelIDs = %v, want [old new]", c.ServedModelIDs)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -32,6 +33,21 @@ func (s *Store) Lock(chatID vibekit.ChatID) *sync.Mutex { return s.lock(chatID) 
 
 // Dir returns the store's base directory.
 func (s *Store) Dir() string { return s.dir }
+
+// Remove deletes a chat and records its tombstone, so a racing Mutate cannot
+// resurrect the id. Only a chat that actually existed is tombstoned. The caller
+// must hold Lock for chatID across this call.
+func (s *Store) Remove(chatID vibekit.ChatID) error {
+	path, err := s.pathFor(chatID)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(path)
+	if !errors.Is(err, os.ErrNotExist) {
+		s.markDeleted(chatID)
+	}
+	return err
+}
 
 // markDeleted records that chatID was just deleted. Mutate calls for
 // the same id within tombstoneTTL will refuse to auto-create.

@@ -51,9 +51,9 @@ func (rs *Runs) StepTranscript(ctx context.Context, workflowID, nodePath string)
 			"node_path", nodePath, "error", err, "detail", rpcerr.Details(err))
 		return out, nil
 	}
-	// No empty-reply check: an EMPTY reply is how a KAS refusal arrives (rawCall drops
-	// `resp.Error`), and the undecodable branch below already answers for it. The LOAD
-	// path does need its own, because there the two arms differ by a whole budget.
+	// No empty-reply check: a KAS refusal is an error above, and the undecodable branch
+	// below answers a reply that arrives empty anyway. The LOAD path does need its own,
+	// because there the two arms differ by a whole budget.
 	//
 	// The step→session registry attributes a resumed run's frames after a restart emptied it.
 	rs.translate.RecordRunSteps(raw)
@@ -121,9 +121,9 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]vibe
 	if u == nil {
 		return nil, vibekit.RunStepTranscriptUnavailable
 	}
-	// An EMPTY result is the LOAD's most likely failure: rawCall drops `resp.Error`, so
-	// KAS refusing to hydrate a reaped session arrives as (nil, nil), and without the
-	// check the read waits out the whole budget on a replay that is never coming.
+	// The empty-result arm stays beside the error one: KAS refusing to hydrate a reaped
+	// session normally errors, but a `{"result":null}` reply would otherwise wait out
+	// the whole budget on a replay that is never coming.
 	raw, at, err := u.session.rawCallAt(cctx, "step transcript load", vibekit.MethodSessionLoad,
 		callerParams(map[string]any{vibekit.KeySessionID: sessionID}))
 	if err != nil || len(raw) == 0 {

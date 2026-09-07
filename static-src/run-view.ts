@@ -56,6 +56,7 @@ import { refreshRunDots, trackRun } from "./run-dots.js";
 import { buildPath } from "./router.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_EXTERNAL } from "./icons.js";
+import { classifyRunStatus } from "./run-status.js";
 import { parseStepSubtask } from "./step-subtask.js";
 import type { RunStepPayload } from "./types.js";
 
@@ -363,7 +364,7 @@ export function autoCloseRunSubTab(workflowID: string, status: string): void {
   if (
     !autoOpened.has(workflowID) ||
     !runEndedCleanly(status) ||
-    runStatusFor(status, runPendingAsks(workflowID).count > 0) !== "done"
+    runStatusFor(classifyRunStatus(status), runPendingAsks(workflowID).count > 0) !== "done"
   ) {
     return;
   }

@@ -216,7 +216,7 @@ func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, chats ChatS
 	reply, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
 	if retryErr != nil {
 		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
-		reason := promptFailureReason(retryErr)
+		reason := promptFailureReason(retryErr, promptParamsInlineImage(params))
 		outcome.AbandonInFlightTurn(ctx, chatID, retryEpoch, reason)
 		// Turn-scoped: the retry ran as a turn of its own and the abandon above
 		// stamped this reason on it, so that card carries the cause.
@@ -450,17 +450,22 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 	}
 	slog.Info("prompt", "chat_id", chatID, "len", len(p.Text))
 	start := time.Now()
-	promptParams := BuildPromptParams(ctx, roles.workspace, sb, p)
+	chatRecord, _ := roles.chats.Get(ctx, chatID)
+	historyImages := historyInlineImageCount(chatRecord, p.MessageID)
+	promptParams, inlinedImage := BuildPromptParams(ctx, roles.workspace, sb, p, historyImages)
 	reply, err := callPromptWithRetry(ctx, sb, promptParams, chatID)
 	elapsed := time.Since(start)
 	if err != nil {
-		reportPromptFailure(ctx, roles, chatID, epoch, err, elapsed)
+		reportPromptFailure(ctx, roles, chatID, epoch, err, elapsed, inlinedImage)
 		sb.ReleaseAfterPrompt()
 		roles.turnOutcome.ReleaseTurnReservation(chatID)
 		roles.turnOutcome.ReleaseTurn(chatID, epoch)
 		return
 	}
 	slog.Info("prompt complete", "chat_id", chatID, "elapsed", elapsed)
+	if roles.auth != nil {
+		roles.auth.Record(nil)
+	}
 
 	// Settle this turn before deciding whether it produced nothing: the
 	// close is what settles the withheld steer carry and measures the
@@ -487,20 +492,16 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 // One rendering of the cause on every surface that carries it: handing the
 // raw error to the broadcast would let RPCErrorText's machine-triplet
 // fallback overwrite the prose promptFailureReason produces.
-func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, err error, elapsed time.Duration) {
+func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, err error, elapsed time.Duration, inlinedImage bool) {
 	slog.Error("prompt failed", "chat_id", chatID, keyError, err, "elapsed", elapsed)
-	reason := promptFailureReason(err)
+	reason := promptFailureReason(err, inlinedImage)
 	// An auth failure is the one prompt failure whose remedy is not "send
 	// again", so it routes through a different code.
 	code := vibekit.ErrCodePromptFailed
 	if classifyPromptFailure(err) == classAuth {
 		code = vibekit.ErrCodeAuthTokenUnavailable
-		// The token vibekit vended was accepted at the vend and rejected
-		// at the backend, which is what an account switch looks like.
-		// Withdrawing it from reuse makes the next callback re-ask the
-		// CLI, which picks up the switched account with no restart.
-		if roles.tokens != nil {
-			roles.tokens.Invalidate()
+		if roles.auth != nil {
+			roles.auth.Record(err)
 		}
 	}
 	// Finalize the turn: without this the assistant buffer survives with
@@ -514,12 +515,12 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit
 		vibekit.ErrorPayload{Code: code, Message: reason, TurnScoped: true}))
 }
 
-// BuildPromptParams constructs the full session/prompt parameter map.
-// Takes sessionScoped, not Bridge: building a parameter map reads an id,
-// nothing more.
-func BuildPromptParams(ctx context.Context, ws Workspace, sb sessionScoped, p *vibekit.PromptCommand) map[string]any {
+// BuildPromptParams constructs the full session/prompt parameter map and
+// reports whether this prompt contains an inlined image.
+func BuildPromptParams(ctx context.Context, ws Workspace, sb sessionScoped, p *vibekit.PromptCommand, historyImages int) (map[string]any, bool) {
+	blocks := BuildPromptBlocks(ctx, p.Text, p.Attachments, historyImages, ws.ResolveInside)
 	params := SessionParams(sb, map[string]any{
-		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, ws.ResolveInside),
+		"prompt": blocks,
 	})
 	// Forward the client-generated user message id so KAS stores this
 	// turn under vibekit's own id — what makes rewind addressable:
@@ -528,11 +529,16 @@ func BuildPromptParams(ctx context.Context, ws Workspace, sb sessionScoped, p *v
 	if p.MessageID != "" {
 		params["messageId"] = p.MessageID
 	}
-	return params
+	return params, inlineImageBlockCount(blocks) > 0
 }
 
-// promptFailureClass names why a prompt failed: the four causes want four
-// different actions, which one boolean could never express.
+func promptParamsInlineImage(params map[string]any) bool {
+	blocks, _ := params["prompt"].([]map[string]any)
+	return inlineImageBlockCount(blocks) > 0
+}
+
+// promptFailureClass names why a prompt failed: the causes want different
+// actions, which one boolean could never express.
 type promptFailureClass int
 
 const (
@@ -610,7 +616,8 @@ type mappedErrorData struct {
 // the classifier keys on this exact value rather than the mere presence
 // of the data block, since most mapped classes are CLIENT_ERROR.
 const (
-	kasRetryThrottling = "THROTTLING"
+	kasRetryThrottling         = "THROTTLING"
+	contextWindowExceededError = "ContextWindowExceededError"
 )
 
 // classifyPromptFailure maps a prompt error onto its class.
@@ -663,6 +670,9 @@ func classifyRPCFailure(re *vibekit.RPCError) promptFailureClass {
 		// every validation and auth failure. Both are excluded from
 		// retry — auth is pure latency, validation is a second upload
 		// of the same rejected payload.
+		if d := mappedFromData(re); d != nil && d.ErrorType == contextWindowExceededError {
+			return classFatal
+		}
 		if isAuthShaped(re) {
 			return classAuth
 		}
@@ -735,10 +745,20 @@ func isValidationShaped(re *vibekit.RPCError) bool {
 	return false
 }
 
+func isImageValidationShaped(re *vibekit.RPCError) bool {
+	hay := re.Message + string(re.ErrorData())
+	for _, name := range validationErrorNames {
+		if strings.HasPrefix(name, "Image") && strings.Contains(hay, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // promptFailureReason renders a failure into something worth showing the
 // user. KAS's own message on a mapped error is already user-facing, so
 // this adds to it rather than replacing it.
-func promptFailureReason(err error) string {
+func promptFailureReason(err error, inlinedImage bool) string {
 	// A cancelled prompt context is not a backend failure and must not
 	// read like one — either the user pressed Cancel and cancelGrace
 	// killed the context, or the HTTP request went away.
@@ -754,11 +774,13 @@ func promptFailureReason(err error) string {
 		// Not one of KAS's mapped backend classes — 127 of 137 measured
 		// engine errors are a -32603 whose message is the literal
 		// "Internal error" and whose cause is in error.data.
-		text := rpcerr.Text(err)
-		if isValidationShaped(re) {
-			text += " The request was refused as sent. Resending it unchanged will fail the same way. Make the prompt or its attachments smaller, then send again."
-		}
-		return text
+		return rpcerr.Text(err) + validationGuidance(re, inlinedImage)
+	}
+	if re.Code == vibekit.RPCCodeInternal && d.ErrorType == contextWindowExceededError {
+		return "This chat exceeds the model's context limit. Type `/compact` or start a new chat, then send the prompt again."
+	}
+	if re.Code == vibekit.RPCCodeBridgeExited && d.ErrorType == "ModelRegistryUnavailableError" {
+		return re.Message + " Run `kiro-cli login`, then send the prompt again."
 	}
 	// A mapped error's `data` is the machine triplet, not the text; the
 	// prose is KAS's own userFacingSessionErrorMessage in `message`.
@@ -779,6 +801,25 @@ func promptFailureReason(err error) string {
 		msg += " (request " + d.RequestID + ")"
 	}
 	return msg
+}
+
+// validationGuidance is the recovery text for a validation-shaped refusal,
+// split by whether an image is what tripped it and whether this prompt
+// inlined one. Empty for everything else.
+func validationGuidance(re *vibekit.RPCError, inlinedImage bool) string {
+	if !isValidationShaped(re) {
+		return ""
+	}
+	text := " The request was refused as sent. Resending it unchanged will fail the same way."
+	switch {
+	case !isImageValidationShaped(re):
+		text += " Make the prompt or its attachments smaller, then send again."
+	case inlinedImage:
+		text += " Make the prompt or its attachments smaller, then send again. If the refusal continues, use Rewind to remove an earlier prompt image, or reopen the chat to clear an image returned by a file or MCP tool."
+	default:
+		text += " Use Rewind to remove an earlier prompt image. Reopen the chat if an image returned by a file or MCP tool caused the refusal; those images last only for the live session."
+	}
+	return text
 }
 
 // String names the class for logs. A number in a log line is a lookup the

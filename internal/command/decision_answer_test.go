@@ -50,6 +50,12 @@ func (d *takeDeps) TakePendingPerm(chatID vibekit.ChatID, requestID int64, _ vib
 	return d.takeOK
 }
 
+func (d *takeDeps) TakePendingPermissionOption(chatID vibekit.ChatID, requestID int64, _ string, _ vibekit.SettledBy) (bool, bool) {
+	d.takes = append(d.takes, requestID)
+	d.takeChats = append(d.takeChats, chatID)
+	return d.takeOK, d.takeOK
+}
+
 func decisionCommand(t *testing.T, typ vibekit.CommandType, payload any) *vibekit.ClientCommand {
 	t.Helper()
 	raw, err := json.Marshal(payload)

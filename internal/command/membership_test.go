@@ -200,6 +200,37 @@ func TestCreateChatAndOpen_ReplayFinishesAMissingTabWrite(t *testing.T) {
 	}
 }
 
+func TestCreateChatAndOpen_RefusesWhenTheRequiredChatIsGone(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedRecord(t, store, "c-required")
+	mem, st, bus := newTabbedMembership(t, store)
+	if err := store.Delete(t.Context(), "c-required"); err != nil {
+		t.Fatalf("Delete(%q) = %v, want nil", "c-required", err)
+	}
+
+	_, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
+		ChatID:      "c-tangent",
+		RequireChat: "c-required",
+		Init:        func(c *vibekit.Chat) { c.Name = "Must not exist" },
+	})
+
+	if statusOf(err) != http.StatusNotFound {
+		t.Errorf("CreateChatAndOpen status = %d, want 404 (error %v)", statusOf(err), err)
+	}
+	if !errors.Is(err, errOpenChatUnknown) {
+		t.Errorf("CreateChatAndOpen error = %v, want errOpenChatUnknown", err)
+	}
+	if got := storedChatIDs(t, store); len(got) != 0 {
+		t.Errorf("CreateChatAndOpen left chat records %v, want none", got)
+	}
+	if open, _ := st.List(); len(open) != 0 {
+		t.Errorf("CreateChatAndOpen left %d tabs, want none", len(open))
+	}
+	if frames := bus.frames(t); len(frames) != 0 {
+		t.Errorf("CreateChatAndOpen emitted %d tab frames, want none", len(frames))
+	}
+}
+
 // The capacity reservation runs before the mint. Reversed, the refusal lands after
 // the record is written and the gesture leaves a chat nothing can ever open.
 func TestCreateChatAndOpen_AtTheLimitLeavesTheChatStoreUnchanged(t *testing.T) {

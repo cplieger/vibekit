@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/httpx/v5"
 	"github.com/cplieger/runesafe/v2"
 )
 
@@ -675,24 +676,30 @@ func doAPIWith(ctx context.Context, token, method, endpoint string, body []byte)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return data, resp.StatusCode, fmt.Errorf("gitea api: %s %s: status %d: %s",
-			method, endpoint, resp.StatusCode, apiErrorSnippet(data))
+			method, endpoint, resp.StatusCode, apiErrorSnippet(data, token))
 	}
 	return data, resp.StatusCode, nil
 }
 
 // apiErrorSnippet returns a short, single-line summary of a Gitea API
-// error body, sanitized and byte-capped via runesafe so an
-// upstream-controlled body cannot forge log records, carry terminal
-// escapes, or balloon the error string.
-func apiErrorSnippet(body []byte) string {
+// error body. The held token is redacted before and after single-line
+// normalization, then the safe text is byte-capped.
+func apiErrorSnippet(body []byte, token string) string {
 	const maxLen = 256
 	var e struct {
 		Message string `json:"message"`
 	}
+	text := string(body)
 	if json.Unmarshal(body, &e) == nil && e.Message != "" {
-		return runesafe.SanitizeSingleLineBounded(trimSpace(e.Message), maxLen)
+		text = e.Message
 	}
-	return runesafe.SanitizeSingleLineBounded(trimSpace(string(body)), maxLen)
+	text = trimSpace(text)
+	secret := httpx.Secret(token)
+	text = httpx.RedactSecretString(text, secret)
+	text = runesafe.SanitizeSingleLine(text)
+	normalizedSecret := httpx.Secret(runesafe.SanitizeSingleLine(token))
+	text = httpx.RedactSecretString(text, normalizedSecret)
+	return runesafe.CapBytes(text, maxLen)
 }
 
 // apiGet performs an authenticated GET against the Gitea API.

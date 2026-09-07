@@ -46,11 +46,8 @@ type secretGetBody struct {
 // handleKiroSecretRequest answers the three `_kiro/secret/*` A→C requests.
 // Returns true when msg was one of them (so translateACPEvent stops).
 //
-// Answered SYNCHRONOUSLY on the forward goroutine, unlike getAccessToken:
-// every operation here is a map lookup plus at most one bounded atomic write,
-// with no network call and no blocking refresh, and KAS issues these inside its
-// MCP connect path — dispatching them async would reorder a store against the
-// get that follows it.
+// Answered synchronously because every operation is bounded and KAS can issue
+// a store followed immediately by a get on the MCP connection path.
 func (in *inbound) handleKiroSecretRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
 	switch msg.Method {
 	case methodKiroSecretGet:

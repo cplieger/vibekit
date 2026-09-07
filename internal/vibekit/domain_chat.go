@@ -808,9 +808,16 @@ type SessionListResponse struct {
 // counted nor judged as runs.
 type WorkflowRun struct {
 	WorkflowID string `json:"workflow_id"`
-	Name       string `json:"name"`
+	// Name is what to DISPLAY: upstream computes it as `runLabel ?? workflowName`,
+	// so it stops being the recipe the moment anything stamps a label.
+	Name string `json:"name"`
+	// WorkflowName is the RECIPE, and the only field a per-recipe decision may
+	// read: an agent launching via `run_workflow` passes a `<recipe>-<topic>`
+	// label and KAS stamps `<workflowName>-<targetId>` on a watch node, so keying
+	// the single-run rule on Name made that guard fail OPEN.
+	WorkflowName string `json:"workflow_name,omitempty"`
 	// Status is run-level: paused / completed / failed.
-	Status string `json:"status,omitempty"`
+	Status RunStatus `json:"status,omitempty"`
 	// ParentChatID is the vibekit chat that launched the run, resolved through the
 	// launching session's chain. Empty for a run with no vibekit parent.
 	ParentChatID string `json:"parent_chat_id,omitempty"`

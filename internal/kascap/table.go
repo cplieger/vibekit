@@ -52,7 +52,7 @@ request (open a URL for the user, e.g. an MCP OAuth page).
 openExternalUrl advertises that we can open a URL for the user; KAS (v3) gates
 its _kiro/openExternalUrl request on it (proactively opening an MCP server's
 OAuth page — the client surfaces a clickable banner, no auto-open; see
-agent/bridge_v3_auth.go).`,
+agent/bridge_v3_hostreq.go).`,
 	},
 	{
 		key:      "infrastructureSafety",
@@ -836,11 +836,12 @@ with it and spans=2 without.
 The ONE condition that reverses this: a sandbox. The sandbox && capabilities.terminal
 arm hands back DefaultTerminalManager, whose DefaultTerminal DOES implement
 onOutputChunk — at which point vibekit's own terminal handlers go silent and the
-stream moves to this frame. Sandbox is a standing proven negative in this
-container (_kiro/sandbox/applyConfig is a silent no-op: bwrap needs an
-unprivileged userns Docker's default profile forbids), so it holds, but it is one
-compose change from not holding and the failure would be silent — a blank tool
-card with the completion snapshot still filling in.
+stream moves to this frame. No sandbox can start in this container because bwrap
+is not in the image, so KAS's bubblewrap backend fails isAvailable() and resolves
+to its no-op. Enabling one also needs an explicit session/set_config_option or
+_kiro/sandbox/applyConfig request with configId "sandbox" and value "enabled";
+both reach applySandboxConfigOption, whose absent config defaults to backend
+"auto" (bubblewrap on Linux), and vibekit sends neither request.
 
 If the premise ever flips, the order is: a content_chunk handler registered and
 green, THEN a toolCallId→card join (vibekit keys on terminal_id today), and only

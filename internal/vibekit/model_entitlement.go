@@ -2,8 +2,8 @@ package vibekit
 
 // Whether this account can actually use a model id.
 //
-// kiro-cli accepts a model id it cannot serve. The `--model` launch flag and
-// `session/set_config_option` both succeed locally, and only the SERVICE rejects
+// kiro-cli accepts a model id it cannot serve. `_meta.kiro.modelId` on
+// `session/new` and `session/set_config_option` with configId `model` both succeed locally, and only the SERVICE rejects
 // it, mid-prompt, on every later turn. So the id has to be checked against what
 // the session advertised before it goes on the wire, and the check has to be ONE
 // predicate: upstream (KiroCrew #1596 / #1549 / #1550) found that a picker, a
@@ -13,7 +13,7 @@ package vibekit
 // vibekit's exposure is a persisted value rather than a user's live pick.
 // `chat.Model` is written from the client's `last_model`, a cross-device setting
 // restored at startup with no list check, so an id that was valid under a
-// previous entitlement rides the launch flag at every spawn of every new chat.
+// previous entitlement rides `_meta.kiro.modelId` on every new session.
 
 import "slices"
 

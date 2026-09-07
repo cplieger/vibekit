@@ -22,6 +22,7 @@ import type {
 // From the generated wire rather than turns.ts, which imports this module: one spelling
 // of the enum, and a type-only import adds no runtime edge.
 import type { TurnOutcome } from "./wire/types.gen.js";
+import type { ClassifiedRunStatus } from "./run-status.js";
 import { severityOf } from "./turn-severity.js";
 import { parseStepSubtask } from "./step-subtask.js";
 import {
@@ -659,10 +660,12 @@ export type RunPauseClass = "" | "need_input";
  *
  *  `paused` is `waiting` — stopped, not finished — EXCEPT for a step parked on a person,
  *  which is `input`, the same dot an unanswered card raises; the park is the half that
- *  survives a client that never received the card. `pause` is read only in the `paused`
- *  arm, so a stale reason on a finished run cannot paint it yellow. */
+ *  survives a client that never received the card. `cancelled` is `done` rather than
+ *  `failed`: the reader asked for the stop, so nothing is owed. `pause` is read only in the
+ *  `paused` arm, so a stale reason on a finished run cannot paint it yellow; `unknown`
+ *  paints nothing. */
 export function runStatusFor(
-  status: string | undefined,
+  status: ClassifiedRunStatus | undefined,
   pendingAsk = false,
   pause: RunPauseClass = "",
 ): TabDotState {
@@ -671,7 +674,6 @@ export function runStatusFor(
   }
   switch (status) {
     case undefined:
-    case "":
       return "";
     case "running":
       return "working";
@@ -680,8 +682,11 @@ export function runStatusFor(
     case "failed":
     case "aborted":
       return "failed";
-    default:
+    case "completed":
+    case "cancelled":
       return "done";
+    case "unknown":
+      return "";
   }
 }
 

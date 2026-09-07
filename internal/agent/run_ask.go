@@ -359,10 +359,10 @@ func needInputPause(reason string) bool {
 // the strings for govet's fieldalignment; the JSON tags carry the wire names.
 type askInspect struct {
 	State *struct {
-		PauseDetail *askPauseDetail `json:"pauseDetail"`
-		Root        *askNode        `json:"root"`
-		Status      string          `json:"status"`
-		PauseReason string          `json:"pauseReason"`
+		PauseDetail *askPauseDetail   `json:"pauseDetail"`
+		Root        *askNode          `json:"root"`
+		Status      vibekit.RunStatus `json:"status"`
+		PauseReason string            `json:"pauseReason"`
 	} `json:"state"`
 }
 
@@ -379,13 +379,13 @@ type askPauseDetail struct {
 // parallel branch where the run-level pauseReason does not. Type has ONE reader,
 // statusUpdateTarget, because KAS considers `type: "step"` nodes alone.
 type askNode struct {
-	NodeID           string    `json:"nodeId"`
-	Type             string    `json:"type"`
-	Status           string    `json:"status"`
-	SessionID        string    `json:"sessionId"`
-	AgentName        string    `json:"agentName"`
-	CompletionSignal string    `json:"completionSignal"`
-	Children         []askNode `json:"children"`
+	NodeID           string                `json:"nodeId"`
+	Type             string                `json:"type"`
+	Status           vibekit.RunNodeStatus `json:"status"`
+	SessionID        string                `json:"sessionId"`
+	AgentName        string                `json:"agentName"`
+	CompletionSignal string                `json:"completionSignal"`
+	Children         []askNode             `json:"children"`
 }
 
 // reconcileNeedInput mints an ask for a run parked on a person with nothing in the registry
@@ -401,7 +401,7 @@ func (rs *Runs) reconcileNeedInput(ctx context.Context, workflowID string, raw j
 	if json.Unmarshal(raw, &res) != nil || res.State == nil {
 		return
 	}
-	if res.State.Status != runStatusPaused {
+	if res.State.Status != vibekit.RunStatusPaused {
 		return
 	}
 	// The signal arm leads: it reaches a park inside a parallel branch, whose reason the
@@ -466,7 +466,7 @@ func needInputParked(n *askNode, trail []string) (leaf *askNode, path []string) 
 		return nil, nil
 	}
 	here := append(append([]string{}, trail...), n.NodeID)
-	if n.Status == runStatusPaused && n.CompletionSignal == needInputSignal {
+	if n.Status == vibekit.RunNodeStatusPaused && n.CompletionSignal == needInputSignal {
 		return n, here
 	}
 	for i := range n.Children {
@@ -486,7 +486,7 @@ func pausedLeaf(n *askNode, trail []string) (leaf *askNode, path []string) {
 	}
 	here := append(append([]string{}, trail...), n.NodeID)
 	if len(n.Children) == 0 {
-		if n.Status == runStatusPaused {
+		if n.Status == vibekit.RunNodeStatusPaused {
 			return n, here
 		}
 		return nil, nil

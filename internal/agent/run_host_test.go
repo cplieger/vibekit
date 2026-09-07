@@ -274,41 +274,24 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`),
-		methodKiroWorkflowList:        json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish","status":"running"}]}`),
+		// Both name fields, as the real wire sends them: the row's `name` is
+		// `runLabel ?? workflowName`, so they agree only while unlabelled.
+		methodKiroWorkflowList: json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish","workflowName":"publish","status":"running"}]}`),
 	}
 	_, _, err := h.runs.Launch(t.Context(), "bundled://publish", nil)
 	if err == nil || !strings.Contains(err.Error(), "live run") {
 		t.Fatalf("err = %v, want the single-run refusal", err)
 	}
-	// A TERMINAL run of the same recipe does not block a relaunch.
-	br.callResults[methodKiroWorkflowList] = json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish","status":"completed"}]}`)
+	// A TERMINAL run of the same recipe does not block a relaunch. It carries
+	// `workflowName` too, or the row misses the recipe match and the case would pass
+	// without ever reaching the status half of the guard.
+	br.callResults[methodKiroWorkflowList] = json.RawMessage(
+		`{"runs":[{"workflowId":"wf_1","name":"publish","workflowName":"publish","status":"completed"}]}`,
+	)
 	br.callResults[methodKiroWorkflowNew] = json.RawMessage(`{"workflowId":"wf_2"}`)
 	br.callResults[methodKiroWorkflowInvoke] = json.RawMessage(`{}`)
 	if _, _, err := h.runs.Launch(t.Context(), "bundled://publish", nil); err != nil {
 		t.Fatalf("a terminal run blocked a relaunch: %v", err)
-	}
-}
-
-// TestCloseFinishedRunBridge_TerminalOnly pins the teardown rule: run_complete
-// closes the bridge only on a TERMINAL status, and a policy pause uses that frame.
-func TestCloseFinishedRunBridge_TerminalOnly(t *testing.T) {
-	cases := []struct {
-		status string
-		closed bool
-	}{
-		{"completed", true},
-		{"failed", true},
-		{"aborted", true},
-		{"cancelled", true},
-		{"paused", false},
-		{"", false},
-	}
-	for _, c := range cases {
-		t.Run("status="+c.status, func(t *testing.T) {
-			if got := terminalRunStatus(c.status); got != c.closed {
-				t.Errorf("terminalRunStatus(%q) = %v, want %v", c.status, got, c.closed)
-			}
-		})
 	}
 }
 
@@ -470,7 +453,7 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
 		// The run list is where a re-hosted run's recipe comes from.
 		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","status":"aborted"}]}`,
+			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted"}]}`,
 		),
 	}
 	held := make(chan struct{})
@@ -540,7 +523,7 @@ func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
 		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","status":"aborted"}]}`,
+			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted"}]}`,
 		),
 	}
 	// Deliberately NO bridge in the manager: that is what makes this the re-hosting
@@ -581,7 +564,7 @@ func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) 
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","status":"aborted"}]}`,
+			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted"}]}`,
 		),
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}

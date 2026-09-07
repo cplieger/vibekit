@@ -31,7 +31,6 @@
 #   "other"          -> types.gen.ts ToolKind union   (+ static-src/tool-schema.ts OTHER profile)
 #   "refusal"        -> types.gen.ts StopReason union (+ static-src/refusal.ts)
 constant ToolKindOther
-constant StopReasonRefusal
 
 # --- 2. json-tagged fields on wiregen-registered structs. The struct is
 # registered in cmd/wire-codegen, so the field is part of the generated TS
@@ -227,7 +226,6 @@ method (*statusError).Unwrap
 # assignment a compile error.
 method (*cappedBuffer).Write
 
-
 # --- 17. Test-isolation seam, same shape as sections 13 and 14. The per-chat
 # file cap is DERIVED from the cgroup memory limit, so its refusal paths are
 # unreachable in a test without an override: crossing a cap sized off the
@@ -242,3 +240,8 @@ function WithChatFileCap
 # SSE hub, because deleting it would make every event stream silently buffer.
 method (*compressWriter).Unwrap
 method (*compressWriter).Flush
+
+# --- 19. Observation-first decode of the initialize result's agentCapabilities
+# _meta.kiro block: no behavior may branch on it yet, so the accessor is the read
+# door for future capability logic and tests are its only consumers by design.
+method (*Bridge).AgentKiroCapabilities

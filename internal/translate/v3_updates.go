@@ -16,7 +16,6 @@ import (
 
 	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/modeltext"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -457,11 +456,11 @@ func readConfigCatalog(opts []configOption) configCatalog {
 	var cat configCatalog
 	for i := range opts {
 		opt := &opts[i]
-		switch {
-		case opt.ID == vibekit.ConfigOptionModel || opt.Category == vibekit.ConfigOptionModel:
+		switch opt.ID {
+		case vibekit.ConfigOptionModel:
 			_ = json.Unmarshal(opt.CurrentValue, &cat.currentModel) // string; ignore non-string
 			cat.models = flattenModelChoices(opt.Options)
-		case opt.ID == vibekit.ConfigOptionEffort:
+		case vibekit.ConfigOptionEffort:
 			cat.sawEffort = true
 			_ = json.Unmarshal(opt.CurrentValue, &cat.currentEffort) // string; ignore non-string
 			cat.efforts = flattenEffortChoices(opt.Options)
@@ -474,7 +473,7 @@ func readConfigCatalog(opts []configOption) configCatalog {
 // the store persists and broadcasts only on a change, so a repeated frame answers
 // false.
 func (cat *configCatalog) applyTo(c *vibekit.Chat) bool {
-	changed := false
+	changed := vibekit.ApplyServedModels(c, cat.models)
 	if cat.currentModel != "" && c.Model != cat.currentModel {
 		c.Model = cat.currentModel
 		changed = true
@@ -525,8 +524,9 @@ func sameEffortLevels(a, b []vibekit.SessionEffortLevel) bool {
 	return true
 }
 
-// flattenModelChoices converts select choices, flat or grouped, into the domain
-// model catalog, dropping the entries modeltext.Hidden names.
+// flattenModelChoices converts select choices, flat or grouped, into the UNFILTERED
+// domain model catalog: it feeds the entitlement set, so dropping an end-of-life
+// entry here would refuse a model the account can still run.
 func flattenModelChoices(choices []configChoice) []vibekit.SessionModel {
 	var out []vibekit.SessionModel
 	for i := range choices {
@@ -535,7 +535,7 @@ func flattenModelChoices(choices []configChoice) []vibekit.SessionModel {
 			out = append(out, flattenModelChoices(c.Options)...)
 			continue
 		}
-		if c.Value == "" || modeltext.Hidden(c.Description) {
+		if c.Value == "" {
 			continue
 		}
 		effort := choiceEffort(c.Meta)

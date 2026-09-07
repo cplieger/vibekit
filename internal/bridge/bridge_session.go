@@ -9,7 +9,6 @@ import (
 
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/kascap"
-	"github.com/cplieger/vibekit/internal/modeltext"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -376,23 +375,17 @@ func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 				"current_model", b.modelID)
 			return
 		}
-		mdls := make([]vibekit.SessionModel, 0, len(opt.Options))
-		served := make([]string, 0, len(opt.Options))
+		catalog := make([]vibekit.SessionModel, 0, len(opt.Options))
 		for _, c := range opt.Options {
 			if c.Value == "" {
 				continue
 			}
-			served = append(served, c.Value)
-			if modeltext.Hidden(c.Description) {
-				continue
-			}
-			mdls = append(mdls, vibekit.SessionModel{
+			catalog = append(catalog, vibekit.SessionModel{
 				ID: c.Value, Name: c.Name, Description: c.Description,
 				RateMultiplier: c.Meta.Kiro.RateMultiplier,
 			})
 		}
-		b.models.Store(&mdls)
-		b.servedModels.Store(&served)
+		b.catalog.Store(&catalog)
 		return
 	}
 }

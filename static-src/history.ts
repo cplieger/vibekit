@@ -43,6 +43,7 @@ import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
 import type { ResumableSession, SessionListResponse, WorkflowRun } from "./types.js";
+import { classifyRunStatus, type ClassifiedRunStatus } from "./run-status.js";
 
 /** A chat row and a run row share the list, so they share a shape. */
 interface HistoryRow {
@@ -177,7 +178,7 @@ const END_REASON_TEXT: Readonly<Record<string, string>> = {
  *  so one vocabulary decides both the sentence and the verdict: an unknown value
  *  degrades to the status word rather than repainting a completed run as aborted
  *  with nothing on the row to explain why. */
-function runVerdict(status: string, endReason = ""): RunVerdict | null {
+function runVerdict(status: ClassifiedRunStatus | undefined, endReason = ""): RunVerdict | null {
   if (END_REASON_TEXT[endReason] !== undefined) {
     return "aborted";
   }
@@ -186,7 +187,13 @@ function runVerdict(status: string, endReason = ""): RunVerdict | null {
     case "failed":
     case "aborted":
       return status;
-    default:
+    case "cancelled":
+      // A user stop reads as the stop a bound produces; `RunVerdict` carries one.
+      return "aborted";
+    case undefined:
+    case "running":
+    case "paused":
+    case "unknown":
       return null;
   }
 }
@@ -281,7 +288,7 @@ function toRows(sessions: ResumableSession[], runs: WorkflowRun[]): HistoryRow[]
       // hide the app's own action from the only reader who can see it.
       detail: END_REASON_TEXT[endReason] ?? "",
       status: r.status ?? "",
-      outcome: runVerdict(r.status ?? "", endReason),
+      outcome: runVerdict(classifyRunStatus(r.status), endReason),
       facts: runFacts(r),
       run: r,
     });

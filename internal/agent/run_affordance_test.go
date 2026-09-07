@@ -26,7 +26,7 @@ func TestAffordance_VerbsByStatus(t *testing.T) {
 		want   []string
 	}{
 		{"running", []string{verbPause, verbCancel}},
-		{runStatusPaused, []string{verbResume, verbCancel}},
+		{string(vibekit.RunStatusPaused), []string{verbResume, verbCancel}},
 		{"completed", []string{}},
 		{"failed", []string{verbRetry}},
 		{"aborted", []string{verbRetry}},
@@ -79,7 +79,7 @@ func TestAffordance_HostedOnlyVerbsAreWithheldWithAReason(t *testing.T) {
 		verb   string
 	}{
 		{"running", verbPause},
-		{runStatusPaused, verbResume},
+		{string(vibekit.RunStatusPaused), verbResume},
 	} {
 		t.Run(tc.status+"/"+tc.verb, func(t *testing.T) {
 			got := affordanceOf(runFacts{status: tc.status})
@@ -176,7 +176,7 @@ func TestAffordance_EveryOfferedVerbHasARoute(t *testing.T) {
 			}
 			// A verb whose absence the table can EXPLAIN must have its route consult
 			// it, or the sentence contradicts what the server accepts.
-			if !v.gated && refusableVerb(verb) {
+			if len(v.from) == 0 && refusableVerb(verb) {
 				t.Errorf("run verb %q can be refused by the table but its route does not consult "+
 					"it, so the sentence would contradict what the server accepts", verb)
 			}

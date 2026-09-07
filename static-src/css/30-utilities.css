@@ -121,8 +121,10 @@
    `.diff-line`, `.diff-text`, `.diff-add`, `.diff-del`, `.diff-hunk`,
    `.diff-mini` and `.diff-gutter` — a renderer that no longer exists. The live
    one is `diff-pane.ts`, whose classes are `.diff-pane*`, `.diff-col*`,
-   `.diff-row*`, `.diff-hunk-toolbar`, `.diff-hunk-btn`, `.diff-none` and
-   `.diff-more`, styled in 60-mcp.css and 20-editor.css.
+   `.diff-row*`, `.diff-none` and `.diff-more`, styled in 60-mcp.css and
+   20-editor.css. There is no `.diff-hunk*` class in either half now: the pane's
+   per-hunk toolbar was deleted in 2026-09 (vibekit-ui.md "Diff viewer and
+   conflict resolution"), so a `diff-hunk` hit anywhere is dead.
 
    Seven of the eight had no emitter at all. `.diff-gutter` did, and 60-mcp.css
    redeclares it later in the MANIFEST — but the stale copy was NOT inert, it was
@@ -132,7 +134,7 @@
    digits and 44.1px at five, and nothing clips. So deleting dead CSS fixed every
    diff of a file over 999 lines.
 
-   The near-miss worth recording: a `\b<name>\b` search calls all eight LIVE,
+   The near-miss worth recording: a `\b<name>\b` search calls a dead class LIVE,
    because `-` is a non-word character, so `\bdiff-add\b` matches inside
-   `diff-add-count` and `\bdiff-hunk\b` inside `.diff-hunk-btn`. A class token
-   ends where the next character is neither `-` nor a word character. */
+   `diff-add-count` (tool-card.ts's stats row, still live). A class token ends
+   where the next character is neither `-` nor a word character. */

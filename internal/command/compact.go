@@ -46,8 +46,14 @@ func CmdCompact(ctx context.Context, bridges BridgeAccess, cmd *vibekit.ClientCo
 		return nil, StatusError(http.StatusConflict, errCompactRefused)
 	}
 
-	// No event broadcast here: the session wire's own summarization frames
-	// are what the translate layer turns into the boundary and watermark.
-	slog.Info("chat compacted", "chat", cmd.ChatID)
+	// Reports ACCEPTANCE, never compaction: `{success: true}` covers five
+	// outcomes and nothing on the wire separates them, three of which compacted
+	// nothing. The transcript boundary rides the wire's own summarization frame,
+	// which this verb can withhold on a committed compaction — so its absence is
+	// not an error and must not be synthesized from `success`. The narrow
+	// `BridgeAccess` parameter is what enforces that: no store, no broadcaster,
+	// so none of it is expressible here. Keep it narrow. Outcomes and the two
+	// withholding paths: `vibekit-acp.md` "Upstream 2.21.1".
+	slog.Info("compact accepted", "chat", cmd.ChatID)
 	return responseWith(nil), nil
 }

@@ -18,7 +18,6 @@ import (
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/ignore"
-	"github.com/cplieger/vibekit/internal/kiroauth"
 	"github.com/cplieger/vibekit/internal/kirosession"
 	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/schedule"
@@ -132,11 +131,13 @@ type Runtime struct {
 	chatStore chatRecords
 	// catalog is the workspace's ONE mode + model vocabulary, served once rather
 	// than stamped onto every chat record and header. See Catalog.
-	catalog            *Catalog
-	mcpConfig          mcpNameSets
-	mcpRegistry        *mcpRegistry
-	shellMgr           *ShellManager
-	kiroToken          *kiroauth.CLISource
+	catalog     *Catalog
+	mcpConfig   mcpNameSets
+	mcpRegistry *mcpRegistry
+	shellMgr    *ShellManager
+	// authReadiness carries the command layer's own account of a failed sign-in,
+	// which is what readiness reports now the relay owns token vending.
+	authReadiness      *command.AuthReadiness
 	chatHandlers       map[string]chatHandler
 	sessUpdateHandlers map[vibekit.ACPUpdateKind]sessionUpdateHandler
 	noopMethods        map[string]struct{}
@@ -160,9 +161,6 @@ type Runtime struct {
 	lines      *buffer.LineTracker
 	agentTerms *agentTerminals
 	hookStatus *hookStatusCache
-	// authLatch remembers the last outcome of vending a KAS access token, so
-	// readiness can report a dead sign-in without asking kiro-cli.
-	authLatch *authTokenLatch
 
 	// secrets holds the credential blobs KAS asks vibekit to persist on its behalf
 	// (bridge_v3_secret.go). ONE store for every bridge, because KAS's key
@@ -239,13 +237,10 @@ func WithMCPConfig(c mcpNameSets) Option {
 	return func(h *Runtime) { h.mcpConfig = c }
 }
 
-// WithKiroCLIPath wires the v3 auth-callback token source over the active
-// kiro-cli binary. resolve is the install manager's path resolver ("" while
-// nothing is installed), so a version switch reaches the next callback; env is
-// its PATH overlay, required because kiro-cli resolves its kiro-cli-chat sidecar
-// by bare name. Unset → the auth callback answers with an RPC error.
-func WithKiroCLIPath(resolve func() string, env func() []string) Option {
-	return func(h *Runtime) { h.kiroToken = kiroauth.NewCLISource(resolve, env) }
+// WithAuthReadiness wires command-layer authentication outcomes to readiness.
+// Unset → readiness reports nothing about sign-in.
+func WithAuthReadiness(readiness *command.AuthReadiness) Option {
+	return func(h *Runtime) { h.authReadiness = readiness }
 }
 
 // WithSessionReaper wires the KAS session reaper and the referenced-session
@@ -270,8 +265,9 @@ func WithSessionSweepGate(gate <-chan struct{}) Option {
 	return func(h *Runtime) { h.sweepGate = gate }
 }
 
-// New constructs a Runtime. Bridges spawn with a fixed kiro-cli acp arg set;
-// tool-call authorization is kiro-cli's native Cedar policy, not CLI trust flags.
+// New constructs a Runtime. Bridges spawn with a fixed kiro-cli acp arg set and
+// let the relay own authentication; tool-call authorization is Cedar's, not a CLI
+// trust flag.
 //
 // ctx is the runtime's LIFETIME and is REQUIRED: there is deliberately no nil
 // check and no WithLifetime option — a nil ctx panics in context.WithCancel below,
@@ -327,7 +323,6 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		chatStore:    chatStore,
 		catalog:      &Catalog{},
 		hookStatus:   newHookStatusCache(kiroSettingsPath()),
-		authLatch:    &authTokenLatch{},
 		chatHandlers: make(map[string]chatHandler),
 		noopMethods:  make(map[string]struct{}),
 	}
@@ -347,7 +342,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	// (coord, and the ignore matcher installed below) do not exist yet at that point.
 	h.inbound = &inbound{
 		lifetime: lc, coord: h.coord, chats: chatStore,
-		bus: sseP, kiroToken: h.kiroToken, authLatch: h.authLatch,
+		bus: sseP,
 	}
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
@@ -429,6 +424,19 @@ func (rt *Runtime) SetMCPOnChange(fn func()) { rt.mcpRegistry.SetOnChange(fn) }
 // would be captured by newBridgeCoordinator before the composition root sets it,
 // and a nil captured at construction is permanent.
 func (rt *Runtime) SetPreBridgeSpawn(fn func(context.Context)) { rt.coord.preBridgeSpawn = fn }
+
+// SetIdentityCheck wires the auth registrar's TTL-gated probe onto every chat
+// bridge open. It must be called before the server starts serving commands.
+func (rt *Runtime) SetIdentityCheck(check func(context.Context)) {
+	if check == nil {
+		panic("agent: identity check is nil")
+	}
+	rt.coord.ensureIdentity = check
+}
+
+// RetireBridges applies an observed identity change to chat and utility
+// sessions without interrupting workflow runs.
+func (rt *Runtime) RetireBridges(reason string) { rt.coord.RetireBridges(reason) }
 
 // RegisterRoutes wires /api/events (SSE), /api/command (POST), and
 // /api/shell/ws (WebSocket PTY).
@@ -543,15 +551,6 @@ func awaitBounded(ctx context.Context, what string, wait func()) error {
 const bridgeIdleTimeout = 30 * time.Minute
 
 // --- Broadcast ---
-
-// AuthTokenUnavailable reports the last SSO token failure, for the readiness
-// endpoint.
-func (rt *Runtime) AuthTokenUnavailable() bool {
-	if rt.inbound == nil {
-		return false
-	}
-	return rt.inbound.AuthTokenUnavailable()
-}
 
 // Broadcast sends a ServerEvent to every connected SSE client.
 //

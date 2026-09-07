@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -11,11 +12,59 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// WHICH statuses a verb is legal from is pinned by run_affordance_test.go, over the one
-// table run_affordance.go holds. Cancel's unrestricted status is the asymmetry worth
-// pinning here instead, because it doubles as the tab-close gesture: TestRunVerbsAreWired
-// below asserts it is never gated, so closing a tab whose run just finished cannot become
-// an error toast.
+// runStatuses reads the run-status vocabulary off the fixture internal/vibekit and
+// internal/kascap already share, so a case is total over it rather than over a copy.
+func runStatuses(t *testing.T) []vibekit.RunStatus {
+	t.Helper()
+	raw, err := os.ReadFile("../vibekit/testdata/run_statuses.json")
+	if err != nil {
+		t.Fatalf("read run-status contract: %v", err)
+	}
+	var contract struct {
+		Runs []struct {
+			Status vibekit.RunStatus `json:"status"`
+		} `json:"runs"`
+	}
+	if err := json.Unmarshal(raw, &contract); err != nil {
+		t.Fatalf("decode run-status contract: %v", err)
+	}
+	out := make([]vibekit.RunStatus, 0, len(contract.Runs))
+	for _, row := range contract.Runs {
+		out = append(out, row.Status)
+	}
+	return out
+}
+
+// TestRunVerbGates pins which statuses each verb's `from` list admits. Why each row
+// is what it is lives on run_affordance.go's own table; what is worth pinning HERE is
+// cancel's unrestricted status, because it doubles as the tab-close gesture and must
+// never be the verb that fails.
+func TestRunVerbGates(t *testing.T) {
+	all := runStatuses(t)
+
+	cases := map[string]struct {
+		verb  runVerb
+		legal []vibekit.RunStatus
+	}{
+		"pause is live-only":     {runVerbPause, []vibekit.RunStatus{vibekit.RunStatusRunning}},
+		"resume is paused-only":  {runVerbResume, []vibekit.RunStatus{vibekit.RunStatusPaused}},
+		"cancel is unrestricted": {runVerbCancel, all},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			for _, status := range all {
+				want := slices.Contains(tc.legal, status)
+				// An empty `from` means unrestricted, which the handler treats as
+				// "skip the pre-check entirely".
+				got := len(tc.verb.from) == 0 || slices.Contains(tc.verb.from, status)
+				if got != want {
+					t.Errorf("%s from %q: got legal=%v, want %v", tc.verb.name, status, got, want)
+				}
+			}
+		})
+	}
+}
 
 // TestRunVerbsAreWired guards the halves that can silently drift apart: a verb with no
 // issuer would 200 without doing anything, a verb with no name would log and error as the
@@ -32,7 +81,7 @@ func TestRunVerbsAreWired(t *testing.T) {
 	// Cancel is the tab-close gesture and must never be the verb that fails (KAS is
 	// idempotent on a terminal run); delete is the only way a row leaves History.
 	for _, verb := range []runVerb{runVerbCancel, runVerbDelete} {
-		if verb.gated {
+		if len(verb.from) != 0 {
 			t.Errorf("run verb %q is gated; it must reach a run from any status", verb.name)
 		}
 	}
@@ -211,7 +260,7 @@ func inspectDriftedDetail(t *testing.T, workflowID, reason string) json.RawMessa
 	raw, err := json.Marshal(map[string]any{
 		"workflowId": workflowID,
 		"state": map[string]any{
-			"status":      runStatusPaused,
+			"status":      vibekit.RunStatusPaused,
 			"pauseReason": reason,
 			"pauseDetail": "transient-error",
 		},

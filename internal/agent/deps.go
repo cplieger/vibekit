@@ -141,11 +141,11 @@ type acpSessionFacts interface {
 	SessionTitle() string
 	// Modes returns the session modes the agent supports; empty if it has none.
 	Modes() []vibekit.SessionMode
+	// Catalog returns every advertised model, UNFILTERED — the entitlement input
+	// ApplyServedModels reads, where Models' display filter would refuse a live model.
+	Catalog() []vibekit.SessionModel
 	// Models returns the swappable models, deprecated/internal entries filtered.
 	Models() []vibekit.SessionModel
-	// ServedModels returns every advertised model id, UNFILTERED — the
-	// entitlement input, where Models' display filter would refuse a live model.
-	ServedModels() []string
 }
 
 // utilityBridge is the long-lived utility session's ACP surface. It never

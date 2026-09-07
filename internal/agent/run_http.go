@@ -13,6 +13,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
@@ -351,8 +352,8 @@ type runVerb struct {
 	issue func(*Runs, context.Context, string) error
 	// method is EXPLICIT on every verb, or the one DELETE would be the only stated method.
 	method string
-	// gated asks the affordance before issuing. False means unrestricted.
-	gated bool
+	// from lists the statuses the verb is legal from. Empty means unrestricted.
+	from []vibekit.RunStatus
 }
 
 var (
@@ -367,13 +368,13 @@ var (
 		name:   verbPause,
 		issue:  (*Runs).Pause,
 		method: http.MethodPost,
-		gated:  true,
+		from:   []vibekit.RunStatus{vibekit.RunStatusRunning},
 	}
 	runVerbResume = runVerb{
 		name:   verbResume,
 		issue:  (*Runs).Resume,
 		method: http.MethodPost,
-		gated:  true,
+		from:   []vibekit.RunStatus{vibekit.RunStatusPaused},
 	}
 	// Delete is unrestricted like cancel, plus it is the only way a row leaves History.
 	runVerbDelete = runVerb{
@@ -471,8 +472,20 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
-	if verb.gated {
-		if _, ok := rr.permits(w, r, verb.name, id); !ok {
+	if len(verb.from) > 0 {
+		status, err := rr.status(r.Context(), id)
+		if err != nil {
+			slog.Warn("run control: status read failed",
+				"verb", verb.name, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
+			httpreply.InternalError(w, errors.New(verb.name+" failed"))
+			return
+		}
+		if status == "" {
+			httpreply.NotFound(w, "run not found")
+			return
+		}
+		if !slices.Contains(verb.from, vibekit.RunStatus(status)) {
+			httpreply.Conflict(w, verb.name+" is not available for a "+status+" run")
 			return
 		}
 	}

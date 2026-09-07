@@ -20,7 +20,11 @@ export type ReadState = "ready" | "unavailable";
 
 export type Role = "user" | "assistant" | "event";
 
+export type RunNodeStatus = "pending" | "running" | "paused" | "completed" | "failed" | "aborted" | "skipped";
+
 export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "loop_iteration" | "watch_poll" | "paused" | "steps_queued";
+
+export type RunStatus = "running" | "paused" | "completed" | "failed" | "aborted" | "cancelled";
 
 export type RunStepTranscriptState = "ready" | "gone" | "unavailable";
 
@@ -795,6 +799,12 @@ export interface MCPOAuthPayload {
   url: string;
 }
 
+/** MCPToolIdentity names the verified MCP server and tool behind a permission request. */
+export interface MCPToolIdentity {
+  server_name: string;
+  tool_name: string;
+}
+
 /**
  * Message is one entry in a chat transcript. Tool calls are embedded in assistant
  * messages, not standalone; an event message carries an EventKind.
@@ -978,6 +988,7 @@ export interface PR {
 
 /** PermissionNeededPayload is the payload for type="permission_needed". */
 export interface PermissionNeededPayload {
+  mcp_tool?: MCPToolIdentity;
   tool_call_id?: string;
   title?: string;
   /**
@@ -2364,9 +2375,20 @@ export interface WhoamiResponse {
  */
 export interface WorkflowRun {
   workflow_id: string;
+  /**
+ * Name is what to DISPLAY: upstream computes it as `runLabel ?? workflowName`,
+ * so it stops being the recipe the moment anything stamps a label.
+ */
   name: string;
+  /**
+ * WorkflowName is the RECIPE, and the only field a per-recipe decision may
+ * read: an agent launching via `run_workflow` passes a `<recipe>-<topic>`
+ * label and KAS stamps `<workflowName>-<targetId>` on a watch node, so keying
+ * the single-run rule on Name made that guard fail OPEN.
+ */
+  workflow_name?: string;
   /** Status is run-level: paused / completed / failed. */
-  status?: string;
+  status?: RunStatus;
   /**
  * ParentChatID is the vibekit chat that launched the run, resolved through the
  * launching session's chain. Empty for a run with no vibekit parent.

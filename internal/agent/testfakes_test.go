@@ -41,7 +41,7 @@ type fakeBridge struct {
 	// observedEffort is the level the SESSION reported, not the one asked for.
 	observedEffort string
 	currentMode    string
-	servedModels   []string
+	catalog        []vibekit.SessionModel
 	modes          []vibekit.SessionMode
 	models         []vibekit.SessionModel
 	sessionTitle   string
@@ -362,18 +362,19 @@ func (b *fakeBridge) Modes() []vibekit.SessionMode {
 	return b.modes
 }
 
+func (b *fakeBridge) Catalog() []vibekit.SessionModel {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.catalog != nil {
+		return b.catalog
+	}
+	return b.models
+}
+
 func (b *fakeBridge) Models() []vibekit.SessionModel {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.models
-}
-
-// ServedModels is nil by default, which reads as "entitlement unknowable" and is
-// allowed, so a test that does not care about entitlement is unaffected.
-func (b *fakeBridge) ServedModels() []string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.servedModels
 }
 
 func (b *fakeBridge) SetModel(_ context.Context, modelID string) error {

@@ -123,6 +123,9 @@ vi.mock("./run-store.js", () => ({
   // EXIST, because a browser-mode mock is linked as real ESM: a name any module in
   // the graph reaches must be on the factory or collection fails outright.
   isNeedInputPark: vi.fn(() => false),
+  // The pause-detail phrase, imported by the same two consumers — here for the
+  // ESM-linking reason above, not because this suite paints a pause.
+  pauseDetailPhrase: vi.fn(() => undefined),
 }));
 
 vi.mock("./run-dots.js", () => ({ refreshRunDots: vi.fn(), trackRun: vi.fn() }));

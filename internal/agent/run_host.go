@@ -530,7 +530,7 @@ func (rs *Runs) stepStatusAddress(ctx context.Context, workflowID, nodeID string
 	if target == nil {
 		slog.Info("a run holds no running or paused step, so nothing was marked",
 			"workflow_id", workflowID, "node_id", scrubLog(nodeID),
-			"status", scrubLog(res.State.Status))
+			"status", scrubLog(string(res.State.Status)))
 		return errStepStatusMistargeted
 	}
 	if target.NodeID != nodeID {
@@ -566,10 +566,10 @@ func stepTargets(n *askNode) (running, paused *askNode) {
 		return nil, nil
 	}
 	if n.Type == stepNodeType {
-		if n.Status == runStatusRunning {
+		if n.Status == vibekit.RunNodeStatusRunning {
 			return n, nil
 		}
-		if n.Status == runStatusPaused {
+		if n.Status == vibekit.RunNodeStatusPaused {
 			paused = n
 		}
 	}
@@ -722,12 +722,12 @@ func (rs *Runs) answerAddress(
 			"asked_node_id", scrubLog(a.payload.NodeID), "parked_node_id", scrubLog(parked.NodeID))
 		return "", answerMoot
 	}
-	if terminalRunStatus(res.State.Status) {
+	if res.State.Status.Terminal() {
 		return "", answerMoot
 	}
 	slog.Info("a run is not parked on any step right now, so its answer was held back "+
 		"rather than discarded", "workflow_id", workflowID,
-		"asked_node_id", scrubLog(a.payload.NodeID), "status", scrubLog(res.State.Status))
+		"asked_node_id", scrubLog(a.payload.NodeID), "status", scrubLog(string(res.State.Status)))
 	return "", answerBusy
 }
 
@@ -744,7 +744,7 @@ func askedStep(n *askNode, nodeID string) *askNode {
 		return nil
 	}
 	if len(n.Children) == 0 {
-		if n.Status == runStatusPaused && (nodeID == "" || n.NodeID == nodeID) {
+		if n.Status == vibekit.RunNodeStatusPaused && (nodeID == "" || n.NodeID == nodeID) {
 			return n
 		}
 		return nil
@@ -978,7 +978,7 @@ func (rs *Runs) closeKeptCarrier(
 	if !ok || res.WorkflowID != workflowID {
 		return carrierSpared
 	}
-	if !terminalRunStatus(res.State.Status) && res.State.Status != runStatusPaused {
+	if !res.State.Status.Terminal() && res.State.Status != vibekit.RunStatusPaused {
 		return carrierSpared
 	}
 	slog.Info("closing a run carrier kept for a verb KAS never took",
@@ -1172,12 +1172,12 @@ func (rt *Runtime) dispatchRequest(ctx context.Context, chatID vibekit.ChatID, m
 // span's end is a signal it can wait on. That and the identity re-check: same doc.
 func (rt *Runtime) closeStoppedBridge(chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var p struct {
-		Status string `json:"status"`
+		Status vibekit.RunStatus `json:"status"`
 	}
 	if json.Unmarshal(msg.Params, &p) != nil {
 		return
 	}
-	if !terminalRunStatus(p.Status) && p.Status != runStatusPaused {
+	if !p.Status.Terminal() && p.Status != vibekit.RunStatusPaused {
 		return
 	}
 	sb := rt.bridge.mgr.get(chatID)
@@ -1191,16 +1191,6 @@ func (rt *Runtime) closeStoppedBridge(chatID vibekit.ChatID, msg *vibekit.RPCRes
 		}
 		go rt.coord.CloseBridge(chatID)
 	})
-}
-
-// terminalRunStatus mirrors KAS's isTerminalWorkflowStatus: paused is the one
-// non-terminal run_complete status (an onMaxIterations policy stop).
-//
-// `cancelled` is KEPT even though it is not in KAS's own status enum — it is
-// reachable, and one value too WIDE is the safe direction here. Bundle evidence and
-// the cost either way: vibekit-acp.md.
-func terminalRunStatus(s string) bool {
-	return s == "completed" || s == "failed" || s == "aborted" || s == "cancelled"
 }
 
 // recipeBySource resolves a launch source against the CURRENT recipe list.
@@ -1232,8 +1222,17 @@ func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
 		// Run ⇄ Cancel row cannot represent.
 		return fmt.Errorf("run list unavailable: %w", err)
 	}
+	status := make(map[string]vibekit.RunStatus, len(runs))
 	for i := range runs {
-		if runs[i].Name != name || terminalRunStatus(runs[i].Status) {
+		status[runs[i].WorkflowID] = runs[i].Status
+	}
+	rs.reconcileLeasePresence(ctx, status, time.Now(), false)
+
+	for i := range runs {
+		// WorkflowName is the RECIPE; Name is the display name and carries a
+		// label once anything stamps one, which made this guard fail OPEN —
+		// a labelled run stopped blocking its own recipe's next slot.
+		if runs[i].WorkflowName != name || !runs[i].Status.Active() {
 			continue
 		}
 		if rs.clearBlockingOrphan(ctx, runs[i].WorkflowID, runs[i].Status) {
@@ -1404,7 +1403,7 @@ func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID vibekit.ChatID
 	}
 	for i := range runs {
 		r := &runs[i]
-		if r.Status != runStatusPaused || !chain[r.ParentSessionID] {
+		if vibekit.RunStatus(r.Status) != vibekit.RunStatusPaused || !chain[r.ParentSessionID] {
 			continue
 		}
 		rs.resumeIfInterrupted(ctx, chatID, r.WorkflowID)
@@ -1654,7 +1653,7 @@ func (rs *Runs) CancelForSessions(ctx context.Context, chatID vibekit.ChatID, se
 	}
 	for i := range runs {
 		r := &runs[i]
-		if terminalRunStatus(r.Status) || !chain[r.ParentSessionID] {
+		if vibekit.RunStatus(r.Status).Terminal() || !chain[r.ParentSessionID] {
 			continue
 		}
 		carrier := rs.runOwnBridge(r.WorkflowID)

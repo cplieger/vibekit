@@ -14,6 +14,7 @@ import {
   RAW_URL,
   STRONG_AST,
   STRONG_UND,
+  TITLE,
   UNCLOSED,
 } from "./smd-parser-types.js";
 
@@ -156,6 +157,28 @@ function hrefs(t: Trace): string[] {
   return t.attrs.filter((a) => a.attr === HREF).map((a) => a.value);
 }
 
+describe("handleLinkOrImage destination grammar", () => {
+  it("keeps a raw space in a query in the href", () => {
+    expect(hrefs(trace("[label](https://x/?a=b c=d)"))).toEqual(["https://x/?a=b c=d"]);
+  });
+
+  it("unwraps an angle-bracketed destination", () => {
+    expect(hrefs(trace("[a](<https://x/a b>)"))).toEqual(["https://x/a b"]);
+  });
+
+  it("splits a quoted title off the destination", () => {
+    const t = trace('[a](https://x "t")');
+    expect(hrefs(t)).toEqual(["https://x"]);
+    expect(t.attrs.filter((a) => a.attr === TITLE).map((a) => a.value)).toEqual(["t"]);
+  });
+
+  it("keeps balanced parentheses in the destination", () => {
+    const t = trace("[a](https://en.wikipedia.org/wiki/X_(y))");
+    expect(hrefs(t)).toEqual(["https://en.wikipedia.org/wiki/X_(y)"]);
+    expect(t.texts.join("")).toBe("a");
+  });
+});
+
 describe("handleRawURL trailing boundary", () => {
   // A URL abutting the opening `**` never becomes a raw URL at all: the `h` is
   // consumed by handleCommon's emphasis arm, which opens STRONG_AST and leaves
@@ -201,8 +224,9 @@ describe("handleRawURL trailing boundary", () => {
   it("is chunk-size invariant", () => {
     fc.assert(
       fc.property(fc.integer({ min: 1, max: 8 }), (chunkLen) => {
-        const input = "a **see https://example.com**, b https://example.com。 c";
-        expect(hrefs(trace(input, chunkLen))).toEqual(hrefs(trace(input)));
+        const input =
+          'a [angle](<https://x/a b>) [title](https://x "t") [paren](https://x/a_(b)) **see https://example.com**, c https://example.com。続き';
+        expect(trace(input, chunkLen).attrs).toEqual(trace(input).attrs);
         expect(trace(input, chunkLen).texts.join("")).toBe(trace(input).texts.join(""));
       }),
       { numRuns: 8 },

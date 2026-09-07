@@ -34,9 +34,9 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 		return
 	}
 	// Internal engine bookkeeping never reaches the transcript. Dropped before
-	// TurnFoldTarget, which would open a wire turn and split the user's own.
+	// TurnFoldTarget, which would open a wire turn and split the user's own — the
+	// cloud-config fetch runs during session creation, before the prompt's turn.
 	if isInternalTool(tc.Meta.Kiro.ToolID) {
-		t.suppressed.add(tc.ToolCallID)
 		return
 	}
 	buf := t.buffers.TurnFoldTarget(ctx, chatID, foldSource(attr.Step))
@@ -101,13 +101,15 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 	if json.Unmarshal(raw, &tu) != nil {
 		return
 	}
-	// Dropped BEFORE TurnFoldTarget, which would otherwise open a wire turn for a
-	// frame nothing renders.
-	if t.suppressed.take(tu.ToolCallID) {
+	content := t.parseToolUpdateContent(tu.ToolCallID, tu.Content)
+	// An update never OPENS a turn: the create it updates is what opens one, so a
+	// frame arriving with no open turn is an orphan, and folding it would materialize
+	// a headless turn card. It is also what drops a suppressed internal tool's
+	// completion, whose create was never buffered, with no set to remember it by.
+	buf, ok := t.buffers.OpenTurnBuffer(chatID)
+	if !ok {
 		return
 	}
-	content := t.parseToolUpdateContent(tu.ToolCallID, tu.Content)
-	buf := t.buffers.TurnFoldTarget(ctx, chatID, foldSource(attr.Step))
 	// Folded on a COPY and written back: the fold reaches the terminal registry, the
 	// line tracker and the event bus, none of which may run under the buffer's mutex.
 	tc, idx, ok := buf.ToolCall(tu.ToolCallID)

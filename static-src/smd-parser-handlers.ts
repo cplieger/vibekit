@@ -1067,7 +1067,13 @@ function scan_destination(run: string): Destination {
       url += run.charAt(i);
     }
     if (i === run.length) {
-      return whole;
+      // No `>` yet, so this `)` is INSIDE the brackets and does not close the link
+      // — the angle form's twin of the bare branch's `depth > 0`. Reported as
+      // `open` rather than keeping the run, or `[a](<javascript:alert(1)>)` closes
+      // at the inner `)` and the mis-split `<javascript:alert(1` becomes the href
+      // instead of reaching the scheme gate. An unterminated run is unwrapped as
+      // literal text at block close, which is what the reference renders.
+      return { url: run, title: null, open: true };
     }
     i += 1;
   } else {

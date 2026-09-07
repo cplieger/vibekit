@@ -331,6 +331,8 @@ type ACPPermissionKiroBlock struct {
 	// Consent is 2.19.1's persistability verdict. Absent for every 2.19.0 and
 	// earlier frame, and absent on 2.19.1 whenever a rule WOULD match.
 	Consent ACPConsentMeta `json:"consent"`
+	// MCPTool carries the identity KAS verified for an MCP-backed tool.
+	MCPTool ACPMCPToolWire `json:"mcpTool"`
 	// Type marks a TURN APPROVAL ("turn_approval"). A turn approval is not a
 	// separate method — KAS raises it as an ordinary
 	// session/request_permission and puts the file list beside this — so this
@@ -341,6 +343,14 @@ type ACPPermissionKiroBlock struct {
 	// the action id arrives as `toolCallId`; both are renamed on the way out
 	// (see vibekit.ApprovalFile).
 	Files []ACPApprovalFile `json:"files"`
+}
+
+// ACPMCPToolWire is the verified MCP identity attached to a permission request.
+type ACPMCPToolWire struct {
+	Identity struct {
+		ServerName string `json:"serverName"`
+		ToolName   string `json:"toolName"`
+	} `json:"identity"`
 }
 
 // ACPApprovalFile is one entry of a turn approval's `files` array.

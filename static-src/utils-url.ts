@@ -4,25 +4,22 @@
 
 import { isViewableImage } from "./file-extensions.js";
 
-/** URL safety predicate: blocks javascript:, vbscript:, data:, file: schemes.
+/** URL safety predicate for a rendered href/src: http, https and mailto are the
+ *  only allowed absolute schemes, and a scheme-less value stays allowed because
+ *  the browser resolves it against the document's own HTTP(S) location.
  *
  *  Strips every C0 control, then trims — at least what the WHATWG URL parser
- *  strips before it reads a scheme (every LEADING C0 control or space, and every
- *  tab and newline anywhere). Normalize less and `\x01javascript:` reaches the
- *  browser as a live scheme. The control pass runs BEFORE the trim, or a control
- *  between two spaces survives both. */
+ *  strips before it reads a scheme. Normalize less and `\x01javascript:` reaches
+ *  the browser as a live scheme; run the trim first and a control between two
+ *  spaces survives both passes. */
 export function isSafeUrl(url: string): boolean {
-  const lower = url
+  const cleaned = url
     // eslint-disable-next-line no-control-regex
     .replace(/[\x00-\x1f]/g, "")
     .trim()
     .toLowerCase();
-  return !(
-    lower.startsWith("javascript:") ||
-    lower.startsWith("vbscript:") ||
-    lower.startsWith("data:") ||
-    lower.startsWith("file:")
-  );
+  const scheme = /^[a-z][a-z0-9+.-]*:/.exec(cleaned)?.[0];
+  return scheme === undefined || scheme === "http:" || scheme === "https:" || scheme === "mailto:";
 }
 
 /** The route that serves a workspace file's BYTES.

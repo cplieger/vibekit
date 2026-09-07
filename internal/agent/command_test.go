@@ -206,7 +206,10 @@ func TestPermission_ForwardsToBridge(t *testing.T) {
 	// The request has to BE pending: the handler claims it before answering, so
 	// a tracked entry is what makes the answer legal.
 	h.bus.pendingPerms.Add(42, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
-		vibekit.PermissionNeededPayload{RequestID: 42}))
+		vibekit.PermissionNeededPayload{
+			RequestID: 42,
+			Options:   []vibekit.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
+		}))
 	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "permission_response", ChatID: "c1",
 		Payload: json.RawMessage(`{"request_id":42,"option_id":"allow"}`),
@@ -227,7 +230,10 @@ func TestPermission_SecondAnswerIs409(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.bus.pendingPerms.Add(42, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
-		vibekit.PermissionNeededPayload{RequestID: 42}))
+		vibekit.PermissionNeededPayload{
+			RequestID: 42,
+			Options:   []vibekit.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
+		}))
 
 	answer := func(reqID string) int {
 		return postCmd(t, h, vibekit.ClientCommand{
@@ -719,7 +725,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 				tc.setupFile(h.lifecycle.workDir)
 			}
 
-			got := command.BuildPromptBlocks(t.Context(), tc.text, tc.attachments, h.lifecycle.resolveInsideWorkDir)
+			got := command.BuildPromptBlocks(t.Context(), tc.text, tc.attachments, 0, h.lifecycle.resolveInsideWorkDir)
 			if len(got) != tc.wantLen {
 				t.Fatalf("blocks = %d, want %d", len(got), tc.wantLen)
 			}
@@ -815,4 +821,32 @@ func BenchmarkHandleCommand(b *testing.B) {
 			h.handleCommand(rec, req)
 		}
 	})
+}
+
+func TestPermission_RejectsOptionNotOfferedByRequest(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		t.Fatal(err)
+	}
+	h.bus.pendingPerms.Add(42, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
+		vibekit.PermissionNeededPayload{
+			RequestID: 42,
+			Options:   []vibekit.PermissionOption{{OptionID: "allow-once", Name: "Allow", Kind: "allow_once"}},
+		}))
+
+	rec := postCmd(t, h, vibekit.ClientCommand{
+		Type: "permission_response", ChatID: "c1",
+		Payload: json.RawMessage(`{"request_id":42,"option_id":"allow-always"}`),
+	})
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("off-list permission response code = %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "option_not_offered") {
+		t.Errorf("off-list permission response body = %q, want a nonsensitive option_not_offered error", rec.Body.String())
+	}
+	if _, ok := h.bus.pendingPerms.TakeIfPresent("c1", 42); !ok {
+		t.Error("off-list permission response consumed the pending request")
+	}
 }

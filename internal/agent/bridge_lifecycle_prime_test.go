@@ -258,3 +258,27 @@ func TestSpawnBridge_ClaimsThePrimeNote(t *testing.T) {
 		t.Errorf("primeFrom = %q, want c-parent", sb.primeFrom)
 	}
 }
+
+func TestPrimeIfNeeded_ForkWithoutSourceHistoryWarns(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(t.Context(), "c-tangent", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "Tangent"
+		return true
+	})
+	sb, err := h.coord.OpenBridge(t.Context(), "c-tangent", "")
+	if err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	sb.primeReason = primeReasonFork
+	sb.primeFrom = "c-parent"
+	logs := captureLogs(t)
+
+	h.coord.PrimeIfNeeded(t.Context(), "c-tangent")
+
+	got := logs.String()
+	for _, want := range []string{"tangent starts without inherited context", `"chat_id":"c-tangent"`, `"history_from":"c-parent"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("fork prime warning = %q, want it to contain %q", got, want)
+		}
+	}
+}

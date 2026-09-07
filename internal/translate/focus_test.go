@@ -253,3 +253,17 @@ func TestHandleSessionInfoUpdate_FocusBroadcastsOnlyWhenItHasSomethingToSay(t *t
 		})
 	}
 }
+
+func TestHandleSessionInfoUpdate_FocusSanitizesTitle(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
+		"title": "\x1b[31mRelease\x1b[0m\ncheck",
+	}), FrameAttribution{})
+
+	c, _ := store.Get(t.Context(), "c1")
+	if c.Name != "Release check" {
+		t.Errorf("chat name = %q, want %q", c.Name, "Release check")
+	}
+}

@@ -8,6 +8,7 @@ package command
 // exactly the half that has to keep working.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -43,7 +44,12 @@ func newForkHost(store ChatStore, bridge Bridge) *primeRecorder {
 
 func forkReq(t *testing.T, newChat, parent vibekit.ChatID, title string) *vibekit.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(vibekit.ForkChatCommand{ParentChatID: parent, Title: title})
+	return forkReqWithOp(t, newChat, parent, title, "")
+}
+
+func forkReqWithOp(t *testing.T, newChat, parent vibekit.ChatID, title, opID string) *vibekit.ClientCommand {
+	t.Helper()
+	payload, err := json.Marshal(vibekit.ForkChatCommand{ParentChatID: parent, Title: title, OpID: opID})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -52,6 +58,19 @@ func forkReq(t *testing.T, newChat, parent vibekit.ChatID, title string) *vibeki
 		ChatID:  newChat,
 		Payload: payload,
 	}
+}
+
+type deletingForkBridge struct {
+	recordingBridge
+	store  ChatStore
+	parent vibekit.ChatID
+}
+
+func (b *deletingForkBridge) Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error) {
+	if err := b.store.Delete(ctx, b.parent); err != nil {
+		return nil, err
+	}
+	return b.recordingBridge.Call(ctx, method, params)
 }
 
 // seedParent writes a parent chat with a transcript, a model, a mode and a live
@@ -268,6 +287,90 @@ func TestCmdForkChat_FallsBackToPrimingOnRefusal(t *testing.T) {
 					c.Model, c.CurrentModeID)
 			}
 		})
+	}
+}
+
+func TestCmdForkChat_RefusesWhenTheParentWasDeletedDuringTheFork(t *testing.T) {
+	cases := map[string]error{
+		"forked session":  nil,
+		"primed fallback": errors.New("bridge closed during fork"),
+	}
+	for name, callErr := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := testsupport.NewInMemoryChatStore()
+			seedParent(t, store, "c-parent")
+			br := &deletingForkBridge{
+				sessionID: "sess_parent",
+				result:    map[string]any{"sessionId": "sess_tangent"},
+				callErr:   callErr,
+				store:     store,
+				parent:    "c-parent",
+			}
+			host := newForkHost(store, br)
+			mem, st, _ := newTabbedMembership(t, store)
+
+			body, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), mem, forkReq(t, "c-tangent", "c-parent", ""))
+
+			if statusOf(err) != http.StatusNotFound {
+				t.Errorf("CmdForkChat status = %d, want 404 (body %v, error %v)", statusOf(err), body, err)
+			}
+			if _, ok := store.Get(t.Context(), "c-tangent"); ok {
+				t.Error("CmdForkChat created a tangent after its parent was deleted")
+			}
+			if got := tabIDsFor(st, "c-tangent"); len(got) != 0 {
+				t.Errorf("CmdForkChat opened tangent tabs %v after its parent was deleted", got)
+			}
+			if len(host.primed) != 0 {
+				t.Errorf("CmdForkChat recorded a prime after refusing the tangent: %v", host.primed)
+			}
+		})
+	}
+}
+
+func TestCmdForkChat_ReplayStillResolvesWithoutTheParent(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedParent(t, store, "c-parent")
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
+	host := newForkHost(store, br)
+	mem, st, _ := newTabbedMembership(t, store)
+	req := forkReqWithOp(t, "", "c-parent", "", "op-replay")
+
+	first, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), mem, req)
+	if err != nil {
+		t.Fatalf("first CmdForkChat = %v, want success", err)
+	}
+	firstReply, ok := first.(map[string]any)
+	if !ok {
+		t.Fatalf("first CmdForkChat body = %T, want map[string]any", first)
+	}
+	firstChat, ok := firstReply["chat"].(vibekit.ChatHeader)
+	if !ok {
+		t.Fatalf("first CmdForkChat chat = %T, want vibekit.ChatHeader", firstReply["chat"])
+	}
+	if err := store.Delete(t.Context(), "c-parent"); err != nil {
+		t.Fatalf("Delete(%q) = %v, want nil", "c-parent", err)
+	}
+
+	body, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), mem, req)
+	if err != nil {
+		t.Fatalf("replayed CmdForkChat = %v, want success", err)
+	}
+	reply, ok := body.(map[string]any)
+	if !ok {
+		t.Fatalf("replayed CmdForkChat body = %T, want map[string]any", body)
+	}
+	gotChat, ok := reply["chat"].(vibekit.ChatHeader)
+	if !ok {
+		t.Fatalf("replayed CmdForkChat chat = %T, want vibekit.ChatHeader", reply["chat"])
+	}
+	if gotChat.ID != firstChat.ID {
+		t.Errorf("replayed CmdForkChat chat = %q, want first chat %q", gotChat.ID, firstChat.ID)
+	}
+	if br.callCount != 1 {
+		t.Errorf("replayed CmdForkChat made %d session/fork calls, want 1 total", br.callCount)
+	}
+	if got := tabIDsFor(st, vibekit.ChatID(firstChat.ID)); len(got) != 1 {
+		t.Errorf("replayed CmdForkChat left tabs %v, want the existing tangent tab", got)
 	}
 }
 

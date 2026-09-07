@@ -21,6 +21,7 @@ import (
 	"github.com/cplieger/vibekit/internal/bridge"
 	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/chat/archive"
+	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/filebrowse"
 	"github.com/cplieger/vibekit/internal/forges"
 	"github.com/cplieger/vibekit/internal/git"
@@ -131,10 +132,11 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// waits on it. Created here because the runtime is built before the server.
 	listenerBound := make(chan struct{})
 	tabStore := openTabStore(cfg.ConfigDir)
+	authReadiness := new(command.AuthReadiness)
 	h := agent.New(appCtx, cfg.WorkDir, bridgeFactory, chatStore,
 		agent.WithConfigDir(cfg.ConfigDir), agent.WithMCPConfig(mcpStore), agent.WithPush(pushSvc),
 		agent.WithACPArgs(cfg.ACPArgs),
-		agent.WithKiroCLIPath(kiro.cliPath, kiro.env),
+		agent.WithAuthReadiness(authReadiness),
 		agent.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs),
 		agent.WithSessionSweepGate(listenerBound),
 		agent.WithSchedules(scheduleStore),
@@ -190,10 +192,16 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	identity := auth.NewIdentity(kiro.cliPath, kiro.env, func() {
+		h.RetireBridges("account identity changed")
+	})
+	h.SetIdentityCheck(identity.EnsureCurrent)
 	authHandler := auth.NewHandler(kiro.cliPath,
 		auth.WithConfig(cfg.AuthConfig),
-		auth.WithTrustedProxies(cfg.TrustedProxies))
-	// Off the boot path: Run primes and refreshes the identity /api/whoami answers from.
+		auth.WithTrustedProxies(cfg.TrustedProxies),
+		auth.WithIdentity(identity))
+	// Off the boot path: Run primes and refreshes the identity /api/whoami answers from,
+	// and every read it makes is what feeds the registrar above.
 	go authHandler.Run(appCtx)
 	forgesHTTP := forges.NewHTTPHandler(forgesManager, h)
 
@@ -261,7 +269,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithKiroCLI(kiro.cliPath, kiro.env),
 		server.WithKiroReady(kiro.ready),
 		server.WithKiroRescan(kiro.rescan),
-		server.WithAuthUnavailable(h.AuthTokenUnavailable),
+		server.WithAuthUnavailable(authReadiness.Unavailable),
 		server.WithConfigDir(cfg.ConfigDir),
 		server.WithTabs(tabStore),
 		server.WithWorkDir(cfg.WorkDir),

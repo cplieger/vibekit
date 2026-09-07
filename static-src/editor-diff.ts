@@ -4,7 +4,6 @@
 
 import { $ } from "./dom.js";
 import { renderDiffPane } from "./diff-pane.js";
-import { getActiveId } from "./store.js";
 import type { FileState } from "./editor-types.js";
 import { getCachedDiff } from "./editor-types.js";
 import { renderEditModeUI, showDiffMode } from "./editor-ui.js";
@@ -28,20 +27,6 @@ export function renderDiffModeUI(state: FileState): void {
     // depth-2 view a chat's changed-file link opens — rendered unhighlighted
     // while the inline peek that sent the reader here was meant to be coloured.
     lang: state.path,
-    onAskAbout: (hunkText: string) => {
-      const chatID = getActiveId();
-      if (chatID === "") {
-        return;
-      }
-      const prompt = `Explain this diff:\n\n\`\`\`diff\n${hunkText}\n\`\`\``;
-      void import("./chat-commands.js")
-        .then(({ sendPromptTo }) => {
-          void sendPromptTo(chatID, prompt);
-        })
-        .catch(() => {
-          /* noop */
-        });
-    },
   };
   // The "Ignore whitespace" toggle: diff.ts supports a whitespace-insensitive
   // compare and diff-pane re-diffs + re-renders in place from these source texts.

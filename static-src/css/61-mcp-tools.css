@@ -339,26 +339,6 @@
   background: var(--c-accent);
 }
 
-/* Diff "Ask about this" button */
-.diff-ask-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-xs);
-  color: var(--c-accent);
-  background: none;
-  border: 1px solid var(--c-accent);
-  border-radius: var(--r-sm);
-  padding: 2px var(--sp-2);
-  cursor: pointer;
-  margin-block-start: var(--sp-1);
-  transition: background var(--dur-micro) var(--ease-standard);
-}
-
-.diff-ask-btn:hover {
-  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
-}
-
 /* THE HIT-TARGET FLOOR, over every interactive element rather than a named list.
  *
  * `--hit-floor` is 24px on the fine tier (WCAG 2.5.8, Level AA) and 44px on the
@@ -493,43 +473,6 @@
   padding: var(--sp-4);
   color: var(--c-text-tertiary);
   font-size: var(--fs-sm);
-}
-
-/* Per-hunk action toolbar in diff pane */
-.diff-hunk-toolbar {
-  display: flex;
-  gap: var(--sp-1);
-  padding: 2px var(--sp-2);
-  border-top: 1px dashed var(--c-border);
-}
-
-.diff-hunk-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-xs);
-  padding: 1px var(--sp-1);
-  border-radius: var(--r-sm);
-  border: 1px solid var(--c-border);
-  background: none;
-  cursor: pointer;
-  transition: background var(--dur-micro) var(--ease-standard);
-}
-
-.diff-hunk-btn.accept {
-  color: var(--c-green);
-}
-
-.diff-hunk-btn.accept:hover {
-  background: color-mix(in srgb, var(--c-green) 12%, transparent);
-}
-
-.diff-hunk-btn.reject {
-  color: var(--c-red);
-}
-
-.diff-hunk-btn.reject:hover {
-  background: color-mix(in srgb, var(--c-red) 12%, transparent);
 }
 
 /* --- Specificity-sensitive overrides (must come after base declarations) --- */

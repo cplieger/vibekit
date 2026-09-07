@@ -374,18 +374,8 @@ func (s *Store) Delete(ctx context.Context, chatID vibekit.ChatID) error {
 	}
 	m := s.lock(chatID)
 	m.Lock()
-	path, err := s.pathFor(chatID)
-	if err != nil {
-		m.Unlock()
-		return err
-	}
-	rmErr := os.Remove(path)
+	rmErr := s.Remove(chatID)
 	missing := errors.Is(rmErr, os.ErrNotExist)
-	if !missing {
-		// Marked while the per-chat lock is still held, so a racing Mutate has to
-		// queue behind it. Only a chat that actually existed is tombstoned.
-		s.markDeleted(chatID)
-	}
 	m.Unlock()
 	if rmErr != nil && !missing {
 		return rmErr

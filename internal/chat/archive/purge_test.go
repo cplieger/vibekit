@@ -415,8 +415,8 @@ func TestPurgeScheduler_APurgeResetsTheBackOff(t *testing.T) {
 
 // TestPurge_HandsTheSessionChainToOnPurge pins that a purge reaps its OWN session
 // directories rather than leaving them to the hourly orphan sweep, a residue
-// collector. The ordering is the point: onPurge fires AFTER os.Remove(entry.path),
-// so the chain must be read before the file goes or the ids are unrecoverable.
+// collector. The ordering is the point: onPurge fires AFTER the store removes the
+// chat file, so the chain must be read before it goes or the ids are unrecoverable.
 func TestPurge_HandsTheSessionChainToOnPurge(t *testing.T) {
 	var rec purgeRecorder
 	svc, store, dir := newPurgeTestService(t, WithOnPurge(rec.recordPurge))

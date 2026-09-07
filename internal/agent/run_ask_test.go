@@ -516,7 +516,7 @@ func TestPausedLeaf(t *testing.T) {
 // status and the pause reason, and the answer path's resolve-from-inspect
 // fallback, which varies the session id — so the two cannot disagree about what a
 // parked run's state looks like.
-func parkedInspect(t *testing.T, status, pauseReason, stepSession string) json.RawMessage {
+func parkedInspect(t *testing.T, status vibekit.RunStatus, pauseReason, stepSession string) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
 		"state": map[string]any{
@@ -557,7 +557,7 @@ func eventOfType(t *testing.T, h *Runtime, want string) bufferedEvent {
 // question gone. Without a reconstructed ask the only recourse would be
 // cancelling work one sentence from finishing.
 func TestReconcileNeedInput(t *testing.T) {
-	inspect := func(status, pauseReason string) json.RawMessage {
+	inspect := func(status vibekit.RunStatus, pauseReason string) json.RawMessage {
 		return parkedInspect(t, status, pauseReason, "sess_step")
 	}
 
@@ -891,7 +891,7 @@ func TestAnswerInput(t *testing.T) {
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 		br.callResults = map[string]json.RawMessage{
 			methodKiroWorkflowInspect: parkedInspect(
-				t, runStatusPaused, needInputPauseReason, "sess_from_inspect",
+				t, vibekit.RunStatusPaused, needInputPauseReason, "sess_from_inspect",
 			),
 		}
 		h.runs.asks.Add(&runAsk{

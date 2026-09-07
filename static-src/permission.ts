@@ -34,7 +34,7 @@ import type {
   PermissionOption,
 } from "./types.js";
 import { el } from "@cplieger/reactive";
-import { mcpToolInfo, formatMCPToolName } from "./tool-schema.js";
+import { formatMCPToolName } from "./tool-schema.js";
 import { editNativeRule } from "./actions/permissions.js";
 import { openChange } from "./navigate.js";
 import { openSetting } from "./settings-highlight.js";
@@ -104,23 +104,23 @@ function buildToolPermissionCard(
   const isModeSwitch = kind === "switch_mode";
 
   const body = el("div", { className: "approval-body" });
-  const mcp = mcpToolInfo(title);
+  const mcp = payload.mcp_tool;
   const heading = isModeSwitch
     ? "Switch session mode"
-    : mcp !== null
-      ? formatMCPToolName(mcp.tool)
+    : mcp !== undefined
+      ? formatMCPToolName(mcp.tool_name)
       : title;
   body.appendChild(el("strong", null, heading));
 
   if (isModeSwitch) {
     body.appendChild(el("div", { className: "approval-origin" }, title));
-  } else if (mcp !== null) {
+  } else if (mcp !== undefined) {
     body.appendChild(
       el(
         "div",
         { className: "approval-origin" },
         "from ",
-        el("strong", null, mcp.server),
+        el("strong", null, mcp.server_name),
         " MCP integration",
       ),
     );

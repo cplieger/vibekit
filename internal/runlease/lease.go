@@ -44,6 +44,8 @@ type Lease struct {
 	// SlotAt is when this run's own next scheduled slot comes due — an INPUT to
 	// Deadline, immutable, so a re-arm re-applies it. Zero for every other origin.
 	SlotAt time.Time `json:"slot_at,omitzero"`
+	// FirstAbsentAt starts the continuous-absence clock. A listed run clears it.
+	FirstAbsentAt time.Time `json:"first_absent_at,omitzero"`
 	// WorkflowID is KAS's id for the run, and the lease's key.
 	WorkflowID string `json:"workflow_id"`
 	// ChatID is the chat whose agent launched the run. Empty means "no chat to

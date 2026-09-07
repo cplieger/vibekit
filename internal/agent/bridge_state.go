@@ -60,6 +60,7 @@ type sharedBridge struct {
 	// is a loop; one bool removes it, and the prompt-time repairEffort stays the
 	// checkpoint for a level that keeps moving back.
 	effortHealed bool
+	retire       bool
 }
 
 // tryAcquireForPrompt attempts to transition from idle to prompting.

@@ -208,7 +208,7 @@ type SetAttachmentsCommand struct {
 }
 
 // SetModeCommand is the payload for type="set_mode". ModeID names an entry in
-// the chat's AvailableModes — bundled workflow modes and workspace custom agents
+// the workspace mode catalog — bundled workflow modes and workspace custom agents
 // alike. Applied to a live session in place; for a chat whose bridge has not
 // started the mode is persisted and applied at session/new (StartOpts.Mode).
 type SetModeCommand struct {

@@ -91,6 +91,9 @@ func TestHandleV3Summarization_CanceledIsBenign(t *testing.T) {
 			if p := errorPayloads(t, events); len(p) != 0 {
 				t.Errorf("EventError broadcasts = %+v, want none (cancel must not banner)", p)
 			}
+			if len(deps.compactionFailures) != 0 {
+				t.Errorf("CompactionFailed calls = %+v, want none for %q", deps.compactionFailures, status)
+			}
 			if len(*events) != 0 {
 				t.Errorf("broadcasts = %d, want 0 (cancel is a silent no-op)", len(*events))
 			}
@@ -130,6 +133,9 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	}
 	if failed := eventMsgsByKind(t, store, "c1", vibekit.EventCompactFailed); len(failed) != 0 {
 		t.Errorf("EventCompactFailed messages = %d, want 0 on success", len(failed))
+	}
+	if len(deps.compactionFailures) != 0 {
+		t.Errorf("CompactionFailed calls = %+v, want none on success", deps.compactionFailures)
 	}
 	if p := errorPayloads(t, events); len(p) != 0 {
 		t.Errorf("EventError broadcasts = %+v, want none on success", p)
@@ -292,6 +298,9 @@ func TestHandleV3Summarization_GenuineErrorFails(t *testing.T) {
 	if p[0].Message != "error" {
 		t.Errorf("error message = %q, want %q", p[0].Message, "error")
 	}
+	if len(deps.compactionFailures) != 1 || deps.compactionFailures[0].chatID != "c1" || deps.compactionFailures[0].detail != "error" {
+		t.Errorf("CompactionFailed calls = %+v, want one call for c1 with detail error", deps.compactionFailures)
+	}
 }
 
 // TestHandleV3Summarization_RunningStarts pins that a "running" reason
@@ -305,6 +314,9 @@ func TestHandleV3Summarization_RunningStarts(t *testing.T) {
 
 	if n := countCompactionStarted(events); n != 1 {
 		t.Errorf("compaction_started broadcasts = %d, want 1", n)
+	}
+	if len(deps.compactionFailures) != 0 {
+		t.Errorf("CompactionFailed calls = %+v, want none while running", deps.compactionFailures)
 	}
 	if p := errorPayloads(t, events); len(p) != 0 {
 		t.Errorf("EventError broadcasts = %+v, want none while running", p)
@@ -378,5 +390,28 @@ func TestHandleV3Summarization_FailedEventAppendSpeaksOnlyOnFailure(t *testing.T
 					tc.appendErr, got, tc.wantLogged, logs.String())
 			}
 		})
+	}
+}
+
+func TestHandleCompactionFailed_BoundsAndSanitizesTheDetail(t *testing.T) {
+	deps, events, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	detail := strings.Repeat("x", maxCompactionDetailBytes) + "\nsecret tail"
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, detail, ""), FrameAttribution{})
+
+	msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompactFailed)
+	if len(msgs) != 1 {
+		t.Fatalf("EventCompactFailed messages = %d, want 1", len(msgs))
+	}
+	if strings.Contains(msgs[0].Content, "\n") || strings.Contains(msgs[0].Content, "secret tail") {
+		t.Errorf("bounded detail = %q, want one sanitized line without the tail", msgs[0].Content)
+	}
+	payloads := errorPayloads(t, events)
+	if len(payloads) != 1 || payloads[0].Message != msgs[0].Content {
+		t.Errorf("error payloads = %+v, want the persisted bounded detail %q", payloads, msgs[0].Content)
+	}
+	if len(deps.compactionFailures) != 1 || deps.compactionFailures[0].detail != msgs[0].Content {
+		t.Errorf("CompactionFailed calls = %+v, want the persisted bounded detail %q", deps.compactionFailures, msgs[0].Content)
 	}
 }

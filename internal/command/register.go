@@ -67,7 +67,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		lifecycle:   r.Lifecycle,
 		mcp:         r.MCP,
 		turnOutcome: r.TurnOutcome,
-		tokens:      r.Tokens,
+		auth:        r.AuthReadiness,
 	}, CmdPrompt))
 	return mem
 }

@@ -37,7 +37,7 @@
 import type { Message, ToolCall } from "./types.js";
 import { humanName, truncate } from "./strings.js";
 import { subagentLabel, subagentName } from "./roles.js";
-import { stateOf, inFlight, type ExecState } from "./exec-view/status.js";
+import { inFlight, type ExecState } from "./exec-view/status.js";
 import type { ExecFact, ExecNode, ExecRun } from "./exec-view/model.js";
 import { groupOf, type SubagentSlice } from "./subagent-slice.js";
 
@@ -67,17 +67,20 @@ function driverPath(pipelineID: string): string {
 
 /** A delegate's state, from its invocation TOOL CALL's status.
  *
- *  Not `stateOf` directly, and that is the seam working rather than a workaround.
- *  `WireStatus` is the vocabulary KAS's run nodes speak (`running`, `paused`,
- *  `aborted`); a tool call speaks `ToolStatus` (`pending`, `in_progress`,
- *  `completed`, `failed`), and `in_progress` is not a member. `stateOf` is a tolerant
- *  reader that folds anything it does not know onto `pending`, so handing it a tool
- *  status made every RUNNING delegate render as a hollow not-started ring — caught by
- *  its own test rather than by reading. Each adapter maps its own words, which is what
- *  `status.ts` says the contract is, and widening `stateOf` with a vocabulary the
- *  workflow does not speak would have been the wrong fix. */
-function toolState(status: string | undefined): ExecState {
-  return status === "in_progress" ? "running" : stateOf(status);
+ *  Not `stateOf` directly: a tool call speaks `ToolStatus` rather than a run
+ *  node status, so each adapter maps its own closed vocabulary. */
+function toolState(status: ToolCall["status"] | undefined): ExecState {
+  switch (status) {
+    case undefined:
+    case "pending":
+      return "pending";
+    case "in_progress":
+      return "running";
+    case "completed":
+      return "ok";
+    case "failed":
+      return "fail";
+  }
 }
 
 /** The identity facts for one delegate, in the order they answer questions: what it

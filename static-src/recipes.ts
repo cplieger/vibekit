@@ -32,6 +32,7 @@ import { openRunView } from "./run-view.js";
 import { loadSettings } from "./persist.js";
 import { toggleSettingsView } from "./tabs.js";
 import type { Recipe, WorkflowRun } from "./types.js";
+import { classifyRunStatus, runStatusTerminal } from "./run-status.js";
 
 /** Last fetched recipe list, kept so a repaint needs no refetch. */
 let recipes: Recipe[] = [];
@@ -45,8 +46,10 @@ let recipes: Recipe[] = [];
  *  seconds after it was typed. */
 let filterText = "";
 
-/** Live (non-terminal) run per recipe NAME. The single-run rule makes the name
- *  a sufficient key: at most one live run per definition exists. */
+/** Live (non-terminal) run per RECIPE; the single-run rule makes the recipe a
+ *  sufficient key. Keyed on `workflow_name`, never `name` — `name` is the DISPLAY
+ *  label (`runLabel ?? workflowName` upstream), so a labelled run filed itself
+ *  under a key no recipe row looks up and its row offered Run over a live run. */
 let liveRuns = new Map<string, WorkflowRun>();
 
 let container: HTMLElement | null = null;
@@ -281,21 +284,16 @@ async function refreshRuns(): Promise<void> {
   }
   const next = new Map<string, WorkflowRun>();
   for (const run of d.runs) {
-    if (!isTerminal(run.status ?? "")) {
-      next.set(run.name, run);
+    // An older server sends no workflow_name; fall back to the display name so
+    // the row keeps its pre-2.21.1 behaviour rather than losing every key.
+    const recipe = run.workflow_name ?? run.name;
+    const status = classifyRunStatus(run.status);
+    if (recipe !== "" && (status === undefined || !runStatusTerminal(status))) {
+      next.set(recipe, run);
     }
   }
   liveRuns = next;
   paint();
-}
-
-/** Mirrors the server's terminalRunStatus: paused is NOT terminal — a paused
- *  run still blocks a relaunch and its row must offer Cancel, or the single-run
- *  rule would wedge the recipe with no way out. */
-function isTerminal(status: string): boolean {
-  return (
-    status === "completed" || status === "failed" || status === "aborted" || status === "cancelled"
-  );
 }
 
 function paint(): void {

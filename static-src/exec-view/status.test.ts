@@ -27,6 +27,7 @@ const ALL: readonly ExecState[] = [
   "running",
   "waiting",
   "input",
+  "unknown",
   "ok",
   "fail",
   "warn",
@@ -41,8 +42,8 @@ describe("STATE_MARK is total, and every state carries exactly one channel", () 
     expect(Object.keys(STATE_MARK).sort()).toEqual(Object.keys(STATE_WORD).sort());
   });
 
-  it("gives the three in-flight states no mark, because CSS draws their ring", () => {
-    for (const state of ["pending", "running", "waiting"] as const) {
+  it("gives the four in-flight states no mark, because CSS draws their ring", () => {
+    for (const state of ["pending", "running", "waiting", "unknown"] as const) {
       expect(STATE_MARK[state]).toEqual({ kind: "none" });
     }
   });
@@ -88,8 +89,8 @@ describe("inFlight and neverRan partition the vocabulary", () => {
     expect(ALL.filter((s) => inFlight(s) && neverRan(s))).toEqual([]);
   });
 
-  it("names the in-flight three", () => {
-    expect(ALL.filter(inFlight)).toEqual(["running", "waiting", "input"]);
+  it("names the in-flight four", () => {
+    expect(ALL.filter(inFlight)).toEqual(["running", "waiting", "input", "unknown"]);
   });
 
   it("names the two states with no execution behind them", () => {

@@ -1,0 +1,18 @@
+{
+  "runs": [
+    {"status": "running", "active": true, "terminal": false},
+    {"status": "paused", "active": true, "terminal": false},
+    {"status": "completed", "active": false, "terminal": true},
+    {"status": "failed", "active": false, "terminal": true},
+    {"status": "aborted", "active": false, "terminal": true}
+  ],
+  "nodes": [
+    {"status": "pending", "active": true, "terminal": false, "exec_state": "pending"},
+    {"status": "running", "active": true, "terminal": false, "exec_state": "running"},
+    {"status": "paused", "active": true, "terminal": false, "exec_state": "waiting"},
+    {"status": "completed", "active": false, "terminal": true, "exec_state": "ok"},
+    {"status": "failed", "active": false, "terminal": true, "exec_state": "fail"},
+    {"status": "aborted", "active": false, "terminal": true, "exec_state": "warn"},
+    {"status": "skipped", "active": false, "terminal": true, "exec_state": "skipped"}
+  ]
+}

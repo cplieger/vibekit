@@ -205,9 +205,9 @@ describe("the single-delegate shape", () => {
     expect(run.nodes[0]?.end).toBeUndefined();
   });
 
-  // `in_progress` is a ToolStatus and not a member of `WireStatus`, so handing it to
-  // `stateOf` folds it onto `pending` and every running delegate renders as a hollow
-  // not-started ring. Each adapter maps its own vocabulary.
+  // `in_progress` is a ToolStatus and not a member of the run-node vocabulary,
+  // so handing it to the node fold would make every running delegate read as
+  // not started. Each adapter maps its own vocabulary.
   it("maps the tool vocabulary's in_progress onto running", () => {
     const run = exec(
       [msg([invocation("tooluse_1", "sub_1", { status: "in_progress" })])],

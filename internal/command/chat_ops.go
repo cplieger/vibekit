@@ -167,8 +167,12 @@ func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermA
 	// Claim the request before answering it: two tabs on one chat can both
 	// see the card, and kiro-cli silently discards the second answer for a
 	// request id already resolved.
-	if !perms.TakePendingPerm(cmd.ChatID, p.RequestID, vibekit.SettledByUser) {
+	pending, offered := perms.TakePendingPermissionOption(cmd.ChatID, p.RequestID, p.OptionID, vibekit.SettledByUser)
+	if !pending {
 		return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
+	}
+	if !offered {
+		return nil, StatusError(http.StatusBadRequest, errPermissionOptionNotOffered)
 	}
 	// A turn approval answers on the same reply, with per-file decisions in
 	// _meta; built through one helper so the omitted-id-means-reject rule

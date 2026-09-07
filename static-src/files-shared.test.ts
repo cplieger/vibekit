@@ -89,11 +89,11 @@ describe("isSafeUrl", () => {
   const safe: string[] = [
     "https://example.com",
     "http://localhost:8080/path",
+    "mailto:user@example.com",
     "/relative/path",
     "./local",
     "#anchor",
-    "mailto:user@example.com",
-    "tel:+1234567890",
+    "//cdn.example.com/image.png",
   ];
 
   for (const url of safe) {
@@ -121,6 +121,9 @@ describe("isSafeUrl", () => {
     ["  data:text/html,...", "leading whitespace data:"],
     ["file:///etc/passwd", "basic file:"],
     ["FILE:///etc/shadow", "uppercase file:"],
+    ["vscode://file/workspace/main.go", "unapproved vscode:"],
+    ["blob:https://example.com/id", "unapproved blob:"],
+    ["tel:+1234567890", "unapproved tel:"],
   ];
 
   for (const [url, desc] of unsafe) {
@@ -246,31 +249,6 @@ describe("relativeTime", () => {
 describe("isSafeUrl property-based", () => {
   const blockedPrefixes = ["javascript:", "vbscript:", "data:", "file:"] as const;
 
-  // The gate's own normalization. The two over-blocking bounds below are stated in
-  // its terms on purpose; the completeness property between them is the one whose
-  // rule comes from the URL parser instead, and it is the only one that can see a
-  // gap between the two.
-  const normalize = (s: string): string =>
-    s
-      .replace(/[\x00-\x1f]/g, "") // eslint-disable-line no-control-regex
-      .trim()
-      .toLowerCase();
-
-  it("soundness: rejected URLs normalize to a blocked prefix", () => {
-    fc.assert(
-      fc.property(fc.string(), (s) => {
-        const result = isSafeUrl(s);
-        if (!result) {
-          const hasBlocked = blockedPrefixes.some((p) => normalize(s).startsWith(p));
-          expect(hasBlocked).toBe(true);
-        } else {
-          expect(result).toBe(true);
-        }
-      }),
-      { numRuns: 1000 },
-    );
-  });
-
   it("no false negatives: blocked prefix + suffix is always rejected", () => {
     fc.assert(
       fc.property(fc.constantFrom(...blockedPrefixes), fc.string(), (prefix, suffix) => {
@@ -300,14 +278,37 @@ describe("isSafeUrl property-based", () => {
     );
   });
 
-  it("safe strings stay safe: no blocked prefix after normalization means true", () => {
+  // The allowlist is the contract, so an absolute scheme it does not name is
+  // refused whatever that scheme is; `vscode:`, `blob:` and `tel:` are the cases
+  // the table above names.
+  it("no false negatives: an absolute scheme outside the allowlist is rejected", () => {
+    const alpha = fc.constantFrom(..."abcdefghijklmnopqrstuvwxyz".split(""));
+    const schemeChar = fc.constantFrom(..."abcdefghijklmnopqrstuvwxyz0123456789+.-".split(""));
+    const scheme = fc
+      .tuple(alpha, fc.array(schemeChar, { maxLength: 12 }))
+      .map(([head, rest]) => head + rest.join(""))
+      .filter((s) => s !== "http" && s !== "https" && s !== "mailto");
+
     fc.assert(
-      fc.property(
-        fc.string().filter((s) => !blockedPrefixes.some((p) => normalize(s).startsWith(p))),
-        (s) => {
-          expect(isSafeUrl(s)).toBe(true);
-        },
-      ),
+      fc.property(scheme, fc.string(), (s, rest) => {
+        expect(isSafeUrl(`${s}:${rest}`)).toBe(false);
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  // The over-blocking bound: a value with no scheme is always allowed, because
+  // the browser resolves a relative path, an anchor or a `//host` URL against
+  // the document's own HTTP(S) location. The tail cannot spell a scheme — `:` is
+  // not in its alphabet — so a failure here is the gate demanding one.
+  it("no false positives: a scheme-less value is allowed", () => {
+    const pathChar = fc.constantFrom(..."aZ0/._-~?&=%#".split(""));
+    const tail = fc.array(pathChar, { maxLength: 20 }).map((chars) => chars.join(""));
+
+    fc.assert(
+      fc.property(fc.constantFrom("", "/", "./", "../", "#", "?", "//"), tail, (prefix, rest) => {
+        expect(isSafeUrl(prefix + rest)).toBe(true);
+      }),
       { numRuns: 1000 },
     );
   });

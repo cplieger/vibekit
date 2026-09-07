@@ -3,33 +3,40 @@ package agent
 // Restart orphans: the runs vibekit launched whose owning process died. TWO clearing
 // paths, answering different questions — the BOOT sweep "is this system idle", the
 // ADMISSION backstop "may this run start". No automatic relaunch (user decision).
+//
+// A run MISSING from an otherwise successful list is a third rule: absence starts a
+// persisted clock, reappearance resets it, and six continuous hours releases the lease
+// as bookkeeping — absence never clears one by itself. Boot asks `inspect` for per-run
+// evidence first.
 
 import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/cplieger/vibekit/internal/rpcerr"
 	"github.com/cplieger/vibekit/internal/runlease"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workflow"
 )
-
-// runStatusPaused is KAS's one non-terminal status a stopped run reports.
-const runStatusPaused = "paused"
-
-// runStatusRunning is KAS's executing status, read on NODES rather than on runs.
-const runStatusRunning = "running"
 
 // orphanSweepBudget bounds the whole boot sweep: one sequential `inspect` per candidate
 // lease on a utility bridge whose own timeout is 45s could hold a boot goroutine for minutes.
 const orphanSweepBudget = 2 * time.Minute
 
+const leaseAbsenceBudget = 6 * time.Hour
+
+// leaseAbsenceOutcome is what the launching SCHEDULE's row reports for a run that went
+// absent and never produced a terminal signal.
+const leaseAbsenceOutcome = "unknown: no terminal signal was seen and the run stayed absent for 6 hours"
+
 // SweepOrphaned clears every lease whose run a dead process left paused, so nothing reads
 // as live after boot unless it genuinely is. Best-effort: skipping an orphan costs one
 // stale row, cancelling a live run destroys work. Reports whether it REACHED KAS.
 func (rs *Runs) SweepOrphaned(ctx context.Context) (reached bool) {
-	held := rs.leaseStore().List()
-	if len(held) == 0 {
+	if len(rs.leaseStore().List()) == 0 {
 		// No leases is not a failure to reach KAS: there was nothing to ask about.
 		return true
 	}
@@ -42,25 +49,27 @@ func (rs *Runs) SweepOrphaned(ctx context.Context) (reached bool) {
 		slog.Warn("boot: run list unavailable, skipping the orphan sweep", "error", err)
 		return false
 	}
-	status := make(map[string]string, len(runs))
+	status := make(map[string]vibekit.RunStatus, len(runs))
 	for i := range runs {
-		status[runs[i].WorkflowID] = runs[i].Status
+		status[runs[i].WorkflowID] = vibekit.RunStatus(runs[i].Status)
 	}
+	rs.reconcileLeasePresence(cctx, status, time.Now(), true)
+
+	held := rs.leaseStore().List()
 	for i := range held {
-		l := held[i]
+		l := &held[i]
 		st, known := status[l.WorkflowID]
+		if !known {
+			// Absence is the reconcile's above, which starts a clock rather than
+			// clearing anything: a missing row is not evidence a run is over.
+			continue
+		}
 		switch {
-		case !known || terminalRunStatus(st):
-			// Bookkeeping only — no run to cancel, so no reason recorded. A lease
-			// outliving its run would make the recipe look busy to the backstop.
-			slog.Info("boot: releasing the lease of a run that is over",
-				"workflow_id", l.WorkflowID, "recipe", l.Recipe, "status", st)
-			rs.releaseLease(cctx, l.WorkflowID)
 		case l.Origin == runlease.OriginAgent:
 			// Chat-parented by construction: KAS parents an agent's run on the calling
 			// chat's session, so it heals WITH that chat when its bridge rehydrates.
-		case st == runStatusPaused && rs.restartPaused(cctx, l.WorkflowID):
-			rs.clearOrphaned(cctx, &l)
+		case st == vibekit.RunStatusPaused && rs.restartPaused(cctx, l.WorkflowID):
+			rs.clearOrphaned(cctx, l)
 		}
 	}
 	return true
@@ -79,7 +88,7 @@ func (rs *Runs) releaseIfOver(ctx context.Context, workflowID string) {
 		return
 	}
 	res, ok := rs.inspect(ctx, workflowID)
-	if !ok || res.WorkflowID != workflowID || !terminalRunStatus(res.State.Status) {
+	if !ok || res.WorkflowID != workflowID || !res.State.Status.Terminal() {
 		return
 	}
 	slog.Info("releasing the lease of a run that stopped without a terminal frame",
@@ -87,11 +96,88 @@ func (rs *Runs) releaseIfOver(ctx context.Context, workflowID string) {
 	rs.releaseLease(ctx, workflowID)
 }
 
+// reconcileLeasePresence settles every held lease against one run list: a terminal row
+// releases, a listed row resets the absence clock, and an ABSENT row starts or spends it.
+// Absence never CANCELS, and it releases only on per-run evidence or a spent budget — a
+// list that cannot see a run is not evidence the run is over. Boot passes inspectAbsent.
+func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]vibekit.RunStatus, now time.Time, inspectAbsent bool) {
+	held := rs.leaseStore().List()
+	for i := range held {
+		l := &held[i]
+		st, known := status[l.WorkflowID]
+		if known {
+			if st.Terminal() {
+				slog.Info("releasing the lease of a run with terminal status",
+					"workflow_id", l.WorkflowID, "recipe", l.Recipe, "status", st)
+				rs.releaseLease(ctx, l.WorkflowID)
+				continue
+			}
+			if !l.FirstAbsentAt.IsZero() {
+				rs.setFirstAbsentAt(ctx, l.WorkflowID, time.Time{})
+			}
+			continue
+		}
+
+		if inspectAbsent && rs.inspectConfirmsGone(ctx, l.WorkflowID) {
+			slog.Info("boot: releasing the lease of a run inspect confirmed is over",
+				"workflow_id", l.WorkflowID, "recipe", l.Recipe)
+			rs.releaseLease(ctx, l.WorkflowID)
+			continue
+		}
+		rs.observeAbsentLease(ctx, l, now)
+	}
+}
+
+// inspectConfirmsGone asks KAS about ONE absent run. Its unknown-workflow refusal is
+// matched by TEXT because the resolver throws a plain error, so there is nothing typed to
+// ask; any other failure is false, which leaves the lease alone.
+func (rs *Runs) inspectConfirmsGone(ctx context.Context, workflowID string) bool {
+	raw, err := rs.rawInspect(ctx, workflowID)
+	if err != nil {
+		return strings.Contains(strings.ToLower(rpcerr.Details(err)), "workflow not found")
+	}
+	var res inspectRunState
+	if json.Unmarshal(raw, &res) != nil {
+		return false
+	}
+	return res.WorkflowID == workflowID && res.State.Status.Terminal()
+}
+
+// observeAbsentLease runs the continuous-absence clock: the first miss stamps it, and only
+// leaseAbsenceBudget of UNBROKEN absence releases the lease. Bookkeeping only, so the
+// schedule's row says the outcome is unknown rather than claiming the run failed.
+func (rs *Runs) observeAbsentLease(ctx context.Context, l *runlease.Lease, now time.Time) {
+	if l.FirstAbsentAt.IsZero() {
+		rs.setFirstAbsentAt(ctx, l.WorkflowID, now)
+		return
+	}
+	if now.Sub(l.FirstAbsentAt) < leaseAbsenceBudget {
+		return
+	}
+
+	slog.Warn("run stayed absent past the lease budget; no terminal signal was ever seen",
+		"workflow_id", l.WorkflowID, "recipe", l.Recipe, "first_absent_at", l.FirstAbsentAt)
+	if rs.schedules != nil && l.ScheduleID != "" {
+		if err := rs.schedules.RecordOutcome(ctx, l.ScheduleID, leaseAbsenceOutcome); err != nil {
+			slog.Warn("could not record the schedule's outcome",
+				"schedule_id", l.ScheduleID, "error", err)
+		}
+	}
+	rs.releaseLease(ctx, l.WorkflowID)
+}
+
+func (rs *Runs) setFirstAbsentAt(ctx context.Context, workflowID string, at time.Time) {
+	if err := rs.leaseStore().SetFirstAbsentAt(ctx, workflowID, at); err != nil {
+		slog.Warn("run lease absence clock not persisted",
+			"workflow_id", workflowID, "error", err)
+	}
+}
+
 // clearBlockingOrphan is the admission backstop: is a row blocking a launch an orphan
 // vibekit itself owns, and clear it if so. Admission reads KAS's run LIST rather than the
 // leases, because that list is the only thing that sees the runs vibekit did not launch.
-func (rs *Runs) clearBlockingOrphan(ctx context.Context, workflowID, status string) bool {
-	if status != runStatusPaused {
+func (rs *Runs) clearBlockingOrphan(ctx context.Context, workflowID string, status vibekit.RunStatus) bool {
+	if status != vibekit.RunStatusPaused {
 		// A running row is not an orphan, whatever else is true of it.
 		return false
 	}
@@ -154,7 +240,7 @@ func (rs *Runs) restartPaused(ctx context.Context, workflowID string) bool {
 		return false
 	}
 	return res.WorkflowID == workflowID &&
-		res.State.Status == runStatusPaused &&
+		res.State.Status == vibekit.RunStatusPaused &&
 		res.State.PauseReason == stalePauseReason
 }
 
@@ -170,7 +256,7 @@ func (rs *Runs) involuntarilyPaused(ctx context.Context, workflowID string) bool
 		return false
 	}
 	return res.WorkflowID == workflowID &&
-		res.State.Status == runStatusPaused &&
+		res.State.Status == vibekit.RunStatusPaused &&
 		resumablePause(res.State.PauseReason, res.State.PauseDetail)
 }
 
@@ -179,9 +265,9 @@ func (rs *Runs) involuntarilyPaused(ctx context.Context, workflowID string) bool
 // pauseFrame's gate can see and this guard cannot would pass a run and then decline it.
 type inspectRunState struct {
 	State struct {
-		PauseDetail *pauseDetail `json:"pauseDetail"`
-		Status      string       `json:"status"`
-		PauseReason string       `json:"pauseReason"`
+		PauseDetail *pauseDetail      `json:"pauseDetail"`
+		Status      vibekit.RunStatus `json:"status"`
+		PauseReason string            `json:"pauseReason"`
 	} `json:"state"`
 	WorkflowID string `json:"workflowId"`
 }

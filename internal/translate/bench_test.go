@@ -35,6 +35,8 @@ type baseDeps struct {
 	// test can assert a workflow step's frame would open the RUN's turn rather
 	// than the chat's.
 	foldSources []vibekit.TurnOpenSource
+	// compactionFailures records failed-compaction facts sent to the host.
+	compactionFailures []compactionFailure
 	// turnInterrupts records every InterruptTurn call, so a test can assert the
 	// sentinel ended the turn exactly once and named its cause, with no bridge
 	// behind it.
@@ -128,6 +130,11 @@ func (d *baseDeps) UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, ms
 // which kind of turn a frame would have opened. The buffer itself is per chat
 // here, which is what keeps the fold sites' own behaviour observable without a
 // turn registry.
+func (d *baseDeps) OpenTurnBuffer(chatID vibekit.ChatID) (*buffer.Buffer, bool) {
+	buf := d.bufStore.Get(chatID)
+	return buf, buf != nil
+}
+
 func (d *baseDeps) TurnFoldTarget(_ context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) *buffer.Buffer {
 	d.foldSources = append(d.foldSources, source)
 	return d.bufStore.GetOrInit(chatID)
@@ -253,6 +260,15 @@ func (d *baseDeps) StepTurnCapExceeded(workflowID, nodeID string, turns int) {
 
 func (d *baseDeps) RunMadeProgress(workflowID string) {
 	d.runProgress = append(d.runProgress, workflowID)
+}
+
+type compactionFailure struct {
+	chatID vibekit.ChatID
+	detail string
+}
+
+func (d *baseDeps) CompactionFailed(chatID vibekit.ChatID, detail string) {
+	d.compactionFailures = append(d.compactionFailures, compactionFailure{chatID: chatID, detail: detail})
 }
 
 // turnInterrupt is one recorded InterruptTurn call.

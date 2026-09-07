@@ -1,6 +1,7 @@
 package sanitize
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -193,6 +194,21 @@ func TestSanitizeOutput_composes_strip_ANSI_then_unicode(t *testing.T) {
 			got := Output(tt.in)
 			if got != tt.want {
 				t.Errorf("Output(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSanitizeOutput_neutralizes_an_escape_the_cut_orphaned(t *testing.T) {
+	tests := []string{
+		"AB\x1b[",
+		"AB\x1b]0;titl",
+		"AB\x1b(",
+	}
+	for _, in := range tests {
+		t.Run(in, func(t *testing.T) {
+			if got := Output(in); strings.ContainsRune(got, '\x1b') {
+				t.Errorf("Output(%q) = %q, want no U+001B", in, got)
 			}
 		})
 	}

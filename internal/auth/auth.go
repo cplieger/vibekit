@@ -1,5 +1,6 @@
 // Package auth serves /api/whoami, /api/login and /api/logout by shelling out to
-// the bundled kiro-cli binary. It persists no state of its own.
+// the bundled kiro-cli binary, and reports every identity it reads to the
+// registrar that owns live agent sessions. It persists no state of its own.
 package auth
 
 import (
@@ -81,6 +82,9 @@ type Handler struct {
 	// identity is what /api/whoami answers from, so the endpoint's page-load and
 	// SSE-reconnect traffic never triggers a read (see identityCache).
 	identity *identityCache
+	// registrar is told every identity this package READS, so an account change
+	// reaches the live agent sessions. Optional; nil observes nothing.
+	registrar *Identity
 	// cliPath resolves the binary at CALL time: the install manager picks the
 	// active version after the listener binds and can switch it later, and on a
 	// first boot there is nothing installed yet.
@@ -104,6 +108,15 @@ func WithConfig(cfg Config) Option {
 // unspoofable socket peer is logged.
 func WithTrustedProxies(trusted []*net.IPNet) Option {
 	return func(h *Handler) { h.trusted = trusted }
+}
+
+// WithIdentity feeds every identity this package reads into registrar. A nil
+// registrar is refused because it would make account changes invisible.
+func WithIdentity(registrar *Identity) Option {
+	if registrar == nil {
+		panic("auth: identity registrar is nil")
+	}
+	return func(h *Handler) { h.registrar = registrar }
 }
 
 // NewHandler returns an auth handler that shells out to whatever binary cliPath

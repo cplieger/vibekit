@@ -14,7 +14,19 @@ import type { RunNode, RunState } from "./run-store.js";
 import type { RunControlsResponse } from "./wire/types.gen.js";
 
 const fetches: string[] = [];
-let responses: (RunState | undefined)[] = [];
+// Deliberately looser than `RunState`: `status` stays a bare string so a case can
+// spell an off-enum word an engine ahead of this build would send, and `root` stays
+// `unknown` so a case can spell a malformed tree.
+let responses: (
+  | {
+      workflowId: string;
+      status?: string;
+      root?: unknown;
+      runLabel?: string;
+      workflowName?: string;
+    }
+  | undefined
+)[] = [];
 let resolvers: (() => void)[] = [];
 let liveRunsReply: {
   runs: { workflow_id: string; chat_id: string; executing: boolean }[];
@@ -107,6 +119,20 @@ describe("the fetch is coalesced, because a busy run invalidates dozens of times
     await settle();
     expect(store.runState("r1")?.status).toBe("running");
     expect(store.runState("r2")?.status).toBe("failed");
+  });
+
+  it("classifies unknown run and node statuses once at the fetch boundary", async () => {
+    responses = [
+      {
+        workflowId: "r4",
+        status: "quiesced",
+        root: { nodeId: "future", type: "step", status: "blocked" },
+      },
+    ];
+    store.invalidateRun("r4");
+    await settle();
+    expect(store.peekRunState("r4")?.status).toBe("unknown");
+    expect(store.peekRunState("r4")?.root?.status).toBe("unknown");
   });
 
   it("ignores an empty id rather than fetching /api/runs/", () => {
@@ -327,6 +353,11 @@ describe("runCounters answers the header's counter", () => {
     expect(c.current).toBe(2);
   });
 
+  it("counts an unknown leaf as current rather than finished or not started", () => {
+    const c = store.runCounters(state(step("a", { status: "unknown" })));
+    expect(c).toEqual({ total: 1, done: 0, failed: 0, current: 1 });
+  });
+
   it("reports no current step for a finished run", () => {
     const c = store.runCounters(
       state(step("a", { status: "completed" }), step("b", { status: "failed" })),
@@ -415,6 +446,7 @@ describe("runIsLive counts a pause as live", () => {
     expect(store.runIsLive({ workflowId: "r1", status: "completed" })).toBe(false);
     expect(store.runIsLive({ workflowId: "r1", status: "failed" })).toBe(false);
     expect(store.runIsLive({ workflowId: "r1", status: "aborted" })).toBe(false);
+    expect(store.runIsLive({ workflowId: "r1", status: "unknown" })).toBe(true);
     expect(store.runIsLive({ workflowId: "r1" })).toBe(false);
     expect(store.runIsLive(undefined)).toBe(false);
   });

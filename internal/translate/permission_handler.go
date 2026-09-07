@@ -120,7 +120,15 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 	// keyed to a different surface, and the node id is what makes the card say
 	// WHO is asking.
 	step := t.steps.refFor(req.SessionID)
+	var mcpTool *vibekit.MCPToolIdentity
+	serverName := displayText(req.Meta.Kiro.MCPTool.Identity.ServerName)
+	toolName := displayText(req.Meta.Kiro.MCPTool.Identity.ToolName)
+	if serverName != "" && toolName != "" {
+		mcpTool = &vibekit.MCPToolIdentity{ServerName: serverName, ToolName: toolName}
+	}
+
 	evt := vibekit.NewEvent(vibekit.EventPermissionNeeded, chatID, vibekit.PermissionNeededPayload{
+		MCPTool:    mcpTool,
 		RequestID:  reqID,
 		ToolCallID: req.ToolCall.ToolCallID,
 		// THE TITLE IS A DECISION SURFACE, which is why it is the one string on

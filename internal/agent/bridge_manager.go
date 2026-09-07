@@ -136,3 +136,52 @@ func (bm *bridgeManager) drain() []*sharedBridge {
 	}
 	return out
 }
+
+// retireChatBridges closes idle chat bridges and marks busy ones for the next
+// bridge open. Run bridges are durable work and rely on the relay's own token
+// refresh, so an account change does not interrupt them.
+func (bm *bridgeManager) retireChatBridges() (closed, marked int) {
+	var victims []*sharedBridge
+	bm.mu.Lock()
+	for chatID, sb := range bm.bridges {
+		if isRunChat(chatID) {
+			continue
+		}
+		sb.mu.Lock()
+		if sb.state == bridgeIdle {
+			delete(bm.bridges, chatID)
+			victims = append(victims, sb)
+			closed++
+		} else if !sb.retire {
+			sb.retire = true
+			marked++
+		}
+		sb.mu.Unlock()
+	}
+	bm.mu.Unlock()
+	for _, sb := range victims {
+		sb.bridge.Stop()
+	}
+	return closed, marked
+}
+
+// closeIfRetired removes and stops sb only after its active turn has released
+// the prompt slot.
+func (bm *bridgeManager) closeIfRetired(chatID vibekit.ChatID, sb *sharedBridge) bool {
+	bm.mu.Lock()
+	if bm.bridges[chatID] != sb {
+		bm.mu.Unlock()
+		return true
+	}
+	sb.mu.Lock()
+	ready := sb.retire && sb.state == bridgeIdle
+	if ready {
+		delete(bm.bridges, chatID)
+	}
+	sb.mu.Unlock()
+	bm.mu.Unlock()
+	if ready {
+		sb.bridge.Stop()
+	}
+	return ready
+}

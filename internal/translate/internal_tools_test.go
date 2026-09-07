@@ -42,20 +42,22 @@ func TestHandleToolCall_InternalToolSuppression(t *testing.T) {
 		tr := New(rolesOf(base), withIDGenerator(func() string { return "id" }))
 		chatID := vibekit.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, cloudConfig), FrameAttribution{})
-		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
-			"toolCallId": "cc-1",
-			"status":     "completed",
-		}), FrameAttribution{})
+		for range 2 {
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+				"toolCallId": "cc-1",
+				"status":     "completed",
+			}), FrameAttribution{})
+		}
 		for _, e := range *events {
 			if e.Type == vibekit.EventToolCallUpdate {
 				t.Error("suppressed internal tool's update was broadcast; want dropped")
 			}
 		}
-		// The load-bearing half: the update must not have opened a turn. The
-		// fold target lazily creates a buffer per chat, so an untouched store
-		// is the proof the drop ran before TurnFoldTarget.
+		// The load-bearing half: the update must not have opened a turn. The fold
+		// target lazily creates a buffer per chat, so an untouched store is the proof
+		// the update asked OpenTurnBuffer rather than TurnFoldTarget.
 		if base.bufStore.Get(chatID) != nil {
-			t.Error("the suppressed update reached TurnFoldTarget and opened a buffer; want dropped first")
+			t.Error("the suppressed update opened a buffer; want dropped, its create was never buffered")
 		}
 	})
 
@@ -75,4 +77,21 @@ func TestHandleToolCall_InternalToolSuppression(t *testing.T) {
 			t.Error("ordinary kind:other tool call suppressed; only internal toolIds are gated")
 		}
 	})
+}
+
+func TestHandleToolCallUpdate_UnknownToolCallOpensNoTurn(t *testing.T) {
+	base, events := newEventCaptureDeps()
+	tr := New(rolesOf(base))
+
+	tr.HandleToolCallUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+		"toolCallId": "unknown",
+		"status":     "completed",
+	}), FrameAttribution{})
+
+	if base.bufStore.Get("c1") != nil {
+		t.Error("unknown tool update opened a turn buffer")
+	}
+	if len(*events) != 0 {
+		t.Errorf("unknown tool update emitted %d events, want 0", len(*events))
+	}
 }
