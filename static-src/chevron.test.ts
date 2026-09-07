@@ -25,7 +25,7 @@ vi.mock("./scroll.js", () => ({
 
 import { chevronEl } from "./chevron.js";
 import { buildToolGroupShell } from "./tool-group.js";
-import { buildSubagentBlock } from "./fundamentals/subagent-block.js";
+import { buildSubagentContainer } from "./fundamentals/subagent-block.js";
 import { buildReasoning } from "./fundamentals/reasoning.js";
 import { buildTurnHeader } from "./fundamentals/turn-header.js";
 import { buildTurnFooter } from "./fundamentals/turn-footer.js";
@@ -76,11 +76,14 @@ describe("every disclosure builder emits the shared chevron", () => {
     expect(g.querySelectorAll(".disclosure-chevron")).toHaveLength(1);
   });
 
-  it("subagent card, and it survives a status flip", async () => {
-    const sa = buildSubagentBlock("context-gatherer", "in_progress");
-    // With something to reveal: a box whose body is empty withdraws its whole
+  // A delegate's CARD is not here because it is no longer a disclosure: it renders
+  // none of its delegate's output, so there is nothing to fold. The pipeline
+  // container is the surviving delegated-work disclosure.
+  it("pipeline container, and it survives a status flip", async () => {
+    const sa = buildSubagentContainer("orchestrate", "in_progress");
+    // With a stage to reveal: a container whose body is empty withdraws its whole
     // control, chevron included, so there is no glyph to be the shared one.
-    sa.body.appendChild(document.createElement("div")).textContent = "work";
+    sa.body.appendChild(document.createElement("div")).textContent = "stage";
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 0);
     });

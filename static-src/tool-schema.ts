@@ -340,6 +340,30 @@ export function disclosedClaim(d: ToolDisclosed): string {
   return `Loaded ${kindWord}: ${d.display_name}`;
 }
 
+/** The tool call that OPENS a subagent (vs. one of its nested tool calls).
+ *  Matched by title only — the nested calls share the same agent_subtask_id
+ *  but never carry these invocation titles.
+ *
+ *  `Orchestrate Sub-agent` is deliberately NOT in this list; it is the PIPELINE
+ *  driver's title (messages-blocks.ts `isPipelineInvocation`), and one title with
+ *  two owners is the overlap that makes a classification unpredictable. It was
+ *  here on the assumption that a pipeline launch carries a subtask id, and it
+ *  never has: measured across 36 live chat files, every one of those calls has
+ *  `agent_subtask_id` null, so this arm could not fire.
+ *
+ *  Here rather than in roles.ts because FOUR surfaces ask it, one of them the
+ *  store: roles.ts reaches icons.ts, and a store that imports it links that
+ *  subtree ahead of the transcript stack. This module is a leaf. */
+export function isSubagentInvocation(tc: { readonly title: string }): boolean {
+  const t = tc.title;
+  return (
+    t === "invokeSubAgent" ||
+    t === "invoke_sub_agent" ||
+    t === "Sub-agent execution" ||
+    t.startsWith("Sub-agent:")
+  );
+}
+
 /** Display titles of KAS-internal bookkeeping announced as tool calls — the
  *  session-boot cloud-config fetch is the one member. The server drops these
  *  frames at translate keyed on `_meta.kiro.toolId` (the machine name), so this

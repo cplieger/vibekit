@@ -670,16 +670,16 @@
   display: contents;
 }
 
-/* The delegated-work card — a subagent's box, and the container a pipeline puts
- * over its stages. The body hosts the delegate's OWN blocks (real tool cards,
- * reasoning, text) rendered by the same dispatcher, full parity with the main
- * transcript. COLLAPSED BY DEFAULT, always: the expanded state is worth nothing
- * when N delegates stream at once, and the result is read from the footer. A
- * rolling tail (last 3 lines) answers "which are progressing" while running +
- * collapsed. Uncapped and unindented — see .tool-call.
+/* The delegated-work boxes — a subagent's CARD, and the CONTAINER a pipeline puts
+ * over its stages. Uncapped and unindented — see .tool-call.
  *
- * A WORKFLOW STEP does not reach this card: a well-formed `wf:` id is dropped by
- * the dispatcher, so only a MALFORMED one lands on the delegate-box fallback. */
+ * THE CARD IS NOT A DISCLOSURE and has no body: the transcript renders NONE of a
+ * delegate's output (`messages-blocks.ts` placeBlock drops it, the way it drops a
+ * workflow step's), so the card is an identity row, a rolling tail of the last 3
+ * lines while it works, and a foot whose link is the way to the delegate's own
+ * page. The CONTAINER keeps a body, because what it holds is its stages' cards
+ * rather than a transcript, and it is collapsed by default: the expanded state is
+ * worth nothing at the moment N stages all start at once. */
 .subagent-block {
   background: var(--c-bg-secondary);
   border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
@@ -689,11 +689,12 @@
   flex-shrink: 0;
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 
-  /* Containment: see `.tool-call`. Collapsed by default, so the fallback is the
-     header alone. The collapsed-body rule below is a different element and a
-     different keying (`hidden`, on `.subagent-body`); both apply. */
+  /* Containment: see `.tool-call`. The fallback is the identity row plus the foot,
+     which is what both kinds are before anything is disclosed. The collapsed-body
+     rule below is a different element and a different keying (`hidden`, on
+     `.subagent-body`); both apply. */
   content-visibility: auto;
-  contain-intrinsic-size: auto 2.5rem;
+  contain-intrinsic-size: auto 4rem;
 }
 
 /* Same floor as `.tool-header` and `.tool-group-header`, and for the same
@@ -709,16 +710,19 @@
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
-/* Gated on `has-disclosure`, the same class name and the same writer discipline the
-   tool card uses (`subagent-block.ts` syncDisclosure is the one writer): a box whose
-   body is empty keeps its header on screen — that box is what makes a failed dispatch
-   visible — but must not advertise a control it has withdrawn. */
-.subagent-block.has-disclosure > .subagent-header {
+/* Only a CONTAINER's header is a control, and only while it HAS one. A card's
+   discloses nothing, so it takes no pointer, no hover response and stays selectable:
+   its name is content. `has-disclosure` is the same class name and the same writer
+   discipline the tool card uses (`subagent-block.ts` syncDisclosure is the one
+   writer): a container whose body is empty keeps its header on screen — that box is
+   what makes a failed dispatch visible — but must not advertise a control it has
+   withdrawn. */
+.subagent-container.has-disclosure > .subagent-header {
   cursor: pointer;
   user-select: none;
 }
 
-.subagent-block.has-disclosure > .subagent-header:hover {
+.subagent-container.has-disclosure > .subagent-header:hover {
   background: color-mix(in srgb, var(--c-accent) 8%, transparent);
 }
 
@@ -765,10 +769,11 @@
   white-space: nowrap;
 }
 
-/* The chevron's button beside a delegate's name. The glyph is the shared
-   `.disclosure-chevron`, replacing a `content: "\25BE"`/`"\25B8"` pair — a FONT
-   triangle, whose vertical position came from whatever font resolved rather than
-   from the box, which is why it read as off-centre. */
+/* The chevron beside a PIPELINE's name; a card has none, because it discloses
+   nothing. The glyph is the shared `.disclosure-chevron`, replacing a
+   `content: "\25BE"`/`"\25B8"` pair — a FONT triangle, whose vertical position came
+   from whatever font resolved rather than from the box, which is why it read as
+   off-centre. */
 .subagent-toggle {
   flex-shrink: 0;
   display: grid;
@@ -782,15 +787,15 @@
   padding: 0 var(--sp-1);
 }
 
-/* Open: the chevron turns down. Stated with `:not(.collapsed)` because this card
+/* Open: the chevron turns down. Stated with `:not(.collapsed)` because this box
    tracks its state as a collapsed CLASS on the root rather than an expanded
    flag, and one open rule keeps it the same shape as every other site. */
 .subagent-block:not(.collapsed) .subagent-toggle > .disclosure-chevron {
   --chev-turn: 0deg;
 }
 
-/* Nested transcript. Collapses to zero height (interpolate-size:
- * allow-keywords on :root animates height auto ↔ 0). */
+/* A PIPELINE's stage cards; no other box has one. Collapses to zero height
+ * (interpolate-size: allow-keywords on :root animates height auto ↔ 0). */
 .subagent-body {
   display: flex;
   flex-direction: column;
@@ -803,11 +808,11 @@
     content-visibility var(--dur-standard) allow-discrete;
 }
 
-/* LAZY RENDERING OF A CLOSED CARD.
+/* LAZY RENDERING OF A CLOSED CONTAINER.
  *
  * `height: 0` + `overflow: hidden` clips PAINT but keeps every descendant in
- * flow, so a transcript holding twenty collapsed delegate cards still laid out
- * every block inside all twenty on every reflow — and a reflow happens on each
+ * flow, so a transcript holding twenty collapsed pipelines still laid out every
+ * stage card inside all twenty on every reflow — and a reflow happens on each
  * streamed delta, because the live text above them grows. `content-visibility:
  * hidden` takes the subtree out of layout as well.
  *
@@ -852,8 +857,10 @@
   border-block-start: none;
 }
 
-/* The tail: rolling activity, shown only while RUNNING and COLLAPSED —
-   expanding shows the real thing, and a settled card's last word is its footer.
+/* The tail: rolling activity while the delegate RUNS, derived from the store by
+   `subagent-tail.ts` and removed on settle, when the footer is the card's last
+   word. No `.collapsed` in the gate any more — a card has nothing to collapse, and
+   the running class is the whole condition.
 
    NO block-size cap, deliberately: the bound is per-line and horizontal —
    `TAIL_LINES` (3) caps the count and each line is `nowrap`, so a burst of long
@@ -861,7 +868,6 @@
    defect, since `overflow: hidden` clips at the PADDING box and a capped box with
    block-end padding paints the clipped line inside that band. */
 .subagent-tail {
-  display: none;
   padding: var(--sp-1) var(--sp-3) var(--sp-2);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
@@ -869,17 +875,18 @@
   overflow: hidden;
 }
 
-.subagent-block.collapsed.running .subagent-tail {
-  display: block;
+/* Empty until the delegate's first line lands, and a padded empty band reads as a
+   layout bug. */
+.subagent-tail:empty {
+  display: none;
 }
 
-/* THE PIPELINE BOX — the `container` activity variant (subagent-block.ts
-   SubagentActivity). Its body holds other delegate cards rather than a
-   transcript, so two things differ from a leaf.
+/* THE PIPELINE CONTAINER (subagent-block.ts `buildSubagentContainer`). Its body
+   holds its stages' own cards, so two things differ from a card.
 
-   Its busy indicator is three dots, and they appear ONLY while it is collapsed:
-   the same gate as the tail above, and for the same reason. Open, its stages are
-   on screen and each carries its own ring, so a fourth moving thing here would
+   Its busy indicator is three dots, and they appear ONLY while it is collapsed.
+   Open, its stages are on screen and each carries its own ring, so a fourth
+   moving thing here would
    claim to be a fifth piece of work. Closed, the stages are hidden and the dots
    are the only thing that separates a pipeline still working from one that
    finished. `.activity-dots` sets `inline-flex`, so the default has to be turned
@@ -920,9 +927,8 @@
 
 /* The FOOT ROW: the ledger and the way to this delegate's own page, in the same
    composition `.run-foot` uses (ledger first, the link right-aligned). It sits
-   OUTSIDE the disclosure, so a collapsed card still states its result and still
-   offers the link — which is what makes the affordance reachable in the card's
-   normal reading state rather than one click in.
+   The LAST region of either box, so a collapsed pipeline still states its result
+   and a card's link sits under the tail it is the destination for.
 
    Created eagerly by subagent-block.ts and invisible when empty, because the
    ledger is withheld until there is something worth a row and a link that appeared

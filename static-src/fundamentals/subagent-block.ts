@@ -1,38 +1,46 @@
 // ---------------------------------------------------------------------------
-// Fundamental: the delegated-work card — a SUBAGENT's or a WORKFLOW STEP's box.
+// Fundamental: the delegated-work boxes — a SUBAGENT's card, and the CONTAINER a
+// pipeline puts over its stages.
 //
-// A delegate's blocks (text / thinking / tool_use) carry its agent_subtask_id;
-// composition groups them and renders into `.body` via the same block
-// dispatcher as the main transcript, so one card serves both delegate kinds.
+// TWO BUILDERS, because the two stopped being one component with a flag:
 //
-// Four regions: header / tail / body / footer, and only the body is disclosed.
+//   - `buildSubagentCard` is a LEAF, and it renders NONE of its delegate's
+//     output. That output is the delegate's PAGE (`subagent-view.ts`), reached
+//     through the foot's link, exactly as a workflow run's steps are the run
+//     tab's. So the card is not a disclosure: an identity row, a rolling tail
+//     while it works, and a foot that states the result.
+//   - `buildSubagentContainer` is a pipeline over its stages, and its body holds
+//     THEIR cards. It keeps the disclosure (collapsed by default: the expanded
+//     state is worth nothing at the moment N stages all start at once) and shows
+//     activity dots rather than a tail — its stages carry their own rings, and a
+//     tail over cards would fold a whole stage into one glued line. The
+//     disclosure is WITHDRAWN while that body is empty: a driver that dispatched
+//     no stage has nothing to reveal, and its box is kept only so a failed
+//     dispatch stays visible.
 //
-//   - COLLAPSED BY DEFAULT, ALWAYS (running and settled). Expanding on settle
-//     is what a reader wants to read; expanding while running wastes the state
-//     on the moment N delegates all stream at once.
-//   - THE TAIL (last few lines, rolling) answers "which are progressing" while
-//     collapsed+running. Lives outside the disclosure so it survives folding;
-//     removed on settle.
-//   - THE FOOTER reuses turn-footer.ts: a delegate has an outcome, duration,
-//     changed files and command/read counts, same as a turn.
+// THE TAIL (last few lines, rolling) answers "which are progressing" while a
+// delegate works, and is removed on settle, when the footer is the card's last
+// word. It is PUSHED IN through `setTail` by `subagent-tail.ts`, which derives it
+// from the store; it used to be harvested off this card's own rendered body with
+// a MutationObserver, and there is no body to harvest.
 //
-// TWO VARIANTS (see SubagentActivity): a LEAF spins its identity glyph — the
-// card IS the work. A CONTAINER (a pipeline over its stages) keeps its glyph,
-// shows activity dots while collapsed, and carries no tail — its stages
-// already spin, and a tail would fold a whole stage into one glued line.
-//
-// This card is transcript-only. A delegate also has its own PAGE
-// (`subagent-view.ts`) built on the shared `exec-view/` surface; the footer's
-// `.subagent-open` link is the door between them.
+// THE FOOT reuses turn-footer.ts: a delegate has an outcome, duration, changed
+// files and command/read counts, same as a turn.
 //
 // The header slot carries ONE mark and no status word, same vocabulary as a tool
 // card: the agent identity glyph tinted green for a success, and for a failure
 // that glyph is REPLACED by the shared silhouette (`icons.ts` `outcomeIcon`), so
 // hue is never the only channel. `applyIcon` depends on the `tool-icon` class for
 // the `.tool-icon.is-*` tint selectors. It does not route through
-// `applyOutcome` (tool-card.ts) because this card owns its own identity glyph and
-// spinner; what IS shared is the glyph set, which is what keeps the two from
-// drifting apart.
+// `applyOutcome` (tool-card.ts) because these boxes own their identity glyph and
+// spinner; what IS shared is the glyph set, which keeps the two from drifting.
+//
+// ACCESSIBILITY. The mark is decorative, so the state is announced as an
+// `.sr-only` word beside the name — the pair `tabs.ts` uses for a tab's dot. It
+// replaced an `aria-label` on the header, which a screen reader ignores on the
+// card, whose header is a plain `div` now that it discloses nothing. The foot's
+// link is named for its delegate rather than "Open", because after the drop it is
+// the ONLY way to that delegate's output and a transcript holds many of them.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
@@ -43,7 +51,6 @@ import { iconEl } from "../icon-el.js";
 import { chevronEl } from "../chevron.js";
 import { ICON_TAB_AGENT, ICON_EXTERNAL, outcomeIcon } from "../icons.js";
 import { CHROME_ATTR } from "../chrome-attr.js";
-import { CHUNK_ENTER_ATTR } from "../smd-renderer.js";
 import {
   buildTurnFooter,
   updateTurnFooter,
@@ -51,75 +58,11 @@ import {
   type TurnSummaryData,
 } from "./turn-footer.js";
 
-/** How many trailing lines the tail shows. */
-const TAIL_LINES = 3;
-
-/** One block's text as lines: element boundaries become spaces, whitespace runs
- *  collapse, newlines in the block's own text split it further.
- *
- *  A CHROME subtree contributes its boundary and no text — the tail keeps the
- *  delegate's output and its tools' claim lines, minus UI text about the UI.
- *
- *  A PER-CHUNK WRAPPER IS NOT A BOUNDARY: `smd-renderer.ts` wraps each streamed
- *  emission in its own span, so a space there lands inside a word. */
-function blockLines(node: Node): string[] {
-  const parts: string[] = [];
-  const walk = (n: Node): void => {
-    if (n.nodeType === Node.TEXT_NODE) {
-      parts.push(n.nodeValue ?? "");
-      return;
-    }
-    if (n.nodeType === Node.ELEMENT_NODE && (n as Element).hasAttribute(CHROME_ATTR)) {
-      parts.push(" ");
-      return;
-    }
-    if (n.nodeType === Node.ELEMENT_NODE && (n as Element).hasAttribute(CHUNK_ENTER_ATTR)) {
-      n.childNodes.forEach(walk);
-      return;
-    }
-    parts.push(" ");
-    n.childNodes.forEach(walk);
-    parts.push(" ");
-  };
-  walk(node);
-  return parts
-    .join("")
-    .split("\n")
-    .map((l) => l.replace(/\s+/gu, " ").trim())
-    .filter((l) => l !== "");
-}
-
-/** The delegate's trailing progress lines, oldest first.
- *
- *  A line is a BLOCK, not a text node: `body.textContent.split("\n")` cannot
- *  answer this, because the body holds rendered blocks whose `textContent`
- *  carries no separators between them — the old whole-body read collapsed to
- *  one glued line and clipped to the beginning instead of the tail.
- *
- *  Walks backwards from the last block and stops once it has enough, so cost
- *  is the tail rather than the whole transcript — this runs on every
- *  animation frame while the delegate streams. */
-function tailLines(body: HTMLElement, want: number): string[] {
-  const out: string[] = [];
-  const kids = body.childNodes;
-  for (let i = kids.length - 1; i >= 0 && out.length < want; i--) {
-    const child = kids[i];
-    if (child === undefined) {
-      continue;
-    }
-    const lines = blockLines(child);
-    out.unshift(...lines.slice(Math.max(0, lines.length - (want - out.length))));
-  }
-  return out;
-}
-
-/** A mounted delegated-work card plus its imperative handle. */
-export interface SubagentView {
+/** What both delegated-work boxes answer to. */
+export interface SubagentBox {
   /** The `.subagent-block` root to insert into the DOM. */
   readonly root: HTMLDivElement;
-  /** The container the composition renders the delegate's child blocks into. */
-  readonly body: HTMLElement;
-  /** Update the header status glyph; on settle, drop the tail for good. */
+  /** Update the header status glyph and the announced state word. */
   setStatus(status: ToolStatus): void;
   /** Update the delegate's display name. */
   setName(name: string): void;
@@ -132,15 +75,19 @@ export interface SubagentView {
   setSummary(d: TurnSummaryData): void;
 }
 
-/** How a card reports that work is happening.
- *
- *  `spinner`: the leaf, the card IS the work, so its identity glyph becomes a
- *  ring. `container`: a card whose body holds other delegate cards that each
- *  carry their own ring — a pipeline over its stages. It keeps its glyph and
- *  shows activity dots instead, only while collapsed: a second ring beside
- *  the children's is a duplicate signal at a different rate (0.6s vs the tool
- *  card's 0.8s), and expanded the children's rings are already on screen. */
-export type SubagentActivity = "spinner" | "container";
+/** One delegate's card. No body: its output is on its own page. */
+export interface SubagentCard extends SubagentBox {
+  /** Replace the rolling tail, oldest line first, capped by its producer
+   *  (`subagent-tail.ts`). A no-op once the delegate has settled and the tail is
+   *  gone. */
+  setTail(lines: readonly string[]): void;
+}
+
+/** A PIPELINE's container. Its `body` hosts its stages' own cards. */
+export interface SubagentContainer extends SubagentBox {
+  /** The container the composition renders this pipeline's stage cards into. */
+  readonly body: HTMLElement;
+}
 
 /** The way to this delegate's own page, injected because a `fundamentals/`
  *  view must not import the feature module that owns tabs. `href` makes it a
@@ -151,13 +98,13 @@ export interface SubagentOpener {
   open: () => void;
 }
 
-export interface SubagentOptions {
-  /** Default `spinner`. See SubagentActivity. */
-  activity?: SubagentActivity;
-  /** The footer's link to this delegate's page. Absent = no link — the right
-   *  answer for a pipeline CONTAINER, since opening a stage's page already
-   *  shows the whole pipeline as a tree. */
+export interface SubagentCardOptions {
+  /** The foot's link to this delegate's page. Absent = no link, which is what a
+   *  delegate with no chat to open it in gets. */
   open?: SubagentOpener;
+}
+
+export interface SubagentContainerOptions {
   /** Fired when the disclosure flips; composition keys its open-container
    *  bookkeeping on ids this view never learns. */
   onOpenChange?: (open: boolean) => void;
@@ -166,13 +113,8 @@ export interface SubagentOptions {
   startOpen?: boolean;
 }
 
-/** The footer's link to this delegate's own page. A real anchor with a click
- *  handler over it, mirroring `run-card.ts`'s `.run-open`.
- *
- *  NOT in the header: it is `role="button"` (carries the disclosure's
- *  activation + `aria-expanded`), so an `<a href>` inside it is axe's
- *  `nested-interactive` — `aria-hidden` + `tabindex="-1"` does not clear it,
- *  since such an element is still focusable by click and script. */
+/** The foot's link to this delegate's own page. A real anchor with a click
+ *  handler over it, mirroring `run-card.ts`'s `.run-open`. */
 function buildOpenLink(opener: SubagentOpener): HTMLAnchorElement {
   const link = el(
     "a",
@@ -191,83 +133,192 @@ function buildOpenLink(opener: SubagentOpener): HTMLAnchorElement {
   return link;
 }
 
-/** Build a delegated-work card. Collapsed unless `startOpen` says otherwise. */
-export function buildSubagentBlock(
+/** The identity row, the foot and the four setters that write them; each builder
+ *  adds its own middle region between them. */
+interface Shell {
+  root: HTMLDivElement;
+  header: HTMLDivElement;
+  foot: HTMLDivElement;
+  box: SubagentBox;
+}
+
+function buildShell(
   name: string,
   status: ToolStatus,
-  opts: SubagentOptions = {},
-): SubagentView {
-  const isContainer = opts.activity === "container";
-  const startOpen = opts.startOpen ?? false;
-  // Built in its FULL form, chevron and affordance class included, and
-  // `syncDisclosure` below takes the control away when there is nothing to reveal —
-  // the shape `buildToolCard` and `refreshToolDisclosure` already have.
-  const root = el("div", { className: "subagent-block has-disclosure" }) as HTMLDivElement;
-  root.classList.toggle("collapsed", !startOpen);
-  if (isContainer) {
-    root.classList.add("subagent-container");
-  }
-
+  isContainer: boolean,
+  opener?: SubagentOpener,
+): Shell {
+  const root = el("div", { className: "subagent-block" }) as HTMLDivElement;
   // `tool-icon` is what the `.tool-icon.is-*` tint selectors match against:
   // without it a settled delegate keeps the running accent forever.
   const icon = el("span", { className: "subagent-icon tool-icon" });
   const nameEl = el("span", { className: "subagent-name" }, name);
-  // A span, not a button: the header is `role="button"` and carries the
-  // disclosure's activation, so a `<button>` chevron inside it is axe's
-  // `nested-interactive` (aria-hidden + tabindex="-1" does not clear it).
-  const chevron = el("span", { className: "subagent-toggle", "aria-hidden": "true" }, chevronEl());
-  // Container's busy indicator: three dots shown only while collapsed+running
-  // (14-tools.css, same gate as the tail).
-  const busy = isContainer
-    ? el(
-        "span",
-        { className: "subagent-busy activity-dots", "aria-hidden": "true" },
-        el("span", { className: "activity-dot" }),
-        el("span", { className: "activity-dot" }),
-        el("span", { className: "activity-dot" }),
-      )
-    : null;
+  const stateEl = el("span", { className: "sr-only" });
   const header = el(
     "div",
-    { className: "subagent-header", role: "button", tabindex: "0", [CHROME_ATTR]: "" },
+    { className: "subagent-header", [CHROME_ATTR]: "" },
     icon,
     nameEl,
-    ...(busy === null ? [] : [busy]),
-    chevron,
+    stateEl,
   ) as HTMLDivElement;
 
-  // Rolling activity tail while running, outside the disclosure so it
-  // survives the collapsed state. A CONTAINER gets none: its children's DOM
-  // carries no newlines for `blockLines` to split on, so a stage would fold
-  // into one glued line — the dots already say busy.
-  const tail = isContainer
-    ? null
-    : el("div", { className: "subagent-tail", "aria-hidden": "true", [CHROME_ATTR]: "" });
-
-  const body = el("div", { className: "subagent-body" });
-
-  // --- foot ------------------------------------------------------------------
   // Ledger + this delegate's page link (right-aligned), created eagerly since
   // `setSummary` withholds the footer until there is something to show.
-  const openLink = opts.open === undefined ? null : buildOpenLink(opts.open);
+  const openLink = opener === undefined ? null : buildOpenLink(opener);
   const foot = el(
     "div",
     { className: "subagent-foot", [CHROME_ATTR]: "" },
     ...(openLink === null ? [] : [openLink]),
   ) as HTMLDivElement;
+  root.append(header, foot);
 
-  root.append(header, ...(tail === null ? [] : [tail]), body, foot);
+  let footer: HTMLDivElement | null = null;
+  let lastSummary: TurnSummaryData = {};
+  let iconSvg = ICON_TAB_AGENT;
+  let lastStatus = status;
 
+  const applyIcon = (s: ToolStatus): void => {
+    const failed = s === "failed";
+    const active = isToolActive(s);
+    icon.classList.toggle("is-fail", failed);
+    icon.classList.toggle("is-ok", !failed && !active);
+    icon.classList.toggle("is-running", active);
+    root.classList.toggle("running", active);
+    // ONE mark, and its SHAPE is what changes. A CARD empties the slot while active so
+    // CSS can spin it as a ring; a CONTAINER keeps its identity glyph for the whole run,
+    // because its stages carry the rings. On settle the glyph stands for a success
+    // (tinted green by `.tool-icon.is-ok`) and is REPLACED by the shared failure
+    // silhouette otherwise — same set as every other outcome surface.
+    const ring = active && !isContainer;
+    icon.classList.toggle("subagent-spinner", ring);
+    icon.replaceChildren(
+      ...(ring ? [] : [iconEl(failed && !active ? outcomeIcon("fail") : iconSvg)]),
+    );
+    stateEl.textContent = failed ? "failed" : active ? "running" : "succeeded";
+  };
+
+  const refreshLinkName = (): void => {
+    openLink?.setAttribute("aria-label", `Open ${nameEl.textContent}`);
+  };
+  applyIcon(status);
+  refreshLinkName();
+
+  return {
+    root,
+    header,
+    foot,
+    box: {
+      root,
+      setStatus(s: ToolStatus): void {
+        lastStatus = s;
+        applyIcon(s);
+      },
+      setName(n: string): void {
+        nameEl.textContent = n;
+        refreshLinkName();
+      },
+      setIcon(svg: string): void {
+        if (svg === iconSvg) {
+          return;
+        }
+        iconSvg = svg;
+        applyIcon(lastStatus);
+      },
+      setSummary(d: TurnSummaryData): void {
+        lastSummary = d;
+        if (!hasTurnSummary(d)) {
+          return;
+        }
+        if (footer === null) {
+          footer = buildTurnFooter(d);
+          footer.classList.add("subagent-footer");
+          // Prepended so the ledger leads and the open link stays right-aligned.
+          foot.prepend(footer);
+        }
+        updateTurnFooter(footer, lastSummary);
+      },
+    },
+  };
+}
+
+/** Build one delegate's card: identity row, rolling tail, foot. */
+export function buildSubagentCard(
+  name: string,
+  status: ToolStatus,
+  opts: SubagentCardOptions = {},
+): SubagentCard {
+  const shell = buildShell(name, status, false, opts.open);
+  // Between the header and the foot, and outside nothing: this card has no
+  // disclosure for the tail to sit outside of.
+  const tail = el("div", { className: "subagent-tail", "aria-hidden": "true", [CHROME_ATTR]: "" });
+  shell.root.insertBefore(tail, shell.foot);
+  let live = isToolActive(status);
+  if (!live) {
+    tail.remove();
+  }
+  return {
+    ...shell.box,
+    setStatus(s: ToolStatus): void {
+      shell.box.setStatus(s);
+      // Settled: the tail's job is done and the footer takes over. Removed rather
+      // than hidden, and `live` is what stops a late tail write putting it back.
+      if (live && !isToolActive(s)) {
+        live = false;
+        tail.remove();
+      }
+    },
+    setTail(lines: readonly string[]): void {
+      if (!live) {
+        return;
+      }
+      tail.replaceChildren(...lines.map((l) => el("div", { className: "subagent-tail-line" }, l)));
+    },
+  };
+}
+
+/** Build a pipeline's container: identity row with activity dots, a disclosed
+ *  body for its stages, foot. Collapsed unless `startOpen` says otherwise. */
+export function buildSubagentContainer(
+  name: string,
+  status: ToolStatus,
+  opts: SubagentContainerOptions = {},
+): SubagentContainer {
+  const shell = buildShell(name, status, true);
+  const startOpen = opts.startOpen ?? false;
+  // Built in its FULL form, chevron and affordance class included, and
+  // `syncDisclosure` below takes the control away when there is nothing to reveal —
+  // the shape `buildToolCard` and `refreshToolDisclosure` already have.
+  shell.root.classList.add("subagent-container", "has-disclosure");
+  shell.root.classList.toggle("collapsed", !startOpen);
+  // A span, not a button: the header is `role="button"` and carries the
+  // disclosure's activation, so a `<button>` chevron inside it is axe's
+  // `nested-interactive` (aria-hidden + tabindex="-1" does not clear it).
+  const chevron = el("span", { className: "subagent-toggle", "aria-hidden": "true" }, chevronEl());
+  shell.header.append(
+    // Shown only while collapsed+running (14-tools.css): open, the stages' own
+    // rings are on screen.
+    el(
+      "span",
+      { className: "subagent-busy activity-dots", "aria-hidden": "true" },
+      el("span", { className: "activity-dot" }),
+      el("span", { className: "activity-dot" }),
+      el("span", { className: "activity-dot" }),
+    ),
+    chevron,
+  );
+  shell.header.setAttribute("role", "button");
+  shell.header.setAttribute("tabindex", "0");
+  const body = el("div", { className: "subagent-body" });
+  shell.root.insertBefore(body, shell.foot);
   const onToggle = (open: boolean): void => {
-    root.classList.toggle("collapsed", !open);
+    shell.root.classList.toggle("collapsed", !open);
     opts.onOpenChange?.(open);
   };
-  let ctl = createDisclosure(header, body, { open: startOpen, onToggle });
+  let ctl = createDisclosure(shell.header, body, { open: startOpen, onToggle });
   let wired = true;
   let pendingAutoOpen = false;
-  // A failed delegate opens on its own: the header can only say THAT it
-  // failed, and the reason is the reader's next question. A user toggle
-  // outranks it.
+  // A failed pipeline opens on its own: the header can only say THAT a stage
+  // failed, and which one is the reader's next question. A user toggle outranks it.
   let userToggled = false;
   const markToggled = (e: Event): void => {
     if (e instanceof KeyboardEvent && e.key !== "Enter" && e.key !== " ") {
@@ -275,44 +326,42 @@ export function buildSubagentBlock(
     }
     // A header whose trigger is withdrawn toggles nothing, so a click on it is not
     // the reader taking over — reading it as one would suppress the auto-open the
-    // body's first block is about to earn.
+    // body's first stage is about to earn.
     if (!wired) {
       return;
     }
     userToggled = true;
   };
-  header.addEventListener("click", markToggled);
-  header.addEventListener("keydown", markToggled);
+  shell.header.addEventListener("click", markToggled);
+  shell.header.addEventListener("keydown", markToggled);
 
   /** The disclosure's ONE writer, mirroring `tool-card.ts`'s `refreshToolDisclosure`.
    *  An EMPTY body gets the primitive's region-only mode — the third use of it here,
-   *  after `tool-group.ts` — so the header keeps its text, its glyph and its name and
-   *  loses the control: no `aria-expanded` over an empty region, no tab stop, no
-   *  chevron. `role="group"` rather than no role at all, because `applyIcon` writes
-   *  the outcome into the header's `aria-label` and a name on a roleless div reaches
-   *  no assistive technology. */
+   *  after `tool-group.ts` — so the header keeps its glyph, its name and its state
+   *  word and loses the control: no `aria-expanded` over an empty region, no tab
+   *  stop, no chevron. It ends up the plain div a CARD's header already is, which is
+   *  the right answer for a header that discloses nothing. */
   const syncDisclosure = (): void => {
     const populated = body.firstElementChild !== null;
     if (populated !== wired) {
       wired = populated;
       ctl.dispose();
       if (populated) {
-        // Re-created rather than re-wired, and `role` goes first or the primitive
-        // leaves the group's in place. `aria-controls` survives the swap because the
-        // primitive assigns `region.id` only when it is empty.
-        header.removeAttribute("role");
-        ctl = createDisclosure(header, body, { open: startOpen, onToggle });
-        header.appendChild(chevron);
-        root.classList.add("has-disclosure");
-        root.classList.toggle("collapsed", !startOpen);
+        // Re-created rather than re-wired; the primitive re-installs `role` and
+        // `tabindex` because the withdrawal took both away. `aria-controls` survives
+        // the swap because the primitive assigns `region.id` only when it is empty.
+        ctl = createDisclosure(shell.header, body, { open: startOpen, onToggle });
+        shell.header.appendChild(chevron);
+        shell.root.classList.add("has-disclosure");
+        shell.root.classList.toggle("collapsed", !startOpen);
       } else {
-        header.removeAttribute("aria-expanded");
-        header.removeAttribute("aria-controls");
-        header.removeAttribute("tabindex");
-        header.setAttribute("role", "group");
+        shell.header.removeAttribute("aria-expanded");
+        shell.header.removeAttribute("aria-controls");
+        shell.header.removeAttribute("tabindex");
+        shell.header.removeAttribute("role");
         chevron.remove();
-        root.classList.add("collapsed");
-        root.classList.remove("has-disclosure");
+        shell.root.classList.add("collapsed");
+        shell.root.classList.remove("has-disclosure");
         ctl = createDisclosure(null, body, { open: false });
       }
     }
@@ -325,7 +374,7 @@ export function buildSubagentBlock(
   /** The failure auto-open, and the one place it can be refused. An empty body has no
    *  chevron to close it again, so opening it strands the region — the refusal
    *  `expandToolDetails` makes on a bare tool card, for the same reason. The ask is
-   *  HELD instead, and applied when the body gains its first child. */
+   *  HELD instead, and applied when the body gains its first stage. */
   const openBody = (): void => {
     if (body.firstElementChild === null) {
       pendingAutoOpen = true;
@@ -338,116 +387,24 @@ export function buildSubagentBlock(
     openBody();
   }
   // A MICROTASK, not the observer, decides the box built empty: the pass that builds
-  // it fills it synchronously or never will (`messages-blocks.ts` placeBlock takes
-  // the container first and then routes the block), and a microtask runs before the
-  // frame is painted — so the withdrawal is invisible where a task-late wiring would
-  // pop the chevron in on every box in the transcript.
+  // it fills it synchronously or never will (`messages-blocks.ts` pipelineBoxFor
+  // takes the container first and then routes its stages), and a microtask runs
+  // before the frame is painted — so the withdrawal is invisible where a task-late
+  // wiring would pop the chevron in on every box in the transcript.
   queueMicrotask(syncDisclosure);
-  // The observer covers the rest of the card's life. Its own rather than a job on the
-  // tail's: that one is leaf-only, watches `characterData` and `subtree`, and is
-  // disconnected on settle, while this must outlive settle — a leaf's first block can
-  // arrive after its status frame.
+  // The observer covers the rest of the container's life: a stage can arrive after
+  // the driver's status frame, and `pipelineBoxFor` re-parents a promoted stage into
+  // a body that was empty when it was built.
   new MutationObserver(syncDisclosure).observe(body, { childList: true });
 
-  // Mirrors the body's trailing text via MutationObserver rather than a
-  // second data feed — the body already receives every progress form.
-  // rAF-coalesced so a burst of streaming mutations repaints once per frame.
-  let tailScheduled = false;
-  const observer =
-    tail === null
-      ? null
-      : new MutationObserver(() => {
-          if (tailScheduled) {
-            return;
-          }
-          tailScheduled = true;
-          requestAnimationFrame(() => {
-            tailScheduled = false;
-            tail.replaceChildren(
-              ...tailLines(body, TAIL_LINES).map((l) =>
-                el("div", { className: "subagent-tail-line" }, l),
-              ),
-            );
-          });
-        });
-  observer?.observe(body, { childList: true, characterData: true, subtree: true });
-
-  // Footer attached lazily on the first summary worth showing, after the
-  // body so it reads as the card's last word regardless of open state.
-  let footer: HTMLDivElement | null = null;
-  let lastSummary: TurnSummaryData = {};
-
-  let iconSvg = ICON_TAB_AGENT;
-  let lastStatus = status;
-  const applyIcon = (s: ToolStatus): void => {
-    const failed = s === "failed";
-    const active = isToolActive(s);
-    icon.classList.toggle("is-fail", failed);
-    icon.classList.toggle("is-ok", !failed && !active);
-    icon.classList.toggle("is-running", active);
-    root.classList.toggle("running", active);
-    // ONE mark, and its SHAPE is what changes. A LEAF empties the slot while
-    // active so CSS can spin it as a ring; a CONTAINER keeps its identity glyph
-    // for the whole run, because its stages carry the rings. On settle the
-    // identity glyph stands for a success (tinted green by `.tool-icon.is-ok`)
-    // and is REPLACED by the shared failure silhouette otherwise — same set as
-    // every other outcome surface, so hue is never the only channel.
-    if (active && !isContainer) {
-      icon.classList.add("subagent-spinner");
-      icon.replaceChildren();
-    } else if (active) {
-      icon.classList.remove("subagent-spinner");
-      icon.replaceChildren(iconEl(iconSvg));
-    } else {
-      icon.classList.remove("subagent-spinner");
-      icon.replaceChildren(iconEl(failed ? outcomeIcon("fail") : iconSvg));
-    }
-    header.setAttribute(
-      "aria-label",
-      `${nameEl.textContent}, ${failed ? "failed" : active ? "running" : "succeeded"}`,
-    );
-  };
-  applyIcon(status);
-
   return {
-    root,
+    ...shell.box,
     body,
     setStatus(s: ToolStatus): void {
-      lastStatus = s;
-      applyIcon(s);
+      shell.box.setStatus(s);
       if (s === "failed" && !userToggled) {
         openBody();
       }
-      // Settled: the tail's job is done and the footer takes over. Removed
-      // rather than hidden — the observer would otherwise keep repainting a
-      // region nothing shows.
-      if (!isToolActive(s)) {
-        observer?.disconnect();
-        tail?.remove();
-      }
-    },
-    setName(n: string): void {
-      nameEl.textContent = n;
-    },
-    setIcon(svg: string): void {
-      if (svg === iconSvg) {
-        return;
-      }
-      iconSvg = svg;
-      applyIcon(lastStatus);
-    },
-    setSummary(d: TurnSummaryData): void {
-      lastSummary = d;
-      if (!hasTurnSummary(d)) {
-        return;
-      }
-      if (footer === null) {
-        footer = buildTurnFooter(d);
-        footer.classList.add("subagent-footer");
-        // Prepended so the ledger leads and the open link stays right-aligned.
-        foot.prepend(footer);
-      }
-      updateTurnFooter(footer, lastSummary);
     },
   };
 }

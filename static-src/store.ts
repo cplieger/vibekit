@@ -24,7 +24,8 @@ import type {
 import type { TurnOutcome } from "./wire/types.gen.js";
 import type { ClassifiedRunStatus } from "./run-status.js";
 import { severityOf } from "./turn-severity.js";
-import { parseStepSubtask } from "./step-subtask.js";
+import { isSubagentInvocation } from "./tool-schema.js";
+import { isStepSubtask, parseStepSubtask } from "./step-subtask.js";
 import {
   signal,
   computed,
@@ -152,12 +153,51 @@ function scheduleMessages(chatID: string, cause: RenderCause, msgID?: string): v
 
 /** The cheap cause for a frame the transcript renders NOTHING for, or `shape`.
  *
- *  Keyed on the PARSE, because that is what `messages-blocks.ts` `isDroppedStep` drops on:
- *  the `wf:` PREFIX is a wider set whose other shapes reach the delegate-box fallback and
- *  DO render, so treating one as dropped would leave its box unmounted. A dropped block
- *  needs no structural work, so the arms below take `chunk`. */
+ *  The STAMP alone answers it, because `messages-blocks.ts` `placeBlock` drops every
+ *  DELEGATED block — a workflow step's and a subagent's alike — and keeps only the card.
+ *  It used to have to parse the `wf:` shape, since a malformed one fell through to an
+ *  inline delegate box that DID render; that box renders nothing now, so the distinction
+ *  went with it. A dropped block needs no structural work, hence `chunk`. */
 function droppedFrameCause(subtaskID: string): RenderCause {
-  return parseStepSubtask(subtaskID) !== null ? "chunk" : "shape";
+  return subtaskID === "" ? "shape" : "chunk";
+}
+
+/** The cause for a block arriving for the FIRST time, where the two dropped kinds part.
+ *
+ *  A SUBAGENT's first block SEATS its card, which is structural work, and it is the only
+ *  thing that will: a delegate with no invocation call — a malformed `wf:` id is one — gets
+ *  no pass scheduled on its behalf anywhere else, and a cheap cause would leave it with no
+ *  card and so no route to its output. A WORKFLOW STEP stays cheap because it seats nothing
+ *  ever; its card is the RUN's, created by the launch call.
+ *
+ *  Once per block, not per delta, so the streaming path this exists to keep cheap is
+ *  untouched. */
+function newBlockCause(subtaskID: string): RenderCause {
+  // Keyed on the PARSE, not the `wf:` prefix: a MALFORMED step id does not parse, falls to
+  // the delegate path, and therefore needs its card seated like any other delegate's.
+  if (subtaskID === "" || parseStepSubtask(subtaskID) === null) {
+    return "shape";
+  }
+  return "chunk";
+}
+
+/** The same question for a TOOL CALL. Two arms need the full pass, and both are arrivals
+ *  that can SEAT a card rather than draw output:
+ *
+ *  A delegate's INVOCATION, which is what guarantees the pass its card is seated on. And a
+ *  `wf:` id that does not PARSE, which is not a step at all: the dispatcher takes its
+ *  delegate fallback for one, so the arrival is structural. Kept to those two so a
+ *  delegate's ordinary member calls — the many — stay cheap, since those draw nothing and
+ *  reach the card's footer through its own tool-call signal. */
+function droppedCallCause(call: ToolCall): RenderCause {
+  const subtask = call.agent_subtask_id ?? "";
+  if (isSubagentInvocation(call)) {
+    return "shape";
+  }
+  if (isStepSubtask(subtask) && parseStepSubtask(subtask) === null) {
+    return "shape";
+  }
+  return droppedFrameCause(subtask);
 }
 
 // --- Model context sizes ---
@@ -1586,9 +1626,10 @@ export function appendChunk(
     scheduleMessages(chatID, "shape");
     return;
   }
-  // A WORKFLOW STEP's blocks are DROPPED by the dispatcher: nothing to mount, nothing to
-  // re-type, so a delta for one needs no structural pass.
-  const stepCause = droppedFrameCause(subtaskID);
+  // A DELEGATE's blocks are DROPPED by the dispatcher, a subagent's and a workflow step's
+  // alike: nothing to mount, nothing to re-type, so a delta for one needs no structural
+  // pass. Its card's rolling tail reads the store directly (`subagent-tail.ts`).
+  const dropCause = droppedFrameCause(subtaskID);
   if (refusalStamped) {
     // Message-level FACT changed: the refusal feeds deriveOutcome and its callout mounts on a
     // full pass.
@@ -1597,7 +1638,7 @@ export function appendChunk(
   if (newBlock || padRepaired) {
     // A new block pushed, or a pad's guessed kind corrected: only the full pass mounts or
     // re-types a block.
-    scheduleMessages(chatID, stepCause);
+    scheduleMessages(chatID, newBlockCause(subtaskID));
   }
   // Fine-grained first — only the block at blockIndex re-renders — then the per-message signal.
   const blockK = blockKey(messageID, blockIndex);
@@ -1623,8 +1664,8 @@ export function appendChunk(
       scheduleMessages(chatID, "chunk");
     } else if (blockSig === undefined && mounted) {
       // Signal-absent fallback: the mounted sink is re-read by the full pass — unless nothing
-      // is MEANT to be drawn, which is a dropped step.
-      scheduleMessages(chatID, stepCause);
+      // is MEANT to be drawn, which is a delegate's block.
+      scheduleMessages(chatID, dropCause);
     }
   } else {
     const sig = streamingTextSigs.get(messageID);
@@ -1633,7 +1674,7 @@ export function appendChunk(
       scheduleMessages(chatID, "chunk");
     } else if (blockSig === undefined && mounted) {
       // Signal-absent fallback, as above.
-      scheduleMessages(chatID, stepCause);
+      scheduleMessages(chatID, dropCause);
     }
   }
 }
@@ -1704,9 +1745,10 @@ export function upsertToolCall(
   msg.blocks ??= [];
   // The existing-message arms take the cheap cause for a call the transcript draws nothing
   // for; the `msg === undefined` arm above deliberately does not. No card is mounted for a
-  // step's call, so `ensureToolCallSig` is never reached for one and every
-  // `tool_call_update` for every step falls into the signal-absent arm at the foot.
-  const stepCause = droppedFrameCause(call.agent_subtask_id ?? "");
+  // delegate's own call — only for its INVOCATION, which `droppedCallCause` excepts — so
+  // `ensureToolCallSig` is never reached for one and every `tool_call_update` for every
+  // delegated call falls into the signal-absent arm at the foot.
+  const dropCause = droppedCallCause(call);
   const tcIdx = msg.tool_calls.findIndex((tc) => tc.id === call.id);
   if (tcIdx === -1) {
     msg.tool_calls.push(call);
@@ -1725,9 +1767,9 @@ export function upsertToolCall(
         ...subtaskField(call.agent_subtask_id),
       };
     }
-    // `stepCause` decides the pass: a drawn call needs the full one that mounts its card, a
-    // dropped step's needs none.
-    scheduleMessages(chatID, stepCause);
+    // `dropCause` decides the pass: a drawn call needs the full one that mounts its card,
+    // a delegate's own needs none.
+    scheduleMessages(chatID, dropCause);
     return;
   }
   const prev = msg.tool_calls[tcIdx];
@@ -1743,7 +1785,7 @@ export function upsertToolCall(
     if (blk !== undefined) {
       Object.assign(blk, subtaskField(call.agent_subtask_id));
     }
-    scheduleMessages(chatID, stepCause);
+    scheduleMessages(chatID, dropCause);
   }
   if (nonEmptyStr(call.workflow_id) && !nonEmptyStr(prev?.workflow_id)) {
     scheduleMessages(chatID, "fact");
@@ -1872,9 +1914,9 @@ function republishToolCall(chatID: string, messageID: string, call: ToolCall): v
     scheduleMessages(chatID, "tool", messageID);
   } else {
     // Signal-absent fallback: nothing is mounted for this card, so the full pass puts its
-    // update on screen — unless nothing is MEANT to be, which is a dropped step. Read off
-    // the call itself, so the two callers cannot disagree about it either.
-    scheduleMessages(chatID, droppedFrameCause(call.agent_subtask_id ?? ""));
+    // update on screen — unless nothing is MEANT to be, which is a delegate's own call.
+    // Read off the call itself, so the two callers cannot disagree about it either.
+    scheduleMessages(chatID, droppedCallCause(call));
   }
 }
 

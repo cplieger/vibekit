@@ -22,9 +22,18 @@ vi.mock("../git.js", () => ({
   markGitDirty: (paths?: readonly string[]) => mockMarkGitDirty(paths),
 }));
 
-const mockIsRepoMutatingKind = vi.fn(() => false);
+// `vi.hoisted`, not a plain const: `store.ts` imports a VALUE from this module now, so the
+// factory is resolved during linking rather than lazily, and a hoisted factory that closes
+// over an ordinary top-level binding reads it before initialisation.
+const { mockIsRepoMutatingKind } = vi.hoisted(() => ({
+  mockIsRepoMutatingKind: vi.fn(() => false),
+}));
 vi.mock("../tool-schema.js", () => ({
   isRepoMutatingKind: mockIsRepoMutatingKind,
+  // Stubbed rather than present-but-undefined: `store.ts` CALLS this on the tool_call_update
+  // path these tests drive, to decide whether an arrival is structural. No fixture here is a
+  // delegate, so `false` is the honest answer and keeps the real title table out of the test.
+  isSubagentInvocation: () => false,
 }));
 
 // Capture SSE handlers via shared helper.

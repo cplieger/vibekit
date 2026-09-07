@@ -70,7 +70,7 @@ function tick(): Promise<void> {
 function invocation(subtaskID: string, status: ToolStatus, id = `tc-${subtaskID}`): ToolCall {
   return {
     id,
-    // One of the four titles `roles.ts` `isSubagentInvocation` accepts. The dot
+    // One of the four titles `tool-schema.ts` `isSubagentInvocation` accepts. The dot
     // resolves through that predicate, so a nested call of the same delegate must
     // not be mistaken for its invocation.
     title: "Sub-agent: introspect",

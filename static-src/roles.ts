@@ -270,31 +270,6 @@ export function iconForSubagent(name: string): string {
   }
 }
 
-/** The tool call that OPENS a subagent (vs. one of its nested tool calls).
- *  Matched by title only — the nested calls share the same agent_subtask_id
- *  but never carry these invocation titles.
- *
- *  `Orchestrate Sub-agent` is deliberately NOT in this list; it is the PIPELINE
- *  driver's title (messages-blocks.ts `isPipelineInvocation`), and one title with
- *  two owners is the overlap that makes a classification unpredictable. It was
- *  here on the assumption that a pipeline launch carries a subtask id, and it
- *  never has: measured across 36 live chat files, every one of those calls has
- *  `agent_subtask_id` null, so this arm could not fire.
- *
- *  Here rather than in messages-blocks.ts because THREE surfaces now ask it: the
- *  transcript's dispatcher, the tab factory (which needs a delegate's label for a
- *  restored tab), and the subagent page. That module reaches the whole transcript
- *  stack, so the two that are not it could not import from it. */
-export function isSubagentInvocation(tc: ToolCall): boolean {
-  const t = tc.title;
-  return (
-    t === "invokeSubAgent" ||
-    t === "invoke_sub_agent" ||
-    t === "Sub-agent execution" ||
-    t.startsWith("Sub-agent:")
-  );
-}
-
 /** The raw subagent id from the invocation tool's input (e.g. "introspect",
  *  "context-gatherer"), or "" when the input carries none. Keys the header
  *  icon (iconForSubagent above); subagentLabel humanizes the same value. */
