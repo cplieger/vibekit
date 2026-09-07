@@ -665,11 +665,20 @@ function wireToggle(el: HTMLElement, buildBody: () => void): void {
  *  is visible without a click). The chevron follows from the `aria-expanded`
  *  the controller writes; a card without wired details is a no-op.
  *
+ *  A BARE card is refused, and the refusal lives here rather than at each caller
+ *  because a bare card has no chevron to close the region with again: opening one
+ *  strands it. `messages-blocks.ts` restores a dropped card's open state from a
+ *  persisted flag that outlives the chevron, so a caller-side gate would have to
+ *  be remembered by every force-open written later.
+ *
  *  The body is built BEFORE the open, for the reason `wireToggle`'s own listener
  *  is registered early: the controller measures the region to animate it. It also
  *  makes the output readable to the caller straight after — the failure path
  *  offers "Explain this error" from `.tool-output`'s text. */
 export function expandToolDetails(card: HTMLElement): void {
+  if (card.querySelector(".tool-disclosure") === null) {
+    return;
+  }
   detailBuilders.get(card)?.();
   detailCtls.get(card)?.open();
 }
@@ -717,6 +726,10 @@ export function refreshToolDisclosure(card: HTMLElement): void {
   detailCtls.get(card)?.close();
   const toggle = card.querySelector<HTMLElement>(".tool-disclosure");
   if (toggle !== null) {
+    // A reader tabbed onto this chevron when the call settles empty loses focus to
+    // <body>. Accepted: the summary is a plain div with no tabindex, so the only
+    // alternative target is one invented for this, and the card would then answer
+    // a Tab from somewhere the reader never put it.
     detachedToggles.set(card, toggle);
     toggle.remove();
   }

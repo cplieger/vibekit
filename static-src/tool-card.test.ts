@@ -940,6 +940,20 @@ describe("a card with nothing to disclose", () => {
     card.remove();
   });
 
+  it("refuses a FORCE-open, which is the door a persisted flag comes back through", () => {
+    // `messages-blocks.ts` re-opens a card the reader had open before a window drop
+    // from a `tool:<id>` flag that outlives the chevron, so the refusal has to be
+    // `expandToolDetails`'s own: opened here, the region would be stranded with no
+    // chevron to close it and no later frame to correct a settled call.
+    const card = bareCard("bare-force");
+    document.body.appendChild(card);
+
+    expandToolDetails(card);
+
+    expect(card.querySelector(".tool-details")?.getAttribute("aria-hidden")).toBe("true");
+    card.remove();
+  });
+
   it("keeps the chevron when the call DID produce output", () => {
     const card = buildToolCard({
       id: "bare-out",
