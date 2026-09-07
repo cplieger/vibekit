@@ -10,6 +10,8 @@
 
 import type { Message, EventKind } from "./types.js";
 import { el } from "@cplieger/reactive";
+import { chevronEl } from "./chevron.js";
+import { renderMarkdownInto } from "./markdown.js";
 
 // ---------------------------------------------------------------------------
 // Event render strategy (exhaustive over EventKind via satisfies)
@@ -138,15 +140,11 @@ export function buildEvent(m: Message): HTMLElement | null {
     if (strategy.kind === "boundary") {
       const content = m.content ?? "";
       const label = strategy.labelFn ? strategy.labelFn(content) : strategy.defaultLabel;
-      const divider = buildBoundaryDivider(strategy.boundary, strategy.icon, label);
-      // Compaction carries the conversation summary in the event content.
-      // Surface it as a collapsible disclosure below the marker (reusing the
-      // reasoning-block styling) instead of dropping it, matching the IDE's
-      // "Conversation summary" affordance.
+      // Compaction is the one kind whose content is a payload, not a reason.
       if (m.event_kind === "compacted" && content !== "") {
-        return wrapWithSummary(divider, content);
+        return buildCompactionBreak(strategy.icon, label, content);
       }
-      return divider;
+      return buildBoundaryDivider(strategy.boundary, strategy.icon, label);
     }
     // "skip" — cancelled produces no visible element
   }
@@ -168,16 +166,35 @@ function buildBoundaryDivider(kind: BoundaryKind, icon: string, label: string): 
   return node;
 }
 
-/** Stack a compaction boundary above a collapsible "Conversation summary"
- *  disclosure. Reuses the reasoning-block/summary/body classes so no new CSS
- *  is needed; the wrapper is a plain block container. */
-function wrapWithSummary(divider: HTMLElement, summary: string): HTMLElement {
-  const wrap = el("div", { className: "boundary-with-summary" });
-  const details = el("details", { className: "reasoning-block compaction-summary" });
-  details.appendChild(el("summary", { className: "reasoning-summary" }, "Conversation summary"));
-  details.appendChild(el("blockquote", { className: "reasoning-body" }, summary));
-  wrap.append(divider, details);
-  return wrap;
+/** The compaction break: two dashed rules with the marker and its collapsible
+ *  summary between them.
+ *
+ *  The body renders on FIRST OPEN — a summary runs to 16 KB of markdown, and
+ *  `::details-content` skips layout and paint but not CONSTRUCTION. */
+function buildCompactionBreak(icon: string, label: string, summary: string): HTMLElement {
+  const root = el("details", { className: "compaction" }) as HTMLDetailsElement;
+  // `.message assistant` is the app's markdown-prose skin (editor-markdown.ts).
+  const body = el("div", { className: "compaction-body message assistant" });
+  root.append(
+    el(
+      "summary",
+      { className: "compaction-head" },
+      el("span", { className: "compaction-icon" }, icon),
+      el("span", { className: "compaction-label" }, label),
+      el("span", { className: "compaction-note" }, "· summary"),
+      chevronEl(),
+    ),
+    body,
+  );
+  let rendered = false;
+  root.addEventListener("toggle", () => {
+    if (!root.open || rendered) {
+      return;
+    }
+    rendered = true;
+    renderMarkdownInto(body, summary);
+  });
+  return root;
 }
 
 export function buildSystemFallback(m: Message): HTMLElement {

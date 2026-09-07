@@ -920,6 +920,77 @@
   color: var(--c-accent);
 }
 
+/* The compaction break. A FRAME rather than `.boundary`'s one centred rule,
+ * because this kind holds a disclosure between the rules. */
+.compaction {
+  margin: var(--sp-4) 0;
+  border-block: 1px dashed var(--c-border);
+  color: var(--c-text-tertiary);
+  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
+}
+
+/* `list-style: none` for `.reasoning-summary`'s reason: the native marker would
+ * paint beside the real chevron. `flex-wrap` is the narrow-width valve. */
+.compaction-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--fs-sm);
+  transition: color var(--dur-micro) var(--ease-standard);
+}
+
+.compaction-head:hover {
+  color: var(--c-text-primary);
+}
+
+.compaction-icon {
+  flex-shrink: 0;
+  color: var(--c-accent);
+  font-size: 1.1em;
+}
+
+.compaction-label {
+  font-style: italic;
+}
+
+.compaction-note {
+  font-size: var(--fs-xs);
+  font-style: normal;
+}
+
+.compaction-head > .disclosure-chevron {
+  --chev-size: 0.75rem;
+}
+
+.compaction[open] .compaction-head > .disclosure-chevron {
+  --chev-turn: 0deg;
+}
+
+/* The slide, in `.reasoning-block::details-content`'s shape; the reasoning there. */
+.compaction::details-content {
+  overflow: clip;
+  block-size: 0;
+  transition:
+    block-size var(--dur-standard) var(--ease-standard),
+    content-visibility var(--dur-standard) allow-discrete;
+}
+
+.compaction[open]::details-content {
+  block-size: auto;
+}
+
+/* NO INLINE PADDING, per `.message`: an inset would put this prose right of every
+ * other block in the card. Block-end only, for air above the rule. */
+.compaction-body {
+  padding: 0 0 var(--sp-3);
+}
+
 /* Banner stack: persistent per-chat banners on the chat toolbar's own row.
  * AN OVERLAY, NOT A BAND IN FLOW: in flow it reserved height, and the region the
  * transcript vacated painted the `body` canvas, which read as a hard box past the

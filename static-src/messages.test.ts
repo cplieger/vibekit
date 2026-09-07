@@ -42,6 +42,8 @@ vi.mock("./store.js", () => ({
 vi.mock("./linkify.js", () => ({ linkifyPaths: vi.fn() }));
 vi.mock("./code-blocks.js", () => ({ setShellRunCallback: vi.fn() }));
 vi.mock("./permission.js", () => ({ buildPermissionCard: vi.fn() }));
+// Unmocked it links `svg-block.js` against the partial `code-blocks.js` mock above.
+vi.mock("./markdown.js", () => ({ renderMarkdownInto: vi.fn() }));
 
 const { EVENT_RENDER_MAP } = await import("./messages-events.js");
 
