@@ -56,19 +56,9 @@ const (
 	RunNodeStatusSkipped   RunNodeStatus = "skipped"
 )
 
-// Terminal reports whether the node has settled. Unknown values stay active so
-// a producer addition cannot be mistaken for a node that never started.
-func (s RunNodeStatus) Terminal() bool {
-	switch s {
-	case RunNodeStatusCompleted, RunNodeStatusFailed, RunNodeStatusAborted, RunNodeStatusSkipped:
-		return true
-	case RunNodeStatusPending, RunNodeStatusRunning, RunNodeStatusPaused:
-		return false
-	}
-	return false
-}
-
-// Active reports whether the node must still be treated as live.
-func (s RunNodeStatus) Active() bool {
-	return !s.Terminal()
-}
+// The node vocabulary deliberately carries NO Terminal/Active predicate, unlike
+// RunStatus. Nothing folds a node status that way: production compares two of these
+// constants directly (paused, running) and the client's exec view owns the fold onto
+// its own presentation states. The constants exist for the census, which asserts this
+// declaration against KAS's own enum; a predicate with no consumer would be surface
+// the census cannot justify.

@@ -127,13 +127,16 @@ func probeIdentity(ctx context.Context, cliPath func() string, env func() []stri
 	if err != nil {
 		return "", fmt.Errorf("parse whoami: %w", err)
 	}
-	return identityFingerprint(info), nil
+	return identityFingerprint(&info), nil
 }
 
 // identityFingerprint hashes the allowlisted identity fields, and ONLY those, so a
 // field upstream adds cannot silently start retiring bridges. An identity with none
 // of them fingerprints as absent.
-func identityFingerprint(info WhoamiResponse) string {
+// Takes a pointer because the struct is 112 bytes and this is a read-only hash;
+// gocritic's hugeParam is the mechanical line, and every caller has an addressable
+// value to hand.
+func identityFingerprint(info *WhoamiResponse) string {
 	if info.Email == "" && info.AccountType == "" && info.StartURL == "" && info.Region == "" {
 		return ""
 	}

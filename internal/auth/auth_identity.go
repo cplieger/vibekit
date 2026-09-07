@@ -192,7 +192,7 @@ func (h *Handler) readIdentity(ctx context.Context) WhoamiResponse {
 	// vibekit could not READ must not read as an account change, or a kiro-cli
 	// that timed out would retire every live bridge. A signed-out answer IS an
 	// answer, so it is observed.
-	h.registrar.Observe(identityFingerprint(info))
+	h.registrar.Observe(identityFingerprint(&info))
 	return info
 }
 
