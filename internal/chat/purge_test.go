@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -401,4 +402,35 @@ func TestPurgeExpired_WiresTheStoresHooksIntoTheService(t *testing.T) {
 			t.Errorf("a chat the live predicate claims is open was purged: %v", err)
 		}
 	})
+}
+
+func TestPurge_TombstonesChatID(t *testing.T) {
+	s, _ := newTestStore(t)
+	if err := s.Mutate(t.Context(), "c-purged", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "old chat"
+		return true
+	}); err != nil {
+		t.Fatalf("Mutate(setup) = %v, want nil", err)
+	}
+	c, ok := s.Get(t.Context(), "c-purged")
+	if !ok {
+		t.Fatal("Get(setup) did not find chat")
+	}
+	c.UpdatedAt = time.Now().Add(-2 * time.Hour).UnixMilli()
+	if err := s.writeChat("c-purged", c); err != nil {
+		t.Fatalf("writeChat(setup) = %v, want nil", err)
+	}
+
+	s.purgeExpired(t.Context(), time.Hour)
+
+	err := s.Mutate(t.Context(), "c-purged", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "ghost"
+		return true
+	})
+	if !errors.Is(err, ErrTombstoned) {
+		t.Errorf("Mutate(after purge) = %v, want ErrTombstoned", err)
+	}
+	if _, ok := s.Get(t.Context(), "c-purged"); ok {
+		t.Error("purged chat was resurrected during the tombstone window")
+	}
 }

@@ -54,7 +54,8 @@ type Turn struct {
 	// an operation a different mutex and a different wake channel.
 	lc *chatLifecycle
 	// done is closed once, at finalize.
-	done chan struct{}
+	done      chan struct{}
+	reapTimer *time.Timer
 	// Opened is when the turn began, and the only source of its elapsed time.
 	Opened time.Time
 	// Model is the model answering, captured at open for every source.
@@ -71,7 +72,12 @@ type Turn struct {
 	Credits CreditBaseline
 	// NeedSeq is the read loop position a LOCAL settle of this turn must wait for:
 	// where the session/prompt response arrived. Zero means no settle is waiting.
-	NeedSeq uint64
+	NeedSeq      uint64
+	reapArmedSeq uint64
+	reapArmedGen uint64
+	// reapArmID names the newest reap arm; an expiry carrying an older id is a stale
+	// timer whose Stop lost the race and must not act.
+	reapArmID uint64
 	// needGen is the forward generation NeedSeq belongs to: a position minted
 	// against one bridge means nothing against the next.
 	needGen uint64
@@ -289,6 +295,7 @@ func (r *turnRegistry) claimEpoch(ctx context.Context, chatID vibekit.ChatID, ep
 // claimLocked moves the chat into turnFinalizing for t. Caller holds mu and has
 // established that t is live.
 func (lc *chatLifecycle) claimLocked(t *Turn) *Turn {
+	lc.stopReapLocked(t)
 	lc.setStateLocked(turnFinalizing)
 	return t
 }

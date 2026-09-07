@@ -257,6 +257,16 @@ describe("renderMarkdown edge cases (table-driven)", () => {
       input: "[click](JAVASCRIPT:alert(1))",
       expected: /href="#"/,
     },
+    {
+      name: "javascript: link in angle brackets blocked",
+      input: "[click](<javascript:alert(1)>)",
+      expected: /href="#"/,
+    },
+    {
+      name: "angle-bracketed link with a space is unwrapped",
+      input: "[click](<https://example.com/a b>)",
+      expected: /href="https:\/\/example\.com\/a b"/,
+    },
     { name: "data: link blocked", input: "[click](data:text/html,<script>)", expected: /href="#"/ },
     { name: "vbscript: link blocked", input: "[click](vbscript:msgbox)", expected: /href="#"/ },
     { name: "file: link blocked", input: "[click](file:///etc/passwd)", expected: /href="#"/ },
@@ -1228,14 +1238,16 @@ describe("renderMarkdown angle autolinks", () => {
       expected: `<p>${A} href="mailto:a@b.com">mailto:a@b.com</a></p>`,
     },
     {
-      name: "any scheme, not just http",
+      // The parser recognises the autolink; the scheme gate refuses the URL, so
+      // the anchor renders with the text typed and a dead href.
+      name: "an off-allowlist scheme keeps its text and loses its href",
       input: "<ftp://e.com/x>",
-      expected: `<p>${A} href="ftp://e.com/x">ftp://e.com/x</a></p>`,
+      expected: `<p>${A} href="#">ftp://e.com/x</a></p>`,
     },
     {
       name: "a scheme with digits, plus, dot and dash",
       input: "<my-scheme+v1.0:x>",
-      expected: `<p>${A} href="my-scheme+v1.0:x">my-scheme+v1.0:x</a></p>`,
+      expected: `<p>${A} href="#">my-scheme+v1.0:x</a></p>`,
     },
     {
       name: "an autolink in a heading",

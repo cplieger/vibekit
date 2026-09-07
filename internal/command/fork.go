@@ -4,7 +4,8 @@ package command
 // and then diverges. A rewind edits the conversation you are in (rewind.go);
 // a tangent keeps it and opens another beside it.
 //
-// Two paths, and only their fidelity differs — the tangent opens either way.
+// Two creation paths differ only in fidelity. Both require the parent
+// record to survive until the tangent is minted.
 //
 //   - Fork (primary): one `session/fork` on the parent's live session; KAS
 //     returns a new session id carrying the parent's actual context, and the
@@ -60,11 +61,6 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 		return nil, err
 	}
 
-	parent, ok := chats.Get(ctx, p.ParentChatID)
-	if !ok {
-		return nil, StatusError(http.StatusNotFound, errForkParentUnknown)
-	}
-
 	// Read the ledger before session/fork: a retry that already produced a
 	// chat must not ask KAS to fork again. A READ rather than the
 	// coordinator's resolve, because the fork round trip must not happen
@@ -89,7 +85,7 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 			// this finishes that. Open is idempotent, so the ordinary
 			// replay costs one scan and emits nothing.
 			var opened ChatOpened
-			opened, err = mem.CreateChatAndOpen(ctx, forkCreate(p, chatID, parent, c.ACPSessionID))
+			opened, err = mem.CreateChatAndOpen(ctx, forkCreate(p, "", c, c.ACPSessionID))
 			if err != nil {
 				return nil, err
 			}
@@ -100,6 +96,11 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 		}
 		// The op was recorded but its chat is not there: the first attempt
 		// reserved the id and then failed. Fall through and fork for real.
+	}
+
+	parent, ok := chats.Get(ctx, p.ParentChatID)
+	if !ok {
+		return nil, StatusError(http.StatusNotFound, errForkParentUnknown)
 	}
 
 	// The parent's model and mode ride along so the tangent's answers come
@@ -146,9 +147,10 @@ func forkOutcomeOf(sessionID string) string {
 // read as a tangent; a parent with no open tab promotes it to top level.
 func forkCreate(p vibekit.ForkChatCommand, chatID vibekit.ChatID, parent *vibekit.Chat, sessionID string) ChatCreate {
 	return ChatCreate{
-		OpID:       p.OpID,
-		ChatID:     chatID,
-		ParentChat: p.ParentChatID,
+		OpID:        p.OpID,
+		ChatID:      chatID,
+		RequireChat: p.ParentChatID,
+		ParentChat:  p.ParentChatID,
 		Init: func(c *vibekit.Chat) {
 			c.Name = vibekit.DefaultChatName
 			c.Model = parent.Model

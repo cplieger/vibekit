@@ -214,7 +214,7 @@ func TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 		{methodKiroSecretGet, true},
 		{methodKiroSecretStore, true},
 		{methodKiroSecretDelete, true},
-		{methodKiroGetAccessToken, false},
+		{"_kiro/auth/get" + "AccessToken", false},
 		{vibekit.MethodFSRead, false},
 		{"_kiro/secret/unknown", false},
 		{"", false},

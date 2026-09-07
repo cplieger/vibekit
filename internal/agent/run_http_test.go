@@ -614,11 +614,11 @@ func stepTargetInspect(t *testing.T, workflowID, nodeID string) json.RawMessage 
 	raw, err := json.Marshal(map[string]any{
 		"workflowId": workflowID,
 		"state": map[string]any{
-			"status": runStatusPaused,
+			"status": string(vibekit.RunStatusPaused),
 			"root": map[string]any{
-				"nodeId": "root", "type": "sequence", "status": runStatusPaused,
+				"nodeId": "root", "type": "sequence", "status": string(vibekit.RunStatusPaused),
 				"children": []any{map[string]any{
-					"nodeId": nodeID, "type": stepNodeType, "status": runStatusPaused,
+					"nodeId": nodeID, "type": stepNodeType, "status": string(vibekit.RunStatusPaused),
 				}},
 			},
 		},
@@ -711,15 +711,15 @@ func TestSetStepStatus_WithholdsAMistargetedWrite(t *testing.T) {
 		raw, err := json.Marshal(map[string]any{
 			"workflowId": "wf_1",
 			"state": map[string]any{
-				"status": runStatusPaused,
+				"status": string(vibekit.RunStatusPaused),
 				"root": map[string]any{
-					"nodeId": "fan", "type": "parallel", "status": runStatusPaused,
+					"nodeId": "fan", "type": "parallel", "status": string(vibekit.RunStatusPaused),
 					"children": []any{
 						map[string]any{
-							"nodeId": "verify", "type": stepNodeType, "status": runStatusPaused,
+							"nodeId": "verify", "type": stepNodeType, "status": string(vibekit.RunStatusPaused),
 						},
 						map[string]any{
-							"nodeId": "plan", "type": stepNodeType, "status": runStatusPaused,
+							"nodeId": "plan", "type": stepNodeType, "status": string(vibekit.RunStatusPaused),
 							"completionSignal": needInputSignal,
 						},
 					},

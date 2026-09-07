@@ -120,7 +120,7 @@ func (*surfaceBridge) PromptGeneration() uint64                         { return
 func TestReportPromptFailure_MarksTheFrameTurnScoped(t *testing.T) {
 	deps := newSurfaceDeps()
 	reportPromptFailure(t.Context(), promptRolesOf(deps), "c1", 7,
-		errors.New("connection reset"), time.Second)
+		errors.New("connection reset"), time.Second, false)
 
 	got := deps.onlyError(t)
 	if got.Code != vibekit.ErrCodePromptFailed {

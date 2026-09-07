@@ -150,7 +150,7 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time, maxAge time.Durat
 		m.Unlock()
 		return purgeKept, refTime.Add(maxAge)
 	}
-	if err := os.Remove(entry.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := s.store.Remove(vibekit.ChatID(entry.name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		m.Unlock()
 		slog.Warn("chat purge: remove", "chat_id", entry.name, "error", err)
 		return purgeErr, time.Time{}

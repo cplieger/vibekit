@@ -35,6 +35,9 @@ var (
 	// errAlreadyAnswered is the 409 for a decision another surface settled
 	// first. A code rather than prose: the client keys off it.
 	errAlreadyAnswered = errors.New("already_answered")
+	// errPermissionOptionNotOffered rejects a choice absent from the request, without
+	// echoing either identifier.
+	errPermissionOptionNotOffered = errors.New("option_not_offered")
 	// errChatNotCreated is the 409 for a chat absent after a Mutate that
 	// reported no error — a client-supplied id naming a tombstoned chat.
 	errChatNotCreated = errors.New("chat could not be created")

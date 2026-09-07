@@ -221,7 +221,11 @@ type kasWorkflowRuns struct {
 // kasWorkflowRun is one run as _kiro/workflow/list reports it.
 type kasWorkflowRun struct {
 	WorkflowID string `json:"workflowId"`
-	Name       string `json:"name"`
+	// Name is the DISPLAY name, `runLabel ?? workflowName` upstream, so it is the
+	// recipe only until something stamps a label. Never key a recipe on it.
+	Name string `json:"name"`
+	// WorkflowName is the RECIPE, and the only field a per-recipe decision may read.
+	WorkflowName string `json:"workflowName"`
 	// Status is RUN-level, unlike the step sessions' status, which is always idle.
 	Status    string `json:"status"`
 	CreatedAt string `json:"createdAt"`
@@ -262,12 +266,13 @@ func (rs *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun)
 		// Attributed through the chain, so a chat that has since changed session resolves.
 		parentChatID := string(claimed[r.ParentSessionID])
 		out = append(out, vibekit.WorkflowRun{
-			WorkflowID: r.WorkflowID,
-			Name:       r.Name,
-			Status:     r.Status,
-			CreatedAt:  parseKASTime(r.CreatedAt),
-			UpdatedAt:  parseKASTime(r.UpdatedAt),
-			StartedAt:  parseKASTime(r.StartedAt),
+			WorkflowID:   r.WorkflowID,
+			Name:         r.Name,
+			WorkflowName: r.WorkflowName,
+			Status:       vibekit.RunStatus(r.Status),
+			CreatedAt:    parseKASTime(r.CreatedAt),
+			UpdatedAt:    parseKASTime(r.UpdatedAt),
+			StartedAt:    parseKASTime(r.StartedAt),
 			// The launching chat, empty for a manual or scheduled run. The client reads
 			// it for the row's nesting, the outcome glyph and the Retry affordance.
 			ParentChatID: parentChatID,

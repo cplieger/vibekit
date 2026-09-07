@@ -11,6 +11,7 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/durable"
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -54,11 +55,14 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID vibek
 	}
 }
 
+const maxCompactionDetailBytes = 200
+
 // handleCompactionFailed persists a compaction-failed event and broadcasts
 // a typed error to the client.
 func (t *Translator) handleCompactionFailed(ctx context.Context, chatID vibekit.ChatID, errMsg string) {
-	errMsg = cmp.Or(errMsg, "compaction failed")
-	evt := t.newEventMessage(vibekit.EventCompactFailed, errMsg)
+	detail := cmp.Or(errMsg, "compaction failed")
+	detail = runesafe.SanitizeSingleLineBounded(detail, maxCompactionDetailBytes)
+	evt := t.newEventMessage(vibekit.EventCompactFailed, detail)
 	err := t.chats.AppendMessage(durable.Context(ctx), chatID, &evt)
 	if errors.Is(err, chat.ErrTombstoned) {
 		return
@@ -68,6 +72,9 @@ func (t *Translator) handleCompactionFailed(ctx context.Context, chatID vibekit.
 	}
 	// Turn-scoped: deriveTurnOutcome grades a turn holding this event as failed.
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
-		Code: vibekit.ErrCodeCompactionFailed, Message: errMsg, TurnScoped: true,
+		Code: vibekit.ErrCodeCompactionFailed, Message: detail, TurnScoped: true,
 	}))
+	// A compaction failure does not prove the turn ended, so the host is told rather
+	// than the turn being closed here: it bounds the silence before it interrupts.
+	t.turnInterrupt.CompactionFailed(chatID, detail)
 }

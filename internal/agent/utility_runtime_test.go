@@ -333,10 +333,8 @@ func TestUtilityPrompt_IncrementsPromptCount(t *testing.T) {
 	}
 }
 
-// TestAnswerUtilityHostRequest verifies the utility bridge ANSWERS the v3
-// (KAS) host-mediated peer requests (auth token + shell type) rather than
-// ignoring them. Regression guard: forwardUtility used to drop peer
-// requests, which on v3 stalls session/new and hangs every UtilityPrompt.
+// TestAnswerUtilityHostRequest verifies the utility bridge answers the shell
+// type request rather than leaving session creation blocked.
 func TestAnswerUtilityHostRequest(t *testing.T) {
 	t.Run("shell_type answered with bash", func(t *testing.T) {
 		rb := newRespondingBridge()
@@ -350,41 +348,6 @@ func TestAnswerUtilityHostRequest(t *testing.T) {
 		m, ok := rb.response.result.(map[string]any)
 		if !ok || m["shellType"] != "bash" {
 			t.Errorf("shell_type result = %v, want map{shellType: bash}", rb.response.result)
-		}
-	})
-
-	t.Run("getAccessToken answered even when no token source", func(t *testing.T) {
-		rb := newRespondingBridge()
-		id := int64(9)
-		(&utilitySession{}).answerHostRequest(rb, &vibekit.RPCResponse{ID: &id, Method: methodKiroGetAccessToken})
-		rb.respMu.Lock()
-		defer rb.respMu.Unlock()
-		// Answered as a JSON-RPC error (no source wired) — never dropped.
-		if rb.response.id != id {
-			t.Fatalf("auth request not answered: got id %d, want %d", rb.response.id, id)
-		}
-		if rb.response.err == nil {
-			t.Errorf("expected an error result when no token source is wired")
-		}
-	})
-
-	t.Run("getAccessToken forwards the wired source's result", func(t *testing.T) {
-		rb := newRespondingBridge()
-		id := int64(11)
-		us := &utilitySession{hooks: utilitySessionHooks{
-			tokenSource: func(context.Context) (map[string]any, error) {
-				return map[string]any{"accessToken": "tok", "expiresAt": "2027-01-01T00:00:00Z"}, nil
-			},
-		}}
-		us.answerHostRequest(rb, &vibekit.RPCResponse{ID: &id, Method: methodKiroGetAccessToken})
-		rb.respMu.Lock()
-		defer rb.respMu.Unlock()
-		if rb.response.id != id {
-			t.Fatalf("auth request not answered: got id %d, want %d", rb.response.id, id)
-		}
-		m, ok := rb.response.result.(map[string]any)
-		if !ok || m["accessToken"] != "tok" {
-			t.Errorf("result = %v, want the source's token map", rb.response.result)
 		}
 	})
 }
@@ -816,6 +779,7 @@ func TestAnswerHostRequest_DeniesToolRequests(t *testing.T) {
 		{method: vibekit.MethodFSRead, wantErr: true},
 		{method: vibekit.MethodFSWrite, wantErr: true},
 		{method: "terminal/create", wantErr: true},
+		{method: "_kiro/auth/get" + "AccessToken", wantErr: true},
 		{method: "_kiro/some/future_request", wantErr: true},
 		// The security property D69 bought, asserted where a regression would
 		// land: executeHook asks vibekit to run a shell command a hook FILE

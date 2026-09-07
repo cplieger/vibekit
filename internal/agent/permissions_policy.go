@@ -20,9 +20,8 @@ import (
 const policyCallTimeout = 45 * time.Second
 
 // buildUtility is the lease's constructor, handed to it at wiring time. It
-// lives here rather than inside the lease because of what it CLOSES OVER: two
-// Settings hooks and the token source, all of which point back into runtime
-// services while those same services lease the utility runtime.
+// lives here because it closes over Settings hooks that point back into runtime
+// services while those services lease the utility runtime.
 func (rt *Runtime) buildUtility() *utilityRuntime {
 	return newUtilityRuntime(
 		rt.lifecycle.shutdownCtx, rt.bridge.factory, rt.Models,
@@ -41,7 +40,6 @@ func (rt *Runtime) buildUtility() *utilityRuntime {
 			presets: func(ctx context.Context) []string {
 				return securityPresets(ctx, rt.lifecycle.configDir)
 			},
-			tokenSource: rt.inbound.kiroAccessTokenResult,
 		},
 		rt.secrets,
 		true, // enableHooks

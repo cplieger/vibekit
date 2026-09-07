@@ -26,6 +26,9 @@ func TestStubDeps_Contract(t *testing.T) {
 	if d.TurnFoldTarget(ctx, "c1", vibekit.TurnSourceWireTurnStart) == nil {
 		t.Error("TurnFoldTarget returned nil")
 	}
+	if _, ok := d.OpenTurnBuffer("no-such-chat"); ok {
+		t.Error("OpenTurnBuffer(no-such-chat) reported an open turn")
+	}
 	d.RecordFromDiffs("c1", nil, 0, "")
 
 	// MCPRecorder must be non-nil.

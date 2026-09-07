@@ -38,6 +38,13 @@ type BridgeCoordinator struct {
 	lifecycle   *lifetime
 	// installed later by SetPreBridgeSpawn from the composition root.
 	preBridgeSpawn func(context.Context) `wiring:"optional"`
+	// ensureIdentity confirms the account before a bridge attaches to it, installed
+	// from the composition root once the auth registrar exists. Nil makes direct
+	// package tests explicitly inert.
+	ensureIdentity func(context.Context) `wiring:"optional"`
+	// retireUtility resets the utility session at the same identity boundary as
+	// chat bridges.
+	retireUtility func()
 	// replayProjection is the session/load replay-projection lifecycle. Nil in
 	// tests that do not exercise a load.
 	replayProjection replayProjector
@@ -112,6 +119,7 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 		push:           h.push,
 		mcpRegistry:    h.mcpRegistry,
 		lifecycle:      h.lifecycle,
+		retireUtility:  h.stopUtilityBridge,
 		// h implements replayProjector via load_projection.go.
 		replayProjection: h.replay,
 		chatStatus:       h.bus.chatStatus.Get,
@@ -155,7 +163,15 @@ func resolveAgentEngine() string {
 //
 //nolint:revive // unexported-return: sharedBridge is package-internal; callers within agent use the methods on it. Exporting would leak ACP wiring outside the runtime package.
 func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID vibekit.ChatID, modelOverride string) (*sharedBridge, error) {
+	// Before the fast path: an account switch has to retire the existing bridge
+	// rather than be noticed after this call handed it back.
+	if bc.ensureIdentity != nil {
+		bc.ensureIdentity(ctx)
+	}
 	if sb := bc.bridge.mgr.get(chatID); sb != nil {
+		if bc.bridge.mgr.closeIfRetired(chatID, sb) {
+			return bc.OpenBridge(ctx, chatID, modelOverride)
+		}
 		bc.repairEffort(ctx, chatID, sb)
 		return sb, nil
 	}
@@ -170,6 +186,11 @@ func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID vibekit.Chat
 		return nil, err
 	}
 	b, _ := v.(*sharedBridge)
+	// A retire that landed DURING the spawn: the fresh bridge is already stale, so
+	// it is closed and reopened rather than handed back on the previous account.
+	if bc.bridge.mgr.closeIfRetired(chatID, b) {
+		return bc.OpenBridge(ctx, chatID, modelOverride)
+	}
 	// Wake prompts parked on the admission slot: their answer depends on the
 	// holder's source, and the bridge going live changes it without moving any
 	// registry state.
@@ -243,10 +264,10 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 	// EnableHooks:true opts chat bridges into KAS's v2 hook engine, so workspace
 	// hooks autofire without vibekit serving executeHook.
 	//
-	// Forward MUST drain NotifCh before Start: on v3 the agent sends
-	// _kiro/auth/getAccessToken and _kiro/terminal/shell_type as server->client
-	// REQUESTS on the session-creation path, so attaching Forward after Start
-	// deadlocks every fresh session.
+	// Forward MUST drain NotifCh before Start: the relay owns authentication now,
+	// but _kiro/terminal/shell_type is still a server->client REQUEST on the
+	// session-creation path, so attaching Forward after Start deadlocks every
+	// fresh session.
 	go bc.Forward(chatID, sb.bridge)
 	// Supervised is passed at creation only: KAS persists `autopilot` in its own
 	// session metadata, so session/load need not repeat it.
@@ -273,10 +294,10 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	ctx context.Context, chatID vibekit.ChatID, sb *sharedBridge, acpSessionID, model, effort string,
 ) bool {
 	// Forward attaches BEFORE Start, as on the session/new path: session/load also
-	// blocks on the host answering _kiro/auth/getAccessToken. On load failure the old
-	// bridge is swapped out of sb before it is stopped, so this goroutine's
-	// identity-compared exit cleanup cannot evict the replacement. Open the
-	// projection first: KAS starts replaying inside Start below.
+	// asks for the shell type before it returns. On load failure the old bridge is
+	// swapped out of sb before it is stopped, so this goroutine's identity-compared
+	// exit cleanup cannot evict the replacement. Open the projection first: KAS
+	// starts replaying inside Start below.
 	if bc.replayProjection != nil {
 		bc.replayProjection.OpenReplayProjection(chatID)
 	}
@@ -366,6 +387,9 @@ func applyLoadedSessionFacts(c *vibekit.Chat, facts acpSessionFacts, title strin
 	if mode := facts.CurrentMode(); mode != "" {
 		c.CurrentModeID = mode
 	}
+	// Keeps its own previous set on an absent catalog: ApplyServedModels answers
+	// false for an empty one, so a load that omitted it refuses nothing later.
+	vibekit.ApplyServedModels(c, facts.Catalog())
 	adoptKASTitle(c, title)
 }
 
@@ -373,7 +397,7 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 	newSessionID := bridge.SessionID()
 	newModelID := bridge.ModelID()
 	currentMode := bridge.CurrentMode()
-	served := bridge.ServedModels()
+	catalog := bridge.Catalog()
 	title := bridge.SessionTitle()
 	// The vocabulary this session advertised is a workspace fact, so it goes to the
 	// one holder. Outside the Mutate: holding the chat lock across it would order
@@ -392,7 +416,7 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 			c.Model = string(newModelID)
 		}
 		c.CurrentModeID = currentMode
-		c.ServedModelIDs = served
+		vibekit.ApplyServedModels(c, catalog)
 		adoptKASTitle(c, title)
 		return true
 	}); err != nil {
@@ -446,6 +470,15 @@ func (rt *Runtime) HasOpenTurn(chatID vibekit.ChatID) bool {
 // CloseBridge stops a bridge and removes it from the map.
 func (bc *BridgeCoordinator) CloseBridge(chatID vibekit.ChatID) {
 	bc.bridge.mgr.close(chatID)
+}
+
+// RetireBridges closes idle chat bridges, marks busy chat bridges for their
+// next open, and resets the utility session. Active workflow runs continue.
+func (bc *BridgeCoordinator) RetireBridges(reason string) {
+	closed, marked := bc.bridge.mgr.retireChatBridges()
+	bc.retireUtility()
+	slog.Info("identity changed; retiring live chat bridges",
+		"reason", reason, "closed", closed, "marked", marked)
 }
 
 // replayProjector is the slice of the Runtime's replay-projection lifecycle the
@@ -560,6 +593,10 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID vibekit.C
 
 	history := bc.chatStore.BuildHistory(ctx, source)
 	if history == "" {
+		if sb.primeReason == primeReasonFork {
+			slog.Warn("tangent starts without inherited context",
+				"chat_id", chatID, "history_from", source)
+		}
 		return
 	}
 	prime += history
@@ -1031,6 +1068,13 @@ func (bc *BridgeCoordinator) TurnFoldTarget(ctx context.Context, chatID vibekit.
 		return buffer.New()
 	}
 	return t.Buf
+}
+
+// OpenTurnBuffer returns the chat's open turn buffer without opening one —
+// the read TurnFoldTarget's minting makes unavailable to a caller that must
+// stay side-effect-free on a missing turn.
+func (bc *BridgeCoordinator) OpenTurnBuffer(chatID vibekit.ChatID) (*buffer.Buffer, bool) {
+	return bc.turns.foldTarget(chatID)
 }
 
 // ReviseTurnBinding acts on a frame that PROVES the open turn is the agent's own

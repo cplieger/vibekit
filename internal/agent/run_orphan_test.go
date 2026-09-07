@@ -7,14 +7,26 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/runlease"
+	"github.com/cplieger/vibekit/internal/schedule"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
+// kasRuns builds a workflow/list reply, DEFAULTING `workflowName` to the row's `name`.
+// The real wire always carries both (`{name: runLabel ?? workflowName, workflowName}`), so
+// omitting it would encode a shape the backend never sends. A row setting `workflowName`
+// itself is the labelled case and is left alone.
 func kasRuns(t *testing.T, rows ...map[string]any) json.RawMessage {
 	t.Helper()
+	for _, row := range rows {
+		if _, ok := row["workflowName"]; !ok {
+			row["workflowName"] = row["name"]
+		}
+	}
 	raw, err := json.Marshal(map[string]any{"runs": rows})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
@@ -27,7 +39,7 @@ func kasRuns(t *testing.T, rows ...map[string]any) json.RawMessage {
 // refuses a reply that does not echo the run it asked about: a fixture omitting the id
 // lets every positive case pass against the exact unsafe shape that check rejects — an
 // orphan's pause state while naming some other, live run.
-func inspectReply(t *testing.T, workflowID, status, reason string) json.RawMessage {
+func inspectReply(t *testing.T, workflowID string, status vibekit.RunStatus, reason string) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
 		"workflowId": workflowID,
@@ -42,7 +54,7 @@ func inspectReply(t *testing.T, workflowID, status, reason string) json.RawMessa
 // inspectPaused is the ordinary positive shape: this run, paused, for this reason.
 func inspectPaused(t *testing.T, workflowID, reason string) json.RawMessage {
 	t.Helper()
-	return inspectReply(t, workflowID, runStatusPaused, reason)
+	return inspectReply(t, workflowID, vibekit.RunStatusPaused, reason)
 }
 
 // inspectPausedWithDetail is the shape a pause KAS CLASSIFIED comes back as: the same
@@ -55,7 +67,7 @@ func inspectPausedWithDetail(t *testing.T, workflowID, reason string, d pauseDet
 	raw, err := json.Marshal(map[string]any{
 		"workflowId": workflowID,
 		"state": map[string]any{
-			"status":      runStatusPaused,
+			"status":      vibekit.RunStatusPaused,
 			"pauseReason": reason,
 			"pauseDetail": map[string]any{
 				"class": d.Class, "code": d.Code,
@@ -191,23 +203,23 @@ func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 func TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn(t *testing.T) {
 	for name, tc := range map[string]struct {
 		lease  *runlease.Lease
-		status string
+		status vibekit.RunStatus
 		reason string
 	}{
 		"a TUI-launched run, which has no lease": {
-			lease: nil, status: runStatusPaused, reason: stalePauseReason,
+			lease: nil, status: vibekit.RunStatusPaused, reason: stalePauseReason,
 		},
 		"an agent-launched run, which its chat resumes": {
 			lease:  &runlease.Lease{WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginAgent},
-			status: runStatusPaused, reason: stalePauseReason,
+			status: vibekit.RunStatusPaused, reason: stalePauseReason,
 		},
 		"a run paused by a policy stop": {
 			lease:  &runlease.Lease{WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginManual},
-			status: runStatusPaused, reason: "Maximum iterations reached",
+			status: vibekit.RunStatusPaused, reason: "Maximum iterations reached",
 		},
 		"a run paused by a person on purpose": {
 			lease:  &runlease.Lease{WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginScheduled},
-			status: runStatusPaused, reason: "Paused by user request",
+			status: vibekit.RunStatusPaused, reason: "Paused by user request",
 		},
 		"a run that is still running": {
 			lease:  &runlease.Lease{WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginScheduled},
@@ -262,7 +274,7 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
-			"workflowId": "wf_1", "name": "nightly", "status": runStatusPaused,
+			"workflowId": "wf_1", "name": "nightly", "status": vibekit.RunStatusPaused,
 		}),
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
@@ -295,23 +307,25 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 	}
 }
 
-// TestSweepOrphanedRuns_ReleasesTheLeaseOfARunThatIsOver is bookkeeping rather than the
-// orphan path: there is nothing to cancel, so nothing is recorded. It matters because a
-// lease outliving its run makes the recipe look like vibekit's own business to the
-// admission backstop, which would then spend an inspect on every launch.
-func TestSweepOrphanedRuns_ReleasesTheLeaseOfARunThatIsOver(t *testing.T) {
-	for name, rows := range map[string][]map[string]any{
-		"KAS reports it completed": {{"workflowId": "wf_1", "name": "publish", "status": "completed"}},
-		"KAS does not know it":     {},
+// TestSweepOrphanedRuns_ReleasesTerminalLeasesImmediately is bookkeeping rather than the
+// orphan path: a terminal status in the list is evidence enough, so nothing is cancelled
+// and nothing is recorded. BOTH origins, because the agent exclusion guards the CANCEL
+// only — an agent-origin lease outliving its run holds its launching chat exempt from
+// client eviction until the next boot.
+func TestSweepOrphanedRuns_ReleasesTerminalLeasesImmediately(t *testing.T) {
+	for name, origin := range map[string]runlease.Origin{
+		"manual": runlease.OriginManual,
+		"agent":  runlease.OriginAgent,
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			br.callResults = map[string]json.RawMessage{
-				methodKiroWorkflowList:   kasRuns(t, rows...),
-				methodKiroWorkflowCancel: json.RawMessage(`{}`),
+				methodKiroWorkflowList: kasRuns(t, map[string]any{
+					"workflowId": "wf_1", "name": "publish", "status": "completed",
+				}),
 			}
 			if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
-				WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginManual,
+				WorkflowID: "wf_1", Recipe: "publish", ChatID: "c-live", Origin: origin,
 			}); err != nil {
 				t.Fatalf("Put: %v", err)
 			}
@@ -319,53 +333,181 @@ func TestSweepOrphanedRuns_ReleasesTheLeaseOfARunThatIsOver(t *testing.T) {
 			h.runs.SweepOrphaned(t.Context())
 
 			if _, held := h.runs.lease("wf_1"); held {
-				t.Error("the lease of a finished run survived the sweep")
+				t.Error("a terminal run kept its lease")
+			}
+			if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+				t.Fatal("the bookkeeping arm cancelled a run KAS already reported terminal")
 			}
 			if got := h.runs.endReason("wf_1"); got != "" {
-				t.Errorf("a finished run was recorded as %q; nothing was cancelled", got)
+				t.Errorf("a terminal run was recorded as %q; nothing was cancelled", got)
 			}
 		})
 	}
 }
 
-// TestSweepOrphanedRuns_ReleasesAnAgentOriginLeaseWhoseRunIsOver is the bookkeeping arm
-// applied to the agent origin, and the mechanism behind "terminal runs are absent from
-// GET /api/runs/live". The agent exclusion exists to avoid destroying an agent's work and
-// this arm cancels nothing, so with the exclusion above BOTH arms an agent-origin lease
-// whose terminal frame was missed was permanent — and the lease carries the launching
-// chat, so it held that chat exempt from client eviction forever.
-func TestSweepOrphanedRuns_ReleasesAnAgentOriginLeaseWhoseRunIsOver(t *testing.T) {
-	for name, rows := range map[string][]map[string]any{
-		"KAS reports it completed": {{"workflowId": "wf_1", "name": "publish", "status": "completed"}},
-		"KAS does not know it":     {},
-	} {
-		t.Run(name, func(t *testing.T) {
-			h, _, br := newTestHub()
-			br.callResults = map[string]json.RawMessage{
-				methodKiroWorkflowList:   kasRuns(t, rows...),
-				methodKiroWorkflowCancel: json.RawMessage(`{}`),
-			}
-			if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
-				WorkflowID: "wf_1", Recipe: "publish", ChatID: "c-live", Origin: runlease.OriginAgent,
-			}); err != nil {
-				t.Fatalf("Put: %v", err)
-			}
+// TestSweepOrphanedRuns_AbsenceStartsAClockWithoutReleasing pins the first miss: a run
+// absent from an otherwise successful list keeps its lease.
+func TestSweepOrphanedRuns_AbsenceStartsAClockWithoutReleasing(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
+	br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
+	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
+		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginManual,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
 
-			h.runs.SweepOrphaned(t.Context())
+	h.runs.SweepOrphaned(t.Context())
 
-			if _, held := h.runs.lease("wf_1"); held {
-				t.Error("an agent-origin lease outlived its run; the recipe reads busy and the " +
-					"launching chat stays exempt from eviction until the next boot")
-			}
-			// The exclusion still guards the CANCEL: bookkeeping must not have
-			// turned into an ending.
-			if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
-				t.Fatal("the sweep CANCELLED an agent's run while releasing its lease")
-			}
-			if got := h.runs.endReason("wf_1"); got != "" {
-				t.Errorf("a finished run was recorded as %q; nothing was cancelled", got)
-			}
-		})
+	got, held := h.runs.lease("wf_1")
+	if !held {
+		t.Fatal("an absent run lost its lease without terminal evidence")
+	}
+	if got.FirstAbsentAt.IsZero() {
+		t.Error("an absent run did not start its continuous-absence clock")
+	}
+	if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+		t.Fatal("absence caused a cancel; the backstop is bookkeeping-only")
+	}
+}
+
+// TestRecipeIdle_ReappearanceClearsTheAbsenceClock pins continuity.
+func TestRecipeIdle_ReappearanceClearsTheAbsenceClock(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList: kasRuns(t, map[string]any{
+			"workflowId": "wf_1", "name": "publish", "status": "running",
+		}),
+	}
+	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
+		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginManual,
+		FirstAbsentAt: time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if err := h.runs.recipeIdle(t.Context(), "another-recipe"); err != nil {
+		t.Fatalf("recipeIdle(another-recipe): %v", err)
+	}
+	got, held := h.runs.lease("wf_1")
+	if !held {
+		t.Fatal("a listed live run lost its lease")
+	}
+	if !got.FirstAbsentAt.IsZero() {
+		t.Errorf("FirstAbsentAt = %v after reappearance, want zero", got.FirstAbsentAt)
+	}
+}
+
+// TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome pins
+// the six-hour bookkeeping backstop. No cancel is ever sent on absence.
+func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t *testing.T) {
+	logs := captureLogs(t)
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
+	br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
+
+	st, err := schedule.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("schedule.NewStore: %v", err)
+	}
+	entry := schedule.Entry{
+		ID: "sched-1", Source: "bundled://publish", Enabled: true,
+		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
+	}
+	if err := st.Put(t.Context(), &entry); err != nil {
+		t.Fatalf("Put schedule: %v", err)
+	}
+	h.runs.schedules = st
+	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
+		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginScheduled,
+		ScheduleID: "sched-1", FirstAbsentAt: time.Now().Add(-6 * time.Hour),
+	}); err != nil {
+		t.Fatalf("Put lease: %v", err)
+	}
+
+	h.runs.SweepOrphaned(t.Context())
+
+	if _, held := h.runs.lease("wf_1"); held {
+		t.Error("a lease continuously absent past the budget was not released")
+	}
+	if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+		t.Fatal("the absence backstop cancelled the run")
+	}
+	if out := logs.String(); !strings.Contains(out, `"level":"WARN"`) ||
+		!strings.Contains(out, "no terminal signal was ever seen") {
+		t.Errorf("absence backstop log = %s, want WARN stating no terminal signal was seen", out)
+	}
+	rows := st.List()
+	if len(rows) != 1 {
+		t.Fatalf("schedule rows = %d, want 1", len(rows))
+	}
+	const wantOutcome = "unknown: no terminal signal was seen and the run stayed absent for 6 hours"
+	if rows[0].LastResult != wantOutcome {
+		t.Errorf("schedule outcome = %q, want %q", rows[0].LastResult, wantOutcome)
+	}
+}
+
+// TestSweepOrphanedRuns_InspectUnknownReleasesImmediately pins the definitive
+// per-run answer KAS gives after its stale-run reconciliation.
+func TestSweepOrphanedRuns_InspectUnknownReleasesImmediately(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
+	br.callRPCErrs = map[string]*vibekit.RPCError{
+		methodKiroWorkflowInspect: {
+			Code: -32603, Message: "Internal error",
+			Data: json.RawMessage(`{"details":"workflow not found"}`),
+		},
+	}
+	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
+		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginManual,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	h.runs.SweepOrphaned(t.Context())
+
+	if _, held := h.runs.lease("wf_1"); held {
+		t.Error("inspect confirmed an unknown workflow, but its lease survived")
+	}
+}
+
+// TestSweepOrphanedRuns_InspectFailureStartsTheClock pins the fail-safe branch.
+func TestSweepOrphanedRuns_InspectFailureStartsTheClock(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
+	br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
+	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
+		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginAgent,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	h.runs.SweepOrphaned(t.Context())
+
+	got, held := h.runs.lease("wf_1")
+	if !held || got.FirstAbsentAt.IsZero() {
+		t.Errorf("lease after inspect failure = %+v, held=%v; want held with absence clock", got, held)
+	}
+}
+
+// TestSweepOrphanedRuns_EmptySuccessfulListReleasesNothing pins the original
+// failure at its widest: one short successful reply must not drop every lease.
+func TestSweepOrphanedRuns_EmptySuccessfulListReleasesNothing(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
+	br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
+	for _, id := range []string{"wf_1", "wf_2", "wf_3"} {
+		if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
+			WorkflowID: id, Recipe: "publish", Origin: runlease.OriginManual,
+		}); err != nil {
+			t.Fatalf("Put(%s): %v", id, err)
+		}
+	}
+
+	h.runs.SweepOrphaned(t.Context())
+
+	if got := len(h.runs.leaseStore().List()); got != 3 {
+		t.Errorf("leases after empty successful list = %d, want 3", got)
 	}
 }
 
@@ -402,7 +544,7 @@ func TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
-			"workflowId": "wf_1", "name": "publish", "status": runStatusPaused,
+			"workflowId": "wf_1", "name": "publish", "status": vibekit.RunStatusPaused,
 		}),
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
 	}
@@ -480,7 +622,7 @@ func TestRecipeIdle_ClearsABlockingOrphanAndProceeds(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
-			"workflowId": "wf_old", "name": "publish", "status": runStatusPaused,
+			"workflowId": "wf_old", "name": "publish", "status": vibekit.RunStatusPaused,
 		}),
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_old", stalePauseReason),
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
@@ -503,6 +645,26 @@ func TestRecipeIdle_ClearsABlockingOrphanAndProceeds(t *testing.T) {
 	}
 }
 
+// TestRecipeIdle_RefusesALabelledRunOfTheSameRecipe pins the single-run rule against a run
+// wearing a LABEL, the shape that made the guard fail OPEN. A row's `name` is
+// `runLabel ?? workflowName`, so a labelled run files itself under a string no recipe
+// lookup matches and a second live run was admitted.
+func TestRecipeIdle_RefusesALabelledRunOfTheSameRecipe(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList: kasRuns(t, map[string]any{
+			"workflowId": "wf_live", "status": "running",
+			// The divergence: KAS's watch stamp made the display name
+			// `<recipe>-<targetId>` while the recipe stayed `publish`.
+			"name": "publish-pr-4127", "workflowName": "publish",
+		}),
+	}
+
+	if err := h.runs.recipeIdle(t.Context(), "publish"); err == nil {
+		t.Fatal("admission allowed a second live run of a recipe whose live run wears a label")
+	}
+}
+
 // TestRecipeIdle_StillRefusesEveryBlockingRowItCannotExplain is why admission keeps
 // reading KAS's list rather than the leases: that list is the only thing that sees the two
 // populations vibekit does not launch, so a lease-only admission would make an
@@ -510,15 +672,15 @@ func TestRecipeIdle_ClearsABlockingOrphanAndProceeds(t *testing.T) {
 func TestRecipeIdle_StillRefusesEveryBlockingRowItCannotExplain(t *testing.T) {
 	for name, tc := range map[string]struct {
 		lease  *runlease.Lease
-		status string
+		status vibekit.RunStatus
 		reason string
 	}{
 		"a TUI-launched run, unleased": {
-			lease: nil, status: runStatusPaused, reason: stalePauseReason,
+			lease: nil, status: vibekit.RunStatusPaused, reason: stalePauseReason,
 		},
 		"an agent-launched run": {
 			lease:  &runlease.Lease{WorkflowID: "wf_old", Recipe: "publish", Origin: runlease.OriginAgent},
-			status: runStatusPaused, reason: stalePauseReason,
+			status: vibekit.RunStatusPaused, reason: stalePauseReason,
 		},
 		"a leased run that is still running": {
 			lease:  &runlease.Lease{WorkflowID: "wf_old", Recipe: "publish", Origin: runlease.OriginManual},
@@ -526,7 +688,7 @@ func TestRecipeIdle_StillRefusesEveryBlockingRowItCannotExplain(t *testing.T) {
 		},
 		"a leased run paused on purpose": {
 			lease:  &runlease.Lease{WorkflowID: "wf_old", Recipe: "publish", Origin: runlease.OriginManual},
-			status: runStatusPaused, reason: "Paused by user request",
+			status: vibekit.RunStatusPaused, reason: "Paused by user request",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

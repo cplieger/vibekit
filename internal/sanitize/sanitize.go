@@ -24,7 +24,8 @@
 // There are three, and the surface decides. Output is for MULTI-LINE content a
 // human reads as a transcript — tool output, a shell capture, an export — where
 // newlines and indentation are the meaning, so a hidden rune is DELETED and the
-// ANSI that would repaint a terminal goes with it.
+// ANSI that would repaint a terminal goes with it. Output is total over escape
+// introducers; StripANSI alone preserves incomplete sequences.
 //
 // A SINGLE-LINE surface takes runesafe's SanitizeSingleLineBounded instead, not
 // this package: a banner sentence, an identity row, a permission card's title
@@ -112,13 +113,12 @@ func isHidden(r rune) bool {
 	return false
 }
 
-// Output applies both ANSI stripping and Unicode sanitization,
-// iterating to a fixed point. A single pass is not enough: removing a
-// hidden Unicode char (e.g. a zero-width space inside "\x1b(\u200b0")
-// can complete an escape sequence that the next StripANSI pass then
-// strips. Iterating guarantees the result is fully sanitized — no
-// residual escapes an attacker hid behind zero-width chars — and makes
-// the function idempotent.
+// Output applies ANSI stripping and Unicode sanitization to a fixed point.
+// Repeating is necessary because removing a hidden rune can complete an escape
+// sequence for the next pass. Any unmatched U+001B is then replaced with
+// U+FFFD, matching internal/ansitext's escape-free contract. This keeps a
+// caller that bounded its input first from emitting an introducer whose
+// terminator the bound removed, and makes Output idempotent.
 //
 // Termination: Unicode normalizes any invalid UTF-8 byte to a
 // single U+FFFD rune (via strings.Map), so after the first pass the
@@ -132,7 +132,7 @@ func Output(s string) string {
 	for {
 		out := Unicode(StripANSI(s))
 		if out == s {
-			return out
+			return strings.ReplaceAll(out, "\x1b", "\uFFFD")
 		}
 		s = out
 	}

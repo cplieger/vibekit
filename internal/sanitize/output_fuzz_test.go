@@ -1,6 +1,7 @@
 package sanitize
 
 import (
+	"strings"
 	"testing"
 	"unicode/utf8"
 )
@@ -12,11 +13,17 @@ func FuzzSanitizeOutput(f *testing.F) {
 	f.Add("a\u200B\x1b(\u200C0b")
 	f.Add("\x1b[\u200B31m")
 	f.Add("\x1b]\u2060title\x07")
+	f.Add("AB\x1b[")
+	f.Add("AB\x1b]0;titl")
+	f.Add("AB\x1b(")
 
 	f.Fuzz(func(t *testing.T, s string) {
 		out := Output(s)
 		if ansiRe.MatchString(out) {
 			t.Errorf("Output(%q) still contains ANSI", s)
+		}
+		if strings.ContainsRune(out, '\x1b') {
+			t.Errorf("Output(%q) still contains U+001B", s)
 		}
 		for _, r := range out {
 			if isHidden(r) {

@@ -30,6 +30,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/vibekit/internal/chat"
+	"github.com/cplieger/vibekit/internal/sanitize"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -102,7 +103,8 @@ type focusUpdate struct {
 // construction — HandleSessionInfoUpdate drops subagent frames before
 // dispatching here.
 func (t *Translator) handleFocusUpdate(ctx context.Context, chatID vibekit.ChatID, f *focusUpdate) {
-	if title := strings.TrimSpace(f.Title); title != "" && utf8.RuneCountInString(title) <= maxFocusTitleRunes {
+	title := strings.TrimSpace(displayText(sanitize.Output(f.Title)))
+	if title != "" && utf8.RuneCountInString(title) <= maxFocusTitleRunes {
 		t.applyFocusTitle(ctx, chatID, title)
 	}
 	status := strings.TrimSpace(f.Status)

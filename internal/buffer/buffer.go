@@ -498,6 +498,18 @@ func (buf *Buffer) ComputeDuration(toolCallID string) int {
 	return int(time.Now().UnixMilli() - start)
 }
 
+// HasToolInFlight reports whether this turn is waiting on a tool result.
+func (buf *Buffer) HasToolInFlight() bool {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	for i := range buf.ToolCalls {
+		if buf.ToolCalls[i].Status == vibekit.ToolInProgress || buf.ToolCalls[i].Status == vibekit.ToolPending {
+			return true
+		}
+	}
+	return false
+}
+
 // MarkCancelledToolsFailed sets every in-progress tool call to failed and returns the turn's
 // message id alongside them, so a cancel leaves no stuck spinners. The id travels WITH the calls
 // because the caller broadcasts each one keyed by it, and reading it separately would be an

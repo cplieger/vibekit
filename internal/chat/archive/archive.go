@@ -29,6 +29,9 @@ type RetentionHeader struct {
 type StoreAccess interface {
 	// Lock returns the per-chat mutex.
 	Lock(chatID vibekit.ChatID) *sync.Mutex
+	// Remove deletes the chat and records its tombstone. The caller must hold
+	// Lock for chatID across this call.
+	Remove(chatID vibekit.ChatID) error
 	// Dir returns the store's base directory.
 	Dir() string
 	// LoadRetentionHeader reads a chat's retention projection without

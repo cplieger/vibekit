@@ -133,21 +133,18 @@ func (rt *Runtime) switchByRestart(
 	return responseOK2, nil
 }
 
-// refuseUnservedModel refuses a pick this account cannot serve rather than
-// downgrading it silently; unrefused, KAS rejects the id mid-prompt on every
-// later turn. Evidence is the live session's UNFILTERED served set — the
-// picker's list would refuse a deprecated model the account can still use — and
-// an empty set means entitlement is unknowable, which ModelServed allows.
+// refuseUnservedModel is the LOUD half of the entitlement check: a spawn withholds
+// an inherited value silently, while a pick the user just made is refused rather
+// than downgraded behind their back. Unrefused, KAS rejects the id mid-prompt on
+// this and every later turn.
+//
+// The chat record is the evidence because config_option_update refreshes it, while
+// the bridge's session-result snapshot can only get older; the set is UNFILTERED,
+// and an empty one means entitlement is unknowable, which ModelServed allows.
 func (rt *Runtime) refuseUnservedModel(
 	ctx context.Context, chatID vibekit.ChatID, chat *vibekit.Chat, model string,
 ) error {
-	served := chat.ServedModelIDs
-	if sb := rt.coord.Bridge(chatID); sb != nil {
-		if live := sb.bridge.ServedModels(); len(live) > 0 {
-			served = live
-		}
-	}
-	if vibekit.ModelServed(model, served) {
+	if vibekit.ModelServed(model, chat.ServedModelIDs) {
 		return nil
 	}
 	slog.Warn("refusing a model switch this account does not serve",

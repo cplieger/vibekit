@@ -6,7 +6,6 @@
 
 import { signal, computed, type Signal, type ReadonlySignal } from "@cplieger/reactive";
 import { lineDiff, type DiffLine } from "./diff.js";
-import { countHunks } from "./diff-pane.js";
 import { relToWorkspace } from "./workspace.js";
 import type { ConflictFile } from "./conflict.js";
 
@@ -113,9 +112,6 @@ export interface FileState {
   returnToGitDiff: { ref: string; repo: string } | null;
   /** Repo identifier for git-diff sources (empty string = default). */
   repo: string;
-  /** Hunk count of the current diff. Derived (computed) from `mode`;
-   *  auto-invalidates whenever `mode` is reassigned. */
-  pendingHunkCount: ReadonlySignal<number>;
   /** Line diff of the current diff source. Derived (computed) from
    *  `mode`; auto-invalidates whenever `mode` is reassigned. */
   cachedDiff: ReadonlySignal<DiffLine[]>;
@@ -154,10 +150,10 @@ class EditorState {
   freshState(path: string): FileState {
     // Reactive inputs: `mode`, `current`, `original`. Everything else is a
     // computed derived from them, so it auto-invalidates with no manual
-    // cache busting. `cachedDiff`/`pendingHunkCount` depend ONLY on `mode`
-    // (the diff's `diffSource` is a snapshot captured at mode-entry; the
-    // editor is read-only in diff mode). `dirty` depends only on
-    // `current`/`original`, so it flips on every edit and on save.
+    // cache busting. `cachedDiff` depends ONLY on `mode` (the diff's
+    // `diffSource` is a snapshot captured at mode-entry; the editor is
+    // read-only in diff mode). `dirty` depends only on `current`/`original`,
+    // so it flips on every edit and on save.
     const mode = signal<FileMode>({ kind: "edit", editing: false });
     const current = signal("");
     const original = signal("");
@@ -165,10 +161,6 @@ class EditorState {
     const cachedDiff = computed<DiffLine[]>(() => {
       const m = mode.value;
       return m.kind === "diff" ? lineDiff(m.diffSource.oldContent, m.diffSource.newContent) : [];
-    });
-    const pendingHunkCount = computed<number>(() => {
-      const m = mode.value;
-      return m.kind === "diff" ? countHunks(cachedDiff.value) : 0;
     });
     return {
       path,
@@ -182,7 +174,6 @@ class EditorState {
       suggestions: new Map(),
       returnToGitDiff: null,
       repo: "",
-      pendingHunkCount,
       cachedDiff,
     };
   }

@@ -262,6 +262,10 @@ describe("the status comes from the store, as a tracked read", () => {
     m.states.set("wf_3", { workflowId: "wf_3", status: "failed" });
     storeChanged();
     expect(m.painted.at(-1)).toEqual({ id: "run:wf_3", status: "failed" });
+
+    m.states.set("wf_3", { workflowId: "wf_3", status: "unknown" });
+    storeChanged();
+    expect(m.painted.at(-1)).toEqual({ id: "run:wf_3", status: "" });
   });
 
   it("paints nothing at all for a run the store has never answered for", () => {
@@ -426,6 +430,7 @@ describe("the live-runs rebuild reaches the dot, which a boot-restored run needs
 
 const { runEndedCleanly, RUN_STATUSES } = await import("./run-controls.js");
 const { runStatusFor } = await import("./store.js");
+const { classifyRunStatus } = await import("./run-status.js");
 
 describe("a clean ending is always a green dot", () => {
   // Exhaustive over the WIRE's own words rather than over whatever subset a table
@@ -434,13 +439,13 @@ describe("a clean ending is always a green dot", () => {
     "agrees about %s",
     (status: string) => {
       // The implication stated as its one FORBIDDEN combination, so every case
-      // asserts and a failure names both readings. A green dot that is not a clean
-      // ending is legal and expected — that is `something-new-upstream`, and it is
+      // asserts and a failure names both readings. `something-new-upstream`
+      // classifies as `unknown`, which paints NO dot and is not a clean ending —
       // the third condition of the auto-close rule doing its job.
       expect({
         status,
         clean: runEndedCleanly(status),
-        green: runStatusFor(status) === "done",
+        green: runStatusFor(classifyRunStatus(status)) === "done",
       }).not.toEqual({ status, clean: true, green: false });
     },
   );
@@ -453,7 +458,7 @@ describe("a clean ending is always a green dot", () => {
   it.each([...RUN_STATUSES, "cancelled", "something-new-upstream"])(
     "reads an unanswered ask on %s as amber rather than green",
     (status: string) => {
-      expect(runStatusFor(status, true)).toBe("input");
+      expect(runStatusFor(classifyRunStatus(status), true)).toBe("input");
     },
   );
 });
@@ -482,7 +487,8 @@ describe("the dot separates a park on a PERSON from every other pause", () => {
   it.each([...RUN_STATUSES.filter((s: string) => s !== "paused"), "cancelled"])(
     "ignores the pause class on %s",
     (status: string) => {
-      expect(runStatusFor(status, false, "need_input")).toBe(runStatusFor(status, false, ""));
+      const cls = classifyRunStatus(status);
+      expect(runStatusFor(cls, false, "need_input")).toBe(runStatusFor(cls, false, ""));
     },
   );
 });

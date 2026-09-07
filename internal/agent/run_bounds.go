@@ -764,7 +764,7 @@ func (rs *Runs) observeStart(ctx context.Context, chatID vibekit.ChatID, msg *vi
 // frames open a turn on the launching chat that the bracket path cannot close, because
 // the attribution gate drops a step's own turn_end.
 func (rs *Runs) observeComplete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
-	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" && terminalRunStatus(f.Status) {
+	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" && f.Status.Terminal() {
 		// FIRST, ahead of HandleRunComplete: the close persists the step's assistant
 		// message, and the client repaints the run on the `run_finished` invalidation the
 		// translator emits — so the content has to be on disk before that repaint.
@@ -804,9 +804,9 @@ func (rs *Runs) observePaused(next func(context.Context, vibekit.ChatID, *vibeki
 // translator's contract with KAS. WorkflowName is on `run_start` and is the recipe name
 // KAS's own run list reports.
 type lifecycleFrame struct {
-	WorkflowID   string `json:"workflowId"`
-	WorkflowName string `json:"workflowName"`
-	Status       string `json:"status"`
+	WorkflowID   string            `json:"workflowId"`
+	WorkflowName string            `json:"workflowName"`
+	Status       vibekit.RunStatus `json:"status"`
 }
 
 func decodeLifecycleFrame(msg *vibekit.RPCResponse) lifecycleFrame {

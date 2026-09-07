@@ -133,41 +133,6 @@ describe("getCachedDiff", () => {
     expect(after.some((l) => l.kind === "add" && l.text === "Z")).toBe(true);
     expect(after.some((l) => l.kind === "add" && l.text === "c")).toBe(false);
   });
-
-  it("pendingHunkCount auto-recomputes when mode changes", async () => {
-    const { freshState } = await import("./editor-types.js");
-    const state = freshState("test.ts");
-
-    // One changed line between two context lines → exactly one hunk.
-    state.mode.value = {
-      kind: "diff",
-      diffSource: {
-        oldContent: "a\nb\nc",
-        newContent: "a\nX\nc",
-        oldLabel: "old",
-        newLabel: "new",
-        fromGit: false,
-      },
-    };
-    expect(state.pendingHunkCount.value).toBe(1);
-
-    // Three changed lines separated by unchanged context → three hunks.
-    state.mode.value = {
-      kind: "diff",
-      diffSource: {
-        oldContent: "1\n2\n3\n4\n5",
-        newContent: "A\n2\nB\n4\nC",
-        oldLabel: "old",
-        newLabel: "new",
-        fromGit: false,
-      },
-    };
-    expect(state.pendingHunkCount.value).toBe(3);
-
-    // Leaving diff mode → no hunks, with no manual reset.
-    state.mode.value = { kind: "edit", editing: false };
-    expect(state.pendingHunkCount.value).toBe(0);
-  });
 });
 
 describe("FileState.dirty (reactive)", () => {

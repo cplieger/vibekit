@@ -947,3 +947,40 @@ func TestTurnFoldTarget_ReadsTheChatOnlyWhenItOpensATurn(t *testing.T) {
 			"unmarshals the whole chat file per frame", got-before, 0)
 	}
 }
+
+func TestOpenTurnBuffer_DoesNotOpenATurn(t *testing.T) {
+	h, cs, _ := newTestHub()
+	before := cs.Gets.Load()
+
+	if buf, ok := h.coord.OpenTurnBuffer("c1"); ok || buf != nil {
+		t.Errorf("OpenTurnBuffer(no open turn) = (%v, %t), want (nil, false)", buf, ok)
+	}
+	if _, open := h.coord.turns.openEpoch("c1"); open {
+		t.Error("OpenTurnBuffer opened a turn")
+	}
+	if got := cs.Gets.Load(); got != before {
+		t.Errorf("chat reads = %d, want %d", got, before)
+	}
+}
+
+func TestApplyLoadedSessionFacts_RefreshesTheEntitlementSet(t *testing.T) {
+	cases := map[string]struct {
+		catalog []vibekit.SessionModel
+		want    []string
+	}{
+		"absent keeps the seed": {want: []string{"seed"}},
+		"present replaces the seed": {
+			catalog: []vibekit.SessionModel{{ID: "old", Description: "[Deprecated]"}, {ID: "new"}},
+			want:    []string{"old", "new"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			chat := &vibekit.Chat{ServedModelIDs: []string{"seed"}}
+			applyLoadedSessionFacts(chat, &fakeBridge{catalog: tc.catalog}, "")
+			if !slices.Equal(chat.ServedModelIDs, tc.want) {
+				t.Errorf("ServedModelIDs = %v, want %v", chat.ServedModelIDs, tc.want)
+			}
+		})
+	}
+}

@@ -71,6 +71,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// second kiro-cli would only add a window in which the sidebar still shows the old identity.
 	signedOut := signedOutIdentity()
 	h.identity.publish(&signedOut)
+	h.registrar.Observe("")
 	webhttp.WriteJSON(w, result)
 }
 

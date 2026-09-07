@@ -50,10 +50,17 @@ type AlwaysAllowBlock string
 // match this command, so a saved rule would be a permanent no-op in permissions.yaml.
 const AlwaysAllowBlockUnparseable AlwaysAllowBlock = "unparseable"
 
+// MCPToolIdentity names the verified MCP server and tool behind a permission request.
+type MCPToolIdentity struct {
+	ServerName string `json:"server_name"`
+	ToolName   string `json:"tool_name"`
+}
+
 // PermissionNeededPayload is the payload for type="permission_needed".
 type PermissionNeededPayload struct {
-	ToolCallID string `json:"tool_call_id,omitempty"`
-	Title      string `json:"title,omitempty"`
+	MCPTool    *MCPToolIdentity `json:"mcp_tool,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+	Title      string           `json:"title,omitempty"`
 	// Kind forwards the ACP toolCall.kind so the client can style distinctive prompts
 	// (switch_mode gets a different dialog from an execute_bash prompt).
 	Kind         ToolKind `json:"kind,omitempty"`
@@ -227,9 +234,8 @@ const (
 	// account's session advertises, so it was refused before the wire rather than rejected
 	// mid-prompt on every later turn.
 	ErrCodeModelNotServed ErrorCode = "model_not_served"
-	// ErrCodeAuthTokenUnavailable means kiro-cli could not vend a KAS access token. The
-	// answer is a SIGN-IN rather than a retry: KAS runs unauthenticated without one, so
-	// sessions still open and every service-backed surface fails.
+	// ErrCodeAuthTokenUnavailable means the backend rejected the active credential.
+	// The client offers sign-in instead of retrying the turn.
 	ErrCodeAuthTokenUnavailable ErrorCode = "auth_token_unavailable" //nolint:gosec // G101: an SSE error code, not a credential
 )
 

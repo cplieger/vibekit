@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/kiroauth"
 	"github.com/cplieger/vibekit/internal/secretstore"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -52,9 +51,6 @@ type utilitySessionHooks struct {
 	// chat dispatch uses: this session's own PolicySession watches the file and its
 	// notifications bypass that dispatcher, so a write with no chat open is lost.
 	onPolicyNotification func(*vibekit.RPCResponse)
-	// tokenSource answers the _kiro/auth/getAccessToken callback (the runtime's
-	// kiroAccessTokenResult). nil = not wired (older tests) → RPC error.
-	tokenSource func(context.Context) (map[string]any, error)
 	// onForeignUpdate offers a `session/update` frame belonging to ANOTHER session to
 	// whoever is reading it, reporting whether it was consumed: a workflow step's
 	// transcript is read here, and `session/load` replays it carrying that session's
@@ -156,10 +152,9 @@ func (us *utilitySession) startLocked(ctx context.Context) error {
 	bridge := us.bridgeFactory()
 	model := cheapestModel(ctx, us.models())
 
-	// The forward goroutine must be draining NotifCh BEFORE Start: on v3, session/new
-	// blocks until the host answers _kiro/auth/getAccessToken and
-	// _kiro/terminal/shell_type, which arrive on NotifCh. The channels are locals, so
-	// a failed Start leaves no session state behind.
+	// The forward goroutine must be draining NotifCh BEFORE Start: session/new blocks
+	// until the host answers _kiro/terminal/shell_type, which arrives on NotifCh. The
+	// channels are locals, so a failed Start leaves no session state behind.
 	responseCh := make(chan utilityChunkPayload, 64)
 	forwardDone := make(chan struct{})
 	// Taken BEFORE the goroutine: the position it reports is comparable only within
@@ -309,9 +304,9 @@ type utilityChunkPayload struct {
 
 // forward drains the bridge's NotifCh, forwarding agent_chunk text to responseCh.
 // Peer requests (msg.ID != nil) go to answerHostRequest, since this session must vend
-// the host-mediated auth token and shell type or session/new stalls. Everything else
-// but hooks/policy is discarded, which keeps NotifCh from blocking readLoop. bridge is
-// passed explicitly so a recycle cannot make this goroutine answer on the wrong pipe.
+// the shell type or session/new stalls. Everything else but hooks/policy is discarded,
+// which keeps NotifCh from blocking readLoop. bridge is passed explicitly so a recycle
+// cannot make this goroutine answer on the wrong pipe.
 func (us *utilitySession) forward(bridge acpSessionResponder, gen uint64, notifCh <-chan vibekit.Notification, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
 	defer close(done)
 	defer close(responseCh)
@@ -408,26 +403,14 @@ func forwardChunk(msg *vibekit.RPCResponse, ownSession string, responseCh chan<-
 	}
 }
 
-// answerHostRequest answers the v3 host-mediated requests the utility session
-// receives. getAccessToken and shell_type are on the session-creation critical path
-// (session/new stalls without them). `_kiro/hooks/executeHook` is deliberately NOT
-// answered — it would run a shell command a hook file names — and falls to -32601.
-// A tool request is refused rather than left pending, which would wedge the turn.
+// answerHostRequest answers the host-mediated requests the utility session receives.
+// shell_type is on the session-creation critical path (session/new stalls without it).
+// `_kiro/hooks/executeHook` is deliberately NOT answered — it would run a shell
+// command a hook file names — and falls to -32601. A tool request is refused rather
+// than left pending, which would wedge the turn.
 func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *vibekit.RPCResponse) {
 	ctx := context.Background()
 	switch {
-	case msg.Method == methodKiroGetAccessToken:
-		if us.hooks.tokenSource == nil {
-			_ = bridge.Respond(ctx, *msg.ID, nil, kiroauth.ErrNoSource)
-			return
-		}
-		result, err := us.hooks.tokenSource(ctx)
-		if err != nil {
-			slog.Error("utility bridge v3 auth: token unavailable", "error", err)
-			_ = bridge.Respond(ctx, *msg.ID, nil, err)
-			return
-		}
-		_ = bridge.Respond(ctx, *msg.ID, result, nil)
 	case msg.Method == methodKiroShellType:
 		_ = bridge.Respond(ctx, *msg.ID, kiroShellTypeResult(), nil)
 	case msg.Method == methodKiroSecretGet:

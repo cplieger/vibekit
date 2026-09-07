@@ -35,10 +35,10 @@ const (
 )
 
 // v3 (KAS) request method names outside the notification set above. openExternalUrl
-// is an A→C request (bridge_v3_auth.go); the other two are C→A on the utility bridge.
+// is an A→C request (bridge_v3_hostreq.go); the other two are C→A on the utility bridge.
 const (
 	methodKiroOpenExternalURL = "_kiro/openExternalUrl"  // A→C request: {url} — open a URL for the user (MCP OAuth); needs the openExternalUrl client capability
-	methodKiroGetUsage        = "_kiro/account/getUsage" // C→A request: account/subscription usage; needs profileArn in the getAccessToken reply
+	methodKiroGetUsage        = "_kiro/account/getUsage" // C→A request: account/subscription usage; needs the authenticated profile
 	methodKiroCodeIntel       = "_kiro/codeIntelligence" // C→A request: code-intelligence status/init (subcommand param); needs the session opted in via initialize _meta.kiro.settings
 )
 

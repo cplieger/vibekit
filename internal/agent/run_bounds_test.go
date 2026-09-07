@@ -1180,34 +1180,6 @@ func TestObserveComplete_ClearsAStepsPendingDecisionOnlyWhenTheRunEnds(t *testin
 	}
 }
 
-// TestObserveRunComplete_DisarmsOnlyOnATerminalStatus pins the one distinction
-// this wrapper exists to make.
-//
-// KAS reports an `onMaxIterations` policy PAUSE through run_complete too, and
-// that run is still this process's to resume — so dropping the arm there would
-// leave a resumed run unbounded until its next run_start happened to arrive.
-func TestObserveRunComplete_DisarmsOnlyOnATerminalStatus(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		status   string
-		terminal bool
-	}{
-		{"completed", true},
-		{"failed", true},
-		{"aborted", true},
-		{"cancelled", true},
-		{"paused", false},
-		{"", false},
-	} {
-		t.Run(tc.status, func(t *testing.T) {
-			t.Parallel()
-			if got := terminalRunStatus(tc.status); got != tc.terminal {
-				t.Errorf("terminalRunStatus(%q) = %v, want %v", tc.status, got, tc.terminal)
-			}
-		})
-	}
-}
-
 // TestDecodeLifecycleFrame reads the two fields the bounds need off a frame, and
 // pins the failure direction: an undecodable frame yields no workflow id, so it
 // arms nothing rather than arming a run called "".
@@ -1216,7 +1188,7 @@ func TestDecodeLifecycleFrame(t *testing.T) {
 	for name, tc := range map[string]struct {
 		params     string
 		wantID     string
-		wantStatus string
+		wantStatus vibekit.RunStatus
 	}{
 		"a run_start frame":        {`{"workflowId":"wf_1","workflowName":"x"}`, "wf_1", ""},
 		"a terminal frame":         {`{"workflowId":"wf_1","status":"completed"}`, "wf_1", "completed"},

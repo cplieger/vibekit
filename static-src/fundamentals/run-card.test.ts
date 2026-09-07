@@ -121,6 +121,14 @@ describe("a step's own state", () => {
     expect(new Set(marks).size).toBe(3);
   });
 
+  it("renders an unknown run as unknown and live, never as starting", () => {
+    const c = card();
+    c.render(runOf("unknown", step("a", "unknown")));
+    expect(statusWord(c.root)).toBe("unknown");
+    expect(rowStates(c.root)).toEqual(["unknown"]);
+    expect(c.root.classList.contains("collapsed")).toBe(false);
+  });
+
   it("names the state in the row's accessible label", () => {
     const c = card();
     c.render(runOf("paused", step("a", "paused")));
@@ -298,6 +306,28 @@ describe("a pause that means a step is waiting on a person", () => {
     );
     expect(text).toBe(
       "A step is waiting for your answer \u00b7 after a transient error (Throttli" + "ngException)",
+    );
+  });
+
+  // Upstream 2.21.1 gave `pauseDetail.class` a second member, and until then both
+  // render sites hardcoded the transient label. An exhausted continuation budget
+  // is not a transient failure, and `pauseReason` already carries upstream's own
+  // sentence, so the class states its code and claims nothing.
+  it("does not call an exhausted continuation budget a transient error", () => {
+    const text = alertText(
+      buildAndRender(
+        {
+          ...runOf("paused", step("a", "paused")),
+          pauseReason: "Step could not be continued after 3 consecutive attempts.",
+          pauseDetail: { class: "continuation-exhausted", code: "MaxContinuationAttempts" },
+        },
+        asks(0, []),
+      ),
+    );
+    expect(text).not.toContain("transient");
+    expect(text).toBe(
+      "Waiting: Step could not be continued after 3 consecutive attempts. \u00b7 " +
+        "(MaxContinuationAttempts)",
     );
   });
 });

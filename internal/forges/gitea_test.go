@@ -407,9 +407,48 @@ func TestGiteaAPIErrorSnippet_PrefersTheServersMessage(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := apiErrorSnippet([]byte(tc.body)); got != tc.want {
+			if got := apiErrorSnippet([]byte(tc.body), ""); got != tc.want {
 				t.Errorf("apiErrorSnippet(%q) = %q, want %q", tc.body, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestGiteaAPI_RedactsTokenBeforeSanitizingErrorBody(t *testing.T) {
+	const token = "pat-left\u202Epat-right"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"request rejected for ` + token + `"}`))
+	}))
+	defer srv.Close()
+
+	_, _, err := doAPIWith(t.Context(), token, http.MethodGet, srv.URL, nil)
+	if err == nil {
+		t.Fatal("doAPIWith returned nil, want an HTTP status error")
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Errorf("doAPIWith error = %q, want a redaction marker", err)
+	}
+	for _, fragment := range []string{"pat-left", "pat-right"} {
+		if strings.Contains(err.Error(), fragment) {
+			t.Errorf("doAPIWith error = %q, leaked token fragment %q", err, fragment)
+		}
+	}
+}
+
+func TestGiteaAPI_RedactsTokenConstructedBySanitizingErrorBody(t *testing.T) {
+	const token = "pat left"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("request rejected for pat\u202Eleft"))
+	}))
+	defer srv.Close()
+
+	_, _, err := doAPIWith(t.Context(), token, http.MethodGet, srv.URL, nil)
+	if err == nil {
+		t.Fatal("doAPIWith returned nil, want an HTTP status error")
+	}
+	if !strings.Contains(err.Error(), "REDACTED") || strings.Contains(err.Error(), token) {
+		t.Errorf("doAPIWith error = %q, want the normalized token fully redacted", err)
 	}
 }

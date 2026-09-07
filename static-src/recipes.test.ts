@@ -89,6 +89,7 @@ import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { openRunView } from "./run-view.js";
 import { launchRun, cancelRun } from "./actions/runs.js";
 import type { RecipesResponse, WorkflowRun, ResumableSession } from "./types.js";
+import type { RunStatus } from "./wire/types.gen.js";
 
 let recipesReply: RecipesResponse = { recipes: [] };
 let runsReply: { sessions: ResumableSession[]; runs: WorkflowRun[] } = {
@@ -101,8 +102,11 @@ function recipe(name: string, inputs?: Record<string, string>): RecipesResponse[
   return inputs === undefined ? base : { ...base, inputs };
 }
 
+// `status` is a bare string, not `RunStatus`: one case spells a word an engine ahead
+// of this build would send, which is exactly what the live/terminal read has to
+// survive. The cast is the wire lie being modelled.
 function run(name: string, id: string, status: string): WorkflowRun {
-  return { workflow_id: id, name, status, updated_at: 0 };
+  return { workflow_id: id, name, status: status as RunStatus, updated_at: 0 };
 }
 
 async function render(filter = ""): Promise<HTMLElement> {
@@ -142,6 +146,13 @@ describe("the Run ⇄ Cancel row", () => {
 
     expect(buttonFor(panel, "bundled://goal")?.textContent).toBe("Run");
     expect(buttonFor(panel, "bundled://investigate")?.textContent).toBe("Cancel");
+  });
+
+  it("treats an unknown status as live and keeps Cancel available", async () => {
+    recipesReply = { recipes: [recipe("goal")] };
+    runsReply.runs = [run("goal", "wf_future", "quiesced")];
+    const panel = await render();
+    expect(buttonFor(panel, "bundled://goal")?.textContent).toBe("Cancel");
   });
 
   it("treats a PAUSED run as live — Cancel, or the recipe wedges", async () => {

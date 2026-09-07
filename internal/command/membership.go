@@ -30,7 +30,8 @@ var (
 	// than a status because the run-tab offer answers no request and must tell this
 	// permanent absence from a real failure to open; every HTTP door adds the status.
 	ErrTabsUnavailable = errors.New("the tab store is unavailable")
-	// errOpenChatUnknown is the 404 for an open_tab naming a chat that is gone.
+	// errOpenChatUnknown is the 404 for an open_tab, or a fresh create, naming a chat
+	// that is gone — the delete-ordering gate's refusal.
 	errOpenChatUnknown = errors.New("that chat no longer exists")
 	// errTabUnknown is the 404 for a pin naming an id the set does not hold.
 	errTabUnknown = errors.New("that tab is not open")
@@ -159,6 +160,9 @@ type ChatCreate struct {
 	// ChatID is the id the envelope supplied, or empty to mint one. A supplied id
 	// bypasses the ledger: Mutate's exists branch is already idempotent for it.
 	ChatID vibekit.ChatID
+	// RequireChat is a fresh create's precondition, checked under the operation lock
+	// so a delete cannot land between the check and the mint.
+	RequireChat vibekit.ChatID
 	// ParentChat names the chat whose tab the new tab hangs under, empty for a
 	// top-level tab. A chat id rather than a tab id, so it resolves inside the
 	// operation lock; outside it, a parent tab closing would leave Parent naming
@@ -192,15 +196,25 @@ type TabOpened struct {
 // the two writes. Returns errTabsFull (409) at MaxOpenTabs, and errChatNotCreated (409)
 // when the record is absent after a Mutate that reported no error (a tombstoned id).
 //
+// Returns errOpenChatUnknown (404) when a required chat is absent, errTabsFull (409)
+// at MaxOpenTabs, and errChatNotCreated (409) when the record is absent after a Mutate
+// that reported no error.
+//
 // A failed tab write leaves the chat created and returns the error; a retry carrying the
 // same op_id finishes it.
 func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (ChatOpened, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	prior, replay := m.priorChat(req)
+	if req.RequireChat != "" && !replay {
+		if _, ok := m.chats.Get(ctx, req.RequireChat); !ok {
+			return ChatOpened{}, StatusError(http.StatusNotFound, errOpenChatUnknown)
+		}
+	}
+
 	// Reserve before anything mints. peek rather than resolve: a repeat whose tab
 	// is already open needs no slot, and refusing it would strand the chat.
-	prior, replay := m.priorChat(req)
 	if err := m.reserveSlot(vibekit.TabKindChat, string(prior), spendLastSlot); err != nil {
 		return ChatOpened{}, err
 	}

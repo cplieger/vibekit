@@ -23,6 +23,8 @@ export type {
   PlanStatus,
   ReadState,
   Role,
+  RunNodeStatus,
+  RunStatus,
   RunStepTranscriptState,
   SafetyStatus,
   SettledBy,

@@ -92,7 +92,7 @@ type Config struct {
 	// refuses --agent-engine and the two inert trust flags). Appended to every
 	// CHAT bridge's argv, never to the utility bridge's. An escape hatch for a
 	// flag upstream adds, not a capability switch: vibekit already pins v3 and
-	// already emits --model / --effort.
+	// sends model via session/new `_meta.kiro.modelId` or session/set_config_option (`configId: model`).
 	ACPArgs []string
 	// ToolCatalogRefresh is the engine refresh cadence under toolbelt's
 	// canonical policy (default 24h; zero = schedule disabled, keeping

@@ -64,7 +64,7 @@ func TestRunStopped_DropsTheProcessAndAPausedRunKeepsItsLease(t *testing.T) {
 		wantLease  bool
 	}{
 		// The ruling's own row.
-		"a pause drops the process and keeps the lease": {runStatusPaused, false, true},
+		"a pause drops the process and keeps the lease": {string(vibekit.RunStatusPaused), false, true},
 		// Here so a mutation widening the close cannot pass on the pause row alone.
 		"a completed run drops both":  {"completed", false, false},
 		"a failed run drops both":     {"failed", false, false},
@@ -102,7 +102,7 @@ func TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor(t *testing.T) {
 	h.runs.grantLease(t.Context(), "wf_1", "nightly",
 		scheduledLaunch("sched_1", time.Now().Add(time.Hour)))
 
-	h.dispatch(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", runStatusPaused))
+	h.dispatch(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", string(vibekit.RunStatusPaused)))
 	if !waitForBridge(t, h, "wf_1", false) {
 		t.Fatal("the parked run kept its process")
 	}
@@ -136,7 +136,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 			methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
 			// SetStepStatus reads the tree first, so the target must resolve to its node.
 			methodKiroWorkflowInspect: parkedInspect(
-				t, runStatusPaused, needInputPauseReason, "sess_step",
+				t, vibekit.RunStatusPaused, needInputPauseReason, "sess_step",
 			),
 		}
 		if h.bridge.mgr.get(runChatID("wf_1")) != nil {
@@ -360,7 +360,7 @@ func TestCloseKeptCarrier_DecidesOnAFreshRead(t *testing.T) {
 	}{
 		// KAS never took the verb: the run is where it was, and nothing is coming.
 		"a parked run's kept carrier is closed": {
-			inspectReply(t, "wf_1", runStatusPaused, ""), false, carrierClosed,
+			inspectReply(t, "wf_1", vibekit.RunStatusPaused, ""), false, carrierClosed,
 		},
 		"a terminal run's kept carrier is closed": {
 			inspectReply(t, "wf_1", "failed", ""), false, carrierClosed,
@@ -380,7 +380,7 @@ func TestCloseKeptCarrier_DecidesOnAFreshRead(t *testing.T) {
 		// reuses the kept carrier, so KAS reports the run parked while that second verb
 		// is in flight on the very process the bound is about to stop.
 		"a carrier a verb is holding is kept, whatever the run reports": {
-			inspectReply(t, "wf_1", runStatusPaused, ""), true, carrierBusy,
+			inspectReply(t, "wf_1", vibekit.RunStatusPaused, ""), true, carrierBusy,
 		},
 		// Both directions of that guard, so neither arm can pass by widening the
 		// other: an executing run is spared for its OWN reason, not for this one.
@@ -449,7 +449,7 @@ func TestBoundKeptCarrier_ReArmsWhileAVerbIsStillHoldingTheCarrier(t *testing.T)
 
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowInspect: inspectReply(t, "wf_1", runStatusPaused, ""),
+		methodKiroWorkflowInspect: inspectReply(t, "wf_1", vibekit.RunStatusPaused, ""),
 	}
 	kept := &sharedBridge{bridge: br, state: bridgeIdle}
 	h.bridge.mgr.insert(runChatID("wf_1"), kept)
@@ -528,7 +528,7 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 			h, _, br := newTestHub()
 			br.callResults = map[string]json.RawMessage{
 				methodKiroWorkflowInspect: parkedInspect(
-					t, runStatusPaused, needInputPauseReason, "sess_step",
+					t, vibekit.RunStatusPaused, needInputPauseReason, "sess_step",
 				),
 				// Retry reads its recipe off the run list before it re-drives.
 				methodKiroWorkflowList: json.RawMessage(
@@ -588,7 +588,7 @@ func TestRehost_ACancelledVerbArmsTheBoundOnTheCarrierItKeeps(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
 		// KAS never took the resume, so the run is still parked.
-		methodKiroWorkflowInspect: inspectReply(t, "wf_1", runStatusPaused, ""),
+		methodKiroWorkflowInspect: inspectReply(t, "wf_1", vibekit.RunStatusPaused, ""),
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowResume: context.Canceled}
 
@@ -610,7 +610,7 @@ func TestRehost_ACancelledVerbArmsTheBoundOnTheCarrierItKeeps(t *testing.T) {
 func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 	cases := map[string]json.RawMessage{
 		"a different step is parked now": parkedInspect(
-			t, runStatusPaused, needInputPauseReason, "sess_other",
+			t, vibekit.RunStatusPaused, needInputPauseReason, "sess_other",
 		),
 		"the run is over": inspectReply(t, "wf_1", "failed", ""),
 	}
@@ -703,7 +703,7 @@ func TestAnswerInput_ARunBetweenStepsHoldsTheAnswerRatherThanDiscardingIt(t *tes
 func TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch(t *testing.T) {
 	tree, err := json.Marshal(map[string]any{
 		"state": map[string]any{
-			"status": runStatusPaused,
+			"status": string(vibekit.RunStatusPaused),
 			"root": map[string]any{
 				"nodeId": "fanout", "status": "paused",
 				"children": []any{
@@ -751,7 +751,7 @@ func TestAnswerInput_TheFreshAddressBeatsTheOneTheAskCarries(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
 		methodKiroWorkflowInspect: parkedInspect(
-			t, runStatusPaused, needInputPauseReason, "sess_current",
+			t, vibekit.RunStatusPaused, needInputPauseReason, "sess_current",
 		),
 	}
 	h.runs.asks.Add(&runAsk{
@@ -872,10 +872,10 @@ func TestHandleRun_AParkedRunsPageRendersWithNoLeaseAndNoBridge(t *testing.T) {
 	tree, err := json.Marshal(map[string]any{
 		"workflowId": "wf_1",
 		"state": map[string]any{
-			"status":      runStatusPaused,
+			"status":      string(vibekit.RunStatusPaused),
 			"pauseReason": "Step 'review' is waiting for user input.",
 			"root": map[string]any{
-				"nodeId": "review", "type": "step", "status": runStatusPaused,
+				"nodeId": "review", "type": "step", "status": string(vibekit.RunStatusPaused),
 			},
 		},
 		"nodePlan": map[string]any{"type": "sequence"},
@@ -990,7 +990,7 @@ func TestCarrierUse_WhenIdleDefersACloseUnderALiveVerb(t *testing.T) {
 func TestCloseStoppedBridge_AsksAboutAVerbInFlight(t *testing.T) {
 	h, _, br := newTestHub()
 	br.setCallResult(methodKiroWorkflowInspect, parkedInspect(
-		t, runStatusPaused, needInputPauseReason, "sess_step",
+		t, vibekit.RunStatusPaused, needInputPauseReason, "sess_step",
 	))
 	held := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowUpdate: held}

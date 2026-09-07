@@ -540,3 +540,26 @@ func TestAppendToolCall_IndexAddressesTheAppendedCall(t *testing.T) {
 			second, buf.ToolCalls[second].Title, "Write File (done)")
 	}
 }
+
+func TestBuffer_HasToolInFlight(t *testing.T) {
+	cases := map[string]struct {
+		status vibekit.ToolStatus
+		want   bool
+	}{
+		"pending":     {status: vibekit.ToolPending, want: true},
+		"in_progress": {status: vibekit.ToolInProgress, want: true},
+		"completed":   {status: vibekit.ToolCompleted, want: false},
+		"failed":      {status: vibekit.ToolFailed, want: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			buf := &Buffer{ToolCalls: []vibekit.ToolCall{{ID: "tc", Status: tc.status}}}
+			if got := buf.HasToolInFlight(); got != tc.want {
+				t.Errorf("HasToolInFlight(%q) = %t, want %t", tc.status, got, tc.want)
+			}
+		})
+	}
+	if (&Buffer{}).HasToolInFlight() {
+		t.Error("HasToolInFlight(empty) = true, want false")
+	}
+}

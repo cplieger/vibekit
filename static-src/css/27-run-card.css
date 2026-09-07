@@ -55,7 +55,8 @@
   border-color: color-mix(in srgb, var(--c-red) 35%, transparent);
 }
 
-.run-card[data-status="aborted"] {
+.run-card[data-status="aborted"],
+.run-card[data-status="cancelled"] {
   border-color: color-mix(in srgb, var(--c-yellow) 35%, transparent);
 }
 

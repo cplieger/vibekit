@@ -330,38 +330,32 @@ func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
 	}
 }
 
-// Which evidence the entitlement gate believes when both exist, in both directions.
-// The chat's recorded set is a snapshot that goes stale the moment entitlements
-// change, so the live session's set is the current answer — but only when the session
-// actually advertised one, or an empty advertisement would make the gate a
-// pass-through.
-func TestSwitchModel_TheLiveSessionsSetOutranksTheChatsRecord(t *testing.T) {
+// Which evidence the entitlement gate believes, in both directions:
+// config_option_update refreshes the chat's recorded set after the session result,
+// so the bridge's snapshot can only be older.
+func TestSwitchModel_TheChatRecordOutranksTheLiveSession(t *testing.T) {
 	cases := []struct {
 		name     string
 		recorded []string
-		live     []string
 		model    string
 		wantCode int
 	}{
 		{
-			name:     "a live session's newer set admits a model the record has not seen",
-			recorded: []string{"m-old"},
-			live:     []string{"m-old", "m-new"},
+			name:     "the record admits a model it carries",
+			recorded: []string{"m-old", "m-new"},
 			model:    "m-new",
 			wantCode: http.StatusOK,
 		},
 		{
-			name:     "a session advertising nothing leaves the record in charge",
+			name:     "the record refuses a model it does not carry",
 			recorded: []string{"m-old"},
-			live:     nil,
-			model:    "m-unentitled",
+			model:    "m-new",
 			wantCode: http.StatusConflict,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, cs, br := newTestHub()
-			br.servedModels = tc.live
 			if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "A"
 				c.Model = "m-old"
@@ -370,7 +364,6 @@ func TestSwitchModel_TheLiveSessionsSetOutranksTheChatsRecord(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("seed the chat: %v", err)
 			}
-			// A LIVE bridge is what makes this the two-evidence case at all.
 			h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
 
 			rec := postCmd(t, h, vibekit.ClientCommand{
@@ -378,8 +371,8 @@ func TestSwitchModel_TheLiveSessionsSetOutranksTheChatsRecord(t *testing.T) {
 				Payload: json.RawMessage(`{"model":"` + tc.model + `"}`),
 			})
 			if rec.Code != tc.wantCode {
-				t.Errorf("switch to %q with recorded=%v live=%v: code = %d, want %d; body = %s",
-					tc.model, tc.recorded, tc.live, rec.Code, tc.wantCode, rec.Body.String())
+				t.Errorf("switch to %q with recorded=%v: code = %d, want %d; body = %s",
+					tc.model, tc.recorded, rec.Code, tc.wantCode, rec.Body.String())
 			}
 		})
 	}

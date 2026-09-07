@@ -360,6 +360,26 @@ describe("runToExec alert precedence", () => {
     );
     expect(run.alert?.kind).toBe("paused");
     expect(run.alert?.text).toContain("ThrottlingException");
+    expect(run.alert?.text).toContain("transient");
+  });
+
+  // `pauseDetail.class` gained a second member upstream in 2.21.1. An exhausted
+  // continuation budget is not a transient failure, and the reason sentence
+  // already carries upstream's own explanation.
+  it("does not call an exhausted continuation budget a transient error", () => {
+    const run = runToExec(
+      "wf_1",
+      stateWith(step("a", "paused"), {
+        status: "paused",
+        pauseReason: "Step could not be continued after 3 consecutive attempts.",
+        pauseDetail: { class: "continuation-exhausted", code: "MaxContinuationAttempts" },
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.alert?.kind).toBe("paused");
+    expect(run.alert?.text).toContain("MaxContinuationAttempts");
+    expect(run.alert?.text).not.toContain("transient");
   });
 
   // The two need-input literals reach the reader as a sentence about THEM rather

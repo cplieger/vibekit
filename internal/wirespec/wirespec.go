@@ -69,6 +69,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.TabSubject](),
 	wiregen.TypeRef[vibekit.TabsChangedPayload](),
 	wiregen.TypeRef[vibekit.TabList](),
+	wiregen.TypeRef[vibekit.MCPToolIdentity](),
 	wiregen.TypeRef[vibekit.PermissionNeededPayload](),
 	wiregen.TypeRef[vibekit.ErrorPayload](),
 	wiregen.TypeRef[vibekit.MCPConnectedPayload](),
@@ -180,6 +181,10 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// The client's label switch over it must be TOTAL.
 	"SteerOrigin":     {},
 	"RunProgressKind": {},
+	// Registered for the same reason: the client folds over both status
+	// vocabularies, and every fold must stay total.
+	"RunStatus":     {},
+	"RunNodeStatus": {},
 	// Registered for CatalogState's reason below.
 	"RunStepTranscriptState": {},
 	"DecisionKind":           {},

@@ -7,6 +7,13 @@ import { signal, touch, type Signal } from "@cplieger/reactive";
 import { apiGet, apiGetTyped } from "./api-client.js";
 import { decodeLiveRunsResponse, decodeRunControlsResponse } from "./wire/decoders.gen.js";
 import type { RunControlsResponse } from "./wire/types.gen.js";
+import {
+  classifyRunNodeStatus,
+  classifyRunStatus,
+  runStatusActive,
+  type ClassifiedRunNodeStatus,
+  type ClassifiedRunStatus,
+} from "./run-status.js";
 
 /** One node of KAS's execution tree, from `state.root`.
  *
@@ -19,7 +26,7 @@ import type { RunControlsResponse } from "./wire/types.gen.js";
 export interface RunNode {
   nodeId: string;
   type: "step" | "sequence" | "repeat" | "parallel" | "watch";
-  status: "pending" | "running" | "paused" | "completed" | "failed" | "aborted" | "skipped";
+  status: ClassifiedRunNodeStatus;
   agentName?: string;
   modelId?: string;
   effortLevel?: string;
@@ -45,7 +52,7 @@ export interface RunState {
   workflowId: string;
   workflowName?: string;
   runLabel?: string;
-  status?: "running" | "paused" | "completed" | "failed" | "aborted";
+  status?: ClassifiedRunStatus;
   inputs?: Record<string, string>;
   artifacts?: Record<string, string>;
   capturedOutputs?: Record<string, string>;
@@ -64,6 +71,42 @@ export interface RunInspect {
    *  structurally, so typing it would re-model a structure vibekit does not own;
    *  `run-exec-source.ts` narrows it at the point of use. Contents: vibekit-acp.md. */
   nodePlan?: unknown;
+}
+
+interface RawRunNode extends Omit<RunNode, "status" | "children"> {
+  status: string;
+  children?: RawRunNode[];
+}
+
+interface RawRunState extends Omit<RunState, "status" | "root"> {
+  status?: string;
+  root?: RawRunNode;
+}
+
+interface RawRunInspect extends Omit<RunInspect, "state"> {
+  state?: RawRunState;
+}
+
+function classifyRunNode(node: RawRunNode): RunNode {
+  const { status, children, ...rest } = node;
+  const out: RunNode = { ...rest, status: classifyRunNodeStatus(status) };
+  if (children !== undefined) {
+    out.children = children.map(classifyRunNode);
+  }
+  return out;
+}
+
+function classifyRunState(state: RawRunState): RunState {
+  const { status, root, ...rest } = state;
+  const out: RunState = { ...rest };
+  const classified = classifyRunStatus(status);
+  if (classified !== undefined) {
+    out.status = classified;
+  }
+  if (root !== undefined) {
+    out.root = classifyRunNode(root);
+  }
+  return out;
 }
 
 /** Per-run signals, created on demand. A signal per run rather than one version
@@ -302,7 +345,7 @@ export function invalidateCachedRuns(): void {
 async function fetchRun(workflowID: string): Promise<void> {
   inFlight.add(workflowID);
   try {
-    const d = await apiGet<RunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
+    const d = await apiGet<RawRunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
     if (d?.state !== undefined) {
       // The plan BEFORE the state, because the state assignment is what wakes
       // every reader: a subscriber that re-rendered between the two would draw a
@@ -312,7 +355,7 @@ async function fetchRun(workflowID: string): Promise<void> {
       } else {
         plans.set(workflowID, d.nodePlan);
       }
-      cell(workflowID).value = d.state;
+      cell(workflowID).value = classifyRunState(d.state);
     }
   } finally {
     inFlight.delete(workflowID);
@@ -695,13 +738,24 @@ export function runCounters(state: RunState | undefined): RunCounters {
   let failed = 0;
   let current = 0;
   for (const [i, n] of leaves.entries()) {
-    if (n.status === "completed" || n.status === "skipped") {
-      done++;
-    } else if (n.status === "failed" || n.status === "aborted") {
-      failed++;
-    }
-    if (current === 0 && (n.status === "running" || n.status === "paused")) {
-      current = i + 1;
+    switch (n.status) {
+      case "completed":
+      case "skipped":
+        done++;
+        break;
+      case "failed":
+      case "aborted":
+        failed++;
+        break;
+      case "running":
+      case "paused":
+      case "unknown":
+        if (current === 0) {
+          current = i + 1;
+        }
+        break;
+      case "pending":
+        break;
     }
   }
   return { total: leaves.length, done, failed, current };
@@ -749,8 +803,20 @@ export function runElapsedMs(state: RunState | undefined): number {
       if (!Number.isNaN(t)) {
         last = Math.max(last, t);
       }
-    } else if (n.status === "running" || n.status === "paused") {
-      running = true;
+    } else {
+      switch (n.status) {
+        case "running":
+        case "paused":
+        case "unknown":
+          running = true;
+          break;
+        case "pending":
+        case "completed":
+        case "failed":
+        case "aborted":
+        case "skipped":
+          break;
+      }
     }
   }
   if (!Number.isFinite(first)) {
@@ -763,8 +829,8 @@ export function runElapsedMs(state: RunState | undefined): number {
  *  the card's open-by-default state. `paused` counts as live: it is stopped
  *  waiting for something, not over. */
 export function runIsLive(state: RunState | undefined): boolean {
-  const s = state?.status;
-  return s === "running" || s === "paused";
+  const status = state?.status;
+  return status === undefined ? false : runStatusActive(status);
 }
 
 /** Whether a pause REASON means a step is waiting on a person — the reason half of
@@ -821,4 +887,35 @@ export function isNeedInputPark(state: RunState | undefined): boolean {
     return false;
   }
   return isNeedInputPause(state.pauseReason) || needInputNode(state.root) !== undefined;
+}
+
+/** Only a class whose `pauseReason` does NOT already name its cause earns a label.
+ *  `continuation-exhausted`'s reason states the attempt count itself, so labelling
+ *  it would stutter; it renders its code bare. */
+const PAUSE_CLASS_LABEL: Readonly<Record<string, string>> = {
+  "transient-error": "after a transient error",
+};
+
+/** `class` is arbitrary wire text, and a bare index read on an object literal answers
+ *  `Object.prototype`'s member for `constructor`/`toString`/… — which would render a
+ *  function's source into the run card's alert. Own membership is the question. */
+function pauseClassLabel(cls: string): string | undefined {
+  return Object.hasOwn(PAUSE_CLASS_LABEL, cls) ? PAUSE_CLASS_LABEL[cls] : undefined;
+}
+
+/** The pause's machine detail as one phrase, or undefined when there is none.
+ *  Upstream 2.21.1 made `pauseDetail.class` a two-member enum, and both render
+ *  sites had folded the single member into prose — so an exhausted continuation
+ *  budget read as "a transient error", which it is not and which points the
+ *  reader at the wrong next action. An unrecognised class claims nothing.
+ *  An ABSENT class takes the transient label: that is every pre-2.21.1 engine's
+ *  wire, and the field is optional. Rule: `vibekit-acp.md` single-member enums. */
+export function pauseDetailPhrase(detail: RunState["pauseDetail"]): string | undefined {
+  const code = detail?.code;
+  if (code === undefined || code === "") {
+    return undefined;
+  }
+  const cls = detail?.class;
+  const label = pauseClassLabel(cls === undefined || cls === "" ? "transient-error" : cls);
+  return label === undefined ? `(${code})` : `${label} (${code})`;
 }

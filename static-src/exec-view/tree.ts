@@ -294,12 +294,15 @@ export function attentionRank(state: ExecState): number {
     case "fail":
       return 1;
     case "running":
+    case "unknown":
       return 2;
     case "waiting":
       return 3;
     case "warn":
       return 4;
-    default:
+    case "pending":
+    case "ok":
+    case "skipped":
       return 5;
   }
 }

@@ -91,6 +91,23 @@ func TestFilterACPArgs(t *testing.T) {
 	}
 }
 
+func TestFilterACPArgs_RefusesAuthMethod(t *testing.T) {
+	// kiro-cli exits 2 before initialize on an invalid value:
+	// error: invalid value 'bogus' for '--auth-method <METHOD>' [possible values: cli]
+	cases := map[string][]string{
+		"long_separate":  {"--auth-method", "bogus", "-v"},
+		"long_inline":    {"--auth-method=bogus", "-v"},
+		"alias_separate": {"--authMethod", "bogus", "-v"},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := FilterACPArgs(args); !slices.Equal(got, []string{"-v"}) {
+				t.Errorf("FilterACPArgs(%v) = %v, want [-v]", args, got)
+			}
+		})
+	}
+}
+
 func TestParseACPArgs(t *testing.T) {
 	cases := []struct {
 		name string
@@ -126,6 +143,8 @@ func TestRefuseReasonNamesTheRealSurface(t *testing.T) {
 		wantSubstrs []string
 	}{
 		{flagAgentEngine, []string{"v3-only"}},
+		{flagAuthMethod, []string{"exits before initialize", "cli"}},
+		{flagAuthMethodAlias, []string{"exits before initialize", "cli"}},
 		{flagTrustAll, []string{"inert", "permissions.yaml"}},
 		{flagTrustAllShort, []string{"inert", "permissions.yaml"}},
 		{flagTrustTools, []string{"inert", "permissions.yaml"}},

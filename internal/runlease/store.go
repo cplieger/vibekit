@@ -142,6 +142,22 @@ func (s *Store) Release(ctx context.Context, workflowID string) error {
 	return s.persistLocked(ctx)
 }
 
+// SetFirstAbsentAt starts or clears a lease's continuous-absence clock.
+func (s *Store) SetFirstAbsentAt(ctx context.Context, workflowID string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l, ok := s.leases[workflowID]
+	if !ok {
+		return ErrNotFound
+	}
+	if l.FirstAbsentAt.Equal(at) {
+		return nil
+	}
+	l.FirstAbsentAt = at
+	s.leases[workflowID] = l
+	return s.persistLocked(ctx)
+}
+
 // SetDeadline re-stamps a lease's deadline, or parks it with the zero time, which is
 // what makes the bound one on EXECUTING time: every start re-arms, every pause parks.
 //

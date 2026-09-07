@@ -2,17 +2,20 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"os/exec"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/kascap"
+	"github.com/cplieger/vibekit/internal/modeltext"
 	"github.com/cplieger/vibekit/internal/version"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -26,8 +29,9 @@ const scannerLineCap = 16 << 20
 // cap: a larger frame is assembled across several ErrBufferFull reads.
 const stdoutBufSize = 64 * 1024
 
-// stderrLineCap bounds a single kiro-cli stderr line. 64 KiB is generous for panic
-// traces; anything longer is almost certainly binary garbage.
+// stderrLineCap bounds one forwarded kiro-cli stderr line. Longer lines are
+// marked as truncated and drained through their newline so later diagnostics
+// continue to reach the log.
 const stderrLineCap = 64 * 1024
 
 // errBridgeExited aliases the exported sentinel Call returns when a waiter is
@@ -62,6 +66,14 @@ const (
 	keyConfigValue = "value"
 )
 
+// AgentKiroCapabilities is the backend capability advertisement retained from
+// the initialize result. Raw preserves keys this client does not model yet.
+type AgentKiroCapabilities struct {
+	Raw              map[string]json.RawMessage
+	ExtensionMethods []string
+	ReplayMarking    bool
+}
+
 // Bridge is one kiro-cli ACP subprocess tied to one chat.
 type Bridge struct {
 	// lifecycleCtx bounds the subprocess: the receiving half of StartOpts.Lifetime,
@@ -74,12 +86,12 @@ type Bridge struct {
 	pending      map[int64]chan pendingReply
 	notifCh      chan vibekit.Notification
 	done         chan struct{}
-	models       atomic.Pointer[[]vibekit.SessionModel]
-	// servedModels is every model id session/new advertised, UNFILTERED. models above
-	// drops end-of-life entries for the picker; this one must not, because a deprecated
-	// model the account can still use has to pass the entitlement check.
-	servedModels atomic.Pointer[[]string]
-	cmd          *exec.Cmd
+	// catalog is the UNFILTERED advertised set. Models derives the picker's list
+	// from it and ApplyServedModels derives the entitlement ids, so a deprecated
+	// model the account still holds cannot be filtered out of the check.
+	catalog   atomic.Pointer[[]vibekit.SessionModel]
+	agentKiro atomic.Pointer[AgentKiroCapabilities]
+	cmd       *exec.Cmd
 	// envAllow re-permits names the credential screen would drop (bridge_env.go).
 	envAllow     map[string]struct{}
 	cliPath      string
@@ -203,6 +215,23 @@ func (b *Bridge) SessionTitle() string {
 	return b.sessionTitle
 }
 
+// AgentKiroCapabilities returns the backend's initialize advertisement.
+func (b *Bridge) AgentKiroCapabilities() AgentKiroCapabilities {
+	p := b.agentKiro.Load()
+	if p == nil {
+		return AgentKiroCapabilities{}
+	}
+	raw := make(map[string]json.RawMessage, len(p.Raw))
+	for key, value := range p.Raw {
+		raw[key] = bytes.Clone(value)
+	}
+	return AgentKiroCapabilities{
+		Raw:              raw,
+		ExtensionMethods: slices.Clone(p.ExtensionMethods),
+		ReplayMarking:    p.ReplayMarking,
+	}
+}
+
 // Modes returns the available session modes as declared on session/new or
 // session/load. The returned slice is frozen; callers MUST NOT mutate it.
 func (b *Bridge) Modes() []vibekit.SessionMode {
@@ -212,23 +241,29 @@ func (b *Bridge) Modes() []vibekit.SessionMode {
 	return nil
 }
 
-// Models returns the available model catalog with [Deprecated] / [Legacy] entries
-// filtered out (modeltext.Hidden). Frozen; callers MUST NOT mutate it.
-func (b *Bridge) Models() []vibekit.SessionModel {
-	if p := b.models.Load(); p != nil {
+// Catalog returns the unfiltered catalog reported by the session result.
+// Frozen; callers MUST NOT mutate it.
+func (b *Bridge) Catalog() []vibekit.SessionModel {
+	if p := b.catalog.Load(); p != nil {
 		return *p
 	}
 	return nil
 }
 
-// ServedModels returns every model id this session advertised, including the
-// end-of-life entries Models filters out. Empty means "entitlement unknowable", which
-// callers must read as allow. Frozen; callers MUST NOT mutate it.
-func (b *Bridge) ServedModels() []string {
-	if p := b.servedModels.Load(); p != nil {
-		return *p
+// Models returns the catalog with [Deprecated] / [Legacy] entries filtered out
+// (modeltext.Hidden), derived from Catalog so the two cannot disagree.
+func (b *Bridge) Models() []vibekit.SessionModel {
+	catalog := b.Catalog()
+	if catalog == nil {
+		return nil
 	}
-	return nil
+	models := make([]vibekit.SessionModel, 0, len(catalog))
+	for _, model := range catalog {
+		if !modeltext.Hidden(model.Description) {
+			models = append(models, model)
+		}
+	}
+	return models
 }
 
 // NotifCh returns incoming ACP notifications, each carrying the read loop's sequence.
@@ -326,6 +361,39 @@ func (b *Bridge) spawn() kascap.Spawn {
 	}
 }
 
+func decodeAgentKiroCapabilities(result json.RawMessage) (AgentKiroCapabilities, error) {
+	var envelope struct {
+		AgentCapabilities struct {
+			Meta struct {
+				Kiro json.RawMessage `json:"kiro"`
+			} `json:"_meta"`
+		} `json:"agentCapabilities"`
+	}
+	if err := json.Unmarshal(result, &envelope); err != nil {
+		return AgentKiroCapabilities{}, err
+	}
+	kiro := envelope.AgentCapabilities.Meta.Kiro
+	if len(kiro) == 0 || string(kiro) == "null" {
+		return AgentKiroCapabilities{}, nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(kiro, &raw); err != nil {
+		return AgentKiroCapabilities{}, err
+	}
+	var typed struct {
+		ExtensionMethods []string `json:"extensionMethods"`
+		ReplayMarking    bool     `json:"replayMarking"`
+	}
+	if err := json.Unmarshal(kiro, &typed); err != nil {
+		return AgentKiroCapabilities{}, err
+	}
+	return AgentKiroCapabilities{
+		Raw:              raw,
+		ExtensionMethods: typed.ExtensionMethods,
+		ReplayMarking:    typed.ReplayMarking,
+	}, nil
+}
+
 func (b *Bridge) initialize(ctx context.Context) error {
 	initStart := time.Now()
 	// The _meta.kiro block is DECLARED in internal/kascap rather than built here. This
@@ -336,7 +404,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	// Advertise fs read/write and terminal: kiro-cli routes file access and command
 	// execution through us when these are true. elicitation is what makes kiro-cli
 	// forward an MCP server's elicitation/create; without it the tool call stalls.
-	if _, err := b.Call(ctx, methodInitialize, map[string]any{
+	resp, err := b.Call(ctx, methodInitialize, map[string]any{
 		"protocolVersion": 1,
 		"clientCapabilities": map[string]any{
 			"fs": map[string]any{
@@ -363,14 +431,22 @@ func (b *Bridge) initialize(ctx context.Context) error {
 		"clientInfo": map[string]any{
 			"name": "vibekit", "title": "Vibekit for Kiro", "version": version.Build,
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("initialize: %w", err)
 	}
+	caps, err := decodeAgentKiroCapabilities(resp.Result)
+	if err != nil {
+		return fmt.Errorf("initialize result: %w", err)
+	}
+	b.agentKiro.Store(&caps)
 	// Developer-oriented; Start()'s "bridge started" is the authoritative line.
 	// elapsed_ms isolates the initialize round trip so a change to it is attributable.
 	slog.Debug("ACP initialize RPC completed",
 		"version", version.Build,
 		"elapsed_ms", time.Since(initStart).Milliseconds(),
+		"extension_methods", len(caps.ExtensionMethods),
+		"replay_marking", caps.ReplayMarking,
 	)
 	return nil
 }

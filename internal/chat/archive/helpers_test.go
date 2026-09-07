@@ -50,6 +50,10 @@ func (f *fakeStore) LoadRetentionHeader(vibekit.ChatID) (RetentionHeader, error)
 	return RetentionHeader{}, errors.New("fakeStore: chat is unreadable")
 }
 
+func (f *fakeStore) Remove(chatID vibekit.ChatID) error {
+	return os.Remove(filepath.Join(f.dir, string(chatID)+chatFileSuffix))
+}
+
 // purgeRecorder collects chat IDs passed to an onPurge
 // callback. Safe for concurrent use (Purge runs callbacks from worker
 // goroutines).

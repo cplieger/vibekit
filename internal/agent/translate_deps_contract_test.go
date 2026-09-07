@@ -88,6 +88,9 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 		if r.Buffers.TurnFoldTarget(t.Context(), "c1", vibekit.TurnSourceWireTurnStart) == nil {
 			t.Error("Buffers.TurnFoldTarget returned nil")
 		}
+		if _, ok := r.Buffers.OpenTurnBuffer("no-such-chat"); ok {
+			t.Error("Buffers.OpenTurnBuffer opened a turn")
+		}
 		r.Lines.RecordFromDiffs("c1", nil, 0, "")
 	})
 

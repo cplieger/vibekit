@@ -54,6 +54,10 @@ func (d *benchDeps) OpenBridge(context.Context, vibekit.ChatID, string) (Bridge,
 func (d *benchDeps) CloseBridge(vibekit.ChatID)                                    {}
 func (d *benchDeps) ClearPendingPermsForChat(vibekit.ChatID)                       {}
 func (d *benchDeps) TakePendingPerm(vibekit.ChatID, int64, vibekit.SettledBy) bool { return true }
+func (d *benchDeps) TakePendingPermissionOption(vibekit.ChatID, int64, string, vibekit.SettledBy) (bool, bool) {
+	return true, true
+}
+
 func (d *benchDeps) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(reqCtx))
 }

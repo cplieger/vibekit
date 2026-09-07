@@ -343,7 +343,7 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 		RetryErrorType: "THROTTLING",
 		RequestID:      "req-9",
 	})
-	got := promptFailureReason(err)
+	got := promptFailureReason(err, false)
 
 	// KAS's own message is already written for a user, so it must SURVIVE rather
 	// than be replaced. What is added is the one thing it cannot know (retrying
@@ -363,7 +363,7 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 		ErrorType:      "GenericValidationError",
 		RetryErrorType: "CLIENT_ERROR",
 	})
-	if reason := promptFailureReason(other); strings.Contains(reason, "already retried") {
+	if reason := promptFailureReason(other, false); strings.Contains(reason, "already retried") {
 		t.Errorf("a validation error was given throttle advice: %q", reason)
 	}
 
@@ -377,7 +377,7 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 		RetryErrorType: "THROTTLING",
 		RequestID:      "req-11",
 	})
-	got = promptFailureReason(blank)
+	got = promptFailureReason(blank, false)
 	for _, leak := range []string{"{", "retryErrorType", "\"requestId\""} {
 		if strings.Contains(got, leak) {
 			t.Errorf("empty-message mapped error leaked the raw triplet (%q) at the user: %q", leak, got)
@@ -393,8 +393,32 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 	// Anything else falls through verbatim: inventing prose for an error we do
 	// not understand would hide the only text there is.
 	plain := errors.New("some other failure")
-	if got := promptFailureReason(plain); got != plain.Error() {
+	if got := promptFailureReason(plain, false); got != plain.Error() {
 		t.Errorf("promptFailureReason(%v) = %q, want it passed through unchanged", plain, got)
+	}
+}
+
+func TestPromptFailureReason_ModelRegistryUnavailableNamesLoginRemedy(t *testing.T) {
+	err := rpcErr(t, vibekit.RPCCodeBridgeExited, "Kiro could not load the available models.", mappedErrorData{
+		ErrorType:      "ModelRegistryUnavailableError",
+		RetryErrorType: "SERVER_ERROR",
+	})
+	got := promptFailureReason(err, false)
+	for _, want := range []string{"Kiro could not load the available models.", "kiro-cli login"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("promptFailureReason(ModelRegistryUnavailableError) = %q, want it to mention %q", got, want)
+		}
+	}
+	if retriesFor(err) {
+		t.Error("ModelRegistryUnavailableError is retryable, want a terminal login remedy")
+	}
+
+	other := rpcErr(t, vibekit.RPCCodeBridgeExited, "The service failed.", mappedErrorData{
+		ErrorType:      "InternalServerError",
+		RetryErrorType: "SERVER_ERROR",
+	})
+	if got := promptFailureReason(other, false); strings.Contains(got, "kiro-cli login") {
+		t.Errorf("promptFailureReason(InternalServerError) = %q, want no login remedy", got)
 	}
 }
 
@@ -409,7 +433,7 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 func TestPromptFailureReason_NamesTheRefusalAsTerminal(t *testing.T) {
 	const cause = "ImageSizeExceeded: image exceeds 5 MB maximum: 6714372 bytes > 5242880"
 	err := rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{"details": cause})
-	got := promptFailureReason(err)
+	got := promptFailureReason(err, true)
 
 	// The backend's account survives: it carries the numbers, which is the only
 	// place a user learns how much smaller the attachment has to get.
@@ -428,7 +452,7 @@ func TestPromptFailureReason_NamesTheRefusalAsTerminal(t *testing.T) {
 	other := rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
 		"details": "upstream connection reset",
 	})
-	if reason := promptFailureReason(other); strings.Contains(reason, "refused as sent") {
+	if reason := promptFailureReason(other, false); strings.Contains(reason, "refused as sent") {
 		t.Errorf("a transient internal error was told its request was refused: %q", reason)
 	}
 }
@@ -446,7 +470,7 @@ func TestPromptFailureReason_HandlesAHalfFilledTriplet(t *testing.T) {
 		if got := classifyPromptFailure(err); got != classThrottled {
 			t.Errorf("classifyPromptFailure(retryErrorType only) = %s, want %s", got, classThrottled)
 		}
-		if got := promptFailureReason(err); !strings.Contains(got, "already retried") {
+		if got := promptFailureReason(err, false); !strings.Contains(got, "already retried") {
 			t.Errorf("reason %q does not carry the throttle advice", got)
 		}
 	})
@@ -455,7 +479,7 @@ func TestPromptFailureReason_HandlesAHalfFilledTriplet(t *testing.T) {
 		err := rpcErr(t, vibekit.RPCCodeBridgeExited, "", mappedErrorData{
 			ErrorType: "ImprovementServiceUnavailable",
 		})
-		got := promptFailureReason(err)
+		got := promptFailureReason(err, false)
 		if !strings.Contains(got, "ImprovementServiceUnavailable") {
 			t.Errorf("reason %q does not name the errorType, the only readable token it has", got)
 		}
@@ -463,4 +487,47 @@ func TestPromptFailureReason_HandlesAHalfFilledTriplet(t *testing.T) {
 			t.Errorf("reason %q leaked the raw triplet at the user", got)
 		}
 	})
+}
+
+func TestPromptFailureReason_HistoryShapedRefusalNamesRewind(t *testing.T) {
+	const cause = "ImageCountExceeded: too many images"
+	err := rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{"details": cause})
+
+	got := promptFailureReason(err, false)
+	for _, want := range []string{"Rewind", "Reopen the chat", "file or MCP tool"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("promptFailureReason history refusal = %q, want it to mention %q", got, want)
+		}
+	}
+}
+
+func TestPromptFailureReason_PromptShapedRefusalKeepsSmallerAdvice(t *testing.T) {
+	const cause = "ImageSizeExceeded: image exceeds the maximum"
+	err := rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{"details": cause})
+
+	got := promptFailureReason(err, true)
+	if !strings.Contains(got, "Make the prompt or its attachments smaller") {
+		t.Errorf("promptFailureReason current-prompt refusal = %q, want smaller-attachment advice", got)
+	}
+}
+
+func TestContextWindowExceededIsPermanentAndNamesRecovery(t *testing.T) {
+	err := rpcErr(t, vibekit.RPCCodeInternal, "Internal error", mappedErrorData{
+		ErrorType:      "ContextWindowExceededError",
+		RetryErrorType: "CLIENT_ERROR",
+		RequestID:      "req-context",
+	})
+
+	if got := classifyPromptFailure(err); got != classFatal {
+		t.Errorf("classifyPromptFailure(ContextWindowExceededError) = %s, want %s", got, classFatal)
+	}
+	if retriesFor(err) {
+		t.Error("ContextWindowExceededError is retryable, want a permanent failure")
+	}
+	got := promptFailureReason(err, false)
+	for _, want := range []string{"/compact", "new chat"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("promptFailureReason(ContextWindowExceededError) = %q, want it to mention %q", got, want)
+		}
+	}
 }

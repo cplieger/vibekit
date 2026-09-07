@@ -41,6 +41,14 @@ func (us *utilitySession) rawCallAt(ctx context.Context, label, method string, p
 	if resp == nil {
 		return nil, at, errors.New(label + ": nil response")
 	}
+	// KAS's in-band refusal is an ERROR, not an empty reply. Dropping it left every
+	// caller with (nil, nil) and no way to recover the reason: `inspectConfirmsGone`
+	// cannot tell an unknown workflow from a transient fault, and `control`'s utility
+	// fallback read a refused cancel as landed while its carrier path (runCallErr)
+	// reported one. Wrapped, so `rpcerr.Details` still reaches the *vibekit.RPCError.
+	if resp.Error != nil {
+		return nil, at, fmt.Errorf("%s: %w", label, resp.Error)
+	}
 	return resp.Result, at, nil
 }
 

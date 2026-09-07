@@ -32,15 +32,18 @@ const (
 // is on both live statuses and neither terminal one. An UNKNOWN status is absent
 // rather than mapped to an empty list, so a future KAS status degrades to a
 // read-only view instead of a wrong control.
-var runStatusVerbs = map[string][]string{
-	"running":       {verbPause, verbCancel},
-	runStatusPaused: {verbResume, verbCancel},
+var runStatusVerbs = map[vibekit.RunStatus][]string{
+	vibekit.RunStatusRunning: {verbPause, verbCancel},
+	vibekit.RunStatusPaused:  {verbResume, verbCancel},
 	// A completed run is a record: nothing to retry, nothing to stop.
-	"completed": {},
+	vibekit.RunStatusCompleted: {},
 	// Retry resets the failed and aborted nodes plus their ancestors, so completed
 	// work survives — unlike relaunching, which starts at step one.
-	"failed":  {verbRetry},
-	"aborted": {verbRetry},
+	vibekit.RunStatusFailed:  {verbRetry},
+	vibekit.RunStatusAborted: {verbRetry},
+	// A cancel writes its target status verbatim, so `cancelled` is reachable from
+	// another client of the workspace and is a record like `completed`.
+	vibekit.RunStatusCancelled: {},
 }
 
 // hostedOnlyVerbs need the process that holds the run's registry entry and cannot
@@ -101,7 +104,7 @@ type runFacts struct {
 // affordanceOf answers what may be done to one run. Pure, so the table is
 // testable over (status × parent × hosted) without a bridge or an RPC.
 func affordanceOf(f runFacts) runAffordance {
-	byStatus, known := runStatusVerbs[f.status]
+	byStatus, known := runStatusVerbs[vibekit.RunStatus(f.status)]
 	if !known {
 		// The parent chat still travels: the page's step-transcript note needs it
 		// whatever the status is.
@@ -172,7 +175,10 @@ func pastTense(verb string) string {
 // carries both the parent session and the recipe.
 func (rs *Runs) affordance(ctx context.Context, workflowID, status string) runAffordance {
 	listed := rs.listedRun(ctx, workflowID)
-	f := runFacts{status: status, recipe: listed.Name}
+	// WorkflowName, not Name: the recipe is what the single-run rule compares a
+	// re-armed lease against, and Name is `runLabel ?? workflowName`, so a labelled
+	// run would carry a recipe nothing matches.
+	f := runFacts{status: status, recipe: listed.WorkflowName}
 	f.parentChat, f.parentName = rs.chatForSession(ctx, listed.ParentSessionID)
 	f.hosted = rs.bridges.get(runChatID(workflowID)) != nil ||
 		(f.parentChat != "" && rs.bridges.get(f.parentChat) != nil)

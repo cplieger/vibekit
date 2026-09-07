@@ -28,9 +28,15 @@
 // ---------------------------------------------------------------------------
 
 import { truncate } from "./strings.js";
-import { isNeedInputPark, nodePathSegment, type RunNode, type RunState } from "./run-store.js";
+import {
+  isNeedInputPark,
+  nodePathSegment,
+  pauseDetailPhrase,
+  type RunNode,
+  type RunState,
+} from "./run-store.js";
 import type { RunAsks } from "./fundamentals/run-card.js";
-import { stateOf, withAsk, inFlight, type ExecState, type WireStatus } from "./exec-view/status.js";
+import { stateOf, withAsk, inFlight, type ExecState } from "./exec-view/status.js";
 import type { ExecFact, ExecKind, ExecNode, ExecRun } from "./exec-view/model.js";
 
 /** The per-node facts `nodePlan` carries that the state tree does not.
@@ -243,12 +249,7 @@ function toNode(
   const plan = plans.get(node.nodeId);
   const kind = kindOf(node.type);
   const children = (node.children ?? []).map((k) => toNode(k, path, plans, asks, node));
-  // `node.status` is typed `string` on the wire so an upstream addition falls
-  // through `stateOf` rather than failing a decode; `WireStatus` is the set this
-  // adapter writes against, and naming it here is what keeps that claim checked
-  // instead of leaving it in a comment on the type.
-  const wire: WireStatus | (string & {}) = node.status;
-  const own = withAsk(stateOf(wire), asks.nodes.has(node.nodeId));
+  const own = withAsk(stateOf(node.status), asks.nodes.has(node.nodeId));
   const out: ExecNode = {
     path: path.join("/"),
     label: node.nodeId,
@@ -334,9 +335,9 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
           ? "Waiting"
           : `Waiting: ${state.pauseReason}`,
     ];
-    const code = state.pauseDetail?.code;
-    if (code !== undefined && code !== "") {
-      bits.push(`after a transient error (${code})`);
+    const detail = pauseDetailPhrase(state.pauseDetail);
+    if (detail !== undefined) {
+      bits.push(detail);
     }
     return { kind: "paused", text: bits.join(" \u00b7 ") };
   }

@@ -375,7 +375,8 @@
   background: var(--c-blue);
 }
 
-.ev-tl-lane[data-state="skipped"] .ev-tl-bar {
+.ev-tl-lane[data-state="skipped"] .ev-tl-bar,
+.ev-tl-lane[data-state="unknown"] .ev-tl-bar {
   background: var(--c-text-tertiary);
 }
 
@@ -680,7 +681,8 @@
    differ by MOTION — the axis the tab dot, the tool card and the run card all use.
    A still ring is a node that is open with nothing moving; spinning is work. */
 .ev-row[data-state="running"] > .ev-row-main > .ev-state::before,
-.ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before {
+.ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before,
+.ev-row[data-state="unknown"] > .ev-row-main > .ev-state::before {
   content: "";
   display: block;
 
@@ -710,6 +712,15 @@
 
 .ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before {
   border-color: var(--c-blue);
+}
+
+/* An UNKNOWN status is a wire value this build does not recognise, folded in-flight
+   because not knowing is not the same as finished. It takes the in-flight ring SIZE
+   and neutral ink: it may not spin (nothing says work is moving) and may not be blue
+   (that means blocked on a person). Without an arm here it rendered no mark at all,
+   which is the colour-alone failure the pending ring below exists to have fixed. */
+.ev-row[data-state="unknown"] > .ev-row-main > .ev-state::before {
+  border-color: var(--c-text-tertiary);
 }
 
 /* A PENDING node gets a hollow ring, and that replaced an `opacity: 0.55` dim on the

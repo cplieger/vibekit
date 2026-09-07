@@ -24,8 +24,8 @@ import (
 	"time"
 )
 
-// codeIntelInitBudget bounds one init call end to end, including a lazy
-// utility-session start (subprocess spawn + auth callback + session/new).
+// codeIntelInitBudget bounds one init call, including a lazy utility-session
+// start and session creation.
 const codeIntelInitBudget = 2 * time.Minute
 
 // SetCodeIntelligence wires the activation inputs: lspConfigPath is the

@@ -21,15 +21,17 @@ func TestStore_RoundTripsALeaseAcrossARestart(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	slot := time.Date(2026, 8, 1, 4, 0, 0, 0, time.UTC)
+	absentAt := time.Date(2026, 8, 1, 3, 30, 0, 0, time.UTC)
 	want := Lease{
-		StartedAt:  time.Date(2026, 8, 1, 3, 0, 0, 0, time.UTC),
-		Deadline:   slot,
-		SlotAt:     slot,
-		WorkflowID: "wf_1",
-		Recipe:     "publish",
-		Origin:     OriginScheduled,
-		ScheduleID: "sched-1",
-		Unattended: true,
+		StartedAt:     time.Date(2026, 8, 1, 3, 0, 0, 0, time.UTC),
+		Deadline:      slot,
+		SlotAt:        slot,
+		FirstAbsentAt: absentAt,
+		WorkflowID:    "wf_1",
+		Recipe:        "publish",
+		Origin:        OriginScheduled,
+		ScheduleID:    "sched-1",
+		Unattended:    true,
 	}
 	if err := s.Put(t.Context(), &want); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -55,6 +57,9 @@ func TestStore_RoundTripsALeaseAcrossARestart(t *testing.T) {
 	}
 	if !got.StartedAt.Equal(want.StartedAt) {
 		t.Errorf("StartedAt = %v, want %v", got.StartedAt, want.StartedAt)
+	}
+	if !got.FirstAbsentAt.Equal(absentAt) {
+		t.Errorf("FirstAbsentAt = %v, want %v; the continuous-absence clock did not survive restart", got.FirstAbsentAt, absentAt)
 	}
 	// The DEADLINE must NOT survive: it was set by a process that no longer exists,
 	// and the bound is on executing time.
@@ -243,6 +248,38 @@ func TestStore_DropsUnusableLeasesOnLoad(t *testing.T) {
 	}
 	if _, ok := s.Get("wf_unknown_origin"); ok {
 		t.Error("a lease with an unknown origin loaded, and the sweep can now reach it")
+	}
+}
+
+// TestStore_SetFirstAbsentAtTracksContinuousAbsence: the first miss stamps the
+// persisted clock, and a later sighting clears it.
+func TestStore_SetFirstAbsentAtTracksContinuousAbsence(t *testing.T) {
+	t.Parallel()
+	s := NewMemory()
+	const id = "wf_1"
+	if err := s.Put(t.Context(), &Lease{WorkflowID: id, Origin: OriginManual}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	absentAt := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	if err := s.SetFirstAbsentAt(t.Context(), id, absentAt); err != nil {
+		t.Fatalf("SetFirstAbsentAt: %v", err)
+	}
+	got, _ := s.Get(id)
+	if !got.FirstAbsentAt.Equal(absentAt) {
+		t.Errorf("FirstAbsentAt = %v, want %v", got.FirstAbsentAt, absentAt)
+	}
+
+	if err := s.SetFirstAbsentAt(t.Context(), id, time.Time{}); err != nil {
+		t.Fatalf("clear FirstAbsentAt: %v", err)
+	}
+	got, _ = s.Get(id)
+	if !got.FirstAbsentAt.IsZero() {
+		t.Errorf("FirstAbsentAt = %v after the run reappeared, want zero", got.FirstAbsentAt)
+	}
+
+	if err := s.SetFirstAbsentAt(t.Context(), "wf_gone", absentAt); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetFirstAbsentAt(wf_gone) = %v, want ErrNotFound", err)
 	}
 }
 
