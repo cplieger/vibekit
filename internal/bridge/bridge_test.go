@@ -154,7 +154,7 @@ func TestApplySessionResult_CopiesModesAndModels(t *testing.T) {
 	}
 
 	b.mu.Lock()
-	b.applySessionResultLocked(r, "fallback-model")
+	b.applySessionResultLocked(&r, "fallback-model")
 	b.mu.Unlock()
 
 	if got := b.CurrentMode(); got != "mode-b" {
@@ -188,7 +188,7 @@ func TestApplySessionResult_CopiesModesAndModels(t *testing.T) {
 func TestApplySessionResult_FallbackModelWhenMissing(t *testing.T) {
 	b := &Bridge{}
 	b.mu.Lock()
-	b.applySessionResultLocked(sessionCreated{}, "fallback")
+	b.applySessionResultLocked(&sessionCreated{}, "fallback")
 	b.mu.Unlock()
 	if got := b.ModelID(); got != "fallback" {
 		t.Errorf("modelID = %q, want fallback", got)
@@ -210,7 +210,7 @@ func TestApplySessionResult_FallbackIgnoredWhenCurrentPresent(t *testing.T) {
 		},
 	}
 	b.mu.Lock()
-	b.applySessionResultLocked(r, "fallback")
+	b.applySessionResultLocked(&r, "fallback")
 	b.mu.Unlock()
 	if got := b.ModelID(); got != "real-model" {
 		t.Errorf("modelID = %q, want real-model (fallback must not override)", got)
@@ -233,7 +233,7 @@ func TestModes_ReturnedSliceIsDefensiveCopy(t *testing.T) {
 		},
 	}
 	b.mu.Lock()
-	b.applySessionResultLocked(r, "")
+	b.applySessionResultLocked(&r, "")
 	b.mu.Unlock()
 
 	first := b.Modes()
@@ -263,7 +263,7 @@ func TestModels_ReturnedSliceIsDefensiveCopy(t *testing.T) {
 		t.Fatalf("unmarshal session result: %v", err)
 	}
 	b.mu.Lock()
-	b.applySessionResultLocked(r, "")
+	b.applySessionResultLocked(&r, "")
 	b.mu.Unlock()
 
 	first := b.Models()
@@ -2648,7 +2648,7 @@ func TestApplySessionResult_TakesFlatMetaTitle(t *testing.T) {
 			}
 			b := &Bridge{}
 			b.mu.Lock()
-			b.applySessionResultLocked(r, "")
+			b.applySessionResultLocked(&r, "")
 			b.mu.Unlock()
 			if got := b.SessionTitle(); got != tc.want {
 				t.Errorf("SessionTitle() = %q, want %q", got, tc.want)
@@ -2704,7 +2704,7 @@ func TestApplySessionResult_TakesFlatMetaContextUsage(t *testing.T) {
 			}
 			b := &Bridge{}
 			b.mu.Lock()
-			b.applySessionResultLocked(r, "")
+			b.applySessionResultLocked(&r, "")
 			b.mu.Unlock()
 			gotSummarize, gotTruncate := b.ContextThresholds()
 			if gotSummarize != tc.wantSummarize {
@@ -2737,7 +2737,7 @@ func TestApplySessionResult_KeepsContextThresholdsOnAbsent(t *testing.T) {
 			b.mu.Lock()
 			b.summarizationPct = 80
 			b.truncationPct = 95
-			b.applySessionResultLocked(r, "")
+			b.applySessionResultLocked(&r, "")
 			b.mu.Unlock()
 			gotSummarize, gotTruncate := b.ContextThresholds()
 			if gotSummarize != 80 || gotTruncate != 95 {
