@@ -178,10 +178,45 @@ describe("tool card summary affordance", () => {
     expect(css(summary, "cursor")).toBe("auto");
   });
 
+  it("a claim-only header reserves no chevron gutter", async () => {
+    // The other half of the region-keyed split, and the reason it is keyed on the
+    // region rather than declared on `.tool-header` outright: most cards in a
+    // transcript are claim-only, and an unconditional reservation would leave 32px
+    // of dead trailing space on every one of them.
+    const { buildToolCard } = await import("./tool-card.js");
+    const claimOnly = mount(
+      buildToolCard({
+        id: "css-claim-gutter",
+        title: "readFile",
+        kind: "read",
+        status: "completed",
+        input: { path: "src/main.ts" },
+        live: false,
+      }),
+    );
+    const withRegion = buildToolCard({
+      id: "css-claim-gutter-ref",
+      title: "invoke_sub_agent",
+      kind: "other",
+      status: "completed",
+      live: false,
+      output: "done\n",
+    });
+    host.appendChild(withRegion);
+    const reserved = css(withRegion.querySelector(".tool-header")!, "padding-inline-end");
+    expect(css(claimOnly.querySelector(".tool-header")!, "padding-inline-end")).not.toBe(reserved);
+    withRegion.remove();
+  });
+
   it("a summary with nothing to reveal stays inert too", async () => {
     // The claim-only case above never had a toggle. This one HAD one and gave it
-    // back, so the affordance has to be withdrawn rather than merely never
-    // granted: no pointer, and no gutter reserved for a chevron that is gone.
+    // back, so the pointer affordance has to be withdrawn rather than merely never
+    // granted.
+    //
+    // The GUTTER stays reserved, which reverses what this case used to assert. It
+    // is keyed on having a details region, not on holding the chevron right now:
+    // the button comes and goes within one card's life, and a gutter that went
+    // with it moved the title row 32px away from its siblings in the same group.
     const { buildToolCard } = await import("./tool-card.js");
     const bare = mount(
       buildToolCard({
@@ -199,8 +234,8 @@ describe("tool card summary affordance", () => {
     expect(css(summary, "cursor")).toBe("auto");
 
     // The gutter is `padding-inline-end` on the header, and its value is a calc
-    // only the `.has-disclosure` rule writes — so compare against a card that
-    // still has its chevron rather than against a hardcoded length.
+    // only the region rule writes — so compare against a card that still has its
+    // chevron rather than against a hardcoded length.
     const withToggle = buildToolCard({
       id: "css-bare-ref",
       title: "invoke_sub_agent",
@@ -211,7 +246,7 @@ describe("tool card summary affordance", () => {
     });
     host.appendChild(withToggle);
     const reserved = css(withToggle.querySelector(".tool-header")!, "padding-inline-end");
-    expect(css(header, "padding-inline-end")).not.toBe(reserved);
+    expect(css(header, "padding-inline-end")).toBe(reserved);
     withToggle.remove();
   });
 

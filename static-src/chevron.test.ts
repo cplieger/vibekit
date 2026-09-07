@@ -76,8 +76,14 @@ describe("every disclosure builder emits the shared chevron", () => {
     expect(g.querySelectorAll(".disclosure-chevron")).toHaveLength(1);
   });
 
-  it("subagent card, and it survives a status flip", () => {
+  it("subagent card, and it survives a status flip", async () => {
     const sa = buildSubagentBlock("context-gatherer", "in_progress");
+    // With something to reveal: a box whose body is empty withdraws its whole
+    // control, chevron included, so there is no glyph to be the shared one.
+    sa.body.appendChild(document.createElement("div")).textContent = "work";
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
     expect(sa.root.querySelectorAll(".disclosure-chevron")).toHaveLength(1);
     sa.setStatus("completed");
     expect(sa.root.querySelectorAll(".disclosure-chevron")).toHaveLength(1);
