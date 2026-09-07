@@ -133,6 +133,19 @@ describe("wireRowToggle", () => {
     expect(h.hits()).toBe(0);
   });
 
+  it("a control taken out of the document is not activated", () => {
+    // A caller may REMOVE its control: a tool card detaches its chevron once it
+    // has nothing left to reveal. The listeners ride along on the detached
+    // element, so without the check the row would still activate a control the
+    // reader cannot see.
+    const h = build();
+    wireRowToggle(h.row, h.control);
+    h.control.remove();
+
+    clickOn(h.plain);
+    expect(h.hits()).toBe(0);
+  });
+
   it("a click inside a live selection does not activate", () => {
     const h = build();
     wireRowToggle(h.row, h.control);

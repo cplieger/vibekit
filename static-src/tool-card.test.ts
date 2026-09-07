@@ -37,7 +37,8 @@ vi.mock("./tool-group.js", () => ({
   },
 }));
 
-const { extractSubtitle, mcpHue, buildToolCard } = await import("./tool-card.js");
+const { extractSubtitle, mcpHue, buildToolCard, expandToolDetails, refreshToolDisclosure } =
+  await import("./tool-card.js");
 
 // ---------------------------------------------------------------------------
 // extractSubtitle — table-driven
@@ -410,9 +411,13 @@ describe("the depth ladder", () => {
   });
 
   it("an edit gets a details region — the old tier axis gave it none", async () => {
+    // The `output` is what makes the region non-empty: the chevron is gated on
+    // there being something to reveal (see "a card with nothing to disclose"),
+    // and an edit's diff preview is a SIBLING of the region rather than in it.
     const { buildToolCard } = await import("./tool-card.js");
     const card = buildToolCard({
       id: "t6",
+      output: "1 replacement made\n",
       title: "strReplace",
       kind: "edit",
       status: "completed",
@@ -628,10 +633,14 @@ describe("disclose_context and policy denials", () => {
 // and the claim-only card that must stay inert.
 // ---------------------------------------------------------------------------
 
+// Every fixture below carries an `output`, because the chevron is gated on the
+// details region having something in it — a card with nothing to reveal has no
+// toggle for a header click to reach (see "a card with nothing to disclose").
 describe("tool card: whole-header disclosure", () => {
   it("a click on the header toggles the card's details", () => {
     const card = buildToolCard({
       id: "hdr1",
+      output: "total 0\n",
       title: "executePwsh",
       kind: "execute",
       status: "completed",
@@ -656,6 +665,7 @@ describe("tool card: whole-header disclosure", () => {
   it("a click on the title inside the summary toggles it too", () => {
     const card = buildToolCard({
       id: "hdr2",
+      output: "total 0\n",
       title: "executePwsh",
       kind: "execute",
       status: "completed",
@@ -679,6 +689,7 @@ describe("tool card: whole-header disclosure", () => {
     // be a dead strip inside a box that otherwise reads as a button.
     const card = buildToolCard({
       id: "hdr-subtitle",
+      output: "3 results\n",
       title: "remote_web_search",
       kind: "fetch",
       status: "completed",
@@ -716,6 +727,7 @@ describe("tool card: whole-header disclosure", () => {
     // click could have counted twice and landed back where it started.
     const card = buildToolCard({
       id: "hdr3",
+      output: "total 0\n",
       title: "executePwsh",
       kind: "execute",
       status: "completed",
@@ -734,6 +746,7 @@ describe("tool card: whole-header disclosure", () => {
   it("the filename link opens the change and does NOT toggle the card", () => {
     const card = buildToolCard({
       id: "hdr4",
+      output: "wrote 3 lines\n",
       title: "fsAppend",
       kind: "write",
       status: "completed",
@@ -857,6 +870,187 @@ describe("the details body is deferred to first open", () => {
     document.body.appendChild(card);
     expandToolDetails(card);
     expect(card.querySelector(".tool-output")?.textContent).toContain("cc: fatal error");
+    card.remove();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A card with nothing to disclose loses its disclosure.
+//
+// The disclosure reveals `.tool-details` and nothing else, so emptiness is a
+// property of that region. Three things a card can carry sit OUTSIDE it and stay
+// visible on a bare card: the diff preview and its fetch control, and the Explain
+// button, all siblings of the region. So an edit whose region is empty is bare and
+// correctly loses its chevron while its diff stays on screen.
+//
+// The region cannot simply be read, because `detailsBody` is deferred to first
+// open: an unopened card's region is empty for every kind. The predicate therefore
+// combines the build-time facts that guarantee content with the live output
+// region — one flag per thing `detailsBody` writes.
+// ---------------------------------------------------------------------------
+
+/** A settled tool call that produced nothing at all: no output, no input, no
+ *  denial, replay mode. `other` resolves to depth 1 `generic`, which is what gives
+ *  it a details region in the first place — the shape a subagent that failed to
+ *  START arrives in, since a call with no subtask id renders as an ordinary card. */
+function bareCard(id = "bare1"): HTMLDivElement {
+  return buildToolCard({
+    id,
+    title: "invoke_sub_agent",
+    kind: "other",
+    status: "failed",
+    live: false,
+  });
+}
+
+describe("a card with nothing to disclose", () => {
+  it("has no chevron", () => {
+    expect(bareCard().querySelector(".tool-disclosure")).toBeNull();
+  });
+
+  it("exposes no aria-expanded anywhere on the card", () => {
+    // The bar a claim-only card already meets. The chevron is DETACHED rather
+    // than hidden precisely for this: the disclosure primitive owns
+    // `aria-expanded` and keeps writing it, so a hidden button would still
+    // announce a control that opens an empty region.
+    expect(bareCard().querySelector("[aria-expanded]")).toBeNull();
+  });
+
+  it("drops the summary's pointer affordance", () => {
+    // `has-disclosure` is what 14-tools.css keys the cursor, the hover wash and
+    // the reserved chevron gutter on.
+    const summary = bareCard().querySelector(".tool-summary");
+    expect(summary?.classList.contains("has-disclosure")).toBe(false);
+  });
+
+  it("keeps its details region, which is what the update path streams into", () => {
+    expect(bareCard().querySelector(".tool-details")).not.toBeNull();
+  });
+
+  it("opens nothing when its header is clicked", () => {
+    // Read off the REGION, not off the absent chevron: the summary forwards a
+    // click by calling the control, and a detached button's listeners ride along
+    // with it, so a forward that was not refused would open the region while the
+    // card still reported no `aria-expanded` anywhere.
+    const card = bareCard();
+    document.body.appendChild(card);
+
+    card.querySelector<HTMLElement>(".tool-header")!.click();
+
+    expect(card.querySelector(".tool-details")?.getAttribute("aria-hidden")).toBe("true");
+    card.remove();
+  });
+
+  it("keeps the chevron when the call DID produce output", () => {
+    const card = buildToolCard({
+      id: "bare-out",
+      title: "invoke_sub_agent",
+      kind: "other",
+      status: "failed",
+      live: false,
+      output: "the delegate refused\n",
+    });
+    expect(card.querySelector(".tool-disclosure")).not.toBeNull();
+  });
+
+  it("keeps the chevron on a call still in flight", () => {
+    // Mid-flight is not at rest: output is still arriving, and taking the
+    // affordance away to hand it back a frame later is a flicker.
+    const card = buildToolCard({
+      id: "bare-pending",
+      title: "invoke_sub_agent",
+      kind: "other",
+      status: "pending",
+      live: true,
+    });
+    expect(card.querySelector(".tool-disclosure")).not.toBeNull();
+  });
+
+  it("keeps the chevron on a settled LIVE call, whose input dump is the reveal", () => {
+    // The one content source with no trace in the region and no trace in the
+    // status: `detailsBody` writes the input `<pre>` only in live mode, and this
+    // call has settled, so nothing else here says the region will fill.
+    const card = buildToolCard({
+      id: "bare-live-input",
+      title: "executePwsh",
+      kind: "execute",
+      status: "completed",
+      live: true,
+      input: { command: "ls -la" },
+    });
+    expect(card.querySelector(".tool-disclosure")).not.toBeNull();
+  });
+
+  it("keeps the chevron on a REFUSED call, whose rule is the whole point", () => {
+    const card = buildToolCard({
+      id: "bare-denied",
+      title: "executePwsh",
+      kind: "execute",
+      status: "failed",
+      live: false,
+      denial: {
+        capability: "shell",
+        resource: "rm -rf /",
+        scope: "workspace",
+        source: ".kiro/permissions.yaml",
+      },
+    });
+    expect(card.querySelector(".tool-disclosure")).not.toBeNull();
+  });
+
+  it("keeps the chevron on a previewed call whose bytes are still on the server", () => {
+    const card = buildToolCard({
+      id: "bare-full",
+      title: "executePwsh",
+      kind: "execute",
+      status: "completed",
+      live: false,
+      hasFull: true,
+      chatID: "c1",
+    });
+    expect(card.querySelector(".tool-disclosure")).not.toBeNull();
+  });
+
+  it("gets its chevron BACK when output lands, and it toggles", () => {
+    const card = bareCard("bare-revive");
+    document.body.appendChild(card);
+    expect(card.querySelector(".tool-disclosure")).toBeNull();
+
+    const out = card.querySelector(".tool-output")!;
+    out.appendChild(document.createElement("pre")).textContent = "late output\n";
+    refreshToolDisclosure(card);
+
+    const toggle = card.querySelector<HTMLElement>(".tool-disclosure");
+    expect(toggle).not.toBeNull();
+    // The RE-ATTACHED button, not a second one: its controller's listeners rode
+    // along, so it still drives the region.
+    toggle!.click();
+    expect(toggle!.getAttribute("aria-expanded")).toBe("true");
+    card.remove();
+  });
+
+  it("collapses an OPEN card whose region is emptied, rather than stranding it", () => {
+    const card = buildToolCard({
+      id: "bare-empty-open",
+      title: "invoke_sub_agent",
+      kind: "other",
+      status: "failed",
+      live: false,
+      output: "transient\n",
+    });
+    document.body.appendChild(card);
+    expandToolDetails(card);
+    const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    // The build-time guarantee goes with the content it described.
+    delete card.dataset["disclosable"];
+    card.querySelector(".tool-output")!.replaceChildren();
+    refreshToolDisclosure(card);
+
+    expect(card.querySelector(".tool-disclosure")).toBeNull();
+    expect(card.querySelector("[aria-expanded]")).toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
     card.remove();
   });
 });

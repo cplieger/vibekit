@@ -213,6 +213,8 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
     const { buildToolCard } = await import("./tool-card.js");
     const el = buildToolCard({
       id: "t1",
+      // The chevron is gated on the region having something to reveal.
+      output: "src/main.ts:12: foo\n",
       title: "Running: grep",
       kind: "tool_use",
       status: "completed",
@@ -252,6 +254,8 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
     const { buildToolCard } = await import("./tool-card.js");
     const el = buildToolCard({
       id: "t2",
+      // The chevron is gated on the region having something to reveal.
+      output: "src/main.ts:12: foo\n",
       title: "Running: grep",
       kind: "tool_use",
       status: "completed",

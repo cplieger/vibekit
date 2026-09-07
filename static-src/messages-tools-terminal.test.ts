@@ -74,6 +74,7 @@ vi.mock("./tool-card.js", () => ({
   insertDiffPreview: vi.fn(),
   expandToolDetails: vi.fn(),
   applyOutcome: vi.fn(),
+  refreshToolDisclosure: vi.fn(),
 }));
 
 import {

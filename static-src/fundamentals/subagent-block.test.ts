@@ -343,11 +343,11 @@ describe("the tail", () => {
     });
     sa.body.appendChild(card);
     const tc = { id: "t-explain", title: "Execute Bash", kind: "execute" as const, ts: 0 };
-    // The output has to land BEFORE the failed frame: `applyStatusUpdate` reads
-    // `.tool-output` to decide, so one frame carrying both builds no button.
+    // ONE frame carrying the failure and its output, the shape a terminal
+    // `tool_call_update` actually has. `applyToolCallUpdate` applies status last so
+    // the Explain gate reads a painted region (`messages-tools-status.test.ts`).
     const out = "build failed\nexit status 2";
-    updateToolCall(card, { ...tc, status: "in_progress", output: out }, "c-tail");
-    updateToolCall(card, { ...tc, status: "failed" }, "c-tail");
+    updateToolCall(card, { ...tc, status: "failed", output: out }, "c-tail");
     expect(card.querySelector(".tool-explain-btn")).not.toBeNull();
     await new Promise((r) => requestAnimationFrame(() => r(undefined)));
     await new Promise((r) => setTimeout(r, 20));
