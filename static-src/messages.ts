@@ -1600,13 +1600,15 @@ function isSpacerKey(key: string): boolean {
  *  read it. */
 let measuredRowHeights: ReadonlyMap<string, number> = new Map();
 
-/** Measure `body`'s rows in ONE read-only pass, then run the mutation that drops some
- *  of them. `reconcile` runs `onRemove` in place between `el.remove()` calls, so the
+/** Measure the rows `keys` names in ONE read-only pass, then run the mutation that
+ *  drops them. `reconcile` runs `onRemove` in place between `el.remove()` calls, so the
  *  layout read `disposeMessage` needs costs one forced reflow PER removed row when it
- *  happens there, and one for the whole pass when it happens here. */
-function withMeasuredRows(body: ParentNode, mutate: () => void): void {
+ *  happens there, and one for the whole pass when it happens here. Callers pass only
+ *  DEPARTING message keys: a surviving row's height is never asked for, and reading it
+ *  would buy a forced reflow nothing reads back. */
+function withMeasuredRows(body: ParentNode, keys: ReadonlySet<string>, mutate: () => void): void {
   const outer = measuredRowHeights;
-  measuredRowHeights = measureRows(body);
+  measuredRowHeights = measureRows(body, keys);
   try {
     mutate();
   } finally {
@@ -1614,16 +1616,29 @@ function withMeasuredRows(body: ParentNode, mutate: () => void): void {
   }
 }
 
-function measureRows(body: ParentNode): Map<string, number> {
+function measureRows(body: ParentNode, keys: ReadonlySet<string>): Map<string, number> {
   const measured = new Map<string, number>();
   for (const row of body.querySelectorAll<HTMLElement>(`:scope > [${KEY_ATTR}]`)) {
     const key = row.getAttribute(KEY_ATTR);
-    if (key === null || isSpacerKey(key) || geometrySkipped(row)) {
+    if (key === null || !keys.has(key) || geometrySkipped(row)) {
       continue;
     }
     measured.set(key, row.offsetHeight);
   }
   return measured;
+}
+
+/** The MESSAGE keys `body` holds, in mount order. The keys half of a reconcile's
+ *  before-picture, read with no layout property touched. */
+function mountedRowKeys(body: ParentNode): string[] {
+  const held: string[] = [];
+  for (const row of body.querySelectorAll<HTMLElement>(`:scope > [${KEY_ATTR}]`)) {
+    const key = row.getAttribute(KEY_ATTR);
+    if (key !== null && !isSpacerKey(key)) {
+      held.push(key);
+    }
+  }
+  return held;
 }
 
 /** Whether `row` sits in a subtree the page is not rendering: a folded card's body
@@ -1638,23 +1653,44 @@ function geometrySkipped(row: Element): boolean {
   );
 }
 
-/** The ONE way a body's rows are reconciled: measured first, mutated second. */
+/** The ONE way a body's rows are reconciled: departing rows measured first, mutated
+ *  second. A reconcile that drops NOTHING reads no layout at all — that is the
+ *  streaming path, where `headUnchanged` lets a tail append through on every paint, and
+ *  a measurement pass there would force a reflow per frame for a cache no `onRemove`
+ *  ever reads. */
 function reconcileBody(body: HTMLElement, rows: readonly BodyRow[]): void {
-  withMeasuredRows(body, () => {
+  const departing = departingKeys(body, rows);
+  if (departing.size === 0) {
+    reconcile(body, rows, bodyRowSpec);
+    return;
+  }
+  withMeasuredRows(body, departing, () => {
     reconcile(body, rows, bodyRowSpec);
   });
+}
+
+/** The message keys this reconcile will REMOVE: what `body` holds minus what `rows`
+ *  wants. Answered from keys alone, so asking costs no layout. */
+function departingKeys(body: ParentNode, rows: readonly BodyRow[]): Set<string> {
+  const wanted = new Set(rows.map((row) => bodyRowSpec.key(row)));
+  const departing = new Set<string>();
+  for (const key of mountedRowKeys(body)) {
+    if (!wanted.has(key)) {
+      departing.add(key);
+    }
+  }
+  return departing;
 }
 
 /** Dispose every MESSAGE row of `body`. A spacer key names no message and owns
  *  nothing, so the three walkers that hand keys to `disposeMessage` route through
  *  here rather than each carrying the test. */
 function disposeBodyRows(body: ParentNode): void {
-  withMeasuredRows(body, () => {
-    for (const row of body.querySelectorAll<HTMLElement>(`:scope > [${KEY_ATTR}]`)) {
-      const key = row.getAttribute(KEY_ATTR);
-      if (key !== null && !isSpacerKey(key)) {
-        disposeMessage(key);
-      }
+  // Every row here departs, so the departing set IS the mounted set.
+  const keys = mountedRowKeys(body);
+  withMeasuredRows(body, new Set(keys), () => {
+    for (const key of keys) {
+      disposeMessage(key);
     }
   });
 }
