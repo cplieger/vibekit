@@ -1595,16 +1595,68 @@ function isSpacerKey(key: string): boolean {
   return key === SPACER_HEAD_KEY || key === SPACER_TAIL_KEY;
 }
 
+/** What each mounted row measured, keyed by reconcile key. Filled by
+ *  `withMeasuredRows` and empty outside it: a height is only true for the pass that
+ *  read it. */
+let measuredRowHeights: ReadonlyMap<string, number> = new Map();
+
+/** Measure `body`'s rows in ONE read-only pass, then run the mutation that drops some
+ *  of them. `reconcile` runs `onRemove` in place between `el.remove()` calls, so the
+ *  layout read `disposeMessage` needs costs one forced reflow PER removed row when it
+ *  happens there, and one for the whole pass when it happens here. */
+function withMeasuredRows(body: ParentNode, mutate: () => void): void {
+  const outer = measuredRowHeights;
+  measuredRowHeights = measureRows(body);
+  try {
+    mutate();
+  } finally {
+    measuredRowHeights = outer;
+  }
+}
+
+function measureRows(body: ParentNode): Map<string, number> {
+  const measured = new Map<string, number>();
+  for (const row of body.querySelectorAll<HTMLElement>(`:scope > [${KEY_ATTR}]`)) {
+    const key = row.getAttribute(KEY_ATTR);
+    if (key === null || isSpacerKey(key) || geometrySkipped(row)) {
+      continue;
+    }
+    measured.set(key, row.offsetHeight);
+  }
+  return measured;
+}
+
+/** Whether `row` sits in a subtree the page is not rendering: a folded card's body
+ *  (`content-visibility: hidden` plus `block-size: 0`, css/29-turns.css) or a parked
+ *  view (css/13-messages.css). Reading a descendant's box there forces the browser to
+ *  render what it skipped, and answers a height no spacer can hold anyway. A
+ *  `closest()` test, never a geometry read — that is the thing being avoided. */
+function geometrySkipped(row: Element): boolean {
+  return (
+    row.closest(".turn[data-folded] > .turn-body") !== null ||
+    row.closest(".transcript-view:not(.is-active)") !== null
+  );
+}
+
+/** The ONE way a body's rows are reconciled: measured first, mutated second. */
+function reconcileBody(body: HTMLElement, rows: readonly BodyRow[]): void {
+  withMeasuredRows(body, () => {
+    reconcile(body, rows, bodyRowSpec);
+  });
+}
+
 /** Dispose every MESSAGE row of `body`. A spacer key names no message and owns
  *  nothing, so the three walkers that hand keys to `disposeMessage` route through
  *  here rather than each carrying the test. */
 function disposeBodyRows(body: ParentNode): void {
-  for (const row of body.querySelectorAll<HTMLElement>(`:scope > [${KEY_ATTR}]`)) {
-    const key = row.getAttribute(KEY_ATTR);
-    if (key !== null && !isSpacerKey(key)) {
-      disposeMessage(key);
+  withMeasuredRows(body, () => {
+    for (const row of body.querySelectorAll<HTMLElement>(`:scope > [${KEY_ATTR}]`)) {
+      const key = row.getAttribute(KEY_ATTR);
+      if (key !== null && !isSpacerKey(key)) {
+        disposeMessage(key);
+      }
     }
-  }
+  });
 }
 
 /** Drop every per-message resource for `key`. Called from the body reconcile's
@@ -1612,12 +1664,14 @@ function disposeBodyRows(body: ParentNode): void {
  *  card's rows — a removed card's inner list never reconciles again, so its
  *  own onRemove would never fire. */
 function disposeMessage(key: string): void {
-  // MEASURED first, so the spacer replacing this row can hold its height: `reconcile`
-  // runs `onRemove` in place, and a row measuring 0 is detached and answers nothing.
-  const row = messageStates.get(key)?.el;
+  // The spacer replacing this row holds the height the row measured in
+  // `withMeasuredRows`'s pass — read from there and never from the DOM, which this
+  // runs mid-mutation of. A row whose geometry was skipped has no entry, and a
+  // detached one answers 0, so both leave the recorded height alone.
   const held = mountedWindow(key);
-  if (row !== undefined && held !== undefined && row.offsetHeight > 0) {
-    recordRowHeight(key, held, row.offsetHeight);
+  const px = measuredRowHeights.get(key);
+  if (held !== undefined && px !== undefined && px > 0) {
+    recordRowHeight(key, held, px);
   }
   const arr = bindUnbinds.get(key);
   if (arr !== undefined) {
@@ -1894,7 +1948,7 @@ function collectWindowMove(
     side,
     fn: () => {
       if (card.isConnected && !hasPendingBuild(t.id) && !stale()) {
-        reconcile(body, rows, bodyRowSpec);
+        reconcileBody(body, rows);
         syncSourceView(body);
       }
     },
@@ -2258,7 +2312,7 @@ function updateTurn(card: HTMLElement, t: Turn): void {
     // the ordinals it stands in for, so the gate and the reconcile share the list.
     const rows = bodyRows(t, range);
     if (headUnchanged(body, rows)) {
-      reconcile(body, rows, bodyRowSpec);
+      reconcileBody(body, rows);
       syncSourceView(body);
     }
   }
