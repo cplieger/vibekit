@@ -25,7 +25,6 @@ vi.mock("./actions/knowledge.js", () => ({
 }));
 vi.mock("./api-client.js", () => ({
   apiGetTyped: vi.fn(),
-  fetchKiroSetting: vi.fn(),
   CancellableSlot: class {
     start(): AbortSignal {
       return new AbortController().signal;
@@ -41,15 +40,15 @@ vi.mock("./api-client.js", () => ({
 }));
 vi.mock("./dom.js", () => ({ byId: (id: string) => document.getElementById(id) }));
 
-import { apiGetTyped, fetchKiroSetting } from "./api-client.js";
+import { apiGetTyped } from "./api-client.js";
 import { onSSE } from "./bus.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { showToast } from "./toast.js";
 import { addKnowledge, removeKnowledge } from "./actions/knowledge.js";
 import { initKnowledge, loadKnowledge } from "./knowledge.js";
+import { settingsPayload } from "./__test-helpers__/settings.js";
 
 const mockGet = vi.mocked(apiGetTyped);
-const mockFlag = vi.mocked(fetchKiroSetting);
 const mockConfirm = vi.mocked(confirmDialog);
 const mockAdd = vi.mocked(addKnowledge.dispatch);
 const mockRemove = vi.mocked(removeKnowledge.dispatch);
@@ -72,12 +71,23 @@ function seedDom(): void {
 
 const list = (): HTMLElement => document.getElementById("knowledge-list") as HTMLElement;
 
+const hint = (): HTMLElement => document.getElementById("knowledge-hint") as HTMLElement;
+
+/** The module makes two GETs through one apiGetTyped, so route by path: the hint
+ *  reads /api/settings, everything else is the knowledge list. `settings` is the
+ *  whole answer, so `null` models a network/decode failure. */
+function routeGets(listAnswer: unknown, settings: unknown): void {
+  mockGet.mockImplementation((path: string) =>
+    Promise.resolve(path === "/api/settings" ? settings : listAnswer),
+  );
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
   seedDom();
-  mockFlag.mockResolvedValue(true); // knowledge enabled by default
-  mockGet.mockResolvedValue({ contexts: [] }); // default; tests override
+  // knowledge enabled by default; tests override the list payload
+  routeGets({ contexts: [] }, settingsPayload());
 });
 
 afterEach(() => {
@@ -160,12 +170,37 @@ describe("loadKnowledge render", () => {
     expect(list().textContent).toContain("Couldn't load knowledge bases.");
   });
 
-  it("shows the enable hint when the knowledge flag is off", async () => {
-    mockFlag.mockResolvedValue(false);
-    mockGet.mockResolvedValue({ contexts: [] });
+  it("shows the enable hint when knowledge_enabled is off", async () => {
+    routeGets({ contexts: [] }, settingsPayload({ knowledge_enabled: false }));
     loadKnowledge();
     await flush();
-    expect((document.getElementById("knowledge-hint") as HTMLElement).hidden).toBe(false);
+    expect(hint().hidden).toBe(false);
+  });
+
+  it("keeps the enable hint hidden when knowledge_enabled is on", async () => {
+    routeGets({ contexts: [] }, settingsPayload({ knowledge_enabled: true }));
+    hint().hidden = false;
+    loadKnowledge();
+    await flush();
+    expect(hint().hidden).toBe(true);
+  });
+
+  // A null answer is a network, abort or decode failure — NOT "knowledge is off",
+  // so the hint keeps whatever it was showing rather than asserting either state.
+  it("leaves a visible hint visible when /api/settings answers null", async () => {
+    routeGets({ contexts: [] }, null);
+    hint().hidden = false;
+    loadKnowledge();
+    await flush();
+    expect(hint().hidden).toBe(false);
+  });
+
+  it("leaves a hidden hint hidden when /api/settings answers null", async () => {
+    routeGets({ contexts: [] }, null);
+    hint().hidden = true;
+    loadKnowledge();
+    await flush();
+    expect(hint().hidden).toBe(true);
   });
 });
 

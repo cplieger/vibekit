@@ -9,8 +9,8 @@
 // (2) maps @cplieger/fetch's non-throwing ApiResult envelope onto vibekit's
 // historical null/false-collapsing convention, and (3) centralizes the
 // console.warn / console.error logging. The public surface (apiGet / apiPost /
-// apiDelete / apiGetTyped / apiPostTyped / apiPutOrError + CancellableSlot +
-// fetchKiroSetting) is unchanged, so the call sites don't move.
+// apiDelete / apiGetTyped / apiPostTyped / apiPutOrError + CancellableSlot) is
+// unchanged, so the call sites don't move.
 //
 // NOT used for the POST /api/command envelope — that's a different contract
 // (Idempotency-Key dedup, typed SendResult with status codes) served by
@@ -268,26 +268,4 @@ export class CancellableSlot {
     this.ctrl?.abort();
     this.ctrl = null;
   }
-}
-
-/** Fetch a kiro-cli setting by key, parse it with the provided function,
- *  and return the fallback if the fetch fails or parsing yields an invalid
- *  value. Consolidates the repeated fetch→parse→validate→default pattern
- *  used by status.ts, retention.ts, and settings.ts consumers. */
-export async function fetchKiroSetting<T>(
-  key: string,
-  parse: (raw: string) => T | null,
-  fallback: T,
-  signal?: AbortSignal,
-): Promise<T> {
-  const d = await apiGet<{ value?: string }>(
-    `/api/kiro-settings?key=${encodeURIComponent(key)}`,
-    signal,
-  );
-  const raw = d?.value ?? "";
-  if (raw === "") {
-    return fallback;
-  }
-  const parsed = parse(raw);
-  return parsed ?? fallback;
 }
