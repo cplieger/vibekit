@@ -198,6 +198,12 @@ function init(): void {
   // set is generated from Go structs by cmd/wire-codegen.
   registerAllSSEDecoders();
 
+  // The chat whose transcript is on screen, injected rather than imported: the
+  // transport holds no store state and importing store.ts from it risks a cycle. It
+  // is what the connect replay reads to decide which busy chats need their in-flight
+  // transcript, and the server cannot derive it — the active chat is per-DEVICE.
+  transport.setSnapshotChatProvider(() => getActiveId());
+
   transport.init((evt: ServerEvent) => {
     dispatch(evt);
   }, onTransportStatus);

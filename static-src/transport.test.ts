@@ -4,7 +4,7 @@
 // hidden-abort over in-flight non-prompt requests. The send tests drive a fetch
 // fake (this repo does not use MSW here) and a stubbed EventSource for init().
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import fc from "fast-check";
 
 // Observe the failure toast without painting one: the 409 carve-out is ABOUT
@@ -23,6 +23,7 @@ import {
   computeBackoff,
   send,
   init,
+  setSnapshotChatProvider,
   BACKOFF_CAP_MS,
 } from "./transport.js";
 
@@ -618,6 +619,150 @@ describe("the replay cursor", () => {
       () => {
         expect(urls).toHaveLength(2);
         expect(urls[1]).toBe("/api/events?last_event_id=7");
+      },
+      { timeout: 3000 },
+    );
+  });
+});
+
+// THE DECLARED SNAPSHOT CHAT ON THE URL. The connect replay serves a busy chat's
+// in-flight transcript only for the chats a client says it can SHOW: the active chat
+// is per-device localStorage state the server cannot derive, and it may not ride
+// `chat_id`, which is the hub topic filter. Absent, the server falls back to serving
+// every open chat, so an older client keeps working.
+//
+// Every assertion here reads the parameter off the URL rather than comparing the whole
+// string: the transport is a module SINGLETON, so the replay cursor an earlier test in
+// this file advanced is still set, and a whole-URL comparison would be asserting that
+// this feature had erased it.
+describe("the declared snapshot chat", () => {
+  class FakeSnapshotSource {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSED = 2;
+    onopen: ((e: Event) => void) | null = null;
+    onmessage: ((e: MessageEvent) => void) | null = null;
+    onerror: ((e: Event) => void) | null = null;
+    readyState = 0;
+    url: string;
+    constructor(url: string) {
+      this.url = url;
+    }
+    close(): void {
+      this.readyState = FakeSnapshotSource.CLOSED;
+    }
+  }
+
+  /** Every EventSource the transport constructed, so a test can read its URL. */
+  function recording(): { urls: string[]; sources: FakeSnapshotSource[] } {
+    const urls: string[] = [];
+    const sources: FakeSnapshotSource[] = [];
+    class Recording extends FakeSnapshotSource {
+      constructor(url: string) {
+        super(url);
+        urls.push(url);
+        sources.push(this);
+      }
+    }
+    vi.stubGlobal("EventSource", Recording);
+    return { urls, sources };
+  }
+
+  function quietInit(): void {
+    init(
+      () => {
+        /* frames unobserved */
+      },
+      () => {
+        /* status unobserved */
+      },
+    );
+  }
+
+  function frame(id: number, data: unknown): MessageEvent {
+    return new MessageEvent("message", { data: JSON.stringify(data), lastEventId: String(id) });
+  }
+
+  /** The query of one recorded events URL, so a test asserts on the parameter it is
+   *  about and stays indifferent to whichever cursor the module happens to hold. */
+  function queryOf(url: string | undefined): URLSearchParams {
+    expect(url).toBeDefined();
+    return new URL(url ?? "", "https://example.test").searchParams;
+  }
+
+  // The provider is module state, so a test that sets it would otherwise decide the
+  // URL every later test in this file measures.
+  afterEach(() => {
+    setSnapshotChatProvider(() => "");
+  });
+
+  it("carries the chat the provider names", () => {
+    const { urls } = recording();
+    setSnapshotChatProvider(() => "c-abc123");
+
+    quietInit();
+
+    expect(urls).toHaveLength(1);
+    expect(queryOf(urls[0]).get("snapshot")).toBe("c-abc123");
+  });
+
+  it("omits the parameter when the provider returns empty, so the server serves every open chat", () => {
+    const { urls } = recording();
+    setSnapshotChatProvider(() => "");
+
+    quietInit();
+
+    expect(urls).toHaveLength(1);
+    // Absent rather than empty: an empty value would still be a declaration, and the
+    // server reads "declare nothing" as "serve every open chat".
+    expect(queryOf(urls[0]).has("snapshot")).toBe(false);
+  });
+
+  it("carries the cursor and the snapshot together on a reconnect", () => {
+    const { urls, sources } = recording();
+    setSnapshotChatProvider(() => "c-abc123");
+    quietInit();
+    const first = sources[0];
+    expect(first).toBeDefined();
+    // Deliberately above any cursor an earlier test left behind, so the advance is
+    // this test's rather than inherited.
+    first?.onmessage?.(frame(4242, { type: "chat_updated", chat_id: "c1" }));
+    if (first !== undefined) {
+      first.readyState = FakeSnapshotSource.CLOSED;
+    }
+    first?.onerror?.(new Event("error"));
+
+    return vi.waitFor(
+      () => {
+        expect(urls).toHaveLength(2);
+        // Both are ordinary query parameters the server reads independently, so the
+        // declaration must not cost the replay its cursor.
+        const q = queryOf(urls[1]);
+        expect(q.get("last_event_id")).toBe("4242");
+        expect(q.get("snapshot")).toBe("c-abc123");
+      },
+      { timeout: 3000 },
+    );
+  });
+
+  it("re-reads the provider at every connect, so a chat switch during an outage is honoured", () => {
+    const { urls, sources } = recording();
+    let active = "c-first";
+    setSnapshotChatProvider(() => active);
+    quietInit();
+    expect(queryOf(urls[0]).get("snapshot")).toBe("c-first");
+    const first = sources[0];
+    expect(first).toBeDefined();
+    active = "c-second";
+    if (first !== undefined) {
+      first.readyState = FakeSnapshotSource.CLOSED;
+    }
+    first?.onerror?.(new Event("error"));
+
+    return vi.waitFor(
+      () => {
+        expect(urls).toHaveLength(2);
+        expect(queryOf(urls[1]).get("snapshot")).toBe("c-second");
       },
       { timeout: 3000 },
     );
