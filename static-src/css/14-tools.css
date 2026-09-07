@@ -578,7 +578,6 @@
   cursor: pointer;
   text-decoration: none;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 12.5rem;
   transition:
@@ -595,12 +594,33 @@
   & .tool-file-icon {
     display: inline-flex;
     align-items: center;
+    flex-shrink: 0;
   }
 
   & :where(.tool-file-icon) svg {
     width: 0.85em;
     height: 0.85em;
   }
+}
+
+/* The chip's TEXT carries the truncation, not the chip. `.tool-file-link` is
+   inline-flex, so its children are flex items and it holds no inline content of
+   its own for `text-overflow` to act on: that declaration could never fire, and
+   `min-width: auto` stopped this span shrinking, so a long name overflowed the
+   12.5rem cap and the button's `overflow: hidden` cut it with no ellipsis. Same
+   shape as `.tool-title` above. The clip makes this box its own line box, so the
+   parent's `line-height: 1.4` is what keeps a descender out of the cut.
+
+   `min-width: 0` reads as redundant here and is: a flex item's automatic minimum
+   size applies only while its own `overflow` computes to `visible`, so the
+   `overflow: hidden` below already zeroes it. Measured — deleting either one
+   alone still shrinks. It is kept because it is the declaration that SAYS the
+   span may shrink, matching `.tool-title` and `.subagent-name`, and it is what
+   would carry that if the clip ever moved. */
+.tool-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Inline file link: clickable chip used when file paths are mentioned in
