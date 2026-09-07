@@ -168,7 +168,8 @@ func seedPendingDecisions(tb testing.TB, rt *Runtime, ids []vibekit.ChatID) {
 					{OptionID: "allow", Name: "Allow", Kind: "allow_once"},
 					{OptionID: "reject", Name: "Reject", Kind: "reject_once"},
 				},
-			}))
+			},
+		))
 	}
 	for i := range fixturePendingRunAsks {
 		if !rt.runs.asks.Add(&runAsk{chatID: ids[0], payload: vibekit.RunInputNeededPayload{
@@ -262,7 +263,7 @@ func TestHandleSSE_ColdConnectDeclaringOneChatCarriesOneSnapshot(t *testing.T) {
 	body := coldConnect(t, rt, "?snapshot="+string(ids[0])).Body.String()
 
 	withSnapshot := 0
-	for _, frame := range strings.Split(body, fixtureFrameSeparator) {
+	for frame := range strings.SplitSeq(body, fixtureFrameSeparator) {
 		if strings.Contains(frame, fixtureSnapshotMarker) {
 			withSnapshot++
 		}

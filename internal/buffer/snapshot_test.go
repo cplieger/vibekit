@@ -1,7 +1,12 @@
 package buffer
 
 import (
+	"bytes"
+	"encoding/json"
+	"strconv"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -104,4 +109,412 @@ func TestBufferSnapshot(t *testing.T) {
 			t.Error("snapshot aliases the buffer's block array")
 		}
 	})
+}
+
+// The capped snapshot's fixture: a turn shaped like the real thing rather than
+// hand-built, because the DUPLICATION is the point. Every Append*Delta writes
+// both the flat builder AND a block, so a cap that reaches only one carrier
+// halves the payload where it should divide it — and a hand-built Buffer would
+// let that defect pass.
+//
+// Returns the buffer plus the per-dimension sizes a caller asserts against.
+type capFixture struct {
+	buf            *Buffer
+	reasoningBytes int
+	contentBytes   int
+	blockTextBytes int
+	blocks         int
+	toolCalls      int
+	toolOutputEach int
+}
+
+func newCapFixture(tb testing.TB) capFixture {
+	tb.Helper()
+	// Sized so the marshaled turn clears 4 MiB, which is what makes the
+	// one-implementation guard below a real comparison rather than one over a
+	// toy: 16 x chunk of text (each stream's delta lands in the flat builder AND
+	// in its own block) plus 20 x toolOutput.
+	const (
+		chunk      = 128 << 10
+		streams    = 4
+		toolCalls  = 20
+		toolOutput = 128 << 10
+	)
+	buf := New()
+	buf.StartTurn("m1")
+	// Distinct subtask ids per stream so each delta opens its OWN block: a
+	// same-subtask thinking delta extends the newest thinking block, which would
+	// leave one block holding everything and make the block-count cap untestable.
+	for i := range streams {
+		sub := "sub-" + strconv.Itoa(i)
+		buf.AppendThinkingDelta(strings.Repeat("r", chunk), sub)
+		buf.AppendTextDelta(strings.Repeat("c", chunk), sub)
+	}
+	for i := range toolCalls {
+		buf.AppendToolCall(&vibekit.ToolCall{
+			ID:     "tool-" + strconv.Itoa(i),
+			Title:  "Run Command",
+			Output: strings.Repeat("o", toolOutput),
+		})
+	}
+	return capFixture{
+		buf:            buf,
+		reasoningBytes: chunk * streams,
+		contentBytes:   chunk * streams,
+		blockTextBytes: chunk * streams * 2,
+		blocks:         streams * 2,
+		toolCalls:      toolCalls,
+		toolOutputEach: toolOutput,
+	}
+}
+
+// blockTextLen is the dimension BlockTextBytes bounds: Text+Thinking summed over
+// every block, which is where the second copy of the turn's text lives.
+func blockTextLen(blocks []vibekit.Block) int {
+	n := 0
+	for _, b := range blocks {
+		n += len(b.Text) + len(b.Thinking)
+	}
+	return n
+}
+
+// TestSnapshotCapped_UnboundedMatchesSnapshot is the ONE-implementation guard.
+// Snapshot delegates to SnapshotCapped(SnapshotCaps{}), so the two can only
+// diverge by someone reintroducing a second read — and the comparison is on
+// MARSHALED BYTES rather than field by field, so a field added to one path and
+// not the other fails here instead of shipping.
+//
+// Ts is normalized because it is stamped from time.Now() per call and the two
+// calls can straddle a millisecond; every other field is compared verbatim.
+func TestSnapshotCapped_UnboundedMatchesSnapshot(t *testing.T) {
+	fx := newCapFixture(t)
+
+	plain, plainSeq, plainOK := fx.buf.Snapshot()
+	capped, cappedSeq, truncated, cappedOK := fx.buf.SnapshotCapped(SnapshotCaps{})
+	if !plainOK || !cappedOK {
+		t.Fatalf("ok = %v / %v, want both true", plainOK, cappedOK)
+	}
+	if truncated {
+		t.Error("SnapshotCaps{} reported truncated; a zero in every field means unbounded")
+	}
+	if plainSeq != cappedSeq {
+		t.Errorf("chunk seq = %d (Snapshot) vs %d (SnapshotCapped), want equal", plainSeq, cappedSeq)
+	}
+	plain.Ts, capped.Ts = 0, 0
+	wantJSON, err := json.Marshal(plain)
+	if err != nil {
+		t.Fatalf("marshal Snapshot: %v", err)
+	}
+	gotJSON, err := json.Marshal(capped)
+	if err != nil {
+		t.Fatalf("marshal SnapshotCapped: %v", err)
+	}
+	if len(wantJSON) < 4<<20 {
+		t.Errorf("fixture marshaled to %d bytes, want at least 4 MiB; the guard has to run over a real turn", len(wantJSON))
+	}
+	if !bytes.Equal(gotJSON, wantJSON) {
+		t.Errorf("SnapshotCapped(SnapshotCaps{}) is not byte-identical to Snapshot (%d vs %d bytes); "+
+			"there are two implementations of the read again", len(gotJSON), len(wantJSON))
+	}
+}
+
+func TestSnapshotCapped_KeepsTheTailAndMarksTruncated(t *testing.T) {
+	buf := New()
+	buf.StartTurn("m1")
+	buf.AppendThinkingDelta("OLD-reasoning"+strings.Repeat("r", 4096)+"NEW-reasoning", "")
+	buf.AppendTextDelta("OLD-content"+strings.Repeat("c", 4096)+"NEW-content", "")
+	buf.AppendToolCall(&vibekit.ToolCall{ID: "t1", Output: "OLD-out" + strings.Repeat("o", 4096) + "NEW-out"})
+
+	msg, _, truncated, ok := buf.SnapshotCapped(SnapshotCaps{
+		ReasoningBytes:  64,
+		ContentBytes:    64,
+		BlockTextBytes:  128,
+		ToolCalls:       4,
+		ToolOutputBytes: 64,
+		Blocks:          8,
+	})
+	if !ok {
+		t.Fatal("snapshot reported no content")
+	}
+	if !truncated {
+		t.Error("truncated = false after cutting reasoning, content, blocks and tool output")
+	}
+	// The TAIL, because a mid-turn reconnect wants the reply being written now.
+	if !strings.HasSuffix(msg.Reasoning, "NEW-reasoning") || strings.Contains(msg.Reasoning, "OLD-reasoning") {
+		t.Errorf("reasoning kept the wrong end: %q…%q", msg.Reasoning[:8], msg.Reasoning[len(msg.Reasoning)-16:])
+	}
+	if !strings.HasSuffix(msg.Content, "NEW-content") || strings.Contains(msg.Content, "OLD-content") {
+		t.Errorf("content kept the wrong end: %q…%q", msg.Content[:8], msg.Content[len(msg.Content)-16:])
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %d, want 1", len(msg.ToolCalls))
+	}
+	if !strings.HasSuffix(msg.ToolCalls[0].Output, "NEW-out") || strings.Contains(msg.ToolCalls[0].Output, "OLD-out") {
+		t.Errorf("tool output kept the wrong end: %q", msg.ToolCalls[0].Output)
+	}
+	// BOTH carriers, which is the whole reason BlockTextBytes exists: the text is
+	// stored twice and a cap reaching one halves the payload instead of dividing it.
+	if got := blockTextLen(msg.Blocks); got > 128 {
+		t.Errorf("block text = %d bytes, want <= 128; the block copy of the turn is uncapped", got)
+	}
+	for _, b := range msg.Blocks {
+		if strings.Contains(b.Text, "OLD-content") || strings.Contains(b.Thinking, "OLD-reasoning") {
+			t.Errorf("a block kept its HEAD: %+v", b)
+		}
+	}
+}
+
+func TestSnapshotCapped_ASmallTurnIsNotMarkedTruncated(t *testing.T) {
+	buf := New()
+	buf.StartTurn("m1")
+	buf.AppendThinkingDelta("pondering", "")
+	buf.AppendTextDelta("hello world", "")
+	buf.AppendToolCall(&vibekit.ToolCall{ID: "t1", Output: "ok"})
+
+	msg, _, truncated, ok := buf.SnapshotCapped(connectCapsForTest())
+	if !ok {
+		t.Fatal("snapshot reported no content")
+	}
+	if truncated {
+		t.Error("truncated = true for a turn well inside every cap; the client would show a note for nothing")
+	}
+	if msg.Content != "hello world" || msg.Reasoning != "pondering" {
+		t.Errorf("content/reasoning = %q / %q, want them untouched", msg.Content, msg.Reasoning)
+	}
+	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].Output != "ok" {
+		t.Errorf("tool calls = %+v, want one uncut call", msg.ToolCalls)
+	}
+}
+
+// connectCapsForTest mirrors internal/agent's connectSnapshotCaps. A copy rather
+// than an import because internal/agent imports THIS package, so reading the real
+// value here would be a cycle; the numbers are policy the production path owns.
+func connectCapsForTest() SnapshotCaps {
+	return SnapshotCaps{
+		ReasoningBytes:  4 << 10,
+		ContentBytes:    16 << 10,
+		BlockTextBytes:  16 << 10,
+		ToolCalls:       8,
+		ToolOutputBytes: 2 << 10,
+		Blocks:          64,
+	}
+}
+
+// TestSnapshotCapped_HonoursEveryCapDimension sets ONE dimension per row and
+// asserts the other five are untouched. A cap that quietly reached a sibling
+// dimension would otherwise pass every whole-payload assertion.
+func TestSnapshotCapped_HonoursEveryCapDimension(t *testing.T) {
+	tests := []struct {
+		name  string
+		caps  SnapshotCaps
+		check func(t *testing.T, fx capFixture, msg vibekit.Message)
+	}{
+		{
+			name: "reasoning bytes",
+			caps: SnapshotCaps{ReasoningBytes: 512},
+			check: func(t *testing.T, fx capFixture, msg vibekit.Message) {
+				if len(msg.Reasoning) > 512 {
+					t.Errorf("reasoning = %d bytes, want <= 512", len(msg.Reasoning))
+				}
+				if len(msg.Content) != fx.contentBytes {
+					t.Errorf("content = %d bytes, want the full %d", len(msg.Content), fx.contentBytes)
+				}
+				if got := blockTextLen(msg.Blocks); got != fx.blockTextBytes {
+					t.Errorf("block text = %d bytes, want the full %d", got, fx.blockTextBytes)
+				}
+			},
+		},
+		{
+			name: "content bytes",
+			caps: SnapshotCaps{ContentBytes: 512},
+			check: func(t *testing.T, fx capFixture, msg vibekit.Message) {
+				if len(msg.Content) > 512 {
+					t.Errorf("content = %d bytes, want <= 512", len(msg.Content))
+				}
+				if len(msg.Reasoning) != fx.reasoningBytes {
+					t.Errorf("reasoning = %d bytes, want the full %d", len(msg.Reasoning), fx.reasoningBytes)
+				}
+				if got := blockTextLen(msg.Blocks); got != fx.blockTextBytes {
+					t.Errorf("block text = %d bytes, want the full %d", got, fx.blockTextBytes)
+				}
+			},
+		},
+		{
+			name: "block text bytes",
+			caps: SnapshotCaps{BlockTextBytes: 512},
+			check: func(t *testing.T, fx capFixture, msg vibekit.Message) {
+				if got := blockTextLen(msg.Blocks); got > 512 {
+					t.Errorf("block text = %d bytes, want <= 512", got)
+				}
+				if len(msg.Content) != fx.contentBytes || len(msg.Reasoning) != fx.reasoningBytes {
+					t.Errorf("flat fields = %d / %d bytes, want the full %d / %d",
+						len(msg.Content), len(msg.Reasoning), fx.contentBytes, fx.reasoningBytes)
+				}
+				if len(msg.ToolCalls) != fx.toolCalls {
+					t.Errorf("tool calls = %d, want the full %d", len(msg.ToolCalls), fx.toolCalls)
+				}
+			},
+		},
+		{
+			name: "block count",
+			caps: SnapshotCaps{Blocks: 3},
+			check: func(t *testing.T, fx capFixture, msg vibekit.Message) {
+				if len(msg.Blocks) != 3 {
+					t.Errorf("blocks = %d, want 3", len(msg.Blocks))
+				}
+				// The NEWEST blocks, so the tail of the turn survives.
+				if got := msg.Blocks[len(msg.Blocks)-1]; got.Text == "" {
+					t.Errorf("last block = %+v, want the fixture's newest (a text block)", got)
+				}
+				if len(msg.Content) != fx.contentBytes || len(msg.Reasoning) != fx.reasoningBytes {
+					t.Errorf("flat fields = %d / %d bytes, want them untouched",
+						len(msg.Content), len(msg.Reasoning))
+				}
+			},
+		},
+		{
+			name: "tool call count",
+			caps: SnapshotCaps{ToolCalls: 5},
+			check: func(t *testing.T, fx capFixture, msg vibekit.Message) {
+				if len(msg.ToolCalls) != 5 {
+					t.Fatalf("tool calls = %d, want 5", len(msg.ToolCalls))
+				}
+				if got := msg.ToolCalls[len(msg.ToolCalls)-1].ID; got != "tool-19" {
+					t.Errorf("newest carried call = %q, want tool-19; the cap kept the wrong end", got)
+				}
+				if got := len(msg.ToolCalls[0].Output); got != fx.toolOutputEach {
+					t.Errorf("tool output = %d bytes, want the full %d", got, fx.toolOutputEach)
+				}
+				if got := blockTextLen(msg.Blocks); got != fx.blockTextBytes {
+					t.Errorf("block text = %d bytes, want the full %d", got, fx.blockTextBytes)
+				}
+			},
+		},
+		{
+			name: "tool output bytes",
+			caps: SnapshotCaps{ToolOutputBytes: 256},
+			check: func(t *testing.T, fx capFixture, msg vibekit.Message) {
+				if len(msg.ToolCalls) != fx.toolCalls {
+					t.Fatalf("tool calls = %d, want the full %d", len(msg.ToolCalls), fx.toolCalls)
+				}
+				for _, tc := range msg.ToolCalls {
+					if len(tc.Output) > 256 {
+						t.Errorf("%s output = %d bytes, want <= 256", tc.ID, len(tc.Output))
+					}
+				}
+				if len(msg.Content) != fx.contentBytes || len(msg.Reasoning) != fx.reasoningBytes {
+					t.Errorf("flat fields = %d / %d bytes, want them untouched",
+						len(msg.Content), len(msg.Reasoning))
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newCapFixture(t)
+			msg, _, truncated, ok := fx.buf.SnapshotCapped(tc.caps)
+			if !ok {
+				t.Fatal("snapshot reported no content")
+			}
+			if !truncated {
+				t.Errorf("SnapshotCapped(%+v) reported truncated = false over a 4 MiB turn", tc.caps)
+			}
+			tc.check(t, fx, msg)
+		})
+	}
+}
+
+// TestSnapshotCapped_CutsOnARuneBoundary is the reason tailBytes advances to the
+// next utf8.RuneStart. A byte-boundary cut leaves an invalid leading fragment,
+// and encoding/json substitutes U+FFFD for it on marshal — so the client renders
+// a replacement character at the top of every capped field.
+func TestSnapshotCapped_CutsOnARuneBoundary(t *testing.T) {
+	// A 3-byte rune, so a cap that is not a multiple of 3 lands mid-rune.
+	const glyph = "日"
+	buf := New()
+	buf.StartTurn("m1")
+	buf.AppendThinkingDelta(strings.Repeat(glyph, 400), "")
+	buf.AppendTextDelta(strings.Repeat(glyph, 400), "")
+	buf.AppendToolCall(&vibekit.ToolCall{ID: "t1", Output: strings.Repeat(glyph, 400)})
+
+	for _, n := range []int{100, 101, 102} {
+		t.Run("cap "+strconv.Itoa(n), func(t *testing.T) {
+			msg, _, truncated, ok := buf.SnapshotCapped(SnapshotCaps{
+				ReasoningBytes:  n,
+				ContentBytes:    n,
+				BlockTextBytes:  n,
+				ToolCalls:       4,
+				ToolOutputBytes: n,
+				Blocks:          64,
+			})
+			if !ok || !truncated {
+				t.Fatalf("ok = %v, truncated = %v, want true / true", ok, truncated)
+			}
+			for name, s := range map[string]string{"reasoning": msg.Reasoning, "content": msg.Content} {
+				if !utf8.ValidString(s) {
+					t.Errorf("%s is not valid UTF-8 after a %d-byte cap: %q", name, n, s)
+				}
+				if len(s) > n {
+					t.Errorf("%s = %d bytes, want <= %d", name, len(s), n)
+				}
+			}
+			for _, b := range msg.Blocks {
+				if !utf8.ValidString(b.Text) || !utf8.ValidString(b.Thinking) {
+					t.Errorf("a block is not valid UTF-8 after a %d-byte cap: %+v", n, b)
+				}
+			}
+			for _, tc := range msg.ToolCalls {
+				if !utf8.ValidString(tc.Output) {
+					t.Errorf("%s output is not valid UTF-8 after a %d-byte cap", tc.ID, n)
+				}
+			}
+			// The marshal is the failure this guards: a split rune survives the
+			// ValidString checks above only if they are wrong, so assert the
+			// round trip too.
+			raw, err := json.Marshal(msg)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if bytes.ContainsRune(raw, utf8.RuneError) {
+				t.Errorf("marshaled snapshot carries U+FFFD, so a cap split a rune at n=%d", n)
+			}
+		})
+	}
+}
+
+// TestSnapshotCaps_MaxTextBytesMatchesTheWorstCasePayload is the arithmetic
+// FEAT-003's per-connect budget depends on: a maximally-full capped snapshot's
+// REAL marshaled length has to sit inside MaxTextBytes plus an envelope, or a
+// budget that subtracts MaxTextBytes per snapshot under-counts and the cold
+// connect exceeds its own gate.
+func TestSnapshotCaps_MaxTextBytesMatchesTheWorstCasePayload(t *testing.T) {
+	caps := connectCapsForTest()
+	if got, want := caps.MaxTextBytes(), 52<<10; got != want {
+		t.Errorf("MaxTextBytes() = %d, want %d; the connect caps and the budget arithmetic disagree", got, want)
+	}
+	if got := (SnapshotCaps{ReasoningBytes: 1}).MaxTextBytes(); got != 0 {
+		t.Errorf("MaxTextBytes() with unbounded dimensions = %d, want 0 (unbounded); a partial sum "+
+			"reads as a real ceiling and understates the payload", got)
+	}
+
+	fx := newCapFixture(t)
+	msg, _, truncated, ok := fx.buf.SnapshotCapped(caps)
+	if !ok || !truncated {
+		t.Fatalf("ok = %v, truncated = %v, want true / true", ok, truncated)
+	}
+	raw, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// The envelope allowance, stated: JSON structure around the text — field
+	// names, quotes, braces, the per-tool-call metadata (id, title, kind,
+	// status, ts) and the per-block type/subtask fields. 8 KiB is generous for
+	// 8 tool calls and 64 blocks and is what the budget subtracts alongside
+	// MaxTextBytes.
+	const envelopeAllowance = 8 << 10
+	if limit := caps.MaxTextBytes() + envelopeAllowance; len(raw) > limit {
+		t.Errorf("capped snapshot marshaled to %d bytes, want <= %d (MaxTextBytes %d + %d envelope); "+
+			"a per-connect budget built on MaxTextBytes would under-count",
+			len(raw), limit, caps.MaxTextBytes(), envelopeAllowance)
+	}
 }

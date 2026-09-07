@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp/v2/sse"
@@ -128,6 +129,24 @@ const (
 	maxDeclaredSnapshotChats = 8
 )
 
+// connectSnapshotCaps bounds ONE turn_state snapshot, at 52 KiB of text
+// (connectSnapshotCaps.MaxTextBytes()) so at least four chats fit inside
+// connectSnapshotBudget. Sized from what a reader needs on a mid-turn reconnect —
+// the tail of the reply being written now. A screen of prose is ~2 KiB, and
+// reasoning renders in a <details> that is collapsed by default, so 4 KiB is
+// several screens of a thing nobody is looking at yet.
+//
+// Every dimension is set, which is what makes MaxTextBytes report a real ceiling:
+// a zero leaves that dimension unbounded and the arithmetic answers 0.
+var connectSnapshotCaps = buffer.SnapshotCaps{
+	ReasoningBytes:  4 << 10,
+	ContentBytes:    16 << 10,
+	BlockTextBytes:  16 << 10,
+	ToolCalls:       8,
+	ToolOutputBytes: 2 << 10,
+	Blocks:          64,
+}
+
 // streamInitialState writes the connected handshake, then replays this client's
 // outstanding state so a reconnecting browser rebuilds its UI as it was.
 // ConnectedPayload carries the ring floor/head so the client can detect a replay
@@ -229,9 +248,15 @@ func (rt *Runtime) replayTurnState(
 			// transcript, but unmarked it makes the launching chat read as busy.
 			WorkflowStep: facts.Source == vibekit.TurnSourceWorkflowStep,
 		}
-		if msg, seq, ok := facts.Buf.Snapshot(); ok {
+		// SnapshotCapped rather than Snapshot: an uncapped snapshot is a whole
+		// transcript, and six of them are the whole cold-connect payload. The
+		// marker travels with it so no client can read the tail as complete —
+		// a bare busy signal leaves it false, because nothing was withheld from
+		// a payload that carries no message.
+		if msg, seq, truncated, ok := facts.Buf.SnapshotCapped(connectSnapshotCaps); ok {
 			payload.Message = &msg
 			payload.ChunkSeq = seq
+			payload.Truncated = truncated
 		} else {
 			payload.ChunkSeq = seq
 		}
