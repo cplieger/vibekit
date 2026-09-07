@@ -158,9 +158,8 @@ export interface OpenTabArgs {
   owns?: boolean;
   /** A label this caller knows and a subject cannot carry. */
   name?: string;
-  /** Whether to activate once the tab exists. Default true; the automatic offers
-   *  (a run sub-tab a progress frame opened, a bulk restore) pass false, because
-   *  the strip is the reader's. */
+  /** Whether to activate once the tab exists. Default true; a bulk restore passes
+   *  false, because the strip is the reader's. */
   activate?: boolean;
 }
 
@@ -2159,9 +2158,7 @@ function setSingletonRoute(kind: TabKind, route: Route): void {
  *  is what cancels. A launcher-OWNED run keeps `owns: true`, so its × means stop.
  *
  *  Every caller is a reader asking for the run — a Run button, a footer link, a
- *  deep link, a History row. The tab a run gets BY ITSELF is opened server-side
- *  (`internal/agent/run_tabs.go`) and arrives as a `tabs_changed` frame, which is
- *  what makes "an automatic offer never steals the screen" structural. */
+ *  deep link, a History row. */
 export async function openRunTab(
   workflowID: string,
   name: string,
@@ -2179,12 +2176,8 @@ export async function openRunTab(
 
 /** Open (or focus) a SUBAGENT execution's own page.
  *
- *  Not a singleton and not offered automatically: a delegate lives and dies inside
- *  the turn that dispatched it, so nothing here is the run tab's proactive offer.
- *  The two reasons that offer exists both fail for a delegate — a run outlives its
- *  turn and emits a progress frame per node, and neither is true of a subagent — so
- *  this door only ever answers a reader who asked. Every caller is a click or a
- *  deep link; no SSE handler may call it.
+ *  Not a singleton. This door only ever answers a reader who asked: every caller is
+ *  a click or a deep link, and no SSE handler may call it.
  *
  *  `owns: false` always, so the × dismisses a view. There is nothing else it could
  *  be: the page is a projection of blocks the chat store owns, and closing it stops

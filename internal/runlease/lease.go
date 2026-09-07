@@ -59,9 +59,6 @@ type Lease struct {
 	// Unattended marks a run with nobody to answer a permission request, which arms
 	// the deny-fast floor. Distinct from the origin: who launched it vs who watches.
 	Unattended bool `json:"unattended"`
-	// TabOffered records that the run's tab has been offered, exactly once for the
-	// life of the run. DURABLE: run_start re-fires on resume and a restart re-reads.
-	TabOffered bool `json:"tab_offered,omitempty"`
 }
 
 // Bounded reports whether vibekit believes the run to be EXECUTING under a deadline it set.

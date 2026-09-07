@@ -1469,11 +1469,10 @@ describe("a run's wait ending releases the launching chat's dot", () => {
     pushDecision(runAsk());
     expect(tabStatusFor(get(PARENT), hasPendingDecision(PARENT))).toBe("input");
 
-    // A terminal run cannot still be waiting on a person, and by then it has no
-    // surface to be answered on either: the sub-tab is auto-closed on completion
-    // and `dropTurnDecisions` exempts a run-scoped ask on purpose, so the launching
-    // turn's own end cannot reach it. Nothing dropped it, so the parent's dot sat
-    // on `input` for the life of the page.
+    // A terminal run cannot still be waiting on a person, and `dropTurnDecisions`
+    // exempts a run-scoped ask on purpose, so the launching turn's own end cannot
+    // reach it. Nothing dropped it, so the parent's dot sat on `input` for the life
+    // of the page.
     dropRunAsks(RUN);
 
     expect(runPendingAsks(RUN).count).toBe(0);

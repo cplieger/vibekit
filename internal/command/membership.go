@@ -26,9 +26,8 @@ import (
 var (
 	// errTabsFull is the 409 for an open at MaxOpenTabs.
 	errTabsFull = errors.New("too many tabs are open; close a tab first")
-	// ErrTabsUnavailable is the 503 for a build with no tab store wired. Typed rather
-	// than a status because the run-tab offer answers no request and must tell this
-	// permanent absence from a real failure to open; every HTTP door adds the status.
+	// ErrTabsUnavailable is the 503 for a build with no tab store wired; every
+	// HTTP door adds the status.
 	ErrTabsUnavailable = errors.New("the tab store is unavailable")
 	// errOpenChatUnknown is the 404 for an open_tab, or a fresh create, naming a chat
 	// that is gone — the delete-ordering gate's refusal.
@@ -36,12 +35,6 @@ var (
 	// errTabUnknown is the 404 for a pin naming an id the set does not hold.
 	errTabUnknown = errors.New("that tab is not open")
 )
-
-// ErrNoParentTab means the chat a run tab would nest under has no tab in the
-// set, so OpenRunTab opened nothing. It carries "retry this later" rather than
-// "tell the user": TabSubject.Parent is immutable, so opening the tab top level
-// instead would foreclose nesting for the life of the run.
-var ErrNoParentTab = errors.New("the launching chat has no open tab to nest under")
 
 // TabSet is the open-tab set as this package uses it, declared at the consumer
 // since internal/tabs exports no interface of its own. List is here beyond the
@@ -215,7 +208,7 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (Cha
 
 	// Reserve before anything mints. peek rather than resolve: a repeat whose tab
 	// is already open needs no slot, and refusing it would strand the chat.
-	if err := m.reserveSlot(vibekit.TabKindChat, string(prior), spendLastSlot); err != nil {
+	if err := m.reserveSlot(vibekit.TabKindChat, string(prior)); err != nil {
 		return ChatOpened{}, err
 	}
 
@@ -303,34 +296,6 @@ func (m *Membership) fillRunParent(spec vibekit.OpenTab) string {
 		return ""
 	}
 	return m.tabForChat(chatID)
-}
-
-// OpenRunTab is the AUTOMATIC open: the tab a starting run offers the chat
-// whose agent launched it. Separate from OpenTab because it answers no request
-// — typed refusals rather than statuses, a slot held back rather than the last
-// one spent, and always a VIEW (`Owns: false`, so closing it stops nothing).
-//
-// The two refusals mean opposite things. ErrNoParentTab is try again later;
-// errTabsFull is stop, because the held-back slot belongs to the reader's next
-// gesture and creating a chat opens a tab.
-func (m *Membership) OpenRunTab(ctx context.Context, workflowID string, parentChat vibekit.ChatID, opID string) (TabOpened, error) {
-	if m.tabs == nil {
-		return TabOpened{}, ErrTabsUnavailable
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	parent := m.tabForChat(parentChat)
-	if parent == "" {
-		return TabOpened{}, ErrNoParentTab
-	}
-	if err := m.reserveSlot(vibekit.TabKindRun, workflowID, holdLastSlot); err != nil {
-		return TabOpened{}, err
-	}
-	return m.openTab(ctx, vibekit.OpenTab{
-		Kind:   vibekit.TabKindRun,
-		Ref:    workflowID,
-		Parent: parent,
-	}, opID)
 }
 
 // CloseTab closes a tab and its descendants, then tears down what an owned tab
@@ -656,24 +621,12 @@ func (m *Membership) closeTabsFor(ctx context.Context, chatID vibekit.ChatID, op
 	}
 }
 
-// slotReserve is how many open-tab slots an operation must leave unspent.
-type slotReserve int
-
-const (
-	// spendLastSlot is a person's gesture: the last slot is theirs to spend.
-	spendLastSlot slotReserve = 0
-	// holdLastSlot is an automatic open, which leaves the last slot for the
-	// reader's next gesture — creating a chat opens a tab, so at MaxOpenTabs
-	// New chat stops working.
-	holdLastSlot slotReserve = 1
-)
-
 // reserveSlot refuses when opening a tab for (kind, ref) would have to mint one
-// and fewer than keep+1 slots remain below MaxOpenTabs. A subject already open
-// needs no slot, which lets a retry finish its own tab write at the limit.
+// and the set is already at MaxOpenTabs. A subject already open needs no slot,
+// which lets a retry finish its own tab write at the limit.
 //
 // Caller holds mu.
-func (m *Membership) reserveSlot(kind vibekit.TabKind, ref string, keep slotReserve) error {
+func (m *Membership) reserveSlot(kind vibekit.TabKind, ref string) error {
 	if m.tabs == nil {
 		return nil
 	}
@@ -683,7 +636,7 @@ func (m *Membership) reserveSlot(kind vibekit.TabKind, ref string, keep slotRese
 			return nil
 		}
 	}
-	if len(open)+int(keep) >= tabs.MaxOpenTabs {
+	if len(open) >= tabs.MaxOpenTabs {
 		return StatusError(http.StatusConflict, errTabsFull)
 	}
 	return nil

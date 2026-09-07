@@ -138,8 +138,8 @@ func (rs *Runs) lease(workflowID string) (runlease.Lease, bool) {
 // whether a lease exists at all, which differs from an empty chat id: a parentless
 // run HAS a lease and no chat.
 //
-// Lock order Membership.mu -> Runs.mu -> the lease store's, acyclic because
-// offerRunTab releases Runs.mu before it opens anything.
+// Lock order Membership.mu -> Runs.mu -> the lease store's, acyclic because the arrow
+// never points back: the run surface holds no reference to the coordinator.
 func (rs *Runs) RunChat(workflowID string) (vibekit.ChatID, bool) {
 	l, ok := rs.lease(workflowID)
 	if !ok {

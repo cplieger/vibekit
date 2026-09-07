@@ -8,8 +8,8 @@
 // refetch and why.
 //
 // So this file routes and interprets nothing: one store write, one bus emit,
-// two facts recorded, and toasts. Every surface that shows a run reads
-// `run-store.ts` and re-renders when that store changes.
+// and toasts. Every surface that shows a run reads `run-store.ts` and
+// re-renders when that store changes.
 //
 // Surfaces: `run-store.ts` by direct import (a leaf over api-client, the one
 // fetch for all readers); the history list over the bus (importing
@@ -35,7 +35,7 @@ import {
 } from "../run-store.js";
 import { isThinking } from "../store.js";
 import { trackRun } from "../run-dots.js";
-import { autoCloseRunSubTab, noteAutoOpenedRun, applyRunStep } from "../run-view.js";
+import { applyRunStep } from "../run-view.js";
 import {
   pushDecision,
   collapseSettledRunInput,
@@ -100,10 +100,6 @@ onSSE("run_started", (chatID, p) => {
   // A start frame is proof of execution: it fires on the launch and again on every
   // resume, so it is exactly the moment frames begin arriving into this chat.
   noteRunLive(p.workflow_id, chatID, true);
-  // The tab itself is the SERVER's, opened at the frame that grants the run's
-  // lease. What is recorded here is only that the tab is the app's doing, which is
-  // what lets the completion auto-close tell it from one the reader asked for.
-  noteAutoOpenedRun(p.workflow_id, chatID);
   invalidateRun(p.workflow_id);
   emitBus(BUS_RUNS_CHANGED);
   if (p.scheduled === true && !announcedStarts.has(p.workflow_id)) {
@@ -160,9 +156,6 @@ onSSE("run_finished", (chatID, p) => {
   emitBus(BUS_RUNS_CHANGED);
   announcedStarts.delete(p.workflow_id);
   toastCompletion(p.status, p.name);
-  // AFTER the toast: the strip stops carrying a row for work that is over,
-  // and the toast is what says the work is over.
-  autoCloseRunSubTab(p.workflow_id, p.status);
 });
 
 // A parentless run's step content — the one run event that is not an
@@ -247,9 +240,6 @@ onSSE("run_progress", (chatID, p) => {
   // (`node_paused`) is a step waiting inside a run that is still going, so it
   // deliberately reads as executing.
   noteRunLive(p.workflow_id, chatID, p.kind !== "paused");
-  // No tab open, and no auto-open MARKER either. The server retries its own offer
-  // on each step's frame, and claiming the tab here would let the completion
-  // auto-close take one a mid-run reader opened themselves.
   if (!applyRunProgress(p)) {
     invalidateRun(p.workflow_id);
   }

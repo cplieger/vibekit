@@ -19,9 +19,6 @@ type Runs struct {
 	translate runTranslator
 	perms     runPermClaimer
 	bus       runBroadcaster
-	// tabs opens the tab a starting run offers its launching chat. REQUIRED, not
-	// optional: offerRunTab's nil check is for a bare &Runs{} in a test.
-	tabs      runTabOpener
 	schedules *schedule.Store `wiring:"optional"`
 	leases    *runlease.Store `wiring:"optional"`
 	bridges   *bridgeManager

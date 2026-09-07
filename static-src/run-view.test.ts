@@ -133,12 +133,9 @@ vi.mock("./tabs.js", () => ({
   // reaches has to exist on it.
   renameTab: vi.fn(),
   setTabStatus: vi.fn(),
-  // The completion auto-close's two reads, and the names this graph pulls in.
-  // Inert here for the same reason `tabIdFor` is: with no tab id to resolve
-  // nothing is closable, and the page renders the run CARD, whose markdown
-  // bubble reaches the linkifier and through it the editor openers. No case
-  // here closes a tab or opens a file; run-subtab.test.ts owns the
-  // auto-close's rules.
+  // The names this graph pulls in through the run CARD, whose markdown bubble
+  // reaches the linkifier and through it the editor openers. All inert: no case
+  // here closes a tab, reads which tab is on screen, or opens a file.
   closeTab: vi.fn(),
   getActiveTabId: vi.fn(() => ""),
   openEditorView: vi.fn(),

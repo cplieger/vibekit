@@ -1089,6 +1089,17 @@ func TestStepTurnCapExceeded_DoesNotConsumeTheDeadlineItLoses(t *testing.T) {
 	}
 }
 
+// noopRunTranslator satisfies the one translate role observeStart reaches.
+type noopRunTranslator struct{}
+
+func (noopRunTranslator) HandleRunStart(context.Context, vibekit.ChatID, *vibekit.RPCResponse)    {}
+func (noopRunTranslator) HandleRunComplete(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {}
+func (noopRunTranslator) RecordRunSteps(json.RawMessage)                                          {}
+func (noopRunTranslator) ForgetRunSteps(string)                                                   {}
+func (noopRunTranslator) SessionNotifyAsk(*vibekit.RPCResponse) (vibekit.RunInputNeededPayload, bool) {
+	return vibekit.RunInputNeededPayload{}, false
+}
+
 // recordingRunTranslator is noopRunTranslator plus a log of which runs had their
 // step sessions forgotten. The registry itself is package-private to
 // `internal/translate`, so the gate is observed through the ROLE — which is the

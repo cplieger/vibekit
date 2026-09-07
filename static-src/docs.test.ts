@@ -42,7 +42,8 @@ vi.mock("./tabs.js", () => ({
   tabIdFor: undefined,
   tabSetVersion: undefined,
   renameTab: undefined,
-  // Reached through run-view.js: the completion auto-close's two reads.
+  // Also reached through run-view.js, via the run card's markdown bubble and the
+  // linkifier behind it.
   closeTab: undefined,
   getActiveTabId: undefined,
   setTabStatus: undefined,

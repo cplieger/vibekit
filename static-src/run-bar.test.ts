@@ -39,8 +39,6 @@ vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m
 const openRunView = vi.hoisted(() => vi.fn());
 vi.mock("./run-view.js", () => ({
   openRunView,
-  noteAutoOpenedRun: vi.fn(),
-  autoCloseRunSubTab: vi.fn(),
   runTabProjectsChat: vi.fn(() => false),
 }));
 

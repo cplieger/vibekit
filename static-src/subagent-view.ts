@@ -283,13 +283,9 @@ function syntheticMessage(id: string, slice: SubagentSlice): Message {
 
 /** Open (or focus) a delegate's page.
  *
- *  NO GUARD, deliberately: this is `openRunView`'s half of the run tab's pair and not
- *  the server-side offer's. A subagent tab is never offered automatically, because
- *  neither reason the run's offer exists transfers — a run outlives the turn that
- *  launched it and emits a progress frame per node event, and a delegate does neither.
- *  Every call here is a reader asking, from a card's footer link or a deep link, and it
- *  FOCUSES a tab that is already open, because one link means both "show me this" and
- *  "bring it back".
+ *  Every call here is a reader asking, from a card's footer link or a deep link, and
+ *  it FOCUSES a tab that is already open, because one link means both "show me this"
+ *  and "bring it back".
  *
  *  It takes no name: the tab factory derives the label from the chat store, so a tab
  *  restored on boot and a tab opened from a card read the same. */
