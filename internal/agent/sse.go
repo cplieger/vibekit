@@ -95,6 +95,39 @@ func adoptCursorParam(r *http.Request) string {
 // maxCursorDigits bounds the parameter at what a uint64 can spell.
 const maxCursorDigits = 20
 
+// The cold-connect payload policy. Every number below is derived from what a
+// realistic reconnect must CARRY, not from what one was measured to carry: three
+// fresh connects against the live instance came to 18,345,594 / 18,369,217 /
+// 18,416,535 bytes, with every byte of the problem in six uncapped turn_state
+// frames and a ~59 KB non-snapshot remainder.
+//
+// maxColdConnectBytes builds up worst-case as: 1 KiB for the retry: line and the
+// connected handshake (measured ~220 B), 16 KiB for one bare busy signal per open
+// tab (~200 B x tabs.MaxOpenTabs), 16 KiB for the waiting-status replays on the
+// same bound, 64 KiB for pending permission asks (a turn approval carries a file
+// list and is uncapped today), 16 KiB for pending run asks, 256 KiB for every
+// snapshot together, and ~143 KiB of headroom.
+//
+// They are POLICY numbers, so the gate over them fails rather than being raised: a
+// connect that exceeds one of these is the defect, never the constant.
+const (
+	// maxColdConnectBytes bounds the whole payload one cold connect writes.
+	maxColdConnectBytes = 512 << 10
+	// maxConnectFrameBytes bounds ONE frame, at 2x the per-snapshot text cap.
+	// WebKit buffers a whole SSE frame before it dispatches it, so a single 3 MB
+	// frame is a peak-memory cost in the network and parse layers that the total
+	// cannot express.
+	maxConnectFrameBytes = 128 << 10
+	// connectSnapshotBudget is the per-connect allowance for every turn_state
+	// snapshot together, sized so at least four chats get a real snapshot before
+	// the rest fall back to the bare busy signal.
+	connectSnapshotBudget = 256 << 10
+	// maxDeclaredSnapshotChats bounds how many chats one connect may declare as
+	// on-screen, so the ?snapshot= parameter cannot ask for the payload the
+	// budget above exists to refuse.
+	maxDeclaredSnapshotChats = 8
+)
+
 // streamInitialState writes the connected handshake, then replays this client's
 // outstanding state so a reconnecting browser rebuilds its UI as it was.
 // ConnectedPayload carries the ring floor/head so the client can detect a replay
