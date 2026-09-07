@@ -15,6 +15,7 @@ import {
   KAS_SUMMARIZATION_PCT,
   KAS_TRUNCATION_PCT,
   contextStroke,
+  tokensUsed,
   wedgeDash,
 } from "./context-ring.js";
 
@@ -36,15 +37,39 @@ describe("wedgeDash", () => {
     [50, "50 50", "50"],
     [0, "100 0", "100"],
     [100, "0 100", "0"],
-  ])("draws the band from %i%% as dasharray %s offset %s", (threshold, dasharray, dashoffset) => {
-    expect(wedgeDash(threshold)).toEqual({ dasharray, dashoffset });
-  });
+  ])(
+    "draws the band from %i percent as dasharray %s offset %s",
+    (threshold, dasharray, dashoffset) => {
+      expect(wedgeDash(threshold)).toEqual({ dasharray, dashoffset });
+    },
+  );
 
   it.each([
     [-40, "100 0", "100"],
     [140, "0 100", "0"],
   ])("clamps an out-of-range threshold of %i", (threshold, dasharray, dashoffset) => {
     expect(wedgeDash(threshold)).toEqual({ dasharray, dashoffset });
+  });
+});
+
+describe("tokensUsed", () => {
+  // ONE derivation, read by the ramp and by the expanded card's readout. Two
+  // owners of it with different inputs is what this export exists to prevent.
+  it.each([
+    [25, 200_000, 50_000],
+    [50, 200_000, 100_000],
+    [10, 1_000_000, 100_000],
+    [0, 1_000_000, 0],
+    [25, 0, 0],
+  ])("puts %i percent of a %i-token window at %i tokens", (pct, size, want) => {
+    expect(tokensUsed(pct, size)).toBe(want);
+  });
+
+  it("never reports more tokens than the window holds", () => {
+    // The ring saturates at 100%, so the readout beside it may not claim 240K of a
+    // 200K window when the wire reports a percentage over 100.
+    expect(tokensUsed(120, 200_000)).toBe(200_000);
+    expect(tokensUsed(-20, 200_000)).toBe(0);
   });
 });
 
@@ -80,7 +105,7 @@ describe("contextStroke", () => {
     [15, 1_000_000, "color-mix(in oklch, var(--c-red) 50.0%, var(--c-yellow))"], // 150K
     [20, 1_000_000, "var(--c-red)"], // 200K
     [40, 1_000_000, "var(--c-red)"], // 400K
-  ])("maps %i%% of a %i-token window to %s", (pct, size, want) => {
+  ])("maps %i percent of a %i-token window to %s", (pct, size, want) => {
     expect(contextStroke(pct, size)).toBe(want);
   });
 
@@ -91,7 +116,7 @@ describe("contextStroke", () => {
     [100, 400_000],
     [100, 4_000_000],
     [50, 800_000],
-  ])("saturates at red for %i%% of %i tokens", (pct, size) => {
+  ])("saturates at red for %i percent of %i tokens", (pct, size) => {
     expect(contextStroke(pct, size)).toBe("var(--c-red)");
   });
 
@@ -118,11 +143,11 @@ describe("contextStroke", () => {
       [50, "color-mix(in oklch, var(--c-red) 0.0%, var(--c-yellow))"],
       [75, "color-mix(in oklch, var(--c-red) 50.0%, var(--c-yellow))"],
       [100, "color-mix(in oklch, var(--c-red) 100.0%, var(--c-yellow))"],
-    ])("maps %i%% to %s", (pct, want) => {
+    ])("maps %i percent to %s", (pct, want) => {
       expect(contextStroke(pct, 0)).toBe(want);
     });
 
-    it.each([0, 25, 50, 75, 100])("produces no NaN or Infinity at %i%%", (pct) => {
+    it.each([0, 25, 50, 75, 100])("produces no NaN or Infinity at %i percent", (pct) => {
       const got = contextStroke(pct, 0);
       expect(got).not.toContain("NaN");
       expect(got).not.toContain("Infinity");
@@ -144,7 +169,7 @@ describe("contextStroke", () => {
     [50, 200_000],
     [25, 0],
     [100, 400_000],
-  ])("names only design tokens for %i%% of %i", (pct, size) => {
+  ])("names only design tokens for %i percent of %i", (pct, size) => {
     expect(contextStroke(pct, size)).toMatch(/^(var\(--c-[a-z]+\)|color-mix\(in oklch, .+\))$/);
     expect(contextStroke(pct, size)).not.toMatch(/#|rgb|oklch\(\d/);
   });

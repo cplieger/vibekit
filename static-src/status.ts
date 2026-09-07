@@ -11,7 +11,7 @@ import { $ } from "./dom.js";
 import { formatTokens, formatMetering } from "./status-format.js";
 import { humanName } from "./strings.js";
 import { checkRuntimeHealth, runtimeStatusLine } from "./runtime-health.js";
-import { contextStroke, wedgeDash } from "./context-ring.js";
+import { contextStroke, tokensUsed, wedgeDash } from "./context-ring.js";
 import { versionsSignal } from "./versions.js";
 import { el, effect, touch } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
@@ -102,7 +102,7 @@ class ContextBarController {
     );
     $.ctxTokens.textContent =
       contextSize > 0
-        ? `${formatTokens(Math.round((contextSize * pct) / 100))} / ${formatTokens(contextSize)}`
+        ? `${formatTokens(Math.round(tokensUsed(pct, contextSize)))} / ${formatTokens(contextSize)}`
         : `${pct.toFixed(1)}%`;
     $.ctxCredits.textContent = credits > 0 ? `${credits.toFixed(2)} cr` : "0.00 cr";
     $.ctxTurns.textContent = String(turnCount);

@@ -52,6 +52,14 @@
     --c-red: oklch(75.6% 0.13 2.8deg);
     --c-yellow: oklch(91.9% 0.07 86.5deg);
 
+    /* The context indicator's compaction band: --c-yellow's hue with L sized per
+     * theme, a SEED rather than one mix over it. No single relationship serves
+     * both backdrops — the band has to read lighter than the --c-border track on
+     * dark and darker than it on light, and it must stay quieter than the fill
+     * that sweeps over it (3.55:1 / 3.46:1 vs that track, over WCAG 1.4.11's 3:1
+     * for a graphical object; `css-contrast.py pair`). */
+    --c-context-wedge: oklch(62% 0.07 86.5deg);
+
     /* Seeds rather than alpha washes of the status hues: alpha moves LIGHTNESS,
      * and no alpha from 12% to 26% reaches AA in either theme. These hold the
      * pane's lightness and spend CHROMA instead. */
@@ -135,12 +143,6 @@
      * `color-mix()` this toward a status hue get a partly-transparent result;
      * raise the status fraction there rather than making this opaque. */
     --c-border: color-mix(in oklch, var(--c-text-primary) 16%, transparent);
-
-    /* The context indicator's compaction band. Mixed toward an OPAQUE surface
-     * rather than toward --c-border, so it separates from that track by ALPHA as
-     * well as lightness and tint (3.55:1 dark, 2.07:1 light; `css-contrast.py
-     * show`) — WCAG 1.4.1 wants a cue here beyond hue. */
-    --c-context-wedge: color-mix(in oklch, var(--c-yellow) 55%, var(--c-bg-secondary));
 
     /* ---- THE TAB ACTIVITY DOT -------------------------------------------- *
      * THE VALUES ARE web-terminal-kiro's: both apps put an activity dot on a tab
@@ -429,6 +431,10 @@
 
     /* Yellow needs lower L than its siblings to read as text on white. */
     --c-yellow: oklch(47% 0.09 86.5deg);
+
+    /* Sized against light's own track, which the band has to read DARKER than —
+     * see the dark declaration for why this is a seed. */
+    --c-context-wedge: oklch(54% 0.09 86.5deg);
 
     /* At the dark block's hues exactly — only L and C move, because dark's four
      * inks read 1.099-1.678:1 here. Chroma is a gamut fact: yellow cannot hold

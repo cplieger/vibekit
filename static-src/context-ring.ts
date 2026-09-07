@@ -47,6 +47,12 @@ export function wedgeDash(thresholdPct: number): { dasharray: string; dashoffset
   return { dasharray: `${String(band)} ${String(100 - band)}`, dashoffset: String(band) };
 }
 
+/** Tokens used at `pct` of a `contextSize`-token window: the ramp's input, and
+ *  the same number the expanded card reads out. */
+export function tokensUsed(pct: number, contextSize: number): number {
+  return (contextSize * clamp(pct, 0, 100)) / 100;
+}
+
 /** The fill's stroke for `pct` of a `contextSize`-token window, saturating at
  *  `--c-red` past the degraded threshold rather than extrapolating.
  *
@@ -60,7 +66,7 @@ export function contextStroke(pct: number, contextSize: number): string {
       ? mix("--c-yellow", "--c-green", clamped / FALLBACK_SPLIT_PCT)
       : mix("--c-red", "--c-yellow", (clamped - FALLBACK_SPLIT_PCT) / (100 - FALLBACK_SPLIT_PCT));
   }
-  const tokens = (contextSize * clamped) / 100;
+  const tokens = tokensUsed(pct, contextSize);
   if (tokens >= CONTEXT_DEGRADED_TOKENS) {
     return "var(--c-red)";
   }

@@ -166,3 +166,81 @@ describe("the model pill", () => {
     expect($.ctxEffortPill.textContent).toBe("· high");
   });
 });
+
+// --- The ring itself ---
+//
+// context-ring.ts owns both computations and this module is their one writer, so
+// what is under test here is that each computed value reaches its own element.
+
+/** One paint of the ring's two halves. */
+async function paintRing(
+  pct: number,
+  contextSize: number,
+  summarizationPct: number,
+): Promise<void> {
+  const { updateContextBar } = await import("./status.js");
+  updateContextBar({
+    pct,
+    contextSize,
+    summarizationPct,
+    credits: 0,
+    turnCount: 0,
+    lastTurnMs: 0,
+    model: "claude-opus-5",
+  });
+  await new Promise((r) => {
+    requestAnimationFrame(() => {
+      r(undefined);
+    });
+  });
+}
+
+describe("the context ring", () => {
+  it("writes the fill's sweep and stroke and the band's dash from one update", async () => {
+    mountContextBar();
+
+    await paintRing(25, 200_000, 80);
+
+    const { $ } = await import("./dom.js");
+    expect($.contextRingFill.style.strokeDashoffset).toBe("75");
+    expect($.contextRingFill.style.stroke).toBe(
+      "color-mix(in oklch, var(--c-yellow) 50.0%, var(--c-green))",
+    );
+    // The band is the element the fill paints over, so a regression that stopped
+    // writing it is invisible to every assertion above. Read back COMMA-separated:
+    // the CSSOM reserializes a dash list, so `wedgeDash`'s own "20 80" (pinned in
+    // context-ring.test.ts) is not what the element reports.
+    expect($.contextRingWedge.style.strokeDasharray).toBe("20, 80");
+    expect($.contextRingWedge.style.strokeDashoffset).toBe("20");
+  });
+
+  it("moves the band when the wire reports a different threshold", async () => {
+    mountContextBar();
+
+    await paintRing(10, 200_000, 95);
+
+    const { $ } = await import("./dom.js");
+    expect($.contextRingWedge.style.strokeDasharray).toBe("5, 95");
+    expect($.contextRingWedge.style.strokeDashoffset).toBe("5");
+  });
+
+  it("reads the token count out of the ramp's own derivation", async () => {
+    mountContextBar();
+
+    await paintRing(25, 200_000, 80);
+
+    // The readout and the ramp are one derivation: 25% of 200K is the 50K that
+    // put the stroke half way through the first segment above.
+    const { $ } = await import("./dom.js");
+    expect($.ctxTokens.textContent).toBe("50.0K / 200.0K");
+  });
+
+  it("reads a percentage when the window is unknown", async () => {
+    mountContextBar();
+
+    await paintRing(25, 0, 80);
+
+    const { $ } = await import("./dom.js");
+    expect($.ctxTokens.textContent).toBe("25.0%");
+  });
+});
