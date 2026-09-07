@@ -474,6 +474,9 @@ class Elements {
   get themeBtn(): HTMLButtonElement {
     return byId("theme-btn");
   }
+  get pointerModeBtn(): HTMLButtonElement {
+    return byId("pointer-mode-btn");
+  }
 
   // Tabs / shell
   // Startup

@@ -61,7 +61,7 @@ const PAIRS: readonly (readonly [label: string, anchor: string, registry: string
   ["sidebar History", 'id="history-btn"', ICON_TAB_HISTORY],
   ["sidebar Files", 'id="files-btn"', ICON_TAB_FILES],
   ["sidebar Git", 'id="git-btn"', ICON_TAB_GIT],
-  ["sidebar Settings", 'id="settings-btn"', ICON_TAB_SETTINGS],
+  ["toolbar Settings", 'id="settings-btn"', ICON_TAB_SETTINGS],
   // Docs categories that name something the app already draws elsewhere.
   ["docs tab Agents", 'data-docs-tab="agents"', ICON_TAB_AGENT],
   ["docs tab Specs", 'data-docs-tab="specs"', ICON_TAB_SPEC],
@@ -97,4 +97,18 @@ describe("hand-authored glyphs in static/index.html", () => {
       expect(shared, `${bar} tabs sharing one glyph`).toEqual([]);
     });
   }
+
+  // The honest extension of that half to the sidebar header, which is where the two
+  // new pointer drawings land. Every glyph the bar can SHOW is counted, not just the
+  // one each button starts on: both toggles there swap glyphs at runtime, so a
+  // collision the reader meets after a click is the same defect as one on load.
+  it("gives every glyph in the sidebar header a distinct mark", () => {
+    const at = indexHtml.indexOf('class="sidebar-header-actions"');
+    expect(at, "static/index.html has no sidebar-header-actions").toBeGreaterThan(-1);
+    const bar = indexHtml.slice(at, indexHtml.indexOf("</div>", at));
+    const glyphs = [...bar.matchAll(/<svg\b[\s\S]*?<\/svg>/g)].map((m) => inner(m[0]));
+    // Moon, sun, system half-disc, mouse, hand, close.
+    expect(glyphs).toHaveLength(6);
+    expect(new Set(glyphs).size, "sidebar-header glyphs sharing one mark").toBe(glyphs.length);
+  });
 });

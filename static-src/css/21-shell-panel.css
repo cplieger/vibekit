@@ -269,10 +269,11 @@
    device class wrong in both directions: Chromium reports coarse with
    `any-pointer: fine` FALSE on a Windows touch laptop with a mouse attached
    (crbug 398065927, open), and iPadOS reports coarse with a trackpad. The
-   attribute is written from real `PointerEvent.pointerType` (pointer-tier.ts), so
-   it is what the size tokens in 01-tokens.css already key on — leaving this block
-   on the query would give the app two definitions of "coarse" that disagree on
-   exactly the hardware this exists for.
+   attribute is written once per load by pointer-tier.ts from the reader's own
+   stated choice, else this device's last observed pointer, else that same query as
+   a last resort — so it is what the size tokens in 01-tokens.css already key on,
+   and leaving this block on the query would give the app two definitions of
+   "coarse" that disagree on exactly the hardware this exists for.
 
    `:where()` keeps the gate at ZERO specificity, so every selector below scores
    what it scored inside the media query and no rule newly outranks another. */
