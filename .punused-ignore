@@ -32,6 +32,20 @@
 #   "refusal"        -> types.gen.ts StopReason union (+ static-src/refusal.ts)
 constant ToolKindOther
 
+# RunNodeStatus is the same contract, one entry for the whole enum rather than per
+# member, because the reason is identical for all seven and does not depend on which
+# ones production happens to compare against today (run_ask.go and run_host.go name
+# only paused and running). It is a registered wire enum (internal/wirespec
+# wireEnums), so the const block IS the source of types.gen.ts's RunNodeStatus union,
+# and static-src/run-status.ts keys RUN_NODE_STATUS_MEMBERS as
+# Record<RunNodeStatus, true> while exec-view/status.ts folds it with explicit
+# "pending" and "skipped" arms. Dropping a constant shrinks the union, so a status
+# KAS really sends classifies as "unknown". The values are KAS's own, verified
+# against the 2.21.1 bundle by internal/kascap's census — which reads this
+# declaration with go/parser rather than by importing it, so its use of these
+# constants is invisible to a reference search.
+constant RunNodeStatus
+
 # --- 2. json-tagged fields on wiregen-registered structs. The struct is
 # registered in cmd/wire-codegen, so the field is part of the generated TS
 # interface AND its validating decoder; encoding/json populates it by
