@@ -40,6 +40,18 @@ describe("the run-status contract shared with Go", () => {
     expect(status === undefined ? undefined : runStatusActive(status)).toBe(true);
     expect(status === undefined ? undefined : runStatusTerminal(status)).toBe(false);
   });
+
+  // The one status the shared fixture cannot carry: `cancelled` is a declared EXTRA
+  // (KAS never emits it, but the cancel verb writes `targetStatus` verbatim with no
+  // enum check), and the Go census asserts that fixture equals KAS's enum exactly.
+  // So it is pinned here and in internal/vibekit's own contract test, which is what
+  // keeps the two languages agreeing that it reads as over.
+  it("reads a cancelled run as over, matching the Go predicate", () => {
+    const status = classifyRunStatus("cancelled");
+    expect(status).toBe("cancelled");
+    expect(status === undefined ? undefined : runStatusTerminal(status)).toBe(true);
+    expect(status === undefined ? undefined : runStatusActive(status)).toBe(false);
+  });
 });
 
 describe("the node-status contract shared with Go", () => {

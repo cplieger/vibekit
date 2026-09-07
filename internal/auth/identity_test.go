@@ -124,12 +124,12 @@ func TestIdentityFingerprint_UsesOnlyNamedStableFields(t *testing.T) {
 	base := WhoamiResponse{Email: "a", AccountType: "bc", StartURL: "https://example.com/start", Region: "us-east-1", Auth: "display one"}
 	sameIdentity := base
 	sameIdentity.Auth = "display two"
-	if identityFingerprint(base) != identityFingerprint(sameIdentity) {
+	if identityFingerprint(&base) != identityFingerprint(&sameIdentity) {
 		t.Error("identityFingerprint changed when only the derived display label changed")
 	}
 
 	ambiguousWithoutNames := WhoamiResponse{Email: "ab", AccountType: "c", StartURL: base.StartURL, Region: base.Region}
-	if identityFingerprint(base) == identityFingerprint(ambiguousWithoutNames) {
+	if identityFingerprint(&base) == identityFingerprint(&ambiguousWithoutNames) {
 		t.Error("identityFingerprint did not preserve stable field boundaries")
 	}
 }
@@ -143,7 +143,7 @@ func TestReadIdentity_ObservesAParsedIdentity(t *testing.T) {
 	skipIfNotUnix(t)
 	retired := 0
 	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) { return "", nil })
-	id.Observe(identityFingerprint(WhoamiResponse{Email: "first@example.com", AccountType: "BuilderId"}))
+	id.Observe(identityFingerprint(&WhoamiResponse{Email: "first@example.com", AccountType: "BuilderId"}))
 	cli := writeFakeCLI(t, `{"email":"second@example.com","account_type":"BuilderId"}`, 0)
 	h := NewHandler(fixedPath(cli), WithIdentity(id))
 
@@ -159,7 +159,7 @@ func TestReadIdentity_WithholdsAnUnreadableIdentity(t *testing.T) {
 	skipIfNotUnix(t)
 	retired := 0
 	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) { return "", nil })
-	id.Observe(identityFingerprint(WhoamiResponse{Email: "first@example.com", AccountType: "BuilderId"}))
+	id.Observe(identityFingerprint(&WhoamiResponse{Email: "first@example.com", AccountType: "BuilderId"}))
 	cli := writeFakeCLI(t, "not json", 0)
 	h := NewHandler(fixedPath(cli), WithIdentity(id))
 
