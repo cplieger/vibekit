@@ -614,8 +614,7 @@ function applyStatusUpdate(
     disclosed: null,
     denial: null,
   });
-  // After applyOutcome, which writes the `data-outcome` the predicate reads to tell
-  // a settled card from one still producing output.
+  // After applyOutcome: it writes the `data-outcome` the predicate reads.
   refreshToolDisclosure(card);
   const done = isToolDone(status);
   if (done) {
