@@ -711,24 +711,34 @@
   background: var(--c-bg-tertiary);
 }
 
-/* Theme toggle: sun/moon vertical slide transition (subflux pattern).
- * Both SVGs are always in the DOM; .hidden controls which is visible.
- * On toggle, the outgoing icon slides down (.theme-setting), then the
- * incoming icon appears below and slides up (removal of .theme-rising).
- * A warm/cool inset glow on the button sells the sun/moon metaphor. */
-[id="theme-btn"] {
+/* THE ICON-SWAP SLIDE, shared by the two sidebar-header toggles that change which
+ * of several glyphs they show: the theme cycle and the touch/mouse toggle.
+ *
+ * Every glyph is permanently in the DOM and `.hidden` decides which one is
+ * visible. On a change the outgoing icon slides down (`.icon-setting`), then the
+ * incoming one is placed below and slides up (removal of `.icon-rising`);
+ * `overflow: hidden` on the button is what clips the +/-2rem travel. Both buttons
+ * drive it from TypeScript (theme.ts, pointer-mode.ts), so the class names are
+ * shared rather than copied — one vocabulary, two consumers, and the alternative
+ * was a second copy of these declarations that could drift silently.
+ *
+ * An attribute selector and `:is()` both score (0,1,0), so widening the selector
+ * newly outranks nothing.
+ *
+ * The GLOW below stays the theme's alone: a warm/cool wash is the sun/moon
+ * metaphor and the pointer has no analogue for it. */
+:is([id="theme-btn"], [id="pointer-mode-btn"]) {
   overflow: hidden;
-  transition: box-shadow 0.35s var(--ease-standard);
 }
 
-[id="theme-btn"] svg {
+:is([id="theme-btn"], [id="pointer-mode-btn"]) svg {
   display: inline-block;
   transition:
     translate 0.35s var(--ease-enter),
     opacity 0.25s var(--ease-enter);
 }
 
-[id="theme-btn"] svg.theme-setting {
+:is([id="theme-btn"], [id="pointer-mode-btn"]) svg.icon-setting {
   translate: 0 2rem;
   opacity: 0;
   transition:
@@ -736,9 +746,13 @@
     opacity 0.2s var(--ease-exit);
 }
 
-[id="theme-btn"] svg.theme-rising {
+:is([id="theme-btn"], [id="pointer-mode-btn"]) svg.icon-rising {
   translate: 0 -2rem;
   opacity: 0;
+}
+
+[id="theme-btn"] {
+  transition: box-shadow 0.35s var(--ease-standard);
 }
 
 [id="theme-btn"].glow-sun {

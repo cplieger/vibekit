@@ -84,16 +84,16 @@ function updateIcon(): void {
     for (const [choice, icon] of Object.entries(icons)) {
       if (icon !== null && choice !== current) {
         icon.classList.add("hidden");
-        icon.classList.remove("theme-setting");
+        icon.classList.remove("icon-setting");
       }
     }
     incoming.classList.remove("hidden");
-    incoming.classList.add("theme-rising");
+    incoming.classList.add("icon-rising");
     btn.classList.add(glowClass);
     // Force reflow so the browser sees the "rising" start state.
     forceReflow(incoming);
     // Remove "rising" so the transition runs from below → center.
-    incoming.classList.remove("theme-rising");
+    incoming.classList.remove("icon-rising");
     incoming.addEventListener(
       "transitionend",
       () => {
@@ -112,7 +112,7 @@ function updateIcon(): void {
   if (outgoing === null) {
     settle();
   } else {
-    outgoing.classList.add("theme-setting");
+    outgoing.classList.add("icon-setting");
     outgoing.addEventListener("transitionend", settle, { once: true });
     // Safety timeout in case transitionend doesn't fire.
     setTimeout(settle, 350);

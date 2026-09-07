@@ -181,3 +181,17 @@
     height: var(--btn-h);
   }
 }
+
+/* PHONE-SHAPED means narrow OR short, and a media query list is CSS's OR. The
+   short arm answers LANDSCAPE, where a phone is mostly wider than 48rem and the
+   narrow arm stops matching; 30rem measures the short edge, the axis a rotation
+   cannot change (derivation: vibekit-ui.md "Hit targets"). The rule sits outside
+   the width block above because that block is layout — widening that prelude would
+   hand a short desktop window the drawer and the safe-area rules. The other two
+   conditions are pointer-mode.ts's and travel on `.hidden`, whose
+   `display: none !important` composes with this plain one. */
+@media (width <= 48rem), (height <= 30rem) {
+  [id="pointer-mode-btn"] {
+    display: none;
+  }
+}

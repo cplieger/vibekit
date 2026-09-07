@@ -1,6 +1,8 @@
 // ---------------------------------------------------------------------------
-// device-view.ts owns the four localStorage fields that are not the workspace's:
-// the active tab, the two shell fields, and the theme's pre-paint cache.
+// device-view.ts owns the localStorage fields that are not the workspace's: the
+// active tab, the two shell fields, the theme's pre-paint cache, and the three
+// pointer fields (the detected tier, the user's stated choice, and the sticky
+// has-been-touched flag).
 //
 // The property worth pinning hardest is the ONE-OWNER rule, and it is here
 // because its violation already shipped once. All four live in a single JSON blob
@@ -16,10 +18,16 @@ import { describe, it, expect, beforeEach } from "vitest";
 
 import {
   activeView,
+  cachePointerTier,
   cacheTheme,
+  cachedPointerTier,
   cachedTheme,
+  coarseEverSeen,
   loadDeviceView,
+  markCoarseSeen,
+  pointerModeChoice,
   setActiveView,
+  setPointerModeChoice,
   setShellHeight,
   setShellOpen,
   shellHeight,
@@ -105,6 +113,45 @@ describe("the theme's pre-paint cache", () => {
   });
 });
 
+describe("the pointer fields", () => {
+  it("round-trips the stated choice", () => {
+    for (const tier of ["fine", "coarse"] as const) {
+      setPointerModeChoice(tier);
+      expect(pointerModeChoice()).toBe(tier);
+    }
+  });
+
+  it("reads an unrecognised or absent choice as none", () => {
+    expect(pointerModeChoice()).toBeNull();
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ pointer_mode: "chunky" }));
+    expect(pointerModeChoice()).toBeNull();
+  });
+
+  it("latches the coarse-seen flag and never reads a non-boolean as set", () => {
+    expect(coarseEverSeen()).toBe(false);
+    markCoarseSeen();
+    expect(coarseEverSeen()).toBe(true);
+
+    // The flag reveals a control, so a hand-edited blob must not turn it on with
+    // a truthy value of the wrong type.
+    for (const bad of ["true", 1, {}]) {
+      localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ pointer_coarse_seen: bad }));
+      expect(coarseEverSeen()).toBe(false);
+    }
+  });
+
+  it("keeps the choice and the observation apart", () => {
+    // The whole reason they are two fields: the detector writes `pointer` on every
+    // tier change it sees, and a choice sharing that field would be erased by the
+    // session's first mouse move.
+    setPointerModeChoice("coarse");
+    cachePointerTier("fine");
+
+    expect(pointerModeChoice()).toBe("coarse");
+    expect(cachedPointerTier()).toBe("fine");
+  });
+});
+
 // The rule, from both sides. This is the module's reason to exist.
 describe("one owner of the key", () => {
   it("a device-field write preserves the theme cache", () => {
@@ -114,6 +161,37 @@ describe("one owner of the key", () => {
     setShellOpen(true);
 
     expect(cachedTheme()).toBe("light");
+  });
+
+  it("a pointer write preserves the theme cache and the three device fields", () => {
+    cacheTheme("light");
+    setActiveView("chat-z");
+    setShellOpen(true);
+    setShellHeight(420);
+
+    setPointerModeChoice("coarse");
+    markCoarseSeen();
+    cachePointerTier("coarse");
+
+    expect(cachedTheme()).toBe("light");
+    expect(loadDeviceView()).toEqual({
+      active_view: "chat-z",
+      shell_open: true,
+      shell_h: 420,
+    });
+  });
+
+  it("a theme or device write preserves the pointer fields", () => {
+    setPointerModeChoice("coarse");
+    markCoarseSeen();
+    cachePointerTier("fine");
+
+    cacheTheme("dark");
+    setShellHeight(200);
+
+    expect(pointerModeChoice()).toBe("coarse");
+    expect(coarseEverSeen()).toBe(true);
+    expect(cachedPointerTier()).toBe("fine");
   });
 
   it("a theme write preserves the three device fields", () => {

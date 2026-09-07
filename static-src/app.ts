@@ -35,6 +35,7 @@ import { iconEl } from "./icon-el.js";
 import { $, byId } from "./dom.js";
 import { guardDuplicateActivation, initSidebarSwipe } from "./platform.js";
 import { initPointerTier } from "./pointer-tier.js";
+import { initPointerModeToggle, revealPointerModeToggle } from "./pointer-mode.js";
 import { initRolePicker } from "./role-picker.js";
 import * as transport from "./transport.js";
 import { initUI, renderIdentity } from "./settings.js";
@@ -136,8 +137,13 @@ import { initActions } from "./actions/boot.js";
 function init(): void {
   // FIRST, before anything measures or renders: `data-pointer` on <html> decides
   // every control height, hit target and icon size, so a consumer that reads a box
-  // before it is set reads the wrong tier.
-  initPointerTier();
+  // before it is set reads the wrong tier. The tier is decided HERE and nothing
+  // after this line moves it — see pointer-tier.ts for the three rungs. The reveal
+  // is registered with it rather than after it, so a coarse pointer arriving during
+  // boot cannot be the one event nobody was listening for; the button is authored
+  // HTML, so revealing it needs no wiring of its own.
+  initPointerTier({ onCoarseSeen: revealPointerModeToggle });
+  initPointerModeToggle();
 
   initActions();
 

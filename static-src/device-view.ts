@@ -44,6 +44,15 @@
 // change, and adopt it once when the server has none). This module owns only the
 // bytes. `theme-init-snippet.test.ts` pins the snippet against the key and the
 // field name, so both must stay as they are.
+//
+// # A fourth group beside it: the three pointer fields
+//
+// `pointer` (the tier last DETECTED here), `pointer_mode` (the tier the user
+// CHOSE, if they ever did) and `pointer_coarse_seen` (has this screen ever been
+// touched). All three are `pointer-tier.ts`'s, and the split between them is that
+// module's precedence ladder rather than three ways of saying one thing — see its
+// header. They are per-device for `shell_h`'s reason: a phone must not tell a
+// desktop what it is being driven by.
 // ---------------------------------------------------------------------------
 
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
@@ -148,16 +157,15 @@ export function cachedTheme(): ThemeChoice | null {
 
 /** The last pointer tier OBSERVED on this screen, or null when none has been.
  *
- *  A cache with the same job as `theme` above and the same second reader: the
- *  inline pre-paint snippet reads it to set `data-pointer` before any module
- *  loads, so a returning device paints its own control sizes on the first frame
- *  instead of rendering compact and then jumping. The AUTHORITY is
- *  `pointer-tier.ts`, which observes `PointerEvent.pointerType` at runtime; this
- *  module owns only the bytes.
+ *  Unlike `theme` this has exactly ONE reader: `pointer-tier.ts`'s resolution,
+ *  where it is the middle rung — a real observation from a previous load, which is
+ *  what makes it worth more than the capability guess below it and less than a
+ *  choice the user stated. The inline pre-paint snippet reads `theme` and nothing
+ *  else, so a returning device does not paint its tier before the first module
+ *  loads.
  *
- *  It is per-device rather than per-workspace for the same reason `shell_h` is:
- *  the answer depends on the screen in front of you, and a phone must not tell a
- *  desktop that it is being touched. */
+ *  The AUTHORITY is `pointer-tier.ts`, which records `PointerEvent.pointerType` as
+ *  it arrives; this module owns only the bytes. */
 export function cachedPointerTier(): PointerTier | null {
   const t = readBlob()["pointer"];
   return t === "fine" || t === "coarse" ? t : null;
@@ -165,6 +173,36 @@ export function cachedPointerTier(): PointerTier | null {
 
 export function cachePointerTier(tier: PointerTier): void {
   writeBlob({ pointer: tier });
+}
+
+/** The tier the user CHOSE with the toggle, or null when they never have.
+ *
+ *  The top rung of the resolution: an explicit choice outranks both the previous
+ *  load's observation and the capability guess, and no input event may overturn
+ *  it. Kept separate from `pointer` precisely so it cannot be — a detector that
+ *  wrote the same field would erase the choice on the session's first mouse
+ *  move. */
+export function pointerModeChoice(): PointerTier | null {
+  const t = readBlob()["pointer_mode"];
+  return t === "fine" || t === "coarse" ? t : null;
+}
+
+export function setPointerModeChoice(tier: PointerTier): void {
+  writeBlob({ pointer_mode: tier });
+}
+
+/** Whether a coarse pointer has EVER driven this screen.
+ *
+ *  Sticky, and never cleared: it is what reveals the touch/mouse toggle, and a
+ *  device that has been touched once keeps the button on every later load whatever
+ *  it is being driven by at the time. A non-boolean value reads as false, so a
+ *  hand-edited blob cannot reveal the control by accident. */
+export function coarseEverSeen(): boolean {
+  return readBlob()["pointer_coarse_seen"] === true;
+}
+
+export function markCoarseSeen(): void {
+  writeBlob({ pointer_coarse_seen: true });
 }
 
 /** Refresh the cache so the NEXT load paints the right theme before its fetch
