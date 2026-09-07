@@ -498,9 +498,13 @@ describe("the search-hit seam", () => {
       output: "src/a.ts:42: found the needle\n",
       live: false,
     });
+    // The output is painted on first open, with the linkify pass in it.
+    document.body.appendChild(card);
+    card.querySelector<HTMLElement>(".tool-disclosure")?.click();
     const link = card.querySelector<HTMLElement>(".tool-output .inline-file-link");
     expect(link).not.toBeNull();
     expect(link?.textContent).toContain("a.ts:42");
+    card.remove();
   });
 });
 
@@ -583,7 +587,13 @@ describe("disclose_context and policy denials", () => {
         },
       },
     });
+    // Behind the disclosure, and built on first open with the rest of the body:
+    // the claim line already says "blocked by security policy" (the case above),
+    // and the rule that fired is depth 2.
+    document.body.appendChild(card);
+    card.querySelector<HTMLElement>(".tool-disclosure")?.click();
     const text = card.querySelector(".tool-denial")?.textContent ?? "";
+    card.remove();
     expect(text).toContain("shell");
     expect(text).toContain("curl *");
     expect(text).toContain("!curl localhost*");
@@ -602,7 +612,10 @@ describe("disclose_context and policy denials", () => {
       live: false,
     });
     expect(card.dataset["outcome"]).toBe("fail");
+    document.body.appendChild(card);
+    card.querySelector<HTMLElement>(".tool-disclosure")?.click();
     expect(card.querySelector(".tool-denial")).toBeNull();
+    card.remove();
   });
 });
 
@@ -762,6 +775,88 @@ describe("tool card: whole-header disclosure", () => {
     header.click();
     expect(card.querySelector("[aria-expanded]")).toBeNull();
 
+    card.remove();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The card's BODY is built on first open.
+//
+// A collapsed card is a claim line, and a transcript mounts dozens of them, so
+// nothing with a cost in it — the denial rows, the input dump, painting the
+// output through the ANSI renderer and the path linkifier — runs until a reader
+// asks. `.tool-output` is the exception: it is part of the shell, because the
+// live update path streams chunks straight into it and a streaming card has
+// usually not been opened.
+// ---------------------------------------------------------------------------
+
+describe("the details body is deferred to first open", () => {
+  it("mounts an EMPTY details region with the output slot in it", () => {
+    const card = buildToolCard({
+      id: "tc1",
+      title: "Execute",
+      kind: "execute",
+      status: "completed",
+      live: false,
+      output: "hello from the build\n",
+    });
+    const details = card.querySelector(".tool-details");
+    expect(details).not.toBeNull();
+    // The slot exists so a streamed chunk has somewhere to land...
+    expect(details?.querySelector(".tool-output")).not.toBeNull();
+    // ...and nothing has been painted into it.
+    expect(details?.querySelector("pre")).toBeNull();
+  });
+
+  it("paints the output when the disclosure is activated", () => {
+    const card = buildToolCard({
+      id: "tc1",
+      title: "Execute",
+      kind: "execute",
+      status: "completed",
+      live: false,
+      output: "hello from the build\n",
+    });
+    document.body.appendChild(card);
+    card.querySelector<HTMLElement>(".tool-disclosure")?.click();
+    expect(card.querySelector(".tool-output pre")?.textContent).toContain("hello from the build");
+    card.remove();
+  });
+
+  it("builds once, however many times the disclosure is toggled", () => {
+    const card = buildToolCard({
+      id: "tc1",
+      title: "Execute",
+      kind: "execute",
+      status: "completed",
+      live: false,
+      output: "one line\n",
+    });
+    document.body.appendChild(card);
+    const toggle = card.querySelector<HTMLElement>(".tool-disclosure");
+    toggle?.click();
+    toggle?.click();
+    toggle?.click();
+    expect(card.querySelectorAll(".tool-output pre")).toHaveLength(1);
+    card.remove();
+  });
+
+  it("makes the output readable straight after expandToolDetails, which the failure path needs", async () => {
+    // `messages-tools.ts` force-opens a failed card and then reads
+    // `.tool-output`'s text to offer "Explain this error". So the body has to be
+    // built by the time that call returns.
+    const { expandToolDetails } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "tc1",
+      title: "Execute",
+      kind: "execute",
+      status: "failed",
+      live: false,
+      output: "cc: fatal error\n",
+    });
+    document.body.appendChild(card);
+    expandToolDetails(card);
+    expect(card.querySelector(".tool-output")?.textContent).toContain("cc: fatal error");
     card.remove();
   });
 });

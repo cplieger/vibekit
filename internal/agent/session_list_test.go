@@ -33,10 +33,9 @@ func rowCreated(id, title, updated, created string) kasSessionRow {
 	return r
 }
 
-// ownedBy seeds a chat store where each chat id owns its listed session ids, in
-// order, so the last one is the chat's current session. Every test below needs
-// this now: the picker offers TAB CONVERSATIONS, so a row with no owning chat is
-// not a row at all and a fixture of bare session ids would assert nothing.
+// ownedBy seeds a chat store where each chat id owns its listed session ids in
+// order, so the last is the chat's current session. The picker offers TAB
+// CONVERSATIONS, so a fixture of bare session ids would assert nothing.
 func ownedBy(t *testing.T, owners map[string][]string) *Runtime {
 	t.Helper()
 	store := testsupport.NewInMemoryChatStore()
@@ -51,8 +50,8 @@ func ownedBy(t *testing.T, owners map[string][]string) *Runtime {
 			t.Fatalf("seed chat %s: %v", chatID, err)
 		}
 	}
-	// runs is populated because the run projection reads the bounds state for a
-	// run's end reason; a nil collaborator is a nil receiver at the first lookup.
+	// The run projection reads bounds state for a run's end reason, so a nil runs
+	// is a nil receiver at the first lookup.
 	return &Runtime{chatStore: store, runs: &Runs{}}
 }
 
@@ -62,9 +61,8 @@ func ownedBy(t *testing.T, owners map[string][]string) *Runtime {
 // machinery. That field is the discriminator — `createdReason` is null on every
 // row.
 func TestToResumable_ExcludesWorkflowSessions(t *testing.T) {
-	// The step session is CLAIMED here on purpose: a workflow step runs on a
-	// chat-owned session when an agent launched the run, so the workflow marker
-	// has to win over ownership rather than the other way round.
+	// The step session is CLAIMED on purpose: an agent-launched run's step runs on a
+	// chat-owned session, so the workflow marker has to win over ownership.
 	h := ownedBy(t, map[string][]string{
 		"c1": {"sess_a"}, "c2": {"sess_b"}, "c3": {"sess_wf"},
 	})
@@ -89,9 +87,8 @@ func TestToResumable_ExcludesWorkflowSessions(t *testing.T) {
 }
 
 // TestToResumable_NewestFirst pins the ordering and the RFC3339 → epoch-millis
-// conversion. KAS reports timestamps as strings, so an unconverted sort would
-// order them lexically — which happens to work for same-format dates and would
-// hide the bug until a timezone or precision difference appeared.
+// conversion. KAS reports timestamps as strings, so an unconverted sort orders them
+// lexically, which works for same-format dates until precision or zone differs.
 func TestToResumable_NewestFirst(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"old"}, "c2": {"new"}, "c3": {"mid"}})
 	got := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
@@ -143,9 +140,8 @@ func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 		t.Fatalf("rows = %d, want 1 (one per chat; the orphan is not a tab conversation): %+v",
 			len(got), got)
 	}
-	// The NEWEST member survives, because UpdatedAt is what the row displays and
-	// what the list sorts on, and it is the chat's live session in every case
-	// that produces a chain.
+	// The NEWEST member survives: UpdatedAt is what the row displays and the list
+	// sorts on, and it is the chat's live session in every case producing a chain.
 	if byID["sess_current"].ChatID != "c1" {
 		t.Errorf("current session chat_id = %q, want c1", byID["sess_current"].ChatID)
 	}
@@ -314,19 +310,17 @@ func wfRun(id, name, status, parentSession, updated string) kasWorkflowRun {
 	}
 }
 
-// A run a CHAT launched is that conversation's work and renders in its
-// transcript, so listing it puts a second door on something the user reaches by
-// opening the chat and buries the runs they can act on. A manual or scheduled run
-// must survive: nothing pushes on a finished run, so this page is the only place
-// its outcome is ever read.
-func TestToWorkflowRuns_KeepsOnlyParentlessRuns(t *testing.T) {
+// A chat-launched run is LISTED, not dropped: reaching it through the transcript
+// needs that tab open and resident, while retry is legal only from `failed` and
+// `aborted` and kiro-cli's restore pass considers neither, so dropping it leaves an
+// aborted agent-launched run no door anywhere. Attribution is what the row's nesting
+// reads, and the chain claim resolves a run launched from a since-retired session.
+func TestToWorkflowRuns_ListsEveryRunAndAttributesTheChatLaunchedOnes(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"sess_retired", "sess_now"}})
 	got := h.runs.toWire(h.claimedSessions(t.Context()), []kasWorkflowRun{
 		wfRun("wf_manual", "nightly", "completed", "", "2026-08-02T12:00:00.000Z"),
 		wfRun("wf_agent", "goal", "completed", "sess_now", "2026-08-02T11:00:00.000Z"),
-		// Launched from a session the chat has since RETIRED. The chain claim is
-		// what catches this one; matching the current id alone would read it as
-		// parentless and list it.
+		// Launched from a session the chat has since RETIRED.
 		wfRun("wf_agent_retired", "goal", "aborted", "sess_retired", "2026-08-02T10:00:00.000Z"),
 		wfRun("wf_scheduled", "backup", "failed", "", "2026-08-02T09:00:00.000Z"),
 	})
@@ -335,14 +329,20 @@ func TestToWorkflowRuns_KeepsOnlyParentlessRuns(t *testing.T) {
 	for i := range got {
 		ids = append(ids, got[i].WorkflowID)
 	}
-	want := []string{"wf_manual", "wf_scheduled"}
+	want := []string{"wf_manual", "wf_agent", "wf_agent_retired", "wf_scheduled"}
 	if !slices.Equal(ids, want) {
-		t.Fatalf("runs = %v, want %v (parentless only, newest first)", ids, want)
+		t.Fatalf("runs = %v, want %v (every run, newest first)", ids, want)
+	}
+	wantParents := map[string]string{
+		"wf_manual":        "",
+		"wf_agent":         "c1",
+		"wf_agent_retired": "c1",
+		"wf_scheduled":     "",
 	}
 	for i := range got {
-		if got[i].ParentChatID != "" {
-			t.Errorf("%s carries parent_chat_id %q: every surviving run is parentless",
-				got[i].WorkflowID, got[i].ParentChatID)
+		if want := wantParents[got[i].WorkflowID]; got[i].ParentChatID != want {
+			t.Errorf("%s carries parent_chat_id %q, want %q", got[i].WorkflowID,
+				got[i].ParentChatID, want)
 		}
 	}
 }

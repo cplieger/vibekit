@@ -13,9 +13,13 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 import { setSessions, get, liveTurnMessage, tabStatusFor } from "../store.js";
 import type { Session, Message } from "../types.js";
 
+// Arguments are FORWARDED, not discarded: the paths a completed call reports are
+// what scope the rescan to the owning repositories, and a scope derived from the
+// wrong fields sends the server looking at the wrong repo while the right one stays
+// stale — with nothing red and nothing on screen to say so.
 const mockMarkGitDirty = vi.fn();
 vi.mock("../git.js", () => ({
-  markGitDirty: () => mockMarkGitDirty(),
+  markGitDirty: (paths?: readonly string[]) => mockMarkGitDirty(paths),
 }));
 
 const mockIsRepoMutatingKind = vi.fn(() => false);
@@ -37,8 +41,6 @@ function makeSession(id: string, over: Partial<Session> = {}): Session {
     model: "",
     acp_session_id: "",
     current_mode_id: "",
-    available_modes: [],
-    available_models: [],
     usage: {
       context_pct: 0,
       context_size: 0,
@@ -266,34 +268,175 @@ describe("code_references", () => {
 });
 
 describe("tool_call_update", () => {
-  it("records the tool call in the store and marks git dirty when a repo-mutating call completes", () => {
+  // The frame is a DELTA addressed by id, so every case here has to establish the
+  // call with a `tool_call` create first: a delta has nothing to apply to, and
+  // the channel for a client that missed the beginning is `turn_state`.
+  function createCall(kind: string): void {
+    fireSSE("tool_call", "chat-1", {
+      message_id: "m1",
+      tool_call: { id: "tc1", title: "write", kind, status: "pending", ts: 0 },
+      block_index: 0,
+    });
+  }
+
+  function heldCall() {
+    return get("chat-1")
+      ?.messages.find((m) => m.id === "m1")
+      ?.tool_calls?.find((c) => c.id === "tc1");
+  }
+
+  it("folds the delta onto the held call and marks git dirty when a repo-mutating call completes", () => {
+    mockIsRepoMutatingKind.mockReturnValue(true);
+    createCall("write");
+    fireSSE("tool_call_update", "chat-1", {
+      message_id: "m1",
+      tool_call_id: "tc1",
+      status: "completed",
+    });
+    expect(heldCall()?.status).toBe("completed");
+    // The create's title survives a delta that did not carry one.
+    expect(heldCall()?.title).toBe("write");
+    expect(mockMarkGitDirty).toHaveBeenCalled();
+  });
+
+  // The scope comes off the ACCUMULATED call, not off the frame: the completion
+  // frame normally carries a status and nothing else, while the paths arrived on
+  // the create and on earlier deltas. Reading the frame would send an empty scope
+  // and cost a whole-tree scan on every completion.
+  it("scopes the rescan to the paths the accumulated call reports", () => {
+    mockIsRepoMutatingKind.mockReturnValue(true);
+    fireSSE("tool_call", "chat-1", {
+      message_id: "m1",
+      tool_call: {
+        id: "tc1",
+        title: "write",
+        kind: "edit",
+        status: "pending",
+        ts: 0,
+        locations: [{ path: "subflux/main.go", line: 1 }],
+      },
+      block_index: 0,
+    });
+    fireSSE("tool_call_update", "chat-1", {
+      message_id: "m1",
+      tool_call_id: "tc1",
+      diffs_appended: [{ path: "vibekit/app.ts", new_text: "x" }],
+    });
+    fireSSE("tool_call_update", "chat-1", {
+      message_id: "m1",
+      tool_call_id: "tc1",
+      status: "completed",
+    });
+    // Both sources, because neither is complete on its own: `locations` is what a
+    // read or a command reports and `diffs[].path` is what a write carries.
+    expect(mockMarkGitDirty).toHaveBeenLastCalledWith(["subflux/main.go", "vibekit/app.ts"]);
+  });
+
+  // A call that names nothing must ask for the WHOLE tree. An empty scope would be
+  // read by the server as "no repository owns these", which it answers from its
+  // snapshot without scanning — so the change would never reach the badge.
+  it("names no paths when the call reports none, which asks for a full rescan", () => {
+    mockIsRepoMutatingKind.mockReturnValue(true);
+    createCall("execute");
+    fireSSE("tool_call_update", "chat-1", {
+      message_id: "m1",
+      tool_call_id: "tc1",
+      status: "completed",
+    });
+    expect(mockMarkGitDirty).toHaveBeenLastCalledWith([]);
+  });
+
+  it("appends output rather than replacing it", () => {
+    createCall("execute");
+    fireSSE("tool_call_update", "chat-1", {
+      message_id: "m1",
+      tool_call_id: "tc1",
+      output_delta: "first\n",
+    });
+    fireSSE("tool_call_update", "chat-1", {
+      message_id: "m1",
+      tool_call_id: "tc1",
+      output_delta: "second\n",
+    });
+    expect(heldCall()?.output).toBe("first\nsecond\n");
+  });
+
+  it("replaces the output when the frame says so", () => {
+    // The terminal's full stream winning over the ACP fragments at completion.
+    createCall("execute");
+    fireSSE("tool_call_update", "chat-1", {
+      message_id: "m1",
+      tool_call_id: "tc1",
+      output_delta: "a fragment",
+    });
+    fireSSE("tool_call_update", "chat-1", {
+      message_id: "m1",
+      tool_call_id: "tc1",
+      output_delta: "the whole stream",
+      output_replace: true,
+      status: "completed",
+    });
+    expect(heldCall()?.output).toBe("the whole stream");
+  });
+
+  it("appends diffs rather than replacing them", () => {
+    createCall("edit");
+    fireSSE("tool_call_update", "chat-1", {
+      message_id: "m1",
+      tool_call_id: "tc1",
+      diffs_appended: [{ path: "a.go", old_text: "x", new_text: "y" }],
+    });
+    fireSSE("tool_call_update", "chat-1", {
+      message_id: "m1",
+      tool_call_id: "tc1",
+      diffs_appended: [{ path: "b.go", old_text: "x", new_text: "y" }],
+    });
+    expect(heldCall()?.diffs?.map((d) => d.path)).toEqual(["a.go", "b.go"]);
+  });
+
+  it("reads the completed call's kind from the store, not from the frame", () => {
+    // `kind` rides a delta only when THAT frame changed it, and the frame that
+    // completes a write normally carries a status alone. Reading it off the frame
+    // made every completed edit look like a non-mutating tool.
+    mockIsRepoMutatingKind.mockReturnValue(true);
+    createCall("write");
+    fireSSE("tool_call_update", "chat-1", {
+      message_id: "m1",
+      tool_call_id: "tc1",
+      status: "completed",
+    });
+    expect(mockIsRepoMutatingKind).toHaveBeenCalledWith("write");
+  });
+
+  it("drops a delta for a call it does not hold", () => {
     mockIsRepoMutatingKind.mockReturnValue(true);
     fireSSE("tool_call_update", "chat-1", {
       message_id: "m1",
-      tool_call: { id: "tc1", title: "write", kind: "write", status: "completed", ts: 0 },
-      block_index: 0,
+      tool_call_id: "unknown",
+      status: "completed",
     });
-    const tc = get("chat-1")
-      ?.messages.find((m) => m.id === "m1")
-      ?.tool_calls?.find((c) => c.id === "tc1");
-    expect(tc?.status).toBe("completed");
-    expect(mockMarkGitDirty).toHaveBeenCalled();
+    expect(get("chat-1")?.messages).toEqual([]);
+    expect(mockMarkGitDirty).not.toHaveBeenCalled();
   });
 
   it("does not mark git dirty for non-mutating tool calls", () => {
     mockIsRepoMutatingKind.mockReturnValue(false);
+    createCall("read");
     fireSSE("tool_call_update", "chat-1", {
       message_id: "m1",
-      tool_call: { id: "tc1", title: "read", kind: "read", status: "completed", ts: 0 },
+      tool_call_id: "tc1",
+      status: "completed",
     });
     expect(mockMarkGitDirty).not.toHaveBeenCalled();
   });
 
   it("does not mark git dirty for a repo-mutating call that has not completed", () => {
     mockIsRepoMutatingKind.mockReturnValue(true);
+    createCall("write");
     fireSSE("tool_call_update", "chat-1", {
       message_id: "m1",
-      tool_call: { id: "tc1", title: "write", kind: "write", status: "in_progress", ts: 0 },
+      tool_call_id: "tc1",
+      status: "in_progress",
     });
     expect(mockMarkGitDirty).not.toHaveBeenCalled();
   });

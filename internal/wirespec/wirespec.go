@@ -32,7 +32,11 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.ToolDenialRule](),
 	wiregen.TypeRef[vibekit.ToolDenial](),
 	wiregen.TypeRef[vibekit.TextSpan](),
+	wiregen.TypeRef[vibekit.ToolTruncation](),
 	wiregen.TypeRef[vibekit.ToolCall](),
+	// A REST response, after ToolDiff and TextSpan, which it references. No
+	// `Payload` suffix, so the SSE-binding test exempts it by construction.
+	wiregen.TypeRef[vibekit.ToolCallBulk](),
 	wiregen.TypeRef[vibekit.PlanEntry](),
 	wiregen.TypeRef[vibekit.Block](),
 	wiregen.TypeRef[vibekit.CodeReference](),
@@ -121,6 +125,9 @@ var wireTypes = []wiregen.WireType{
 	// Before LiveRunsResponse, which references it.
 	wiregen.TypeRef[vibekit.LiveRun](),
 	wiregen.TypeRef[vibekit.LiveRunsResponse](),
+	// REST replies; no `Payload` suffix, so the SSE-binding test exempts them.
+	wiregen.TypeRef[vibekit.RunControlsResponse](),
+	wiregen.TypeRef[vibekit.RunRetriedResponse](),
 	wiregen.TypeRef[vibekit.RunLaunchRequest](),
 	wiregen.TypeRef[vibekit.RunLaunchedResponse](),
 	// A request shape the client composes: generated rather than hand-mirrored, so
@@ -189,7 +196,10 @@ var wireEnums = map[string]wiregen.EnumDef{
 	"CatalogReason": {},
 	// Registered for CatalogState's reason: the History picker branches on it.
 	"ReadState": {},
-	"Transport": {Values: []string{"stdio", "http", "sse"}},
+	// The client's branch over it must be TOTAL: "vibekit could not ask" has to
+	// render a retry rather than a sign-in prompt.
+	"WhoamiState": {},
+	"Transport":   {Values: []string{"stdio", "http", "sse"}},
 }
 
 // enumTSNames renames an enum on the TypeScript side.

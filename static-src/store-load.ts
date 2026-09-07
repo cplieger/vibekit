@@ -5,6 +5,7 @@ import { apiGetTyped, apiGetTypedOrError } from "./api-client.js";
 import { asObject, decodeArray, reqBool, type Decoder } from "./validators.js";
 import { decodeChatHeader, decodeMessage } from "./wire/decoders.gen.js";
 import { registerCleanup } from "./actions/index.js";
+import { RESIDENT_BLOCKS, RESIDENT_TOOL_CALLS } from "./block-window.js";
 import {
   setSessions,
   get,
@@ -65,6 +66,37 @@ function reorderKept(kept: Message[], liveID: string | undefined): Message[] {
   }
   return [...before, live, ...after];
 }
+
+/**
+ * The BYTE bound on one transcript page: what the wire may carry however the
+ * content is shaped, and what a reader is waiting on.
+ *
+ * 256 KiB, down from the megabyte it arrived at: a megabyte of transcript JSON is
+ * several times the resident block budget, so the remainder was fetched, decoded
+ * and then stubbed on arrival. Nothing becomes unreachable — the server returns
+ * the newest message WHOLE however big it is (with its tool calls windowed behind
+ * their own resource), and `has_more` plus `before_id` reach everything older,
+ * which is the same path the reader's scroll already walks.
+ */
+const PAGE_BUDGET_BYTES = 1 << 18;
+
+/**
+ * The RESIDENCY bounds on one transcript page: the same ORDER as the window, in two
+ * UNITS. This pair bounds what the server SENDS, message-granular over `tool_calls`
+ * entries; the window bounds what one paint MOUNTS, ordinal-granular over `tool_use`
+ * blocks, and an entry can carry no block of its own. A cut on bytes alone holds a
+ * chat-dependent number of both, and the server cuts at a message boundary regardless.
+ */
+const PAGE_BUDGET_BLOCKS = RESIDENT_BLOCKS;
+const PAGE_BUDGET_TOOL_CALLS = RESIDENT_TOOL_CALLS;
+
+/**
+ * The server's cap on messages per page, and NOT this client's budget — it is a
+ * bound on the answer's shape, not on its size. It binds only where messages are
+ * small enough that 50 of them fit in the budget above, which on this workload is
+ * never: the budget is what cuts every real page.
+ */
+const PAGE_MESSAGE_CAP = 50;
 
 // --- Abort controllers ---
 let listController: AbortController | null = null;
@@ -274,8 +306,6 @@ export async function loadList(): Promise<boolean> {
       model: h.model ?? "",
       acp_session_id: h.acp_session_id ?? "",
       current_mode_id: h.current_mode_id ?? "",
-      available_modes: h.available_modes ?? [],
-      available_models: h.available_models ?? [],
       supervised_mode: h.supervised_mode ?? false,
       effort: h.effort ?? "",
       // Keep the client's live effort catalog when the header carries none: this
@@ -298,22 +328,18 @@ export async function loadList(): Promise<boolean> {
       // without it every reconnect would wipe the notes back out of turns the
       // reader can still see.
       ...(existing?.steer_marks !== undefined && { steer_marks: existing.steer_marks }),
-      // The two outcome latches are SERVER-SUPPLIED now, with the local one
-      // carried over on top. They used to be a pure carry-over, and the comment
-      // here called this list "the header endpoint's blind spot" — that is the
-      // half that is fixed: `last_turn_outcome` rides the header, so a chat this
-      // client has never seen live gets a real verdict instead of the hollow
-      // `idle` ring. The carry-over still wins where it exists (a live
-      // `turn_ended` on this page is newer than any header read) and a live turn
-      // seeds nothing; `latchFieldsFor` owns all three rules.
+      // The two outcome latches are SERVER-SUPPLIED, with the local one carried over on
+      // top: `last_turn_outcome` rides the header, so a chat this client has never seen
+      // live gets a real verdict instead of the hollow `idle` ring. A live `turn_ended`
+      // on this page is newer than any header read, and a live turn seeds nothing;
+      // `latchFieldsFor` owns all three rules.
       ...latchFieldsFor(existing, h),
-      // The rest of the client-only projections remain a pure carry-over: the
-      // server sends none of them, so rebuilding a Session from a header alone
-      // silently resets them — and `loadList` runs on EVERY `connected`,
-      // reconnects included, so an ordinary network recovery dropped the agent's
-      // declared status. The reconcile that IS entitled to drop them is
-      // `transport:gap`, which clears them explicitly and runs first, so there is
-      // nothing left here to preserve after a real replay gap.
+      // Every OTHER client-only projection is a pure carry-over: the server sends none of
+      // them, so rebuilding a Session from a header alone silently resets them — and
+      // `boot.ts onTransportStatus` owns which connections call this, which is more of
+      // them than a reconnect, so an ordinary network recovery dropped the agent's
+      // declared status. The reconcile that IS entitled to drop them is `transport:gap`,
+      // which clears them explicitly and runs first.
       ...(existing?.agent_status !== undefined && { agent_status: existing.agent_status }),
       ...(existing?.agent_status_text !== undefined && {
         agent_status_text: existing.agent_status_text,
@@ -328,12 +354,16 @@ export async function loadList(): Promise<boolean> {
     };
     next.push(session);
   }
-  // Preserve sessions added by SSE (upsertHeader) during the await.
+  // Preserve sessions added by SSE (upsertHeader) during the await — but NOT the
+  // boot snapshot's provisional rows, which satisfy the same "unknown before,
+  // unnamed by the server" test and mean the opposite thing: a hint for a chat the
+  // server no longer holds, which would otherwise outlive the answer that omitted
+  // it. See types.ts `Session.provisional`.
   const currentSessions = getSessions();
   const currentIndex = new Map(currentSessions.map((s) => [s.id, s]));
   const nextIds = new Set(next.map((s) => s.id));
   for (const [id, s] of currentIndex) {
-    if (!knownBefore.has(id) && !nextIds.has(id)) {
+    if (!knownBefore.has(id) && !nextIds.has(id) && s.provisional !== true) {
       next.push(s);
     }
   }
@@ -350,15 +380,16 @@ export async function loadList(): Promise<boolean> {
   return true;
 }
 
-export async function loadMessages(
-  chatID: string,
-  beforeID?: string,
-  limit = 50,
-): Promise<boolean> {
+export async function loadMessages(chatID: string, beforeID?: string): Promise<boolean> {
   msgControllers.get(chatID)?.abort();
   const controller = new AbortController();
   msgControllers.set(chatID, controller);
-  const params = new URLSearchParams({ limit: String(limit) });
+  const params = new URLSearchParams({
+    limit: String(PAGE_MESSAGE_CAP),
+    max_bytes: String(PAGE_BUDGET_BYTES),
+    blocks: String(PAGE_BUDGET_BLOCKS),
+    tool_calls: String(PAGE_BUDGET_TOOL_CALLS),
+  });
   if (beforeID !== undefined) {
     params.set("before_id", beforeID);
   }
@@ -391,6 +422,11 @@ export async function loadMessages(
     msgControllers.delete(chatID);
     return false;
   }
+  // Whether this load left the client's OLDEST message where it was, in which
+  // case the answer's `has_more` describes a different question than the one the
+  // session's flag answers. Only the no-cursor re-adopt below can cause it: a
+  // `before_id` page becomes the new oldest, so its `has_more` is exactly right.
+  let keepHasMore = false;
   if (beforeID !== undefined) {
     // Prepend older-page messages, deduped by id. The cursor is a message ID and
     // the server treats it as exclusive, so a boundary message cannot come back
@@ -426,18 +462,44 @@ export async function loadMessages(
     //    than the answer being applied.
     //
     // Both go at the END, which is where the server puts the finished turn too:
-    // persistTurn appends it after anything persisted during it. Everything else
-    // the page omits is the page's own business — older history it deliberately
-    // left out, which re-appending would reorder.
+    // persistTurn appends it after anything persisted during it.
     const fetchedIDs = new Set(fetched.map((m) => m.id));
     const liveID = liveTurnMessage(chatID);
-    const kept = session.messages.filter(
-      (m) => !fetchedIDs.has(m.id) && (m.id === liveID || !knownBefore.has(m.id)),
-    );
-    session.messages = kept.length === 0 ? fetched : [...fetched, ...reorderKept(kept, liveID)];
+    // And the RESIDENT OLDER PAGES go back in front. The old rule said
+    // "everything else the page omits is the page's own business", which was true
+    // while `limit = 50` messages returned every real conversation whole — the
+    // page WAS the chat. Under the byte budget the newest page is frequently one
+    // message, so a no-cursor reload of a paged-up transcript threw the reader's
+    // history away and their scroll position with it: `fillViewport` pages it
+    // back over a fresh chain of round trips, but the position is gone. The
+    // reachable path is the gap heal, which calls this with no cursor.
+    //
+    // The page is a CONTIGUOUS newest window, so the held messages BEFORE its
+    // oldest one are pages this client already fetched and the answer says nothing
+    // about. Anchored on that oldest id rather than on a count or a timestamp: no
+    // overlap means the window moved out from under what is held, and then the
+    // page replaces, which is the honest answer.
+    const oldest = fetched[0]?.id;
+    const anchor = oldest === undefined ? -1 : session.messages.findIndex((m) => m.id === oldest);
+    const older =
+      anchor > 0 ? session.messages.slice(0, anchor).filter((m) => !fetchedIDs.has(m.id)) : [];
+    const kept = session.messages
+      .slice(anchor > 0 ? anchor : 0)
+      .filter((m) => !fetchedIDs.has(m.id) && (m.id === liveID || !knownBefore.has(m.id)));
+    session.messages = [...older, ...fetched, ...reorderKept(kept, liveID)];
+    // `has_more` describes what is older than the OLDEST MESSAGE HELD, and
+    // re-adopting older pages does not move that — the client's oldest is
+    // unchanged, so its previous answer still stands. `d.has_more` describes what
+    // is older than the PAGE, which is only the same question when the page starts
+    // the window.
+    if (older.length > 0) {
+      keepHasMore = true;
+    }
   }
   session.message_count = d.chat.message_count;
-  session.has_more = d.has_more;
+  if (!keepHasMore) {
+    session.has_more = d.has_more;
+  }
   rebuildMsgIndex(chatID, session.messages);
   msgControllers.delete(chatID);
   // Park the server's draft on the session so the composer can adopt it. Only on

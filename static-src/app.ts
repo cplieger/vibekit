@@ -1,24 +1,34 @@
-// App: the composition root. Wires modules, registers SSE handlers, and handles
-// auth plus the initial route.
+// ---------------------------------------------------------------------------
+// App: orchestrator. Wires modules, registers SSE handlers, and routes.
+//
+// WIRING, and no longer a job of its own. Two jobs left this file: the boot
+// sequence is `boot.ts`, and the whoami read plus its three-state verdict is
+// `identity.ts`. What stays is construction, injection, `applyRoute` — the
+// switch over every route kind, which reaches most of the app's surfaces and so
+// belongs where the surfaces are constructed — and the pre-session catalog
+// fetch, which stays because `picker.ts` takes its Retry as an injected thunk
+// and `model-catalog.ts` takes its reader and sinks as parameters, so the one
+// place that can see the endpoint, the phase sink and the picker is here.
+//
+// Server is the source of truth. Sending a prompt posts a command; the
+// server broadcasts SSE events that drive all rendering. No optimistic
+// local mutations.
+// ---------------------------------------------------------------------------
 
 import type { ServerEvent, ModelInfo, SessionModel } from "./types.js";
 import { setCatalogModes } from "./roles.js";
+import { setCatalogEfforts } from "./effort.js";
 import {
   MODEL_CONTEXT_SIZES,
   parseContextSize,
-  contextSizeFor,
-  activeSession,
   getActiveId,
   getActive,
   get,
   getSessions,
   isThinking,
-  registerEvictionExemption,
-  startEvictionSweep,
 } from "./store.js";
-import { loadList } from "./store-load.js";
 import { settleDeepLinkedChat } from "./deep-link.js";
-import { computed, effect, touch } from "@cplieger/reactive";
+import { effect } from "@cplieger/reactive";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_TRANSPORT_GAP } from "./bus.js";
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -27,20 +37,14 @@ import { guardDuplicateActivation, initSidebarSwipe } from "./platform.js";
 import { initPointerTier } from "./pointer-tier.js";
 import { initRolePicker } from "./role-picker.js";
 import * as transport from "./transport.js";
-import {
-  adoptThemeFromSettings,
-  loadSettings,
-  restoreAll,
-  initUI,
-  initPostAuthUI,
-  setUserEmail,
-} from "./settings.js";
+import { initUI, renderIdentity } from "./settings.js";
+import { initPostAuth, onTransportStatus, startBoot } from "./boot.js";
+import { resolveIdentity } from "./identity.js";
 import { apiGetTyped } from "./api-client.js";
-import { decodeConfigTemplateResponse, decodeWhoamiResponse } from "./wire/decoders.gen.js";
+import { decodeConfigTemplateResponse } from "./wire/decoders.gen.js";
 import type { ConfigTemplateResponse } from "./wire/types.gen.js";
 import {
   setOnEmpty,
-  activateRestoredTab,
   getActiveTabRoute,
   openTab,
   setSettingsTab,
@@ -51,7 +55,7 @@ import {
 } from "./tabs.js";
 import { markBootDone } from "./view-swap.js";
 import { ingestTabsChanged, listTabs } from "./tabs-sync.js";
-import { parseRoute, replaceRoute, onPopState, suppressPush } from "./router.js";
+import { replaceRoute, onPopState } from "./router.js";
 import type { Route } from "./router.js";
 import {
   refreshPickerIfVisible,
@@ -60,15 +64,14 @@ import {
   setCatalogPhase,
 } from "./picker.js";
 import { refreshCatalog, CATALOG_REQUEST_TIMEOUT_MS } from "./model-catalog.js";
-import { setStatus, refreshRuntimeLine, initStatusVersions } from "./status.js";
+import { refreshRuntimeLine } from "./status.js";
 import { initShellPanel } from "./shell.js";
-import { showLoginModal, hideLoginModal, initLoginModal } from "./modals.js";
+import { hideLoginModal, initLoginModal } from "./modals.js";
 import { initEditor } from "./editor-core.js";
 import { openFile, activateFile, closeEditorFile } from "./editor-openers.js";
 import { registerTabOpeners } from "./tab-materialize.js";
-import { runTabProjectsChat, showRun } from "./run-view.js";
-import { showSubagent, subagentTabProjectsChat } from "./subagent-view.js";
-import { hasExecutingRunForChat, rebuildLiveRuns, runChatID } from "./run-store.js";
+import { showRun } from "./run-view.js";
+import { showSubagent } from "./subagent-view.js";
 import { openAtLine } from "./navigate.js";
 import { initAttachmentPillCallbacks } from "./attachment-pill.js";
 import { initFileBrowser, restoreFileBrowser } from "./files.js";
@@ -79,7 +82,7 @@ import { initAwaySummary } from "./away-summary.js";
 import { initAttention } from "./attention.js";
 import { initTerminalStream } from "./terminal-stream.js";
 import { initTooltips } from "./tooltip.js";
-import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./retention.js";
+import { isRetentionEnabled, onRetentionChange } from "./retention.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { openShortcutsSheet } from "./shortcuts.js";
 import {
@@ -90,7 +93,6 @@ import {
 import { forceSettingsTab } from "./settings-tabs.js";
 import { flushURLHighlight } from "./settings-highlight.js";
 import { forceGitTab } from "./git-tabs.js";
-import { restoreLastModel, restoreLastEffort } from "./session-context.js";
 import {
   createSession,
   switchSession,
@@ -101,21 +103,16 @@ import {
   chatTabDot,
 } from "./chat.js";
 import { initModelSwitcher, pickModel } from "./model-switcher.js";
-import { setCatalogEfforts } from "./effort.js";
 import { makeExpandable } from "./pill-expand.js";
 import { loadAccountUsage } from "./account-usage.js";
-import { initGovernance } from "./governance.js";
 import { initPromptInput, sendComposer } from "./prompt-input.js";
 import { initComposerState } from "./composer-state.js";
 import { initPendingSteers } from "./pending-steers.js";
 import { initRunBar } from "./run-bar.js";
 import { initChatOptions } from "./chat-options.js";
 import { mountDecisionDock } from "./decision-dock.js";
-import { initRuntimeHealth } from "./runtime-health.js";
-import { loadVersions } from "./versions.js";
 import { refreshContextUI } from "./context-ui.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
-import { applyShareTarget } from "./share-target.js";
 
 import "./handlers/chat.js";
 import "./handlers/messages.js";
@@ -128,18 +125,12 @@ import { installRunDotSubscriber } from "./run-dots.js";
 import { installSubagentDotSubscriber } from "./subagent-dots.js";
 import "./handlers/steer.js";
 import { initPushMessages } from "./handlers/push-message.js";
+import { initLaunchQueue } from "./share-target.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
 import { subscribeToActions } from "./actions/index.js";
 import { initActions } from "./actions/boot.js";
-import { error as toastError } from "./toast.js";
-
-function dismissLoadingScreen(): void {
-  document.getElementById("app-loading")?.remove();
-  $.appRoot.classList.remove("app-hidden");
-}
-
 // Init
 
 function init(): void {
@@ -161,7 +152,7 @@ function init(): void {
       // run store's record of which chat launched this run. No `cancel` half: a run
       // tab is a VIEW, so its × stops nothing.
       show: (workflowID) => {
-        showRun(workflowID, runChatID(workflowID) === "");
+        showRun(workflowID);
       },
     },
     // No close half for the same reason: a subagent page is a projection of blocks the
@@ -187,22 +178,23 @@ function init(): void {
     void listTabs();
   });
 
+  // Re-read the pre-session catalog after a gap: the server may have restarted, so the
+  // utility session is new and the answer can differ. Beside the tab re-list rather than
+  // inside `initPostAuth`, which is `boot.ts`'s and cannot reach this module's fetch — so
+  // a signed-out page session also arms it, where the read simply fails and the policy
+  // treats that as transient.
+  onBus(BUS_TRANSPORT_GAP, () => {
+    void fetchModelsFromREST();
+  });
+
   // Before the transport opens: decoders run in transport.ts ahead of dispatch(), and an
   // event whose payload fails validation is dropped rather than handed on partial. The
   // set is generated from Go structs by cmd/wire-codegen.
   registerAllSSEDecoders();
 
-  transport.init(
-    (evt: ServerEvent) => {
-      dispatch(evt);
-    },
-    (status) => {
-      setStatus(status);
-      if (status === "connected") {
-        void loadList();
-      }
-    },
-  );
+  transport.init((evt: ServerEvent) => {
+    dispatch(evt);
+  }, onTransportStatus);
 
   installStoreSubscribers();
 
@@ -219,25 +211,13 @@ function init(): void {
   // is opened, because it captures the served <title> as its base.
   initAttention();
 
-  // Models arrive both from a pre-conversation REST fetch at startup and per-session
-  // from the bridge's session/new response; this listener is the live update path, and
-  // session-sourced lists overwrite whatever the REST path seeded.
-  const modelSig = computed(() => {
-    touch(activeSession);
-    const active = getActive();
-    if (active === undefined) {
-      return "";
-    }
-    return active.id + ":" + active.available_models.map((m) => m.id).join(",");
-  });
-  effect(() => {
-    // The computed dedups by value and is glitch-free, so each distinct catalog triggers
-    // exactly one fetch. An empty signature means no active session.
-    if (modelSig.value === "") {
-      return;
-    }
-    fetchModelsFromSession();
-  });
+  // There is no per-session model feed. It watched the active chat's
+  // `available_models` and re-populated the picker from it, but that list was the
+  // WORKSPACE catalog copied onto every chat — 29 identical copies, 5.5% of a
+  // 1.25 MiB response — so the signature it deduped on could only change when
+  // the workspace's own catalog did. /api/config-template is that one feed, and
+  // the server prefers a live session's report over the session-less template,
+  // so nothing authoritative is lost.
 
   setupInput();
   initUI();
@@ -378,186 +358,28 @@ function init(): void {
   // The other half of the push channel: the worker posts here to route a notification
   // click and to toast a push that arrived while this page was focused.
   initPushMessages();
+  // A relaunch FOCUSES this window rather than navigating it (manifest
+  // launch_handler), so a shortcut's or a share's URL arrives in the launch queue
+  // and nowhere else. Registered before the boot, because the queue delivers what
+  // it buffered as soon as a consumer exists.
+  initLaunchQueue();
 
-  void checkAuthAndStart();
-}
-
-async function checkAuthAndStart(): Promise<void> {
-  // Null means the settings fetch FAILED, which is not "the settings are the defaults".
-  // Nothing is restored on that path — the theme keeps the pre-paint cache, the model and
-  // effort seeds stay unset — and boot continues so a reload can recover.
-  const settings = await loadSettings();
-  if (settings !== null) {
-    restoreLastModel(settings.last_model);
-    restoreLastEffort(settings.last_effort, settings.last_effort_model);
-    // The toggle was constructed during initUI against the pre-paint cache, so this is
-    // where the server's choice replaces that hint, and where the cache is carried across
-    // once if the server has none.
-    adoptThemeFromSettings(settings);
-
-    suppressPush(true);
-    try {
-      restoreAll(settings);
-    } catch {
-      /* best-effort */
-    }
-    suppressPush(false);
-  }
-
-  let authenticated = false;
-  const d = await apiGetTyped("/api/whoami", decodeWhoamiResponse);
-  if (d !== null) {
-    const email = d.email;
-    if (email !== undefined && email !== "") {
-      setUserEmail(email);
-      authenticated = true;
-    }
-  }
-
-  if (!authenticated) {
-    setUserEmail("");
-    // Nothing will hydrate the store behind a login modal, so release the held frames
-    // rather than leaving the stream stalled until the watchdog fires.
-    transport.markHydrated();
-    showLoginModal();
-    return;
-  }
-
-  initPostAuth();
-
-  // Degraded-runtime probe (kiro-cli missing → app-global banner); re-checks on every
-  // transport gap so recovery self-heals.
-  initRuntimeHealth();
-
-  // Fire-and-forget: one read per page load, and the lines repaint through a signal when
-  // it lands, so nothing waits on the `--version` subprocess the server spawns.
-  initStatusVersions();
-  void loadVersions();
-
-  // Pre-conversation catalog so the picker has content before the first chat's
-  // session/new lands. Session-sourced updates overwrite it the moment a bridge spawns.
-  void fetchModelsFromREST();
-  // Kept concurrent with the two boot reads below and awaited before the tab list is
-  // adopted: serialising it would add a round trip to every boot, while not awaiting it
-  // leaves a close reading the default (enabled) whenever /api/settings is the slower.
-  const retentionReady = refreshRetention();
-
-  suppressPush(true);
-  // If share-target intends to create a session, skip the default empty-state
-  // createSession so there is no unused "New conversation" tab beside the planner.
-  const wantsAgent = new URLSearchParams(location.search).get("agent");
-  const shareWillCreate = wantsAgent === "planner";
-  try {
-    const ok = await loadList();
-    // The chat store is populated (or provably unreachable), so the frames held since the
-    // connection opened can be released — chief among them the one `turn_state` per busy
-    // chat, which is never re-broadcast. Here rather than after the tabs open, because the
-    // frames only need a chat ROW to land on.
-    transport.markHydrated();
-    if (!ok || getSessions().length === 0) {
-      if (!ok) {
-        // Before falling back to the empty state, so the fresh "New conversation" reads
-        // as a fallback rather than impersonating the user's unreachable chats.
-        toastError("Couldn't load your chats.", {
-          label: "Reload",
-          onClick: () => {
-            location.reload();
-          },
-        });
-      }
-      if (!shareWillCreate) {
-        // AWAITED: applyInitialRoute() below resolves the URL against the strip, and
-        // detaching would let the route apply before the tab appears.
-        await createSession();
-      }
-    }
-    // THE TAB SET, read whole from the server: no per-kind reopen switch, no editor-file
-    // list and no saved order to re-apply, because a tab the collection holds is open and
-    // the slice position IS the order. On EVERY path, chats or no chats — a chat list and
-    // a tab set are different collections.
-    await retentionReady;
-    if (!(await listTabs())) {
-      // The strip is empty here, so an unadopted read leaves the reader with no tabs and
-      // nothing saying why. Nothing retries on its own: there is no gap to detect on a
-      // boot connection, and a timer would re-list against a strip already in use.
-      toastError("Couldn't restore your tabs.", {
-        label: "Reload",
-        onClick: () => {
-          location.reload();
-        },
-      });
-    }
-    activateRestoredTab();
-  } catch {
-    transport.markHydrated();
-    toastError("Couldn't load your chats.", {
-      label: "Reload",
-      onClick: () => {
-        location.reload();
-      },
-    });
-    if (!shareWillCreate) {
-      // AWAITED for the reason above: applyInitialRoute() reads the strip.
-      await createSession();
-    }
-  }
-  suppressPush(false);
-
-  await applyShareTarget();
-  applyInitialRoute();
-  // Only now, with the restored tab's content already painted underneath: the app root is
-  // visibility:hidden, which preserves layout, so activation and scroll measurement ran
-  // normally behind it. The per-view skeleton still covers any message fetch that
-  // outlives the splash.
-  dismissLoadingScreen();
-  // Boot restores are done — view swaps animate from here on.
-  markBootDone();
-}
-
-// One-time post-auth initialization: the fetches gated behind a successful whoami, so the
-// login screen does not fan out API calls. Runs on boot when already authenticated, or
-// after the first login.
-let postAuthInitDone = false;
-function initPostAuth(): void {
-  if (postAuthInitDone) {
-    return;
-  }
-  postAuthInitDone = true;
-  // Gates MCP availability, renders the read-only Organization-policy disclosure, and
-  // gates the code-reference chip.
-  initGovernance();
-  // Version info (Settings → About) + git panel wiring incl. badge poll.
-  initPostAuthUI();
-  // Boot is one of the live-runs inventory's two rebuild triggers (the other is
-  // transport:gap). The three eviction exemptions are registered here because store.ts is
-  // a leaf and must not import run-store.ts or tabs.ts.
-  //
-  // The first is the EXECUTING predicate rather than the any-live-run one: a run parked on
-  // a question writes nothing into the transcript, so exempting its chat pinned that whole
-  // message window for the life of the page. The third is its narrower sibling — a run's
-  // SUB-TAB projects steps out of the launching chat's window for as long as it is open,
-  // including long after the executing exemption has lapsed.
-  void rebuildLiveRuns();
-  registerEvictionExemption(hasExecutingRunForChat);
-  registerEvictionExemption(subagentTabProjectsChat);
-  registerEvictionExemption(runTabProjectsChat);
-  startEvictionSweep();
-  // Re-read the pre-session catalog after a gap: the server may have restarted, so the
-  // utility session is new and the answer can differ. HERE rather than beside the boot
-  // fetch, which sits past checkAuthAndStart's unauthenticated return — a page session that
-  // came in through the login modal would otherwise never re-probe.
-  onBus(BUS_TRANSPORT_GAP, () => {
-    void fetchModelsFromREST();
-  });
+  void startBoot({ applyRoute });
 }
 
 function onLoginSuccess(): void {
   hideLoginModal();
-  dismissLoadingScreen();
+  // The post-auth fan-out the signed-out boot held back: governance, the version
+  // pair, the git badge and the workspace catalog. Guarded, so a login after an
+  // `unavailable` boot that already ran it is a no-op.
   initPostAuth();
-  void apiGetTyped("/api/whoami", decodeWhoamiResponse).then((d) => {
-    if (d?.email !== undefined) {
-      setUserEmail(d.email);
+  void resolveIdentity().then((v) => {
+    // Only the signed_in arm may write the row. The other two must not blank a
+    // value the login that just succeeded put on screen: a page that signs in and
+    // then meets a whoami timeout would otherwise clear the sidebar's email and
+    // read as a sign-out one frame after signing in.
+    if (v.state === "signed_in") {
+      renderIdentity(v);
     }
   });
   // RESETS a live boot loop rather than being refused by it: a login is exactly the new
@@ -574,9 +396,11 @@ function onLoginSuccess(): void {
 }
 
 /** One catalog entry, mapped from the wire `SessionModel` to the picker's `ModelInfo`.
- *  Shared by both feeds because a field carried by one and dropped by the other is
- *  invisible until a control silently loses its input. Fields are spread conditionally
- *  rather than assigned undefined — the client compiles under exactOptionalPropertyTypes. */
+ *  A named function rather than an inline map because a field carried on the wire and
+ *  dropped here is invisible until a control silently loses its input: that is how the
+ *  model's default effort tier went missing while the server was sending it. Fields are
+ *  spread conditionally rather than assigned undefined — the client compiles under
+ *  exactOptionalPropertyTypes. */
 function toModelInfo(m: SessionModel): ModelInfo {
   return {
     model_id: m.id,
@@ -591,10 +415,10 @@ function toModelInfo(m: SessionModel): ModelInfo {
 }
 
 function fetchModelsFromREST(opts: { readonly reset?: boolean } = {}): Promise<void> {
-  // One fetch seeds BOTH pickers before any chat session has spawned: the model list, and
-  // the role picker's mode base (bundled modes plus the user's global ~/.kiro/agents,
-  // richer than the static BUILTIN_MODES fallback). Once a session/new response lands, the
-  // per-session path below overwrites it with that chat's authoritative catalog.
+  // One fetch seeds BOTH pickers: the model list, and the role picker's mode base
+  // (bundled modes plus the user's global ~/.kiro/agents, richer than the static
+  // BUILTIN_MODES fallback). It is the ONLY feed — the catalog is a workspace fact, and
+  // the server prefers a live session's report over the session-less template.
 
   // model-catalog.ts owns the POLICY; what stays here is the endpoint and the surfaces it
   // feeds.
@@ -641,21 +465,6 @@ function fetchModelsFromREST(opts: { readonly reset?: boolean } = {}): Promise<v
     },
     opts,
   );
-}
-
-function fetchModelsFromSession(): void {
-  // Live per-chat catalog: session/new carries modes.availableModels, and whenever that
-  // list changes on the active session it overwrites whatever the REST fetch seeded.
-  const active = getActive();
-  if (active === undefined || active.available_models.length === 0) {
-    return;
-  }
-  const mapped: ModelInfo[] = active.available_models.map(toModelInfo);
-  populatePickerModels(mapped, active.model);
-  if (active.usage.context_size === 0 && active.model !== "") {
-    active.usage.context_size = contextSizeFor(active.model);
-  }
-  refreshContextUI(active);
 }
 
 /** Merge a model list into the picker cache and context-size table. `activeModel` moves
@@ -859,27 +668,6 @@ function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): void {
           /* noop */
         });
       break;
-  }
-}
-
-function applyInitialRoute(): void {
-  const route = parseRoute(location.pathname);
-  if (route.kind !== "chat" || route.id !== "") {
-    applyRoute(route);
-    return;
-  }
-  // Default "/" route. Canonicalize the URL to what is actually visible:
-  //   - active chat → /chat/{id}, whether or not it has messages yet;
-  //   - restored non-chat tab → its route, so the restored view and the URL agree (their
-  //     boot-time pushRoute was suppressed).
-  const active = getActive();
-  if (getActiveId() !== "" && active !== undefined) {
-    replaceRoute({ kind: "chat", id: getActiveId() });
-    return;
-  }
-  const tabRoute = getActiveTabRoute();
-  if (tabRoute !== null && tabRoute.kind !== "chat") {
-    replaceRoute(tabRoute);
   }
 }
 

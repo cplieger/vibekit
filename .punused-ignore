@@ -226,3 +226,19 @@ method (*statusError).Unwrap
 # direct call site exists for punused to see. Dropping it makes the
 # assignment a compile error.
 method (*cappedBuffer).Write
+
+
+# --- 17. Test-isolation seam, same shape as sections 13 and 14. The per-chat
+# file cap is DERIVED from the cgroup memory limit, so its refusal paths are
+# unreachable in a test without an override: crossing a cap sized off the
+# container's own budget means allocating hundreds of MiB. WithChatFileCap is how
+# internal/chat's tests point that cap at a few bytes instead.
+function WithChatFileCap
+
+# --- 18. http.ResponseWriter wrapper methods on internal/server's
+# compressWriter, reached only through interfaces net/http discovers by type
+# assertion — the same blind spot as sections 8 and 9. Unwrap serves
+# http.ResponseController; Flush serves http.Flusher and is load-bearing for the
+# SSE hub, because deleting it would make every event stream silently buffer.
+method (*compressWriter).Unwrap
+method (*compressWriter).Flush

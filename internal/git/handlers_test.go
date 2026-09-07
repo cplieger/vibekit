@@ -110,105 +110,6 @@ func TestStatusLabel(t *testing.T) {
 	}
 }
 
-func TestParseGitStatusOutput(t *testing.T) {
-	tests := []struct {
-		name string
-		in   []byte
-		want []gitFile
-	}{
-		{"nil input", nil, nil},
-		{"empty input", []byte(""), nil},
-		{"unstaged modified", []byte(" M file.go\x00"), []gitFile{
-			{Path: "file.go", Status: "M", Display: "Modified"},
-		}},
-		{"staged added", []byte("A  new.go\x00"), []gitFile{
-			{Path: "new.go", Status: "A", Display: "Added", Staged: true},
-		}},
-		{"staged and unstaged emits two entries", []byte("MM both.go\x00"), []gitFile{
-			{Path: "both.go", Status: "M", Display: "Modified", Staged: true},
-			{Path: "both.go", Status: "M", Display: "Modified", Staged: false},
-		}},
-		{"untracked", []byte("?? newfile.go\x00"), []gitFile{
-			{Path: "newfile.go", Status: "?", Display: "Untracked"},
-		}},
-		// -z rename: the ` -> ` is dropped and the order is reversed, so
-		// the new (current) path comes first and the origin path is a
-		// second NUL field. Path is the new one (what stage, discard and
-		// diff need); OrigPath carries where it came from, so the panel
-		// can say "new.go ← old.go" instead of dropping the origin on
-		// the floor as this parser used to.
-		{"rename keeps new path, carries origin", []byte("R  new.go\x00old.go\x00"), []gitFile{
-			{Path: "new.go", Status: "R", Display: "Renamed", Staged: true, OrigPath: "old.go"},
-		}},
-		// The worktree half of a staged rename describes an ordinary edit
-		// to the file at its NEW path, so it carries no origin: the move
-		// is the staged entry's fact, not this one's.
-		{"rename plus worktree modify emits two entries", []byte("RM renamed.go\x00orig.go\x00"), []gitFile{
-			{Path: "renamed.go", Status: "R", Display: "Renamed", Staged: true, OrigPath: "orig.go"},
-			{Path: "renamed.go", Status: "M", Display: "Modified", Staged: false},
-		}},
-		{"copy carries origin", []byte("C  copy.go\x00src.go\x00"), []gitFile{
-			{Path: "copy.go", Status: "C", Display: "Copied", Staged: true, OrigPath: "src.go"},
-		}},
-		// A rename recorded only in the WORKTREE puts the R in the Y
-		// column, so the origin has to ride the unstaged entry there.
-		{"unstaged rename carries origin", []byte(" R new.go\x00old.go\x00"), []gitFile{
-			{Path: "new.go", Status: "R", Display: "Renamed", OrigPath: "old.go"},
-		}},
-		// A truncated tail must not read past the record slice: the
-		// origin is simply unknown, and the entry still renders.
-		{"rename with a missing origin field", []byte("R  new.go"), []gitFile{
-			{Path: "new.go", Status: "R", Display: "Renamed", Staged: true},
-		}},
-		// 'T' (typechange) used to fall through statusLabel's default and
-		// render as "Unknown". Measured on git 2.x: `rm f && ln -s /tmp f`.
-		{"unstaged typechange", []byte(" T link.txt\x00"), []gitFile{
-			{Path: "link.txt", Status: "T", Display: "Typechange"},
-		}},
-		{"staged typechange", []byte("T  link.txt\x00"), []gitFile{
-			{Path: "link.txt", Status: "T", Display: "Typechange", Staged: true},
-		}},
-		// -z never quotes: non-ASCII bytes arrive verbatim as UTF-8.
-		{"non-ascii filename unquoted", []byte(" M café.txt\x00"), []gitFile{
-			{Path: "café.txt", Status: "M", Display: "Modified"},
-		}},
-		{"staged non-ascii rename", []byte("R  café-new.txt\x00café-old.txt\x00"), []gitFile{
-			{Path: "café-new.txt", Status: "R", Display: "Renamed", Staged: true, OrigPath: "café-old.txt"},
-		}},
-		// A literal " -> " inside a filename is no longer mistaken for a
-		// rename separator (the old newline parser split on it).
-		{"spaced filename with arrow-like substring", []byte(" M foo -> bar.txt\x00"), []gitFile{
-			{Path: "foo -> bar.txt", Status: "M", Display: "Modified"},
-		}},
-		{"rename of spaced paths", []byte("R  new name.txt\x00old name.txt\x00"), []gitFile{
-			{Path: "new name.txt", Status: "R", Display: "Renamed", Staged: true, OrigPath: "old name.txt"},
-		}},
-		{"directory entry skipped", []byte("?? somedir/\x00?? real.txt\x00"), []gitFile{
-			{Path: "real.txt", Status: "?", Display: "Untracked"},
-		}},
-		{"short records skipped", []byte("XY\x00 M file.go\x00?\x00"), []gitFile{
-			{Path: "file.go", Status: "M", Display: "Modified"},
-		}},
-		{"multiple entries", []byte("M  staged.go\x00 M unstaged.go\x00?? untracked.go\x00A  added.go\x00"), []gitFile{
-			{Path: "staged.go", Status: "M", Display: "Modified", Staged: true},
-			{Path: "unstaged.go", Status: "M", Display: "Modified"},
-			{Path: "untracked.go", Status: "?", Display: "Untracked"},
-			{Path: "added.go", Status: "A", Display: "Added", Staged: true},
-		}},
-		{"no trailing NUL still parses final record", []byte(" M file.go"), []gitFile{
-			{Path: "file.go", Status: "M", Display: "Modified"},
-		}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseGitStatusOutput(tt.in)
-			if !slices.Equal(got, tt.want) {
-				t.Errorf("parseGitStatusOutput(%q) = %+v, want %+v", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestRepoFromQuery(t *testing.T) {
 	tests := []struct {
 		name string
@@ -291,16 +192,10 @@ func TestHandleShow_Rejections(t *testing.T) {
 	}
 }
 
-// BF15, half one. A workspace root that is not itself a repository has no
-// committed revision of anything, and that is not a git FAILURE — it is the
-// absence of a base. The two used to be one kind: `git show` ran in the
-// non-repo directory, errored with "fatal: not a git repository", and the
-// handler reported show_failed. A client cannot act on that: the honest answer
-// is "no repo owns this path", which renders as an all-add diff.
-//
-// The distinction is what keeps a REAL git failure legible. Fold them and a
-// broken object database renders as "this file is brand new", silently claiming
-// every line was added.
+// A workspace root that is not itself a repository has no committed revision of
+// anything, which is the absence of a base rather than a git FAILURE. The distinction is
+// what keeps a real failure legible: folded together, a broken object database renders
+// as "this file is brand new" and silently claims every line was added.
 func TestHandleShow_PathOutsideEveryRepoIsNotAFailure(t *testing.T) {
 	h := NewHandler(t.TempDir()) // no .git anywhere
 	req := httptest.NewRequest(http.MethodGet, "/api/git/show?path=nonexistent", nil)
@@ -318,14 +213,11 @@ func TestHandleShow_PathOutsideEveryRepoIsNotAFailure(t *testing.T) {
 	}
 }
 
-// BF15, half two, and the one with a user-visible wrong ANSWER rather than a
-// wrong label. An absent `repo` used to default to the workspace root, so a file
-// living in a SUBDIRECTORY repo was shown from the wrong repository: `git show
-// HEAD:sub/tracked.txt` finds nothing there, the base came back empty, and the
-// diff claimed every line had just been added. Every caller that holds only a
-// workspace-relative path is in this shape — a turn's changed-file ledger, a
-// tool card's filename — because translate.relPath strips the workspace prefix
-// and knows nothing about repos.
+// An absent `repo` must resolve the OWNING repo, not default to the workspace root: for
+// a file in a subdirectory repo, `git show HEAD:sub/tracked.txt` there finds nothing, the
+// base comes back empty and the diff claims every line was added. Every caller holding
+// only a workspace-relative path is in this shape — a turn's changed-file ledger, a tool
+// card's filename — because translate.relPath knows nothing about repos.
 func TestHandleShow_ResolvesTheOwningRepoWhenNoneIsNamed(t *testing.T) {
 	work := t.TempDir()
 	// The workspace root is a repo too, so this cannot pass by accident: the
@@ -673,15 +565,11 @@ func TestDecodePostBodyOptional_EmptyBodyIgnored(t *testing.T) {
 	}
 }
 
-// TestSyncHandlers_OversizeBodyRefusedBeforeGit pins the refusal on the four
-// handlers whose body is advisory. An oversize body means the server stopped
-// reading before Repo arrived, and a zero Repo resolves to the WORKSPACE ROOT
-// (resolveRepoDir), so waving it through runs push/pull/stash against the wrong
-// tree and answers 200 with a success shape.
-//
-// The status is what proves git was not reached: every git result on these paths
-// goes out through writeCmdResult, which writes 200 whether the command
-// succeeded or failed, so a 413 can only come from the decode refusal.
+// TestSyncHandlers_OversizeBodyRefusedBeforeGit pins the refusal on the four handlers
+// whose body is advisory: an oversize body means the server stopped reading before Repo
+// arrived, and a zero Repo resolves to the WORKSPACE ROOT, so waving it through runs
+// push/pull/stash against the wrong tree and answers 200. The status is what proves git
+// was never reached — writeCmdResult answers 200 either way, so only the decode refuses.
 func TestSyncHandlers_OversizeBodyRefusedBeforeGit(t *testing.T) {
 	body := `{"repo":"` + strings.Repeat("A", int(webhttp.MaxJSONBody)) + `"}`
 
@@ -777,20 +665,13 @@ func TestWriteCmdResult_ScrubsAuthInErrorOutput(t *testing.T) {
 
 // --- gitExec env hardening regression pin ---
 
-// TestGitExec_ScrubsInheritedEnv pins the env block + cmdline -c
-// hardening in gitExec that defends against credential-prompt
-// hijacking, runtime gitconfig injection (GIT_CONFIG_COUNT/KEY/VALUE
-// + GIT_CONFIG_PARAMETERS), and ext:: transport re-enabling. Each
-// guarantee is load-bearing; dropping any of them re-opens a
-// CVE-class exposure (CVE-2017-1000117 and kin).
-//
-// Note on shape: an earlier version of this code pinned
-// GIT_CONFIG_GLOBAL=/dev/null and GIT_CONFIG_SYSTEM=/dev/null. That
-// also disabled the credential.helper line `gh auth setup-git`
-// writes to ~/.gitconfig, which broke HTTPS clones of private repos.
-// The fix moved the ext:: hardening to a command-line `-c
-// protocol.ext.allow=never` flag (which always wins over gitconfig)
-// and let gitconfig files load again.
+// TestGitExec_ScrubsInheritedEnv pins gitExec's env scrub plus its cmdline -c hardening
+// against credential-prompt hijacking, runtime gitconfig injection
+// (GIT_CONFIG_COUNT/KEY/VALUE, GIT_CONFIG_PARAMETERS) and ext:: transport re-enabling;
+// dropping any of them re-opens CVE-2017-1000117 and kin. The ext:: guard is a
+// `-c protocol.ext.allow=never` flag, which always wins over gitconfig, rather than
+// GIT_CONFIG_GLOBAL=/dev/null — that also disabled the credential.helper line
+// `gh auth setup-git` writes, breaking HTTPS clones of private repos.
 func TestGitExec_ScrubsInheritedEnv(t *testing.T) {
 	// Simulate a compromised parent env attempting every known
 	// runtime-injection path. The scrub must win via os/exec's
@@ -1842,23 +1723,6 @@ func behindRepo(t *testing.T) string {
 	return work
 }
 
-// aheadBehind must report real upstream divergence. The counts come from
-// `git rev-list --left-right --count HEAD...@{upstream}`, so rev-list has to
-// be permitted by the allowedSubcommands allowlist; if it is dropped, the command is
-// rigged to fail and the counts silently collapse to 0/0 (a dead ahead/behind
-// indicator in the git panel).
-func TestAheadBehind_ReportsUpstreamDivergence(t *testing.T) {
-	work := behindRepo(t) // HEAD at C1, origin/main at C2 -> behind 1, ahead 0
-	if ahead, behind := aheadBehind(t.Context(), work); ahead != 0 || behind != 1 {
-		t.Fatalf("aheadBehind on a behind-by-one work tree = (%d, %d), want (0, 1)", ahead, behind)
-	}
-	// A local commit on top of C1 leaves the work tree both ahead and behind.
-	writeCommit(t, work, "local.txt", "local\n", "local commit")
-	if ahead, behind := aheadBehind(t.Context(), work); ahead != 1 || behind != 1 {
-		t.Fatalf("aheadBehind after a local commit = (%d, %d), want (1, 1)", ahead, behind)
-	}
-}
-
 func TestHandleStatus_NonRepoReturnsIsRepoFalse(t *testing.T) {
 	workDir := t.TempDir()
 	h := NewHandler(workDir)
@@ -1979,65 +1843,6 @@ func TestHandleStatus_DirtyRepoReportsFiles(t *testing.T) {
 	}
 	if len(resp.Files) < 2 {
 		t.Errorf("Files = %+v, want >=2 entries", resp.Files)
-	}
-}
-
-// parseGitStatus round-trips real `git status --porcelain=v1 -z` output
-// for filenames git C-quotes in the default (newline) format: non-ASCII
-// bytes, embedded spaces, and a staged rename to such a name. The -z
-// format never quotes, so every returned Path is the exact on-disk path
-// — which is what stage/unstage/discard/diff feed back to git. This is
-// the end-to-end proof of the quoting-bug fix (GIT-PANEL): under the old
-// newline + line[3:] parser these paths came back wrapped in double
-// quotes with C-escapes (café.txt → "caf\303\251.txt") and no subsequent
-// git op could resolve them.
-func TestParseGitStatus_UnquotesSpecialFilenames(t *testing.T) {
-	skipNoGit(t)
-	dir := t.TempDir()
-	initFixtureRepo(t, dir) // commits README.md on main
-
-	// Untracked files whose names the default porcelain format would quote.
-	const nonASCII = "café.txt"
-	const spaced = "with space.txt"
-	for _, name := range []string{nonASCII, spaced} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("x\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// A staged rename to a non-ASCII + spaced name (git mv stages it).
-	const renamedTo = "rénamed doc.md"
-	runGit(t, dir, "mv", "README.md", renamedTo)
-
-	files := parseGitStatus(t.Context(), dir)
-
-	byPath := make(map[string]gitFile, len(files))
-	for _, f := range files {
-		byPath[f.Path] = f
-		// Regression guard: the old parser surfaced C-quoted paths
-		// (e.g. "caf\303\251.txt"). -z output is verbatim, so no
-		// returned path may be double-quote-wrapped or carry a
-		// backslash escape.
-		if strings.HasPrefix(f.Path, `"`) || strings.Contains(f.Path, `\`) {
-			t.Errorf("path %q looks C-quoted; -z output must be verbatim", f.Path)
-		}
-	}
-
-	if f, ok := byPath[nonASCII]; !ok {
-		t.Errorf("non-ASCII untracked file %q missing from %+v", nonASCII, files)
-	} else if f.Status != "?" {
-		t.Errorf("%q status = %q, want untracked", nonASCII, f.Status)
-	}
-	if _, ok := byPath[spaced]; !ok {
-		t.Errorf("spaced untracked file %q missing from %+v", spaced, files)
-	}
-	// The rename's new (current) path must be present, staged, and
-	// un-quoted regardless of whether git reports it as R (rename
-	// detected, origin field consumed) or A (add) — both stage the new
-	// path under this exact name.
-	if f, ok := byPath[renamedTo]; !ok {
-		t.Errorf("renamed path %q missing from %+v", renamedTo, files)
-	} else if !f.Staged {
-		t.Errorf("renamed path %q Staged = false, want true", renamedTo)
 	}
 }
 
@@ -2318,19 +2123,12 @@ func TestHandleReclone_RejectsNonStandardScheme(t *testing.T) {
 	}
 }
 
-// TestHandleReclone_RefusesAnIntermediateSymlinkEscape pins the second
-// destructive site on the pinned-parent removal.
-//
-// The bait is one the unguarded code takes. Unlinking by name,
-// {"repo":"link/victim"} passes every guard reclone has — it is not empty, not
-// ".", not the workspace root, `<dir>/.git` exists through the symlink, origin
-// resolves, and the scheme is allowed — and the delete then destroys a repo
-// outside the workspace. So the surviving victim tree is the assertion that
-// matters: revert handleReclone to os.RemoveAll and this test fails on it.
-//
-// The positive control lives next door: TestHandleReclone_RejectsNonStandardScheme
-// drives a plain in-workspace repo all the way to the scheme check, so the guard
-// added here is not refusing everything.
+// TestHandleReclone_RefusesAnIntermediateSymlinkEscape: {"repo":"link/victim"} passes
+// every other guard reclone has — non-empty, not ".", not the workspace root, `.git`
+// exists through the symlink, origin resolves, scheme allowed — so an unlink by name
+// destroys a repo outside the workspace. The surviving victim tree is the assertion.
+// TestHandleReclone_RejectsNonStandardScheme is the positive control that this guard is
+// not refusing everything.
 func TestHandleReclone_RefusesAnIntermediateSymlinkEscape(t *testing.T) {
 	// Requires a real git binary to set up the fixture.
 	if _, err := exec.LookPath("git"); err != nil {
@@ -2600,34 +2398,6 @@ func TestPRRemoteHost_NeverContainsPathOrUserinfo(t *testing.T) {
 
 // --- fuzz targets ---
 
-func FuzzParseGitStatusOutput(f *testing.F) {
-	// Seed corpus from the table-driven test cases (NUL-delimited -z format).
-	seeds := [][]byte{
-		nil,
-		[]byte(""),
-		[]byte(" M file.go\x00"),
-		[]byte("A  new.go\x00"),
-		[]byte("MM both.go\x00"),
-		[]byte("?? newfile.go\x00"),
-		[]byte("R  new.go\x00old.go\x00"),
-		[]byte("RM renamed.go\x00orig.go\x00"),
-		[]byte("C  copy.go\x00src.go\x00"),
-		[]byte(" M café.txt\x00"),
-		[]byte(" M foo -> bar.txt\x00"),
-		[]byte("?? somedir/\x00?? real.txt\x00"),
-		[]byte("XY\x00 M file.go\x00?\x00"),
-		[]byte("M  staged.go\x00 M unstaged.go\x00?? untracked.go\x00A  added.go\x00"),
-		[]byte(" M file.go"),
-	}
-	for _, s := range seeds {
-		f.Add(s)
-	}
-	f.Fuzz(func(t *testing.T, data []byte) {
-		// Must not panic on any input.
-		_ = parseGitStatusOutput(data)
-	})
-}
-
 func FuzzScrubAuth(f *testing.F) {
 	// Seed corpus from existing test cases.
 	seeds := []string{
@@ -2785,35 +2555,6 @@ func FuzzExtractCommitMessage(f *testing.F) {
 			t.Errorf("extractCommitMessage(%q) = %q: prefix not stripped", data, result)
 		}
 	})
-}
-
-func BenchmarkParseGitStatusOutput(b *testing.B) {
-	// Generate synthetic porcelain -z output (NUL-delimited) for sub-benchmarks.
-	generate := func(n int) []byte {
-		var buf strings.Builder
-		for i := range n {
-			switch i % 4 {
-			case 0:
-				buf.WriteString(" M file" + strconv.Itoa(i) + ".go\x00")
-			case 1:
-				buf.WriteString("A  new" + strconv.Itoa(i) + ".go\x00")
-			case 2:
-				buf.WriteString("?? untracked" + strconv.Itoa(i) + ".txt\x00")
-			case 3:
-				buf.WriteString("MM both" + strconv.Itoa(i) + ".go\x00")
-			}
-		}
-		return []byte(buf.String())
-	}
-
-	for _, n := range []int{10, 100, 1000} {
-		data := generate(n)
-		b.Run(strconv.Itoa(n)+"_files", func(b *testing.B) {
-			for b.Loop() {
-				_ = parseGitStatusOutput(data)
-			}
-		})
-	}
 }
 
 func BenchmarkScrubAuth(b *testing.B) {
@@ -3469,7 +3210,8 @@ func TestCollectStatus_RemoteSet(t *testing.T) {
 	}
 }
 
-// collectStatus counts stash entries from `git stash list`.
+// collectStatus reports stash entries, which now ride the one status call's
+// `# stash` header rather than a `git stash list` spawn of their own.
 func TestCollectStatus_StashCount(t *testing.T) {
 	skipNoGit(t)
 	dir := t.TempDir()
@@ -3484,22 +3226,19 @@ func TestCollectStatus_StashCount(t *testing.T) {
 	}
 }
 
-// parseGitStatusOutput's inclusive lower bound for a parseable record is
-// 4 bytes ("XY P": 2 status bytes, a space, a >=1-char path). A record of
-// exactly 4 bytes yields one entry; a 3-byte record (no path) is dropped
-// rather than emitting a useless empty-path entry.
-func TestParseGitStatusOutput_LenBoundary(t *testing.T) {
-	got := parseGitStatusOutput([]byte("?? x\x00"))
+// The untracked record's lower bound: `? <path>` is 3 bytes at minimum, and a
+// record with no path at all must be dropped rather than emitted as an
+// empty-path row the panel would render as a nameless file.
+func TestParsePorcelainV2_UntrackedLenBoundary(t *testing.T) {
+	got := parsePorcelainV2([]byte("? x\x00")).Files
 	if len(got) != 1 {
-		t.Fatalf("parseGitStatusOutput(\"?? x\") len = %d, want 1", len(got))
+		t.Fatalf(`parsePorcelainV2("? x") len = %d, want 1`, len(got))
 	}
 	if got[0].Status != "?" || got[0].Display != "Untracked" || got[0].Path != "x" {
-		t.Errorf("entry = %+v, want {Path:\"x\" Status:\"?\" Display:\"Untracked\"}", got[0])
+		t.Errorf(`entry = %+v, want {Path:"x" Status:"?" Display:"Untracked"}`, got[0])
 	}
-
-	// One byte short of a path: dropped, not emitted as an empty-path entry.
-	if got := parseGitStatusOutput([]byte("?? \x00")); len(got) != 0 {
-		t.Errorf("parseGitStatusOutput(\"?? \") = %+v, want no entries", got)
+	if got := parsePorcelainV2([]byte("? \x00")).Files; len(got) != 0 {
+		t.Errorf(`parsePorcelainV2("? ") = %+v, want no entries`, got)
 	}
 }
 
@@ -3897,16 +3636,12 @@ func TestHandleBranchName_CleanTreeUsesCommits(t *testing.T) {
 	}
 }
 
-// swappedAncestor stages the race a pinned parent exists for: a repo path whose
-// directory component was a real, empty directory when the caller resolved it, and
-// is an IN-WORKSPACE symlink to a protected tree by the time the remove runs. The
-// path is computed before the swap, which is what makes the window deterministic.
-//
-// In-workspace deliberately: the confined root follows an in-root symlink by
-// design, so this is the case confinement alone does not answer and only the
-// pinned descent does.
-//
-// It returns the repo name to remove and the on-disk path that must survive.
+// swappedAncestor stages the race a pinned parent exists for, returning the repo name to
+// remove and the on-disk path that must survive: a path whose directory component was a
+// real empty directory when the caller resolved it and is an IN-WORKSPACE symlink to a
+// protected tree by the time the remove runs. Computing the path before the swap makes
+// the window deterministic, and in-workspace is deliberate — a confined root follows an
+// in-root symlink by design, so only the pinned descent answers this case.
 func swappedAncestor(t *testing.T, workDir string) (repo, victim string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(workDir, "store"), 0o750); err != nil {

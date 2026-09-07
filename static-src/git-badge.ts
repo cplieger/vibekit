@@ -12,21 +12,17 @@
 //   remote  — at least one repo is behind origin. Blue.
 //   (none)  — everything synced; badge hidden.
 //
-// A FAILED /api/forges fetch is deliberately not an error state, and this
-// comment used to claim it was. A fetch failure leaves the badge on the last
-// state it derived rather than turning red, so a network blip does not raise an
-// alarm about the forges themselves. forge-store.ts publishes the failure
-// separately and the Sources tab is what renders it, beside a Retry.
+// A FAILED /api/forges fetch is deliberately NOT the error state: a blip leaves
+// the badge on its last derived state instead of raising an alarm about the
+// forges. forge-store.ts publishes that failure and the Sources tab renders it.
 //
-// This module owns NO fetch and NO timer. Both shared stores do:
-// git-status-store.ts polls /api/git/status-all every 15s (cheap, no `git
-// fetch`, so remote state lags and is refreshed on navigation), forge-store.ts
-// polls /api/forges on the same cadence and re-reads it on SSE forges_changed.
-// The badge subscribes to both and paints.
+// This module owns NO fetch and NO timer; it subscribes to the two shared stores
+// and paints. Neither carries remote state live (no `git fetch`), so `behind` lags
+// until a navigation refreshes it.
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { initGitStatusStore, onGitStatusChange, currentRepos } from "./git-status-store.js";
+import { onGitStatusChange, currentRepos } from "./git-status-store.js";
 import { initForgeStore, onForgeChange, currentForges, refreshForges } from "./forge-store.js";
 import type { GitRepoStatusBadge } from "./git-types.js";
 import type { ConfiguredForge } from "./wire/types.gen.js";
@@ -49,21 +45,23 @@ let lastTooltip = "";
 
 /** Wire the badge to both shared stores. Idempotent.
  *
- *  Neither poll is started here: git-status-store.ts and forge-store.ts each own
- *  one, and the badge repaints from their subscriptions. That removed the last of
- *  the duplicate fetches — the status half moved first (which is what let the
- *  docs page and the file browser get per-path letters), the forges half
- *  followed, and the PR fan-out now reads the same forge list instead of asking
- *  for its own. */
+ *  No fetch is started here: the badge repaints from the two stores'
+ *  subscriptions, which is what removed the last of the duplicate fetches — the
+ *  status half moved first (which is what let the docs page and the file browser
+ *  get per-path letters), the forges half followed, and the PR fan-out now reads
+ *  the same forge list instead of asking for its own.
+ *
+ *  Only forge-store.ts owns a timer. git-status-store.ts refreshes on facts
+ *  rather than on a clock, and its header says which. */
 export function initGitBadge(): void {
   if (started) {
     return;
   }
   started = true;
-  initGitStatusStore();
   initForgeStore();
   // Repaint whenever either store lands a result. Both fire immediately with
-  // their current (initially empty) value.
+  // their current (initially empty) value, and subscribing to the git store is
+  // what starts its one read.
   onGitStatusChange(() => {
     repaint();
   });

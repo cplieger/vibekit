@@ -14,6 +14,8 @@ const H = vi.hoisted(() => ({
   mockBind: vi.fn(),
   mockApplyTheme: vi.fn(),
   mockKiroDispatch: vi.fn(),
+  mockInitGitBadge: vi.fn(),
+  mockInitGitPanel: vi.fn(),
 }));
 
 vi.mock("./actions/tools.js", () => ({
@@ -36,7 +38,13 @@ vi.mock("./actions/settings.js", () => ({
   logout: {},
   setKiroSetting: { dispatch: (...a: unknown[]) => H.mockKiroDispatch(...a) },
 }));
-vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
+// apiGet resolves rather than returning undefined: the flag read awaits it
+// directly now (one request for every flag), where it used to be one of several
+// inside a Promise.all, which resolves a non-promise silently.
+vi.mock("./api-client.js", () => ({
+  apiGet: vi.fn(() => Promise.resolve(undefined)),
+  apiGetTyped: vi.fn(),
+}));
 vi.mock("./wire/decoders.gen.js", () => ({ decodeWhoamiResponse: vi.fn() }));
 vi.mock("./save-indicator.js", () => ({
   showSaving: vi.fn(),
@@ -70,13 +78,17 @@ vi.mock("./tabs.js", () => ({
   // these, so no path under test changes behavior.
   toggleGitView: undefined,
 }));
-vi.mock("./git.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
-  initGitPanel: undefined,
-  loadGitRepos: undefined,
+// The badge, not the git view: `initPostAuthUI` wires only this at boot now, and
+// the real module reaches git-status-store.ts, whose `apiAction` import this file's
+// partial `./actions/index.js` factory does not provide.
+vi.mock("./git-badge.js", () => ({ initGitBadge: H.mockInitGitBadge }));
+// The git VIEW. Nothing in settings.ts imports it any more, and the case below is
+// what keeps it that way: wiring it at boot fired `refreshChanges(true)`, a forced
+// `git fetch` across every worktree, for a view nobody had opened.
+vi.mock("./git.js", () => ({ initGitPanel: H.mockInitGitPanel, loadGitRepos: vi.fn() }));
+vi.mock("./versions.js", () => ({
+  loadVersions: vi.fn(),
+  getVersions: () => ({ vibekit: "", kiroCli: "" }),
 }));
 vi.mock("./git-tabs.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
@@ -182,6 +194,7 @@ const {
   initChatRetention,
   initDiagnostics,
   initExperimentalToggles,
+  initPostAuthUI,
   themeStorage,
   _resetThemeForTest,
 } = await import("./settings.js");
@@ -602,4 +615,69 @@ describe("initExperimentalToggles", () => {
       expect(showError).toHaveBeenCalledExactlyOnceWith("chat.disableInheritingDefaultResources");
     });
   });
+
+  // ONE request for every flag, naming them all. It used to be one request per
+  // flag, and each one cost the server a `kiro-cli settings` SUBPROCESS with its
+  // own 3 s budget — three of them, concurrently, every time this panel opened.
+  it("reads every flag in one request", async () => {
+    const { apiGet } = await import("./api-client.js");
+    await initFlags();
+
+    expect(apiGet).toHaveBeenCalledTimes(1);
+    const url = vi.mocked(apiGet).mock.calls[0]?.[0] ?? "";
+    const asked = new URL(url, "http://localhost").searchParams.get("keys")?.split(",") ?? [];
+    expect(asked).toEqual([
+      "hooks.showStatus",
+      "telemetry.enabled",
+      "chat.disableInheritingDefaultResources",
+    ]);
+  });
+
+  // The answer is read BY KEY, not by position: the server sorts the document it
+  // returns, so a reader that trusted request order would flip two checkboxes.
+  it("adopts each flag's value by key rather than by response order", async () => {
+    const { apiGet } = await import("./api-client.js");
+    vi.mocked(apiGet).mockResolvedValueOnce({
+      settings: {
+        "chat.disableInheritingDefaultResources": "true",
+        "hooks.showStatus": "false",
+        "telemetry.enabled": "false",
+      },
+    });
+
+    initExperimentalToggles();
+
+    await vi.waitFor(() => {
+      expect(box("flag-hooks-status").checked).toBe(false);
+    });
+    expect(box("flag-telemetry").checked).toBe(false);
+    expect(box("flag-disable-inherit-resources").checked).toBe(true);
+  });
 });
+
+// ---------------------------------------------------------------------------
+// The post-auth door, and what it may NOT reach.
+// ---------------------------------------------------------------------------
+
+describe("initPostAuthUI", () => {
+  it("wires the sidebar badge and not the git view", async () => {
+    // The badge is boot-visible chrome in the toolbar, so the one `status-all`
+    // scan its subscription starts is a read for something on screen. The git
+    // VIEW is not: `initGitPanel` subscribes to its own tab signal, which fires
+    // immediately, so wiring it here ran `refreshChanges(true)` — a forced
+    // `git fetch` across every worktree — plus three tab inits, on the boot path,
+    // for a panel nobody had opened.
+    initPostAuthUI();
+
+    expect(H.mockInitGitBadge).toHaveBeenCalledTimes(1);
+    expect(H.mockInitGitPanel).not.toHaveBeenCalled();
+  });
+});
+
+// NOT TESTED, and the absence is deliberate rather than an oversight: that `initUI`
+// issues no `GET /api/steering`. The read is `settings-steering.ts`'s
+// `loadSteeringDoc` (pinned in `settings-steering.test.ts`), reachable only through
+// the loader map `initUI` hands `initSettingsTabs` — and `initUI` cannot run here,
+// because eight of the feature modules it calls are mocked present-but-undefined
+// for real-ESM linking. A test asserting it against `initPostAuthUI` was written,
+// passed, and deleted: that door never touched the editor, so it held either way.

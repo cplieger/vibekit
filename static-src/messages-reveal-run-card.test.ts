@@ -46,7 +46,8 @@ vi.mock("./api-client.js", async () => ({
 
 const { mountChatView, revealRunCard, activeTranscriptView } = await import("./messages.js");
 const { setSessions, setActive, bumpMessages, removeChat } = await import("./store.js");
-const { setTurnOpen, _resetFoldStateForTest, TURNS_WARM } = await import("./fold-state.js");
+const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
+const { RESIDENT_BLOCKS } = await import("./block-window.js");
 const { resetTurnRail } = await import("./turn-rail.js");
 const { scrollMock } = await import("./__test-helpers__/scroll-mock.js");
 
@@ -123,7 +124,7 @@ function chatID(): string {
 beforeEach(() => {
   mountChatView();
   localStorage.clear();
-  _resetFoldStateForTest();
+  resetFoldState();
   resetTurnRail();
   scrollMock.jumpTo.mockClear();
   setSessions([]);
@@ -145,7 +146,8 @@ describe("revealRunCard", () => {
   });
 
   // The renderer fact this function rests on, and the reason it does not also unfold:
-  // a turn past TURNS_WARM is a header/footer STUB with no `.turn-body`, so it holds
+  // a turn pushed out of the resident BLOCK window is a header/footer STUB with no
+  // `.turn-body`, so it holds
   // no run card at all and this answers false. The collapsed FACE used to mount a
   // duplicate card, which is what made a stub answer true; that duplicate is gone —
   // the composer band's run bar is the persistent surface for a live run now — and
@@ -154,8 +156,10 @@ describe("revealRunCard", () => {
   it("answers false for a launching turn that folded to a stub", () => {
     const c = chatID();
     const messages: Msg[] = [user("u0"), launcher("a0", "wf_old")];
-    // Push the launching turn well past the warm window.
-    for (let i = 1; i <= TURNS_WARM + 2; i++) {
+    // Push the launching turn out of the resident window. Residency is counted in
+    // BLOCKS, not turns, so this adds enough plain turns to exceed that budget; the
+    // stub premise is asserted below rather than assumed.
+    for (let i = 1; i <= RESIDENT_BLOCKS; i++) {
       messages.push(...plain(String(i)));
     }
     activate(c, messages);

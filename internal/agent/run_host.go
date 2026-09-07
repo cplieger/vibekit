@@ -179,6 +179,15 @@ func (rs *Runs) Delete(ctx context.Context, workflowID string) error {
 	return nil
 }
 
+// errRunNotHosted is returned by a control verb that needs the run's OWN bridge
+// when there is none. Distinct from a KAS refusal so the REST layer can answer
+// 409 with an explanation rather than 500.
+var errRunNotHosted = errors.New(
+	"this run has no live bridge on this server, so it cannot be paused or resumed from here; " +
+		"cancel still works. A run from before the last restart is in this state, " +
+		"and so is an agent-launched run whose chat is closed -- open that chat to bring it back",
+)
+
 // Pause asks a running run to stop at its next node boundary, keeping its state
 // resumable. The in-flight node runs to completion, so the reply confirms the ASK
 // rather than a paused state; a re-hosted pause is expected to be REFUSED, because
@@ -197,81 +206,211 @@ func (rs *Runs) Resume(ctx context.Context, workflowID string) error {
 	return err
 }
 
-// Retry re-hosts a finished run and resets its failed work. Only reachable for a
-// PARENTLESS run; an agent-parented run's recovery is the agent's own.
-func (rs *Runs) Retry(ctx context.Context, workflowID string) error {
+// retryTimeout bounds the whole retry handshake, process start included.
+//
+// BELOW the browser's own request budget deliberately: on a longer deadline a
+// slow engine start let the BROWSER abort first, and that cancellation tore down
+// a freshly minted bridge, releasing the lease with nobody watching. DERIVED from
+// clientRequestBudget so the relationship cannot be broken by editing one of the
+// two. A `var` only so a test can drive the expiry in milliseconds.
+var retryTimeout = clientRequestBudget - 5*time.Second
+
+// clientRequestBudget is the ceiling retryTimeout fits under: the timeout
+// @cplieger/fetch hard-wires into every apiAction, applied by the browser
+// whatever the server thinks its own deadline is.
+const clientRequestBudget = 30 * time.Second
+
+// errRetryEngineSlow reports that the retry could not be handed off inside
+// retryTimeout. Its own class so the REST layer can answer 503 "try again".
+var errRetryEngineSlow = errors.New(
+	"the run's engine did not start in time, so nothing was retried; try again",
+)
+
+// errRetryOutcomeUnreadable reports that KAS ACCEPTED the retry and its report
+// could not be read.
+//
+// Its own class because the remedy inverts: the run may be executing, so retrying
+// would ask for the work twice and killing the bridge would kill it mid-node.
+// Refreshing is what the reader can act on.
+var errRetryOutcomeUnreadable = errors.New(
+	"the retry was accepted but its report could not be read, so which steps it reset " +
+		"is unknown; refresh the run to see where it is",
+)
+
+// kasRetryOutcome is `_kiro/workflow/retry`'s reply in KAS's own spelling, the
+// decode target only; the verb answers vibekit.RunRetriedResponse.
+//
+// RetriedNodeIDs is why Retry returns a value at all: a retry that reset five
+// nodes and one that reset none are otherwise indistinguishable, which is what
+// "I pressed Retry and nothing happened" looks like from outside.
+type kasRetryOutcome struct {
+	WorkflowID     string   `json:"workflowId"`
+	Status         string   `json:"status"`
+	RetriedNodeIDs []string `json:"retriedNodeIds"`
+}
+
+// Retry resets a finished run's failed work and reports what it reset.
+//
+// Legal only from `failed` or `aborted`, and `closeStoppedBridge` tears the bridge
+// down on exactly those statuses, so retry is the one control verb that must reach
+// a run nothing hosts. THE HOST IS RESOLVED, not assumed: keying on `run:<id>`
+// alone sent every chat-parented run down the re-host branch, spawning a second
+// engine for a run whose parent session is still alive. That branch LOADS FIRST,
+// because KAS's retry refuses a run it has never seen.
+func (rs *Runs) Retry(
+	ctx context.Context, workflowID string, aff runAffordance,
+) (vibekit.RunRetriedResponse, error) {
 	if workflowID == "" {
-		return errors.New("missing workflow id")
+		return vibekit.RunRetriedResponse{}, errors.New("missing workflow id")
 	}
-	chatID := runChatID(workflowID)
-
-	// Not the expected path — retry's window implies a closed bridge — but a run
-	// aborted without a terminal frame can still be registered.
-	if sb := rs.bridges.get(chatID); sb != nil {
-		rs.carriers.enter(sb)
-		defer rs.carriers.leave(sb)
-		recipe := rs.recipeOf(ctx, workflowID)
-		_, err := sb.Call(ctx, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
-		if err == nil {
-			// Only on success: a retry KAS refused re-drove nothing.
-			rs.rearmRetried(ctx, workflowID, recipe)
-		}
-		return err
-	}
-
-	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
+	cctx, cancel := context.WithTimeout(ctx, retryTimeout)
 	defer cancel()
 
-	// BEFORE anything is re-driven: see recipeOf.
-	recipe := rs.recipeOf(cctx, workflowID)
+	// The run's real host: its own bridge, or the LAUNCHING CHAT's. Already
+	// registered there, so no load is needed and no second engine is started.
+	if _, sb := rs.hostBridgeFor(workflowID, aff.ParentChat); sb != nil {
+		// Held for the whole span, so neither the kept-carrier bound nor a
+		// lifecycle frame's deferred close can come due under it — carrierUse.
+		rs.carriers.enter(sb)
+		defer rs.carriers.leave(sb)
+		recipe := aff.Recipe
+		out, err := rs.retryCall(cctx, sb.bridge, workflowID)
+		if err != nil {
+			// The verb LANDED and only its report is unusable, so the run may be running.
+			if errors.Is(err, errRetryOutcomeUnreadable) {
+				rs.rearmRetried(cctx, workflowID, recipe)
+			}
+			return vibekit.RunRetriedResponse{}, err
+		}
+		// Only on success: a refused retry re-drove nothing, so the run's previous
+		// terminal reason is still the truth about it.
+		rs.rearmRetried(cctx, workflowID, recipe)
+		slog.Info("workflow run retried on its host",
+			"workflow_id", workflowID, "recipe", recipe,
+			"retried_nodes", len(out.RetriedNodeIDs), "status", out.Status)
+		return out, nil
+	}
+	return rs.retryRehosted(cctx, workflowID, aff.Recipe)
+}
 
-	sb, discard, err := rs.rehost(cctx, workflowID)
+// retryRehosted retries a run NOTHING in this process holds: re-host it, load the
+// run into that process, then retry. recipe is the name the gate's inventory read
+// carried, "" when it carried none — threaded because nothing here can learn it
+// once the run is re-driving.
+func (rs *Runs) retryRehosted(
+	ctx context.Context, workflowID, recipe string,
+) (vibekit.RunRetriedResponse, error) {
+	// The shared re-host: it registers the carrier before the verb, because retry's
+	// first lifecycle frame follows the call at once, and hands back the teardown
+	// this call owes on a failure.
+	sb, discard, err := rs.rehost(ctx, workflowID)
 	if err != nil {
-		return err
+		return vibekit.RunRetriedResponse{}, rs.retryStartErr(ctx, err)
 	}
 	rs.carriers.enter(sb)
 	defer rs.carriers.leave(sb)
 
-	// Before the verb, as a launch grants between `new` and `invoke`: retry's own
-	// `run_start` can arrive before the call returns.
+	// The lease before the verb, as a launch grants between `new` and `invoke`:
+	// retry's own `run_start` can arrive before the call returns.
 	minted := false
 	if _, held := rs.lease(workflowID); !held {
-		rs.grantLease(cctx, workflowID, recipe, manualLaunch())
+		rs.grantLease(ctx, workflowID, recipe, manualLaunch())
 		minted = true
 	}
 
-	if _, err := sb.bridge.Call(cctx, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID}); err != nil {
-		// A CONTEXT error keeps BOTH the carrier and the lease, under the one
-		// unknown-outcome rule: armDeadline returns when there is no lease, so a
-		// retry KAS did take would execute with no deadline and nothing to arm one.
+	out, err := rs.loadThenRetry(ctx, sb.bridge, workflowID)
+	if errors.Is(err, errRetryOutcomeUnreadable) {
+		// KAS ACCEPTED the retry, so the run may be re-driving inside this bridge:
+		// only the report is lost, and tearing down would kill the work mid-node.
+		rs.rearmRetried(ctx, workflowID, recipe)
+		return vibekit.RunRetriedResponse{}, err
+	}
+	if err != nil {
+		// Nothing is executing, so the carrier goes — except on a CONTEXT error,
+		// which keeps BOTH it and the lease under the one unknown-outcome rule:
+		// armDeadline returns when there is no lease, so a retry KAS did take
+		// would execute with no deadline and nothing to arm one.
 		if minted && !isCtxErr(err) {
-			rs.releaseLease(cctx, workflowID)
+			rs.releaseLease(ctx, workflowID)
 		}
 		discard(err)
-		return fmt.Errorf("workflow retry: %w", err)
+		return vibekit.RunRetriedResponse{}, err
 	}
-	// Only now the retry has landed: the client lets a recognised end_reason outrank
-	// live status.
-	rs.rearmRetried(cctx, workflowID, recipe)
-	slog.Info("workflow run retried", "workflow_id", workflowID, "recipe", recipe)
-	return nil
+	// A fresh clock and a clean row, now that the retry has landed: the run's
+	// recorded termination is no longer a fact about it.
+	rs.rearmRetried(ctx, workflowID, recipe)
+	slog.Info("workflow run re-hosted and retried",
+		"workflow_id", workflowID, "recipe", recipe,
+		"retried_nodes", len(out.RetriedNodeIDs), "status", out.Status)
+	return out, nil
 }
 
-// recipeOf reads a run's recipe NAME off KAS's own run list. Best-effort: "" when the
-// list cannot be read, because a retry must not fail over a name.
-func (rs *Runs) recipeOf(ctx context.Context, workflowID string) string {
-	runs, err := rs.listRaw(ctx)
-	if err != nil {
-		slog.Warn("could not read a retried run's recipe, so its lease carries none",
-			"workflow_id", workflowID, "error", err)
-		return ""
+// loadThenRetry registers the run in a fresh process and retries it. The `load`
+// is not optional: KAS's retry handler requires the run in its live registry and
+// says so ("not registered. Load or create it first.").
+func (rs *Runs) loadThenRetry(
+	ctx context.Context, bridge acpCaller, workflowID string,
+) (vibekit.RunRetriedResponse, error) {
+	resp, err := bridge.Call(ctx, methodKiroWorkflowLoad, map[string]any{
+		keyWorkflowID:     workflowID,
+		keyWorkspacePaths: []string{rs.lifecycle.workDir},
+	})
+	if cErr := runCallErr(resp, err); cErr != nil {
+		return vibekit.RunRetriedResponse{}, fmt.Errorf("workflow load: %w", rs.retryDeadlineErr(ctx, cErr))
 	}
-	for i := range runs {
-		if runs[i].WorkflowID == workflowID {
-			return runs[i].Name
-		}
+	return rs.retryCall(ctx, bridge, workflowID)
+}
+
+// retryCall issues the verb and decodes its outcome report. Folded through
+// runCallErr, so a JSON-RPC refusal arriving as a well-formed response with an
+// `error` member is not read as a success.
+func (rs *Runs) retryCall(
+	ctx context.Context, bridge acpCaller, workflowID string,
+) (vibekit.RunRetriedResponse, error) {
+	none := vibekit.RunRetriedResponse{}
+	resp, err := bridge.Call(ctx, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
+	if cErr := runCallErr(resp, err); cErr != nil {
+		return none, fmt.Errorf("workflow retry: %w", rs.retryDeadlineErr(ctx, cErr))
 	}
-	return ""
+	// Past this point KAS has ACCEPTED the verb, so every failure below is a lost
+	// REPORT rather than a retry that did not happen.
+	if resp == nil || len(resp.Result) == 0 {
+		return none, fmt.Errorf("%w: the reply carried no outcome", errRetryOutcomeUnreadable)
+	}
+	var out kasRetryOutcome
+	if uErr := json.Unmarshal(resp.Result, &out); uErr != nil {
+		return none, fmt.Errorf("%w: undecodable outcome: %w", errRetryOutcomeUnreadable, uErr)
+	}
+	// The reply must be ABOUT the run that was asked for: one run's outcome under
+	// another's name would be reported to the reader as theirs.
+	if out.WorkflowID != "" && out.WorkflowID != workflowID {
+		return none, fmt.Errorf("%w: the reply names run %q, not %q",
+			errRetryOutcomeUnreadable, out.WorkflowID, workflowID)
+	}
+	// Never nil on the wire, so a counting caller need not tell "none" from "absent".
+	nodes := out.RetriedNodeIDs
+	if nodes == nil {
+		nodes = []string{}
+	}
+	return vibekit.RunRetriedResponse{Status: out.Status, RetriedNodeIDs: nodes}, nil
+}
+
+// retryStartErr labels a failed bridge start: this call's deadline, or the start
+// failure itself.
+func (rs *Runs) retryStartErr(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return errRetryEngineSlow
+	}
+	return fmt.Errorf("retry bridge start: %w", err)
+}
+
+// retryDeadlineErr rewrites a call that failed on THIS call's budget into
+// errRetryEngineSlow, so the reader is told to try again.
+func (rs *Runs) retryDeadlineErr(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return errRetryEngineSlow
+	}
+	return err
 }
 
 // errStepStatusRefused means KAS resolved the run and DECLINED the update instead of
@@ -875,7 +1014,10 @@ func (rs *Runs) hostBridgeChat(
 	if sb := rs.runOwnBridge(workflowID); sb != nil {
 		return runChatID(workflowID), sb
 	}
-	return rs.bridgeForSession(ctx, rs.parentSession(ctx, workflowID))
+	// One resolution for both questions run_affordance.go asks about a run's parent:
+	// which chat owns it, and whether that chat is a live carrier.
+	chatID, _ := rs.chatForSession(ctx, rs.listedRun(ctx, workflowID).ParentSessionID)
+	return rs.hostBridgeFor(workflowID, chatID)
 }
 
 // runOwnBridge is the process holding the run under its OWN `run:<id>` chat id, or
@@ -889,52 +1031,50 @@ func (rs *Runs) runOwnBridge(workflowID string) *sharedBridge {
 	return rs.bridges.get(runChatID(workflowID))
 }
 
-// bridgeForSession is the live bridge whose chat launched from this KAS session, the
-// half hostBridgeChat reaches once the parent session is known. No RPC.
+// hostBridgeFor is hostBridgeChat for a caller that ALREADY KNOWS the run's parent
+// chat: no RPC, no chat-store read, and only a LIVE bridge answers.
 //
-// It needs the chat RECORD, which is what makes it unusable on the delete-grade
-// teardown — see CancelForSessions.
-func (rs *Runs) bridgeForSession(
-	ctx context.Context, parent string,
+// The resolution above costs a `workflow/list` round trip plus a chat-directory
+// scan, and two reads can DISAGREE, leaving the verb acting on a different answer
+// than the gate approved.
+func (rs *Runs) hostBridgeFor(
+	workflowID string, parentChat vibekit.ChatID,
 ) (vibekit.ChatID, *sharedBridge) {
-	if parent == "" {
+	if sb := rs.bridges.get(runChatID(workflowID)); sb != nil {
+		return runChatID(workflowID), sb
+	}
+	if parentChat == "" {
 		return "", nil
 	}
-	// The bridge map rather than the chat store: a chat with no bridge is no
-	// carrier, so resolving its id answers a question nobody can act on.
-	for chatID, sb := range rs.bridges.all() {
-		chat, ok := rs.chats.Get(ctx, chatID)
-		if !ok {
-			continue
-		}
-		// The whole CHAIN, not the live id: a chat changes session routinely, and
-		// matching only the current one would strand exactly those runs.
-		if slices.Contains(chat.SessionChain(), parent) {
-			return chatID, sb
-		}
+	sb := rs.bridges.get(parentChat)
+	if sb == nil {
+		return "", nil
 	}
-	return "", nil
+	return parentChat, sb
 }
 
-// parentSession reports the KAS session that launched a run, or "" when the run is
-// parentless, unknown, or the inventory cannot be read. `workflow/list` is the only
-// source — `inspect` omits the field, and the frame that carries it is not retained.
-func (rs *Runs) parentSession(ctx context.Context, workflowID string) string {
+// listedRun finds one run in KAS's own inventory, the only place this process can
+// read a run it did not launch: `inspect` carries neither the parent session nor
+// the recipe.
+//
+// The ZERO VALUE is the answer for a missing run, an empty field and an unreadable
+// inventory alike, because none of the three may fail a control read or a retry.
+func (rs *Runs) listedRun(ctx context.Context, workflowID string) kasWorkflowRun {
 	if workflowID == "" {
-		return ""
+		return kasWorkflowRun{}
 	}
 	runs, err := rs.listRaw(ctx)
 	if err != nil {
-		slog.Warn("could not read the run inventory, so a run's parent chat is unknown",
+		slog.Warn("could not read the run inventory, so a run's parent chat and recipe are unknown",
 			"workflow_id", workflowID, "error", err)
-		return ""
+		return kasWorkflowRun{}
 	}
 	for i := range runs {
 		if runs[i].WorkflowID == workflowID {
-			return runs[i].ParentSessionID
+			return runs[i]
 		}
 	}
-	return ""
+	return kasWorkflowRun{}
 }
 
 // control issues a verb that is safe on either connection, PREFERRING the process
@@ -1106,8 +1246,8 @@ func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
 	return nil
 }
 
-// kasRecipe is one listRecipes entry as KAS reports it (probe 26). `plan` rides
-// through as raw JSON — see vibekit.Recipe.
+// kasRecipe is one listRecipes entry as KAS reports it; `plan` rides through as
+// raw JSON — see vibekit.Recipe.
 type kasRecipe struct {
 	Inputs      map[string]string `json:"inputs"`
 	Name        string            `json:"name"`
@@ -1153,8 +1293,7 @@ func (rs *Runs) listRecipes(ctx context.Context) ([]vibekit.Recipe, error) {
 
 // workflowNew creates the run on the given bridge and returns its id.
 func (rs *Runs) workflowNew(ctx context.Context, bridge acpCaller, source string, inputs map[string]string) (string, error) {
-	// inputs is always a map, never nil: KAS requires the key ("inputs is not
-	// iterable" without it), and an input-less recipe takes {}.
+	// Always a map, never nil: KAS answers "inputs is not iterable" without it.
 	in := map[string]any{}
 	for k, v := range inputs {
 		in[k] = v
@@ -1187,7 +1326,7 @@ func runCallErr(resp *vibekit.RPCResponse, err error) error {
 	return nil
 }
 
-// --- Restart recovery -------------------------------------------------------
+// --- Restart recovery ---
 
 // stalePauseReason is KAS's STALE_RUNNING_PAUSE_REASON, stamped by its read-path
 // reconcile on a run whose owning process died. Matched as a LITERAL: several sites
@@ -1272,9 +1411,8 @@ func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID vibekit.ChatID
 	}
 }
 
-// maxAutoHeals bounds the automatic resumes one run may spend between two
-// pieces of progress. Three, because a fourth attempt against a dead network
-// tells nobody anything the third did not.
+// maxAutoHeals bounds the automatic resumes one run may spend between two pieces
+// of progress. Three, because a fourth attempt against a dead network says nothing.
 const maxAutoHeals = 3
 
 // healBaseDelay is the wait before the FIRST automatic resume, doubling per attempt
@@ -1409,9 +1547,8 @@ func (rs *Runs) healProgress(
 			// every `_kiro/workflow/*` method — so this is the one progress site a
 			// parentless run and a chat-parented one share.
 			rs.refillDeadline(ctx, f.WorkflowID)
-			// SettledByMoot: this frame says the node MOVED ON — completion,
-			// failure or abort — and vibekit's answer path already settled
-			// anything it accepted, so nothing here was answered through us.
+			// SettledByMoot rather than SettledByUser: the frame says only that the node
+			// moved on, and the answer path already settled anything vibekit accepted.
 			rs.settleAskForNode(ctx, f.WorkflowID, f.NodeID, vibekit.SettledByMoot)
 		}
 		next(ctx, chatID, msg)
@@ -1440,9 +1577,8 @@ func decodeNodeFrame(msg *vibekit.RPCResponse) nodeFrame {
 	return f
 }
 
-// resumeIfInterrupted inspects one paused run and resumes it when its pause
-// reason means the stop was involuntary. Resumed on the CHAT's bridge, so the
-// chat's process becomes the run's owner again.
+// resumeIfInterrupted inspects one paused run and resumes it when the pause was
+// involuntary. Resumed on the CHAT's bridge, so that process owns the run again.
 func (rs *Runs) resumeIfInterrupted(ctx context.Context, chatID vibekit.ChatID, workflowID string) {
 	// The wider involuntary set, because this RESUMES; the orphan sweep's
 	// narrower `restartPaused` cancels.
@@ -1465,8 +1601,8 @@ func (rs *Runs) resumeIfInterrupted(ctx context.Context, chatID vibekit.ChatID, 
 	slog.Info("rehydrate: resumed restart-paused run", "workflow_id", workflowID, "chat_id", chatID)
 }
 
-// listRaw lists runs with their raw parent session ids, for callers
-// that scope by session chain rather than by resolved chat.
+// listRaw lists runs with their raw parent session ids, for callers that scope by
+// session chain rather than by resolved chat.
 func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)

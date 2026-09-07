@@ -157,16 +157,9 @@ RUN mkdir -p static-src/node_modules/@cplieger/keyenc && \
 # Step 1: tsc --noEmit is the TYPE gate over the app + service-worker
 # configs (esbuild transpiles without typechecking, so tsc keeps failing
 # the build on type errors exactly as before).
-# Step 2: cmd/bundle (esbuild via its Go API — a Go library, no Node, no
-# npm) bundles static-src/app.ts into /app.js + hashed lazy chunks under
-# /chunks/ (the dynamic import() sites), bundles sw.ts into /sw.js,
-# assembles static/style.css from the two CSS manifests
-# (@cplieger/web-terminal-ui's MANIFEST.touch first — library-before-
-# consumer source order is the override mechanism — then
-# static-src/css/MANIFEST), and writes precompressed .gz siblings the
-# server hands to gzip-accepting clients. The @cplieger/* library sources
-# fetched above are bundled in at build time, so nothing is served from
-# /vendor/ and the page needs no importmap.
+# Step 2: cmd/bundle runs esbuild through its Go API, a Go library, which
+# is why this stage installs no Node and no npm. What it emits and how the
+# CSS manifests compose: CONTRIBUTING.md, frontend assets.
 ARG BUILD_VERSION=dev
 # Wire-floor gate (cross-language compatibility): go.mod's engine module and
 # the ARG-pinned npm client version move INDEPENDENTLY (Renovate bumps them in
@@ -269,6 +262,7 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
     jq \
     libatomic1 \
     openssh-client \
+    tini \
     unzip \
     xz-utils \
     && rm -rf /var/lib/apt/lists/*
@@ -360,4 +354,18 @@ EXPOSE 9847
 # unhealthy while the install was progressing normally.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=300s \
     CMD ["curl", "-sf", "http://127.0.0.1:9847/api/health"]
-ENTRYPOINT ["/opt/vibekit/entrypoint.sh"]
+# tini is PID 1 so orphans get reaped.
+#
+# vibekit spawns git, kiro-cli and the agent's own terminals, and each of those can
+# leave a grandchild whose parent exits first. An orphan reparents to PID 1, and
+# PID 1 was vibekit — a Go program that waits the children it started and nothing
+# else, so an orphan's exit status was never collected and the process stayed on the
+# table as a zombie forever. Measured before this: 1,172 zombies of 1,246 processes,
+# 610 of them `git`, all with ppid 1, against a `pids.max` of `max` as the only
+# thing between that and a hard `fork` failure.
+#
+# Reaping is not an application concern and an in-process SIGCHLD/Wait4 loop fights
+# the Go runtime's own child bookkeeping, so it belongs in PID 1. `--` separates
+# tini's arguments from the entrypoint's; entrypoint.sh keeps its own `exec`, so the
+# server still runs as tini's direct child and signals still reach it.
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/vibekit/entrypoint.sh"]

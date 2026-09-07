@@ -49,13 +49,21 @@ function hit(over: Partial<SearchHit> = {}): SearchHit {
   };
 }
 
+/** The three injected surfaces, declared once because they are MODULE state in
+ *  chat-search.ts: a case that armed its own would leak it into the next. The
+ *  suite's `mockReset` restores each implementation before every test. */
+const reveal = vi.fn((_chatID: string, _turnID: string, _messageID: string, _blockIndex?: number) =>
+  Promise.resolve(),
+);
+const forWalk = vi.fn((_chatID: string, _turnID: string) => Promise.resolve());
+const endWalk = vi.fn((_chatID: string) => undefined);
+
 beforeEach(() => {
   apiGet.mockReset();
   apiGet.mockResolvedValue({ hits: [] });
-  // The builder is module state; a case that injects its own must not leak it
-  // into the next.
-  initSearchRevealBuilder(() => Promise.resolve());
-  resetServerSearch("c1");
+  initSearchRevealBuilder(reveal, forWalk, endWalk);
+  resetServerSearch();
+  endWalk.mockClear();
 });
 
 describe("runServerSearch: the request", () => {
@@ -106,26 +114,26 @@ describe("runServerSearch: the reveal", () => {
       ],
     });
     const order: string[] = [];
-    const build = vi.fn((_chatID: string, turnID: string) => {
+    forWalk.mockImplementation((_chatID: string, turnID: string) => {
       order.push(`build:${turnID}`);
       return Promise.resolve();
     });
     bumpMessages.mockImplementation(() => {
       order.push("bump");
     });
-    initSearchRevealBuilder(build);
     await runServerSearch("c1", "retry");
     expect(order).toEqual(["build:u1", "build:u3", "bump"]);
-    expect(build).toHaveBeenCalledWith("c1", "u1");
-    expect(build).toHaveBeenCalledWith("c1", "u3");
+    expect(forWalk).toHaveBeenCalledWith("c1", "u1");
+    expect(forWalk).toHaveBeenCalledWith("c1", "u3");
+    // Through the WALK's entry point, not the navigation one: one pin slot cannot
+    // serve a loop over N turns, so the loop would do N builds to keep one.
+    expect(reveal).not.toHaveBeenCalled();
   });
 
   it("does not build for a hit the server could not resolve to a turn opener", async () => {
     apiGet.mockResolvedValue({ hits: [hit({ turn_message_id: "" })] });
-    const build = vi.fn(() => Promise.resolve());
-    initSearchRevealBuilder(build);
     await runServerSearch("c1", "retry");
-    expect(build).not.toHaveBeenCalled();
+    expect(forWalk).not.toHaveBeenCalled();
   });
 
   it("records the hit turns and their counts for the rail and the folded rows", async () => {
@@ -155,12 +163,44 @@ describe("runServerSearch: the reveal", () => {
     apiGet.mockResolvedValue({ hits: [hit({ turn: 2 })] });
     await runServerSearch("c1", "retry");
     bumpMessages.mockClear();
-    resetServerSearch("c1");
+    resetServerSearch();
     expect([...searchHitTurns()]).toEqual([]);
     expect(searchHitCount(2)).toBe(0);
     expect(clearSearchOpened).toHaveBeenCalledWith("c1");
-    // The re-fold un-mounts what the reveal mounted past the warm window: a
+    // The re-fold un-mounts what the reveal pinned past the block budget: a
     // shape change, stated at the branch that knows.
+    expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
+  });
+
+  it("releases the walk's grants on reset even when nothing was left to re-fold", async () => {
+    // The grants outlive the loop that took them, so the reveal's END is what ends
+    // them — and it must not depend on another question's answer. `clearSearchOpened`
+    // returns false whenever the set is already empty (`resetFoldState`, a second
+    // reset), which would leave every grant standing with no gesture left to end it.
+    apiGet.mockResolvedValue({ hits: [hit({ turn: 2 })] });
+    await runServerSearch("c1", "retry");
+    clearSearchOpened.mockReturnValue(false);
+    endWalk.mockClear();
+    resetServerSearch();
+    expect(endWalk).toHaveBeenCalledExactlyOnceWith("c1");
+  });
+
+  it("undoes the reveal in the chat the SEARCH ran in, whatever is active at close", async () => {
+    // The close path runs after a tab change has already moved the ACTIVE chat, so a
+    // teardown keyed on that re-folded nothing: the searched chat kept 48 granted ordinals at
+    // every hit turn's head AND its search-opened turns stayed open, with no search running.
+    // The function takes no chat argument now, so no caller can name the wrong one; what
+    // this pins is that all THREE effects name the chat the search ran in.
+    apiGet.mockResolvedValue({ hits: [hit({ turn: 2 })] });
+    await runServerSearch("c1", "retry");
+    endWalk.mockClear();
+    clearSearchOpened.mockClear();
+    bumpMessages.mockClear();
+
+    resetServerSearch();
+
+    expect(endWalk).toHaveBeenCalledExactlyOnceWith("c1");
+    expect(clearSearchOpened).toHaveBeenCalledExactlyOnceWith("c1");
     expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
   });
 
@@ -180,7 +220,7 @@ describe("runServerSearch: the reveal", () => {
     apiGet.mockResolvedValue({ hits: [hit({ turn: 1 })] });
     await runServerSearch("c1", "x");
     expect(searchHitTotal()).toBe(1);
-    resetServerSearch("c1");
+    resetServerSearch();
     // Zero rather than stale: the counter falls back to the DOM number, which is
     // the honest answer once there is no server opinion standing.
     expect(searchHitTotal()).toBe(0);
@@ -218,14 +258,13 @@ describe("revealHitTurn: the per-hit reveal navigation runs before selecting", (
     openForSearch.mockImplementation((_chatID: string, id: string) => {
       order.push(`open:${id}`);
     });
-    const build = vi.fn((_chatID: string, turnID: string) => {
+    reveal.mockImplementation((_chatID: string, turnID: string) => {
       order.push(`build:${turnID}`);
       return Promise.resolve();
     });
     bumpMessages.mockImplementation(() => {
       order.push("bump");
     });
-    initSearchRevealBuilder(build);
     await revealHitTurn("c1", hit({ turn_message_id: "u7" }));
     // Same ordering contract as the search-wide reveal: the body must exist
     // before the repaint that unfolds it, and the bump is the stated `shape`.
@@ -233,25 +272,40 @@ describe("revealHitTurn: the per-hit reveal navigation runs before selecting", (
     expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
   });
 
+  it("names the hit's own BLOCK, so the build can centre on it rather than the head", async () => {
+    // The turn-block ordinal is a fact of the residency projection, which is on the
+    // other side of this injection: what crosses is the block's identity, and the
+    // consumer converts. Without it every hit in a 700-block turn builds the head and
+    // the reader lands on `could not be shown`.
+    await revealHitTurn("c1", hit({ turn_message_id: "u7", message_id: "a4", block_index: 311 }));
+    expect(reveal).toHaveBeenCalledExactlyOnceWith("c1", "u7", "a4", 311);
+  });
+
+  it("passes no block for a hit that names none, which is the message's own row", async () => {
+    // A `message`-kind hit and a legacy blockless one both resolve to the ROW, and
+    // `turnOrdinalOf` answers the message's FIRST ordinal for an absent index.
+    await revealHitTurn(
+      "c1",
+      hit({ turn_message_id: "u7", message_id: "a4", segment_kind: "message" }),
+    );
+    expect(reveal).toHaveBeenCalledExactlyOnceWith("c1", "u7", "a4", undefined);
+  });
+
   it("does nothing for a hit with no turn opener", async () => {
     // The beforeEach reset already bumped once; this test asserts the CALL
     // BELOW adds nothing.
     bumpMessages.mockClear();
-    const build = vi.fn(() => Promise.resolve());
-    initSearchRevealBuilder(build);
     await revealHitTurn("c1", hit({ turn_message_id: "" }));
     expect(openForSearch).not.toHaveBeenCalled();
-    expect(build).not.toHaveBeenCalled();
+    expect(reveal).not.toHaveBeenCalled();
     expect(bumpMessages).not.toHaveBeenCalled();
   });
 
   it("does nothing without an active chat", async () => {
     bumpMessages.mockClear();
-    const build = vi.fn(() => Promise.resolve());
-    initSearchRevealBuilder(build);
     await revealHitTurn("", hit());
     expect(openForSearch).not.toHaveBeenCalled();
-    expect(build).not.toHaveBeenCalled();
+    expect(reveal).not.toHaveBeenCalled();
     expect(bumpMessages).not.toHaveBeenCalled();
   });
 });

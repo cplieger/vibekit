@@ -333,7 +333,7 @@ func TestRetry_ACancelledRetryKeepsTheLeaseItMinted(t *testing.T) {
 				t.Fatal("the fixture holds a lease, so Retry mints none and this proves nothing")
 			}
 
-			if err := h.runs.Retry(t.Context(), "wf_1"); err == nil {
+			if _, err := h.runs.Retry(t.Context(), "wf_1", runAffordance{}); err == nil {
 				t.Fatal("a failed retry reported success")
 			}
 			why := "a run KAS may be driving cannot be bounded without the lease armDeadline reads"
@@ -516,7 +516,10 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 		},
 		"a retry in flight": {
 			methodKiroWorkflowRetry,
-			func(t *testing.T, h *Runtime) error { return h.runs.Retry(t.Context(), "wf_1") },
+			func(t *testing.T, h *Runtime) error {
+				_, err := h.runs.Retry(t.Context(), "wf_1", runAffordance{})
+				return err
+			},
 		},
 	}
 

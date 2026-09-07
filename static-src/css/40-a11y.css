@@ -4,25 +4,6 @@
   display: none !important;
 }
 
-/* Initial loading screen: shown until auth state is resolved. */
-[id="app-loading"] {
-  position: fixed;
-  inset: 0;
-  z-index: 400;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--c-bg-primary);
-}
-
-[id="app-loading"] svg {
-  animation: vk-skeleton 1.5s ease-in-out infinite;
-}
-
-[id="app"].app-hidden {
-  visibility: hidden;
-}
-
 /* ==========================================================================
    Accessibility
    ========================================================================== */

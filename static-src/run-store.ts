@@ -5,7 +5,8 @@
 
 import { signal, touch, type Signal } from "@cplieger/reactive";
 import { apiGet, apiGetTyped } from "./api-client.js";
-import { decodeLiveRunsResponse } from "./wire/decoders.gen.js";
+import { decodeLiveRunsResponse, decodeRunControlsResponse } from "./wire/decoders.gen.js";
+import type { RunControlsResponse } from "./wire/types.gen.js";
 
 /** One node of KAS's execution tree, from `state.root`.
  *
@@ -102,10 +103,169 @@ export function runState(workflowID: string): RunState | undefined {
   return cell(workflowID).value;
 }
 
-/** Read a run's state WITHOUT subscribing. Module-private: one caller, so exporting
- *  it would add a surface only a test reaches. */
-function peekRunState(workflowID: string): RunState | undefined {
+/** Read a run's state WITHOUT subscribing. For a caller that must not re-run when
+ *  the run changes. */
+export function peekRunState(workflowID: string): RunState | undefined {
   return cells.get(workflowID)?.peek();
+}
+
+/** Apply a `run_progress` frame to the cached tree, and report whether it landed.
+ *
+ *  `false` means the caller must refetch, and there are exactly three reasons for
+ *  it: the frame names no node (`loop_iteration` and `steps_queued` change the
+ *  tree's SHAPE, `paused` is run-level with its reason on `inspect` alone), the
+ *  run is not cached at all (nothing to patch — a client that missed the start),
+ *  or the path addresses a node this tree does not hold yet (a step inside a
+ *  freshly-created iteration container). So the refetch survives as the
+ *  gap-recovery path it always should have been, and a progressing run costs no
+ *  HTTP round trips.
+ *
+ *  Idempotent, which is what makes it safe against KAS's duplicate frames across
+ *  a resume: every write is an assignment addressed by path, never an increment.
+ *
+ *  The tree is copied down the matched path rather than mutated in place. The
+ *  signal's value is what readers hold, and a reader that keeps the previous
+ *  value to compare against — the exec view does — must not find it rewritten
+ *  underneath. Siblings are shared by reference: only the spine changes. */
+export function applyRunProgress(p: RunProgressFrame): boolean {
+  if (p.workflow_id === "" || p.node_path === undefined || p.node_path === "") {
+    return false;
+  }
+  const c = cells.get(p.workflow_id);
+  const root = c?.peek()?.root;
+  if (c === undefined || root === undefined) {
+    return false;
+  }
+  const next = patchNode(root, undefined, p.node_path.split("/"), p);
+  if (next === undefined) {
+    return false;
+  }
+  if (next === root) {
+    // The frame addressed a node this tree holds and moved nothing about it: a
+    // watch poll re-stating `running`, or a duplicate frame across a resume.
+    // Landed, so no refetch — and no assignment, because a new object identity
+    // for an unchanged tree wakes every subscriber for a repaint of the same
+    // pixels. `patchedLeaf` is where the sameness is decided.
+    return true;
+  }
+  const state = c.peek();
+  if (state === undefined) {
+    return false;
+  }
+  c.value = { ...state, root: next };
+  return true;
+}
+
+/** The fields of a `run_progress` payload this store reads. Declared here rather
+ *  than imported from the generated type so the store's contract is the four
+ *  fields it applies, and a test can hand it a literal. */
+export interface RunProgressFrame {
+  workflow_id: string;
+  node_path?: string;
+  status?: string;
+  started_at?: string;
+  ended_at?: string;
+  failure_reason?: string;
+}
+
+/** Rebuild `node`'s subtree with the addressed descendant patched, or `undefined`
+ *  when this tree does not hold it.
+ *
+ *  `trail` is the path still to walk. Matching uses `nodePathSegment`, the same
+ *  translation `nodePathOf` uses in the other direction, so a repeat's
+ *  `iter-<n>` frame segment finds the `<repeatId>#<n>` container it names. */
+function patchNode(
+  node: RunNode,
+  parent: RunNode | undefined,
+  trail: string[],
+  p: RunProgressFrame,
+): RunNode | undefined {
+  const [head, ...rest] = trail;
+  if (head === undefined || nodePathSegment(node, parent) !== head) {
+    return undefined;
+  }
+  if (rest.length === 0) {
+    return patchedLeaf(node, p);
+  }
+  const kids = node.children;
+  if (kids === undefined) {
+    return undefined;
+  }
+  for (const [i, k] of kids.entries()) {
+    const patched = patchNode(k, node, rest, p);
+    if (patched === k) {
+      // Found, and unchanged. Rebuilding the spine over an identical child would
+      // hand `applyRunProgress` a new root for a tree that did not move.
+      return node;
+    }
+    if (patched !== undefined) {
+      return { ...node, children: kids.with(i, patched) };
+    }
+  }
+  return undefined;
+}
+
+/** The addressed node with the frame's fields written over it, or the SAME node
+ *  when the frame moves none of them.
+ *
+ *  Every field is set only when the frame carries it, because a frame states what
+ *  changed: `node_complete` carries no `started_at` and must not lose the one
+ *  node_start left. `exactOptionalPropertyTypes` is why each is a conditional
+ *  spread rather than an assignment of a possibly-undefined value.
+ *
+ *  Returning the same reference for an unchanged node is what the callers above
+ *  read to leave the spine and the signal alone. */
+function patchedLeaf(node: RunNode, p: RunProgressFrame): RunNode {
+  const status = nodeStatus(p.status);
+  const startedAt = nonEmpty(p.started_at);
+  const endedAt = nonEmpty(p.ended_at);
+  const failureReason = nonEmpty(p.failure_reason);
+  const moved =
+    (status !== undefined && status !== node.status) ||
+    (startedAt !== undefined && startedAt !== node.startedAt) ||
+    (endedAt !== undefined && endedAt !== node.endedAt) ||
+    (failureReason !== undefined && failureReason !== node.failureReason);
+  if (!moved) {
+    return node;
+  }
+  return {
+    ...node,
+    ...(status === undefined ? {} : { status }),
+    ...(startedAt === undefined ? {} : { startedAt }),
+    ...(endedAt === undefined ? {} : { endedAt }),
+    ...(failureReason === undefined ? {} : { failureReason }),
+  };
+}
+
+/** The value, or `undefined` for absent and for the empty string — which is what
+ *  an omitted `omitempty` string field decodes to and means "unchanged", never
+ *  "clear this". */
+function nonEmpty(v: string | undefined): string | undefined {
+  return v === undefined || v === "" ? undefined : v;
+}
+
+/** KAS's NodeState status words, as the tree spells them. The frame carries the
+ *  status as a plain string — it is forwarded from KAS rather than enumerated
+ *  server-side — so this is where it is narrowed. */
+const NODE_STATUSES = [
+  "pending",
+  "running",
+  "paused",
+  "completed",
+  "failed",
+  "aborted",
+  "skipped",
+] as const;
+
+/** The frame's status, or `undefined` for absent, empty, or a word this client
+ *  does not know.
+ *
+ *  An unrecognised status is DROPPED rather than written: the field is a typed
+ *  union every renderer switches on, so a new upstream word landing in it would
+ *  reach those switches with no case. Dropping leaves the node's previous status
+ *  and the next refetch carries the truth. */
+function nodeStatus(v: string | undefined): RunNode["status"] | undefined {
+  return NODE_STATUSES.find((s) => s === v);
 }
 
 /** Re-read a run from the server. Safe to call on every SSE frame: a second call
@@ -120,6 +280,23 @@ export function invalidateRun(workflowID: string): void {
     return;
   }
   void fetchRun(workflowID);
+}
+
+/** Re-read every run this client holds state for. The gap-recovery half of the
+ *  push contract.
+ *
+ *  `run_progress` frames are applied rather than refetched, so an outage that
+ *  swallows them leaves the cached tree stale with nothing to notice it — a node
+ *  that completed during the gap keeps reading `running` and its clock keeps
+ *  ticking. A gap is the one moment the client knows it missed frames, so it is
+ *  where the refetch belongs.
+ *
+ *  Bounded by the cache: at most one request per run already on screen, collapsed
+ *  by `invalidateRun`'s in-flight guard. */
+export function invalidateCachedRuns(): void {
+  for (const id of cells.keys()) {
+    invalidateRun(id);
+  }
 }
 
 async function fetchRun(workflowID: string): Promise<void> {
@@ -152,6 +329,9 @@ export function forgetRun(workflowID: string): void {
   cells.delete(workflowID);
   stale.delete(workflowID);
   plans.delete(workflowID);
+  controlCells.delete(workflowID);
+  controlsInFlight.delete(workflowID);
+  controlsStale.delete(workflowID);
   launchedBy.delete(workflowID);
 }
 
@@ -162,6 +342,83 @@ export function runLabelOf(workflowID: string): string {
   const state = peekRunState(workflowID);
   const label = state?.runLabel ?? "";
   return label === "" ? (state?.workflowName ?? "") : label;
+}
+
+// ---------------------------------------------------------------------------
+// What may be done to a run: `GET /api/runs/{id}/controls`.
+//
+// A SECOND cell rather than a field on the state above, because it is a second
+// fetch on its own clock: the state is re-read on every gap and shape change,
+// while the answer here turns over only when the run reaches a terminal status.
+// Signal-backed for the state cell's reason — the run page repaints from it, and
+// the answer arrives after the first paint.
+//
+// It is the server's answer verbatim, and nothing here re-derives any part of
+// it. The rule needs the run's status, its parentage and whether anything hosts
+// it, and this process can see only the first; the previous client-side copy read
+// parentage off an event-fed map that is empty after a reload, so a chat-parented
+// run was classified parentless and drew a row it should not have had.
+// ---------------------------------------------------------------------------
+
+const controlCells = new Map<string, Signal<RunControlsResponse | undefined>>();
+const controlsInFlight = new Set<string>();
+const controlsStale = new Set<string>();
+
+function controlCell(workflowID: string): Signal<RunControlsResponse | undefined> {
+  let c = controlCells.get(workflowID);
+  if (c === undefined) {
+    c = signal<RunControlsResponse | undefined>(undefined);
+    controlCells.set(workflowID, c);
+  }
+  return c;
+}
+
+/** Subscribe to what a run offers. `undefined` until the first fetch resolves,
+ *  which renders no row rather than guessing one — the same rule the old table
+ *  applied to an unknown status, now covering the moment before the answer
+ *  lands. */
+export function runControls(workflowID: string): RunControlsResponse | undefined {
+  return controlCell(workflowID).value;
+}
+
+/** Re-read what a run offers. THREE triggers, never one per repaint: a tab open
+ *  (`run-view.ts`), that run's own `run_finished` (`handlers/run.ts`), and a retry
+ *  that succeeded (`actions/runs.ts`).
+ *
+ *  Coalesced with a TRAILING refetch, the state cell's discipline: any two CAN
+ *  coincide, and the retry one is fired by a CLICK, so it is the likeliest to land
+ *  inside another read's window. A run ending inside the tab-open read's window is
+ *  the moment the answer changes, so dropping it would leave a pre-terminal verb row
+ *  with nothing left to re-ask. A failed fetch leaves the previous answer standing. */
+export function invalidateRunControls(workflowID: string): void {
+  if (workflowID === "") {
+    return;
+  }
+  if (controlsInFlight.has(workflowID)) {
+    controlsStale.add(workflowID);
+    return;
+  }
+  void fetchRunControls(workflowID);
+}
+
+async function fetchRunControls(workflowID: string): Promise<void> {
+  // Claimed HERE rather than by the caller, so the trailing call below re-arms the
+  // guard with no window a coincident invalidation could slip a third request into.
+  controlsInFlight.add(workflowID);
+  try {
+    const d = await apiGetTyped(
+      `/api/runs/${encodeURIComponent(workflowID)}/controls`,
+      decodeRunControlsResponse,
+    );
+    if (d !== null) {
+      controlCell(workflowID).value = d;
+    }
+  } finally {
+    controlsInFlight.delete(workflowID);
+  }
+  if (controlsStale.delete(workflowID)) {
+    await fetchRunControls(workflowID);
+  }
 }
 
 /** A run's node plan, read WITHOUT subscribing.

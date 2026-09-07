@@ -230,6 +230,50 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 				"Got: %s", wantLine, out)
 		}
 	})
+
+	// A live session's report beats the session-less template, per list: this endpoint is the
+	// client's only copy of the vocabulary, so the weaker of the two loses the workspace agents.
+	t.Run("a live catalog wins over the template", func(t *testing.T) {
+		h, _, br := newTestHub()
+		br.callResults = map[string]json.RawMessage{
+			methodKiroConfigTemplate: json.RawMessage(goodReply),
+		}
+		h.catalog.SetModes([]vibekit.SessionMode{
+			{ID: "vibe", Name: "Default", Source: "bundled"},
+			{ID: "reviewer", Name: "reviewer", Source: "workspace"},
+		})
+
+		got := serve(t, h)
+
+		if len(got.Modes) != 2 || got.Modes[1].ID != "reviewer" {
+			t.Errorf("modes = %+v, want the live catalog's two entries", got.Modes)
+		}
+		// The template still fills what no session has reported.
+		if len(got.Models) != 1 || got.Models[0].ID != "m-default" {
+			t.Errorf("models = %+v, want the template's, which the live catalog has not replaced",
+				got.Models)
+		}
+		if got.DefaultModel != "m-default" {
+			t.Errorf("default model = %q, want the template's m-default", got.DefaultModel)
+		}
+	})
+
+	// A template outage must not hide a catalog vibekit already holds.
+	t.Run("a live catalog survives a template outage", func(t *testing.T) {
+		h, _, br := newTestHub()
+		br.callErrs = map[string]error{methodKiroConfigTemplate: errors.New("kas gone")}
+		h.catalog.SetModes([]vibekit.SessionMode{{ID: "reviewer", Name: "reviewer", Source: "workspace"}})
+		h.catalog.SetModels([]vibekit.SessionModel{{ID: "m-live", Name: "Live"}})
+
+		got := serve(t, h)
+
+		if len(got.Modes) != 1 || got.Modes[0].ID != "reviewer" {
+			t.Errorf("modes = %+v, want the live catalog's entry despite the template failing", got.Modes)
+		}
+		if len(got.Models) != 1 || got.Models[0].ID != "m-live" {
+			t.Errorf("models = %+v, want the live catalog's entry", got.Models)
+		}
+	})
 }
 
 // Asserted on the raw BYTES, because decoding into the struct cannot see this

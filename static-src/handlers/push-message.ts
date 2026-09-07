@@ -1,20 +1,11 @@
-// Service-worker push messages.
+// Service-worker push messages, in two kinds wanting opposite treatment.
 //
-// The worker posts to the page in two situations wanting opposite treatment:
-//
-//   "arrived"  a push landed while this page was focused, so the worker
-//              showed no OS notification (the sanctioned exception to
-//              "every push must show a notification" — Chrome's
-//              userVisibleOnly would otherwise substitute a generic
+//   "arrived"  a push landed while this page was focused, so the worker showed no
+//              OS notification (the sanctioned exception to "every push must show
+//              one" — Chrome's userVisibleOnly would substitute a generic
 //              background notice). Right surface: an ephemeral toast.
-//
-//   "clicked"  the user tapped a notification. The worker focuses this page
-//              and hands over the chat id; the route is built here because
-//              router.ts is the single source of truth and the worker
-//              compiles standalone with no imports.
-//
-// Sending the id rather than a URL is also why an existing tab changes
-// route instead of reloading.
+//   "clicked"  the user tapped one. The route is built here because router.ts owns
+//              the route vocabulary, which is why a tab re-routes and never reloads.
 // ---------------------------------------------------------------------------
 
 import { openChatTab } from "../chat.js";
@@ -50,9 +41,8 @@ function isPushMessage(d: unknown): d is PushPageMessage {
   );
 }
 
-/** Where a clicked notification goes. A PR subject opens the git view;
- *  the route is built here because router.ts is the single source of
- *  truth and the worker compiles standalone with no imports. */
+/** Where a clicked notification goes: a PR subject opens the git view, and
+ *  everything else routes by chat id. */
 export function routePushMessage(msg: PushPageMessage): void {
   if ((msg.subject ?? "").startsWith(PR_SUBJECT_PREFIX)) {
     openChangeSet();

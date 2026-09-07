@@ -423,6 +423,7 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID vibeki
 	if len(cat.models) == 0 && !cat.sawEffort {
 		return
 	}
+	t.catalog.SetModels(cat.models)
 	err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
@@ -474,10 +475,6 @@ func readConfigCatalog(opts []configOption) configCatalog {
 // false.
 func (cat *configCatalog) applyTo(c *vibekit.Chat) bool {
 	changed := false
-	if len(cat.models) > 0 && !sameModelIDs(c.AvailableModels, cat.models) {
-		c.AvailableModels = cat.models
-		changed = true
-	}
 	if cat.currentModel != "" && c.Model != cat.currentModel {
 		c.Model = cat.currentModel
 		changed = true
@@ -577,18 +574,4 @@ func choiceEffort(meta json.RawMessage) choiceEffortMeta {
 		HasEffort: m.Kiro.HasEffort,
 		Default:   m.Kiro.DefaultEffortLevel,
 	}
-}
-
-// sameModelIDs reports whether two model catalogs carry the same ids in the same
-// order, sameEffortLevels' twin.
-func sameModelIDs(a, b []vibekit.SessionModel) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].ID != b[i].ID {
-			return false
-		}
-	}
-	return true
 }

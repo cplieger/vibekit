@@ -17,14 +17,14 @@
 //   - EventSource's native auto-reconnect covers transient drops with
 //     a spec-defined retry (Firefox/Chrome default 3s, resettable via
 //     `retry:` fields the server doesn't emit).
-//   - On terminal errors (SSE stream ends with a non-2xx body, proxy
-//     strips keep-alives, iOS backgrounds the tab long enough that the
-//     browser closes the source), `readyState` transitions to CLOSED
-//     and the browser gives up. We handle this by tearing down the
-//     current EventSource and reopening with exponential backoff.
+//   - On terminal errors (a non-2xx body, a proxy stripping keep-alives, iOS
+//     closing a backgrounded source), `readyState` goes CLOSED and the browser
+//     gives up. We tear down the source and reopen with exponential backoff.
 //   - visibilitychange + pageshow kick an immediate reconnect attempt
 //     when the tab returns to the foreground. Covers the common case
 //     where iOS killed the stream while the tab was in the background.
+//   - Every reconnect above carries the cursor itself, as a query parameter:
+//     only the browser's OWN retry sends Last-Event-ID. See `eventsURL`.
 // ---------------------------------------------------------------------------
 
 import type { ServerEvent, ConnectedPayload, ConnectionStatus, TabKind } from "./types.js";
@@ -288,6 +288,20 @@ const HYDRATE_TIMEOUT_MS = 20_000;
  *  move rather than grow a buffer without bound. */
 const MAX_PENDING_FRAMES = 2000;
 
+/** The events URL, carrying the replay cursor when there is one.
+ *
+ *  EventSource sends `Last-Event-ID` on ITS OWN retry only, and `teardown` closes
+ *  the source — so every reconnect below opens a fresh EventSource with no history
+ *  and used to get no replay at all. Zero is omitted: a first connection has missed
+ *  nothing. The server reads the parameter only when the header is absent, so the
+ *  browser's own retry keeps deciding for itself (`internal/agent/sse.go`). */
+function eventsURL(cursor: number): string {
+  if (cursor <= 0) {
+    return "/api/events";
+  }
+  return `/api/events?last_event_id=${encodeURIComponent(String(cursor))}`;
+}
+
 class TransportController {
   private onMsg: MsgHandler = () => {
     /* noop */
@@ -435,8 +449,22 @@ class TransportController {
     });
   }
 
+  /** Whether the stream needs help coming back.
+   *
+   *  The source's own `readyState`, not the phase: `onerror` demotes the phase only
+   *  on CLOSED, so the browser's internal retry — what the kick pre-empts — leaves
+   *  it at `connected`. Mid-handshake is ALIVE, which is why `connecting` gets its
+   *  own arm: `pageshow` fires on every cold load after `init` opened the source, so
+   *  a bare `!== OPEN` would tear that stream down and reopen it every load. */
   private sseIsDead(): boolean {
-    return this.conn.phase !== "connected" && this.conn.phase !== "connecting";
+    switch (this.conn.phase) {
+      case "connected":
+        return this.conn.source.readyState !== EventSource.OPEN;
+      case "connecting":
+        return this.conn.source.readyState === EventSource.CLOSED;
+      default:
+        return true;
+    }
   }
 
   // --- SSE ---
@@ -466,7 +494,7 @@ class TransportController {
     this.onStatus("connecting");
     this.cursorAtConnect = this.lastSeenEventID;
     this.openedAt = 0;
-    const source = new EventSource("/api/events");
+    const source = new EventSource(eventsURL(this.lastSeenEventID));
     this.conn = { phase: "connecting", source };
     source.onopen = (): void => {
       this.openedAt = Date.now();
@@ -542,9 +570,11 @@ class TransportController {
   }
 
   private scheduleReconnect(info: { delay: number }): void {
-    if (this.conn.phase === "reconnecting") {
-      clearTimeout(this.conn.timer);
-    }
+    // Close what is live, not just a pending timer: the kick fires while a source
+    // can still be OPEN or mid-retry, and an unclosed one keeps its `onmessage`
+    // bound — it would deliver frames beside its own replacement and move the
+    // cursor.
+    this.teardown();
     const timer = setTimeout(() => {
       this.connectSSE();
     }, info.delay);

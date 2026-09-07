@@ -173,12 +173,26 @@ export function createRunChatStepStream(
     // Comparing the prefix is what tells the two apart without throwing away the
     // reader's place on every streamed chunk.
     if (!flipped && shapeExtends(rec.shape, shape) && rec.shape.length > 0) {
-      updateDetachedBody(rec.host, message, sourceChatID(source), rec.stepID, slice.live);
+      updateDetachedBody(
+        rec.host,
+        message,
+        sourceChatID(source),
+        rec.stepID,
+        slice.live,
+        slice.sourceKeys,
+      );
     } else {
       disposeDetachedBody(rec.renderKey, rec.stepID);
       rec.host.replaceChildren();
       rec.sealed = false;
-      buildDetachedBody(rec.host, message, sourceChatID(source), rec.stepID, slice.live);
+      buildDetachedBody(
+        rec.host,
+        message,
+        sourceChatID(source),
+        rec.stepID,
+        slice.live,
+        slice.sourceKeys,
+      );
     }
     rec.shape = shape;
 

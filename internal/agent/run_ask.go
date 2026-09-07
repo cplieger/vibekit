@@ -466,7 +466,7 @@ func needInputParked(n *askNode, trail []string) (leaf *askNode, path []string) 
 		return nil, nil
 	}
 	here := append(append([]string{}, trail...), n.NodeID)
-	if n.Status == "paused" && n.CompletionSignal == needInputSignal {
+	if n.Status == runStatusPaused && n.CompletionSignal == needInputSignal {
 		return n, here
 	}
 	for i := range n.Children {
@@ -486,7 +486,7 @@ func pausedLeaf(n *askNode, trail []string) (leaf *askNode, path []string) {
 	}
 	here := append(append([]string{}, trail...), n.NodeID)
 	if len(n.Children) == 0 {
-		if n.Status == "paused" {
+		if n.Status == runStatusPaused {
 			return n, here
 		}
 		return nil, nil

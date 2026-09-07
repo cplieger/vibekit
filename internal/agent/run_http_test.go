@@ -9,16 +9,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/vibekit/internal/workflow"
 )
 
 // TestHandleRun_RejectsNonGET: this surface is read-only at the method level too, so a
@@ -35,15 +36,13 @@ func TestHandleRun_RejectsNonGET(t *testing.T) {
 func TestHandleRun_RejectsAMissingID(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
-	// No path value set: the route cannot match this, but a hand-built request
-	// can, and answering 400 beats calling KAS with an empty id.
+	// The route cannot match this, but a hand-built request can: 400 beats calling KAS.
 	h.runRoutes.handleRun(rec, httptest.NewRequest(http.MethodGet, "/api/runs/", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("GET with no id = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
 
-// getLiveRuns serves GET /api/runs/live off rr and decodes the envelope.
 func getLiveRuns(t *testing.T, rr *runRoutes) vibekit.LiveRunsResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -123,10 +122,11 @@ func TestHandleLiveRuns_ATerminalRunLeavesTheProjection(t *testing.T) {
 	}
 }
 
-// TestHandleLiveRuns_HistoryStaysParentlessOnly: the projection is a NEW surface, not a
-// change to History, so one chat-parented run appears in /api/runs/live while History's
-// toWire drops it (that work already renders in the chat's transcript).
-func TestHandleLiveRuns_HistoryStaysParentlessOnly(t *testing.T) {
+// Both surfaces carry a chat-parented run, and what separates them is the answer each is
+// FOR: /api/runs/live projects the run with the chat it belongs to, because its consumer
+// is that chat's eviction exemption, while History attributes the run to the chat so the
+// row's door can nest the run's tab under it.
+func TestHandleLiveRuns_AndHistoryBothCarryAChatParentedRun(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_agent", "workflowName": "publish",
@@ -143,14 +143,20 @@ func TestHandleLiveRuns_HistoryStaysParentlessOnly(t *testing.T) {
 			{WorkflowID: "wf_manual", Name: "nightly", Status: "completed"},
 		},
 	)
-	for i := range rows {
-		if rows[i].WorkflowID == "wf_agent" {
-			t.Errorf("History listed a chat-parented run; the live-runs projection must not "+
-				"have widened it: %+v", rows[i])
-		}
+	if len(rows) != 2 {
+		t.Fatalf("History listed %d rows, want both runs: %+v", len(rows), rows)
 	}
-	if len(rows) != 1 || rows[0].WorkflowID != "wf_manual" {
-		t.Errorf("History dropped the parentless run it exists to list: %+v", rows)
+	byID := map[string]string{}
+	for i := range rows {
+		byID[rows[i].WorkflowID] = rows[i].ParentChatID
+	}
+	if got, ok := byID["wf_agent"]; !ok || got != "c-live" {
+		t.Errorf("History's chat-parented row carries parent_chat_id %q (present=%v), want %q: "+
+			"the row's door nests the run's tab under that chat", got, ok, "c-live")
+	}
+	if got, ok := byID["wf_manual"]; !ok || got != "" {
+		t.Errorf("History's parentless row carries parent_chat_id %q (present=%v), want empty",
+			got, ok)
 	}
 }
 
@@ -220,9 +226,9 @@ func TestHandleLiveRuns_ExecutingFollowsTheLeasesOwnClock(t *testing.T) {
 	}
 }
 
-// TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat: the field is additive, so a
-// pre-upgrade row loads and projects an empty chat_id — "no chat to exempt", which is
-// what a parentless launch mints.
+// TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat: a version-1 file written
+// before Lease.ChatID existed still loads (the field is additive), and its rows project
+// with an empty chat_id — "no chat to exempt".
 func TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -247,8 +253,92 @@ func TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat(t *testing.T) {
 	}
 }
 
-// answerReq builds a POST /api/runs/{id}/answer request with its path value set,
-// which the handler reads rather than parsing the URL.
+// TestHandleControls serves the affordance route and pins its envelope. The endpoint
+// exists because the CLIENT cannot answer the question: it decided the control row from a
+// map written only by SSE frames, so a reloaded client read every run as parentless.
+func TestHandleControls(t *testing.T) {
+	controlsReq := func(id string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/api/runs/"+id+"/controls", nil)
+		req.SetPathValue("id", id)
+		return req
+	}
+
+	t.Run("it refuses a non-GET", func(t *testing.T) {
+		h, _ := seedChatParentedRun(t, true)
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleControls(rec, httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/controls", nil))
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("POST = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+		}
+	})
+
+	t.Run("it refuses a missing id", func(t *testing.T) {
+		h, _ := seedChatParentedRun(t, true)
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleControls(rec, httptest.NewRequest(http.MethodGet, "/api/runs//controls", nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("no id = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+	})
+
+	// Retry is offered and the parent chat travels with it, because the run page's
+	// step-transcript note asks the same question.
+	t.Run("an aborted chat-parented run offers retry and names its parent chat", func(t *testing.T) {
+		h, _ := seedChatParentedRun(t, true)
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleControls(rec, controlsReq("wf_1"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET controls = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		var got vibekit.RunControlsResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decoding the controls reply: %s", err)
+		}
+		if !slices.Contains(got.Verbs, "retry") {
+			t.Errorf("verbs = %v, want retry offered", got.Verbs)
+		}
+		if got.ParentChatID != "c1" {
+			t.Errorf("parent_chat_id = %q, want c1; the run page reads it to say where a step's "+
+				"live transcript went", got.ParentChatID)
+		}
+	})
+
+	t.Run("a live run whose engine is gone carries the refusal sentence", func(t *testing.T) {
+		// Chat closed, so nothing in this process holds the run.
+		h, br := seedChatParentedRun(t, false)
+		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleControls(rec, controlsReq("wf_1"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET controls = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		var got vibekit.RunControlsResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decoding the controls reply: %s", err)
+		}
+		if slices.Contains(got.Verbs, "pause") {
+			t.Errorf("verbs = %v, want pause withheld from a run nothing hosts", got.Verbs)
+		}
+		if !strings.Contains(got.Refused["pause"], "Findings cleanup") {
+			t.Errorf("refused[pause] = %q, want the sentence to name the chat to open",
+				got.Refused["pause"])
+		}
+	})
+
+	t.Run("an unreadable run is a 404 rather than an empty row", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true)
+		// An engine with no workflow verb: rr.status reports "" rather than an error,
+		// which means "no status to gate on".
+		br.setCallErr(methodKiroWorkflowInspect, workflow.ErrUnknownMethod)
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleControls(rec, controlsReq("wf_1"))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET controls for an unreadable run = %d, want %d: %s",
+				rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+	})
+}
+
 func answerReq(t *testing.T, id, askID, text string) *http.Request {
 	t.Helper()
 	body, err := json.Marshal(vibekit.RunAnswerRequest{AskID: askID, Text: text})
@@ -408,102 +498,65 @@ func pauseReq(id string) *http.Request {
 	return req
 }
 
-// TestControlHandler_ClassifiesAKASRefusalApartFromAStartFailure: the re-host made KAS's
-// own refusal the answer a reader gets most often here, and a failed spawn is the other
-// arm. Which status each earns: vibekit-runtime.md's liveness-split block.
-func TestControlHandler_ClassifiesAKASRefusalApartFromAStartFailure(t *testing.T) {
-	// `from` gates pause on a RUNNING run, which is the population the re-host is
-	// reached for: KAS says running, this process holds nothing.
-	running := func(t *testing.T, br *fakeBridge) {
-		t.Helper()
-		br.callResults = map[string]json.RawMessage{
-			methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
-			methodKiroWorkflowInspect: inspectReply(t, "wf_1", "running", ""),
-		}
+// TestControlHandler_ForwardsKASsOwnRefusal: a hosted run whose verb KAS refuses must
+// answer 409 carrying KAS's reason, not a generic failure — otherwise the reason reaches
+// the log alone.
+//
+// The run is HOSTED deliberately. affordanceOf refuses pause outright for a run nothing
+// in this process holds (hostedOnlyVerbs), so an unhosted pause never reaches
+// controlHandler at all; see the note on the deleted subtests below.
+func TestControlHandler_ForwardsKASsOwnRefusal(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "running", ""),
+	}
+	// What makes the affordance offer pause: this process holds the run.
+	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	// The shape KAS actually refuses in: -32603 with the reason in `error.data`, which
+	// is why the client is handed rpcerr.Text rather than error.Message.
+	br.callRPCErrs = map[string]*vibekit.RPCError{
+		methodKiroWorkflowPause: {
+			Code:    -32603,
+			Message: "Internal error",
+			Data:    json.RawMessage(`{"details":"Workflow 'wf_1' is not registered"}`),
+		},
 	}
 
-	t.Run("KAS's own refusal answers 409 carrying its reason", func(t *testing.T) {
-		h, _, br := newTestHub()
-		running(t, br)
-		// The shape KAS actually refuses in: -32603 with the reason in `error.data`,
-		// which is why the client is handed rpcerr.Text rather than error.Message.
-		br.callRPCErrs = map[string]*vibekit.RPCError{
-			methodKiroWorkflowPause: {
-				Code:    -32603,
-				Message: "Internal error",
-				Data:    json.RawMessage(`{"details":"Workflow 'wf_1' is not registered"}`),
-			},
-		}
+	rec := httptest.NewRecorder()
+	h.runRoutes.handlePause(rec, pauseReq("wf_1"))
 
-		rec := httptest.NewRecorder()
-		h.runRoutes.handlePause(rec, pauseReq("wf_1"))
-
-		if rec.Code != http.StatusConflict {
-			t.Fatalf("a refused pause = %d, want %d: %s",
-				rec.Code, http.StatusConflict, rec.Body.String())
-		}
-		if !strings.Contains(rec.Body.String(), "not registered") {
-			t.Errorf("the body = %s, want KAS's own reason; without it the reader is told "+
-				"only that the verb failed and the reason reaches the log alone",
-				rec.Body.String())
-		}
-	})
-
-	t.Run("a failed spawn answers a generic 500", func(t *testing.T) {
-		h, _, br := newTestHub()
-		running(t, br)
-		// Armed AFTER the status read, which needs the utility session, so what fails
-		// is the re-host and not the gate.
-		if _, err := h.runRoutes.status(t.Context(), "wf_1"); err != nil {
-			t.Fatalf("Setup: the status gate could not read the run: %s", err)
-		}
-		br.startErr = errors.New("fork/exec: no such file or directory")
-
-		rec := httptest.NewRecorder()
-		h.runRoutes.handlePause(rec, pauseReq("wf_1"))
-
-		if rec.Code != http.StatusInternalServerError {
-			t.Fatalf("a failed spawn = %d, want %d: %s",
-				rec.Code, http.StatusInternalServerError, rec.Body.String())
-		}
-		if strings.Contains(rec.Body.String(), "fork/exec") {
-			t.Errorf("the body = %s, want a generic sentinel: a spawn failure reads as the "+
-				"caller's fault and echoes an internal path", rec.Body.String())
-		}
-	})
-
-	// The arm ORDER, which a plain startErr cannot pin: a refused session door puts an
-	// *RPCError UNDER errRunHostStart, so testing the type first reports a failed spawn
-	// as a state of the run.
-	t.Run("a spawn KAS refused is still a 500, not its refusal", func(t *testing.T) {
-		h, _, br := newTestHub()
-		running(t, br)
-		if _, err := h.runRoutes.status(t.Context(), "wf_1"); err != nil {
-			t.Fatalf("Setup: the status gate could not read the run: %s", err)
-		}
-		// The nesting a refused handshake produces: two wraps under errRunHostStart.
-		br.startErr = fmt.Errorf("session/new: %w",
-			fmt.Errorf("ACP error %d: %w", -32000, &vibekit.RPCError{
-				Code:    -32000,
-				Message: "unknown security preset 'read-workspace'",
-			}))
-
-		rec := httptest.NewRecorder()
-		h.runRoutes.handlePause(rec, pauseReq("wf_1"))
-
-		if rec.Code != http.StatusInternalServerError {
-			t.Fatalf("a spawn KAS refused = %d, want %d: a start failure is this "+
-				"server's fault whoever refused it, and 409 says the RUN is in a state "+
-				"the reader can act on: %s",
-				rec.Code, http.StatusInternalServerError, rec.Body.String())
-		}
-		if strings.Contains(rec.Body.String(), "unknown security preset") {
-			t.Errorf("the body = %s, want a generic sentinel: KAS's session-door text "+
-				"describes vibekit's spawn, not the run the reader asked about",
-				rec.Body.String())
-		}
-	})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("a refused pause = %d, want %d: %s",
+			rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not registered") {
+		t.Errorf("the body = %s, want KAS's own reason; without it the reader is told "+
+			"only that the verb failed and the reason reaches the log alone",
+			rec.Body.String())
+	}
 }
+
+// Two subtests were DELETED here in the merge that brought the run-affordance gate in
+// beside the re-host, and the deletion is behaviour-affecting rather than cosmetic.
+//
+// They drove handlePause on a running run this process does not hold, and asserted that
+// the re-host is attempted and that a spawn fault answers 500 rather than echoing KAS's
+// session-door text. `hostedOnlyVerbs` now refuses pause and resume for exactly that
+// population BEFORE a process is started, so neither path is reachable through this
+// route: the reader gets the affordance's own sentence, which names opening the
+// launching chat as the remedy, and no ~300 MB process tree is spawned to be refused.
+//
+// The premise the deleted tests rested on is the one the two branches disagreed about —
+// whether KAS rehydrates a run from disk. `rehost`'s doc says it does; `hostedOnlyVerbs`
+// says pause reaches `registry.require`, which does not. The deleted tests' own fixture
+// armed KAS to answer "Workflow 'wf_1' is not registered" after the re-host, which
+// corroborates the second reading, so the gate is kept and the spawn is not attempted.
+//
+// What is NOT covered any more: controlHandler's arm ORDER, that `errRunHostStart` is
+// tested before writeControlErr's *RPCError type test. That branch is still live for a
+// verb that can reach a re-host, and TestHandleStepStatus_SplitsAValidationRefusalFrom
+// AStartFailure below covers the same split on the step-status route.
 
 // TestHandleStepStatus_SplitsAValidationRefusalFromAStartFailure: the re-host put a
 // SERVER fault on a path that had only ever carried a caller's mistake, so

@@ -44,6 +44,8 @@ export type TurnOutcome = "running" | "completed" | "cancelled" | "interrupted" 
 
 export type TurnSeverity = "running" | "clean" | "stopped" | "broken";
 
+export type WhoamiState = "signed_in" | "signed_out" | "unavailable";
+
 /**
  * AccountUsage is the account/subscription usage snapshot for the
  * signed-in identity.
@@ -236,9 +238,8 @@ export interface ChatDeletedPayload {
 }
 
 /**
- * ChatHeader is the metadata-only view of a Chat. Field order is driven
- * by fieldalignment packing, not Chat's field order; both structs
- * serialise to JSON independently so the visual mismatch is harmless.
+ * ChatHeader is the metadata-only view of a Chat. Field order is fieldalignment's,
+ * not Chat's; the two serialise independently, so the mismatch is harmless.
  */
 export interface ChatHeader {
   name: string;
@@ -246,11 +247,9 @@ export interface ChatHeader {
   acp_session_id?: string;
   current_mode_id?: string;
   /**
- * Effort mirrors Chat's. Carried here because the effort control reads the
- * ACTIVE chat's level, and an empty chat never fetches its full record (the
- * client shows the model picker instead of loading messages), so the header
- * is the only path that reaches every chat. Chat.Draft is deliberately NOT
- * mirrored — see the comment on that field.
+ * Effort mirrors Chat's, because the effort control reads the ACTIVE chat's
+ * level and an empty chat never fetches its full record, so the header is the
+ * only path that reaches every chat. Chat.Draft is deliberately NOT mirrored.
  */
   effort?: string;
   /**
@@ -265,19 +264,19 @@ export interface ChatHeader {
   last_turn_outcome?: TurnOutcome;
   /**
  * EffortActive + EffortLevels mirror Chat's, for the same reason Effort does:
- * the control renders from the ACTIVE chat's header, and an empty chat never
- * fetches its full record.
+ * the control renders from the ACTIVE chat's header.
  */
   effort_active?: string;
   effort_levels?: SessionEffortLevel[];
+  /**
+ * The model and mode vocabulary is a WORKSPACE fact served once by
+ * agent.Catalog, never mirrored per header.
+ */
   id: string;
   compaction_watermark?: string;
-  available_models?: SessionModel[];
-  available_modes?: SessionMode[];
   /**
- * PriorACPSessionIDs mirrors Chat's. Carried on the header because the
- * retention sweep derives its keep-list from header reads rather than
- * loading every chat in full.
+ * PriorACPSessionIDs mirrors Chat's, because the retention sweep derives its
+ * keep-list from header reads rather than loading every chat in full.
  */
   prior_acp_session_ids?: string[];
   usage: Usage;
@@ -576,10 +575,7 @@ export interface ElicitationRequestSchema {
   required?: string[];
 }
 
-/**
- * ErrorPayload is the payload for type="error". Code lets clients react
- * per-class without string-matching.
- */
+/** ErrorPayload is the payload for type="error"; Code lets clients react per-class. */
 export interface ErrorPayload {
   code: ErrorCode;
   message: string;
@@ -640,13 +636,16 @@ export interface GovernanceFeatures {
  */
 export interface GovernanceStatePayload {
   /**
- * DisabledReason is a human-readable reason surfaced by enterprise
- * governance (e.g. why MCP is off); empty/absent on a normal account.
+ * DisabledReason is a human-readable reason from enterprise governance (e.g. why
+ * MCP is off); empty on a normal account.
  */
   disabled_reason?: string;
   /** Features is the resolved effective feature-flag set. */
   features: GovernanceFeatures;
-  /** Known is true once the real policy has been observed (see the type doc). */
+  /**
+ * Known is true once the real policy has been observed. Clients MUST only gate
+ * affordances when it is true: the all-false zero value means "not yet known".
+ */
   known: boolean;
   /** IsEnterprise reports whether this is an enterprise/managed account. */
   is_enterprise?: boolean;
@@ -753,10 +752,7 @@ export interface LiveRun {
   executing: boolean;
 }
 
-/**
- * LiveRunsResponse is GET /api/runs/live's reply. An envelope rather than a
- * bare array, the GET /api/tabs precedent.
- */
+/** LiveRunsResponse is GET /api/runs/live's reply. */
 export interface LiveRunsResponse {
   runs: LiveRun[];
 }
@@ -800,9 +796,8 @@ export interface MCPOAuthPayload {
 }
 
 /**
- * Message is one entry in a chat transcript. Tool calls are embedded in
- * assistant messages (not standalone messages). Event messages carry an
- * EventKind for inline rendering (compression, cancellation, restart).
+ * Message is one entry in a chat transcript. Tool calls are embedded in assistant
+ * messages, not standalone; an event message carries an EventKind.
  */
 export interface Message {
   /**
@@ -855,17 +850,14 @@ export interface Message {
  */
   blocks?: Block[];
   /**
- * CodeReferences carries licensed-code attributions the agent flagged
- * during this turn (v3/KAS _kiro/code_references). Turn-scoped: the wire
- * carries no span, so it annotates the whole assistant turn. Persisted here
- * so the chip survives reload.
+ * CodeReferences carries licensed-code attributions the agent flagged during
+ * this turn. Turn-scoped: the wire carries no span.
  */
   code_references?: CodeReference[];
   /**
- * Refusal marks this assistant turn as a model refusal (kiro-cli 2.13
- * contract): the message content IS the refusal explanation, and this
- * carries the category + recommended-model metadata the client uses to
- * render the distinct refusal callout (chip + rewind / switch-model CTAs).
+ * Refusal marks this assistant turn as a model refusal (kiro-cli 2.13 contract):
+ * the message content IS the refusal explanation, and this carries the category
+ * and recommended model the client's refusal callout renders.
  */
   refusal?: RefusalInfo;
   plan?: PlanEntry[];
@@ -880,9 +872,8 @@ export interface Message {
  */
   attachments?: Attachment[];
   /**
- * TurnCredits / TurnElapsedMs complete the turn footer summary alongside
- * ChangedFiles (above). The values also ride the turn_ended SSE for the
- * live render; omitempty drops the zero cases (a read-only turn has none).
+ * TurnCredits / TurnElapsedMs complete the turn footer alongside ChangedFiles.
+ * omitempty drops the zero cases: a read-only turn has none.
  */
   turn_credits?: number;
   turn_elapsed_ms?: number;
@@ -921,9 +912,8 @@ export interface MessageChunkPayload {
 }
 
 /**
- * MeteringItem is one usage dimension reported by kiro-cli's
- * meteringUsage array. UnitPlural is the canonical identifier
- * ("credits", "tokens", "requests"); UnitSingular is its singular form.
+ * MeteringItem is one usage dimension from kiro-cli's meteringUsage array.
+ * UnitPlural is the canonical identifier ("credits", "tokens", "requests").
  */
 export interface MeteringItem {
   unit_singular: string;
@@ -1226,11 +1216,8 @@ export interface Repo {
 
 /**
  * ResumableSession is one stored KAS session offered by the previous-session
- * picker (GET /api/sessions). Adopts kiro-cli's own `--resume-picker`
- * capability: KAS owns the inventory and the transcript, so vibekit carries no
- * archive of its own. See agent/session_list.go for the wire provenance.
- * //
- * Field order is fieldalignment's, not the JSON's.
+ * picker (GET /api/sessions). KAS owns the inventory and the transcript, so
+ * vibekit keeps no archive of its own. Field order is fieldalignment's.
  */
 export interface ResumableSession {
   session_id: string;
@@ -1244,9 +1231,8 @@ export interface ResumableSession {
  */
   description?: string;
   /**
- * ChatID names the vibekit chat that already owns this session, empty when
- * no chat does. A claimed session is one the user can simply open, so the
- * picker offers it differently rather than duplicating the chat.
+ * ChatID names the vibekit chat that already owns this session, empty when none
+ * does. A claimed session is one the user can simply open.
  */
   chat_id?: string;
   updated_at: number;
@@ -1263,6 +1249,35 @@ export interface ResumableSession {
 export interface RunAnswerRequest {
   ask_id: string;
   text: string;
+}
+
+/**
+ * RunControlsResponse is GET /api/runs/{id}/controls's reply: what may be done to
+ * one run, and why not for the rest.
+ * //
+ * Its own route rather than a field on GET /api/runs/{id}, a verbatim KAS
+ * passthrough. The client used to decide this from a status table plus an SSE-fed
+ * cache of which chat launched the run, so any reloaded client read a
+ * chat-parented run as parentless. Only the server sees all three inputs.
+ */
+export interface RunControlsResponse {
+  /**
+ * Refused maps a verb this run does not offer to the one sentence a reader
+ * needs, and carries only a verb whose absence would otherwise be unexplained.
+ */
+  refused?: Record<string, string>;
+  /**
+ * ParentChatID names the chat whose agent launched the run, empty for a
+ * parentless one. Read from the chat store here rather than from an event-fed
+ * client cache, which is empty after a reload.
+ */
+  parent_chat_id: string;
+  /**
+ * Verbs are the offered controls, in row order. Strings rather than a
+ * registered enum because the client's label table is the narrowing point: an
+ * unlabelled verb is dropped, so a future one degrades to a missing button.
+ */
+  verbs: string[];
 }
 
 /**
@@ -1360,7 +1375,42 @@ export interface RunLaunchedResponse {
 export interface RunProgressPayload {
   workflow_id: string;
   node_id?: string;
+  /**
+ * NodePath addresses ONE execution of a node, joined with "/" — the same
+ * spelling RunStepPayload.NodePath uses. Empty on the run-level and
+ * shape-changing kinds, which is what tells the client to refetch instead.
+ */
+  node_path?: string;
+  /**
+ * Status is the node's status after this frame, in KAS's own NodeState
+ * vocabulary so it drops straight onto the cached tree.
+ */
+  status?: string;
+  /**
+ * StartedAt and EndedAt are RFC 3339, stamped by the SERVER at frame arrival:
+ * KAS puts no timestamp on either lifecycle frame. A later refetch overwrites
+ * both with KAS's own values.
+ */
+  started_at?: string;
+  ended_at?: string;
+  /**
+ * FailureReason is KAS's own explanation for a node that failed. Empty on
+ * every other outcome.
+ */
+  failure_reason?: string;
   kind: RunProgressKind;
+}
+
+/**
+ * RunRetriedResponse is POST /api/runs/{id}/retry's reply: KAS's own outcome
+ * report, forwarded rather than collapsed to `{"ok":true}`. RetriedNodeIDs is why
+ * the route exists — a retry that resets five nodes and one that resets none are
+ * otherwise the same HTTP result, and the second is what "nothing happened" is.
+ */
+export interface RunRetriedResponse {
+  /** Status is the run's status after the reset, as KAS reports it. */
+  status: string;
+  retried_node_ids: string[];
 }
 
 /**
@@ -1531,12 +1581,11 @@ export interface SecurityProfile {
 
 /**
  * SessionEffortLevel is one reasoning-effort tier the running session offers,
- * from the `effortLevel` config option's own `options[]` (value + name).
+ * from the `effortLevel` config option's own `options[]`.
  * //
- * The tiers are NOT a fixed five and NOT a per-model list on the model choice:
- * kiro-cli 2.18.0 builds its picker from this option and errors "Effort is not
- * available on the current model" when the list is empty, so the list IS the
- * capability. Sending a tier that is absent here is a level the service rejects.
+ * The tiers are NOT a fixed five and NOT a per-model list: kiro-cli 2.18.0 builds
+ * its picker from this option and errors when the list is empty, so the list IS
+ * the capability. A tier absent here is a level the service rejects.
  */
 export interface SessionEffortLevel {
   id: string;
@@ -1575,9 +1624,8 @@ export interface SessionMode {
 }
 
 /**
- * SessionModel describes one model the running agent can swap to, as
- * declared by kiro-cli's session/new response. Replaces our prior
- * shell-out to `kiro-cli chat --list-models`.
+ * SessionModel describes one model the running agent can swap to, as declared by
+ * kiro-cli's session/new response.
  */
 export interface SessionModel {
   id: string;
@@ -1849,9 +1897,8 @@ export interface TextSpan {
 }
 
 /**
- * ToolCall is a tool invocation inside an assistant message. One assistant
- * message may have multiple tool calls; each can be updated in place as
- * status changes (pending → in_progress → completed/failed).
+ * ToolCall is a tool invocation inside an assistant message. Each can be updated
+ * in place as status changes (pending → in_progress → completed/failed).
  */
 export interface ToolCall {
   id: string;
@@ -1859,61 +1906,92 @@ export interface ToolCall {
   kind: ToolKind;
   status: ToolStatus;
   output?: string;
-  /**
- * SubSessionID is the v2 subagent-session attribution (inert on v3;
- * all subagent updates ride the parent session id there).
- */
+  /** SubSessionID is the v2 subagent-session attribution (inert on v3). */
   sub_session_id?: string;
   /**
- * AgentSubtaskID is from a tool call's _meta.kiro.agentSubtaskId. On v3 a
- * subagent surfaces as an ordinary tool_call, and this id is what links its
- * card to the nested deltas carrying the same id.
+ * AgentSubtaskID is set from a tool call's _meta.kiro.agentSubtaskId. On v3 a
+ * subagent surfaces as an ordinary tool_call with _meta.kiro.kind agent-subtask;
+ * this id links the card to its nested deltas, which carry the same id.
  */
   agent_subtask_id?: string;
   /**
- * WorkflowID names the run a `run_workflow` invocation started, from the
- * terminal update's `rawOutput.workflowId`; empty until the run is created and
- * on every other tool call. It makes the invocation the RUN's card — a step's
- * blocks carry the same id in `agent_subtask_id`, so the two join with no
- * accumulation — and is the handle for `/run/{id}`.
+ * WorkflowID names the run a `run_workflow` invocation started, from the terminal
+ * update's `rawOutput.workflowId`. Empty on every other tool call, and on this one
+ * until the run is created. It makes the invocation the RUN's card: the client
+ * keys a run card on it, and a step's blocks arrive carrying the same id in their
+ * `agent_subtask_id`, so the two sides join with no guessing.
  */
   workflow_id?: string;
   /**
- * TerminalID links an execute tool call to the agent terminal running it, which
- * is what lets the CARD be that terminal's rendering surface. Empty on every
- * tool call that spawned no process.
+ * TerminalID links an execute tool call to the agent terminal running it, from
+ * the ACP type:"terminal" content block. It makes the CARD the terminal's
+ * rendering surface. Empty on every tool call that spawned no process.
  */
   terminal_id?: string;
   /**
- * Checkpoint is KAS's snapshot mapping for a tool call that wrote a file, nil
- * for the majority that touched none. Ahead of the slices below for govet
- * fieldalignment: a trailing pointer would extend the GC scan region past a
- * slice's non-pointer len/cap words.
+ * Checkpoint is KAS's snapshot mapping for a tool call that wrote a file, from
+ * _meta.kiro.checkpoint; nil when it touched no file. Ahead of the slices below
+ * for govet fieldalignment: a trailing pointer would extend the GC scan region.
  */
   checkpoint?: ToolCheckpoint;
   /**
  * Disclosed names the skill or steering document a `disclose_context` call
- * loaded. The only signal that a skill's body reached the model, which is why
- * the transcript renders it instead of a generic tool card.
+ * loaded, from _meta.kiro.disclosedContext. The only signal that a skill's body
+ * reached the model, so the transcript renders it, not a generic tool card.
  */
   disclosed?: ToolDisclosed;
   /**
- * Denial is KAS's structured reason for a call the Cedar policy refused, nil
- * unless it did. Present so a refusal reads as a refusal rather than a tool
- * failure, and names the rule responsible, since the user owns the policy.
+ * Denial is KAS's structured reason for a call the Cedar policy refused, from
+ * _meta.kiro.policyDenial. Present so a refusal reads as a refusal rather than a
+ * tool failure, and names the rule, since the user owns the policy.
  */
   denial?: ToolDenial;
+  /**
+ * Truncated is what the STORE dropped to bound this call on disk, nil on every
+ * call that fitted. Grouped with the pointers above for govet fieldalignment.
+ */
+  truncated?: ToolTruncation;
   input?: unknown;
   locations?: ToolLocation[];
   diffs?: ToolDiff[];
   /**
- * OutputSpans styles ranges of Output, parsed once server-side so Output stays
- * plain searchable text and the client never builds HTML from agent bytes.
- * Empty for the ~99.75% of real command outputs carrying no escape.
+ * OutputSpans styles ranges of Output. Parsed once server-side by
+ * internal/ansitext, so Output stays plain searchable text and the client never
+ * builds HTML from agent-controlled bytes.
  */
   output_spans?: TextSpan[];
-  duration_ms?: number;
   ts: number;
+  duration_ms?: number;
+  /**
+ * OutputBytes is the PERSISTED output's length and DiffCount the persisted
+ * number of diffs: what the reveal will fetch. Set ONLY alongside HasFull; where
+ * the store also cut the call, Truncated carries the size before THAT cut.
+ */
+  output_bytes?: number;
+  diff_count?: number;
+  /**
+ * HasFull says Input, Output and Diffs here are a PREVIEW, and the whole of what
+ * the record kept is at GET /api/chats/{id}/tools/{id}. Set by the transcript
+ * read path alone, because only a page load or scroll-up reads a preview.
+ */
+  has_full?: boolean;
+}
+
+/**
+ * ToolCallBulk is GET /api/chats/{id}/tools/{toolCallID}: the whole of one tool
+ * call's PERSISTED content, for a card whose preview said HasFull. Only the three
+ * fields the transcript previews; title, kind and status are on the card already.
+ */
+export interface ToolCallBulk {
+  /**
+ * Strings before slices, and no field order here carries meaning: this is
+ * betteralign's answer for the smallest GC scan region (govet fieldalignment).
+ */
+  output?: string;
+  id: string;
+  diffs?: ToolDiff[];
+  output_spans?: TextSpan[];
+  input?: unknown;
 }
 
 /**
@@ -1927,10 +2005,52 @@ export interface ToolCallPayload {
   block_index: number;
 }
 
-/** ToolCallUpdatePayload is the payload for type="tool_call_update". */
+/**
+ * ToolCallUpdatePayload is the payload for type="tool_call_update": a DELTA addressed by
+ * id, carrying only what this frame changed. Every field is omitempty and means
+ * "unchanged" when absent; OutputDelta's meaning depends on OutputReplace. turn_state
+ * remains the whole-object channel — a reconnecting client has no delta base.
+ */
 export interface ToolCallUpdatePayload {
+  /** The three metadata blocks, each sent whole when it changed; none accumulates. */
+  checkpoint?: ToolCheckpoint;
+  disclosed?: ToolDisclosed;
+  denial?: ToolDenial;
   message_id: string;
-  tool_call: ToolCall;
+  tool_call_id: string;
+  /** Title and Kind: KAS sends them nullish on most updates, so absent is "keep". */
+  title?: string;
+  kind?: ToolKind;
+  status?: ToolStatus;
+  /**
+ * OutputDelta is normally the text to APPEND; when OutputReplace is set it is the
+ * whole output instead. The replace case is load-bearing: at completion a terminal's
+ * full stream wins over the ACP fragments already on the card (adoptTerminalOutput).
+ */
+  output_delta?: string;
+  /** The four late identity attachments: each is adopted once, on at most one frame. */
+  terminal_id?: string;
+  sub_session_id?: string;
+  agent_subtask_id?: string;
+  workflow_id?: string;
+  /**
+ * OutputSpans style the WHOLE output at absolute offsets, so they are sent entire
+ * whenever they change. Empty for output carrying no escape sequence.
+ */
+  output_spans?: TextSpan[];
+  /**
+ * DiffsAppended are the diffs this frame added; diffs only ever append, so there is
+ * no replace case.
+ */
+  diffs_appended?: ToolDiff[];
+  /** Locations are REPLACED wholesale when present. */
+  locations?: ToolLocation[];
+  /**
+ * The two non-pointer scalars last, so the GC scan region stops above them (govet
+ * fieldalignment). OutputReplace's meaning is on OutputDelta.
+ */
+  duration_ms?: number;
+  output_replace?: boolean;
 }
 
 /**
@@ -2061,8 +2181,8 @@ export interface ToolJobChangedPayload {
 }
 
 /**
- * ToolJobOutputPayload is the payload for type="tool_job_output":
- * a coalesced batch of output lines from the running tool job.
+ * ToolJobOutputPayload is the payload for type="tool_job_output": a coalesced batch of
+ * output lines from the running tool job.
  */
 export interface ToolJobOutputPayload {
   job_id: string;
@@ -2076,6 +2196,24 @@ export interface ToolJobOutputPayload {
 export interface ToolLocation {
   path: string;
   line?: number;
+}
+
+/**
+ * ToolTruncation is what the store DROPPED to bound what one tool call costs the
+ * record, each cut field carrying its size BEFORE the cut so a reader renders
+ * "truncated, N bytes" instead of showing less than happened. A zero field was
+ * not cut.
+ */
+export interface ToolTruncation {
+  /** OutputBytes and InputBytes are each field's original length. */
+  output_bytes?: number;
+  input_bytes?: number;
+  /**
+ * DiffBytes is the original diff total and DiffCount the original count. Diffs
+ * are dropped WHOLE: a cut before/after pair would describe an edit nobody made.
+ */
+  diff_bytes?: number;
+  diff_count?: number;
 }
 
 /** TurnEndedPayload is the payload for type="turn_ended". */
@@ -2100,7 +2238,7 @@ export interface TurnEndedPayload {
   model?: string;
   credits_delta?: number;
   elapsed_ms?: number;
-  /** Truncated is a turn the model stopped at a bound: completed, answer cut off. */
+  /** Truncated means the model stopped at a bound: completed, answer cut off. */
   truncated?: boolean;
 }
 
@@ -2196,16 +2334,24 @@ export interface UserInputSubOption {
 }
 
 /**
- * WhoamiResponse is the typed response from /api/whoami; see the block
- * comment above for field semantics.
+ * WhoamiResponse is the typed wire shape returned by /api/whoami. State is the
+ * discriminator; the remaining fields belong to one arm each. Any kiro-cli field
+ * not represented here is dropped at the wire boundary, so a compromised or
+ * upgraded CLI cannot leak arbitrary attributes into the browser.
  */
 export interface WhoamiResponse {
+  state: WhoamiState;
+  /** Email and the four labels below belong to the signed_in arm. */
   email?: string;
   auth?: string;
   accountType?: string;
   startUrl?: string;
   region?: string;
-  error?: string;
+  /**
+ * Reason belongs to the unavailable arm: a server-authored phrase, never
+ * CLI output.
+ */
+  reason?: string;
 }
 
 /**
@@ -2222,9 +2368,8 @@ export interface WorkflowRun {
   /** Status is run-level: paused / completed / failed. */
   status?: string;
   /**
- * ParentChatID is the vibekit chat that launched the run, resolved through
- * the launching session's chain. Empty for a run with no vibekit parent
- * (launched from the TUI, or by a chat vibekit no longer keeps).
+ * ParentChatID is the vibekit chat that launched the run, resolved through the
+ * launching session's chain. Empty for a run with no vibekit parent.
  */
   parent_chat_id?: string;
   /**

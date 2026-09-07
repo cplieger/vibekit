@@ -83,6 +83,9 @@ function setSettingsTab(tab: SettingsTab): void {
 const tabLoaders = new Map<SettingsTab, () => void>();
 const loadedTabs = new Set<SettingsTab>();
 
+/** Whether the subscribe-time paint has run. See the `painted` gate below. */
+let painted = false;
+
 /** Run the tab's registered lazy loader on its first use. Idempotent. */
 export function loadSettingsTabData(tab: SettingsTab): void {
   if (loadedTabs.has(tab)) {
@@ -158,10 +161,16 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
     // segmented control names it too, so 12-chat.css suppresses this while that
     // control shows its labels and reveals it when tab-bar-fit.ts drops them.
     setPageSubtitle("settings", TAB_LABELS[tab]);
-    // Lazy panel data: first activation of a tab fires its loader (B9).
-    // The immediate subscribe-time fire covers "general", which has no
-    // registered loader — a harmless no-op.
-    loadSettingsTabData(tab);
+    // Lazy panel data, on a tab SWITCH. NOT on the first call, which is
+    // `subscribe` painting the default panel at boot with Settings off screen — a
+    // loader there is what put General's three `kiro-cli settings` spawns on the
+    // boot path. Not the only door either, and not the DEFAULT tab's: `activeTab`
+    // is deduped, so re-selecting "general" notifies nobody, and what loads it is
+    // the tab factory's `onShow` calling `loadSettingsTabData` (tab-materialize.ts).
+    if (painted) {
+      loadSettingsTabData(tab);
+    }
+    painted = true;
   });
 }
 

@@ -57,6 +57,7 @@ export function tabsMock(): Record<string, unknown> {
     adoptSubject: vi.fn(),
     activateTab: vi.fn(),
     activateRestoredTab: vi.fn(),
+    paintProvisionalTabs: vi.fn(),
     renameTab: vi.fn(),
     setTabStatus: vi.fn(),
     setTabDirty: vi.fn(),
@@ -77,6 +78,7 @@ export function tabsMock(): Record<string, unknown> {
     parentChatRef: vi.fn(() => ""),
     openChatRefs: vi.fn(() => []),
     openSubagentRefs: vi.fn(() => []),
+    openTabSubjects: vi.fn(() => []),
     cueCandidates: vi.fn(() => []),
 
     // Registration slots. `subscribeTabCues` hands back its unsubscribe so a

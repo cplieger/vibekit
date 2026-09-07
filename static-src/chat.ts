@@ -555,7 +555,7 @@ export async function createPlannerSession(): Promise<void> {
  *  half can be missing — a chat with no session has no mode, and the agent declares a
  *  description only while working — so the separator is emitted only when both are. */
 function tabTooltipFor(s: Session): string {
-  const mode = s.current_mode_id === "" ? "" : labelForMode(s.current_mode_id, s.available_modes);
+  const mode = s.current_mode_id === "" ? "" : labelForMode(s.current_mode_id);
   const doing = s.agent_status_text ?? "";
   if (mode === "" || doing === "") {
     return mode === "" ? doing : mode;

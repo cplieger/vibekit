@@ -41,35 +41,23 @@ type Server struct {
 	steering      SteeringGenerator
 	mcpRegistry   routeHandler
 	staticFS      fs.FS
-	// kiroDocs memoizes the document-oriented .kiro inventory behind a directory-mtime
-	// signature. A pointer so the zero Server the method-guard tests use needs no init.
+	// kiroDocs memoizes the .kiro inventory; a pointer so the zero Server needs no init.
 	kiroDocs *docsCache
-	// tabs is the open-tab SET. Nil in a bare test server and in a build with no config
-	// dir; the handler then answers an empty collection at version 0 rather than 404. A
-	// one-method ROLE rather than *tabs.Store, because the endpoint's contract is that the
-	// set and its version come from ONE call and only a double that MOVES between two
-	// calls holds a handler to that.
+	// tabs is the open-tab set; nil (no config dir) answers an empty collection at version 0.
 	tabs      tabReader
 	cliRunner CLIRunner
 	tools     *toolbelt.Engine
-	// kiroReady is the install manager's readiness verdict plus its TYPED reason,
-	// consulted per /api/health probe so a recovery is visible without a restart. Nil =
-	// this server does not own the install, and readiness stays pure-listener.
+	// kiroReady is the install manager's readiness verdict, re-read per /api/health.
 	kiroReady func() (bool, pinstall.Reason)
-	// kiroRescan re-derives the active kiro-cli version from disk, downloading nothing.
-	// Nil when there is no manager, and then the route is not mounted at all.
+	// kiroRescan re-derives the active version from disk; nil leaves the repair route unmounted.
 	kiroRescan func(context.Context) (bool, error)
-	// authUnavailable reports whether the last attempt to vend a KAS access token failed.
-	// A LATCH read, never a probe: /api/health consults it per request, and probing would
-	// spawn kiro-cli on a monitor's poll and could block on an SSO-OIDC refresh.
+	// authUnavailable reads a latch, never a probe (see WithAuthUnavailable).
 	authUnavailable func() bool
 	configDir       string
 	workDir         string
-	// trustedProxies is passed to webhttp.WithClientIP. Nil = log the unspoofable socket
-	// peer rather than resolving X-Forwarded-For.
+	// trustedProxies feeds webhttp.WithClientIP; nil logs the unspoofable socket peer.
 	trustedProxies []*net.IPNet
-	// hostPolicy is the ALLOWED_HOSTS exact-match allowlist the security middleware
-	// applies before the CSRF check. Nil or inactive = any Host accepted.
+	// hostPolicy is the ALLOWED_HOSTS allowlist; nil or inactive accepts any Host.
 	hostPolicy *webhttp.HostPolicy
 	// onListen fires once per successful bind, before serving: it is what tells the rest
 	// of the app this process is the one serving its config dir.
@@ -77,8 +65,7 @@ type Server struct {
 	acctUsage   acctUsageCache
 	cliTimeouts cliTimeouts
 	settingsMu  sync.Mutex
-	// ready flips true once the listener binds, and false on the shutdown signal so
-	// /api/health reports unready during drain. Same semantic fleet-wide.
+	// ready is true between listener bind and the shutdown signal.
 	ready atomic.Bool
 }
 
@@ -88,19 +75,10 @@ type Option func(*Server)
 // WithSteering sets the steering generator used to produce environment.md for kiro-cli.
 func WithSteering(g SteeringGenerator) Option { return func(s *Server) { s.steering = g } }
 
-// WithAgent sets the agent runtime that manages bridge processes and SSE
-// broadcasts. It was WithHub over a chatEngine; the dependency is *agent.Runtime
-// now and the name says which collaborator it is rather than what topology it
-// used to be.
+// WithAgent sets the agent runtime that manages bridge processes and SSE broadcasts.
 func WithAgent(a chatEngine) Option { return func(s *Server) { s.agent = a } }
 
 // WithChats sets the chat store, whose own router owns the chat HTTP surface.
-//
-// The parameter is routeHandler because mounting those routes is the ONLY thing
-// this package does with the store: 1 of its 11 methods. The chat reads
-// (GET /api/chats, /api/chats/{id}, its search and turns endpoints) are
-// registered and served by internal/chat's own router, so the server neither
-// reads nor writes a chat itself. It used to hold all of them to call one.
 func WithChats(c routeHandler) Option { return func(s *Server) { s.chats = c } }
 
 // WithGit sets the git handler for non-AI git HTTP endpoints.
@@ -133,30 +111,25 @@ func WithForges(r routeHandler) Option { return func(s *Server) { s.forges = r }
 // WithTools sets the tools engine backing the /api/tools surface.
 func WithTools(e *toolbelt.Engine) Option { return func(s *Server) { s.tools = e } }
 
-// WithUtilityPrompt sets the utility prompter used for AI-assisted tasks
-// (error explanations, commit messages, PR descriptions, conflict resolution).
+// WithUtilityPrompt sets the utility prompter used for AI-assisted tasks.
 func WithUtilityPrompt(p utilityPrompter) Option {
 	return func(s *Server) { s.utilityPrompt = p }
 }
 
-// WithAccountUsage sets the provider for account/subscription usage,
-// served at GET /api/account/usage (sidebar footer).
+// WithAccountUsage sets the provider backing GET /api/account/usage.
 func WithAccountUsage(p AccountUsageProvider) Option {
 	return func(s *Server) { s.accountUsage = p }
 }
 
-// WithPolicy sets the native Cedar policy provider, backing the read-only
-// policy view at GET /api/permissions and the pre-flight simulation at
-// POST /api/permissions/explain. The rule WRITER at POST /api/permissions/rules
-// needs no provider (it is a file write KAS hot-reloads).
+// WithPolicy sets the Cedar policy provider backing GET /api/permissions and
+// POST /api/permissions/explain. The rule writer needs no provider.
 func WithPolicy(p policyProvider) Option {
 	return func(s *Server) { s.policy = p }
 }
 
 // WithPolicyReload wires the recycle a security-profile change needs. Optional:
-// unwired, a profile still persists and still reaches every session started
-// afterwards, and only the policy VIEW keeps describing the previous profile until
-// the utility session is next recycled on its own.
+// unwired, a saved profile still reaches every session started afterwards and
+// only the policy view lags until the utility session is next recycled.
 func WithPolicyReload(p policyReloader) Option {
 	return func(s *Server) { s.policyReload = p }
 }
@@ -166,29 +139,27 @@ func WithStaticFS(staticFS fs.FS) Option {
 	return func(s *Server) { s.staticFS = staticFS }
 }
 
-// WithCLIPath sets the RESOLVER for the kiro-cli binary used by the CLI
-// sub-operations (/api/version, /api/diagnostics, /api/kiro-settings).
-//
-// A resolver rather than a string because the install manager selects the
-// active version AFTER the listener binds and can switch it later: a path
-// captured at construction would pin every shell-out to whatever was installed
-// first, which on a first boot is nothing at all.
-func WithCLIPath(resolve func() string) Option {
-	return func(s *Server) { s.cliRunner = &execCLIRunner{cliPath: resolve} }
+// WithKiroCLI sets the resolvers for the kiro-cli binary and its environment.
+// Resolvers rather than values: the install manager selects the active version
+// AFTER the listener binds and can switch it later. The environment matters as
+// much as the path, because `settings` re-execs a sibling binary through PATH
+// and the overlay is what makes that search land inside the verified install.
+func WithKiroCLI(resolvePath func() string, resolveEnv func() []string) Option {
+	return func(s *Server) {
+		s.cliRunner = &execCLIRunner{cliPath: resolvePath, env: resolveEnv}
+	}
 }
 
 // WithKiroReady sets the kiro-cli readiness verdict /api/health reports. Unset
-// leaves the health probe reflecting only that the listener is up. The reason is
-// the install manager's typed one; this package owns the wording it serves.
+// leaves the probe reflecting only that the listener is up.
 func WithKiroReady(ready func() (bool, pinstall.Reason)) Option {
 	return func(s *Server) { s.kiroReady = ready }
 }
 
-// WithAuthUnavailable sets the sign-in leg /api/health reports after the
-// kiro-cli leg. It must be a LATCH read, not a probe: the readiness handler runs
-// per request and stays a lock and two field reads, so vending a token here to
-// find out would spawn kiro-cli on every monitor poll and could block on an
-// SSO-OIDC refresh. Unset leaves readiness with no auth leg.
+// WithAuthUnavailable sets the sign-in leg /api/health reports. It must be a
+// LATCH read, not a probe: the handler runs per request, so vending a token here
+// would spawn kiro-cli on every monitor poll and could block on an SSO-OIDC
+// refresh. Unset leaves readiness with no auth leg.
 func WithAuthUnavailable(unavailable func() bool) Option {
 	return func(s *Server) { s.authUnavailable = unavailable }
 }
@@ -202,11 +173,10 @@ func WithKiroRescan(rescan func(context.Context) (bool, error)) Option {
 // WithConfigDir sets the configuration directory path used for chat files and settings.
 func WithConfigDir(d string) Option { return func(s *Server) { s.configDir = d } }
 
-// WithTabs wires the open-tab set that GET /api/tabs reads.
-//
-// A nil store stays a nil INTERFACE rather than becoming a non-nil interface
-// holding a nil pointer, or the handler's unwired branch would never be taken and
-// the endpoint would nil-deref instead of answering the empty collection.
+// WithTabs wires the open-tab set that GET /api/tabs reads. A nil store stays a
+// nil INTERFACE rather than an interface holding a nil pointer, or the handler's
+// unwired branch would never be taken and the endpoint would nil-deref instead
+// of answering the empty collection.
 func WithTabs(st *tabs.Store) Option {
 	return func(s *Server) {
 		if st == nil {
@@ -219,18 +189,15 @@ func WithTabs(st *tabs.Store) Option {
 // WithWorkDir sets the workspace directory served by the file handler and git endpoints.
 func WithWorkDir(d string) Option { return func(s *Server) { s.workDir = d } }
 
-// WithTrustedProxies sets the reverse-proxy networks trusted when
-// resolving the access-log client_ip via webhttp.WithClientIP. Empty/nil
-// trusts nothing, so the unspoofable socket-peer host is logged (the
-// spoof-safe default for a directly-exposed deployment).
+// WithTrustedProxies sets the reverse-proxy networks trusted when resolving the
+// access-log client_ip. Empty trusts nothing, so the socket peer is logged.
 func WithTrustedProxies(trusted []*net.IPNet) Option {
 	return func(s *Server) { s.trustedProxies = trusted }
 }
 
-// WithHostPolicy sets the exact-match Host allowlist (parsed from
-// ALLOWED_HOSTS) that the security middleware applies before the CSRF
-// check — the anti-DNS-rebinding gate. A nil or inactive policy is a
-// pass-through (any Host accepted, the backward-compatible default).
+// WithHostPolicy sets the exact-match Host allowlist the security middleware
+// applies before the CSRF check — the anti-DNS-rebinding gate. A nil or inactive
+// policy accepts any Host.
 func WithHostPolicy(p *webhttp.HostPolicy) Option {
 	return func(s *Server) { s.hostPolicy = p }
 }
@@ -359,8 +326,8 @@ func (s *Server) ListenAndServe() error {
 	// The bound ADDRESS, not the port constant: a misdirected boot's own output then says
 	// which listener it got.
 	slog.Info("Kiro Web UI listening", "addr", ln.Addr().String())
-	// DNS rebinding rides the victim's BROWSER, so it reaches even a loopback bind, and
-	// this HTTP surface carries no auth of its own: the Host allowlist is the whole gate.
+	// DNS rebinding rides the victim's BROWSER, so it reaches even a loopback
+	// bind, and this HTTP surface carries no auth of its own.
 	if !s.hostPolicy.Active() {
 		slog.Warn("ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
 			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,vibekit.example.com)")
@@ -412,6 +379,11 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 		// the dedup cache, so a refused spelling mints no entry a retry would replay.
 		canonicalAPIPath,
 		idem.middleware,
+		// INNERMOST, so it sees exactly what a handler wrote: the idempotency
+		// cache stores identity bytes and a replay re-negotiates against the
+		// replaying client's own Accept-Encoding, while the outermost access
+		// logger counts on-the-wire bytes.
+		compressJSON,
 	}
 }
 

@@ -150,16 +150,25 @@ interface StepRow {
   endedAt?: string;
 }
 
+/** Both halves of the disclosure bookkeeping this view delegates: what a row was
+ *  last left at, and where a flip goes. Keyed by node path, `null` for the card
+ *  itself. `wasOpen` returning undefined leaves the card's own default standing. */
+export interface RunDisclosure {
+  readonly wasOpen: (nodePath: string | null) => boolean | undefined;
+  readonly onOpenChange: (nodePath: string | null, open: boolean) => void;
+}
+
 /** Build a run card. `name` is the best label at creation (recipe name from
  *  the invocation, or generic); later renders prefer the run's own
- *  `runLabel`. `onOpen` is injected so this `fundamentals/` view avoids
- *  importing the feature module that owns run tabs; its third argument is the
- *  node a STEP ROW names, absent for the footer link, which means "the run".
- *  Card mounts open. */
+ *  `runLabel`. `onOpen` and `disclosure` are injected so this `fundamentals/`
+ *  view avoids importing the feature module that owns run tabs and its
+ *  open-container bookkeeping; `onOpen`'s third argument is the node a STEP ROW
+ *  names, absent for the footer link, which means "the run". Card mounts open. */
 export function buildRunCard(
   workflowID: string,
   name: string,
   onOpen: (id: string, label: string, focusNode?: string) => void,
+  disclosure?: RunDisclosure,
 ): RunCardView {
   const root = el("div", {
     className: "run-card",
@@ -174,6 +183,8 @@ export function buildRunCard(
    *  downward, and the producer then cannot spell the route differently from the
    *  parser (`messages-blocks.ts` already does this for the subagent href). */
   const runHref = buildPath({ kind: "run", id: workflowID });
+  const cardOpen = disclosure?.wasOpen(null) ?? true;
+  root.classList.toggle("collapsed", !cardOpen);
 
   // --- head -----------------------------------------------------------------
   const icon = el("span", { className: "run-icon", "aria-hidden": "true" }, iconEl(ICON_TAB_RUN));
@@ -234,9 +245,10 @@ export function buildRunCard(
   root.append(head, alert, body, foot);
 
   createDisclosure(head, body, {
-    open: true,
+    open: cardOpen,
     onToggle: (isOpen) => {
       root.classList.toggle("collapsed", !isOpen);
+      disclosure?.onOpenChange(null, isOpen);
     },
   });
 

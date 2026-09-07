@@ -82,8 +82,6 @@ describe("handleTypedCommand /drop", () => {
         model: "",
         acp_session_id: "",
         current_mode_id: "",
-        available_modes: [],
-        available_models: [],
         usage: {
           context_pct: 0,
           context_size: 0,

@@ -53,6 +53,7 @@ import {
   searchHitTotal,
 } from "./chat-search.js";
 import { getActive, getActiveId } from "./store.js";
+import { blockElement } from "./messages-blocks.js";
 import { loadMessages } from "./store-load.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
@@ -351,7 +352,7 @@ function teardown(): void {
   });
   serverHits = [];
   hitCursor = -1;
-  resetServerSearch(getActiveId());
+  resetServerSearch();
   updateCounter("");
 }
 
@@ -571,19 +572,39 @@ async function navigateToHit(hit: SearchHit): Promise<void> {
     }
     return;
   }
-  const target = resolveSegmentEl(row, hit) ?? row;
+  const target = resolveSegmentEl(hit) ?? row;
   openDisclosureChain(row, target, hit);
   // Re-walk now that the chain is open: the marks inside it exist only after
   // the walker can see the text.
-  applyEngine(() => {
-    engine?.search(shell?.value ?? "", shell?.caseSensitive ?? false);
-  });
-  const chosen = pickNearestMark(target, hit);
+  let chosen = walkAndPick(target, hit);
+  // Whether the second walk had a rendered frame to walk. A first-walk hit never
+  // asks, and never reaches the notice below either.
+  let rendered = true;
+  if (chosen === -1) {
+    // A miss can mean the text is not THERE, or that it was not RENDERED when the
+    // walker ran. The four cards that carry a transcript's mass are
+    // `content-visibility: auto` (css/14-tools.css), so their content is skipped
+    // while off screen and the walker prunes it — and a hit the reader has not
+    // scrolled to yet is exactly that. Scrolling to it is what renders it, so
+    // navigate FIRST and ask once more before claiming the text is not there.
+    jumpTo(target, { block: "center", inline: "nearest", behavior: "auto" });
+    rendered = await nextRender();
+    // Closed, or the transcript repainted this element away, while the frame
+    // rendered. `shell` needs no re-check: it is assigned once at build.
+    if (!isOpen() || !target.isConnected) {
+      return;
+    }
+    chosen = walkAndPick(target, hit);
+  }
   if (chosen === -1) {
     // Syntax-only match (link target, emphasis marker, fence info) or a best
-    // candidate below the similarity floor: select the block and say why.
+    // candidate below the similarity floor: select the block and say why. With no
+    // frame delivered the walk ran against content that may simply not be painted
+    // yet — a hidden tab, or a paint past the ceiling — so the notice claims
+    // "later", not "absent". Either way the block is selected, which is the part
+    // that is true in both.
     selectContainer(target);
-    showHitNotice("not in rendered text");
+    showHitNotice(rendered ? "not in rendered text" : "not rendered yet");
     return;
   }
   applyEngine(() => {
@@ -591,6 +612,45 @@ async function navigateToHit(hit: SearchHit): Promise<void> {
   });
   updateCounter(shell.value);
   revealCurrent();
+}
+
+/** Walk the transcript again and pick the mark that is credibly THIS hit.
+ *
+ *  The walk is what makes marks exist inside content that has only just become
+ *  visible — a disclosure chain the navigation opened, or a card a scroll brought
+ *  on screen. -1 when nothing inside `target` is credibly the hit. */
+function walkAndPick(target: HTMLElement, hit: SearchHit): number {
+  applyEngine(() => {
+    engine?.search(shell?.value ?? "", shell?.caseSensitive ?? false);
+  });
+  return pickNearestMark(target, hit);
+}
+
+/** Ceiling on the frame wait below. Four 60Hz frames: long enough that a busy
+ *  frame does not lose the re-walk, short enough that the fallback is not itself
+ *  a stall the reader can feel. */
+const RENDER_WAIT_CEILING_MS = 64;
+
+/** One RENDERED frame, or the ceiling, whichever lands first. `true` when a frame
+ *  was actually delivered, which is what makes a following miss CONCLUSIVE.
+ *
+ *  The second callback is the first point after the previous frame was laid out,
+ *  which is when a `content-visibility: auto` card a scroll just reached holds
+ *  walkable text. THE TIMEOUT IS NOT BELT-AND-BRACES: a hidden page gets no
+ *  animation frames, so the bare pair never settled inside `stepServerHit`'s
+ *  `navBusy` latch, leaving find's next/prev inert until the tab came forward. */
+function nextRender(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const ceiling = setTimeout(() => {
+      resolve(false);
+    }, RENDER_WAIT_CEILING_MS);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        clearTimeout(ceiling);
+        resolve(true);
+      });
+    });
+  });
 }
 
 /** Page older history in until the hit's message is resident. Bounded by the
@@ -624,16 +684,11 @@ function messageRowEl(messageID: string): HTMLElement | null {
   );
 }
 
-/**
- * The rendered container of the hit's SEGMENT, resolved by
- * (messageID, blockIndex, segment_kind) against the store's block array:
- * tool segments carry their tool call's id (the card is addressed by
- * `data-tool-id`), text and reasoning blocks map ordinally onto the bubbles
- * and traces mounted in their own container (top level, or the delegate box
- * addressed by `data-subtask`). Null — the caller falls back to the message
- * row — for legacy blockless hits and anything the renderer did not mount.
- */
-function resolveSegmentEl(row: HTMLElement, hit: SearchHit): HTMLElement | null {
+/** The rendered container of the hit's SEGMENT, from the renderer's own per-block map, for every
+ *  segment kind. NOT scoped to the hit's row: a run card holds every later message's steps, so a
+ *  mounted card can sit in an EARLIER message's row. Every kind that mounts an element stamps it,
+ *  so null means nothing is mounted and the caller falls back to the row. */
+function resolveSegmentEl(hit: SearchHit): HTMLElement | null {
   const bi = hit.block_index;
   if (bi === undefined) {
     return null;
@@ -642,41 +697,18 @@ function resolveSegmentEl(row: HTMLElement, hit: SearchHit): HTMLElement | null 
   if (block === undefined) {
     return null;
   }
-  if (hit.segment_kind === "tool_title" || hit.segment_kind === "tool_output") {
-    const tid = block.tool_call_id ?? "";
-    if (tid === "") {
-      return null;
-    }
-    return row.querySelector<HTMLElement>(`[data-tool-id="${CSS.escape(tid)}"]`);
-  }
-  // content | reasoning: the Nth same-kind block of this agent maps onto the
-  // Nth mounted bubble/trace in that agent's container, because the renderer
-  // mounts blocks in chronological order per container.
-  const wantType = hit.segment_kind === "content" ? "text" : "thinking";
-  const subtask = hit.agent_subtask_id ?? "";
-  const msg = getActive()?.messages.find((m) => m.id === hit.message_id);
-  let ordinal = 0;
-  for (let i = 0; i < bi; i++) {
-    const b = msg?.blocks?.[i];
-    if (b?.type === wantType && (b.agent_subtask_id ?? "") === subtask) {
-      ordinal++;
-    }
-  }
-  const scope =
-    subtask === ""
-      ? row
-      : row.querySelector<HTMLElement>(`[data-subtask="${CSS.escape(subtask)}"]`);
-  if (scope === null) {
+  const stamped = blockElement(hit.message_id, bi);
+  // A map can name an element that has LEFT the document, where the subtree query this
+  // replaced could not; `navigateToHit` exits silently on one, so decline it here.
+  if (stamped?.isConnected !== true) {
     return null;
   }
-  const selector = wantType === "text" ? ".message" : "details.reasoning-block";
-  const inScope = [...scope.querySelectorAll<HTMLElement>(selector)].filter((cand) => {
-    // Direct membership: a top-level block is not inside any delegate box, and
-    // a delegate's block belongs to ITS box, not a box nested deeper.
-    const owner = cand.closest("[data-subtask]");
-    return subtask === "" ? owner === null : owner === scope;
-  });
-  return inScope[ordinal] ?? null;
+  // A top-level text block is stamped on its ROW — that is what a window drop
+  // removes — so both shapes answer with the bubble, which is what every consumer
+  // downstream flashes, walks and jumps to.
+  return hit.segment_kind === "content"
+    ? (stamped.querySelector<HTMLElement>(":scope > .message") ?? stamped)
+    : stamped;
 }
 
 /**

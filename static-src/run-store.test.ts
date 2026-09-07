@@ -11,6 +11,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { RunNode, RunState } from "./run-store.js";
+import type { RunControlsResponse } from "./wire/types.gen.js";
 
 const fetches: string[] = [];
 let responses: (RunState | undefined)[] = [];
@@ -18,6 +19,7 @@ let resolvers: (() => void)[] = [];
 let liveRunsReply: {
   runs: { workflow_id: string; chat_id: string; executing: boolean }[];
 } | null = null;
+let controlsReplies: RunControlsResponse[] = [];
 
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(async (path: string) => {
@@ -28,12 +30,20 @@ vi.mock("./api-client.js", () => ({
     const state = responses.shift();
     return state === undefined ? null : { workflowId: state.workflowId, state };
   }),
-  // The live-runs rebuild goes through the typed GET; the decoder is the
-  // generated one and is not under test here, so the mock answers typed values
-  // directly (null is the degrade arm: non-2xx / network / decode failure).
-  apiGetTyped: vi.fn((path: string) => {
+  // The live-runs rebuild and the affordance both go through the typed GET; the
+  // decoder is the generated one and is not under test here, so the mock answers
+  // typed values directly (null is the degrade arm: non-2xx / network / decode
+  // failure).
+  apiGetTyped: vi.fn(async (path: string) => {
     fetches.push(path);
-    return Promise.resolve(liveRunsReply);
+    if (!path.endsWith("/controls")) {
+      return liveRunsReply;
+    }
+    // Deferred like the state fetch above, so a test can invalidate the
+    // affordance again WHILE one read is open — the run that ends inside the
+    // tab-open read's window, which is the one moment its answer changes.
+    await new Promise<void>((r) => resolvers.push(r));
+    return controlsReplies.shift() ?? null;
   }),
 }));
 
@@ -58,6 +68,7 @@ beforeEach(() => {
   responses = [];
   resolvers = [];
   liveRunsReply = null;
+  controlsReplies = [];
   for (const id of ["r1", "r2", "r3", "r4"]) {
     store.forgetRun(id);
   }
@@ -724,5 +735,357 @@ describe("the live-runs inventory", () => {
     liveRunsReply = { runs: [] };
     await store.rebuildLiveRuns();
     expect(store.hasExecutingRunForChat("chat-kept")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `run_progress` is APPLIED, not answered with a fetch. That is what removes up
+// to five concurrent `GET /api/runs/{id}` round trips per burst of node events,
+// each one a JSON-RPC call to KAS returning the whole state tree.
+//
+// The property that makes it safe is addressability: a frame names ONE execution
+// by node PATH, and a repeat's iterations have distinct paths where they share a
+// node id. Every write is an assignment, so KAS's duplicate frames across a
+// resume cost nothing.
+// ---------------------------------------------------------------------------
+
+/** Seed a run's cached state without a fetch, by resolving one. */
+async function seedRun(id: string, state: RunState): Promise<void> {
+  responses = [state];
+  store.invalidateRun(id);
+  await settle();
+  fetches.length = 0;
+}
+
+describe("applyRunProgress writes the addressed node and issues no request", () => {
+  it("applies a node_start to the leaf its path names", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "seq", type: "sequence", status: "running", children: [step("coder")] },
+    });
+
+    const landed = store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: "seq/coder",
+      status: "running",
+      started_at: "2026-03-04T05:06:07Z",
+    });
+
+    expect(landed).toBe(true);
+    expect(fetches).toHaveLength(0);
+    const leaf = store.peekRunState("r1")?.root?.children?.[0];
+    expect(leaf?.status).toBe("running");
+    expect(leaf?.startedAt).toBe("2026-03-04T05:06:07Z");
+  });
+
+  it("finds an iteration container by its FRAME spelling, not the tree's", async () => {
+    // KAS spells a repeat's per-iteration container `<repeatId>#<n>` in the state
+    // tree and `iter-<n>` in a node path, so the client translates. Without that
+    // a step inside a loop is unaddressable and every frame for it refetches.
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: {
+        nodeId: "loop",
+        type: "repeat",
+        status: "running",
+        children: [
+          {
+            nodeId: "loop#0",
+            type: "sequence",
+            status: "completed",
+            iteration: 0,
+            children: [step("body", { status: "completed" })],
+          },
+          {
+            nodeId: "loop#1",
+            type: "sequence",
+            status: "running",
+            iteration: 1,
+            children: [step("body")],
+          },
+        ],
+      },
+    });
+
+    expect(
+      store.applyRunProgress({
+        workflow_id: "r1",
+        node_path: "loop/iter-1/body",
+        status: "running",
+      }),
+    ).toBe(true);
+    const iters = store.peekRunState("r1")?.root?.children ?? [];
+    expect(iters[1]?.children?.[0]?.status).toBe("running");
+    // The first pass of the loop must be untouched — the whole point of the path.
+    expect(iters[0]?.children?.[0]?.status).toBe("completed");
+  });
+
+  it("is idempotent, because KAS duplicates progress frames across a resume", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "coder", type: "step", status: "pending" },
+    });
+    const frame = { workflow_id: "r1", node_path: "coder", status: "completed", ended_at: "T1" };
+    store.applyRunProgress(frame);
+    const once = store.peekRunState("r1")?.root;
+    store.applyRunProgress(frame);
+    expect(store.peekRunState("r1")?.root).toEqual(once);
+  });
+
+  it("keeps the fields the frame does NOT carry", async () => {
+    // A `watch_poll` carries a path and no status, and a `node_complete` carries
+    // no `started_at`. A frame states what changed, so an absent field must not
+    // blank what node_start already left.
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "w", type: "watch", status: "running", startedAt: "T0" },
+    });
+
+    store.applyRunProgress({ workflow_id: "r1", node_path: "w" });
+    expect(store.peekRunState("r1")?.root?.status).toBe("running");
+    expect(store.peekRunState("r1")?.root?.startedAt).toBe("T0");
+
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: "w",
+      status: "completed",
+      ended_at: "T9",
+    });
+    expect(store.peekRunState("r1")?.root?.startedAt).toBe("T0");
+    expect(store.peekRunState("r1")?.root?.endedAt).toBe("T9");
+  });
+
+  it("drops a status word it does not know rather than writing it into the union", async () => {
+    // The frame forwards KAS's own word as a plain string. Every renderer switches
+    // on the node's status, so a new upstream word landing in the field would
+    // reach those switches with no case; the next refetch carries the truth.
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "coder", type: "step", status: "running" },
+    });
+    store.applyRunProgress({ workflow_id: "r1", node_path: "coder", status: "quantum" });
+    expect(store.peekRunState("r1")?.root?.status).toBe("running");
+  });
+
+  it("copies the spine rather than mutating it, so a reader's held value is stable", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: {
+        nodeId: "seq",
+        type: "sequence",
+        status: "running",
+        children: [step("a"), step("b")],
+      },
+    });
+    const before = store.peekRunState("r1");
+    const untouchedSibling = before?.root?.children?.[1];
+
+    store.applyRunProgress({ workflow_id: "r1", node_path: "seq/a", status: "running" });
+
+    const after = store.peekRunState("r1");
+    expect(after).not.toBe(before);
+    expect(before?.root?.children?.[0]?.status).toBe("pending");
+    // Siblings are shared by reference: only the matched spine is rebuilt.
+    expect(after?.root?.children?.[1]).toBe(untouchedSibling);
+  });
+
+  // A frame that moves nothing must cost nothing. The store's value is what every
+  // reader watches and it dedups by IDENTITY, so handing back a new object for an
+  // unchanged tree wakes every subscriber to repaint the same pixels.
+  //
+  // `watch_poll` is the frame that made this reachable — it re-states `running` on a
+  // node already running, once per poll interval for the life of a watch — and a
+  // duplicate frame across a KAS resume is the other. Asserted through the state's
+  // identity rather than a render count, because identity is the thing the
+  // subscribers key on.
+  it("does not reassign the state for a frame that moves nothing", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: {
+        nodeId: "seq",
+        type: "sequence",
+        status: "running",
+        children: [{ nodeId: "w", type: "watch", status: "running", startedAt: "T0" }],
+      },
+    });
+    const before = store.peekRunState("r1");
+
+    // The watch_poll shape: the node's path and the status it already holds.
+    const landed = store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: "seq/w",
+      status: "running",
+    });
+
+    // LANDED, so the caller must not refetch — "nothing changed" is not "I could
+    // not apply this", and conflating them would put the HTTP round trip back on
+    // every poll.
+    expect(landed).toBe(true);
+    expect(store.peekRunState("r1")).toBe(before);
+  });
+
+  // The same claim one level up: an unchanged leaf must not rebuild the spine
+  // above it either, or the root identity changes and the saving is lost.
+  it("leaves the spine alone when the addressed leaf did not move", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: {
+        nodeId: "seq",
+        type: "sequence",
+        status: "running",
+        children: [{ nodeId: "w", type: "watch", status: "running" }, step("b")],
+      },
+    });
+    const root = store.peekRunState("r1")?.root;
+
+    store.applyRunProgress({ workflow_id: "r1", node_path: "seq/w", status: "running" });
+
+    expect(store.peekRunState("r1")?.root).toBe(root);
+  });
+
+  // And the guard must not swallow a real change. A frame carrying a field the node
+  // does not hold is a change, however small.
+  it("still reassigns when the frame moves one field", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "w", type: "watch", status: "running" },
+    });
+    const before = store.peekRunState("r1");
+
+    store.applyRunProgress({
+      workflow_id: "r1",
+      node_path: "w",
+      status: "running",
+      started_at: "T1",
+    });
+
+    expect(store.peekRunState("r1")).not.toBe(before);
+    expect(store.peekRunState("r1")?.root?.startedAt).toBe("T1");
+  });
+});
+
+describe("applyRunProgress refuses what it cannot express, so the caller refetches", () => {
+  it("refuses a frame with no node path (loop_iteration, steps_queued, paused)", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "coder", type: "step", status: "running" },
+    });
+    expect(store.applyRunProgress({ workflow_id: "r1" })).toBe(false);
+    expect(store.applyRunProgress({ workflow_id: "r1", node_path: "" })).toBe(false);
+  });
+
+  it("refuses a run it holds no state for", () => {
+    expect(store.applyRunProgress({ workflow_id: "r4", node_path: "coder" })).toBe(false);
+  });
+
+  it("refuses a path this tree does not hold, which is a freshly-created container", async () => {
+    await seedRun("r1", {
+      workflowId: "r1",
+      status: "running",
+      root: { nodeId: "seq", type: "sequence", status: "running", children: [step("a")] },
+    });
+    expect(store.applyRunProgress({ workflow_id: "r1", node_path: "seq/b" })).toBe(false);
+    expect(store.applyRunProgress({ workflow_id: "r1", node_path: "other/a" })).toBe(false);
+  });
+});
+
+// The affordance is a SECOND cell on its own clock: the state is re-read on every
+// gap and shape change, while what a run offers turns over only when it reaches a
+// terminal status. Two triggers ask for it — a tab opening and that run's own
+// `run_finished` — and they can land together, which is the whole subject here.
+describe("the affordance cell coalesces like the state cell, trailing fetch included", () => {
+  const live: RunControlsResponse = {
+    verbs: ["pause", "cancel"],
+    refused: {},
+    parent_chat_id: "",
+  };
+  const ended: RunControlsResponse = { verbs: ["retry"], refused: {}, parent_chat_id: "" };
+
+  /** The controls requests issued so far. `fetches` also holds state reads. */
+  function controlsFetches(): string[] {
+    return fetches.filter((p) => p.endsWith("/controls"));
+  }
+
+  // THE DEFECT. The in-flight guard dropped a coincident call and scheduled
+  // nothing, so a run that ENDED inside the tab-open read's window kept the
+  // pre-terminal row — Pause and Cancel on a run that had already aborted — with
+  // no trigger left to re-ask for the tab's lifetime.
+  it("re-asks for a run that ended while the tab-open read was still open", async () => {
+    controlsReplies = [live, ended];
+    store.invalidateRunControls("r1"); // the tab opening
+    store.invalidateRunControls("r1"); // run_finished, inside that read's window
+    expect(controlsFetches()).toHaveLength(1);
+
+    await settle();
+    expect(controlsFetches()).toHaveLength(2);
+    await settle();
+    expect(store.runControls("r1")?.verbs).toEqual(["retry"]);
+  });
+
+  it("asks once when nothing coincided, rather than answering the same question twice", async () => {
+    controlsReplies = [live];
+    store.invalidateRunControls("r1");
+    await settle();
+    await settle();
+
+    expect(controlsFetches()).toHaveLength(1);
+    expect(store.runControls("r1")?.verbs).toEqual(["pause", "cancel"]);
+  });
+
+  it("does not conflate two runs", async () => {
+    controlsReplies = [live, ended];
+    store.invalidateRunControls("r1");
+    store.invalidateRunControls("r2");
+    expect(controlsFetches()).toHaveLength(2);
+    await settle();
+
+    expect(store.runControls("r1")?.verbs).toEqual(["pause", "cancel"]);
+    expect(store.runControls("r2")?.verbs).toEqual(["retry"]);
+  });
+
+  // A failed read leaves the previous answer standing: degrading to the last known
+  // row beats blanking the controls under a reader about to use them.
+  it("keeps the last good answer when a read comes back empty", async () => {
+    controlsReplies = [live];
+    store.invalidateRunControls("r1");
+    await settle();
+    await settle();
+
+    store.invalidateRunControls("r1"); // nothing left in the queue, so null
+    await settle();
+    expect(store.runControls("r1")?.verbs).toEqual(["pause", "cancel"]);
+  });
+
+  it("ignores an empty id rather than fetching /api/runs//controls", () => {
+    store.invalidateRunControls("");
+    expect(controlsFetches()).toEqual([]);
+  });
+});
+
+describe("invalidateCachedRuns is the gap-recovery half of the push contract", () => {
+  it("re-reads every run it holds, and nothing it does not", async () => {
+    await seedRun("r1", { workflowId: "r1", status: "running" });
+    await seedRun("r2", { workflowId: "r2", status: "running" });
+
+    responses = [
+      { workflowId: "r1", status: "completed" },
+      { workflowId: "r2", status: "completed" },
+    ];
+    store.invalidateCachedRuns();
+    await settle();
+
+    expect(fetches).toHaveLength(2);
+    expect(fetches.some((p) => p.includes("r1"))).toBe(true);
+    expect(fetches.some((p) => p.includes("r2"))).toBe(true);
   });
 });

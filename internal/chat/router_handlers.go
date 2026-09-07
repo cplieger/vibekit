@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"mime"
@@ -50,6 +51,11 @@ func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 
 // routeChatSubResource dispatches /api/chats/{id}/<sub> to its handler.
 func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, cid vibekit.ChatID, sub string) {
+	// The one sub-resource that is itself addressed: /tools/{toolCallID}.
+	if rest, ok := strings.CutPrefix(sub, "tools/"); ok {
+		rt.handleToolCall(w, r, cid, rest)
+		return
+	}
 	switch sub {
 	case "export":
 		rt.handleExport(w, r, cid)
@@ -78,20 +84,14 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 
-	limit := parseLimitParam(r)
-	beforeID := r.URL.Query().Get("before_id")
-
 	msgs := c.Messages
 	end := len(msgs)
-	if beforeID != "" {
+	if beforeID := r.URL.Query().Get("before_id"); beforeID != "" {
 		end = indexOfMessage(msgs, beforeID)
 	}
-	start := max(end-limit, 0)
-	// NOT slices.Clone: a sub-slice of a nil array clones to nil and marshals as
-	// `null`, which the wire decoder rejects for an array. make+copy yields `[]`.
-	window := make([]vibekit.Message, end-start)
-	copy(window, msgs[start:end])
+	window, start := messageWindow(msgs[:end], parseWindowBudget(r))
 
+	// `draft` is its own field, keeping the composer autosave off the SSE fan-out.
 	// `turn_open` ships with the transcript because the in-flight reply has no
 	// carrier in `messages` until turn end, so a client deriving an outcome from
 	// that silence would answer `unknown` mid-turn.
@@ -104,10 +104,101 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	})
 }
 
-// handleTurns serves GET /api/chats/{id}/turns: the chat's session-wide turn
-// index (number, outcome, start time, first line) with no message bodies.
-// Session-wide because the client's transcript store is a paginated window, so
-// a rail assembled from resident turns would grow markers on scroll-up.
+// windowBudget is what one transcript page may carry. A struct rather than four
+// int parameters, which are interchangeable at a call site.
+type windowBudget struct {
+	// Messages caps the page's LENGTH, a bound on shape rather than size.
+	Messages int
+	// Bytes is the hostile-input bound: what the wire may carry.
+	Bytes int
+	// Blocks and ToolCalls are the client's residency budgets; planResidency stops
+	// on whichever runs out first.
+	Blocks    int
+	ToolCalls int
+}
+
+// messageWindow returns the newest messages of msgs that fit EVERY budget, plus
+// the index the window starts at, so a caller can answer has_more honestly.
+//
+// Bytes bound what the WIRE carries, the residency pair what the CLIENT can hold.
+// Messages are marshalled HERE and returned as raw JSON, because the cut has to be
+// decided on the bytes that go on the wire. It always falls at a message boundary
+// and the newest message always goes through whole, or an over-budget chat's
+// newest message would be unreachable; previewMessage bounds the message ITSELF.
+func messageWindow(msgs []vibekit.Message, budget windowBudget) (window []json.RawMessage, start int) {
+	// Non-nil: a nil slice marshals as `null` and the generated decoder rejects
+	// `null` for an array.
+	window = make([]json.RawMessage, 0, min(budget.Messages, len(msgs)))
+	spentBytes := 0
+	var spent messageCost
+	start = len(msgs)
+	for i := range slices.Backward(msgs) {
+		if len(window) == budget.Messages {
+			break
+		}
+		raw, err := json.Marshal(previewMessage(&msgs[i]))
+		if err != nil {
+			// Unreachable — a Message holds no type encoding/json can refuse — but
+			// stop rather than serve a window with a hole in it.
+			slog.Warn("chat window: message marshal failed",
+				"message_id", msgs[i].ID, "error", err)
+			break
+		}
+		cost := costOfMessage(&msgs[i])
+		if len(window) > 0 && (spentBytes+len(raw) > budget.Bytes ||
+			spent.Blocks+cost.Blocks > budget.Blocks ||
+			spent.ToolCalls+cost.ToolCalls > budget.ToolCalls) {
+			break
+		}
+		spentBytes += len(raw)
+		spent.Blocks += cost.Blocks
+		spent.ToolCalls += cost.ToolCalls
+		window = append(window, raw)
+		start = i
+	}
+	slices.Reverse(window)
+	return window, start
+}
+
+// messageCost is what one message costs the client's two residency budgets.
+type messageCost struct {
+	Blocks    int
+	ToolCalls int
+}
+
+// costOfMessage prices one message the way `block-window.ts turnCost` must:
+// measuring differently would cut a page the client still stubs.
+func costOfMessage(m *vibekit.Message) messageCost {
+	return messageCost{Blocks: messageBlockCost(m), ToolCalls: len(m.ToolCalls)}
+}
+
+// messageBlockCost is the BLOCK half of costOfMessage. A message with no blocks
+// costs ONE, because the reconcile unit is the message row.
+//
+// The synthesis mirrors `store.ts normalizeMessage` INCLUDING its role gate: only
+// an ASSISTANT message persisted before the blocks field synthesizes per tool
+// call. Missing either half misprices a legacy many-tool-call turn.
+func messageBlockCost(m *vibekit.Message) int {
+	if n := len(m.Blocks); n > 0 {
+		return n
+	}
+	if m.Role != vibekit.RoleAssistant {
+		return 1
+	}
+	n := len(m.ToolCalls)
+	if m.Reasoning != "" {
+		n++
+	}
+	if m.Content != "" {
+		n++
+	}
+	return max(1, n)
+}
+
+// handleTurns serves GET /api/chats/{id}/turns: the session-wide turn index with
+// no message bodies. Server-side because the client's transcript store holds a
+// paginated window, so a rail built from resident turns would grow markers as the
+// reader scrolled up.
 func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -128,9 +219,8 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID vib
 	})
 }
 
-// handleSearch serves GET /api/chats/{id}/search?q=: a lexical scan of the
-// chat's messages, session-wide. Server-side because the client's store is a
-// paginated window; see search.go's header for why there is no index.
+// handleSearch serves GET /api/chats/{id}/search?q=: a session-wide lexical scan.
+// Server-side because the client's store is a paginated window.
 func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -155,13 +245,71 @@ func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID vi
 // parseLimitParam returns the ?limit= page size, honouring 1..500 inclusive;
 // anything else (absent, non-numeric, out of range) falls back to 50.
 func parseLimitParam(r *http.Request) int {
-	limit := 50
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
-			limit = n
-		}
+	return clampedQueryInt(r, "limit", 50, 1, 500)
+}
+
+// Byte budget bounds for the transcript window. Neither is a limit on the chat:
+// has_more plus before_id is how the rest is reached.
+const (
+	defaultMaxBytes = 1 << 20 // 1 MiB
+	maxMaxBytes     = 8 << 20 // 8 MiB
+)
+
+// parseMaxBytesParam returns the validated ?max_bytes= budget, defaulting to
+// defaultMaxBytes over the inclusive 1 KiB..maxMaxBytes range. The floor is 1 KiB
+// because anything under one message's envelope selects exactly one message
+// however small it is set, so it only hides a client bug.
+func parseMaxBytesParam(r *http.Request) int {
+	return clampedQueryInt(r, "max_bytes", defaultMaxBytes, 1<<10, maxMaxBytes)
+}
+
+// Residency-count bounds, shared by ?blocks= and ?tool_calls=. The default is
+// several of the client's own residency budgets, so a caller naming neither gets
+// the byte-bounded answer; the ceiling is 8× it, as the byte budget's is.
+const (
+	defaultMaxBlocks = 1024
+	maxMaxBlocks     = 8 * defaultMaxBlocks
+)
+
+// parseBlocksParam returns the validated ?blocks= budget, defaulting to
+// defaultMaxBlocks over the inclusive 1..maxMaxBlocks range. The floor is 1
+// because that is the smallest a message can cost.
+func parseBlocksParam(r *http.Request) int {
+	return clampedQueryInt(r, "blocks", defaultMaxBlocks, 1, maxMaxBlocks)
+}
+
+// parseToolCallsParam returns the validated ?tool_calls= budget, the second half
+// of the client's residency pair. The default is the BLOCK default, so this budget
+// cannot cut a page the block budget admitted; the floor is 0, because a page of
+// pure prose costs no tool calls.
+func parseToolCallsParam(r *http.Request) int {
+	return clampedQueryInt(r, "tool_calls", defaultMaxBlocks, 0, maxMaxBlocks)
+}
+
+// parseWindowBudget reads the four page budgets off the query.
+func parseWindowBudget(r *http.Request) windowBudget {
+	return windowBudget{
+		Messages:  parseLimitParam(r),
+		Bytes:     parseMaxBytesParam(r),
+		Blocks:    parseBlocksParam(r),
+		ToolCalls: parseToolCallsParam(r),
 	}
-	return limit
+}
+
+// clampedQueryInt returns the named query parameter when it parses as an integer
+// inside the inclusive [lo, hi] range, and def for anything else. Out of range
+// falls back to the DEFAULT rather than clamping, so a caller asking for something
+// unserveable cannot keep believing the number it sent.
+func clampedQueryInt(r *http.Request, name string, def, lo, hi int) int {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < lo || n > hi {
+		return def
+	}
+	return n
 }
 
 // indexOfMessage returns the position of the message with the given id, the

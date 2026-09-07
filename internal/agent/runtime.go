@@ -37,6 +37,12 @@ const (
 	// iOS Safari kills idle background connections after ~30s.
 	keepaliveInterval = 15 * time.Second
 
+	// reconnectDelay is the stream's advertised `retry:` field, governing the
+	// reconnect the BROWSER performs after a transient drop — transport.ts's own
+	// backoff never sees that case. Without it the delay is the browser default and
+	// the two disagree (3s Chrome, 5s Firefox). Not lower: a DOWN server retries on it.
+	reconnectDelay = 1500 * time.Millisecond
+
 	// outputBufferLimit is the byte budget for subprocess output ring buffers.
 	// 64 KB covers a 200x50 terminal screen with generous ANSI escapes.
 	outputBufferLimit = buffer.DefaultOutputCap
@@ -72,8 +78,8 @@ func (lt *lifetime) derivedContext() (context.Context, context.CancelFunc) {
 	return context.WithCancel(lt.shutdownCtx)
 }
 
-// TurnContext returns the context a turn runs under, plus the teardown its
-// handler must defer.
+// TurnContext returns the context a turn runs under, plus the teardown its handler
+// must defer.
 //
 // The turn is DETACHED from reqCtx's cancellation while keeping its values: the
 // prompt POST's context dies when the handler returns, and a turn that died with
@@ -122,8 +128,11 @@ type Runtime struct {
 	bus       *bus
 	coord     *BridgeCoordinator
 
-	push               pushService
-	chatStore          chatRecords
+	push      pushService
+	chatStore chatRecords
+	// catalog is the workspace's ONE mode + model vocabulary, served once rather
+	// than stamped onto every chat record and header. See Catalog.
+	catalog            *Catalog
 	mcpConfig          mcpNameSets
 	mcpRegistry        *mcpRegistry
 	shellMgr           *ShellManager
@@ -270,7 +279,11 @@ func WithSessionSweepGate(gate <-chan struct{}) Option {
 // cancels the runtime's own child. chatStore is REQUIRED on the same terms,
 // refused at construction rather than crashing on the first ACP frame.
 func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStore chatRecords, opts ...Option) *Runtime {
-	sseHub := sse.NewHub(sse.WithReplay(replayBufSize), sse.WithKeepalive(keepaliveInterval))
+	sseHub := sse.NewHub(
+		sse.WithReplay(replayBufSize),
+		sse.WithKeepalive(keepaliveInterval),
+		sse.WithReconnectDelay(reconnectDelay),
+	)
 	lc := &lifetime{
 		workDir: workDir,
 		done:    make(chan struct{}),
@@ -312,6 +325,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		runs:         runs,
 		config:       configP,
 		chatStore:    chatStore,
+		catalog:      &Catalog{},
 		hookStatus:   newHookStatusCache(kiroSettingsPath()),
 		authLatch:    &authTokenLatch{},
 		chatHandlers: make(map[string]chatHandler),
@@ -549,9 +563,9 @@ func (rt *Runtime) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
 	rt.bus.emit(evt)
 }
 
-// refuseWhenDraining answers 503 once Shutdown has flipped draining, for the
-// two routes that must stop accepting work before the HTTP drain begins:
-// commands and the event stream.
+// refuseWhenDraining answers 503 once Shutdown has flipped draining, for the two
+// routes that must stop accepting work before the HTTP drain begins: commands and
+// the event stream.
 //
 // A ROUTE wrapper rather than a member of the global chain, which also covers
 // /api/health, /api/version and static assets — none of which should start failing

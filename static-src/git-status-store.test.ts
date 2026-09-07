@@ -1,6 +1,15 @@
 // Tests for the shared git-status store: the per-path lookup the docs page and
 // the file browser read, and the index rules behind it.
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// The store reads the tree for its FIRST SUBSCRIBER, and two tests below
+// subscribe. Replacing the actions layer keeps that read off the network: these
+// tests seed the store with `_setReposForTest` and assert on what the index
+// derives. Which triggers make it read is git-status-triggers.test.ts's subject.
+vi.mock("./actions/index.js", () => ({
+  apiAction: () => ({ dispatch: () => Promise.resolve({ repos: [] }) }),
+  defineAction: () => ({ dispatch: () => Promise.resolve({ repos: [] }) }),
+}));
 
 import {
   _setReposForTest,

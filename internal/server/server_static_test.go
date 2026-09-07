@@ -41,12 +41,9 @@ func TestSpaHandler_assetETagRevalidation(t *testing.T) {
 	}
 }
 
-// A gzip-accepting client gets the construction-time gzip representation
-// with Content-Encoding: gzip and the ORIGINAL extension's Content-Type; a
-// client without gzip support gets the identity bytes. The two
-// representations carry distinct ETags. (There are no precompressed .gz
-// siblings anymore — webhttp.StaticHandler compresses the original bytes at
-// construction.)
+// A gzip-accepting client gets the construction-time gzip representation with
+// Content-Encoding: gzip and the ORIGINAL extension's Content-Type; a client
+// without gzip support gets the identity bytes. The two carry distinct ETags.
 func TestSpaHandler_gzipVariant(t *testing.T) {
 	plain := []byte(strings.Repeat("console.log('gzip variant fixture');\n", 40))
 	fsys := fstest.MapFS{
@@ -118,15 +115,11 @@ func TestSpaHandler_unknownPathFallsBackToIndex(t *testing.T) {
 	}
 }
 
-// index.html requested directly is HTML, so it takes the no-store branch
-// (never the asset ETag policy), keeping releases immediate — and it answers
-// with the shell, not a redirect.
-//
-// The status assertion is the half that was missing. This test used to check
-// only Cache-Control and ETag, and both of those are set before the fallback
-// runs, so it passed while the handler answered 301 "./" with a zero-length
-// body (measured on go1.27.0 before the fix). See spaHandler's comment for the
-// stdlib branch that caused it.
+// index.html requested directly is HTML, so it takes the no-store branch (never
+// the asset ETag policy), keeping releases immediate — and it answers with the
+// shell, not a redirect. The status assertion is load-bearing: Cache-Control and
+// ETag are both set before the fallback runs, so checking only those passes while
+// the handler answers a 301 with a zero-length body.
 func TestSpaHandler_indexHTMLIsNoStore(t *testing.T) {
 	fsys := fstest.MapFS{
 		"index.html": {Data: []byte("<html>fresh</html>")},
@@ -153,17 +146,12 @@ func TestSpaHandler_indexHTMLIsNoStore(t *testing.T) {
 
 // Every client route whose path ENDS in /index.html gets the shell.
 //
-// This is the class net/http.serveFile answered with a bare 301 to "./"
-// (fs.go:686-689: the index canonicalization reads r.URL.Path and runs before
-// the name it was handed is opened). `/file/{path}` is the file editor's deep
-// link, so a file genuinely named index.html — this repo has one under
-// static-src/ — could not be opened by URL: the browser followed the redirect
-// to the parent directory and the router rendered the wrong view.
-//
-// The %2F row is the Go 1.27 half: localRedirect now answers 404 rather than
-// 301 once the escaped path carries an escaped slash (fs.go:786-792), so that
-// spelling changed status with the toolchain while staying just as wrong. All
-// four must be the shell.
+// net/http.serveFile answers this class with a bare 301 to "./" (fs.go:686-689:
+// index canonicalization reads r.URL.Path and runs before the name it was handed
+// is opened), so the file editor's `/file/{path}` deep link could not open a file
+// genuinely named index.html. The %2F row is the Go 1.27 half: localRedirect
+// answers 404 rather than 301 once the escaped path carries an escaped slash
+// (fs.go:786-792) — a different status, just as wrong.
 func TestSpaHandler_indexHTMLSuffixedRoutesGetTheShell(t *testing.T) {
 	fsys := fstest.MapFS{
 		"index.html": {Data: []byte("<html>shell</html>")},
@@ -199,9 +187,8 @@ func TestSpaHandler_indexHTMLSuffixedRoutesGetTheShell(t *testing.T) {
 	}
 }
 
-// A HEAD on the shell carries the length and no body. net/http suppresses the
-// body itself; the explicit Content-Length is what keeps the answer complete
-// rather than chunked, which is what ServeFileFS used to provide.
+// A HEAD on the shell carries the length and no body: net/http suppresses the body
+// itself, and the explicit Content-Length keeps the answer complete, not chunked.
 func TestSpaHandler_headOnTheShellIsLengthOnly(t *testing.T) {
 	body := []byte("<html>shell</html>")
 	h := spaHandler(fstest.MapFS{"index.html": {Data: body}})
@@ -214,5 +201,77 @@ func TestSpaHandler_headOnTheShellIsLengthOnly(t *testing.T) {
 	}
 	if got := rec.Header().Get("Content-Length"); got != strconv.Itoa(len(body)) {
 		t.Errorf("Content-Length = %q, want %d", got, len(body))
+	}
+}
+
+// A content-addressed chunk is served immutable, end to end. The fixture name is
+// the real shape cmd/bundle emits (esbuild's `chunks/[name]-[hash]`, 8 uppercase
+// base32 characters), so this is the header a browser actually receives.
+func TestSpaHandler_hashedChunkIsImmutable(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html":                    {Data: []byte("<html></html>")},
+		"app.js":                        {Data: []byte("console.log(1)")},
+		"chunks/api-client-4K73XYBF.js": {Data: []byte("export const x = 1")},
+	}
+	h := spaHandler(fsys)
+
+	req := httptest.NewRequest(http.MethodGet, "/chunks/api-client-4K73XYBF.js", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != immutableAsset {
+		t.Errorf("Cache-Control = %q, want %q", got, immutableAsset)
+	}
+	if rec.Header().Get("ETag") == "" {
+		t.Error("hashed asset lost its ETag; an immutable answer still needs one for a forced reload")
+	}
+	// A release replaces app.js's bytes under the same name, so it must not inherit.
+	reqApp := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	recApp := httptest.NewRecorder()
+	h.ServeHTTP(recApp, reqApp)
+	if got := recApp.Header().Get("Cache-Control"); got != revalidateAsset {
+		t.Errorf("app.js Cache-Control = %q, want %q", got, revalidateAsset)
+	}
+}
+
+// The policy is a claim about the NAME, and the near misses are what make it safe:
+// a year-long immutable answer for a name whose bytes can change is unrecoverable
+// server-side, so anything but the bundler's own shape falls back to revalidating.
+func TestAssetCachePolicy(t *testing.T) {
+	cases := map[string]string{
+		// The bundler's own shape, and its sourcemap sibling.
+		"chunks/api-client-4K73XYBF.js":     immutableAsset,
+		"chunks/api-client-4K73XYBF.js.map": immutableAsset,
+		"chunks/banner-stack-KYMDPXPX.js":   immutableAsset,
+		// Stable names whose content a release replaces.
+		"app.js":            revalidateAsset,
+		"sw.js":             revalidateAsset,
+		"style.css":         revalidateAsset,
+		"favicon.svg":       revalidateAsset,
+		"icon-192.png":      revalidateAsset,
+		"exec-view/page.js": revalidateAsset,
+		"":                  revalidateAsset,
+		"index.html":        noStoreHTML,
+		"docs/index.html":   noStoreHTML,
+		// Near misses, each one character or one path segment off the shape.
+		"assets/app-4K73XYBF.js":         revalidateAsset,
+		"chunks/api-client-4K73XY.js":    revalidateAsset,
+		"chunks/api-client-4k73xybf.js":  revalidateAsset,
+		"chunks/api-client-4K73XYBF.css": revalidateAsset,
+		"chunks/deep/thing-4K73XYBF.js":  revalidateAsset,
+		"chunks/4K73XYBF.js":             revalidateAsset,
+		"prefix/chunks/x-4K73XYBF.js":    revalidateAsset,
+	}
+	for path, want := range cases {
+		// `-run` treats "/" as a subtest separator, so a slash-bearing name could
+		// not be selected; the failure message carries the real path.
+		t.Run(strings.ReplaceAll(path, "/", "_"), func(t *testing.T) {
+			if got := assetCachePolicy(path); got != want {
+				t.Errorf("assetCachePolicy(%q) = %q, want %q", path, got, want)
+			}
+		})
 	}
 }

@@ -33,3 +33,20 @@ export const LS_TURN_FOLDS_KEY = "vibekit.turn-folds";
  *  the viewer's (web-terminal's rule verbatim), so a phone dismissing a banner
  *  must not silence the desktop. It used to be `ui-state.dismissed_banners`. */
 export const LS_DISMISSED_BANNERS_KEY = "vibekit.dismissed-banners";
+
+/** Every key above, so a sign-out can drop them without naming them one by one.
+ *
+ *  Here rather than at the three owning modules because this file is by
+ *  construction the complete list: a fourth key declared above joins the sweep, and
+ *  a key added anywhere else is already a defect this file exists to prevent. The
+ *  in-MEMORY halves are not this file's — `fold-state.ts` caches its document and is
+ *  reset beside this call (`boot.ts` `forgetDeviceState`). */
+export function clearDeviceKeys(): void {
+  for (const key of [LS_UI_STATE_KEY, LS_TURN_FOLDS_KEY, LS_DISMISSED_BANNERS_KEY]) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      /* a storage-denied browser has nothing to clear */
+    }
+  }
+}

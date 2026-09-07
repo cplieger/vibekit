@@ -9,11 +9,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/workspace"
@@ -21,67 +23,178 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// allRepoStatus mirrors gitStatusResp but adds the repo name so the
-// front-end multi-repo dashboard can group by source.
+// allRepoStatus is gitStatusResp plus the repo name, so the dashboard can group.
 type allRepoStatus struct {
 	Repo string `json:"repo"`
 	gitStatusResp
 }
 
-// statusAllBudget bounds one full status-all scan; perRepoBudget bounds
-// each repo inside it so a single wedged repo degrades to a partial row
-// instead of stalling the whole dashboard.
+// Scan budgets. perRepoBudget keeps one wedged repo to a partial row rather than a
+// stalled dashboard. statusColdWait is the WHOLE scan budget, because a cold wait
+// expiring first answers `{repos: []}` — a claim about the tree, not about the read.
 const (
-	statusAllBudget = 30 * time.Second
-	perRepoBudget   = 10 * time.Second
+	statusScanBudget = 30 * time.Second
+	perRepoBudget    = 10 * time.Second
+	statusMaxAge     = 10 * time.Second
+	statusColdWait   = statusScanBudget
+	// scanConcurrency bounds fork+exec pressure, not CPU: each repo is two
+	// short-lived git subprocesses.
+	scanConcurrency = 8
+	// statusPathsMax caps one scoped read's paths; the excess is dropped, since a
+	// scoped refresh exists to scan FEWER repos than a full one.
+	statusPathsMax = 64
 )
 
-// handleStatusAll fans out collectStatus across every cloned repo
-// under workDir (plus workDir itself if it's a repo) and returns a
-// merged array. This is what the Changes tab on the git page fetches
-// once per refresh, instead of N round-trips for N repos.
-//
-// The scan is singleflighted and DETACHED from the request context:
-// boot fires several concurrent callers (changes tab + badge poll), so
-// concurrent callers join one scan, an abandoned scan runs to
-// completion (bounded by statusAllBudget), and the next poll gets a
-// fast answer.
-//
-// By default the network fetch (`fetch --quiet`) is skipped inside each
-// per-repo collectStatus call: doing N fetches in parallel on every
-// 15s badge poll is too aggressive for slow forges. ?fetch=1 (the
-// user-initiated "Refresh all" / git-tab activation) opts in so
-// ahead/behind counts are refreshed against the remotes. Fetching
-// callers get their own singleflight key so a cheap poll never
-// piggybacks a fetch-less result onto them (and vice versa).
+// handleStatusAll answers the multi-repo dashboard from the newest completed scan plus
+// its age, and refreshes behind the answer (status_cache.go says why). Only two callers
+// wait: the FIRST read of a process, and `?fetch=1`. `?paths=` narrows the refresh to
+// the repositories owning those paths, resolved server-side.
 func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 	doFetch := r.URL.Query().Get("fetch") == "1"
-	key := "status-all"
+	key := statusKeyPoll
 	if doFetch {
-		key = "status-all-fetch"
+		key = statusKeyFetch
 	}
-	v, _, _ := h.statusFlight.Do(key, func() (any, error) {
-		sctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), statusAllBudget)
-		defer cancel()
-		repos := h.cachedDiscoverRepos(sctx)
-		results := make([]allRepoStatus, len(repos))
-		g, gctx := errgroup.WithContext(sctx)
-		g.SetLimit(8)
-		for i, e := range repos {
-			g.Go(func() error {
-				rctx, rcancel := context.WithTimeout(gctx, perRepoBudget)
-				defer rcancel()
-				st := collectStatus(rctx, e.Dir, h.timeouts, &h.fetchFlight, doFetch)
-				results[i] = allRepoStatus{Repo: e.Name, gitStatusResp: st}
-				return nil
-			})
-		}
-		_ = g.Wait()
-		return results, nil
+	snap, running := h.statusCache.read(key)
+	scoped, only := h.statusScope(r, snap)
+	switch {
+	case scoped && len(only) == 0:
+		// Paths named but unowned: rescanning everything would be the opposite of the
+		// request, so answer from the snapshot unchanged.
+	case scoped:
+		running = h.refreshStatus(r, key, doFetch, only)
+	case doFetch || snap.stale(statusMaxAge):
+		running = h.refreshStatus(r, key, doFetch, nil)
+	}
+	if wait := h.coldWait(snap, doFetch); wait > 0 {
+		snap = h.awaitStatusAll(r, key, running, wait)
+		_, running = h.statusCache.read(key)
+	}
+	webhttp.WriteJSON(w, statusAllResp{
+		Repos:    snap.rows(),
+		AgeMS:    snap.age().Milliseconds(),
+		Scanning: running != nil,
 	})
-	results, _ := v.([]allRepoStatus)
-	// Treated as read-only by every singleflight sharer.
-	webhttp.WriteJSON(w, map[string]any{jsonKeyRepos: results})
+}
+
+// statusScope resolves `?paths=` into the repository names owning those paths; scoped
+// reports whether this read is a scoped one at all. A COLD read carrying paths is not
+// scoped: publishing a two-repo result into no snapshot leaves a partial scan later
+// reads cannot tell from a whole one. An unowned path is dropped.
+func (h *Handler) statusScope(r *http.Request, snap *statusSnapshot) (scoped bool, only map[string]struct{}) {
+	raw := r.URL.Query().Get("paths")
+	if raw == "" || snap == nil {
+		return false, nil
+	}
+	only = make(map[string]struct{}, 4)
+	seen := 0
+	for p := range strings.SplitSeq(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		seen++
+		if seen > statusPathsMax {
+			break
+		}
+		// Checked before ownerOf, which would otherwise resolve `../elsewhere` to the
+		// workspace-root repo — it owns every path no subdirectory repo claims.
+		if pathinside.RelEscapes(p) {
+			continue
+		}
+		if repo, _, ok := h.ownerOf(r.Context(), p); ok {
+			only[repo] = struct{}{}
+		}
+	}
+	return true, only
+}
+
+// statusAllResp is the dashboard's answer: the newest completed scan, how old it is,
+// and whether one is running behind it. The age is what lets the answer be immediate.
+type statusAllResp struct {
+	Repos    []allRepoStatus `json:"repos"`
+	AgeMS    int64           `json:"age_ms"`
+	Scanning bool            `json:"scanning"`
+}
+
+// coldWait is how long this read may wait for the scan in flight: nothing for an
+// ordinary poll with a snapshot, the cold budget for a process's first read, and the
+// whole-scan budget for a forced refresh.
+func (h *Handler) coldWait(snap *statusSnapshot, doFetch bool) time.Duration {
+	switch {
+	case doFetch:
+		return statusScanBudget
+	case snap == nil:
+		return statusColdWait
+	default:
+		return 0
+	}
+}
+
+// refreshStatus starts a scan for key unless one is in flight, returning the channel
+// that closes when the refresh in flight publishes. `only` names the repositories to
+// scan, nil the whole tree; a scoped result is MERGED. The scan runs DETACHED from the
+// request, so a client walking away mid-poll does not abort work the next poll
+// repeats, and it LOOPS to drain the intent a joining read leaves in the refresh slot.
+func (h *Handler) refreshStatus(r *http.Request, key string, doFetch bool, only map[string]struct{}) chan struct{} {
+	done, started := h.statusCache.claim(key, only)
+	if !started {
+		return done
+	}
+	parent := context.WithoutCancel(r.Context())
+	go func() {
+		for scope, run := only, true; run; {
+			ctx, cancel := context.WithTimeout(parent, statusScanBudget)
+			rows := h.scanRepos(ctx, doFetch, scope)
+			cancel()
+			scope, run = h.statusCache.finish(key, rows)
+		}
+	}()
+	return done
+}
+
+// awaitStatusAll waits for the scan in flight to publish, bounded by budget and by
+// the request going away, then returns whatever the holder has: a timeout answers
+// from the older snapshot rather than holding the request open.
+func (h *Handler) awaitStatusAll(r *http.Request, key string, running chan struct{}, budget time.Duration) *statusSnapshot {
+	if running != nil {
+		timer := time.NewTimer(budget)
+		defer timer.Stop()
+		select {
+		case <-running:
+		case <-r.Context().Done():
+		case <-timer.C:
+		}
+	}
+	snap, _ := h.statusCache.read(key)
+	return snap
+}
+
+// scanRepos collects the status of every cloned repo under workDir, bounded per repo. A
+// non-nil `only` narrows it, and the result is then a PARTIAL scan the caller must
+// merge rather than publish.
+func (h *Handler) scanRepos(ctx context.Context, doFetch bool, only map[string]struct{}) []allRepoStatus {
+	repos := h.cachedDiscoverRepos(ctx)
+	if only != nil {
+		repos = slices.DeleteFunc(slices.Clone(repos), func(e repoEntry) bool {
+			_, want := only[e.Name]
+			return !want
+		})
+	}
+	results := make([]allRepoStatus, len(repos))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(scanConcurrency)
+	for i, e := range repos {
+		g.Go(func() error {
+			rctx, rcancel := context.WithTimeout(gctx, perRepoBudget)
+			defer rcancel()
+			st := collectStatus(rctx, e.Dir, h.timeouts, &h.fetchFlight, doFetch)
+			results[i] = allRepoStatus{Repo: e.Name, gitStatusResp: st}
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return results
 }
 
 func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
@@ -101,12 +214,8 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "path required")
 		return
 	}
-	// Reject path traversal and flag smuggling. The client only
-	// sends relative paths from `git status` output; `..` and
-	// control bytes never appear in legitimate use and keep log
-	// lines clean. Reject the full ASCII control range (including
-	// tab, ESC) plus DEL so slog/Loki readers see readable values
-	// and no invisible bytes survive into downstream tooling.
+	// Rejects traversal, flag smuggling, and the whole ASCII control range plus
+	// DEL, so no invisible byte reaches a log sink or downstream tooling.
 	if !validateFilePath(requested) {
 		slog.Warn("git show: invalid path rejected", "repo", logsafe.Field(h.repoDir(repoFromQuery(r))), "path_len", len(requested))
 		httpreply.BadRequest(w, "invalid path")
@@ -118,31 +227,26 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "invalid ref")
 		return
 	}
-	// An absent `repo` means "resolve it": the path is workspace-relative
-	// and the caller does not know which repository owns it — the shape
-	// produced by translate.relPath for a turn's changed-file ledger or a
-	// tool card, which strips the workspace prefix and knows nothing
-	// about repos.
+	// An absent `repo` means resolve it: the caller knows nothing of repos, so its path
+	// is workspace-relative.
 	repo := repoFromQuery(r)
 	file := requested
 	if repo == "" {
 		owner, inRepo, ok := h.ownerOf(r.Context(), requested)
 		if !ok {
-			// Not a failure: there is no committed revision to show. The
-			// client renders an all-add diff against an empty base.
+			// Not a failure: no committed revision to show, so the client renders an
+			// all-add diff against an empty base.
 			writeGitError(w, KindNotInRepo, "")
 			return
 		}
 		repo, file = owner, inRepo
 	}
 	dir := h.repoDir(repo)
-	// gitShowCmd carries --no-textconv, so this resolution path inherits
-	// the raw-blob pin rather than needing its own.
+	// gitShowCmd carries --no-textconv, so the raw-blob pin is inherited here.
 	out, err := gitShowCmd(r.Context(), dir, ref, file)
 	if err != nil {
 		if errors.Is(err, ErrPathNotInRef) {
-			// File didn't exist at ref — return empty content so the
-			// diff renders as all-add for new files.
+			// Absent at ref: empty content renders as an all-add diff.
 			webhttp.WriteJSON(w, map[string]string{"content": ""})
 			return
 		}
@@ -156,7 +260,6 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dir := h.repoDir(repoFromQuery(r))
-	// Show remote branch log if available, fall back to local
 	ref := refHEAD
 	if branch, err := gitCmd(ctx, dir, "branch", "--show-current"); err == nil && branch != "" {
 		if _, err := gitCmd(ctx, dir, "rev-parse", "--verify", "origin/"+branch); err == nil {
@@ -169,10 +272,8 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 		webhttp.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0, "commit_url_prefix": ""})
 		return
 	}
-	// Not pinned to []string{} the way `branches` below is: git log
-	// answering successfully means at least one commit line, and the
-	// no-commits repo takes the error path above, which writes the empty
-	// array explicitly.
+	// Not pinned to []string{} the way `branches` is: a successful git log means at
+	// least one line, and a no-commits repo takes the error path above.
 	var lines []string
 	for line := range strings.SplitSeq(out, "\n") {
 		if line != "" {
@@ -183,8 +284,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	if rErr != nil {
 		slog.Debug("git remote get-url failed during log", "repo", logsafe.Field(dir), "error", logsafe.Field(rErr.Error()))
 	}
-	// Scrubbed once, so the commit prefix is derived from the same
-	// credential-free string the client is handed.
+	// Scrubbed once, so the commit prefix comes off the same credential-free string.
 	remote = scrubAuth(remote)
 	behind := 0
 	if ab, err := gitCmd(ctx, dir, "rev-list", "--left-right", "--count", "HEAD...@{upstream}"); err == nil {
@@ -248,11 +348,8 @@ func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "branch required")
 		return
 	}
-	// Reject branch names that look like options or contain characters
-	// forbidden by git-check-ref-format. The `--` barrier that makes
-	// most git subcommands safe can't be used here because
-	// `git checkout -- <name>` changes the semantics to "restore file",
-	// not "switch branch".
+	// The `--` barrier is unavailable here: `git checkout -- <name>` means restore file,
+	// not switch branch, so the name itself must be validated.
 	if !isValidGitRef(body.Branch) {
 		slog.Warn("git checkout: invalid branch rejected", "repo", body.Repo, "branch", body.Branch)
 		httpreply.BadRequest(w, "invalid branch name")
@@ -282,9 +379,8 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := h.repoDir(body.Repo)
-	// The lexical resolver answers workDir for every input it will not vouch for
-	// (empty, ".", a `..` component, an absolute path), so this one comparison is
-	// both the escape refusal and the "remove the workspace" refusal.
+	// The lexical resolver answers workDir for every input it will not vouch for, so
+	// this one comparison is both the escape refusal and the remove-the-workspace one.
 	if dir == h.workDir {
 		httpreply.BadRequest(w, "cannot remove workspace root")
 		return
@@ -304,25 +400,10 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 }
 
 // removeRepoDir unlinks dir through a parent pinned inside a confined root on the
-// workspace, never by name. A lexical containment check cannot carry its answer
-// forward: between the check and the remove the kernel re-resolves every
-// component from the root, so an ordinary directory that passed, replaced by a
-// symlink before the unlink, sends the delete wherever the link points — with no
-// root on the path the target is not even bounded to the workspace, and this
-// container's /config holds the chat store, the secret store, the tool tree and
-// the installed agent runtime.
-//
-// atomicfile.OpenParentInRoot descends component by component, Lstat-ing each and
-// refusing a symlink rather than following it, then confirms with os.SameFile that
-// the directory it opened is the one it inspected. Naming only the final element
-// through that handle removes every ancestor from the unlink's path.
-//
-// A repo the user symlinked into the workspace stays removable: the descent
-// refuses a symlink only at an INTERMEDIATE component and hands back the parent
-// for the final one, whose own RemoveAll unlinks a symlink rather than following
-// it — atomicfile.RemoveFileInRoot would refuse it with ErrNotRegular instead,
-// the right rule for a writer sweeping names it created, the wrong one here.
-// internal/agent's _kiro/fs/delete records the same choice.
+// workspace, never by name: the kernel re-resolves every component at the unlink, so a
+// lexically-checked directory later replaced by a symlink would send the delete
+// wherever the link points. A repo the user symlinked in stays removable — the descent
+// refuses a symlink only at an INTERMEDIATE component.
 func (h *Handler) removeRepoDir(dir string) error {
 	root, err := os.OpenRoot(h.workDir)
 	if err != nil {
@@ -335,10 +416,8 @@ func (h *Handler) removeRepoDir(dir string) error {
 	}
 	parent, base, err := atomicfile.OpenParentInRoot(root, rel)
 	if err != nil {
-		// os.RemoveAll answered success for a missing path, and a parent directory
-		// that is gone is the same answer to the caller. Only the not-exist verdict:
-		// a component refused for being a symlink or a non-directory is a real
-		// failure and must surface, as a REFUSAL rather than as a disk error.
+		// A gone parent is the same answer as a gone path. Only not-exist: a component
+		// refused for being a symlink or non-directory is a real failure.
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}

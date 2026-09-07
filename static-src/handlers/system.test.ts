@@ -92,10 +92,21 @@ vi.mock("../status.js", () => ({
 }));
 vi.mock("../retention.js", () => ({ refreshRetention: vi.fn() }));
 
+// The mode/model catalog re-read. Mocked because the real one is a network fetch
+// that seeds four controls, and because a call count is the whole assertion: the
+// catalog is announced on no frame, so a gap is the only signal this client gets
+// that a `config_option_update` or a server restart happened during the outage.
+const mockFetchCatalog = vi.fn(() => Promise.resolve());
+vi.mock("../session-catalog.js", () => ({ fetchCatalog: mockFetchCatalog }));
+
 // The live-runs inventory rebuild: the gap handler re-reads the server's
 // presence projection because the events feeding the inventory were lost.
+const mockInvalidateCachedRuns = vi.fn();
 const mockRebuildLiveRuns = vi.fn(() => Promise.resolve());
-vi.mock("../run-store.js", () => ({ rebuildLiveRuns: mockRebuildLiveRuns }));
+vi.mock("../run-store.js", () => ({
+  rebuildLiveRuns: mockRebuildLiveRuns,
+  invalidateCachedRuns: mockInvalidateCachedRuns,
+}));
 
 // The shared turn teardown (turn-teardown.ts) reaches these three, and each is a
 // boundary this test has no business driving: the rail FETCHES the session-wide
@@ -147,8 +158,6 @@ function makeSession(id: string, over: Partial<Session> = {}): Session {
     model: "",
     acp_session_id: "",
     current_mode_id: "",
-    available_modes: [],
-    available_models: [],
     usage: {
       context_pct: 0,
       context_size: 0,
@@ -239,6 +248,27 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     setSessions([makeSession("a")]);
     fireGap();
     expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
+  });
+
+  // A run's node state is APPLIED from `run_progress` rather than refetched, so
+  // frames lost in the outage leave a stale tree with nothing to notice it — a
+  // node that completed during the gap keeps reading `running` and its clock keeps
+  // ticking. A gap is the one moment the client knows it missed frames.
+  it("re-reads every cached run, because the progress frames it missed were applied ones", () => {
+    setSessions([makeSession("a")]);
+    fireGap();
+    expect(mockInvalidateCachedRuns).toHaveBeenCalledTimes(1);
+  });
+
+  // The catalog left ChatHeader for one workspace-global holder, and nothing
+  // broadcasts a change to it: `fetchCatalog` used to run at boot and after login
+  // only, so a model list that moved during the outage — or a server restart, which
+  // empties the in-memory holder until a bridge respawns — left the picker on
+  // whatever boot answered, until a reload.
+  it("re-reads the mode/model catalog, which no frame announces", () => {
+    setSessions([makeSession("a")]);
+    fireGap();
+    expect(mockFetchCatalog).toHaveBeenCalledTimes(1);
   });
 
   // THE TAB RECONCILE IS GONE, and its absence is what this pins.

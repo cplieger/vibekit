@@ -6,6 +6,7 @@
 // `onClose`); stopping a run is the Cancel VERB.
 
 import { el, effect, touch } from "@cplieger/reactive";
+import { bindLoadingState } from "./actions/index.js";
 import {
   closeTab,
   getActiveTabId,
@@ -17,11 +18,17 @@ import {
 } from "./tabs.js";
 import { mountRunDecisionDock, rerenderDocks, runPendingAsks } from "./decision-dock.js";
 import { cancelRun, pauseRun, resumeRun, retryRun } from "./actions/runs.js";
-import { RUN_CONTROLS, CONTROL_LABEL, runEndedCleanly, type RunVerb } from "./run-controls.js";
+import {
+  CONTROL_LABEL,
+  offeredVerbs,
+  refusalSentences,
+  runEndedCleanly,
+  type RunVerb,
+} from "./run-controls.js";
 import { get, isThinking, messagesVersionOf, runStatusFor } from "./store.js";
 import { blockTextSigs, blockThinkingSigs } from "./store-signals.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
-import { inFlight, neverRan, type ExecState } from "./exec-view/status.js";
+import { inFlight, neverRan } from "./exec-view/status.js";
 import { flatten, leaves, type ExecNode } from "./exec-view/model.js";
 import { runToExec } from "./run-exec-source.js";
 import type { RunStepStream } from "./run-step-blocks.js";
@@ -36,12 +43,15 @@ import {
 } from "./run-step-transcript.js";
 import {
   invalidateRun,
+  invalidateRunControls,
   noteRunChat,
+  runControls,
   runState,
   runChatID,
   runPlan,
   type RunState,
 } from "./run-store.js";
+import type { RunControlsResponse } from "./wire/types.gen.js";
 import { refreshRunDots, trackRun } from "./run-dots.js";
 import { buildPath } from "./router.js";
 import { iconEl } from "./icon-el.js";
@@ -49,36 +59,29 @@ import { ICON_EXTERNAL } from "./icons.js";
 import { parseStepSubtask } from "./step-subtask.js";
 import type { RunStepPayload } from "./types.js";
 
-/** Verb → its action. Separate from run-controls.ts's table because that module is the
- *  pure RULE and must stay importable without the actions framework. */
-const RUN_ACTION: Record<RunVerb, { dispatch: (id: string) => Promise<unknown> }> = {
+/** Verb → its action. Separate from run-controls.ts on purpose: that module is
+ *  the pure RULE and must stay importable without the actions framework; this is
+ *  the wiring. */
+const RUN_ACTION: Record<
+  RunVerb,
+  { readonly name: string; dispatch: (id: string) => Promise<unknown> }
+> = {
   pause: pauseRun,
   resume: resumeRun,
   cancel: cancelRun,
   retry: retryRun,
 };
 
-/** The exec view's state back to the run status `RUN_CONTROLS` is keyed by. `input` maps
- *  to `running` because a run blocked on an ask still is; `pending` and `skipped` have no
- *  run-level meaning and answer undefined, which renders no control row. */
-const EXEC_TO_WIRE: Partial<Record<ExecState, string>> = {
-  running: "running",
-  input: "running",
-  waiting: "paused",
-  ok: "completed",
-  fail: "failed",
-  warn: "aborted",
-};
-
-/** The run on screen, so an invalidation knows whether it is about that run. */
+/** The run this view is currently showing, so an SSE invalidation knows whether
+ *  it is about the run on screen. Cleared when the view loads a different one;
+ *  a closed tab simply stops matching, because the next open reassigns it. */
 let shownRun = "";
 
-/** Whether the shown run was launched by an AGENT, from the run's own state. */
+/** Whether the shown run was launched by an AGENT, from the run's own state
+ *  (`paint` sets it from `inspect`'s `parentSessionId`). It decides what the empty-step
+ *  note says and whether the door beside it is offered, and nothing else: the control
+ *  row is the SERVER's answer now, so no verb is gated on it here. */
 let shownRunChatParented = false;
-
-/** Whether the shown run was launched manually. Gates the one verb that only makes sense
- *  on a run vibekit hosts itself, and is derived from the run's state, not from the door. */
-let shownRunParentless = false;
 
 /** The launching chat of a run, or "" for a parentless one. TWO sources: `runChatID`
  *  (SSE-fed, so it answers for a live run), then the run tab's persisted
@@ -96,28 +99,59 @@ function launchingChatOf(workflowID: string): string {
   return fromTab;
 }
 
-/** Point the shared run view (one DOM element serves every run tab) at a run,
- *  and give its dock somewhere to render. The dock host is mounted ONCE with a
- *  dynamic match — the run on screen — so tab switches re-key it without
- *  re-mounting. */
+/** The pending bindings on the control row's buttons, dropped when the row that
+ *  carries them goes — either replaced by a new one or discarded with the page.
+ *
+ *  `bindLoadingState` self-disposes only for an element that was ATTACHED the last
+ *  time its effect ran, and this row is built before the caller appends it, so a
+ *  button replaced before its first pending flip never reaches that path. Nothing
+ *  else would drop it. */
+let controlBindings: (() => void)[] = [];
+
+/** The control row on screen and the affordance it was built from, so a render that
+ *  did not move the answer hands the SAME row back.
+ *
+ *  The row is a function of that answer and the pending signals its buttons carry,
+ *  and neither moves at the rate this is called: it is built inside the exec page's
+ *  one render pass, which runs per `run_progress` frame. Rebuilding there threw away
+ *  a live button several times a minute on a busy run. `""` is the no-answer
+ *  signature; a real one always carries its separators. */
+let controlRow: HTMLElement | null = null;
+let controlSig = "";
+
+/** Drop the row on screen and the bindings its buttons hold.
+ *
+ *  Both callers own a moment the row stops being current: `buildRunControls` when the
+ *  answer moved, `mountPage` when the whole page it lived in is disposed. Without the
+ *  second, the last row's disposers were held until some later build — bounded to one
+ *  row, and still a live effect following an action for a button nothing can see. */
+function dropControlRow(): void {
+  for (const dispose of controlBindings) {
+    dispose();
+  }
+  controlBindings = [];
+  controlRow = null;
+  controlSig = "";
+}
+
 /** Point the run view at one run and mount its dock.
  *
  *  Exported for the tab factory (tab-materialize.ts): this is a run tab's `onShow`,
  *  and the factory has to name it without importing the openers above, which build
- *  tabs. `parentless` is deliberately NOT derivable from a `TabSubject` — see the
- *  factory's header: it asks whether the RUN has a parent agent session, while a
- *  subject's `Parent` names the open tab this one nests under, and a chat-parented run
- *  reviewed while its chat's tab is closed has an empty Parent without being
- *  parentless.
+ *  tabs.
  *
- *  `parentless` is the PRE-FETCH hint and nothing more: it is all the loading row has
- *  to go on, and `paint` replaces it from `state.parentSessionId` the moment the
- *  first reply lands. The signature stays for that reason rather than growing a
- *  second argument — `app.ts` and `tab-materialize.ts`'s opener type both name it. */
-export function showRun(workflowID: string, parentless: boolean): void {
+ *  ONE argument now. It used to take `parentless`, and the composition root answered
+ *  it from the run store's record of which chat launched the run — a map written only
+ *  by SSE frames, so every client that had reloaded answered `true` for a
+ *  chat-parented run. Parentage is a durable property of the RUN, so `paint` reads it
+ *  off `inspect`'s own `parentSessionId` when the first reply lands and no door has to
+ *  guess it. */
+export function showRun(workflowID: string): void {
   shownRun = workflowID;
-  shownRunParentless = parentless;
-  shownRunChatParented = !parentless;
+  // Until that reply lands the run is treated as PARENTLESS, which is the arm whose
+  // sentences describe THIS tab and so cannot mislead about another one. Reset per
+  // show, or the previous run's verdict would answer for this one.
+  shownRunChatParented = false;
   const dock = document.getElementById("run-dock");
   if (dock !== null) {
     mountRunDecisionDock(dock, () => shownRun);
@@ -129,6 +163,8 @@ export function showRun(workflowID: string, parentless: boolean): void {
   // leak a subscription per tab opened.
   installViewEffect();
   invalidateRun(workflowID);
+  // The affordance, once per tab open. `invalidateRunControls` owns the trigger list.
+  invalidateRunControls(workflowID);
 }
 
 /** The view's single subscription to the store. Idempotent. */
@@ -388,10 +424,12 @@ let emptyLink: { workflowID: string; chatID: string; el: HTMLElement } | undefin
 /** Build the page into `#run-body`, replacing whatever was there. */
 function mountPage(container: HTMLElement, workflowID: string): ExecPageView {
   page?.dispose();
+  // The row belonged to the page being replaced, and its host goes with it.
+  dropControlRow();
   const built = buildExecPage({
     emptyNote: stepEmptyNote,
     emptyAction: stepEmptyAction,
-    controls: (run) => buildRunControls(run.id, run.state),
+    controls: (run) => buildRunControls(run.id),
     onShowNode: armStepRead,
   });
   page = built;
@@ -739,10 +777,11 @@ function paint(workflowID: string, state: RunState | undefined): void {
   // Chat-parentedness comes from the RUN, not from client memory or from the door.
   // `parentSessionId` is `inspect`'s own answer and is empty for a manual and a
   // scheduled launch alike; the second term can only ADD chat-parented verdicts, and
-  // every one it adds withholds the control verbs, which is the safe direction.
+  // every one it adds offers a DOOR into the conversation rather than withholding
+  // anything, which is the safe direction. No verb hangs off it: the control row is
+  // the server's answer.
   const launchingChat = launchingChatOf(workflowID);
   shownRunChatParented = (state.parentSessionId ?? "") !== "" || launchingChat !== "";
-  shownRunParentless = !shownRunChatParented;
 
   // Reused only while the page this module built is STILL MOUNTED in this container.
   // The run id alone is not enough: `#run-body` is one shared element whose children
@@ -882,57 +921,58 @@ function subscribeToDeltas(slices: ReadonlyMap<string, RunStepSlice>): void {
   }
 }
 
-/** The run's control row. Empty for an unknown status, which renders nothing
- *  rather than an empty container. */
-function buildRunControls(workflowID: string, state: ExecState): HTMLElement | null {
-  // The verb table is keyed by KAS's own status words, and the page hands over the
-  // exec view's state — one vocabulary in, a different one out. Mapped here rather
-  // than by widening the table, because `run-controls.ts` is deliberately the pure
-  // rule over the WIRE's statuses and a second set of keys in it would make "which
-  // status is this" ambiguous at the one place that must not be.
-  const wire = EXEC_TO_WIRE[state];
-  let verbs = wire === undefined ? undefined : RUN_CONTROLS[wire];
-  // ONE gate now, and it is about the RUN rather than about the door.
-  //
-  // The which-door gate is gone with the ×-cancels behaviour it belonged to: an owned
-  // tab used to carry the live verbs while a History-opened review carried only retry,
-  // on the reasoning that reaching a live run's controls was the launching tab's job
-  // and its × was the stop. With the × disarmed (tab-materialize.ts), that leaves a
-  // live run readable from History with no way to stop it — so the verbs are the
-  // status's wherever the run is read from.
-  //
-  // PARENTLESSNESS gates ONE verb, not all four, and the claim it used to rest on is
-  // no longer true. It read "an agent-parented run is the agent's to drive, on a
-  // bridge it holds, so vibekit does not offer to pause, resume, cancel or retry it
-  // from a page" — but `hostBridge` (run_host.go) resolves such a run's carrier by
-  // matching its `parentSessionId` against each LIVE bridge's chat session chain, so
-  // pause and resume reach it whenever the launching chat is open, and cancel reaches
-  // it unconditionally (`control` falls back to the utility session, and a cancel
-  // only WRITES state). Suppressing all four left a wedged agent-launched run
-  // recoverable only by `curl`, with nothing on screen saying so — the run this
-  // change came from was one POST away from advancing.
-  //
-  // RETRY keeps its suppression, and that one is a standing user decision rather than
-  // a carrier fact: an agent-parented run's recovery is the agent's own, and
-  // `(*Runs).Retry` says so at its own door. It is also the one verb that RE-HOSTS,
-  // so it would put vibekit's bridge under a run the agent still believes it owns.
-  //
-  // A verb offered on a run nothing holds is not a lie the row tells either, and it
-  // is no longer even a refusal: `hostOrRehost` (run_host.go) STARTS a process for
-  // such a run and lets KAS rehydrate it from disk, which is what a container
-  // restart and a closed launching chat now resolve to. What can still refuse is
-  // the run's own state, and KAS's 409 names it.
-  if (verbs !== undefined && !shownRunParentless) {
-    verbs = verbs.filter((verb) => verb !== "retry");
+/** The run's control row, rendered from the SERVER's answer and rebuilt only when
+ *  that answer moved (`controlRow` owns why).
+ *
+ *  Nothing is decided here. The exec view's own state word is not even consulted:
+ *  the affordance is computed against a status the server read one round trip ago,
+ *  and re-deriving it from the state this page happens to hold would put the
+ *  drifting copy back — which is what the status-keyed table plus a parentlessness
+ *  gate used to be. Parentlessness gates no verb here either: `hostBridge`
+ *  (run_host.go) resolves an agent-parented run's carrier from the launching chat's
+ *  live bridge, so which verbs that run offers is the server's answer too.
+ *
+ *  Three outcomes. Verbs render as buttons. No verbs but a REFUSAL renders the
+ *  server's sentences where the buttons would have been — before this the row
+ *  returned null and a reader was never told why a run offered nothing. Neither
+ *  renders nothing, the honest answer for a completed run (its state word says it)
+ *  and for the moment before the first fetch resolves. */
+function buildRunControls(workflowID: string): HTMLElement | null {
+  const answer = runControls(workflowID);
+  const sig = answer === undefined ? "" : controlSignature(workflowID, answer);
+  if (sig === controlSig) {
+    return controlRow;
   }
-  // Empty is as good as absent: a completed run offers nothing, and an empty
-  // control row would be a visible container with no purpose.
-  if (verbs === undefined || verbs.length === 0) {
-    return null;
+  // The answer moved, so the row on screen is on its way out and its bindings go
+  // with it — the caller replaces the host's children with whatever is returned here.
+  dropControlRow();
+  controlSig = sig;
+  controlRow = answer === undefined ? null : renderControls(workflowID, answer);
+  return controlRow;
+}
+
+/** What the row is a function of, and nothing else: the run it acts on, the verbs it
+ *  draws and the sentences it draws instead. The parent chat travels on the same
+ *  answer and changes nothing here, so it is left out rather than churning the row. */
+function controlSignature(workflowID: string, answer: RunControlsResponse): string {
+  // Keyed, not positional: `refused` is a map on the wire, so two answers that differ
+  // only in the order the server happened to serialize them are the same row.
+  const refused = Object.entries(answer.refused ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([verb, text]) => `${verb}\u0001${text}`)
+    .join("\u0002");
+  return `${workflowID}\u0000${answer.verbs.join("\u0001")}\u0000${refused}`;
+}
+
+/** The row itself. Split from the decision above so the guard reads as one thing. */
+function renderControls(workflowID: string, answer: RunControlsResponse): HTMLElement | null {
+  const verbs = offeredVerbs(answer.verbs);
+  if (verbs.length === 0) {
+    return refusalRow(refusalSentences(answer.refused));
   }
   const row = el("div", { className: "run-controls" });
   for (const verb of verbs) {
-    const dispatch = RUN_ACTION[verb];
+    const action = RUN_ACTION[verb];
     const btn = el(
       "button",
       {
@@ -943,12 +983,33 @@ function buildRunControls(workflowID: string, state: ExecState): HTMLElement | n
           // boundary, so the run is still `running` when the reply arrives and a
           // flipped label would be a lie for as long as the node takes. The
           // run_progress invalidation is what repaints this row.
-          void dispatch.dispatch(workflowID);
+          void action.dispatch(workflowID);
         },
       },
       CONTROL_LABEL[verb],
-    );
+      // `el` answers HTMLElement; the pending binding needs the `disabled`
+      // property, which only the concrete button type declares.
+    ) as HTMLButtonElement;
+    // A retry starts a process and can legitimately take tens of seconds, so an
+    // unbound button looks dead for the whole handshake and can be clicked again
+    // meanwhile. Its disposer is held rather than left to the binding's own
+    // detach detection, which cannot arm on a button bound before it is attached.
+    controlBindings.push(bindLoadingState(action.name, btn));
     row.appendChild(btn);
   }
   return row;
+}
+
+/** The row a run with no verbs gets: the server's own sentences, in the place a
+ *  reader is already looking for the control. Null when there is nothing to say,
+ *  so a completed run keeps its clean header. */
+function refusalRow(sentences: readonly string[]): HTMLElement | null {
+  if (sentences.length === 0) {
+    return null;
+  }
+  return el(
+    "div",
+    { className: "run-controls run-controls-refused", role: "note" },
+    ...sentences.map((text) => el("p", { className: "run-control-refusal" }, text)),
+  );
 }

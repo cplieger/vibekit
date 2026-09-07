@@ -11,50 +11,29 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// TestRunVerbGates pins which statuses each run-control verb is legal from,
-// mirroring what KAS itself accepts.
-//
-// Cancel is deliberately UNRESTRICTED, and that asymmetry is the part worth
-// pinning: it doubles as the tab-close gesture, so gating it would turn closing a
-// tab whose run just finished into an error toast.
-func TestRunVerbGates(t *testing.T) {
-	// KAS's WorkflowStatusSchema, exhaustively.
-	all := []string{"running", "paused", "completed", "failed", "aborted"}
+// WHICH statuses a verb is legal from is pinned by run_affordance_test.go, over the one
+// table run_affordance.go holds. Cancel's unrestricted status is the asymmetry worth
+// pinning here instead, because it doubles as the tab-close gesture: TestRunVerbsAreWired
+// below asserts it is never gated, so closing a tab whose run just finished cannot become
+// an error toast.
 
-	cases := map[string]struct {
-		verb  runVerb
-		legal []string
-	}{
-		"pause is live-only":     {runVerbPause, []string{"running"}},
-		"resume is paused-only":  {runVerbResume, []string{"paused"}},
-		"cancel is unrestricted": {runVerbCancel, all},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			for _, status := range all {
-				want := slices.Contains(tc.legal, status)
-				// An empty `from` means unrestricted, which the handler treats as
-				// "skip the pre-check entirely".
-				got := len(tc.verb.from) == 0 || slices.Contains(tc.verb.from, status)
-				if got != want {
-					t.Errorf("%s from %q: got legal=%v, want %v", tc.verb.name, status, got, want)
-				}
-			}
-		})
-	}
-}
-
-// TestRunVerbsAreWired guards the two halves that can silently drift apart: a
-// verb with no issuer would 200 without doing anything, and a verb with no name
-// would log and error as the empty string.
+// TestRunVerbsAreWired guards the halves that can silently drift apart: a verb with no
+// issuer would 200 without doing anything, a verb with no name would log and error as the
+// empty string, and cancel losing its unrestricted status would error on a tab close.
 func TestRunVerbsAreWired(t *testing.T) {
-	for _, verb := range []runVerb{runVerbCancel, runVerbPause, runVerbResume} {
+	for _, verb := range []runVerb{runVerbCancel, runVerbPause, runVerbResume, runVerbDelete} {
 		if verb.name == "" {
 			t.Error("a run verb has no name; its 409 and its log line would both be blank")
 		}
 		if verb.issue == nil {
 			t.Errorf("run verb %q has no issuer: the route would answer ok without calling KAS", verb.name)
+		}
+	}
+	// Cancel is the tab-close gesture and must never be the verb that fails (KAS is
+	// idempotent on a terminal run); delete is the only way a row leaves History.
+	for _, verb := range []runVerb{runVerbCancel, runVerbDelete} {
+		if verb.gated {
+			t.Errorf("run verb %q is gated; it must reach a run from any status", verb.name)
 		}
 	}
 }
@@ -67,8 +46,6 @@ func TestRunVerbsAreWired(t *testing.T) {
 // the utility bridge, is a carrier that cannot execute the run (it denies every
 // permission ask and errors every fs call), which is worse than refusing.
 func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
-	// Seeds a chat carrying `sessions` as its chain, opens its bridge, and points
-	// the fake `workflow/list` at one run parented on `parentSession`.
 	setup := func(t *testing.T, parentSession string, sessions ...string) (*Runtime, *fakeBridge) {
 		t.Helper()
 		h, cs, br := newTestHub()
@@ -101,10 +78,8 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 		}
 	})
 
-	// A chat changes session on a failed session/load, a model-switch fallback and
-	// empty-turn recovery, so a run launched before such a change is parented on a
-	// RETIRED id. Matching only the current one would strand exactly the runs a
-	// rough session produced.
+	// A chat changes session on a failed load, a model-switch fallback and empty-turn
+	// recovery, so a run launched before such a change is parented on a RETIRED id.
 	t.Run("a run parented on a RETIRED session in the chain still resolves", func(t *testing.T) {
 		h, _ := setup(t, "sess_old", "sess_old", "sess_current")
 		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {

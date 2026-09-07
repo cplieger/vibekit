@@ -1,9 +1,7 @@
 package agent
 
-// Tests for the run host: the synthetic-id plumbing, the dispatch split, and
-// the teardown rules. The launch flow's KAS half (new/invoke) is exercised
-// against the fake bridge; what is pinned is vibekit's sequencing and
-// bookkeeping, not KAS's behaviour.
+// Tests for the run host: the synthetic-id plumbing, the dispatch split, and the
+// teardown rules. What is pinned is vibekit's sequencing, not KAS's behaviour.
 
 import (
 	"encoding/json"
@@ -18,17 +16,15 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// bufferedEvent is one decoded SSE envelope. Payload stays RAW: most cases here
-// assert on the type and the topic only, and the two that read a field decode it
-// themselves rather than making every other case carry a shape.
+// bufferedEvent is one decoded SSE envelope. Payload stays RAW: the two cases that
+// read a field decode it themselves rather than making every case carry a shape.
 type bufferedEvent struct {
 	Type    string          `json:"type"`
 	ChatID  string          `json:"chat_id"`
 	Payload json.RawMessage `json:"payload"`
 }
 
-// bufferedEvents decodes the SSE replay buffer back into typed envelopes, so a
-// dispatch test asserts on what a client would actually receive.
+// bufferedEvents decodes the SSE replay buffer, so a test asserts what a client sees.
 func bufferedEvents(h *Runtime) []bufferedEvent {
 	var out []bufferedEvent
 	for _, e := range h.bus.fanout.Buffered() {
@@ -40,8 +36,6 @@ func bufferedEvents(h *Runtime) []bufferedEvent {
 	return out
 }
 
-// marshalPayload decodes an event payload's string fields, which is all the run
-// step cases assert on.
 func marshalPayload(t *testing.T, raw json.RawMessage) map[string]string {
 	t.Helper()
 	var out map[string]string
@@ -75,10 +69,9 @@ func TestRunChatID_Namespace(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_LifecycleGoesWorkspaceGlobal pins the topic rule: a
-// parentless run's lifecycle events carry an EMPTY chat id (workspace-global),
-// never the synthetic one — the synthetic id is bridge-map plumbing and must
-// not leak onto the wire as a topic.
+// TestRunDispatch_LifecycleGoesWorkspaceGlobal pins the topic rule: a parentless
+// run's lifecycle events carry an EMPTY chat id, never the synthetic one, which is
+// bridge-map plumbing and must not leak onto the wire as a topic.
 func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 	h, _, _ := newTestHub()
 
@@ -159,9 +152,8 @@ func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 }
 
 // TestRunDispatch_UnmarkedStepContentIsDropped pins the one frame this door still
-// refuses: a `session/update` with no `_meta.kiro.workflow` block names no node,
-// so there is no step row to render it in. It is the run session's own bookkeeping
-// rather than a step's work.
+// refuses: a `session/update` with no `_meta.kiro.workflow` block names no node, so
+// there is no step row to render it in.
 func TestRunDispatch_UnmarkedStepContentIsDropped(t *testing.T) {
 	h, _, _ := newTestHub()
 
@@ -178,10 +170,9 @@ func TestRunDispatch_UnmarkedStepContentIsDropped(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_PermissionKeyedToRunChat pins the ask path: a step's
-// permission on a run bridge broadcasts keyed to the synthetic chat id — which
-// is what the client dock renders in the run tab, and what the reply's
-// chat_id routes back through.
+// TestRunDispatch_PermissionKeyedToRunChat pins the ask path: a step's permission
+// on a run bridge broadcasts keyed to the synthetic chat id, which is what the dock
+// renders in the run tab and what the reply's chat_id routes back through.
 func TestRunDispatch_PermissionKeyedToRunChat(t *testing.T) {
 	h, _, _ := newTestHub()
 
@@ -209,8 +200,7 @@ func TestRunDispatch_PermissionKeyedToRunChat(t *testing.T) {
 }
 
 // TestRunDispatch_UnknownRequestIsRefused pins that an unmatched A→C request is
-// ANSWERED with an error rather than dropped — an unanswered request wedges the
-// step's turn until a timeout nobody set fires.
+// ANSWERED with an error rather than dropped: an unanswered request wedges the step.
 func TestRunDispatch_UnknownRequestIsRefused(t *testing.T) {
 	h, _, br := newTestHub()
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
@@ -225,9 +215,8 @@ func TestRunDispatch_UnknownRequestIsRefused(t *testing.T) {
 	}
 }
 
-// TestLaunchRun_SequencesNewRegisterInvoke pins the launch ordering against the
-// fake bridge: the run is created, REGISTERED, and only then invoked — a frame
-// following invoke immediately must find the bridge in the map.
+// TestLaunchRun_SequencesNewRegisterInvoke pins the launch ordering: created,
+// REGISTERED, and only then invoked, so a frame following invoke finds the bridge.
 func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -264,8 +253,8 @@ func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 }
 
 // TestLaunchRun_RefusesAnUnknownSource pins the validation posture: the launch
-// source is re-checked against a fresh listRecipes reply, so this endpoint
-// cannot be pointed at an arbitrary file even though the value looks like one.
+// source is re-checked against a fresh listRecipes reply, so this endpoint cannot
+// be pointed at an arbitrary file.
 func TestLaunchRun_RefusesAnUnknownSource(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -301,8 +290,7 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 }
 
 // TestCloseFinishedRunBridge_TerminalOnly pins the teardown rule: run_complete
-// closes the bridge only on a TERMINAL status. A policy pause reports through
-// the same frame and the run is still this process's to resume.
+// closes the bridge only on a TERMINAL status, and a policy pause uses that frame.
 func TestCloseFinishedRunBridge_TerminalOnly(t *testing.T) {
 	cases := []struct {
 		status string
@@ -345,9 +333,8 @@ func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 	}
 }
 
-// epochStub is a controllable turn-epoch reader: what turnRegistry.currentEpoch
-// answers, without a lifecycle to drive. A chat absent from the map, or holding
-// zero, is idle.
+// epochStub is a controllable turn-epoch reader. A chat absent from the map, or
+// holding zero, is idle.
 type epochStub struct {
 	cur map[vibekit.ChatID]vibekit.TurnEpoch
 }
@@ -357,14 +344,10 @@ func (e *epochStub) read(chatID vibekit.ChatID) (vibekit.TurnEpoch, bool) {
 	return epoch, epoch != 0
 }
 
-// TestKillForTurn_ScopedToTheOpenTurn pins the interrupt gate's scope (§5.6
-// R3): a cancel kills the CURRENT turn's terminals and leaves a background
-// command an earlier turn started on purpose alone.
-//
-// The boundary between the two turns here is a turn CLOSING and another OPENING,
-// which is what the epoch expresses and what the ordinal it replaced could not:
-// that ordinal was advanced by the prompt path alone, so a turn the wire started
-// left it where it was and its terminals stayed attributed to the next turn.
+// TestKillForTurn_ScopedToTheOpenTurn pins the interrupt gate's scope: a cancel
+// kills the CURRENT turn's terminals and leaves a background command an earlier
+// turn started alone. The boundary is a turn CLOSING and another OPENING, which the
+// epoch expresses and the prompt-advanced ordinal it replaced could not.
 func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
 	ep := &epochStub{cur: map[vibekit.ChatID]vibekit.TurnEpoch{"c1": 7, "c2": 3}}
 	at := newAgentTerminals(nil, nil, nil, ep.read)
@@ -417,13 +400,10 @@ func TestKillForTurn_NothingOpenIsANoOp(t *testing.T) {
 	}
 }
 
-// TestRetry_SuccessClearsTheOldTerminalReason is finding 9 on the hosted
-// branch, end to end through the verb.
-//
-// Retry reuses the workflow id, so a run stopped as `overran` carried that reason
-// into its retry — and history.ts deliberately lets a recognised end_reason
-// outrank live status, so the running retry rendered as aborted and stayed that way
-// after it succeeded.
+// TestRetry_SuccessClearsTheOldTerminalReason: retry reuses the workflow id, so
+// a run stopped as `overran` carried that reason into its retry — and the client
+// lets a recognised end_reason outrank live status, so the running retry rendered
+// as aborted and stayed that way after it succeeded.
 func TestRetry_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -434,7 +414,11 @@ func TestRetry_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	h.runs.claimTermination(id)
 	h.runs.recordEnd(id, runEndOverran)
 
-	if err := h.runs.Retry(t.Context(), id); err != nil {
+	// The zero affordance is what the route's gate resolves for a PARENTLESS run,
+	// which is what every fixture in this file stages: no launching chat to thread,
+	// so the verb finds its host through the run's own bridge. A chat-parented run
+	// threading its real parent is run_retry_test.go's subject.
+	if _, err := h.runs.Retry(t.Context(), id, runAffordance{}); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
 	if got := h.runs.endReason(id); got != "" {
@@ -450,9 +434,8 @@ func TestRetry_SuccessClearsTheOldTerminalReason(t *testing.T) {
 }
 
 // TestRetry_FailureKeepsTheOldTerminalReason is the other half, and the reason
-// the clear happens AFTER the RPC rather than before it: a retry KAS refused
-// re-drove nothing, so the previous terminal reason is still the truth about that
-// run and its row must keep saying so.
+// the clear happens AFTER the RPC: a retry KAS refused re-drove nothing, so the
+// previous terminal reason is still the truth about that run.
 func TestRetry_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -462,7 +445,7 @@ func TestRetry_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	h.runs.claimTermination(id)
 	h.runs.recordEnd(id, runEndOverran)
 
-	if err := h.runs.Retry(t.Context(), id); err == nil {
+	if _, err := h.runs.Retry(t.Context(), id, runAffordance{}); err == nil {
 		t.Fatal("a refused retry reported success")
 	}
 	if got := h.runs.endReason(id); got != runEndOverran {
@@ -473,14 +456,13 @@ func TestRetry_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	}
 }
 
-// TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable is the
-// interleaving that shipped the defect, forced deterministically. The lease was
-// granted AFTER the retry call, so `run_start` landing first found none, the
-// observer inferred OriginAgent from that absence, and the agent exclusion made the
-// run permanently unsweepable — blocking every later launch of the recipe.
-//
-// The fake bridge's blockOn seam holds the retry call open, so the frame is
-// delivered strictly INSIDE the window rather than near it.
+// TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable forces the
+// interleaving that shipped the defect: a re-hosted PARENTLESS run's first frame can
+// arrive before the retry call returns, and with the lease granted after that call,
+// `run_start` found none and the observer stamped OriginAgent on a run no chat owns
+// — which made it permanently unsweepable and blocked every later launch of the
+// recipe. The fake bridge's blockOn seam holds the call open, so the frame lands
+// strictly INSIDE the window.
 func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -494,9 +476,19 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 	held := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: held}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	// The route's gate, resolved for real: it is the affordance that now carries the
+	// recipe off KAS's run list, so a hand-built stand-in would keep this green after
+	// the thread broke and the lease went back to being nameless.
+	aff := h.runs.affordance(t.Context(), id, "aborted")
+	if aff.Recipe != "nightly" {
+		t.Fatalf("Setup: the gate resolved recipe %q, want nightly off KAS's run list", aff.Recipe)
+	}
 
 	done := make(chan error, 1)
-	go func() { done <- h.runs.Retry(t.Context(), id) }()
+	go func() {
+		_, rErr := h.runs.Retry(t.Context(), id, aff)
+		done <- rErr
+	}()
 
 	// Wait until the retry is genuinely in flight, then deliver the frame the way
 	// dispatch does: a run bridge's workflow frames carry an EMPTY chat id.
@@ -539,9 +531,9 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 // one retry's legality window implies, since `closeStoppedBridge` tears the bridge
 // down on every stop.
 //
-// Its lease used to be minted with an EMPTY recipe, on the reasoning that a
-// re-hosted run's recipe is unknowable here. KAS's own run list reports it, and a
-// nameless lease cannot be recognised as the run holding its own recipe.
+// The recipe is knowable here: KAS's own run list reports it, and it is the same
+// string the single-run rule compares against, so a nameless lease could not be
+// recognised as the run holding its own recipe.
 func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -556,8 +548,13 @@ func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	if h.bridge.mgr.get(runChatID(id)) != nil {
 		t.Fatal("the fixture registered a bridge, so this exercises the wrong branch")
 	}
+	// The gate's own answer, which is what carries the name to the lease.
+	aff := h.runs.affordance(t.Context(), id, "aborted")
+	if aff.Recipe != "nightly" {
+		t.Fatalf("Setup: the gate resolved recipe %q, want nightly off KAS's run list", aff.Recipe)
+	}
 
-	if err := h.runs.Retry(t.Context(), id); err != nil {
+	if _, err := h.runs.Retry(t.Context(), id, aff); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
 	l, ok := h.runs.lease(id)
@@ -576,10 +573,9 @@ func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	}
 }
 
-// TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused: the lease is now
-// granted BEFORE the verb, so a refusal has to put it back. A lease left behind for
-// a run that never re-drove would make its recipe read as busy to the admission
-// backstop and hand a wall clock to a run that is not executing.
+// TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused: the lease is
+// granted BEFORE the verb, so a refusal has to put it back, or the recipe reads as
+// busy to the admission backstop and a wall clock is handed to an idle run.
 func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -590,7 +586,7 @@ func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) 
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
 
-	if err := h.runs.Retry(t.Context(), id); err == nil {
+	if _, err := h.runs.Retry(t.Context(), id, runAffordance{}); err == nil {
 		t.Fatal("a refused retry reported success")
 	}
 	if _, ok := h.runs.lease(id); ok {
@@ -600,9 +596,8 @@ func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) 
 }
 
 // TestCancelRun_LostClaimIssuesNoSecondCancel pins the loser's half of the
-// termination claim on the public verb: something is already ending the run, so the
-// user's Cancel must not send a second cancel or overwrite the winner's reason.
-// It reports success because the outcome the caller asked for is the one happening.
+// termination claim: something is already ending the run, so Cancel must not send a
+// second one or overwrite the winner's reason. It reports success regardless.
 func TestCancelRun_LostClaimIssuesNoSecondCancel(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -625,9 +620,8 @@ func TestCancelRun_LostClaimIssuesNoSecondCancel(t *testing.T) {
 	}
 }
 
-// TestCancelRun_WinsTheClaimAndRecordsNothing: the user's cancel is the one
-// terminal path that records NO reason, because its absence is what makes the two
-// bounds distinguishable from a person on the History row.
+// TestCancelRun_WinsTheClaimAndRecordsNothing: the user's cancel records NO reason,
+// because its absence is what tells the two bounds from a person on the History row.
 func TestCancelRun_WinsTheClaimAndRecordsNothing(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"

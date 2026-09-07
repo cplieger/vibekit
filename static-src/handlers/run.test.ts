@@ -11,7 +11,15 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("../run-store.js", () => ({
+  // `false` by default: the frame did not land, which is the arm that still
+  // refetches. A case that pins the APPLY path sets it true.
+  applyRunProgress: vi.fn(() => false),
   invalidateRun: vi.fn(),
+  // The affordance refetch a run's ENDING triggers: the verb set changes at exactly
+  // that moment (a live run's Pause/Cancel becomes a failed run's Retry) and nothing
+  // else in the frame stream says so.
+  invalidateRunControls: vi.fn(),
+  invalidateCachedRuns: vi.fn(),
   noteRunChat: vi.fn(),
   noteRunLive: vi.fn(),
   noteRunSettled: vi.fn(),
@@ -55,7 +63,9 @@ import "./run.js";
 import { dispatch, onBus, BUS_RUNS_CHANGED } from "../bus.js";
 import type { SSEPayloads } from "../bus.js";
 import {
+  applyRunProgress,
   invalidateRun,
+  invalidateRunControls,
   noteRunChat,
   noteRunLive,
   noteRunSettled,
@@ -75,6 +85,8 @@ import { answerRunInput, continueRunStep } from "../actions/runs.js";
 import { notifyIfHidden } from "../notify.js";
 
 const invalidate = vi.mocked(invalidateRun);
+const invalidateControls = vi.mocked(invalidateRunControls);
+const applyProgress = vi.mocked(applyRunProgress);
 const noteChat = vi.mocked(noteRunChat);
 const noteLive = vi.mocked(noteRunLive);
 const noteSettled = vi.mocked(noteRunSettled);
@@ -111,6 +123,7 @@ onBus(BUS_RUNS_CHANGED, () => {
 
 beforeEach(() => {
   invalidate.mockClear();
+  invalidateControls.mockClear();
   noteChat.mockClear();
   noteLive.mockClear();
   noteSettled.mockClear();
@@ -161,13 +174,54 @@ const _keys: readonly (keyof SSEPayloads)[] = [
 void _keys;
 
 describe("run SSE handlers", () => {
-  it("invalidates the run store on every one of the three events", () => {
-    const order: RunEvent[] = ["run_started", "run_progress", "run_finished"];
+  it("invalidates the run store at both ENDS of a run", () => {
+    const order: RunEvent[] = ["run_started", "run_finished"];
     for (const [i, type] of order.entries()) {
-      send(type, { workflow_id: "wf_1", kind: "node_start", status: "completed", name: "x" });
+      send(type, { workflow_id: "wf_1", status: "completed", name: "x" });
       expect(invalidate).toHaveBeenCalledTimes(i + 1);
       expect(invalidate).toHaveBeenLastCalledWith("wf_1");
     }
+  });
+
+  // The verb set turns over at exactly one moment in a run's life: its ending. A
+  // live run's Pause/Cancel becomes a failed run's Retry, or a completed run's
+  // nothing, and no other frame says so — so this is the affordance's second and
+  // last trigger, the first being a tab opening. Fetching it per frame instead
+  // would put a round trip on every node event, which is what the progress patch
+  // exists to avoid.
+  it("refetches the affordance when a run ENDS, and never mid-run", () => {
+    send("run_progress", { workflow_id: "wf_1", kind: "node_start", node_path: "seq/coder" });
+    send("run_started", { workflow_id: "wf_1", name: "x" });
+    expect(invalidateControls).not.toHaveBeenCalled();
+
+    send("run_finished", { workflow_id: "wf_1", status: "failed", name: "x" });
+    expect(invalidateControls).toHaveBeenCalledTimes(1);
+    expect(invalidateControls).toHaveBeenLastCalledWith("wf_1");
+  });
+
+  // A progress frame is APPLIED, and the refetch is what happens only when it
+  // cannot be. That is the whole of B7: a burst of node events used to cost one
+  // `GET /api/runs/{id}` each — a JSON-RPC round trip to KAS for the whole state
+  // tree — and up to five runs do it concurrently.
+  it("applies a progress frame and does NOT refetch when it landed", () => {
+    applyProgress.mockReturnValue(true);
+    send("run_progress", {
+      workflow_id: "wf_1",
+      kind: "node_start",
+      node_path: "seq/coder",
+      status: "running",
+    });
+    expect(applyProgress).toHaveBeenCalledTimes(1);
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  // The store refuses a frame it cannot express — a shape change, a run-level
+  // pause, a run it holds nothing for — and the refetch is the recovery.
+  it("refetches when the frame could not be applied", () => {
+    applyProgress.mockReturnValue(false);
+    send("run_progress", { workflow_id: "wf_1", kind: "loop_iteration" });
+    expect(applyProgress).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith("wf_1");
   });
 
   // Every run's tab carries a dot now, agent-launched included, so every event

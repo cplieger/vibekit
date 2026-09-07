@@ -1,15 +1,15 @@
 // ---------------------------------------------------------------------------
 // Workflow-run SSE handlers.
 //
-// Three events, all meaning "something about a run changed, go read it" —
-// the payloads are too thin to reconstruct a run from (`run_start` re-fires
-// on every resume; `node_complete` carries neither `iteration` nor
-// `branchId`). `_kiro/workflow/inspect` is the truth; these events only say
-// when to ask it.
+// `_kiro/workflow/inspect` is still the source of a run's state, but only
+// `run_started` and the frames a per-node patch cannot express reach it.
+// `run_progress` names one node by path and states what happened to it, so
+// the store applies it — see run-store.ts's header for which frames still
+// refetch and why.
 //
-// So this file routes and interprets nothing: one store invalidation, one
-// bus emit, two facts recorded, and toasts. Every surface that shows a run
-// reads `run-store.ts` and re-renders when that store changes.
+// So this file routes and interprets nothing: one store write, one bus emit,
+// two facts recorded, and toasts. Every surface that shows a run reads
+// `run-store.ts` and re-renders when that store changes.
 //
 // Surfaces: `run-store.ts` by direct import (a leaf over api-client, the one
 // fetch for all readers); the history list over the bus (importing
@@ -25,7 +25,9 @@
 import { onSSE, emitBus, BUS_RUNS_CHANGED } from "../bus.js";
 import { info, success, error } from "../toast.js";
 import {
+  applyRunProgress,
   invalidateRun,
+  invalidateRunControls,
   noteRunChat,
   noteRunLive,
   noteRunSettled,
@@ -151,6 +153,10 @@ onSSE("run_finished", (chatID, p) => {
   // Deliberately NOT opened: a run that finished before anyone looked has
   // nothing live to watch. History is the door to a finished run.
   invalidateRun(p.workflow_id);
+  // An ending is the one moment the verb set changes: a live run's Pause/Cancel
+  // becomes a failed run's Retry, or a completed run's nothing. Fetched here
+  // rather than on every frame, so a progressing run costs no extra round trip.
+  invalidateRunControls(p.workflow_id);
   emitBus(BUS_RUNS_CHANGED);
   announcedStarts.delete(p.workflow_id);
   toastCompletion(p.status, p.name);
@@ -221,6 +227,15 @@ onSSE("run_input_settled", (_chatID, p) => {
   collapseSettledRunInput(p.workflow_id, p.ask_id, p.settled_by);
 });
 
+// The one lifecycle frame that carries CONTENT rather than a nudge: what
+// happened to one node of the run, addressed by its path. It is applied to
+// the cached tree, and the refetch runs only when it cannot be —
+// `loop_iteration` and `steps_queued` change the tree's shape, `paused` is
+// run-level, and a run this client holds no state for has nothing to patch.
+//
+// That is what a burst of node events used to cost: one `GET /api/runs/{id}`
+// per frame, each a JSON-RPC round trip to KAS for the whole state tree, up
+// to five runs concurrently.
 onSSE("run_progress", (chatID, p) => {
   trackRun(p.workflow_id);
   noteRunChat(p.workflow_id, chatID);
@@ -235,5 +250,7 @@ onSSE("run_progress", (chatID, p) => {
   // No tab open, and no auto-open MARKER either. The server retries its own offer
   // on each step's frame, and claiming the tab here would let the completion
   // auto-close take one a mid-run reader opened themselves.
-  invalidateRun(p.workflow_id);
+  if (!applyRunProgress(p)) {
+    invalidateRun(p.workflow_id);
+  }
 });

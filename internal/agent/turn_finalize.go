@@ -119,8 +119,8 @@ func (bc *BridgeCoordinator) StartTurn(ctx context.Context, chatID vibekit.ChatI
 		return 0
 	}
 	if model != "" {
-		// Latch the model here: the streaming handler stamps it on the first frame,
-		// which can be seconds later and so can pick up a fast in-session switch.
+		// Latched here: the streaming handler stamps it on the first frame, seconds
+		// later, where a fast in-session switch would be picked up instead.
 		t.Buf.SetModel(model)
 	}
 	return t.Epoch
@@ -141,9 +141,9 @@ func (bc *BridgeCoordinator) displaceEngineTurn(ctx context.Context, chatID vibe
 }
 
 // AwaitTurn blocks until the turn named by epoch has finalized and reports what it
-// did, so a caller deciding something about its OWN turn reads the turn's account
-// rather than state the finalize has consumed. It runs on the caller's goroutine:
-// moving the decision into the finalizer deadlocks against the close it awaits.
+// did, so a caller reads the turn's account rather than state the finalize has
+// consumed. It runs on the CALLER's goroutine: deciding inside the finalizer
+// deadlocks against the close it awaits.
 func (bc *BridgeCoordinator) AwaitTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch) (vibekit.TurnResult, error) {
 	return bc.turns.await(ctx, chatID, epoch)
 }
@@ -216,11 +216,10 @@ func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID vibekit.Ch
 	}
 }
 
-// claimForCloser claims the turn a closer is ending. An EPOCH claims exactly that
-// turn; AnyOpen takes whatever is open, because it describes the chat. Neither
-// OPENS a turn to close it, or a bracket for an already-closed turn makes a
-// phantom. A ZERO epoch closes nothing — that is what StartTurn returns when ctx
-// died, so falling through would let a prompt failure claim a turn it never opened.
+// claimForCloser claims the turn a closer is ending: an EPOCH claims exactly that
+// turn, AnyOpen whatever is open. Neither OPENS a turn to close it, or a bracket for
+// an already-closed turn makes a phantom. A ZERO epoch closes nothing, so a prompt
+// failure cannot claim a turn StartTurn never opened.
 func (bc *BridgeCoordinator) claimForCloser(ctx context.Context, chatID vibekit.ChatID, tc turnClose) (*Turn, bool) {
 	if tc.AnyOpen {
 		// NO AMEND ON THIS BRANCH: claimOpen cannot tell a loss from an absence (both
@@ -346,9 +345,8 @@ func (bc *BridgeCoordinator) persistTurnReply(ctx context.Context, t *Turn, msg 
 	bc.persistTurn(ctx, t.Chat, msg)
 }
 
-// closeOnPromptResponse finalizes a turn on the response that settled it — the LOCAL
-// fallback, running only when the wire's own turn_end never arrived, so its outcome can
-// be nothing richer than end_turn or cancelled.
+// closeOnPromptResponse finalizes a turn on the response that settled it: the LOCAL
+// fallback, so its outcome is never richer than end_turn or cancelled.
 func (bc *BridgeCoordinator) closeOnPromptResponse(ctx context.Context, t *Turn, resp *vibekit.RPCResponse) vibekit.TurnResult {
 	// No reason of its own: the response carries a stop reason and no prose.
 	return bc.closeWithOutcome(ctx, t, extractStopReason(resp), closerPromptResponse, "")
@@ -743,8 +741,15 @@ func (bc *BridgeCoordinator) closeOnLocalShell(ctx context.Context, t *Turn) vib
 func (bc *BridgeCoordinator) failInFlightTools(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer) {
 	messageID, changed := buf.MarkCancelledToolsFailed()
 	for i := range changed {
+		// The status is the only thing that moved, so the frame carries the id and
+		// the status and nothing else — the buffer already holds the rest, and a
+		// reconnecting client reads it from turn_state.
 		bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID,
-			vibekit.ToolCallUpdatePayload{MessageID: messageID, ToolCall: changed[i]}))
+			vibekit.ToolCallUpdatePayload{
+				MessageID:  messageID,
+				ToolCallID: changed[i].ID,
+				Status:     changed[i].Status,
+			}))
 	}
 }
 

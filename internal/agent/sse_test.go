@@ -107,6 +107,32 @@ func TestHandleSSE_EmitsConnectedHandshake(t *testing.T) {
 	}
 }
 
+// TestHandleSSE_AdvertisesReconnectDelay pins that the hub is CONSTRUCTED with
+// the reconnect hint. Nothing else in the suite would notice its absence: the
+// field is not a frame, so it carries no type and no id to assert on.
+func TestHandleSSE_AdvertisesReconnectDelay(t *testing.T) {
+	h, _, _ := newTestHub()
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.handleSSE(rec, req)
+
+	body := rec.Body.String()
+	want := fmt.Sprintf("retry: %d\n\n", reconnectDelay.Milliseconds())
+	if n := strings.Count(body, "retry: "); n != 1 {
+		t.Fatalf("body carries %d retry: lines, want exactly 1 (a property of the connection, not of a frame): %q", n, body)
+	}
+	// Ahead of the replay and the handshake, so the delay is in effect before
+	// the connection can first drop.
+	if !strings.HasPrefix(body, want) {
+		t.Errorf("body does not open with %q: %q", want, body)
+	}
+}
+
 func TestReplayBounds_EmptyBuffer(t *testing.T) {
 	h, _, _ := newTestHub()
 	floor, head := h.bus.fanout.Bounds()
@@ -161,10 +187,8 @@ func TestHandleSSE_ReplaysSinceLastEventID(t *testing.T) {
 	}
 }
 
-// TestHandleSSE_ReplaysNewestBeyondClientBuffer pins the replay-delivery
-// guarantee across a large gap: replayed frames are written directly to the
-// response (not through the per-client delivery buffer), so a reconnect that
-// missed hundreds of events still receives the NEWEST ones.
+// Replayed frames go straight to the response, not through the per-client delivery
+// buffer, so a reconnect that missed hundreds of events still receives the NEWEST.
 func TestHandleSSE_ReplaysNewestBeyondClientBuffer(t *testing.T) {
 	h, _, _ := newTestHub()
 
@@ -193,6 +217,93 @@ func TestHandleSSE_ReplaysNewestBeyondClientBuffer(t *testing.T) {
 	}
 }
 
+// TestHandleSSE_ReplaysFromTheCursorQueryParameter covers the resume the browser
+// cannot ask for: EventSource sends Last-Event-ID on ITS OWN retry and on nothing
+// else, so every reconnect the client drives itself carries the cursor as a query
+// parameter instead.
+func TestHandleSSE_ReplaysFromTheCursorQueryParameter(t *testing.T) {
+	h, _, _ := newTestHub()
+
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c3"})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/events?last_event_id=2", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.handleSSE(rec, req)
+
+	body := rec.Body.String()
+	if strings.Contains(body, `"chat_id":"c1"`) || strings.Contains(body, `"chat_id":"c2"`) {
+		t.Errorf("replay included an event at or below the cursor: %s", body)
+	}
+	if !strings.Contains(body, `"chat_id":"c3"`) {
+		t.Errorf("replay missed the event after the cursor: %s", body)
+	}
+}
+
+// TestHandleSSE_HeaderOutranksTheCursorParameter pins which side wins when both
+// are present. Only the browser knows which event its own EventSource last
+// delivered, so a stale parameter left on the URL may never override it.
+func TestHandleSSE_HeaderOutranksTheCursorParameter(t *testing.T) {
+	h, _, _ := newTestHub()
+
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c3"})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/events?last_event_id=2", nil).WithContext(ctx)
+	req.Header.Set("Last-Event-ID", "1")
+	rec := httptest.NewRecorder()
+
+	h.handleSSE(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"chat_id":"c2"`) {
+		t.Errorf("the parameter overrode the header: c2 was not replayed: %s", body)
+	}
+}
+
+func TestAdoptCursorParam(t *testing.T) {
+	cases := map[string]struct {
+		url    string
+		header string
+		want   string
+	}{
+		"promotes a digit string":      {url: "/api/events?last_event_id=42", want: "42"},
+		"header wins":                  {url: "/api/events?last_event_id=42", header: "7", want: "7"},
+		"no cursor at all":             {url: "/api/events", want: ""},
+		"empty parameter":              {url: "/api/events?last_event_id=", want: ""},
+		"rejects a non-digit":          {url: "/api/events?last_event_id=12a", want: ""},
+		"rejects a sign":               {url: "/api/events?last_event_id=-1", want: ""},
+		"rejects a leading space":      {url: "/api/events?last_event_id=%2012", want: ""},
+		"rejects past uint64 digits":   {url: "/api/events?last_event_id=123456789012345678901", want: ""},
+		"accepts twenty digits":        {url: "/api/events?last_event_id=12345678901234567890", want: "12345678901234567890"},
+		"header wins over a bad param": {url: "/api/events?last_event_id=nope", header: "9", want: "9"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+			if tc.header != "" {
+				req.Header.Set("Last-Event-ID", tc.header)
+			}
+			got := adoptCursorParam(req)
+			if got != tc.want {
+				t.Errorf("adoptCursorParam(%q, header %q) = %q, want %q", tc.url, tc.header, got, tc.want)
+			}
+			// The replay stays one code path, so the promotion has to be VISIBLE to
+			// the sse library — which only ever reads the header.
+			if h := req.Header.Get("Last-Event-ID"); h != tc.want {
+				t.Errorf("header after adopt = %q, want %q", h, tc.want)
+			}
+		})
+	}
+}
+
 func TestHandleSSE_RejectsNonFlusher(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := &nonFlusherWriter{}
@@ -203,14 +314,10 @@ func TestHandleSSE_RejectsNonFlusher(t *testing.T) {
 	}
 }
 
-// TestRegisterRoutes_DrainingGate asserts the drain refusal through the MUX, not
-// by calling a handler directly. That is the whole point: the gate is a route
-// wrapper applied at registration (agent.refuseWhenDraining), so a test that calls
-// handleSSE or the dispatcher directly would bypass it and pass whether or not it
-// is wired. Both gated routes are checked, and one ungated route is checked too,
-// because the gate must NOT become global — the middleware chain also covers
-// /api/health and the static assets, and a health probe during wind-down is what
-// reports the wind-down.
+// Asserted through the MUX because the gate is a route wrapper applied at
+// registration: a test calling handleSSE directly would bypass it and pass whether or
+// not it is wired. An ungated route is checked too, because the gate must NOT become
+// global — a health probe during wind-down is what reports the wind-down.
 func TestRegisterRoutes_DrainingGate(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -295,21 +402,11 @@ func BenchmarkEmit(b *testing.B) {
 	}
 }
 
-// TestSupervisedState_Property is GONE with supervisedState. Its invariants were
-// about per-turn TRUST — a way to wave past vibekit's per-write staging gate for
-// the rest of a turn. KAS reviews the whole turn in one approval, so there is no
-// per-write gate and nothing to trust past.
-
-// TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog pins the two
-// replays that run AFTER the handshake, and therefore the fact that the handshake's
-// write does not end the hook.
-//
-// Both exist because the event log alone is not enough. A permission dialog that
-// aged out of the replay ring would leave the agent blocked on an answer the
-// reconnected client never renders — the turn hangs with no visible cause. And a
-// client that connects mid-turn has no event to tell it a chat is busy, so it draws
-// an idle chat that is actually streaming. An early return anywhere in the hook
-// drops the rest silently: the stream still opens and looks healthy.
+// The two replays that run AFTER the handshake, so also the fact that the handshake's
+// write does not end the hook. The event log alone is not enough: a permission dialog
+// that aged out of the ring leaves the agent blocked on an answer nothing renders, and
+// a client connecting mid-turn has no event telling it the chat is busy. An early
+// return anywhere in the hook drops the rest silently — the stream still looks healthy.
 func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.T) {
 	h, _, br := newTestHub()
 
@@ -345,13 +442,9 @@ func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.
 	}
 }
 
-// TestHandleSSE_ReplaysAParkedStepsQuestion pins the run-ask half of the connect
-// replay.
-//
-// The reason is stronger than the permission's: a parked run has no deadline of
-// its own, so an ask this client saw an hour ago is still the only thing between
-// that run and its next step — and the event does not re-fire, so a reload with no
-// replay leaves the run parked with nothing on screen to answer it.
+// The run-ask half, whose reason is stronger than the permission's: a parked run has
+// no deadline of its own and the event does not re-fire, so a reload with no replay
+// leaves the run parked with nothing on screen to answer it.
 func TestHandleSSE_ReplaysAParkedStepsQuestion(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.runs.asks.Add(&runAsk{
@@ -390,13 +483,10 @@ func TestHandleSSE_ReplaysAParkedStepsQuestion(t *testing.T) {
 	}
 }
 
-// TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect pins which connection
-// re-reads the notification toggles from disk.
-//
-// A reconnect is the case that needs it: the config may have been edited while SSE
-// was down, and a container restart is not required to pick that up. A FRESH
-// connection is not — the process just read them at startup — and re-reading on
-// every one turns each page load into a disk read plus a singleflight round.
+// A reconnect re-reads the notification toggles because the config may have been
+// edited while SSE was down. A FRESH connection does not — the process just read them
+// — and re-reading on every one costs a disk read plus a singleflight round per page
+// load.
 func TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -433,15 +523,11 @@ func TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect(t *testing.T) {
 	}
 }
 
-// TestReplayTurnState_MarksAStepDrivenTurnAsTheRunsOwn pins the one field a client
-// needs to apply a replayed step turn's transcript WITHOUT reading the chat as busy.
-//
-// The event is emitted rather than skipped because the snapshot is the only copy of
-// an in-flight step's transcript — nothing persists it — so skipping it loses the
-// step's output on every refresh. Unmarked, though, the client's turn_state handler
-// latches `thinking`, and it re-latches on every reconnect for the length of the
-// run with nothing to clear it, since a step's own turn_end is dropped by the
-// workflow attribution gate.
+// The one field a client needs to apply a replayed step turn's transcript WITHOUT
+// reading the chat as busy. The event is emitted rather than skipped because the
+// snapshot is the only copy of an in-flight step's transcript, but unmarked the
+// client latches `thinking` and re-latches on every reconnect with nothing to clear
+// it, since a step's own turn_end is dropped by the workflow attribution gate.
 func TestReplayTurnState_MarksAStepDrivenTurnAsTheRunsOwn(t *testing.T) {
 	cases := []struct {
 		name string

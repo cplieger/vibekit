@@ -123,8 +123,6 @@ const chatHeaderArb = fc.record({
   acp_session_id: optField(fc.string()),
   current_mode_id: optField(fc.string()),
   compaction_watermark: optField(fc.string()),
-  available_models: optField(fc.array(sessionModelArb, { maxLength: 3 })),
-  available_modes: optField(fc.array(sessionModeArb, { maxLength: 3 })),
   supervised_mode: optField(fc.boolean()),
 });
 
@@ -362,7 +360,19 @@ const toolCallPayloadArb = fc.record({
 
 const toolCallUpdatePayloadArb = fc.record({
   message_id: fc.string({ minLength: 1 }),
-  tool_call: toolCallArb,
+  tool_call_id: fc.string({ minLength: 1 }),
+  title: optField(fc.string()),
+  kind: optField(toolKindArb),
+  status: optField(toolStatusArb),
+  output_delta: optField(fc.string()),
+  output_replace: optField(fc.boolean()),
+  diffs_appended: optField(fc.array(toolDiffArb, { maxLength: 3 })),
+  locations: optField(fc.array(toolLocationArb, { maxLength: 3 })),
+  duration_ms: optField(posInt),
+  terminal_id: optField(fc.string()),
+  sub_session_id: optField(fc.string()),
+  agent_subtask_id: optField(fc.string()),
+  workflow_id: optField(fc.string()),
 });
 
 const turnEndedPayloadArb = fc.record({
@@ -382,12 +392,13 @@ const userArb = fc.record({
 });
 
 const whoamiResponseArb = fc.record({
+  state: fc.constantFrom("signed_in", "signed_out", "unavailable"),
   email: optField(fc.string()),
   auth: optField(fc.string()),
   accountType: optField(fc.string()),
   startUrl: optField(fc.string()),
   region: optField(fc.string()),
-  error: optField(fc.string()),
+  reason: optField(fc.string()),
 });
 
 // --- Decoder registry: maps decoder name to its valid-shape arbitrary ---

@@ -425,11 +425,14 @@ describe("the view handle", () => {
     await flushed();
     await settledFrames();
 
-    // Chat A: the reader scrolls UP — Reading. `scroll-behavior: smooth` is on
-    // the scroller, so a bare scrollTop assignment would only START an
-    // animation; the instant scrollTo is the synchronous gesture.
+    // Chat A: the reader scrolls UP — Reading. Three parts, all load-bearing. The
+    // wheel is what makes it the READER's (the controller reads intent from input,
+    // not from the position). `scroll-behavior: smooth` is on the scroller, so a bare
+    // scrollTop assignment would only START an animation; the instant scrollTo is the
+    // synchronous gesture. And the event is what the listener acts on.
     const scroller = scroll.getScrollEl();
     expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight + 150);
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
     scroller.scrollTo({ top: 5, behavior: "instant" });
     scroller.dispatchEvent(new Event("scroll"));
     expect(scroll.readingState()).toBe("reading");
@@ -454,6 +457,62 @@ describe("the view handle", () => {
     switchTo(b);
     await flushed();
     expect(scroll.readingState()).toBe("following");
+  });
+
+  it("holds the reading position through a park/unpark over a turn that GREW", async () => {
+    // What the case pins is the DEFERRAL, and the name used to claim the window move it
+    // rules out: the reader is Reading, so `deferWhileReading` holds the unpark paint and
+    // no window pass runs while this measures. A re-derived window at unpark is therefore
+    // unreachable by design here — the assertions below read the window the park left,
+    // over a turn the store has since grown, which is the half that can go wrong.
+    const a = freshID("c-win");
+    const b = freshID("c-win");
+    // Over the block budget, so the body holds a RANGE rather than the whole turn and
+    // the unpark paint has a window to re-derive rather than a row list to replay.
+    const heavy = (n: number): Message =>
+      assistant(
+        `${a}-m`,
+        Array.from({ length: n }, (_, i) => textBlock(`chunk ${String(i)}`)),
+      );
+    const uid = `${a}-u`;
+    seed(session(a, { messages: [user(uid, "go"), heavy(500)], message_count: 2 }), longChat(b));
+    await flushed();
+    await settledFrames();
+
+    const scroller = scroll.getScrollEl();
+    const indices = (): number[] =>
+      [...viewOf(a).querySelectorAll<HTMLElement>("[data-block-index]")]
+        .map((e) => Number(e.dataset["blockIndex"]))
+        .sort((x, y) => x - y);
+    expect(indices().length).toBeLessThan(500);
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
+    scroller.scrollTo({ top: 120, behavior: "instant" });
+    scroller.dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("reading");
+    const parked = scroller.scrollTop;
+
+    switchTo(b);
+    await flushed();
+    // The turn GROWS while A is parked, so the unpark paint has to re-derive a window
+    // over a LONGER turn rather than replay the row list it froze.
+    store.setSessions([
+      session(a, { messages: [user(uid, "go"), heavy(700)], message_count: 2 }),
+      longChat(b),
+    ]);
+    store.bumpMessages(a);
+    await flushed();
+
+    switchTo(a);
+    await flushed();
+
+    // The body that came back is still the WINDOW the park froze, over a turn 200
+    // ordinals longer: nothing grew it to cover the new tail, and nothing replayed the
+    // whole 700-block row list either.
+    expect(indices().length).toBeLessThan(500);
+    expect(viewOf(a).querySelector('[data-block-index="699"]')).toBeNull();
+    // And the reader is exactly where they were.
+    expect(scroll.readingState()).toBe("reading");
+    expect(scroller.scrollTop).toBe(parked);
   });
 
   it("keeps a short transcript bottom-aligned through a park/unpark cycle", async () => {

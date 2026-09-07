@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"sync"
@@ -31,9 +32,6 @@ func (s *Store) Lock(chatID vibekit.ChatID) *sync.Mutex { return s.lock(chatID) 
 
 // Dir returns the store's base directory.
 func (s *Store) Dir() string { return s.dir }
-
-// Load reads a chat from the active directory (exported for archive).
-func (s *Store) Load(chatID vibekit.ChatID) (*vibekit.Chat, error) { return s.load(chatID) }
 
 // markDeleted records that chatID was just deleted. Mutate calls for
 // the same id within tombstoneTTL will refuse to auto-create.
@@ -79,7 +77,7 @@ func (s *Store) load(chatID vibekit.ChatID) (*vibekit.Chat, error) {
 	if err != nil {
 		return nil, err
 	}
-	return readChatFile(path, "chat "+string(chatID))
+	return readChatFile(path, "chat "+string(chatID), s.fileCap)
 }
 
 // save stamps the chat's last-activity time and writes it to chatID's
@@ -90,18 +88,14 @@ func (s *Store) save(chatID vibekit.ChatID, chat *vibekit.Chat) error {
 	return s.writeChat(chatID, chat)
 }
 
-// writeChat atomically writes chat to chatID's file, leaving UpdatedAt
-// exactly as the caller left it. The caller holds the per-chat mutex, so
-// atomicfile's own locking is unnecessary. WithMkdirMode auto-creates the
-// parent dir (0o700: chat files may carry secrets).
+// writeChat atomically writes chat to chatID's file, leaving UpdatedAt exactly
+// as the caller left it — which is what SetDraft needs. The caller holds the
+// per-chat mutex, so atomicfile's own locking is unnecessary; the parent dir is
+// created 0o700 because chat files may carry secrets.
 //
-// Split out of save for SetDraft, whose whole point is a write that does
-// not move the retention clock.
-//
-// THE DESTINATION IS THE ARGUMENT, and the object's own id is verified
-// against it: a chat file whose stored id is not its filename would
-// otherwise be written over the file that id names, under the requested
-// id's lock — one chat silently overwriting another.
+// THE DESTINATION IS THE ARGUMENT, and the object's own id is verified against
+// it: a chat whose stored id is not its filename would otherwise overwrite the
+// file that id names, under the requested id's lock.
 func (s *Store) writeChat(chatID vibekit.ChatID, chat *vibekit.Chat) error {
 	path, err := s.pathFor(chatID)
 	if err != nil {
@@ -112,14 +106,52 @@ func (s *Store) writeChat(chatID vibekit.ChatID, chat *vibekit.Chat) error {
 			"chat_id", chatID, "stored_id", chat.ID, "path", path)
 		return errChatIDMismatch(chatID, chat.ID)
 	}
-	data, err := json.MarshalIndent(chat, "", "  ")
+	// Bounded copy-on-write, never in place: AppendMessage's caller keeps the
+	// message it handed over and broadcasts it, and a Message copy shares its
+	// ToolCalls backing array, so cutting the stored value in place would edit
+	// the live one.
+	data, err := json.MarshalIndent(storeChat(chat), "", "  ")
 	if err != nil {
 		return err
 	}
-	// WithMaxBytes mirrors the readCappedFile bound: never persist a chat
-	// file the store's own read path would refuse to load.
+	// WithMaxBytes mirrors readCappedFile's bound: never persist a chat file the
+	// store's own read path would refuse to load. int64(0) is atomicfile's
+	// documented "no cap", which is the same encoding chatFileCap uses.
 	_, err = atomicfile.WriteFile(context.Background(), path, data,
 		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode),
-		atomicfile.WithMaxBytes(maxChatFileBytes))
+		atomicfile.WithMaxBytes(int64(s.fileCap)))
+	s.logWriteOutcome(chatID, int64(len(data)), err)
 	return err
+}
+
+// writeHeadroomFraction is how close to the cap a SUCCESSFUL write may land
+// before it is reported. A tenth gives an operator the last 10% of a chat's
+// budget to act in, and the alarm rides the write it describes rather than a
+// poll nothing schedules.
+const writeHeadroomFraction = 10
+
+// logWriteOutcome reports what the cap did to this write: a refusal is an
+// ERROR naming the size and the cap, because atomicfile pre-checks before
+// staging its temp, so the old file survives and the TURN IS DISCARDED — the
+// data-loss shape this whole bound exists to stop. A write that landed inside
+// the last tenth of the cap warns while there is still room to act.
+//
+// Both are no-ops under an unlimited cap, where neither can happen.
+func (s *Store) logWriteOutcome(chatID vibekit.ChatID, size int64, err error) {
+	if s.fileCap.unlimited() {
+		return
+	}
+	capBytes := int64(s.fileCap)
+	if err != nil {
+		if errors.Is(err, atomicfile.ErrFileTooLarge) {
+			slog.Error("chat write: refused over the chat file cap; this turn was NOT persisted",
+				"chat_id", chatID, "size_bytes", size, "cap_bytes", capBytes)
+		}
+		return
+	}
+	if headroom := capBytes - size; headroom < capBytes/writeHeadroomFraction {
+		slog.Warn("chat write: this chat is near the chat file cap",
+			"chat_id", chatID, "size_bytes", size, "cap_bytes", capBytes,
+			"headroom_bytes", headroom)
+	}
 }

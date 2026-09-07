@@ -4,14 +4,12 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/webhttp/v2"
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -26,67 +24,41 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, st)
 }
 
-// collectStatus runs the same shape of git queries handleStatus uses,
-// returning a fully-populated gitStatusResp. Extracted so handleStatusAll
-// can fan-out the same logic across every cloned repo. `doFetch=false`
-// skips the network fetch (useful for the multi-repo dashboard where
-// fetching N repos in parallel would be costly + noisy).
+// collectStatus answers one repository's status. doFetch=false skips the network
+// fetch, for the dashboard where fetching N repos in parallel is costly.
+//
+// Order is load-bearing: the fetch runs BEFORE the status call, so ahead/behind is
+// measured against the refreshed remote ref.
 func collectStatus(ctx context.Context, dir string, timeouts gitTimeouts, fetchFlight *singleflight.Group, doFetch bool) gitStatusResp {
 	if !IsRepo(ctx, dir) {
 		return gitStatusResp{IsRepo: false, Files: []gitFile{}}
 	}
 	st := gitStatusResp{IsRepo: true}
-	if b, err := gitCmd(ctx, dir, "branch", "--show-current"); err == nil {
-		st.Branch = b
-	}
 	if rem, err := gitCmd(ctx, dir, subRemote, "get-url", remoteOrigin); err == nil {
 		st.Remote = scrubAuth(rem)
 	}
 	if doFetch {
 		fetchStatus(ctx, dir, timeouts.Fetch, fetchFlight)
 	}
-
-	// Post-fetch queries are independent — run them concurrently.
-	var (
-		ahead, behind int
-		files         []gitFile
-		stashes       int
-	)
-	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		ahead, behind = aheadBehind(gctx, dir)
-		return nil
-	})
-	g.Go(func() error {
-		files = parseGitStatus(gctx, dir)
-		return nil
-	})
-	g.Go(func() error {
-		stashes = countStashes(gctx, dir)
-		return nil
-	})
-	_ = g.Wait()
-
-	st.Ahead = ahead
-	st.Behind = behind
-	// Never let Files marshal to JSON null: the wire contract (and the
-	// client's GitRepoStatus.files) is a non-nullable array. parseGitStatus
-	// returns nil for a clean repo or on error, and a nil slice marshals to
-	// `null`, which makes the Changes tab's `for (const f of r.files)` throw
-	// "r.files is not iterable" and blanks the whole git page.
-	if files == nil {
-		files = []gitFile{}
+	// A failed status leaves the zero counts, so one wedged repository cannot blank
+	// the dashboard; readStatus still reports the branch, read off .git/HEAD.
+	ps, _ := readStatus(ctx, dir)
+	st.Branch = ps.Branch
+	st.Ahead = ps.Ahead
+	st.Behind = ps.Behind
+	st.Stashes = ps.Stashes
+	// The wire contract is a non-nullable array: a nil slice marshals to `null`, and
+	// the Changes tab's `for (const f of r.files)` then throws and blanks the page.
+	st.Files = ps.Files
+	if st.Files == nil {
+		st.Files = []gitFile{}
 	}
-	st.Files = files
-	st.Stashes = stashes
 	st.HasDirty = len(st.Files) > 0
 	return st
 }
 
-// fetchStatus runs a best-effort `git fetch --quiet`, deduped per-dir via
-// the shared singleflight group. A failure is logged at debug and
-// otherwise ignored — a status read must not fail because the network is
-// down or the remote is unreachable.
+// fetchStatus runs a best-effort `git fetch --quiet`, deduped per-dir. A failure is
+// logged at debug and ignored: a status read must not fail on an unreachable remote.
 func fetchStatus(ctx context.Context, dir string, timeout time.Duration, fetchFlight *singleflight.Group) {
 	fetchCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -96,38 +68,6 @@ func fetchStatus(ctx context.Context, dir string, timeout time.Duration, fetchFl
 		}
 		return nil, nil
 	})
-}
-
-// aheadBehind reports how many commits HEAD is ahead of and behind its
-// upstream. Both are 0 when there is no upstream or the count can't be
-// parsed (rev-list is gated by allowedSubcommands, so a missing upstream yields an
-// error and the zero values).
-func aheadBehind(ctx context.Context, dir string) (ahead, behind int) {
-	ab, err := gitCmd(ctx, dir, "rev-list", "--left-right", "--count", "HEAD...@{upstream}")
-	if err != nil {
-		return 0, 0
-	}
-	parts := strings.Fields(ab)
-	if len(parts) != 2 {
-		return 0, 0
-	}
-	if n, aerr := strconv.Atoi(parts[0]); aerr == nil {
-		ahead = n
-	}
-	if n, berr := strconv.Atoi(parts[1]); berr == nil {
-		behind = n
-	}
-	return ahead, behind
-}
-
-// countStashes returns the number of stash entries, or 0 on error or an
-// empty stash list.
-func countStashes(ctx context.Context, dir string) int {
-	out, err := gitCmd(ctx, dir, "stash", "list")
-	if err != nil || out == "" {
-		return 0
-	}
-	return strings.Count(out, "\n") + 1
 }
 
 func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {
@@ -207,11 +147,8 @@ func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	dir := h.repoDir(body.Repo)
-	// Unstage the requested paths first: `checkout --` restores the
-	// worktree FROM THE INDEX, so a staged modification silently survived
-	// "Discard all", and a staged NEW file (no index-vs-worktree diff)
-	// made checkout error with "pathspec did not match". Best-effort —
-	// paths with nothing staged are a no-op for reset.
+	// Unstage first: `checkout --` restores the worktree FROM THE INDEX, so a staged
+	// modification survives the discard and a staged NEW file makes checkout error.
 	if out, err := gitCmd(ctx, dir, append([]string{subReset, "-q", refHEAD, "--"}, files...)...); err != nil {
 		slog.Debug("git discard: reset before discard failed (continuing)",
 			"repo", body.Repo, "error", err, "out", scrubAuth(out))

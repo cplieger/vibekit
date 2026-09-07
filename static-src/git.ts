@@ -28,6 +28,7 @@ import { refreshPRs } from "./actions/git-prs.js";
 import { initSourcesTab, refreshSources } from "./git-sources-tab.js";
 import { initStatusBanner } from "./git-status-banner.js";
 import { initGitBadge, refreshGitBadge as refreshBadgeImpl } from "./git-badge.js";
+import { refreshGitStatus } from "./git-status-store.js";
 import { registerFind } from "./find-registry.js";
 import type { PageFind } from "./find-registry.js";
 import type { SearchPopup } from "./search-popup.js";
@@ -174,10 +175,26 @@ export function refreshGitBadge(): void {
   void refreshBadgeImpl();
 }
 
-/** Mark git state as dirty so the changes view refetches. The legacy
- *  name comes from when the badge had its own dirty flag; today it
- *  triggers both the tab refresh and the sidebar badge re-derivation. */
-export function markGitDirty(): void {
+/** Mark git state as dirty so every git surface refetches.
+ *
+ *  The automatic refresh of the status store, and the reason it holds no timer any
+ *  more: something actually writing to the tree is the FACT that it changed, where
+ *  a 15-second poll and a `turn_ended` nudge were both guesses.
+ *
+ *  `paths` are the WORKSPACE-RELATIVE paths the caller knows changed, and passing
+ *  them narrows the scan to the repositories that own them — one repo's two git
+ *  subprocesses instead of the whole tree's hundred-odd, which is what makes a
+ *  trigger per edit affordable. Omit them only when the caller genuinely cannot
+ *  name what moved (a shell command); a wrong path is worse than none, because it
+ *  scopes the scan away from the repo that actually changed.
+ *
+ *  Callers, and between them every writer: `handlers/messages.ts` (an agent's
+ *  repo-mutating tool call completing), the editor's save, the file browser's
+ *  actions, and the shell panel closing.
+ *
+ *  The legacy name comes from when the badge had its own dirty flag. */
+export function markGitDirty(paths?: readonly string[]): void {
+  void refreshGitStatus(paths);
   void refreshChanges();
   void refreshBadgeImpl();
 }

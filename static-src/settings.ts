@@ -6,7 +6,7 @@
 
 import { initAllModals } from "./modals.js";
 import { toggleSettingsView, toggleGitView } from "./tabs.js";
-import { initGitPanel } from "./git.js";
+import { initGitBadge } from "./git-badge.js";
 import { getGitTab } from "./git-tabs.js";
 import { restoreFileBrowser } from "./files.js";
 import { restoreShell } from "./shell.js";
@@ -19,6 +19,7 @@ import type { ThemeChoice } from "./device-view.js";
 import { applyThemeChoice, initThemeToggle } from "./theme.js";
 import type { ThemeStorage } from "@cplieger/ui-primitives/theme";
 import { initSettingsTabs } from "./settings-tabs.js";
+import type { IdentityVerdict } from "./identity.js";
 import { initPermissionsUI, initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
 import { initMCP } from "./mcp-ui.js";
 import { initKnowledge, loadKnowledge } from "./knowledge.js";
@@ -30,15 +31,11 @@ import { $ } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { initNotificationToggles } from "./settings-notifications.js";
 
-import { showSaving, showSaved, showError, STEERING_SAVE_KEY } from "./save-indicator.js";
-import { saveSteering, logout, setKiroSetting } from "./actions/settings.js";
+import { showSaving, showSaved, showError } from "./save-indicator.js";
+import { logout, setKiroSetting } from "./actions/settings.js";
 import { runDiagnostics } from "./actions/tools.js";
-import {
-  bindLoadingState,
-  registerCleanup,
-  debouncedDispatch,
-  subscribeByName,
-} from "./actions/index.js";
+import { bindLoadingState } from "./actions/index.js";
+import { initSteeringEditor, loadSteeringDoc } from "./settings-steering.js";
 
 // Per-key write generation for the kiro-cli settings endpoint; same rule as
 // persist.ts's `keyGen`, which explains it. Separate because the key namespaces
@@ -332,19 +329,29 @@ export function initChatRetention(s: EffectiveSettings): void {
 
 // --- UI init ---
 
-/** Load the one list the Instructions tab still shows: the workspace knowledge
- *  bases. Fired once on the tab's first activation via the settings-tabs loader
- *  map.
+/** What the Instructions tab reads: the global-instructions document and the
+ *  workspace knowledge bases. Fired once on the tab's first activation via the
+ *  settings-tabs loader map.
  *
- *  TWO lists left this panel, and for the same reason both times: a `.kiro`
- *  inventory belongs on the page that shows `.kiro` inventories. The steering /
- *  skills / agents list went to the configuration browser first, and the HOOKS
- *  dashboard followed it — hooks are `.kiro` files with a trigger, and keeping
- *  them here meant one file family had two homes with different affordances in
- *  each. The /api/workspace/kiro-config ENDPOINT stays: role-picker.ts fetches it
- *  to seed the mode picker with workspace agents before a session exists. */
+ *  TWO lists left this panel, both because a `.kiro` inventory belongs on the page
+ *  that shows `.kiro` inventories: the steering/skills/agents list, then the hooks
+ *  dashboard. The /api/workspace/kiro-config ENDPOINT stays — role-picker.ts reads
+ *  it to seed the mode picker before a session exists. */
 function loadInstructionsPanel(): void {
+  loadSteeringDoc();
   loadKnowledge();
+}
+
+/** Read what the General panel's controls display. Fired once, on the panel's
+ *  first activation, via the settings-tabs loader map.
+ *
+ *  The experimental toggles are the reason there is a loader here at all: each
+ *  one is a `GET /api/kiro-settings`, and each of those is a `kiro-cli settings`
+ *  SPAWN with its own 3 s budget on the server. Three of them fired from
+ *  `initUI()` at boot, concurrent with the boot's own reads, to fill checkboxes
+ *  in a panel nobody had opened. */
+function loadGeneralPanel(): void {
+  initExperimentalToggles();
 }
 
 export function initUI(): void {
@@ -359,9 +366,12 @@ export function initUI(): void {
     void toggleSettingsView("general");
   });
 
-  // Per-tab lazy data loaders: fired by settings-tabs on the first
-  // activation of each tab. General has no loader (static panel).
+  // Per-tab lazy data loaders: fired by settings-tabs on the first ACTIVATION of
+  // each tab, never on the subscribe-time paint that shows the default panel.
+  // Every tab has one now — General's is what took its three kiro-cli spawns off
+  // the boot path.
   initSettingsTabs({
+    general: loadGeneralPanel,
     tools: loadToolsList,
     permissions: loadNativePolicy,
     instructions: loadInstructionsPanel,
@@ -370,7 +380,6 @@ export function initUI(): void {
   initLogoutButton();
   initNotificationToggles();
   initDiagnostics();
-  initExperimentalToggles();
 
   initTools();
   initMCP();
@@ -393,56 +402,17 @@ export function initUI(): void {
   });
 }
 
-/** Post-auth UI init: fetches that must not fire on the login screen (B2).
- *  loadAbout hits /api/version; initGitPanel starts the git-badge poll
- *  (/api/git/status-all + /api/forges every 15s). Called once by app.ts
- *  after whoami succeeds — at boot when already authenticated, or after
- *  the first successful login. */
+/** Post-auth UI init: the reads that must not fire on a login screen.
+ *
+ *  `initGitBadge` is the BADGE alone. It is boot-visible toolbar chrome, so the one
+ *  `status-all` scan its subscription starts is a read for something on screen; the
+ *  rest of `initGitPanel` is not, and wiring it here fired `refreshChanges(true)`, a
+ *  forced `git fetch` across every worktree, for a view nobody had opened.
+ *
+ *  Called once through `boot.ts`'s `initPostAuth`. */
 export function initPostAuthUI(): void {
   void loadAbout();
-  initGitPanel();
-}
-
-// --- Steering (auto-save with debounce) ---
-
-function initSteeringEditor(): void {
-  const textarea = $.steeringInput;
-  // debouncedDispatch coalesces rapid keystrokes into a single trailing
-  // dispatch after the quiet window (replaces the manual clearTimeout +
-  // setTimeout(600) + saveGen pattern). saveGen is no longer needed: the
-  // action has scope:"settings", so dispatches serialize (ordered
-  // resolution), and the indicator is driven by the action's own
-  // lifecycle events below rather than a per-dispatch .then().
-  const debouncedSave = debouncedDispatch(saveSteering, { wait: 600 });
-
-  void apiGet<{ content?: string }>("/api/steering").then((d) => {
-    if (d?.content !== undefined) {
-      textarea.value = d.content;
-    }
-  });
-
-  const unsub = subscribeByName("settings.save_steering", (inst) => {
-    if (inst.status === "success") {
-      showSaved(STEERING_SAVE_KEY);
-    } else if (inst.status === "error") {
-      showError(STEERING_SAVE_KEY);
-    }
-  });
-
-  textarea.addEventListener("input", () => {
-    showSaving(STEERING_SAVE_KEY);
-    debouncedSave({ content: textarea.value });
-  });
-
-  registerCleanup(() => {
-    // Stop touching the indicator (mirrors the original cleanup, which
-    // flushed without updating it), then flush any pending edit so an
-    // unsaved change still persists on teardown.
-    unsub();
-    if (debouncedSave.isPending()) {
-      void debouncedSave.flush({ content: textarea.value });
-    }
-  });
+  initGitBadge();
 }
 
 // --- Logout ---
@@ -629,16 +599,24 @@ export function initDiagnostics(): void {
   });
 }
 
-// (loadIdentity was removed: it duplicated the /api/whoami fetch that
-// checkAuthAndStart / onLoginSuccess in app.ts already perform — both call
-// setUserEmail with their result, so the sidebar label needs no second
-// fetch at boot.)
-
 // --- User display ---
 
-export function setUserEmail(email: string): void {
-  $.userEmail.textContent = email;
-  $.stAuth.textContent = email !== "" ? "signed in" : "not signed in";
+/** The status card's auth line, one phrase per arm. `unavailable` gets its own:
+ *  reading "not signed in" for it is the mistake the third arm exists to remove. */
+const AUTH_LINE: Readonly<Record<IdentityVerdict["state"], string>> = {
+  signed_in: "signed in",
+  signed_out: "not signed in",
+  unavailable: "unknown",
+};
+
+/** Paint the sidebar identity row and the status card's auth line.
+ *
+ *  Takes the VERDICT rather than an email because three answers reach it and only
+ *  one carries an address. Writing `textContent` also drops the authored pending
+ *  shimmer (index.html #user-email), so every arm resolves the region. */
+export function renderIdentity(v: IdentityVerdict): void {
+  $.userEmail.textContent = v.state === "signed_in" ? v.email : "";
+  $.stAuth.textContent = AUTH_LINE[v.state];
 }
 
 // --- Experimental flag toggles (Settings → General) ---
@@ -647,9 +625,19 @@ export function setUserEmail(email: string): void {
 // experimentalFlags registry below for the full set). Vibekit seeds them at
 // container boot (entrypoint.sh); this UI lets the user flip each one.
 
-interface KiroSettingPayload {
-  key?: string;
-  value?: string;
+/** What GET /api/kiro-settings answers: the requested keys and their values, as
+ *  one document.
+ *
+ *  ONE REQUEST FOR EVERY FLAG, because the server reads them all in one
+ *  `kiro-cli settings list` subprocess. This used to be one request per key
+ *  returning `{key, value}`, and each one cost its own spawn with its own 3 s
+ *  budget — three of them, concurrently, every time this panel opened.
+ *
+ *  Values stay STRINGS, so the reading below is unchanged: an absent key and an
+ *  unreadable one both read as "", which the unset-means-on rule renders as the
+ *  control's default. */
+interface KiroSettingsPayload {
+  settings?: Record<string, string>;
 }
 
 // experimentalFlags is the single source of truth for which kiro-cli
@@ -694,22 +682,23 @@ export function initExperimentalToggles(): void {
   const inputs = experimentalFlags.map(
     (flag) => document.getElementById(flag.inputID) as HTMLInputElement | null,
   );
-  void Promise.all(
-    experimentalFlags.map((flag) =>
-      apiGet<KiroSettingPayload>(`/api/kiro-settings?key=${encodeURIComponent(flag.key)}`),
-    ),
-  ).then((results) => {
-    for (let i = 0; i < experimentalFlags.length; i++) {
-      const input = inputs[i] ?? null;
-      if (input === null) {
-        continue;
+  const wanted = experimentalFlags.map((flag) => flag.key).join(",");
+  void apiGet<KiroSettingsPayload>(`/api/kiro-settings?keys=${encodeURIComponent(wanted)}`).then(
+    (payload) => {
+      const values = payload?.settings ?? {};
+      for (let i = 0; i < experimentalFlags.length; i++) {
+        const input = inputs[i] ?? null;
+        if (input === null) {
+          continue;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        const flag = experimentalFlags[i]!;
+        const v = values[flag.key] ?? "";
+        const isOn = v === "" || v === "true";
+        input.checked = flag.inverted ? !isOn : isOn;
       }
-      const v = results[i]?.value ?? "";
-      const isOn = v === "" || v === "true";
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      input.checked = experimentalFlags[i]!.inverted ? !isOn : isOn;
-    }
-  });
+    },
+  );
   for (let i = 0; i < experimentalFlags.length; i++) {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const flag = experimentalFlags[i]!;

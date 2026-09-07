@@ -13,12 +13,7 @@ import { getActiveTabKind, showFilesView, toggleFilesView } from "./tabs.js";
 import { openFile } from "./editor-openers.js";
 import { openChange } from "./navigate.js";
 import { fileDownloadURL } from "./utils-url.js";
-import {
-  initGitStatusStore,
-  onGitStatusChange,
-  statusForPath,
-  statusUnder,
-} from "./git-status-store.js";
+import { onGitStatusChange, statusForPath, statusUnder } from "./git-status-store.js";
 import { describeStatus } from "./git-types.js";
 import { activeSession } from "./store.js";
 import type { Session } from "./types.js";
@@ -105,19 +100,12 @@ export function initFileBrowser(): void {
     $.fbChatFilter.setAttribute("aria-pressed", String(toggleChatFilter()));
   });
 
-  // The shared status poll, and a repaint on each of its results. Idempotent, so
-  // it does not matter that the git badge and the docs page start it too. The
-  // repaint is in place (see repaintRows) — a 15s poll must not disturb the
-  // selection or the scroll position of a listing the user is working in.
-  initGitStatusStore();
-  registerCleanup(onGitStatusChange(repaintRows));
-
   // The filter's OTHER input is which chat is active, and the browser is a
   // singleton tab that stays open across chat switches — so without this the
-  // filter would keep showing the previous chat's set until the next poll, i.e.
-  // claiming one chat's writes belong to another for up to 15 seconds. Gated on
-  // the filter being on and guarded by a set comparison, because `activeSession`
-  // re-derives on every streaming chunk.
+  // filter would keep showing the previous chat's set until the next refresh, i.e.
+  // claiming one chat's writes belong to another. Gated on the filter being on and
+  // guarded by a set comparison, because `activeSession` re-derives on every
+  // streaming chunk.
   effect(() => {
     const changed = chatFilterOn ? changedPathsOf(activeSession.value) : new Set<string>();
     const key = [...changed].sort().join("\n");
@@ -256,7 +244,27 @@ function initPathInput(): void {
 
 // --- Dir load ---
 
+/** Whether this surface is watching the shared git status yet. */
+let gitWatched = false;
+
+/** Start decorating rows with git status, on the browser's FIRST listing.
+ *
+ *  Not from `initFileBrowser`, which runs at boot: the store scans every worktree
+ *  for its first subscriber, and a listing is the earliest moment a row can want a
+ *  letter. Every door reaches a listing, so nothing has to arm this.
+ *
+ *  The repaint is in place (`repaintRows`), so a refresh cannot disturb the
+ *  selection or scroll of a listing in use. */
+function watchGitStatus(): void {
+  if (gitWatched) {
+    return;
+  }
+  gitWatched = true;
+  registerCleanup(onGitStatusChange(repaintRows));
+}
+
 function loadDir(): void {
+  watchGitStatus();
   void fetchDir(state.currentPath, browserFetchHolder).then((d) => {
     if (d.error !== undefined) {
       if (d.error === "stale") {

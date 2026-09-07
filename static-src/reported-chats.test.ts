@@ -24,7 +24,7 @@ import fixtureRaw from "./testdata/reported-chats.json?raw";
 import { projectTurns, turnFailureText, type Turn } from "./turns.js";
 import { severityOf, defaultFailureReason } from "./turn-severity.js";
 import { outcomeLatch } from "./store.js";
-import { isTurnOpen, _resetFoldStateForTest } from "./fold-state.js";
+import { isTurnOpen, resetFoldState } from "./fold-state.js";
 import type { Message } from "./types.js";
 import type { TurnOutcome } from "./wire/types.gen.js";
 
@@ -103,7 +103,7 @@ function turnsOf(name: string): Turn[] {
 
 beforeEach(() => {
   localStorage.clear();
-  _resetFoldStateForTest();
+  resetFoldState();
 });
 
 describe("the reported chats project into the turns the report described", () => {

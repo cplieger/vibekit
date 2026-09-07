@@ -11,7 +11,7 @@
   "theme_color": "#c099ff",
   "orientation": "any",
   "launch_handler": {
-    "client_mode": "navigate-existing"
+    "client_mode": "focus-existing"
   },
   "shortcuts": [
     {

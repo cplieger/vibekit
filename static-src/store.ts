@@ -9,6 +9,7 @@ import type {
   Block,
   Usage,
   ToolCall,
+  ToolCallUpdatePayload,
   CodeReference,
   RefusalInfo,
   FileChange,
@@ -1056,8 +1057,6 @@ export function upsertHeader(h: ChatHeader): void {
         model: h.model !== undefined && h.model !== "" ? h.model : s.model,
         acp_session_id: h.acp_session_id ?? "",
         current_mode_id: h.current_mode_id ?? "",
-        available_modes: h.available_modes ?? [],
-        available_models: h.available_models ?? [],
         supervised_mode: h.supervised_mode ?? false,
         effort: h.effort ?? "",
         // Absent means the server has no session catalog to report (a chat with no bridge, or a
@@ -1084,8 +1083,6 @@ export function upsertHeader(h: ChatHeader): void {
     model: h.model ?? "",
     acp_session_id: h.acp_session_id ?? "",
     current_mode_id: h.current_mode_id ?? "",
-    available_modes: h.available_modes ?? [],
-    available_models: h.available_models ?? [],
     supervised_mode: h.supervised_mode ?? false,
     effort: h.effort ?? "",
     effort_levels: h.effort_levels ?? [],
@@ -1486,6 +1483,16 @@ export function liveTurnMessage(chatID: string): string | undefined {
   return liveTurnMsgIDs.get(chatID);
 }
 
+/** Whether a mounted text sink exists for this block, which is what the
+ *  signal-absent repaint below is FOR. Default true, so a caller that never wires
+ *  it — and every test that does not — keeps the schedule unconditional. */
+let mountedBlockProbe: (messageID: string, blockIndex: number) => boolean = () => true;
+
+/** Injected by the block renderer, which is the only module that knows. */
+export function setMountedBlockProbe(fn: (messageID: string, blockIndex: number) => boolean): void {
+  mountedBlockProbe = fn;
+}
+
 export function appendChunk(
   chatID: string,
   messageID: string,
@@ -1600,14 +1607,18 @@ export function appendChunk(
     // refreshes tail bookkeeping only.
     scheduleMessages(chatID, "chunk");
   }
+  // The signal-absent fallback is for a MOUNTED block whose liveness was misjudged:
+  // the pass re-reads it through `syncMountedText`. For an unmounted one the pass
+  // paints nothing either, so a parked reader would pay a full pass per delta.
+  const mounted = mountedBlockProbe(messageID, blockIndex);
   if (isReasoning) {
     const sig = streamingReasoningSigs.get(messageID);
     if (sig !== undefined) {
       sig.value = msg.reasoning ?? "";
       scheduleMessages(chatID, "chunk");
-    } else if (blockSig === undefined) {
-      // Signal-absent fallback: nothing is mounted to carry the text, so the full pass is what
-      // puts it on screen — unless nothing is MEANT to be, which is a dropped step.
+    } else if (blockSig === undefined && mounted) {
+      // Signal-absent fallback: the mounted sink is re-read by the full pass — unless nothing
+      // is MEANT to be drawn, which is a dropped step.
       scheduleMessages(chatID, stepCause);
     }
   } else {
@@ -1615,7 +1626,7 @@ export function appendChunk(
     if (sig !== undefined) {
       sig.value = msg.content ?? "";
       scheduleMessages(chatID, "chunk");
-    } else if (blockSig === undefined) {
+    } else if (blockSig === undefined && mounted) {
       // Signal-absent fallback, as above.
       scheduleMessages(chatID, stepCause);
     }
@@ -1732,6 +1743,122 @@ export function upsertToolCall(
   if (nonEmptyStr(call.workflow_id) && !nonEmptyStr(prev?.workflow_id)) {
     scheduleMessages(chatID, "fact");
   }
+  republishToolCall(chatID, messageID, call);
+}
+
+/** Apply a `tool_call_update` DELTA to the held tool call.
+ *
+ *  The frame carries only what the server's fold changed — the whole accumulated
+ *  call used to go on the wire, re-sending a Replace-in-File's 184 KB of diffs on
+ *  every later frame for it. An absent field means unchanged.
+ *
+ *  A call this client does not hold is DROPPED, not created: a delta has nothing
+ *  to apply to, and the channel for a client that missed the beginning is
+ *  `turn_state`, which still carries whole objects. `undefined` reports that
+ *  drop.
+ *
+ *  RETURNS the folded call, because the handler needs a field off it (the
+ *  completed call's `kind`, to decide whether a repo moved) and this function has
+ *  just done both lookups — the message through the store's index and the call
+ *  through its own scan. Answering from the return value is what stops the
+ *  handler walking the same two collections again. */
+export function applyToolCallDelta(chatID: string, d: ToolCallUpdatePayload): ToolCall | undefined {
+  const s = get(chatID);
+  if (s === undefined) {
+    return undefined;
+  }
+  const idx = getMsgIndex(chatID, s.messages).get(d.message_id) ?? -1;
+  const msg = idx !== -1 ? s.messages[idx] : undefined;
+  const tcIdx = msg?.tool_calls?.findIndex((tc) => tc.id === d.tool_call_id) ?? -1;
+  if (msg?.tool_calls === undefined || tcIdx === -1) {
+    return undefined;
+  }
+  const prev = msg.tool_calls[tcIdx];
+  if (prev === undefined) {
+    return undefined;
+  }
+  const next = foldToolCallDelta(prev, d);
+  msg.tool_calls[tcIdx] = next;
+  // A first `agent_subtask_id` decides container MEMBERSHIP, which is the
+  // BLOCK's field and the tool fast path never re-homes a card — so the block
+  // updates here and the full pass re-homes. Only the delta can say this
+  // happened now, which is what makes it cheaper than the old whole-object
+  // compare against `prev`.
+  if (nonEmptyStr(d.agent_subtask_id) && !nonEmptyStr(prev.agent_subtask_id)) {
+    msg.blocks ??= [];
+    const blk = msg.blocks.find((b) => b.type === "tool_use" && b.tool_call_id === next.id);
+    if (blk !== undefined) {
+      Object.assign(blk, subtaskField(next.agent_subtask_id));
+    }
+    scheduleMessages(chatID, "shape");
+  }
+  // A first `workflow_id` changes `turnRunIDs`, a projection/fold input, so the
+  // fold pass must run.
+  if (nonEmptyStr(d.workflow_id) && !nonEmptyStr(prev.workflow_id)) {
+    scheduleMessages(chatID, "fact");
+  }
+  republishToolCall(chatID, d.message_id, next);
+  return next;
+}
+
+/** Fold one delta onto a held tool call, returning the new value.
+ *
+ *  A fresh object rather than a mutation, because the card's signal dedups by
+ *  identity: repainting on a delta that changed nothing observable would undo
+ *  the frame budget this shape exists to buy.
+ *
+ *  Fields are spread conditionally rather than assigned undefined — the client
+ *  compiles under exactOptionalPropertyTypes.
+ *
+ *  EXPORTED for the cross-language contract test, and that is the only reason:
+ *  `tool-call-delta.node.test.ts` drives this against the same fixture
+ *  `internal/translate/streaming_tools_roundtrip_test.go` drives the BUILDER
+ *  against, so the two halves cannot drift on a transition either side's own
+ *  table happens not to cover. Every production caller reaches it through
+ *  `applyToolCallDelta`. */
+export function foldToolCallDelta(prev: ToolCall, d: ToolCallUpdatePayload): ToolCall {
+  // `output_replace` is the terminal's full stream winning over the ACP
+  // fragments at completion (adoptTerminalOutput server-side). It is the only
+  // case where the accumulated output legitimately shrinks or is rewritten.
+  //
+  // The flag is read FIRST and is authoritative on its own, because
+  // `output_delta` is `omitempty` on the Go side: a replace-to-empty travels as
+  // `{output_replace: true}` with no delta at all. Reading the delta's presence
+  // first made that frame mean "unchanged" here and `""` to the server's own
+  // spec, which is the two folds disagreeing on the one transition this contract
+  // exists to keep aligned.
+  const output =
+    d.output_replace === true
+      ? (d.output_delta ?? "")
+      : d.output_delta === undefined
+        ? prev.output
+        : (prev.output ?? "") + d.output_delta;
+  const diffs =
+    d.diffs_appended === undefined ? prev.diffs : [...(prev.diffs ?? []), ...d.diffs_appended];
+  return {
+    ...prev,
+    ...(d.title !== undefined && { title: d.title }),
+    ...(d.kind !== undefined && { kind: d.kind }),
+    ...(d.status !== undefined && { status: d.status }),
+    ...(output !== undefined && { output }),
+    ...(d.output_spans !== undefined && { output_spans: d.output_spans }),
+    ...(diffs !== undefined && { diffs }),
+    ...(d.locations !== undefined && { locations: d.locations }),
+    ...(d.duration_ms !== undefined && { duration_ms: d.duration_ms }),
+    ...(d.terminal_id !== undefined && { terminal_id: d.terminal_id }),
+    ...(d.sub_session_id !== undefined && { sub_session_id: d.sub_session_id }),
+    ...(d.agent_subtask_id !== undefined && { agent_subtask_id: d.agent_subtask_id }),
+    ...(d.workflow_id !== undefined && { workflow_id: d.workflow_id }),
+    ...(d.checkpoint !== undefined && { checkpoint: d.checkpoint }),
+    ...(d.disclosed !== undefined && { disclosed: d.disclosed }),
+    ...(d.denial !== undefined && { denial: d.denial }),
+  };
+}
+
+/** Push a tool call's new value at whatever is rendering it, and schedule the
+ *  narrowest pass that can show it. Shared by the create path and the delta
+ *  path so the two cannot disagree about which pass a tool update needs. */
+function republishToolCall(chatID: string, messageID: string, call: ToolCall): void {
   const sig = toolCallSigs.get(toolCallSigKey(chatID, call.id));
   if (sig !== undefined) {
     sig.value = call;
@@ -1740,8 +1867,9 @@ export function upsertToolCall(
     scheduleMessages(chatID, "tool", messageID);
   } else {
     // Signal-absent fallback: nothing is mounted for this card, so the full pass puts its
-    // update on screen — unless nothing is MEANT to be, which is a dropped step.
-    scheduleMessages(chatID, stepCause);
+    // update on screen — unless nothing is MEANT to be, which is a dropped step. Read off
+    // the call itself, so the two callers cannot disagree about it either.
+    scheduleMessages(chatID, droppedFrameCause(call.agent_subtask_id ?? ""));
   }
 }
 

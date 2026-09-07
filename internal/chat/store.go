@@ -1,10 +1,8 @@
 // Package chat implements per-chat persistence: one JSON file per chat under
-// <dir>/<chat_id>.json. The directory listing is the index. Each file is
-// atomically rewritten on every mutation via write-temp-then-rename.
-//
-// The store is the single source of truth for chat state. No sessions.json,
-// no index.json, no event log replay. A chat's ACP session id lives in the
-// chat file's header so a container restart can resume via session/load.
+// <dir>/<chat_id>.json, atomically rewritten on every mutation via
+// write-temp-then-rename. The directory listing is the index, and the store is the
+// single source of truth for chat state. A chat's ACP session id lives in the chat
+// file's header so a container restart can resume via session/load.
 package chat
 
 import (
@@ -25,16 +23,14 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// errInvalidUTF8 is returned when a chat mutation produces content that
-// cannot round-trip through JSON (the storage format).
+// errInvalidUTF8 marks content that cannot round-trip through JSON, the storage format.
 var errInvalidUTF8 = errors.New("chat: content contains invalid UTF-8")
 
 // errDraftTooLarge is returned when a composer draft exceeds vibekit.MaxDraftBytes.
 var errDraftTooLarge = errors.New("chat: draft exceeds the size cap")
 
-// errTooManyAttachments and errBadAttachmentPath are the two ways a staged
-// attachment list is refused at the store: more entries than vibekit.MaxAttachments,
-// and a path that is empty, over vibekit.MaxAttachmentPathBytes or not UTF-8.
+// The two ways a staged attachment list is refused at the store: more entries than
+// vibekit.MaxAttachments, and a path empty, over the byte cap or not UTF-8.
 var (
 	errTooManyAttachments = errors.New("chat: too many attachments")
 	errBadAttachmentPath  = errors.New("chat: attachment path is empty or too long")
@@ -49,24 +45,18 @@ type broadcaster interface {
 // Compile-time assertion: Store satisfies archive.StoreAccess.
 var _ archive.StoreAccess = (*Store)(nil)
 
-// fileMode is the on-disk mode for chat files. The parent dir uses 0o700
-// because chat content may contain secrets the user pasted into prompts.
+// fileMode is the on-disk mode for chat files. The parent dir uses 0o700 because
+// chat content may contain secrets the user pasted into prompts.
 const (
 	fileMode       = 0o600
 	dirMode        = 0o700
 	chatFileSuffix = ".json"
 )
 
-// maxChatFileBytes caps a single chat file loaded by `load`, so a corrupted or
-// runaway file cannot OOM the process via List() walking every chat.
-const maxChatFileBytes = 32 * 1024 * 1024 // 32 MiB
-
-// Store owns the chat directory. Each chat has its own mutex so different
-// chats never block each other; same-chat mutations serialize.
-//
-// A short-TTL tombstone set guards the delete-during-turn race: a late
-// AppendMessage on an id another tab just deleted would otherwise re-create the
-// chat file as a ghost row, so Mutate refuses to create for a tombstoned id.
+// Store owns the chat directory. Each chat has its own mutex so different chats
+// never block each other; same-chat mutations serialize. A short-TTL tombstone set
+// closes the delete-during-turn race: without it, an AppendMessage arriving after a
+// concurrent Delete would re-create the chat file as a ghost row.
 type Store struct {
 	broadcast   broadcaster
 	listSF      singleflight.Group
@@ -78,6 +68,7 @@ type Store struct {
 	archive     *archive.Service
 	locks       sync.Map
 	dir         string
+	fileCap     chatFileCap
 	archiveOnce sync.Once
 	tombMu      sync.Mutex
 }
@@ -114,16 +105,18 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 	slog.Info("chat store: opened", "dir", dir, "mode", mode)
 	s := &Store{
 		dir:       dir,
+		fileCap:   resolveChatFileCap(),
 		tombstone: make(map[vibekit.ChatID]time.Time),
 	}
+	// Options land AFTER the derivation so WithChatFileCap overrides it, and the
+	// derivation's own log line still records what the container asked for.
 	for _, opt := range opts {
 		opt(s)
 	}
 	return s, nil
 }
 
-// StoreOption configures optional dependencies on a Store at construction
-// time. Use With* functions to create options.
+// StoreOption configures optional dependencies on a Store at construction time.
 type StoreOption func(*Store)
 
 // WithBroadcaster sets the SSE broadcaster used by the store to emit
@@ -139,8 +132,7 @@ func WithLive(fn func(chatID vibekit.ChatID) bool) StoreOption {
 }
 
 // WithOpenTab registers retention's second exemption: a chat with an open TAB is
-// never purged, however old. See archive.WithOpenTabs for what that costs (it
-// makes retention opt-out for a chat left open forever, which is accepted).
+// never purged, however old. See archive.WithOpenTabs for what that costs.
 func WithOpenTab(fn func(chatID vibekit.ChatID) bool) StoreOption {
 	return func(s *Store) { s.hasOpenTab = fn }
 }
@@ -167,21 +159,16 @@ func (s *Store) TurnOpen(chatID vibekit.ChatID) bool {
 }
 
 // WithOnPurge registers a callback fired after a retention purge removes a chat.
-// sessionChain carries every KAS session the chat ran on, captured before the
-// chat file was removed, so the purge can reap its own session directories.
+// sessionChain carries every KAS session the chat ran on, captured before the chat
+// file was removed, so the purge can reap its own session directories.
 func WithOnPurge(fn func(chatID vibekit.ChatID, sessionChain []string)) StoreOption {
 	return func(s *Store) { s.onPurge = fn }
 }
 
-// --- Path helpers ---
-
-// chatIDPattern reports whether id is a valid chat identifier. Delegates
-// to ids.ValidChatID — the single source of truth for chat ID validation.
+// chatIDPattern reports whether id is a valid chat identifier.
 func chatIDPattern(id vibekit.ChatID) bool {
 	return ids.ValidChatID(string(id))
 }
-
-// --- Public API ---
 
 // Get returns the full chat at chatID, or false if it does not exist.
 func (s *Store) Get(ctx context.Context, chatID vibekit.ChatID) (*vibekit.Chat, bool) {

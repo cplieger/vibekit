@@ -36,6 +36,7 @@ import {
   ICON_SUBAGENT_TASK,
   ICON_SUBAGENT_CREATOR,
 } from "./icons.js";
+import { signal } from "@cplieger/reactive";
 import type { SessionMode, ToolCall } from "./types.js";
 import { humanName } from "./strings.js";
 
@@ -92,23 +93,30 @@ const BUILTIN_MODES: readonly SessionMode[] = [
   },
 ];
 
-/** Server-fetched pre-session mode catalog (kiro-cli 2.14
- *  /api/config-template): the bundled modes + bundled agents + the user's
- *  global ~/.kiro/agents, with real names/descriptions/source tags.
- *  Replaces BUILTIN_MODES as the picker's base once fetched; BUILTIN_MODES
- *  stays the offline/pre-fetch fallback. Workspace agents are NOT in the
- *  template (it is built session-less with no workspace paths) — the role
- *  picker merges those from /api/workspace/kiro-config. */
-let catalogModes: readonly SessionMode[] | null = null;
+/** The WORKSPACE mode catalog, served once by /api/config-template: the bundled
+ *  modes + bundled agents + the user's global ~/.kiro/agents, with real
+ *  names/descriptions/source tags, and — once any session has run — the live
+ *  list KAS reported, which additionally carries the workspace agents with the
+ *  shadowing already resolved.
+ *
+ *  This is the ONE copy. The same list used to ride every ChatHeader as
+ *  `available_modes`: 59 entries repeated across 29 chats, identical in all of
+ *  them, 93.1% of a 1.25 MiB response the boot fetched twice.
+ *
+ *  A signal rather than a plain binding because the label call sites are inside
+ *  reactive effects, and the catalog arrives after the first paint. Empty until
+ *  the fetch lands; catalogBaseModes falls back to BUILTIN_MODES. */
+const catalogModes = signal<readonly SessionMode[]>([]);
 
 export function setCatalogModes(modes: readonly SessionMode[]): void {
-  catalogModes = modes;
+  catalogModes.value = modes;
 }
 
-/** The pre-session mode base: the fetched catalog when available, else the
+/** The workspace mode base: the fetched catalog when it has landed, else the
  *  static bundled list. */
 export function catalogBaseModes(): readonly SessionMode[] {
-  return catalogModes ?? BUILTIN_MODES;
+  const modes = catalogModes.value;
+  return modes.length > 0 ? modes : BUILTIN_MODES;
 }
 
 /** One offered mode plus what the pre-session merge had to DECIDE about it.
@@ -355,11 +363,18 @@ export function displayModeName(name: string): string {
     .join(" ");
 }
 
-/** Human-facing label for a mode id. Prefers the live session's mode name
- *  (custom agents carry their own), falls back to the bundled catalog, then
- *  to the raw id. */
-export function labelForMode(id: string, modes?: readonly SessionMode[]): string {
+/** Human-facing label for a mode id, from the workspace catalog (custom agents
+ *  carry their own name), falling back to the bundled list and then to the raw
+ *  id.
+ *
+ *  `modes` defaults to the catalog rather than being passed in by every caller:
+ *  the three call sites used to read the per-session `available_modes`, which was
+ *  the same 59 entries on every chat. */
+export function labelForMode(
+  id: string,
+  modes: readonly SessionMode[] = catalogModes.value,
+): string {
   const key = normalizeModeID(id);
-  const found = modes?.find((m) => m.id === key) ?? BUILTIN_MODES.find((m) => m.id === key);
+  const found = modes.find((m) => m.id === key) ?? BUILTIN_MODES.find((m) => m.id === key);
   return displayModeName(found?.name ?? id);
 }

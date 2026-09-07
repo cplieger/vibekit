@@ -47,9 +47,24 @@ type RunStartedPayload struct {
 // accumulating client could not tell two repeat iterations apart. NodeID is absent
 // on the run-level `paused` and holds the loop id on `loop_iteration`.
 type RunProgressPayload struct {
-	WorkflowID string          `json:"workflow_id"`
-	NodeID     string          `json:"node_id,omitempty"`
-	Kind       RunProgressKind `json:"kind"`
+	WorkflowID string `json:"workflow_id"`
+	NodeID     string `json:"node_id,omitempty"`
+	// NodePath addresses ONE execution of a node, joined with "/" — the same
+	// spelling RunStepPayload.NodePath uses. Empty on the run-level and
+	// shape-changing kinds, which is what tells the client to refetch instead.
+	NodePath string `json:"node_path,omitempty"`
+	// Status is the node's status after this frame, in KAS's own NodeState
+	// vocabulary so it drops straight onto the cached tree.
+	Status string `json:"status,omitempty"`
+	// StartedAt and EndedAt are RFC 3339, stamped by the SERVER at frame arrival:
+	// KAS puts no timestamp on either lifecycle frame. A later refetch overwrites
+	// both with KAS's own values.
+	StartedAt string `json:"started_at,omitempty"`
+	EndedAt   string `json:"ended_at,omitempty"`
+	// FailureReason is KAS's own explanation for a node that failed. Empty on
+	// every other outcome.
+	FailureReason string          `json:"failure_reason,omitempty"`
+	Kind          RunProgressKind `json:"kind"`
 }
 
 // RunFinishedPayload is the payload for type="run_finished": terminal. Status is
@@ -242,8 +257,38 @@ type LiveRun struct {
 	Executing bool `json:"executing"`
 }
 
-// LiveRunsResponse is GET /api/runs/live's reply. An envelope rather than a
-// bare array, the GET /api/tabs precedent.
+// LiveRunsResponse is GET /api/runs/live's reply.
 type LiveRunsResponse struct {
 	Runs []LiveRun `json:"runs"`
+}
+
+// RunControlsResponse is GET /api/runs/{id}/controls's reply: what may be done to
+// one run, and why not for the rest.
+//
+// Its own route rather than a field on GET /api/runs/{id}, a verbatim KAS
+// passthrough. The client used to decide this from a status table plus an SSE-fed
+// cache of which chat launched the run, so any reloaded client read a
+// chat-parented run as parentless. Only the server sees all three inputs.
+type RunControlsResponse struct {
+	// Refused maps a verb this run does not offer to the one sentence a reader
+	// needs, and carries only a verb whose absence would otherwise be unexplained.
+	Refused map[string]string `json:"refused,omitempty"`
+	// ParentChatID names the chat whose agent launched the run, empty for a
+	// parentless one. Read from the chat store here rather than from an event-fed
+	// client cache, which is empty after a reload.
+	ParentChatID string `json:"parent_chat_id"`
+	// Verbs are the offered controls, in row order. Strings rather than a
+	// registered enum because the client's label table is the narrowing point: an
+	// unlabelled verb is dropped, so a future one degrades to a missing button.
+	Verbs []string `json:"verbs"`
+}
+
+// RunRetriedResponse is POST /api/runs/{id}/retry's reply: KAS's own outcome
+// report, forwarded rather than collapsed to `{"ok":true}`. RetriedNodeIDs is why
+// the route exists — a retry that resets five nodes and one that resets none are
+// otherwise the same HTTP result, and the second is what "nothing happened" is.
+type RunRetriedResponse struct {
+	// Status is the run's status after the reset, as KAS reports it.
+	Status         string   `json:"status"`
+	RetriedNodeIDs []string `json:"retried_node_ids"`
 }

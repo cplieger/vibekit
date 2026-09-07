@@ -4,6 +4,11 @@ services:
     image: ghcr.io/cplieger/vibekit:latest
     container_name: vibekit
     restart: unless-stopped
+    # Required, not optional: tini reaps orphaned children. An agent's terminal commands fork
+    # gits, language servers and build tools whose own parent exits, re-parenting them onto PID 1,
+    # and the server waits only for the children it spawned itself; at PID 1 it collects them as
+    # zombies instead, until the container runs out of process slots.
+    init: true
     user: "${PUID:-1000}:${PGID:-1000}"  # from .env; must own the /config and /workspace host dirs
 
     ports:

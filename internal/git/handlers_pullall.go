@@ -1,15 +1,8 @@
 package git
 
-// The Pull-all pass: one sweep over every discovered repository that fetches,
-// judges whether a fast-forward is safe, pulls the ones that are, and reports a
-// verdict for every one it looked at.
-//
-// Shaped like handleStatusAll (singleflight, detached scan, bounded per repo,
-// results written by index) because it asks the same kind of question of the
-// same population. What it adds is the PRE-FLIGHT, and that is why the pass
-// lives here rather than as a client-side fan-out over handlePull: the judgement
-// "is a fast-forward safe in this tree" has to be atomic with the pull it
-// guards, or the tree changes between the answer and the action.
+// The Pull-all pass. Server-side rather than a client fan-out over handlePull
+// because "is a fast-forward safe here" must be atomic with the pull it guards,
+// or the tree changes between the answer and the action.
 
 import (
 	"context"
@@ -28,17 +21,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// pullVerdict names what the pass did to one repository. The four values are
-// mutually exclusive and cover every repository, so a reader gets exactly one
-// answer per repo and the client needs no residual bucket:
-//
-//	pulled  — the pull ran and git accepted it.
-//	blocked — the pre-flight refused; Reason names which hazard, Detail says which files or commits.
-//	failed  — the pull ran and git refused it; Detail carries git's own words.
-//	skipped — there was nothing to do; Reason says why.
-//
-// blocked and failed are the two a reader has to act on, and the two the panel
-// flags on a repo's own block.
+// pullVerdict names what the pass did to one repository: pulled, blocked (the
+// pre-flight refused), failed (git refused, Detail carries its words) or skipped
+// (nothing to do). Exhaustive, so the client needs no residual bucket.
 type pullVerdict string
 
 const (
@@ -48,16 +33,15 @@ const (
 	verdictSkipped pullVerdict = "skipped"
 )
 
-// Reasons a repository was left alone. Each set is exhaustive over its verdict
-// and the blocked set is ordered by severity: the first hazard that holds is the
-// one reported, so no repo carries two.
+// Reasons a repository was left alone. The blocked set is ordered by severity:
+// the first hazard that holds is the one reported, so no repo carries two.
 const (
 	// blocked
 	reasonInProgress   = "in_progress"   // a merge, rebase, cherry-pick or revert is underway
 	reasonConflict     = "conflict"      // the index holds unmerged entries
-	reasonUnreadable   = "unreadable"    // the working tree could not be read, so nothing may be assumed about it
-	reasonDiverged     = "diverged"      // local commits are not on the upstream, so no fast-forward exists
-	reasonLocalChanges = "local_changes" // a locally-changed path is one the incoming commits rewrite
+	reasonUnreadable   = "unreadable"    // the working tree could not be read
+	reasonDiverged     = "diverged"      // local commits are not on the upstream
+	reasonLocalChanges = "local_changes" // a locally-changed path the incoming commits rewrite
 
 	// skipped
 	reasonNotARepo     = "not_a_repo"
@@ -75,21 +59,14 @@ type pullResult struct {
 	Detail  string      `json:"detail,omitempty"`
 }
 
-// pullAllBudget bounds the whole pass, perRepoPullBudget bounds each repository
-// inside it, and minPullBudget is the floor a pull needs before it may START.
+// pullAllBudget bounds the whole pass, perRepoPullBudget each repository inside
+// it, and minPullBudget is the floor a pull needs before it may START: a
+// `git pull --ff-only` killed part-way through its checkout leaves a half-updated
+// worktree and possibly an index.lock, so a repository the remaining budget
+// cannot see through is reported out_of_time and never touched.
 //
-// That floor is the point of the three: a `git pull --ff-only` killed part-way
-// through its checkout leaves a half-updated worktree and possibly an
-// index.lock, which is precisely the state this pass exists to avoid producing.
-// So a repository the remaining budget cannot see through is reported
-// out_of_time and never touched, rather than pulled and then interrupted.
-//
-// pullAllBudget sits under @cplieger/fetch's 30s request timeout on purpose, so
-// the client always receives a complete answer rather than timing out over a
-// pass that is still running. The fetch half of this pass is the same work
-// /api/git/status-all?fetch=1 does on every Refresh, which the client already
-// caps at 15s, and the pulls it adds are local checkouts against objects the
-// fetch has just brought down.
+// pullAllBudget sits under the client's 30s request timeout, so the caller always
+// receives a complete answer rather than timing out over a running pass.
 const (
 	pullAllBudget     = 25 * time.Second
 	perRepoPullBudget = 20 * time.Second
@@ -97,13 +74,9 @@ const (
 )
 
 // handlePullAll fetches every repository, fast-forwards the ones where that is
-// safe, and reports why it left the others alone.
-//
-// Singleflighted, so two presses join one pass. DETACHED from the request
-// context (context.WithoutCancel), because a client that navigates away
-// mid-pass must not SIGKILL a git pull in the middle of its checkout — the same
-// reasoning handleStatusAll gives for its own scan, with a mutation behind it
-// instead of a read.
+// safe, and reports why it left the others alone. Singleflighted, so two presses
+// join one pass, and detached from the request context because a client that
+// navigates away mid-pass must not SIGKILL a pull inside its checkout.
 func (h *Handler) handlePullAll(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
 		return
@@ -132,9 +105,8 @@ func (h *Handler) handlePullAll(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, map[string]any{jsonKeyRepos: results})
 }
 
-// pullOne answers for one repository. Every exit carries a verdict: a row with
-// no verdict would reach the client as an unclassifiable repo, so the zero value
-// is out_of_time rather than empty.
+// pullOne answers for one repository. Every exit carries a verdict, so the zero
+// value is out_of_time rather than empty.
 func (h *Handler) pullOne(ctx context.Context, e repoEntry, deadline time.Time) pullResult {
 	res := pullResult{Repo: e.Name, Verdict: verdictSkipped, Reason: reasonOutOfTime}
 	if ctx.Err() != nil {
@@ -144,10 +116,9 @@ func (h *Handler) pullOne(ctx context.Context, e repoEntry, deadline time.Time) 
 		res.Reason = reasonNotARepo
 		return res
 	}
-	// Fetch first, or `behind` is whatever the last poll happened to see and a
-	// repository that fell behind since would be reported up to date. Shares the
-	// per-directory singleflight with the status fan-out, so pressing Pull all
-	// straight after Refresh costs one fetch rather than two.
+	// Fetch first, or `behind` is whatever the last poll saw. Shares the
+	// per-directory singleflight with the status fan-out, so Pull all straight
+	// after Refresh costs one fetch.
 	fetchStatus(ctx, e.Dir, h.timeouts.Fetch, &h.fetchFlight)
 
 	branch, err := gitCmd(ctx, e.Dir, "branch", "--show-current")
@@ -164,10 +135,8 @@ func (h *Handler) pullOne(ctx context.Context, e repoEntry, deadline time.Time) 
 		res.Reason = reasonUpToDate
 		return res
 	}
-	// Past here the repository HAS something to pull, so every remaining answer
-	// is either a pull or a hazard the reader must see. An expired context is
-	// re-checked because the reads below report their failure as a REASON, and a
-	// cancelled read would otherwise be reported as a property of the repo.
+	// Re-checked here because the reads below report failure as a REASON, so a
+	// cancelled read would otherwise look like a property of the repo.
 	if ctx.Err() != nil {
 		res.Reason = reasonOutOfTime
 		return res
@@ -190,13 +159,10 @@ func (h *Handler) pullOne(ctx context.Context, e repoEntry, deadline time.Time) 
 }
 
 // preflight judges whether a fast-forward is safe in a repository already known
-// to be behind, returning the blocking verdict or nil.
-//
-// Ordered by severity, first hit wins, so the reported hazard is the worst one
-// present. `git pull --ff-only` would refuse in every one of these states — the
-// pass runs the checks anyway because git's own message names the symptom rather
-// than the cause ("You have unstaged changes" for a rebase in progress), and
-// because a reader scanning a list of repositories needs the cause.
+// to be behind, returning the blocking verdict or nil. Ordered by severity, first
+// hit wins. `git pull --ff-only` would refuse in all these states anyway; the
+// checks exist because git's message names the symptom, not the cause ("You have
+// unstaged changes" for a rebase in progress).
 func preflight(ctx context.Context, dir, branch string, ahead int) *pullResult {
 	if operationInProgress(ctx, dir) {
 		return blocked(reasonInProgress, "A merge, rebase or cherry-pick is in progress here.")
@@ -213,8 +179,6 @@ func preflight(ctx context.Context, dir, branch string, ahead int) *pullResult {
 		return blocked(reasonDiverged,
 			fmt.Sprintf("%s has %s the upstream does not, so there is no fast-forward.", branch, commits))
 	}
-	// The one hazard whose answer needs both sides: which paths carry a local
-	// change, and which paths the incoming commits rewrite.
 	incoming, iok := incomingFiles(ctx, dir)
 	if !iok {
 		return blocked(reasonUnreadable, "The incoming changes could not be read.")
@@ -226,16 +190,15 @@ func preflight(ctx context.Context, dir, branch string, ahead int) *pullResult {
 	return nil
 }
 
-// blocked builds a blocking verdict. Repo is filled in by the caller, which is
-// the one field preflight has no business knowing.
+// blocked builds a blocking verdict; the caller fills in Repo.
 func blocked(reason, detail string) *pullResult {
 	return &pullResult{Verdict: verdictBlocked, Reason: reason, Detail: detail}
 }
 
-// upstreamDivergence reports how far HEAD is from its upstream. ok is false when
-// the branch tracks nothing, which aheadBehind deliberately cannot distinguish
-// from being in sync — it answers (0, 0) for both, and the two want different
-// verdicts here.
+// upstreamDivergence reports how far HEAD is from its upstream; ok is false when
+// the branch tracks nothing. Asks rev-list rather than the shared status call
+// because porcelain v2 omits the ahead/behind header for an untracked branch, so
+// a status read answers (0, 0) for both that and being in sync.
 func upstreamDivergence(ctx context.Context, dir string) (ahead, behind int, ok bool) {
 	out, err := gitCmd(ctx, dir, "rev-list", "--left-right", "--count", "HEAD...@{upstream}")
 	if err != nil {
@@ -253,9 +216,8 @@ func upstreamDivergence(ctx context.Context, dir string) (ahead, behind int, ok 
 	return a, b, true
 }
 
-// inProgressMarkers are git's own control entries for an operation that has
-// stopped part-way. A pull during one of these is unambiguously wrong, and it is
-// also the state where git's refusal is least informative.
+// inProgressMarkers are git's own control entries for an operation that stopped
+// part-way.
 var inProgressMarkers = []string{
 	"MERGE_HEAD",
 	"CHERRY_PICK_HEAD",
@@ -265,13 +227,9 @@ var inProgressMarkers = []string{
 }
 
 // operationInProgress reports whether a merge, rebase, cherry-pick or revert has
-// stopped part-way in dir.
-//
-// The markers are read out of --absolute-git-dir rather than out of dir/.git,
-// because a worktree's and a submodule's .git is a FILE pointing elsewhere and
-// the control entries live at the real directory. A path git does not answer
-// absolutely is refused rather than joined: nothing is blocked on it, and the
-// pull that follows reports git's own message.
+// stopped part-way in dir. Reads the markers out of --absolute-git-dir, not
+// dir/.git, because a worktree's and a submodule's .git is a FILE pointing
+// elsewhere. A non-absolute answer is refused rather than joined.
 func operationInProgress(ctx context.Context, dir string) bool {
 	gitDir, err := gitCmd(ctx, dir, "rev-parse", "--absolute-git-dir")
 	if err != nil || !filepath.IsAbs(gitDir) {
@@ -285,66 +243,31 @@ func operationInProgress(ctx context.Context, dir string) bool {
 	return false
 }
 
-// worktreeState answers the two questions the pre-flight asks of a working tree,
-// from ONE git status call: does the index already hold a merge conflict, and
-// which paths carry a local change.
+// worktreeState answers the pre-flight's two questions off ONE status read: does
+// the index hold a merge conflict, and which paths carry a local change.
 //
-// It reads the porcelain records itself rather than going through
-// parseGitStatusOutput, and that is not duplication: that parser splits an XY
-// pair into one row per side of the index, which is right for the file list the
-// panel renders and unusable here, because it is exactly the pairing a conflict
-// IS. Through it `UU` becomes two ordinary "U" rows and `AA` becomes a plain
-// staged add.
-//
-// Every changed path counts as dirty, staged and untracked alike: git refuses a
-// merge that would overwrite an index change or an untracked file just as it
-// refuses one that would overwrite a worktree edit.
+// The conflict half reads v2's unmerged record type, because the row builder
+// splits an XY pair into one row per side and that pairing is what a conflict IS.
+// A rename's ORIGIN counts as dirty too: a fast-forward writes either end.
 func worktreeState(ctx context.Context, dir string) (dirty map[string]struct{}, conflicted, ok bool) {
-	raw, err := gitExec(ctx, dir, "status", "--porcelain=v1", "-z", "-uall").CombinedOutput()
+	st, err := readStatus(ctx, dir)
 	if err != nil {
+		// Fail closed: a tree whose status could not be read is not a clean one.
 		return nil, false, false
 	}
-	dirty = make(map[string]struct{})
-	records := strings.Split(string(raw), "\x00")
-	for i := 0; i < len(records); i++ {
-		line := records[i]
-		// A valid record is at least "XY P". Anything shorter is the trailing
-		// empty field after the final NUL, or an origin path already consumed.
-		if len(line) < 4 {
-			continue
+	dirty = make(map[string]struct{}, len(st.Files))
+	for _, f := range st.Files {
+		dirty[f.Path] = struct{}{}
+		if f.OrigPath != "" {
+			dirty[f.OrigPath] = struct{}{}
 		}
-		x, y, path := line[0], line[1], line[3:]
-		if isRenameOrCopy(x, y) {
-			// A rename or copy carries its origin path as a second NUL field.
-			// Both ends are dirty (a fast-forward would have to write either),
-			// and consuming it stops it being read as a record of its own.
-			if i+1 < len(records) {
-				dirty[records[i+1]] = struct{}{}
-			}
-			i++
-		}
-		if isUnmerged(x, y) {
-			conflicted = true
-		}
-		dirty[path] = struct{}{}
 	}
-	return dirty, conflicted, true
+	return dirty, st.Conflicted, true
 }
 
-// isUnmerged reports whether an XY status pair records a merge conflict. The
-// seven pairs are git's own (git-status(1) "Short Format"): either side U, plus
-// the two both-changed cases where neither side is.
-func isUnmerged(x, y byte) bool {
-	return x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D')
-}
-
-// incomingFiles lists the paths a fast-forward to the upstream would write. Only
-// meaningful when HEAD is strictly behind, which is the only state preflight
-// asks in.
-//
-// --no-textconv pins the raw comparison: --name-only prints no content, but the
-// flag is what stops a repo-supplied textconv PROGRAM being run, not merely its
-// output being shown.
+// incomingFiles lists the paths a fast-forward to the upstream would write; only
+// meaningful when HEAD is strictly behind. --no-textconv stops a repo-supplied
+// textconv PROGRAM being run, which --name-only alone does not.
 func incomingFiles(ctx context.Context, dir string) (map[string]struct{}, bool) {
 	out, err := gitCmd(ctx, dir, "diff", "--no-textconv", "--name-only", "-z", "HEAD..@{upstream}")
 	if err != nil {
@@ -359,8 +282,8 @@ func incomingFiles(ctx context.Context, dir string) (map[string]struct{}, bool) 
 	return files, true
 }
 
-// overlap returns the paths present in both sets, sorted so the reported names
-// do not reshuffle between passes over an unchanged tree.
+// overlap returns the paths present in both sets, sorted so reported names do
+// not reshuffle between passes over an unchanged tree.
 func overlap(dirty, incoming map[string]struct{}) []string {
 	var both []string
 	for p := range dirty {
@@ -372,13 +295,11 @@ func overlap(dirty, incoming map[string]struct{}) []string {
 	return both
 }
 
-// maxNamedPaths bounds how many paths a blocked detail names before it counts
-// the rest. Three is enough to recognise what is in the way; a hundred is a
-// banner nobody reads.
+// maxNamedPaths bounds how many paths a blocked detail names: enough to
+// recognise what is in the way, short of a banner nobody reads.
 const maxNamedPaths = 3
 
-// nameSome renders a path list for a user-facing sentence, naming at most
-// maxNamedPaths of them.
+// nameSome renders a path list, naming at most maxNamedPaths of them.
 func nameSome(paths []string) string {
 	if len(paths) <= maxNamedPaths {
 		return strings.Join(paths, ", ")

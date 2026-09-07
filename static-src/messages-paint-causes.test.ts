@@ -84,6 +84,21 @@ function assistant(id: string, text: string): Message {
   } as Message;
 }
 
+/** An assistant message longer than the block budget, so a paint mounts a WINDOW of
+ *  it and its head is outside the DOM. */
+function hugeAssistant(id: string, blocks: number): Message {
+  return {
+    id,
+    role: "assistant",
+    ts: 2,
+    content: "",
+    blocks: Array.from({ length: blocks }, (_, i) => ({
+      type: "text",
+      text: `chunk ${String(i)}`,
+    })),
+  } as unknown as Message;
+}
+
 function assistantWithTool(id: string, tc: ToolCall): Message {
   return {
     id,
@@ -166,6 +181,56 @@ describe("paint branches on the flushed render cause", () => {
     },
   );
 
+  it("a delta to an UNMOUNTED block schedules nothing at all", async () => {
+    // The signal-absent fallback exists for a MOUNTED block whose liveness was
+    // misjudged: the full pass re-reads it. For a block outside the window the pass
+    // paints nothing either, so a parked reader would pay one full pass per delta —
+    // which on a streaming run is a pass per frame over the whole transcript.
+    const chat = "cause-unmounted";
+    const kids = mount(chat, [user("cu-u1", "hi"), hugeAssistant("cu-a1", 700)], false);
+    expect(kids.length).toBe(1);
+    await vi.waitFor(() => {
+      expect(viewRoot().querySelectorAll("[data-block-index]").length).toBeGreaterThan(48);
+    });
+    // The case's premise: block 0 is outside the mounted window.
+    expect(viewRoot().querySelector('[data-block-index="0"]')).toBeNull();
+    const before = seamCounts();
+
+    store.appendChunk(chat, "cu-a1", " more", false, 0, "");
+    await flushed();
+
+    expect(seamCounts()).toEqual(before);
+    // And nothing is lost: the text is in the store, and a scroll back mounts it from
+    // there (`block-virtualization.test.ts` pins that half).
+    const blocks = store.get(chat)?.messages.find((m) => m.id === "cu-a1")?.blocks ?? [];
+    expect(blocks[0]?.text).toBe("chunk 0 more");
+  });
+
+  it("a delta to a MOUNTED block with no signal still runs the full pass", async () => {
+    // The other side of the same condition, and the behaviour the fallback is FOR: a
+    // settled message's blocks carry no per-block signal, so the pass is what puts the
+    // text on screen through `syncMountedText`.
+    const chat = "cause-mounted";
+    mount(chat, [user("cm-u1", "hi"), assistant("cm-a1", "hello")], false);
+    await vi.waitFor(() => {
+      expect(viewRoot().querySelector('[data-block-index="0"]')).not.toBeNull();
+    });
+    const before = seamCounts();
+
+    // The delta runs past the assertion below because the bubble's reveal holds its
+    // last characters back behind the caret.
+    store.appendChunk(chat, "cm-a1", " world and then some", false, 0, "");
+    await flushed();
+
+    expect(store.renderCauseOf(chat).cause).toBe("shape");
+    expect(vi.mocked(turnsMod.projectTurns).mock.calls.length).toBeGreaterThan(
+      before["projectTurns"]!,
+    );
+    await vi.waitFor(() => {
+      expect(viewRoot().querySelector('[data-block-index="0"]')?.textContent).toContain("world");
+    });
+  });
+
   it("a tool flush refreshes only the owning message's card", async () => {
     const chat = "cause-tool";
     const tc = {
@@ -174,13 +239,16 @@ describe("paint branches on the flushed render cause", () => {
       kind: "execute",
       status: "in_progress",
     } as unknown as ToolCall;
+    // The tool-bearing message is in the NEWEST turn: the fold policy wants that
+    // turn open, so its card is mounted and its per-tool signal exists — which is
+    // what makes the cause `tool` rather than the signal-absent `shape` fallback.
     const kids = mount(
       chat,
       [
         user("ct-u1", "one"),
-        assistantWithTool("ct-a1", tc),
+        assistant("ct-a1", "done"),
         user("ct-u2", "two"),
-        assistant("ct-a2", "done"),
+        assistantWithTool("ct-a2", tc),
       ],
       false,
     );
@@ -188,14 +256,14 @@ describe("paint branches on the flushed render cause", () => {
     const before = seamCounts();
     const refreshBefore = vi.mocked(blocksMod.refreshMessageCard).mock.calls.length;
 
-    store.upsertToolCall(chat, "ct-a1", { ...tc, status: "completed" } as ToolCall, 0);
+    store.upsertToolCall(chat, "ct-a2", { ...tc, status: "completed" } as ToolCall, 0);
     await flushed();
 
-    expect(store.renderCauseOf(chat)).toEqual({ cause: "tool", msgID: "ct-a1" });
+    expect(store.renderCauseOf(chat)).toEqual({ cause: "tool", msgID: "ct-a2" });
     // The keyed update ran for the one owning message, and it found its render.
     const refreshCalls = vi.mocked(blocksMod.refreshMessageCard).mock;
     expect(refreshCalls.calls.length).toBe(refreshBefore + 1);
-    expect(refreshCalls.calls.at(-1)?.[0]).toBe("ct-a1");
+    expect(refreshCalls.calls.at(-1)?.[0]).toBe("ct-a2");
     expect(refreshCalls.results.at(-1)?.value).toBe(true);
     // No projection, no reconcile, no fold pass — and zero FULL-PATH body
     // updates: the spy sees only cross-module calls, so the keyed update's own

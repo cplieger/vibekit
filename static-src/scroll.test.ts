@@ -210,7 +210,7 @@ describe("resetScrollState", () => {
 
   it("hides the resume control the reader left behind", () => {
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     expect(scrollBtn.classList.contains("hidden")).toBe(false);
 
     scroll.resetScrollState();
@@ -224,11 +224,11 @@ describe("resetScrollState", () => {
     // permanent: scrolling back to the bottom is a Following-to-Following
     // no-op, so the reader could not dismiss it by any gesture.
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     scroll.resetScrollState();
 
     s.scrollTop = 1500;
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     expect(scrollBtn.classList.contains("hidden")).toBe(true);
   });
 
@@ -364,6 +364,28 @@ describe("readingState", () => {
 const messagesEl = document.getElementById("messages")!;
 const scrollBtn = document.getElementById("scrollBottom")!;
 
+/** The reader's own scroll, in the two events a device produces: the INPUT that
+ *  says WHOSE scroll it is, then the `scroll` the browser delivers.
+ *
+ *  Both halves are load-bearing. The controller decides intent from the input, so
+ *  a bare `scroll` event is the PLATFORM's shape — a `content-visibility`
+ *  re-measure clamping the position — and a fixture that omits the wheel is
+ *  asking for the clamp's behaviour, not the reader's. */
+function readerScroll(): void {
+  readerArrivedAt(scroll.getScrollEl());
+}
+
+/** Dispatch the wheel whose DIRECTION would have brought the reader to where `el`
+ *  already sits, then the `scroll` event. The controller enters Reading from the aim
+ *  of the input, so a fixture that seeds a position off the live edge and then fires a
+ *  DOWNWARD wheel is describing a reader travelling the wrong way, and gets the
+ *  platform's answer (Following) rather than the reader's. */
+function readerArrivedAt(el: HTMLElement): void {
+  const atEdge = el.scrollTop + el.clientHeight >= el.scrollHeight - 100;
+  el.dispatchEvent(new WheelEvent("wheel", { deltaY: atEdge ? 1 : -1 }));
+  el.dispatchEvent(new Event("scroll"));
+}
+
 /** Drain the MutationObserver callback and the queued animation frame. Every pin
  *  writes synchronously now, so this covers the observer-driven state revalidation
  *  and the bottom pin's re-assert frames, not a deferred scroll write. */
@@ -389,15 +411,24 @@ describe("the scroll listener's reading model", () => {
 
   it("parks the reader in Reading when they scroll away from the bottom", () => {
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     expect(scroll.readingState()).toBe("reading");
+  });
+
+  // The defect this file's real-layout section reproduces, in its cheapest form:
+  // the SAME position, arriving with no input behind it, is the platform's own
+  // clamp and may not park anyone.
+  it("ignores a scroll away from the bottom that no reader input produced", () => {
+    fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
+    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("following");
   });
 
   it("returns to Following when the scroll reaches the bottom again", () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     s.scrollTop = 1500;
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     expect(scroll.readingState()).toBe("following");
   });
 
@@ -405,26 +436,176 @@ describe("the scroll listener's reading model", () => {
   // 1400 + 500 === 2000 - 100 exactly.
   it("counts the tolerance band as the bottom", () => {
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1400 });
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     expect(scroll.readingState()).toBe("following");
   });
 
   it("counts one pixel above the tolerance band as Reading", () => {
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1399 });
+    readerScroll();
+    expect(scroll.readingState()).toBe("reading");
+  });
+
+  // The control window is what stops the auto-scroll fighting a scroll still in
+  // flight: a wheel gesture that ends inside the tolerance band leaves the reader
+  // Following, and a chunk arriving inside READER_CONTROL_MS must not yank.
+  it("suppresses the auto-scroll for the debounce window after a user scroll", async () => {
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    readerScroll();
+    expect(scroll.readingState()).toBe("following");
+    // The document GROWS with the chunk, or the pin would write 1500 either way
+    // and the case could not fail: at the live edge the suppressed write and the
+    // one that lands are the same number.
+    s.scrollHeight = 3000;
+    messagesEl.appendChild(document.createElement("div"));
+    await settle();
+    expect(s.scrollTop).toBe(1500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WHICH INPUTS COUNT AS THE READER. Intent is decided from input rather than
+// position, so every device that scrolls this box needs a listener of its own,
+// and a device left out parks the reader by their own gesture. The observable
+// here is the suppression: while the reader owns the scroller, a transcript that
+// grows may not move it.
+// ---------------------------------------------------------------------------
+describe("the reader's input surfaces", () => {
+  beforeEach(resetBetween);
+
+  /** A touch at one vertical position. `touchmove` carries a position rather than a
+   *  delta, so a drag is two of these and the controller keeps the previous one. */
+  function touchAt(el: HTMLElement, type: "touchstart" | "touchmove", clientY: number): void {
+    const touch = new Touch({ identifier: 1, target: el, clientY, clientX: 10 });
+    el.dispatchEvent(new TouchEvent(type, { touches: [touch], bubbles: true, cancelable: true }));
+  }
+
+  /** Grow the transcript by a chunk and report where the scroller ended up. 1500 is
+   *  the write suppressed, 2500 is the pin running. */
+  async function chunkLands(s: { scrollHeight: number; scrollTop: number }): Promise<number> {
+    s.scrollHeight = 3000;
+    messagesEl.appendChild(document.createElement("div"));
+    await settle();
+    return s.scrollTop;
+  }
+
+  it("hands the scroller to a scrolling key", async () => {
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown" }));
+    expect(await chunkLands(s)).toBe(1500);
+  });
+
+  it("hands the scroller to a scrolling key under a modifier", async () => {
+    // Ctrl+Home scrolls this box to the top. Dropped for its modifier, the reader
+    // ends at a position carrying no fingerprint, which reads as Following and
+    // gets pinned straight back down.
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", ctrlKey: true }));
+    expect(await chunkLands(s)).toBe(1500);
+  });
+
+  it("takes no licence from a pointer moving with no thumb held", async () => {
+    // Without the held-thumb guard every mouse movement over the page refreshes the
+    // quiet period, and the auto-scroll is suppressed for as long as the reader's hand
+    // is on the mouse.
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    document.dispatchEvent(new PointerEvent("pointermove", { clientX: 10, clientY: 100 }));
+    expect(await chunkLands(s)).toBe(2500);
+  });
+
+  it("parks the reader on a key that scrolls UP", () => {
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "PageUp" }));
+    s.scrollTop = 0;
     scroll.getScrollEl().dispatchEvent(new Event("scroll"));
     expect(scroll.readingState()).toBe("reading");
   });
 
-  // The debounce is what stops the auto-scroll fighting a scroll still in
-  // flight: a wheel gesture that ends inside the tolerance band leaves the
-  // reader Following, and a chunk arriving in the same 150ms must not yank.
-  it("suppresses the auto-scroll for the debounce window after a user scroll", async () => {
+  it("leaves the reader Following on a key that scrolls DOWN", () => {
+    // Same displacement, opposite aim: a reader heading for the live edge is not
+    // parked by whatever the layout does to them on the way.
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown" }));
+    s.scrollTop = 0;
     scroll.getScrollEl().dispatchEvent(new Event("scroll"));
     expect(scroll.readingState()).toBe("following");
-    messagesEl.appendChild(document.createElement("div"));
-    await settle();
-    expect(s.scrollTop).toBe(1500);
+  });
+
+  it("reads Shift+Space as a scroll UP", () => {
+    // The one direction no key spelling distinguishes: Space pages down, Shift+Space
+    // pages up, and both arrive as `key: " "`.
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: " ", shiftKey: true }));
+    s.scrollTop = 0;
+    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("reading");
+  });
+
+  it("spends the reader's aim when they reach the live edge", () => {
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    const el = scroll.getScrollEl();
+    el.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
+    s.scrollTop = 0;
+    el.dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("reading");
+
+    s.scrollTop = 1500;
+    el.dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("following");
+
+    // The layout now moves them off the edge with no input at all. An aim left
+    // standing from the gesture they have already satisfied would re-park them here.
+    s.scrollTop = 0;
+    el.dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("following");
+  });
+
+  it("leaves the scroller alone for a key that does not scroll", async () => {
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "k" }));
+    expect(await chunkLands(s)).toBe(2500);
+  });
+
+  it("leaves the scroller alone for a scrolling key typed into a field", async () => {
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    const field = document.createElement("input");
+    document.body.appendChild(field);
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
+    field.remove();
+    expect(await chunkLands(s)).toBe(2500);
+  });
+
+  it("parks the reader when a touch drag aims UP", () => {
+    // A finger moving DOWN the screen scrolls the content UP, so the sign inverts —
+    // and the aim is what parks them, which is why the momentum that follows needs no
+    // direction of its own.
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    const el = scroll.getScrollEl();
+    touchAt(el, "touchstart", 100);
+    touchAt(el, "touchmove", 260);
+    s.scrollTop = 0;
+    el.dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("reading");
+  });
+
+  it("leaves the reader Following when a touch drag aims DOWN", () => {
+    // The same displacement, aimed the other way: everything below the reader is the
+    // layout's business, and a fling toward the live edge must not park them.
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    const el = scroll.getScrollEl();
+    touchAt(el, "touchstart", 260);
+    touchAt(el, "touchmove", 100);
+    s.scrollTop = 0;
+    el.dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("following");
+  });
+
+  it("keeps the momentum after a lifted finger inside the reader's window", async () => {
+    // `touchend` marks but cannot aim. It is in the set for the SUPPRESSION only:
+    // iOS momentum outlives the finger, and a chunk arriving under it must not yank.
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    scroll.getScrollEl().dispatchEvent(new TouchEvent("touchend", { touches: [] }));
+    expect(await chunkLands(s)).toBe(1500);
   });
 });
 
@@ -574,29 +755,10 @@ describe("scrollToBottom", () => {
 describe("the streaming auto-scroll", () => {
   beforeEach(resetBetween);
 
-  /** An element reporting a position `frameTop` px down the scroller's own scroll
-   *  frame.
-   *
-   *  Faked through RECTS rather than `offsetTop`, because rects are the
-   *  coordinate space the anchor arithmetic reads: `offsetTop` is measured
-   *  against `offsetParent`, which for a real transcript bubble is its own
-   *  containment-bounded `.msg-row` and not the scroller. The rect is computed
-   *  per call against the scroller's live rect and scrollTop, which is what the
-   *  frame conversion undoes — so the four numbers below still mean a position in
-   *  the transcript, and they are unchanged from the offsetTop era on purpose. If
-   *  one of them moves, the fake is wrong. */
-  function fakeAnchor(frameTop: number, height: number): HTMLElement {
-    const anchor = document.createElement("div");
-    const rectAt = (): DOMRect => {
-      const wrap = scroll.getScrollEl();
-      const top = wrap.getBoundingClientRect().top + wrap.clientTop + frameTop - wrap.scrollTop;
-      return new DOMRect(0, top, 100, height);
-    };
-    anchor.getBoundingClientRect = rectAt;
-    anchor.getClientRects = (() =>
-      [rectAt()] as unknown as DOMRectList) as typeof anchor.getClientRects;
-    return anchor;
-  }
+  // The anchored pin is measured under REAL LAYOUT below ("the streaming pin
+  // through a containment-bounded row" and "the anchor's coordinate space"): it
+  // reads the anchor's rect against the scroller's, and a fake whose `scrollTop`
+  // moves no box double-counts the second pin of a burst.
 
   it("pins to the document bottom when no anchor is offered", async () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 100 });
@@ -619,39 +781,6 @@ describe("the streaming auto-scroll", () => {
   // on the return to Following" pins that invariant by driving the real
   // transition instead.
 
-  // The bug this exists for: a tall diff card renders BELOW the sentence being
-  // streamed, and pinning to scrollHeight scrolls that sentence off the top.
-  // 1000 + 200 - 500 + 100/2 puts the anchor's bottom at the viewport's bottom.
-  it("puts the anchor's bottom at the viewport's bottom", async () => {
-    const s = fakeScroller({ scrollHeight: 4000, clientHeight: 500, scrollTop: 0 });
-    const anchor = fakeAnchor(1000, 200);
-    scroll.setAnchorProvider(() => anchor);
-    messagesEl.appendChild(anchor);
-    await settle();
-    expect(s.scrollTop).toBe(750);
-  });
-
-  it("never scrolls to a negative offset for an anchor above the fold", async () => {
-    // 0 + 100 - 500 + 50 is -350, which is not a scroll position.
-    const s = fakeScroller({ scrollHeight: 4000, clientHeight: 500, scrollTop: 0 });
-    const anchor = fakeAnchor(0, 100);
-    scroll.setAnchorProvider(() => anchor);
-    messagesEl.appendChild(anchor);
-    await settle();
-    expect(s.scrollTop).toBe(0);
-  });
-
-  it("never scrolls past the end of the content", async () => {
-    // 9000 + 100 - 500 + 50 is past a 1000px transcript, so the landing is the
-    // maximum scrollTop a 500px viewport over 1000px of content has.
-    const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
-    const anchor = fakeAnchor(9000, 100);
-    scroll.setAnchorProvider(() => anchor);
-    messagesEl.appendChild(anchor);
-    await settle();
-    expect(s.scrollTop).toBe(500);
-  });
-
   // One frame per burst of mutations, but the guard has to re-arm or the second
   // chunk of a stream never scrolls.
   it("re-arms the frame guard so the next chunk scrolls too", async () => {
@@ -673,7 +802,7 @@ describe("pagination", () => {
     const load = vi.fn();
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
     scroll.setLoadMore(load, true);
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     expect(load).toHaveBeenCalledTimes(1);
   });
 
@@ -682,7 +811,7 @@ describe("pagination", () => {
     const load = vi.fn();
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 100 });
     scroll.setLoadMore(load, true);
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     expect(load).not.toHaveBeenCalled();
   });
 
@@ -690,7 +819,7 @@ describe("pagination", () => {
     const load = vi.fn();
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
     scroll.setLoadMore(load, false);
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     expect(load).not.toHaveBeenCalled();
   });
 
@@ -698,8 +827,8 @@ describe("pagination", () => {
     const load = vi.fn();
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
     scroll.setLoadMore(load, true);
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
+    readerScroll();
     expect(load).toHaveBeenCalledTimes(1);
   });
 
@@ -707,7 +836,7 @@ describe("pagination", () => {
     fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
     scroll.setLoadMore(() => undefined, true);
     expect(document.getElementById("load-more-indicator")).not.toBeNull();
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     expect(document.getElementById("load-more-indicator")).toBeNull();
     expect(document.getElementById("load-more-skeleton")).not.toBeNull();
   });
@@ -725,7 +854,7 @@ describe("pagination", () => {
         s.scrollHeight = 1400;
       }, 0);
     }, true);
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     await settle();
     expect(s.scrollTop).toBe(400);
   });
@@ -739,10 +868,10 @@ describe("pagination", () => {
       }, 0);
     });
     scroll.setLoadMore(load, true);
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     await settle();
     s.scrollTop = 0;
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     expect(load).toHaveBeenCalledTimes(2);
   });
 
@@ -784,7 +913,7 @@ describe("pagination", () => {
   it("takes the previous chat's loading skeleton down with it", () => {
     fakeScroller({ scrollHeight: 5000, clientHeight: 500, scrollTop: 50 });
     scroll.setLoadMore(() => undefined, true);
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     expect(document.getElementById("load-more-skeleton")).not.toBeNull();
 
     scroll.resetScrollState();
@@ -794,7 +923,7 @@ describe("pagination", () => {
   it("does not compensate the next chat for the previous chat's page", async () => {
     const s = fakeScroller({ scrollHeight: 5000, clientHeight: 500, scrollTop: 50 });
     scroll.setLoadMore(() => undefined, true);
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
 
     // The reader switches chats with the fetch still in flight.
     scroll.resetScrollState();
@@ -804,7 +933,7 @@ describe("pagination", () => {
     // Following reader on the very next mutation, and returns early for this one.
     s.scrollHeight = 1000;
     s.scrollTop = 300;
-    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    readerScroll();
     expect(scroll.readingState()).toBe("reading");
 
     // Now the OUTGOING chat's fetch resolves and drops the skeleton without
@@ -878,7 +1007,13 @@ function realScroller(): HTMLElement {
   for (const key of ["scrollHeight", "clientHeight", "scrollTop", "scrollTo"]) {
     Reflect.deleteProperty(wrap, key);
   }
-  wrap.style.cssText = "height:400px;overflow-y:auto;position:relative;";
+  // `scrollbar-gutter: stable` and `overflow-anchor: none` are both shipped
+  // declarations (css/13-messages.css) that this section MEASURES rather than
+  // decorates: the gutter is what a scrollbar press aims at, and without the
+  // anchoring off Chromium restores a clamped position itself, which is the
+  // platform doing the controller's job and hiding whether it works.
+  wrap.style.cssText =
+    "height:400px;overflow-y:auto;position:relative;scrollbar-gutter:stable;overflow-anchor:none;";
   if (messagesEl.parentElement !== wrap) {
     wrap.appendChild(messagesEl);
   }
@@ -963,6 +1098,15 @@ async function land(ms = 120): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
 }
 
+/** Move the scroller AS THE READER: the input event that says whose scroll it is,
+ *  then the position they reach. Assigning `scrollTop` alone is the shape the
+ *  PLATFORM produces (a `content-visibility` clamp), which the controller
+ *  deliberately refuses to read as intent. */
+function readerScrollTo(wrap: HTMLElement, top: number): void {
+  wrap.dispatchEvent(new WheelEvent("wheel", { deltaY: top < wrap.scrollTop ? -1 : 1 }));
+  wrap.scrollTop = top;
+}
+
 /** Both real-layout blocks start the same way: no anchor, a real overflowing
  *  box, an empty transcript, and the reader Following at the top. */
 async function realLayoutReset(): Promise<void> {
@@ -976,9 +1120,9 @@ async function realLayoutReset(): Promise<void> {
  *  the top. Two writes rather than one, so the state passes through Following
  *  and the park is the listener's own verdict rather than a seeded field. */
 async function park(wrap: HTMLElement): Promise<void> {
-  wrap.scrollTop = wrap.scrollHeight - wrap.clientHeight;
+  readerScrollTo(wrap, wrap.scrollHeight - wrap.clientHeight);
   await land();
-  wrap.scrollTop = 0;
+  readerScrollTo(wrap, 0);
   await land();
 }
 
@@ -1043,15 +1187,15 @@ describe("a large tool card below the streaming block", () => {
   });
 
   it("still parks the reader in Reading when THEY scroll up", async () => {
-    // The guard excuses the controller's own landing and nothing else, so the
-    // gesture the state exists for has to keep working over the same DOM.
+    // The controller ignores a scroll no input produced, so the gesture the state
+    // exists for has to keep working over the same DOM.
     block(1500);
     const streaming = block(200, "message assistant streaming");
     block(900);
     scroll.setAnchorProvider(() => streaming);
     await land();
 
-    scroll.getScrollEl().scrollTop = 200;
+    readerScrollTo(scroll.getScrollEl(), 200);
     await land();
     expect(scroll.readingState()).toBe("reading");
   });
@@ -1255,6 +1399,98 @@ describe("the streaming pin through a containment-bounded row", () => {
   });
 });
 
+// The anchor in its PRODUCTION wrapper. Every fixture above appends the bubble
+// straight into the transcript column, where the scroller is the offsetParent and an
+// offsetTop walk is right by accident; production seats it in a `.msg-row`, whose
+// `content-visibility: auto` (13-messages.css) makes the row that offsetParent.
+describe("the anchor's coordinate space", () => {
+  beforeEach(realLayoutReset);
+
+  /** The shipped `.msg-row` declarations that decide this geometry; the
+   *  containment is what moves the offsetParent onto the row. */
+  function msgRow(): HTMLElement {
+    const row = block(0);
+    row.style.cssText =
+      "display:flex;align-items:flex-end;flex-shrink:0;content-visibility:auto;contain-intrinsic-size:auto 3rem;";
+    return row;
+  }
+
+  /** The live bubble as `mountText` seats it: inside the row, and positioned,
+   *  which is the shape the shipped `.message` rule gives it. */
+  function bubbleIn(row: HTMLElement, px: number): HTMLElement {
+    const streaming = document.createElement("div");
+    streaming.className = "message assistant streaming";
+    streaming.style.cssText = `position:relative;height:${String(px)}px;width:100%;`;
+    row.appendChild(streaming);
+    return streaming;
+  }
+
+  // The fixture's own premise, so a layout change that hands the bubble a
+  // different offsetParent turns the case below into one that cannot fail rather
+  // than leaving it green for the wrong reason.
+  it("seats the bubble in a row that is its offsetParent", () => {
+    const row = msgRow();
+    expect(bubbleIn(row, 200).offsetParent).toBe(row);
+  });
+
+  it("keeps Following when the anchor above the fold asks for a negative scrollTop", async () => {
+    // The other edge of the same arithmetic, and the one no case reached: an anchor within
+    // one viewport of the document's top makes the pin's target NEGATIVE. Three things the
+    // fixture has to carry or it cannot fail. The anchor's bottom must sit above
+    // `clientHeight − BOTTOM_TOLERANCE_PX / 2`, or the target is positive. The write has
+    // to come from a MUTATION rather than a resume, because `pinLiveEdgeNow` clamps before
+    // it calls through while `autoScrollIfAnchored` does not. And the reader must be at a
+    // NON-ZERO scrollTop: at 0 the clamped write moves nothing, so no scroll event is
+    // delivered and there is no marker comparison left to get wrong.
+    const wrap = scroll.getScrollEl();
+    const streaming = bubbleIn(msgRow(), 200);
+    block(3000);
+    scroll.setAnchorProvider(() => streaming);
+    await land();
+
+    // A gesture landing inside the tolerance band keeps Following, which is how a reader
+    // gets to the live edge while the anchor still owes a negative pin. Long enough for
+    // the reader's own control window (READER_CONTROL_MS, 300) to expire, or the
+    // mutation's write is suppressed and the case never reaches the arithmetic.
+    readerScrollTo(wrap, wrap.scrollHeight - wrap.clientHeight);
+    await land(400);
+    expect({ at: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      at: 2800,
+      state: "following",
+    });
+
+    streaming.appendChild(document.createTextNode("a streamed chunk"));
+    await land();
+
+    // −150 asked for (a 200px anchor bottom, a 400px viewport, half a 100px band), so 0
+    // is the reachable landing. Both halves are the assertion: an unclamped landing gives
+    // the repair a target it can never reach, and a 2800px drop the reader did not ask
+    // for must still leave them Following, because no input produced it.
+    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      scrollTop: 0,
+      state: "following",
+    });
+  });
+
+  it("pins the anchor's own bottom, not its offset inside its row", async () => {
+    block(1500);
+    const streaming = bubbleIn(msgRow(), 200);
+    block(900);
+    scroll.setAnchorProvider(() => streaming);
+    await land();
+
+    streaming.appendChild(document.createTextNode("a streamed chunk"));
+    await land();
+
+    // The contract in the reader's own units. A gap rather than a scrollTop, so
+    // the c-v render the pin itself triggers cannot make the expected number a
+    // function of which frame settled last.
+    const wrap = scroll.getScrollEl();
+    const gap = wrap.getBoundingClientRect().bottom - streaming.getBoundingClientRect().bottom;
+    expect({ gap, state: scroll.readingState() }).toEqual({ gap: 50, state: "following" });
+  });
+});
+
 // The reported failure: "the scroll to bottom button showed '108 new blocks', I
 // clicked it, and instead of scrolling to the bottom it scrolled to the start of
 // the last output message." The click's landing is short by exactly the height
@@ -1329,7 +1565,7 @@ describe("the resume control's landing", () => {
     await park(wrap);
     scrollBtn.click();
     await land(60);
-    wrap.scrollTop = 200;
+    readerScrollTo(wrap, 200);
     await land(400);
 
     expect({ state: scroll.readingState(), scrollTop: wrap.scrollTop }).toEqual({
@@ -1482,7 +1718,7 @@ describe("the bottom pin's settle window", () => {
     scrollBtn.click();
     await land(60);
 
-    wrap.scrollTop = 2560;
+    readerScrollTo(wrap, 2560);
     await land(400);
 
     expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
@@ -1521,9 +1757,9 @@ describe("the bottom pin's settle window", () => {
 // TWO publishers, and the second is the one this block exists to pin: a scroll,
 // and a request for the LIVE EDGE. The resume control, End, and a turn the reader
 // just sent all reach the scroller through `scrollSelfTo`, whose marker the scroll
-// listener consumes on its early-return branch — so a seam published from the
-// scroll branch alone is silent for every one of them, which is what let the
-// timeline rail keep its accent fill on the turn the reader had just left.
+// listener consumes before it decides whether to publish — so a seam published
+// from the scroll branch alone is silent for every one of them, which is what let
+// the timeline rail keep its accent fill on the turn the reader had just left.
 //
 // Real-layout, and for a stronger reason than the block above: half the contract is
 // that a scroll the CONTROLLER performed does NOT fire, and `fakeScroller` shadows
@@ -1701,5 +1937,120 @@ describe("onReaderGesture", () => {
     await land();
 
     expect(seen).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE SCROLLBAR, which is the one input surface with no event of its own: a
+// thumb drag produces no wheel and no touch, so the PRESS is the input and its
+// position is the only thing separating it from a click in the transcript. Real
+// layout, because the whole discrimination is a measured gutter width.
+// ---------------------------------------------------------------------------
+describe("the scrollbar as an input surface", () => {
+  beforeEach(realLayoutReset);
+
+  /** A press on the thumb: the reserved gutter's width, and the press that lands in
+   *  it. `scrollbar-gutter: stable` reserves the strip whether or not a bar is
+   *  drawn, which is what makes the arithmetic answerable in a test. */
+  function gutterPress(wrap: HTMLElement): { gutter: number; press: () => void } {
+    const gutter = wrap.offsetWidth - wrap.clientWidth;
+    const x = wrap.getBoundingClientRect().right - gutter / 2;
+    return {
+      gutter,
+      press: () => {
+        // `clientY` matters: it is the origin `dragThumb` measures its travel from.
+        wrap.dispatchEvent(
+          new PointerEvent("pointerdown", { clientX: x, clientY: 200, bubbles: true }),
+        );
+      },
+    };
+  }
+
+  /** A transcript that overflows, with the reader moved off the live edge by the
+   *  PLATFORM rather than by any input — the auto-scroll pins to the bottom on the
+   *  append, and a case asserting the bottom asserts nothing about a press.
+   *
+   *  The returned state is half the assertion: a positionless move must leave the
+   *  reader Following, so a demotion in any case below came from the press. */
+  async function driftedOffTheEdge(): Promise<HTMLElement> {
+    block(1500);
+    const wrap = scroll.getScrollEl();
+    await land();
+    wrap.scrollTop = 0;
+    await land();
+    expect(scroll.readingState()).toBe("following");
+    return wrap;
+  }
+
+  /** Move the held thumb by `dy`, watched on the DOCUMENT because a drag that leaves
+   *  the scroller still owns the bar. The thumb travels WITH the content, so this sign
+   *  does not invert the way a finger's does. */
+  function dragThumb(wrap: HTMLElement, dy: number): void {
+    const gutter = wrap.offsetWidth - wrap.clientWidth;
+    const x = wrap.getBoundingClientRect().right - gutter / 2;
+    document.dispatchEvent(new PointerEvent("pointermove", { clientX: x, clientY: 200 + dy }));
+  }
+
+  it("parks the reader when the thumb is dragged UP", async () => {
+    const wrap = await driftedOffTheEdge();
+    const { gutter, press } = gutterPress(wrap);
+    // The premise this surface needs, pinned rather than assumed: this platform
+    // reserves a strip to aim at. An overlay scrollbar measures 0, and there the
+    // surface is deliberately absent because a touch drag is how you scroll.
+    expect(gutter).toBeGreaterThan(0);
+
+    press();
+    dragThumb(wrap, -40);
+    wrap.dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("reading");
+  });
+
+  it("leaves the reader Following when the thumb is dragged DOWN", async () => {
+    const wrap = await driftedOffTheEdge();
+    gutterPress(wrap).press();
+    dragThumb(wrap, 40);
+    wrap.dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("following");
+  });
+
+  it("takes no aim from a drag that started inside the transcript", async () => {
+    // A copy button, a fold header. Tracked as a thumb, the pointer's own travel
+    // would park a reader who never touched the scrollbar.
+    const wrap = await driftedOffTheEdge();
+    wrap.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        clientX: wrap.getBoundingClientRect().left + 10,
+        bubbles: true,
+      }),
+    );
+    dragThumb(wrap, -40);
+    wrap.dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("following");
+  });
+
+  it("suppresses the auto-scroll for as long as the thumb is held", async () => {
+    // Untimed, because a held thumb produces no repeat input to refresh a deadline:
+    // 400ms is past READER_CONTROL_MS with the press still down. This is the half of
+    // the press that survives — the aim comes from the drag, the licence from the hold.
+    await driftedOffTheEdge();
+    const wrap = scroll.getScrollEl();
+    gutterPress(wrap).press();
+    await land(400);
+    const was = wrap.scrollTop;
+    block(1500);
+    await land();
+    expect(wrap.scrollTop).toBe(was);
+  });
+
+  it("gives the scroller back when the thumb is released", async () => {
+    // A release that goes unseen latches the licence on for the session.
+    await driftedOffTheEdge();
+    const wrap = scroll.getScrollEl();
+    gutterPress(wrap).press();
+    document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    await land(400);
+    block(1500);
+    await land();
+    expect(wrap.scrollTop).toBe(wrap.scrollHeight - wrap.clientHeight);
   });
 });

@@ -141,6 +141,16 @@ export function clearToolCallSig(chatID: string, toolID: string): void {
   toolCallSigs.clear(toolCallSigKey(chatID, toolID));
 }
 
+/** Drop ONE block's streaming signals, for a range the window dropped. Removes
+ *  the key from the per-message set too, so the sweep below does not later
+ *  iterate a key nothing holds. */
+export function clearBlockSig(messageID: string, blockIndex: number): void {
+  const key = blockKey(messageID, blockIndex);
+  blockTextSigs.clear(key);
+  blockThinkingSigs.clear(key);
+  blockSigKeysByMsg.get(messageID)?.delete(key);
+}
+
 /** Drop one message's per-block streaming signals. The per-message half of
  *  `clearAllBlockSigs`: without it a block signal lives until the last chat
  *  closes, one entry per streamed block, for the whole page's life. */

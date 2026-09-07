@@ -10,13 +10,16 @@ interface ServiceWorkerGlobalScope {
 interface Clients {
   matchAll(options?: { type?: string; includeUncontrolled?: boolean }): Promise<readonly Client[]>;
   openWindow(url: string): Promise<WindowClient | null>;
+  // Take control of already-loaded pages. Called once, on the FIRST activation, so
+  // the page that registered this worker gets the precache without a reload.
+  claim(): Promise<void>;
 }
 
 interface Client {
   readonly url: string;
   // The worker's only channel to a live page. It carries a notification's
   // target chat id so the PAGE builds the route (router.ts owns the route
-  // vocabulary; this file's script cannot import it).
+  // vocabulary, and it is DOM-bound — see sw.ts subjectPath).
   postMessage(message: unknown): void;
 }
 

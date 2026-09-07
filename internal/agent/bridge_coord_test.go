@@ -1,9 +1,7 @@
 package agent
 
-// Tests for bridge_coord.go: BridgeCoordinator override application,
-// fast model switch, registry teardown on the last bridge, turn-ended
-// trust-clear / push behaviour, and the persist success paths that must
-// stay log-silent.
+// Tests for bridge_coord.go: override application, fast model switch, registry
+// teardown on the last bridge, turn-ended push behaviour, and the silent successes.
 
 import (
 	"context"
@@ -24,8 +22,7 @@ import (
 
 // --- helpers ---
 
-// recordingStartBridge records the StartOpts passed to Start while
-// behaving like a fakeBridge for every other method.
+// recordingStartBridge records the StartOpts passed to Start, else a fakeBridge.
 type recordingStartBridge struct {
 	*fakeBridge
 	lastStart vibekit.StartOpts
@@ -60,8 +57,7 @@ func newRecordingStartHub(t *testing.T) (*Runtime, *fakeChatStore, *recordingSta
 }
 
 // recordingPush records the body of each Send on a channel, plus the subject of
-// the most recent one (read only after a body has been received, so the
-// unsynchronised field is ordered behind the channel handoff).
+// the most recent one, read only after a body arrives so the field is ordered.
 type recordingPush struct {
 	sends chan string
 	// reloads counts ReloadPreferences calls, for the SSE reconnect rule. Atomic
@@ -87,9 +83,8 @@ func (p *recordingPush) Send(_ context.Context, _, body string, _ vibekit.PushKi
 
 // --- OpenBridge overrides + persisted model ---
 
-// On a fresh session/new path the override model wins over the chat's
-// stored value, and the persisted chat model is copied from the started
-// bridge's ModelID.
+// On a fresh session/new path the override model wins over the chat's stored value,
+// and the persisted model is copied from the started bridge's ModelID.
 func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 	h, cs, rb := newRecordingStartHub(t)
 	ctx := t.Context()
@@ -117,13 +112,9 @@ func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 // --- TryFastModelSwitch ---
 
 // A successful in-session SetModel returns true, and the chat's reasoning-effort
-// level is re-applied after the swap.
-//
-// The re-apply is the load-bearing half. KAS reconciles the session's
-// effortLevel against the NEW model's tier list inside its own model handler and
-// replaces it with that model's default when the current level is not in the
-// list, so a chat sitting at max dropped to the new model's default while the
-// chat record and the pill both still read max.
+// level is re-applied after the swap. The re-apply is the load-bearing half: KAS
+// reconciles the session's effortLevel against the NEW model's tier list, so a chat
+// at max dropped to the new default while the record and the pill still read max.
 func TestTryFastModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
@@ -226,13 +217,10 @@ func TestTryFastModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 
 // --- repairEffort: the level KAS changed on its own ---
 
-// A prompt on an ALREADY-OPEN bridge re-asserts the chat's level, which is the
-// only checkpoint that catches a level KAS moved without vibekit asking.
-//
-// Two ways that happens: KAS's own pinSessionModelId settles an unset model on the
-// first prompt and reconciles the effort against it, and a model switch made from
-// the Kiro IDE or the TUI on a shared session does the same. Neither is a vibekit
-// action, so neither the session doors nor the model-switch re-assert sees it.
+// A prompt on an ALREADY-OPEN bridge re-asserts the chat's level, the only
+// checkpoint that catches a level KAS moved without vibekit asking:
+// pinSessionModelId settling an unset model on the first prompt, or a switch made
+// from the Kiro IDE or TUI on a shared session. Neither is a vibekit action.
 func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
@@ -258,9 +246,8 @@ func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 	}
 }
 
-// A chat that has chosen no level, and has no seed to follow, asks for nothing:
-// the service's own reconciliation is the right answer and a call would only
-// re-impose a level nobody picked.
+// A chat that has chosen no level, and has no seed to follow, asks for nothing: a
+// call would only re-impose a level nobody picked.
 func TestOpenBridge_RepairsNothingWithoutAChoice(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
@@ -284,10 +271,9 @@ func TestOpenBridge_RepairsNothingWithoutAChoice(t *testing.T) {
 // --- effortFor ---
 
 // effortFor prefers the chat's own choice, falls back to the last level the user
-// picked anywhere — but only when that pick was made under the chat's OWN model
-// — and refuses a level too malformed to be a tier id. Shape only: the tier
-// vocabulary is per model and KAS's to judge, so an unknown-but-well-formed seed
-// flows.
+// picked anywhere — but only when that pick was made under the chat's OWN model —
+// and refuses a level too malformed to be a tier id. Shape only: the tier
+// vocabulary is per model and KAS's to judge, so a well-formed unknown seed flows.
 func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
 	tests := map[string]struct {
 		chatEffort string
@@ -329,7 +315,7 @@ func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
 }
 
 // EffortForSwitch resolves against the TARGET model: the seed when it was picked
-// under that model, else the target's own catalog default, else nothing.
+// under that model, else the target's own default from the WORKSPACE catalog.
 func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
 	catalog := []vibekit.SessionModel{
 		{ID: "m1", DefaultEffortLevel: "high"},
@@ -357,9 +343,9 @@ func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
 			}
 			h, _, _ := newTestHub()
 			h.coord.lifecycle.configDir = dir
-			chat := &vibekit.Chat{ID: "c1", Effort: "low", Model: "m1", AvailableModels: catalog}
+			h.coord.catalog.SetModels(catalog)
 
-			got := h.coord.EffortForSwitch(t.Context(), chat, test.target)
+			got := h.coord.EffortForSwitch(t.Context(), test.target)
 
 			if got != test.want {
 				t.Errorf("EffortForSwitch(target=%q, seed=%q under %q) = %q, want %q — the chat's own choice must never leak into a switch",
@@ -423,10 +409,7 @@ func TestForward_ClearsRegistryOnlyWhenLastBridge(t *testing.T) {
 	})
 }
 
-// The per-turn trust-clear test is GONE with the trust it asserted on. Per-turn
-// trust existed to let a user wave past vibekit's own staging queue for the rest
-// of a turn; KAS reviews a whole turn at once, so there is no per-write gate to
-// wave past and no reason to clear anything at turn end.
+// KAS reviews a whole turn at once, so there is no per-turn trust gate to test.
 
 // A non-cancelled turn fires the "Agent finished" push.
 func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
@@ -515,12 +498,10 @@ func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 
 // --- adoptKASTitle: the bottom of the chat-naming precedence ---
 
-// TestAdoptKASTitle pins all four arms of the guard. Every refusal here is a
-// bug that compiles cleanly: adopting KAS's "New Session" placeholder makes the
-// chat non-default-named, which then rejects the real title that arrives later
-// and leaves the chat reading "New Session" forever; adopting over an existing
-// name clobbers either the user's first-prompt label or the agent's
-// focus_update title, both of which outrank this channel.
+// TestAdoptKASTitle pins all four arms of the guard. Every refusal here is a bug
+// that compiles cleanly: adopting KAS's "New Session" placeholder makes the chat
+// non-default-named, which then rejects the real title that arrives later, and
+// adopting over an existing name clobbers a label that outranks this channel.
 func TestAdoptKASTitle(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -573,16 +554,14 @@ func TestAdoptKASTitle(t *testing.T) {
 
 // --- sweepSessionsOnce: the keep-list is chat-referenced UNION live ---
 
-// testReaperWorkDir is the workspace root the reaper fixtures below are built
-// for. It is both the runtime's workDir and the root every fixture session claims
-// in its own session.json, because the reaper reaps only for the workspace it was
-// constructed with.
+// testReaperWorkDir is the workspace root the reaper fixtures are built for: both
+// the runtime's workDir and the root every fixture session claims in its own
+// session.json, because the reaper reaps only for the workspace it was built with.
 const testReaperWorkDir = "/tmp/work"
 
 // writeSessionRecord writes the session.json the reaper reads to decide whether a
 // session belongs to its workspace. A fixture without one is DOUBT, which the
-// reaper answers by retaining — correct in production and vacuous in a test that
-// wants to observe a reap.
+// reaper answers by retaining — correct in production and vacuous in a reap test.
 func writeSessionRecord(t *testing.T, sessionDir, workspaceRoot string) {
 	t.Helper()
 	body := `{"workspacePaths":["` + workspaceRoot + `"]}`
@@ -657,14 +636,10 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 	}
 }
 
-// TestLiveSessionIDs_CoversEveryBridge pins that the exemption is general.
-//
-// It used to be one ad-hoc special case for the utility bridge, whose own
-// comment named the failure mode: without it the sweep deletes on-disk state
-// from under a live subprocess once it ages past the 10-minute guard, because
-// that guard is a create-race cushion and not a liveness test. Any bridge
-// holding a session no chat references hits the same bug — a parentless run tab
-// is the case that made it general.
+// TestLiveSessionIDs_CoversEveryBridge pins that the exemption is general: any
+// bridge holding a session no chat references would otherwise have its on-disk
+// state deleted from under it once the session ages past the 10-minute guard,
+// which is a create-race cushion and not a liveness test.
 func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 	// newTestHub's factory hands back ONE shared fake so tests can inspect it;
 	// this test needs bridges with distinct session ids, so build the runtime with
@@ -699,65 +674,28 @@ func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 }
 
 // TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted pins the resume half of
-// the catalog contract: a fact the load result did not carry must not be written.
-//
-// A resumed bridge is freshly constructed, so it answers the zero value for
-// anything absent — and `session/load` omits the model catalog routinely, because
-// KAS resolves ListAvailableModels asynchronously (measured on kiro-cli 2.20.0).
-// Writing those zeros wiped the catalog the chat file had carried since its
-// previous session. The mode half is the one with no repair channel afterwards.
+// the mode contract: a fact the load result did not carry must not be written. A
+// resumed bridge is freshly constructed, so it answers the zero value for anything
+// absent, and writing those zeros wiped what the chat file had carried since its
+// previous session. The CATALOGS are not written here — Catalog owns that rule.
 func TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted(t *testing.T) {
-	seededModes := []vibekit.SessionMode{{ID: "spec", Name: "Spec"}}
-	seededModels := []vibekit.SessionModel{{ID: "seeded-model", Name: "Seeded"}}
-
 	cases := map[string]struct {
-		mode       string
-		modes      []vibekit.SessionMode
-		models     []vibekit.SessionModel
-		wantMode   string
-		wantModes  []vibekit.SessionMode
-		wantModels []vibekit.SessionModel
+		mode     string
+		wantMode string
 	}{
-		"a silent result changes nothing": {
-			mode: "", modes: nil, models: nil,
-			wantMode: "spec", wantModes: seededModes, wantModels: seededModels,
-		},
-		"an empty list is not an empty catalog": {
-			mode: "", modes: []vibekit.SessionMode{}, models: []vibekit.SessionModel{},
-			wantMode: "spec", wantModes: seededModes, wantModels: seededModels,
-		},
-		"what the result DOES carry is written": {
-			mode:  "vibe",
-			modes: []vibekit.SessionMode{{ID: "vibe", Name: "Default"}},
-			models: []vibekit.SessionModel{
-				{ID: "fresh-model", Name: "Fresh"},
-			},
-			wantMode:   "vibe",
-			wantModes:  []vibekit.SessionMode{{ID: "vibe", Name: "Default"}},
-			wantModels: []vibekit.SessionModel{{ID: "fresh-model", Name: "Fresh"}},
-		},
+		"a silent result changes nothing":       {mode: "", wantMode: "spec"},
+		"what the result DOES carry is written": {mode: "vibe", wantMode: "vibe"},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			c := &vibekit.Chat{
-				Name:            "A",
-				CurrentModeID:   "spec",
-				AvailableModes:  seededModes,
-				AvailableModels: seededModels,
-			}
-			br := &fakeBridge{currentMode: tc.mode, modes: tc.modes, models: tc.models}
+			c := &vibekit.Chat{Name: "A", CurrentModeID: "spec"}
+			br := &fakeBridge{currentMode: tc.mode}
 
 			applyLoadedSessionFacts(c, br, "")
 
 			if c.CurrentModeID != tc.wantMode {
 				t.Errorf("CurrentModeID = %q, want %q", c.CurrentModeID, tc.wantMode)
-			}
-			if !slices.Equal(c.AvailableModes, tc.wantModes) {
-				t.Errorf("AvailableModes = %v, want %v", c.AvailableModes, tc.wantModes)
-			}
-			if !slices.Equal(c.AvailableModels, tc.wantModels) {
-				t.Errorf("AvailableModels = %v, want %v", c.AvailableModels, tc.wantModels)
 			}
 		})
 	}
@@ -891,11 +829,10 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 	}
 }
 
-// TestChatTeardown_DeleteByChainReapsWithoutTheRecord is the close
-// escalation's grade: the record is already deleted when the teardown runs, so
-// the reap is driven from the chain captured before the commit. The
-// record-reading grade is the control — on a recordless chat it must leave the
-// session, which is precisely the silent no-op the chain-shaped seam bypasses.
+// TestChatTeardown_DeleteByChainReapsWithoutTheRecord is the close escalation's
+// grade: the record is already deleted when the teardown runs, so the reap is
+// driven from the chain captured before the commit. The record-reading grade is the
+// control — on a recordless chat it must leave the session.
 func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 	cases := []struct {
 		name        string

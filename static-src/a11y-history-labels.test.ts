@@ -68,9 +68,9 @@ describe("a11y: History row accessible names", () => {
   // does ("Open X"); the row itself carries no role, because a role="button" on it
   // is Children-Presentational and flattens the delete button beside it out of the
   // accessibility tree (axe nested-interactive, serious, every row).
-  // A settled parentless run also states its OUTCOME, and that outcome is a
-  // glyph — so the word has exactly one home, that control's accessible name, and
-  // must not be duplicated as visible text beside the glyph it replaced.
+  // A settled run also states its OUTCOME, and that outcome is a glyph — so the
+  // word has exactly one home, that control's accessible name, and must not be
+  // duplicated as visible text beside the glyph it replaced.
   it("a settled run row names the outcome once, in the accessible name only", async () => {
     const host = document.createElement("div");
     host.id = "history-table";

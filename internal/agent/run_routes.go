@@ -11,6 +11,7 @@ type runRoutes struct{ runs *Runs }
 // register mounts every run and schedule endpoint.
 func (rr *runRoutes) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/runs/{id}", rr.handleRun)
+	mux.HandleFunc("GET /api/runs/{id}/controls", rr.handleControls)
 	mux.HandleFunc("GET /api/runs/live", rr.handleLiveRuns)
 	// The exact form is registered beside the subtree because ServeMux otherwise
 	// answers it with a 307 to the trailing-slash form, the one redirect class

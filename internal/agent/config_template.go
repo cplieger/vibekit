@@ -23,8 +23,7 @@ import (
 // default aborted every cold start. Move the two together.
 const configTemplateTimeout = 45 * time.Second
 
-// kasConfigTemplate is the _kiro/config/template result shape. Modes
-// reuses the wire layout of session/new's modes block; configOptions
+// kasConfigTemplate is the _kiro/config/template result shape. ConfigOptions
 // carries the model catalog under the entry with id "model".
 type kasConfigTemplate struct {
 	Modes struct {
@@ -72,23 +71,39 @@ type kasConfigChoice struct {
 // answers 200 with non-null lists (the client keeps its static fallbacks and
 // the authoritative per-session catalog arrives with the first bridge); what
 // separates them is vibekit.ConfigTemplateResponse.Catalog.
+//
+// A LIVE session's report wins over the template's, per list: KAS has already
+// resolved which workspace agent shadows which bundled mode, while the template
+// is built session-less with no workspace paths and so carries no workspace
+// entries at all.
 func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) {
 	u := rt.utility.get()
 	cctx, cancel := context.WithTimeout(r.Context(), configTemplateTimeout)
 	defer cancel()
+	// Neither failure returns early: a template outage must still serve the live
+	// catalog below, so each one only decides which body the overrides land on.
+	var out vibekit.ConfigTemplateResponse
 	raw, err := u.session.configTemplateRaw(cctx)
-	if err != nil {
+	switch {
+	case err != nil:
 		slog.Warn("config template failed", "error", err)
-		webhttp.WriteJSON(w, unavailableTemplate(vibekit.CatalogReasonRPC))
-		return
+		out = unavailableTemplate(vibekit.CatalogReasonRPC)
+	default:
+		var tpl kasConfigTemplate
+		if uErr := json.Unmarshal(raw, &tpl); uErr != nil {
+			slog.Warn("config template decode failed", "error", uErr)
+			out = unavailableTemplate(vibekit.CatalogReasonDecode)
+		} else {
+			out = templateToResponse(&tpl)
+		}
 	}
-	var tpl kasConfigTemplate
-	if uErr := json.Unmarshal(raw, &tpl); uErr != nil {
-		slog.Warn("config template decode failed", "error", uErr)
-		webhttp.WriteJSON(w, unavailableTemplate(vibekit.CatalogReasonDecode))
-		return
+	if modes := rt.catalog.Modes(); len(modes) > 0 {
+		out.Modes = modes
 	}
-	webhttp.WriteJSON(w, templateToResponse(&tpl))
+	if models := rt.catalog.Models(); len(models) > 0 {
+		out.Models = models
+	}
+	webhttp.WriteJSON(w, out)
 }
 
 // unavailableTemplate is the body for a read that produced no catalog. ONE builder
@@ -104,10 +119,10 @@ func unavailableTemplate(reason vibekit.CatalogReason) vibekit.ConfigTemplateRes
 	}
 }
 
-// templateToResponse flattens the KAS template into the client-facing
-// catalog: modes with their source tag (bundled | global — the template
-// carries no workspace entries), and the model catalog with the same
-// [Deprecated]/[Legacy] filtering the per-session paths apply.
+// templateToResponse flattens the KAS template into the client-facing catalog:
+// modes with their source tag (bundled | global — the template carries no
+// workspace entries), and the model catalog with the same [Deprecated]/[Legacy]
+// filtering the per-session paths apply.
 func templateToResponse(tpl *kasConfigTemplate) vibekit.ConfigTemplateResponse {
 	modes := make([]vibekit.SessionMode, 0, len(tpl.Modes.AvailableModes))
 	for i := range tpl.Modes.AvailableModes {
@@ -147,9 +162,8 @@ func templateToResponse(tpl *kasConfigTemplate) vibekit.ConfigTemplateResponse {
 }
 
 // flattenTemplateEfforts converts the effortLevel option's choices into the
-// domain tier list. Same shape as the translate-side flattener; the two feeds
-// stay separate because their wire structs are (one is KAS's session frame, one
-// is the template result).
+// domain tier list. Kept separate from the translate-side flattener because the
+// two wire structs differ (a KAS session frame vs this template result).
 func flattenTemplateEfforts(choices []kasConfigChoice) []vibekit.SessionEffortLevel {
 	out := make([]vibekit.SessionEffortLevel, 0, len(choices))
 	for i := range choices {
@@ -166,13 +180,13 @@ func flattenTemplateEfforts(choices []kasConfigChoice) []vibekit.SessionEffortLe
 	return out
 }
 
-// flattenTemplateModels converts the model select's choices (flat or
-// grouped) into the domain catalog, dropping hidden-tagged entries.
+// flattenTemplateModels converts the model select's choices (flat or grouped)
+// into the domain catalog, dropping hidden-tagged entries.
 func flattenTemplateModels(choices []kasConfigChoice) []vibekit.SessionModel {
 	out := make([]vibekit.SessionModel, 0, len(choices))
 	for i := range choices {
 		c := &choices[i]
-		if len(c.Options) > 0 { // grouped: recurse into the group's choices
+		if len(c.Options) > 0 {
 			out = append(out, flattenTemplateModels(c.Options)...)
 			continue
 		}

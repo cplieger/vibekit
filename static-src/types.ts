@@ -138,14 +138,7 @@ export type {
 // the generated naming. The generated type is PermissionNeededPayload.
 export type { PermissionNeededPayload as PermissionNeeded } from "./wire/types.gen.js";
 
-import type {
-  Message,
-  SessionEffortLevel,
-  SessionMode,
-  SessionModel,
-  SteerOrigin,
-  Usage,
-} from "./wire/types.gen.js";
+import type { Message, SessionEffortLevel, SteerOrigin, Usage } from "./wire/types.gen.js";
 
 // --- Client-only types ---
 
@@ -303,8 +296,12 @@ export interface Session {
   model: string;
   acp_session_id: string;
   current_mode_id: string;
-  available_modes: SessionMode[];
-  available_models: SessionModel[];
+  // There is no available_modes / available_models. They are a WORKSPACE
+  // vocabulary, not a per-session one: 59 modes repeated across 29 chats,
+  // identical in all of them, and 98.6% of a 1.25 MiB /api/chats response the
+  // boot fetched twice. roles.ts holds the one copy, fed by
+  // /api/config-template. `current_mode_id` above stays because it is this
+  // chat's CHOICE from that vocabulary.
   /** The reasoning-effort tiers this session offers (the `effortLevel` config
    *  option's own choices). Empty means the current model has no tiers, which is
    *  what kiro-cli's TUI treats as "effort is not available on this model". */
@@ -417,6 +414,15 @@ export interface Session {
    *  `syncEpoch()`; a fetch that raced a transport gap therefore stores a
    *  number that already reads stale. See store.ts transcriptStale. */
   loadedEpoch?: number;
+  /** This row is the boot snapshot's paint-time hint, not the server's answer:
+   *  `boot-snapshot.ts` sets it and nothing else ever does.
+   *
+   *  It exists because `loadList` PRESERVES rows the server did not name — the
+   *  rule that keeps a chat SSE created while the request was in flight — and a
+   *  hinted row for a chat deleted since the capture satisfies that rule
+   *  identically. The mark is what tells the two apart, so the hint does not
+   *  outlive the answer that omitted it. */
+  provisional?: true;
 }
 
 // GET /api/sessions' two row types are GENERATED (`ResumableSession`,

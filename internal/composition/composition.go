@@ -46,24 +46,22 @@ type App struct {
 	purgeScheduler *archive.PurgeScheduler
 	mcpPrewarm     *prewarm.Runner
 	tools          *toolbelt.Engine
-	// stopKiro cancels the background kiro-cli install, so a shutdown during a
-	// first-boot download or a retry backoff does not wait it out.
+	// stopKiro cancels the background kiro-cli install, so shutdown need not wait it out.
 	stopKiro func()
 	// stopOrphanSweep stops the boot orphan sweep and WAITS: a sweep in flight issues
 	// one `inspect` per lease over the utility bridge the teardown below is about to close.
 	stopOrphanSweep func()
-	// stopPRPoller stops the PR-status poller and waits; nothing else stops it.
+	// stopPRPoller stops the PR-status poller and waits for its goroutine.
 	stopPRPoller func()
-	// stopApp ends the app's LIFETIME: the context every component that must die with
-	// the process is parented on, and the one agent.New requires.
+	// stopApp ends the app's LIFETIME: what every process-bound component is parented on.
 	stopApp func()
 }
 
-// Build constructs all services and wires them together. cfg is READ-ONLY: it is built
-// once from the environment and must never be mutated after.
+// Build constructs all services and wires them together. staticFS is the embedded
+// web UI; cfg must be treated as read-only from here on.
 func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
-	// Two processes on one configDir would corrupt chat files. flock, so the lock
-	// auto-releases on crash or SIGKILL with no cleanup.
+	// flock, so the lock auto-releases on SIGKILL: two processes on one configDir
+	// corrupt chat files.
 	if err := acquireInstanceLock(cfg.ConfigDir); err != nil {
 		return nil, fmt.Errorf("another vibekit instance is running on %s: %w", cfg.ConfigDir, err)
 	}
@@ -72,12 +70,10 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, fmt.Errorf("config validation failed:\n  %w", err)
 	}
 
-	// The app's lifetime. Build's ctx is context.Background() in production, so it can
-	// never end; appCtx is the cancellable child every component whose work must not
-	// outlive the process is parented on, derived HERE so the lifetime flows outward.
+	// The app's lifetime: Build's ctx is context.Background() in production, so every
+	// component whose work must not outlive the process is parented on appCtx.
 	appCtx, stopApp := context.WithCancel(ctx)
-	// A boot that returns no App is the one case nothing can call App.Shutdown,
-	// including the (nil, nil) degraded verdict below and not just the error returns.
+	// A boot that returns no App has no Shutdown to call, so the lifetime ends here.
 	built := false
 	defer cancelUnless(&built, stopApp)
 
@@ -98,7 +94,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	steer := steering.New(cfg.WorkDir, cfg.ConfigDir)
 	steer.Generate(ctx)
 
-	// Wipe legacy shadow-git checkpoint directories.
 	legacyCheckpoints := filepath.Join(cfg.ConfigDir, "checkpoints")
 	if err := os.RemoveAll(legacyCheckpoints); err != nil {
 		slog.Warn("legacy checkpoint wipe failed",
@@ -198,6 +193,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	authHandler := auth.NewHandler(kiro.cliPath,
 		auth.WithConfig(cfg.AuthConfig),
 		auth.WithTrustedProxies(cfg.TrustedProxies))
+	// Off the boot path: Run primes and refreshes the identity /api/whoami answers from.
+	go authHandler.Run(appCtx)
 	forgesHTTP := forges.NewHTTPHandler(forgesManager, h)
 
 	// A cache, because steering.Generate runs synchronously on the pre-bridge-spawn path
@@ -235,6 +232,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		// After the per-chat record lock is released: it keeps the lock order acyclic.
 		h.Membership().RetentionClose(appCtx, id)
 	})(chatStore)
+	// An exempt chat contributes no wake-up deadline, so closing its tab must trigger
+	// a pass; without this the purge noticed up to an hour later.
+	h.Membership().SetRetentionWake(purgeScheduler.Trigger)
 	purgeScheduler.Start(appCtx)
 
 	srv := server.New(
@@ -258,7 +258,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		// profile that was in force before it.
 		server.WithPolicyReload(h),
 		server.WithStaticFS(static),
-		server.WithCLIPath(kiro.cliPath),
+		server.WithKiroCLI(kiro.cliPath, kiro.env),
 		server.WithKiroReady(kiro.ready),
 		server.WithKiroRescan(kiro.rescan),
 		server.WithAuthUnavailable(h.AuthTokenUnavailable),

@@ -9,6 +9,8 @@ import (
 	"cmp"
 	"context"
 	"log/slog"
+	"strings"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -32,10 +34,13 @@ type kasRunStart struct {
 // the set: `paused` carries only the workflow id, and `loop_iteration` names its node in
 // `loopId` rather than `nodeId`.
 type kasRunNode struct {
-	WorkflowID string `json:"workflowId"`
-	NodeID     string `json:"nodeId"`
-	LoopID     string `json:"loopId"`
-	SessionID  string `json:"sessionId"`
+	WorkflowID string   `json:"workflowId"`
+	NodeID     string   `json:"nodeId"`
+	LoopID     string   `json:"loopId"`
+	SessionID  string   `json:"sessionId"`
+	Status     string   `json:"status"`
+	Reason     string   `json:"reason"`
+	NodePath   []string `json:"nodePath"`
 }
 
 // kasRunComplete mirrors _kiro/workflow/run_complete. `finalState` is not adopted as client
@@ -127,10 +132,56 @@ func (t *Translator) RunProgressHandler(kind vibekit.RunProgressKind) func(conte
 		if kind == vibekit.RunProgressNodeStart && p.SessionID != "" {
 			t.steps.record(p.SessionID, p.WorkflowID, node)
 		}
-		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunProgress, chatID, vibekit.RunProgressPayload{
-			WorkflowID: p.WorkflowID,
-			NodeID:     node,
-			Kind:       kind,
-		}))
+		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunProgress, chatID,
+			runProgress(kind, node, &p, time.Now())))
 	}
+}
+
+// runProgress builds the frame for one progress kind: the node's state where the
+// kind describes a node, an empty node path where it does not. The empty path is
+// the signal, not a gap — a client applies a named node and refetches otherwise,
+// which is the contract the three tree-shape kinds keep.
+func runProgress(
+	kind vibekit.RunProgressKind, node string, p *kasRunNode, at time.Time,
+) vibekit.RunProgressPayload {
+	out := vibekit.RunProgressPayload{WorkflowID: p.WorkflowID, NodeID: node, Kind: kind}
+	stamp := at.UTC().Format(time.RFC3339Nano)
+	switch kind {
+	case vibekit.RunProgressNodeStart:
+		out.NodePath = runNodePathOf(p, node)
+		out.Status = runNodeStatusRunning
+		out.StartedAt = stamp
+	case vibekit.RunProgressNodeComplete:
+		out.NodePath = runNodePathOf(p, node)
+		// KAS's own word, forwarded: it is already the client tree's NodeState
+		// vocabulary, so mapping it here would be a second enumeration.
+		out.Status = p.Status
+		out.EndedAt = stamp
+		out.FailureReason = p.Reason
+	case vibekit.RunProgressNodePaused:
+		out.NodePath = runNodePathOf(p, node)
+		out.Status = runNodeStatusPaused
+	case vibekit.RunProgressWatchPoll:
+		// A poll only says it looked, so it re-states `running`: a frame stating
+		// nothing is a frame the client cannot apply.
+		out.NodePath = runNodePathOf(p, node)
+		out.Status = runNodeStatusRunning
+	case vibekit.RunProgressLoopIteration, vibekit.RunProgressPaused, vibekit.RunProgressStepsQueued:
+	}
+	return out
+}
+
+// The two KAS NodeState words this translator asserts rather than forwards.
+const (
+	runNodeStatusRunning = "running"
+	runNodeStatusPaused  = "paused"
+)
+
+// runNodePathOf joins the frame's node path, falling back to the node id: an
+// empty path would silently mean "refetch" (see runProgress).
+func runNodePathOf(p *kasRunNode, node string) string {
+	if len(p.NodePath) > 0 {
+		return strings.Join(p.NodePath, "/")
+	}
+	return node
 }

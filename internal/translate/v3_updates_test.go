@@ -10,10 +10,9 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// configModelUpdate builds a config_option_update payload carrying a "model"
-// select option whose choices optionally stamp _meta.kiro.hasEffort — the
-// shape KAS sends (each model choice gets `_meta: { kiro: { hasEffort } }`
-// when the model has effort levels or a rate multiplier).
+// configModelUpdate mirrors the shape KAS sends: each model choice gets
+// `_meta: { kiro: { hasEffort } }` when the model has effort levels or a rate
+// multiplier.
 func configModelUpdate(t *testing.T, current string, choices []map[string]any) []byte {
 	t.Helper()
 	return mustJSON(t, map[string]any{
@@ -29,12 +28,8 @@ func configModelUpdate(t *testing.T, current string, choices []map[string]any) [
 	})
 }
 
-// TestHandleConfigOptionUpdate_PlumbsHasEffort pins the server half of the
-// model-aware effort gate: the per-model _meta.kiro.hasEffort KAS stamps on
-// each config-catalog model choice must land on SessionModel.HasEffort, so the
-// client picker can hide the effort row for a model that doesn't support it.
-// A choice with no _meta (KAS omits it when the model has neither a rate
-// multiplier nor effort) decodes as HasEffort=false.
+// The per-model _meta.kiro.hasEffort must land on SessionModel.HasEffort so the
+// client picker can hide the effort row. A choice with no _meta decodes as false.
 func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -54,11 +49,13 @@ func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 	if c.Model != "model-a" {
 		t.Errorf("current model = %q, want model-a", c.Model)
 	}
+	// The model LIST is the workspace catalog's, not the chat's — the same frame
+	// carries both, with different owners.
 	want := map[string]bool{"model-a": true, "model-b": false, "model-c": false}
-	if len(c.AvailableModels) != len(want) {
-		t.Fatalf("AvailableModels len = %d, want %d: %+v", len(c.AvailableModels), len(want), c.AvailableModels)
+	if len(deps.catalogModels) != len(want) {
+		t.Fatalf("catalog models len = %d, want %d: %+v", len(deps.catalogModels), len(want), deps.catalogModels)
 	}
-	for _, m := range c.AvailableModels {
+	for _, m := range deps.catalogModels {
 		exp, known := want[m.ID]
 		if !known {
 			t.Errorf("unexpected model %q in catalog", m.ID)
@@ -70,10 +67,8 @@ func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 	}
 }
 
-// configEffortUpdate builds a config_option_update carrying the `effortLevel`
-// option — the tier vocabulary plus the level the session runs at. This is the
-// option kiro-cli's own TUI builds its effort picker from; there is no per-model
-// tier list on the wire.
+// configEffortUpdate carries the `effortLevel` option kiro-cli's own TUI builds its
+// picker from. There is no per-model tier list on the wire.
 func configEffortUpdate(t *testing.T, current string, choices []map[string]any) []byte {
 	t.Helper()
 	return mustJSON(t, map[string]any{
@@ -88,10 +83,8 @@ func configEffortUpdate(t *testing.T, current string, choices []map[string]any) 
 	})
 }
 
-// TestHandleConfigOptionUpdate_PlumbsEffortOption pins the fix for a control that
-// rendered five tiers with none marked: the effortLevel option's own choices are
-// the tier list, and its currentValue is the level the session is RUNNING at,
-// which is what the UI marks for a chat that has chosen nothing of its own.
+// The effortLevel option's own choices are the tier list, and its currentValue is the
+// level the session is RUNNING at — what the UI marks for a chat with no choice.
 func TestHandleConfigOptionUpdate_PlumbsEffortOption(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -121,19 +114,15 @@ func TestHandleConfigOptionUpdate_PlumbsEffortOption(t *testing.T) {
 	if len(c.EffortLevels) > 0 && c.EffortLevels[0].Name != "Low" {
 		t.Errorf("level name = %q, want Low", c.EffortLevels[0].Name)
 	}
-	// The chat's own CHOICE is untouched: the option reports what the session is
-	// doing, and adopting it as the choice would pin a service default into every
-	// later session through StartOpts.Effort.
+	// The chat's own CHOICE is untouched: adopting what the session is doing would pin
+	// a service default into every later session through StartOpts.Effort.
 	if c.Effort != "" {
 		t.Errorf("Effort = %q, want empty (the option is not a choice)", c.Effort)
 	}
 }
 
-// TestHandleConfigOptionUpdate_EmptyEffortOptionApplies covers the answer that is
-// not a missing answer: kiro-cli reports an EMPTY option list for a model with no
-// effort tiers, and its own TUI reads that as "effort is not available on the
-// current model". So an empty list has to land, or a model without tiers keeps
-// showing the previous model's.
+// An empty list is an answer, not a missing one: kiro-cli reports it for a model with
+// no tiers, so it has to land or that model keeps showing the previous model's.
 func TestHandleConfigOptionUpdate_EmptyEffortOptionApplies(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
@@ -151,12 +140,9 @@ func TestHandleConfigOptionUpdate_EmptyEffortOptionApplies(t *testing.T) {
 	}
 }
 
-// TestChoiceEffort covers the _meta.kiro effort extractor on a model choice.
-// Two fields only, and the tier LIST is deliberately not one of them: kiro-cli
-// 2.18.0 stamps `defaultEffortLevel` per model and stamps no `hasEffort` at all
-// (measured against the shipped chat sidecar), and the tiers belong to the
-// `effortLevel` option. Absent and malformed meta both decode to the zero value,
-// which the client reads as "not plumbed".
+// Two fields only: the tier LIST belongs to the `effortLevel` option, not to a model
+// choice. Absent and malformed meta both decode to the zero value, which the client
+// reads as "not plumbed".
 func TestChoiceEffort(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -170,8 +156,7 @@ func TestChoiceEffort(t *testing.T) {
 		{name: "hasEffort false", meta: `{"kiro":{"hasEffort":false}}`},
 		{name: "kiro without hasEffort", meta: `{"kiro":{"rateMultiplier":2}}`},
 		{
-			// The 2.18.0 shape: a default tier, no capability flag. Opus 4.7's
-			// service default is xhigh, which other models do not even offer.
+			// The 2.18.0 shape: a default tier, no capability flag.
 			name:        "default tier, no hasEffort",
 			meta:        `{"kiro":{"rateMultiplier":1,"effortSchemaPath":"reasoning","defaultEffortLevel":"xhigh"}}`,
 			wantDefault: "xhigh",
@@ -287,14 +272,10 @@ func turnBracketInfo(t *testing.T, kind string) json.RawMessage {
 	return mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": kiro}})
 }
 
-// A workflow STEP's own turn bracket is dropped by the attribution gate, so
-// nothing on this path closes the launching chat's turn.
-//
-// That is the premise the step-driven-turn fix rests on: a step's fold opens a
-// turn MARKED vibekit.TurnSourceWorkflowStep precisely because no bracket will
-// ever close it. Widening this gate would take the premise away silently.
-// The chat's own rows are the control — without them a handler that closed
-// nothing at all would pass.
+// A workflow STEP's own turn bracket is dropped by the attribution gate, which is the
+// premise a step's fold rests on: it opens a turn marked TurnSourceWorkflowStep
+// precisely because no bracket will ever close it, so widening this gate would take
+// the premise away silently. The chat's own rows are the control.
 func TestHandleSessionInfoUpdate_AStepsTurnBracketIsDropped(t *testing.T) {
 	tests := []struct {
 		name string
@@ -528,12 +509,12 @@ func TestHandleConfigOptionUpdate_EffortOnlyFrameKeepsTheModelCatalog(t *testing
 	if !ok {
 		t.Fatal("chat c1 missing after config_option_update")
 	}
-	gotIDs := make([]string, 0, len(c.AvailableModels))
-	for _, m := range c.AvailableModels {
+	gotIDs := make([]string, 0, len(deps.catalogModels))
+	for _, m := range deps.catalogModels {
 		gotIDs = append(gotIDs, m.ID)
 	}
 	if !slices.Equal(gotIDs, []string{"model-a", "model-b"}) {
-		t.Errorf("AvailableModels after an effort-only frame = %v, want [model-a model-b]", gotIDs)
+		t.Errorf("catalog models after an effort-only frame = %v, want [model-a model-b]", gotIDs)
 	}
 	if c.EffortActive != "high" {
 		t.Errorf("EffortActive = %q, want high (the effort half still applied)", c.EffortActive)

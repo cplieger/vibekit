@@ -115,7 +115,7 @@ const (
 	methodWFStepsQueued   = "_kiro/workflow/steps_queued"   // {workflowId, pendingSteps[], resolution?}
 )
 
-// C→A workflow verbs vibekit issues (beyond list/inspect above).
+// C→A workflow verbs vibekit issues, beyond list/inspect above.
 //
 //   - listRecipes: `source` is the launch key, `bundled://<name>` or an absolute
 //     *.workflow.json path.
@@ -130,16 +130,21 @@ const (
 	// what a History row's delete has to reach; cancel only settles a status.
 	methodKiroWorkflowDelete = "_kiro/workflow/delete"
 	methodKiroWorkflowResume = "_kiro/workflow/resume"
-	// The run stops at the next NODE boundary, like cancel. cancel's optional
-	// `targetStatus` is deliberately not sent: letting a client choose which
-	// terminal status a stop records would make history mean different things
-	// depending on which door was used.
+	// Sets `control.pauseRequested`, so the run stops at the next NODE boundary,
+	// like cancel. cancel's optional `targetStatus` is deliberately not sent:
+	// letting a client choose which terminal status a stop records would make
+	// history mean different things depending on which door was used.
 	methodKiroWorkflowPause = "_kiro/workflow/pause"
 
 	// Resets a finished run's FAILED and aborted nodes plus their ancestors. Legal
-	// only from `failed`/`aborted`, and it rehydrates the run from disk, which is
-	// what lets vibekit re-host a run whose bridge closed at terminal status.
+	// only from `failed`/`aborted`, and it requires the run in the calling
+	// process's live registry, so a re-hosting caller must `load` first. Resetting
+	// ZERO nodes is a success reply.
 	methodKiroWorkflowRetry = "_kiro/workflow/retry"
+
+	// Registers an existing run from disk into the calling process; the
+	// prerequisite for every verb reaching a run it has never seen.
+	methodKiroWorkflowLoad = "_kiro/workflow/load"
 
 	// Mutates a live run. vibekit narrows it to a step-status update (mark a step
 	// completed/failed so the run advances); `replace_remaining` is a plan editor

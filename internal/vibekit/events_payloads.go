@@ -18,7 +18,7 @@ type TurnEndedPayload struct {
 	Model        string  `json:"model,omitempty"`
 	CreditsDelta float64 `json:"credits_delta,omitempty"`
 	ElapsedMs    float64 `json:"elapsed_ms,omitempty"`
-	// Truncated is a turn the model stopped at a bound: completed, answer cut off.
+	// Truncated means the model stopped at a bound: completed, answer cut off.
 	Truncated bool `json:"truncated,omitempty"`
 }
 
@@ -233,8 +233,7 @@ const (
 	ErrCodeAuthTokenUnavailable ErrorCode = "auth_token_unavailable" //nolint:gosec // G101: an SSE error code, not a credential
 )
 
-// ErrorPayload is the payload for type="error". Code lets clients react
-// per-class without string-matching.
+// ErrorPayload is the payload for type="error"; Code lets clients react per-class.
 type ErrorPayload struct {
 	Code    ErrorCode `json:"code"`
 	Message string    `json:"message"`
@@ -334,12 +333,13 @@ type GovernanceFeatures struct {
 // no chat open. Clients MUST gate affordances only when Known is true — the all-false zero
 // value otherwise reads as "everything disabled" when the policy is simply unobserved.
 type GovernanceStatePayload struct {
-	// DisabledReason is a human-readable reason surfaced by enterprise
-	// governance (e.g. why MCP is off); empty/absent on a normal account.
+	// DisabledReason is a human-readable reason from enterprise governance (e.g. why
+	// MCP is off); empty on a normal account.
 	DisabledReason string `json:"disabled_reason,omitempty"`
 	// Features is the resolved effective feature-flag set.
 	Features GovernanceFeatures `json:"features"`
-	// Known is true once the real policy has been observed (see the type doc).
+	// Known is true once the real policy has been observed. Clients MUST only gate
+	// affordances when it is true: the all-false zero value means "not yet known".
 	Known bool `json:"known"`
 	// IsEnterprise reports whether this is an enterprise/managed account.
 	IsEnterprise bool `json:"is_enterprise,omitempty"`
@@ -380,10 +380,42 @@ type ToolCallPayload struct {
 	BlockIndex int      `json:"block_index"`
 }
 
-// ToolCallUpdatePayload is the payload for type="tool_call_update".
+// ToolCallUpdatePayload is the payload for type="tool_call_update": a DELTA addressed by
+// id, carrying only what this frame changed. Every field is omitempty and means
+// "unchanged" when absent; OutputDelta's meaning depends on OutputReplace. turn_state
+// remains the whole-object channel — a reconnecting client has no delta base.
 type ToolCallUpdatePayload struct {
-	MessageID string   `json:"message_id"`
-	ToolCall  ToolCall `json:"tool_call"`
+	// The three metadata blocks, each sent whole when it changed; none accumulates.
+	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`
+	Disclosed  *ToolDisclosed  `json:"disclosed,omitempty"`
+	Denial     *ToolDenial     `json:"denial,omitempty"`
+	MessageID  string          `json:"message_id"`
+	ToolCallID string          `json:"tool_call_id"`
+	// Title and Kind: KAS sends them nullish on most updates, so absent is "keep".
+	Title  string     `json:"title,omitempty"`
+	Kind   ToolKind   `json:"kind,omitempty"`
+	Status ToolStatus `json:"status,omitempty"`
+	// OutputDelta is normally the text to APPEND; when OutputReplace is set it is the
+	// whole output instead. The replace case is load-bearing: at completion a terminal's
+	// full stream wins over the ACP fragments already on the card (adoptTerminalOutput).
+	OutputDelta string `json:"output_delta,omitempty"`
+	// The four late identity attachments: each is adopted once, on at most one frame.
+	TerminalID     string `json:"terminal_id,omitempty"`
+	SubSessionID   string `json:"sub_session_id,omitempty"`
+	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
+	WorkflowID     string `json:"workflow_id,omitempty"`
+	// OutputSpans style the WHOLE output at absolute offsets, so they are sent entire
+	// whenever they change. Empty for output carrying no escape sequence.
+	OutputSpans []TextSpan `json:"output_spans,omitempty"`
+	// DiffsAppended are the diffs this frame added; diffs only ever append, so there is
+	// no replace case.
+	DiffsAppended []ToolDiff `json:"diffs_appended,omitempty"`
+	// Locations are REPLACED wholesale when present.
+	Locations []ToolLocation `json:"locations,omitempty"`
+	// The two non-pointer scalars last, so the GC scan region stops above them (govet
+	// fieldalignment). OutputReplace's meaning is on OutputDelta.
+	DurationMs    int  `json:"duration_ms,omitempty"`
+	OutputReplace bool `json:"output_replace,omitempty"`
 }
 
 // TerminalOutputPayload is the payload for type="terminal_output". Data is PLAIN text with
@@ -469,8 +501,8 @@ type ToolJobChangedPayload struct {
 	Job *ToolJob `json:"job"`
 }
 
-// ToolJobOutputPayload is the payload for type="tool_job_output":
-// a coalesced batch of output lines from the running tool job.
+// ToolJobOutputPayload is the payload for type="tool_job_output": a coalesced batch of
+// output lines from the running tool job.
 type ToolJobOutputPayload struct {
 	JobID string   `json:"job_id"`
 	Lines []string `json:"lines"`

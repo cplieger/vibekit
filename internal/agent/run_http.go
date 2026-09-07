@@ -13,10 +13,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/rpcerr"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workflow"
@@ -41,12 +41,12 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, workflow.ErrUnknownMethod) {
 			slog.Warn("workflow inspect: engine not available on this kiro-cli",
-				"workflow_id", id, "detail", rpcerr.Details(err))
+				"workflow_id", logsafe.Field(id), "detail", rpcerr.Details(err))
 			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
 				map[string]string{"error": "the workflow engine is not available on this kiro-cli build"})
 			return
 		}
-		slog.Warn("workflow inspect failed", "workflow_id", id,
+		slog.Warn("workflow inspect failed", "workflow_id", logsafe.Field(id),
 			"error", err, "detail", rpcerr.Details(err))
 		httpreply.NotFound(w, "workflow run not found")
 		return
@@ -88,7 +88,7 @@ func (rr *runRoutes) handleStepTranscript(w http.ResponseWriter, r *http.Request
 			httpreply.NotFound(w, errStepUnknown.Error())
 			return
 		}
-		slog.Warn("step transcript failed", "workflow_id", id, "node_path", nodePath,
+		slog.Warn("step transcript failed", "workflow_id", logsafe.Field(id), "node_path", logsafe.Field(nodePath),
 			"error", err, "detail", rpcerr.Details(err))
 		httpreply.InternalError(w, errors.New("step transcript unavailable"))
 		return
@@ -170,7 +170,7 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 			httpreply.Conflict(w, errRecipeBusy.Error())
 			return
 		}
-		slog.Warn("run launch failed", "source", req.Source, "error", err, "detail", rpcerr.Details(err))
+		slog.Warn("run launch failed", "source", logsafe.Field(req.Source), "error", err, "detail", rpcerr.Details(err))
 		// KAS's launch-time validation names the problem (a bad input set, an
 		// unregistered agent), so forward it rather than a sentinel: the fix is the user's.
 		httpreply.BadRequest(w, rpcerr.Text(err))
@@ -185,7 +185,44 @@ func (rr *runRoutes) handleCancel(w http.ResponseWriter, r *http.Request) {
 	rr.controlHandler(w, r, runVerbCancel)
 }
 
-// handlePause / handleResume are cancel's shape; only the legal statuses differ.
+// handleControls: GET /api/runs/{id}/controls → what may be done to this run, and
+// one sentence per verb it refuses. See vibekit.RunControlsResponse for why the
+// server owns the answer.
+//
+// Its own route rather than a field on the passthrough above, which must stay a
+// verbatim relay. The client fetches it on pointing at a run and again on that
+// run's `run_finished`, so it is one request per tab open, not per repaint.
+func (rr *runRoutes) handleControls(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpreply.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		httpreply.BadRequest(w, "missing workflow id")
+		return
+	}
+	status, err := rr.status(r.Context(), id)
+	if err != nil {
+		slog.Warn("run controls: status read failed",
+			"workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
+		httpreply.InternalError(w, errors.New("run controls unavailable"))
+		return
+	}
+	if status == "" {
+		httpreply.NotFound(w, "run not found")
+		return
+	}
+	aff := rr.runs.affordance(r.Context(), id, status)
+	webhttp.WriteJSON(w, vibekit.RunControlsResponse{
+		Verbs:        aff.Verbs,
+		Refused:      aff.Refused,
+		ParentChatID: string(aff.ParentChat),
+	})
+}
+
+// handlePause / handleResume are cancel's shape; the affordance table carries which
+// statuses permit them.
 func (rr *runRoutes) handlePause(w http.ResponseWriter, r *http.Request) {
 	rr.controlHandler(w, r, runVerbPause)
 }
@@ -194,8 +231,33 @@ func (rr *runRoutes) handleResume(w http.ResponseWriter, r *http.Request) {
 	rr.controlHandler(w, r, runVerbResume)
 }
 
+// handleRetry: POST /api/runs/{id}/retry → reset the run's failed work and report
+// WHAT WAS RESET. Its own handler rather than a runVerb, for handleStepStatus's
+// reason inverted: the verb table's issue signature answers `error` alone, and
+// retry's reply is the outcome — collapsed to `{"ok":true}`, a retry that reset zero
+// nodes is indistinguishable from one that reset five.
 func (rr *runRoutes) handleRetry(w http.ResponseWriter, r *http.Request) {
-	rr.controlHandler(w, r, runVerbRetry)
+	if r.Method != http.MethodPost {
+		httpreply.MethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		httpreply.BadRequest(w, "missing workflow id")
+		return
+	}
+	aff, ok := rr.permits(w, r, verbRetry, id)
+	if !ok {
+		return
+	}
+	// The gate's own answer, forwarded: it carries the run's parent chat, which is
+	// what the verb needs to find the process that holds the run.
+	out, err := rr.runs.Retry(r.Context(), id, aff)
+	if err != nil {
+		rr.writeControlErr(w, verbRetry, id, err)
+		return
+	}
+	webhttp.WriteJSON(w, out)
 }
 
 // handleDelete: DELETE /api/runs/{id} — removes the run from KAS and drops vibekit's
@@ -232,8 +294,8 @@ func (rr *runRoutes) handleStepStatus(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 		webhttp.Ok(w)
 	case errors.Is(err, errRunHostStart):
-		slog.Warn("run step status: could not host the run", "workflow_id", id,
-			"node_id", body.NodeID, "error", err)
+		slog.Warn("run step status: could not host the run", "workflow_id", logsafe.Field(id),
+			"node_id", logsafe.Field(body.NodeID), "error", err)
 		httpreply.InternalError(w, errors.New("step status update failed"))
 	case errors.Is(err, errStepStatusRefused):
 		httpreply.Conflict(w, rpcerr.Text(err))
@@ -271,11 +333,11 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		httpreply.Conflict(w, err.Error())
 	case errors.Is(err, errRunHostStart):
 		// A failed spawn is this server's fault, so it must not read as the caller's.
-		slog.Warn("run answer: could not host the run", "workflow_id", id,
-			"ask_id", body.AskID, "error", err)
+		slog.Warn("run answer: could not host the run", "workflow_id", logsafe.Field(id),
+			"ask_id", logsafe.Field(body.AskID), "error", err)
 		httpreply.InternalError(w, errors.New("answer failed"))
 	default:
-		slog.Warn("run answer failed", "workflow_id", id, "ask_id", body.AskID,
+		slog.Warn("run answer failed", "workflow_id", logsafe.Field(id), "ask_id", logsafe.Field(body.AskID),
 			"error", err, "detail", rpcerr.Details(err))
 		httpreply.BadRequest(w, rpcerr.Text(err))
 	}
@@ -289,46 +351,115 @@ type runVerb struct {
 	issue func(*Runs, context.Context, string) error
 	// method is EXPLICIT on every verb, or the one DELETE would be the only stated method.
 	method string
-	// from lists the statuses the verb is legal from. Empty means unrestricted.
-	from []string
+	// gated asks the affordance before issuing. False means unrestricted.
+	gated bool
 }
 
-// The status vocabulary is KAS's: running | paused | completed | failed | aborted.
 var (
 	runVerbCancel = runVerb{
-		name: "cancel",
-		// Deliberately unrestricted: cancel is the tab-close gesture and must never be
-		// the verb that fails; KAS is idempotent on an already-terminal run.
+		name: verbCancel,
+		// Deliberately unrestricted: cancel is the tab-close gesture and must never
+		// be the verb that fails; KAS is idempotent on an already-terminal run.
 		issue:  (*Runs).Cancel,
 		method: http.MethodPost,
 	}
 	runVerbPause = runVerb{
-		name:   "pause",
+		name:   verbPause,
 		issue:  (*Runs).Pause,
 		method: http.MethodPost,
-		from:   []string{"running"},
+		gated:  true,
 	}
 	runVerbResume = runVerb{
-		name:   "resume",
+		name:   verbResume,
 		issue:  (*Runs).Resume,
 		method: http.MethodPost,
-		from:   []string{runStatusPaused},
-	}
-	// Retry's window is exactly the two statuses at which a run's own bridge has already
-	// been closed, which is why Retry re-hosts instead of requiring one.
-	runVerbRetry = runVerb{
-		name:   "retry",
-		issue:  (*Runs).Retry,
-		method: http.MethodPost,
-		from:   []string{"failed", "aborted"},
+		gated:  true,
 	}
 	// Delete is unrestricted like cancel, plus it is the only way a row leaves History.
 	runVerbDelete = runVerb{
-		name:   "delete",
+		name:   verbDelete,
 		issue:  (*Runs).Delete,
 		method: http.MethodDelete,
 	}
 )
+
+// verbDelete is the History row's delete. Deliberately outside run_affordance.go's
+// table: it is never offered as a control, so listing it there would put a verb in
+// the row's vocabulary that the row must not draw.
+const verbDelete = "delete"
+
+// permits gates one verb on the run's affordance, writing the refusal itself, and
+// hands the affordance back so the verb can act on the ANSWER rather than resolving
+// the same facts again. The refusal carries the affordance's own sentence when it
+// has one, and falls back to naming the status when the status alone is the reason.
+func (rr *runRoutes) permits(
+	w http.ResponseWriter, r *http.Request, verb, id string,
+) (runAffordance, bool) {
+	status, err := rr.status(r.Context(), id)
+	if err != nil {
+		slog.Warn("run control: status read failed",
+			"verb", verb, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
+		httpreply.InternalError(w, errors.New(verb+" failed"))
+		return runAffordance{}, false
+	}
+	if status == "" {
+		httpreply.NotFound(w, "run not found")
+		return runAffordance{}, false
+	}
+	aff := rr.runs.affordance(r.Context(), id, status)
+	if aff.permits(verb) {
+		return aff, true
+	}
+	slog.Info("run control refused", "verb", verb, "workflow_id", logsafe.Field(id), "status", status)
+	if sentence := aff.refusal(verb); sentence != "" {
+		httpreply.Conflict(w, sentence)
+		return aff, false
+	}
+	httpreply.Conflict(w, verb+" is not available for a "+status+" run")
+	return aff, false
+}
+
+// writeControlErr answers a verb that reached KAS and failed, distinguishing a
+// refusal from a fault. InternalError is kept for what it is for: a fault that is
+// not the reader's to act on. Anonymising the rest sent the reader the constant
+// "internal error" while the actionable sentence went only to the container log.
+func (rr *runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err error) {
+	switch {
+	case errors.Is(err, errRunNotHosted):
+		// A state of the world, not a fault.
+		slog.Info("run control unavailable: run not hosted here", "verb", verb, "workflow_id", logsafe.Field(id))
+		httpreply.Conflict(w, err.Error())
+	case errors.Is(err, errRetryEngineSlow):
+		slog.Warn("run control timed out starting an engine", "verb", verb, "workflow_id", logsafe.Field(id))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+	case errors.Is(err, errRetryOutcomeUnreadable):
+		// The engine ACCEPTED the verb and only its report is unusable, so 502: the
+		// sentence sends the reader to a refresh rather than to a second retry of
+		// work that may already be running.
+		slog.Warn("run control landed but its report could not be read",
+			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
+		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
+			httpreply.ErrorJSON(errRetryOutcomeUnreadable.Error()))
+	case isRPCRefusal(err):
+		// KAS declined. Its sentence names the reason and the fix is frequently the
+		// reader's, so it is forwarded rather than replaced by a sentinel.
+		slog.Info("run control refused by the workflow engine",
+			"verb", verb, "workflow_id", logsafe.Field(id), "detail", rpcerr.Details(err))
+		httpreply.Conflict(w, rpcerr.Text(err))
+	default:
+		slog.Warn("run control failed",
+			"verb", verb, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
+		httpreply.InternalError(w, errors.New(verb+" failed"))
+	}
+}
+
+// isRPCRefusal reports whether the failure is KAS's own answer rather than a fault
+// on this side. Matched at any wrapping depth, because the verb helpers wrap with
+// fmt.Errorf on the way up.
+func isRPCRefusal(err error) bool {
+	_, ok := errors.AsType[*vibekit.RPCError](err)
+	return ok
+}
 
 func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb runVerb) {
 	if r.Method != verb.method {
@@ -340,41 +471,22 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
-	if len(verb.from) > 0 {
-		status, err := rr.status(r.Context(), id)
-		if err != nil {
-			slog.Warn("run control: status read failed",
-				"verb", verb.name, "workflow_id", id, "error", err, "detail", rpcerr.Details(err))
-			httpreply.InternalError(w, errors.New(verb.name+" failed"))
-			return
-		}
-		if status == "" {
-			httpreply.NotFound(w, "run not found")
-			return
-		}
-		if !slices.Contains(verb.from, status) {
-			httpreply.Conflict(w, verb.name+" is not available for a "+status+" run")
+	if verb.gated {
+		if _, ok := rr.permits(w, r, verb.name, id); !ok {
 			return
 		}
 	}
 	if err := verb.issue(rr.runs, r.Context(), id); err != nil {
-		slog.Warn("run control failed",
-			"verb", verb.name, "workflow_id", id, "error", err, "detail", rpcerr.Details(err))
 		// A START failure is tested FIRST: a re-host whose handshake KAS itself refused
-		// puts an *RPCError UNDER errRunHostStart, so the type test below would report
-		// this server's failed spawn as a state of the run.
+		// puts an *RPCError UNDER errRunHostStart, so writeControlErr's type test would
+		// report this server's failed spawn as a state of the run.
 		if errors.Is(err, errRunHostStart) {
+			slog.Warn("run control failed",
+				"verb", verb.name, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
 			httpreply.InternalError(w, errors.New(verb.name+" failed"))
 			return
 		}
-		// KAS's OWN refusal reaches the client: the `from` gate is one round trip stale,
-		// so a verb reaching a run whose state has moved is refused BY KAS, and "pause
-		// failed" names neither the state nor a remedy. 409, a state of the world.
-		if _, fromKAS := errors.AsType[*vibekit.RPCError](err); fromKAS {
-			httpreply.Conflict(w, rpcerr.Text(err))
-			return
-		}
-		httpreply.InternalError(w, errors.New(verb.name+" failed"))
+		rr.writeControlErr(w, verb.name, id, err)
 		return
 	}
 	webhttp.Ok(w)

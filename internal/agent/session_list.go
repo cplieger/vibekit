@@ -75,7 +75,6 @@ func (rt *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, out)
 }
 
-// resumableSessions fetches and filters the workspace's stored sessions.
 func (rt *Runtime) resumableSessions(ctx context.Context, claimed map[string]vibekit.ChatID) ([]vibekit.ResumableSession, error) {
 	u := rt.utility.get()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
@@ -262,10 +261,6 @@ func (rs *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun)
 		}
 		// Attributed through the chain, so a chat that has since changed session resolves.
 		parentChatID := string(claimed[r.ParentSessionID])
-		// PARENTLESS only: a chat-launched run already renders in that chat's transcript.
-		if parentChatID != "" {
-			continue
-		}
 		out = append(out, vibekit.WorkflowRun{
 			WorkflowID: r.WorkflowID,
 			Name:       r.Name,
@@ -273,8 +268,8 @@ func (rs *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun)
 			CreatedAt:  parseKASTime(r.CreatedAt),
 			UpdatedAt:  parseKASTime(r.UpdatedAt),
 			StartedAt:  parseKASTime(r.StartedAt),
-			// Always empty here (parentless-only), kept explicit rather than inferred
-			// from row presence: the client reads it for the glyph and Retry.
+			// The launching chat, empty for a manual or scheduled run. The client reads
+			// it for the row's nesting, the outcome glyph and the Retry affordance.
 			ParentChatID: parentChatID,
 			// KAS has no end-reason field, and both run bounds stop a run via the same
 			// cancel a person does, so the reason comes from the host that decided.

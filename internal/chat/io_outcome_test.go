@@ -104,7 +104,7 @@ func TestReadChatHeader_LastTurnOutcomeAgreesWithChatHeader(t *testing.T) {
 				t.Fatalf("write chat file: %v", err)
 			}
 
-			onDisk, err := readChatHeader(path, "chat outcome test")
+			onDisk, err := readChatHeader(path, "chat outcome test", 0)
 			if err != nil {
 				t.Fatalf("readChatHeader: %v", err)
 			}
@@ -142,7 +142,7 @@ func TestReadChatHeader_MalformedMessagesStillYieldsAUsableHeader(t *testing.T) 
 		t.Fatalf("write chat file: %v", err)
 	}
 
-	h, err := readChatHeader(path, "chat malformed test")
+	h, err := readChatHeader(path, "chat malformed test", 0)
 	if err == nil {
 		// A truncated document is rejected by json.Unmarshal itself, which is
 		// the stricter and equally acceptable answer; the point is that it is

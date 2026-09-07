@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,15 +28,13 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 	// ENFORCEMENT, so sat under them a display preference decides a cancellation.
 	// Deliberately apart from countStepTurn, which needs a step key this does not.
 	t.reportRunProgress(tc.Meta.Kiro.Workflow)
-	// A hook's ask-permission gate arrives as a kind:"other" call tagged
-	// _meta.kiro.hookAsk. Its follow-up tool_call_update drops too, since
-	// HandleToolCallUpdate early-returns when the id was never buffered.
+	// A pre-tool-use hook's ask-permission gate arrives as a kind:"other" call
+	// tagged _meta.kiro.hookAsk; drop the card when hooks.showStatus is off.
 	if len(tc.Meta.Kiro.HookAsk) > 0 && !t.hookStatus.IsHookStatusEnabled() {
 		return
 	}
-	// Dropped BEFORE ensureTurnStarted, or the cloud-config fetch's frame opens a
-	// wire turn the prompt then displaces, splitting the user's turn in two. The
-	// update must drop too: TurnFoldTarget opens a turn for any frame it is asked about.
+	// Internal engine bookkeeping never reaches the transcript. Dropped before
+	// TurnFoldTarget, which would open a wire turn and split the user's own.
 	if isInternalTool(tc.Meta.Kiro.ToolID) {
 		t.suppressed.add(tc.ToolCallID)
 		return
@@ -115,9 +114,112 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 	if !ok {
 		return
 	}
+	// The pre-fold value, kept so the frame can carry the fold's INPUTS rather than
+	// its result: comparing before against after derives the delta from the fold
+	// instead of restating the fold's rules here — including the one a pure-append
+	// wire cannot express, adoptTerminalOutput replacing the output at completion. A
+	// struct copy is enough: every field the fold writes is replaced or appended to.
+	before := tc
 	t.applyToolCallUpdate(ctx, chatID, buf, &tc, &tu, content, attr.SubSessionID)
 	buf.SetToolCall(idx, &tc)
-	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID, vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: tc}))
+	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID,
+		toolCallDelta(buf.MessageID, &before, &tc)))
+}
+
+// toolCallDelta describes what one fold changed about a tool call.
+//
+// Sending the whole accumulated ToolCall re-sent output and diffs on every later
+// frame for it — megabytes behind a few open tabs — and Input is not here at all,
+// because an update never changes it.
+//
+// Every omitted field means "unchanged", so applying this to `before` reconstructs
+// `after` exactly. That is what lets the client keep no accumulation rules.
+func toolCallDelta(messageID string, before, after *vibekit.ToolCall) vibekit.ToolCallUpdatePayload {
+	d := vibekit.ToolCallUpdatePayload{MessageID: messageID, ToolCallID: after.ID}
+	if after.Title != before.Title {
+		d.Title = after.Title
+	}
+	if after.Kind != before.Kind {
+		d.Kind = after.Kind
+	}
+	if after.Status != before.Status {
+		d.Status = after.Status
+	}
+	if after.DurationMs != before.DurationMs {
+		d.DurationMs = after.DurationMs
+	}
+	d.OutputDelta, d.OutputReplace = outputDelta(before.Output, after.Output)
+	deltaContent(&d, before, after)
+	deltaAttachments(&d, before, after)
+	return d
+}
+
+// deltaContent carries the three collections. Only Diffs accumulates; the other
+// two are absolute and go entire whenever they change.
+func deltaContent(d *vibekit.ToolCallUpdatePayload, before, after *vibekit.ToolCall) {
+	if !slices.Equal(after.OutputSpans, before.OutputSpans) {
+		d.OutputSpans = after.OutputSpans
+	}
+	// Diffs only ever append (applyToolCallDiffs), so the tail is the whole change.
+	// Guarded on the length, because a frame that appended nothing must send nothing.
+	if len(after.Diffs) > len(before.Diffs) {
+		d.DiffsAppended = after.Diffs[len(before.Diffs):]
+	}
+	if !slices.Equal(after.Locations, before.Locations) {
+		d.Locations = after.Locations
+	}
+}
+
+// deltaAttachments carries the four late identity ids and the three metadata
+// blocks. Every one is adopted once and never overwritten, so each appears on at
+// most one frame per call — which is what makes a set-if-present fold correct.
+func deltaAttachments(d *vibekit.ToolCallUpdatePayload, before, after *vibekit.ToolCall) {
+	if after.TerminalID != before.TerminalID {
+		d.TerminalID = after.TerminalID
+	}
+	if after.SubSessionID != before.SubSessionID {
+		d.SubSessionID = after.SubSessionID
+	}
+	if after.AgentSubtaskID != before.AgentSubtaskID {
+		d.AgentSubtaskID = after.AgentSubtaskID
+	}
+	if after.WorkflowID != before.WorkflowID {
+		d.WorkflowID = after.WorkflowID
+	}
+	if after.Checkpoint != nil && *after.Checkpoint != derefCheckpoint(before.Checkpoint) {
+		d.Checkpoint = after.Checkpoint
+	}
+	if before.Disclosed == nil && after.Disclosed != nil {
+		d.Disclosed = after.Disclosed
+	}
+	if before.Denial == nil && after.Denial != nil {
+		d.Denial = after.Denial
+	}
+}
+
+// outputDelta describes the change from one accumulated output to the next: the
+// appended tail, or the whole new value when it is not an extension of the old.
+//
+// The replace arm is adoptTerminalOutput: at completion a terminal's full stream
+// wins over the ACP fragments already on the card. Detected by asking whether the
+// new value EXTENDS the old, so the rule lives in the fold and this reports it.
+func outputDelta(before, after string) (delta string, replace bool) {
+	if after == before {
+		return "", false
+	}
+	if strings.HasPrefix(after, before) {
+		return after[len(before):], false
+	}
+	return after, true
+}
+
+// derefCheckpoint returns the checkpoint's value, or the zero value for nil, so
+// a nil-to-set transition compares as a change without a second nil branch.
+func derefCheckpoint(c *vibekit.ToolCheckpoint) vibekit.ToolCheckpoint {
+	if c == nil {
+		return vibekit.ToolCheckpoint{}
+	}
+	return *c
 }
 
 // parseToolUpdateContent extracts the sanitized output delta, any file diffs, and
@@ -126,7 +228,8 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 //
 // A type:"terminal" block's text is deliberately not folded into the output delta:
 // the bytes arrive on the terminal/* surface instead, and the id is what lets the
-// card subscribe to that stream. toolCallID is carried for diagnostics only.
+// card subscribe to that stream. toolCallID is carried for the two Debug lines,
+// where a content block vibekit does not model disappears.
 func (t *Translator) parseToolUpdateContent(toolCallID string, items []ACPToolCallContentBlock) toolUpdateContent {
 	var out toolUpdateContent
 	var outputDelta strings.Builder
