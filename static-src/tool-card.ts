@@ -537,7 +537,7 @@ function fetchOutputBulk(node: HTMLDivElement, opts: BuildToolCardOpts, depth1: 
   }
   void toolCallBulk(chatID, opts.id).then((bulk) => {
     const output = bulk?.output ?? "";
-    if (output === "") {
+    if (output.trim() === "") {
       return;
     }
     const out = node.querySelector(".tool-output");
@@ -732,11 +732,11 @@ export function refreshToolDisclosure(card: HTMLElement): void {
   detailCtls.get(card)?.close();
   const toggle = card.querySelector<HTMLElement>(".tool-disclosure");
   if (toggle !== null) {
-    // No FOCUSED chevron reaches this: the wire status is not consulted and the
-    // update gate refuses blank output, so every detach left runs inside
-    // `buildToolCard`, before the card is in the document. Reintroduce an in-document
-    // one and focus falls to <body>; the target is then the card itself at
-    // `tabindex="-1"` — click-focusable, NOT a tab stop — or `.tool-group-header`.
+    // No FOCUSED chevron reaches this: the wire status is not consulted, the update gate
+    // refuses blank output, and `writeChunkToCard` only reaches a terminal-bearing card,
+    // latched at build by the command in `opts.input`. So every detach left runs inside
+    // `buildToolCard`, before the card is in the document. Reintroduce an in-document one and
+    // focus falls to <body>; the fallback is the card at `tabindex="-1"` or `.tool-group-header`.
     detachedToggles.set(card, toggle);
     toggle.remove();
   }

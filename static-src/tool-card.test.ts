@@ -37,6 +37,16 @@ vi.mock("./tool-group.js", () => ({
   },
 }));
 
+// The bulk a previewed card fetches on first open. Hoisted because the factory below
+// is lifted above every module-scope binding.
+const stubBulk = vi.hoisted(() => ({ output: "" }));
+vi.mock("./tool-bulk.js", () => ({
+  toolCallBulk: () => Promise.resolve({ id: "stub", output: stubBulk.output, output_spans: [] }),
+  forgetToolCallBulk: () => {
+    /* noop */
+  },
+}));
+
 const { extractSubtitle, mcpHue, buildToolCard, expandToolDetails, refreshToolDisclosure } =
   await import("./tool-card.js");
 
@@ -1157,6 +1167,30 @@ describe("a card with nothing to disclose", () => {
     });
     document.body.appendChild(card);
     expandToolDetails(card);
+    expect(card.querySelector(".tool-output pre")).toBeNull();
+    card.remove();
+  });
+
+  it("paints no output <pre> when the FETCHED bulk is blank either", async () => {
+    // The same reading, one fetch out. Measured in `internal/chat`: a `\r`-and-spaces
+    // progress animation of 12,292 bytes persists whole and cuts on serve, so the store
+    // stamps `outputBytes`, that arm latches the card, and the bulk it opens is blank.
+    stubBulk.output = "\r      ".repeat(1757);
+    const card = buildToolCard({
+      id: "bare-blank-bulk",
+      title: "executePwsh",
+      kind: "execute",
+      status: "completed",
+      live: false,
+      hasFull: true,
+      outputBytes: 12_292,
+      chatID: "c1",
+    });
+    document.body.appendChild(card);
+    expandToolDetails(card);
+    // A macrotask, so the fetch's resolved `.then` has certainly run: asserting on an
+    // absent node would otherwise pass before the paint it is meant to refuse.
+    await new Promise((r) => setTimeout(r, 0));
     expect(card.querySelector(".tool-output pre")).toBeNull();
     card.remove();
   });
