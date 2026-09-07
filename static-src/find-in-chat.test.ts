@@ -36,6 +36,9 @@ vi.mock("./store-load.js", { spy: true });
 // nothing here needs its real implementation, and replacing it keeps the
 // exec-view chunk out of this suite entirely.
 vi.mock("./run-view.js", () => ({ openRunView: vi.fn() }));
+// Same shape and same reason for the delegate tab: reached by a lazy `await import`, so
+// replacing it keeps `exec-view/**` out of this suite.
+vi.mock("./subagent-view.js", () => ({ openSubagentView: vi.fn() }));
 // The renderer's per-block map, which is how a hit's element is resolved now: this
 // file builds transcript DOM by hand, so no render would ever register one. A
 // REPLACING factory rather than a spy — the real dispatcher's graph reaches
@@ -711,6 +714,7 @@ import type * as ModStore from "./store.js";
 import type * as ModStoreLoad from "./store-load.js";
 import type * as ModScroll from "./scroll.js";
 import type * as ModRunView from "./run-view.js";
+import type * as ModSubagentView from "./subagent-view.js";
 import type * as ModBlocks from "./messages-blocks.js";
 
 describe("server-hit navigation", () => {
@@ -720,6 +724,7 @@ describe("server-hit navigation", () => {
   let storeLoad: typeof ModStoreLoad;
   let scroll: typeof ModScroll;
   let runView: typeof ModRunView;
+  let subagentView: typeof ModSubagentView;
   let blocks: typeof ModBlocks;
 
   beforeEach(async () => {
@@ -743,6 +748,7 @@ describe("server-hit navigation", () => {
     storeLoad = await import("./store-load.js");
     scroll = await import("./scroll.js");
     runView = await import("./run-view.js");
+    subagentView = await import("./subagent-view.js");
     blocks = await import("./messages-blocks.js");
     // The renderer's map, stood in for by the fixtures' own stamps: each carries the
     // two coordinates `stampBlock` writes, read DOCUMENT-WIDE because the real map is
@@ -1585,15 +1591,57 @@ describe("server-hit navigation", () => {
     await openAndSearch("retry");
     typeAndEnter("retry");
 
-    // The surviving claim: a malformed id is NOT a step, so navigation must not send the
-    // reader to a run tab. It no longer resolves to a DOM mark either — the transcript
-    // renders no delegate output at all now — which is the same dead end a workflow step's
-    // hit has always had here and is the accepted cost of dropping that output.
+    // A malformed id is NOT a step, so it must not reach the run tab — and it is a
+    // DELEGATE, so it goes to that delegate's own page, which renders the blocks the
+    // transcript drops. The subtask id is carried through verbatim.
     await vi.waitFor(() => {
-      expect(countText()).toContain("1 of 1");
+      expect(vi.mocked(subagentView.openSubagentView)).toHaveBeenCalledWith(
+        "c1",
+        "wf:no-second-colon",
+      );
     });
-    expect(document.querySelector(".subagent-body mark.find-hit-current")).toBeNull();
     expect(vi.mocked(runView.openRunView)).not.toHaveBeenCalled();
+    expect(document.querySelector("mark.find-hit-current")).toBeNull();
+  });
+
+  it("sends an ordinary DELEGATE's hit to that delegate's page", async () => {
+    // The counter reads the SERVER's figure, so a hit inside a delegate's output is
+    // reported however little of it the transcript renders — which is none. Before the
+    // delegate route this ended at "could not be shown" on the launching turn's row, the
+    // same dead end the step branch above was written to close.
+    stageChat([
+      { id: "u1", role: "user", content: "find it" },
+      {
+        id: "a1",
+        role: "assistant",
+        blocks: [
+          { type: "tool_use", tool_call_id: "t-sub", agent_subtask_id: "sub-9" },
+          { type: "text", text: "delegate found the retry backoff", agent_subtask_id: "sub-9" },
+        ],
+      },
+    ]);
+    mountTurnCard("u1", `<div data-reconcile-key="a1" class="msg-row"></div>`);
+    stageHits([
+      serverHit({
+        excerpt: "delegate found the retry backoff",
+        segment_kind: "content",
+        agent_subtask_id: "sub-9",
+        block_index: 1,
+        offset: 19,
+        segment_len: 32,
+      }),
+    ]);
+
+    await openAndSearch("retry");
+    typeAndEnter("retry");
+
+    await vi.waitFor(() => {
+      expect(vi.mocked(subagentView.openSubagentView)).toHaveBeenCalledWith("c1", "sub-9");
+    });
+    // The transcript is not paged in or revealed for a destination in another tab.
+    expect(vi.mocked(chatSearch.revealHitTurn)).not.toHaveBeenCalled();
+    expect(vi.mocked(runView.openRunView)).not.toHaveBeenCalled();
+    expect(countText()).not.toContain("could not be");
   });
 
   it("keeps Enter-cycling on resident marks when any exist, however many hits the server found", async () => {
