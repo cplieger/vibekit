@@ -43,6 +43,7 @@ vi.mock("./tool-schema.js", () => ({
   // Present-but-undefined, same reason as the mocks above: another module in
   // this graph imports the name and no path under test calls it.
   isToolActive: undefined,
+  isSubagentInvocation: undefined,
 }));
 vi.mock("./tool-card.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this

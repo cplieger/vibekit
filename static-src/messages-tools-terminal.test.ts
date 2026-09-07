@@ -48,6 +48,7 @@ vi.mock("./tool-schema.js", () => ({
   // Present-but-undefined, same reason as the mocks above: another module in
   // this graph imports the name and no path under test calls it.
   isToolActive: undefined,
+  isSubagentInvocation: undefined,
 }));
 
 // A card double that does the ONE thing these tests depend on the real builder

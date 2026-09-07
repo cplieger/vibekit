@@ -100,7 +100,6 @@ import {
   refreshGroupHeader,
   refreshMessageCard,
   liveRenderIDs,
-  openContainerKeys,
   initBlockRenderer,
   getLiveAnchor,
   mountedWindow,
@@ -695,32 +694,25 @@ export function fadeInTranscript(): void {
  *  and a chip reading "1 new message" for four minutes of work is a static badge
  *  rather than a progress read-out.
  *
- *  REACHABLE, not merely present, and that is the same argument one level down. A
- *  delegate's blocks are members of the parent assistant message's `blocks` array,
- *  but they render into a card that collapses to `block-size: 0` with
- *  `overflow: hidden` — so while that card is shut they contribute ZERO document
- *  height. Counting them makes the control promise a distance that does not exist:
- *  the reader resumes expecting nine blocks of new content and lands on the same
- *  view they parked at. The resume control is the only element on screen that
- *  knows the reader is behind, so it is the only one that says how far, and a
- *  number nothing on the page can account for is worse than no number.
+ *  REACHABLE, not merely present, and that is the same argument one level down.
+ *  DELEGATED blocks — a subagent's and a workflow step's alike — are members of the
+ *  parent assistant message's `blocks` array, and `messages-blocks.ts` `placeBlock`
+ *  DROPS every one of them: the transcript keeps a card and renders none of that
+ *  work's content, which lives on the delegate's or the run's own tab. So they
+ *  contribute zero document height in every fold state, and counting them would
+ *  make the control promise a distance that does not exist — the reader resumes
+ *  expecting nine blocks of new content and lands on the same view they parked at.
+ *  The resume control is the only element on screen that knows the reader is behind,
+ *  so it is the only one that says how far, and a number nothing on the page can
+ *  account for is worse than no number.
  *
- *  A block with no `agent_subtask_id` is the parent stream: always inline, always
- *  counted. One with a subtask id counts only while its container is open —
- *  `openContainerKeys` (messages-blocks.ts) owns what "open" means — so expanding a
- *  delegate's card legitimately raises the count: those blocks became reachable at
- *  that moment.
- *
- *  A WORKFLOW STEP's blocks are never counted, and that is not a fold state: the
- *  dispatcher DROPS them, so nothing on the page renders them however the run card
- *  is folded, and `openContainerKeys` can never name one. */
+ *  So the test is the STAMP, not a fold state: a block with no `agent_subtask_id` is
+ *  the parent stream, always inline and always counted. */
 function blockCount(msgs: readonly Message[]): number {
-  const open = openContainerKeys();
   let n = 0;
   for (const m of msgs) {
     for (const b of m.blocks ?? []) {
-      const subtask = b.agent_subtask_id ?? "";
-      if (subtask === "" || open.has(subtask)) {
+      if ((b.agent_subtask_id ?? "") === "") {
         n++;
       }
     }
@@ -734,8 +726,8 @@ let followBaseline = 0;
 /** The last FULL pass's reachable-block count. `refreshResumeLabel` runs on
  *  chunk- and tool-cause paints too, and those causes cannot add a REACHABLE
  *  block: a block this transcript draws arrives as `shape`, while the blocks that
- *  now take `chunk` on first sighting are a dropped step's, which are never drawn
- *  and so cannot move this count. The walk therefore happens once per full pass
+ *  take `chunk` on first sighting are a DELEGATE's, which are never drawn and so
+ *  cannot move this count. The walk therefore happens once per full pass
  *  instead of once per streamed delta. */
 let reachableBlocks = 0;
 

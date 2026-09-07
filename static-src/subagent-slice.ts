@@ -22,8 +22,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Block, Message, ToolCall } from "./types.js";
-import { isSubagentInvocation } from "./roles.js";
-import { isToolActive } from "./tool-schema.js";
+import { isSubagentInvocation, isToolActive } from "./tool-schema.js";
 import { blockKey } from "./store-signals.js";
 
 /** The prefix KAS puts on a PIPELINE STAGE's tool-call id. The full shape is

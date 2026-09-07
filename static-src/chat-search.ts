@@ -111,14 +111,15 @@ export function searchHitCount(turn: number): number {
  *
  *  This is the figure the counter needs and did not have. The DOM pass can only
  *  count what it marked, and three populations are unreachable to it: every
- *  `aria-hidden` subtree (a collapsed delegate card, since `createDisclosure`
- *  writes `aria-hidden` + `inert` on a closed region, plus every closed reasoning
- *  `<details>`), every non-resident page, and every WORKFLOW STEP's text, which
- *  `messages-blocks.ts` drops outright rather than hiding. The server searches the
- *  chat FILE, so it sees all of it. Reporting only the DOM number let the overlay
- *  print "No matches" in the same tick the server had answered that the text
- *  occurs N times, which is the data-loss case this module's own header says the
- *  pre-pass exists to prevent. */
+ *  `aria-hidden` subtree (a closed reasoning `<details>`, a collapsed pipeline
+ *  container — `createDisclosure` writes `aria-hidden` + `inert` on a closed
+ *  region), every non-resident page, and every DELEGATED block's text — a workflow
+ *  step's and a subagent's alike — which `messages-blocks.ts` drops outright rather
+ *  than hiding. The server searches the chat FILE, so it sees all of it, which is
+ *  why dropping a delegate's output cost the MARKS and not this count. Reporting
+ *  only the DOM number let the overlay print "No matches" in the same tick the
+ *  server had answered that the text occurs N times, which is the data-loss case
+ *  this module's own header says the pre-pass exists to prevent. */
 export function searchHitTotal(): number {
   return hitTotal;
 }

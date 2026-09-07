@@ -82,7 +82,7 @@ const { setTurnOpen, openForSearch, clearSearchOpened, resetFoldState } =
   await import("./fold-state.js");
 const { OVERSCAN_BLOCKS, RESIDENT_BLOCKS, RESIDENT_TOOL_CALLS } = await import("./block-window.js");
 const { blockTextSigs, ensureBlockTextSig, blockKey } = await import("./store-signals.js");
-const { openContainerKeys, mountedWindow } = await import("./messages-blocks.js");
+const { mountedWindow } = await import("./messages-blocks.js");
 const { invalidateRun } = await import("./run-store.js");
 const { loadTurnRail, resetTurnRail } = await import("./turn-rail.js");
 const { scrollMock } = await import("./__test-helpers__/scroll-mock.js");
@@ -636,7 +636,10 @@ describe("the fold policy over residency", () => {
 // --- Lifecycle: resident → stub -------------------------------------------------
 
 describe("the residency lifecycle", () => {
-  it("keeps signals and containers while resident, and drops both at the unmount", async () => {
+  // The container-registry half of this case went with the delegate card's disclosure:
+  // a card renders no output, so it holds no key. `block-virtualization.test.ts` covers
+  // the surviving contract, that a re-mount restores a TOOL card's own disclosure.
+  it("keeps a block's signals while resident, and drops them at the unmount", async () => {
     const id = chatID();
     // The target turn carries a delegate box so the container registry has an
     // entry to lose, and a minted block signal so the signal maps do too.
@@ -669,10 +672,6 @@ describe("the residency lifecycle", () => {
     ensureBlockTextSig("a1", 0, "parent prose");
     expect(blockTextSigs.get(blockKey("a1", 0))).toBeDefined();
 
-    // Open the delegate box: the container registry now holds its subtask.
-    (card("u1").querySelector(".subagent-header") as HTMLElement).click();
-    expect(openContainerKeys().has("sub-leak")).toBe(true);
-
     // Resident → stub: three more turns fold the target, and the window is not
     // grown over a folded turn, so the fold IS the unmount.
     activate(id, [user("u1"), target, ...plainTurns(4).slice(2)]);
@@ -682,7 +681,6 @@ describe("the residency lifecycle", () => {
     expect(isFolded("u1")).toBe(true);
     expect(card("u1").querySelector(`[${KEY_ATTR}="a1"]`)).toBeNull();
     expect(blockTextSigs.get(blockKey("a1", 0))).toBeUndefined();
-    expect(openContainerKeys().has("sub-leak")).toBe(false);
   });
 
   it("defers the unmount while reading and applies it height-compensated", () => {

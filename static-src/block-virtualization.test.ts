@@ -137,30 +137,6 @@ function todoHeadTurn(id: string, blocks: number): Message[] {
   return messages;
 }
 
-/** A huge turn whose first two blocks are a DELEGATE BOX: its invocation, then one
- *  block of the delegate's own prose inside it. A box, unlike a tool card, has a
- *  registry key — so what a drop has to carry here is the key's meaning at re-mount.
- */
-function subagentHeadTurn(id: string, blocks: number): Message[] {
-  const messages = hugeTurn(id, blocks);
-  const m = messages[1] as unknown as {
-    blocks: Record<string, unknown>[];
-    tool_calls: Record<string, unknown>[];
-  };
-  m.blocks[0] = { type: "tool_use", tool_call_id: `${id}-inv`, agent_subtask_id: `${id}-sub` };
-  m.blocks[1] = { type: "text", text: "delegate prose", agent_subtask_id: `${id}-sub` };
-  m.tool_calls = [
-    {
-      id: `${id}-inv`,
-      title: "Sub-agent: general-task-execution",
-      kind: "other",
-      status: "completed",
-      agent_subtask_id: `${id}-sub`,
-    },
-  ];
-  return messages;
-}
-
 /** `toolTurn` with OUTPUT on its first call, so that card has something to reveal and
  *  therefore a disclosure control at all. */
 function outputHeadTurn(id: string, blocks: number): Message[] {
@@ -892,35 +868,9 @@ describe("scrolling moves the window", () => {
     expect(toggle()?.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("brings a delegate box back OPEN when the reader had opened it before the drop", async () => {
-    await coldLoad("sub", subagentHeadTurn("sub", HUGE));
-    const box = (): HTMLElement | null =>
-      card("sub").querySelector<HTMLElement>(".subagent-block[data-subtask='sub-sub']");
-    const head = (): HTMLElement | null =>
-      box()?.querySelector<HTMLElement>(":scope > .subagent-header") ?? null;
-    await dragTo(0);
-    await vi.waitFor(() => {
-      expect(box()).not.toBeNull();
-    });
-    expect(box()?.classList.contains("collapsed")).toBe(true);
-    head()?.click();
-    expect(box()?.classList.contains("collapsed")).toBe(false);
-
-    // Away, so the drop takes the box, and back. Its `openContainers` key survives the
-    // drop by design — what this pins is that the re-mount READS it, which is the half
-    // a default-collapsed creation site decides on its own.
-    await dragTo(scroller().scrollHeight);
-    await vi.waitFor(() => {
-      expect(box()).toBeNull();
-    });
-    await atLiveEdge();
-    await dragTo(0);
-    await vi.waitFor(() => {
-      expect(box()).not.toBeNull();
-    });
-    expect(box()?.classList.contains("collapsed")).toBe(false);
-    expect(head()?.getAttribute("aria-expanded")).toBe("true");
-  });
+  // A delegate box's own restore case was here, and its subject is gone: a card renders
+  // none of its delegate's output, so it is not a disclosure and holds no registry key.
+  // The tool-card case above is the surviving half of that contract.
 
   it("mounts a HEAD-ward grant with no repaint behind it, which is all a rail jump gives", async () => {
     const id = await coldLoad("big", hugeTurn("big", HUGE));

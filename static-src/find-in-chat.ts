@@ -713,20 +713,22 @@ function resolveSegmentEl(hit: SearchHit): HTMLElement | null {
 
 /**
  * Open every closed disclosure between the hit's container and its row, so the
- * walker can reach the text: reasoning `<details>` by the platform API, and
- * delegate boxes / tool groups by ACTIVATING their real header — the
- * disclosure controller behind it flips `aria-hidden` + `inert` synchronously,
- * and going through it keeps its state agreeing with the DOM. A tool_output
- * hit additionally opens its card's own disclosure, where the output body
- * lives (and is often first BUILT).
+ * walker can reach the text: reasoning `<details>` by the platform API, and tool
+ * groups by ACTIVATING their real header — the disclosure controller behind it
+ * flips `aria-hidden` + `inert` synchronously, and going through it keeps its
+ * state agreeing with the DOM. A tool_output hit additionally opens its card's own
+ * disclosure, where the output body lives (and is often first BUILT).
+ *
+ * A DELEGATE's card is not in the walk: it discloses nothing, because the
+ * transcript renders none of its delegate's output (`messages-blocks.ts`
+ * `placeBlock`). A hit inside that output has no DOM segment here at all — the
+ * same position a workflow step's hit is in, which `navigateToHit` answers by
+ * sending the reader to the run tab.
  */
 function openDisclosureChain(row: HTMLElement, target: HTMLElement, hit: SearchHit): void {
   for (let cur: HTMLElement | null = target; cur !== null && cur !== row.parentElement;) {
     if (cur instanceof HTMLDetailsElement && !cur.open) {
       cur.open = true;
-    }
-    if (cur.classList.contains("subagent-block") && cur.classList.contains("collapsed")) {
-      cur.querySelector<HTMLElement>(":scope > .subagent-header")?.click();
     }
     if (cur.classList.contains("tool-group") && cur.classList.contains("tool-group-collapsed")) {
       cur.querySelector<HTMLElement>(":scope > .tool-group-header")?.click();

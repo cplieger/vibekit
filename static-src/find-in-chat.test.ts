@@ -866,78 +866,13 @@ describe("server-hit navigation", () => {
     });
   }
 
-  it("steps into a collapsed delegate inside a stub turn, end to end", async () => {
-    stageChat([
-      { id: "u1", role: "user", content: "find it" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: [
-          { type: "tool_use", tool_call_id: "t-sub", agent_subtask_id: "sub-1" },
-          { type: "text", text: "delegate found the retry backoff", agent_subtask_id: "sub-1" },
-        ],
-      },
-    ]);
-    // The transcript holds ONE stub turn: no body at all until the reveal.
-    mountTurnCard("u1", null);
-    const theHit = serverHit({
-      excerpt: "delegate found the retry backoff",
-      segment_kind: "content",
-      agent_subtask_id: "sub-1",
-      block_index: 1,
-      offset: 19,
-      segment_len: 32,
-    });
-    stageHits([theHit]);
-    // The reveal is what builds a stub's body (mountTurnBody in production);
-    // here it mounts the delegate box, wired through the real disclosure —
-    // collapsed, aria-hidden, inert — exactly the state the walker prunes.
-    vi.mocked(chatSearch.revealHitTurn).mockImplementation(() => {
-      const card = document.querySelector('[data-reconcile-key="u1"]');
-      if (card !== null && card.querySelector(".turn-body") === null) {
-        const body = document.createElement("div");
-        body.className = "turn-body";
-        body.innerHTML = `
-          <div data-reconcile-key="a1" class="msg-row">
-            <div class="assistant-blocks">
-              <div class="subagent-block collapsed" data-subtask="sub-1">
-                <div class="subagent-header">Subagent</div>
-                <div class="subagent-body"><div class="message assistant" data-block-msg="a1" data-block-index="1">delegate found the retry backoff</div></div>
-              </div>
-            </div>
-          </div>`;
-        card.appendChild(body);
-        const box = body.querySelector<HTMLElement>(".subagent-block");
-        if (box !== null) {
-          wireSubagentBox(box);
-        }
-      }
-      return Promise.resolve();
-    });
-
-    await openAndSearch("retry");
-    expect(countText()).toBe("1 in chat");
-    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
-
-    typeAndEnter("retry"); // step: no DOM mark anywhere -> navigate the hit
-    await vi.waitFor(() => {
-      expect(document.querySelector(".subagent-body mark.find-hit-current")).not.toBeNull();
-    });
-    // The chain was opened through the real primitive, not force-styled.
-    const body = document.querySelector(".subagent-body");
-    expect(body?.getAttribute("aria-hidden")).toBe("false");
-    expect(document.querySelector(".subagent-block")?.classList.contains("collapsed")).toBe(false);
-    // The reveal ran against the stub before selection.
-    expect(vi.mocked(chatSearch.revealHitTurn)).toHaveBeenCalledWith("c1", theHit);
-    // The counter flips from the session figure to a navigable position, and
-    // the selected mark is what got scrolled to.
-    expect(countText()).toBe("1 of 1");
-    const mark = document.querySelector("mark.find-hit-current");
-    expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(mark, expect.anything());
-    // The step branch is NARROW: `sub-1` is a delegate uuid, not a `wf:` step id,
-    // so this hit resolves in the DOM exactly as it always has.
-    expect(vi.mocked(runView.openRunView)).not.toHaveBeenCalled();
-  });
+  // The "steps into a collapsed delegate" case was here. Its subject is gone: the transcript
+  // renders none of a delegate's output, so there is no collapsed body to step into and no
+  // disclosure chain to open. A hit inside that output now has no DOM segment at all — the
+  // same position a workflow step's hit is in — and `chat-search.ts` still COUNTS it,
+  // because the server searches the chat file. Routing such a hit to the delegate's own tab
+  // the way a step's goes to the run tab is the obvious follow-up and is deliberately not
+  // done here.
 
   it("resolves the block a hit names when the mounted window starts above index 0", async () => {
     // The window holds 2..7 of eight blocks, which is what per-block residency makes
@@ -1650,9 +1585,14 @@ describe("server-hit navigation", () => {
     await openAndSearch("retry");
     typeAndEnter("retry");
 
+    // The surviving claim: a malformed id is NOT a step, so navigation must not send the
+    // reader to a run tab. It no longer resolves to a DOM mark either — the transcript
+    // renders no delegate output at all now — which is the same dead end a workflow step's
+    // hit has always had here and is the accepted cost of dropping that output.
     await vi.waitFor(() => {
-      expect(document.querySelector(".subagent-body mark.find-hit-current")).not.toBeNull();
+      expect(countText()).toContain("1 of 1");
     });
+    expect(document.querySelector(".subagent-body mark.find-hit-current")).toBeNull();
     expect(vi.mocked(runView.openRunView)).not.toHaveBeenCalled();
   });
 

@@ -41,7 +41,6 @@ const {
   disposeAssistantBody,
   resetBlockRenders,
   buildDetachedBody,
-  openContainerKeys,
   blockElement,
   mountedWindow,
   mountHeadRange,
@@ -130,9 +129,10 @@ describe("subagent grouping is keyed by subtask id, NOT by contiguity", () => {
     ]);
     const cards = wrap.querySelectorAll(".subagent-block");
     expect(cards).toHaveLength(1);
-    const body = cards[0]?.querySelector(".subagent-body")?.textContent ?? "";
-    expect(body).toContain("delegate first");
-    expect(body).toContain("delegate second");
+    // Grouping is still the subject; the CONTENT is not here to group. Both blocks are
+    // dropped, so what one card proves is that one delegate gets one record.
+    expect(cards[0]?.querySelector(".subagent-body")).toBeNull();
+    expect(cards[0]?.textContent).not.toContain("delegate first");
   });
 
   it("keeps two DIFFERENT subtasks in two cards", () => {
@@ -270,7 +270,9 @@ describe("a workflow run's card is its launch, and its steps are dropped", () =>
     expect(cards(wrap)).toHaveLength(0);
     const box = wrap.querySelector(".subagent-block");
     expect(box?.getAttribute("data-subtask")).toBe("wf:no-node-path");
-    expect(box?.textContent).toContain("orphan text");
+    // The block is not LOST — it has a card, which is the route to its output — but the
+    // transcript renders none of its text.
+    expect(box?.textContent).not.toContain("orphan text");
   });
 
   it("leaves an ordinary tool call alone: no workflow id means no card", () => {
@@ -548,8 +550,10 @@ describe("a pipeline's stages render inside the orchestrate call that started th
     // ONE top-level object for the whole pipeline, where there were two.
     expect(shape(wrap)).toEqual(["pipeline(d-one)"]);
     expect(nested(wrap)).toEqual(["u-one", "u-one-b"]);
-    const body = wrap.querySelector(".subagent-container .subagent-block .subagent-body");
-    expect(body?.textContent).toContain("planning");
+    // The pipeline's body holds its stages' CARDS; a stage's prose is on the stage's page.
+    const stageCard = wrap.querySelector(".subagent-container .subagent-block");
+    expect(stageCard).not.toBeNull();
+    expect(stageCard?.textContent).not.toContain("planning");
   });
 
   it("gives one pipeline its several stages, in first-seen order", () => {
@@ -625,7 +629,7 @@ describe("a pipeline's stages render inside the orchestrate call that started th
     );
     expect(boxes(wrap)).toHaveLength(0);
     expect(shape(wrap)).toEqual(["card(u-bad)"]);
-    expect(wrap.querySelector(".subagent-block")?.textContent).toContain("orphan");
+    expect(wrap.querySelector(".subagent-block")?.textContent).not.toContain("orphan");
   });
 
   it("keeps the driver id whole when a stage NAME contains the separator", () => {
@@ -782,8 +786,9 @@ describe("a pipeline's stages render inside the orchestrate call that started th
     );
     expect(boxes(wrap)).toHaveLength(0);
     expect(shape(wrap)).toEqual(["card(u-solo)"]);
-    const body = wrap.querySelector(".assistant-blocks > .subagent-block > .subagent-body");
-    expect(body?.textContent).toContain("planning");
+    const solo = wrap.querySelector(".assistant-blocks > .subagent-block");
+    expect(solo).not.toBeNull();
+    expect(solo?.textContent).not.toContain("planning");
   });
 
   it("a promoted stage keeps its page link", () => {
@@ -838,11 +843,13 @@ describe("a pipeline's stages render inside the orchestrate call that started th
     );
     expect(shape(wrap)).toEqual(["pipeline(d-up)"]);
     expect(nested(wrap)).toEqual(["u-up-a", "u-up-b"]);
-    // MOVED, not rebuilt: the first stage's own streamed text came with it.
+    // MOVED into the container. The streamed text that used to evidence "moved, not
+    // rebuilt" is no longer rendered anywhere, so what remains asserted is the seat and
+    // the page link; a rebuild would be indistinguishable here.
     const moved = wrap.querySelector(
       '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-up-a"]',
     );
-    expect(moved?.querySelector(":scope > .subagent-body")?.textContent).toContain("planning hard");
+    expect(moved).not.toBeNull();
     expect(moved?.querySelector(".subagent-foot a.subagent-open")).not.toBeNull();
     // The upgraded container paints its OWN header: the count comes from the
     // stages it now holds, and the status from the DRIVER, which has settled — not
@@ -893,10 +900,13 @@ describe("a pipeline's stages render inside the orchestrate call that started th
     expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline · 2 stages");
   });
 
-  it("carries a promoted stage's OPEN disclosure through the upgrade", () => {
-    // The disclosure controller and the `sub:<subtask>` key are both properties of
-    // the node, not of its position, so re-parenting must preserve both. A rebuild
-    // would fold the card the reader had opened.
+  it("carries a promoted stage's own NODE through the upgrade", () => {
+    // A RE-PARENT, not a rebuild: everything a stage card accumulates — its bound
+    // header, its footer ledger, its live tail subscription — is a property of the
+    // node, and a rebuild would drop all three on the floor. The card no longer
+    // holds a disclosure for a reader to have opened, so node identity IS the
+    // property to pin.
+    let promoted: Element | null | undefined;
     const wrap = renderThenGrow(
       {
         blocks: [toolUse("d-open"), toolUse(stageID("d-open", "plan"), "u-open-a")],
@@ -907,23 +917,14 @@ describe("a pipeline's stages render inside the orchestrate call that started th
         calls: [stage("d-open", "code", "u-open-b")],
       },
       (w) => {
-        const header = w.querySelector<HTMLElement>(
-          '.assistant-blocks > .subagent-block[data-subtask="u-open-a"] > .subagent-header',
-        );
-        header?.click();
-        expect(openContainerKeys().has("u-open-a")).toBe(true);
+        promoted = w.querySelector('.assistant-blocks > .subagent-block[data-subtask="u-open-a"]');
+        expect(promoted).not.toBeNull();
       },
     );
     const moved = wrap.querySelector<HTMLElement>(
       '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-open-a"]',
     );
-    expect(moved?.classList.contains("collapsed")).toBe(false);
-    expect(openContainerKeys().has("u-open-a")).toBe(true);
-    // Its sibling arrived collapsed, as every delegate card does.
-    const sibling = wrap.querySelector<HTMLElement>(
-      '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-open-b"]',
-    );
-    expect(sibling?.classList.contains("collapsed")).toBe(true);
+    expect(moved).toBe(promoted);
   });
 
   it("upgrades when a late driver declares two stages", () => {
@@ -942,7 +943,7 @@ describe("a pipeline's stages render inside the orchestrate call that started th
     const moved = wrap.querySelector(
       '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-late"]',
     );
-    expect(moved?.querySelector(":scope > .subagent-body")?.textContent).toContain("early work");
+    expect(moved).not.toBeNull();
   });
 
   it("re-homes a stage whose pipeline became known after its box was placed", () => {
@@ -957,11 +958,12 @@ describe("a pipeline's stages render inside the orchestrate call that started th
     );
     expect(shape(wrap)).toEqual(["pipeline(d-ooo)"]);
     expect(nested(wrap)).toEqual(["u-ooo-a", "u-ooo-b"]);
-    // A RE-PARENT, not a rebuild: the stranded box's streamed text came with it.
+    // RE-PARENTED. As above, the streamed text that distinguished a re-parent from a
+    // rebuild is not rendered any more, so the seat is what stays asserted.
     const moved = wrap.querySelector(
       '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-ooo-a"]',
     );
-    expect(moved?.querySelector(":scope > .subagent-body")?.textContent).toContain("planning");
+    expect(moved).not.toBeNull();
   });
 
   it("still renders a box for a driver that settled having dispatched no stage", () => {
@@ -1070,18 +1072,10 @@ describe("the auto-collapse registry: which arrivals close a tool group", () => 
     ).toEqual(expected);
   });
 
-  it("is keyed by CONTAINER: a parent-lane block does not close a DELEGATE's group", () => {
-    // The registry is per container, so the parent's prose supersedes the parent's
-    // own registrants and nothing inside the delegate's body. Without that keying a
-    // delegate's tool run would be split by every parent block that interleaved.
-    const wrap = render(
-      [toolUse("t1", "sub-A"), text("parent prose"), toolUse("t2", "sub-A")],
-      [call("t1", "Read"), call("t2", "Read")],
-    );
-    const body = wrap.querySelector(".subagent-block .subagent-body");
-    expect(body?.querySelectorAll(":scope > .tool-group")).toHaveLength(1);
-    expect(body?.querySelectorAll(".tool-call")).toHaveLength(2);
-  });
+  // The per-container keying case was here. Its subject is gone: a delegate's tool calls
+  // are dropped with the rest of its output, so the transcript holds no delegate tool run
+  // for an interleaved parent block to split. The parent-lane keying is still covered by
+  // the cases above.
 
   it("does not enrol a subagent box: a following block neither closes nor folds it", () => {
     // The non-contiguity contrast the file's header comment draws, now enforced
@@ -1093,7 +1087,10 @@ describe("the auto-collapse registry: which arrivals close a tool group", () => 
     );
     const cards = wrap.querySelectorAll<HTMLElement>(".assistant-blocks > .subagent-block");
     expect(cards).toHaveLength(1);
-    expect(cards[0]?.querySelectorAll(".subagent-body .message.assistant")).toHaveLength(2);
+    // The card has no disclosure for an arrival to close, and no body for the second
+    // same-subtask block to join.
+    expect(cards[0]?.querySelector(".subagent-body")).toBeNull();
+    expect(cards[0]?.classList.contains("collapsed")).toBe(false);
   });
 
   it("leaves a subagent box the reader opened open when the next block lands", () => {
@@ -1242,18 +1239,9 @@ describe("a mounted block picks up text that arrived after it mounted", () => {
     expect(wrap.querySelector(".message.assistant")?.innerHTML).toBe(before);
   });
 
-  it("reaches a block inside a subagent card too", () => {
-    const wrap = document.createElement("div");
-    const blocks = [text("delegate ", "sub-A")];
-    const m = growingMessage(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, false);
-
-    blocks[0]!["text"] = "delegate finished its walk.";
-    updateAssistantBody(wrap, m, CHAT_ID, false);
-    expect(wrap.querySelector(".subagent-body")?.textContent).toContain(
-      "delegate finished its walk",
-    );
-  });
+  // The delegate-hosted case was here, and it cannot exist: the transcript mounts no block
+  // of a delegate's, so there is none to pick up late text. The delegate's own page renders
+  // those blocks through the detached path, which `subagent-view.test.ts` covers.
 });
 
 // ---------------------------------------------------------------------------
@@ -1654,7 +1642,7 @@ describe("getLiveAnchor", () => {
     }
   });
 
-  it("has no anchor when only a DELEGATE is streaming", () => {
+  it("never anchors inside a delegate's card when a DELEGATE is the tail", () => {
     // The dispatcher seals the parent's bubble when the delegate's block
     // appends, so this is the ordinary shape of a running subagent. Null is the
     // answer rather than the delegate's bubble: that bubble sits inside a box
@@ -1668,10 +1656,14 @@ describe("getLiveAnchor", () => {
     blocks.push(text("delegate prose", "sub-A"));
     updateAssistantBody(wrap, m, CHAT_ID, true);
 
+    // The delegate's block renders nothing, so it contributes no caret and does not seal
+    // the parent's: one caret, at the top level, and it is the anchor. The old case put the
+    // only caret INSIDE the delegate's body and expected no anchor at all; that DOM no
+    // longer exists, so what is worth pinning is that an anchor is never inside a card.
     const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
     expect(live).toHaveLength(1);
-    expect(live[0]?.closest(".subagent-body")).not.toBeNull();
-    expect(getLiveAnchor()).toBeNull();
+    expect(live[0]?.closest(".subagent-block")).toBeNull();
+    expect(getLiveAnchor()).toBe(live[0]);
   });
 
   it("prefers a top-level bubble over a later delegate bubble", () => {
@@ -1913,9 +1905,10 @@ describe("thinking blocks mount open per LANE and seal on the next sibling", () 
     expect(labelOf(all[1])).toBe("Thinking…");
   });
 
-  it("leaves a delegate's own open trace alone when the parent thinks", () => {
-    // Different containers: the delegate's trace lives in its card's body, the
-    // parent's at top level, and neither seals the other.
+  it("renders no trace for a DELEGATE, and leaves the parent's open", () => {
+    // A delegate's thinking block is dropped like the rest of its output, so the two-lane
+    // case this used to assert has one lane in the DOM now: the parent's own trace, which
+    // the delegate's arrival must not seal.
     const wrap = document.createElement("div");
     const blocks: Record<string, unknown>[] = [thinking("delegate trace", "sub-A")];
     const m = liveMsg(blocks);
@@ -1925,10 +1918,9 @@ describe("thinking blocks mount open per LANE and seal on the next sibling", () 
     updateAssistantBody(wrap, m, CHAT_ID, true);
 
     const all = traces(wrap);
-    expect(all).toHaveLength(2);
-    for (const t of all) {
-      expect(t.open).toBe(true);
-    }
+    expect(all).toHaveLength(1);
+    expect(all[0]?.textContent).not.toContain("delegate trace");
+    expect(all[0]?.open).toBe(true);
   });
 
   it("finalize seals every open trace", () => {
@@ -2486,12 +2478,9 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
     mountHeadRange(m, { from: 0, to: 3 }, false, []);
 
     expect(shape(wrap)).toEqual(["card(sub-H)", "text(tail)"]);
-    // Ascending INSIDE it too: the reference is captured on the first touch even
-    // when it is null, or the box's own members mount in reverse.
-    const inner = [...wrap.querySelectorAll(".subagent-body .message.assistant")].map((e) =>
-      e.textContent?.trim(),
-    );
-    expect(inner).toEqual(["a", "b"]);
+    // The delegate's own members used to mount inside the card and pinned ascending order
+    // there as well. They are dropped now, so the top-level order above is the whole claim.
+    expect(wrap.querySelectorAll(".subagent-body .message.assistant")).toHaveLength(0);
   });
 
   it("keeps the insertion boundary below a container the insertion itself seated", () => {
@@ -2635,11 +2624,9 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
   });
 
   it("leaves a DELEGATE box standing when the drop takes the invocation that opened it", () => {
-    // The invocation block's element is the box, a container `pruneEmptyContainers` owns
-    // and removes only once nothing is left inside it. Released like an ordinary block it
-    // takes the delegate's own still-mounted prose out of the document, seals its bubble,
-    // and records the whole box's height against one ordinal. The fixture needs a delegate
-    // block BELOW the invocation and inside the box, or the removal is correct anyway.
+    // The card is the delegate's whole record in the transcript and the only route to its
+    // output, so a window that drops the invocation must not take it: `subagentCardFor`
+    // seats a card from any of the delegate's blocks, not just the one that names it.
     const blocks = [
       toolUse("inv-d", "sub-K"),
       text("delegate prose", "sub-K"),
@@ -2651,15 +2638,14 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
     // The stamp is the premise: without it the drop finds no element and the guard below
     // has nothing to refuse.
     expect(blockElement("m-boxdrop", 0)).toBe(box);
-    expect(box?.textContent).toContain("delegate prose");
+    // The delegate's prose is NOT in it: the card renders none of its delegate's output.
+    expect(box?.textContent).not.toContain("delegate prose");
+    expect(blockElement("m-boxdrop", 1)).toBeUndefined();
 
     dropHead(m, { from: 1, to: 3 }, []);
 
     expect(wrap.querySelector(".subagent-block")).toBe(box);
     expect(box?.parentElement?.classList.contains("assistant-blocks")).toBe(true);
-    // The delegate's own block is what the removal would have taken with it, while
-    // `st.window` went on counting it mounted.
-    expect(box?.contains(blockElement("m-boxdrop", 1) ?? null)).toBe(true);
     expect(mountedWindow("m-boxdrop")).toEqual({ from: 1, to: 3 });
   });
 
@@ -2688,13 +2674,16 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
     const { wrap, m } = renderRange(blocks, [driver, stage], { id: "m-pipedrop" });
     const box = wrap.querySelector<HTMLElement>(".subagent-container");
     expect(blockElement("m-pipedrop", 0)).toBe(box);
-    expect(box?.textContent).toContain("stage prose");
+    // A pipeline's body holds its stages' CARDS, never their prose.
+    const stageCard = box?.querySelector<HTMLElement>(".subagent-block");
+    expect(stageCard).not.toBeNull();
+    expect(box?.textContent).not.toContain("stage prose");
 
     dropHead(m, { from: 1, to: 3 }, []);
 
     expect(wrap.querySelector(".subagent-container")).toBe(box);
     expect(box?.parentElement?.classList.contains("assistant-blocks")).toBe(true);
-    expect(box?.contains(blockElement("m-pipedrop", 1) ?? null)).toBe(true);
+    expect(box?.contains(stageCard ?? null)).toBe(true);
     expect(mountedWindow("m-pipedrop")).toEqual({ from: 1, to: 3 });
   });
 
@@ -2879,9 +2868,11 @@ describe("blockElement resolves a block's own element", () => {
     expect(el?.dataset["blockMsg"]).toBe("m-row");
   });
 
-  it("gives a delegate-hosted text block the bubble, which is the drop there", () => {
+  it("gives a delegate-hosted text block NO element, because nothing renders it", () => {
     build("m-sub", [text("delegate prose", "sub-Z")]);
-    expect(blockElement("m-sub", 0)?.classList.contains("message")).toBe(true);
+    expect(blockElement("m-sub", 0)).toBeUndefined();
+    // The delegate still has its card; it is just not this block's element.
+    expect(document.querySelector(".subagent-block[data-subtask='sub-Z']")).not.toBeNull();
   });
 
   it("gives a reasoning block its details element", () => {

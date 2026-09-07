@@ -154,25 +154,17 @@ describe("the resume label counts only blocks the reader can reach", () => {
     block("delegate c", "sa-1"),
   ];
 
-  it("does NOT count a collapsed delegate's blocks", () => {
+  it("does NOT count a delegate's blocks", () => {
     parkThenLand(delegateBlocks());
-    // The mount state: a delegate box is collapsed by default, so the three
-    // blocks inside it contribute no document height — two blocks of distance.
+    // The transcript renders none of the three, in any fold state, so the reader's
+    // distance is the two parent blocks.
     expect(lastLabel()).toBe("2 new blocks");
   });
 
-  it("counts the SAME blocks once the delegate's card is expanded", () => {
-    const chat = parkThenLand(delegateBlocks());
-    toggleAndRepaint(chat, '.subagent-block[data-subtask="sa-1"] > .subagent-header');
-    expect(lastLabel()).toBe("5 new blocks");
-  });
-
-  it("stops counting them again when the reader closes the card", () => {
-    const chat = parkThenLand(delegateBlocks());
-    toggleAndRepaint(chat, '.subagent-block[data-subtask="sa-1"] > .subagent-header');
-    toggleAndRepaint(chat, '.subagent-block[data-subtask="sa-1"] > .subagent-header');
-    expect(lastLabel()).toBe("2 new blocks");
-  });
+  // The expand/collapse pair was here, and both halves are unreachable: a card is not a
+  // disclosure, so there is no toggle to change this count. Their point — that the count
+  // follows what is REACHABLE rather than what is present — is now the single case above,
+  // because a delegate's blocks are never reachable in the transcript at all.
 
   it("counts parent-stream blocks whatever is collapsed around them", () => {
     parkThenLand([block("only parent"), block("delegate", "sa-1")]);
