@@ -255,6 +255,24 @@ interface GapInfo {
 
 const HIDDEN_ABORT_MS = 30_000;
 
+/** The server's NAMED keepalive (`heartbeatEventName`, internal/agent/heartbeat.go).
+ *  A named event never reaches `onmessage`, so it needs its own listener — which is
+ *  the whole reason the server publishes a named event rather than relying on the
+ *  transport's COMMENT keepalive, which the EventSource parser discards. */
+const SSE_HEARTBEAT_EVENT = "heartbeat";
+
+/** Cadence of the received-event watchdog, matching the server's heartbeat interval
+ *  (keepaliveInterval, internal/agent). A finer tick could observe nothing new. */
+const SSE_WATCHDOG_TICK_MS = 15_000;
+
+/** How long the stream may deliver NO event before the watchdog reconnects it.
+ *
+ *  Five missed heartbeats. It has to clear 2x the heartbeat interval with margin
+ *  rather than one interval: the beat is idle-gated, so a real event landing just
+ *  before a tick pushes the next beat a whole interval out, which makes the
+ *  worst-case silence on a perfectly healthy stream 30s. */
+const SSE_SILENCE_MS = 75_000;
+
 /** Default timeout for bridge command channel (long-running agent turns). */
 const COMMAND_TIMEOUT_MS = 15 * 60 * 1000;
 
@@ -359,6 +377,13 @@ class TransportController {
    *  design — restarted the ramp at 500ms on every cycle. */
   private lastBackoffMs = 0;
   private hiddenSince: number | null = null;
+
+  /** Date.now() when this connection last delivered an EVENT — an `onmessage` frame
+   *  or a named heartbeat. Keepalives are comments the parser discards, so an event's
+   *  arrival is the only byte-recency signal a browser has. Stamped when the watchdog
+   *  arms, so the silence window is measured from the CONNECT rather than from load. */
+  private lastEventAt = Date.now();
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
 
   /** Whether the chat store has been populated, so a frame can find the chat
    *  it names. See `holdUntilHydrated` for why this gate exists. */
@@ -497,12 +522,65 @@ class TransportController {
     }
   }
 
+  /** Arm the received-event watchdog for the connection about to open, stamping the
+   *  clock so the silence window starts at THIS connect. */
+  private armWatchdog(): void {
+    this.stopWatchdog();
+    this.lastEventAt = Date.now();
+    this.watchdogTimer = setInterval(() => {
+      this.checkSilence();
+    }, SSE_WATCHDOG_TICK_MS);
+  }
+
+  /** Release the watchdog. Public because the module-level unload cleanup owns it,
+   *  beside `cancelInflight`, so navigating away does not leak a timer. */
+  stopWatchdog(): void {
+    if (this.watchdogTimer !== null) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+  }
+
+  /** Reconnect when the stream has delivered NO event for the whole silence window.
+   *
+   *  A SECOND, INDEPENDENT liveness signal — not a reinterpretation of `readyState`,
+   *  and it reads none. The one place that does (`sseIsDead`) must treat a
+   *  mid-handshake stream as ALIVE, because `pageshow` fires on every cold load after
+   *  `init` opened the source, so a bare `!== OPEN` there would tear that stream down
+   *  and reopen it on every page load. Byte recency answers the question `readyState`
+   *  cannot: iOS reports OPEN for a stream the OS already tore down.
+   *
+   *  Going through `nextBackoff` rather than reconnecting at delay 0 is what makes
+   *  REPEATED silence escalate — the ramp is client-owned. KNOWN LIMITATION, stated
+   *  narrowly: this bounds a SAME-DOCUMENT retry loop only. A fresh document starts
+   *  with `lastBackoffMs = 0`, so the ramp dies with every reloaded document, and a
+   *  persisted reload counter is deliberately out of scope.
+   *
+   *  Skipped while the document is HIDDEN: a backgrounded tab has throttled timers,
+   *  iOS kills the stream anyway, and the existing visibilitychange/pageshow kick
+   *  covers the return immediately — so reconnecting here is work nobody is waiting
+   *  for. */
+  private checkSilence(): void {
+    if (document.visibilityState === "hidden") {
+      return;
+    }
+    if (Date.now() - this.lastEventAt <= SSE_SILENCE_MS) {
+      return;
+    }
+    // `scheduleReconnect` tears the source down itself, which is what stops the dead
+    // one delivering beside its own replacement and moving the cursor.
+    this.scheduleReconnect(this.nextBackoff());
+  }
+
   // --- SSE ---
 
   /** Tear down the current connection state, transitioning to idle.
    *  Handles cleanup of EventSource and reconnect timers regardless of
    *  current phase. Called before (re)connecting to ensure a clean slate. */
   private teardown(): void {
+    // Before the idle early-return: the watchdog belongs to a CONNECTION, and the
+    // backoff window between a teardown and its reconnect has none to watch.
+    this.stopWatchdog();
     if (this.conn.phase === "idle") {
       return;
     }
@@ -524,6 +602,8 @@ class TransportController {
     this.onStatus("connecting");
     this.cursorAtConnect = this.lastSeenEventID;
     this.openedAt = 0;
+    // Re-armed per connect; `teardown` above just cleared the previous one.
+    this.armWatchdog();
     const source = new EventSource(eventsURL(this.lastSeenEventID));
     this.conn = { phase: "connecting", source };
     source.onopen = (): void => {
@@ -532,6 +612,8 @@ class TransportController {
       this.onStatus("connected");
     };
     source.onmessage = (e: MessageEvent): void => {
+      // The watchdog's clock: an EVENT arrived, whether or not it parses below.
+      this.lastEventAt = Date.now();
       if (e.lastEventId !== "") {
         const id = Number(e.lastEventId);
         if (Number.isFinite(id) && id > this.lastSeenEventID) {
@@ -579,6 +661,21 @@ class TransportController {
       }
       this.onMsg(evt);
     };
+    // A named event never reaches `onmessage`, which is why this listener exists at
+    // all. It also advances the cursor, so the browser's own `Last-Event-ID` and this
+    // module's stay in step across a reconnect.
+    source.addEventListener(SSE_HEARTBEAT_EVENT, (e: Event): void => {
+      this.lastEventAt = Date.now();
+      // Narrowing: `addEventListener`'s generic overload types the argument as
+      // `Event`, and every frame the server sends under this name is a MessageEvent.
+      const msg = e as MessageEvent<string>;
+      if (msg.lastEventId !== "") {
+        const id = Number(msg.lastEventId);
+        if (Number.isFinite(id) && id > this.lastSeenEventID) {
+          this.lastSeenEventID = id;
+        }
+      }
+    });
     source.onerror = (): void => {
       if (source.readyState === EventSource.CLOSED) {
         const bo = this.nextBackoff();
@@ -768,6 +865,7 @@ export { computeBackoff, BACKOFF_CAP_MS } from "./lib/backoff.js";
 const instance = new TransportController();
 registerCleanup(() => {
   instance.cancelInflight();
+  instance.stopWatchdog();
 });
 
 export function init(msg: MsgHandler, status: StatusHandler): void {

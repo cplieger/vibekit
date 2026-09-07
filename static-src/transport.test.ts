@@ -429,6 +429,13 @@ describe("hidden-abort over in-flight requests", () => {
     close(): void {
       this.readyState = FakeEventSource.CLOSED;
     }
+    /** Named-event listeners. A named SSE event never reaches `onmessage`, so the
+     *  transport registers its heartbeat listener here. Recorded rather than
+     *  dropped: a fake that discards a registration cannot be driven from it. */
+    readonly named: ((e: MessageEvent) => void)[] = [];
+    addEventListener(_type: string, fn: (e: MessageEvent) => void): void {
+      this.named.push(fn);
+    }
   }
 
   it("aborts a non-prompt request once the page was hidden past the threshold", async () => {
@@ -570,6 +577,13 @@ describe("the replay cursor", () => {
     close(): void {
       this.readyState = FakeSource.CLOSED;
     }
+    /** Named-event listeners. A named SSE event never reaches `onmessage`, so the
+     *  transport registers its heartbeat listener here. Recorded rather than
+     *  dropped: a fake that discards a registration cannot be driven from it. */
+    readonly named: ((e: MessageEvent) => void)[] = [];
+    addEventListener(_type: string, fn: (e: MessageEvent) => void): void {
+      this.named.push(fn);
+    }
   }
 
   /** One SSE frame as the browser delivers it: `lastEventId` is what advances the
@@ -650,6 +664,13 @@ describe("the declared snapshot chat", () => {
     }
     close(): void {
       this.readyState = FakeSnapshotSource.CLOSED;
+    }
+    /** Named-event listeners. A named SSE event never reaches `onmessage`, so the
+     *  transport registers its heartbeat listener here. Recorded rather than
+     *  dropped: a fake that discards a registration cannot be driven from it. */
+    readonly named: ((e: MessageEvent) => void)[] = [];
+    addEventListener(_type: string, fn: (e: MessageEvent) => void): void {
+      this.named.push(fn);
     }
   }
 
