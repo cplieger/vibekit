@@ -37,9 +37,17 @@ for (const id of [
 import { vi } from "vitest";
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
+// Spy-wrapped rather than replaced: the height cache is what a departing row hands
+// over, so the ARGUMENT is the contract, and the real recording still has to run for
+// the spacers that stand in for the row.
+vi.mock("./block-heights.js", { spy: true });
+
 const store = await import("./store.js");
 const sigs = await import("./store-signals.js");
 const messages = await import("./messages.js");
+const heights = await import("./block-heights.js");
+const { mountedWindow } = await import("./messages-blocks.js");
+const { KEY_ATTR } = await import("./reconcile.js");
 
 messages.mountChatView();
 
@@ -72,6 +80,43 @@ function mountStreaming(blocks: Block[]): { chat: string; msgID: string } {
     blocks,
   } as Message);
   return { chat, msgID };
+}
+
+/** Mount one chat over exactly `msgs`, the shape a page load hands the renderer. */
+function mountChat(msgs: Message[]): string {
+  const chat = `c-${String(++seq)}`;
+  store.setSessions([{ ...session(chat), messages: msgs, message_count: msgs.length } as Session]);
+  store.setActive(chat);
+  store.bumpMessages(chat);
+  return chat;
+}
+
+function asst(id: string, texts: string[]): Message {
+  return {
+    id,
+    role: "assistant",
+    ts: 2,
+    content: "",
+    blocks: texts.map((text) => ({ type: "text", text })),
+  } as unknown as Message;
+}
+
+function turnCard(turnID: string): HTMLElement {
+  const card = (messages.activeTranscriptView() ?? document.body).querySelector<HTMLElement>(
+    `:scope > [${KEY_ATTR}="${turnID}"]`,
+  );
+  if (card === null) {
+    throw new Error(`no card for turn ${turnID}`);
+  }
+  return card;
+}
+
+function row(messageID: string): HTMLElement {
+  const el = document.querySelector<HTMLElement>(`.msg-wrap[${KEY_ATTR}="${messageID}"]`);
+  if (el === null) {
+    throw new Error(`no row for message ${messageID}`);
+  }
+  return el;
 }
 
 describe("disposeMessage clears the row's block signals", () => {
@@ -116,5 +161,86 @@ describe("disposeMessage clears the row's block signals", () => {
     expect(sigs.blockThinkingSigs.get(sigs.blockKey(msgID, 0))).toBeUndefined();
     expect(sigs.blockTextSigs.get(sigs.blockKey("m-foreign", 0))).toBe(foreign);
     sigs.blockTextSigs.clear(sigs.blockKey("m-foreign", 0));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The height a departing row leaves behind, and where it is read.
+//
+// `reconcile` runs `onRemove` in place, between `el.remove()` calls, so the row
+// measurement moved AHEAD of the mutation: one read pass per reconcile instead of
+// one forced reflow per removed row. Two rules come out of that, and these cases
+// pin both — the number a live row leaves is unchanged, and a row whose subtree the
+// page is not rendering is measured not at all.
+// ---------------------------------------------------------------------------
+
+describe("what a dropped row records", () => {
+  it("records the height the row measured while it was still mounted", () => {
+    const chat = mountChat([
+      { id: "u-live", role: "user", ts: 1, content: "prompt" } as Message,
+      asst("a-live-1", ["first"]),
+      asst("a-live-2", ["second"]),
+    ]);
+    const px = row("a-live-2").offsetHeight;
+    expect(px).toBeGreaterThan(0);
+
+    // The tail row leaves the body (a rewind's shape): the body reconciles, and
+    // `onRemove` disposes the row it dropped.
+    const s = store.get(chat)!;
+    s.messages = s.messages.slice(0, 2);
+    store.bumpMessages(chat, "shape");
+
+    expect(vi.mocked(heights.recordRowHeight).mock.calls).toEqual([
+      ["a-live-2", { from: 0, to: 1 }, px],
+    ]);
+  });
+
+  it("disposes a FOLDED card's rows with no height recorded for them", async () => {
+    // TWO prose blocks, so folding this turn hides something (turns.ts
+    // `turnFoldHides`) and the policy folds it the moment a newer turn exists. A
+    // folded card holds a body only while something has ASKED for one, which is the
+    // search reveal's walk grant — and that body is `content-visibility: hidden`
+    // and `block-size: 0`, so its rows have no height to hand over.
+    const chat = mountChat([
+      { id: "u-fold", role: "user", ts: 1, content: "older" } as Message,
+      asst("a-fold", ["one", "two"]),
+      { id: "u-new", role: "user", ts: 3, content: "newer" } as Message,
+      asst("a-new", ["newest"]),
+    ]);
+    expect(turnCard("u-fold").hasAttribute("data-folded")).toBe(true);
+
+    await messages.mountTurnBodyForWalk(chat, "u-fold");
+    expect(turnCard("u-fold").hasAttribute("data-folded")).toBe(true);
+    expect(mountedWindow("a-fold")).toEqual({ from: 0, to: 2 });
+    vi.mocked(heights.recordRowHeight).mockClear();
+
+    // The reveal ends, so the grant lapses and the fold pass takes the body back.
+    messages.endWalkReveal(chat);
+    store.bumpMessages(chat, "shape");
+
+    // Disposed: its render state is gone with its row.
+    expect(mountedWindow("a-fold")).toBeUndefined();
+    expect(vi.mocked(heights.recordRowHeight)).not.toHaveBeenCalled();
+  });
+
+  it("disposes a PARKED view's rows with no height recorded for them", () => {
+    const chat = mountChat([
+      { id: "u-park", role: "user", ts: 1, content: "prompt" } as Message,
+      asst("a-park", ["parked prose"]),
+    ]);
+    expect(mountedWindow("a-park")).toEqual({ from: 0, to: 1 });
+
+    // Switching chats PARKS the view: `content-visibility: hidden`, so its rows
+    // hold no geometry either, and the LRU dispose that eventually claims them
+    // must not ask for any.
+    const other = `c-${String(++seq)}`;
+    store.setSessions([store.get(chat)!, session(other)] as Session[]);
+    store.setActive(other);
+    vi.mocked(heights.recordRowHeight).mockClear();
+
+    messages.disposeChatView(chat);
+
+    expect(mountedWindow("a-park")).toBeUndefined();
+    expect(vi.mocked(heights.recordRowHeight)).not.toHaveBeenCalled();
   });
 });
