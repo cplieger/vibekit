@@ -49,6 +49,10 @@
 12-chat.css
 12-tabs.css
 13-messages.css
+# The capped-snapshot note. Its own slice, immediately after the messages skin so
+# it wins a tie by source order; 13-messages.css is the natural home and was held
+# open by a concurrent session.
+13-truncation.css
 29-turns.css
 23-shortcuts.css
 24-find.css

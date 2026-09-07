@@ -1167,6 +1167,7 @@ export function removeChat(id: string): void {
     msgIndex.delete(id);
     clearSnapshotSeq(id);
     clearLiveTurnMessage(id);
+    clearTruncatedSnapshots(id);
     // Every per-message streaming signal the chat's window minted: the renderer's
     // disposeMessage only reaches rows a reconcile removes, and a background chat's never see one.
     clearMessageSignals(id, doomed.messages);
@@ -1328,11 +1329,19 @@ function ingestMessage(chatID: string, incoming: Message, persisted: boolean): v
 
 /** message_appended → merge path. It is also the PERSIST echo: the server writes the chat
  *  file before it broadcasts this, so an id arriving here is no longer the client's only
- *  copy and stops being the in-flight turn. */
+ *  copy and stops being the in-flight turn.
+ *
+ *  It is therefore also the HEAL for a capped connect-time snapshot: this frame carries the
+ *  whole persisted message, so the tail the cap left is replaced and the marker goes. The
+ *  clear lives HERE rather than in the shared merge path deliberately — `message_created`
+ *  and `message_updated` route through the same merge and neither is a whole message, and
+ *  the `turn_state` handler itself calls `upsertMessage` right after noting the marker, so a
+ *  clear in the merge would erase the marker in the same tick it was set. */
 export function appendMessage(chatID: string, msg: Message): void {
   if (liveTurnMessage(chatID) === msg.id) {
     clearLiveTurnMessage(chatID);
   }
+  clearTruncatedSnapshot(chatID, msg.id);
   ingestMessage(chatID, msg, true);
 }
 
@@ -1474,6 +1483,53 @@ export function setSnapshotSeq(chatID: string, messageID: string, seq: number): 
 /** Drop the chunk watermark (turn finished or chat removed). */
 export function clearSnapshotSeq(chatID: string): void {
   snapshotSeqs.delete(chatID);
+}
+
+/** Per-chat set of message ids whose connect-time snapshot was TRUNCATED: the
+ *  server capped the turn_state payload and sent only the TAIL of the in-flight
+ *  turn, so what the store holds for that id is not the whole reply.
+ *
+ *  It exists so the renderer can SAY so. Without a consumer the cap would be the
+ *  mistake design.md §3 retracted — a client reading a bounded payload as
+ *  complete — and `truncated` is a required wire field precisely so the marker
+ *  cannot be missed. Keyed by chat because one in-flight turn per chat, and the
+ *  set rather than a flag because a reconnect can name a different message than
+ *  the previous one. */
+const truncatedSnapshots = new Map<string, Set<string>>();
+
+/** Record that this message id arrived as a capped snapshot. */
+export function noteTruncatedSnapshot(chatID: string, messageID: string): void {
+  if (chatID === "" || messageID === "") {
+    return;
+  }
+  const set = truncatedSnapshots.get(chatID);
+  if (set === undefined) {
+    truncatedSnapshots.set(chatID, new Set([messageID]));
+    return;
+  }
+  set.add(messageID);
+}
+
+/** Whether the store's copy of this message is the TAIL of a capped snapshot. */
+export function isTruncatedSnapshot(chatID: string, messageID: string): boolean {
+  return truncatedSnapshots.get(chatID)?.has(messageID) === true;
+}
+
+/** Drop one id's marker: the whole message has arrived. */
+export function clearTruncatedSnapshot(chatID: string, messageID: string): void {
+  const set = truncatedSnapshots.get(chatID);
+  if (set === undefined) {
+    return;
+  }
+  set.delete(messageID);
+  if (set.size === 0) {
+    truncatedSnapshots.delete(chatID);
+  }
+}
+
+/** Drop every marker for a chat (turn finished, transport gap, or chat removed). */
+export function clearTruncatedSnapshots(chatID: string): void {
+  truncatedSnapshots.delete(chatID);
 }
 
 /** Reserve the block indices below `upto` whose own frame has not arrived yet.

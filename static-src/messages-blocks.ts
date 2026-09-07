@@ -5,7 +5,7 @@ import type { Message, Block, ToolCall, PlanStatus, FileChange, SteerMark } from
 import type { BlockRange } from "./block-window.js";
 import { effect, el } from "@cplieger/reactive";
 import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
-import { getActiveId, setMountedBlockProbe } from "./store.js";
+import { getActiveId, isTruncatedSnapshot, setMountedBlockProbe } from "./store.js";
 import {
   blockKey,
   ensureBlockTextSig,
@@ -368,6 +368,7 @@ function buildBody(
   const want = range ?? wholeOf(m);
   const blocksEl = el("div", { className: "assistant-blocks" });
   wrap.appendChild(blocksEl);
+  syncTruncationNote(wrap, chatID, m.id);
   const st: MsgRender = {
     chatID,
     blocksEl,
@@ -562,6 +563,45 @@ function updateBody(
   flushSteerNotes(st, marks, m.id, st.window.from, st.window.to);
   syncGroupCollapse(st, idx);
   syncMountedText(st, m);
+  syncTruncationNote(wrap, chatID, m.id);
+}
+
+/** The class the CSS slice keys on. */
+const CLS_TRUNCATION_NOTE = "msg-truncated-note";
+
+/** What the note says. The reader's question is "is this the whole reply", so the
+ *  answer leads and the remedy follows; no byte counts, which are diagnostics a
+ *  reader cannot act on. */
+const TRUNCATION_NOTE_TEXT = "Earlier output is not shown. It arrives when the turn ends.";
+
+/** Mount or drop the withheld-output note at the TOP of a truncated message's body.
+ *
+ *  A STATIC note, never a show-more: the withheld bytes are not on the wire, so a
+ *  control here could only fail, and `#vibekit-ui` forbids a control that does
+ *  nothing outright — one teaches a reader to distrust every other one.
+ *
+ *  Idempotent mount/update, the shape `syncRefusal` and `syncCodeReferences`
+ *  already use, because the marker's two lifetimes do not line up: it is set on the
+ *  connect frame and cleared by `message_appended` at turn end, and neither moment
+ *  rebuilds the body. So both the build and the update path ask, and the answer is
+ *  read fresh rather than captured.
+ *
+ *  A DETACHED render needs no guard and gets none: `buildDetachedBody` renders under
+ *  the SYNTHETIC id `detachedID` composes, which no marker is ever filed under — the
+ *  subagent page shows one delegate's blocks while the cap is a property of the whole
+ *  message's transfer, so the claim belongs in the transcript. */
+function syncTruncationNote(wrap: HTMLElement, chatID: string, msgID: string): void {
+  const existing = wrap.querySelector(`:scope > .${CLS_TRUNCATION_NOTE}`);
+  if (!isTruncatedSnapshot(chatID, msgID)) {
+    existing?.remove();
+    return;
+  }
+  if (existing !== null) {
+    return;
+  }
+  // FIRST child, so it reads as a preface to the body rather than as a footnote
+  // to whatever the pass happened to mount last.
+  wrap.prepend(el("div", { className: CLS_TRUNCATION_NOTE }, TRUNCATION_NOTE_TEXT));
 }
 
 /** Bring every mounted block up to the store's current text for that block.

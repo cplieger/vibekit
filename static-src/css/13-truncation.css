@@ -1,0 +1,23 @@
+/* The withheld-output note at the top of a truncated assistant message.
+ *
+ * A connect-time turn_state carries only the TAIL of a big in-flight turn, and
+ * this one static line is what stops a reader taking that tail for the whole
+ * reply. A NOTE and not a control: the withheld bytes are not on the wire, so a
+ * show-more could only fail, and `#vibekit-ui` forbids a control that does
+ * nothing.
+ *
+ * Its own slice rather than a rule in 13-messages.css, and the reason is
+ * mechanical: that file is modified by a concurrent session, so an edit there
+ * would collide. Registered immediately after it in MANIFEST, so a tie at equal
+ * specificity resolves here — source order is the cascade.
+ *
+ * Tertiary ink and no fill: the note reports a transport fact rather than an
+ * outcome, so it must not read as a warning about the reply. */
+.msg-truncated-note {
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-sm);
+  font-style: italic;
+  /* One line's separation from the prose it prefaces. The body is a flex column
+   * with its own gap, so this needs no margin of its own. */
+  line-height: 1.5;
+}

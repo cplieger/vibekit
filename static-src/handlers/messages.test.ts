@@ -10,7 +10,14 @@
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import { setSessions, get, liveTurnMessage, tabStatusFor } from "../store.js";
+import {
+  setSessions,
+  get,
+  liveTurnMessage,
+  tabStatusFor,
+  isTruncatedSnapshot,
+  clearTruncatedSnapshots,
+} from "../store.js";
 import type { Session, Message } from "../types.js";
 
 // Arguments are FORWARDED, not discarded: the paths a completed call reports are
@@ -448,5 +455,79 @@ describe("tool_call_update", () => {
       status: "in_progress",
     });
     expect(mockMarkGitDirty).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The capped-snapshot marker's two SSE moments.
+//
+// The connect-time cap sends only the TAIL of a big in-flight turn, so a reader
+// shown that tail with nothing saying so reads a bounded payload as the whole
+// reply — the mistake design.md §3 retracted. `truncated` is a REQUIRED wire
+// field for exactly that reason, and this is its consumer.
+// ---------------------------------------------------------------------------
+describe("turn_state truncation marker", () => {
+  beforeEach(() => {
+    setSessions([makeSession("chat-1")]);
+    clearTruncatedSnapshots("chat-1");
+  });
+
+  it("a truncated turn_state records the marker for its message", () => {
+    fireSSE("turn_state", "chat-1", {
+      message: { id: "m1", role: "assistant", ts: 0, content: "…the tail of a big turn" },
+      chunk_seq: 400,
+      truncated: true,
+    });
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(true);
+    // The snapshot is still APPLIED: a bounded transcript is the point, not none.
+    expect(get("chat-1")?.messages.map((m) => m.id)).toEqual(["m1"]);
+  });
+
+  it("an untruncated turn_state records nothing", () => {
+    fireSSE("turn_state", "chat-1", {
+      message: { id: "m1", role: "assistant", ts: 0, content: "a short reply" },
+      chunk_seq: 2,
+      truncated: false,
+    });
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
+  });
+
+  // The HEAL. message_appended is the persist echo, so it carries the whole
+  // message and the note has nothing left to claim.
+  it("a later message_appended for the same id clears it", () => {
+    fireSSE("turn_state", "chat-1", {
+      message: { id: "m1", role: "assistant", ts: 0, content: "…the tail" },
+      chunk_seq: 400,
+      truncated: true,
+    });
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(true);
+
+    fireSSE("message_appended", "chat-1", {
+      id: "m1",
+      role: "assistant",
+      ts: 1,
+      content: "the whole reply, from the chat file",
+    });
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
+  });
+
+  // A workflow step's snapshot is capped like any other, and the two marks are
+  // orthogonal: `workflow_step` says whose turn it is, `truncated` says whether
+  // the payload is complete.
+  it("marks a truncated workflow-step snapshot too, without latching thinking", () => {
+    fireSSE("turn_state", "chat-1", {
+      message: { id: "m1", role: "assistant", ts: 0, content: "…the step's tail" },
+      chunk_seq: 400,
+      workflow_step: true,
+      truncated: true,
+    });
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(true);
+    expect(get("chat-1")?.thinking).toBe(false);
+  });
+
+  // A bare busy signal withholds nothing, so there is no id to mark.
+  it("a turn_state with no message records nothing", () => {
+    fireSSE("turn_state", "chat-1", { chunk_seq: 0, truncated: false });
+    expect(get("chat-1")?.messages).toEqual([]);
   });
 });

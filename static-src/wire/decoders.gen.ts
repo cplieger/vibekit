@@ -1562,6 +1562,7 @@ export const decodeTurnEndedPayload: Decoder<TurnEndedPayload> = (v) => {
 export const decodeTurnStatePayload: Decoder<TurnStatePayload> = (v) => {
   const o = asObject(v, "$.turn_state_payload");
   const out: TurnStatePayload = {
+    truncated: reqBool(o, "truncated", "$.turn_state_payload"),
   };
   if (o["message"] !== undefined && o["message"] !== null) out.message = decodeMessage(o["message"]);
   const status = o["status"] === null ? undefined : optStr(o, "status", "$.turn_state_payload");

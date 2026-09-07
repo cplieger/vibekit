@@ -18,6 +18,7 @@ import {
   setAgentStatus,
   setSnapshotSeq,
   noteLiveTurnMessage,
+  noteTruncatedSnapshot,
   get,
 } from "../store.js";
 import { markGitDirty } from "../git.js";
@@ -122,6 +123,14 @@ onSSE("turn_state", (chatID, p) => {
     // The snapshot is the server's unflushed buffer, so this id is
     // unpersisted by construction.
     noteLiveTurnMessage(chatID, msg.id);
+    // BEFORE the upsert, so the body's first paint already carries the note: the
+    // connect-time cap sends only the TAIL of a big turn, and a reader shown the
+    // tail with nothing saying so reads a bounded payload as the whole reply.
+    // `truncated` is a REQUIRED wire field, so an absent marker cannot mean
+    // "complete" — it means an older server, which capped nothing.
+    if (p.truncated) {
+      noteTruncatedSnapshot(chatID, msg.id);
+    }
     upsertMessage(chatID, msg);
   }
   if (p.status !== undefined && p.status !== "") {

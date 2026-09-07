@@ -27,7 +27,14 @@
 // their next activation instead of fanning a fetch out per open chat.
 // ---------------------------------------------------------------------------
 
-import { setThinking, clearSnapshotSeq, clearLiveTurnMessage, get, tabStatusFor } from "./store.js";
+import {
+  setThinking,
+  clearSnapshotSeq,
+  clearLiveTurnMessage,
+  clearTruncatedSnapshots,
+  get,
+  tabStatusFor,
+} from "./store.js";
 import { setTabStatus, tabIdFor } from "./tabs.js";
 import { hasPendingDecision } from "./decision-dock.js";
 import { drainModelSwitchQueue } from "./model-switcher.js";
@@ -45,6 +52,12 @@ export function clearTurnState(chatID: string): void {
   // the chat file now holds under a different shape.
   clearSnapshotSeq(chatID);
   clearLiveTurnMessage(chatID);
+  // The third fact from the same connect: a capped turn_state's withheld-output
+  // note. The turn is over, so `message_appended` has delivered the whole message
+  // (the outcome door) or the replay ring no longer covers what was missed (the
+  // gap door) — either way there is nothing left for the note to be true about,
+  // and left standing it claims output is still coming.
+  clearTruncatedSnapshots(chatID);
   // A queued mid-turn model switch drains on the turn ending. On the gap door the
   // turn_ended that would have drained it may be among the dropped events, which
   // is what left the switch stranded behind a stuck `.pending` pill.
