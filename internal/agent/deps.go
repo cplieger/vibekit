@@ -139,6 +139,10 @@ type acpSessionFacts interface {
 	// SessionTitle returns KAS's own title (flat _meta.title). Advisory:
 	// creation always yields "New Session", so adopt it only for a default name.
 	SessionTitle() string
+	// ContextThresholds returns the session's summarization and truncation
+	// percentages. Either reads 0 when the load result omitted it, which is why
+	// every caller writes only a positive value.
+	ContextThresholds() (summarization, truncation float64)
 	// Modes returns the session modes the agent supports; empty if it has none.
 	Modes() []vibekit.SessionMode
 	// Catalog returns every advertised model, UNFILTERED — the entitlement input

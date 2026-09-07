@@ -423,15 +423,20 @@ type Message struct {
 	TurnTruncated bool `json:"turn_truncated,omitempty"`
 }
 
-// Usage is a chat's last-known context and billing snapshot.
+// Usage is a chat's last-known context and billing snapshot, plus the percentages at
+// which the SESSION summarizes and truncates its own context. Both thresholds are
+// omitempty because 0 means UNKNOWN — a chat that has never resumed receives neither,
+// and the client applies its own fallback.
 type Usage struct {
-	MeteringItems []MeteringItem `json:"metering_items,omitempty"`
-	ContextPct    float64        `json:"context_pct"`
-	ContextSize   int            `json:"context_size"`
-	Credits       float64        `json:"credits"`
-	TurnCount     int            `json:"turn_count"`
-	LastTurnMs    float64        `json:"last_turn_ms"`
-	HasRealData   bool           `json:"has_real_data"`
+	MeteringItems             []MeteringItem `json:"metering_items,omitempty"`
+	ContextPct                float64        `json:"context_pct"`
+	SummarizationThresholdPct float64        `json:"summarization_threshold_pct,omitempty"`
+	TruncationThresholdPct    float64        `json:"truncation_threshold_pct,omitempty"`
+	ContextSize               int            `json:"context_size"`
+	Credits                   float64        `json:"credits"`
+	TurnCount                 int            `json:"turn_count"`
+	LastTurnMs                float64        `json:"last_turn_ms"`
+	HasRealData               bool           `json:"has_real_data"`
 }
 
 // MeteringItem is one usage dimension from kiro-cli's meteringUsage array.

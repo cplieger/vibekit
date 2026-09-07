@@ -18,6 +18,7 @@ const {
   openTangentChat,
   openRunView,
   setSupervisedDispatch,
+  compactDispatch,
   launchDispatch,
   recipesDispatch,
   submitPrompt,
@@ -30,6 +31,7 @@ const {
   openTangentChat: vi.fn(),
   openRunView: vi.fn(),
   setSupervisedDispatch: vi.fn(),
+  compactDispatch: vi.fn(),
   launchDispatch: vi.fn(),
   recipesDispatch: vi.fn(),
   submitPrompt: vi.fn(),
@@ -77,7 +79,10 @@ vi.mock("./files-picker.js", () => ({ openFilePicker }));
 vi.mock("./chat.js", () => ({ openTangentChat }));
 vi.mock("./run-view.js", () => ({ openRunView }));
 vi.mock("./toast.js", () => ({ error: toastError, success: vi.fn(), info: vi.fn() }));
-vi.mock("./actions/chat.js", () => ({ setSupervised: { dispatch: setSupervisedDispatch } }));
+vi.mock("./actions/chat.js", () => ({
+  setSupervised: { dispatch: setSupervisedDispatch },
+  compactChat: { dispatch: compactDispatch },
+}));
 vi.mock("./actions/runs.js", () => ({
   launchRun: { dispatch: launchDispatch },
   loadRecipes: { dispatch: recipesDispatch },
@@ -195,12 +200,19 @@ beforeEach(() => {
 });
 
 describe("the chat-actions menu", () => {
-  // Four residents, and the count is the assertion: a fifth added without a
-  // decision, or one silently lost to a refactor, both show up here.
-  it("holds exactly four entries", async () => {
+  // Five residents, and the count is the assertion: a sixth added without a
+  // decision, or one silently lost to a refactor, both show up here. The order is
+  // asserted too, because the switch is reserved for last.
+  it("holds exactly five entries, the switch last", async () => {
     const { card } = await mountMenu();
     const names = Array.from(card.querySelectorAll(".chat-opt-name")).map((n) => n.textContent);
-    expect(names).toEqual(["Attach a file", "Set a goal", "Start a tangent", "Supervised mode"]);
+    expect(names).toEqual([
+      "Attach a file",
+      "Set a goal",
+      "Start a tangent",
+      "Compact the context",
+      "Supervised mode",
+    ]);
   });
 
   // The switch sorts last because it is the one resident that is a SWITCH rather
@@ -208,7 +220,7 @@ describe("the chat-actions menu", () => {
   // shape the other three share.
   it("renders the switch as a label with a checkbox and the rest as buttons", async () => {
     const { card } = await mountMenu();
-    expect(card.querySelectorAll(".chat-opt-btn")).toHaveLength(3);
+    expect(card.querySelectorAll(".chat-opt-btn")).toHaveLength(4);
     const row = card.querySelector<HTMLLabelElement>("label.chat-opt-row");
     expect(row?.htmlFor).toBe("chat-opt-supervised");
     expect(row?.querySelector<HTMLInputElement>("input")?.type).toBe("checkbox");
@@ -526,6 +538,92 @@ describe("set a goal", () => {
   });
 });
 
+describe("compact the context", () => {
+  // The row is the second door onto the action `/compact` already dispatches, so
+  // what matters is that it reaches THAT action once with the active chat's id.
+  it("dispatches the shared compact action for the active chat", async () => {
+    const { card } = await mountMenu();
+    clickRow(card, "Compact the context");
+    expect(compactDispatch).toHaveBeenCalledTimes(1);
+    expect(compactDispatch).toHaveBeenCalledWith({ chatID: "c-active" });
+    expect(collapseAll).toHaveBeenCalled();
+  });
+
+  // The two states CmdCompact refuses: no live session (409 errNoBridge, because a
+  // chat is client-side only until its first prompt) and a turn in flight (409
+  // errCompactRefused). Disabled rather than a toast, following the tangent row.
+  it.each([
+    ["a brand-new chat with no messages", "c-active", 0, false],
+    ["no active chat at all", "", 3, false],
+    ["a turn in flight", "c-active", 3, true],
+  ])("disables the row on %s", async (_desc, id, count, busy) => {
+    activeID = id;
+    messageCount = count;
+    thinking = busy;
+    const { card } = await mountMenu();
+    expect(rowButton(card, "Compact the context").disabled).toBe(true);
+  });
+
+  it("enables the row on an idle chat that holds a conversation", async () => {
+    const { card } = await mountMenu();
+    expect(rowButton(card, "Compact the context").disabled).toBe(false);
+  });
+
+  // Two distinct hints for two distinct refusals: the action to take differs, so a
+  // shared sentence would be wrong for one of them.
+  it.each([
+    ["Send a message first", "", 0, false],
+    ["Wait for this turn to finish", "c-active", 3, true],
+  ])("swaps the hint to name %s", async (fragment, id, count, busy) => {
+    activeID = id === "" ? "c-active" : id;
+    messageCount = count;
+    thinking = busy;
+    const { card } = await mountMenu();
+    const hint = rowButton(card, "Compact the context").querySelector(".chat-opt-hint");
+    expect(hint?.textContent).toContain(fragment);
+  });
+
+  // The disabled attribute IS the refusal, so pressing it says nothing at all.
+  it("dispatches nothing and says nothing when pressed with no conversation", async () => {
+    messageCount = 0;
+    const { card } = await mountMenu();
+    clickRow(card, "Compact the context");
+    expect(compactDispatch).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["with no conversation", 0, false],
+    ["mid-turn", 3, true],
+  ])("refuses in the handler as well when a stale row is enabled %s", async (_d, count, busy) => {
+    const { card } = await mountMenu();
+    messageCount = count;
+    thinking = busy;
+    const btn = rowButton(card, "Compact the context");
+    btn.disabled = false;
+    btn.click();
+    expect(compactDispatch).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledTimes(1);
+  });
+
+  // The card is built once at init and outlives every chat switch.
+  it("compacts the chat that is active at click time", async () => {
+    const { card } = await mountMenu();
+    activeID = "c-other";
+    clickRow(card, "Compact the context");
+    expect(compactDispatch).toHaveBeenCalledWith({ chatID: "c-other" });
+  });
+
+  // No second action, and no other verb: this row is a door onto chat.compact.
+  it("adds no second send path", async () => {
+    const { card } = await mountMenu();
+    clickRow(card, "Compact the context");
+    expect(submitPrompt).not.toHaveBeenCalled();
+    expect(sendPromptTo).not.toHaveBeenCalled();
+    expect(transportSend).not.toHaveBeenCalled();
+  });
+});
+
 describe("supervised mode", () => {
   it("dispatches the toggle for the active chat", async () => {
     const { card } = await mountMenu();
@@ -555,6 +653,6 @@ describe("initChatOptions", () => {
   it("is idempotent", async () => {
     const { card, mod } = await mountMenu();
     mod.initChatOptions();
-    expect(card.querySelectorAll(".chat-opt-name")).toHaveLength(4);
+    expect(card.querySelectorAll(".chat-opt-name")).toHaveLength(5);
   });
 });

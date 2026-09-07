@@ -2657,6 +2657,96 @@ func TestApplySessionResult_TakesFlatMetaTitle(t *testing.T) {
 	}
 }
 
+// --- _meta.contextUsage: the compaction thresholds, on the same flat path ---
+
+// TestApplySessionResult_TakesFlatMetaContextUsage pins that the session's compaction
+// thresholds are read from a FLAT `_meta.contextUsage`, the same shape as `_meta.title`
+// above, and that the nested `_meta.kiro.contextUsage` a reader would expect yields
+// nothing.
+func TestApplySessionResult_TakesFlatMetaContextUsage(t *testing.T) {
+	cases := []struct {
+		name          string
+		body          string
+		wantSummarize float64
+		wantTruncate  float64
+	}{
+		{
+			name:          "flat _meta.contextUsage is adopted",
+			body:          `{"sessionId":"s1","_meta":{"id":"s1","contextUsage":{"summarizationThreshold":80,"truncationThreshold":95}}}`,
+			wantSummarize: 80,
+			wantTruncate:  95,
+		},
+		{
+			name: "nested _meta.kiro.contextUsage is NOT the wire shape",
+			body: `{"sessionId":"s1","_meta":{"kiro":{"contextUsage":{"summarizationThreshold":80,"truncationThreshold":95}}}}`,
+		},
+		{
+			name: "absent _meta leaves both thresholds unknown",
+			body: `{"sessionId":"s1"}`,
+		},
+		{
+			name:          "a block carrying one member adopts that one alone",
+			body:          `{"sessionId":"s1","_meta":{"contextUsage":{"summarizationThreshold":75}}}`,
+			wantSummarize: 75,
+		},
+		{
+			name:          "non-integer percentages survive the decode",
+			body:          `{"sessionId":"s1","_meta":{"contextUsage":{"summarizationThreshold":80.5,"truncationThreshold":95.25}}}`,
+			wantSummarize: 80.5,
+			wantTruncate:  95.25,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var r sessionCreated
+			if err := json.Unmarshal([]byte(tc.body), &r); err != nil {
+				t.Fatalf("unmarshal session result: %v", err)
+			}
+			b := &Bridge{}
+			b.mu.Lock()
+			b.applySessionResultLocked(r, "")
+			b.mu.Unlock()
+			gotSummarize, gotTruncate := b.ContextThresholds()
+			if gotSummarize != tc.wantSummarize {
+				t.Errorf("summarization = %v, want %v", gotSummarize, tc.wantSummarize)
+			}
+			if gotTruncate != tc.wantTruncate {
+				t.Errorf("truncation = %v, want %v", gotTruncate, tc.wantTruncate)
+			}
+		})
+	}
+}
+
+// TestApplySessionResult_KeepsContextThresholdsOnAbsent pins that a result which says
+// nothing about the thresholds leaves the previous pair standing. A resume is the only
+// channel that carries them, so a zero written here would never heal.
+func TestApplySessionResult_KeepsContextThresholdsOnAbsent(t *testing.T) {
+	cases := map[string]string{
+		"no contextUsage block at all": `{"sessionId":"s1","_meta":{"title":"x"}}`,
+		"a block with absent members":  `{"sessionId":"s1","_meta":{"contextUsage":{}}}`,
+		"a block whose members are 0":  `{"sessionId":"s1","_meta":{"contextUsage":{"summarizationThreshold":0,"truncationThreshold":0}}}`,
+		"an explicitly null block":     `{"sessionId":"s1","_meta":{"contextUsage":null}}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			var r sessionCreated
+			if err := json.Unmarshal([]byte(body), &r); err != nil {
+				t.Fatalf("unmarshal session result: %v", err)
+			}
+			b := &Bridge{}
+			b.mu.Lock()
+			b.summarizationPct = 80
+			b.truncationPct = 95
+			b.applySessionResultLocked(r, "")
+			b.mu.Unlock()
+			gotSummarize, gotTruncate := b.ContextThresholds()
+			if gotSummarize != 80 || gotTruncate != 95 {
+				t.Errorf("ContextThresholds() = (%v, %v), want (80, 95)", gotSummarize, gotTruncate)
+			}
+		})
+	}
+}
+
 // --- R1: the bridge's Cancel must close stdin, not just signal the head ---
 
 // TestCancelClosesStdinSoTheTreeSeesEOF: vibekit runs `kiro-cli acp` on pipes and the head

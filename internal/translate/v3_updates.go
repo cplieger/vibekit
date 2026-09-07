@@ -363,10 +363,10 @@ func (t *Translator) persistUsage(ctx context.Context, chatID vibekit.ChatID, pc
 // transcript rewrite: one point, the resolution the context ring renders.
 const contextPctEpsilon = 1.0
 
-// contextPctTiers are the thresholds a crossing must always persist through,
-// because each changes what the client DOES: 70 and 90 recolour the context ring,
-// 95 stops it accepting input. vibekit's own, not KAS's — KAS's 80/95 boundaries
-// let the epsilon round away the crossing that disables the composer.
+// contextPctTiers are the thresholds a crossing must always persist through. 95 is
+// the composer's cutoff, so the epsilon must not round that crossing away; 70 and 90
+// stay because the ring's fill is continuous now and no percentage is a colour
+// boundary, which makes a mid-range crossing the one thing nothing else pins.
 var contextPctTiers = [...]float64{70, 90, 95}
 
 // materialPctDelta reports whether prev → next is worth persisting: at least

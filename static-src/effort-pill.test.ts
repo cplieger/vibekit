@@ -83,6 +83,7 @@ document.body.innerHTML = `
   </button>
   <div id="model-switch-list"></div>
   <span id="context-ring-fill"></span>
+  <span id="context-ring-wedge"></span>
   <span id="context-label"></span>
   <span id="ctx-tokens"></span>
   <span id="ctx-credits"></span>

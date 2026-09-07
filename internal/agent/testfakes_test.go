@@ -41,11 +41,15 @@ type fakeBridge struct {
 	// observedEffort is the level the SESSION reported, not the one asked for.
 	observedEffort string
 	currentMode    string
-	catalog        []vibekit.SessionModel
-	modes          []vibekit.SessionMode
-	models         []vibekit.SessionModel
-	sessionTitle   string
-	calls          []string
+	// summarizationPct and truncationPct default to 0, which is what a freshly
+	// constructed bridge answers for a threshold the load result omitted.
+	summarizationPct float64
+	truncationPct    float64
+	catalog          []vibekit.SessionModel
+	modes            []vibekit.SessionMode
+	models           []vibekit.SessionModel
+	sessionTitle     string
+	calls            []string
 	// startOpts records what the most recent spawn was actually handed.
 	startOpts *vibekit.StartOpts
 	// startGate holds a spawn OPEN, so a bridge-ready test is not saved by the
@@ -352,6 +356,14 @@ func (b *fakeBridge) SessionTitle() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.sessionTitle
+}
+
+// ContextThresholds returns whatever a test set. Zero is the freshly-constructed
+// bridge's answer, which is the case the keep-on-absent guards exist for.
+func (b *fakeBridge) ContextThresholds() (summarization, truncation float64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.summarizationPct, b.truncationPct
 }
 
 // Modes and Models are nil by default, which is what a freshly constructed bridge

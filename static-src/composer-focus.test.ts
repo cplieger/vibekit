@@ -57,7 +57,10 @@ vi.mock("./pill-expand.js", () => ({ makeExpandable: vi.fn(), collapseAll }));
 vi.mock("./files-picker.js", () => ({ openFilePicker: vi.fn() }));
 vi.mock("./chat.js", () => ({ openTangentChat: vi.fn() }));
 vi.mock("./toast.js", () => ({ error: vi.fn(), success: vi.fn(), info: vi.fn() }));
-vi.mock("./actions/chat.js", () => ({ setSupervised: { dispatch: setSupervisedDispatch } }));
+vi.mock("./actions/chat.js", () => ({
+  setSupervised: { dispatch: setSupervisedDispatch },
+  compactChat: { dispatch: vi.fn() },
+}));
 vi.mock("./submit.js", () => ({ submitPrompt: vi.fn() }));
 
 /** The selector the border keys on, read out of the shipped stylesheet. */

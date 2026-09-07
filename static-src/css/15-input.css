@@ -416,15 +416,19 @@
     flex-shrink: 0;
   }
 
-  /* Ring fill + compaction tick animate via stylesheet rules, NOT inline
-   * style attributes: those two inline transitions were a genuine
-   * style-src 'unsafe-inline' dependency (independent of the terminal
-   * renderer) documented in internal/server/security.go's CSP comment —
-   * with them gone the served markup carries zero style attributes. */
+  /* The fill's transitions live HERE rather than on a style attribute: the served
+   * markup carries zero style attributes, which is what lets the CSP drop
+   * style-src 'unsafe-inline' (internal/server/security.go). */
   & [id="context-ring-fill"] {
     transition:
       stroke-dashoffset 0.4s,
       stroke 0.4s;
+  }
+
+  /* No transition: the band's geometry moves only when a session reports a
+   * different threshold, which is not an animation. */
+  & [id="context-ring-wedge"] {
+    stroke: var(--c-context-wedge);
   }
 
   & [id="context-label"] {

@@ -1586,6 +1586,10 @@ export const decodeUsage: Decoder<Usage> = (v) => {
     has_real_data: reqBool(o, "has_real_data", "$.usage"),
   };
   if (o["metering_items"] !== undefined && o["metering_items"] !== null) out.metering_items = decodeArray(o["metering_items"], decodeMeteringItem, "$.usage.metering_items");
+  const summarizationThresholdPct = o["summarization_threshold_pct"] === null ? undefined : optNum(o, "summarization_threshold_pct", "$.usage");
+  if (summarizationThresholdPct !== undefined) out.summarization_threshold_pct = summarizationThresholdPct;
+  const truncationThresholdPct = o["truncation_threshold_pct"] === null ? undefined : optNum(o, "truncation_threshold_pct", "$.usage");
+  if (truncationThresholdPct !== undefined) out.truncation_threshold_pct = truncationThresholdPct;
   return out;
 };
 

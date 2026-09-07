@@ -390,6 +390,13 @@ func applyLoadedSessionFacts(c *vibekit.Chat, facts acpSessionFacts, title strin
 	// Keeps its own previous set on an absent catalog: ApplyServedModels answers
 	// false for an empty one, so a load that omitted it refuses nothing later.
 	vibekit.ApplyServedModels(c, facts.Catalog())
+	summarization, truncation := facts.ContextThresholds()
+	if summarization > 0 {
+		c.Usage.SummarizationThresholdPct = summarization
+	}
+	if truncation > 0 {
+		c.Usage.TruncationThresholdPct = truncation
+	}
 	adoptKASTitle(c, title)
 }
 

@@ -11,6 +11,7 @@ import { $ } from "./dom.js";
 import { formatTokens, formatMetering } from "./status-format.js";
 import { humanName } from "./strings.js";
 import { checkRuntimeHealth, runtimeStatusLine } from "./runtime-health.js";
+import { contextStroke, wedgeDash } from "./context-ring.js";
 import { versionsSignal } from "./versions.js";
 import { el, effect, touch } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
@@ -22,6 +23,8 @@ import type { MeteringItem, ConnectionStatus } from "./types.js";
 interface ContextBarUpdate {
   pct: number;
   contextSize: number;
+  /** Where the compaction band starts, already defaulted by context-ui.ts. */
+  summarizationPct: number;
   credits: number;
   turnCount: number;
   lastTurnMs: number;
@@ -56,7 +59,7 @@ class ContextBarController {
   }
 
   private updateImpl(opts: ContextBarUpdate): void {
-    const { pct, contextSize, credits, turnCount, lastTurnMs, model } = opts;
+    const { pct, contextSize, summarizationPct, credits, turnCount, lastTurnMs, model } = opts;
     const metering = opts.metering ?? [];
     const msgCount = opts.msgCount ?? 0;
     const toolCount = opts.toolCount ?? 0;
@@ -67,9 +70,10 @@ class ContextBarController {
     // so the offset IS the unused remainder. The hardcoded 50.27 circumference
     // this replaced was the ring's one magic constant.
     $.contextRingFill.style.strokeDashoffset = String(100 - clamped);
-    const stroke =
-      clamped >= 90 ? "var(--c-red)" : clamped >= 70 ? "var(--c-yellow)" : "var(--c-green)";
-    $.contextRingFill.style.stroke = stroke;
+    $.contextRingFill.style.stroke = contextStroke(clamped, contextSize);
+    const wedge = wedgeDash(summarizationPct);
+    $.contextRingWedge.style.strokeDasharray = wedge.dasharray;
+    $.contextRingWedge.style.strokeDashoffset = wedge.dashoffset;
     $.contextLabel.textContent = `${pct.toFixed(0)}%`;
 
     $.switchModelBtn.setAttribute("data-tooltip", "Switch model");

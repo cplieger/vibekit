@@ -266,6 +266,13 @@
                        radial edges outward. -->
                   <svg class="context-ring" viewBox="0 0 20 20" width="16" height="16">
                     <circle cx="10" cy="10" r="8" fill="var(--c-border)"/>
+                    <!-- The band the fill sweeps into when compaction is imminent.
+                         Beneath the fill in document order, so the fill paints over
+                         it. Its dash is the 80% fallback; status.ts rewrites it from
+                         whatever threshold the session reported. -->
+                    <circle id="context-ring-wedge" cx="10" cy="10" r="4" fill="none"
+                      stroke-width="8" pathLength="100" stroke-dasharray="20 80" stroke-dashoffset="20"
+                      transform="rotate(-90 10 10)"/>
                     <circle id="context-ring-fill" cx="10" cy="10" r="4" fill="none" stroke="var(--c-green)"
                       stroke-width="8" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"
                       transform="rotate(-90 10 10)"/>

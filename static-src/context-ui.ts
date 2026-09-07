@@ -25,17 +25,12 @@ import { contextFull } from "./prompt-input.js";
 import { nonDefaultEffortLabel } from "./effort.js";
 import { getCachedModels } from "./picker.js";
 import { getLastEffortFor } from "./session-context.js";
+import { KAS_SUMMARIZATION_PCT, KAS_TRUNCATION_PCT } from "./context-ring.js";
 
+// The live cutoff, derived from the model's real window: a flat percentage leaves
+// tens of thousands of tokens of slack on a large one. KAS_TRUNCATION_PCT is its
+// fallback, for a window this chat does not know yet.
 const CONTEXT_RESERVE_TOKENS = 16_000;
-// Mirrors KAS's own `truncationThreshold`, which `session/load`'s `_meta` now
-// publishes as `contextUsage.truncationThreshold: 95` (measured on kiro-cli
-// 2.20.0). It is a fallback: the live cutoff is the reserve above, derived from
-// the model's real window, which survives a model with a much larger context
-// where a flat percentage leaves tens of thousands of tokens of slack. Recorded
-// as a mirror rather than consumed from the wire — the bridge does not decode
-// that `_meta`, and threading two numbers through the chat record to agree with
-// a constant that already agrees would buy nothing.
-const DEFAULT_CUTOFF_PCT = 95;
 
 // `contextFull` is declared in prompt-input.ts — the module that owns the send
 // button/textarea and is the sole renderer of the state. This module COMPUTES
@@ -73,9 +68,12 @@ export function refreshContextUI(s: Session): void {
     }
   }
   const summarized = summarizedCount(s);
+  // The ONE fallback site: the streaming usage channel carries no threshold.
+  const summarizationPct = u.summarization_threshold_pct ?? KAS_SUMMARIZATION_PCT;
   updateContextBar({
     pct: u.context_pct,
     contextSize: u.context_size,
+    summarizationPct,
     credits: u.credits,
     turnCount: u.turn_count,
     lastTurnMs: u.last_turn_ms,
@@ -104,6 +102,6 @@ export function refreshContextUI(s: Session): void {
   const cutoff =
     u.context_size > 0
       ? ((u.context_size - CONTEXT_RESERVE_TOKENS) / u.context_size) * 100
-      : DEFAULT_CUTOFF_PCT;
+      : (u.truncation_threshold_pct ?? KAS_TRUNCATION_PCT);
   contextFull.value = u.context_pct >= cutoff;
 }

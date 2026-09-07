@@ -1,33 +1,13 @@
-// ---------------------------------------------------------------------------
-// The chat-actions menu: the composer's tray for what acts on THIS chat.
-//
-// One `+` pill expanding to a small card (the standard pill-expand pattern —
-// inline diagonal growth, one open at a time, no floating popup). Four
-// residents: attach a file, set a goal, start a tangent, and the supervised
-// switch.
-//
-// Deliberately a menu rather than four more pills. A pill earns its prompt-row
-// slot by changing per MESSAGE — the model and the mode do, and the row is
-// already tight enough on a phone that the slot layer needed its own
-// minimum-size rule. None of these four change per message, and four more pills
-// would grow the row without bound.
-//
-// Two of the four are here because they had nowhere else to be. The supervised
-// toggle has been homeless since the supervised pill died with the staged-write
-// store: the pill's expanded list became KAS's, but the per-chat CHOICE still
-// needs a control. Attach arrived from the other direction — it WAS a pill, and
-// it does not change per message either, so the same rule that keeps the other
-// three out of the row applies to it.
-//
-// Every row is built here; static/index.html carries an empty card.
-// ---------------------------------------------------------------------------
+// The chat-actions menu, and the test a sixth row has to pass: a pill earns its
+// prompt-row slot by changing per MESSAGE, which none of these five do. Every row
+// is built here; static/index.html carries an empty card.
 
 import { el, effect } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { activeSession, isThinking, isEmptyChat } from "./store.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { iconEl } from "./icon-el.js";
-import { setSupervised } from "./actions/chat.js";
+import { compactChat, setSupervised } from "./actions/chat.js";
 import { openFilePicker } from "./files-picker.js";
 import { uploadLimitHint } from "./upload-policy.js";
 import { openTangentChat } from "./chat.js";
@@ -42,6 +22,8 @@ const ICON_GOAL =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>';
 const ICON_TANGENT =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>';
+const ICON_COMPACT =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 19h16"/><path d="M12 9v-3l-3 3"/><path d="M12 9v-3l3 3"/><path d="M12 15v3l-3-3"/><path d="M12 15v3l3-3"/></svg>';
 
 /** KAS's own clamp on the goal loop's iteration budget, mirrored here rather
  *  than invented: `parseGoalCommand` runs
@@ -67,7 +49,7 @@ export function initChatOptions(): void {
   const pill = $.chatOptionsBtn;
   const card = $.chatOptionsCard;
 
-  card.append(attachRow(), goalRow(), tangentRow(), supervisedRow());
+  card.append(attachRow(), goalRow(), tangentRow(), compactRow(), supervisedRow());
 
   makeExpandable(pill, card, { haspopup: "dialog" });
 }
@@ -177,6 +159,56 @@ function tangentRow(): HTMLElement {
     }
     btn.disabled = empty;
     hint.textContent = empty ? TANGENT_HINT_EMPTY : TANGENT_HINT;
+  });
+
+  return row;
+}
+
+/** The hints the compact row swaps between, each naming what to do next. Two
+ *  disabled variants because the two refusals want different actions of the user,
+ *  and `CmdCompact` answers them with different 409s. */
+const COMPACT_HINT = "Summarize the history so far to free up context";
+const COMPACT_HINT_EMPTY = "Send a message first; there is no session to compact yet";
+const COMPACT_HINT_BUSY = "Wait for this turn to finish, or cancel it, then compact";
+
+/** Compact this chat's context, a second door onto the action `/compact` dispatches.
+ *  UNAVAILABLE for the two states `CmdCompact` refuses — no live session
+ *  (`errNoBridge`) and a turn in flight (`errCompactRefused`) — disabled rather than
+ *  toasting, for `tangentRow`'s reason. It reports no COMPLETION: the server already
+ *  broadcasts `compaction_started` and persists a `compacted` row. */
+function compactRow(): HTMLElement {
+  const { row, btn, hint } = actionRow({
+    icon: ICON_COMPACT,
+    name: "Compact the context",
+    hint: COMPACT_HINT,
+    onClick: () => {
+      // Re-read at CLICK time: the card outlives every chat switch.
+      const session = activeSession.peek();
+      if (session === undefined || isEmptyChat(session)) {
+        toast.error("Send a message first, then compact the conversation");
+        return;
+      }
+      if (isThinking(session.id)) {
+        toast.error("Wait for this turn to finish, then compact the conversation");
+        return;
+      }
+      collapseAll();
+      void compactChat.dispatch({ chatID: session.id });
+    },
+  });
+
+  // A projection of the ACTIVE chat, guarded on the value because `activeSession`
+  // re-derives on every streaming chunk.
+  effect(() => {
+    const session = activeSession.value;
+    const empty = isEmptyChat(session);
+    const busy = session !== undefined && isThinking(session.id);
+    const nextHint = empty ? COMPACT_HINT_EMPTY : busy ? COMPACT_HINT_BUSY : COMPACT_HINT;
+    if (hint.textContent === nextHint) {
+      return;
+    }
+    btn.disabled = empty || busy;
+    hint.textContent = nextHint;
   });
 
   return row;
