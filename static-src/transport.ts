@@ -288,18 +288,48 @@ const HYDRATE_TIMEOUT_MS = 20_000;
  *  move rather than grow a buffer without bound. */
 const MAX_PENDING_FRAMES = 2000;
 
-/** The events URL, carrying the replay cursor when there is one.
+/** The chat this device is SHOWING, read at connect time.
+ *
+ *  An injected getter and not an import: this module deliberately holds no store
+ *  state, and importing `store.ts` risks a cycle — the same
+ *  `registerTabOpeners` / `setRefusalRewindHandler` idiom the codebase already
+ *  uses. Registered from `app.ts` at composition time; unregistered it answers
+ *  empty, which the server reads as "declare nothing" and serves every open chat. */
+let snapshotChatProvider: () => string = () => "";
+
+/** Register the reader for the chat whose transcript is on screen. The server
+ *  cannot derive it — the active chat is per-device localStorage state — and it may
+ *  not ride `chat_id`, which is the hub topic filter. See `parseSnapshotChats` in
+ *  `internal/agent/sse.go`. */
+export function setSnapshotChatProvider(fn: () => string): void {
+  snapshotChatProvider = fn;
+}
+
+/** The events URL, carrying the replay cursor when there is one and the chat this
+ *  device is showing when there is one.
  *
  *  EventSource sends `Last-Event-ID` on ITS OWN retry only, and `teardown` closes
  *  the source — so every reconnect below opens a fresh EventSource with no history
  *  and used to get no replay at all. Zero is omitted: a first connection has missed
  *  nothing. The server reads the parameter only when the header is absent, so the
- *  browser's own retry keeps deciding for itself (`internal/agent/sse.go`). */
+ *  browser's own retry keeps deciding for itself (`internal/agent/sse.go`).
+ *
+ *  `snapshot` names the chat whose in-flight transcript this connect needs. Omitted
+ *  when there is none, and composable with the cursor: both are ordinary query
+ *  parameters and the server reads them independently. Without it the server serves
+ *  a snapshot for every open busy chat, which is correct but pays for transcripts
+ *  nobody is looking at. */
 function eventsURL(cursor: number): string {
-  if (cursor <= 0) {
-    return "/api/events";
+  const params = new URLSearchParams();
+  if (cursor > 0) {
+    params.set("last_event_id", String(cursor));
   }
-  return `/api/events?last_event_id=${encodeURIComponent(String(cursor))}`;
+  const snapshot = snapshotChatProvider();
+  if (snapshot !== "") {
+    params.set("snapshot", snapshot);
+  }
+  const query = params.toString();
+  return query === "" ? "/api/events" : `/api/events?${query}`;
 }
 
 class TransportController {
