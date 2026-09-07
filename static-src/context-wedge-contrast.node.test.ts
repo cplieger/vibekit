@@ -1,20 +1,11 @@
 // THE COMPACTION BAND, measured rather than asserted about.
 //
-// The band is a graphical object conveying information — where KAS will
-// auto-summarize — and it carries no text and no shape of its own, so WCAG
-// 1.4.11's 3:1 against the track it sits on is the whole of its legibility. It
-// shipped at 2.07:1 in the light theme, which is what a floor here would have
-// caught: `01-tokens.css` enforces the same number on the --c-dot-* family two
-// declarations below and nothing enforced it on this one.
-//
-// Shelling out to `scripts/css-contrast.py pair` rather than reimplementing the
-// colour maths, for the reason the sibling floors record: a second implementation
-// is a second thing to be wrong, and the ratios in the stylesheet's comments were
-// measured with the first one. Passing the TOKEN NAME rather than a value is also
-// what keeps the measurement honest — the script resolves it per theme out of
-// `01-tokens.css`, so a retune moves these numbers instead of leaving them behind.
-//
-// Node environment: this runs a process.
+// The band conveys information and carries no text and no shape, so its
+// separation from the track it sits on is the whole of its legibility. It shipped
+// at 2.07:1 in the light theme, under WCAG 1.4.11's 3:1 — the floor
+// `01-tokens.css` already enforces on the --c-dot-* family. Measuring the TOKEN
+// NAME is what keeps this honest: the script resolves it per theme out of that
+// stylesheet, so a retune moves these numbers rather than leaving them behind.
 
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -71,9 +62,8 @@ describe.skipIf(!existsSync(script))("the compaction band, measured", () => {
   });
 
   it("stays quieter than every hue the fill can take", () => {
-    // The relation the design rests on, as a comparison rather than a ceiling: the
-    // band marks a zone and the fill reports the reading, so whatever either is
-    // retuned to, a band as loud as the fill reads as already-filled.
+    // A comparison rather than a ceiling, because whatever either is retuned to, a
+    // band as loud as the fill reads as already-filled.
     const band = new Map(pair(BAND, TRACK).map((m) => [m.theme, m.ratio]));
     for (const hue of FILL_HUES) {
       for (const m of pair(hue, TRACK)) {
