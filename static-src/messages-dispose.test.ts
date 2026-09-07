@@ -111,6 +111,35 @@ function turnCard(turnID: string): HTMLElement {
   return card;
 }
 
+/** How many times `run()` reads a message row's height. `offsetHeight` is a
+ *  configurable accessor on the prototype, so the count comes from wrapping it —
+ *  calling THROUGH, so the measurement pass still records real heights, and
+ *  restoring the captured descriptor in a `finally`, because a patch left installed
+ *  would change what every later case in this file measures. */
+function countRowGeometryReads(run: () => void): number {
+  const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+  const real = desc?.get;
+  if (desc === undefined || real === undefined) {
+    throw new Error("offsetHeight is not an accessor on HTMLElement.prototype");
+  }
+  let reads = 0;
+  Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+    ...desc,
+    get(this: HTMLElement): number {
+      if (this.classList.contains("msg-wrap")) {
+        reads++;
+      }
+      return real.call(this) as number;
+    },
+  });
+  try {
+    run();
+  } finally {
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", desc);
+  }
+  return reads;
+}
+
 function row(messageID: string): HTMLElement {
   const el = document.querySelector<HTMLElement>(`.msg-wrap[${KEY_ATTR}="${messageID}"]`);
   if (el === null) {
@@ -221,6 +250,46 @@ describe("what a dropped row records", () => {
     // Disposed: its render state is gone with its row.
     expect(mountedWindow("a-fold")).toBeUndefined();
     expect(vi.mocked(heights.recordRowHeight)).not.toHaveBeenCalled();
+  });
+
+  it("reads no row geometry at all when the reconcile drops nothing", () => {
+    const chat = mountChat([
+      { id: "u-stream", role: "user", ts: 1, content: "prompt" } as Message,
+      asst("a-stream-1", ["first"]),
+      asst("a-stream-2", ["second"]),
+    ]);
+
+    // A streaming tail append: the turn keeps every row it holds and gains one, so
+    // the reconcile has nothing departing and no `onRemove` to feed. A measurement
+    // pass here would force a reflow on every frame of a running workflow for a
+    // cache nothing reads back.
+    const reads = countRowGeometryReads(() => {
+      store.appendMessage(chat, asst("a-stream-3", ["third"]));
+    });
+
+    expect(mountedWindow("a-stream-3")).toEqual({ from: 0, to: 1 });
+    expect(reads).toBe(0);
+  });
+
+  it("reads the departing row's geometry once, not once per mounted row", () => {
+    const chat = mountChat([
+      { id: "u-drop", role: "user", ts: 1, content: "prompt" } as Message,
+      asst("a-drop-1", ["first"]),
+      asst("a-drop-2", ["second"]),
+      asst("a-drop-3", ["third"]),
+    ]);
+
+    // The tail row leaves the body, so the pass HAS a height to hand over — pinning
+    // one read per drop rather than "some read happened", which the case above
+    // would otherwise be satisfiable by never measuring at all.
+    const s = store.get(chat)!;
+    const reads = countRowGeometryReads(() => {
+      s.messages = s.messages.slice(0, 3);
+      store.bumpMessages(chat, "shape");
+    });
+
+    expect(mountedWindow("a-drop-3")).toBeUndefined();
+    expect(reads).toBe(1);
   });
 
   it("disposes a PARKED view's rows with no height recorded for them", () => {
