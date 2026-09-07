@@ -34,6 +34,13 @@ class FakeEventSource {
   close(): void {
     this.readyState = FakeEventSource.CLOSED;
   }
+  /** Named-event listeners. A named SSE event never reaches `onmessage`, so the
+   *  transport registers its heartbeat listener here. Recorded rather than
+   *  dropped: a fake that discards a registration cannot be driven from it. */
+  readonly named: ((e: MessageEvent) => void)[] = [];
+  addEventListener(_type: string, fn: (e: MessageEvent) => void): void {
+    this.named.push(fn);
+  }
   /** The handshake completing. */
   open(): void {
     this.readyState = FakeEventSource.OPEN;
