@@ -100,6 +100,9 @@ interface Msg {
   blocks?: unknown[];
   tool_calls?: unknown[];
   refusal?: Record<string, unknown>;
+  /** The durable outcome, which is what decides a turn's severity and so its
+   *  residency: a BROKEN turn never auto-folds, a STOPPED one does. */
+  turn_outcome?: string;
   event_kind?: string;
 }
 
@@ -141,6 +144,19 @@ function toolTurns(n: number): Msg[] {
     });
   }
   return out;
+}
+
+/** ONE turn whose fold HIDES something, with `extra` merged onto its assistant
+ *  message — which is where the fields that decide a turn's OUTCOME live.
+ *
+ *  The tool card is what puts the turn on the ordinary residency ladder, and it is
+ *  what makes an outcome case able to fail at all: a prose-only turn's face equals
+ *  its body, so it carries `data-no-fold` and stays open AND mounted at any distance
+ *  whatever its severity. A fixture built from `plainTurns` therefore cannot tell
+ *  the fold policy's failure exemption from that rule — measured, with the exemption
+ *  deleted outright and both outcome cases below still green. */
+function outcomeTurn(extra: Partial<Msg>): Msg[] {
+  return toolTurns(1).map((m) => (m.role === "assistant" ? { ...m, ...extra } : m));
 }
 
 /** One turn costing `blocks` blocks, spread over rows of 8 so the builder has
@@ -535,7 +551,34 @@ describe("the fold policy over residency", () => {
     expect(card("big").hasAttribute("data-no-fold")).toBe(true);
   });
 
-  it("folds a turn holding a live workflow run — the face carries a duplicate card", async () => {
+  it("keeps a failed turn OPEN and mounted at any distance", () => {
+    // REVERSED, and the sentence this case used to carry — "the face carries the
+    // error" — is the premise that was measured false. The face's error row came
+    // from a scan for an `event` message, and a turn that failed on the wire's own
+    // turn_end carries none, so folding it produced a header, an empty body and a
+    // footer. `fold-state.ts` had promised in its own header comment that a broken
+    // turn never auto-folds; now it does not, and residency follows openness.
+    //
+    // The turn ran a TOOL, so the exemption is the only thing holding it open; see
+    // `outcomeTurn` for why a prose-only fixture pins nothing here.
+    const id = chatID();
+    activate(id, [...outcomeTurn({ refusal: { category: "safety" } }), ...plainTurns(10).slice(2)]);
+    expect(isFolded("u1")).toBe(false);
+    expect(hasBody("u1")).toBe(true);
+  });
+
+  it("still folds and unmounts a CANCELLED turn, which is not a failure", () => {
+    // The control for the case above: `cancelled` is `stopped` rather than `broken`,
+    // so it keeps the ordinary residency ladder — the window is not grown over a
+    // folded turn, so the fold IS the unmount. Without this the exemption above
+    // could be widened to every non-clean outcome and nothing would notice.
+    const id = chatID();
+    activate(id, [...outcomeTurn({ turn_outcome: "cancelled" }), ...plainTurns(10).slice(2)]);
+    expect(isFolded("u1")).toBe(true);
+    expect(hasBody("u1")).toBe(false);
+  });
+
+  it("folds a turn holding a live workflow run, and mounts no duplicate card", async () => {
     const id = chatID();
     runStatus.set("wf-live", "running");
     invalidateRun("wf-live");
@@ -558,14 +601,17 @@ describe("the fold policy over residency", () => {
       ],
     };
     activate(id, [user("u1"), launcher, ...plainTurns(4).slice(2)]);
+    // A live run no longer holds a turn open, and it no longer earns a second
+    // rendering: the composer band's run bar is the persistent surface for one, so
+    // the fold takes away nothing a reader is watching.
     expect(isFolded("u1")).toBe(true);
-    // The collapsed face is a CARD-level child sitting where the body was —
-    // above the ledger footer, never inside it, so the footer keeps its
-    // open-state row (ledger + actions + Rewind) untouched.
-    const face = card("u1").querySelector(":scope > .turn-face");
-    expect(face).not.toBeNull();
-    expect(face?.querySelector(".run-card")).not.toBeNull();
-    expect(face?.nextElementSibling?.classList.contains("turn-footer")).toBe(true);
+    // The launcher turn carries no top-level prose, so `turnFaceProse` is "" and
+    // `syncTurnFace` appends no face at all — stated explicitly, because the run
+    // card was the only other thing that could have put one here.
+    expect(card("u1").querySelector(":scope > .turn-face")).toBeNull();
+    // And nowhere else on the card either: the in-body card lives in `.turn-body`,
+    // which a turn this far back does not have.
+    expect(card("u1").querySelector(".run-card")).toBeNull();
   });
 
   it("the NEWEST turn ignores a recorded collapse — it cannot be folded", () => {

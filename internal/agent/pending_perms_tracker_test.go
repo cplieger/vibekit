@@ -8,8 +8,8 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// listIDs reads the request ids back off a List snapshot, which is the only way
-// to assert the order the replay will write the cards in.
+// listIDs reads the ids off a List snapshot, the only way to assert the order the
+// replay writes the cards in.
 func listIDs(t *testing.T, evts []vibekit.ServerEvent) []int64 {
 	t.Helper()
 	ids := make([]int64, 0, len(evts))
@@ -24,13 +24,9 @@ func listIDs(t *testing.T, evts []vibekit.ServerEvent) []int64 {
 }
 
 // TestPendingPermsTracker_List_OrdersByRequestID pins the connect-time replay's
-// ordering contract: ascending request id, which is ask order because the
-// JSON-RPC boundary assigns ids monotonically.
-//
-// The ids are added out of order on purpose. Reading the map directly returned
-// Go's randomized order, so this test would have been flaky-green rather than
-// failing outright — which is why the assertion is the full sequence rather than
-// a spot check on the first element.
+// ordering contract: ascending request id, which is ask order because the JSON-RPC
+// boundary assigns ids monotonically. Added out of order on purpose, and asserted as
+// the full sequence because a map-ordered List can satisfy a spot check by luck.
 func TestPendingPermsTracker_List_OrdersByRequestID(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
@@ -40,8 +36,7 @@ func TestPendingPermsTracker_List_OrdersByRequestID(t *testing.T) {
 	}
 
 	want := []int64{1, 2, 5, 7, 9}
-	// One pass can satisfy an order-random List by luck, so each pass is its own
-	// subtest: a single unlucky pass reports without hiding the rest.
+	// Per-pass subtests, so one unlucky pass reports without hiding the rest.
 	for pass := range 8 {
 		t.Run("pass_"+strconv.Itoa(pass), func(t *testing.T) {
 			if got := listIDs(t, tracker.List("")); !slices.Equal(got, want) {
@@ -51,11 +46,8 @@ func TestPendingPermsTracker_List_OrdersByRequestID(t *testing.T) {
 	}
 }
 
-// TestPendingPermsTracker_List_OrdersAcrossKinds covers the three card kinds
-// tracked in the one id space. Ordering is the QUEUE's, not each kind's: an
-// elicitation asked between two permissions replays between them, because a
-// reader's question is "what was I asked, in what order" and not "what were the
-// permissions".
+// TestPendingPermsTracker_List_OrdersAcrossKinds pins that ordering is the QUEUE's,
+// not each kind's: an elicitation asked between two permissions replays between them.
 func TestPendingPermsTracker_List_OrdersAcrossKinds(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
@@ -70,8 +62,8 @@ func TestPendingPermsTracker_List_OrdersAcrossKinds(t *testing.T) {
 
 	got := tracker.List("chat-1")
 	wantIDs := []int64{12, 20, 31}
-	// Fatal, and the reason is the per-kind subtests below: they index got, so a
-	// short replay would panic the test binary instead of reporting a failure.
+	// Fatal because the per-kind subtests below index got: a short replay would panic
+	// the binary instead of reporting a failure.
 	if len(got) != len(wantIDs) {
 		t.Fatalf("List returned %d events, want %d: %v", len(got), len(wantIDs), listIDs(t, got))
 	}
@@ -87,9 +79,8 @@ func TestPendingPermsTracker_List_OrdersAcrossKinds(t *testing.T) {
 	}
 }
 
-// TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered checks the filter
-// did not become an ordering exception: a filtered replay is the same sequence
-// with the other chats' cards removed, never a re-sort.
+// TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered: a filtered replay is the
+// same sequence with the other chats' cards removed, never a re-sort.
 func TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
@@ -111,11 +102,9 @@ func TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered(t *testing.T) {
 	}
 }
 
-// ClearForChat drops the closing chat's unresolved cards and only those. Both
-// halves matter and they fail in opposite directions: keeping the closing chat's
-// entries leaves a card the user can never answer, and dropping another chat's
-// entries makes TakeIfPresent refuse an answer that chat is still waiting to
-// give.
+// Both halves fail in opposite directions: keeping the closing chat's entries leaves
+// a card nobody can answer, and dropping another chat's makes TakeIfPresent refuse an
+// answer that chat is still waiting to give.
 func TestPendingPermsTracker_ClearForChat_DropsOnlyThatChat(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
@@ -134,16 +123,14 @@ func TestPendingPermsTracker_ClearForChat_DropsOnlyThatChat(t *testing.T) {
 	if got := listIDs(t, tracker.List("chat-2")); !slices.Equal(got, want) {
 		t.Errorf("List(\"chat-2\") = %v after ClearForChat(\"chat-1\"), want %v", got, want)
 	}
-	// The surviving chat's answers are still accepted, which is what the entries
-	// are for.
+	// The surviving chat's answers are still accepted.
 	if _, ok := tracker.TakeIfPresent("chat-2", 2); !ok {
 		t.Error(`TakeIfPresent("chat-2", 2) = false: another chat's clear took chat-2's entry`)
 	}
 }
 
-// An empty chat id clears nothing. It is not a wildcard: the one caller that
-// could pass it is a close path with no chat, and treating it as "every chat"
-// would drop every open dialog in the process.
+// An empty chat id is not a wildcard: the one caller that could pass it is a close
+// path with no chat, so "every chat" would drop every open dialog in the process.
 func TestPendingPermsTracker_ClearForChat_EmptyChatIDClearsNothing(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
@@ -160,16 +147,11 @@ func TestPendingPermsTracker_ClearForChat_EmptyChatIDClearsNothing(t *testing.T)
 	}
 }
 
-// TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID is the identity space
-// the tracker is keyed on, and the case an id-only map could not represent.
-//
-// Request ids are minted per BRIDGE (`nextID atomic.Int64`, one bridge per chat,
-// every one starting at zero), so two live chats holding request 7 at the same
-// time is ordinary rather than a race. Keyed on the id alone the second Add
-// silently overwrote the first chat's card, so: chat 1's dialog was replayed to
-// chat 2 on reconnect, an answer from EITHER chat retired the single surviving
-// entry, and whichever request lost had no answer path left at all while the
-// engine still held it open — a turn wedged for the whole life of the bridge.
+// TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID is the case an id-only map
+// cannot represent: ids are minted per BRIDGE (`nextID atomic.Int64`, one bridge per
+// chat, each starting at zero), so two live chats holding request 7 is ordinary. Keyed
+// on the id alone, the second Add overwrites the first chat's card and whichever
+// request loses has no answer path while the engine still holds it open.
 func TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
@@ -197,8 +179,7 @@ func TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID(t *testing.T) {
 		}
 	}
 
-	// chat-1 answers. chat-2's request must still be answerable: it was never
-	// asked, and nothing else can answer it for that chat.
+	// chat-2's request must survive chat-1 answering: nothing else can answer it.
 	evt, ok := tracker.TakeIfPresent("chat-1", shared)
 	if !ok {
 		t.Fatal(`TakeIfPresent("chat-1", 7) refused a pending request`)
@@ -215,5 +196,89 @@ func TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID(t *testing.T) {
 		vibekit.PermissionNeededPayload{RequestID: shared}))
 	if _, ok := tracker.TakeIfPresent("chat-4", shared); ok {
 		t.Error(`TakeIfPresent("chat-4", 7) succeeded against chat-3's request`)
+	}
+}
+
+// requestIDOf reads one card's request id whichever kind it is. `listIDs` cannot
+// serve: it fails on a non-permission payload, and this table mixes all three.
+func requestIDOf(t *testing.T, evt vibekit.ServerEvent) int64 {
+	t.Helper()
+	switch p := evt.Payload.(type) {
+	case vibekit.PermissionNeededPayload:
+		return p.RequestID
+	case vibekit.ElicitationNeededPayload:
+		return p.RequestID
+	case vibekit.UserInputNeededPayload:
+		return p.RequestID
+	default:
+		t.Fatalf("replayed event carries payload %T, want one of the three *_needed payloads", evt.Payload)
+		return 0
+	}
+}
+
+// TestClearForRun_DropsOnlyTheNamedRunsDecisions pins that the run comes off the
+// PAYLOAD, because the key carries none. The permission and elicitation rows are the
+// load-bearing ones: every kind a step can raise carries a `RunID`, so a clear naming
+// only the question kind leaves two thirds of the population behind.
+func TestClearForRun_DropsOnlyTheNamedRunsDecisions(t *testing.T) {
+	t.Parallel()
+	const launching vibekit.ChatID = "c-parent"
+	entries := []struct {
+		id      int64
+		name    string
+		payload any
+		// survives says the entry must still be replayable after ClearForRun("wf_1").
+		survives bool
+	}{
+		{1, "a step's question", vibekit.UserInputNeededPayload{RequestID: 1, RunID: "wf_1"}, false},
+		{2, "a step's permission", vibekit.PermissionNeededPayload{RequestID: 2, RunID: "wf_1"}, false},
+		{3, "a step's elicitation", vibekit.ElicitationNeededPayload{RequestID: 3, RunID: "wf_1"}, false},
+		// A SIBLING run shares the launching chat's entries, so the clear has to
+		// separate them by run rather than by chat.
+		{4, "a sibling run's question", vibekit.UserInputNeededPayload{RequestID: 4, RunID: "wf_2"}, true},
+		// An ordinary chat ask carries no run and still blocks a live turn.
+		{5, "the chat's own permission", vibekit.PermissionNeededPayload{RequestID: 5}, true},
+	}
+	kindOf := map[int64]vibekit.EventType{
+		1: vibekit.EventUserInputNeeded, 2: vibekit.EventPermissionNeeded,
+		3: vibekit.EventElicitationNeeded, 4: vibekit.EventUserInputNeeded,
+		5: vibekit.EventPermissionNeeded,
+	}
+	tracker := newPendingPermsTracker()
+	for _, e := range entries {
+		tracker.Add(e.id, vibekit.NewEvent(kindOf[e.id], launching, e.payload))
+	}
+
+	tracker.ClearForRun("wf_1")
+
+	left := map[int64]bool{}
+	for _, evt := range tracker.List("") {
+		left[requestIDOf(t, evt)] = true
+	}
+	for _, e := range entries {
+		t.Run(e.name, func(t *testing.T) {
+			if left[e.id] != e.survives {
+				verb := "survived the run's end"
+				if e.survives {
+					verb = "was swept by another run's end"
+				}
+				t.Errorf("request %d (%s) %s", e.id, e.name, verb)
+			}
+		})
+	}
+}
+
+// TestClearForRun_RefusesAnEmptyRunID: `RunID` is empty on every ordinary chat ask, so
+// an empty argument would match the whole tracker, and the id arrives off a wire frame.
+func TestClearForRun_RefusesAnEmptyRunID(t *testing.T) {
+	t.Parallel()
+	tracker := newPendingPermsTracker()
+	tracker.Add(1, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
+		vibekit.PermissionNeededPayload{RequestID: 1}))
+
+	tracker.ClearForRun("")
+
+	if got := len(tracker.List("")); got != 1 {
+		t.Errorf("an empty run id left %d cards, want the chat's own 1", got)
 	}
 }

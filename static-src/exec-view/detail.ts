@@ -10,9 +10,10 @@
 // produced, as markdown), TRANSCRIPT (the live host, filled by the consumer's
 // frames).
 //
-// The transcript host is handed OUT (`bodyFor`), the same contract the run
-// card's `stepBody` uses, so this pane knows nothing about where content comes
-// from.
+// The transcript host is handed OUT (`bodyFor`), so this pane knows nothing about
+// where content comes from — `run-view.ts` supplies it to whichever step source is
+// feeding a node. It is the ONLY host for a step's transcript: the transcript's run
+// card used to hand out one of its own and no longer renders step content at all.
 
 import { el } from "@cplieger/reactive";
 import { buildAssistantBubble } from "../fundamentals/text-bubble.js";
@@ -39,7 +40,15 @@ export interface ExecDetailView {
  *  reasons are not a subagent tab's. */
 export type EmptyNote = (node: ExecNode) => string;
 
-export function buildExecDetail(emptyNote: EmptyNote): ExecDetailView {
+/** An affordance to render BESIDE that note, or null when there is none.
+ *
+ *  Injected for the same reason the wording is, and separate from it because a
+ *  note is a claim while this is a door: a workflow run whose steps are in the
+ *  launching chat can offer to open it, and a delegate's page — reached FROM the
+ *  conversation already — has nowhere new to send anyone. */
+export type EmptyAction = (node: ExecNode) => HTMLElement | null;
+
+export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction): ExecDetailView {
   const title = el("span", { className: "ev-d-title" });
   const state = el("span", { className: "ev-d-state" });
   const dur = el("span", { className: "ev-d-dur" });
@@ -54,6 +63,7 @@ export function buildExecDetail(emptyNote: EmptyNote): ExecDetailView {
   const output = el("div", { className: "ev-d-out" });
   const bodies = el("div", { className: "ev-d-bodies" });
   const empty = el("div", { className: "ev-d-empty" });
+  const emptyAct = el("div", { className: "ev-d-empty-action", hidden: true });
   const root = el(
     "div",
     { className: "ev-detail", "aria-live": "polite" },
@@ -63,6 +73,7 @@ export function buildExecDetail(emptyNote: EmptyNote): ExecDetailView {
     output,
     bodies,
     empty,
+    emptyAct,
   );
 
   const hosts = new Map<string, HTMLElement>();
@@ -131,6 +142,8 @@ export function buildExecDetail(emptyNote: EmptyNote): ExecDetailView {
       bodies.hidden = true;
       empty.hidden = false;
       empty.textContent = "Pick a step to see what it did.";
+      emptyAct.replaceChildren();
+      emptyAct.hidden = true;
       return;
     }
     root.dataset["state"] = node.state;
@@ -169,6 +182,16 @@ export function buildExecDetail(emptyNote: EmptyNote): ExecDetailView {
     if (!hostable) {
       empty.hidden = true;
     }
+
+    const action = hostable ? (emptyAction?.(node) ?? null) : null;
+    // IDENTITY-guarded, not signature-guarded: `render` runs on every store
+    // invalidation, and re-seating a node BLURS it — so a reader who tabbed to the
+    // link would lose focus several times a minute on a live run. The consumer
+    // returns a CACHED element, so the guard holds.
+    if (action !== emptyAct.firstElementChild) {
+      emptyAct.replaceChildren(...(action === null ? [] : [action]));
+    }
+    emptyAct.hidden = action === null || empty.hidden;
   }
 
   return {
@@ -183,9 +206,11 @@ export function buildExecDetail(emptyNote: EmptyNote): ExecDetailView {
         bodies.appendChild(host);
       }
       // A first frame arriving for the node on screen retires the empty note in
-      // the same pass.
+      // the same pass — and its action with it, since that action's whole subject
+      // is content that is NOT here.
       if (shown?.path === path) {
         empty.hidden = true;
+        emptyAct.hidden = true;
       }
       return host;
     },

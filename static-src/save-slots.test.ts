@@ -85,7 +85,7 @@ describe("per-setting save slots (static/index.html)", () => {
       const label = row?.firstElementChild;
       expect(label, `${slot.dataset["saveStatus"] ?? ""}: row has a label first`).not.toBe(slot);
       expect(
-        label?.matches("h3.section-title, label.section-title, .section-option-label"),
+        label?.matches("h2.section-title, label.section-title, .section-option-label"),
         `${slot.dataset["saveStatus"] ?? ""}: row leads with a setting title`,
       ).toBe(true);
     }

@@ -93,14 +93,15 @@ describe("git-tabs store", () => {
     expect(location.pathname).toBe("/git");
   });
 
-  it("names the active Git section below the tab bar", async () => {
+  it("names the active Git section in the title bar subtitle", async () => {
     document.body.innerHTML = `
       <nav id="git-tab-bar">
         <button data-git-tab="changes"></button>
         <button data-git-tab="prs"></button>
         <button data-git-tab="sources"></button>
       </nav>
-      <span id="git-page-title"></span>
+      <span id="titlebar-title"></span>
+      <span id="titlebar-subtitle"></span>
       <div data-git-panel="changes"></div>
       <div data-git-panel="prs"></div>
       <div data-git-panel="sources"></div>`;
@@ -108,11 +109,19 @@ describe("git-tabs store", () => {
       /* @vite-ignore */ `./git-tabs.ts?boot=${bootSeq}`
     )) as typeof ModGitTabs;
 
+    // The heading has TWO writers on two clocks: `showView` owns the title and
+    // names the kind, the tab module owns the subtitle. `setPageSubtitle` paints
+    // only for the kind currently shown, so a view that is not on screen records
+    // its section without stealing another view's heading — which means this test
+    // has to perform the view switch, exactly as `tabs.ts` does.
+    const { setPageTitle } = await import("./page-title.js");
+    setPageTitle("Git", "git");
+
     initGitTabs();
-    expect(document.getElementById("git-page-title")?.textContent).toBe("Changes");
+    expect(document.getElementById("titlebar-subtitle")?.textContent).toBe("Changes");
 
     setGitTab("prs");
-    expect(document.getElementById("git-page-title")?.textContent).toBe("Pull requests");
+    expect(document.getElementById("titlebar-subtitle")?.textContent).toBe("Pull requests");
   });
 });
 

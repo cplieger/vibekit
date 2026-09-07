@@ -94,4 +94,22 @@ describe("the summarized-message count", () => {
   it("counts nothing summarized in an empty window with no watermark", () => {
     expect(bar({ messages: [] })["summarizedCount"]).toBe(0);
   });
+
+  // A compaction that landed MID-TURN: the server seals the turn at the boundary,
+  // so the shape is [user, segment-1, event, segment-2] and the watermark names
+  // the event. Segment 1 counts as summarized, which is true — it is what the
+  // summary replaced — and segment 2 does not.
+  it("counts the sealed segment and the event on a turn split at a compaction point", () => {
+    const b = bar({
+      compaction_watermark: "evt",
+      messages: [
+        { id: "u1", role: "user", content: "do it" } as Message,
+        { id: "seg1", role: "assistant", content: "before" } as Message,
+        { id: "evt", role: "event", content: "the summary" } as Message,
+        { id: "seg2", role: "assistant", content: "after" } as Message,
+      ],
+    });
+    expect(b["summarizedCount"]).toBe(3);
+    expect(b["msgCount"]).toBe(4);
+  });
 });

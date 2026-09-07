@@ -1,0 +1,111 @@
+{
+  "reported-failed-no-reason": {
+    "chat_id": "c-c4b7910007414d0e0759fc263cbb2146",
+    "messages": [
+      {
+        "id": "m-mtmqc5a9-2o3k6h501b5p1h2lu6w",
+        "role": "user",
+        "ts": 1788512790476,
+        "content": "<redacted prose>"
+      },
+      {
+        "id": "01a06bab-867a-70e1-9936-7cb066964d09",
+        "role": "assistant",
+        "ts": 1788512930111,
+        "turn_outcome": "failed",
+        "turn_stop_reason_raw": "error",
+        "block_count": 26,
+        "tool_call_count": 17,
+        "changed_file_count": 3,
+        "has_credits": true,
+        "has_elapsed": true
+      },
+      {
+        "id": "m-mtmqfpn3-321a3v283xy4t283p63",
+        "role": "user",
+        "ts": 1788512956827,
+        "content": "<redacted prose>"
+      },
+      {
+        "id": "01a06bad-f6c9-71e0-87e6-932f809233d2",
+        "role": "event",
+        "ts": 1788512958153,
+        "event_kind": "turn_outcome",
+        "turn_outcome": "failed",
+        "turn_stop_reason_raw": "error",
+        "content": ""
+      },
+      {
+        "id": "m-mtmroqtt-4a2o5u5ij6v4161v6q",
+        "role": "user",
+        "ts": 1788515057902,
+        "content": "<redacted prose>"
+      },
+      {
+        "id": "01a06bce-1871-7815-b79e-0902d0a53e14",
+        "role": "assistant",
+        "ts": 1788515318112,
+        "turn_outcome": "completed",
+        "turn_stop_reason_raw": "end_turn",
+        "content": "<redacted prose>",
+        "block_count": 40,
+        "tool_call_count": 25,
+        "changed_file_count": 2,
+        "has_credits": true,
+        "has_elapsed": true
+      }
+    ]
+  },
+  "reported-interrupted-hollow-dot": {
+    "chat_id": "c-a7f83c9ff14d180d6cf44e9caea44f45",
+    "messages": [
+      {
+        "id": "m-mtmq8d5g-5p52174n1631141b1546",
+        "role": "user",
+        "ts": 1788512614046,
+        "content": "<redacted prose>"
+      },
+      {
+        "id": "01a06ba8-f9c6-71a3-aa92-ff57ee060176",
+        "role": "assistant",
+        "ts": 1788512930352,
+        "turn_outcome": "interrupted",
+        "turn_stop_reason_raw": "interrupted",
+        "block_count": 46,
+        "tool_call_count": 30,
+        "changed_file_count": 1
+      },
+      {
+        "id": "01a06bad-8a33-7408-9656-e80adbf7b5c6",
+        "role": "event",
+        "ts": 1788512930355,
+        "event_kind": "interrupted",
+        "content": "A network error occurred. Please check your connection and try again."
+      },
+      {
+        "id": "m-mtmrumf6-651h5j6o6q4t27714l6k",
+        "role": "user",
+        "ts": 1788515332128,
+        "content": "<redacted prose>"
+      },
+      {
+        "id": "01a06bd2-45a3-7531-9b8a-1aa111f44ba8",
+        "role": "assistant",
+        "ts": 1788515344772,
+        "turn_outcome": "cancelled",
+        "turn_stop_reason_raw": "cancelled",
+        "block_count": 2,
+        "tool_call_count": 1,
+        "has_credits": true,
+        "has_elapsed": true
+      },
+      {
+        "id": "01a06bd2-6191-79c3-b7ce-b88a646db4a8",
+        "role": "event",
+        "ts": 1788515344785,
+        "event_kind": "cancelled",
+        "content": ""
+      }
+    ]
+  }
+}

@@ -33,29 +33,6 @@
   padding-block: calc(0.3125rem + env(safe-area-inset-top, 0)) var(--sp-2);
 }
 
-/* ONE element, two positions, and the breakpoint decides which. Desktop puts
-   the section title ABOVE the menu bar, because `.chat-toolbar` is
-   `position: absolute` over the top-right corner of every view at z-index 10
-   (12-chat.css) and the bar is full-width: with nothing above it the bar's
-   right end renders UNDERNEATH those buttons — measured at 1440x900 on /git,
-   the Sources segment lost its last 33px and the bar overlapped the toolbar's
-   whole 12-54px band. The title row is what re-opens that gap (bar top moves
-   21px -> 78px, 24px clear of the toolbar), and it is the same thing every
-   untabbed page already does with a plain `.page-title` (files, history, run).
-   Below 48rem the bar keeps the title UNDERNEATH it: the labels are gone there
-   (tab-bar-fit.ts), so this line is the only text naming the active section,
-   and the toolbar is `position: static` at that width so nothing floats over
-   the bar to clear. Both halves live here so neither can be moved alone. */
-.settings-title-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-
-  @media (width <= 48rem) {
-    order: 1;
-  }
-}
-
 /* A setting's title with its own save indicator beside it. Every user setting has
    one: the indicator belongs to the thing being written, not to a page-wide slot,
    so the slot sits next to whichever label names that setting — a section
@@ -66,15 +43,15 @@
   gap: var(--sp-2);
 }
 
-/* h3.section-title pads var(--sp-4) above ITSELF. Left there, that padding is
+/* .section-title pads var(--sp-4) above ITSELF. Left there, that padding is
    inside the box `align-items: center` measures, so the status would land half of
    it below the heading's ink — the same defect that put the old page-wide slot
    5.5px below the settings title. Move the padding to the row. */
-.section-title-status-row:has(> h3.section-title) {
+.section-title-status-row:has(> .section-title) {
   padding-block-start: var(--sp-4);
 }
 
-.section-title-status-row > h3.section-title {
+.section-title-status-row > .section-title {
   padding-block-start: 0;
 }
 
@@ -99,6 +76,17 @@
 
 .settings-save-status > .spinner-sm {
   border-width: 1.5px;
+}
+
+/* The two save faces carry `currentColor` and a semantic class; the hue is the
+   host's to state, so a save indicator elsewhere tints them for its own
+   surface instead of inheriting a colour baked into the glyph. */
+.icon-save-ok {
+  color: var(--c-green);
+}
+
+.icon-save-fail {
+  color: var(--c-red);
 }
 
 /* Desktop tab bar: segmented-control pills.
@@ -214,7 +202,7 @@
 }
 
 :where(.section-header-row) .section-title,
-:where(.section-header-row) h3.section-title {
+:where(.section-header-row) .section-title {
   padding-block-start: 0;
 }
 
@@ -462,6 +450,13 @@
 }
 
 .forge-account-repo-row {
+  /* Row height comes from the TIER, not from the font. Without it this row
+     resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
+     close — so it measured the same on a finger as on a mouse while `.tab`
+     beside it correctly went 36px to 44px. A floor, so a taller row keeps its
+     own height: measured, this moves desktop by at most 1px and gives every
+     list row a real 36px target on touch. */
+  min-block-size: var(--ctl-h-sm);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -1291,20 +1286,8 @@
   background: var(--c-bg-tertiary);
 }
 
-.git-ci-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--c-text-tertiary);
-  flex-shrink: 0;
-}
-
 .git-ci-pill-success {
   border-color: color-mix(in srgb, var(--c-teal) 45%, var(--c-border));
-}
-
-.git-ci-pill-success .git-ci-dot {
-  background: var(--c-teal);
 }
 
 .git-ci-pill-failure,
@@ -1312,22 +1295,8 @@
   border-color: color-mix(in srgb, var(--c-danger) 45%, var(--c-border));
 }
 
-.git-ci-pill-failure .git-ci-dot,
-.git-ci-pill-error .git-ci-dot {
-  background: var(--c-danger);
-}
-
 .git-ci-pill-pending {
   border-color: color-mix(in srgb, var(--c-accent) 45%, var(--c-border));
-}
-
-.git-ci-pill-pending .git-ci-dot {
-  background: var(--c-accent);
-  animation: vk-breathe 1.4s var(--ease-standard) infinite;
-}
-
-.git-ci-pill-canceled .git-ci-dot {
-  background: var(--c-text-tertiary);
 }
 
 .git-ci-panel {
@@ -1365,20 +1334,6 @@
   gap: var(--sp-2);
   padding: var(--sp-1) var(--sp-3);
   font-size: var(--fs-sm);
-}
-
-.git-ci-panel-row-success .git-ci-dot {
-  background: var(--c-teal);
-}
-
-.git-ci-panel-row-failure .git-ci-dot,
-.git-ci-panel-row-error .git-ci-dot {
-  background: var(--c-danger);
-}
-
-.git-ci-panel-row-pending .git-ci-dot {
-  background: var(--c-accent);
-  animation: vk-breathe 1.4s var(--ease-standard) infinite;
 }
 
 .git-ci-panel-name {
@@ -1694,7 +1649,8 @@ select.native-rule-effect:focus-visible {
   block-size: 1.5rem;
   padding: 0;
   border: none;
-  border-radius: var(--r);
+  /* --r-sm is the ladder's rung for a 16-24px box; this is 24px. */
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--c-text-tertiary);
   font-size: var(--fs-md);

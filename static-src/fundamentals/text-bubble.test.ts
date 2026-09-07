@@ -15,9 +15,16 @@
 
 import { describe, expect, it } from "vitest";
 import { buildAssistantBubble } from "./text-bubble.js";
+import { framesBudgetMs, testTimeoutFor } from "../__test-helpers__/frame-budget.js";
+
+/** These reveal 400 characters, and `reveal.ts` clamps a frame's advance to
+ *  MAX_DT_SECS (0.1s) however long that frame took — so a throttled frame moves
+ *  0.1s of reveal, not a second's worth, and the whole string needs ~10 of them.
+ *  Sized at twice that. */
+const REVEAL_BUDGET_MS = framesBudgetMs(20);
 
 /** Resolve once `cond` holds, or throw after `budget` ms. */
-async function until(cond: () => boolean, budget = 4000): Promise<void> {
+async function until(cond: () => boolean, budget = REVEAL_BUDGET_MS): Promise<void> {
   const deadline = performance.now() + budget;
   while (!cond()) {
     if (performance.now() > deadline) {
@@ -29,7 +36,7 @@ async function until(cond: () => boolean, budget = 4000): Promise<void> {
   }
 }
 
-describe("buildAssistantBubble", () => {
+describe("buildAssistantBubble", { timeout: testTimeoutFor(REVEAL_BUDGET_MS) }, () => {
   it("paints the text it was mounted with, live or replay", () => {
     // A mid-turn connect and a repaint both arrive holding text. Deferring it
     // would blank a transcript the reader is already looking at.
@@ -157,7 +164,7 @@ describe("buildAssistantBubble", () => {
 // half is in messages-blocks.test.ts.
 // ---------------------------------------------------------------------------
 
-describe("the caret's two exits", () => {
+describe("the caret's two exits", { timeout: testTimeoutFor(REVEAL_BUDGET_MS) }, () => {
   it("end() keeps the caret while a backlog remains", async () => {
     const b = buildAssistantBubble("", true);
     b.setText("d".repeat(400));

@@ -20,10 +20,16 @@
 // against a single reason would leave that window with no banner at all, so a
 // user would see chats fail with the UI claiming everything is fine.
 //
-// The check runs at boot and again on every transport gap — a gap is exactly
-// when the server may have restarted, i.e. when the state can have flipped in
-// either direction, so the banner self-heals once the install completes (health
-// re-reads the verdict per request).
+// The check runs at boot, on every transport gap, and then on a POLL for as long
+// as the runtime reports itself unready. The poll is what makes the copy true:
+// the installing banner tells the reader it clears itself, and a boot probe plus
+// a gap listener is not a channel — a first boot spends minutes installing while
+// its SSE stream stays connected, so no gap ever fires and the banner outlived
+// the condition until the reader reloaded or happened to open the status popup.
+//
+// It runs ONLY while unready, so a healthy app polls nothing: health re-reads the
+// verdict per request, so the first ready answer both clears the banner and ends
+// the poll.
 //
 // There are TWO reason families, and they are separate because their remedies
 // are: the install family above ("kiro-cli ...", nothing for the user to do but
@@ -165,9 +171,56 @@ const SIGNED_OUT: RuntimeState = {
   level: "error",
 };
 
+/** How long to wait before the FIRST re-probe of an unready runtime. A kiro-cli
+ *  install is minutes of work, so this is about how fast the banner should
+ *  disappear once it finishes rather than about catching a transition. */
+const UNREADY_POLL_MS = 10_000;
+
+/** The steady-state interval the re-probe backs off to, and the reason there is
+ *  one: an install converges in minutes, while a page left open against a stopped
+ *  server never does — at a flat 10s that tab issues one /api/health every 10s
+ *  for as long as it is open. Doubling to a 2-minute ceiling keeps the banner
+ *  clearing promptly on the case that recovers and costs an abandoned tab ~1
+ *  request a minute. Never zero: a permanently degraded runtime is a state the
+ *  banner should keep reflecting, so this backs OFF rather than giving up. */
+const UNREADY_POLL_MAX_MS = 120_000;
+
+/** The one pending re-probe. A single slot rather than a repeating interval, so a
+ *  slow probe can never overlap the next one and a ready answer ends the chain by
+ *  simply not re-arming. */
+let unreadyTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Consecutive unready answers, which is what the backoff is a function of. Reset
+ *  by any ok answer, so a runtime that recovers and degrades again gets the fast
+ *  interval back rather than inheriting the previous outage's ceiling. */
+let unreadyStreak = 0;
+
+/** Re-arm (or cancel) the unready re-probe. Always cancels first, so the boot
+ *  probe, a transport gap and a poll tick all converge on one timer. */
+function armUnreadyPoll(unready: boolean): void {
+  if (unreadyTimer !== undefined) {
+    clearTimeout(unreadyTimer);
+    unreadyTimer = undefined;
+  }
+  if (!unready) {
+    unreadyStreak = 0;
+    return;
+  }
+  const delay = Math.min(UNREADY_POLL_MS * 2 ** unreadyStreak, UNREADY_POLL_MAX_MS);
+  unreadyStreak += 1;
+  unreadyTimer = setTimeout(() => {
+    unreadyTimer = undefined;
+    void checkRuntimeHealth();
+  }, delay);
+}
+
 /** Probe /api/health once and reconcile the degraded banner. */
 export async function checkRuntimeHealth(): Promise<void> {
   const res = await apiGetOrError<HealthBody>("/api/health");
+  // Re-armed before the branching, because every non-ok answer wants another look:
+  // the two named families below AND a startup/shutdown 503, which raises no banner
+  // and is exactly the window an install begins in.
+  armUnreadyPoll(!res.ok);
   const reason = reasonOf(res.body);
   if (!res.ok && reason.startsWith(AUTH_REASON_PREFIX)) {
     runtimeLine = LINE_SIGNED_OUT;

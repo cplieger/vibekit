@@ -410,7 +410,11 @@
      push the actions off the row. */
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
+
+  /* Centred, never `start`: the 1.5rem action button is the tallest item, so a
+     top-aligned row hangs the state word and a one-line message ~4px above the
+     row's own middle. User ruling: centred at every message length. */
+  align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
   border: 1px dashed color-mix(in srgb, var(--c-accent) 45%, var(--c-border));
@@ -448,9 +452,6 @@
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  /* Nudged onto the message's first line: the column is top-aligned so a
-     two-line message keeps the label beside its start, not its middle. */
-  padding-block-start: 0.05rem;
   color: var(--c-accent);
 }
 
@@ -459,10 +460,19 @@
   flex: none;
 }
 
+/* STILL, and deliberately: this glyph carried `vk-breathe`, whose trough put it
+   at 2.16:1 against this row's own background (accent #c099ff at opacity 0.4
+   over the 6% accent wash) — under WCAG 1.4.11's 3:1 for a graphical object, for
+   half of every 2s cycle, which is the opacity-multiplies-contrast trap the
+   `sending` rule above avoids by CHOOSING its ink. The app's own reading settles
+   the rest: motion means in flight, and a steer is parked in KAS's buffer, so
+   12-tabs.css stopped animating its `waiting` dot for this exact reason ("an
+   animated one nags indefinitely with nothing in flight"), and a surface the
+   reader is already watching earns no beat (vibekit-ui.md). The state is carried
+   by the word, the ink and the dashed edge. */
 .steer-state-icon svg {
   width: 0.85rem;
   height: 0.85rem;
-  animation: vk-breathe 2s var(--ease-standard) infinite;
 }
 
 /* The WORD, not only the glyph. "Sent" is the fact the stack exists to state:
@@ -582,11 +592,161 @@
   outline-offset: var(--focus-offset);
 }
 
-/* Expand the hit target to ~44px on touch without growing the glyph. */
-@media (pointer: coarse) {
+/* Expand the hit target to ~44px on touch without growing the glyph. Gated on the
+   observed tier rather than `@media (pointer: coarse)` for the reason
+   21-shell-panel.css states at length: the query answers for the primary input
+   only, and the size tokens already key on this attribute. `:where()` keeps the
+   gate at zero specificity. */
+:where([data-pointer="coarse"]) {
   .steer-act::after {
     content: "";
     position: absolute;
     inset: -0.6rem;
   }
+}
+
+/* ==========================================================================
+   THE RUN BAR — one line per live workflow run this chat launched.
+
+   The band's third region, between the dock and the steer stack, and the
+   ordering is by SCOPE: a dock card blocks the turn, a run spans turns, a steer
+   is scoped to the turn running now. Same mechanical property as the dock at the
+   top of this file — the bar GROWS upward and the transcript's flex row shrinks
+   by exactly this region's height, so nothing is covered.
+
+   State is carried by a GLYPH plus a WORD, never by tint alone (WCAG 1.4.1). The
+   glyph column is a copy of `.ev-state`'s (31-exec-view.css), deliberately rather
+   than of `.run-step-glyph`'s: the exec view's reads `--dot-size` where the run
+   card's hard-codes a length, and this is the third surface that has to agree.
+   ========================================================================== */
+
+.run-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+
+  /* Character-for-character .steer-stack's, .prompt-box's and .decision-dock's
+     measure, so all four band regions share one column. */
+  max-width: var(--content-max-w);
+  width: 100%;
+  margin: 0 auto var(--sp-2);
+  padding: 0;
+  list-style: none;
+}
+
+/* The row's control. NO `min-width` and NO `min-height`: the zero-specificity
+   floor in 61-mcp-tools.css already gives every `button` `--hit-floor` on both
+   tiers, and a class-level declaration here would BEAT it (0,1,0 against 0,0,0)
+   — the `.send-btn` precedent that file records. */
+.run-bar-open {
+  /* glyph | name | word | steps | clock. minmax(0, 1fr) on the name is what lets
+     it ellipsize instead of pushing the clock off the row. */
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-secondary);
+  text-align: start;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    opacity var(--dur-enter) var(--ease-enter),
+    transform var(--dur-enter) var(--ease-enter);
+
+  /* Rises from below as a run starts, like `.steer-row`. */
+  @starting-style {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* `any-hover`, never `hover`: those queries report the PRIMARY input only, so an
+   iPad with a trackpad answers `none` and would lose the rule. The BACKGROUND
+   moves and the ink does not — accent ink on hover is this app's TEXT-control
+   idiom and reads as a link on a button-shaped control. */
+@media (any-hover: hover) {
+  .run-bar-open:hover {
+    background: var(--c-hover);
+  }
+}
+
+.run-bar-open:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+/* A RESERVED box, so a row whose state is not known yet does not shift its name
+   when the first fetch lands. */
+.run-bar-glyph {
+  display: grid;
+  place-items: center;
+  inline-size: 1rem;
+  block-size: 1rem;
+  font-size: var(--fs-xs);
+  line-height: 1;
+  color: var(--c-text-tertiary);
+}
+
+/* FOUR states reach a row and no more, so there is no ink here for a settled one:
+   `rows()` keeps a run only while its state is unfetched or `runIsLive`, which
+   admits running and paused alone. An unanswered ask is the one of the four a
+   reader must ACT on, so its `?` carries weight as well as hue. */
+.run-bar-row[data-state="input"] .run-bar-glyph {
+  font-weight: var(--fw-semibold);
+  color: var(--c-yellow);
+}
+
+/* Running and waiting carry no character, so the RING is the glyph and the two
+   differ by MOTION — the axis the tab dot, the tool card, the run card and the
+   exec tree all use. A still ring is a run stopped with nothing moving. */
+.run-bar-row[data-state="running"] .run-bar-glyph::before,
+.run-bar-row[data-state="waiting"] .run-bar-glyph::before {
+  content: "";
+  display: block;
+  inline-size: var(--dot-size);
+  block-size: var(--dot-size);
+  border: 0.125rem solid var(--c-accent);
+  border-radius: 50%;
+}
+
+.run-bar-row[data-state="running"] .run-bar-glyph::before {
+  border-top-color: transparent;
+  animation: vk-spin var(--spin-dur) linear infinite;
+}
+
+.run-bar-row[data-state="waiting"] .run-bar-glyph::before {
+  border-color: var(--c-blue);
+}
+
+.run-bar-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+}
+
+/* The WORD, not only the glyph, and dimmed with a CHOSEN ink rather than an
+   opacity: an opacity multiplies the measured contrast and is invisible to the
+   contrast gates. */
+.run-bar-state {
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+}
+
+.run-bar-steps,
+.run-bar-clock {
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-tertiary);
 }

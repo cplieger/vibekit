@@ -1,9 +1,45 @@
-// Find in Chat (Ctrl-F) over the ACTIVE chat: the server pre-pass, the counter, the streaming
-// re-run and the popup. The walker is find-engine.ts; find-dispatch.ts owns which tab the chord
-// reaches. Enumeration is SERVER-side because the DOM cannot answer it: non-resident pages,
-// collapsed subtrees, and the rows and cards whose `content-visibility: auto` makes
-// checkVisibility report false. Overriding the chord stays defensible only while this keeps its
-// half — <mark>, an aria-live count, next/prev, no focus trap.
+// ---------------------------------------------------------------------------
+// Find in Chat (Ctrl-F / Cmd-F): an in-chat message search overlay.
+//
+// Scoped to the ACTIVE chat's rendered messages (`#messages`).
+//
+// THE DOM_MESSAGE_CAP CLAIM THIS COMMENT USED TO MAKE WAS FALSE. It said the
+// list is "DOM-capped at 50 nodes (see scroll.ts DOM_MESSAGE_CAP)"; no such
+// constant has ever existed and scroll.ts never trims the DOM. The 50 was
+// store-load.ts's PAGE SIZE — pagination, not eviction — and the wrong
+// provenance propagated out of here into a design document before it was caught.
+//
+// The WALKER itself is find-engine.ts now, shared with the editor's find over a
+// diff pane or rendered markdown — the same problem, one implementation. What
+// stays here is the transcript's own half: the server pre-pass, the counter, the
+// streaming re-run, and the popup.
+//
+// The real blind spots are three, and they are why the enumeration moves
+// server-side rather than being patched in that walker: non-resident pages;
+// resident rows whose `content-visibility: auto` makes checkVisibility report
+// false while rendering is skipped; and hidden or collapsed subtrees, which
+// progressive collapse adds a third time.
+//
+// Native-find override policy (researched against 2024-2026 a11y/UX guidance):
+//   - Overriding Ctrl-F is only acceptable because we provide an EQUIVALENT
+//     in-page find: highlight, an aria-live "N of M" counter, next/prev
+//     stepping, and scroll-into-view. Like native find, it never restructures
+//     page content — it only wraps matches in <mark> and cleanly unwraps on
+//     close.
+//   - The override is NARROW: it only fires when the chat view is the active
+//     context. Over the editor, shell, settings, git, or files views the
+//     browser's native find is left untouched.
+//   - Escape hatch: a SECOND Ctrl-F while our find field already has focus
+//     falls through to the browser's native find (no preventDefault).
+//   - No focus trap: Tab moves through the widget and back out to the page.
+//     Escape closes and restores focus to wherever it was before opening.
+//
+// The keydown listener is registered from app.ts (the composition root) via
+// handleFindHotkey — this module is a leaf (imports dom/scroll/reactive; nothing
+// imports it except app.ts and the test), so there is no import cycle. The one
+// door out of it, the run tab a workflow-step hit navigates to, is reached through
+// a LAZY import, so that chunk stays lazy and the leaf claim still holds.
+// ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
 import { createPopup } from "@cplieger/ui-primitives/popup";
@@ -22,6 +58,7 @@ import { loadMessages } from "./store-load.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
 import { createSearchShell, searchIconButton } from "./search-shell.js";
+import { parseStepSubtask } from "./step-subtask.js";
 import { FindEngine, formatCount } from "./find-engine.js";
 import type { SearchShell } from "./search-shell.js";
 import type { SearchHit } from "./chat-search.js";
@@ -469,6 +506,42 @@ function showHitNotice(suffix: string): void {
 async function navigateToHit(hit: SearchHit): Promise<void> {
   const chatID = getActiveId();
   if (chatID === "" || engine === null) {
+    return;
+  }
+  // A WORKFLOW STEP's hit goes to the RUN TAB, which is the only surface that
+  // renders it. Three facts the code below cannot show: a step's blocks are DROPPED
+  // by the transcript's dispatcher (`messages-blocks.ts` placeBlock), so there is no
+  // DOM segment for `resolveSegmentEl` to find and the old path ended at "could not
+  // be shown" on the launching turn's row; the run tab renders that step's
+  // transcript by slicing the same blocks (`run-view.ts` -> `run-step-slice.ts`), so
+  // this is a real destination; and the predicate is the renderer's own
+  // `parseStepSubtask`, so a malformed `wf:` id falls through to the delegate box
+  // exactly as it does there.
+  //
+  // Skipping `ensureHitResident` and `revealHitTurn` is the point: the destination
+  // is another tab, so paging the launching chat's history in and revealing a turn
+  // would be work for a surface nobody is about to look at.
+  const step = parseStepSubtask(hit.agent_subtask_id ?? "");
+  if (step !== null) {
+    // Painted BEFORE the open: on success the tab switch tears the overlay down
+    // (BUS_TAB_CHANGED -> closeChatFind), and on a refused open this is the accurate
+    // position for a reader still on the transcript.
+    if (countEl !== null) {
+      countEl.textContent = serverHitCounter();
+    }
+    try {
+      // Lazily imported, the shape `messages-blocks.ts` uses for the run card's own
+      // opener: a static import would pull `exec-view/**`, `run-exec-source` and
+      // `actions/runs` into the main bundle for a branch that is rarely taken.
+      const { openRunView } = await import("./run-view.js");
+      // Name "" so the tab factory derives the label from the run store — find has
+      // no better one than the factory does.
+      openRunView(step.workflowID, "", chatID, step.nodePath);
+    } catch {
+      if (isOpen()) {
+        showHitNotice("could not be opened");
+      }
+    }
     return;
   }
   if (!(await ensureHitResident(chatID, hit))) {

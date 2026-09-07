@@ -307,10 +307,12 @@ describe("a run step's clamped output does not paint past its own clamp", () => 
     cap.textContent = text;
 
     const row = document.createElement("div");
-    row.className = "run-step collapsed";
+    row.className = "run-step";
     row.dataset["status"] = "completed";
-    const head = document.createElement("div");
+    // An ANCHOR, as the builder makes it: the row is a door into `/run/{id}`.
+    const head = document.createElement("a");
     head.className = "run-step-head";
+    head.href = "/run/wf_1";
     row.append(head, cap);
 
     const card = document.createElement("div");
@@ -321,6 +323,25 @@ describe("a run step's clamped output does not paint past its own clamp", () => 
     card.appendChild(steps);
     return card;
   }
+
+  it("keeps a navigator row's own ink rather than taking the reset's link ink", () => {
+    // The reset layer carries `a { color: var(--c-link) }`, and this app spends link
+    // ink on TEXT controls; a row is a navigator, like `.tab` and `.ev-row-main`. So
+    // the row has to opt out, or every step in the card reads as a hyperlink.
+    const card = mount(step("captured"));
+    const head = card.querySelector<HTMLElement>(".run-step-head")!;
+    expect(css(head, "text-decoration-line")).toBe("none");
+
+    // The oracle is the LIVE token, not a literal: `--c-link` is theme-split, and a
+    // hard-coded swatch would pass on one theme and lie on the other.
+    const probe = document.createElement("a");
+    probe.href = "/run/wf_1";
+    probe.textContent = "link";
+    card.appendChild(probe);
+    expect(css(head, "color")).not.toBe(css(probe, "color"));
+    // …and it is the inherited ink, which is what `color: inherit` means.
+    expect(css(head, "color")).toBe(css(card, "color"));
+  });
 
   const overflowing = Array.from(
     { length: 40 },

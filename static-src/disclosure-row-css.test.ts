@@ -265,12 +265,8 @@ function inlineDisclosure(
 }
 
 describe("turn action overflow", () => {
-  it("renders the secondary actions inline with the More summary hidden on desktop", () => {
-    const details = inlineDisclosure(
-      "turn-actions-more",
-      "turn-actions-secondary",
-      "turn-action-btn",
-    );
+  it("renders the grouped actions inline with the More summary hidden on desktop", () => {
+    const details = inlineDisclosure("turn-actions-more", "turn-actions-group", "turn-action-btn");
     const slot = document.createElement("span");
     slot.className = "turn-actions-buttons";
     slot.appendChild(details);
@@ -280,7 +276,7 @@ describe("turn action overflow", () => {
 
     expect(details.open).toBe(false);
     expect(css(summary, "display")).toBe("none");
-    // Closed, summary-less, and NOT skipped: the four actions really render.
+    // Closed, summary-less, and NOT skipped: the grouped actions really render.
     expect(contentSkipped(details)).toBe(false);
   });
 });
@@ -429,7 +425,10 @@ describe("turn card header affordance", () => {
 });
 
 describe("folded turn face", () => {
-  function face(kind: "turn-face-prose" | "turn-face-error", lines: number): HTMLElement {
+  // `turn-notice` is a CARD-level sibling of the face rather than a child of it
+  // (29-turns.css), because it renders in both fold states; the fixture mounts it
+  // where production does so the no-clamp assertion measures the real box.
+  function face(kind: "turn-face-prose" | "turn-notice", lines: number): HTMLElement {
     const card = document.createElement("div");
     card.className = "turn";
     card.setAttribute("data-folded", "");
@@ -444,13 +443,16 @@ describe("folded turn face", () => {
         p.textContent = `line ${String(i)}`;
         content.appendChild(p);
       }
+      faceEl.appendChild(content);
+      card.appendChild(faceEl);
     } else {
       // The real shape: one text node, newlines rendered by pre-wrap.
       content.className = kind;
+      content.dataset["severity"] = "broken";
       content.textContent = Array.from({ length: lines }, (_, i) => `line ${String(i)}`).join("\n");
+      card.appendChild(faceEl);
+      card.appendChild(content);
     }
-    faceEl.appendChild(content);
-    card.appendChild(faceEl);
     mount(card);
     return content;
   }
@@ -461,7 +463,7 @@ describe("folded turn face", () => {
     // fold's compactness comes from hiding tool cards, reasoning and delegate
     // output. A turn with none of those offers no fold at all (data-no-fold),
     // so an unclamped face can no longer read as "collapse does not work".
-    for (const kind of ["turn-face-prose", "turn-face-error"] as const) {
+    for (const kind of ["turn-face-prose", "turn-notice"] as const) {
       const content = face(kind, 40);
       expect(content.scrollHeight, `${kind}: nothing clipped`).toBeLessThanOrEqual(
         content.clientHeight + 1,
@@ -532,36 +534,39 @@ describe("sub-page menu bars", () => {
     expect(css(label, "display")).toBe("none");
   });
 
-  // One element, two positions. On desktop the title LEADS the bar, and that is
-  // load-bearing rather than cosmetic: `.chat-toolbar` floats over the top-right
-  // corner of every view, so a full-width bar with nothing above it renders its
-  // right end underneath those buttons. Below 48rem the title FOLLOWS the bar,
-  // where the labels are gone and this line is the only text naming the active
-  // section. The layout half is asserted at whichever width the test page has;
-  // the narrow half is asserted as a source fact so it is pinned either way.
-  it("leads the menu bar on desktop and follows it on a narrow bar", () => {
-    const header = document.createElement("header");
-    header.className = "settings-header";
-    const title = document.createElement("div");
-    title.className = "settings-title-row";
+  // THE SUBTITLE DEFERS TO A LABELLED BAR, and this is the dependency that makes
+  // it work. `tab-bar-fit.ts` publishes `.tab-bar-named` while a bar is VISIBLE
+  // and showing its labels, i.e. while it names its own active section, and
+  // 12-chat.css suppresses the title bar's subtitle for exactly that condition —
+  // otherwise the section name prints twice, twenty pixels apart. When the bar
+  // drops its labels the class goes with them and the subtitle becomes the only
+  // text naming the section.
+  //
+  // What this replaced: `.settings-title-row`, an element whose whole job was to
+  // push the bar clear of a floating menu that no longer floats. Its own comment
+  // recorded the measurement (the Sources segment lost its last 33px at 1440x900).
+  // The bar is in flow now, so the row is deleted rather than repositioned.
+  it("suppresses the title bar subtitle while the menu bar names its own section", () => {
+    const area = document.createElement("div");
+    area.id = "chat-area";
+    const heading = document.createElement("div");
+    heading.className = "titlebar-heading";
+    const subtitle = document.createElement("span");
+    subtitle.className = "titlebar-subtitle";
+    subtitle.textContent = "Tools";
+    heading.append(subtitle);
     const bar = document.createElement("nav");
     bar.className = "settings-tab-bar";
-    header.append(title, bar);
-    mount(header);
+    area.append(heading, bar);
+    mount(area);
 
-    const titleBox = title.getBoundingClientRect();
-    const barBox = bar.getBoundingClientRect();
-    if (matchMedia("(width <= 48rem)").matches) {
-      expect(Number(css(title, "order"))).toBeGreaterThan(Number(css(bar, "order")));
-      expect(titleBox.top).toBeGreaterThanOrEqual(barBox.bottom);
-    } else {
-      expect(Number(css(title, "order"))).toBe(Number(css(bar, "order")));
-      expect(titleBox.bottom).toBeLessThanOrEqual(barBox.top);
-    }
+    // Labelled bar: it names the section, so the subtitle stands down.
+    bar.classList.add("tab-bar-named");
+    expect(css(subtitle, "display")).toBe("none");
 
-    expect(ruleBody(loadCSS("17-settings.css"), ".settings-title-row")).toMatch(
-      /@media\s*\(width\s*<=\s*48rem\)\s*\{[^}]*order:\s*1/,
-    );
+    // Labels dropped: the subtitle is the only name left on screen.
+    bar.classList.remove("tab-bar-named");
+    expect(css(subtitle, "display")).not.toBe("none");
   });
 });
 
@@ -579,7 +584,7 @@ describe("the mid-turn steer note's box", () => {
     head.className = "steer-note-head";
     const label = document.createElement("span");
     label.className = "steer-note-label";
-    label.textContent = "Your mid-turn message";
+    label.textContent = "Mid-turn message";
     head.append(label);
     const body = document.createElement("div");
     body.className = "steer-note-body";

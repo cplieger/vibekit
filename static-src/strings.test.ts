@@ -1,7 +1,7 @@
 // Unit tests for strings.ts — pure functions, no DOM dependency.
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import { escText, escAttr, humanName, truncate } from "./strings.js";
+import { escText, escAttr, formatElapsed, humanName, isoDuration, truncate } from "./strings.js";
 
 describe("escText", () => {
   it("passes through plain text unchanged", () => {
@@ -339,5 +339,80 @@ describe("windowSpans", () => {
     expect(out).toHaveLength(1);
     // The rebased offsets must select the same word in the windowed text.
     expect(win.text.slice(out[0]!.start, out[0]!.end)).toBe("line49");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A span's two spellings. `formatElapsed` writes the words and `isoDuration`
+// writes the `datetime` beside them, and `<time>`'s own contract is that the
+// attribute is a machine-readable form of the element's CONTENTS — so a pair that
+// disagrees is not two views of one value, it is a wrong attribute.
+//
+// The pair is asserted here rather than at the footer that renders it because both
+// functions live here; the footer's own tests cover the ELEMENT.
+// ---------------------------------------------------------------------------
+
+describe("a span's text and its machine-readable twin", () => {
+  /** `[ms, text, datetime]`, hardcoded on all three axes. Computing either
+   *  expectation from the other's thresholds would assert the split against a copy
+   *  of itself. */
+  const PAIRS: [number, string, string][] = [
+    [0, "0.0s", "PT0.0S"],
+    [400, "0.4s", "PT0.4S"],
+    [45_500, "45.5s", "PT45.5S"],
+    [59_999, "60.0s", "PT60.0S"],
+    [60_000, "1m 0s", "PT1M"],
+    [92_000, "1m 32s", "PT1M32S"],
+    [119_999, "1m 59s", "PT1M59S"],
+    [3_600_000, "1h 0m", "PT1H"],
+    [3_661_000, "1h 1m", "PT1H1M"],
+    [7_200_000, "2h 0m", "PT2H"],
+    [8_999_999, "2h 29m", "PT2H29M"],
+  ];
+
+  it("spells the same span both ways", () => {
+    for (const [ms, text, iso] of PAIRS) {
+      expect(formatElapsed(ms), `text for ${String(ms)}ms`).toBe(text);
+      expect(isoDuration(ms), `datetime for ${String(ms)}ms`).toBe(iso);
+    }
+  });
+
+  it("never carries a seconds component the words do not show", () => {
+    // The invariant the doc states, checked against the TEXT rather than against a
+    // second copy of the thresholds: above an hour `formatElapsed` prints `1h 1m`
+    // and nothing finer, so a `PT1H1M1S` beside it claims a precision the reader
+    // cannot see. That is the exact pair this caught.
+    //
+    // ONE DIRECTION, and the converse is deliberately not asserted: ISO 8601 omits
+    // a ZERO component, so `1m 0s` is spelled `PT1M` and that is the same span at
+    // the same precision rather than a coarser one. What must never happen is the
+    // attribute naming a unit the reader has no digit for.
+    //
+    // BOTH SIDES ARE COMPUTED: the table supplies only the input here. Reading its
+    // expected `iso` column instead would assert a property of a string literal,
+    // which no change to either function could ever falsify — the first draft of
+    // this case did exactly that and survived the red-check.
+    for (const [ms] of PAIRS) {
+      const text = formatElapsed(ms);
+      const iso = isoDuration(ms);
+      if (/\d(?:\.\d)?s$/.test(text)) {
+        continue;
+      }
+      expect(iso, `${text} / ${iso}`).not.toMatch(/S$/);
+    }
+  });
+
+  it("floors rather than rounds, in both spellings", () => {
+    // 1.9999s of a minute is still `1m 59s`, not `1m 60s` — and the attribute has
+    // to agree, or the two disagree by a whole second at every boundary.
+    expect(formatElapsed(119_999)).toBe("1m 59s");
+    expect(isoDuration(119_999)).toBe("PT1M59S");
+  });
+
+  it("treats a negative span as zero rather than emitting a negative duration", () => {
+    // `PT-0.4S` is not a duration any consumer should have to parse. The words are
+    // the footer's problem and it never renders one: the slot is hidden without a
+    // stamped duration.
+    expect(isoDuration(-400)).toBe("PT0.0S");
   });
 });

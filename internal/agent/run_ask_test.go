@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -523,9 +524,9 @@ func parkedInspect(t *testing.T, status, pauseReason, stepSession string) json.R
 			"pauseReason": pauseReason,
 			"pauseDetail": map[string]any{"occurredAt": "2026-09-03T10:00:00Z"},
 			"root": map[string]any{
-				"nodeId": "root", "status": "paused",
+				"nodeId": "root", "type": "sequence", "status": "paused",
 				"children": []any{map[string]any{
-					"nodeId": "review", "status": "paused",
+					"nodeId": "review", "type": stepNodeType, "status": "paused",
 					"sessionId": stepSession, "agentName": "reviewer",
 				}},
 			},
@@ -664,6 +665,133 @@ func TestReconcileNeedInput(t *testing.T) {
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", inspect("running", ""))
 		if events := bufferedEvents(h); len(events) != 0 {
 			t.Errorf("got %+v, want no event for a running run", events)
+		}
+	})
+}
+
+// TestReconcileNeedInput_InsideAParallelBranch pins the arm no pause reason can reach:
+// a branch's own sentence is written to a throwaway state copy, so the run keeps only
+// a wrapper that KAS also emits for an interruption and a permanent failure, and what
+// survives is the branch NODE's completionSignal (vibekit-acp.md has the read).
+//
+// Its own function rather than a case in the table above: the fixture is a different
+// tree shape, and the checking logic here is about which NODE was named.
+func TestReconcileNeedInput_InsideAParallelBranch(t *testing.T) {
+	// branched builds a run parked at a parallel with TWO paused branches. The first
+	// in document order is the one pausedLeaf would name, so a case that expects the
+	// second is asserting the signal decided rather than the walk order.
+	branched := func(t *testing.T, firstSignal, secondSignal string) json.RawMessage {
+		t.Helper()
+		raw, err := json.Marshal(map[string]any{
+			"state": map[string]any{
+				"status": "paused",
+				// The wrapper sentence, verbatim from executeParallel.
+				"pauseReason": "Parallel 'phase1' is waiting on branch 'verify'.",
+				"root": map[string]any{
+					"nodeId": "root", "status": "paused",
+					"children": []any{map[string]any{
+						"nodeId": "phase1", "status": "paused",
+						"children": []any{
+							map[string]any{
+								"nodeId": "verify", "status": "paused",
+								"sessionId": "sess_verify", "agentName": "verifier",
+								"completionSignal": firstSignal,
+							},
+							map[string]any{
+								"nodeId": "plan", "status": "paused",
+								"sessionId": "sess_plan", "agentName": "planner",
+								"completionSignal": secondSignal,
+							},
+						},
+					}},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Setup: marshalling the inspect reply: %s", err)
+		}
+		return raw
+	}
+
+	t.Run("a branch parked on a person gets an ask", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		h.runs.reconcileNeedInput(t.Context(), "wf_1", branched(t, needInputSignal, ""))
+
+		evt := eventOfType(t, h, string(vibekit.EventRunInputNeeded))
+		p := marshalPayload(t, evt.Payload)
+		if p["node_id"] != "verify" {
+			t.Errorf("node_id = %q, want verify", p["node_id"])
+		}
+		if p["step_session_id"] != "sess_verify" {
+			t.Errorf("step_session_id = %q, want sess_verify (the answer address)",
+				p["step_session_id"])
+		}
+	})
+
+	// The signal NAMES the step, which pausedLeaf's first depth-first match cannot:
+	// with two branches parked for different causes only the signal says which one
+	// owes a person an answer, and addressing the other one prompts a step nobody
+	// asked to steer.
+	t.Run("it names the branch carrying the signal, not the first paused one", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		h.runs.reconcileNeedInput(t.Context(), "wf_1", branched(t, "", needInputSignal))
+
+		evt := eventOfType(t, h, string(vibekit.EventRunInputNeeded))
+		p := marshalPayload(t, evt.Payload)
+		if p["node_id"] != "plan" {
+			t.Errorf("node_id = %q, want plan: the ask must follow the signal rather "+
+				"than the walk order", p["node_id"])
+		}
+	})
+
+	// The negative that keeps the arm honest. A branch parked on a TRANSIENT error is
+	// the shape that produced the identical wrapper sentence on the live instance, and
+	// nobody owes it an answer — so an arm keyed on the sentence would mint a card for
+	// a run that only needs a resume.
+	t.Run("a branch parked on a transient error gets none", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		h.runs.reconcileNeedInput(t.Context(), "wf_1", branched(t, "", ""))
+		if events := bufferedEvents(h); len(events) != 0 {
+			t.Errorf("got %+v, want no event: no node claims a person owes an answer", events)
+		}
+	})
+
+	// The `paused` half of the signal test, and the shape that makes it load-bearing:
+	// KAS's QUEUED status update writes `need_input` onto a node that is still RUNNING
+	// (its turn has to end first), so a signal alone does not mean a step is parked.
+	// One parallel branch in that state beside another parked for its own cause gives a
+	// `paused` run whose only need-input signal sits on a running node — and an ask
+	// minted there addresses a step nothing is waiting at.
+	t.Run("a signal on a RUNNING node is not a park", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		raw, err := json.Marshal(map[string]any{
+			"state": map[string]any{
+				"status":      "paused",
+				"pauseReason": "Parallel 'phase1' is waiting on branch 'plan'.",
+				"root": map[string]any{
+					"nodeId": "root", "status": "paused",
+					"children": []any{map[string]any{
+						"nodeId": "phase1", "status": "paused",
+						"children": []any{
+							map[string]any{
+								"nodeId": "verify", "status": "running",
+								"sessionId": "sess_verify", "completionSignal": needInputSignal,
+							},
+							map[string]any{"nodeId": "plan", "status": "paused", "sessionId": "sess_plan"},
+						},
+					}},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Setup: marshalling the inspect reply: %s", err)
+		}
+
+		h.runs.reconcileNeedInput(t.Context(), "wf_1", raw)
+
+		if events := bufferedEvents(h); len(events) != 0 {
+			t.Errorf("got %+v, want no event: the only need-input signal is on a node that "+
+				"is still executing, so no step is waiting at it", events)
 		}
 	})
 }
@@ -825,20 +953,33 @@ func TestAnswerInput(t *testing.T) {
 		}
 	})
 
-	t.Run("an unhosted run is refused without losing the ask", func(t *testing.T) {
-		h, _, _ := newTestHub()
+	// A run nothing hosts is the ORDINARY case now that a park drops the bridge, so
+	// the answer path re-hosts instead of refusing. This test replaced one asserting
+	// the refusal: that refusal was reachable for every parked run, which made the
+	// card the reader was shown unanswerable by construction.
+	t.Run("a run nothing hosts is re-hosted and the answer lands", func(t *testing.T) {
+		h, _, br := newTestHub()
 		h.runs.asks.Add(&runAsk{
 			chatID: "run:wf_1",
 			payload: vibekit.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step",
 			},
 		})
-		err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch")
-		if !errors.Is(err, errRunNotHosted) {
-			t.Errorf("AnswerInput with no bridge = %v, want errRunNotHosted", err)
+		if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+			t.Fatal("the fixture registered a bridge, so this exercises the wrong branch")
 		}
-		if !h.runs.asks.HasRun("wf_1") {
-			t.Error("the ask was consumed by a refusal, want it left answerable")
+		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
+			t.Fatalf("AnswerInput on an unhosted run = %v, want nil", err)
+		}
+		if h.bridge.mgr.get(runChatID("wf_1")) == nil {
+			t.Error("no bridge was registered under the run's synthetic chat id, so its " +
+				"lifecycle frames have nowhere to route")
+		}
+		if !slices.Contains(br.callLog(), vibekit.MethodPrompt) {
+			t.Errorf("the answer never reached KAS; calls were %v", br.callLog())
+		}
+		if h.runs.asks.HasRun("wf_1") {
+			t.Error("the answered ask is still offered, so the card outlives its answer")
 		}
 	})
 }

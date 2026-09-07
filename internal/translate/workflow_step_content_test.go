@@ -1,16 +1,13 @@
 package translate
 
-// Tests for a PARENTLESS run's step projection.
-//
-// The rule under test in every case is the one the chat path does not have to
-// state: a run has no buffer, so anything that needs accumulating has to be
-// accumulated HERE or it cannot be rendered at all. Text and reasoning need none
-// (the client appends deltas into a live block), and a tool call needs all of it
-// (an update carries a status and an output delta and nothing that says what ran).
+// Tests for a PARENTLESS run's step projection. A run has no buffer, so anything that
+// needs accumulating is accumulated HERE or cannot be rendered at all: text and reasoning
+// need none, a tool call needs all of it.
 
 import (
 	"encoding/json"
 	"maps"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -157,6 +154,87 @@ func TestHandleRunStepFrame_FoldsAToolUpdate(t *testing.T) {
 	}
 }
 
+// TestHandleRunStepFrame_ReportsRunProgress pins the progress signal for the population
+// that has no other one: a manual or scheduled run's frames never reach the chat path's
+// countStepTurn site, so without this an unattended run's only signal is `node_complete`
+// and one legitimately long step reads as a stall and is cancelled. The UPDATE reports
+// nothing deliberately — crediting it would let one wedged tool call refill the idle
+// window forever by re-reporting itself.
+func TestHandleRunStepFrame_ReportsRunProgress(t *testing.T) {
+	t.Parallel()
+	deps := newBaseDeps()
+	tr := New(rolesOf(deps))
+
+	tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call", "wf_1",
+		[]string{"seq", "coder"}, map[string]any{
+			"toolCallId": "t1",
+			"title":      "Read a file",
+			"kind":       "read",
+			"status":     "pending",
+		}))
+	tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call_update", "wf_1",
+		[]string{"seq", "coder"}, map[string]any{
+			"toolCallId": "t1",
+			"status":     "completed",
+		}))
+
+	if want := []string{"wf_1"}; !slices.Equal(deps.runProgress, want) {
+		t.Errorf("progress reported = %v, want %v: the create is the evidence, the update is "+
+			"not — a parentless run's tool calls are its only progress signal besides a "+
+			"completed node, and a re-reported call is not a new frame", deps.runProgress, want)
+	}
+}
+
+// TestHandleRunStepFrame_ReportsProgressAboveTheRenderGuards pins the report's PLACEMENT.
+// Both guards below it are rendering decisions and neither says whether KAS is producing
+// frames, which is the only question the idle window asks — reported under them,
+// hooks.showStatus off cancels a working unattended run as stalled.
+func TestHandleRunStepFrame_ReportsProgressAboveTheRenderGuards(t *testing.T) {
+	t.Parallel()
+	for name, meta := range map[string]map[string]any{
+		// A hook ask with hooks.showStatus off: the card is dropped, the run is not.
+		"a hook ask whose card is suppressed": {
+			"workflow": map[string]any{
+				"workflowId": "wf_1",
+				"nodeId":     "coder",
+				"nodePath":   []string{"seq", "coder"},
+				"type":       "step",
+			},
+			"hookAsk": map[string]any{"kind": "pre-tool-use", "toolName": "fs_write"},
+		},
+		// A workflow block naming the run but no node: there is no step row to render
+		// into, and the run is still producing frames.
+		"a step frame with no address to render at": {
+			"workflow": map[string]any{"workflowId": "wf_1", "type": "step"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			base := newBaseDeps()
+			deps := &hookStatusDeps{baseDeps: base, enabled: false}
+			tr := New(rolesOf(deps))
+
+			tr.HandleRunStepFrame(t.Context(), "wf_1", mustJSON(t, map[string]any{
+				"sessionId": "sess_step",
+				"update": map[string]any{
+					"sessionUpdate": "tool_call",
+					"toolCallId":    "t1",
+					"title":         "Run hook",
+					"kind":          "other",
+					"status":        "pending",
+					"_meta":         map[string]any{"kiro": meta},
+				},
+			}))
+
+			if want := []string{"wf_1"}; !slices.Equal(base.runProgress, want) {
+				t.Errorf("progress reported = %v, want %v: a frame a run's card cannot render is "+
+					"still evidence the run is producing frames, and it is the only evidence a "+
+					"parentless run has besides a completed node", base.runProgress, want)
+			}
+		})
+	}
+}
+
 // TestHandleRunStepFrame_DropsAnOrphanUpdate mirrors the chat path's `buf.ToolCall`
 // miss: without the create there is nothing to fold into, so a partial would be a
 // card that says nothing about what ran.
@@ -263,12 +341,9 @@ func TestHandleRunStepFrame_DropsUnaddressableAndReplayedFrames(t *testing.T) {
 				`"content":{"type":"text","text":"orphan"}}}`),
 		},
 		{
-			// Hand-written rather than built by stepFrame: the replay flag sits on
-			// the UPDATE object beside the workflow block, which that helper's own
-			// `_meta` write would clobber. Note the nesting — the flag is NOT on
-			// `params` (see ACPSessionUpdateBase, where reading it off params
-			// yields false for every frame and looks exactly like a wire that
-			// never sets it).
+			// Hand-written because the replay flag sits on the UPDATE object beside
+			// the workflow block, which stepFrame's own `_meta` write would clobber.
+			// It is NOT on `params`: reading it there yields false for every frame.
 			name: "a replayed frame",
 			params: json.RawMessage(`{"sessionId":"s","update":{` +
 				`"sessionUpdate":"agent_message_chunk",` +

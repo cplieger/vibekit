@@ -111,7 +111,7 @@ function renderOrgPolicy(g: GovernanceStatePayload): void {
   }
 
   const children: HTMLElement[] = [
-    el("h3", { className: "section-title" }, "Organization policy"),
+    el("h2", { className: "section-title" }, "Organization policy"),
     el(
       "p",
       { className: "section-hint" },

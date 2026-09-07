@@ -6,7 +6,15 @@ import type * as GitStatusStore from "./git-status-store.js";
 type GitStatusStoreModule = typeof GitStatusStore;
 
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
-vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
+// `apiGetTypedOrError` is present-but-inert for the reason the two mocks below
+// state: Browser Mode links a mock as real ESM, so a name any module in this graph
+// imports has to exist on the factory or COLLECTION fails. `run-step-transcript.js`
+// is that importer, reached through the run surfaces; no case here calls it.
+vi.mock("./api-client.js", () => ({
+  apiGet: vi.fn(),
+  apiGetTyped: vi.fn(),
+  apiGetTypedOrError: vi.fn(),
+}));
 vi.mock("./editor-openers.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading
@@ -29,14 +37,19 @@ vi.mock("./tabs.js", () => ({
   setSettingsTab: undefined,
   toggleGitView: undefined,
   toggleSettingsView: undefined,
-  // Reached through run-view.js → run-dots.js, the parentless-run tab dot.
+  // Reached through run-view.js → run-dots.js, the run tab's dot and its name.
   hasTab: undefined,
   tabIdFor: undefined,
   tabSetVersion: undefined,
+  renameTab: undefined,
   // Reached through run-view.js: the completion auto-close's two reads.
   closeTab: undefined,
   getActiveTabId: undefined,
   setTabStatus: undefined,
+  // Also run-view.js: the launching chat a run tab nests under (the detail pane's
+  // "Open the conversation" note reads it) and the door that link dispatches through.
+  parentChatRef: undefined,
+  openTab: undefined,
   setDocsTab: vi.fn(),
   toggleDocsView: vi.fn(() => Promise.resolve()),
 }));

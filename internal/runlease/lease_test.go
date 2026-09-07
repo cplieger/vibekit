@@ -5,86 +5,144 @@ import (
 	"time"
 )
 
-// TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor is the whole
-// arithmetic of "one clock, two inputs".
-//
-// Before the lease these were two independent mechanisms: armDeadline (the
-// slot, armed only by the scheduler's launch) and the run ceiling (armed by
-// everything). So a manual run of a scheduled recipe held that recipe for the
-// whole ceiling and refused every slot underneath it, and a slot that fired late
-// bounded its run by whatever remained of an interval that had nearly elapsed.
+// The whole arithmetic of one clock over three inputs. Two mechanisms would let a manual
+// run of a scheduled recipe hold that recipe for the whole ceiling and refuse every slot
+// under it, and a late slot bound its run by whatever remained of the interval.
 func TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 1, 3, 0, 0, 0, time.UTC)
-	const ceiling = time.Hour
+	const idle = 15 * time.Minute
 	const floor = 5 * time.Minute
 
 	for name, tc := range map[string]struct {
-		slotAt time.Time
-		want   time.Time
+		in   Bounds
+		want time.Time
 	}{
-		"no slot, so the ceiling is the whole bound": {
-			slotAt: time.Time{},
-			want:   now.Add(ceiling),
+		"no slot and no backstop, so the idle window is the whole bound": {
+			in:   Bounds{Idle: idle, Floor: floor},
+			want: now.Add(idle),
 		},
-		"a slot inside the ceiling wins": {
-			slotAt: now.Add(10 * time.Minute),
-			want:   now.Add(10 * time.Minute),
+		"a slot inside the idle window wins": {
+			in:   Bounds{SlotAt: now.Add(10 * time.Minute), Idle: idle, Floor: floor},
+			want: now.Add(10 * time.Minute),
 		},
-		"a slot beyond the ceiling loses, so a daily schedule is still bounded": {
-			slotAt: now.Add(24 * time.Hour),
-			want:   now.Add(ceiling),
+		"a slot beyond the window loses, so a daily schedule is still bounded": {
+			in:   Bounds{SlotAt: now.Add(24 * time.Hour), Idle: idle, Floor: floor},
+			want: now.Add(idle),
 		},
-		"a slot exactly at the ceiling changes nothing": {
-			slotAt: now.Add(ceiling),
-			want:   now.Add(ceiling),
+		"a slot exactly at the window's end changes nothing": {
+			in:   Bounds{SlotAt: now.Add(idle), Idle: idle, Floor: floor},
+			want: now.Add(idle),
 		},
 		"a slot already passed is floored, not honoured": {
-			slotAt: now.Add(-time.Minute),
-			want:   now.Add(floor),
+			in:   Bounds{SlotAt: now.Add(-time.Minute), Idle: idle, Floor: floor},
+			want: now.Add(floor),
 		},
 		"a slot inside the floor is floored: a bound too small to finish in is no bound": {
-			slotAt: now.Add(90 * time.Second),
-			want:   now.Add(floor),
+			in:   Bounds{SlotAt: now.Add(90 * time.Second), Idle: idle, Floor: floor},
+			want: now.Add(floor),
 		},
 		"a slot exactly at the floor is honoured": {
-			slotAt: now.Add(floor),
-			want:   now.Add(floor),
+			in:   Bounds{SlotAt: now.Add(floor), Idle: idle, Floor: floor},
+			want: now.Add(floor),
+		},
+		"a backstop inside the idle window wins": {
+			in:   Bounds{BackstopAt: now.Add(7 * time.Minute), Idle: idle, Floor: floor},
+			want: now.Add(7 * time.Minute),
+		},
+		"a backstop beyond the window loses, so an ordinary refill is unaffected": {
+			in:   Bounds{BackstopAt: now.Add(100 * idle), Idle: idle, Floor: floor},
+			want: now.Add(idle),
+		},
+		// Deliberately in the PAST, which is what makes the backstop absolute: floored
+		// instead, a run refilling on its own progress rolls the bound forward forever.
+		"a spent backstop is honoured, not floored": {
+			in:   Bounds{BackstopAt: now.Add(-time.Hour), Idle: idle, Floor: floor},
+			want: now.Add(-time.Hour),
+		},
+		"a spent backstop outranks a slot inside the floor too": {
+			in: Bounds{
+				SlotAt: now.Add(90 * time.Second), BackstopAt: now.Add(-time.Hour),
+				Idle: idle, Floor: floor,
+			},
+			want: now.Add(-time.Hour),
+		},
+		"a zero backstop does not bound the run": {
+			in:   Bounds{Idle: idle, Floor: floor},
+			want: now.Add(idle),
+		},
+		"slot and backstop both set: the tighter one wins": {
+			in: Bounds{
+				SlotAt: now.Add(12 * time.Minute), BackstopAt: now.Add(9 * time.Minute),
+				Idle: idle, Floor: floor,
+			},
+			want: now.Add(9 * time.Minute),
+		},
+		"slot and backstop both set: the slot can be the tighter one": {
+			in: Bounds{
+				SlotAt: now.Add(9 * time.Minute), BackstopAt: now.Add(12 * time.Minute),
+				Idle: idle, Floor: floor,
+			},
+			want: now.Add(9 * time.Minute),
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got := NextDeadline(now, ceiling, floor, tc.slotAt)
+			got := NextDeadline(now, tc.in)
 			if !got.Equal(tc.want) {
 				t.Errorf("NextDeadline = %v, want %v (in %v / %v from now)",
 					got, tc.want, got.Sub(now), tc.want.Sub(now))
 			}
-			if got.Before(now.Add(floor)) {
+			// The floor holds for every case a SPENT backstop does not answer,
+			// which is the one input allowed below it.
+			spent := !tc.in.BackstopAt.IsZero() && tc.in.BackstopAt.Before(now.Add(floor))
+			if !spent && got.Before(now.Add(floor)) {
 				t.Errorf("NextDeadline = %v, below the floor %v", got.Sub(now), floor)
+			}
+			if spent && !got.Equal(tc.in.BackstopAt) {
+				t.Errorf("NextDeadline = %v with a spent backstop at %v; the backstop instant is "+
+					"the answer, or a floor rolls the absolute bound forward on every stamp",
+					got.Sub(now), tc.in.BackstopAt.Sub(now))
 			}
 		})
 	}
 }
 
-// TestNextDeadline_FloorOutranksTheSlot states the ordering as its own property,
-// because it is the one place the two inputs genuinely disagree and the answer is
-// not "the tighter one".
-//
-// A schedule whose interval was edited below the run floor, or a slot that fired
-// at the very end of its window, would otherwise hand every run a budget it
-// cannot finish inside — which writes "failed" into the row on every slot while
-// nothing is actually wrong.
-func TestNextDeadline_FloorOutranksTheSlot(t *testing.T) {
+// The one place the inputs genuinely disagree, and the two halves disagree in OPPOSITE
+// directions, so no single composition step serves both. The floor answers how much budget
+// a run should GET — without it an interval edited below it, or a slot fired at the end of
+// its window, writes "failed" into the row while nothing is wrong. The backstop answers how
+// much a run has LEFT, so the floor cannot reach it: any remainder tighter than the floor
+// wins, and a spent one is an instant in the past the timer fires on at once.
+func TestNextDeadline_FloorOutranksTheSlotButNotTheBackstop(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
-	got := NextDeadline(now, time.Hour, 5*time.Minute, now.Add(time.Second))
-	if want := now.Add(5 * time.Minute); !got.Equal(want) {
-		t.Errorf("NextDeadline = %v after now, want the floor %v", got.Sub(now), want.Sub(now))
+	const floor = 5 * time.Minute
+
+	slot := NextDeadline(now, Bounds{SlotAt: now.Add(time.Second), Idle: 15 * time.Minute, Floor: floor})
+	if want := now.Add(floor); !slot.Equal(want) {
+		t.Errorf("with a one-second slot NextDeadline = %v after now, want the floor %v",
+			slot.Sub(now), want.Sub(now))
+	}
+
+	backstop := now.Add(-time.Hour)
+	spent := NextDeadline(now, Bounds{BackstopAt: backstop, Idle: 15 * time.Minute, Floor: floor})
+	if !spent.Equal(backstop) {
+		t.Errorf("with a spent backstop NextDeadline = %v after now, want the backstop instant "+
+			"%v; a floor here is a fresh budget on every stamp, so the absolute bound becomes a "+
+			"rolling window a productive-looking runaway never reaches",
+			spent.Sub(now), backstop.Sub(now))
+	}
+
+	// A REFILL a moment later computes the same instant, which is what makes it terminal:
+	// the anchor is fixed for the whole stretch, so the armed timer stands.
+	later := NextDeadline(now.Add(2*time.Minute), Bounds{BackstopAt: backstop, Idle: 15 * time.Minute, Floor: floor})
+	if !later.Equal(spent) {
+		t.Errorf("a stamp two minutes later moved the spent backstop from %v to %v", spent, later)
 	}
 }
 
-// TestLeaseBounded_IsTheSuccessorOfTheArmMap pins the meaning of a zero
-// deadline, which three readers depend on: the timer callback's own liveness
+// Three readers depend on the meaning of a zero deadline: the timer callback's liveness
 // test, the step cap's authority to act, and the re-arm.
 func TestLeaseBounded_IsTheSuccessorOfTheArmMap(t *testing.T) {
 	t.Parallel()
@@ -110,10 +168,8 @@ func TestLeaseBounded_IsTheSuccessorOfTheArmMap(t *testing.T) {
 	}
 }
 
-// TestOriginValid pins the closed set. An unknown origin cannot be reasoned
-// about — it says neither whether the run is sweepable nor whether it is
-// unattended — so it is refused on the way in and dropped on the way back off
-// disk.
+// An unknown origin says neither whether the run is sweepable nor whether it is
+// unattended, so it is refused on the way in and dropped on the way back off disk.
 func TestOriginValid(t *testing.T) {
 	t.Parallel()
 	for _, o := range []Origin{OriginScheduled, OriginManual, OriginAgent} {

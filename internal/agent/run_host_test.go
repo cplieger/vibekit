@@ -90,10 +90,11 @@ func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_StepContentIsProjected pins the run bridge's content door: the
-// frame REACHES the client as a workspace-global `run_step` naming its node, and it
-// does NOT open an assistant buffer for the synthetic chat id, which would be the
-// phantom chat invariant 3 exists to prevent.
+// TestRunDispatch_StepContentIsProjected pins the run bridge's content door, both halves.
+// The frame REACHES the client as a workspace-global `run_step` naming the node it came
+// from, which is what makes a run whose only surface is the run tab watchable. And it does
+// NOT open an assistant buffer for the synthetic chat id, because that is the phantom chat
+// invariant 3 exists to prevent; the content goes to the run's watchers, not a transcript.
 func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 	logs := captureLogs(t)
 	h, _, _ := newTestHub()
@@ -312,15 +313,20 @@ func TestCloseFinishedRunBridge_TerminalOnly(t *testing.T) {
 }
 
 // TestBridgeManagerInsert_RefusesReplacement pins that inserting over a live
-// entry fails rather than orphaning the process the entry holds.
+// entry fails rather than orphaning the process the entry holds, AND that the
+// refusal hands back the incumbent — rehost's loser has no other way to reach it.
 func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 	h, _, br := newTestHub()
 	first := &sharedBridge{bridge: br, state: bridgeIdle}
-	if !h.bridge.mgr.insert("run:wf_1", first) {
+	if _, inserted := h.bridge.mgr.insert("run:wf_1", first); !inserted {
 		t.Fatal("first insert refused")
 	}
-	if h.bridge.mgr.insert("run:wf_1", &sharedBridge{bridge: br, state: bridgeIdle}) {
+	resident, inserted := h.bridge.mgr.insert("run:wf_1", &sharedBridge{bridge: br, state: bridgeIdle})
+	if inserted {
 		t.Error("second insert over a live entry succeeded")
+	}
+	if resident != first {
+		t.Error("the refused insert did not answer the incumbent entry")
 	}
 	if got := h.bridge.mgr.get("run:wf_1"); got != first {
 		t.Error("the original entry did not survive the refused insert")
@@ -394,11 +400,11 @@ func TestKillForTurn_NothingOpenIsANoOp(t *testing.T) {
 	}
 }
 
-// TestRetryRun_SuccessClearsTheOldTerminalReason: retry reuses the workflow id, so
+// TestRetry_SuccessClearsTheOldTerminalReason: retry reuses the workflow id, so
 // a run stopped as `overran` carried that reason into its retry — and the client
 // lets a recognised end_reason outrank live status, so the running retry rendered
 // as aborted and stayed that way after it succeeded.
-func TestRetryRun_SuccessClearsTheOldTerminalReason(t *testing.T) {
+func TestRetry_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowRetry: json.RawMessage(`{}`)}
@@ -427,10 +433,10 @@ func TestRetryRun_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	}
 }
 
-// TestRetryRun_FailureKeepsTheOldTerminalReason is the other half, and the reason
+// TestRetry_FailureKeepsTheOldTerminalReason is the other half, and the reason
 // the clear happens AFTER the RPC: a retry KAS refused re-drove nothing, so the
 // previous terminal reason is still the truth about that run.
-func TestRetryRun_FailureKeepsTheOldTerminalReason(t *testing.T) {
+func TestRetry_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
@@ -450,14 +456,14 @@ func TestRetryRun_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	}
 }
 
-// TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable forces the
+// TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable forces the
 // interleaving that shipped the defect: a re-hosted PARENTLESS run's first frame can
 // arrive before the retry call returns, and with the lease granted after that call,
 // `run_start` found none and the observer stamped OriginAgent on a run no chat owns
 // — which made it permanently unsweepable and blocked every later launch of the
 // recipe. The fake bridge's blockOn seam holds the call open, so the frame lands
 // strictly INSIDE the window.
-func TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testing.T) {
+func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
@@ -521,14 +527,14 @@ func TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *tes
 	}
 }
 
-// TestRetryRun_ReHostedRunTakesItsRecipeFromTheRunList is the re-hosting branch,
-// the one retry's legality window implies, since `closeFinishedBridge` tears the
-// bridge down on exactly the statuses retry is legal from.
+// TestRetry_ReHostedRunTakesItsRecipeFromTheRunList is the re-hosting branch — the
+// one retry's legality window implies, since `closeStoppedBridge` tears the bridge
+// down on every stop.
 //
 // The recipe is knowable here: KAS's own run list reports it, and it is the same
 // string the single-run rule compares against, so a nameless lease could not be
 // recognised as the run holding its own recipe.
-func TestRetryRun_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
+func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
@@ -567,10 +573,10 @@ func TestRetryRun_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	}
 }
 
-// TestRetryRun_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused: the lease is
+// TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused: the lease is
 // granted BEFORE the verb, so a refusal has to put it back, or the recipe reads as
 // busy to the admission backstop and a wall clock is handed to an idle run.
-func TestRetryRun_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) {
+func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
@@ -659,10 +665,11 @@ func TestCancelRun_FailedRPCHandsTheClaimBack(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_TheOtherAskKindsReachTheRunTab is the rest of the ask population:
-// a step can raise an elicitation or a plain question, and both are BLOCKING
-// requests, so a dispatch that fell through to the refusal ladder would answer
-// "unsupported" and strand the step with no way for the user to unblock it.
+// TestRunDispatch_TheOtherAskKindsReachTheRunTab is the rest of the ask population: a step
+// can raise an elicitation or a plain question, not only a permission. Both are BLOCKING
+// requests — KAS holds the step until an answer comes back — so a dispatch falling through
+// to the refusal ladder would answer "unsupported" and strand the step with no way to
+// unblock it. The synthetic chat id is the route in both directions.
 func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -732,11 +739,11 @@ func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_TerminalCompletionClosesTheRunsBridge pins the teardown itself,
-// not only its predicate: the close hangs off run_complete, and a run bridge that
-// outlives its terminal run holds a kiro-cli subprocess for the life of the process.
-// The close runs on its own goroutine, so the wait is a deadline-bounded poll that
-// fails closed rather than an assumption about which side of the race won.
+// TestRunDispatch_TerminalCompletionClosesTheRunsBridge pins the FRAME the close hangs off
+// — run_complete specifically — where its sibling pins only the predicate; a run bridge
+// outliving its terminal run holds a kiro-cli subprocess for the life of the process. The
+// close runs on its own goroutine, because it is called from the forward loop and closing
+// that bridge closes the channel the loop ranges over, so the wait is a bounded poll.
 func TestRunDispatch_TerminalCompletionClosesTheRunsBridge(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
@@ -755,11 +762,11 @@ func TestRunDispatch_TerminalCompletionClosesTheRunsBridge(t *testing.T) {
 	}
 }
 
-// TestLaunchRun_ReportsTheReplysOwnError pins which of a Call's two failure
-// channels a launch believes. KAS refuses a launch IN BAND: the transport succeeds
-// and the reply carries the reason, so a launch reading only the transport error
-// reports the generic "reply carried no workflowId" and the operator loses the one
-// sentence that says what to fix.
+// TestLaunchRun_ReportsTheReplysOwnError pins which of a Call's two failure channels a
+// launch believes. KAS refuses a launch IN BAND: the transport succeeds and the reply
+// carries a JSON-RPC error, which is where the reason lives. A launch reading only the
+// transport error falls through to the decode and reports the generic "reply carried no
+// workflowId" — the same message a malformed reply produces, so the reason is lost.
 func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -780,13 +787,12 @@ func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
 	}
 }
 
-// TestCancelForSessions_CancelsARunWhoseRecordIsGone is the close escalation's half
-// of the run lifecycle: the record was deleted inside the close commit, so the
-// cancel is driven from the CAPTURED session chain, and CancelForChat is the control
-// that must no-op on a deleted chat.
-//
-// Two chains, because the membership layer captures one per doomed chat: a root chat
-// whose run hangs off a RETIRED session, and a tangent child's single-session chain.
+// TestCancelForSessions_CancelsARunWhoseRecordIsGone: the record was deleted inside the
+// close commit, so the cancel is driven from the CAPTURED session chain. The record-reading
+// form (CancelForChat) is the control — on a deleted chat it must no-op, which is why the
+// chain-shaped seam exists. Two chains, because the membership layer captures one per doomed
+// chat: a root chat whose run hangs off a RETIRED session (the chain's whole point, since
+// the current id alone would miss it), and a tangent child's single-session chain.
 func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -872,4 +878,115 @@ func TestCancelForChat_ReportsARunListItCouldNotRead(t *testing.T) {
 			t.Errorf("a close that read the run list fine reported it as unavailable: %s", out)
 		}
 	})
+}
+
+// TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts: discarding the WHOLE frame on
+// any unmarshal error breaks the heal for EVERY pause rather than only the branch ones, and
+// breaks it silently, because an empty workflow id makes `healPaused` return before the line
+// that reports a decline. `encoding/json` finishes the object on a type mismatch and reports
+// the earliest one, so keeping what decoded is not a guess. What is NOT kept is a syntax
+// error's leftovers: there the bytes are not JSON and nothing may be read off them.
+func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
+	frame := func(t *testing.T, params string) pauseFrame {
+		t.Helper()
+		return decodePauseFrame(&vibekit.RPCResponse{Params: json.RawMessage(params)})
+	}
+
+	// Every shape a `pauseDetail` change can arrive as, against a reason the heal
+	// DOES act on. `workflowId` and `pauseReason` must survive all of them, or the
+	// heal has gone blind rather than degraded.
+	for name, params := range map[string]string{
+		"the detail became a string": `{"workflowId":"wf_1","pauseReason":"` +
+			interruptedPauseReason + `","pauseDetail":"transient-error"}`,
+		"the detail became a number": `{"workflowId":"wf_1","pauseReason":"` +
+			interruptedPauseReason + `","pauseDetail":7}`,
+		"the detail became an array": `{"workflowId":"wf_1","pauseReason":"` +
+			interruptedPauseReason + `","pauseDetail":["transient-error"]}`,
+		"class became an object": `{"workflowId":"wf_1","pauseReason":"` +
+			interruptedPauseReason + `","pauseDetail":{"class":{"kind":"transient-error"}}}`,
+		// Key order matters to a streaming decoder, so the drifted key is placed
+		// BEFORE the two fields that must survive it as well as after.
+		"the drifted detail comes first": `{"pauseDetail":"transient-error","workflowId":"wf_1",` +
+			`"pauseReason":"` + interruptedPauseReason + `"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := frame(t, params)
+			if f.WorkflowID != "wf_1" {
+				t.Errorf("WorkflowID = %q, want %q; a drifted detail took the run's identity "+
+					"with it, so healPaused returns at its addressing gate and logs nothing",
+					f.WorkflowID, "wf_1")
+			}
+			if f.PauseReason != interruptedPauseReason {
+				t.Errorf("PauseReason = %q, want %q; the reason arms are what the heal degrades "+
+					"TO, so losing the reason is what turns a degradation into blindness",
+					f.PauseReason, interruptedPauseReason)
+			}
+			// The whole point of keeping the frame: the reason arm still decides.
+			if !resumablePause(f.PauseReason, f.PauseDetail) {
+				t.Error("resumablePause = false for an interrupted step whose detail drifted; " +
+					"the reason arm must still answer")
+			}
+		})
+	}
+
+	// The OTHER half of the fix, and the one the tolerance above cannot substitute
+	// for: `occurredAt` came OFF this type, so its wire shape cannot reach this
+	// decode at all and a numeric one is not even a drift to be tolerated.
+	//
+	// Asserted as behaviour rather than as a field list — a raw `json.Unmarshal`
+	// against `pauseFrame` must return NO error — because that is the property
+	// declaring the field would take away. Tolerance is a GUARD; this is the shrink,
+	// and a shape KAS controls is better off unable to arrive than caught on arrival.
+	t.Run("occurredAt's wire type cannot reach the predicate path", func(t *testing.T) {
+		var f pauseFrame
+		body := []byte(`{"workflowId":"wf_1","pauseReason":"` + interruptedPauseReason +
+			`","pauseDetail":{"class":"transient-error","code":"EAI_AGAIN",` +
+			`"occurredAt":1730000000}}`)
+		if err := json.Unmarshal(body, &f); err != nil {
+			t.Errorf("json.Unmarshal returned %v; a field no predicate reads must not be able "+
+				"to produce a decode error at all — declaring it on pauseDetail puts KAS's "+
+				"timestamp shape back on the heal's path", err)
+		}
+		if f.PauseDetail == nil || f.PauseDetail.Class != transientErrorClass {
+			t.Fatalf("PauseDetail = %+v, want the class decoded", f.PauseDetail)
+		}
+	})
+
+	// A CLASS the predicate does not accept is not a drift and must not be read as
+	// one: the frame decodes cleanly and the detail arm declines, which is the
+	// ordinary negative case rather than a degradation.
+	t.Run("an unknown class is decoded, not tolerated", func(t *testing.T) {
+		f := frame(t, `{"workflowId":"wf_1","pauseReason":"Paused by user request",`+
+			`"pauseDetail":{"class":"permanent","code":"ENOTFOUND"}}`)
+		if f.PauseDetail == nil || f.PauseDetail.Class != "permanent" {
+			t.Fatalf("PauseDetail = %+v, want the class decoded", f.PauseDetail)
+		}
+		if resumablePause(f.PauseReason, f.PauseDetail) {
+			t.Error("resumablePause = true for a permanent fault nobody's arm accepts")
+		}
+	})
+
+	// The line the tolerance may not cross, asserted at the HELPER because the frame
+	// cannot show it: `json.Unmarshal` validates the whole document before it decodes
+	// anything, so a syntax error leaves the destination untouched and the frame is the
+	// zero value either way — a frame-level assertion here survives a mutant that
+	// tolerates everything, which makes it a test that cannot fail. The helper's verdict
+	// is observable, and `rs.inspect` hands it an unguarded RPC payload, so the empty
+	// document is a reachable input rather than a hypothetical.
+	for name, body := range map[string]string{
+		"a truncated object": `{"workflowId":"wf_1","pauseReason":"x"`,
+		"not JSON at all":    `wf_1`,
+		"an empty document":  ``,
+	} {
+		t.Run(name+" is not a partial answer", func(t *testing.T) {
+			var f pauseFrame
+			if unmarshalKeepingReadable([]byte(body), &f) {
+				t.Errorf("unmarshalKeepingReadable(%q) = true; a syntax error is not a type "+
+					"drift, and nothing may be read off bytes that are not JSON", body)
+			}
+			if f != (pauseFrame{}) {
+				t.Errorf("frame = %+v, want the zero frame", f)
+			}
+		})
+	}
 }

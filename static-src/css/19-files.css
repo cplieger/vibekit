@@ -286,7 +286,7 @@
   cursor: pointer;
   padding: 0.25rem;
   margin-inline-start: var(--sp-2);
-  border-radius: calc(var(--r) / 2);
+  border-radius: var(--r-sm);
   line-height: 0;
   display: inline-flex;
   align-items: center;
@@ -300,6 +300,17 @@
 
 :where(.fb-row:hover) .fb-add-to-chat,
 .fb-add-to-chat:focus-visible {
+  opacity: 1;
+}
+
+/* A COARSE POINTER GETS IT PERMANENTLY, because neither reveal above is reachable
+   by a finger. There is no hover on touch, and the `:focus-visible` half is
+   keyboard-only — and even a `:focus-within` on the row would not help, because
+   focusing this button means tapping a button that is invisible until focused.
+   So on touch this control did not exist. Revealed rather than given a
+   long-press or a swipe: the row is already a tap target for opening the file,
+   and a second hidden gesture on it is not discoverable either. */
+:where([data-pointer="coarse"]) .fb-add-to-chat {
   opacity: 1;
 }
 
@@ -511,7 +522,7 @@
     padding: var(--sp-2);
     border: 1px solid var(--c-border);
     border-radius: var(--r);
-    background: var(--c-bg-elevated);
+    background: var(--c-bg-secondary);
     box-shadow:
       var(--shadow-ambient),
       0 0.5rem 1.5rem oklch(0% 0 none / 40%);

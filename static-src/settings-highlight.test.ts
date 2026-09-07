@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+import { framesBudgetMs, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 
 const mocks = vi.hoisted(() => ({
   getActiveTabRoute: vi.fn<() => { kind: string } | null>(),
@@ -83,7 +84,7 @@ function control(id: string): HTMLInputElement {
   return laidOut(e) as HTMLInputElement;
 }
 
-describe("highlightControl", () => {
+describe("highlightControl", { timeout: testTimeoutFor(framesBudgetMs(25)) }, () => {
   it("scrolls the control into view and flashes a ring", async () => {
     const box = control("security-profile-list");
     highlightControl("security-profile-list");

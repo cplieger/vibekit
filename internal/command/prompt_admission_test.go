@@ -305,6 +305,10 @@ func (g *gatedBridgeAccess) PrimeIfNeeded(ctx context.Context, id vibekit.ChatID
 	g.inner.PrimeIfNeeded(ctx, id)
 }
 func (g *gatedBridgeAccess) PrimeFromChat(id, src vibekit.ChatID) { g.inner.PrimeFromChat(id, src) }
+func (g *gatedBridgeAccess) AwaitReplayAdopted(ctx context.Context, id vibekit.ChatID) error {
+	return g.inner.AwaitReplayAdopted(ctx, id)
+}
+
 func (g *gatedBridgeAccess) OpenBridge(ctx context.Context, id vibekit.ChatID, model string) (Bridge, error) {
 	select {
 	case <-g.gate:

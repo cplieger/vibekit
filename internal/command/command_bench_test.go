@@ -69,6 +69,11 @@ func (d *benchDeps) PendingSummary(context.Context) MCPPendingSummary { return M
 func (d *benchDeps) PrimeIfNeeded(context.Context, vibekit.ChatID)    {}
 func (d *benchDeps) PrimeFromChat(vibekit.ChatID, vibekit.ChatID)     {}
 
+// AwaitReplayAdopted answers adopted: no double here runs a session/load, so
+// there is never a replay to wait for. bridgeDeps overrides it to record the
+// call order and to drive the refusal.
+func (d *benchDeps) AwaitReplayAdopted(context.Context, vibekit.ChatID) error { return nil }
+
 // StartTurn answers a real epoch, not zero. Zero is the REFUSAL — the local-shell
 // source rule declines while another turn is open — so a stub returning it makes
 // every `!cmd` test 409.

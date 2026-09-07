@@ -58,6 +58,7 @@ import {
   attr_to_html_attr,
 } from "./smd-parser-types.js";
 import type { Token, Attr, Renderer } from "./smd-parser-types.js";
+import { CHROME_ATTR } from "./chrome-attr.js";
 import { isSafeUrl, rewriteWorkspaceImageSrc } from "./utils-url.js";
 import { mediaElementFor } from "./media-block.js";
 import { latexToMathML } from "./mathml.js";
@@ -416,6 +417,7 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
         const shown = alt !== "" ? alt : decodeURIComponent(src.replace(/^.*[?&]path=/, ""));
         const miss = document.createElement("span");
         miss.className = "img-missing";
+        miss.setAttribute(CHROME_ATTR, "");
         miss.textContent = `Image not available: ${shown}`;
         node.replaceWith(miss);
       },

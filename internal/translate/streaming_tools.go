@@ -1,7 +1,5 @@
 package translate
 
-// Tool call streaming handlers: tool_call, tool_call_update, ext session update.
-
 import (
 	"context"
 	"encoding/json"
@@ -19,13 +17,17 @@ import (
 )
 
 // HandleToolCall adds a tool call to the current assistant message buffer and
-// broadcasts it. A v3 (KAS) subagent is an ordinary tool call tagged
-// _meta.kiro.kind=="agent-subtask"; its AgentSubtaskID is what nests its chunks.
+// broadcasts it, threading AgentSubtaskID so the client can nest a subagent's
+// chunks (which carry the same id) under its card.
 func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var tc ACPToolCallWire
 	if json.Unmarshal(raw, &tc) != nil {
 		return
 	}
+	// Must stay ABOVE every guard below: those are RENDERING decisions and this is
+	// ENFORCEMENT, so sat under them a display preference decides a cancellation.
+	// Deliberately apart from countStepTurn, which needs a step key this does not.
+	t.reportRunProgress(tc.Meta.Kiro.Workflow)
 	// A pre-tool-use hook's ask-permission gate arrives as a kind:"other" call
 	// tagged _meta.kiro.hookAsk; drop the card when hooks.showStatus is off.
 	if len(tc.Meta.Kiro.HookAsk) > 0 && !t.hookStatus.IsHookStatusEnabled() {
@@ -39,21 +41,21 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 	}
 	buf := t.buffers.TurnFoldTarget(ctx, chatID, foldSource(attr.Step))
 	t.ensureTurnStarted(ctx, chatID, buf)
-	// A step's tool frames carry KAS's own agentSubtaskId while its TEXT is keyed
-	// by nodePath, so the step's workflow identity wins or its work splits in two.
+	// A step's tool frames carry KAS's own agentSubtaskId while the step's TEXT is
+	// keyed by nodePath, so without this override one step's work fragments in two.
 	subtask := tc.Meta.Kiro.AgentSubtaskID
 	if wf := tc.Meta.Kiro.Workflow.SubtaskID(); wf != "" {
 		subtask = wf
 		t.countStepTurn(tc.Meta.Kiro.Workflow, wf)
 	}
-	// One parser for both frames. The create frame deliberately does NOT adopt
-	// content.output: the following update repeats it, so it would double-render.
+	// The create frame deliberately does NOT adopt content.output: the initial
+	// tool_call has never fed Output, and folding it in would double-render
+	// whatever the following update repeats.
 	content := t.parseToolUpdateContent(tc.ToolCallID, tc.Content)
 	diffs := content.diffs
 	call := toolCallFromWire(&tc, subtask, attr.SubSessionID, content)
 	turn := buf.AppendToolCall(&call) + 1
-	// Anchor the tool in the chronological block array. Always a NEW block, so
-	// back-to-back tool calls each get their own.
+	// Always a new block: back-to-back tool calls each get their own.
 	blockIndex := buf.AppendToolUseBlock(call.ID, subtask)
 	buf.RecordToolStart(tc.ToolCallID)
 	if len(diffs) > 0 {
@@ -69,10 +71,9 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 
 // toolCallFromWire builds the domain tool call a `tool_call` frame describes.
 //
-// Extracted so the CHAT path above and the run-bridge path
-// (workflow_step_content.go) decode one frame one way: a second copy of this
-// literal is a second place a field can be forgotten, which is how a run card
-// ends up with no diffs while a chat's card has them.
+// Shared with the run-bridge path (workflow_step_content.go) so one frame decodes
+// one way; a second copy of this literal is a second place a field can be
+// forgotten, which is how a run card ends up with no diffs or no denial notice.
 func toolCallFromWire(
 	tc *ACPToolCallWire, subtask, subSessionID string, content toolUpdateContent,
 ) vibekit.ToolCall {
@@ -93,22 +94,22 @@ func toolCallFromWire(
 	}
 }
 
-// HandleToolCallUpdate mutates an in-flight tool call's status and
-// appends any new output chunks.
+// HandleToolCallUpdate mutates an in-flight tool call's status and appends any new
+// output chunks.
 func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var tu ACPToolCallUpdateWire
 	if json.Unmarshal(raw, &tu) != nil {
 		return
 	}
-	// A suppressed internal tool's completion. Dropped BEFORE TurnFoldTarget,
-	// which would otherwise open a wire turn for a frame nothing renders.
+	// Dropped BEFORE TurnFoldTarget, which would otherwise open a wire turn for a
+	// frame nothing renders.
 	if t.suppressed.take(tu.ToolCallID) {
 		return
 	}
 	content := t.parseToolUpdateContent(tu.ToolCallID, tu.Content)
 	buf := t.buffers.TurnFoldTarget(ctx, chatID, foldSource(attr.Step))
-	// A COPY, folded locally and written back: the fold reaches the terminal
-	// registry, the line tracker and the event bus, none of which may hold the mutex.
+	// Folded on a COPY and written back: the fold reaches the terminal registry, the
+	// line tracker and the event bus, none of which may run under the buffer's mutex.
 	tc, idx, ok := buf.ToolCall(tu.ToolCallID)
 	if !ok {
 		return
@@ -225,10 +226,10 @@ func derefCheckpoint(c *vibekit.ToolCheckpoint) vibekit.ToolCheckpoint {
 // the terminal id from a tool_call_update's content blocks. Diff paths are
 // normalized to workspace-relative form.
 //
-// A type:"terminal" block is ACP's statement that this call's output is a
-// terminal's stream: its text is deliberately not folded in, because the bytes
-// arrive on the terminal/* surface instead. toolCallID is carried for the two Debug
-// lines, where a content block vibekit does not model disappears.
+// A type:"terminal" block's text is deliberately not folded into the output delta:
+// the bytes arrive on the terminal/* surface instead, and the id is what lets the
+// card subscribe to that stream. toolCallID is carried for the two Debug lines,
+// where a content block vibekit does not model disappears.
 func (t *Translator) parseToolUpdateContent(toolCallID string, items []ACPToolCallContentBlock) toolUpdateContent {
 	var out toolUpdateContent
 	var outputDelta strings.Builder
@@ -244,17 +245,15 @@ func (t *Translator) parseToolUpdateContent(toolCallID string, items []ACPToolCa
 		case item.Type == ContentTypeTerminal && item.TerminalID != "":
 			out.terminalID = item.TerminalID
 		case !knownToolContentType(item.Type):
-			// The TYPE is what is unmodelled, so this arm is guarded on the type rather
-			// than left as a bare default: a default would also catch a known type whose
-			// payload arm did not match, which is a normal frame, and bury this line.
+			// Guarded on the TYPE rather than left as a bare default, which would also
+			// catch a known type whose payload arm did not match and bury this line.
 			slog.Debug("tool call content block of an unmodelled type, dropped",
 				"tool_call_id", toolCallID, "type", item.Type)
 		}
 	}
 	out.output = outputDelta.String()
-	// The observable SYMPTOM, logged once per frame rather than per block: content
-	// arrived and none of it reached the card. Guarded on all three outputs so a
-	// legitimately claim-only tool logs nothing.
+	// Logged once per frame rather than per block, and guarded on all three outputs
+	// so a legitimately claim-only tool logs nothing.
 	if len(items) > 0 && out.output == "" && out.diffs == nil && out.terminalID == "" {
 		slog.Debug("tool call carried content blocks that produced nothing to render",
 			"tool_call_id", toolCallID, "blocks", len(items))
@@ -266,8 +265,7 @@ func (t *Translator) parseToolUpdateContent(toolCallID string, items []ACPToolCa
 // parseToolUpdateContent models.
 //
 // A closed set beside the switch rather than inside it: the switch's arms pair a
-// type WITH a payload condition, so it cannot answer "is this type known" on its
-// own. Both have to move together when a member is adopted.
+// type WITH a payload condition, so it cannot answer this question on its own.
 func knownToolContentType(t string) bool {
 	switch t {
 	case ContentTypeContent, ContentTypeDiff, ContentTypeTerminal:
@@ -278,28 +276,28 @@ func knownToolContentType(t string) bool {
 }
 
 // toolUpdateContent is one tool_call_update's parsed content blocks. A struct
-// rather than three return values, because the set grows with the ACP union.
+// rather than three return values because the set grows with the ACP content union.
 type toolUpdateContent struct {
 	output     string
 	terminalID string
 	diffs      []vibekit.ToolDiff
 }
 
-// applyToolCallUpdate folds a parsed tool_call_update into the buffered tool call:
-// status (emitting a working label on a terminal status), appended output, replaced
-// locations, appended diffs with line tracking, and a first-seen subsession id.
+// applyToolCallUpdate folds a parsed tool_call_update into the buffered tool call
+// at idx: status, appended output, replaced locations, appended diffs with line
+// tracking, and a first-seen subsession id.
 func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer, tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent, subSessionID string) {
-	// A mid-flight update may refine title/kind (KAS sends them nullish), so apply
-	// only when present, or an update that omits them wipes the initial values.
+	// KAS sends title and kind nullish on an update, so apply only when present or
+	// an update that omits them wipes the initial tool_call's values.
 	if tu.Title != "" {
 		tc.Title = tu.Title
 	}
 	if tu.Kind != "" {
 		tc.Kind = tu.Kind
 	}
-	// Adopt the terminal link BEFORE the status fold. One frame can carry both the
-	// link and `completed`, and with the status fold first that frame's adoption
-	// looked up an id the call did not yet have, so the output was never persisted.
+	// BEFORE the status fold: one frame can carry both the link and `completed`, and
+	// with the fold first that frame's adoption looked up an id the tool call did
+	// not yet have, so the output was never persisted and never would be.
 	if tc.TerminalID == "" && content.terminalID != "" {
 		tc.TerminalID = content.terminalID
 	}
@@ -320,8 +318,8 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID vibekit.Cha
 			tc.AgentSubtaskID = tu.Meta.Kiro.AgentSubtaskID
 		}
 	}
-	// The run a `run_workflow` invocation started. Adopted once and never
-	// overwritten: a later frame for the same call cannot name a different run.
+	// Adopted once and never overwritten: KAS reports the run on the terminal
+	// update, and a later frame for the same call cannot name a different one.
 	if tc.WorkflowID == "" {
 		tc.WorkflowID = rawOutputWorkflowID(tu.RawOutput)
 	}
@@ -331,9 +329,9 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID vibekit.Cha
 
 // applyToolCallOutput folds an update's output text onto the card.
 //
-// A failed tool's reason rides `rawOutput` and nothing else: for an edit KAS puts a
-// diff in the content blocks and the reason in no block at all. Gated on an empty
-// Output so a command's own output wins.
+// A failed tool's reason rides `rawOutput` and nothing else. Gated on an empty
+// Output so a command's own output wins — the status fold ran first, so
+// adoptTerminalOutput may already have filled it.
 func applyToolCallOutput(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
 	if content.output != "" {
 		tc.Output += content.output
@@ -359,10 +357,10 @@ func (t *Translator) applyToolCallStatus(
 	if tu.Status != vibekit.ToolCompleted && tu.Status != vibekit.ToolFailed {
 		return
 	}
-	// KAS can send more than one terminal status frame for one tool call, and
+	// KAS can send several terminal status frames for one tool call, and
 	// ComputeDuration CONSUMES its start time, so the second read answers 0.
-	// Assigning it unconditionally wrote that 0 over a correct duration, and the
-	// markdown export then dropped the line, which is gated on a positive value.
+	// Assigning it unconditionally wrote that 0 over a correct duration, which the
+	// markdown export then dropped. The sibling read below is non-destructive too.
 	if tc.DurationMs == 0 {
 		tc.DurationMs = buf.ComputeDuration(tu.ToolCallID)
 	}
@@ -375,9 +373,8 @@ func (t *Translator) applyToolCallStatus(
 // succeeded, records the file changes they describe.
 //
 // Only a `completed` status feeds the ledger: KAS repeats a write's diff block on
-// every streaming frame, on the approval frame, and from the write tool's own
-// catch, so tracking each arrival would claim a file changed when the write failed.
-// The card keeps every diff regardless — a pending write's is what a reader approves.
+// every streaming frame, so tracking each arrival would count partial streams and
+// claim a file changed when the write failed. The card keeps every diff regardless.
 func (t *Translator) applyToolCallDiffs(
 	chatID vibekit.ChatID, buf *buffer.Buffer, tc *vibekit.ToolCall, diffs []vibekit.ToolDiff,
 ) {
@@ -396,10 +393,10 @@ func (t *Translator) applyToolCallDiffs(
 // the command's output survives a page reload.
 //
 // A copy at one moment rather than incremental bookkeeping: a terminal's first
-// output arrives before the update that names it, so no earlier point could be
-// both correct and complete. The terminal's output wins over anything already on
-// the call, since an ACP content block is a fragment of what it holds in full. A
-// miss is logged, because a card that renders empty looks like a silent command.
+// output arrives before the update that names it. The terminal's output wins over
+// anything already on the tool call, since an earlier ACP content block is a
+// fragment of what the terminal holds in full. A miss is logged because a card
+// that renders empty looks exactly like a command that printed nothing.
 func (t *Translator) adoptTerminalOutput(chatID vibekit.ChatID, tc *vibekit.ToolCall) {
 	if tc.TerminalID == "" {
 		return
@@ -420,8 +417,8 @@ func (t *Translator) adoptTerminalOutput(chatID vibekit.ChatID, tc *vibekit.Tool
 }
 
 // mergeToolMeta folds a tool_call_update's disclosure and denial metadata into the
-// buffered call. Late adoption: a denial is decided when the call is ATTEMPTED, so
-// it can arrive on the update rather than the create. Never overwrites.
+// buffered call. A denial is decided when the call is ATTEMPTED, so it can arrive
+// on the update rather than the create. Never overwrites a value already held.
 func mergeToolMeta(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire) {
 	if tc.Disclosed == nil {
 		tc.Disclosed = disclosedFrom(tu.Meta.Kiro.DisclosedContext)
@@ -431,8 +428,8 @@ func mergeToolMeta(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire) {
 	}
 }
 
-// disclosedFrom maps KAS's disclosedContext block onto the domain type. Nil for
-// every tool call that is not a disclose_context, which is nearly all of them.
+// disclosedFrom maps KAS's disclosedContext block onto the domain type. Returns nil
+// for every tool call that is not a disclose_context, which is nearly all of them.
 func disclosedFrom(in *ACPDisclosedContext) *vibekit.ToolDisclosed {
 	if in == nil {
 		return nil
@@ -440,9 +437,9 @@ func disclosedFrom(in *ACPDisclosedContext) *vibekit.ToolDisclosed {
 	return &vibekit.ToolDisclosed{Type: in.Type, DisplayName: in.DisplayName, URI: in.URI}
 }
 
-// denialFrom maps KAS's policyDenial block onto the domain type. The outer
-// `effect` is always the literal "deny" so it is dropped; the matched rule's own
-// effect is kept, because an "ask" rule that nobody answered also arrives here.
+// denialFrom maps KAS's policyDenial block onto the domain type. The outer `effect`
+// is always the literal "deny" so it is dropped; the matched rule's own effect is
+// kept, because an "ask" rule that nobody answered also arrives here.
 func denialFrom(in *ACPPolicyDenial) *vibekit.ToolDenial {
 	if in == nil {
 		return nil
@@ -464,13 +461,10 @@ func denialFrom(in *ACPPolicyDenial) *vibekit.ToolDenial {
 	return out
 }
 
-// mergeCheckpoint folds a tool_call_update's _meta.kiro.checkpoint into the
-// buffered tool call, field by field so a frame omitting a key cannot erase one an
-// earlier frame supplied.
-//
-// Per-field rather than wholesale because the key set genuinely varies between
-// frames: KAS sends {modified, local} for a file creation and adds `original` only
-// when there was a pre-image, so replacing the struct would be lossy.
+// mergeCheckpoint folds a tool_call_update's _meta.kiro.checkpoint into the buffered
+// tool call, field by field so a frame omitting a key cannot erase one an earlier
+// frame supplied: the key set genuinely varies between frames for one tool call, so
+// replacing the struct would be lossy the moment a narrower set arrives.
 func mergeCheckpoint(tc *vibekit.ToolCall, in *ACPCheckpointMeta) {
 	if in == nil || (in.Original == "" && in.Modified == "" && in.Local == "") {
 		return
@@ -491,13 +485,12 @@ func mergeCheckpoint(tc *vibekit.ToolCall, in *ACPCheckpointMeta) {
 
 // localPath converts a wire path reference to a local filesystem path.
 //
-// KAS sends some tool-call paths as file:// URIs, and every consumer downstream
-// treats the value as a path while none survive a URI (filepath.Rel refuses it),
-// so the symptom was a changed-file row whose diff could never load. Anything that
-// is not a LOCAL file:// URI is returned unchanged: a remote authority names a file
-// this process cannot open, so the outside-the-workspace handling rejects it.
+// KAS sends some tool-call paths as file:// URIs. Every consumer downstream treats
+// the value as a path and none survive a URI (filepath.Rel refuses it). Anything
+// that is not a LOCAL file:// URI is returned unchanged, so a remote authority
+// falls through to the normal outside-the-workspace handling.
 func localPath(ref string) string {
-	// Cheap gate: a filesystem path has no scheme, and this runs on every path.
+	// Cheap gate: this runs on every location and diff of every tool call.
 	if !strings.Contains(ref, "://") {
 		return ref
 	}
@@ -516,11 +509,10 @@ func localPath(ref string) string {
 // relPath strips the workspace root prefix from an absolute path. A path that is
 // not under the workspace is returned unchanged.
 //
-// The funnel every ACP-supplied path crosses on the way to the client, so
-// normalising the wire's URI spelling belongs here rather than at each call site —
-// and it has to happen FIRST, or the not-under-the-workspace branch returns the raw
-// URI. The escape test is pathinside.RelEscapes, not a leading-".." prefix: the
-// separator-precise rule keeps a file under a directory whose name starts with two.
+// Normalising the wire's URI spelling belongs here rather than at each call site:
+// the not-under-the-workspace branch returns its input, so a raw URI would leak the
+// spelling this function exists to remove. The escape test is separator-precise
+// (pathinside.RelEscapes), where a leading-".." string test would leak the path.
 func (t *Translator) relPath(ref string) string {
 	abs := localPath(ref)
 	workDir := t.workDir
@@ -545,9 +537,9 @@ func (t *Translator) ensureTurnStarted(ctx context.Context, chatID vibekit.ChatI
 	if !buf.StartTurn(t.newMsgID()) {
 		return
 	}
-	// Fallback attribution only. A prompt latches the model at dispatch, closing the
-	// window where a fast switch lands before the old model's first frame. This read
-	// stays for turns nobody dispatched, where the chat record is the only evidence.
+	// Fallback attribution only: a prompt latches the model at dispatch. This read
+	// stays for turns nobody dispatched, where the chat record is the only evidence
+	// of what is answering.
 	if !buf.HasModel() {
 		if c, ok := t.chats.Get(ctx, chatID); ok {
 			buf.SetModel(c.Model)

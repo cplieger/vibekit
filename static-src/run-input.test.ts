@@ -33,8 +33,9 @@ function payload(over: Partial<RunInputNeededPayload> = {}): RunInputNeededPaylo
 function mount(
   p: RunInputNeededPayload,
   onSubmit: (text: string | null) => void = () => undefined,
+  held = "",
 ): HTMLElement {
-  const card = buildRunInputCard(p, onSubmit);
+  const card = buildRunInputCard(p, held, onSubmit);
   document.body.replaceChildren(card);
   return card;
 }
@@ -90,6 +91,20 @@ describe("buildRunInputCard", () => {
     // Trimmed: the server refuses whitespace, and sending it would spend the
     // reader's one claim on an answer the step cannot use.
     expect(onSubmit).toHaveBeenCalledWith("the release branch");
+  });
+
+  it("seeds the box with words a previous send is still holding", () => {
+    // The dock splices the card BEFORE the answer goes out, so a retryable refusal
+    // re-offers the question against a fresh element. Without the seed the reader
+    // gets their question back with an empty box and retypes what they just wrote.
+    const card = mount(payload(), () => undefined, "the release branch");
+    expect((card.querySelector("textarea") as HTMLTextAreaElement).value).toBe(
+      "the release branch",
+    );
+  });
+
+  it("opens empty when nothing is held, which is the ordinary case", () => {
+    expect((mount(payload()).querySelector("textarea") as HTMLTextAreaElement).value).toBe("");
   });
 
   it("refuses an empty Send rather than waiving the question", () => {

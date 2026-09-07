@@ -359,6 +359,13 @@ func TestBundledToolsFiles(t *testing.T) {
 	})
 
 	t.Run("a missing default warns too, marked not explicit", func(t *testing.T) {
+		// Staged, not read off the ambient path: inside the image the real file
+		// exists, so an ambient read passes on CI and fails in the container.
+		absent := filepath.Join(t.TempDir(), "bundled-tools.json")
+		restore := defaultBundledTools
+		defaultBundledTools = absent
+		t.Cleanup(func() { defaultBundledTools = restore })
+
 		logs := captureDefaultLogger(t)
 
 		if got := bundledToolsFiles(""); got != nil {

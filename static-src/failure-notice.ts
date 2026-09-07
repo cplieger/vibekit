@@ -92,7 +92,15 @@ const remedies = new Map<string, () => void>();
  *  the single action slot from the "Open chat" jump and makes the toast STICKY,
  *  because a remedy offered nowhere else must not expire unread. The chat is still
  *  NAMED, which is the half that answers whose failure this is. */
-export function reportFailure(chatID: string, message: string, action?: ToastRetry): void {
+export function reportFailure(
+  chatID: string,
+  message: string,
+  action?: ToastRetry,
+  turnScoped = false,
+): void {
+  if (suppressedAsAlreadyOnScreen(chatID, action, turnScoped)) {
+    return;
+  }
   const reason = message.trim() !== "" ? message.trim() : NO_REASON;
   // Dedupe on the TEXT, not on the code or the channel: the two channels agree on
   // the prose by construction (one server-side renderer), which is exactly what
@@ -123,6 +131,52 @@ export function reportFailure(chatID: string, message: string, action?: ToastRet
   } else {
     live.set(chatID, dismiss);
   }
+}
+
+/** Whether the reader is ALREADY LOOKING at the durable report of this failure, so
+ *  a corner overlay would be a second copy of it over the top of the first.
+ *
+ *  Since the turn's own card carries the reason (`turn_failure_reason` →
+ *  `.turn-notice`, present open and folded), a toast for the chat on screen
+ *  duplicates a row that is both better placed and permanent. Off-screen it is the
+ *  only thing that can report at all, which is why this suppresses and never
+ *  replaces.
+ *
+ *  FOUR conjuncts, and each one is a case that must still toast:
+ *
+ *   1. `turnScoped`. Only a failure that FINALIZED a turn has an inline home; a
+ *      `bridge_start_failed`, an `agent_config_error`, a prompt that never opened a
+ *      turn at all has no transcript row to land in, so it keeps its toast whatever
+ *      is on screen. The SERVER states this per frame (`ErrorPayload.turn_scoped`),
+ *      because it is a property of the emission and not of the code — three of the
+ *      five emitters behind `prompt_failed` and `recovery_failed` open no turn. It
+ *      was a per-code flag on the route table until that was measured wrong; the
+ *      note in error-routing.ts records what it cost.
+ *   2. No `action`. A route's own remedy — Sign in, a Settings jump — is exactly
+ *      what an inline row cannot offer, so an action-bearing notice is never
+ *      suppressed. `auth_token_unavailable` is both turn-scoped and action-bearing,
+ *      which is what makes this clause real rather than defensive.
+ *   3. A named chat. An empty `chatID` is a workspace-global command that names no
+ *      chat and therefore has no inline home either.
+ *   4. THE CHAT IS ACTUALLY ON SCREEN, which needs BOTH signals and neither alone.
+ *      Tab-active alone toasts into a window nobody is looking at, where a 12s
+ *      notice expires unread and the report is spent for nothing.
+ *      Document-visible alone suppresses a background chat's failure while the
+ *      reader is looking at a different chat entirely.
+ *
+ *  Both reads are ones the app already makes: `raise` below reasons its way to the
+ *  tab half and records why `store.getActiveId()` is the wrong question (nothing
+ *  clears it when the reader moves to Settings or an editor tab), and `attention.ts`
+ *  and `notify.ts` both already gate on document visibility. */
+function suppressedAsAlreadyOnScreen(
+  chatID: string,
+  action: ToastRetry | undefined,
+  turnScoped: boolean,
+): boolean {
+  if (!turnScoped || action !== undefined || chatID === "") {
+    return false;
+  }
+  return tabIdFor("chat", chatID) === getActiveTabId() && document.visibilityState === "visible";
 }
 
 /** Retract this chat's ordinary failure notice.

@@ -57,7 +57,6 @@ const { forgetHeights, recordRowHeight, spacerHeight } = await import("./block-h
 const { toolCallSigs, toolCallSigKey } = await import("./store-signals.js");
 const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
 const { appendChunk } = await import("./store.js");
-const { blockElement, mountedWindow } = await import("./messages-blocks.js");
 const { handleFindHotkey, toggleChatFind } = await import("./find-in-chat.js");
 const api = await import("./api-client.js");
 
@@ -213,61 +212,6 @@ function sentinelTurn(id: string, blocks: number, at: number): Message[] {
 }
 
 const SENTINEL = "chartreuse";
-
-/** A turn whose first assistant message LAUNCHES a workflow run near its end, and
- *  whose second message's blocks are that run's step frames — so the second render's
- *  blocks are mounted inside a card the FIRST render hosts. `launchAt` is deep enough
- *  that the search walk's own head grant cannot reach it, so what the launch's window
- *  does stays this case's variable. */
-function hostedRunTurn(id: string, head: number, launchAt: number, tail: number): Message[] {
-  const lane = `wf:${id}-run:${id}-run/lint`;
-  const blocks: Record<string, unknown>[] = Array.from({ length: head }, (_, i) => ({
-    type: "text",
-    text: `head ${String(i)}`,
-  }));
-  blocks[launchAt] = { type: "tool_use", tool_call_id: `${id}-wf` };
-  return [
-    { id, role: "user", ts: 1, content: `prompt ${id}` } as Message,
-    {
-      id: `${id}-a`,
-      role: "assistant",
-      ts: 2,
-      content: "",
-      blocks,
-      tool_calls: [
-        {
-          id: `${id}-wf`,
-          title: "Run Workflow",
-          kind: "other",
-          status: "completed",
-          workflow_id: `${id}-run`,
-        },
-      ],
-    } as unknown as Message,
-    {
-      id: `${id}-b`,
-      role: "assistant",
-      ts: 3,
-      content: "",
-      blocks: Array.from({ length: tail }, (_, i) => ({
-        type: "text",
-        text: i === HOSTED_HIT ? `the ${SENTINEL} frame` : `frame ${String(i)}`,
-        agent_subtask_id: lane,
-      })),
-    } as unknown as Message,
-  ];
-}
-
-/** Which of the hosted message's frames carries the needle. Its FIRST, so the frame
- *  the drop re-homed is the one the search resolves: a later one the reveal would have
- *  to mount fresh, in a card rebuilt after the drop, which is the state a broken
- *  re-home also produces. */
-const HOSTED_HIT = 0;
-
-/** Which of the launching message's blocks is the launch. Past `2 × OVERSCAN_BLOCKS`,
- *  so the search-wide walk's own head grant cannot reach it and the launch's residency
- *  stays the case's own variable. */
-const LAUNCH_AT = 55;
 
 /** One turn whose body is `rows` separate one-block messages, so `.turn-body`'s
  *  own flex `gap` separates them and a spacer standing in for the lot has to
@@ -1048,89 +992,16 @@ describe("scrolling moves the window", () => {
     expect(t2.querySelector(":scope > .turn-body")).not.toBeNull();
   });
 
-  it("lands a hit on a block whose run card a window drop RE-HOMED", async () => {
-    // C25's shape from the search path's side. The launching message hosts the run
-    // card; the NEXT message's frames are mounted inside it. Dropping the launch block
-    // removes a CONTAINER, so the fix re-homes the card to the render that still holds
-    // blocks in it — and `blockElement`, which is what the search resolves through,
-    // would otherwise hand out a detached node.
-    const id = await coldLoad("run", hostedRunTurn("run", 60, LAUNCH_AT, 400));
-    // A launch block's element IS the run card, which `stampBlock` never records — so
-    // its residency is read off the render's window rather than off a stamp.
-    const holdsLaunch = (): boolean => {
-      const w = mountedWindow("run-a");
-      return w !== undefined && w.from <= LAUNCH_AT && LAUNCH_AT < w.to;
-    };
-    const cardHost = (): string | null =>
-      card("run").querySelector(".run-card")?.closest(`[${KEY_ATTR}]`)?.getAttribute(KEY_ATTR) ??
-      null;
-    const frame = (): Element | null =>
-      card("run").querySelector(".run-card .run-step-body [data-block-msg='run-b']");
-
-    // One grant over the launch AND the first frames: the card is built where the
-    // launch is, and the frames route into it from the other render.
-    await mountTurnBody(id, "run", LAUNCH_AT + 1);
-    bumpMessages(id, "shape");
-    await vi.waitFor(() => {
-      expect(holdsLaunch()).toBe(true);
-      expect(frame()).not.toBeNull();
-    });
-    expect(cardHost()).toBe("run-a");
-    const node = card("run").querySelector(".run-card");
-    const hosted = blockElement("run-b", HOSTED_HIT);
-    expect(hosted).not.toBeUndefined();
-
-    // The grant steps past the launch. Its block drops while the frames stay mounted,
-    // which is the only path into the re-home.
-    // Two ordinals past it, plus the grant's own half-width: the launching message
-    // keeps a row (so the drop is a block drop rather than a render dispose) and the
-    // hosted frames stay mounted (so the drop has a claimant to hand the card to).
-    await mountTurnBody(id, "run", LAUNCH_AT + 2 + OVERSCAN_BLOCKS);
-    bumpMessages(id, "shape");
-    await vi.waitFor(() => {
-      expect(holdsLaunch()).toBe(false);
-    });
-    // MOVED, not rebuilt: the same card node, in the render that still holds blocks
-    // inside it, and every frame it was holding still in the READER'S transcript. The
-    // map answers with the same element either way — which is the defect, when the
-    // element it names has left the document.
-    expect(cardHost()).toBe("run-b");
-    expect(card("run").querySelector(".run-card")).toBe(node);
-    expect(frame()).not.toBeNull();
-    expect(blockElement("run-b", HOSTED_HIT)).toBe(hosted);
-    expect(hosted?.isConnected).toBe(true);
-
-    const text = `the ${SENTINEL} frame`;
-    stageServerHits([hitOn("run-b", "run", text, HOSTED_HIT)]);
-    // Inside a COLLAPSED run step, so the walker prunes it (`aria-hidden`) and there is
-    // no mark for stepping to cycle: the reader's Enter reaches the server hit.
-    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
-
-    await findAndStep(SENTINEL);
-
-    // The reader is taken to the block, and the block is inside the re-homed card and
-    // inside the transcript. A DETACHED answer takes `navigateToHit`'s `isConnected`
-    // exit instead — silently, with nothing selected and nothing said.
-    await vi.waitFor(() => {
-      const el = blockElement("run-b", HOSTED_HIT);
-      expect(el?.isConnected).toBe(true);
-      // Either arm is "the reader was taken there": a selected mark where the walker
-      // can read the text, the block's own flash where it cannot. Inside a collapsed
-      // run step it cannot, so this fixture takes the second.
-      expect(
-        el?.classList.contains("find-target-flash") === true ||
-          el?.querySelector("mark.find-hit-current") !== null,
-      ).toBe(true);
-    });
-    // On the SAME element the re-home carried, inside the card, inside the transcript.
-    expect(blockElement("run-b", HOSTED_HIT)).toBe(hosted);
-    expect(
-      card("run")
-        .querySelector(".run-card")
-        ?.contains(hosted ?? null),
-    ).toBe(true);
-    toggleChatFind();
-  });
+  // DELETED: "lands a hit on a block whose run card a window drop RE-HOMED". Its
+  // fixture was a second message whose blocks are a run's step frames mounted inside
+  // the launching message's card, so dropping the launch left a claimant to re-home the
+  // card to. `placeBlock` renders a step block nowhere, so nothing is ever mounted
+  // inside a run card, `liveRunClaimant` can find no claimant, and the drop releases the
+  // card instead of moving it. What is no longer covered: `resolveRunCardFate`'s re-home
+  // arm and `adoptRunCard`, and with them that `blockElement` keeps answering with a
+  // CONNECTED node across such a move — the search path's `navigateToHit` still has its
+  // own `isConnected` exit, and the release arm is covered by "brings a run card back
+  // COLLAPSED when the reader had closed it before the drop" in messages-blocks.test.ts.
 
   // -------------------------------------------------------------------------
   // The running turn: what the reader watching a live run sees.

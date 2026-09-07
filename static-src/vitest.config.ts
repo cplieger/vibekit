@@ -275,7 +275,7 @@ export default defineConfig({
     // Loaded once per worker before any test file. Configures fast-check
     // global defaults (numRuns, verbosity, time limits). See file for
     // tuning rationale.
-    setupFiles: ["./fc-strict-setup.ts"],
+    setupFiles: ["./fc-strict-setup.ts", "./waitfor-budget-setup.ts"],
 
     // Print stack traces with every console.* call in tests.
     printConsoleTrace: true,

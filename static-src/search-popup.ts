@@ -59,7 +59,6 @@ const TRIGGER_ID = "find-btn";
 const GROUP = "app-search";
 
 /** The leading glyph's size, matching the × beside it. */
-const GLYPH_PX = 14;
 
 export interface SearchPopupSpec<R> {
   /** Element id prefix. The input becomes `<id>-input`, the note `<id>-note`. */
@@ -155,7 +154,7 @@ export function createSearchPopup<R>(spec: SearchPopupSpec<R>): SearchPopup {
     // for every control in the box; `glyph` is the same node the toolbar button
     // paints, from the same producer.
     const verb = spec.kind === "search" ? "Search" : "Filter";
-    const glyph = iconEl(findGlyph(spec.kind, GLYPH_PX));
+    const glyph = iconEl(findGlyph(spec.kind));
     glyph.setAttribute("class", "page-find-icon");
     const built = createSearchShell<R>({
       id: spec.id,

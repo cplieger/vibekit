@@ -44,21 +44,67 @@ describe("the sidebar connection dot", () => {
     expect(dot.getAnimations({ subtree: true })).toHaveLength(0);
   });
 
-  it("generates no ::after overlay to animate", () => {
+  it("paints and animates nothing on its ::after overlay", () => {
     // The ripple lived on the pseudo, so a rule that survived with its animation
-    // stripped would leave an opaque green disc covering the dot. No `content`
-    // means no box at all.
+    // stripped would leave an opaque green disc covering the dot.
+    //
+    // The pseudo EXISTS again, and this assertion is narrowed to the property that
+    // was ever the defect rather than to the box. `all: unset` on this control
+    // resets `min-width`/`min-height` at class specificity, which makes it
+    // invisible to the app-wide zero-specificity hit-target floor rather than an
+    // override of it — an 8px button at every tier. The mark's size is its
+    // meaning, so the TARGET grows past the paint through an `::after` expander
+    // (10-shell-app.css). Transparent and inert: no background, no animation.
     const dot = mountDot("status-dot connected");
-    expect(getComputedStyle(dot, "::after").content).toBe("none");
+    const after = getComputedStyle(dot, "::after");
+    expect(after.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(after.animationName).toBe("none");
+    expect(dot.getAnimations({ subtree: true })).toHaveLength(0);
   });
 
-  it("still breathes while connecting", () => {
+  it("grows its hit target past its 8px disc", () => {
+    // The whole point of the expander: the painted mark stays 8px while the target
+    // reaches the tier's floor. `inset` is negative by half the difference, so the
+    // target follows `--hit-floor` with no second declaration to keep in step.
+    const dot = mountDot("status-dot connected");
+    const inset = getComputedStyle(dot, "::after").insetBlockStart;
+    expect(parseFloat(inset)).toBeLessThan(0);
+  });
+
+  it("still breathes while connecting, by tracking the document clock", () => {
+    // The dot owns no animation any more: it reads `--vk-beat` (03-base.css), so
+    // the footer breathes in step with the tab strip instead of against it. The
+    // clock is DRIVEN to two known phases here rather than sampled over time —
+    // deterministic, and it proves the dot follows the clock rather than merely
+    // naming it.
     const dot = mountDot("status-dot");
-    expect(getComputedStyle(dot).animationName).toBe("vk-breathe");
+    const clock = document.documentElement.getAnimations()[0];
+    expect(clock, "the document beat must be running on :root").toBeDefined();
+    clock!.pause();
+
+    clock!.currentTime = 0; // --vk-beat 0 -> resting, fully opaque
+    expect(Number(getComputedStyle(dot).opacity)).toBeCloseTo(1, 2);
+
+    clock!.currentTime = 1200; // half of --dot-beat-dur -> --vk-beat 1 -> trough
+    expect(Number(getComputedStyle(dot).opacity)).toBeCloseTo(0.45, 2);
+
+    clock!.play();
   });
 
-  it("is static when disconnected", () => {
-    const dot = mountDot("status-dot error");
-    expect(getComputedStyle(dot).animationName).toBe("none");
+  it.each(["connected", "error"])("is static when %s, at every phase of the clock", (state) => {
+    // BOTH settled states, because the two are separate rules and only one of
+    // them being wrong is the live shape of this bug. The settled states reset
+    // OPACITY, not an animation: with the beat inherited there is no animation on
+    // this element to cancel, so `animation: none` here cancels nothing and the
+    // dot keeps breathing — which is the claim these states exist to deny.
+    const dot = mountDot(`status-dot ${state}`);
+    const clock = document.documentElement.getAnimations()[0];
+    expect(clock, "the document beat must be running on :root").toBeDefined();
+    clock!.pause();
+    for (const t of [0, 600, 1200, 1800]) {
+      clock!.currentTime = t;
+      expect(Number(getComputedStyle(dot).opacity), `phase ${String(t)}ms`).toBeCloseTo(1, 3);
+    }
+    clock!.play();
   });
 });

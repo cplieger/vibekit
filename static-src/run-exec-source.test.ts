@@ -389,6 +389,32 @@ describe("runToExec alert precedence", () => {
     }
   });
 
+  // The branch arm: KAS composes `Parallel '<id>' is waiting on branch '<branch>'.`
+  // onto the run because the branch's own sentence went to a shallow state copy, so
+  // before the node-signal arm this page quoted a sentence naming a branch at a reader
+  // who needed to know somebody owes an answer.
+  it("recognises a park inside a parallel branch and says the same thing", () => {
+    const run = runToExec(
+      "wf_1",
+      stateWith(
+        {
+          nodeId: "phase1",
+          type: "parallel",
+          status: "paused",
+          children: [step("verify", "paused", { completionSignal: "need_input" })],
+        },
+        { status: "paused", pauseReason: "Parallel 'phase1' is waiting on branch 'verify'." },
+      ),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.alert?.kind).toBe("paused");
+    expect(run.alert?.text).toBe(
+      "A step is waiting for your answer \u2014 Resume alone will park it again; " +
+        "answer or waive it in the dock",
+    );
+  });
+
   it("quotes any other pause reason verbatim", () => {
     const run = runToExec(
       "wf_1",

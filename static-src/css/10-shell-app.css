@@ -31,9 +31,15 @@
   user-select: none;
 }
 
-.logo h1 {
+/* The app's name, and deliberately NOT a heading any more. The page's title is
+   the `<h1>` in the title bar (12-chat.css), so a second `<h1>` here made every
+   page's real heading the second one on the document and forced its section
+   titles down a level. `margin: 0` because this is a `<p>` now and carries the
+   UA's block margins. */
+.logo-name {
   font-size: var(--fs-lg);
   font-weight: var(--fw-semibold);
+  margin: 0;
   transition: color var(--dur-enter) var(--ease-enter);
 }
 
@@ -44,7 +50,7 @@
   margin-left: 0.15em;
 }
 
-.logo:hover h1 {
+.logo:hover .logo-name {
   /* Lighter purple in dark mode, darker purple in light mode — never
    white/black, so it stays branded. */
   color: color-mix(in srgb, var(--c-accent) 70%, var(--c-text-primary));
@@ -110,14 +116,25 @@
   cursor: pointer;
   white-space: nowrap;
   min-height: var(--btn-h);
-  transition:
-    background var(--dur-micro),
-    color var(--dur-micro) var(--ease-standard);
+  transition: background var(--dur-micro);
   position: relative;
 
+  /* HOVER MOVES THE BACKGROUND ONLY, and the ink stays --c-text-primary. This
+     used to also set `color: var(--c-accent)`, which took the label AND the
+     icon (it strokes in currentColor) to the pastel violet — the one
+     button-shaped control in the app that did that. Every other button either
+     keeps its ink or moves it TOWARD --c-text-primary on hover: .git-action-btn
+     and .list-row-btn say so outright, .pill / .chat-opt-btn / .picker-btn
+     change background alone, and .tab-close mixes toward the text colour. In
+     this app accent-on-hover is the TEXT-CONTROL idiom instead — .turn-req-more,
+     .ev-in-more, .steer-more, .steer-note-more, a.git-pr-row-title — so
+     spending it here made a primary action read as a link. `color` left the
+     transition list with the declaration: nothing else writes this element's
+     colour in any state (verified by a CSSOM walk over the whole bundle:
+     .sidebar-action-btn was the only other writer), so the entry animated
+     nothing. */
   &:hover {
     background: var(--c-bg-elevated);
-    color: var(--c-accent);
   }
 
   & svg {
@@ -426,7 +443,13 @@
   cursor: pointer;
   padding: var(--sp-1);
   flex-shrink: 0;
-  border-radius: var(--r);
+  /* The ladder's rung for a 16-24px box is --r-sm, and this is 24px. It shipped
+     --r (6px), which is the TAB's own radius, so the close button's arc was
+     identical to the row containing it — the one relationship a nested corner may
+     never have. It is centred in a 36px row rather than sitting in the tab's
+     corner, so the concentric rule does not bind here (that rule is for a
+     corner-ADJACENT child) and the rung is the whole answer. */
+  border-radius: var(--r-sm);
   line-height: 0;
   width: 1.5rem;
   height: 1.5rem;
@@ -517,29 +540,53 @@
   cursor: pointer;
   box-sizing: border-box;
 
-  /* Connecting (default/yellow): gentle breathing pulse. Motion here means an
-     UNSETTLED state, which is this app's motion axis, so it stays. */
-  animation: vk-breathe 2s ease-in-out infinite;
-
-  /* Connected (green): a STILL disc. It used to carry a `vk-ping` ripple on an
-     `::after` overlay every 4 seconds, forever — a dot pulsing in the healthy
-     steady state, in the same green the tab dot uses for a finished turn, next to
-     a card showing credits, which is why it read as a work indicator rather than
-     as a transport light. This dot has never reported a turn.
-     The `::after` went with the animation rather than just the animation: the
-     overlay was an opaque green disc at `inset: 0` and `vk-ping` was the only
-     thing fading it, so removing one declaration would have left a solid layer
-     covering the dot. `@keyframes vk-ping` stays in 03-base.css — the cloned-repo
-     indicator in 22-git-multirepo.css still uses it. */
-  &.connected {
-    background: var(--c-green);
-    animation: none;
+  /* The TARGET is --hit-floor; the DISC stays 8px. `all: unset` above resets
+     `min-width`/`min-height`, and it scores (0,1,0) against the app-wide floor's
+     zero-specificity `:where()` (61-mcp-tools.css), so this control is invisible
+     to that floor — an 8px button at every tier and the one undersize the desktop
+     audit reports. Growing the box is not the answer here: this is a status MARK
+     whose size is its meaning, so the hit area grows past the paint instead. The
+     expander is centred by `inset` rather than sized, so it follows the tier with
+     no second declaration. */
+  &::after {
+    content: "";
+    position: absolute;
+    inset: calc((var(--hit-floor) - 100%) / -2);
   }
 
-  /* Disconnected (red): static, no animation */
+  /* Connecting (default/yellow): gentle breathing pulse. Motion here means an
+     UNSETTLED state, which is this app's motion axis, so it stays — but it now
+     reads the shared document beat (03-base.css) rather than its own 2s
+     animation, so the footer breathes in step with the tab strip instead of
+     against it. There is exactly one of these on screen, so nothing here was a
+     noise problem; the point is that the app has ONE period. */
+  opacity: calc(1 - var(--vk-beat) * 0.55);
+
+  /* Connected (green): a STILL disc. It used to carry a `vk-ping` ripple on an
+     ::after overlay every four seconds, which said "activity" on a light that
+     only reports whether the transport is up — this dot has never reported a
+     turn. The overlay was an opaque green disc at `inset: 0`, so removing only
+     its animation would have left it permanently covering the dot; the pseudo
+     went wholesale.
+
+     `@keyframes vk-ping` is now DELETED: the cloned-repo indicator in
+     22-git-multirepo.css was its last consumer and it is a still dot too, for
+     the same reason as here. */
+  &.connected {
+    background: var(--c-green);
+
+    /* `opacity: 1`, not `animation: none`. The breathe is now an inherited value
+       rather than an animation on this element, so cancelling an animation
+       cancels nothing and a CONNECTED dot would breathe — which is exactly the
+       claim this state exists to deny. */
+    opacity: 1;
+  }
+
+  /* Disconnected (red): static — see `.connected` for why this resets opacity
+     rather than an animation. */
   &.error {
     background: var(--c-red);
-    animation: none;
+    opacity: 1;
   }
 
   &:focus-visible {
@@ -564,7 +611,12 @@
     width: var(--btn-h);
     height: var(--btn-h);
     background: transparent;
-    animation: none;
+
+    /* The button becomes a transparent 44px target and its ::before carries the
+       mark, so the beat moves down with it. Resetting opacity here is required,
+       not tidy: the desktop rule above sets it on the BUTTON, and inherited
+       opacity would multiply with the pseudo's own. */
+    opacity: 1;
   }
 
   .status-dot::before {
@@ -573,17 +625,17 @@
     height: 0.5rem;
     border-radius: 50%;
     background: var(--c-yellow);
-    animation: vk-breathe 2s ease-in-out infinite;
+    opacity: calc(1 - var(--vk-beat) * 0.55);
   }
 
   .status-dot.connected::before {
     background: var(--c-green);
-    animation: none;
+    opacity: 1;
   }
 
   .status-dot.error::before {
     background: var(--c-red);
-    animation: none;
+    opacity: 1;
   }
 
   /* No `.status-dot.connected::after` twin here. It only re-centred the ripple
@@ -620,11 +672,6 @@
   transition:
     background var(--dur-micro),
     color var(--dur-micro) var(--ease-standard);
-
-  &:where(:disabled) {
-    opacity: 0.3;
-    cursor: default;
-  }
 
   &:where(:disabled:hover) {
     background: none;

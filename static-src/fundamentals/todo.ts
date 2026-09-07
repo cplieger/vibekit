@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { CHROME_ATTR } from "../chrome-attr.js";
 import { reconcile, type ReconcileSpec } from "../reconcile.js";
 import type { PlanStatus } from "../types.js";
 
@@ -41,7 +42,11 @@ function buildRow(t: TodoItem): HTMLDivElement {
   const row = el("div", { className: "todo-row" }) as HTMLDivElement;
   row.dataset["status"] = t.status;
   row.append(
-    el("span", { className: "todo-glyph", "aria-hidden": "true" }, GLYPH[t.status]),
+    el(
+      "span",
+      { className: "todo-glyph", "aria-hidden": "true", [CHROME_ATTR]: "" },
+      GLYPH[t.status],
+    ),
     el("span", { className: "todo-text" }, t.content),
   );
   return row;
@@ -52,7 +57,7 @@ export function buildTodoList(items: readonly TodoItem[]): HTMLDivElement {
   const root = el("div", { className: "todo-list" }) as HTMLDivElement;
   const header = el(
     "div",
-    { className: "todo-header" },
+    { className: "todo-header", [CHROME_ATTR]: "" },
     el("span", { className: "todo-title" }, "To-dos"),
     el("span", { className: "todo-progress" }),
   );

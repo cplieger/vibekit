@@ -102,7 +102,14 @@ vi.mock("./store.js", () => ({
   // is the routing each verdict produces.
   transcriptStale: vi.fn(() => true),
 }));
-vi.mock("./store-load.js", () => ({ loadList: vi.fn(), loadMessages: vi.fn() }));
+// The loader, including the one call that asks the SERVER whether a chat exists.
+// A stub rather than the real thing, because what `resolveUnknownChat` owns is the
+// ROUTING of each verdict; the status-to-verdict mapping is store-load.test.ts's.
+vi.mock("./store-load.js", () => ({
+  loadList: vi.fn(),
+  loadMessages: vi.fn(),
+  confirmChatExists: vi.fn(),
+}));
 vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
 vi.mock("./chat-commands.js", () => ({ sendPromptTo: vi.fn() }));
 vi.mock("./tabs.js", () => ({
@@ -202,12 +209,15 @@ import {
   openTangentChat,
   openPreviousSession,
   installStoreSubscribers,
+  switchSession,
+  resolveUnknownChat,
 } from "./chat.js";
 import {
   openTab,
   adoptSubject,
   activateTab,
   tabIdFor,
+  getActiveTabId,
   setTabTooltip,
   openChatRefs,
 } from "./tabs.js";
@@ -215,7 +225,7 @@ import { addAttachment } from "./attachments.js";
 import { dropDecisions } from "./decision-dock.js";
 import { get, watchSession, removeChat, setActive, upsertHeader, clearTurnDone } from "./store.js";
 import { transcriptStale } from "./store.js";
-import { loadList, loadMessages } from "./store-load.js";
+import { loadList, loadMessages, confirmChatExists } from "./store-load.js";
 import {
   loadTurnRail,
   pointTurnRail,
@@ -1218,5 +1228,137 @@ describe("activateChatView routes on the staleness verdict", () => {
     activateChatView("c-empty-stale");
 
     expect(loadMessages).toHaveBeenCalledWith("c-empty-stale");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A deep link to a chat with no open tab.
+//
+// `switchSession` resolved the chat's tab id and returned EARLY on "", so
+// `applyRoute`'s chat branch did nothing at all for a chat whose tab had been
+// closed: no tab, no transcript, no error, the empty-state hero, and the URL still
+// naming the chat. The five singleton routes already opened their tab through
+// `openTab`; this was the one kind that did not. Measured twice on the live
+// instance.
+//
+// The arm for an id that names NO record lives in `app.ts`'s router — the
+// composition root, which has no test address — so it is verified in the live
+// browser and said so rather than claimed here.
+// ---------------------------------------------------------------------------
+
+describe("switchSession", () => {
+  it("activates the tab a chat already has, and dispatches no open", async () => {
+    vi.mocked(tabIdFor).mockReturnValue("tb_open");
+    vi.mocked(getActiveTabId).mockReturnValue("tb_other");
+
+    await switchSession("c-has-tab");
+
+    expect(activateTab).toHaveBeenCalledWith("tb_open");
+    expect(openTab).not.toHaveBeenCalled();
+  });
+
+  it("OPENS the tab for a chat that has none, through the server door", async () => {
+    // The fix. `openChatTab` → `openTab` → `open_tab` → the membership coordinator,
+    // which is what keeps the tab set server-owned and coordinator-ordered; a
+    // local-only row is never minted.
+    vi.mocked(tabIdFor).mockReturnValue("");
+    vi.mocked(get).mockReturnValue({ id: "c-no-tab", name: "The old chat" } as never);
+
+    await switchSession("c-no-tab");
+
+    expect(activateTab).not.toHaveBeenCalled();
+    expect(openTab).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(openTab).mock.calls[0]?.[0]).toMatchObject({
+      kind: "chat",
+      ref: "c-no-tab",
+      name: "The old chat",
+    });
+  });
+
+  it("does neither for the chat that is already active in the active tab", async () => {
+    vi.mocked(tabIdFor).mockReturnValue("tb_active");
+    vi.mocked(getActiveTabId).mockReturnValue("tb_active");
+    // The store mock's `activeId` is what `getActiveId()` answers; `setActive` is
+    // its only writer, so pointing it is how this case names the active chat.
+    setActive("c-active");
+
+    await switchSession("c-active");
+
+    expect(activateTab).not.toHaveBeenCalled();
+    expect(openTab).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A deep link to a chat the STORE has never heard of.
+//
+// The router's dead-id arm used to say "That conversation no longer exists." on the
+// strength of a chat list having landed once. That is a terminal verdict derived
+// from data this client may simply not have yet: a list is authoritative at the
+// instant it lands and stale from then on, so a chat created on another device while
+// this client's SSE was down is missing from a store that is otherwise entitled to
+// speak, and the reader was told a live conversation was gone.
+//
+// `resolveUnknownChat` is the ask that replaces the guess. What is pinned here is
+// the ROUTING of each verdict — the terminal claim allowed for `gone` and refused
+// for `unresolved`, the deep link opening for `exists` — plus the ordering rule the
+// round trip creates. The URL rewrite itself stays in `applyRoute`, a private
+// function in the composition root with no test address, so it is verified in the
+// live browser and said so rather than claimed here.
+// ---------------------------------------------------------------------------
+
+describe("resolveUnknownChat", () => {
+  it("OPENS the chat when the server says it exists", async () => {
+    // The direction that makes the round trip worth making. `confirmChatExists` has
+    // already adopted the header by this point, so the deep link lands on a real
+    // transcript instead of on the empty-state hero.
+    vi.mocked(confirmChatExists).mockResolvedValue("exists");
+    vi.mocked(tabIdFor).mockReturnValue("");
+
+    expect(await resolveUnknownChat("c-elsewhere")).toBe("opened");
+    expect(openTab).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(openTab).mock.calls[0]?.[0]).toMatchObject({
+      kind: "chat",
+      ref: "c-elsewhere",
+    });
+  });
+
+  it("reports `gone` when the SERVER says the chat is gone, and opens nothing", async () => {
+    // The one verdict that licenses the terminal claim: the server itself answered.
+    vi.mocked(confirmChatExists).mockResolvedValue("gone");
+
+    expect(await resolveUnknownChat("c-deleted")).toBe("gone");
+    expect(openTab).not.toHaveBeenCalled();
+    expect(activateTab).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES the terminal claim when nobody answered", async () => {
+    // A 5xx, a dead network, an undecodable body. The caller holds the URL and says
+    // nothing terminal — claiming the chat is gone here would be the same defect one
+    // layer down from the one this function exists to fix.
+    vi.mocked(confirmChatExists).mockResolvedValue("unresolved");
+
+    expect(await resolveUnknownChat("c-real")).toBe("unresolved");
+    expect(openTab).not.toHaveBeenCalled();
+    expect(activateTab).not.toHaveBeenCalled();
+  });
+
+  it("prefers a row that appeared WHILE the request was in flight over a `gone`", async () => {
+    // The ordering rule the round trip creates: the missing `chat_created` frame can
+    // land during the trip, and a row that arrived after the verdict was computed is
+    // newer than it. Without the post-await store read this answers `gone` for a
+    // chat whose tab the reader can already see.
+    vi.mocked(confirmChatExists).mockImplementation(async () => {
+      vi.mocked(get).mockReturnValue({ id: "c-raced", name: "Landed mid-flight" } as never);
+      return "gone";
+    });
+    vi.mocked(tabIdFor).mockReturnValue("");
+
+    expect(await resolveUnknownChat("c-raced")).toBe("opened");
+    expect(vi.mocked(openTab).mock.calls[0]?.[0]).toMatchObject({
+      kind: "chat",
+      ref: "c-raced",
+      name: "Landed mid-flight",
+    });
   });
 });

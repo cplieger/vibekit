@@ -8,11 +8,15 @@
 //      painted under the full-box scroller, so it reads fine and answers no
 //      pointer event. That is how the `agent_config_error` banner shipped an
 //      "Open custom instructions" button nobody could press.
-//   2. `.chat-toolbar` is anchored to the same top corner, opaque, at z-index 10
-//      (12-chat.css). The band now shares that row, so what keeps its dismiss ×
-//      and its action button reachable is `inset-inline-end` derived from the
-//      toolbar's measured width — and, because the band is out of flow and
-//      precedes the transcript in DOM order, an explicit `z-index`.
+//   2. The band is out of flow and PRECEDES the transcript in DOM order, so two
+//      positioned `z-index: auto` boxes paint in that order and the transcript
+//      covers it. An explicit `z-index` is what keeps it reachable.
+//
+// A THIRD defect used to live here and is now structurally unreachable: the
+// toolbar was a floating pill anchored to the same top corner, opaque, at
+// z-index 10, so the band shared its row and had to dodge its measured width.
+// The bar is in flow and full width now (12-chat.css), which puts it ABOVE this
+// band in the flex column — nothing to overlap and nothing to measure.
 //
 // The band's position is the contract, so most of this reads RENDERED GEOMETRY
 // rather than CSS text: a substring assertion cannot tell a band level with the
@@ -25,7 +29,6 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import indexHtml from "../static/index.html?raw";
 import messagesCss from "./css/13-messages.css?raw";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
-import { initChatToolbarMetrics } from "./chat-toolbar-metrics.js";
 
 describe("banner band placement (static/index.html)", () => {
   it("puts the banner stack outside the transcript scroller's wrapper", () => {
@@ -48,7 +51,7 @@ describe("banner band placement (static/index.html)", () => {
   });
 });
 
-describe("the banner band shares the chat toolbar's row", () => {
+describe("the banner band sits under the title bar", () => {
   let styleEl: HTMLStyleElement;
   let app: HTMLElement;
   let toolbar: HTMLElement;
@@ -82,10 +85,6 @@ describe("the banner band shares the chat toolbar's row", () => {
     band = app.querySelector<HTMLElement>("#banner-stack")!;
     wrapOuter = app.querySelector<HTMLElement>("#messages-wrap-outer")!;
 
-    // The real publisher, so the wiring this geometry depends on is pinned too:
-    // without `--chat-toolbar-w` the band's fallback runs it under the toolbar.
-    initChatToolbarMetrics();
-
     banner = document.createElement("div");
     banner.className = "banner banner-error";
     banner.innerHTML = `<span class="banner-glyph" aria-hidden="true">\u2717</span><span class="banner-msg">A message.</span>`;
@@ -95,18 +94,17 @@ describe("the banner band shares the chat toolbar's row", () => {
   afterAll(() => {
     styleEl?.remove();
     app?.remove();
-    document.documentElement.style.removeProperty("--chat-toolbar-w");
   });
 
-  it("puts the band's top edge level with the toolbar's", () => {
-    expect(band.getBoundingClientRect().top).toBeCloseTo(toolbar.getBoundingClientRect().top, 1);
-  });
-
-  it("keeps the band clear of the toolbar rather than under it", () => {
-    const gap = toolbar.getBoundingClientRect().left - band.getBoundingClientRect().right;
-    // One `--sp-2`. Below zero the dismiss × and the action button sit under six
-    // navigation buttons at z-index 10, which is defect 2 above.
-    expect(gap).toBeGreaterThanOrEqual(8);
+  it("starts at or below the bar's bottom edge, so neither can cover the other", () => {
+    // The bar is a flex child of `#chat-area` and the band's containing block is
+    // that same element, so an overlap here would mean the bar had gone back out
+    // of flow. Both axes are covered by this one assertion: below the bar's
+    // bottom, horizontal position cannot overlap it at all, which is why the old
+    // width-dodging assertion is gone rather than relaxed.
+    expect(band.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+      toolbar.getBoundingClientRect().bottom - 0.5,
+    );
   });
 
   it("gives a banner row at least the toolbar's full box height", () => {
@@ -131,14 +129,15 @@ describe("the banner band shares the chat toolbar's row", () => {
     expect(getComputedStyle(band).backgroundColor).toBe("rgba(0, 0, 0, 0)");
   });
 
-  it("stacks above the transcript and below the toolbar", () => {
+  it("stacks above the transcript", () => {
     // Out of flow it precedes `#messages-wrap-outer` in DOM order, and two
     // positioned `z-index: auto` boxes paint in that order — so an explicit
-    // z-index is what stops the transcript covering it.
+    // z-index is what stops the transcript covering it. There is no upper bound
+    // to assert any more: the bar carries no z-index at all now, because a bar in
+    // flow has nothing to sit above.
     const bandZ = Number(getComputedStyle(band).zIndex);
     expect(Number.isNaN(bandZ), "the band needs an explicit z-index, not `auto`").toBe(false);
     expect(bandZ).toBeGreaterThan(0);
-    expect(bandZ).toBeLessThan(Number(getComputedStyle(toolbar).zIndex));
   });
 });
 
@@ -182,11 +181,11 @@ describe("--chat-toolbar-h is the toolbar's real box height", () => {
 });
 
 describe("the banner band on a phone", () => {
-  it("returns to the flow under the toolbar", () => {
+  it("returns to the flow", () => {
     // The one rule the fixed 1280px test viewport cannot reach, so it is read off
-    // the CSSOM rather than rendered: at this width `.chat-toolbar` is in flow and
-    // paints the top band itself, so the band belongs below it and in flow — an
-    // overlay would sit on top of the live turn on a short viewport.
+    // the CSSOM rather than rendered. This is about viewport HEIGHT rather than
+    // about the bar: on a short screen an overlay would sit on top of the live
+    // turn, so the band takes flow space instead.
     const media = messagesCss.match(/@media \(width <= 48rem\) \{\s*\.banner-stack \{([^}]*)\}/);
     expect(media, "13-messages.css must carry the band's own <=48rem block").not.toBeNull();
     expect(media?.[1]).toContain("position: static");

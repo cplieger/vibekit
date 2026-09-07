@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/chat"
+	"github.com/cplieger/vibekit/internal/durable"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/rpcerr"
 	"github.com/cplieger/vibekit/internal/settings"
@@ -97,15 +98,10 @@ func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string
 // recoverEmptyTurn re-prompts a turn that ended having produced nothing:
 // recreate the session, then send the same prompt once more.
 //
-// result is the finalized turn's captured outcome, read while the caller
-// still holds the turn's completion handle — the decision comes off the
-// finalized turn, never the live buffer, which can still be withholding
-// the turn's only text when this runs.
-//
-// The caller released both admission holds before this runs, so the retry
-// competes like anything else and re-reserves with a try: a user prompt
-// that won the slot abandons the retry, the right direction since the
-// empty turn is already recorded.
+// result is the FINALIZED turn's captured outcome, never the live buffer,
+// which can still be withholding the turn's only text when this runs.
+// Both admission holds are already released, so the retry re-reserves
+// with a try and a user prompt that won the slot abandons it.
 func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, outcome TurnOutcomeAccess, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, result vibekit.TurnResult, p *vibekit.PromptCommand, params map[string]any) {
 	// A verb KAS answers itself produces no content by design, so an
 	// empty turn is the correct outcome and recovery is pure damage.
@@ -130,7 +126,7 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 	defer outcome.ReleaseTurnReservation(chatID)
 	slog.Warn("empty turn detected, recreating session", "chat_id", chatID)
 	refreshRetrySession(ctx, bridges, chats, chatID)
-	retryEmptyTurnPrompt(ctx, bridges, bus, outcome, chatID, p, params)
+	retryEmptyTurnPrompt(ctx, bridges, chats, bus, outcome, chatID, p, params)
 }
 
 // refreshRetrySession abandons the session that answered nothing: close
@@ -160,14 +156,28 @@ func refreshRetrySession(ctx context.Context, bridges BridgeAccess, chats ChatSt
 
 // retryEmptyTurnPrompt respawns the bridge and re-sends the prompt as a turn of
 // its own. The caller holds the retry's admission reservation.
-func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, bus Broadcaster, outcome TurnOutcomeAccess, chatID vibekit.ChatID, p *vibekit.PromptCommand, params map[string]any) {
+func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, outcome TurnOutcomeAccess, chatID vibekit.ChatID, p *vibekit.PromptCommand, params map[string]any) {
 	sb2, err2 := bridges.OpenBridge(ctx, chatID, p.Model)
 	if err2 != nil {
 		slog.Error("empty turn: respawn failed",
 			"chat_id", chatID, keyError, err2)
+		reason := "Session refresh failed: " + rpcerr.Text(err2)
+		// Correct the transcript before reporting: refreshRetrySession already wrote
+		// "Session refreshed, retrying" onto this turn, so without this the record
+		// claims a retry that will never happen. Appended rather than replacing it,
+		// so the reader sees two consecutive dividers. The empty turn was finalized
+		// before recovery began and the retry's epoch never opens, so no turn carries
+		// this failure and the divider is its only durable surface.
+		evt := vibekit.Message{
+			ID: ids.NewMessageID(), Role: vibekit.RoleEvent, Ts: time.Now().UnixMilli(),
+			EventKind: vibekit.EventInterrupted, Content: reason,
+		}
+		if err := chats.AppendMessage(durable.Context(ctx), chatID, &evt); err != nil {
+			slog.Error("empty turn: append respawn-failure event", "chat_id", chatID, keyError, err)
+		}
 		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 			Code:    vibekit.ErrCodeRecoveryFailed,
-			Message: "Session refresh failed: " + rpcerr.Text(err2),
+			Message: reason,
 		}))
 		return
 	}
@@ -208,9 +218,12 @@ func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, bus Broadca
 		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
 		reason := promptFailureReason(retryErr)
 		outcome.AbandonInFlightTurn(ctx, chatID, retryEpoch, reason)
+		// Turn-scoped: the retry ran as a turn of its own and the abandon above
+		// stamped this reason on it, so that card carries the cause.
 		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
-			Code:    vibekit.ErrCodeRecoveryFailed,
-			Message: "Retry prompt failed: " + reason,
+			Code:       vibekit.ErrCodeRecoveryFailed,
+			Message:    "Retry prompt failed: " + reason,
+			TurnScoped: true,
 		}))
 		return
 	}
@@ -397,12 +410,9 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 // StartTurn at bridge-ready, the ACP call, the settle, and the ordered
 // handoff into the empty-turn recovery.
 //
-// The release order on the settled path is the contract: the finalized
-// result is captured via the still-held epoch handle first, then the
-// bridge slot, then the reservation, so a waiting prompt is admitted the
-// moment the turn's effects are done — then recovery re-acquires both
-// holds with a try, and ReleaseTurn goes last so every epoch-based
-// recovery predicate reads a live record.
+// The release ORDER is the contract: capture the finalized result through
+// the still-held epoch handle, then the bridge slot, then the reservation,
+// and ReleaseTurn last so every epoch-based predicate reads a live record.
 func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chatID vibekit.ChatID, p *vibekit.PromptCommand) {
 	// The prompt Call gets its own cancellable context so CmdCancel's
 	// grace budget has something to trip when KAS never acks a
@@ -497,8 +507,11 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit
 	// Started == true, so the next prompt's ensureTurnStarted no-ops and
 	// extends this dead turn's blocks under this dead turn's message id.
 	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, epoch, reason)
+	// Turn-scoped: the abandon above stamps this same reason on the turn's
+	// carrier, so the card says it durably and a toast for the chat on screen
+	// would be a second copy of it.
 	roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID,
-		vibekit.ErrorPayload{Code: code, Message: reason}))
+		vibekit.ErrorPayload{Code: code, Message: reason, TurnScoped: true}))
 }
 
 // BuildPromptParams constructs the full session/prompt parameter map.
@@ -547,15 +560,11 @@ const (
 
 // validationErrorNames are the backend's own names for a request refused
 // as malformed or oversized, read off the kiro-cli-chat 2.19.0 binary's
-// string table. Every member is a statement about the bytes that were
-// sent, so a second attempt with the same bytes gets the same answer.
-// Without this table they land on -32603 like everything else and get
-// retried twice more.
-//
-// Deliberately excluded, though they sit in the same enumeration: quota
-// and capacity names, model names and the Kms* family — none is a
-// statement about the payload, so telling a user to shrink their prompt
-// because their monthly allowance ran out would be worse than nothing.
+// string table. Every member is a statement about the BYTES sent, so a
+// retry with the same bytes gets the same answer; without this table they
+// land on -32603 and are retried twice more. Quota, capacity, model and
+// Kms* names are excluded: none describes the payload, so classifying one
+// here would tell a user to shrink a prompt when their allowance ran out.
 var validationErrorNames = []string{
 	"ImageSizeExceeded",
 	"ImageDimensionExceeded",

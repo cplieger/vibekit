@@ -14,6 +14,16 @@
  *  one frame, so there is no visible flicker. */
 const ICONS_CLASS = "tab-bar-icons";
 
+/** Set while this bar is VISIBLE and showing its labels, i.e. while it names its
+ *  own active section. 12-chat.css reads it to suppress the title bar's subtitle,
+ *  which would otherwise print that same section name twice, twenty pixels apart.
+ *
+ *  Published here rather than derived in CSS because the derivation needs the
+ *  bar's visibility as well as its label mode, and a `:has()` chain carrying both
+ *  ran past stylelint's complexity ceiling — which was the right complaint: this
+ *  module already measures, so it is the one place that knows. */
+const NAMED_CLASS = "tab-bar-named";
+
 function measure(bar: HTMLElement): void {
   bar.classList.remove(ICONS_CLASS);
   let overflows = false;
@@ -27,6 +37,12 @@ function measure(bar: HTMLElement): void {
     }
   }
   bar.classList.toggle(ICONS_CLASS, overflows);
+
+  // `offsetParent` is null under a `display: none` ancestor, which is how every
+  // inactive view's bar reports. A view switch changes this bar's width (to and
+  // from 0), so the ResizeObserver re-runs `measure` and the class follows the
+  // visible view with no extra wiring.
+  bar.classList.toggle(NAMED_CLASS, !overflows && bar.offsetParent !== null);
 }
 
 /** Watch a tab bar and keep its label/icon mode fitted to its width.

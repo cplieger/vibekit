@@ -217,9 +217,9 @@ func TestMutate_RejectsBadChatID(t *testing.T) {
 
 // --- Broadcaster contract ---
 
-// BroadcasterContractTest checks a Broadcaster against two semantics, parameterised so
-// any implementation can be driven through it: events submitted by a single goroutine
-// appear in submission order, and Broadcast never blocks indefinitely.
+// BroadcasterContractTest holds any Broadcaster implementation to two semantics
+// under concurrent Broadcast calls: a single writer's events stay in submission
+// order, and Broadcast never blocks indefinitely.
 func BroadcasterContractTest(t *testing.T, newBroadcaster func() broadcaster) {
 	t.Helper()
 
@@ -328,11 +328,13 @@ func TestGet_MissingChat(t *testing.T) {
 
 // --- List ---
 
-// TestList_SortsByUpdatedAtDesc runs in a synctest bubble so the gap between the two
-// UpdatedAt stamps is EXACT rather than a wall-clock nudge that collides on a fast
-// machine. atomicfile.WriteFile's real filesystem work is fine inside one: TRANSIENT
-// file I/O reaches a durably-blocked state afterwards, so the synthetic clock still
-// advances, and only a goroutine parked indefinitely on an external FD defeats a bubble.
+// TestList_SortsByUpdatedAtDesc runs in a synctest bubble, so the gap between the
+// two timestamps is exact rather than a real-clock nudge that can collide on a
+// fast machine.
+//
+// The store's real filesystem work is fine in here: TRANSIENT file I/O reaches a
+// durably-blocked state afterwards so the clock still advances, and only a
+// goroutine parked indefinitely on an external FD defeats a bubble.
 func TestList_SortsByUpdatedAtDesc(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s, _ := newTestStore(t)
@@ -713,12 +715,14 @@ func TestHandleOne_ReturnsChatAndMessages(t *testing.T) {
 	}
 }
 
-// TestHandleOne_PaginationSurvivesUnorderedTimestamps: paging back from the newest
-// window must return the messages immediately before it, in array order, with none
-// skipped. A timestamp cursor cannot promise that, because nothing makes Message.Ts
-// non-decreasing across the slice — render order is array position, Ts is stamped at
-// CONSTRUCTION outside the per-chat lock, and projection.applySummary deliberately
-// gives a compaction event its predecessor's exact Ts, so tie groups always exist.
+// TestHandleOne_PaginationSurvivesUnorderedTimestamps pins the two states that
+// made a `?before=<ts>` cursor lose a page, both reachable on the real wire.
+//
+// Message.Ts is not non-decreasing across the slice: a sender stamps it outside
+// the per-chat lock the append takes, so two writers can stamp in one order and
+// append in the other, and a replayed compaction event deliberately reuses its
+// predecessor's exact Ts, so a tie group always exists. Both cases assert one
+// property: paging back from the newest window skips nothing.
 func TestHandleOne_PaginationSurvivesUnorderedTimestamps(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -1842,5 +1846,39 @@ func TestHandleExport_SuccessfulMarkdownWriteIsQuiet(t *testing.T) {
 	}
 	if got := logs.String(); strings.Contains(got, `msg="chat export: markdown write failed"`) {
 		t.Errorf("a successful export logged a write failure; logs = %q", got)
+	}
+}
+
+// TestMutate_RefusesACancelledContext pins the guard at Mutate's entry, untested
+// until now, and it is the negative that keeps the durable-write decision
+// enforceable from this side.
+//
+// Deleting the guard is the cheap way to stop a shutdown discarding an assistant
+// turn, and it opens nine request-context sites at once: a rewind truncation, a
+// user message, a membership change would all persist for a POST the client
+// abandoned. The caller detaches instead — only it can tell the two apart.
+func TestMutate_RefusesACancelledContext(t *testing.T) {
+	s, b := newTestStore(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	var mutatorRan bool
+	err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+		mutatorRan = true
+		c.Name = "written for a request nobody is waiting on"
+		return true
+	})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Mutate on a cancelled context = %v, want context.Canceled", err)
+	}
+	if mutatorRan {
+		t.Error("the mutator ran, so the guard sits below the load rather than at the entry")
+	}
+	if _, exists := s.Get(t.Context(), "c1"); exists {
+		t.Error("a refused Mutate created the chat anyway")
+	}
+	if events := b.snapshot(); len(events) != 0 {
+		t.Errorf("a refused Mutate broadcast %d events, want none", len(events))
 	}
 }

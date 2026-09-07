@@ -70,8 +70,8 @@
 }
 
 .git-multirepo-empty-icon svg {
-  width: 48px;
-  height: 48px;
+  inline-size: var(--icon-hero);
+  block-size: var(--icon-hero);
 }
 
 .git-multirepo-empty-title {
@@ -743,6 +743,17 @@
   opacity: 1;
 }
 
+/* A COARSE POINTER GETS THEM PERMANENTLY. Neither reveal above is reachable by a
+   finger: there is no hover, and `:focus-within` needs something inside the row
+   focused, which means tapping a button that is invisible until it is tapped.
+   Stage and Discard were therefore unreachable on touch — including Discard,
+   which is destructive, so the alternative reading (leave them hidden and let
+   touch users use another surface) would mean the git view silently offers less
+   on a tablet than the same build offers on a laptop. */
+:where([data-pointer="coarse"]) .git-repo-section-body .git-file-actions {
+  opacity: 1;
+}
+
 /* Commit composition area inside a repo section */
 .git-commit-area {
   display: flex;
@@ -1026,24 +1037,21 @@ a.git-pr-row-title:hover {
   padding-block: var(--sp-2);
 }
 
-/* Cloned indicator: tiny green circle with the same vk-ping ripple
- * the sidebar status-dot uses when connected. The ::after layer
- * pings every 4s on top of the static dot. */
+/* Cloned indicator: a STILL green circle. "Cloned" is a settled fact about a repo,
+ * and this app spends motion on unsettled states only — the rule `.status-dot`
+ * states for itself one file over.
+ *
+ * It used to carry a `vk-ping` ripple, on the stated grounds that the sidebar's
+ * connected dot did too. That dot's ping was removed for this exact reason and
+ * the comment here outlived it, so the justification had been false for a while.
+ * It was also the app's only animation running on EVERY instance permanently:
+ * one ripple per cloned repo, for as long as the tab was open, reporting
+ * nothing that changes. */
 .git-sources-cloned-dot {
-  position: relative;
   display: inline-block;
-  width: 0.5rem;
-  height: 0.5rem;
+  inline-size: var(--dot-size);
+  block-size: var(--dot-size);
   border-radius: 50%;
   background: var(--c-green);
   flex-shrink: 0;
-}
-
-.git-sources-cloned-dot::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: var(--c-green);
-  animation: vk-ping 4s ease-out infinite;
 }

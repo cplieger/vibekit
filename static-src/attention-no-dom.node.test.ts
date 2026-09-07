@@ -465,6 +465,97 @@ describe("summarize folds the chat tabs into one value", () => {
     // reintroduce a duplicate by, say, summing per status.
     expect(summarize([{ id: "a", status: "done" }], seen()).count).toBe(1);
   });
+
+  // -------------------------------------------------------------------------
+  // What a FRESH DEVICE opens at, which is the cost of the header seed.
+  //
+  // The two latches behind `done` and `failed` used to be reachable only from a
+  // live `turn_ended` this browser observed, so the device that could raise the
+  // cue was always the device that could acknowledge it — and a device with no
+  // stored acknowledgements had every tab on `idle`, which is not a CueStatus, so
+  // it opened at (0) whatever was on disk. Seeding those latches from the chat
+  // header (store.ts `latchFieldsFor`) means a device can now inherit a verdict
+  // it never watched happen, so the count on first load is the number of open
+  // chat tabs holding a finished-or-failed turn.
+  //
+  // These cases MEASURE that rather than arguing about it: the number is the
+  // thing to ratify, and it was self-reported before this test existed.
+  // -------------------------------------------------------------------------
+  it("opens at one per finished tab on a device with no acknowledgements", () => {
+    // Eight open chat tabs, and the SPLIT is the live instance's own: six
+    // `completed`, two `interrupted` (which `severityOf` grades broken, so
+    // `failed`). Re-measured against /config on 2026-09-04 rather than assumed,
+    // and the number came back identical under the pre-ruling mapping too — the
+    // one cancelled chat and the one unreadable chat have no open tab, so the
+    // hollow-ring ruling moved nothing here. A stopped turn nevertheless DOES
+    // count when it has a tab (user ratification, same day): `done` is the dot for
+    // a turn that ended, whatever became of it, and this fold sees only the dot.
+    const tabs = [
+      { id: "t1", status: "done" },
+      { id: "t2", status: "done" },
+      { id: "t3", status: "done" },
+      { id: "t4", status: "done" },
+      { id: "t5", status: "done" },
+      { id: "t6", status: "done" },
+      { id: "t7", status: "failed" },
+      { id: "t8", status: "failed" },
+    ];
+
+    // The active tab is acknowledged as it is observed (the controller's
+    // watched-tab rule), so the reader sees one fewer than the tab count.
+    expect(summarize(tabs, seen())).toEqual({ count: 8, worst: "failed" });
+    expect(summarize(tabs, seen({ t1: "done" }))).toEqual({ count: 7, worst: "failed" });
+  });
+
+  it("takes the ALERT icon as soon as one tab holds a failure", () => {
+    // `failed` outranks `done`, so a single broken turn among finished ones
+    // decides the favicon for the whole window. This is the other half of the
+    // fresh-device change: not just a count, a red icon.
+    expect(cueIconName(summarize([{ id: "a", status: "done" }], seen()).worst as CueStatus)).toBe(
+      "done",
+    );
+    expect(
+      cueIconName(
+        summarize(
+          [
+            { id: "a", status: "done" },
+            { id: "b", status: "failed" },
+          ],
+          seen(),
+        ).worst as CueStatus,
+      ),
+    ).toBe("alert");
+  });
+
+  it("clears as the reader visits each tab, so the count is transient", () => {
+    // The state that makes the first-load count acceptable rather than permanent:
+    // every acknowledgement is persisted per device, so the number only ever
+    // falls until a new turn ends.
+    const tabs = [
+      { id: "a", status: "done" },
+      { id: "b", status: "done" },
+      { id: "c", status: "failed" },
+    ];
+    expect(summarize(tabs, seen()).count).toBe(3);
+    expect(summarize(tabs, seen({ a: "done" })).count).toBe(2);
+    expect(summarize(tabs, seen({ a: "done", b: "done" })).count).toBe(1);
+    expect(summarize(tabs, seen({ a: "done", b: "done", c: "failed" }))).toEqual(NO_ATTENTION);
+  });
+
+  it("counts a chat whose dot has never been written as nothing", () => {
+    // The window between `openTab` and the store effect's first sweep, and the
+    // answer for a chat the store does not know. `""` is not a cue, so a boot
+    // restore cannot spike the count before the dots are painted.
+    expect(
+      summarize(
+        [
+          { id: "a", status: "" },
+          { id: "b", status: "" },
+        ],
+        seen(),
+      ),
+    ).toEqual(NO_ATTENTION);
+  });
 });
 
 describe("isUnseenCue is the one predicate behind both surfaces", () => {

@@ -17,40 +17,26 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// scannerLineCap is the per-frame content cap for the bridge's stdout.
-// Must accommodate a full fsWriteCap (4 MiB) content payload inside a
-// JSON envelope after worst-case escaping (non-ASCII, control chars).
-// 16 MiB is the safe pick: 4 MiB content + ~100% worst-case JSON
-// overhead + envelope slack.
-//
-// Exceeding it is survivable, not fatal: the frame is drained to its terminator
-// and dropped, and the stream continues. See bridge_frame.go.
+// scannerLineCap is the per-frame content cap for the bridge's stdout: a full
+// fsWriteCap (4 MiB) payload plus worst-case JSON escaping and envelope slack.
+// Exceeding it is survivable — the frame is drained and dropped (bridge_frame.go).
 const scannerLineCap = 16 << 20
 
-// stdoutBufSize is the ReadSlice window for the stdout frame reader. It is NOT
-// the frame cap: a frame larger than this is assembled across several
-// ErrBufferFull reads, up to scannerLineCap.
+// stdoutBufSize is the ReadSlice window for the stdout frame reader, NOT the frame
+// cap: a larger frame is assembled across several ErrBufferFull reads.
 const stdoutBufSize = 64 * 1024
 
-// stderrLineCap bounds a single kiro-cli stderr line before we drop
-// the rest. 64 KiB is generous for panic traces and progress lines;
-// anything longer is almost certainly binary garbage and not worth
-// carrying into Loki.
+// stderrLineCap bounds a single kiro-cli stderr line. 64 KiB is generous for panic
+// traces; anything longer is almost certainly binary garbage.
 const stderrLineCap = 64 * 1024
 
-// errBridgeExited is the sentinel Call returns when a caller's waiter
-// is unblocked by readLoop's post-exit drain or by the done-channel
-// race-guard. Kept as a var-level errors.New rather than fmt.Errorf
-// so callers can errors.Is against it without allocating per-call.
-// errBridgeExited aliases the exported sentinel so a caller in another package
-// can classify a dead bridge with errors.Is. It must stay an alias rather than
-// its own errors.New: two distinct values with the same text would make the
-// classification silently fail and the retry loop would spin on a corpse again.
+// errBridgeExited aliases the exported sentinel Call returns when a waiter is
+// unblocked by readLoop's post-exit drain. It must stay an ALIAS: two distinct values
+// with the same text would make errors.Is fail and the retry loop spin on a corpse.
 var errBridgeExited = vibekit.ErrBridgeExited
 
-// ACP RPC method names — re-exported from api for package-local use.
-// The canonical definitions live in api/methods.go so the full protocol
-// vocabulary is discoverable in one place.
+// ACP RPC method names, re-exported for package-local use. The canonical definitions
+// live in vibekit/methods.go so the protocol vocabulary is discoverable in one place.
 const (
 	methodInitialize  = vibekit.MethodInitialize
 	methodSessionNew  = vibekit.MethodSessionNew
@@ -58,22 +44,19 @@ const (
 	methodSetMode     = vibekit.MethodSetMode
 )
 
-// metaKeyKiro is the vendor namespace inside an ACP `_meta` object. Every
-// extension key on this wire hangs off it, on three different requests, and a
-// block written one level up or down is IGNORED rather than rejected — so the one
-// spelling is worth having in one place.
+// metaKeyKiro is the vendor namespace inside an ACP `_meta` object. Every extension
+// key on this wire hangs off it, on three different requests, and a block written one
+// level up or down is IGNORED rather than rejected.
 const metaKeyKiro = "kiro"
 
-// The two per-session composer choices vibekit sends inside _meta.kiro on
-// session/new. KAS's own newSession reads them as `kiroMeta.modelId` and
-// `kiroMeta.effortLevel`; see Bridge.withSessionChoices for the probe.
+// The two per-session composer choices vibekit sends inside _meta.kiro on session/new.
+// KAS reads them as `kiroMeta.modelId` and `kiroMeta.effortLevel`.
 const (
 	metaKeyModelID     = "modelId"
 	metaKeyEffortLevel = "effortLevel"
 )
 
-// session/set_config_option param keys. Named because three call sites spell
-// them: the model, the reasoning effort and the supervised-mode autopilot.
+// session/set_config_option param keys, named because three call sites spell them.
 const (
 	keyConfigID    = "configId"
 	keyConfigValue = "value"
@@ -81,11 +64,9 @@ const (
 
 // Bridge is one kiro-cli ACP subprocess tied to one chat.
 type Bridge struct {
-	// lifecycleCtx bounds the subprocess: the receiving half of
-	// vibekit.StartOpts.Lifetime, assigned by Start, which refuses a nil one. It is
-	// a lifetime HANDLE rather than a stashed caller context — never a request
-	// or turn context — which is why it is required at the method that runs the
-	// process instead of defaulted anywhere.
+	// lifecycleCtx bounds the subprocess: the receiving half of StartOpts.Lifetime,
+	// assigned by Start, which refuses a nil one. A lifetime HANDLE rather than a
+	// stashed caller context — never a request or turn context.
 	lifecycleCtx context.Context
 	stdin        io.WriteCloser
 	modes        atomic.Pointer[[]vibekit.SessionMode]
@@ -94,14 +75,12 @@ type Bridge struct {
 	notifCh      chan vibekit.Notification
 	done         chan struct{}
 	models       atomic.Pointer[[]vibekit.SessionModel]
-	// servedModels is every model id session/new advertised, UNFILTERED. models
-	// above drops end-of-life entries for the picker; this one must not, because
-	// it is the input to the entitlement check and a deprecated model the account
-	// can still use has to pass it.
+	// servedModels is every model id session/new advertised, UNFILTERED. models above
+	// drops end-of-life entries for the picker; this one must not, because a deprecated
+	// model the account can still use has to pass the entitlement check.
 	servedModels atomic.Pointer[[]string]
 	cmd          *exec.Cmd
-	// envAllow re-permits names the credential screen would otherwise drop
-	// (bridge_env.go, EnvAllowVar). Nil is the shipped configuration.
+	// envAllow re-permits names the credential screen would drop (bridge_env.go).
 	envAllow     map[string]struct{}
 	cliPath      string
 	modelID      vibekit.ModelID
@@ -109,87 +88,66 @@ type Bridge struct {
 	sessionID    vibekit.SessionID
 	currentMode  string
 	sessionTitle string
-	// effortLevel is the reasoning-effort tier the session last REPORTED running
-	// at, read off the `effortLevel` config option's currentValue. Observed rather
-	// than requested, which is what makes applyInitialEffort a repair instead of an
-	// unconditional round trip. Empty means unknown: KAS omits the option for a
-	// model with no tiers and omits it from every session/load result, and an
-	// unknown level must assert rather than assume a match.
-	//
-	// The session reports it on TWO channels and this bridge reads only one of
-	// them, so ObserveEffort is how the other one lands here.
+	// effortLevel is the tier the session last REPORTED, off the `effortLevel` option's
+	// currentValue — observed rather than requested, which makes applyInitialEffort a
+	// repair. Empty means unknown and must assert. ObserveEffort feeds the other channel.
 	effortLevel string
 	// extraArgs are the filtered operator launch flags for this spawn
 	// (StartOpts.ExtraArgs). Immutable after Start.
 	extraArgs []string
-	// extraEnv is appended to the inherited environment of the kiro-cli
-	// process this bridge starts. The install manager's active version
-	// directory leads PATH through it, so `kiro-cli` resolves any sibling it
-	// needs out of the same verified install rather than through whatever else
-	// $TOOLS/bin holds. Empty leaves the inherited environment (screened, see
-	// bridge_env.go) as the whole environment.
+	// extraEnv is appended to the inherited environment of the kiro-cli process, so the
+	// install manager's active version directory leads PATH and `kiro-cli` resolves a
+	// sibling out of the same verified install. Empty leaves the screened inherited env.
 	extraEnv []string
-	// presets are the KAS policy-preset ids this session opens with
-	// (StartOpts.Presets), from the active security profile. Immutable after
-	// Start, like the two above, and for a stronger reason than symmetry: KAS
-	// does not persist the ids, so session/new and session/load must send the
-	// SAME set or a resumed chat silently changes posture. Holding them on the
-	// bridge rather than reading a setting per call is what guarantees that.
+	// presets are the KAS policy-preset ids this session opens with. Immutable after
+	// Start for a stronger reason than symmetry: KAS does not persist the ids, so both
+	// session doors must send the SAME set or a resumed chat changes posture silently.
 	presets []string
-	// deliveredSeq counts the notifications readLoop has pushed onto notifCh, and is
-	// the sequence stamped on each one. Touched only by readLoop's goroutine — it is
-	// published on the frame itself and on the reply to a pending request, never
-	// read across the boundary.
+	// deliveredSeq counts the notifications readLoop has pushed onto notifCh and is the
+	// sequence stamped on each. Touched only by readLoop's goroutine — published on the
+	// frame and on the reply to a pending request, never read across the boundary.
 	deliveredSeq uint64
-	nextID       atomic.Int64
-	stopOnce     sync.Once
-	mu           sync.Mutex
-	writeMu      sync.Mutex
-	pendingMu    sync.Mutex
-	enableHooks  bool
-	// secretStorage gates the `_meta.kiro.secretStorage` declaration in
-	// initialize (StartOpts.SecretStorage). Immutable after Start, like
-	// enableHooks.
+	// loadSeq is the read-loop position the `session/load` response arrived at, published
+	// by SessionLoadSeq. Guarded by b.mu, unlike deliveredSeq: written on the goroutine
+	// that issued the load, read wherever a decision is ordered against the replay.
+	loadSeq     uint64
+	nextID      atomic.Int64
+	stopOnce    sync.Once
+	mu          sync.Mutex
+	writeMu     sync.Mutex
+	pendingMu   sync.Mutex
+	enableHooks bool
+	// secretStorage gates the `_meta.kiro.secretStorage` declaration in initialize.
 	secretStorage bool
-	// toolSearch and knowledge gate the `_meta.kiro.settings.toolSearch` row and
-	// the two `knowledge` rows (StartOpts.ToolSearch / .Knowledge). Immutable
-	// after Start, for the same reason as presets: KAS resolves both at session
-	// creation and freezes them, so the connection door and the session door have
-	// to describe one spawn rather than each re-reading a setting that may have
-	// changed in between.
+	// toolSearch and knowledge gate the `settings.toolSearch` row and the two
+	// `knowledge` rows. Immutable after Start, like presets: KAS resolves both at
+	// session creation and freezes them, so both doors must describe one spawn.
 	toolSearch bool
 	knowledge  bool
-	// memory gates the `userMemoryOptIn` row's VALUE (never its presence) and
-	// contributes KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED to the child environment.
-	// Immutable after Start for the same reason as its siblings, plus one of its
-	// own: the environment is fixed when the subprocess starts, so nothing could
-	// carry a later flip into a running session even if KAS re-read the gate.
+	// memory gates the `userMemoryOptIn` row's VALUE (never its presence) and contributes
+	// KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED to the child environment. Immutable after
+	// Start, and the environment is fixed when the subprocess starts anyway.
 	memory bool
 }
 
 // Option configures a Bridge at construction time.
 type Option func(*Bridge)
 
-// WithEnv appends extra environment variables to the kiro-cli process this
-// bridge starts, on top of the inherited environment. Used to put the install
-// manager's active version directory first on PATH.
+// WithEnv appends extra environment variables to the kiro-cli process this bridge
+// starts. Used to put the install manager's active version directory first on PATH.
 func WithEnv(env []string) Option {
 	return func(b *Bridge) { b.extraEnv = env }
 }
 
 // WithEnvAllow re-permits credential-shaped names the inherit screen would drop.
-// Built by ParseEnvAllowlist from EnvAllowVar; see bridge_env.go for which
-// direction the screen guards.
+// Built by ParseEnvAllowlist from EnvAllowVar; see bridge_env.go.
 func WithEnvAllow(allowed map[string]struct{}) Option {
 	return func(b *Bridge) { b.envAllow = allowed }
 }
 
-// New returns a fresh bridge that runs the kiro-cli binary at cliPath. Call
-// Start before any other method.
-//
-// cliPath is resolved by the CALLER, once per bridge, which is what makes a
-// version switch reach the next chat: the bridge is the long-lived consumer
-// here, and one is constructed per chat rather than once per process.
+// New returns a fresh bridge that runs the kiro-cli binary at cliPath. Call Start
+// before any other method. cliPath is resolved by the CALLER, once per bridge, which
+// is what makes a version switch reach the next chat.
 func New(cliPath, workDir string, opts ...Option) *Bridge {
 	b := &Bridge{
 		cliPath: cliPath,
@@ -204,47 +162,49 @@ func New(cliPath, workDir string, opts ...Option) *Bridge {
 	return b
 }
 
-// SessionID returns the bridge's ACP session id. Safe to call from
-// any goroutine.
+// SessionID returns the bridge's ACP session id. Safe from any goroutine.
 func (b *Bridge) SessionID() vibekit.SessionID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.sessionID
 }
 
-// ModelID returns the currently-selected model id. Safe to call from
-// any goroutine.
+// SessionLoadSeq returns the read-loop position the `session/load` response arrived at,
+// which a consumer must have folded up to before treating that replay as complete.
+// Set by `session/load` ONLY, so session/new and a failed load answer 0 — and 0 is
+// also a legal position, so pair this with the fact that the load returned.
+func (b *Bridge) SessionLoadSeq() uint64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.loadSeq
+}
+
+// ModelID returns the currently-selected model id. Safe from any goroutine.
 func (b *Bridge) ModelID() vibekit.ModelID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.modelID
 }
 
-// CurrentMode returns the currently-selected session mode. Safe to
-// call from any goroutine.
+// CurrentMode returns the currently-selected session mode. Safe from any goroutine.
 func (b *Bridge) CurrentMode() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.currentMode
 }
 
-// SessionTitle returns KAS's own title for the live session, taken from the
-// session/new or session/load result's flat `_meta.title`. On creation this is
-// always the literal "New Session" placeholder; on load it is the real stored
-// title. Empty when no session result has been applied.
-//
-// This is NOT the authoritative chat name. The caller adopts it only while the
-// chat is still default-named (bridge_coord.go), and an agent-authored
-// focus_update title outranks it — see translate/focus.go.
+// SessionTitle returns KAS's own title for the live session, from the session result's
+// flat `_meta.title` — always the "New Session" placeholder on creation, the real
+// stored title on load. NOT the authoritative chat name: the caller adopts it only
+// while the chat is default-named, and a focus_update title outranks it.
 func (b *Bridge) SessionTitle() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.sessionTitle
 }
 
-// Modes returns the available session modes as declared by the agent
-// on session/new or session/load. The returned slice is frozen
-// (never mutated after construction); callers MUST NOT mutate it.
+// Modes returns the available session modes as declared on session/new or
+// session/load. The returned slice is frozen; callers MUST NOT mutate it.
 func (b *Bridge) Modes() []vibekit.SessionMode {
 	if p := b.modes.Load(); p != nil {
 		return *p
@@ -252,10 +212,8 @@ func (b *Bridge) Modes() []vibekit.SessionMode {
 	return nil
 }
 
-// Models returns the available model catalog as declared by the agent
-// on session/new or session/load, with [Deprecated] / [Legacy] entries
-// filtered out (see modeltext.Hidden). The returned slice is frozen
-// (never mutated after construction); callers MUST NOT mutate it.
+// Models returns the available model catalog with [Deprecated] / [Legacy] entries
+// filtered out (modeltext.Hidden). Frozen; callers MUST NOT mutate it.
 func (b *Bridge) Models() []vibekit.SessionModel {
 	if p := b.models.Load(); p != nil {
 		return *p
@@ -264,9 +222,8 @@ func (b *Bridge) Models() []vibekit.SessionModel {
 }
 
 // ServedModels returns every model id this session advertised, including the
-// end-of-life entries Models filters out. Empty when the session advertised no
-// catalog, which callers must read as "entitlement unknowable" and allow.
-// The returned slice is frozen; callers MUST NOT mutate it.
+// end-of-life entries Models filters out. Empty means "entitlement unknowable", which
+// callers must read as allow. Frozen; callers MUST NOT mutate it.
 func (b *Bridge) ServedModels() []string {
 	if p := b.servedModels.Load(); p != nil {
 		return *p
@@ -274,15 +231,12 @@ func (b *Bridge) ServedModels() []string {
 	return nil
 }
 
-// NotifCh returns the channel of incoming ACP notifications from the bridge
-// subprocess, each carrying the read loop's sequence for it.
+// NotifCh returns incoming ACP notifications, each carrying the read loop's sequence.
 func (b *Bridge) NotifCh() <-chan vibekit.Notification { return b.notifCh }
 
-// SetModel performs an in-session model swap via session/set_config_option
-// (configId "model") — the v3 (KAS) replacement for the removed
-// session/set_model. On success, updates the bridge's internal model id
-// and returns nil. On failure (context too large, model unavailable,
-// InvalidModelError), returns the error and leaves the model id unchanged.
+// SetModel performs an in-session model swap via session/set_config_option (configId
+// "model") — the v3 replacement for the removed session/set_model. On failure the
+// bridge's model id is left unchanged.
 func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 	b.mu.Lock()
 	sessionID := b.sessionID
@@ -297,33 +251,19 @@ func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 	}
 	b.mu.Lock()
 	b.modelID = vibekit.ModelID(modelID)
-	// A swap can reset the session's reasoning-effort level and the bridge cannot
-	// see that it did: KAS reconciles the level against the NEW model's tier list
-	// and replaces it with that model's default when the current one is absent
-	// (measured on 2.19.1 — a swap between two models offering the same five tiers
-	// KEEPS the level, and a swap to `auto`, which offers none, destroys it). So the
-	// cached level is no longer evidence, and clearing it is what makes the next
-	// EnsureEffort assert rather than skip on a stale match.
+	// A swap can reset the session's effort level and the bridge cannot see that it did:
+	// KAS reconciles against the NEW model's tier list (measured on 2.19.1 — a swap to
+	// `auto`, which offers none, destroys it). Clearing makes the next call assert.
 	b.effortLevel = ""
 	b.mu.Unlock()
 	return nil
 }
 
-// EnsureEffort makes the live session run at `level`, via
-// session/set_config_option (configId "effortLevel"). The twin of SetModel and
-// the one spelling of that call: the session doors, the model-switch re-assert and
-// the prompt-time repair all go through it.
-//
-// Differs-only against what the session last REPORTED, so a call that changes
-// nothing costs nothing. That is safe rather than optimistic because SetModel
-// CLEARS the cached level: a swap can reset it inside KAS and the bridge cannot
-// see that, so a post-swap call always asserts.
-//
-// An invalid level is dropped rather than sent, so a bad settings value cannot
-// turn into a failed config-option call on the session-creation path. KAS silently
-// ignores a level the CURRENT MODEL does not offer (it assigns only when its own
-// tier list contains the value, and answers success either way), which is why the
-// cache is written from the REPLY and never from the request.
+// EnsureEffort makes the live session run at `level` via session/set_config_option
+// (configId "effortLevel"). The ONE spelling of that call. Differs-only against what
+// the session last REPORTED, which is safe rather than optimistic because SetModel
+// CLEARS the cache. An invalid level is dropped rather than sent, and the cache is
+// written from the REPLY: KAS silently ignores a level the current model lacks.
 func (b *Bridge) EnsureEffort(ctx context.Context, level string) error {
 	if level == "" || !vibekit.EffortLevel(level).Valid() {
 		return nil
@@ -343,11 +283,9 @@ func (b *Bridge) EnsureEffort(ctx context.Context, level string) error {
 	if err != nil {
 		return err
 	}
-	// Record what the session now REPORTS, never what was asked for. Probed on
-	// 2.19.1: setting a level on a session sitting at the `auto` model returns ok
-	// with no effortLevel option in the reply at all, so storing the request would
-	// leave the bridge believing a tier it does not have and the next repair would
-	// skip.
+	// Record what the session now REPORTS, never what was asked for. Probed on 2.19.1:
+	// setting a level on a session at the `auto` model returns ok with no effortLevel
+	// option at all, so storing the request would leave the bridge believing a tier.
 	var out struct {
 		ConfigOptions []sessionConfigOption `json:"configOptions"`
 	}
@@ -359,23 +297,11 @@ func (b *Bridge) EnsureEffort(ctx context.Context, level string) error {
 	return nil
 }
 
-// ObserveEffort records a reasoning-effort level the SESSION reported on the one
-// channel this bridge does not read: the `config_option_update` notification,
-// which it forwards unread on NotifCh.
-//
-// Without it the cache goes stale-OPTIMISTIC exactly where it matters. KAS moves
-// the level on its own — its first-prompt pinSessionModelId settles an unset model
-// and applies that model's default tier, and a swap made from the IDE or the TUI
-// does the same — and announces it only on that notification. A bridge still
-// believing the level it asked for at the session door then compares equal and
-// skips the very EnsureEffort that would put the level back, so the differs-only
-// comparison silently becomes a refusal to repair.
-//
-// An empty level is ignored, matching applyEffortConfigOptionLocked: an absent
-// report means the level is unknown, not that it is empty. The value is stored
-// unvalidated for the same reason that function stores it unvalidated — it is what
-// the session SAID, and a level vibekit's own vocabulary does not know must still
-// compare unequal to a level it does.
+// ObserveEffort records a level the SESSION reported on the one channel this bridge
+// does not read: the `config_option_update` notification it forwards unread. Without
+// it the cache goes stale-OPTIMISTIC where it matters — KAS moves the level on its own
+// (first-prompt model pin, a swap from the IDE or TUI) and a bridge still believing its
+// own request compares equal and skips the repair. An empty level is ignored.
 func (b *Bridge) ObserveEffort(level string) {
 	if level == "" {
 		return
@@ -385,18 +311,10 @@ func (b *Bridge) ObserveEffort(level string) {
 	b.mu.Unlock()
 }
 
-// spawn packages this bridge's per-spawn facts for the kascap table's gated
-// rows, and the FIVE fields exist because the table gates five different ways.
-// SecretStorage decides the secretStorage key's VALUE (the key is present either
-// way), Hooks decides whether the hooks key is present AT ALL, Presets decides
-// presence from emptiness, ToolSearch decides presence from a bool, and
-// Knowledge decides the value of TWO rows at once. One boolean would not do.
-//
-// All five are immutable after Start, so this reads them without the mutex, and
-// it is one method rather than a literal at each call site because the
-// connection door and the session door must describe the SAME spawn: a bridge
-// that declared a capability at initialize and then contradicted itself at
-// session/new would be a defect no test looks for.
+// spawn packages this bridge's per-spawn facts for the kascap table's gated rows,
+// which gate several different ways — presence, value, presence-from-emptiness — so one
+// boolean would not do. All are immutable after Start, so this reads them without the
+// mutex, and it is one method because both doors must describe the SAME spawn.
 func (b *Bridge) spawn() kascap.Spawn {
 	return kascap.Spawn{
 		SecretStorage: b.secretStorage,
@@ -410,82 +328,34 @@ func (b *Bridge) spawn() kascap.Spawn {
 
 func (b *Bridge) initialize(ctx context.Context) error {
 	initStart := time.Now()
-	// The _meta.kiro block is DECLARED in internal/kascap rather than built
-	// here: which call carries each key, how KAS resolves it, whether an ABSENT
-	// key resolves true, whether vibekit sends it at all, and why. Every key's
-	// rationale moved there verbatim, beside the declaration it belongs to,
-	// along with the semanticReview row this literal had no way to express.
-	//
-	// This is the CONNECTION door. The session door is built from the same
-	// table by withSessionMeta (bridge_session.go); a key belongs to whichever
-	// one KAS reads it from, which is the table's door column.
+	// The _meta.kiro block is DECLARED in internal/kascap rather than built here. This
+	// is the CONNECTION door; the session door is built from the same table by
+	// withSessionMeta, and a key belongs to whichever one KAS reads it from.
 	kiroMeta := kascap.Capabilities(b.spawn())
 
-	// Advertise fs read/write and terminal capabilities. kiro-cli routes
-	// file access and command execution through us when these are true.
-	// elicitation advertises form-mode MCP elicitation support: kiro-cli
-	// only forwards an MCP server's elicitation/create request to us when
-	// this capability is present (verified against kiro-cli 2.6.0, which
-	// gates forwarding on clientCapabilities.elicitation). Without it the
-	// agent has nowhere to surface the prompt and the tool call stalls.
+	// Advertise fs read/write and terminal: kiro-cli routes file access and command
+	// execution through us when these are true. elicitation is what makes kiro-cli
+	// forward an MCP server's elicitation/create; without it the tool call stalls.
 	if _, err := b.Call(ctx, methodInitialize, map[string]any{
 		"protocolVersion": 1,
 		"clientCapabilities": map[string]any{
 			"fs": map[string]any{
 				"readTextFile":  true,
 				"writeTextFile": true,
-				// fs._meta.kiro.{stat,readDirectory,delete} claim KAS's own fs
-				// verbs. Declaring them CONFINES rather than grants: the
-				// else-branch is not a refusal, it is KAS's in-process
-				// NodeFileSystem doing the same fs.stat / fs.readdir / fs.rm
-				// with no vibekit path check at all. So an agent delete is an
-				// unchecked unlink today, and readDirectory is an unfiltered
-				// listing — which is how an agent discovers the file the
-				// ignore-list read filter would then refuse to open. Handled by
-				// agent/bridge_fs_kiro.go, which resolves inside the work dir,
-				// filters the listing, and executes; it does not stage or gate
-				// (KAS checkpoints before its own delete and restores a
-				// rejected one through fs/write_text_file — a second gate here
-				// would intercept that restore).
-				//
-				// readFile / writeFile are deliberately ABSENT. They are the
-				// same ladder one rung up, and claiming them would move reads
-				// and writes off fs/{read,write}_text_file — the rung whose
-				// handlers vibekit implements, and whose guardrails are the
-				// only containment a KAS-side write meets: confineInWorkDir's
-				// ../symlink rejection, the fsWriteCap ceiling, permission-bit
-				// preservation, temp-then-rename atomicity, FIFO and
-				// device-node refusal, and internal/ignore on the read side.
-				//
-				// It is NOT the supervised staging path: KAS gates a whole turn
-				// (autopilot: false) and restores a rejected action through an
-				// ordinary fs/write_text_file, which is exactly why
-				// respondFSWrite applies unconditionally.
+				// fs._meta.kiro.{stat,readDirectory,delete} claim KAS's own fs verbs, and
+				// declaring them CONFINES rather than grants: the else-branch is KAS's own
+				// NodeFileSystem with no vibekit path check. readFile / writeFile are
+				// deliberately ABSENT — claiming them moves writes off the guarded rung.
 				"_meta": map[string]any{metaKeyKiro: map[string]any{
 					"stat":          true,
 					"readDirectory": true,
 					"delete":        true,
 				}},
 			},
-			// terminal:true is what routes every agent shell command through
-			// vibekit's own terminal/* handlers (agent/agent_terminal.go) rather
-			// than an in-process spawn inside KAS, so vibekit owns the pid, the
-			// argv and the output ring for all agent shell work.
-			//
-			// It also decides WHICH ExecuteBash the agent gets, and that is not
-			// obvious from here. KAS ships two: an ACP-origin one with no upper
-			// bound, and a clamped one at min(input.timeout ?? 120000, 1800000).
-			// vibekit gets the clamped one, so an agent command carries a 30
-			// minute ceiling, because `hasClientIOTools` is false and
-			// mergeTools' second argument wins.
-			//
-			// The trap: registering ANY client tool whose id is in KAS's
-			// CORE_IO_TOOL_IDS set flips `hasClientIOTools` and silently
-			// promotes the agent to the UNBOUNDED variant. Nothing logs it and
-			// no test would catch it, so the 30 minute ceiling would disappear
-			// as a side effect of an unrelated feature. If a future change wants
-			// to register such a tool, the bound has to be reintroduced here
-			// deliberately rather than lost by accident.
+			// terminal:true routes every agent shell command through vibekit's own
+			// terminal/* handlers, so vibekit owns the pid, argv and output ring. THE
+			// TRAP: registering any client tool whose id is in KAS's CORE_IO_TOOL_IDS
+			// flips `hasClientIOTools` and silently unbounds the agent's ExecuteBash.
 			"terminal":    true,
 			"elicitation": map[string]any{"form": map[string]any{}},
 			"_meta":       map[string]any{metaKeyKiro: kiroMeta},
@@ -496,17 +366,8 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("initialize: %w", err)
 	}
-	// Developer-oriented intermediate signal; the user-facing
-	// "bridge started" breadcrumb in Start() is the authoritative
-	// "a bridge exists now" Info line.
-	//
-	// elapsed_ms isolates the initialize round trip from the rest of the
-	// handshake, which is what makes an upstream change to that ONE call
-	// attributable. kiro-cli 2.19.0 awaited an experiment-service resolve inside
-	// its initialize handler for any client declaring infrastructureSafety with no
-	// explicit infraSafetyMonitor — vibekit's exact handshake, on every
-	// hooks-bearing spawn — and 2.19.1 removed it. Without this number that is an
-	// argument; with it, it is a measurement.
+	// Developer-oriented; Start()'s "bridge started" is the authoritative line.
+	// elapsed_ms isolates the initialize round trip so a change to it is attributable.
 	slog.Debug("ACP initialize RPC completed",
 		"version", version.Build,
 		"elapsed_ms", time.Since(initStart).Milliseconds(),

@@ -26,13 +26,10 @@ func launchableRecipe(br *fakeBridge, workflowID string) {
 	}
 }
 
-// TestLaunchRun_GrantsTheRunsEnvelope pins what a launch records, per origin.
-//
-// All four facts are on ONE record because they are read together and were
-// previously kept apart: the recipe (the single-run rule's key), the origin and
-// schedule id (attribution), the slot (an input to the deadline), and the
-// unattended mark (the permission floor's authority to answer for an absent
-// user).
+// TestLaunchRun_GrantsTheRunsEnvelope pins what a launch records, per origin. All four
+// facts are on ONE record because they are read together: the recipe (the single-run rule's
+// key), the origin and schedule id (attribution), the slot (an input to the deadline), and
+// the unattended mark (the permission floor's authority to answer for an absent user).
 func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 	slot := time.Now().Add(30 * time.Minute)
 
@@ -93,23 +90,12 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 	})
 }
 
-// TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot is the manual-run
-// bug, end to end, against a real schedule entry.
-//
-// The ratified design says a manual Run of a recipe that ALSO has a schedule must
-// yield to that recipe's next slot. It did not: manualLaunch carried a zero slot and
-// nothing consulted the schedule store, so the run took the universal ceiling as its
-// whole bound — it held the recipe for up to an hour while the single-run rule
-// refused every slot underneath it, up to ELEVEN at the 5-minute schedule floor.
-//
-// Driven through Launch rather than through the arm, because that is where the
-// defect lived: the test this replaces asserted the arithmetic with a
-// scheduledLaunch substituted into every nonzero-slot case, so it passed while the
-// manual path resolved no slot at all.
-//
-// The slot is derived through schedule.NextRunFrom here too, from the entry's own
-// spec and anchor, so the assertion cannot drift from the one derivation the runner
-// and the REST row use.
+// TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot: a manual Run of a recipe
+// that also has a schedule must yield to that recipe's next slot. It did not — manualLaunch
+// carried a zero slot, so the run took the universal ceiling and held the recipe while the
+// single-run rule refused up to eleven slots underneath it. Driven through Launch because
+// that is where the defect lived, with the slot derived through schedule.NextRunFrom so the
+// assertion cannot drift from the derivation the runner and the REST row use.
 func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) {
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_manual")
@@ -152,19 +138,20 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 	if l.SlotAt.Sub(wantSlot).Abs() > time.Minute {
 		t.Errorf("SlotAt = %v, want the schedule's own next slot %v", l.SlotAt, wantSlot)
 	}
-	// The bound is the SCHEDULE's, not the hour: on a 5-minute grid the next slot is
-	// always inside the ceiling, so the deadline is the slot — floored up to
-	// minRunBudget when the slot is nearer than that, since a bound too small to
-	// finish inside is no bound (runlease.NextDeadline, tested there).
-	want := runlease.NextDeadline(before, runCeiling, minRunBudget, l.SlotAt)
+	// The bound is the SCHEDULE's, not the idle window: on a 5-minute grid the next slot
+	// is always inside the window, floored up to minRunBudget. BackstopAt is zero because
+	// the launch is this run's first arm, so it cannot be the tightest input.
+	want := runlease.NextDeadline(before, runlease.Bounds{
+		SlotAt: l.SlotAt, Idle: runIdleWindow, Floor: minRunBudget,
+	})
 	if l.Deadline.Sub(want).Abs() > time.Second {
 		t.Errorf("deadline = %v, want the one derivation's answer %v for slot %v",
 			l.Deadline, want, l.SlotAt)
 	}
 	if budget := l.Deadline.Sub(before); budget > minRunBudget+time.Second {
 		t.Errorf("the manual run got %v of budget against a 5-minute schedule; it must not hold "+
-			"the recipe for the whole %v ceiling and refuse the slots underneath it",
-			budget.Round(time.Second), runCeiling)
+			"the recipe for the whole %v idle window and refuse the slots underneath it",
+			budget.Round(time.Second), runIdleWindow)
 	}
 	// Still a MANUAL run in every other respect: the slot bounds it, and nothing else
 	// about it changed.
@@ -292,15 +279,11 @@ func TestLeaseStore_FallsBackToMemory(t *testing.T) {
 	}
 }
 
-// TestGrantLease_ReportsAnEnvelopeItCouldNotPersist pins the compensation for the
-// deliberate choice not to fail a launch over a bookkeeping error.
-//
-// The run is already on the wire, so the lease is kept in memory and this process
-// still bounds and attributes it — but only THIS process. A restart then finds a
-// run with no envelope: no deadline, no recipe, no origin, so the orphan sweep
-// cannot recognise it and nothing ever ends it. That line is the only warning
-// anyone gets, and a guard flipped here emits it on every successful launch
-// instead, which is the same as not having it.
+// TestGrantLease_ReportsAnEnvelopeItCouldNotPersist pins the compensation for not failing a
+// launch over a bookkeeping error: the run is on the wire and only THIS process bounds it,
+// so a restart finds a run with no deadline, recipe or origin that the orphan sweep cannot
+// recognise and nothing ends. That line is the only warning anyone gets, and a guard flipped
+// here emits it on every successful launch instead, which is the same as not having it.
 func TestGrantLease_ReportsAnEnvelopeItCouldNotPersist(t *testing.T) {
 	const wantLine = "run lease not persisted; this run's envelope will not survive a restart"
 

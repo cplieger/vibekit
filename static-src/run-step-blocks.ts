@@ -21,9 +21,11 @@
 // half. `reset()` is called when the tab points at another run, which is the whole
 // of its lifecycle.
 //
-// ONE HOST PER STEP, supplied by the caller. The run card already owns the step
-// rows and hands out `stepBody(nodePath)`, so this module never decides where a
-// step goes — it only decides what a step's body contains.
+// ONE HOST PER STEP, supplied by the caller. The DETAIL PANE owns those hosts
+// (`exec-view/detail.ts` `bodyFor(nodePath)`, handed to this module by
+// `run-view.ts`), so this module never decides where a step goes — it only decides
+// what a step's body contains. The transcript's run card hosts nothing: its step
+// rows are doors into this page.
 // ---------------------------------------------------------------------------
 
 import { buildAssistantBubble, type AssistantBubble } from "./fundamentals/text-bubble.js";

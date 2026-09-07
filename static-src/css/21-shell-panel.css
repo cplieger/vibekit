@@ -59,13 +59,34 @@
   /* Touch drags must fire pointermove, not pan/scroll the page. */
   touch-action: none;
   transition: background var(--dur-micro) var(--ease-standard);
+
+  /* OPT OUT OF THE BOX FLOOR. This is a `role="separator"` with a tabindex, so it
+     matches the universal hit floor's third rule (61-mcp-tools.css) and its BOX
+     was being grown to --hit-floor — 24px on a fine pointer, 44px on a coarse
+     one. That is the one shape the floor must never grow: the bar is
+     `position: absolute; top: 0` across the panel's full width at `z-index: 1`,
+     so a 44px box lies directly over the whole 45px header and takes every one of
+     its four buttons' clicks. Measured before this line: box 44px against a
+     visual bar of 3px.
+
+     The floor's own comment already names this control as one of the two that
+     grow their TARGET instead (the other is `.status-dot`), so the expander below
+     is the intended mechanism and this is the missing half of it. A class rule
+     scores (0,1,0) against the floor's zero, so this wins by specificity. */
+  min-width: 0;
+  min-height: 0;
 }
 
-/* Design system: ~24px minimum hit target; the visual bar stays 3px. */
+/* The hit target, grown by an expander so the visual bar stays 3px. It reaches UP
+   into the transcript's dead space and only 4px DOWN, deliberately asymmetric:
+   downward is the header's own 44px buttons, and every pixel the handle takes
+   there is a pixel that resizes the panel when the reader meant to press a
+   button. `--hit-floor` drives it, so the target follows the pointer tier with no
+   second declaration. */
 .shell-resize::before {
   content: "";
   position: absolute;
-  inset: -0.625rem 0;
+  inset: calc(-1 * (var(--hit-floor) - 0.1875rem - 0.25rem)) 0 -0.25rem;
 }
 
 .shell-resize:hover,
@@ -106,7 +127,8 @@
      class centers, this one was missed. */
   width: 1.5rem;
   height: 1.5rem;
-  border-radius: var(--r);
+  /* --r-sm is the ladder's rung for a 16-24px box; this is 24px. */
+  border-radius: var(--r-sm);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -119,10 +141,19 @@
 }
 
 /* The key grid's trigger exists only where the grid does: the library gates every
-   .kb-* control on `@media (pointer: coarse)` (23-toolbar.css), so a mouse-only
-   pointer gets no button rather than one that toggles nothing. An id addressed as
-   an attribute selector ties with .shell-header-btn's `display: flex`, so both
-   halves sit after it and source order decides. */
+   .kb-* control on `@media (pointer: coarse)` (in the VENDORED package's own
+   23-toolbar.css, not this directory), so a mouse-only pointer gets no button
+   rather than one that toggles nothing.
+
+   The two gates therefore differ by design after the rekey below — the library
+   asks the media query, this panel asks the observed tier. It resolves the safe
+   way round: a device the query calls coarse but the pointer calls fine gets no
+   trigger, so the library's toolbar is never toggled into view, and touching the
+   screen flips the attribute and brings the trigger back. A trigger for a grid
+   that cannot render would be the broken direction, and it is unreachable.
+
+   An id addressed as an attribute selector ties with .shell-header-btn's
+   `display: flex`, so both halves sit after it and source order decides. */
 [id="shell-keys-btn"] {
   display: none;
 }
@@ -231,8 +262,21 @@
    rows and 24px controls on a device whose only input is a finger (Apple HIG
    wants 44pt). A phone satisfies both conditions, so this is a strict widening.
    2.75rem rather than --btn-h because --btn-h rides that same width-keyed axis
-   and answers 36px on exactly the device this fixes. */
-@media (pointer: coarse) {
+   and answers 36px on exactly the device this fixes.
+
+   THE GATE IS THE OBSERVED TIER, not the `@media (pointer: coarse)` query it used
+   to be, because that query answers for the PRIMARY input only and gets this
+   device class wrong in both directions: Chromium reports coarse with
+   `any-pointer: fine` FALSE on a Windows touch laptop with a mouse attached
+   (crbug 398065927, open), and iPadOS reports coarse with a trackpad. The
+   attribute is written from real `PointerEvent.pointerType` (pointer-tier.ts), so
+   it is what the size tokens in 01-tokens.css already key on — leaving this block
+   on the query would give the app two definitions of "coarse" that disagree on
+   exactly the hardware this exists for.
+
+   `:where()` keeps the gate at ZERO specificity, so every selector below scores
+   what it scored inside the media query and no rule newly outranks another. */
+:where([data-pointer="coarse"]) {
   .shell-header {
     height: calc(2.75rem + 1px);
   }

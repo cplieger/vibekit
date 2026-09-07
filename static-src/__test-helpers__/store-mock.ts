@@ -20,6 +20,8 @@
 import { vi } from "vitest";
 import { computed, SignalMap, type Signal } from "@cplieger/reactive";
 
+import type { Session } from "../types.js";
+
 // A REAL SignalMap rather than a vi.fn(), because consumers read the returned
 // signal's `.value` and subscribe to it; a mock function there is a crash
 // waiting for the first suite whose graph wires an effect at import time.
@@ -70,15 +72,29 @@ export const storeMock = {
   isThinking: vi.fn(() => false),
   isEmptyChat: vi.fn(() => false),
   setThinking: vi.fn(),
+  setTurnOpen: vi.fn(),
+  // The real derivation, like `steerIDFor` and `normalizeMessage`: it is a pure
+  // function of the session handed to it, so there is no store state to fake and a
+  // flat `false` would answer for a session that says otherwise. It also keeps a
+  // spreading suite on the behaviour it was written against — the transcript's
+  // liveness input used to be `session.thinking` read at the call site.
+  turnLive: vi.fn((s: Session) => s.thinking || s.turn_open === true),
   setTurnFailed: vi.fn(),
   clearTurnFailed: vi.fn(),
   setTurnDone: vi.fn(),
   clearTurnDone: vi.fn(),
   relatchTurnVerdict: vi.fn(),
+  // The outcome-to-latch table and the header-derived seed. Both answer the
+  // EMPTY value for their type, like every other reader here: a mock that
+  // latched `done` would make a dot assertion pass for a reason production did
+  // not supply. A suite that drives the seed overrides it.
+  outcomeLatch: vi.fn((): "done" | "failed" | "" => ""),
+  latchFieldsFor: vi.fn((): { turn_done?: true; turn_failed?: true } => ({})),
   setTurnSummary: vi.fn(),
 
   tabStatusFor: vi.fn(() => ""),
   runStatusFor: vi.fn(() => ""),
+  subagentStatusFor: vi.fn(() => ""),
   setAgentStatus: vi.fn(),
   setWorkingLabel: vi.fn(),
 

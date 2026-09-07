@@ -24,6 +24,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
+import { severityOf } from "./turn-severity.js";
+import type { TurnOutcome } from "./turns.js";
 
 const BREAKPOINT = "width <= 48rem";
 
@@ -39,11 +41,17 @@ afterAll(() => {
 
 /** A running turn's header dot, mounted in `doc` under the ancestry the real
  *  card gives it — the selectors are descendant-scoped, so a bare span measures
- *  nothing. */
-function mountDot(doc: Document, outcome: string): HTMLElement {
+ *  nothing.
+ *
+ *  BOTH attributes, because `updateTurnHeader` writes both: hue and the
+ *  `display` gate key on `data-severity` since the four outcome surfaces adopted
+ *  the shared table, and `data-outcome` carries the words plus the one `unknown`
+ *  exception. A header missing either is not the DOM production builds. */
+function mountDot(doc: Document, outcome: TurnOutcome): HTMLElement {
   const header = doc.createElement("div");
   header.className = "turn-header";
   header.dataset["outcome"] = outcome;
+  header.dataset["severity"] = severityOf(outcome);
   const row = doc.createElement("div");
   row.className = "turn-head-row";
   const dot = doc.createElement("span");
@@ -62,7 +70,8 @@ describe("the turn header dot at desktop width", () => {
   });
 
   it("does not render for any outcome, running included", () => {
-    for (const outcome of ["running", "completed", "interrupted", "failed", "unknown"]) {
+    const outcomes: TurnOutcome[] = ["running", "completed", "interrupted", "failed", "unknown"];
+    for (const outcome of outcomes) {
       const dot = mountDot(document, outcome);
       expect(getComputedStyle(dot).display, outcome).toBe("none");
     }

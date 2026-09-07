@@ -1,5 +1,6 @@
 // ---------------------------------------------------------------------------
-// The activity dot for a workflow run's tab.
+// The activity dot and the NAME of a workflow run's tab row: one effect writes both,
+// because a `tabs_changed` frame carries no label. The dot is the harder half.
 //
 // A run is the one kind of work in this app that has no activity signal of its
 // own. Its `run:<workflowId>` tab has no chat, no `Session` row and no `thinking`
@@ -48,10 +49,10 @@
 // ---------------------------------------------------------------------------
 
 import { effect, signal, touch } from "@cplieger/reactive";
-import { setTabStatus, tabIdFor, tabSetVersion } from "./tabs.js";
-import { runStatusFor } from "./store.js";
+import { renameTab, setTabStatus, tabIdFor, tabSetVersion } from "./tabs.js";
+import { runStatusFor, type RunPauseClass } from "./store.js";
 import { runPendingAsks } from "./decision-dock.js";
-import { runState } from "./run-store.js";
+import { isNeedInputPark, registerLiveRunObserver, runLabelOf, runState } from "./run-store.js";
 
 /** The runs this client has seen an event for, and the version counter that makes
  *  the effect depend on the set.
@@ -123,7 +124,26 @@ function repaint(): void {
     // TRACKED read, deliberately: the run's cell resolving (the fetch an
     // invalidation coalesces into) is exactly the moment the dot must repaint,
     // and `run_progress` for an already-tracked run bumps nothing else here.
-    setTabStatus(id, runStatusFor(runState(workflowID)?.status, asking));
+    const state = runState(workflowID);
+    // A park on a PERSON is the yellow dot even with no card in the dock: a
+    // client that connected after the ask was raised holds nothing to join, and
+    // the park is the only thing left that says a human is owed an answer.
+    // Classified here because `run-store.ts` owns that rule and `store.ts` owns the
+    // dot vocabulary. The PARK, not the reason: a park inside a parallel branch
+    // keeps no reason on the run and would otherwise read as an ordinary wait.
+    const pause: RunPauseClass = isNeedInputPark(state) ? "need_input" : "";
+    setTabStatus(id, runStatusFor(state?.status, asking, pause));
+    // The name, from the same read. `""` means nothing has been fetched for the
+    // run yet, so the row keeps the factory's placeholder.
+    //
+    // `renameTab` EMITS where `setTabStatus` paints the node directly, because a
+    // name is read by the mobile toolbar and the route as well as the strip. The
+    // self-write that creates is bounded rather than cyclic: renameTab returns
+    // early once the row carries the label, so it costs one extra pass per run.
+    const label = runLabelOf(workflowID);
+    if (label !== "") {
+      renameTab(id, label);
+    }
   }
 }
 
@@ -132,6 +152,12 @@ function repaint(): void {
  *  restored yet, and `setTabStatus` parks its state on a spec that does not exist
  *  then. The tab-set dependency is what picks a tab up once it does. */
 export function installRunDotSubscriber(): void {
+  // The live-runs rebuild is the THIRD door into "this client knows about this
+  // run", beside a run frame and the run view's own paint, and it is the only one
+  // a PAUSED run restored on boot reaches. Registered from here rather than from
+  // the composition root because this module already imports the store, and the
+  // store may not import this one.
+  registerLiveRunObserver(trackRun);
   effect(() => {
     touch(version);
     // Subscribes to the tab SET as well, so a run tab arriving after its run's

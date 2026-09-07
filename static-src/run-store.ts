@@ -1,33 +1,9 @@
-// ---------------------------------------------------------------------------
-// The one owner of a workflow run's state.
-//
-// `GET /api/runs/{id}` is a passthrough of KAS's `_kiro/workflow/inspect` and is
-// the SOURCE of a run's state: the tree is fetched, never assembled. What has
-// changed is that it is no longer fetched per frame. `run_progress` names one
-// node by PATH and states what happened to it, so `applyRunProgress` writes that
-// node and the fetch survives for the cases a per-node patch cannot express — a
-// shape change (`loop_iteration`, `steps_queued`), a run-level pause, a run this
-// client holds nothing for, and a transport gap.
-//
-// The refetch could not be avoided before because the frames were too thin to
-// address one execution: `run_start` re-fires on every resume and `node_complete`
-// carries neither `iteration` nor `branchId`, so (nodeId) alone could not tell two
-// passes of a loop body apart. The node path can, and every write through it is an
-// idempotent assignment, so KAS's duplicate frames cost nothing.
-//
-// It is still NOT a second model of a run: every derived question (which leaves,
-// how many done, how long) stays a function over the cached value.
-//
-// THREE readers, which is why it exists: the transcript's run card, the
-// `/run/{id}` view, and the tab dot for a parentless run. Before it, the view
-// fetched on every event and the dot kept a parallel map of statuses, so a run
-// open in both places fetched twice for the same frame and the two could disagree.
-// `git-status-store.ts` is the precedent — one owner of a poll, signal-backed,
-// several lookups off one rebuild.
-//
-// ---------------------------------------------------------------------------
+// The one owner of a workflow run's state: refetched on invalidation, cached
+// verbatim, never accumulated from an SSE payload. Its readers, the coalescing,
+// the cache bound and the live-run inventory: vibekit-client.md "The run store";
+// why the run events cannot reconstruct a run: vibekit-acp.md.
 
-import { signal, type Signal } from "@cplieger/reactive";
+import { signal, touch, type Signal } from "@cplieger/reactive";
 import { apiGet, apiGetTyped } from "./api-client.js";
 import { decodeLiveRunsResponse, decodeRunControlsResponse } from "./wire/decoders.gen.js";
 import type { RunControlsResponse } from "./wire/types.gen.js";
@@ -84,19 +60,9 @@ export interface RunState {
 export interface RunInspect {
   workflowId: string;
   state?: RunState;
-  /** KAS's node PLAN, forwarded verbatim by `GET /api/runs/{id}`.
-   *
-   *  `unknown` on purpose: this is the one part of the reply the client walks
-   *  structurally rather than reading named fields off, and typing it as a shape
-   *  would be a second representation of a structure vibekit does not own — the
-   *  same reason `state` is passed through rather than re-modelled.
-   *  `run-exec-source.ts` narrows it at the point of use.
-   *
-   *  It had ZERO readers until the exec view. Its only content the state tree
-   *  lacks is a repeat's `maxIterations` / `onMaxIterations` / `stopCondition`, so
-   *  a loop's bound and its exit condition were on the wire and had never been on
-   *  screen. `update` appends to it, which is why it is refetched with the state
-   *  rather than read once. */
+  /** KAS's node PLAN, forwarded verbatim. `unknown` because the client walks it
+   *  structurally, so typing it would re-model a structure vibekit does not own;
+   *  `run-exec-source.ts` narrows it at the point of use. Contents: vibekit-acp.md. */
   nodePlan?: unknown;
 }
 
@@ -138,7 +104,7 @@ export function runState(workflowID: string): RunState | undefined {
 }
 
 /** Read a run's state WITHOUT subscribing. For a caller that must not re-run when
- *  the run changes — the dot's sweep already has its own dependency. */
+ *  the run changes. */
 export function peekRunState(workflowID: string): RunState | undefined {
   return cells.get(workflowID)?.peek();
 }
@@ -356,12 +322,9 @@ async function fetchRun(workflowID: string): Promise<void> {
   }
 }
 
-/** Forget a run's cached state: the cache's ONLY bound, callable only by a reader that
- *  knows it was the LAST. Three surfaces read a cell (the transcript's card, the run
- *  view, the tab dot), so the condition is the claim-holding card unmounting with no
- *  run tab open — and early is NOT recoverable, because `cell()` mints a replacement
- *  on the next read and an effect still on the deleted signal never re-runs again.
- *  Without the bound a long-lived page keeps one state object per run it ever saw. */
+/** Forget a run's cached state — the cache's ONLY bound, so it must be called by
+ *  a reader that knows it was the last one (`messages-blocks.ts`). Which condition
+ *  qualifies and why: vibekit-client.md "The run store". */
 export function forgetRun(workflowID: string): void {
   cells.delete(workflowID);
   stale.delete(workflowID);
@@ -370,6 +333,15 @@ export function forgetRun(workflowID: string): void {
   controlsInFlight.delete(workflowID);
   controlsStale.delete(workflowID);
   launchedBy.delete(workflowID);
+}
+
+/** What this run is CALLED, or `""` when nothing has been fetched for it yet: the
+ *  launcher's label for this execution first, the recipe's name second. UNTRACKED,
+ *  like `runPlan`. Both reasons: vibekit-client.md "The run store". */
+export function runLabelOf(workflowID: string): string {
+  const state = peekRunState(workflowID);
+  const label = state?.runLabel ?? "";
+  return label === "" ? (state?.workflowName ?? "") : label;
 }
 
 // ---------------------------------------------------------------------------
@@ -458,16 +430,9 @@ export function runPlan(workflowID: string): unknown {
   return plans.get(workflowID);
 }
 
-/** Which chat's agent launched a run, learned from the SSE envelope.
- *
- *  It lives here rather than in the handler that reads it because it is a fact
- *  ABOUT a run and every surface needs it for the same reason: a run's tab belongs
- *  under its launching chat, so re-opening one from a transcript link or a deep
- *  link has to know the parent. `parentSessionId` on the fetched state cannot
- *  answer it — that is an ACP session id, not a chat id, and the client indexes
- *  nothing by session.
- *
- *  Empty for a parentless run, which has no launching chat by definition. */
+/** Which chat's agent launched a run, learned from the SSE envelope, and empty for
+ *  a parentless run. A fact ABOUT a run rather than the reading handler's, and the
+ *  one `parentSessionId` cannot supply: vibekit-client.md, `run-dots.ts`. */
 const launchedBy = new Map<string, string>();
 
 /** A parentless run's own surface, and NOT a chat id.
@@ -493,52 +458,114 @@ export function runChatID(workflowID: string): string {
   return launchedBy.get(workflowID) ?? "";
 }
 
-// ---------------------------------------------------------------------------
-// The live-runs inventory: which chats have a run in flight.
-//
-// The eviction sweep's exemption source — a chat whose agent has a run going
-// must keep its transcript window even while the reader is elsewhere, because
-// the run's frames stream into it. Fed by the run lifecycle events (started and
-// progress add, a terminal finish removes; a pause keeps — the run is still
-// this process's to resume), and REBUILT from `GET /api/runs/live` at boot and
-// after a transport gap, because events this client never saw (a paused run
-// across a reload, a start inside an outage) leave the event-fed view blind.
-// The server side is presence over its run leases, so a row here is exactly
-// "vibekit put this run on the wire and nothing terminal released it".
-// ---------------------------------------------------------------------------
+// The live-runs inventory: which chats have a run in flight. Event-fed, rebuilt
+// from `GET /api/runs/live`, and a row carries two facts because two readers ask
+// two questions — vibekit-client.md "The run store".
 
-/** workflow id → launching chat id ("" for a parentless run). Distinct from
- *  `launchedBy`, whose entries deliberately OUTLIVE a run so a finished one can
- *  be re-opened under its parent; this map holds live runs only. */
-const liveRunChats = new Map<string, string>();
+/** One live run: the chat that launched it ("" for a parentless run), and whether
+ *  it is still EXECUTING as opposed to parked. `executing` is
+ *  `hasExecutingRunForChat`'s alone; every other reader takes the whole row. */
+interface LiveRunRow {
+  readonly chat: string;
+  readonly executing: boolean;
+}
 
-/** Record a run as live. Parentless runs ("" chat) are tracked too — they
- *  exempt no chat, but their presence mirrors the server's inventory. */
-export function noteRunLive(workflowID: string, chatID: string): void {
+/** workflow id → its live row. Distinct from `launchedBy`, whose entries
+ *  deliberately OUTLIVE a run so a finished one can be re-opened under its
+ *  parent; this map holds live runs only. */
+const liveRunChats = new Map<string, LiveRunRow>();
+
+/** Bumped by every writer of the map above, so a reactive reader can subscribe to
+ *  the inventory CHANGING. A plain `Map` is not a signal, so a `computed` over it
+ *  would track nothing and never re-evaluate. */
+const liveRunsVersion = signal(0);
+
+/** `peek()` on the write is the idiom `run-dots.ts` records: a `+ 1` off `.value`
+ *  subscribes the writing effect to the signal it is about to write, which the
+ *  reactive layer refuses with `Cycle detected`. */
+function bumpLiveRuns(): void {
+  liveRunsVersion.value = liveRunsVersion.peek() + 1;
+}
+
+/** Record a run as live, saying whether it is executing. Parentless runs ("" chat)
+ *  are tracked too: they exempt no chat, but their presence mirrors the server's
+ *  inventory, which is what the dot painter reads.
+ *
+ *  `executing` is the CALLER's statement rather than a default — why, and what each
+ *  of the four callers knows: vibekit-client.md "The run store". */
+export function noteRunLive(workflowID: string, chatID: string, executing: boolean): void {
   if (workflowID === "") {
     return;
   }
-  liveRunChats.set(workflowID, chatID);
+  liveRunChats.set(workflowID, { chat: chatID, executing });
+  bumpLiveRuns();
 }
 
 /** Drop a run that reached a terminal status. */
 export function noteRunSettled(workflowID: string): void {
   liveRunChats.delete(workflowID);
+  bumpLiveRuns();
 }
 
-/** Whether any live run was launched by this chat. A scan, not an index: the
- *  single-run rule bounds live runs to a handful, and a second map keyed by
- *  chat would be one more thing the rebuild could leave inconsistent. */
+/** Whether this chat has a run that is still EXECUTING — the store-eviction
+ *  exemption, and the only reader that filters on `executing`. It asks "are frames
+ *  still arriving into this chat's transcript", which a PARKED run answers no to.
+ *  Why the narrowing: vibekit-client.md "The run store". */
+export function hasExecutingRunForChat(chatID: string): boolean {
+  return anyRunForChat(chatID, (r) => r.executing);
+}
+
+/** Whether this chat has ANY live run, parked ones included — a DIFFERENT question
+ *  from the one above, which is why these are two predicates rather than one
+ *  filtered. Its consumer is the ask sweep in `handlers/run.ts`; narrowing it to
+ *  `executing` would strand a parked run's ask. vibekit-client.md has the rest. */
 export function hasLiveRunForChat(chatID: string): boolean {
+  return anyRunForChat(chatID, () => true);
+}
+
+/** The live runs this chat launched, in the order they were recorded. Parked runs
+ *  are INCLUDED like `hasLiveRunForChat`; parentless ones are EXCLUDED, their own
+ *  tab dot already surfacing them (`run-dots.ts`).
+ *
+ *  The one TRACKED read of the inventory here, because this caller is a reactive
+ *  effect where the two booleans' are not: vibekit-client.md "The run store". */
+export function liveRunIDsForChat(chatID: string): string[] {
+  touch(liveRunsVersion);
+  if (chatID === "") {
+    return [];
+  }
+  const out: string[] = [];
+  for (const [id, r] of liveRunChats) {
+    if (r.chat === chatID) {
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+/** The scan both readers share. Not an index: the single-run rule bounds live runs
+ *  to a handful, and a second map keyed by chat would be one more thing the
+ *  rebuild could leave inconsistent. */
+function anyRunForChat(chatID: string, pass: (r: LiveRunRow) => boolean): boolean {
   if (chatID === "") {
     return false;
   }
-  for (const c of liveRunChats.values()) {
-    if (c === chatID) {
+  for (const r of liveRunChats.values()) {
+    if (r.chat === chatID && pass(r)) {
       return true;
     }
   }
   return false;
+}
+
+/** Externally-owned "this client now knows about this run", REGISTERED rather than
+ *  imported because `run-dots.ts` imports this module and the reverse edge would
+ *  close a cycle. Unregistered, the rebuild seeds state and repaints nothing. */
+let noteRunKnown: ((workflowID: string) => void) | null = null;
+
+/** Register the observer the rebuild reports each live run to. Last wins. */
+export function registerLiveRunObserver(fn: (workflowID: string) => void): void {
+  noteRunKnown = fn;
 }
 
 /** Rebuild the inventory from the server. A FAILED fetch keeps the event-fed
@@ -552,15 +579,20 @@ export async function rebuildLiveRuns(): Promise<void> {
   liveRunChats.clear();
   for (const r of d.runs) {
     if (r.workflow_id !== "") {
-      liveRunChats.set(r.workflow_id, r.chat_id);
+      // Three seeds per row, and the two beyond the inventory are what a reload
+      // would otherwise lose — vibekit-client.md "The run store".
+      liveRunChats.set(r.workflow_id, { chat: r.chat_id, executing: r.executing });
+      noteRunChat(r.workflow_id, r.chat_id);
+      noteRunKnown?.(r.workflow_id);
+      invalidateRun(r.workflow_id);
     }
   }
+  // ONE bump for the whole rebuild rather than one per row.
+  bumpLiveRuns();
 }
 
-// ---------------------------------------------------------------------------
-// Derived reads. Functions over the cached value, never stored beside it: a
-// second copy of "how many steps finished" is a second thing that can be wrong.
-// ---------------------------------------------------------------------------
+// Derived reads: functions over the cached value, never stored beside it — a second
+// copy of "how many steps finished" is a second thing that can be wrong.
 
 /** The run's LEAF nodes in plan order — the steps and watches a reader thinks of
  *  as "the work". A `sequence`, `repeat` or `parallel` node is scaffolding: it has
@@ -586,18 +618,13 @@ export function leafNodes(root: RunNode | undefined): RunNode[] {
   return out;
 }
 
-/** What KAS calls this node in a node PATH, which is not always what it calls it
- *  in the state tree.
+/** What KAS calls this node in a node PATH, which for a repeat's per-iteration
+ *  container is not what it calls it in the state tree — the two spellings and why
+ *  the frame's is canonical: vibekit-acp.md "Workflow runs on the wire".
  *
- *  One node kind diverges: a repeat's per-iteration container is `<repeatId>#<n>`
- *  in the state tree and `iter-<n>` in the `nodePath` KAS stamps on a step frame.
- *  Every other node contributes its own `nodeId` and the two spellings agree.
- *
- *  Derived from the container's own `iteration` rather than by rewriting the `#`
- *  suffix off the id, so nothing here depends on how KAS spells a generated id.
- *  A repeat child carrying no `iteration` falls back to its `nodeId`: a row in
- *  the wrong place beats content that vanishes, which is the same call the
- *  server's own `runNodePath` makes when a frame carries no path. */
+ *  A repeat child carrying no `iteration` falls back to its `nodeId`: a row in the
+ *  wrong place beats content that vanishes, the same call the server's own
+ *  `runNodePath` makes when a frame carries no path. */
 export function nodePathSegment(node: RunNode, parent: RunNode | undefined): string {
   if (parent?.type === "repeat" && node.iteration !== undefined) {
     return `iter-${String(node.iteration)}`;
@@ -605,21 +632,20 @@ export function nodePathSegment(node: RunNode, parent: RunNode | undefined): str
   return node.nodeId;
 }
 
-/** A leaf's stable address within its run, in the spelling the server joins into
- *  a step's subtask id (`wf:<workflowId>:<a/b/c>`).
+export interface NodeAddress {
+  /** The joined segments, in the spelling the server joins into a step's subtask
+   *  id (`wf:<workflowId>:<a/b/c>`). */
+  readonly path: string[];
+  /** Whether the walk PLACED the target in this tree. False means `path` is the
+   *  bare `nodeId` fallback below rather than an address. */
+  readonly placed: boolean;
+}
+
+/** A leaf's stable address within its run, plus whether the walk placed it.
  *
- *  Rebuilt here rather than read off the node, because `NodeState` carries no
- *  path: KAS puts the path on the FRAME and the id on the node, so the two sides
- *  of the join are described differently and the client owns the reconciliation.
- *  A repeat's iterations share a `nodeId`, so the path is what separates them.
- *
- *  The frame's spelling is canonical and this TRANSLATES the tree into it, which
- *  is what `nodePathSegment` is for — before it, every step inside a loop got two
- *  rows, one from the tree and one unpainted from its own content frames. */
-export function nodePathOf(root: RunNode | undefined, target: RunNode): string[] {
-  if (root === undefined) {
-    return [target.nodeId];
-  }
+ *  Rebuilt from the tree rather than read off the node, because `NodeState` carries
+ *  no path — the join and who owns it: vibekit-client.md "The run card". */
+export function nodeAddressOf(root: RunNode | undefined, target: RunNode): NodeAddress {
   const found: string[] = [];
   const walk = (n: RunNode, parent: RunNode | undefined, trail: string[]): boolean => {
     const here = [...trail, nodePathSegment(n, parent)];
@@ -634,18 +660,32 @@ export function nodePathOf(root: RunNode | undefined, target: RunNode): string[]
     }
     return false;
   };
-  walk(root, undefined, []);
-  return found.length > 0 ? found : [target.nodeId];
+  if (root !== undefined) {
+    walk(root, undefined, []);
+  }
+  if (found.length > 0) {
+    return { path: found, placed: true };
+  }
+  // An UNPLACED node keeps the bare id, which `placed: false` stops a consumer
+  // spending as an address (its first segment is a leaf id where the endpoint
+  // asserts the run id). A row still needs a key, so the value stays.
+  return { path: [target.nodeId], placed: false };
+}
+
+/** The address's path alone, for a consumer that only needs a render key.
+ *
+ *  Kept as the thin wrapper because that is the whole of what a row KEY wants;
+ *  anything that puts the value on the wire reads `nodeAddressOf` instead. */
+export function nodePathOf(root: RunNode | undefined, target: RunNode): string[] {
+  return nodeAddressOf(root, target).path;
 }
 
 export interface RunCounters {
   total: number;
   done: number;
   failed: number;
-  /** The 1-based position of the running leaf, or 0 when none is running. What
-   *  the header's "step N of M" states, and it is the RUNNING one rather than
-   *  `done + 1` because a parallel node has several in flight and a skipped leaf
-   *  would otherwise shift the count. */
+  /** The 1-based position of the RUNNING leaf, or 0 when none is — the header's
+   *  "step N of M", and not `done + 1`: vibekit-client.md "The run store". */
   current: number;
 }
 
@@ -727,26 +767,14 @@ export function runIsLive(state: RunState | undefined): boolean {
   return s === "running" || s === "paused";
 }
 
-/** Whether a pause reason means a step is waiting on a PERSON.
+/** Whether a pause REASON means a step is waiting on a person — the reason half of
+ *  `isNeedInputPark`, which is the question every surface asks.
  *
- *  Two literals, and KAS writes both: `Step requested user input via
- *  send_message.` for a step's own question, and `Step '<id>' is waiting for user
- *  input.` when a plain Resume re-parks one — resume clears the run's pause reason
- *  and leaves the step node's signal, so the next step execution parks again under
- *  a fallback sentence naming the node. A third spelling, `… is waiting for the
- *  next user message.`, is the same condition on a step that asked for a message
- *  rather than an answer.
- *
- *  It lives HERE rather than in either renderer because two surfaces ask it (the
- *  transcript's run card and the `/run/{id}` page's alert) and the answer is a
- *  property of run state, which is this module's subject. The interpolated form is
- *  matched by its two ends because the node id sits in the middle; both spellings
- *  are specific enough that no involuntary pause reason can reach them.
- *
- *  The SERVER holds the same rule (`needInputPause`, internal/agent/run_ask.go) and
- *  neither copy can go: the server's decides whether to reconstruct an ask for a
- *  restart-orphaned run, this one decides what a reader is told when no ask has
- *  reached this client. */
+ *  Three sentences KAS writes: a step's own `send_message` park, plus two a plain
+ *  Resume re-parks under (it clears the run's reason and leaves the node's signal).
+ *  The interpolated pair is matched by its two ENDS, because the node id sits in the
+ *  middle. Exported only for `run-store-pause.node.test.ts`, which pins them against
+ *  `needInputPause` (internal/agent/run_ask.go) — the owner of both facts. */
 export function isNeedInputPause(reason: string | undefined): boolean {
   if (reason === undefined || reason === "") {
     return false;
@@ -759,4 +787,38 @@ export function isNeedInputPause(reason: string | undefined): boolean {
     (reason.endsWith("' is waiting for user input.") ||
       reason.endsWith("' is waiting for the next user message."))
   );
+}
+
+/** The paused node whose own completion signal says it is waiting on a person.
+ *  Depth-first, first match wins. Why the per-NODE signal is the only thing left of
+ *  a park inside a parallel branch: vibekit-acp.md. */
+function needInputNode(n: RunNode | undefined): RunNode | undefined {
+  if (n === undefined) {
+    return undefined;
+  }
+  if (n.status === "paused" && n.completionSignal === "need_input") {
+    return n;
+  }
+  for (const child of n.children ?? []) {
+    const hit = needInputNode(child);
+    if (hit !== undefined) {
+      return hit;
+    }
+  }
+  return undefined;
+}
+
+/** Whether a run is parked on a PERSON — the one pause a reader has to act on.
+ *
+ *  TWO ARMS, because neither answers alone: the run's own pause reason, which is what
+ *  a plain step's park writes, and a paused node's completion signal, which is the
+ *  only thing left of a park that happened inside a parallel branch.
+ *
+ *  Gated on `paused`, like the dot vocabulary's own arm: a reason or a signal
+ *  outliving its pause must never paint a finished run as awaiting input. */
+export function isNeedInputPark(state: RunState | undefined): boolean {
+  if (state?.status !== "paused") {
+    return false;
+  }
+  return isNeedInputPause(state.pauseReason) || needInputNode(state.root) !== undefined;
 }

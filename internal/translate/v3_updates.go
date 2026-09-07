@@ -1,19 +1,18 @@
 package translate
 
-// v3 (KAS) session/update sub-kind handlers, reshaping v3 payloads onto domain
-// outputs (chat usage, compaction events, model catalog) so the context ring,
-// compaction UI and model picker work without the client knowing which engine is
-// live. `usage_update` is DEAD on 2.16.1 — one bundle hit and no emit site — so
-// session_info_update carries the usage. `available_commands_update` arrives here and
-// is deliberately not decoded; it falls through handleSessionUpdate silently.
+// v3 (KAS) session/update sub-kind handlers: context usage, compaction status
+// and the model catalog. Shapes verified against the KAS 2.12 acp-server
+// bundle; see kiro-cli-research.md "v3 _kiro/* wire surface".
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"math"
 	"reflect"
+	"strings"
 
 	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/chat"
@@ -21,9 +20,8 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// v3Summarization is the compaction status carried under session_info_update
-// _meta.kiro.summarization. Status is "running" while compacting, "success" on
-// completion (with the summary), or a failure-reason string otherwise.
+// v3Summarization is session_info_update's _meta.kiro.summarization block.
+// Status is "running", "success" (with the summary), or a failure reason.
 type v3Summarization struct {
 	Summary *struct {
 		ConversationSummary string `json:"conversationSummary"`
@@ -31,50 +29,47 @@ type v3Summarization struct {
 	Status string `json:"status"`
 }
 
-// sessionInfoUpdate is the v3 session_info_update payload. The _meta.kiro block
-// carries context-usage stats, a summarization sub-block on compaction, and a
-// per-turn metering summary at turn end. Other kinds carry none and are ignored.
+// sessionInfoUpdate is the v3 session_info_update payload. A kind carrying none
+// of the sub-blocks sessionInfoKiroBlock names is ignored.
 type sessionInfoUpdate struct {
 	Meta struct {
 		Kiro sessionInfoKiroBlock `json:"kiro"`
 	} `json:"_meta"`
 }
 
-// sessionInfoKiroBlock is the `kiro` object inside a session_info_update's `_meta`,
-// and the richest carrier on the wire: 22+ sub-kinds multiplexed under one update
-// type, dispatched on which sub-BLOCK is present rather than on the kind string. So
-// it is where a KAS addition is least likely to be noticed — logUnconsumedInfoKind
-// reports the KIND and says nothing about the payload that arrived with it.
+// sessionInfoKiroBlock is the `kiro` object inside a session_info_update's
+// `_meta`, named so it can carry the wire census.
+//
+// 22+ sub-kinds multiplex through it, dispatched on which sub-BLOCK is present
+// rather than on the kind string — so a KAS addition is least likely to be
+// noticed here: logUnconsumedInfoKind reports the kind and nothing about the
+// payload that arrived with it.
 type sessionInfoKiroBlock struct {
 	Summarization   *v3Summarization `json:"summarization"`
 	UsagePercentage *float64         `json:"usagePercentage"`
-	// Workflow marks the frame as a workflow STEP's, which lets a step's metering
-	// through the parent-only gate while keeping it out of the chat's counters.
+	// Workflow marks the frame a workflow STEP's: its metering passes the
+	// parent-only gate below, its turn counters do not.
 	Workflow     *ACPWorkflowMeta `json:"workflow"`
 	ContextUsage struct {
 		UsagePercentage *float64 `json:"usagePercentage"`
 	} `json:"contextUsage"`
-	// Focus is the kind=="focus_update" block: the agent's
-	// self-declared title/description/status (see focus.go).
+	// Focus is the kind=="focus_update" block (see focus.go).
 	Focus *focusUpdate `json:"focus"`
-	// TurnStart and TurnEnd are the wire's own turn bracket, which KAS emits for
-	// EVERY turn including one vibekit never prompted. Dispatched on BLOCK presence:
-	// legacyFields gives turn_end a nested object and turn_start a flat `true`, so a
-	// pointer is what makes presence readable.
+	// TurnStart and TurnEnd are the wire's own turn bracket, emitted for EVERY
+	// turn including one vibekit never prompted. Pointers because KAS gives
+	// turn_end a nested object and turn_start a flat `true`.
 	TurnStart *bool         `json:"turnStart"`
 	TurnEnd   *turnEndBlock `json:"turnEnd"`
-	// The steering sub-kinds' fields, FLAT beside Kind rather than in a sub-block:
-	// KAS's buildSessionInfoUpdate spreads the update object straight into
-	// _meta.kiro and its legacyFields() returns {} for all three steering kinds, so
-	// these must dispatch on the kind STRING. See handleSteeringUpdate.
+	// The steering sub-kinds' fields, FLAT beside Kind because KAS's
+	// legacyFields() returns {} for all three: there is no nested object to key
+	// off, so these three must dispatch on the kind STRING (handleSteeringUpdate).
 	MessageIDs           []string `json:"messageIds"`
 	MessageID            string   `json:"messageId"`
 	Content              string   `json:"content"`
 	NotificationSeverity string   `json:"notificationSeverity"`
 	Kind                 string   `json:"kind"`
-	// PromptTurnSummaries is KAS's per-turn metering record, emitted just before the
-	// session/prompt response returns: [{unit:"credit", usage:0.0619}], beside
-	// elapsedTime (ms).
+	// PromptTurnSummaries is KAS's per-turn metering record, emitted just before
+	// the session/prompt response returns (verified on the live 2.12.1 wire).
 	PromptTurnSummaries []promptTurnSummary `json:"promptTurnSummaries"`
 	ElapsedTime         float64             `json:"elapsedTime"`
 }
@@ -84,8 +79,7 @@ type sessionInfoKiroBlock struct {
 type sessionInfoKiroShadow sessionInfoKiroBlock
 
 // UnmarshalJSON decodes the block and reports any member KAS sent that this type
-// does not read. The method receives exactly this object's bytes, so the probe is
-// bounded to it and the census can contribute no error.
+// does not read. The census can contribute no error.
 func (b *sessionInfoKiroBlock) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*sessionInfoKiroShadow)(b)); err != nil {
 		return err
@@ -94,10 +88,39 @@ func (b *sessionInfoKiroBlock) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// turnEndBlock is the kind=="turn_end" sub-block. stopDetails is pinned upstream
-// and has never been observed, so it is not decoded.
+// turnEndBlock is the kind=="turn_end" sub-block.
+//
+// StopDetails is the only channel on this path carrying an abnormal stop's cause.
+// `json.RawMessage` because the field is optional upstream and never observed
+// live: a wrong concrete type would fail the whole frame's decode rather than one
+// field's. stopDetailsText owns reading it.
 type turnEndBlock struct {
-	StopReason string `json:"stopReason"`
+	StopReason  string          `json:"stopReason"`
+	StopDetails json.RawMessage `json:"stopDetails"`
+}
+
+// stopDetailsText reads a human sentence out of turn_end's stopDetails, answering
+// "" for anything it does not recognise so the caller falls through to the
+// outcome's own default rather than showing a reader a JSON fragment. Two shapes
+// are accepted because the field is unmeasured and both are plausible from a
+// TypeScript producer.
+func stopDetailsText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return strings.TrimSpace(s)
+	}
+	var obj struct {
+		Message string `json:"message"`
+		Details string `json:"details"`
+		Reason  string `json:"reason"`
+	}
+	if json.Unmarshal(raw, &obj) != nil {
+		return ""
+	}
+	return strings.TrimSpace(cmp.Or(obj.Message, obj.Details, obj.Reason))
 }
 
 // promptTurnSummary is one metering line of a turn-end summary.
@@ -106,31 +129,27 @@ type promptTurnSummary struct {
 	Usage float64 `json:"usage"`
 }
 
-// meteringUnitCredit is the one unit persistTurnSummary counts as spend. Named so
-// it and the census agree by construction: the census reports every OTHER unit, so
-// a rename here that missed it would silently stop counting and report nothing.
+// meteringUnitCredit is the one unit persistTurnSummary counts as spend. Named
+// because the census reports every OTHER unit, so the two must agree by
+// construction or counting stops silently.
 const meteringUnitCredit = "credit"
 
-// HandleSessionInfoUpdate folds v3 context-usage into the chat's usage so the
-// context ring works on the KAS engine, and routes v3 compaction status.
-// Parent-only: subagent updates are dropped so they cannot overwrite the parent
-// chat. One exception — a workflow step's turn_completion is the only record of
-// what that step spent, so it is let through for its metering only. See
-// persistTurnSummary for why the turn counters are not the step's to move.
+// HandleSessionInfoUpdate folds v3 context-usage into the chat's usage and routes
+// v3 compaction status. Parent-only, so a subagent update cannot overwrite the
+// parent chat — except a workflow step's turn_completion, let through for its
+// metering only (see persistTurnSummary).
 func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
 		return
 	}
 	// Before the parent-only gate deliberately: a steer belongs to the chat but is
-	// consumed by whichever execution is running, which may be a subagent's, so
-	// gating on attribution would drop it exactly when the agent delegated.
+	// consumed by whichever execution is running, which may be a subagent's.
 	if t.handleSteeringUpdate(ctx, chatID, &u) {
 		return
 	}
-	// A step's frame is identified by its session, never by this payload:
-	// `_meta.kiro.workflow` never reaches a session_info_update, so every step's
-	// metering used to be counted as one of this chat's own turns.
+	// By session, never by this payload: `_meta.kiro.workflow` never reaches a
+	// session_info_update.
 	step := attr.Step
 	if attr.SubSessionID != "" || (step && len(u.Meta.Kiro.PromptTurnSummaries) == 0) {
 		return
@@ -141,54 +160,63 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit
 		t.turns.WireTurnStart(ctx, chatID)
 		return
 	}
-	if e := u.Meta.Kiro.TurnEnd; e != nil {
-		t.turns.WireTurnEnd(ctx, chatID, vibekit.StopReason(e.StopReason))
+	if t.handleWireTurnEnd(ctx, chatID, u.Meta.Kiro.TurnEnd) {
 		return
 	}
-	// Agent focus updates (title / description / status) ride here as
-	// kind=="focus_update" frames; see focus.go for the adoption rules.
+	// Adoption rules for an agent focus title are focus.go's.
 	if f := u.Meta.Kiro.Focus; f != nil {
 		t.handleFocusUpdate(ctx, chatID, f)
 		return
 	}
-	// Compaction rides here on v3 (v2 used _kiro.dev/compaction/status).
 	if s := u.Meta.Kiro.Summarization; s != nil && s.Status != "" {
 		t.handleV3Summarization(ctx, chatID, s)
 		return
 	}
 	// The ONLY v3 channel that reliably carries the turn's credit spend and
-	// duration. Without it, Usage.TurnCount/LastTurnMs/Credits have no writer and
-	// the context popup shows zeros forever.
+	// duration; usage_update.cost never arrived on the live 2.12.1 wire.
 	if len(u.Meta.Kiro.PromptTurnSummaries) > 0 {
 		t.persistTurnSummary(ctx, chatID, u.Meta.Kiro.PromptTurnSummaries, u.Meta.Kiro.ElapsedTime, step)
 		return
 	}
-	// Context usage: the channel that actually arrives. The standalone usage_update
-	// frame HandleUsageUpdate decodes has no emit site in any KAS build vibekit has
-	// run against, so this mirror is what keeps the ring fresh. Both are honoured
-	// because either would be correct if it came.
+	// The context-usage channel that actually arrives; usageUpdate records why the
+	// standalone frame is only a fallback.
 	pct := u.Meta.Kiro.ContextUsage.UsagePercentage
 	if pct == nil {
 		pct = u.Meta.Kiro.UsagePercentage
 	}
 	if pct == nil {
-		// Most sub-kinds legitimately land here, but an UNKNOWN one is worth a
-		// line — see logUnconsumedInfoKind.
 		logUnconsumedInfoKind(chatID, u.Meta.Kiro.Kind)
 		return
 	}
 	t.persistUsage(ctx, chatID, *pct, 0, -1) // no size/credits on this channel
 }
 
-// knownSessionInfoKinds is every `_meta.kiro.kind` value KAS is known to multiplex
+// handleWireTurnEnd closes the chat's live turn on the wire's own turn_end
+// bracket. Reports whether the frame was a turn_end, so the caller stops.
+func (t *Translator) handleWireTurnEnd(ctx context.Context, chatID vibekit.ChatID, e *turnEndBlock) bool {
+	if e == nil {
+		return false
+	}
+	details := stopDetailsText(e.StopDetails)
+	if details == "" && len(e.StopDetails) > 0 {
+		// The field's shape is unmeasured, so this line is the only thing that would
+		// ever tell us it arrived in one stopDetailsText does not read.
+		slog.Debug("turn_end carried stopDetails in an unread shape",
+			"chat_id", chatID, "stop_reason", e.StopReason, "bytes", len(e.StopDetails))
+	}
+	t.turns.WireTurnEnd(ctx, chatID, vibekit.StopReason(e.StopReason), details)
+	return true
+}
+
+// knownSessionInfoKinds is every `_meta.kiro.kind` KAS is known to multiplex
 // through session_info_update, enumerated from all 30 buildSessionInfoUpdate call
-// sites plus the two reaching the wire via SessionInfoEmitter.send, which a
-// call-site census cannot see. It exists to tell "a sub-kind vibekit deliberately
-// ignores" apart from "a sub-kind KAS added since this was written"; membership
-// implies nothing about consumption, and most of these are ignored on purpose.
+// sites plus the two reaching the wire via SessionInfoEmitter.send.
+//
+// It tells a sub-kind vibekit deliberately ignores from one KAS added since this
+// was written; membership implies nothing about consumption.
 var knownSessionInfoKinds = map[string]struct{}{
-	// turn_start and turn_end are ABSENT because both are CONSUMED now, so a
-	// bracket kind reaching this table means its sub-block did not decode.
+	// turn_start and turn_end are ABSENT because both are consumed, so a bracket
+	// kind reaching this table means its sub-block did not decode.
 	"turn_completion": {},
 	"context_usage":   {}, "summarization_separator": {}, "summary_message": {},
 	"summarization_started": {}, "summarization_failed": {}, "summarization_completed": {},
@@ -198,10 +226,9 @@ var knownSessionInfoKinds = map[string]struct{}{
 }
 
 // logUnconsumedInfoKind reports a session_info_update that reached the end of the
-// dispatch cascade without being consumed, which most do: the cascade dispatches on
-// which sub-block is present, not on the kind string. A kind absent from
-// knownSessionInfoKinds logs at Warn, since it is most likely a KAS addition nobody
-// has looked at yet; a known-but-ignored kind logs at Debug.
+// dispatch cascade without being consumed. Most sub-kinds legitimately do: a kind
+// absent from knownSessionInfoKinds logs at Warn as a probable KAS addition, a
+// known-but-ignored one at Debug.
 func logUnconsumedInfoKind(chatID vibekit.ChatID, kind string) {
 	if kind == "" {
 		return
@@ -218,8 +245,7 @@ func logUnconsumedInfoKind(chatID vibekit.ChatID, kind string) {
 }
 
 // handleV3Summarization maps the v3 summarization sub-states onto the compaction
-// domain events. "running"/"success" drive the started/completed path; a "canceled"
-// reason is benign; any other non-empty status is a genuine failure.
+// domain events.
 func (t *Translator) handleV3Summarization(ctx context.Context, chatID vibekit.ChatID, s *v3Summarization) {
 	switch s.Status {
 	case "running":
@@ -231,8 +257,8 @@ func (t *Translator) handleV3Summarization(ctx context.Context, chatID vibekit.C
 		}
 		t.handleCompactionCompleted(ctx, chatID, summary)
 	case "canceled", "cancelled":
-		// KAS reports cancellation as a summarization "reason", but the IDE treats
-		// it as a no-op: no failed-compaction boundary, no error banner.
+		// Benign: KAS reports it as a summarization reason and the IDE treats it as a
+		// no-op, so no failed-compaction boundary and no error banner.
 		slog.Debug("compaction canceled", "chat_id", chatID)
 	default:
 		// Any other non-empty status is a genuine failure reason.
@@ -241,10 +267,13 @@ func (t *Translator) handleV3Summarization(ctx context.Context, chatID vibekit.C
 }
 
 // persistTurnSummary routes one turn-end metering frame to the two operations it
-// carries. `step` says the metering came from a workflow step rather than from a
-// turn of the conversation: credits are real account spend the launching chat is
-// owed a readout of, so they accumulate either way, while the turn count and
-// duration describe the conversation and a step must not touch them.
+// carries.
+//
+// `step` says the metering came from a workflow step: credits are real account
+// spend the launching chat is owed a readout of, so they accumulate either way,
+// while the turn count and duration describe the CONVERSATION and a step must not
+// touch them. The absolute usage_update.cost channel keeps overwrite precedence
+// if KAS ever ships both.
 func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.ChatID, summaries []promptTurnSummary, elapsedMs float64, step bool) {
 	var credits float64
 	for i := range summaries {
@@ -252,8 +281,8 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.Chat
 			credits += summaries[i].Usage
 			continue
 		}
-		// A dimension KAS added, or a rename of the one above — invisible to a
-		// field-name probe, and the alternative is a spend line that stops counting.
+		// A dimension KAS added or a rename of the one above, invisible to a
+		// field-name probe. Reported, or the spend line stops counting silently.
 		censusMeteringUnit(summaries[i].Unit)
 	}
 	t.metering.AccumulateSpend(ctx, chatID, credits)
@@ -262,13 +291,13 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.Chat
 	}
 }
 
-// usageUpdate is the v3 usage_update payload: size is the context window (tokens),
-// used is tokens consumed, and cost carries the credit spend. cost is nullish
-// upstream, so it is a pointer — an absent cost leaves the stored credits untouched.
+// usageUpdate is the v3 usage_update payload: size is the context window in
+// tokens, used the tokens consumed, cost the credit spend. cost is a pointer
+// because it is nullish upstream, and absent leaves stored credits untouched.
 //
-// This is the FALLBACK, not the primary channel: the frame has no emit site in any
-// KAS build vibekit has run against, so the live channel is the context_usage
-// session_info_update sub-kind and this decoder would be correct if it ever came.
+// A FALLBACK, not the primary: the frame has no emit site in any KAS build
+// vibekit has run against (one bundle hit on 2.16.1, no emitter), so the live
+// channel is the context_usage session_info_update sub-kind.
 type usageUpdate struct {
 	Cost *struct {
 		Amount float64 `json:"amount"`
@@ -277,8 +306,8 @@ type usageUpdate struct {
 	Used int64 `json:"used"`
 }
 
-// HandleUsageUpdate folds v3 usage_update into the chat's usage (context %, window
-// size, credits). Parent attribution is handled by ignoreSubSession in the table.
+// HandleUsageUpdate folds v3 usage_update into the chat's usage. Parent
+// attribution is ignoreSubSession's, in the dispatch table.
 func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 	var u usageUpdate
 	if json.Unmarshal(raw, &u) != nil || u.Size <= 0 {
@@ -293,13 +322,13 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID vibekit.ChatI
 }
 
 // persistUsage writes the context percentage, and optionally the context-window
-// size and credits, into the chat's usage, skipping a no-op write. size <= 0 leaves
-// the stored context size unchanged; credits < 0 leaves credits unchanged.
+// size and credits, into the chat's usage. size <= 0 leaves the stored size
+// unchanged; credits < 0 leaves credits unchanged.
 //
 // The context-percentage gate is a MATERIAL delta, not any delta: a chat file is
-// rewritten wholesale on every Mutate and KAS emits its percentage more than once
-// per model response, so an exact-inequality gate turned a 20-tool-call turn into
-// dozens of full-transcript rewrites to move a float by fractions of a point.
+// rewritten wholesale on every Mutate and KAS emits its percentage several times
+// per model response, so an exact-inequality gate turned one 20-tool-call turn
+// into dozens of full-transcript rewrites.
 func (t *Translator) persistUsage(ctx context.Context, chatID vibekit.ChatID, pct float64, size int, credits float64) {
 	err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
@@ -320,8 +349,7 @@ func (t *Translator) persistUsage(ctx context.Context, chatID vibekit.ChatID, pc
 			changed = true
 		}
 		// Credits keep an exact-inequality gate deliberately: a money value is where
-		// rounding away a change would be wrong, and the only caller passing a
-		// non-negative credits is HandleUsageUpdate, whose frame nothing emits.
+		// rounding a change away would be wrong.
 		return changed
 	})
 	if errors.Is(err, chat.ErrTombstoned) {
@@ -336,14 +364,14 @@ func (t *Translator) persistUsage(ctx context.Context, chatID vibekit.ChatID, pc
 // transcript rewrite: one point, the resolution the context ring renders.
 const contextPctEpsilon = 1.0
 
-// contextPctTiers are the thresholds a crossing must always persist through, since
-// each changes what the client does rather than how it rounds: 70 and 90 recolour
-// the ring, 95 stops the client accepting input. vibekit's own, not KAS's — KAS's
-// 80/95 let the epsilon round away the crossing that disables the composer.
+// contextPctTiers are the thresholds a crossing must always persist through,
+// because each changes what the client DOES: 70 and 90 recolour the context ring,
+// 95 stops it accepting input. vibekit's own, not KAS's — KAS's 80/95 boundaries
+// let the epsilon round away the crossing that disables the composer.
 var contextPctTiers = [...]float64{70, 90, 95}
 
-// materialPctDelta reports whether moving the stored context percentage from prev to
-// next is worth persisting: at least contextPctEpsilon, or any tier crossing.
+// materialPctDelta reports whether prev → next is worth persisting: at least
+// contextPctEpsilon, or any move crossing a tier boundary.
 func materialPctDelta(prev, next float64) bool {
 	if math.Abs(next-prev) >= contextPctEpsilon {
 		return true
@@ -357,14 +385,14 @@ func materialPctDelta(prev, next float64) bool {
 }
 
 // configOptionUpdate is the v3 config_option_update payload: the live
-// model/mode/effort catalog. On v3 session/new returns an empty model list, so this
-// is the per-session channel that populates the model picker.
+// model/mode/effort catalog. On v3 session/new returns an empty model list, so
+// this is the channel that populates the model picker.
 type configOptionUpdate struct {
 	ConfigOptions []configOption `json:"configOptions"`
 }
 
-// configOption is one entry in the catalog. id is the configId ("model" | "mode" |
-// "effortLevel"); for select options the choices are in options[], possibly grouped.
+// configOption is one entry in the config_option_update catalog. ID is the
+// configId ("model" | "mode" | "effortLevel"); a select's choices may be grouped.
 type configOption struct {
 	ID           string          `json:"id"`
 	Category     string          `json:"category"`
@@ -373,8 +401,8 @@ type configOption struct {
 	Options      []configChoice  `json:"options"`
 }
 
-// configChoice is one selectable value (or, when Options is non-empty, a
-// group of nested choices) in a select-type config option.
+// configChoice is one selectable value in a select-type config option, or a group
+// of nested choices when Options is non-empty.
 type configChoice struct {
 	Name        string          `json:"name"`
 	Value       string          `json:"value"`
@@ -383,12 +411,9 @@ type configChoice struct {
 	Options     []configChoice  `json:"options"`
 }
 
-// HandleConfigOptionUpdate refreshes the model catalog and the chat's own effort
-// state from the v3 config_option_update. The frame carries two things with
-// different owners: the MODEL LIST is a workspace vocabulary and goes to the one
-// catalog holder, while the current model and effort state are this chat's. Modes
-// are intentionally NOT refreshed — the config catalog omits the bundled/workspace
-// source tag the picker groups by, so session/new's list stays authoritative.
+// HandleConfigOptionUpdate refreshes the chat's model catalog. Modes are
+// intentionally NOT refreshed: this catalog omits the bundled/workspace source tag
+// the picker groups by, so the authoritative mode list is session/new's.
 func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 	var p configOptionUpdate
 	if json.Unmarshal(raw, &p) != nil {
@@ -413,10 +438,12 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID vibeki
 	}
 }
 
-// configCatalog is what one config_option_update says about the two options vibekit
-// consumes. sawEffort is tracked apart from the list because an EMPTY effort list is
-// a real answer — kiro-cli reports it for a model with no tiers — so it must be
-// applied, while a frame carrying no effort option at all leaves the tiers alone.
+// configCatalog is what one config_option_update says about the two options
+// vibekit consumes: the model select and the effortLevel select.
+//
+// sawEffort is tracked apart from the list because an EMPTY effort list is a real
+// answer, reported for a model with no tiers, so it must be applied — while a
+// frame carrying no effort option at all must leave the chat's tiers alone.
 type configCatalog struct {
 	currentModel  string
 	currentEffort string
@@ -443,10 +470,9 @@ func readConfigCatalog(opts []configOption) configCatalog {
 	return cat
 }
 
-// applyTo writes the chat's own share of the catalog onto the chat, reporting
-// whether anything changed — the store only persists and broadcasts on a change, so
-// a repeated frame must answer false. The model LIST is not here: it is the
-// workspace's, and HandleConfigOptionUpdate hands it to the catalog holder.
+// applyTo writes the catalog onto the chat, reporting whether anything changed:
+// the store persists and broadcasts only on a change, so a repeated frame answers
+// false.
 func (cat *configCatalog) applyTo(c *vibekit.Chat) bool {
 	changed := false
 	if cat.currentModel != "" && c.Model != cat.currentModel {
@@ -468,7 +494,7 @@ func (cat *configCatalog) applyTo(c *vibekit.Chat) bool {
 }
 
 // flattenEffortChoices converts the effortLevel option's choices into the domain
-// tier list. Flat by construction, but recursing costs one branch and cannot be wrong.
+// tier list. Flat by construction, since KAS groups only the model select.
 func flattenEffortChoices(choices []configChoice) []vibekit.SessionEffortLevel {
 	out := make([]vibekit.SessionEffortLevel, 0, len(choices))
 	for i := range choices {
@@ -486,8 +512,7 @@ func flattenEffortChoices(choices []configChoice) []vibekit.SessionEffortLevel {
 }
 
 // sameEffortLevels reports whether two tier lists carry the same ids in the same
-// order — the change-detector that keeps a repeated catalog from rewriting the chat
-// file, and broadcasting, on every frame.
+// order — the change-detector applyTo's answer depends on.
 func sameEffortLevels(a, b []vibekit.SessionEffortLevel) bool {
 	if len(a) != len(b) {
 		return false
@@ -500,9 +525,8 @@ func sameEffortLevels(a, b []vibekit.SessionEffortLevel) bool {
 	return true
 }
 
-// flattenModelChoices converts select choices (flat or grouped) into the domain
-// model catalog, dropping [Deprecated]/[Legacy]-tagged entries the same way
-// bridge.applySessionResultLocked does for v2.
+// flattenModelChoices converts select choices, flat or grouped, into the domain
+// model catalog, dropping the entries modeltext.Hidden names.
 func flattenModelChoices(choices []configChoice) []vibekit.SessionModel {
 	var out []vibekit.SessionModel
 	for i := range choices {
@@ -525,8 +549,8 @@ func flattenModelChoices(choices []configChoice) []vibekit.SessionModel {
 }
 
 // choiceEffortMeta is the reasoning-effort half of a model choice's `_meta.kiro`.
-// Only one field is live against 2.18.0: `defaultEffortLevel` is stamped, `hasEffort`
-// is not. The TIER LIST belongs to the `effortLevel` option, not to a model choice.
+// Only `defaultEffortLevel` is stamped against kiro-cli 2.18.0; `hasEffort` is not.
+// The TIER LIST is deliberately absent — it belongs to the `effortLevel` option.
 type choiceEffortMeta struct {
 	Default   string
 	HasEffort bool

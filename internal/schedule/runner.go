@@ -6,27 +6,20 @@ import (
 	"time"
 )
 
-// TickInterval is how often the runner looks for due schedules. One shared
-// ticker rather than a timer per schedule: there is no per-entry lifecycle to
-// leak, an edit needs no rescheduling, and the whole loop is one readable pass.
+// TickInterval is how often the runner looks for due schedules. One shared ticker
+// rather than a timer per schedule: there is no per-entry lifecycle to leak.
 const TickInterval = time.Minute
 
 // MissGrace is how late a due slot may be and still fire. Anything later was
-// missed while the container was down and is SKIPPED — by decision, because
-// waking up to a batch of overdue runs firing at once is worse than missing
-// one, especially when they write files. The user can always launch manually.
-//
-// It must exceed TickInterval, or a slot landing between ticks would be
-// classified as missed and never run at all.
+// missed while the container was down and is SKIPPED by decision: waking to a
+// batch of overdue runs firing at once is worse than missing one. It must exceed
+// TickInterval, or a slot landing between ticks would never run at all.
 const MissGrace = 3 * time.Minute
 
-// Launcher starts one workflow run on behalf of a schedule; Runtime satisfies
-// it. scheduleID travels with the launch so the host can attribute an
-// unattended run's outcome (e.g. a denied permission) back to this row.
-//
-// slotAt is this schedule's own next slot, an INPUT to the run's bound rather
-// than the bound itself: the host takes the tighter of this and its own
-// ceiling, floored, so zero means "no slot to respect" rather than "unbounded".
+// Launcher starts one workflow run on behalf of a schedule; Runtime satisfies it.
+// scheduleID travels with the launch so the host can attribute an unattended run's
+// outcome back to this row. slotAt is an INPUT to the run's bound, not the bound:
+// the host takes the tighter of it and its own ceiling, and zero means no slot.
 type Launcher interface {
 	LaunchScheduled(ctx context.Context, source, scheduleID string, slotAt time.Time) (id, name string, err error)
 }
@@ -47,8 +40,7 @@ func NewRunner(store *Store, launcher Launcher) *Runner {
 }
 
 // Run polls until ctx is cancelled. It does NOT sweep on entry: a schedule due
-// during a restart is a missed slot, and firing it at boot is the behaviour this
-// deliberately avoids.
+// during a restart is a missed slot, and firing it at boot is what this avoids.
 func (r *Runner) Run(ctx context.Context) {
 	t := time.NewTicker(r.tick)
 	defer t.Stop()
@@ -71,16 +63,12 @@ func (r *Runner) sweep(ctx context.Context) {
 		if !e.Enabled {
 			continue
 		}
-		// No floor: the runner is the one caller that must SEE a slot which has
-		// already gone, because the two branches below tell a slot it may still
-		// fire from one missed while the container was down. The REST view calls
-		// the same helper with `now` as the floor, which is what stops a row from
-		// naming a next run in the past.
+		// No floor: the runner is the one caller that must SEE a slot already gone,
+		// so the branches below can tell a due slot from one missed while down.
 		due, err := NextRunFrom(e.Spec, e.Anchor, time.Time{})
 		if err != nil {
-			// A stored spec that cannot be computed would otherwise be
-			// retried every tick forever; say so once per tick and move on
-			// rather than disabling something the user configured.
+			// An uncomputable stored spec would otherwise be retried every tick
+			// forever; say so once per tick rather than disabling the user's row.
 			slog.Warn("schedule has no next run", "id", e.ID, "error", err)
 			continue
 		}
@@ -88,8 +76,7 @@ func (r *Runner) sweep(ctx context.Context) {
 			continue
 		}
 		if now.Sub(due) > r.grace {
-			// Missed while down. Advance past it silently-but-logged; the next
-			// slot is computed from here, so the schedule resumes normally.
+			// Missed while down. Advance past it; the next slot computes from here.
 			slog.Info("schedule slot missed while offline, skipping",
 				"id", e.ID, "due", due, "late_by", now.Sub(due).Round(time.Second))
 			if err := r.store.skipTo(ctx, e.ID, now); err != nil {
@@ -104,25 +91,20 @@ func (r *Runner) sweep(ctx context.Context) {
 // fire launches one run and records the outcome. The anchor advances either
 // way so a schedule whose launch keeps failing does not retry every tick.
 func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
-	// Bound the run by its own repeat interval — the next slot after the one
-	// that just fired, measured from `due` so a late fire inside the grace
-	// window does not extend the budget past the slot it would collide with.
-	//
-	// DEFENSIVE and unreachable through the store today (Put validates the
-	// spec), left in so an uncomputable slot degrades to "bounded by the
-	// ceiling alone" rather than silently becoming unbounded.
+	// Bound the run by the next slot after the one that just fired, measured from
+	// `due` so a late fire inside the grace window cannot extend the budget into
+	// it. An uncomputable slot degrades to the idle window, never to unbounded.
 	slotAt, dErr := NextRun(e.Spec, due)
 	if dErr != nil {
-		slog.Warn("schedule cannot name its next slot, so its run is bounded by the ceiling alone",
+		slog.Warn("schedule cannot name its next slot, so its run is bounded by its idle window alone",
 			"id", e.ID, "source", e.Source, "error", dErr)
 		slotAt = time.Time{}
 	}
 	runID, name, err := r.launcher.LaunchScheduled(ctx, e.Source, e.ID, slotAt)
 	result := "started"
 	if err != nil {
-		// An overlap is the expected, already-implemented refusal (one live run
-		// per recipe), not a fault: the previous run is still going, so this
-		// slot is simply skipped.
+		// An overlap is the expected refusal (one live run per recipe), not a fault:
+		// the previous run is still going, so this slot is simply skipped.
 		result = "failed: " + err.Error()
 		slog.Warn("scheduled run did not start", "id", e.ID, "source", e.Source, "error", err)
 	} else {

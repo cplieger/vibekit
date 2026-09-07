@@ -7,14 +7,14 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// registerCommandHandlers populates the dispatcher with the concrete
-// dispatch table. Called once from NewHub.
+// registerCommandHandlers populates the dispatcher with the dispatch table.
 func (rt *Runtime) registerCommandHandlers() {
 	rt.membership = command.RegisterDefaults(rt.dispatcher, &command.Roles{
 		Bridges:     bridgeRole{coord: rt.coord},
 		Chats:       rt.chatStore,
 		Bus:         rt.bus,
 		Tabs:        tabSetOrNil(rt.tabs),
+		Runs:        rt.runs,
 		Teardown:    rt,
 		Perms:       rt.bus,
 		Terminals:   rt.agentTerms,
@@ -40,8 +40,7 @@ func tabSetOrNil(st *tabs.Store) command.TabSet {
 }
 
 // tokenSourceOrNil converts an unwired token source into a nil INTERFACE for
-// the same reason as tabSetOrNil: Invalidate takes the source's mutex, so a
-// non-nil interface holding a nil *kiroauth.CLISource would nil-deref.
+// tabSetOrNil's reason: Invalidate takes the source's mutex.
 func tokenSourceOrNil(src *kiroauth.CLISource) command.TokenSource {
 	if src == nil {
 		return nil

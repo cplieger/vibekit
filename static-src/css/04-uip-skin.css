@@ -32,6 +32,7 @@
      var(--dur-standard) var(--ease-enter)` for BOTH enter and leave; the
      progress bar shrank `linear` over the duration (set inline by the lib). */
   --uip-toast-gap: var(--sp-2);
+  --uip-toast-row-gap: var(--sp-2);
   --uip-toast-max-width: min(24rem, calc(100vw - 2 * var(--sp-4)));
   --uip-toast-enter-duration: var(--dur-standard);
   --uip-toast-enter-easing: var(--ease-enter);
@@ -137,13 +138,7 @@
   --uip-toast-progress-color: color-mix(in srgb, var(--c-on-accent) 50%, transparent);
 }
 
-.uip-toast-msg {
-  position: relative; /* sit above the progress bar so text is never clipped */
-  z-index: 1;
-}
-
 .uip-toast-retry {
-  margin-inline-start: var(--sp-2);
   padding: var(--sp-1) var(--sp-2);
   background: transparent;
   border: 1px solid color-mix(in srgb, currentcolor 60%, transparent);
@@ -161,6 +156,58 @@
   &:focus-visible {
     outline: var(--focus-ring);
     outline-offset: var(--focus-offset);
+  }
+}
+
+/* PHONE: a toast is a full-width TOP BANNER, not a bottom-right card.
+   Measured on the 390x844 preset, the bottom-right stack occupied y 696..810
+   while the composer's textarea ran 703..756 and its pill row 756..809 — so
+   every status message covered the controls it was reporting on, and an error
+   toast with a Retry button sat on top of the Send button. There is no width
+   at which a corner card and a full-width composer can share the bottom of a
+   phone screen, so the stack moves to the one band with nothing interactive in
+   it. It starts BELOW the chat toolbar (`--below-chat-toolbar`, which folds in
+   the notch inset) rather than at the viewport top, or it would cover the menu
+   button for the toast's whole lifetime. */
+@media (width <= 48rem) {
+  .uip-toast-stack {
+    /* Two declarations, and the second is the exact one. Below 30rem of chat area
+       the toolbar WRAPS its heading onto a second row (12-chat.css), so its
+       height is content-driven — the title's line box plus an optional subtitle —
+       and no token can state it: `--below-chat-toolbar` describes the one-row bar
+       and left the banner over the page title by 10px. `anchor()` reads the real
+       bottom edge, which is what this mechanism is for. Its own fallback is the
+       one-row edge, so a missing anchor lands where the token would; an engine
+       with no anchor positioning at all drops the second declaration and keeps
+       the first. `.chat-toolbar` carries the `anchor-name` (12-chat.css) and is a
+       SIBLING of the views rather than inside one, so it is rendered on every
+       route and precedes this body-level stack in the box tree. */
+    inset-block: var(--below-chat-toolbar) auto;
+    inset-block-start: calc(
+      anchor(--chat-toolbar bottom, calc(var(--titlebar-h) + env(safe-area-inset-top, 0))) +
+        var(--sp-2)
+    );
+    inset-inline: var(--sp-2);
+
+    /* Newest at the BOTTOM of a top-anchored stack, so an arriving toast pushes
+       the older ones down and away from the edge it entered from. The
+       bottom-right stack reverses for the mirror-image reason. */
+    flex-direction: column;
+
+    /* The banner spans the width the two insets leave, so the 24rem card cap
+       does not shrink-wrap it back to a corner card's proportions. */
+    max-inline-size: none;
+  }
+
+  /* Enter and leave UPWARD. Both transforms are the bottom stack's flipped: the
+     pre-enter offset is where the toast slides in FROM, and the leave offset is
+     where it exits to, and a top-anchored banner does both at its own edge. */
+  .uip-toast {
+    transform: translateY(-0.5rem);
+  }
+
+  .uip-toast.is-leaving {
+    transform: translateY(-0.5rem);
   }
 }
 

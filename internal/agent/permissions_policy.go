@@ -1,15 +1,6 @@
-// Native Cedar policy VIEW (_kiro/permissions/list + explain).
-//
-// vibekit reads kiro-cli's native permission policy as the source of truth
-// for what is ENFORCED, and exposes it read-only at GET /api/permissions.
-// Editing is a FILE write (internal/policyfile) that KAS hot-reloads — not
-// an RPC — so this file is purely the reader.
-//
-// The queries route through the long-lived utility bridge so the Permissions
-// panel works with no chat open. list is synchronous and explain is a pure
-// simulation (verified to raise no consent prompt), so neither has a side
-// effect on the agent — unlike policy/check, which is deliberately never
-// called.
+// Native Cedar policy VIEW (_kiro/permissions/list + explain), read-only at
+// GET /api/permissions. Editing is a FILE write (internal/policyfile) KAS
+// hot-reloads, not an RPC. Both queries route through the utility bridge.
 
 package agent
 
@@ -39,6 +30,14 @@ func (rt *Runtime) buildUtility() *utilityRuntime {
 			onHooksChanged:       rt.config.broadcastHooksChanged,
 			onGovernanceState:    rt.config.cacheGovernanceFromUtility,
 			onPolicyNotification: rt.forwardPolicyNotification,
+			// The step-transcript seam: a `session/load` of a step's session replays
+			// frames the utility session reads as foreign. No-ops until a read is open.
+			onForeignUpdate: func(sessionID string, kind vibekit.ACPUpdateKind, update json.RawMessage) bool {
+				return rt.runs.stepReplays.ingest(sessionID, kind, update)
+			},
+			onFrameDrained: func(at drainPoint, force bool) {
+				rt.runs.stepReplays.settleConsumed(at, force)
+			},
 			presets: func(ctx context.Context) []string {
 				return securityPresets(ctx, rt.lifecycle.configDir)
 			},
@@ -49,14 +48,10 @@ func (rt *Runtime) buildUtility() *utilityRuntime {
 	)
 }
 
-// forwardPolicyNotification hands a _kiro/policy/{changed,error} notification
-// the UTILITY session received to the same translator the chat dispatch table
-// uses, so one decode and one payload shape serve both doors. Both events are
-// broadcast workspace-global (empty chatID).
-//
-// context.Background(), like broadcastHooksChanged: forward is a goroutine with
-// no request behind it, and the frame it carries must not be dropped because
-// whatever wrote the file has since returned.
+// forwardPolicyNotification hands a _kiro/policy/{changed,error} notification the
+// UTILITY session received to the same translator the chat dispatch table uses, so
+// one decode serves both doors. Broadcast workspace-global (empty chatID), on
+// context.Background(): forward is a goroutine with no request behind it.
 func (rt *Runtime) forwardPolicyNotification(msg *vibekit.RPCResponse) {
 	switch msg.Method {
 	case methodV3PolicyChanged:

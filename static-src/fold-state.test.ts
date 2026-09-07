@@ -45,10 +45,30 @@ describe("the automatic rule", () => {
 });
 
 describe("outcome and position", () => {
-  // A failed turn folds like any other once the next turn starts: the collapsed
-  // face carries the error as the turn's output, so folding hides nothing.
-  it.each(["failed", "interrupted"] as const)("auto-folds a settled %s turn", (outcome) => {
-    const list = [turn("bad", outcome), ...turns(10)];
+  // A BROKEN turn never auto-folds, which is what this module's header comment has
+  // always promised and what the code did not do.
+  //
+  // REVERSED, and the case it replaced was pinning the defect. It asserted a failed
+  // turn folds "because the collapsed face carries the error as the turn's output" —
+  // and that premise was measured FALSE for the shape it matters most in: the face's
+  // error row came from a scan for an `event` message, and a turn that failed on the
+  // wire's own turn_end carries none, so the face mounted nothing at all and the
+  // turn folded to a header, an empty body and a footer. Errors are the last thing
+  // that should hide themselves.
+  it.each(["failed", "interrupted", "refused"] as const)(
+    "keeps a settled %s turn open wherever it sits",
+    (outcome) => {
+      const list = [turn("bad", outcome), ...turns(10)];
+      expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(true);
+    },
+  );
+
+  // The two STOPPED outcomes still fold. A cancel the user asked for is not a
+  // failure, and an unmeasured stop reason says nothing about whether the work
+  // succeeded — so neither earns the exemption, and the turn's own notice carries
+  // what little there is to say either way.
+  it.each(["cancelled", "unknown"] as const)("still auto-folds a %s turn", (outcome) => {
+    const list = [turn("stopped", outcome), ...turns(10)];
     expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(false);
   });
 

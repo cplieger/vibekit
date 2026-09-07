@@ -73,9 +73,22 @@ export const EVENT_RENDER_MAP: Readonly<Record<EventKind, EventRenderStrategy>> 
   // hub/bridge_coord.go) and nothing in the tree detects a restart, so the
   // string was a claim about a mechanism that no longer exists.
   //
-  // labelFn is what makes the server's own reason visible. Without it `content`
-  // was decoded, carried across the wire and then dropped by this renderer, so
-  // "Session refreshed, retrying..." never reached the screen.
+  // NO labelFn, and THIS IS THE OWNERSHIP RULE, stated here and at
+  // `turnFailureText` (turns.ts) because it is the only thing keeping the two
+  // surfaces from both speaking: THE CARD-LEVEL `.turn-notice` OWNS THE PROSE
+  // ACCOUNT of why a turn did not end cleanly. A body divider marks the BOUNDARY
+  // and names its KIND; it never repeats that prose.
+  //
+  // The notice wins because it is the surface present in BOTH fold states —
+  // `syncTurnFace` early-returns for an unfolded card, which is why a face-only
+  // reason was unreachable on an open turn, and a broken turn is precisely the
+  // turn that never auto-folds. The divider is inside `.turn-body`, so a folded
+  // card hides it.
+  //
+  // Nothing is lost by dropping the labelFn: `turnFailureText`'s first source
+  // still reads THIS row's `content`, so the server's own sentence still reaches
+  // the reader — once, on the durable surface, instead of twice about 50px apart
+  // (measured on live chat `c-a7f83c9…` turn 1).
   //
   // Still red "failed"-styled: a turn cut short reads as a short but complete
   // answer without a visible boundary.
@@ -84,7 +97,6 @@ export const EVENT_RENDER_MAP: Readonly<Record<EventKind, EventRenderStrategy>> 
     boundary: "failed",
     icon: "\u26a0",
     defaultLabel: "Turn interrupted",
-    labelFn: (c) => (c ? c : "Turn interrupted"),
   },
   cancelled: { kind: "skip" },
   // The outcome marker is a CARRIER, not a divider. It exists because a turn that

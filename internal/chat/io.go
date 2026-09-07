@@ -2,8 +2,10 @@ package chat
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -67,7 +69,8 @@ func readChatFile(path, label string, fileCap chatFileCap) (*vibekit.Chat, error
 }
 
 // chatHeaderOnDisk is the header projection's decode target. Embedding ChatHeader means a new
-// header field flows through with no mapping step; MessageCount is counted separately.
+// header field flows through with no mapping step; the two facts the messages array carries
+// are derived by the walk instead.
 type chatHeaderOnDisk struct {
 	vibekit.ChatHeader
 }
@@ -97,17 +100,21 @@ func readChatHeader(path, label string, fileCap chatFileCap) (*vibekit.ChatHeade
 
 // decodeChatHeader is the projection itself, over any reader, so the parsing contract is testable
 // without a file. Every member except `messages` is captured RAW and handed to encoding/json in
-// one object, which keeps chatHeaderOnDisk's field mapping automatic.
+// one object, which keeps chatHeaderOnDisk's field mapping automatic; `messages` is walked at the
+// token level for the message count and the newest turn outcome.
 func decodeChatHeader(r io.Reader) (*vibekit.ChatHeader, error) {
 	head := make(map[string]json.RawMessage)
-	count := 0
+	var (
+		count int
+		last  vibekit.TurnOutcome
+	)
 	dec := jsoncap.NewDecoder(r, 0)
 	err := dec.Object(func(key string) error {
 		// EqualFold because encoding/json matches a field tag case-insensitively and is the OTHER
 		// reader of this same file, so a chat carrying "Messages" must not be captured whole.
 		if strings.EqualFold(key, keyMessages) {
-			n, cerr := countStreamedArrayElements(dec)
-			count = n
+			n, l, cerr := scanStreamedMessages(dec)
+			count, last = n, l
 			return cerr
 		}
 		var raw json.RawMessage
@@ -128,25 +135,60 @@ func decodeChatHeader(r io.Reader) (*vibekit.ChatHeader, error) {
 	if err := json.Unmarshal(reassembled, &h); err != nil {
 		return nil, err
 	}
-	h.MessageCount = count
+	h.MessageCount, h.LastTurnOutcome = count, last
 	return &h.ChatHeader, nil
 }
 
-// countStreamedArrayElements consumes one JSON array from dec, counting its top-level elements
-// and materializing none of them. A JSON null counts 0; any other non-array value is an error,
-// which agrees with readChatFile — a `messages` member that is not an array fails Unmarshal into
+// outcomeProbe is the ONE field the messages walk reads off a message; encoding/json
+// discards every other key without allocating.
+type outcomeProbe struct {
+	TurnOutcome vibekit.TurnOutcome `json:"turn_outcome"`
+}
+
+// scanMessagesArray answers both header facts for a caller that already holds the raw messages
+// array, over the same walk the streaming header path uses. Returns (0, "") for nil, empty or
+// invalid input, and stays usable on a decode failure.
+func scanMessagesArray(raw json.RawMessage) (count int, last vibekit.TurnOutcome) {
+	if len(raw) == 0 {
+		return 0, ""
+	}
+	count, last, _ = scanStreamedMessages(jsoncap.NewDecoder(bytes.NewReader(raw), 0))
+	return count, last
+}
+
+// scanStreamedMessages consumes one JSON array from dec and answers both header facts the
+// messages array carries: how many top-level elements it holds, and the NEWEST turn outcome any
+// of them stamped. A JSON null counts 0; any other non-array value is an error, which agrees
+// with readChatFile — a `messages` member that is not an array fails Unmarshal into
 // vibekit.Chat, so tolerating it here listed a chat in the sidebar that could not be opened.
-func countStreamedArrayElements(dec *jsoncap.Decoder) (int, error) {
+//
+// Decode rather than jsoncap's Skip, because the outcome is a field of the element: Decode
+// advances past a complete value, so a non-object element is a TYPE error the walk absorbs with
+// the stream left on the next element and the count intact. A syntax error stops the walk.
+func scanStreamedMessages(dec *jsoncap.Decoder) (int, vibekit.TurnOutcome, error) {
 	ok, err := dec.Open('[')
 	if err != nil || !ok {
-		return 0, err
+		return 0, "", err
 	}
-	count := 0
+	var (
+		count int
+		last  vibekit.TurnOutcome
+	)
 	for dec.More() {
-		if serr := dec.Skip(); serr != nil {
-			return count, serr
+		var probe outcomeProbe
+		derr := dec.Decode(&probe)
+		var typeErr *json.UnmarshalTypeError
+		switch {
+		case derr == nil:
+			if probe.TurnOutcome != "" {
+				last = probe.TurnOutcome
+			}
+		case errors.As(derr, &typeErr):
+			// A non-object element: skipped past, so the count stays correct.
+		default:
+			return count, last, derr
 		}
 		count++
 	}
-	return count, dec.Close()
+	return count, last, dec.Close()
 }

@@ -25,9 +25,18 @@ const m = vi.hoisted(() => ({
   settle: [] as (() => void)[],
 }));
 
+// A Browser-Mode mock is linked as real ESM, so EVERY name any module in this
+// graph reaches has to exist on it — a partial factory fails collection rather than
+// one case. Anything no case here drives answers the EMPTY value for its type, never
+// a plausible one: a mock that claims an answer makes a case pass for a reason
+// production never supplied.
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
+  // Reached through `run-step-transcript.js`, which run-view imports to read a
+  // settled step's transcript off KAS. No case here shows a step, so this answers
+  // the no-request result: `run-step-transcript.ts` grades status 0 transient.
+  apiGetTypedOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
 }));
 
 vi.mock("./tabs.js", () => ({
@@ -37,12 +46,22 @@ vi.mock("./tabs.js", () => ({
   }),
   tabIdFor: vi.fn(() => ""),
   tabSetVersion: vi.fn(() => 0),
+  // A run's tab row is renamed once its state arrives (run-dots.ts). Inert here for
+  // `tabIdFor`'s reason: with no tab id to resolve there is no row to rename.
+  renameTab: vi.fn(),
   setTabStatus: vi.fn(),
   closeTab: vi.fn(),
   getActiveTabId: vi.fn(() => ""),
   openEditorView: vi.fn(),
   setTabDirty: vi.fn(),
   toggleGitView: vi.fn(),
+  // run-view's own three. `hasTab` is the eviction exemption's reader (no tab is
+  // open), `parentChatRef` the launching chat a run tab nests under (none), and
+  // `openTab` the door behind the empty-step link, which no case here clicks —
+  // hence "nothing was opened" rather than the success answer.
+  hasTab: vi.fn(() => false),
+  parentChatRef: vi.fn(() => ""),
+  openTab: vi.fn(() => Promise.resolve("failed")),
 }));
 
 vi.mock("./decision-dock.js", () => ({

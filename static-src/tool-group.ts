@@ -1,9 +1,43 @@
 // ---------------------------------------------------------------------------
 // Tool group: collapsible container that wraps consecutive tool calls.
-// Auto-collapses once a run of ≥3 completed calls is done, regardless of
-// whether the calls share a kind. The header shows a per-kind summary
-// (e.g. "Read 5 files: a.ts, b.go, + 3 more") or a mixed breakdown for
-// heterogeneous groups ("7 operations: 4 reads, 2 edits, 1 search").
+//
+// THE BOX ONLY EXISTS FROM THE SECOND CONSECUTIVE CALL. A lone tool call is not
+// a group of one: a header summarising "Read 1 file: a.ts" over a single card
+// that already says exactly that is two renderings of one fact, wrapped in a
+// disclosure with nothing to hide. So a one-member shell carries CLS_BARE, and
+// `14-tools.css` answers it by dropping all three things that make a member a ROW
+// rather than a card — the header, the first row's separator hairline, and the
+// tighter `padding-block`. What is left is PIXEL-IDENTICAL to a standalone
+// `.tool-call`, because `.tool-group` and `.tool-call` already declare the same
+// four chrome properties (background, border, radius, overflow) from the same
+// tokens: measured 42px against 42px in headless Chromium with the real card
+// builder, and a screenshot of each came out BYTE-IDENTICAL. The padding half is
+// the one a synthetic fixture hides — a hand-rolled card measures under both
+// floors, so both states report the floor and the 6px gap is invisible.
+//
+// The shell is mounted on the FIRST card and gains its chrome by class when the
+// second lands, rather than the first card being mounted bare and re-parented
+// later. Re-seating a node restarts its CSS animations and blurs focus inside it,
+// and `.tool-call` carries `vk-slide-up` — so promoting a card mid-stream would
+// replay the entry slide on a card the reader is already looking at, and would
+// drop focus if they had opened its output or diff. The cost of the cheaper path
+// is stated plainly: the selector `.tool-group` stops meaning "two or more", so
+// anything reading it (a CSS rule, a test, an audit script) must consult
+// `groupIsBare`. The bare header is `display: none`, which removes it from the
+// accessibility tree AND from tab order, so there is no phantom `aria-expanded`
+// and no dead tab stop. The second cost, also stated: the first card SHRINKS 6px
+// when the second lands, in the same frame as the header appearing — one reflow
+// inside a change that is already adding 37px of header.
+//
+// A BARE GROUP NEVER COLLAPSES, in either direction: its body region IS the lone
+// card, so closing the disclosure would make the card vanish.
+//
+// The collapse trigger is POSITIONAL, not a count: a group stays open while it is
+// the newest thing in its container and folds when the next element is posted
+// after it (autoCollapseGroup, driven by the dispatcher's supersede registry).
+// The header shows a per-kind summary (e.g. "Read 5 files: a.ts, b.go, + 3 more")
+// or a mixed breakdown for heterogeneous groups ("7 operations: 4 reads, 2 edits,
+// 1 search").
 //
 // User-initiated clicks disable auto-collapse (the group becomes user-
 // controlled) so the UI doesn't fight against the reader.
@@ -20,6 +54,7 @@
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
+import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
 import { outcomeIcon } from "./icons.js";
 import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
@@ -31,6 +66,10 @@ import { createDisclosure, type DisclosureController } from "@cplieger/ui-primit
 const CLS_COLLAPSED = "tool-group-collapsed";
 const CLS_AUTO_COLLAPSED = "tool-group-auto-collapsed";
 const CLS_USER_TOGGLED = "tool-group-user-toggled";
+/** A shell holding fewer than two members: no header, no group chrome. A pure
+ *  function of the member count with ONE writer (refreshGroupHeader), so there is
+ *  no second flag or counter to keep in step. */
+const CLS_BARE = "tool-group-bare";
 
 // Per-group disclosure controllers for the .tool-group-body region. The
 // collapse STATE MACHINE (user latch, auto-collapse, the CLS_* classes) stays
@@ -43,6 +82,13 @@ const groupCtls = new WeakMap<HTMLElement, DisclosureController>();
  *  the group root, so the collapse region excludes the always-visible header. */
 export function groupBody(group: HTMLElement): HTMLElement {
   return group.querySelector<HTMLElement>(":scope > .tool-group-body") ?? group;
+}
+
+/** Whether this shell is holding fewer than two members, so it renders as a plain
+ *  card with no header. Read it rather than the `.tool-group` selector: that
+ *  selector no longer means "a group of two or more". */
+export function groupIsBare(group: HTMLElement): boolean {
+  return group.classList.contains(CLS_BARE);
 }
 
 class ToolGroupTracker {
@@ -119,10 +165,21 @@ export function untrackInProgress(node: HTMLElement): void {
  *  groups per render container (including nested subagent bodies), so there is
  *  no single global "current group" anymore. */
 export function buildToolGroupShell(): HTMLDivElement {
-  const group = el("div", { className: "tool-group" }) as HTMLDivElement;
+  // Born BARE, so "bare ⇔ fewer than two members" holds at every instant
+  // including the one between construction and the first append. The alternative
+  // is leaving the first card's own refreshGroupHeader to add it, which is
+  // invisible in production (mountToolCard builds, appends and refreshes in one
+  // task) and would make the invariant true only after that task.
+  const group = el("div", { className: `tool-group ${CLS_BARE}` }) as HTMLDivElement;
   const header = el(
     "div",
-    { className: "tool-group-header", role: "button", tabindex: "0", "aria-expanded": "true" },
+    {
+      className: "tool-group-header",
+      role: "button",
+      tabindex: "0",
+      "aria-expanded": "true",
+      [CHROME_ATTR]: "",
+    },
     // The shared disclosure chevron, replacing a `content: "▸ "` that appeared
     // ONLY when the group was collapsed — so an expanded group advertised
     // nothing and the affordance had to be discovered. It is present in both
@@ -130,10 +187,11 @@ export function buildToolGroupShell(): HTMLDivElement {
     chevronEl(),
     // The header's verdict slot: an ICON slot, sharing `.tool-icon` for the tint
     // classes. paintGroupOutcome writes `outcomeIcon("ok")` / `outcomeIcon("fail")`
-    // into it as a node and leaves it EMPTY while the group runs, so a collapsed
-    // group of twelve searches shows a verdict rather than a magnifier — the KIND
-    // is named in the summary text instead. The box stays reserved for that empty
-    // state, or the count text shifts when the group settles.
+    // into it as a node, so a collapsed group of twelve searches shows a verdict
+    // rather than a magnifier — the KIND is named in the summary text instead. It
+    // writes NO node while the group runs, because there is no verdict yet;
+    // `14-tools.css` draws the hollow ring that says so, and the box is sized by the
+    // slot either way so the count text does not shift when the group settles.
     el("span", { className: "tool-group-icon tool-icon" }),
     el("span", { className: "tool-group-count" }),
   ) as HTMLDivElement;
@@ -156,13 +214,20 @@ export function buildToolGroupShell(): HTMLDivElement {
 /** Recompute the group header summary text. Called after each card append,
  *  on every tool status flip, and on collapse toggle. */
 export function refreshGroupHeader(group: HTMLElement): void {
+  const calls = [
+    ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
+  ] as HTMLElement[];
+  // The ONE writer of the bare class, and it runs after every card append, on
+  // every status flip and on every collapse toggle — so the class is a pure
+  // function of the member count and reversible if a group ever drops to one.
+  // It sits ABOVE the summary-span guard below because it needs only `calls`:
+  // behind that guard the invariant would hold for a shell carrying a count span
+  // and not for one without.
+  group.classList.toggle(CLS_BARE, calls.length < 2);
   const header = group.querySelector(".tool-group-header .tool-group-count");
   if (header === null) {
     return;
   }
-  const calls = [
-    ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
-  ] as HTMLElement[];
   const failures = countFailures(calls);
   // The summary states the aggregate FACT and names any failure in it. It never
   // counts cards: "Read 5 files" is right, "5 tool calls" is a bug.
@@ -184,9 +249,10 @@ function countFailures(calls: HTMLElement[]): number {
  *
  *  The mark comes from the shared set (`icons.ts` `outcomeIcon`) rather than from
  *  `applyOutcome`: this slot has no identity glyph to keep for a success, so the
- *  silhouette is what a clean group shows too. `running` shows nothing — the
- *  members carry their own spinners — and the reserved box is what keeps the
- *  summary text from shifting when the group settles. */
+ *  silhouette is what a clean group shows too. `running` writes no node, because a
+ *  running group has no verdict — the mark for that state is the hollow ring
+ *  `14-tools.css` draws on the slot, which is the in-flight vocabulary rather than
+ *  a fifth member of the settled set. */
 function paintGroupOutcome(group: HTMLElement, calls: HTMLElement[], failures: number): void {
   const icon = group.querySelector<HTMLElement>(".tool-group-icon");
   if (icon === null) {
@@ -358,6 +424,9 @@ function dedup(arr: string[]): string[] {
 // --- Collapse / expand ---
 
 function onHeaderClick(group: HTMLDivElement, _header: HTMLDivElement): void {
+  // No bare guard here, unlike both collapse paths below, and the asymmetry is
+  // not an oversight: a bare header is `display: none`, so it is out of the
+  // accessibility tree and out of tab order and this handler is unreachable.
   group.classList.add(CLS_USER_TOGGLED);
   const wasAuto = group.classList.contains(CLS_AUTO_COLLAPSED);
   if (wasAuto) {
@@ -384,6 +453,12 @@ function onHeaderClick(group: HTMLDivElement, _header: HTMLDivElement): void {
 export function maybeCollapseGroup(node: HTMLElement): void {
   const group = node.closest<HTMLElement>(".tool-group");
   if (group === null) {
+    return;
+  }
+  // A bare group is never collapsed, so there is nothing to re-open. Its lone
+  // card carries its own failure mark, which is the actionable signal a group
+  // header would otherwise be standing in for.
+  if (groupIsBare(group)) {
     return;
   }
   const calls = [
@@ -420,10 +495,17 @@ export function maybeCollapseGroup(node: HTMLElement): void {
 /** Collapse a group whose run of consecutive calls just ENDED (something else
  *  was posted after it). The positional rule that replaced "auto-collapse after
  *  ≥3 completed calls": the newest card is the open one, and being superseded
- *  is what closes it. A user toggle outranks it, a failure inside blocks it
- *  (failure is not noise), and a still-running member keeps it open — that
- *  member's status flip re-runs maybeCollapseGroup, which re-opens on failure. */
+ *  is what closes it. A BARE group is exempt (there is no box to fold), a user
+ *  toggle outranks it, a failure inside blocks it (failure is not noise), and a
+ *  still-running member keeps it open — that member's status flip re-runs
+ *  maybeCollapseGroup, which re-opens on failure. */
 export function autoCollapseGroup(group: HTMLElement): void {
+  // A BARE group's body region IS the lone card, and its header is hidden — so
+  // closing the disclosure would make the card vanish with no affordance to bring
+  // it back. Correctness, not tidiness.
+  if (groupIsBare(group)) {
+    return;
+  }
   if (
     group.classList.contains(CLS_AUTO_COLLAPSED) ||
     group.classList.contains(CLS_USER_TOGGLED) ||

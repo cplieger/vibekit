@@ -161,6 +161,16 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
+  // Put the DOCUMENT back at its origin, which is where production keeps it:
+  // the app shell is `#app { position: fixed; inset: 0 }`, so the page itself
+  // never scrolls. This harness appends its hosts in normal flow, so it CAN —
+  // and `.focus()` scrolls its target into view, so the focus case left the
+  // page at scrollY 1010. The transcript then sat at top -1010 in a 720px
+  // viewport, which puts `.msg-row`'s `content-visibility: auto` subtrees out
+  // of relevance; the find walker prunes a skipped subtree, so the very next
+  // case could not see its own active view's text and read 0 hits. It passed
+  // alone and failed in file order, which is the signature.
+  window.scrollTo(0, 0);
 });
 
 // ---------------------------------------------------------------------------

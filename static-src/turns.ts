@@ -12,6 +12,7 @@
 // touching the renderer.
 // ---------------------------------------------------------------------------
 
+import { severityOf, defaultFailureReason } from "./turn-severity.js";
 import type { Message, FileChange } from "./types.js";
 import type { TurnOutcome } from "./wire/types.gen.js";
 
@@ -101,10 +102,22 @@ const COMMAND_KINDS = new Set(["execute", "shell", "command"]);
  *  paginated window whose first page starts mid-turn. Both render the same
  *  way, so neither needs a special case here.
  *
- *  `thinking` marks the LAST turn as running. It is the session's flag rather
- *  than anything on the message, because a turn in flight is only ever the
- *  last one. */
-export function projectTurns(messages: readonly Message[], thinking: boolean): Turn[] {
+ *  `live` marks the LAST turn as running, and it is not a message field for the
+ *  same reason it is not called `thinking` any more: a turn in flight is only ever
+ *  the last one, and whether one IS in flight is now TWO facts the caller composes
+ *  — this client's own memory of a stream it has watched, plus the server's last
+ *  statement that a turn is open (`store.ts` `turnLive`).
+ *
+ *  It has to be both, and `deriveOutcome`'s tail clause is why. The newest turn's
+ *  carrier is absent in two completely different situations — nothing closed the
+ *  turn, or the closing message is still in the server's in-memory buffer and
+ *  therefore absent from `GET /api/chats/{id}` — and `unknown` is only honest for
+ *  the first. `thinking` alone cannot separate them: it is client memory that starts
+ *  false, so on a mid-turn reload it says "not running" about a turn the server knows
+ *  is running, and the projection then paints a TERMINAL verdict during the one
+ *  window in which nothing can know one. A parameter named for one of the two facts
+ *  would be a lie about what the caller passes. */
+export function projectTurns(messages: readonly Message[], live: boolean): Turn[] {
   const turns: Turn[] = [];
   let closed = false;
   for (const m of messages) {
@@ -130,7 +143,7 @@ export function projectTurns(messages: readonly Message[], thinking: boolean): T
     if (t === undefined) {
       continue;
     }
-    t.outcome = deriveOutcome(t, thinking && i === turns.length - 1);
+    t.outcome = deriveOutcome(t, live && i === turns.length - 1);
     // Rewinding from turn i means discarding turn i+1 onward, so the target is
     // the NEXT turn's trigger. The last turn gets none, which is what removes
     // its button.
@@ -183,6 +196,19 @@ function opensHeaderlessTurn(m: Message, prevClosed: boolean): boolean {
  *  has already opened) — trusting it over the marker would repaint a failure
  *  as in-progress.
  *
+ *  THE TAIL CLAUSE IS `unknown`, NOT `completed`, and it is the reader half of one
+ *  cross-language change. The server now persists a carrier for EVERY close, so an
+ *  absent carrier is a fact — nothing closed this turn — rather than a gap the
+ *  reader has to guess at. Three server sites produce that shape (a prompt refused
+ *  after its user row landed, a cancel during the spawn window, a process death
+ *  mid-turn) and every one of them used to read as a turn that answered.
+ *
+ *  The predicate is "no ASSISTANT message", never "empty body". A turn persisted
+ *  before the outcome field existed still holds one — the chat file only ever gained
+ *  an assistant message at finalize — so a legacy transcript keeps reading
+ *  `completed` instead of turning into a wall of failures. It also catches the
+ *  event-only turn a mid-turn compaction leaves behind.
+ *
  *  PROPOSAL, not a defect, and left open on purpose: a FAILED TOOL CALL does not
  *  fail its turn. The three sources above are a refusal, `compaction_failed` and
  *  `infra_safety_blocked`; nothing here reads tool status, so a turn whose only
@@ -211,7 +237,11 @@ function opensHeaderlessTurn(m: Message, prevClosed: boolean): boolean {
 function deriveOutcome(t: Turn, isLive: boolean): TurnOutcome {
   let interrupted = false;
   let sawUnknown = false;
+  let sawAssistant = false;
   for (const m of t.body) {
+    if (m.role === "assistant") {
+      sawAssistant = true;
+    }
     // The DURABLE outcome, when the turn carries one: since P9 the message that
     // finalized a turn records the wire's own verdict, so a reloaded transcript
     // reads it instead of inferring one from whichever markers survived. The
@@ -242,30 +272,7 @@ function deriveOutcome(t: Turn, isLive: boolean): TurnOutcome {
   if (isLive) {
     return "running";
   }
-  return sawUnknown ? "unknown" : "completed";
-}
-
-/** Every workflow run a turn launched, from its body's tool calls.
- *
- *  A launch is the only tool call carrying a `workflow_id` (the server decodes it
- *  off the invocation's `rawOutput`), so this is exact rather than a heuristic. Its
- *  one consumer is the fold rule: a turn holding a run that is still going must not
- *  fold, and the turn's own outcome cannot answer that because `run_workflow`
- *  returns as soon as the run is created, so the turn completes long before the run
- *  does. Returns the ids rather than a boolean because only the caller can say
- *  whether a run is still live — that answer lives in `run-store.ts`, which this
- *  DOM-free projection must not import. */
-export function turnRunIDs(t: Turn): string[] {
-  const out: string[] = [];
-  for (const m of t.body) {
-    for (const tc of m.tool_calls ?? []) {
-      const id = tc.workflow_id ?? "";
-      if (id !== "" && !out.includes(id)) {
-        out.push(id);
-      }
-    }
-  }
-  return out;
+  return sawUnknown || !sawAssistant ? "unknown" : "completed";
 }
 
 /** Sum a turn's ledger across its assistant messages. */
@@ -307,7 +314,21 @@ export function turnLedger(t: Turn): TurnLedger {
  *  address a precise point from a ledger row, a run's launch record or a search
  *  hit. Lives here rather than in the renderer because the anchor is a property
  *  of the turn, and more than one surface has to be able to compute it without
- *  reaching into the DOM. */
+ *  reaching into the DOM.
+ *
+ *  THE `n` HERE IS WINDOW-LOCAL (`Turn.n`), NOT the rail's session-absolute
+ *  `TurnSummary.n`. Two numbering spaces, one spelling, and conflating them is
+ *  what made the rail's click land on the wrong card: the error is exactly the
+ *  number of turns paged out, so it is zero on a short chat. This function cannot
+ *  learn the absolute number — `projectTurns` is pure and DOM-free and the
+ *  absolute index only exists behind the rail's own fetch — which is why anything
+ *  addressing a turn ACROSS that boundary joins on the opening message id instead
+ *  (`turn-rail.ts` `keyOf` / `turnCard`).
+ *
+ *  Recorded because it is a trap rather than a defect: `router.ts` parses no
+ *  `#turn-` fragment at all (`parseHashLine` matches only `/^#L(\d+)/`), so the
+ *  documented `/chat/{id}#turn-{n}` permalink is aspirational. If it is ever built
+ *  it must resolve through the rail's index, or it inherits that exact bug. */
 export function turnAnchorID(n: number): string {
   return `turn-${String(n)}`;
 }
@@ -366,28 +387,78 @@ export function turnFaceProse(t: Turn): string {
   return "";
 }
 
-/** What a collapsed FAILED or INTERRUPTED turn shows as its output: the last
- *  event row's text — the error is the turn's real result. Falls back to the
- *  event kind's own words when the row carries no prose, and to "" for a turn
- *  that ended cleanly (the face shows the answer instead). */
-export function turnFaceError(t: Turn): string {
-  const o = t.outcome;
-  if (o !== "failed" && o !== "interrupted" && o !== "cancelled" && o !== "refused") {
+/** What a turn that did not end cleanly SAYS, in the words of whoever knows the
+ *  cause. "" for a clean or running turn, so a caller can read the empty string as
+ *  "there is nothing to report" without asking the severity again.
+ *
+ *  THIS FUNCTION IS THE FIX FOR A TURN THAT FAILED AND SAID NOTHING. Its
+ *  predecessor read the newest `event` row's text and nothing else, so a turn that
+ *  failed on the wire's own `turn_end` had no source at all: `closeWithOutcome`
+ *  wrote no prose and, when the turn had streamed something, wrote no event message
+ *  either. Measured on a live chat file: 26 blocks, a settled `failed` outcome,
+ *  three changed files — and no sentence anywhere in the record. The reader's only
+ *  account of it was a 12-second toast.
+ *
+ *  THIS NOTICE OWNS THE PROSE, and the body divider that used to repeat it does
+ *  not. One rule, stated here and at `messages-events.ts`'s `interrupted` entry:
+ *  the card-level notice is the account of WHY, a divider marks the BOUNDARY and
+ *  names its kind. The notice wins because it is present in BOTH fold states,
+ *  which is the same argument that moved it out of the collapsed face.
+ *
+ *  Three sources, in falling order of specificity, and each one exists because the
+ *  one above it is legitimately absent for some path:
+ *
+ *   1. The newest `interrupted` event row's content. This is the prompt-failure and
+ *      bridge-death path, where that row carries the upstream sentence, and it is
+ *      the most specific text available.
+ *   2. The carrier's own `turn_failure_reason`. The server stamps it beside
+ *      `turn_outcome` on the ONE message that finalized the turn, so it is there
+ *      whether or not a divider was written — which is what closes source 1's gap.
+ *   3. The outcome's default sentence. For every turn already on disk, which
+ *      carries neither: the population symptom 1 was reported against.
+ *
+ *  SOURCE 1 IS SCOPED TO `event_kind === "interrupted"`, and the scope is exact
+ *  rather than a heuristic: that is the only kind whose content is AUTHORED as the
+ *  turn's stop account (`closeAsInterrupted` passes `reason` as the row's content,
+ *  and `internal/command/prompt.go`'s respawn-failure site appends the same kind).
+ *  Unscoped, "the newest event row's content" reached five other kinds that persist
+ *  content which is NOT an account of the turn's stop, and each one is a distinct
+ *  wrong answer: `compaction_failed` and `infra_safety_blocked` make the notice
+ *  repeat their own divider's prose (item 7's defect again, one kind over),
+ *  `step_notice` attributes a workflow step's message to the turn's failure,
+ *  `model_switched` renders as a bare model id, and `compacted` renders THE WHOLE
+ *  CONVERSATION SUMMARY as a failure reason. (`cancelled` and `turn_outcome`
+ *  persist "" and were already skipped by the trim check.)
+ *
+ *  Nothing is lost for the population source 1 exists for. A `compaction_failed`
+ *  turn now falls through to source 2 (absent — that outcome is a client-side
+ *  inference with no carrier) and then to source 3, so the notice reads the
+ *  outcome's default sentence while the divider keeps the specific compaction
+ *  reason. Honest, and non-duplicating.
+ *
+ *  The event-kind humanisation the old version fell back to is gone with the need
+ *  for it: `defaultFailureReason` says the same thing in a sentence rather than
+ *  title-casing an enum member at a reader. */
+export function turnFailureText(t: Turn): string {
+  const severity = severityOf(t.outcome);
+  if (severity === "clean" || severity === "running") {
     return "";
   }
   for (let i = t.body.length - 1; i >= 0; i--) {
     const m = t.body[i];
-    if (m?.role !== "event") {
+    if (m?.role !== "event" || m.event_kind !== "interrupted") {
       continue;
     }
     const text = (m.content ?? "").trim();
     if (text !== "") {
       return text;
     }
-    const kind = (m.event_kind ?? "").replaceAll("_", " ");
-    if (kind !== "") {
-      return kind.charAt(0).toUpperCase() + kind.slice(1);
+  }
+  for (let i = t.body.length - 1; i >= 0; i--) {
+    const reason = (t.body[i]?.turn_failure_reason ?? "").trim();
+    if (reason !== "") {
+      return reason;
     }
   }
-  return "";
+  return defaultFailureReason(t.outcome);
 }

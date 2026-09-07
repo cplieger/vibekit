@@ -15,7 +15,7 @@
 // `field-sizing: content` on its textarea, so without `contain: layout` a
 // keystroke shares a layout pass with whatever the transcript is doing.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
+import { loadCSS, mountAppCSS, ruleBody, ruleContaining } from "./__test-helpers__/css-rules.js";
 
 /** The selectors that carry the bulk, and the file each is authored in. */
 const BULK: readonly { selector: string; file: string }[] = [
@@ -64,12 +64,33 @@ describe("composer layout independence", () => {
   });
 
   it("carries the z-index its own stacking context makes necessary", () => {
-    // Layout containment makes the bar a stacking context, which would otherwise
-    // paint the pill cards that open out of it below `.chat-toolbar`.
+    // Layout containment makes the bar a stacking context, and a NON-POSITIONED
+    // stacking context paints with the in-flow content — so the pill cards that
+    // open upward out of this box (`bottom: 100%`, up to `min(26rem, 55dvh)`)
+    // would paint under `.chat-toolbar`, which is opaque and spans the same
+    // column. `position: relative` plus a positive z-index puts the whole bar in
+    // the positioned layer instead, above the content layer the toolbar paints in.
+    //
+    // THE TOOLBAR IS THE OTHER HALF OF THAT ORDER, AND THE CHECK IS NEGATIVE NOW.
+    // It used to be a floating `position: absolute` pill at z-index 10, so this
+    // rule's 10 existed to MATCH it and leave the two to a DOM-order tie. It is a
+    // full-width in-flow bar since the title-bar rewrite (12-chat.css): static,
+    // with no stacking level of its own, so it paints in the content layer and any
+    // positioned z-index above 0 clears it. What must not come back silently is a
+    // toolbar that COMPETES — re-floating it puts an opaque bar back over the
+    // cards, and the pairing has to be re-derived rather than inherited from a
+    // number that happened to match.
     const body = form();
     expect(body).toMatch(/position:\s*relative\s*;/u);
     expect(body).toMatch(/z-index:\s*10\s*;/u);
-    expect(ruleBody(loadCSS("12-chat.css"), ".chat-toolbar")).toMatch(/z-index:\s*10\s*;/u);
+    // `ruleContaining` rather than `ruleBody`: a negative assertion has to run
+    // against a comment-free body, and this one also pins that there is exactly
+    // one top-level `.chat-toolbar` rule to read.
+    const toolbar = ruleContaining(loadCSS("12-chat.css"), ".chat-toolbar", "top").body;
+    expect(toolbar, "the toolbar claims no stacking level of its own").not.toMatch(/z-index:/u);
+    expect(toolbar, "and stays in flow, under the positioned composer").not.toMatch(
+      /position:\s*(?:absolute|fixed|sticky)/u,
+    );
   });
 
   it("does not put the containment on the bottom bar every view shares", () => {

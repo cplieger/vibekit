@@ -8,14 +8,26 @@
 // the one fact that explains it (a repeat's bound, a parallel's join policy, a
 // watch's condition), from `nodePlan`.
 //
+// HIERARCHY IS A BOX, not an indent. A top-level container gets `.ev-group` — a
+// bordered box whose own row is its filled header — and its direct children sit
+// inside it unindented, because the box already says they are its. Only a
+// sub-sub-item (depth >= 2) indents, and it takes the `↳` glyph as well.
+//
 // SELECTION, not disclosure: unfolding a step in place pushes every later row
 // down, moving what a live-run reader is watching. Containers still collapse
-// (hiding a finished loop's twelve passes is a real want).
+// (hiding a finished loop's twelve passes is a real want), and a STEP never does —
+// `paint` hides a childless row's chevron, which is what keeps it non-collapsible.
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
-import { ICON_REFRESH, ICON_GIT_BRANCH, ICON_HOURGLASS, ICON_TAB_AGENT } from "../icons.js";
+import {
+  ICON_REFRESH,
+  ICON_GIT_BRANCH,
+  ICON_HOURGLASS,
+  ICON_TAB_AGENT,
+  ICON_TAB_SUBTAB,
+} from "../icons.js";
 import { formatElapsed } from "../strings.js";
 import { elapsed, type ExecNode } from "./model.js";
 import { STATE_WORD, paintStateMark, type ExecState } from "./status.js";
@@ -54,6 +66,7 @@ interface Row {
   dur: HTMLElement;
   glyph: HTMLElement;
   kindSlot: HTMLElement;
+  nest: HTMLElement;
   chevron: HTMLElement;
   kids: HTMLElement | null;
   start?: string;
@@ -81,11 +94,22 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     // an element carrying `role="treeitem"` plus a click handler is axe's
     // `nested-interactive`, and `aria-hidden` does not clear it.
     const chevron = el("span", { className: "ev-twist", "aria-hidden": "true" }, chevronEl());
+    // The sub-sub-item marker: the tab strip's own nesting glyph in the tab strip's
+    // own carrier shape. `aria-hidden` because the row's `aria-label` already states
+    // the structure, and NOT a `.tab-icon`-style affordance — a row's position is
+    // its parent's.
+    const nest = el(
+      "span",
+      { className: "ev-nest", "aria-hidden": "true" },
+      iconEl(ICON_TAB_SUBTAB),
+    );
+    nest.hidden = depth < 2;
 
     const head = el(
       "div",
       { className: "ev-row-main" },
       chevron,
+      nest,
       glyph,
       kindSlot,
       el("span", { className: "ev-text" }, label, sub),
@@ -97,7 +121,10 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
       tabindex: "-1",
       "data-path": node.path,
     });
-    rowRoot.style.setProperty("--ev-depth", String(depth));
+    // Depth 0 and depth 1 both indent by ZERO: a top-level container is a bordered
+    // box (`.ev-group`) and its direct children sit inside it, so the box carries the
+    // hierarchy. A sub-sub-item gets one `--sp-3` step per level past 1.
+    rowRoot.style.setProperty("--ev-depth", String(depth >= 2 ? depth - 1 : 0));
     rowRoot.appendChild(head);
 
     const row: Row = {
@@ -107,6 +134,7 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
       dur,
       glyph,
       kindSlot,
+      nest,
       chevron,
       kids: null,
       collapsed: false,
@@ -152,6 +180,9 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     row.sub.hidden = (node.subtitle ?? "") === "";
     row.root.dataset["state"] = node.state;
     row.root.dataset["kind"] = node.kind;
+    // The GROUP BOX. Toggled rather than added, because `paint` re-runs for the same
+    // reconciled row and a node gains children as the run progresses.
+    row.root.classList.toggle("ev-group", depth === 0 && node.children.length > 0);
     paintStateMark(row.glyph, node.state);
     const kg = kindGlyph(node.kind);
     if (row.kindSlot.childElementCount === 0 && kg !== null) {
@@ -183,6 +214,8 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     if (node.children.length === 0) {
       row.kids?.remove();
       row.kids = null;
+      // THIS is what keeps a STEP non-collapsible: a childless row has no
+      // disclosure at all, so there is nothing to fold. Nothing here may change it.
       row.chevron.hidden = true;
       row.root.removeAttribute("aria-expanded");
       return;

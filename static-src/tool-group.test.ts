@@ -9,6 +9,7 @@ import {
   refreshGroupHeader,
   maybeCollapseGroup,
   autoCollapseGroup,
+  groupIsBare,
   formatDuration,
   summarizeSameKind,
   summarizeMCP,
@@ -298,8 +299,9 @@ describe("grouping amendments", () => {
     const running = groupWith(card("read", "ok"), card("read", "running"));
     const runningIcon = running.querySelector(".tool-group-icon");
     expect(runningIcon?.classList.contains("is-running")).toBe(true);
-    // No mark while the group runs: the members carry their own spinners, and the
-    // slot's reserved box is what keeps the summary text from shifting on settle.
+    // No SVG while the group runs, because there is no verdict to draw from the
+    // settled set. The state's own mark is the hollow ring `14-tools.css` puts on
+    // the slot, which `tool-group-mark-css.test.ts` measures.
     expect(runningIcon?.querySelector("svg")).toBeNull();
 
     const both = groupWith(card("read", "fail"), card("read", "running"));
@@ -318,13 +320,18 @@ describe("grouping amendments", () => {
     expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
   });
 
-  it("collapses when the run of consecutive calls ends, however short", () => {
-    // The positional rule: being superseded is what closes a group, so even a
-    // single settled call folds to its one-line summary when the next element
-    // is posted after it.
-    const g = groupWith(card("read", "ok"));
-    autoCollapseGroup(g);
-    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+  it("collapses a superseded run of two or more, and NEVER a bare one-call run", () => {
+    // The positional rule: being superseded is what closes a group. But a
+    // ONE-member group is bare — no header, no chrome — so its body region IS the
+    // lone card, and collapsing it would make that card vanish with nothing left
+    // to bring it back. It has no box to fold, so there is nothing to do.
+    const lone = groupWith(card("read", "ok"));
+    autoCollapseGroup(lone);
+    expect(lone.classList.contains("tool-group-auto-collapsed")).toBe(false);
+
+    const pair = groupWith(card("read", "ok"), card("read", "ok"));
+    autoCollapseGroup(pair);
+    expect(pair.classList.contains("tool-group-auto-collapsed")).toBe(true);
   });
 
   it("does not collapse a superseded group holding a failure", () => {
@@ -368,5 +375,57 @@ describe("grouping amendments", () => {
     maybeCollapseGroup(late);
     // The UI must not fight a reader who has taken control.
     expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The BARE state: a lone tool call gets no outer box and no group header. The
+// class is a pure function of the member count with one writer, so the assertions
+// below drive `refreshGroupHeader` (through `groupWith`) rather than setting it.
+// ---------------------------------------------------------------------------
+
+describe("a one-call run renders bare", () => {
+  it("carries the bare class at zero and one member, and drops it at two", () => {
+    const empty = buildToolGroupShell();
+    // Born bare: the header would otherwise paint for the frame between the shell
+    // being appended and its first card arriving.
+    expect(groupIsBare(empty)).toBe(true);
+
+    const lone = groupWith(card("read", "ok", "a.ts"));
+    expect(groupIsBare(lone)).toBe(true);
+    expect(lone.classList.contains("tool-group-bare")).toBe(true);
+
+    const pair = groupWith(card("read", "ok", "a.ts"), card("read", "ok", "b.ts"));
+    expect(groupIsBare(pair)).toBe(false);
+  });
+
+  it("comes BACK if a group ever drops to one member", () => {
+    // A pure function of the count has to be reversible in both directions, or the
+    // class is really a latch with a misleading name.
+    const g = groupWith(card("read", "ok", "a.ts"), card("read", "ok", "b.ts"));
+    expect(groupIsBare(g)).toBe(false);
+    groupBody(g).lastElementChild?.remove();
+    refreshGroupHeader(g);
+    expect(groupIsBare(g)).toBe(true);
+  });
+
+  it("still summarises and marks its outcome while bare", () => {
+    // The header is hidden, not absent — the summary and the verdict keep being
+    // written, so a group that GAINS a second member has nothing to catch up on.
+    const g = groupWith(card("read", "fail", "a.ts"));
+    expect(g.querySelector(".tool-group-count")?.textContent).toBe("Read 1 file: a.ts · 1 failed");
+    expect(g.dataset["outcome"]).toBe("fail");
+  });
+
+  it("makes maybeCollapseGroup a no-op on a bare group holding a failure", () => {
+    // A bare group is never collapsed, so the re-open half has nothing to re-open —
+    // and the lone card carries its own failure mark, which is the actionable
+    // signal a group header would have stood in for.
+    const g = groupWith(card("read", "fail"));
+    g.classList.add("tool-group-auto-collapsed");
+    maybeCollapseGroup(groupBody(g).firstElementChild as HTMLElement);
+    // Untouched: not re-opened, and not collapsed further.
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(g.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("true");
   });
 });

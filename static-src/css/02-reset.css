@@ -56,10 +56,6 @@
     color: var(--c-text-tertiary);
   }
 
-  :where(input, textarea, select) {
-    caret-color: var(--c-accent);
-  }
-
   :is(
     .steering-textarea,
     .auth-input,
@@ -125,11 +121,6 @@
     background-color: var(--c-accent);
     border-color: var(--c-accent);
     background-image: var(--img-dash-on-accent);
-  }
-
-  input[type="checkbox"]:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
   }
 
   body {

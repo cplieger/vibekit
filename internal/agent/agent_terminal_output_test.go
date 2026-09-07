@@ -198,11 +198,11 @@ func TestTerminalExited_IsOrderedAfterEveryOutputEvent(t *testing.T) {
 	}
 }
 
-// The live stream carries PLAIN text plus spans, and the sanitizer ORDER is what
-// makes that possible: sanitize.Output is SanitizeUnicode(StripANSI(s)) to a fixed
-// point, so calling it here deletes every escape before the parser sees one and every
-// chunk arrives unstyled. SanitizeUnicode alone keeps the hidden-Unicode defence and
-// leaves the escapes to the parser, which guarantees no ESC survives into the text.
+// The live stream carries PLAIN text plus spans, and the ORDER of the two sanitizers is what
+// makes that possible. sanitize.Output is SanitizeUnicode(StripANSI(s)), so calling it here
+// would delete every escape before the parser saw one and every chunk would arrive unstyled.
+// SanitizeUnicode alone keeps the hidden-Unicode defence and leaves the escapes for the
+// parser, whose own guarantee is that no ESC survives into the text.
 func TestTerminalEmitter_ParsesStylingAndStillStripsHiddenUnicode(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	term := newAgentTerminal(nil, "c1", 4096)
@@ -727,11 +727,11 @@ func stageTerminal(h *Runtime, id string, chatID vibekit.ChatID) {
 	h.agentTerms.byChatID[chatID] = append(h.agentTerms.byChatID[chatID], id)
 }
 
-// A turn count advanced only from the PROMPT path is never moved by a turn the wire
-// started, so an agent-initiated turn's `npm run dev` ends up sharing the next
-// prompted turn's epoch and the user's cancel kills a background process nobody asked
-// to stop. The WINNING closer publishes the boundary, so a turn vibekit did not prompt
-// moves it exactly as a prompted one does.
+// TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals: the registry's own turn count
+// was advanced from the PROMPT path only, so no wire-started turn ever moved it — an
+// agent-initiated turn spawning `npm run dev` shared its count with the next prompted turn,
+// and cancelling that prompt killed a background process nobody asked to stop. Nothing here
+// names the registry's boundary on purpose: the WINNING closer publishes it, whoever opened.
 func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	ctx := t.Context()
@@ -741,7 +741,7 @@ func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 	stageTerminal(h, "agent-bg", "c1")
 
 	// It ends on the wire's own bracket — no prompt wrapper anywhere on this path.
-	h.coord.WireTurnEnd(ctx, "c1", vibekit.StopReasonEndTurn)
+	h.coord.WireTurnEnd(ctx, "c1", vibekit.StopReasonEndTurn, "")
 
 	// The user's next turn, with a command of its own.
 	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)

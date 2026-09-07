@@ -1,11 +1,14 @@
-// Package wirespec is the single source of truth for vibekit's wire contract:
-// the registered wire types, the enums, the TS-name and path-name overrides, and
-// the SSE event→decoder table that cmd/wire-codegen feeds into wiregen to emit
+// Package wirespec is the single source of truth for vibekit's wire contract: the
+// registered wire types, the enums, the TS-name and path-name overrides, and the
+// SSE event→decoder table cmd/wire-codegen feeds into wiregen to emit
 // static-src/wire/{types,decoders,registry}.gen.ts.
 //
 // wiregen is a BUILD-TIME-ONLY dependency: this package is imported by
-// cmd/wire-codegen and by tests, never by the server runtime, because importing
-// it there would pull go/packages and golang.org/x/tools into the binary.
+// cmd/wire-codegen and by tests, never by the server runtime, or go/packages and
+// golang.org/x/tools would enter the server binary.
+//
+// There is deliberately NO endpoint table: vibekit generates neither a typed client
+// nor Go path constants, so one here would be an unverified copy of the routing.
 package wirespec
 
 import (
@@ -19,8 +22,7 @@ import (
 )
 
 // wireTypes is every Go type the generator emits a TypeScript declaration for.
-// Order is significant: the generator emits in slice order, so a type must be
-// declared before any type that references it.
+// ORDER IS SIGNIFICANT: a type must be declared before any type referencing it.
 var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.ToolLocation](),
 	wiregen.TypeRef[vibekit.ToolDiff](),
@@ -47,6 +49,10 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.SessionMode](),
 	wiregen.TypeRef[vibekit.SessionModel](),
 	wiregen.TypeRef[vibekit.SessionEffortLevel](),
+	// Registered so the pre-session catalog fetch reads a GENERATED decoder rather
+	// than an unchecked cast: `modes` was read as `d.modes.length` with nothing
+	// behind the claim, so `modes: null` was a TypeError inside the boot path.
+	wiregen.TypeRef[vibekit.ConfigTemplateResponse](),
 	wiregen.TypeRef[vibekit.ChatHeader](),
 	wiregen.TypeRef[vibekit.PermissionOption](),
 	wiregen.TypeRef[vibekit.ApprovalFile](),
@@ -110,6 +116,12 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.ToolCatalogInfo](),
 	wiregen.TypeRef[vibekit.Recipe](),
 	wiregen.TypeRef[vibekit.RecipesResponse](),
+	// GET /api/sessions. Registered so the History picker reads the per-list
+	// verdicts through a decoder: they had no client reader at all, so "nothing to
+	// resume" and "the read failed" rendered identically.
+	wiregen.TypeRef[vibekit.ResumableSession](),
+	wiregen.TypeRef[vibekit.WorkflowRun](),
+	wiregen.TypeRef[vibekit.SessionListResponse](),
 	// Before LiveRunsResponse, which references it.
 	wiregen.TypeRef[vibekit.LiveRun](),
 	wiregen.TypeRef[vibekit.LiveRunsResponse](),
@@ -118,8 +130,8 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.RunRetriedResponse](),
 	wiregen.TypeRef[vibekit.RunLaunchRequest](),
 	wiregen.TypeRef[vibekit.RunLaunchedResponse](),
-	// A request body the client composes: generated, not hand-mirrored, so a
-	// field rename cannot land on one side only.
+	// A request shape the client composes: generated rather than hand-mirrored, so
+	// a field rename cannot land on one side only.
 	wiregen.TypeRef[vibekit.RunAnswerRequest](),
 	wiregen.TypeRef[vibekit.RunStartedPayload](),
 	wiregen.TypeRef[vibekit.RunProgressPayload](),
@@ -127,13 +139,16 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.RunStepPayload](),
 	wiregen.TypeRef[vibekit.RunInputNeededPayload](),
 	wiregen.TypeRef[vibekit.RunInputSettledPayload](),
+	// GET /api/runs/{id}/steps/{path...}. No field carries omitempty, so `state` is
+	// a REQUIRED TypeScript field and a reader cannot invent "assume ready".
+	wiregen.TypeRef[vibekit.RunStepTranscript](),
 	wiregen.TypeRef[vibekit.ToolJobChangedPayload](),
 	wiregen.TypeRef[vibekit.ToolJobOutputPayload](),
 	wiregen.TypeRef[vibekit.TerminalCreatedPayload](),
 	wiregen.TypeRef[vibekit.TerminalOutputPayload](),
 	wiregen.TypeRef[vibekit.TerminalExitedPayload](),
-	// Generated rather than mirrored: every field is required on both sides, which
-	// is what lets the client hold no defaults of its own.
+	// GET /api/settings. Every field is required on both sides (no omitempty),
+	// which is what lets the client hold no defaults of its own.
 	wiregen.TypeRef[vibekit.EffectiveSettings](),
 	wiregen.TypeRef[forges.ConfiguredForge](),
 	wiregen.TypeRef[forges.Repo](),
@@ -149,26 +164,38 @@ var wireTypes = []wiregen.WireType{
 }
 
 // wireEnums names the string enums to emit; values are auto-discovered from each
-// type's const block. Transport stays explicit because it lives in internal/mcp,
-// which discovery does not scan.
+// type's const block. Transport stays explicit: it lives in internal/mcp, which is
+// not a registered-type root package, so discovery does not scan it.
 var wireEnums = map[string]wiregen.EnumDef{
 	"Role": {}, "EventKind": {}, "ToolKind": {}, "ToolStatus": {},
 	"PlanStatus": {},
 	"StopReason": {}, "ErrorCode": {}, "Kind": {}, // forges.Kind → ForgeKind
-	// Derived in BOTH languages (deriveTurnOutcome and turns.ts), so a
-	// hand-written union would be a second spelling of one vocabulary.
-	"TurnOutcome":  {},
+	// The rule producing it is implemented in BOTH languages, so a hand-written
+	// client union would be a second enumeration of one vocabulary.
+	"TurnOutcome": {},
+	// Five client surfaces BRANCH on it, and those branches must be total over the
+	// vocabulary.
+	"TurnSeverity": {},
 	"SafetyStatus": {},
 	// The client's label switch over it must be TOTAL.
-	"SteerOrigin":      {},
-	"RunProgressKind":  {},
-	"DecisionKind":     {},
-	"SettledBy":        {},
-	"AlwaysAllowBlock": {},
-	// One definition across both languages: this makes TabSubject.kind a TabKind,
-	// so an unknown kind fails the generated decoder instead of reaching the
-	// client's factory, which is TOTAL by contract.
+	"SteerOrigin":     {},
+	"RunProgressKind": {},
+	// Registered for CatalogState's reason below.
+	"RunStepTranscriptState": {},
+	"DecisionKind":           {},
+	"SettledBy":              {},
+	"AlwaysAllowBlock":       {},
+	// So the nine kinds have ONE definition across both languages. It was a
+	// hand-written union in tabs.ts, so a kind added server-side reached a client
+	// switch with no case for it and no build error anywhere, and TabSubject.kind
+	// now fails the generated decoder at the boundary instead.
 	"TabKind": {},
+	// The client BRANCHES on the verdict to decide whether to retry and what to
+	// say, so a value it has no case for is the failure the type prevents.
+	"CatalogState":  {},
+	"CatalogReason": {},
+	// Registered for CatalogState's reason: the History picker branches on it.
+	"ReadState": {},
 	// The client's branch over it must be TOTAL: "vibekit could not ask" has to
 	// render a retry rather than a sign-in prompt.
 	"WhoamiState": {},
@@ -191,9 +218,9 @@ var pathNameOverrides = map[string]string{
 // typeMessage is named because 3 SSE events decode to vibekit.Message.
 const typeMessage = "Message"
 
-// sseEvents binds each SSE event type to the registered struct its payload
-// decodes as. Every TypeName here must appear in wireTypes and every payload
-// there must appear here; both directions are asserted by test.
+// sseEvents binds each SSE event type to the registered struct its payload decodes
+// as. Both directions are asserted by
+// TestRegistry_EveryRegisteredPayloadHasAnSSEBinding.
 var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "chat_created", TypeName: "ChatHeader"},
 	{EventType: "chat_deleted", TypeName: "ChatDeletedPayload"},
@@ -234,6 +261,7 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "steer_injected", TypeName: "SteerInjectedPayload"},
 	{EventType: "steer_cleared", TypeName: "SteerClearedPayload"},
 	{EventType: "agent_notice", TypeName: "AgentNoticePayload"},
+	// The agent-terminal trio.
 	{EventType: "terminal_created", TypeName: "TerminalCreatedPayload"},
 	{EventType: "terminal_output", TypeName: "TerminalOutputPayload"},
 	{EventType: "terminal_exited", TypeName: "TerminalExitedPayload"},
@@ -242,15 +270,16 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "tabs_changed", TypeName: "TabsChangedPayload"},
 }
 
-// Registry returns the fully-populated wiregen registry: the generator options
-// plus the declarative tables above. The tables are CLONED, not aliased — the
-// generator may reorder or extend what it is given, and one call must not mutate
-// what the next one reads.
+// Registry returns the fully-populated wiregen registry: the generator options plus
+// the declarative tables above.
+//
+// The tables are CLONED rather than aliased: the generator is free to reorder or
+// extend what it is given, and this package's own tests call Registry() twice.
 func Registry() *wiregen.Registry {
 	r := wiregen.NewRegistry(
 		wiregen.WithValidatorsImport("../validators.js"),
-		// Library-owned generated output: Generate rewrites it every run, so never
-		// hand-edit it.
+		// Library-owned generated output: Generate rewrites it next to the
+		// hand-written source on every run. Never hand-edit it.
 		wiregen.WithValidatorsFile("../validators.ts"),
 		wiregen.WithBusImport("../bus.js"),
 		wiregen.WithHeaderComment("// CODE-GENERATED by cmd/wire-codegen, DO NOT EDIT.\n\n"),

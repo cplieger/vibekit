@@ -1,7 +1,7 @@
 package vibekit
 
-// Chat domain types: the persisted and over-the-wire chat shapes the store,
-// agent, bridge and push packages operate on.
+// Chat domain types: the persisted and over-the-wire shapes for session state,
+// messages, tool calls, plans, usage and session modes/models.
 
 import (
 	"encoding/json"
@@ -29,30 +29,33 @@ const (
 	EventCompacted     EventKind = "compacted"      // kiro-cli's native /compact, carries summary
 	EventCompactFailed EventKind = "compaction_failed"
 	// EventInfraSafetyBlocked marks an ENFORCE-mode Infrastructure-Safety refusal:
-	// KAS blocked the tool call upstream, so nothing was written. Persisted as a
-	// permanent inline event, and Content carries the violated safety properties.
+	// KAS blocked the tool call upstream, so nothing was written. Persisted rather
+	// than bannered so the refusal is part of the transcript; Content carries the
+	// violated safety properties.
 	EventInfraSafetyBlocked EventKind = "infra_safety_blocked"
 	// EventTurnOutcome is the CARRIER for a turn that emitted nothing: with no
-	// assistant message there is nowhere else to stamp TurnOutcome. Persisted only
-	// when no other marker carries the outcome and that outcome is not `completed`.
+	// assistant message there is nowhere else to stamp TurnOutcome, so a failed or
+	// refused empty turn would read `completed` on reload. Persisted only when no
+	// other marker carries the outcome and only when it is not `completed`, since a
+	// row that changes no reading is one the transcript does not need.
 	EventTurnOutcome EventKind = "turn_outcome"
-	// EventStepNotice is a message a workflow STEP sent into the chat that launched
-	// its run, replayed off KAS's durable copy. That copy persists as a steer-source
-	// user row, so without this kind it replays as a USER BUBBLE. Not dropped the way
-	// a progress row is: it is the only durable copy of a question the ask registry
-	// holds in memory.
+	// EventStepNotice is a message a workflow STEP sent into its launching chat.
+	// KAS keeps it as `{type:"user", source:"steer"}`, which without this kind
+	// replays as a user bubble — the transcript then claims the reader typed the
+	// step's own question. Not dropped like a workflow-progress row: that row is
+	// machine state, this is the only durable copy of the question.
 	EventStepNotice EventKind = "step_notice"
 )
 
-// ToolKind identifies the category of a tool invocation. Values are assigned by
-// kiro-cli and flow through the ACP protocol unchanged.
+// ToolKind identifies the category of a tool invocation, assigned by kiro-cli and
+// flowing through ACP unchanged.
 type ToolKind string
 
-// ToolKindExecute and the following constants classify tool invocations. KAS v3
-// emits only read/edit/delete/move/search/execute/think/fetch/switch_mode/other;
-// the rest are retained because they back WorkingLabelForKind's label table and
-// keep older persisted chat files renderable. Hook activity arrives as kind
-// "other" tagged _meta.kiro.hookAsk, NOT ToolKindHook (see translate.ACPKiroMeta).
+// ToolKindExecute and the following constants define the valid ToolKind values.
+// KAS v3 emits only read/edit/delete/move/search/execute/think/fetch/switch_mode/
+// other; the rest are retained because they back WorkingLabelForKind's label table
+// and keep older persisted chat files renderable. Hook activity arrives as kind
+// "other" tagged _meta.kiro.hookAsk, NOT ToolKindHook.
 const (
 	ToolKindExecute    ToolKind = "execute"
 	ToolKindShell      ToolKind = "shell"
@@ -94,49 +97,52 @@ const (
 	ACPUpdateToolUpdate   ACPUpdateKind = "tool_call_update"
 	ACPUpdatePlan         ACPUpdateKind = "plan"
 	ACPUpdateModeChange   ACPUpdateKind = "current_mode_update"
-	// ACPUpdateSessionInfo and the two below are v3 (KAS) sub-kinds: v3 moves
-	// context-usage stats into session/update. available_commands_update arrives too
-	// and is deliberately NOT decoded — the catalog has no consumer.
+	// ACPUpdateSessionInfo and the two below are v3 (KAS) sub-kinds.
+	// available_commands_update arrives too and is deliberately NOT decoded: an
+	// unhandled sub-kind falls through handleSessionUpdate silently, and the
+	// slash-command catalog has no consumer.
 	ACPUpdateSessionInfo ACPUpdateKind = "session_info_update"
 	// ACPUpdateConfigOption carries the live model/mode/effort catalog;
-	// ACPUpdateUsage carries context-window usage. Both v3-only (KAS 2.12).
+	// ACPUpdateUsage carries context-window usage. Both v3-only.
 	ACPUpdateConfigOption ACPUpdateKind = "config_option_update"
 	ACPUpdateUsage        ACPUpdateKind = "usage_update"
 )
 
 // BlockType discriminates content blocks in an assistant message's chronological
-// content array. Mirrors Anthropic's `content_block.type` from the Messages API.
+// content array, mirroring Anthropic's `content_block.type` so text, tool calls and
+// thinking traces render inline as the agent emits them.
 type BlockType string
 
 const (
 	// BlockText is a markdown text segment from the agent.
 	BlockText BlockType = "text"
-	// BlockToolUse is a tool invocation. Only the ToolCallID is in the block; the
-	// full ToolCall lives in Message.ToolCalls, so a status update skips the array.
+	// BlockToolUse is a tool invocation. Only the ToolCallID is here; the full
+	// ToolCall lives in Message.ToolCalls, so a status update touches no block.
 	BlockToolUse BlockType = "tool_use"
 	// BlockThinking is an extended-thinking trace segment.
 	BlockThinking BlockType = "thinking"
 )
 
-// Block is one entry in an assistant message's chronological content array.
-// Within ONE agent's stream, position IS the order that agent emitted the block,
-// so the client renders text and tools inline as they happened.
+// Block is one entry in an assistant message's chronological content array. Within
+// ONE agent's stream, position IS emission order, so the client renders inline.
 //
 // ACROSS streams it is NOT a global chronology: a parent and its delegates share
-// one array, and internal/buffer extends the newest block of the delta's OWN
-// subtask. Order is per AgentSubtaskID. Messages persisted before this field
-// existed have Blocks=nil, and renderers fall back to Content + ToolCalls.
+// one array and internal/buffer extends the newest block of the delta's OWN
+// subtask, so a parent delta can land BEHIND a delegate's block. Order is per
+// AgentSubtaskID; Content carries arrival order. Nil on a message persisted
+// before the field existed, where a renderer falls back to Content + ToolCalls.
 type Block struct {
 	// Type is the discriminator: text | tool_use | thinking.
 	Type BlockType `json:"type"`
-	// Text carries the markdown text for Type=BlockText, accumulated across chunks.
+	// Text is the markdown for Type=BlockText, accumulated across the
+	// MessageChunkPayload events targeting this block index.
 	Text string `json:"text,omitempty"`
 	// Thinking carries the reasoning text for Type=BlockThinking.
 	Thinking string `json:"thinking,omitempty"`
-	// ToolCallID references a tool in Message.ToolCalls for Type=BlockToolUse.
+	// ToolCallID references a Message.ToolCalls entry for Type=BlockToolUse.
 	ToolCallID string `json:"tool_call_id,omitempty"`
-	// AgentSubtaskID is the subtask id of the agent that produced this block ("" =
-	// top-level), from _meta.kiro.agentSubtaskId; lets the client render it nested.
+	// AgentSubtaskID is the subtask id of the agent that produced this block, ""
+	// for the top-level one. It is what lets the client nest a subagent's blocks.
 	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
 }
 
@@ -226,27 +232,27 @@ type ToolCallBulk struct {
 	Input       json.RawMessage `json:"input,omitempty"`
 }
 
-// TextSpan styles the half-open range [Start,End) of a sibling text field.
+// TextSpan styles the half-open range [Start,End) of a sibling text field. It
+// mirrors internal/ansitext.Span, and the wire type lives here because that package
+// stays a stdlib-only leaf that knows nothing about the wire.
 //
-// It mirrors internal/ansitext.Span; the wire type lives here because
-// internal/vibekit owns every shape codegen projects into TypeScript. Attrs values
-// match web-terminal-engine's vt.WireRun.A, but the COLOUR encoding deliberately
-// differs: a palette INDEX survives into a persisted chat file without baking
-// today's theme into it, and the transcript's palette is CSS custom properties.
+// Attrs matches web-terminal-engine's vt.WireRun.A so both renderers share one
+// attribute vocabulary. The COLOUR encoding deliberately differs: a palette INDEX
+// survives into a persisted chat file without baking today's theme into it.
 type TextSpan struct {
-	// Start is the inclusive offset into the styled text, in UTF-16 CODE UNITS
-	// rather than bytes, because the consumer indexes with JavaScript string
-	// offsets. A byte offset would point mid-character on any box-drawing glyph.
+	// Start is the inclusive offset in UTF-16 CODE UNITS, not bytes, because the
+	// consumer indexes with JavaScript string offsets: a byte offset would point
+	// mid-character the moment output carried a box-drawing glyph or accented name.
 	Start int `json:"start"`
 	// End is the exclusive offset into the styled text, in UTF-16 code units.
 	End int `json:"end"`
-	// FG is the foreground colour: -1 for default, 0-255 for a palette index,
-	// or 0x1000000|RGB for 24-bit colour.
+	// FG is the foreground colour: -1 default, 0-255 a palette index, or
+	// 0x1000000|RGB for 24-bit.
 	FG int32 `json:"fg"`
 	// BG is the background colour, encoded like FG.
 	BG int32 `json:"bg"`
-	// Attrs is a bitfield: 1=bold, 2=italic, 4=underline, 8=inverse, 16=strike,
-	// 32=dim, 64=hidden, 128=blink, 256=overline, 512=double-underline.
+	// Attrs is a bitfield: 1 bold, 2 italic, 4 underline, 8 inverse, 16 strike,
+	// 32 dim, 64 hidden, 128 blink, 256 overline, 512 double-underline.
 	Attrs uint16 `json:"attrs"`
 }
 
@@ -258,11 +264,9 @@ type ToolDisclosed struct {
 	URI         string `json:"uri"`
 }
 
-// ToolDenial is the policy verdict that refused a tool call.
-//
-// Rule is the load-bearing field: a denial that names its rule is one click from
-// editing it. Scope and Source say WHERE the rule lives (user or workspace
-// `permissions.yaml`).
+// ToolDenial is the policy verdict that refused a tool call. Rule is the
+// load-bearing field — a denial naming its rule is one click from editing it — and
+// Scope plus Source say which `permissions.yaml` to open.
 type ToolDenial struct {
 	Rule       *ToolDenialRule `json:"rule,omitempty"`
 	Capability string          `json:"capability"`
@@ -281,13 +285,13 @@ type ToolDenialRule struct {
 }
 
 // ToolCheckpoint is KAS's pre/post-image mapping for one file write, persisted
-// verbatim so a diff is a snapshot read plus a file read with no derivation.
+// verbatim so a diff is a snapshot read plus a file read. Original and Modified are
+// opaque `kiro-snapshot-v2://` handles, NOT filesystem paths, deliberately unparsed.
 //
-// Original and Modified are `kiro-snapshot-v2://…` URIs — opaque handles, NOT
-// filesystem paths, deliberately stored unparsed; Local is a `file://` URI. All
-// three are independently optional and a consumer must tolerate any subset
-// (probed 2026-08-02, kiro-cli 2.16.0): a CREATE has no pre-image. Granularity is
-// per-file-write, so multi-file attribution is not recoverable from this field.
+// ALL THREE FIELDS ARE INDEPENDENTLY OPTIONAL and a consumer must tolerate any
+// subset: a file CREATE has no pre-image, so code treating this as a fixed triplet
+// breaks on the first file the agent creates. Granularity is per-file-write, so
+// multi-file attribution must not be inferred from it.
 type ToolCheckpoint struct {
 	// Original is the pre-image snapshot URI. Empty on a file creation.
 	Original string `json:"original,omitempty"`
@@ -297,44 +301,41 @@ type ToolCheckpoint struct {
 	Local string `json:"local,omitempty"`
 }
 
-// ToolLocation is a file path (and optional line) the agent is working with, from
-// kiro-cli's tool_call and tool_call_update notifications.
+// ToolLocation is a file path, and optional line, the agent is working with. The
+// editor scrolls to it.
 type ToolLocation struct {
 	Path string `json:"path"`
 	Line int    `json:"line,omitempty"`
 }
 
 // ToolDiff is a before/after text change from a write tool call. Path is
-// workspace-relative (agent.relPath normalises kiro-cli's absolute paths).
+// workspace-relative; agent.relPath normalises it on the way in.
 //
-// OldText/NewText carry the WHOLE FILE for KAS's edit tools, and a hunk pair is
-// also accepted, so a consumer must DIFF the two sides rather than count their
-// newlines: counting reported a whole file removed and re-added for a one-line
-// edit. internal/buffer/linediff.go is the one line-delta primitive, twinned by
-// diff.ts's lineDelta.
+// OldText/NewText carry the WHOLE FILE for KAS's edit tools (325 of 413 persisted
+// fragments measured whole-file shaped), and a hunk pair is also accepted, so a
+// consumer must DIFF the two sides rather than count newlines — counting reported a
+// one-line edit as the entire file removed and re-added.
 type ToolDiff struct {
 	Path    string `json:"path"`
 	OldText string `json:"old_text,omitempty"`
 	NewText string `json:"new_text"`
 }
 
-// CodeReference is one licensed-code attribution surfaced by the agent (v3/KAS
-// _kiro/code_references), emitted when a completion reproduces a recognizable
-// chunk of a referenced open-source file.
+// CodeReference is one licensed-code attribution, emitted when a completion
+// reproduces a recognizable chunk of a referenced open-source file.
 //
-// The KAS ACP layer drops the recommendationContentSpan upstream, so there is no
-// span to map a reference to a message region: attributions are turn-scoped.
+// KAS drops CodeWhisperer's recommendationContentSpan upstream, so there is no span
+// to map a reference to a message region: attributions are TURN-scoped.
 type CodeReference struct {
 	LicenseName string `json:"license_name"`
 	Repository  string `json:"repository,omitempty"`
 	URL         string `json:"url,omitempty"`
 }
 
-// RefusalInfo is the structured refusal metadata KAS attaches when the model
-// declines to continue (modelStopReason "content_filtered"; kiro-cli 2.13+). The
-// explanation text streams as ordinary assistant content, so only the
-// classification fields are kept here. RecommendedModel, when set, names a model
-// the service suggests switching to.
+// RefusalInfo is the refusal metadata KAS attaches when the model declines to
+// continue a conversation, and the turn then ends with stopReason "refusal". The
+// explanation streams as ordinary assistant content, so only the classification is
+// kept here; persisted so the callout survives reload.
 type RefusalInfo struct {
 	Category         string `json:"category,omitempty"`
 	RecommendedModel string `json:"recommended_model,omitempty"`
@@ -360,35 +361,40 @@ type PlanEntry struct {
 // Message is one entry in a chat transcript. Tool calls are embedded in assistant
 // messages, not standalone; an event message carries an EventKind.
 type Message struct {
-	// ChangedFiles is part of the per-turn summary shown in the assistant turn's
-	// footer, set on the final assistant message at turn_ended so the footer survives
-	// reload. (Field order in this struct is fieldalignment-optimal, not logical.)
+	// ChangedFiles is part of the per-turn footer summary, set on the final assistant
+	// message at turn_ended so the footer survives reload. Field order in this struct
+	// is govet-fieldalignment-optimal, not logical.
 	ChangedFiles map[string]*FileChange `json:"changed_files,omitempty"`
 	Role         Role                   `json:"role"`
 	Content      string                 `json:"content,omitempty"`
-	// Reasoning is the agent's thinking trace for this turn, persisted on the same
-	// message so the one-message-per-turn invariant holds.
+	// Reasoning is the agent's thinking trace, a parallel stream alongside Content.
+	// On the same message so the one-message-per-turn invariant holds.
 	Reasoning string    `json:"reasoning,omitempty"`
 	EventKind EventKind `json:"event_kind,omitempty"`
 	ID        string    `json:"id"`
-	// TurnOutcome is how this turn ENDED, stamped on the message that finalized it —
-	// the last assistant message, or an EventTurnOutcome marker when the turn emitted
-	// nothing. Its presence is also what CLOSES a turn for the two turn projections:
-	// the next message after it opens a new segment. A message persisted before this
-	// field existed carries none, so those turns never close.
+	// TurnOutcome is how this turn ENDED, stamped on the message that finalized
+	// it: the durable half of a fact otherwise carried only by the live
+	// turn_ended SSE. Its presence also CLOSES a turn for both projections, so an
+	// older message never closes one.
 	TurnOutcome TurnOutcome `json:"turn_outcome,omitempty"`
-	// TurnStopReasonRaw is the wire's stop reason verbatim. Kept because the enum is
-	// OPEN — KAS exceeds ACP spec v1's closed union — so an unmeasured value survives
-	// in the record. No consumer may branch on it; TurnOutcome is what they read.
+	// TurnStopReasonRaw is the wire's stop reason verbatim, kept because the enum is
+	// OPEN: an unmeasured value stays recoverable rather than flattened to `unknown`.
+	// No consumer may branch on it; TurnOutcome is what they read.
 	TurnStopReasonRaw StopReason `json:"turn_stop_reason_raw,omitempty"`
-	// TurnModel is the model that answered this turn, stamped at turn_ended. It
-	// belongs on the MESSAGE because the chat's Model is the CURRENT one: reading
-	// that at render time would relabel every historical turn on a model switch.
+	// TurnFailureReason is WHY the turn ended badly, stamped by the same code that
+	// stamps TurnOutcome so exactly one persisted message per turn carries both.
+	//
+	// Sanitized and byte-capped at the write, because its usual source is the
+	// agent's own text. Absent on older records, so the client keeps a per-outcome
+	// default.
+	TurnFailureReason string `json:"turn_failure_reason,omitempty"`
+	// TurnModel is the model that answered this turn. It belongs on the MESSAGE and
+	// not only on the Chat, whose Model is the CURRENT one: rendering that would
+	// relabel every historical turn the moment the user switched models.
 	TurnModel string     `json:"turn_model,omitempty"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
-	// Blocks is the chronologically-ordered content array, each block stamped with an
-	// agent_subtask_id. The canonical render model: the client normalizes legacy
-	// Content/ToolCalls into Blocks on replay so there is a single render path.
+	// Blocks is the canonical render model, in emission order. The client normalizes
+	// legacy Content/ToolCalls into Blocks on replay so there is a single render path.
 	Blocks []Block `json:"blocks,omitempty"`
 	// CodeReferences carries licensed-code attributions the agent flagged during
 	// this turn. Turn-scoped: the wire carries no span.
@@ -398,21 +404,22 @@ type Message struct {
 	// and recommended model the client's refusal callout renders.
 	Refusal *RefusalInfo `json:"refusal,omitempty"`
 	Plan    []PlanEntry  `json:"plan,omitempty"`
-	// Attachments are the files the user attached to THIS prompt, stamped on the user
-	// message so a sent turn can render them as pills. It has to live on the record:
-	// BuildPromptBlocks folds each one into a content block on the way OUT, so by
-	// read time nothing else recovers the list. Absent on a turn opened by a steer,
-	// which takes a plain string and carries no structured attachment list.
+	// Attachments are the files attached to THIS prompt, on the user message so a
+	// sent turn renders them as header pills. It must live on the record:
+	// BuildPromptBlocks folds each one into a content block on the way OUT, so a
+	// turn read back has nothing to recover the list from.
+	//
+	// Absent on older records and on a turn opened by a steer, which takes a plain
+	// string and so carries no structured list.
 	Attachments []Attachment `json:"attachments,omitempty"`
 	// TurnCredits / TurnElapsedMs complete the turn footer alongside ChangedFiles.
 	// omitempty drops the zero cases: a read-only turn has none.
 	TurnCredits   float64 `json:"turn_credits,omitempty"`
 	TurnElapsedMs float64 `json:"turn_elapsed_ms,omitempty"`
 	Ts            int64   `json:"ts"`
-	// TurnTruncated marks a turn the model stopped at a bound: it completed, and its
-	// answer is cut off. Stored though derivable, so the Go and TypeScript
-	// projections do not each re-implement the mapping. Last because it is the only
-	// bool: a bool between the strings above pads them apart (fieldalignment).
+	// TurnTruncated marks a turn the model stopped at a bound: it completed and
+	// its answer is cut off. Stored though derivable from the raw stop reason, so
+	// the Go and TypeScript projections do not each re-implement the mapping.
 	TurnTruncated bool `json:"turn_truncated,omitempty"`
 }
 
@@ -436,12 +443,12 @@ type MeteringItem struct {
 }
 
 // SessionMode describes one mode the running agent supports, from
-// `modes.availableModes` on session/new or session/load, kept on the chat so the
-// UI renders a mode pill without re-querying the bridge.
+// `modes.availableModes` on session/new or session/load; kept on the chat so the
+// mode pill renders without re-querying the bridge.
 //
-// On v3 (KAS) the list is unified: bundled workflow modes AND every workspace
-// custom agent (.kiro/agents/*), each switchable via session/set_mode. Source
-// distinguishes them so the picker can group built-ins above custom agents.
+// The v3 list is unified — bundled workflow modes AND every workspace custom
+// agent, all switchable via session/set_mode — so Source ("bundled" vs
+// "workspace") is what lets the picker group them.
 type SessionMode struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -455,18 +462,18 @@ type SessionModel struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	// DefaultEffortLevel is the level this MODEL defaults to, from the model choice's
-	// `_meta.kiro.defaultEffortLevel`. vibekit uses it for a chat with no session yet,
-	// where no live level exists to read. NOT persisted onto Chat.Effort: seeding a
-	// chat's CHOICE from a service default would pin it to every later session.
+	// DefaultEffortLevel is the level this MODEL defaults to, from
+	// `_meta.kiro.defaultEffortLevel`; used for a chat with no session yet.
+	//
+	// NOT persisted onto Chat.Effort: seeding a chat's CHOICE from a service
+	// default would pin it to every later session through StartOpts.Effort.
 	DefaultEffortLevel string  `json:"default_effort_level,omitempty"`
 	RateMultiplier     float64 `json:"rate_multiplier,omitempty"`
-	// HasEffort reports whether this model supports a reasoning-effort level, from
-	// `_meta.kiro.hasEffort`. kiro-cli 2.19.1 stamps it on every model choice (probed
-	// 2026-08-25 against KAS 0.48.0): `auto` carries false, every real model true. So
-	// a chat still on `auto` HIDES the effort row, which is correct — KAS builds no
-	// effortLevel option for a model with no tiers and silently drops any level sent.
-	// Chat.EffortLevels answers the same question from the other side.
+	// HasEffort reports whether this model offers reasoning-effort tiers, from
+	// `_meta.kiro.hasEffort`. `auto` carries false, so a chat on it hides the
+	// effort row: KAS builds no effortLevel option for a tierless model and
+	// silently drops a level sent to one. Chat.EffortLevels answers the same
+	// question from the other side.
 	HasEffort bool `json:"has_effort,omitempty"`
 }
 
@@ -479,6 +486,63 @@ type SessionModel struct {
 type SessionEffortLevel struct {
 	ID   string `json:"id"`
 	Name string `json:"name,omitempty"`
+}
+
+// CatalogState is GET /api/config-template's verdict on the pre-session model
+// catalog.
+//
+// Three-valued, and the ceiling is KAS's: it omits the `model` option
+// identically for an unresolved cache and for an unentitled account, so
+// CatalogEmpty states no cause and copy over it must not invent one. That also
+// bounds the retry — the template is a pure cache read, so retrying converges on
+// CatalogUnavailable, never on CatalogEmpty.
+type CatalogState string
+
+const (
+	// CatalogReady means a `model` config option was decoded. Its entry list may
+	// still be empty after the [Deprecated]/[Legacy] filter — KAS answered with a
+	// catalog either way, which is what separates this from CatalogEmpty.
+	CatalogReady CatalogState = "ready"
+	// CatalogEmpty means the reply decoded and carried no `model` option at all.
+	CatalogEmpty CatalogState = "empty"
+	// CatalogUnavailable means vibekit never got an answer it could read.
+	CatalogUnavailable CatalogState = "unavailable"
+)
+
+// CatalogReason discriminates the two ways a read fails, on CatalogUnavailable
+// only. They are categorically different — one says try again, the other says the
+// contract moved — and the flattened body could say neither.
+type CatalogReason string
+
+const (
+	// CatalogReasonRPC means the read itself failed: retrying may succeed.
+	CatalogReasonRPC CatalogReason = "rpc"
+	// CatalogReasonDecode means the reply arrived unreadable: the contract moved.
+	CatalogReasonDecode CatalogReason = "decode"
+)
+
+// ConfigTemplateResponse is the GET /api/config-template reply: the pre-session
+// mode + model catalog, plus the verdict that says which outcome produced it.
+//
+// Named …Response rather than …Payload because it is bound to no SSE event;
+// internal/wirespec's binding tests key on the Payload suffix, and
+// auth.WhoamiResponse is the precedent.
+type ConfigTemplateResponse struct {
+	DefaultModel string `json:"default_model,omitempty"`
+	// EffortActive is the `effortLevel` option's currentValue: the tier a
+	// fresh session would run at. Pre-session, this is the only evidence of
+	// a live level.
+	EffortActive string `json:"effort_active,omitempty"`
+	// Catalog carries NO omitempty deliberately: wiregen emits a required
+	// TypeScript field for a field without it, so a client cannot invent a
+	// fallback for the one value the whole retry policy reads.
+	Catalog       CatalogState  `json:"catalog"`
+	CatalogReason CatalogReason `json:"catalog_reason,omitempty"`
+	// The three lists are non-null on every path, degrade branches included, so a
+	// generated decoder requiring an array cannot fail on a failure body.
+	Modes        []SessionMode        `json:"modes"`
+	Models       []SessionModel       `json:"models"`
+	EffortLevels []SessionEffortLevel `json:"effort_levels"`
 }
 
 // Chat is the full persisted chat. Serialized as <dir>/<id>.json.
@@ -542,8 +606,8 @@ type Chat struct {
 	Usage              Usage    `json:"usage"`
 	CreatedAt          int64    `json:"created_at"`
 	UpdatedAt          int64    `json:"updated_at"`
-	// A rewind reverts the chat it is in, so nothing here records a parent chat or
-	// the turn a chat started at.
+	// A rewind reverts the chat it is in, so a chat has no parent and records no
+	// starting turn. WorkflowRun.ParentChatID is unrelated: it names a launcher.
 	MessageCount   int  `json:"message_count"`
 	SupervisedMode bool `json:"supervised_mode,omitempty"`
 }
@@ -557,10 +621,10 @@ func (c *Chat) SessionChain() []string {
 // ComposerState is the pair a chat's composer holds between sends: the text typed
 // and not sent, and the files staged beside it.
 //
-// It exists so the two writers can report what landed — Store.SetDraft and
-// Store.SetAttachments each write one half and the draft_changed broadcast needs
-// both, where re-reading the chat would put a file read back on CmdSetDraft's hot
-// path. Not persisted: the chat file holds the two fields directly.
+// Returned by Store.SetDraft and Store.SetAttachments so the draft_changed
+// broadcast gets both halves without a second chat-file read.
+//
+// Not a wire type and not persisted: DraftChangedPayload crosses the wire.
 type ComposerState struct {
 	Text        string
 	Attachments []string
@@ -575,9 +639,10 @@ func (c *Chat) Composer() ComposerState {
 // chat's full chain. Shared by Chat and ChatHeader so the two views cannot
 // disagree about what a chat's retention set is.
 //
-// The returned slice is freshly allocated on EVERY branch: handing back
-// PriorACPSessionIDs itself would let a caller's append rewrite the chat's own
-// retention set, and copying on only one branch is worse than never copying.
+// Freshly allocated on EVERY branch: returning PriorACPSessionIDs itself would
+// let a caller's append rewrite the chat's retention set, and copying on only
+// one branch is worse than never copying — a mutating caller would be correct
+// with a session attached and corrupting without one.
 func sessionChain(current string, prior []string) []string {
 	chain := make([]string, 0, len(prior)+1)
 	chain = append(chain, prior...)
@@ -605,6 +670,24 @@ func (c *Chat) RecordSession(id string) {
 	}
 }
 
+// lastTurnOutcome returns the newest persisted turn outcome in msgs — the
+// TurnOutcome of the last message carrying one — or "" when none does.
+//
+// Walks BACKWARDS and stops at the first hit, because the newest outcome is the
+// only one that describes how this chat's LAST turn ended, and rows persisted
+// after the carrier (a plan row, a compaction event) carry none of their own and
+// so must not hide it.
+func lastTurnOutcome(msgs []Message) TurnOutcome {
+	// Index-only range: Message is far past gocritic's rangeValCopy threshold, so
+	// binding the element would copy a whole transcript row per iteration.
+	for i := range slices.Backward(msgs) {
+		if o := msgs[i].TurnOutcome; o != "" {
+			return o
+		}
+	}
+	return ""
+}
+
 // Header returns the chat's metadata without messages. Used for list
 // endpoints and SSE broadcasts when messages are not needed.
 func (c *Chat) Header() ChatHeader {
@@ -616,6 +699,7 @@ func (c *Chat) Header() ChatHeader {
 		PriorACPSessionIDs:  c.PriorACPSessionIDs,
 		CurrentModeID:       c.CurrentModeID,
 		Effort:              c.Effort,
+		LastTurnOutcome:     lastTurnOutcome(c.Messages),
 		EffortLevels:        c.EffortLevels,
 		EffortActive:        c.EffortActive,
 		Usage:               c.Usage,
@@ -638,6 +722,14 @@ type ChatHeader struct {
 	// level and an empty chat never fetches its full record, so the header is the
 	// only path that reaches every chat. Chat.Draft is deliberately NOT mirrored.
 	Effort string `json:"effort,omitempty"`
+	// LastTurnOutcome is how this chat's NEWEST finished turn ended, DERIVED on
+	// every read from the last message carrying a TurnOutcome — a second copy
+	// would be a second thing that can be wrong. Here because the header is the
+	// only projection reaching every chat, which is what the tab dot needs.
+	//
+	// Empty for a chat with no finished turn and for older records (invariant 5
+	// forbids the backfill). Never `running`.
+	LastTurnOutcome TurnOutcome `json:"last_turn_outcome,omitempty"`
 	// EffortActive + EffortLevels mirror Chat's, for the same reason Effort does:
 	// the control renders from the ACTIVE chat's header.
 	EffortActive string               `json:"effort_active,omitempty"`
@@ -681,12 +773,39 @@ type ResumableSession struct {
 	CreatedAt int64  `json:"created_at,omitempty"`
 }
 
-// WorkflowRun is one previous workflow run, listed beside previous chats in the
-// history surface (GET /api/sessions) and reviewable read-only.
+// ReadState is one list read's outcome on GET /api/sessions.
 //
-// Sourced from _kiro/workflow/list, NOT session/list: session/list's workflow rows
-// are STEP sessions whose status is idle regardless of the run's outcome, so they
-// can be neither counted nor judged as runs.
+// Two-valued where CatalogState is three: an empty list arrives as an empty
+// array rather than an omitted field, so `empty` stays derivable from its own
+// length and only the read's failure needs stating.
+type ReadState string
+
+const (
+	// ReadReady means the list read succeeded; an empty list is a real answer.
+	ReadReady ReadState = "ready"
+	// ReadUnavailable means the read failed, so the list says nothing.
+	ReadUnavailable ReadState = "unavailable"
+)
+
+// SessionListResponse is the GET /api/sessions reply.
+//
+// The two lists degrade INDEPENDENTLY — separate verbs on the same bridge, so
+// one can fail alone — which is why each carries its own verdict rather than the
+// response carrying one. Neither verdict carries omitempty: a reader must not be
+// able to read an absent field as success.
+type SessionListResponse struct {
+	SessionsState ReadState          `json:"sessions_state"`
+	RunsState     ReadState          `json:"runs_state"`
+	Sessions      []ResumableSession `json:"sessions"`
+	Runs          []WorkflowRun      `json:"runs"`
+}
+
+// WorkflowRun is one previous workflow run, listed beside previous chats in
+// the history surface (GET /api/sessions) and reviewable read-only.
+//
+// Sourced from _kiro/workflow/list, NOT session/list: that verb's workflow rows
+// are STEP sessions reporting idle whatever the run did, so they can be neither
+// counted nor judged as runs.
 type WorkflowRun struct {
 	WorkflowID string `json:"workflow_id"`
 	Name       string `json:"name"`
@@ -695,12 +814,12 @@ type WorkflowRun struct {
 	// ParentChatID is the vibekit chat that launched the run, resolved through the
 	// launching session's chain. Empty for a run with no vibekit parent.
 	ParentChatID string `json:"parent_chat_id,omitempty"`
-	// EndReason says why a run STOPPED when something other than the run itself
-	// decided that: "overran" (it blew a wall clock) or "step_cap" (a step blew its
-	// turn cap). KAS's status cannot answer it, because both bounds terminate through
-	// the same Cancel the button reaches, so the run reports `cancelled` either way.
-	// A user cancel records NOTHING, so absence is the third value. Not persisted:
-	// vibekit keeps it in memory for the runs it stopped in THIS process.
+	// EndReason says why something OTHER than the run stopped it: "overran" (a
+	// slot, the idle window or the backstop) or "step_cap". Every bound cancels
+	// through the verb the Cancel button reaches, so KAS reports `cancelled`
+	// either way and only this separates a bound from a person; a user cancel
+	// records nothing. In-memory for the runs THIS process stopped, so one
+	// stopped before a restart falls back to the plain status.
 	EndReason string `json:"end_reason,omitempty"`
 	UpdatedAt int64  `json:"updated_at"`
 	CreatedAt int64  `json:"created_at,omitempty"`

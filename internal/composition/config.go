@@ -139,8 +139,9 @@ func ConfigFromEnv() Config {
 }
 
 // defaultBundledTools is the image path of vibekit's bundled-tools file
-// (shipped by the Dockerfile beside the binary).
-const defaultBundledTools = "/opt/vibekit/bundled-tools.json"
+// (shipped by the Dockerfile beside the binary). A var, not a const, so a test
+// can point the default at an absent path; never reassigned in production.
+var defaultBundledTools = "/opt/vibekit/bundled-tools.json"
 
 // bundledToolsFiles resolves the bundled-tools list.
 //

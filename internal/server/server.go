@@ -58,7 +58,10 @@ type Server struct {
 	// trustedProxies feeds webhttp.WithClientIP; nil logs the unspoofable socket peer.
 	trustedProxies []*net.IPNet
 	// hostPolicy is the ALLOWED_HOSTS allowlist; nil or inactive accepts any Host.
-	hostPolicy  *webhttp.HostPolicy
+	hostPolicy *webhttp.HostPolicy
+	// onListen fires once per successful bind, before serving: it is what tells the rest
+	// of the app this process is the one serving its config dir.
+	onListen    func()
 	acctUsage   acctUsageCache
 	cliTimeouts cliTimeouts
 	settingsMu  sync.Mutex
@@ -199,6 +202,17 @@ func WithHostPolicy(p *webhttp.HostPolicy) Option {
 	return func(s *Server) { s.hostPolicy = p }
 }
 
+// WithOnListen registers a callback fired once the listener has SUCCESSFULLY
+// bound, which is this app's evidence that this process — rather than another one
+// already on the port — is serving its config dir.
+//
+// A bind failure returns before it, so a boot that could not bind never fires it.
+// It runs on the bind goroutine ahead of serving, so it must not block; the one
+// caller closes a channel (see composition, the session-sweep gate).
+func WithOnListen(fn func()) Option {
+	return func(s *Server) { s.onListen = fn }
+}
+
 // New constructs a Server with the given options applied.
 func New(opts ...Option) *Server {
 	s := &Server{
@@ -211,14 +225,14 @@ func New(opts ...Option) *Server {
 	return s
 }
 
-// ListenAndServe registers all routes and starts the HTTP server.
-// Blocks until SIGTERM/SIGINT, then shuts down gracefully.
+// ListenAndServe registers all routes and starts the HTTP server. Blocks until
+// SIGTERM/SIGINT, then shuts down gracefully.
 //
-// Every route is a plain path with the method gated in the handler
-// (httpreply.RequireMethod). Do not put a method back on a pattern here:
-// ServeMux only synthesises its 405 when NO pattern matched, and the "/" SPA
-// mount matches every path and method, so a method-mismatched request would be
-// answered 200 with index.html instead of an RFC 9110 §15.5.6 405.
+// EVERY ROUTE HERE IS A PLAIN PATH AND THE METHOD IS GATED IN THE HANDLER. ServeMux
+// synthesises its 405 + Allow only when NO pattern matched at all, and the "/" SPA mount
+// matches every path and method, so a method-mismatched request lands there and is answered
+// 200 with index.html. That fallback is not optional, so httpreply.RequireMethod is the
+// whole of vibekit's 405 surface: do not put a method back on a pattern here.
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.Handle("/", spaHandler(s.staticFS))
@@ -228,18 +242,19 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/kiro-settings", s.handleKiroSettings)
 	s.chats.RegisterRoutes(mux)
 	mux.HandleFunc("/api/health", s.handleHealth)
-	// Absent rather than answering a misleading 503 when nothing owns the install.
+	// Only when this server owns the install: with no pins there is nothing to rescan, so
+	// the route is absent rather than answering a misleading 503.
 	if s.kiroRescan != nil {
 		mux.Handle(kiroRescanPath, loopbackOnly(kiroRescanSurface, http.HandlerFunc(s.handleKiroRescan)))
 	}
-	// Same loopback gate, but unconditional: a goroutine dump is a property of
-	// the process, so it is always answerable.
+	// Runtime profiles, same loopback gate, but unconditional: a goroutine dump is a
+	// property of the process and is always answerable.
 	mux.Handle(pprofPath, pprofHandler())
 	s.auth.RegisterRoutes(mux)
 	mux.HandleFunc("/api/steering", s.handleSteering)
-	// The exact /api/tools/status pattern below wins over this subtree mount for
-	// EVERY method, which keeps it out of toolbelt's /api/tools/{name} handlers
-	// with name="status".
+	// The toolbelt httpapi projection, at the exact prefix and the subtree.
+	// /api/tools/status stays app-owned, and its exact pattern winning over the subtree
+	// for EVERY method is what keeps it out of toolbelt's {name} handlers as name="status".
 	if s.tools != nil {
 		toolsAPI := httpapi.Handler(s.tools, "/api/tools")
 		mux.Handle("/api/tools", toolsAPI)
@@ -270,28 +285,30 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/account/usage", s.handleAccountUsage)
 	s.push.RegisterRoutes(mux)
 
-	// Derived from the embedded index.html so the inline importmap's sha256 hash
-	// stays in sync with what the browser actually sees.
+	// Computed from the embedded index.html so the inline importmap's sha256 stays in sync
+	// with what the browser sees, with no literal to hand-update per importmap edit.
 	cspPolicy, err := buildCSPPolicy(s.staticFS)
 	if err != nil {
 		return fmt.Errorf("build CSP: %w", err)
 	}
 
-	// Deduped inside securityMiddleware (so only same-origin, CSRF-checked
-	// requests are) and inside the access logger (so replays stay logged).
+	// Inside securityMiddleware, so only same-origin CSRF-checked requests are deduped,
+	// and inside the access logger, so a replay is still logged.
 	idem := newIdempotencyCache(idempotencyTTL)
 	defer idem.stop()
 
-	// srv.MaxHeaderValueCount is deliberately left at its default: the 431 it
-	// answers is written BELOW the middleware chain, so a cap tuned under a
-	// future proxy's header count would refuse requests with no access-log line,
-	// no request id and no client_ip.
+	// webhttp.NewServer's defaults are what this app wants: ReadHeaderTimeout 10s,
+	// IdleTimeout 120s, MaxHeaderBytes 1 MiB, and Read/WriteTimeout unset for the SSE,
+	// WebSocket and streaming-zip responses. Server.MaxHeaderValueCount is deliberately
+	// left at its default, and this is the one place that could set it: a 431 is answered
+	// BELOW the middleware chain, so a cap tuned under a future proxy's header count
+	// refuses requests with no access-log line, no request id and no client_ip.
 	handler := webhttp.Chain(mux, s.middlewareStack(cspPolicy, idem)...)
 	srv := webhttp.NewServer(handler)
 	srv.Addr = ":" + port
 
-	// Bind up front so port-in-use surfaces synchronously, rather than after the
-	// serve goroutine launches.
+	// Bound up front so port-in-use surfaces synchronously, and so /api/health reports
+	// unready until the listener can genuinely accept.
 	var lc net.ListenConfig
 	ln, err := lc.Listen(context.Background(), "tcp", srv.Addr)
 	if err != nil {
@@ -302,7 +319,13 @@ func (s *Server) ListenAndServe() error {
 	defer stop()
 
 	s.ready.Store(true)
-	slog.Info("Kiro Web UI listening", "port", port)
+	// AFTER the bind, so nothing downstream can read a failed bind as ownership.
+	if s.onListen != nil {
+		s.onListen()
+	}
+	// The bound ADDRESS, not the port constant: a misdirected boot's own output then says
+	// which listener it got.
+	slog.Info("Kiro Web UI listening", "addr", ln.Addr().String())
 	// DNS rebinding rides the victim's BROWSER, so it reaches even a loopback
 	// bind, and this HTTP surface carries no auth of its own.
 	if !s.hostPolicy.Active() {
@@ -310,13 +333,14 @@ func (s *Server) ListenAndServe() error {
 			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,vibekit.example.com)")
 	}
 
-	// The pre-drain hook keeps agent-before-server ordering: readiness flips and
-	// the runtime cancels its streams before the HTTP drain runs.
+	// webhttp.Run owns the serve/shutdown sequence. The pre-drain hook is what keeps the
+	// agent-before-server ordering: readiness flips, the runtime stops bridges and cancels
+	// the SSE/WebSocket streams, and only then does the HTTP drain run.
 	runErr := webhttp.Run(ctx, srv, ln, nil, webhttp.WithPreDrain(func(drainCtx context.Context) {
 		slog.Info("received signal, shutting down", "cause", context.Cause(ctx))
 		s.ready.Store(false)
-		// Run calls this hook SYNCHRONOUSLY before srv.Shutdown, so an unbounded
-		// teardown here would consume the whole grace: pass the budget on.
+		// Run calls this hook SYNCHRONOUSLY before srv.Shutdown, so an unbounded teardown
+		// here would consume the whole grace: drainCtx is passed on, never discarded.
 		if err := s.agent.Shutdown(drainCtx); err != nil {
 			slog.Error("agent runtime shutdown did not finish within the grace period", "error", err)
 		}
@@ -325,33 +349,34 @@ func (s *Server) ListenAndServe() error {
 	return runErr
 }
 
-// middlewareStack returns the middleware wrapping the route mux, OUTERMOST
-// FIRST (webhttp.Chain's order): request-id access logging, panic recovery, the
-// security layer (dynamic CSP + the ALLOWED_HOSTS allowlist + stdlib CSRF), the
-// canonical-path gate, the REST idempotency dedup, then the mux.
+// middlewareStack returns the middleware wrapping the route mux, OUTERMOST FIRST
+// (webhttp.Chain's order): access logging, panic recovery, the security layer (dynamic CSP
+// + ALLOWED_HOSTS + stdlib CSRF), the canonical-path gate, the REST idempotency dedup.
 //
-// A method rather than an inline literal in ListenAndServe so the ORDER is
-// assertable without binding a port; the ordering is a security property.
+// A method rather than an inline literal so the ORDER is assertable without binding a
+// port: that order is a security property, and a test hand-assembling the same list would
+// only assert agreement with itself.
 func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []webhttp.Middleware {
 	return []webhttp.Middleware{
 		webhttp.Logging(
-			// The long-lived SSE stream would log one open-forever line.
+			// Skipped by path, or the long-lived stream logs one open-forever line.
 			webhttp.WithSkipPaths("/api/events"),
-			// The shell PTY is silenced by RESPONSE, not by path: only a recorded
-			// 101 or a bare hijack drops the record, so every handshake REFUSAL on
-			// the same path keeps its status, request id and client_ip.
+			// The shell PTY is silenced by RESPONSE rather than by path: the record is
+			// dropped only once the response left HTTP framing, so every handshake
+			// REFUSAL keeps its line — which is what a reader needs when a browser
+			// cannot attach a shell, and what the path skip deleted along with the noise.
 			webhttp.WithSkipUpgrades(true),
-			// Keeps healthy probes (every 30s) at Debug and a failing one at Warn.
+			// /api/health is probed every 30s, so a healthy probe logs at Debug and only
+			// a failing one is surfaced.
 			webhttp.ProbeLogLevel("/api/health"),
 			webhttp.WithClientIP(s.trustedProxies...),
 		),
 		webhttp.Recoverer(),
 		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, s.hostPolicy, next) },
-		// INSIDE the host allowlist and the CSRF check, whose 403 must not be
-		// shadowed by a 400 about spelling; OUTSIDE the mux, because ServeMux
-		// canonicalizes before selecting a pattern so no handler can refuse for
-		// itself; outside the idempotency cache, so a refused spelling mints no
-		// entry a later well-formed retry would replay.
+		// INSIDE the host allowlist and the CSRF check, so their 403 is never shadowed by
+		// a 400 about spelling; OUTSIDE the mux, because ServeMux canonicalizes before it
+		// selects a pattern and no handler can be reached to refuse for itself; outside
+		// the dedup cache, so a refused spelling mints no entry a retry would replay.
 		canonicalAPIPath,
 		idem.middleware,
 		// INNERMOST, so it sees exactly what a handler wrote: the idempotency
@@ -362,40 +387,40 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 	}
 }
 
-// requirePOST reports whether r.Method is POST, writing a 405 when it is not.
-// Every command endpoint accepts only POST.
+// requirePOST returns true if r.Method is POST, and otherwise writes 405 and returns false.
+// Every command endpoint here is POST-only, so this saves an identical argument per site.
 func requirePOST(w http.ResponseWriter, r *http.Request) bool {
 	return httpreply.RequireMethod(w, r, http.MethodPost)
 }
 
-// decodeBody applies LimitBody, decodes JSON into v, and returns true
-// on success. On failure it writes a 400 response and returns false.
+// decodeBody applies LimitBody, decodes JSON into v, and returns true on success. On
+// failure it writes a 400 and returns false.
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return httpreply.DecodeBody(w, r, v, "bad request")
 }
 
-// healthBody is the readiness envelope handleHealth and handleKiroRescan both
-// answer with. A struct rather than a map because encoding/json sorts map keys,
-// which put the fields in a different order from webhttp.ReadinessHandler's.
-// This cannot simply BE that handler: the verdict here is composite (a second
-// reason for an unavailable kiro-cli) while ReadinessChecker is Ready() bool.
+// healthBody is the readiness envelope handleHealth and handleKiroRescan both answer with,
+// so an operator reads one shape from either surface. A struct, not a map, so the key order
+// matches webhttp.ReadinessHandler's byte for byte — encoding/json sorts map keys, which is
+// what made the shared-envelope claim false. This handler cannot BE ReadinessHandler: its
+// verdict is composite where the library's ReadinessChecker is Ready() bool.
 type healthBody struct {
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`
 }
 
-// handleHealth answers the readiness envelope: 200 {"status":"ok"} once the
-// listener is serving, 503 {"status":"unready",...} during startup, during the
-// shutdown drain, or while kiro-cli is unavailable.
+// handleHealth returns the liveness+readiness status in the envelope shared across the
+// fleet: 200 {"status":"ok"} when the listener is bound and serving, 503
+// {"status":"unready",...} during startup, drain, or an unavailable kiro-cli.
 //
-// The kiro-cli verdict is version-aware and re-read per request — a lock and two
-// field reads, never a subprocess — so an install completing heals the signal
-// with no restart. READINESS only: wire it to a readinessProbe, never a
-// livenessProbe.
+// The kiro-cli verdict is the install manager's and is VERSION-AWARE, so a binary drifted
+// from the pin reads unready rather than healthy. Reading it is a lock and two field reads,
+// never a spawn, and it re-evaluates per request, so a completing install heals the signal
+// with no restart. A READINESS signal: nothing restarts on the unhealthy state.
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	// Under RFC 9111 a 200 with no explicit freshness is heuristically cacheable,
-	// and a cached "ok" outliving the readiness it reported keeps traffic arriving
-	// at an instance that has begun draining.
+	// Never cached: under RFC 9111 a 200 with no explicit freshness is heuristically
+	// cacheable, and a cached "ok" outliving the readiness it reported keeps traffic
+	// arriving at an instance that has begun draining. (503 is not, so unready is safe.)
 	w.Header().Set("Cache-Control", "no-store")
 	unready := func(reason string) {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
@@ -413,8 +438,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 			return
 		}
 	}
-	// The kiro-cli leg stays FIRST: with no binary there is nothing to vend a
-	// token, and the envelope carries only one reason.
+	// The kiro-cli leg stays FIRST: with no binary there is nothing to vend a token, so it
+	// is the superset failure and the envelope carries one reason.
 	if s.authUnavailable != nil && s.authUnavailable() {
 		unready(reasonSignIn)
 		return

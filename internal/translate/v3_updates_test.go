@@ -196,11 +196,14 @@ func infoKindFrame(t *testing.T, kind string) json.RawMessage {
 	return b
 }
 
-// The dispatch cascade keys on which sub-BLOCK is present, not on the kind string,
-// so a sub-kind KAS adds later would vanish leaving no trace. An unrecognised kind
-// must therefore reach the log at Warn, while a known-but-ignored one must not —
-// `turn_start` alone would be noise once per prompt. Serial by necessity: the
-// assertion reads captured slog output and slog's default is process-global.
+// TestSessionInfoUpdate_UnknownKindWarns pins the observability contract on
+// session_info_update, a CARRIER multiplexing 22+ sub-kinds under one wire type.
+//
+// The cascade keys on which sub-BLOCK is present, so a sub-kind KAS adds later
+// falls through and vanishes leaving no trace. An unrecognised kind must reach
+// the log at Warn; a known-but-ignored one must not, or `turn_start` alone is
+// noise once per prompt. A log line IS the behaviour here, and slog's default is
+// process-global, so this is serial.
 func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -208,8 +211,8 @@ func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 		wantWarn bool
 	}{
 		{name: "a kind KAS added since this was written", kind: "quantum_entanglement_update", wantWarn: true},
-		// display_error, not turn_start: brackets are consumed, so a bracket kind with no
-		// sub-block to dispatch on is a decode miss rather than an expected drop.
+		// display_error, not turn_start: the brackets are consumed, so a bracket
+		// kind with no sub-block to dispatch on is a decode miss, not a drop.
 		{name: "known and deliberately ignored", kind: "display_error", wantWarn: false},
 		{name: "known compaction marker", kind: "summarization_separator", wantWarn: false},
 		{name: "known, carries the persisted permission history", kind: "pending_interaction", wantWarn: false},
@@ -310,11 +313,13 @@ func TestHandleSessionInfoUpdate_AStepsTurnBracketIsDropped(t *testing.T) {
 	}
 }
 
-// The gate deciding whether a context-percentage move is worth a full transcript
-// rewrite. Two properties hold together: a move under one point is dropped BECAUSE
-// the ring cannot render it, and a tier crossing is kept even when tiny, because
-// the tier is what the UI colours on. An epsilon-only gate would round away exactly
-// the crossing that matters.
+// TestMaterialPctDelta pins the gate deciding whether a context-percentage move
+// is worth a full transcript rewrite — an exact-inequality gate rewrote a chat
+// file up to 21 MB roughly 40 times per 20-tool-call turn.
+//
+// Two properties hold together, which is why the tier cases sit beside the
+// epsilon ones: a sub-point move is dropped because the ring cannot render it,
+// and a tier crossing is kept because the tier is what the UI colours on.
 func TestMaterialPctDelta(t *testing.T) {
 	cases := map[string]struct {
 		old, new float64
@@ -326,8 +331,9 @@ func TestMaterialPctDelta(t *testing.T) {
 		"exactly one point up":           {50, 51, true},
 		"exactly one point down":         {51, 50, true},
 		"large jump":                     {10, 90, true},
-		// The tiers are vibekit's OWN client thresholds, not KAS's: 70 and 90 recolour
-		// the context ring, 95 is where the composer stops accepting input.
+		// The tiers are vibekit's OWN client thresholds, not KAS's: 70 and 90
+		// recolour the context ring, 95 is where the composer stops accepting
+		// input. KAS's 80/95 TUI boundaries are not rendered by this client.
 		"tiny move crossing 70":              {69.9, 70.0, true},
 		"tiny move crossing 70 downward":     {70.0, 69.9, true},
 		"tiny move crossing 90":              {89.9, 90.0, true},
@@ -336,8 +342,8 @@ func TestMaterialPctDelta(t *testing.T) {
 		"tiny move inside the warning band":  {75.0, 75.2, false},
 		"tiny move inside the critical band": {91.0, 91.3, false},
 		"tiny move above the cutoff":         {96.0, 96.3, false},
-		// 80 is KAS's boundary and not one of vibekit's, so a sub-point move across it
-		// is correctly ignored. This row fails if someone reinstates KAS's tiers.
+		// 80 is KAS's boundary and not one of vibekit's, so a sub-point move
+		// across it is correctly ignored.
 		"tiny move crossing KAS's 80 is not material": {79.9, 80.0, false},
 		"from zero is material":                       {0, 1, true},
 	}
@@ -512,5 +518,90 @@ func TestHandleConfigOptionUpdate_EffortOnlyFrameKeepsTheModelCatalog(t *testing
 	}
 	if c.EffortActive != "high" {
 		t.Errorf("EffortActive = %q, want high (the effort half still applied)", c.EffortActive)
+	}
+}
+
+// TestHandleSessionInfoUpdate_TurnEndCarriesStopDetails pins the ONE channel that
+// can explain an abnormal wire close: without it a `stopReason: "error"` turn
+// arrives with no cause and a transient toast is the reader's only account.
+//
+// The field is optional and its shape unmeasured, so the decode is tolerant and a
+// shape it does not read answers "" rather than leaking a JSON fragment into a
+// transcript row.
+func TestHandleSessionInfoUpdate_TurnEndCarriesStopDetails(t *testing.T) {
+	tests := []struct {
+		name    string
+		details any
+		want    string
+	}{
+		{
+			name:    "a bare string, the simplest thing a TypeScript producer sends",
+			details: "  The upstream model dropped the stream.  ",
+			want:    "The upstream model dropped the stream.",
+		},
+		{
+			name:    "an object naming its prose `message`",
+			details: map[string]any{"message": "Rate limit exceeded."},
+			want:    "Rate limit exceeded.",
+		},
+		{
+			name:    "an object naming it `details`, which is what -32603 frames use",
+			details: map[string]any{"details": "ClientThrottleError"},
+			want:    "ClientThrottleError",
+		},
+		{
+			name:    "an object naming it `reason`",
+			details: map[string]any{"reason": "capacity"},
+			want:    "capacity",
+		},
+		{
+			// A shape the decode does not read. It must answer "" so the closer falls
+			// through to the outcome's own sentence: showing a reader `[1,2,3]` as the
+			// reason for a failed turn is worse than showing them a generic one.
+			name:    "a shape with no prose in it at all",
+			details: []any{1, 2, 3},
+			want:    "",
+		},
+		{
+			name:    "an object carrying only fields we do not read",
+			details: map[string]any{"code": 42, "retryable": true},
+			want:    "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps, _, _ := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+			raw := mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
+				"kind":    "turn_end",
+				"turnEnd": map[string]any{"stopReason": "error", "stopDetails": tt.details},
+			}}})
+
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", raw, FrameAttribution{})
+
+			want := []turnBracket{
+				{chat: "c1", kind: "end", stop: vibekit.StopReasonError, details: tt.want},
+			}
+			if !slices.Equal(deps.brackets, want) {
+				t.Errorf("brackets = %+v, want %+v", deps.brackets, want)
+			}
+		})
+	}
+}
+
+// TestHandleSessionInfoUpdate_TurnEndWithoutStopDetailsSaysNothing is the control,
+// and it is the case every measured build actually sends. The closer supplies the
+// outcome's default sentence for it, so "" here is the correct answer rather than a
+// gap: inventing wording in the translator would put two sources of that prose in
+// the tree.
+func TestHandleSessionInfoUpdate_TurnEndWithoutStopDetailsSaysNothing(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", turnBracketInfo(t, "turn_end"), FrameAttribution{})
+
+	want := []turnBracket{{chat: "c1", kind: "end", stop: vibekit.StopReason("end_turn")}}
+	if !slices.Equal(deps.brackets, want) {
+		t.Errorf("brackets = %+v, want %+v", deps.brackets, want)
 	}
 }

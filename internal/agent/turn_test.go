@@ -22,16 +22,11 @@ func openTestTurn(t *testing.T, reg *turnRegistry, chatID vibekit.ChatID) *Turn 
 	return turn
 }
 
-// TestTurnRegistry_InterruptIsFirstWinsPerEpoch pins both guards on the cause a
-// turn ends with.
-//
-// FIRST-WINS, because two writers reach one turn: a user pressing Cancel and
-// kiro-cli's tool-use filter firing in the same window. Neither may relabel the
-// other, so the first cause recorded is the turn's.
-//
-// EPOCH-SCOPED, because the cause used to live on the bridge, where turn A's
-// cause survived into turn B once the prompt failure that consumed it was
-// deferred. A cause offered for a finished epoch must land nowhere.
+// TestTurnRegistry_InterruptIsFirstWinsPerEpoch pins both guards on the cause a turn ends
+// with. FIRST-WINS because two writers reach one turn — a user pressing Cancel and
+// kiro-cli's tool-use filter — and neither may relabel the other. EPOCH-SCOPED because a
+// cause offered for a finished epoch must land nowhere; while it lived on the bridge,
+// turn A's cause survived into turn B.
 func TestTurnRegistry_InterruptIsFirstWinsPerEpoch(t *testing.T) {
 	reg := newTurnRegistry()
 	turn := openTestTurn(t, reg, "c1")
@@ -58,13 +53,10 @@ func TestTurnRegistry_InterruptIsFirstWinsPerEpoch(t *testing.T) {
 	}
 }
 
-// TestTurnRegistry_StagedSummaryAccumulatesWithinOneTurn is why the metering
-// summary is staged on the record rather than written straight through.
-//
-// Several turn_completion frames can describe one turn, and the last one winning
-// threw the earlier measurements away. Accumulating on the TURN is also what
-// bounds the sum: the count is one per turn, not one per frame, and the total
-// restarts when the next turn opens.
+// TestTurnRegistry_StagedSummaryAccumulatesWithinOneTurn is why the metering summary is
+// staged on the record: several turn_completion frames can describe one turn, so last-wins
+// threw earlier measurements away. The TURN is also what bounds the sum — one count per
+// turn rather than per frame, restarting when the next turn opens.
 func TestTurnRegistry_StagedSummaryAccumulatesWithinOneTurn(t *testing.T) {
 	reg := newTurnRegistry()
 	turn := openTestTurn(t, reg, "c1")
@@ -102,13 +94,10 @@ func TestTurnRegistry_StagedSummaryWithNoTurnOpen(t *testing.T) {
 	}
 }
 
-// TestTurnRegistry_ClaimIsFirstWins pins the exclusion the finalizer rests on:
-// two closers reaching one turn produce one set of effects, so a turn is
-// persisted once and announced once.
-//
-// The loser WAITS rather than being refused outright, which is what turnFinalizing
-// is for — the winner's persistence and broadcast run with no lock held, and the
-// loser observes the result of that work rather than a half-finalized turn.
+// TestTurnRegistry_ClaimIsFirstWins pins the exclusion the finalizer rests on: two closers
+// reaching one turn persist and announce it once. The loser WAITS rather than being refused
+// — the winner's persistence and broadcast run with no lock held, so the loser observes the
+// result of that work rather than a half-finalized turn.
 func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 	reg := newTurnRegistry()
 	openTestTurn(t, reg, "c1")
@@ -140,12 +129,9 @@ func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 	}
 }
 
-// TestTurnRegistry_FinalizeWakesAParkedOpen is the normal-path deadlock guard,
-// and it is the reason the waitable is a channel closed on EVERY state change.
-//
-// With the wake-up armed only where a frame folds, a finalize woke nobody: the
-// chat goes idle, no fold runs, and the user's next prompt parks in StartTurn
-// forever and never reaches KAS.
+// TestTurnRegistry_FinalizeWakesAParkedOpen is the normal-path deadlock guard, and the
+// reason the waitable is a channel closed on EVERY state change: armed only where a frame
+// folds, a finalize woke nobody and the user's next prompt parked in StartTurn forever.
 func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 	reg := newTurnRegistry()
 	first := openTestTurn(t, reg, "c1")
@@ -236,14 +222,14 @@ func (s stubMeteringStore) Mutate(context.Context, vibekit.ChatID, func(*vibekit
 	return s.mutateErr
 }
 
-// TestMutateUsage_TombstonedRefusalIsNotAnError pins the drop the tombstone was
-// designed for, on the metering write that moved here from internal/translate.
-//
-// chat.ErrTombstoned means the write was DECLINED because the chat id was deleted
-// inside the tombstone window: the mutator never ran, nothing reached disk. A
-// metering frame lands once per turn on every chat, so surfacing that as an
-// error would put an ERROR line in the operator's log for the mechanism working
-// as intended.
+func (s stubMeteringStore) UpdateMessage(context.Context, vibekit.ChatID, string, func(*vibekit.Message)) error {
+	return nil
+}
+
+// TestMutateUsage_TombstonedRefusalIsNotAnError pins the drop the tombstone was designed
+// for. ErrTombstoned means the write was DECLINED for a chat id deleted inside the window,
+// so nothing reached disk — and a metering frame lands once per turn on every chat, so
+// surfacing it would put an ERROR line in the log for the mechanism working as intended.
 func TestMutateUsage_TombstonedRefusalIsNotAnError(t *testing.T) {
 	bc := &BridgeCoordinator{chatStore: stubMeteringStore{mutateErr: chat.ErrTombstoned}, turns: newTurnRegistry()}
 	logs := captureLogs(t)
@@ -270,16 +256,11 @@ func TestMutateUsage_OtherErrorsStillLog(t *testing.T) {
 	}
 }
 
-// A chat forgotten mid-finalize still has its turn published on the lifecycle its
-// waiters are parked on.
-//
-// Every registry operation used to re-resolve a lifecycle from the chat id, and
-// lifecycleFor CREATES one on a miss — so after cleanupChatState's forget, a finish
-// still in flight published onto a FRESH lifecycle and set that one idle, leaving
-// the old one in turnFinalizing forever. The waiter parked there is Forward's own
-// goroutine (through openWire or reclassify), whose only other exit is shutdown, so
-// it never returned from consumeFrame: no seal, no replay-projection settle, no
-// exit tail, leaked until the process ended. The turn carries its lifecycle now.
+// A chat forgotten mid-finalize still has its turn published on the lifecycle its waiters
+// are parked on. Re-resolving from the chat id creates a FRESH lifecycle on a miss, so a
+// finish in flight after a forget set that one idle and left the old one in turnFinalizing
+// forever — parking Forward's own goroutine there for the life of the process, with no
+// seal, no replay-projection settle and no exit tail. The turn carries its lifecycle now.
 func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) {
 	r := newTurnRegistry()
 	ctx := t.Context()

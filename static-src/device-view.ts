@@ -52,6 +52,10 @@ import { LS_UI_STATE_KEY } from "./ls-keys.js";
  *  follow the OS — which is why it is a value here and not the absence of one. */
 export type ThemeChoice = "dark" | "light" | "system";
 
+/** Which pointer this screen is driven by. "coarse" is a finger or a pen,
+ *  "fine" a mouse, a trackpad or a stylus with a cursor. */
+export type PointerTier = "fine" | "coarse";
+
 /** The three fields, as one record. Read together because they are stored
  *  together; written one at a time because that is how they change. */
 interface DeviceView {
@@ -140,6 +144,27 @@ export function setShellHeight(px: number): void {
 export function cachedTheme(): ThemeChoice | null {
   const t = readBlob()["theme"];
   return t === "dark" || t === "light" || t === "system" ? t : null;
+}
+
+/** The last pointer tier OBSERVED on this screen, or null when none has been.
+ *
+ *  A cache with the same job as `theme` above and the same second reader: the
+ *  inline pre-paint snippet reads it to set `data-pointer` before any module
+ *  loads, so a returning device paints its own control sizes on the first frame
+ *  instead of rendering compact and then jumping. The AUTHORITY is
+ *  `pointer-tier.ts`, which observes `PointerEvent.pointerType` at runtime; this
+ *  module owns only the bytes.
+ *
+ *  It is per-device rather than per-workspace for the same reason `shell_h` is:
+ *  the answer depends on the screen in front of you, and a phone must not tell a
+ *  desktop that it is being touched. */
+export function cachedPointerTier(): PointerTier | null {
+  const t = readBlob()["pointer"];
+  return t === "fine" || t === "coarse" ? t : null;
+}
+
+export function cachePointerTier(tier: PointerTier): void {
+  writeBlob({ pointer: tier });
 }
 
 /** Refresh the cache so the NEXT load paints the right theme before its fetch

@@ -28,6 +28,7 @@ import { pushRoute } from "./router.js";
 import { setSettingsTab as setTabRoute } from "./tabs.js";
 import { fitTabBar } from "./tab-bar-fit.js";
 import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
+import { setPageSubtitle } from "./page-title.js";
 
 export const TABS: readonly SettingsTab[] = [
   "general",
@@ -156,11 +157,10 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
       return active;
     };
     swapViews(swap);
-    // Update the page title to the active tab's label.
-    const title = document.getElementById("settings-page-title");
-    if (title !== null) {
-      title.textContent = TAB_LABELS[tab];
-    }
+    // The title bar's subtitle names the active section. The bar's own
+    // segmented control names it too, so 12-chat.css suppresses this while that
+    // control shows its labels and reveals it when tab-bar-fit.ts drops them.
+    setPageSubtitle("settings", TAB_LABELS[tab]);
     // Lazy panel data, on a tab SWITCH. NOT on the first call, which is
     // `subscribe` painting the default panel at boot with Settings off screen — a
     // loader there is what put General's three `kiro-cli settings` spawns on the
