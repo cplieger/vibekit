@@ -916,8 +916,8 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("drops the summary's pointer affordance", () => {
-    // `has-disclosure` is what 14-tools.css keys the cursor, the hover wash and
-    // the reserved chevron gutter on.
+    // `has-disclosure` is what 14-tools.css keys the cursor and the hover wash on.
+    // The chevron GUTTER is keyed on the region instead, so it does not move.
     const summary = bareCard().querySelector(".tool-summary");
     expect(summary?.classList.contains("has-disclosure")).toBe(false);
   });
@@ -981,15 +981,32 @@ describe("a card with nothing to disclose", () => {
     expect(card.querySelector(".tool-disclosure")).toBeNull();
   });
 
-  it("keeps the chevron on a call still in flight", () => {
-    // Mid-flight is not at rest: output is still arriving, and taking the
-    // affordance away to hand it back a frame later is a flicker.
+  it("has no chevron on a call still in flight either", () => {
+    // The reverse of what this used to assert. Mid-flight was granted the
+    // affordance up front to spare an appear-transition, and the wire status is not
+    // evidence about the region: both production call sites pass `live: true`, so a
+    // replayed in-progress call held an empty disclosure for good.
     const card = buildToolCard({
       id: "bare-pending",
       title: "invoke_sub_agent",
       kind: "other",
       status: "pending",
       live: true,
+    });
+    expect(card.querySelector(".tool-disclosure")).toBeNull();
+  });
+
+  it("keeps the chevron on an in-flight call that carries its INPUT", () => {
+    // The latch, not the status, is what covers the common case: 33,106 of the
+    // 33,119 toggle-bearing calls on the live volume carry input, and a live card's
+    // input dump is content `detailsBody` will write.
+    const card = buildToolCard({
+      id: "bare-pending-input",
+      title: "executePwsh",
+      kind: "execute",
+      status: "in_progress",
+      live: true,
+      input: { command: "ls -la" },
     });
     expect(card.querySelector(".tool-disclosure")).not.toBeNull();
   });
@@ -1026,7 +1043,9 @@ describe("a card with nothing to disclose", () => {
     expect(card.querySelector(".tool-disclosure")).not.toBeNull();
   });
 
-  it("keeps the chevron on a previewed call whose bytes are still on the server", () => {
+  it("keeps the chevron on a previewed call whose OUTPUT bytes are still on the server", () => {
+    // `outputBytes` is what says the bulk holds output: the store stamps it only in
+    // the branch that cut the output, so it is the exact signal rather than a guess.
     const card = buildToolCard({
       id: "bare-full",
       title: "executePwsh",
@@ -1034,9 +1053,43 @@ describe("a card with nothing to disclose", () => {
       status: "completed",
       live: false,
       hasFull: true,
+      outputBytes: 48_000,
       chatID: "c1",
     });
     expect(card.querySelector(".tool-disclosure")).not.toBeNull();
+  });
+
+  it("has no chevron on a previewed call whose cut was DIFFS only", () => {
+    // `hasFull` fires when the store cut anything at all, so it used to latch this
+    // card — and its region can never fill: `fetchOutputBulk` returns early on an
+    // empty bulk output, so the chevron opened on nothing for good.
+    const card = buildToolCard({
+      id: "bare-full-diffs",
+      title: "fsWrite",
+      kind: "edit",
+      status: "completed",
+      live: false,
+      hasFull: true,
+      diffCount: 3,
+      chatID: "c1",
+    });
+    expect(card.querySelector(".tool-disclosure")).toBeNull();
+  });
+
+  it("still offers that card's diffs, which are a SIBLING of the region", () => {
+    // What the narrowing must not cost: the diffs the preview dropped are exactly
+    // what the reader wanted, and they were never inside the disclosure.
+    const card = buildToolCard({
+      id: "bare-full-diffs-ctl",
+      title: "fsWrite",
+      kind: "edit",
+      status: "completed",
+      live: false,
+      hasFull: true,
+      diffCount: 3,
+      chatID: "c1",
+    });
+    expect(card.querySelector('[data-reveal="diff"]')?.textContent).toBe("Show 3 diffs");
   });
 
   it("gets its chevron BACK when output lands, and it toggles", () => {

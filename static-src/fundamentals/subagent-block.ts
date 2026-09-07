@@ -199,7 +199,10 @@ export function buildSubagentBlock(
 ): SubagentView {
   const isContainer = opts.activity === "container";
   const startOpen = opts.startOpen ?? false;
-  const root = el("div", { className: "subagent-block" }) as HTMLDivElement;
+  // Built in its FULL form, chevron and affordance class included, and
+  // `syncDisclosure` below takes the control away when there is nothing to reveal —
+  // the shape `buildToolCard` and `refreshToolDisclosure` already have.
+  const root = el("div", { className: "subagent-block has-disclosure" }) as HTMLDivElement;
   root.classList.toggle("collapsed", !startOpen);
   if (isContainer) {
     root.classList.add("subagent-container");
@@ -255,13 +258,13 @@ export function buildSubagentBlock(
 
   root.append(header, ...(tail === null ? [] : [tail]), body, foot);
 
-  const ctl = createDisclosure(header, body, {
-    open: startOpen,
-    onToggle: (open) => {
-      root.classList.toggle("collapsed", !open);
-      opts.onOpenChange?.(open);
-    },
-  });
+  const onToggle = (open: boolean): void => {
+    root.classList.toggle("collapsed", !open);
+    opts.onOpenChange?.(open);
+  };
+  let ctl = createDisclosure(header, body, { open: startOpen, onToggle });
+  let wired = true;
+  let pendingAutoOpen = false;
   // A failed delegate opens on its own: the header can only say THAT it
   // failed, and the reason is the reader's next question. A user toggle
   // outranks it.
@@ -270,13 +273,81 @@ export function buildSubagentBlock(
     if (e instanceof KeyboardEvent && e.key !== "Enter" && e.key !== " ") {
       return;
     }
+    // A header whose trigger is withdrawn toggles nothing, so a click on it is not
+    // the reader taking over — reading it as one would suppress the auto-open the
+    // body's first block is about to earn.
+    if (!wired) {
+      return;
+    }
     userToggled = true;
   };
   header.addEventListener("click", markToggled);
   header.addEventListener("keydown", markToggled);
-  if (status === "failed") {
+
+  /** The disclosure's ONE writer, mirroring `tool-card.ts`'s `refreshToolDisclosure`.
+   *  An EMPTY body gets the primitive's region-only mode — the third use of it here,
+   *  after `tool-group.ts` — so the header keeps its text, its glyph and its name and
+   *  loses the control: no `aria-expanded` over an empty region, no tab stop, no
+   *  chevron. `role="group"` rather than no role at all, because `applyIcon` writes
+   *  the outcome into the header's `aria-label` and a name on a roleless div reaches
+   *  no assistive technology. */
+  const syncDisclosure = (): void => {
+    const populated = body.firstElementChild !== null;
+    if (populated !== wired) {
+      wired = populated;
+      ctl.dispose();
+      if (populated) {
+        // Re-created rather than re-wired, and `role` goes first or the primitive
+        // leaves the group's in place. `aria-controls` survives the swap because the
+        // primitive assigns `region.id` only when it is empty.
+        header.removeAttribute("role");
+        ctl = createDisclosure(header, body, { open: startOpen, onToggle });
+        header.appendChild(chevron);
+        root.classList.add("has-disclosure");
+        root.classList.toggle("collapsed", !startOpen);
+      } else {
+        header.removeAttribute("aria-expanded");
+        header.removeAttribute("aria-controls");
+        header.removeAttribute("tabindex");
+        header.setAttribute("role", "group");
+        chevron.remove();
+        root.classList.add("collapsed");
+        root.classList.remove("has-disclosure");
+        ctl = createDisclosure(null, body, { open: false });
+      }
+    }
+    if (populated && pendingAutoOpen && !userToggled) {
+      pendingAutoOpen = false;
+      ctl.open();
+    }
+  };
+
+  /** The failure auto-open, and the one place it can be refused. An empty body has no
+   *  chevron to close it again, so opening it strands the region — the refusal
+   *  `expandToolDetails` makes on a bare tool card, for the same reason. The ask is
+   *  HELD instead, and applied when the body gains its first child. */
+  const openBody = (): void => {
+    if (body.firstElementChild === null) {
+      pendingAutoOpen = true;
+      return;
+    }
     ctl.open();
+  };
+
+  if (status === "failed") {
+    openBody();
   }
+  // A MICROTASK, not the observer, decides the box built empty: the pass that builds
+  // it fills it synchronously or never will (`messages-blocks.ts` placeBlock takes
+  // the container first and then routes the block), and a microtask runs before the
+  // frame is painted — so the withdrawal is invisible where a task-late wiring would
+  // pop the chevron in on every box in the transcript.
+  queueMicrotask(syncDisclosure);
+  // The observer covers the rest of the card's life. Its own rather than a job on the
+  // tail's: that one is leaf-only, watches `characterData` and `subtree`, and is
+  // disconnected on settle, while this must outlive settle — a leaf's first block can
+  // arrive after its status frame.
+  new MutationObserver(syncDisclosure).observe(body, { childList: true });
 
   // Mirrors the body's trailing text via MutationObserver rather than a
   // second data feed — the body already receives every progress form.
@@ -345,7 +416,7 @@ export function buildSubagentBlock(
       lastStatus = s;
       applyIcon(s);
       if (s === "failed" && !userToggled) {
-        ctl.open();
+        openBody();
       }
       // Settled: the tail's job is done and the footer takes over. Removed
       // rather than hidden — the observer would otherwise keep repainting a

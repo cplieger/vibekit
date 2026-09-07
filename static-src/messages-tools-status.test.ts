@@ -112,6 +112,48 @@ describe("a terminal frame carrying the failure AND its output", () => {
   });
 });
 
+describe("a live call that has produced nothing YET", () => {
+  it("has no chevron while the region is empty", () => {
+    // The wire status is not evidence about the region. It used to be: an
+    // in-progress card was granted the affordance up front, and because both
+    // production call sites pass `live: true`, a REPLAYED in-progress call kept an
+    // empty disclosure with no later frame to take it away.
+    const card = liveCard("st-inflight-bare");
+    expect(card.querySelector(".tool-disclosure")).toBeNull();
+    card.remove();
+  });
+
+  it("gains one on its first output frame, still in flight", () => {
+    const card = liveCard("st-inflight-out");
+    updateToolCall(
+      card,
+      frame("st-inflight-out", { status: "in_progress", output: "step 1 of 3\n" }),
+      "c1",
+    );
+    expect(card.querySelector(".tool-disclosure")).not.toBeNull();
+    card.remove();
+  });
+});
+
+describe("a terminal frame whose output is blank", () => {
+  it("paints nothing into the region", () => {
+    // One value, three consumers, and the two downstream ones already trimmed: the
+    // predicate and the Explain gate both read this region as empty, so a `<pre>`
+    // built here was DOM nothing could ever reach.
+    const card = liveCard("st-blank-pre");
+    updateToolCall(card, frame("st-blank-pre", { status: "completed", output: "   \n  \n" }), "c1");
+    expect(card.querySelector(".tool-output pre")).toBeNull();
+    card.remove();
+  });
+
+  it("offers no Explain button on a failure", () => {
+    const card = liveCard("st-blank-explain");
+    updateToolCall(card, frame("st-blank-explain", { status: "failed", output: "  \n" }), "c1");
+    expect(card.querySelector(".tool-explain-btn")).toBeNull();
+    card.remove();
+  });
+});
+
 describe("a call that failed having produced nothing", () => {
   it("is not force-opened", () => {
     const card = liveCard("st-bare-open");

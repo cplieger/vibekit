@@ -118,13 +118,18 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     wireToggle(node, detailsBody(node, opts, depth1));
     // One arm per thing `detailsBody` writes, read back by `refreshToolDisclosure`.
     // The region cannot be read for them: it is empty until first open, so a card
-    // whose only content is deferred looks exactly like one with none. `hasFull`
-    // over-approximates (a bulk may hold only diffs), erring toward keeping it.
+    // whose only content is deferred looks exactly like one with none.
+    //
+    // `outputBytes` is stamped only where the store cut the OUTPUT, so it is an
+    // exact test for whether the bulk holds any rather than an approximation of it.
+    // `hasFull` alone also fires for a preview cut of its DIFFS, and those reach the
+    // reader through the `Show N diffs` sibling — the region would stay empty and
+    // `fetchOutputBulk` returns early on an empty bulk output.
     if (
       opts.denial !== undefined ||
       (opts.live && opts.input !== undefined) ||
       (opts.output !== undefined && opts.output.trim() !== "") ||
-      opts.hasFull === true
+      (opts.hasFull === true && (opts.outputBytes ?? 0) > 0)
     ) {
       node.dataset["disclosable"] = "1";
     }
@@ -295,9 +300,8 @@ function buildHeader(
   // enum value `completed` was the claim "Tool call completed", which says
   // nothing the row does not already say.
 
-  // A card with nothing to reveal gets no toggle AT ALL rather than a hidden one:
-  // no chevron means no `aria-expanded` for a reader to find. The claim-only kinds
-  // are decided here; a card that goes bare LATER is `refreshToolDisclosure`'s.
+  // The claim-only kinds are decided here; a card that goes bare LATER is
+  // `refreshToolDisclosure`'s, which owns the reason the shape is a detach.
   if (withToggle) {
     header.appendChild(
       el(
@@ -690,10 +694,16 @@ const detachedToggles = new WeakMap<HTMLElement, HTMLElement>();
 
 /** Whether the details region holds anything a reader can SEE, or will once opened.
  *  Non-blank text, the same reading `applyStatusUpdate`'s Explain gate takes of the
- *  same region. A RUNNING card counts either way: output is still arriving, and
- *  withdrawing the affordance to hand it back a frame later is a flicker. */
+ *  same region.
+ *
+ *  THE WIRE STATUS IS NOT CONSULTED, and a `running` arm used to be. It granted the
+ *  affordance up front to spare an appear-transition, but emptiness is a property of
+ *  the region and `data-outcome` says nothing about it: both production call sites
+ *  pass `live: true`, so a REPLAYED in-progress call kept an empty disclosure with no
+ *  later frame to correct it. The affordance now appears when content does, at no
+ *  reflow — the chevron gutter is reserved for every card that HAS a region. */
 function isDisclosable(card: HTMLElement): boolean {
-  if (card.dataset["outcome"] === "running" || card.dataset["disclosable"] === "1") {
+  if (card.dataset["disclosable"] === "1") {
     return true;
   }
   const out = card.querySelector(".tool-output");
@@ -723,13 +733,18 @@ export function refreshToolDisclosure(card: HTMLElement): void {
     summary?.classList.add("has-disclosure");
     return;
   }
+  // Closed through the CONTROLLER first, while the button is still connected: that
+  // is what lands `aria-expanded="false"` on it and `aria-hidden` + `inert` on the
+  // region. Removing the button first leaves the region open and exposed.
   detailCtls.get(card)?.close();
   const toggle = card.querySelector<HTMLElement>(".tool-disclosure");
   if (toggle !== null) {
-    // A reader tabbed onto this chevron when the call settles empty loses focus to
-    // <body>. Accepted: the summary is a plain div with no tabindex, so the only
-    // alternative target is one invented for this, and the card would then answer
-    // a Tab from somewhere the reader never put it.
+    // No FOCUSED chevron can be removed here: the wire status is no longer consulted
+    // and `.tool-output` never shrinks, so every detach left runs inside
+    // `buildToolCard`, before the card is in the document. Reintroduce an in-document
+    // one and focus falls to <body> again; the target is then the card itself
+    // (`applyOutcome` already names it) at `tabindex="-1"` — click-focusable and NOT
+    // a tab stop — or `.tool-group-header`, which is already a trigger.
     detachedToggles.set(card, toggle);
     toggle.remove();
   }
