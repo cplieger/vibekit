@@ -19,15 +19,8 @@ vi.mock("./transport.js", () => ({
   // them.
   newOpID: vi.fn(() => "op-test"),
 }));
-vi.mock("./store.js", () => ({
-  state: { messages: [], chatID: "" },
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
-  get: vi.fn(() => undefined),
-  getActive: vi.fn(() => undefined),
-  getSessions: vi.fn(() => []),
-  tabStatusFor: vi.fn(() => ""),
+vi.mock("./store.js", async () => ({
+  ...(await import("./__test-helpers__/store-mock.js")).storeMock,
 }));
 
 import { EVENT_RENDER_MAP, buildEvent } from "./messages-events.js";
@@ -171,22 +164,47 @@ describe("cancelled event", () => {
 });
 
 describe("compacted event summary", () => {
-  it("renders the conversation summary in a collapsible disclosure", () => {
-    const node = buildEvent({
+  const compacted = (content: string): HTMLDetailsElement =>
+    buildEvent({
       id: "cp1",
       role: "event",
       event_kind: "compacted",
-      content: "The user asked to refactor the auth module; we split it into three files.",
+      content,
       ts: 0,
-    } as Message);
-    expect(node).not.toBeNull();
-    // The boundary marker is present...
-    expect(node?.querySelector(".boundary")).not.toBeNull();
-    // ...and the summary is surfaced (not dropped) in an expandable details.
-    const details = node?.querySelector("details");
-    expect(details).not.toBeNull();
-    expect(details?.textContent ?? "").toContain("Conversation summary");
-    expect(details?.textContent ?? "").toContain("split it into three files");
+    } as Message) as HTMLDetailsElement;
+
+  it("makes the marker itself the summary's trigger", () => {
+    const node = compacted("The user asked to refactor auth; we split it into three files.");
+    expect(node.tagName).toBe("DETAILS");
+    expect(node.querySelector(".boundary")).toBeNull();
+    const head = node.querySelector("summary.compaction-head");
+    expect(head?.textContent ?? "").toContain("Conversation compacted");
+    // The app's own joiner, as plain text (status.ts's effort pill is the shape).
+    expect(head?.textContent ?? "").toContain("· summary");
+  });
+
+  // The row sets `list-style: none`, so this glyph is the only thing on screen
+  // saying it opens.
+  it("carries the app's disclosure chevron", () => {
+    const node = compacted("A summary.");
+    expect(node.querySelectorAll(".disclosure-chevron")).toHaveLength(1);
+    expect(node.querySelector("summary.compaction-head > .disclosure-chevron")).not.toBeNull();
+  });
+
+  it("renders the summary as markdown on first open, and not before", async () => {
+    const node = compacted("## Goal\n\nSplit `auth` into three files.\n");
+    const body = node.querySelector(".compaction-body");
+    expect(body).not.toBeNull();
+    expect(body?.textContent).toBe("");
+
+    node.open = true;
+    // `toggle` is queued, not dispatched synchronously.
+    await vi.waitFor(() => {
+      expect(body?.querySelector("h2")?.textContent).toBe("Goal");
+    });
+    expect(body?.querySelector("code")?.textContent).toBe("auth");
+    expect(body?.textContent ?? "").not.toContain("##");
+    expect(body?.textContent ?? "").not.toContain("`");
   });
 
   it("renders just the marker (no disclosure) when there is no summary", () => {
