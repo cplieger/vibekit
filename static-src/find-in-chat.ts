@@ -515,8 +515,8 @@ async function navigateToHit(hit: SearchHit): Promise<void> {
   // be shown" on the launching turn's row; the run tab renders that step's
   // transcript by slicing the same blocks (`run-view.ts` -> `run-step-slice.ts`), so
   // this is a real destination; and the predicate is the renderer's own
-  // `parseStepSubtask`, so a malformed `wf:` id falls through to the delegate box
-  // exactly as it does there.
+  // `parseStepSubtask`, so a malformed `wf:` id falls through to the DELEGATE branch
+  // below exactly as it does there.
   //
   // Skipping `ensureHitResident` and `revealHitTurn` is the point: the destination
   // is another tab, so paging the launching chat's history in and revealing a turn
@@ -537,6 +537,27 @@ async function navigateToHit(hit: SearchHit): Promise<void> {
       // Name "" so the tab factory derives the label from the run store — find has
       // no better one than the factory does.
       openRunView(step.workflowID, "", chatID, step.nodePath);
+    } catch {
+      if (isOpen()) {
+        showHitNotice("could not be opened");
+      }
+    }
+    return;
+  }
+  // A DELEGATE's hit goes to that delegate's TAB, for the same three reasons and by the
+  // same route. Its blocks are dropped by the transcript too, so the DOM path below can
+  // only reach "could not be shown" for one — while the counter, which reads the SERVER's
+  // figure, says the text is there. Every non-empty subtask id that is not a step is a
+  // delegate, malformed `wf:` ids included: those fall through to the delegate path in the
+  // renderer as well.
+  const subtask = hit.agent_subtask_id ?? "";
+  if (subtask !== "") {
+    if (countEl !== null) {
+      countEl.textContent = serverHitCounter();
+    }
+    try {
+      const { openSubagentView } = await import("./subagent-view.js");
+      openSubagentView(chatID, subtask);
     } catch {
       if (isOpen()) {
         showHitNotice("could not be opened");
