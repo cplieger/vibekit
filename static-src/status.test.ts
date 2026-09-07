@@ -61,6 +61,7 @@ function mountContextBar(): void {
   document.body.appendChild(btn);
   for (const id of [
     "context-ring-fill",
+    "context-ring-wedge",
     "context-label",
     "ctx-tokens",
     "ctx-credits",
@@ -82,6 +83,7 @@ async function paint(model: string, effort: string): Promise<void> {
   updateContextBar({
     pct: 0,
     contextSize: 0,
+    summarizationPct: 80,
     credits: 0,
     turnCount: 0,
     lastTurnMs: 0,

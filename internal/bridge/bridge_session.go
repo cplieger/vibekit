@@ -63,8 +63,15 @@ type sessionCreated struct {
 		// WorkflowsEnabled is KAS's RESOLVED answer for settings.workflows. A POINTER
 		// because absent and false are different states, and the failure is otherwise
 		// silent: the agent loses its workflowChatTools array with no error, no -32601.
-		WorkflowsEnabled *bool  `json:"workflowsEnabled"`
-		Title            string `json:"title"`
+		WorkflowsEnabled *bool `json:"workflowsEnabled"`
+		// ContextUsage carries the session's own compaction thresholds. Pointers all
+		// the way down because absent and 0 are different states and the caller keeps
+		// a previous value on absent.
+		ContextUsage *struct {
+			SummarizationThreshold *float64 `json:"summarizationThreshold"`
+			TruncationThreshold    *float64 `json:"truncationThreshold"`
+		} `json:"contextUsage"`
+		Title string `json:"title"`
 	} `json:"_meta"`
 	ConfigOptions []sessionConfigOption `json:"configOptions"`
 }
@@ -289,10 +296,27 @@ func (b *Bridge) applySessionResultLocked(r sessionCreated, fallbackModel string
 		}
 	}
 	b.sessionTitle = r.Meta.Title
+	b.applyContextUsageLocked(r)
 	b.reportWorkflowsDisagreement(r.Meta.WorkflowsEnabled)
 	b.applyModelConfigOptionLocked(r.ConfigOptions)
 	if b.modelID == "" {
 		b.modelID = vibekit.ModelID(fallbackModel)
+	}
+}
+
+// applyContextUsageLocked records the session's compaction thresholds, keeping the
+// previous value for anything the result did not carry — the modes branch above spells
+// out why absent and present-but-empty are the same answer here. MUST be called with
+// b.mu held.
+func (b *Bridge) applyContextUsageLocked(r sessionCreated) {
+	if r.Meta.ContextUsage == nil {
+		return
+	}
+	if v := r.Meta.ContextUsage.SummarizationThreshold; v != nil && *v > 0 {
+		b.summarizationPct = *v
+	}
+	if v := r.Meta.ContextUsage.TruncationThreshold; v != nil && *v > 0 {
+		b.truncationPct = *v
 	}
 }
 

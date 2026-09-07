@@ -247,9 +247,11 @@ export const setAttachments = transportAction<{ chatID: string; paths: string[] 
 
 // --- chat.compact ---
 
-/** Summarizes the conversation through KAS's native `compact` verb (typed
- *  `/compact` reaches the model as prose, not this — see typed-commands.ts).
- *  `idempotencyKey` because a retry that compacts twice summarizes a summary. */
+/** Summarizes the conversation through KAS's native `compact` verb (typed `/compact`
+ *  reaches the model as prose, not this — see typed-commands.ts). `idempotencyKey`
+ *  because a retry that compacts twice summarizes a summary; success claims ACCEPTANCE
+ *  rather than completion (`internal/command/compact.go` records why); and `error` is
+ *  unset so the default carries the server's own refusal prose. */
 export const compactChat = transportAction<{ chatID: string }>({
   name: "chat.compact",
   networkMode: "always",
@@ -259,7 +261,7 @@ export const compactChat = transportAction<{ chatID: string }>({
     type: "compact",
     chat_id: chatID,
   }),
-  error: "Couldn't compact",
+  success: "Compacting the conversation…",
 });
 
 // --- chat.steer ---

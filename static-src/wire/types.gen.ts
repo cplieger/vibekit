@@ -2283,10 +2283,17 @@ export interface TurnStatePayload {
   workflow_step?: boolean;
 }
 
-/** Usage is a chat's last-known context and billing snapshot. */
+/**
+ * Usage is a chat's last-known context and billing snapshot, plus the percentages at
+ * which the SESSION summarizes and truncates its own context. Both thresholds are
+ * omitempty because 0 means UNKNOWN — a chat that has never resumed receives neither,
+ * and the client applies its own fallback.
+ */
 export interface Usage {
   metering_items?: MeteringItem[];
   context_pct: number;
+  summarization_threshold_pct?: number;
+  truncation_threshold_pct?: number;
   context_size: number;
   credits: number;
   turn_count: number;

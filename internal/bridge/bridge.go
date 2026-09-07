@@ -122,13 +122,18 @@ type Bridge struct {
 	// loadSeq is the read-loop position the `session/load` response arrived at, published
 	// by SessionLoadSeq. Guarded by b.mu, unlike deliveredSeq: written on the goroutine
 	// that issued the load, read wherever a decision is ordered against the replay.
-	loadSeq     uint64
-	nextID      atomic.Int64
-	stopOnce    sync.Once
-	mu          sync.Mutex
-	writeMu     sync.Mutex
-	pendingMu   sync.Mutex
-	enableHooks bool
+	loadSeq uint64
+	// summarizationPct and truncationPct are the compaction thresholds the SESSION
+	// reported. 0 means no session/load result has carried one, which is the normal
+	// state of a chat that has never resumed.
+	summarizationPct float64
+	truncationPct    float64
+	nextID           atomic.Int64
+	stopOnce         sync.Once
+	mu               sync.Mutex
+	writeMu          sync.Mutex
+	pendingMu        sync.Mutex
+	enableHooks      bool
 	// secretStorage gates the `_meta.kiro.secretStorage` declaration in initialize.
 	secretStorage bool
 	// toolSearch and knowledge gate the `settings.toolSearch` row and the two
@@ -213,6 +218,15 @@ func (b *Bridge) SessionTitle() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.sessionTitle
+}
+
+// ContextThresholds returns the percentages at which the session summarizes and
+// truncates its own context, from the session/load result's flat `_meta.contextUsage`.
+// Either is 0 when no result has carried it; the caller supplies the fallback.
+func (b *Bridge) ContextThresholds() (summarization, truncation float64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.summarizationPct, b.truncationPct
 }
 
 // AgentKiroCapabilities returns the backend's initialize advertisement.

@@ -701,6 +701,41 @@ func TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted(t *testing.T) {
 	}
 }
 
+// TestApplyLoadedSessionFacts_KeepsContextThresholds pins the same keep-on-absent
+// contract one layer up: a resumed bridge is freshly constructed, so it answers 0 for a
+// threshold the load result omitted, and writing that zero would replace a pair the chat
+// file has carried since its previous session.
+func TestApplyLoadedSessionFacts_KeepsContextThresholds(t *testing.T) {
+	cases := map[string]struct {
+		summarization, truncation         float64
+		wantSummarization, wantTruncation float64
+	}{
+		"a silent result keeps both":         {wantSummarization: 80, wantTruncation: 95},
+		"what the result carries is written": {summarization: 85, truncation: 97, wantSummarization: 85, wantTruncation: 97},
+		"one carried member keeps the other": {summarization: 85, wantSummarization: 85, wantTruncation: 95},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := &vibekit.Chat{Name: "A"}
+			c.Usage.SummarizationThresholdPct = 80
+			c.Usage.TruncationThresholdPct = 95
+			br := &fakeBridge{summarizationPct: tc.summarization, truncationPct: tc.truncation}
+
+			applyLoadedSessionFacts(c, br, "")
+
+			if c.Usage.SummarizationThresholdPct != tc.wantSummarization {
+				t.Errorf("SummarizationThresholdPct = %v, want %v",
+					c.Usage.SummarizationThresholdPct, tc.wantSummarization)
+			}
+			if c.Usage.TruncationThresholdPct != tc.wantTruncation {
+				t.Errorf("TruncationThresholdPct = %v, want %v",
+					c.Usage.TruncationThresholdPct, tc.wantTruncation)
+			}
+		})
+	}
+}
+
 // TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied pins the visibility half of the
 // mode contract. applyInitialMode warns and continues when session/set_mode is refused, so the
 // session runs the engine's default, and persistNewSessionMetadata then writes the ACTUAL mode

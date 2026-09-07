@@ -136,6 +136,12 @@
      * raise the status fraction there rather than making this opaque. */
     --c-border: color-mix(in oklch, var(--c-text-primary) 16%, transparent);
 
+    /* The context indicator's compaction band. Mixed toward an OPAQUE surface
+     * rather than toward --c-border, so it separates from that track by ALPHA as
+     * well as lightness and tint (3.55:1 dark, 2.07:1 light; `css-contrast.py
+     * show`) — WCAG 1.4.1 wants a cue here beyond hue. */
+    --c-context-wedge: color-mix(in oklch, var(--c-yellow) 55%, var(--c-bg-secondary));
+
     /* ---- THE TAB ACTIVITY DOT -------------------------------------------- *
      * THE VALUES ARE web-terminal-kiro's: both apps put an activity dot on a tab
      * strip and one signal must not carry two colours. The HUE is the source's in

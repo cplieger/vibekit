@@ -193,6 +193,9 @@ class Elements {
   get contextRingFill(): HTMLElement {
     return byId("context-ring-fill");
   }
+  get contextRingWedge(): HTMLElement {
+    return byId("context-ring-wedge");
+  }
   get contextLabel(): HTMLElement {
     return byId("context-label");
   }
