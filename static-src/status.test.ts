@@ -206,10 +206,8 @@ describe("the context ring", () => {
     expect($.contextRingFill.style.stroke).toBe(
       "color-mix(in oklch, var(--c-yellow) 50.0%, var(--c-green))",
     );
-    // The band is the element the fill paints over, so a regression that stopped
-    // writing it is invisible to every assertion above. Read back COMMA-separated:
-    // the CSSOM reserializes a dash list, so `wedgeDash`'s own "20 80" (pinned in
-    // context-ring.test.ts) is not what the element reports.
+    // Read back COMMA-separated: the CSSOM reserializes a dash list, so
+    // `wedgeDash`'s own "20 80" is not what the element reports.
     expect($.contextRingWedge.style.strokeDasharray).toBe("20, 80");
     expect($.contextRingWedge.style.strokeDashoffset).toBe("20");
   });
