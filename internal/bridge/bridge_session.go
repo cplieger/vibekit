@@ -145,7 +145,7 @@ func (b *Bridge) newSession(ctx context.Context, opts *vibekit.StartOpts) error 
 	}
 	b.mu.Lock()
 	b.sessionID = vibekit.SessionID(result.SessionID)
-	b.applySessionResultLocked(result, "")
+	b.applySessionResultLocked(&result, "")
 	sid := string(b.sessionID)
 	current := b.currentMode
 	b.mu.Unlock()
@@ -262,7 +262,7 @@ func (b *Bridge) adoptLoadedSession(acpSessionID, fallbackModel string, resp *vi
 		var result sessionCreated
 		parseErr := json.Unmarshal(resp.Result, &result)
 		if parseErr == nil {
-			b.applySessionResultLocked(result, fallbackModel)
+			b.applySessionResultLocked(&result, fallbackModel)
 			return
 		}
 		slog.Warn("session/load: unparseable result, using fallback",
@@ -275,7 +275,7 @@ func (b *Bridge) adoptLoadedSession(acpSessionID, fallbackModel string, resp *vi
 
 // applySessionResultLocked copies the ACP session response into the
 // bridge's state. MUST be called with b.mu held.
-func (b *Bridge) applySessionResultLocked(r sessionCreated, fallbackModel string) {
+func (b *Bridge) applySessionResultLocked(r *sessionCreated, fallbackModel string) {
 	if r.Modes != nil {
 		b.currentMode = r.Modes.CurrentModeID
 		// ABSENT and PRESENT-BUT-EMPTY are different states. The gate above is on the
@@ -308,7 +308,7 @@ func (b *Bridge) applySessionResultLocked(r sessionCreated, fallbackModel string
 // previous value for anything the result did not carry — the modes branch above spells
 // out why absent and present-but-empty are the same answer here. MUST be called with
 // b.mu held.
-func (b *Bridge) applyContextUsageLocked(r sessionCreated) {
+func (b *Bridge) applyContextUsageLocked(r *sessionCreated) {
 	if r.Meta.ContextUsage == nil {
 		return
 	}
