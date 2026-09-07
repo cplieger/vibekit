@@ -909,10 +909,9 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("exposes no aria-expanded anywhere on the card", () => {
-    // The bar a claim-only card already meets. The chevron is DETACHED rather
-    // than hidden precisely for this: the disclosure primitive owns
-    // `aria-expanded` and keeps writing it, so a hidden button would still
-    // announce a control that opens an empty region.
+    // The bar a claim-only card already meets, and what the chevron is DETACHED
+    // for: the disclosure primitive owns `aria-expanded` and keeps writing it, so
+    // the attribute goes only when the button does.
     expect(bareCard().querySelector("[aria-expanded]")).toBeNull();
   });
 
@@ -951,6 +950,21 @@ describe("a card with nothing to disclose", () => {
       output: "the delegate refused\n",
     });
     expect(card.querySelector(".tool-disclosure")).not.toBeNull();
+  });
+
+  it("counts output the reader cannot see as nothing", () => {
+    // One newline is the "opens on one empty line" the report described, reached by
+    // a narrower input. The Explain gate reads the same region with the same trim,
+    // so a blank-output card offers no button either.
+    const card = buildToolCard({
+      id: "bare-blank",
+      title: "invoke_sub_agent",
+      kind: "other",
+      status: "failed",
+      live: false,
+      output: "\n",
+    });
+    expect(card.querySelector(".tool-disclosure")).toBeNull();
   });
 
   it("keeps the chevron on a call still in flight", () => {
@@ -1027,6 +1041,15 @@ describe("a card with nothing to disclose", () => {
     toggle!.click();
     expect(toggle!.getAttribute("aria-expanded")).toBe("true");
     card.remove();
+  });
+
+  it("stays bare when a chunk paints a blank line into the region", () => {
+    // The live half of the case above: a settled card can still receive a chunk (a
+    // terminal outlives the call), and a `<pre>` on its own is not content.
+    const card = bareCard("bare-blank-live");
+    card.querySelector(".tool-output")!.appendChild(document.createElement("pre"));
+    refreshToolDisclosure(card);
+    expect(card.querySelector(".tool-disclosure")).toBeNull();
   });
 
   it("collapses an OPEN card whose region is emptied, rather than stranding it", () => {

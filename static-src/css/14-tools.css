@@ -284,8 +284,9 @@
    click to the chevron button, which keeps `aria-expanded` and the keyboard
    path where they were.
 
-   Gated on `.has-disclosure`, stamped on the summary exactly when buildHeader
-   builds the chevron, so a claim-only card stays inert without a second flag to
+   Gated on `.has-disclosure`, which is on the summary exactly while the chevron is
+   in the DOM — `refreshToolDisclosure` is the one writer of the withdraw-and-restore
+   direction — so a card with nothing to reveal stays inert without a second flag to
    keep in step. Bare `:hover` like its sibling card headers: they all keep the
    same touch behavior, and this rule stops the title row and subtitle from
    answering the same gesture differently. */

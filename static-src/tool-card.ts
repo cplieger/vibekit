@@ -118,11 +118,12 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     wireToggle(node, detailsBody(node, opts, depth1));
     // One arm per thing `detailsBody` writes, read back by `refreshToolDisclosure`.
     // The region cannot be read for them: it is empty until first open, so a card
-    // whose only content is deferred looks exactly like one with none.
+    // whose only content is deferred looks exactly like one with none. `hasFull`
+    // over-approximates (a bulk may hold only diffs), erring toward keeping it.
     if (
       opts.denial !== undefined ||
       (opts.live && opts.input !== undefined) ||
-      (opts.output !== undefined && opts.output !== "") ||
+      (opts.output !== undefined && opts.output.trim() !== "") ||
       opts.hasFull === true
     ) {
       node.dataset["disclosable"] = "1";
@@ -294,9 +295,9 @@ function buildHeader(
   // enum value `completed` was the claim "Tool call completed", which says
   // nothing the row does not already say.
 
-  // A claim-only card has nothing to reveal, so it gets no toggle AT ALL rather
-  // than a hidden one: a `display: none` button is still a button in the
-  // accessibility tree, announcing a control that would open an empty region.
+  // A card with nothing to reveal gets no toggle AT ALL rather than a hidden one:
+  // no chevron means no `aria-expanded` for a reader to find. The claim-only kinds
+  // are decided here; a card that goes bare LATER is `refreshToolDisclosure`'s.
   if (withToggle) {
     header.appendChild(
       el(
@@ -678,32 +679,25 @@ export function expandToolDetails(card: HTMLElement): void {
 // card that regains content needs no second createDisclosure.
 const detachedToggles = new WeakMap<HTMLElement, HTMLElement>();
 
-/** Whether a card's details region holds anything, or is guaranteed to once opened.
- *
- *  A running card counts as disclosable whatever the region holds: output is still
- *  arriving, and withdrawing the affordance to hand it back a frame later is a
- *  flicker nobody asked for. */
+/** Whether the details region holds anything a reader can SEE, or will once opened.
+ *  Non-blank text, the same reading `applyStatusUpdate`'s Explain gate takes of the
+ *  same region. A RUNNING card counts either way: output is still arriving, and
+ *  withdrawing the affordance to hand it back a frame later is a flicker. */
 function isDisclosable(card: HTMLElement): boolean {
   if (card.dataset["outcome"] === "running" || card.dataset["disclosable"] === "1") {
     return true;
   }
   const out = card.querySelector(".tool-output");
-  if (out === null) {
-    return false;
-  }
-  return out.querySelector("pre") !== null || out.textContent.trim() !== "";
+  return out !== null && out.textContent.trim() !== "";
 }
 
 /** Give a card its disclosure, or take it away: the ONE writer of bare-ness, the
  *  discipline `refreshGroupHeader` has for `tool-group-bare`. Idempotent both ways,
- *  so output landing later restores the chevron, and a card that goes bare while
- *  open is closed rather than stranded over an empty region.
+ *  so output landing later restores the chevron and a card that goes bare while open
+ *  is closed rather than stranded over an empty region.
  *
- *  DETACHED rather than hidden, because the disclosure primitive owns
- *  `aria-expanded` and keeps writing it: a hidden button still announces a control
- *  that opens nothing, and a bare card has to meet the same bar as a claim-only one.
- *  `has-disclosure` goes with it — that class gates the pointer cursor, the hover
- *  wash and the reserved chevron gutter. */
+ *  DETACHED rather than `display: none`d, so a bare card meets the same
+ *  no-`aria-expanded` bar a claim-only one already does, at no CSS cost. */
 export function refreshToolDisclosure(card: HTMLElement): void {
   // A claim-only card owns none of this: no details region, no toggle, and a
   // summary that never became clickable.
