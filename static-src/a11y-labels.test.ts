@@ -148,6 +148,44 @@ describe("a11y: permissions rule-form labels (static markup)", () => {
   });
 });
 
+describe("a11y: autocomplete on every autocompletable input (static markup)", () => {
+  // Chrome's "[DOM] Input elements should have autocomplete attributes"
+  // violation fires per focused field, so it only ever names one. Sweep the
+  // whole file instead, over the raw text rather than a parse: a full-document
+  // innerHTML would make the runner chase the <link rel=stylesheet>.
+  it("no autocompletable input is missing an autocomplete attribute", () => {
+    const autocompletable = ["text", "password", "url", "email", "search", "number", "tel"];
+    const offenders: string[] = [];
+
+    for (const tag of indexHtml.match(/<input\b[^>]*>/g) ?? []) {
+      const type = /\stype="([^"]*)"/.exec(tag)?.[1] ?? "text";
+      if (!autocompletable.includes(type)) {
+        continue;
+      }
+      if (/\sautocomplete="/.test(tag)) {
+        continue;
+      }
+      offenders.push(`#${/\sid="([^"]*)"/.exec(tag)?.[1] ?? "(no id)"} (type=${type})`);
+    }
+
+    expect(
+      offenders,
+      `these inputs need an autocomplete value: ${offenders.join(", ")}`,
+    ).toStrictEqual([]);
+  });
+
+  // An OAuth client id is not a login identifier: honouring Chrome's
+  // "username" suggestion would file it in the browser's credential store and
+  // offer it as an autofill identity elsewhere.
+  it("takes autocomplete=off, never username, for the OAuth client id", () => {
+    expect(indexHtml).not.toContain('autocomplete="username"');
+    const clientId = /<input\b[^>]*id="mcp-remote-oauth-client-id"[^>]*>/.exec(indexHtml)?.[0];
+    expect(clientId).toContain('autocomplete="off"');
+    const secret = /<input\b[^>]*id="mcp-remote-oauth-client-secret"[^>]*>/.exec(indexHtml)?.[0];
+    expect(secret).toContain('autocomplete="new-password"');
+  });
+});
+
 describe("a11y: keyboard navigation on picker grid", () => {
   it("rovingFocus makes items focusable via tabindex", async () => {
     const { rovingFocus } = await import("@cplieger/ui-primitives/roving-focus");

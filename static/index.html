@@ -478,7 +478,7 @@
               </div>
               <div class="section-option" id="chat-retention-days-row">
                 <label for="chat-retention-days" class="section-option-label">Days kept</label>
-                <input type="number" id="chat-retention-days" class="page-input-sm" min="0" max="90" value="1" aria-label="Chat retention days">
+                <input type="number" id="chat-retention-days" class="page-input-sm" autocomplete="off" min="0" max="90" value="1" aria-label="Chat retention days">
               </div>
             </div>
 
@@ -672,11 +672,11 @@
                 </label>
                 <label class="rf-field rf-grow">
                   <span class="rf-label">Match globs <span class="rf-optional">(optional)</span></span>
-                  <input id="native-rule-match" class="rf-input rf-mono" type="text" placeholder="src/**, docs/**…">
+                  <input id="native-rule-match" class="rf-input rf-mono" type="text" autocomplete="off" placeholder="src/**, docs/**…">
                 </label>
                 <label class="rf-field rf-grow">
                   <span class="rf-label">Exclude globs <span class="rf-optional">(optional)</span></span>
-                  <input id="native-rule-exclude" class="rf-input rf-mono" type="text" placeholder="**/secrets/**…">
+                  <input id="native-rule-exclude" class="rf-input rf-mono" type="text" autocomplete="off" placeholder="**/secrets/**…">
                 </label>
                 <button id="native-rule-add" class="btn rf-submit" type="button">Add rule</button>
               </div>
@@ -692,7 +692,7 @@
                   </label>
                   <label class="rf-field rf-grow">
                     <span class="rf-label">Resource</span>
-                    <input id="native-explain-resource" class="rf-input rf-mono" type="text" placeholder="a path, or a command for shell…">
+                    <input id="native-explain-resource" class="rf-input rf-mono" type="text" autocomplete="off" placeholder="a path, or a command for shell…">
                   </label>
                   <button id="native-explain-run" class="btn rf-submit" type="button">Test</button>
                 </div>
@@ -736,7 +736,7 @@
                 <div class="rule-form" data-rule-form="ignore" role="group" aria-label="Add an agent ignore file">
                   <label class="rf-field rf-grow">
                     <span class="rf-label">Path</span>
-                    <input id="agent-ignore-input" class="rf-input rf-mono" type="text" placeholder="e.g. .gitignore">
+                    <input id="agent-ignore-input" class="rf-input rf-mono" type="text" autocomplete="off" placeholder="e.g. .gitignore">
                   </label>
                   <button id="agent-ignore-add" class="btn rf-submit" type="button">Add</button>
                 </div>
@@ -1004,7 +1004,7 @@
               <button type="button" id="fb-forward" class="icon-btn" data-tooltip="Forward" aria-label="Forward" disabled>
                 <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
               </button>
-              <input id="fb-path" class="fb-path" type="text" readonly aria-label="Current path">
+              <input id="fb-path" class="fb-path" type="text" autocomplete="off" readonly aria-label="Current path">
               <div class="fb-actions">
                 <button type="button" id="fb-chat-filter" class="icon-btn" data-tooltip="Highlight files this chat changed" aria-label="Highlight files this chat changed" aria-pressed="false">
                   <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/><path d="M5 3v4M3 5h4"/></svg>
@@ -1137,8 +1137,8 @@
       <button type="button" id="modal-login-sso" class="modal-btn"><span>Sign in with SSO</span><span class="modal-btn-sub">Identity Center / Enterprise</span></button>
     </div>
     <div id="modal-sso-form" class="hidden">
-      <input id="modal-provider" class="modal-input" type="url" aria-label="Start URL" placeholder="Start URL (e.g. https://d-xxxxxxxxxx.awsapps.com/start)">
-      <input id="modal-region" class="modal-input" type="text" aria-label="Region" placeholder="Region (e.g. us-east-1)">
+      <input id="modal-provider" class="modal-input" type="url" autocomplete="off" aria-label="Start URL" placeholder="Start URL (e.g. https://d-xxxxxxxxxx.awsapps.com/start)">
+      <input id="modal-region" class="modal-input" type="text" autocomplete="off" aria-label="Region" placeholder="Region (e.g. us-east-1)">
       <button type="button" id="modal-sso-submit" class="modal-btn modal-btn-accent">Connect</button>
     </div>
     <div id="modal-status" class="modal-status"></div>
@@ -1210,7 +1210,7 @@
     <form class="mcp-mode-panel hidden" data-mcp-mode="remote" autocomplete="off" novalidate>
       <p class="mcp-mode-hint">Point at a hosted MCP server. Choose Streamable HTTP (the current MCP transport, 2025-03-26 spec) for most servers; pick SSE only for a server that exposes a legacy Server-Sent-Events endpoint. Use for cloud-hosted integrations like Linear, Notion, or a private deployment.</p>
       <label class="tool-form-label">Name
-        <input id="mcp-remote-name" class="tool-form-input" type="text" placeholder="e.g. linear">
+        <input id="mcp-remote-name" class="tool-form-input" type="text" autocomplete="off" placeholder="e.g. linear">
         <span class="tool-form-hint">Short identifier used in tool names (mcp_&lt;name&gt;_&lt;tool&gt;).</span>
       </label>
       <label class="tool-form-label">Transport
@@ -1221,10 +1221,10 @@
         <span class="tool-form-hint">Streamable HTTP is the current MCP transport. Choose SSE only for a server that exposes a legacy Server-Sent-Events endpoint.</span>
       </label>
       <label class="tool-form-label">URL
-        <input id="mcp-remote-url" class="tool-form-input" type="url" placeholder="https://mcp.example.com/mcp">
+        <input id="mcp-remote-url" class="tool-form-input" type="url" autocomplete="off" placeholder="https://mcp.example.com/mcp">
       </label>
       <label class="tool-form-label">OAuth client ID <span class="tool-form-label-aux">(optional, advanced)</span>
-        <input id="mcp-remote-oauth-client-id" class="tool-form-input" type="text" placeholder="e.g. abc123 (leave empty for Dynamic Client Registration)">
+        <input id="mcp-remote-oauth-client-id" class="tool-form-input" type="text" autocomplete="off" placeholder="e.g. abc123 (leave empty for Dynamic Client Registration)">
         <span class="tool-form-hint">Pre-registered OAuth 2.0 client_id. Required for servers that don't support DCR (Slack, GitHub, Figma); leave empty otherwise.</span>
       </label>
       <label class="tool-form-label">OAuth client secret <span class="tool-form-label-aux">(optional, advanced)</span>
@@ -1252,11 +1252,11 @@
     <div class="mcp-mode-panel hidden" data-mcp-mode="npm">
       <p class="mcp-mode-hint">Run a published MCP server as a local subprocess via <code>npx -y</code>. Works for the entire <code>@modelcontextprotocol/server-*</code> family and most community servers.</p>
       <label class="tool-form-label">Name
-        <input id="mcp-npm-name" class="tool-form-input" type="text" placeholder="e.g. github">
+        <input id="mcp-npm-name" class="tool-form-input" type="text" autocomplete="off" placeholder="e.g. github">
         <span class="tool-form-hint">Short identifier used in tool names.</span>
       </label>
       <label class="tool-form-label">Package
-        <input id="mcp-npm-pkg" class="tool-form-input" type="text" placeholder="@modelcontextprotocol/server-github">
+        <input id="mcp-npm-pkg" class="tool-form-input" type="text" autocomplete="off" placeholder="@modelcontextprotocol/server-github">
         <span class="tool-form-hint">npm package identifier. We run it as <code>npx -y &lt;package&gt;</code>.</span>
       </label>
       <label class="toggle-inline">
@@ -1303,7 +1303,7 @@
       <p class="section-hint">Block specific tools from this server without disabling the whole integration. Type the tool name exactly as it appears in the agent's tool list (e.g. <code>create_issue</code>).</p>
       <div id="mcp-disabled-chips" class="chip-list"></div>
       <div class="chip-adder">
-        <input id="mcp-disabled-input" class="chip-input" type="text" placeholder="e.g. create_issue" aria-label="Add disabled tool">
+        <input id="mcp-disabled-input" class="chip-input" type="text" autocomplete="off" placeholder="e.g. create_issue" aria-label="Add disabled tool">
         <button id="mcp-disabled-add" class="action-pill" type="button" data-tooltip="Block tool" aria-label="Block tool">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
         </button>
@@ -1332,7 +1332,7 @@
     </div>
     <div id="filepicker-list" class="filepicker-list"></div>
     <div class="filepicker-footer">
-      <input id="filepicker-path" class="fb-path" type="text" value="/" readonly aria-label="Upload path">
+      <input id="filepicker-path" class="fb-path" type="text" autocomplete="off" value="/" readonly aria-label="Upload path">
       <button type="button" id="filepicker-upload" class="btn-save">
         <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         Upload
