@@ -1,13 +1,17 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp/v2/sse"
@@ -49,8 +53,10 @@ func (b *bus) emit(evt vibekit.ServerEvent) {
 // the connected handshake and the initial per-client state replay.
 func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	chatFilter := vibekit.ChatID(r.URL.Query().Get("chat_id"))
+	declared := parseSnapshotChats(r)
 	lastRaw := adoptCursorParam(r)
-	slog.Info("SSE connected", "chat_filter", logsafe.Field(string(chatFilter)), "last_event_id", logsafe.Field(lastRaw))
+	slog.Info("SSE connected", "chat_filter", logsafe.Field(string(chatFilter)),
+		"last_event_id", logsafe.Field(lastRaw), "declared_snapshots", len(declared))
 
 	// A reconnect reloads push preferences from disk so settings edited while SSE
 	// was down take effect without a restart.
@@ -61,7 +67,7 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	rt.bus.fanout.Serve(w, r,
 		sse.WithTopic(string(chatFilter)),
 		sse.OnConnect(func(sw *sse.Writer, b sse.ReplayBounds) error {
-			return rt.streamInitialState(sw, b.Floor, b.Head, chatFilter)
+			return rt.streamInitialState(sw, b.Floor, b.Head, chatFilter, declared)
 		}),
 	)
 	slog.Info("SSE disconnected", "chat_filter", logsafe.Field(string(chatFilter)))
@@ -95,6 +101,71 @@ func adoptCursorParam(r *http.Request) string {
 
 // maxCursorDigits bounds the parameter at what a uint64 can spell.
 const maxCursorDigits = 20
+
+// snapshotParam is the query spelling of "these chats are on screen", the one fact
+// the server cannot derive: the active chat is per-DEVICE localStorage state, and
+// vibekit's standing rule is that the server does not care which chat is visible on
+// which device.
+//
+// A NEW parameter rather than a value on chat_id, which is the hub TOPIC filter: a
+// scoped topic delivers only an exactly-matching chat's events, so reusing it would
+// take every other chat's message_chunk, chat_status and tabs_changed frames off the
+// wire and leave the tab dots, the sidebar and the strip dark.
+const snapshotParam = "snapshot"
+
+// parseSnapshotChats reads the chats a client declares as on-screen. Malformed
+// entries are DROPPED and reported rather than failing the connect — the
+// ParseCIDRs shape — because the stream is the client's only recovery channel and a
+// mangled parameter must not be what keeps it closed.
+//
+// An EMPTY result means "declare nothing", which reads downstream as "every open
+// chat", so an older client, a curl and a test fixture all still receive snapshots,
+// bounded by connectSnapshotBudget rather than by the parameter.
+func parseSnapshotChats(r *http.Request) map[vibekit.ChatID]struct{} {
+	raw := r.URL.Query().Get(snapshotParam)
+	if raw == "" {
+		return nil
+	}
+	declared := make(map[vibekit.ChatID]struct{}, maxDeclaredSnapshotChats)
+	malformed, overCap := 0, 0
+	for entry := range strings.SplitSeq(raw, ",") {
+		if !ids.ValidChatID(entry) {
+			malformed++
+			continue
+		}
+		if len(declared) >= maxDeclaredSnapshotChats {
+			overCap++
+			continue
+		}
+		declared[vibekit.ChatID(entry)] = struct{}{}
+	}
+	if malformed > 0 || overCap > 0 {
+		slog.Warn("SSE snapshot parameter partly ignored", "declared", len(declared),
+			"malformed", malformed, "over_cap", overCap, "cap", maxDeclaredSnapshotChats)
+	}
+	return declared
+}
+
+// hasOpenTab reports whether this chat has a row in the tab strip, matching a
+// chat-kind TabSubject by Ref.
+//
+// A NIL store answers TRUE for every chat, and that FAIL-OPEN is deliberate rather
+// than incidental: an unwired store must never withhold state a client needs, and
+// every test in this package runs with one. Closed-by-default would break the suite
+// and, worse, would silently withhold every busy chat's transcript in production on
+// a wiring mistake.
+func (rt *Runtime) hasOpenTab(chatID vibekit.ChatID) bool {
+	if rt.tabs == nil {
+		return true
+	}
+	subjects, _ := rt.tabs.List()
+	for _, s := range subjects {
+		if s.Kind == vibekit.TabKindChat && s.Ref == string(chatID) {
+			return true
+		}
+	}
+	return false
+}
 
 // The cold-connect payload policy. Every number below is derived from what a
 // realistic reconnect must CARRY, not from what one was measured to carry: three
@@ -151,7 +222,12 @@ var connectSnapshotCaps = buffer.SnapshotCaps{
 // outstanding state so a reconnecting browser rebuilds its UI as it was.
 // ConnectedPayload carries the ring floor/head so the client can detect a replay
 // gap, plus the workspace root, the one server fact the client cannot derive.
-func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter vibekit.ChatID) error {
+func (rt *Runtime) streamInitialState(
+	sw *sse.Writer,
+	floor, head uint64,
+	chatFilter vibekit.ChatID,
+	declared map[vibekit.ChatID]struct{},
+) error {
 	connectedEvt := vibekit.NewEvent(vibekit.EventConnected, "", vibekit.ConnectedPayload{
 		Workspace: rt.lifecycle.workDir,
 		Floor:     floor,
@@ -167,12 +243,16 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFi
 	}
 
 	// No id: replayed state is synthesized, not part of the event sequence.
-	writeEvent := func(evt vibekit.ServerEvent) error {
+	//
+	// The MARSHALED byte count comes back beside the error so the per-connect budget
+	// below is EXACT rather than estimated, and so every replay path's cost is
+	// measurable. A skipped event reports zero, which is what it cost.
+	writeEvent := func(evt vibekit.ServerEvent) (int, error) {
 		data, err := json.Marshal(evt)
 		if err != nil {
-			return nil //nolint:nilerr // skip unmarshalable event, keep stream
+			return 0, nil //nolint:nilerr // skip unmarshalable event, keep stream
 		}
-		return sw.Event(0, "", data)
+		return len(data), sw.Event(0, "", data)
 	}
 
 	if err := rt.replayPendingPermissions(writeEvent, chatFilter); err != nil {
@@ -188,7 +268,7 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFi
 	// ONE read of the open-turn set serves both replays below, so the busy chats
 	// the second one skips are exactly the chats the first one described.
 	open := rt.coord.turns.openTurns()
-	if err := rt.replayTurnState(writeEvent, chatFilter, open); err != nil {
+	if err := rt.replayTurnState(writeEvent, chatFilter, open, declared); err != nil {
 		return err
 	}
 	// turn_state cannot carry a chat that is waiting on a person: its client
@@ -200,7 +280,7 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFi
 // waiting on a person, skipping chats replayTurnState already covered. A real
 // chat_status rather than a stretched turn_state, which asserts a turn is RUNNING.
 func (rt *Runtime) replayWaitingStatus(
-	writeFn func(vibekit.ServerEvent) error,
+	writeFn func(vibekit.ServerEvent) (int, error),
 	chatFilter vibekit.ChatID,
 	open map[vibekit.ChatID]openTurnFacts,
 ) error {
@@ -208,6 +288,12 @@ func (rt *Runtime) replayWaitingStatus(
 		if chatFilter != "" && id != chatFilter {
 			continue
 		}
+		// The skip is keyed on `open`, NOT on what replayTurnState emitted, and that
+		// is load-bearing since the tab filter and the budget can withhold a busy
+		// chat's frame: a chat whose turn is genuinely running must still suppress a
+		// stale waiting_on_user, or a client renders the amber "answer me" dot over a
+		// chat the agent is working in.
+		//
 		// A PRIME's chat is skipped here too, even though turn_state withholds it:
 		// its turn is genuinely running, so an older status describes the wrong turn.
 		if _, busy := open[id]; busy {
@@ -216,23 +302,62 @@ func (rt *Runtime) replayWaitingStatus(
 		if p.Status != vibekit.ChatStatusWaitingOnUser {
 			continue
 		}
-		if err := writeFn(vibekit.NewEvent(vibekit.EventChatStatus, id, p)); err != nil {
+		if _, err := writeFn(vibekit.NewEvent(vibekit.EventChatStatus, id, p)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// replayTurnState emits one synthesized turn_state event per chat with an open
-// turn; an absent snapshot still goes out as a bare busy signal. Reading the TURN
-// rather than the prompt slot is what makes an agent-initiated turn visible at all.
-// A PRIME turn is never served: its frames are a transcript replay vibekit sent
+// turnCandidate is one chat the connect replay may describe, carrying the two facts
+// the order and the budget below turn on.
+type turnCandidate struct {
+	id       vibekit.ChatID
+	facts    openTurnFacts
+	declared bool
+}
+
+// narrowedConnectCaps clamps the per-snapshot caps to what is LEFT of the
+// per-connect budget, so the last snapshot that fits is bounded by the budget rather
+// than by the per-snapshot ceiling.
+//
+// Every text dimension is scaled by the same factor rather than one being starved:
+// reasoning and content are separate fields a reader consumes together, so a short
+// budget should shrink the snapshot in proportion. The floor is 1 byte and never 0 —
+// a zero dimension means UNBOUNDED to buffer.SnapshotCaps, so clamping a field to
+// "spend nothing" would spend everything, and MaxTextBytes would report 0.
+func narrowedConnectCaps(remaining int) buffer.SnapshotCaps {
+	caps := connectSnapshotCaps
+	full := caps.MaxTextBytes()
+	if remaining <= 0 || full <= 0 || remaining >= full {
+		return caps
+	}
+	scale := func(n int) int { return max(1, n*remaining/full) }
+	caps.ReasoningBytes = scale(caps.ReasoningBytes)
+	caps.ContentBytes = scale(caps.ContentBytes)
+	caps.BlockTextBytes = scale(caps.BlockTextBytes)
+	caps.ToolOutputBytes = scale(caps.ToolOutputBytes)
+	return caps
+}
+
+// replayTurnState emits one synthesized turn_state event per chat with an open turn
+// that a client can actually SHOW, under a per-connect snapshot budget. Reading the
+// TURN rather than the prompt slot is what makes an agent-initiated turn visible at
+// all. A PRIME turn is never served: its frames are a transcript replay vibekit sent
 // itself, so serving them would render the preamble as conversation.
+//
+// Two filters compose, and they answer different questions. A busy chat with NO OPEN
+// TAB gets nothing at all — there is no row in the strip, so there is no dot to feed
+// and no transcript to draw. An open chat the client did not DECLARE as on-screen
+// gets the bare busy signal, which is what makes the payload O(1) in the number of
+// busy chats: the snapshot is the expensive part and only a visible chat needs it.
 func (rt *Runtime) replayTurnState(
-	writeFn func(vibekit.ServerEvent) error,
+	writeFn func(vibekit.ServerEvent) (int, error),
 	chatFilter vibekit.ChatID,
 	open map[vibekit.ChatID]openTurnFacts,
+	declared map[vibekit.ChatID]struct{},
 ) error {
+	candidates := make([]turnCandidate, 0, len(open))
 	for id, facts := range open {
 		if chatFilter != "" && id != chatFilter {
 			continue
@@ -240,30 +365,75 @@ func (rt *Runtime) replayTurnState(
 		if facts.Source == vibekit.TurnSourcePrime {
 			continue
 		}
-		status := rt.bus.chatStatus.Get(id)
+		// Skipped ENTIRELY rather than downgraded to a bare signal: a chat with no
+		// tab has no surface the signal could reach. Fails OPEN on an unwired store
+		// (see hasOpenTab).
+		if !rt.hasOpenTab(id) {
+			continue
+		}
+		_, isDeclared := declared[id]
+		candidates = append(candidates, turnCandidate{id: id, facts: facts, declared: isDeclared})
+	}
+	// A DETERMINISTIC order is required, not a nicety. Go randomises map iteration, so
+	// without the sort a short budget picks arbitrary winners and the same fixture
+	// measures a different payload on every run — which makes every byte assertion
+	// over this path flaky. Declared chats lead so the chats a reader is actually
+	// looking at get the full per-snapshot cap; the rest follow by chat id.
+	slices.SortFunc(candidates, func(a, b turnCandidate) int {
+		if a.declared != b.declared {
+			if a.declared {
+				return -1
+			}
+			return 1
+		}
+		return cmp.Compare(a.id, b.id)
+	})
+
+	remaining := connectSnapshotBudget
+	snapshots, bare, truncated := 0, 0, 0
+	for _, cand := range candidates {
+		status := rt.bus.chatStatus.Get(cand.id)
 		payload := vibekit.TurnStatePayload{
 			Status:      status.Status,
 			Description: status.Description,
 			// Emitted AND marked: the snapshot is the only copy of the in-flight step
 			// transcript, but unmarked it makes the launching chat read as busy.
-			WorkflowStep: facts.Source == vibekit.TurnSourceWorkflowStep,
+			WorkflowStep: cand.facts.Source == vibekit.TurnSourceWorkflowStep,
 		}
+		// An empty declared set reads as "every open chat", so an older client and a
+		// curl still get snapshots — bounded by the budget rather than the parameter.
+		wantSnapshot := len(declared) == 0 || cand.declared
 		// SnapshotCapped rather than Snapshot: an uncapped snapshot is a whole
-		// transcript, and six of them are the whole cold-connect payload. The
-		// marker travels with it so no client can read the tail as complete —
-		// a bare busy signal leaves it false, because nothing was withheld from
-		// a payload that carries no message.
-		if msg, seq, truncated, ok := facts.Buf.SnapshotCapped(connectSnapshotCaps); ok {
+		// transcript, and six of them are the whole cold-connect payload. ChunkSeq is
+		// taken either way — it is the watermark a client drops folded chunks
+		// against, and it is a fact about the turn rather than about the snapshot.
+		msg, seq, cut, ok := cand.facts.Buf.SnapshotCapped(narrowedConnectCaps(remaining))
+		payload.ChunkSeq = seq
+		if wantSnapshot && remaining > 0 && ok {
+			// The marker travels with the snapshot so no client can read the tail as
+			// complete.
 			payload.Message = &msg
-			payload.ChunkSeq = seq
-			payload.Truncated = truncated
-		} else {
-			payload.ChunkSeq = seq
+			payload.Truncated = cut
 		}
-		if err := writeFn(vibekit.NewEvent(vibekit.EventTurnState, id, payload)); err != nil {
+		// Truncated stays FALSE on a bare signal: nothing was withheld from a payload
+		// that carries no message, and a marker there would teach a reader to ignore
+		// the one on a payload that IS cut.
+		n, err := writeFn(vibekit.NewEvent(vibekit.EventTurnState, cand.id, payload))
+		if err != nil {
 			return err
 		}
+		if payload.Message == nil {
+			bare++
+			continue
+		}
+		snapshots++
+		if cut {
+			truncated++
+		}
+		remaining -= n
 	}
+	slog.Debug("SSE connect turn_state replay", "snapshots", snapshots, "bare_signals", bare,
+		"snapshot_bytes", connectSnapshotBudget-remaining, "truncated", truncated)
 	return nil
 }
 
@@ -271,9 +441,11 @@ func (rt *Runtime) replayTurnState(
 // connected client, so dialogs survive a reconnect that outlived the ring buffer.
 // EVERY unresolved request goes, however old: the agent server holds
 // session/request_permission open until answered, so an old card is a live question.
-func (rt *Runtime) replayPendingPermissions(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
+func (rt *Runtime) replayPendingPermissions(writeFn func(vibekit.ServerEvent) (int, error), chatFilter vibekit.ChatID) error {
 	for _, evt := range rt.bus.pendingPerms.List(chatFilter) {
-		if err := writeFn(evt); err != nil {
+		// The byte count is discarded: this replay does not budget, and its allowance
+		// is a separate line in maxColdConnectBytes.
+		if _, err := writeFn(evt); err != nil {
 			return err
 		}
 	}
@@ -284,9 +456,10 @@ func (rt *Runtime) replayPendingPermissions(writeFn func(vibekit.ServerEvent) er
 // connected client, so a reload, a second device and a transport gap converge on the
 // same set. The client's dock de-duplicates by ask id, which is what lets a
 // `transport:gap` clear eagerly and be followed by this burst.
-func (rt *Runtime) replayPendingRunAsks(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
+func (rt *Runtime) replayPendingRunAsks(writeFn func(vibekit.ServerEvent) (int, error), chatFilter vibekit.ChatID) error {
 	for _, evt := range rt.runs.asks.List(chatFilter) {
-		if err := writeFn(evt); err != nil {
+		// The count is discarded for replayPendingPermissions' reason.
+		if _, err := writeFn(evt); err != nil {
 			return err
 		}
 	}

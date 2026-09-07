@@ -2,10 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -554,17 +557,17 @@ func TestReplayTurnState_MarksAStepDrivenTurnAsTheRunsOwn(t *testing.T) {
 			h.translateACPEvent(chatID, tc.msg)
 
 			var got []vibekit.TurnStatePayload
-			err := h.replayTurnState(func(evt vibekit.ServerEvent) error {
+			err := h.replayTurnState(func(evt vibekit.ServerEvent) (int, error) {
 				if evt.Type != vibekit.EventTurnState {
-					return nil
+					return 0, nil
 				}
 				p, ok := evt.Payload.(vibekit.TurnStatePayload)
 				if !ok {
 					t.Fatalf("turn_state payload = %T, want vibekit.TurnStatePayload", evt.Payload)
 				}
 				got = append(got, p)
-				return nil
-			}, chatID, h.coord.turns.openTurns())
+				return 0, nil
+			}, chatID, h.coord.turns.openTurns(), nil)
 			if err != nil {
 				t.Fatalf("replayTurnState: %v", err)
 			}
@@ -587,25 +590,63 @@ func TestReplayTurnState_MarksAStepDrivenTurnAsTheRunsOwn(t *testing.T) {
 // holds, so the drive belongs in one place.
 func replayedTurnState(t *testing.T, h *Runtime, chatID vibekit.ChatID) vibekit.TurnStatePayload {
 	t.Helper()
-	var got []vibekit.TurnStatePayload
-	err := h.replayTurnState(func(evt vibekit.ServerEvent) error {
+	got := orderedTurnStates(t, h, chatID, nil)
+	if len(got) != 1 {
+		t.Fatalf("turn_state events = %d, want 1", len(got))
+	}
+	return got[0].payload
+}
+
+// replayedTurn is one turn_state the replay wrote. The chat id is kept beside the
+// payload because the payload does not carry it and the ordering and filter tests
+// below assert on WHICH chats were served.
+type replayedTurn struct {
+	chatID  vibekit.ChatID
+	payload vibekit.TurnStatePayload
+}
+
+// orderedTurnStates drives replayTurnState and returns every turn_state it wrote, in
+// WIRE ORDER — a slice rather than a map, because the order is what two of the tests
+// below assert.
+func orderedTurnStates(
+	t *testing.T,
+	rt *Runtime,
+	chatFilter vibekit.ChatID,
+	declared map[vibekit.ChatID]struct{},
+) []replayedTurn {
+	t.Helper()
+	var got []replayedTurn
+	err := rt.replayTurnState(func(evt vibekit.ServerEvent) (int, error) {
 		if evt.Type != vibekit.EventTurnState {
-			return nil
+			return 0, nil
 		}
 		p, ok := evt.Payload.(vibekit.TurnStatePayload)
 		if !ok {
 			t.Fatalf("turn_state payload = %T, want vibekit.TurnStatePayload", evt.Payload)
 		}
-		got = append(got, p)
-		return nil
-	}, chatID, h.coord.turns.openTurns())
+		got = append(got, replayedTurn{chatID: evt.ChatID, payload: p})
+		data, err := json.Marshal(evt)
+		if err != nil {
+			t.Fatalf("marshal turn_state for %q: %v", evt.ChatID, err)
+		}
+		// The REAL marshaled length, so the budget under test is charged what the wire
+		// would charge it. A test-side zero would make the budget unspendable and every
+		// assertion over it vacuous.
+		return len(data), nil
+	}, chatFilter, rt.coord.turns.openTurns(), declared)
 	if err != nil {
 		t.Fatalf("replayTurnState: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("turn_state events = %d, want 1", len(got))
+	return got
+}
+
+// servedChats is the chat ids a replay described, in wire order.
+func servedChats(turns []replayedTurn) []vibekit.ChatID {
+	ids := make([]vibekit.ChatID, 0, len(turns))
+	for _, tn := range turns {
+		ids = append(ids, tn.chatID)
 	}
-	return got[0]
+	return ids
 }
 
 // openBigTurn opens a turn on chatID and fills its buffer past every dimension of
@@ -690,3 +731,304 @@ func TestReplayTurnState_ASmallTurnIsNotMarkedTruncated(t *testing.T) {
 		t.Errorf("content = %q, want it untouched", got.Message.Content)
 	}
 }
+
+// --- the connect replay's two filters and its budget ---
+
+// openSmallTurn opens a PROMPT-sourced turn on chatID and gives it just enough
+// content for a snapshot to exist. Small deliberately: the tests below assert WHICH
+// chats are served and in what order, never what each one costs. A prime-sourced
+// turn would be withheld outright and an unstarted buffer reports no snapshot, so
+// both facts are set here rather than assumed.
+func openSmallTurn(tb testing.TB, rt *Runtime, id vibekit.ChatID, text string) {
+	tb.Helper()
+	rt.bridge.mgr.orInsert(id)
+	if epoch := rt.coord.StartTurn(tb.Context(), id, vibekit.TurnSourcePrompt); epoch == 0 {
+		tb.Fatalf("StartTurn(%q) refused, so the chat is not busy and nothing is replayed", id)
+	}
+	buf := rt.liveTurnBuffer(id)
+	if buf == nil {
+		tb.Fatalf("no live turn buffer for %q, so there is nothing to snapshot", id)
+	}
+	if !buf.StartTurn("m-" + string(id)) {
+		tb.Fatalf("turn for %q was already started, so the fixture is not the one filling it", id)
+	}
+	buf.AppendTextDelta(text, "")
+}
+
+// declaredSet is the shape a parsed ?snapshot= parameter hands replayTurnState.
+func declaredSet(ids ...vibekit.ChatID) map[vibekit.ChatID]struct{} {
+	set := make(map[vibekit.ChatID]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	return set
+}
+
+// TestReplayTurnState_SkipsAChatWithNoOpenTab pins the SERVER-side filter, the half
+// that needs no client change: a busy chat with no row in the strip has no dot to
+// feed and no transcript to draw, so its frame is pure cost. Skipped entirely rather
+// than downgraded to a bare signal, because there is no surface the signal reaches.
+func TestReplayTurnState_SkipsAChatWithNoOpenTab(t *testing.T) {
+	rt := newBudgetRuntime(t)
+	const tabbed vibekit.ChatID = "c-tabbed"
+	const untabbed vibekit.ChatID = "c-untabbed"
+	openSmallTurn(t, rt, tabbed, "the reader is looking at this")
+	openSmallTurn(t, rt, untabbed, "nobody has this open")
+	openBudgetChatTab(t, rt, tabbed)
+
+	got := servedChats(orderedTurnStates(t, rt, "", nil))
+
+	want := []vibekit.ChatID{tabbed}
+	if !slices.Equal(got, want) {
+		t.Errorf("replayTurnState served %v, want %v: a chat with no tab must get nothing at all",
+			got, want)
+	}
+}
+
+// TestReplayTurnState_ServesEveryBusyChatWhenTheTabStoreIsUnwired is the FAIL-OPEN
+// guard, and it is why the rest of this package's tests keep passing: they all run on
+// a runtime with no tab store. A closed default would break the suite and, far worse,
+// would silently withhold every busy chat's transcript in production the first time
+// the store was left unwired.
+func TestReplayTurnState_ServesEveryBusyChatWhenTheTabStoreIsUnwired(t *testing.T) {
+	rt, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, rt) })
+	if rt.tabs != nil {
+		t.Fatal("the fixture wired a tab store, so it cannot exercise the unwired path")
+	}
+	const first vibekit.ChatID = "c-1"
+	const second vibekit.ChatID = "c-2"
+	openSmallTurn(t, rt, first, "one")
+	openSmallTurn(t, rt, second, "two")
+
+	got := orderedTurnStates(t, rt, "", nil)
+
+	want := []vibekit.ChatID{first, second}
+	if ids := servedChats(got); !slices.Equal(ids, want) {
+		t.Fatalf("replayTurnState served %v, want %v: an unwired store must treat every chat as open",
+			ids, want)
+	}
+	for _, tn := range got {
+		if tn.payload.Message == nil {
+			t.Errorf("%q got a bare signal; an unwired store must not withhold the snapshot either",
+				tn.chatID)
+		}
+	}
+}
+
+// TestReplayTurnState_ServesTheDeclaredChatsSnapshotAndABareSignalForTheRest pins the
+// second filter, the one the client drives. An open-but-undeclared chat is still
+// BUSY, so it must keep saying so — it just does not need the transcript nobody is
+// looking at.
+func TestReplayTurnState_ServesTheDeclaredChatsSnapshotAndABareSignalForTheRest(t *testing.T) {
+	rt := newBudgetRuntime(t)
+	const onScreen vibekit.ChatID = "c-on-screen"
+	const background vibekit.ChatID = "c-background"
+	openSmallTurn(t, rt, onScreen, "the reply the reader is watching")
+	openSmallTurn(t, rt, background, "a reply nobody has open")
+	openBudgetChatTab(t, rt, onScreen)
+	openBudgetChatTab(t, rt, background)
+
+	got := orderedTurnStates(t, rt, "", declaredSet(onScreen))
+
+	if len(got) != 2 {
+		t.Fatalf("turn_state events = %d, want 2: an undeclared chat is still busy", len(got))
+	}
+	for _, tn := range got {
+		switch tn.chatID {
+		case onScreen:
+			if tn.payload.Message == nil {
+				t.Error("the declared chat got a bare signal, so the visible transcript is lost")
+			}
+		case background:
+			if tn.payload.Message != nil {
+				t.Error("an undeclared chat carried a snapshot; that is the payload being cut")
+			}
+			if tn.payload.Truncated {
+				t.Error("truncated = true on a bare signal: nothing was withheld from a payload " +
+					"carrying no message, and a marker here teaches a reader to ignore a real one")
+			}
+		default:
+			t.Errorf("unexpected chat %q in the replay", tn.chatID)
+		}
+	}
+}
+
+// TestReplayTurnState_ServesDeclaredChatsFirstWhenTheBudgetIsShort covers the order
+// AND the budget, which are one mechanism: six uncapped snapshots are ~333 KB against
+// a 256 KB budget, so SOMETHING has to be refused, and which chats are refused must
+// not depend on Go's map iteration order.
+func TestReplayTurnState_ServesDeclaredChatsFirstWhenTheBudgetIsShort(t *testing.T) {
+	t.Run("declared chats lead the wire and keep their snapshots", func(t *testing.T) {
+		rt := newBudgetRuntime(t)
+		ids := busyChatsWithHugeTurns(t, rt, fixtureBusyChats)
+		// Declared chats that sort LAST by id, so a sort that ignored the declaration
+		// would put them at the end of the wire behind four bare signals.
+		lateA, lateB := ids[len(ids)-2], ids[len(ids)-1]
+
+		got := orderedTurnStates(t, rt, "", declaredSet(lateA, lateB))
+
+		if lead := servedChats(got)[:2]; !slices.Equal(lead, []vibekit.ChatID{lateA, lateB}) {
+			t.Errorf("the wire leads with %v, want the declared chats %v first",
+				lead, []vibekit.ChatID{lateA, lateB})
+		}
+		for _, tn := range got {
+			declared := tn.chatID == lateA || tn.chatID == lateB
+			if declared && tn.payload.Message == nil {
+				t.Errorf("declared chat %q got a bare signal", tn.chatID)
+			}
+			if !declared && tn.payload.Message != nil {
+				t.Errorf("undeclared chat %q carried a snapshot", tn.chatID)
+			}
+		}
+	})
+
+	t.Run("with every chat declared the budget cuts the tail by id", func(t *testing.T) {
+		rt := newBudgetRuntime(t)
+		ids := busyChatsWithHugeTurns(t, rt, fixtureBusyChats)
+
+		got := orderedTurnStates(t, rt, "", declaredSet(ids...))
+
+		if served := servedChats(got); !slices.Equal(served, ids) {
+			t.Fatalf("replayTurnState served %v, want every busy chat in id order %v", served, ids)
+		}
+		// The budget is what makes this fail if it is deleted: six full snapshots fit
+		// under no ceiling, so a run with none refused is a run with no budget.
+		snapshots := 0
+		for _, tn := range got {
+			if tn.payload.Message != nil {
+				snapshots++
+			}
+		}
+		if snapshots == len(ids) {
+			t.Errorf("all %d declared chats got a full snapshot, so nothing bounded the connect: "+
+				"six of them are ~%d bytes of text against a %d byte budget",
+				snapshots, len(ids)*connectSnapshotCaps.MaxTextBytes(), connectSnapshotBudget)
+		}
+		if snapshots == 0 {
+			t.Error("no declared chat got a snapshot; the budget refused the payload it exists to admit")
+		}
+		// The refusals are a SUFFIX by id: the budget spends in wire order, so a chat
+		// that got a snapshot cannot follow one that did not.
+		seenBare := false
+		for _, tn := range got {
+			if tn.payload.Message == nil {
+				seenBare = true
+				continue
+			}
+			if seenBare {
+				t.Errorf("%q carried a snapshot after an earlier chat was refused, so the budget "+
+					"is not being spent in wire order", tn.chatID)
+			}
+		}
+	})
+}
+
+// TestReplayTurnState_IsDeterministicallyOrdered is the assertion the budget makes
+// necessary. Go randomises map iteration, so an unsorted candidate list picks
+// arbitrary winners: the payload would differ run to run over an identical fixture,
+// which makes every byte assertion over this path flaky rather than wrong.
+func TestReplayTurnState_IsDeterministicallyOrdered(t *testing.T) {
+	rt := newBudgetRuntime(t)
+	ids := busyChatsWithHugeTurns(t, rt, fixtureBusyChats)
+
+	// Both the ORDER and which chats the budget served, because a stable order with
+	// unstable winners is the same defect one field along.
+	type shape struct {
+		id       vibekit.ChatID
+		snapshot bool
+	}
+	var first []shape
+	for i := range 20 {
+		got := make([]shape, 0, len(ids))
+		for _, tn := range orderedTurnStates(t, rt, "", nil) {
+			got = append(got, shape{id: tn.chatID, snapshot: tn.payload.Message != nil})
+		}
+		if i == 0 {
+			first = got
+			continue
+		}
+		if !slices.Equal(got, first) {
+			t.Fatalf("iteration %d replayed %v, iteration 0 replayed %v: the replay order depends "+
+				"on Go's map iteration", i, got, first)
+		}
+	}
+	if len(first) != len(ids) {
+		t.Errorf("replayed %d chats, want %d: the fixture is not the one being ordered",
+			len(first), len(ids))
+	}
+}
+
+func TestParseSnapshotChats(t *testing.T) {
+	overCap := make([]string, 0, maxDeclaredSnapshotChats+2)
+	wantOverCap := make([]vibekit.ChatID, 0, maxDeclaredSnapshotChats)
+	for i := range maxDeclaredSnapshotChats + 2 {
+		id := fmt.Sprintf("c-%02d", i)
+		overCap = append(overCap, id)
+		if i < maxDeclaredSnapshotChats {
+			wantOverCap = append(wantOverCap, vibekit.ChatID(id))
+		}
+	}
+
+	cases := []struct {
+		name string
+		// query is the raw parameter VALUE, already decoded, or absent when nil.
+		query *string
+		want  []vibekit.ChatID
+	}{
+		{name: "absent, which reads as declare nothing", query: nil, want: nil},
+		{name: "present but empty", query: ptr(""), want: nil},
+		{name: "one chat", query: ptr("c-1"), want: []vibekit.ChatID{"c-1"}},
+		{
+			name:  "several chats",
+			query: ptr("c-1,c-2,c-3"),
+			want:  []vibekit.ChatID{"c-1", "c-2", "c-3"},
+		},
+		{
+			name:  "a malformed entry is dropped and the rest still declared",
+			query: ptr("c-1,../etc/passwd,c-2"),
+			want:  []vibekit.ChatID{"c-1", "c-2"},
+		},
+		{
+			name: "every entry malformed reads as declare nothing rather than failing the connect",
+			// The stream is the client's only recovery channel, so a mangled parameter
+			// must not be the thing that keeps it closed.
+			query: ptr("../,,%00"),
+			want:  nil,
+		},
+		{
+			name:  "a blank between separators is dropped",
+			query: ptr("c-1,,c-2"),
+			want:  []vibekit.ChatID{"c-1", "c-2"},
+		},
+		{
+			name:  "over the cap, truncated to the first entries",
+			query: ptr(strings.Join(overCap, ",")),
+			want:  wantOverCap,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			target := "/api/events"
+			if tc.query != nil {
+				target += "?" + url.Values{snapshotParam: {*tc.query}}.Encode()
+			}
+			req := httptest.NewRequest(http.MethodGet, target, nil)
+
+			got := parseSnapshotChats(req)
+
+			ids := make([]vibekit.ChatID, 0, len(got))
+			for id := range got {
+				ids = append(ids, id)
+			}
+			slices.Sort(ids)
+			if !slices.Equal(ids, tc.want) {
+				t.Errorf("parseSnapshotChats(%q) = %v, want %v", target, ids, tc.want)
+			}
+		})
+	}
+}
+
+// ptr is the address-of helper the table above needs to tell an ABSENT parameter from
+// a present-and-empty one; the two are different inputs with the same result.
+func ptr[T any](v T) *T { return &v }

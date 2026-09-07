@@ -15,7 +15,7 @@ func replayedTurnStates(tb testing.TB, rt *Runtime) (turnStates map[vibekit.Chat
 	tb.Helper()
 	turnStates = make(map[vibekit.ChatID]vibekit.TurnStatePayload)
 	statuses = make(map[vibekit.ChatID]struct{})
-	collect := func(evt vibekit.ServerEvent) error {
+	collect := func(evt vibekit.ServerEvent) (int, error) {
 		switch evt.Type {
 		case vibekit.EventTurnState:
 			p, ok := evt.Payload.(vibekit.TurnStatePayload)
@@ -26,10 +26,12 @@ func replayedTurnStates(tb testing.TB, rt *Runtime) (turnStates map[vibekit.Chat
 		case vibekit.EventChatStatus:
 			statuses[evt.ChatID] = struct{}{}
 		}
-		return nil
+		return 0, nil
 	}
 	open := rt.coord.turns.openTurns()
-	if err := rt.replayTurnState(collect, "", open); err != nil {
+	// Nothing declared, so every open chat is served: these tests are about WHICH
+	// turns the replay reads, not about which of them a client can show.
+	if err := rt.replayTurnState(collect, "", open, nil); err != nil {
 		tb.Fatalf("replayTurnState: %v", err)
 	}
 	if err := rt.replayWaitingStatus(collect, "", open); err != nil {
