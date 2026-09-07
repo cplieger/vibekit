@@ -142,6 +142,7 @@ describe("tool card summary affordance", () => {
     const card = mount(
       buildToolCard({
         id: "css1",
+        output: "3 results\n",
         title: "remote_web_search",
         kind: "fetch",
         status: "completed",
@@ -177,6 +178,43 @@ describe("tool card summary affordance", () => {
     expect(css(summary, "cursor")).toBe("auto");
   });
 
+  it("a summary with nothing to reveal stays inert too", async () => {
+    // The claim-only case above never had a toggle. This one HAD one and gave it
+    // back, so the affordance has to be withdrawn rather than merely never
+    // granted: no pointer, and no gutter reserved for a chevron that is gone.
+    const { buildToolCard } = await import("./tool-card.js");
+    const bare = mount(
+      buildToolCard({
+        id: "css-bare",
+        title: "invoke_sub_agent",
+        kind: "other",
+        status: "failed",
+        live: false,
+      }),
+    );
+    const summary = bare.querySelector<HTMLElement>(".tool-summary")!;
+    const header = bare.querySelector<HTMLElement>(".tool-header")!;
+    expect(bare.querySelector(".tool-details")).not.toBeNull();
+    expect(bare.querySelector(".tool-disclosure")).toBeNull();
+    expect(css(summary, "cursor")).toBe("auto");
+
+    // The gutter is `padding-inline-end` on the header, and its value is a calc
+    // only the `.has-disclosure` rule writes — so compare against a card that
+    // still has its chevron rather than against a hardcoded length.
+    const withToggle = buildToolCard({
+      id: "css-bare-ref",
+      title: "invoke_sub_agent",
+      kind: "other",
+      status: "failed",
+      live: false,
+      output: "the delegate refused\n",
+    });
+    host.appendChild(withToggle);
+    const reserved = css(withToggle.querySelector(".tool-header")!, "padding-inline-end");
+    expect(css(header, "padding-inline-end")).not.toBe(reserved);
+    withToggle.remove();
+  });
+
   it("hovering a toggle summary paints both title and description", async () => {
     // The hover paints their common parent, so no dead strip can remain between
     // the title row and the description line below it.
@@ -184,6 +222,7 @@ describe("tool card summary affordance", () => {
     const card = mount(
       buildToolCard({
         id: "css3",
+        output: "3 results\n",
         title: "remote_web_search",
         kind: "fetch",
         status: "completed",
@@ -203,6 +242,7 @@ describe("tool card summary affordance", () => {
     const card = mount(
       buildToolCard({
         id: "css-chevron",
+        output: "3 results\n",
         title: "remote_web_search",
         kind: "fetch",
         status: "completed",

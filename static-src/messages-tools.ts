@@ -26,7 +26,13 @@ import {
   untrackInProgress,
 } from "./tool-group.js";
 import { isToolDone, type ToolKind } from "./tool-schema.js";
-import { buildToolCard, insertDiffPreview, expandToolDetails, applyOutcome } from "./tool-card.js";
+import {
+  buildToolCard,
+  insertDiffPreview,
+  expandToolDetails,
+  applyOutcome,
+  refreshToolDisclosure,
+} from "./tool-card.js";
 import { toolCardOptsFor } from "./tool-card-opts.js";
 import { windowOutput, windowSpans, humanName } from "./strings.js";
 import { renderOutput, appendOutput as appendOutputChunk } from "./output-render.js";
@@ -430,6 +436,7 @@ function writeChunkToCard(
   appendOutputChunk(pre, text, spans, base);
   trimToLiveCap(pre);
   linkifyPaths(pre, { insidePre: true });
+  refreshToolDisclosure(card);
 }
 
 function holdChunk(termID: string, text: string, spans: TextSpan[], base: number): void {
@@ -570,14 +577,18 @@ function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: string): 
   if (tc.title !== undefined) {
     applyTitleUpdate(el, tc.title);
   }
-  if (tc.status !== undefined) {
-    applyStatusUpdate(el, tc.status, tc.duration_ms, tc.id);
-  }
+  // STATUS IS APPLIED LAST: two consumers inside `applyStatusUpdate` read
+  // `.tool-output` back out of the DOM — the "Explain this error" gate and the
+  // bare-disclosure predicate — and a terminal frame commonly carries the status
+  // and the output together, so status ahead of output reads an unpainted region.
   if (tc.output !== undefined && tc.output !== "") {
     applyOutputUpdate(el, tc.output, tc.output_spans ?? []);
   }
   if (tc.diffs !== undefined && tc.diffs.length > 0) {
     applyDiffUpdate(el, tc.diffs);
+  }
+  if (tc.status !== undefined) {
+    applyStatusUpdate(el, tc.status, tc.duration_ms, tc.id);
   }
 }
 
@@ -603,6 +614,9 @@ function applyStatusUpdate(
     disclosed: null,
     denial: null,
   });
+  // After applyOutcome, which writes the `data-outcome` the predicate reads to tell
+  // a settled card from one still producing output.
+  refreshToolDisclosure(card);
   const done = isToolDone(status);
   if (done) {
     card.querySelector(".tool-spinner")?.remove();
@@ -629,8 +643,12 @@ function applyStatusUpdate(
   }
   if (status === "failed") {
     // Failed tools open their details so the error output is visible without
-    // a click; the disclosure controller flips the chevron + ARIA itself.
-    expandToolDetails(card);
+    // a click; the disclosure controller flips the chevron + ARIA itself. Gated on
+    // the chevron surviving the refresh above: a card with no error text has
+    // nothing to put in front of anyone, so opening it strands an empty region.
+    if (card.querySelector(".tool-disclosure") !== null) {
+      expandToolDetails(card);
+    }
     if (card.querySelector(".tool-explain-btn") === null) {
       const output = card.querySelector(".tool-output")?.textContent ?? "";
       if (output.trim() !== "") {
@@ -731,6 +749,8 @@ export function applyOutputUpdate(
     });
     out.appendChild(reveal);
   }
+
+  refreshToolDisclosure(card);
 }
 
 function applyDiffUpdate(el: HTMLDivElement, diffs: ToolDiff[]): void {

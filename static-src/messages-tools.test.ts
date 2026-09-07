@@ -51,6 +51,10 @@ vi.mock("./tool-card.js", () => ({
   // these, so no path under test changes behavior.
   applyOutcome: undefined,
   expandToolDetails: undefined,
+  // Inert rather than undefined: `applyOutputUpdate` calls it. Nothing here
+  // asserts on it — bare-ness is pinned against the real writer in
+  // `tool-card.test.ts` and `messages-tools-status.test.ts`.
+  refreshToolDisclosure: vi.fn(),
   buildToolCard: vi.fn(() => document.createElement("div")),
   insertDiffPreview: vi.fn(),
 }));

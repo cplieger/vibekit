@@ -38,6 +38,8 @@
 //     turn header and having the turn fold shut under the cursor is worse than
 //     a small chevron, and it is what keeps the turn header's prompt text
 //     selectable while the whole band stays the fold's target.
+//
+// And one STATE it must not forward into: a control that has left the document.
 // ---------------------------------------------------------------------------
 
 /** Anything inside a header row that owns its own click.
@@ -67,6 +69,13 @@ export function wireRowToggle(row: HTMLElement, control: HTMLElement): void {
       return;
     }
     if (hasSelectionIn(row)) {
+      return;
+    }
+    // A control out of the document is one the reader cannot see. Reachable
+    // because a caller may TAKE its control away — a tool card detaches its
+    // chevron once it has nothing left to reveal — and the listeners ride along on
+    // the detached element, so an unrefused forward would still activate it.
+    if (!control.isConnected) {
       return;
     }
     control.click();
