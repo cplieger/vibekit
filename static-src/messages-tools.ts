@@ -581,10 +581,7 @@ function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: string): 
   // `.tool-output` back out of the DOM — the "Explain this error" gate and the
   // bare-disclosure predicate — and a terminal frame commonly carries the status
   // and the output together, so status ahead of output reads an unpainted region.
-  //
-  // The gate TRIMS, so all three take the same reading of the same string: those
-  // two consumers already did, so blank output was painted through the ANSI
-  // renderer and the path linkifier into a region the reader could never open.
+  // The gate TRIMS, like both of them, so one string gets one reading.
   if (tc.output !== undefined && tc.output.trim() !== "") {
     applyOutputUpdate(el, tc.output, tc.output_spans ?? []);
   }
@@ -618,7 +615,6 @@ function applyStatusUpdate(
     disclosed: null,
     denial: null,
   });
-  // After applyOutcome: it writes the `data-outcome` the predicate reads.
   refreshToolDisclosure(card);
   const done = isToolDone(status);
   if (done) {

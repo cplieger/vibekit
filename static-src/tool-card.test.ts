@@ -982,10 +982,8 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("has no chevron on a call still in flight either", () => {
-    // The reverse of what this used to assert. Mid-flight was granted the
-    // affordance up front to spare an appear-transition, and the wire status is not
-    // evidence about the region: both production call sites pass `live: true`, so a
-    // replayed in-progress call held an empty disclosure for good.
+    // The wire status is not evidence about the region, and both production call
+    // sites pass `live: true`, so a replayed in-progress call is this exact shape.
     const card = buildToolCard({
       id: "bare-pending",
       title: "invoke_sub_agent",
@@ -1060,9 +1058,9 @@ describe("a card with nothing to disclose", () => {
   });
 
   it("has no chevron on a previewed call whose cut was DIFFS only", () => {
-    // `hasFull` fires when the store cut anything at all, so it used to latch this
-    // card — and its region can never fill: `fetchOutputBulk` returns early on an
-    // empty bulk output, so the chevron opened on nothing for good.
+    // `hasFull` fires when the store cut anything at all, and this cut was DIFFS
+    // only: `fetchOutputBulk` returns early on an empty bulk output, so the region
+    // can never fill.
     const card = buildToolCard({
       id: "bare-full-diffs",
       title: "fsWrite",
@@ -1141,6 +1139,25 @@ describe("a card with nothing to disclose", () => {
     expect(card.querySelector(".tool-disclosure")).toBeNull();
     expect(card.querySelector("[aria-expanded]")).toBeNull();
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    card.remove();
+  });
+
+  it("paints no output <pre> on a latched card whose output is blank", () => {
+    // The build path is the fourth consumer of one output string, and it is reachable
+    // with blank output: the INPUT arm latches this card, so the reader opens a region
+    // an untrimmed gate had put an empty `<pre>` into.
+    const card = buildToolCard({
+      id: "bare-blank-body",
+      title: "executePwsh",
+      kind: "execute",
+      status: "completed",
+      live: true,
+      input: { command: "ls -la" },
+      output: "   \n  \n",
+    });
+    document.body.appendChild(card);
+    expandToolDetails(card);
+    expect(card.querySelector(".tool-output pre")).toBeNull();
     card.remove();
   });
 });

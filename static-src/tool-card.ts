@@ -118,13 +118,9 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     wireToggle(node, detailsBody(node, opts, depth1));
     // One arm per thing `detailsBody` writes, read back by `refreshToolDisclosure`.
     // The region cannot be read for them: it is empty until first open, so a card
-    // whose only content is deferred looks exactly like one with none.
-    //
-    // `outputBytes` is stamped only where the store cut the OUTPUT, so it is an
-    // exact test for whether the bulk holds any rather than an approximation of it.
-    // `hasFull` alone also fires for a preview cut of its DIFFS, and those reach the
-    // reader through the `Show N diffs` sibling — the region would stay empty and
-    // `fetchOutputBulk` returns early on an empty bulk output.
+    // whose only content is deferred looks exactly like one with none. `outputBytes`
+    // is stamped only where the store cut the OUTPUT, so a `hasFull` from a
+    // diffs-only cut names a bulk `fetchOutputBulk` returns early on.
     if (
       opts.denial !== undefined ||
       (opts.live && opts.input !== undefined) ||
@@ -517,7 +513,7 @@ function detailsBody(node: HTMLDivElement, opts: BuildToolCardOpts, depth1: stri
     if (head !== "") {
       details.insertAdjacentHTML("afterbegin", head);
     }
-    if (opts.output !== undefined && opts.output !== "") {
+    if (opts.output !== undefined && opts.output.trim() !== "") {
       appendOutput(node, opts.output, opts.outputSpans ?? [], depth1 === "output");
     }
     if (opts.hasFull === true) {
@@ -696,12 +692,9 @@ const detachedToggles = new WeakMap<HTMLElement, HTMLElement>();
  *  Non-blank text, the same reading `applyStatusUpdate`'s Explain gate takes of the
  *  same region.
  *
- *  THE WIRE STATUS IS NOT CONSULTED, and a `running` arm used to be. It granted the
- *  affordance up front to spare an appear-transition, but emptiness is a property of
- *  the region and `data-outcome` says nothing about it: both production call sites
- *  pass `live: true`, so a REPLAYED in-progress call kept an empty disclosure with no
- *  later frame to correct it. The affordance now appears when content does, at no
- *  reflow — the chevron gutter is reserved for every card that HAS a region. */
+ *  The WIRE STATUS is not consulted: emptiness is a property of the region, and both
+ *  production call sites pass `live: true`, so `data-outcome` cannot separate a call
+ *  still filling one from a replayed call that never will. */
 function isDisclosable(card: HTMLElement): boolean {
   if (card.dataset["disclosable"] === "1") {
     return true;
@@ -739,12 +732,11 @@ export function refreshToolDisclosure(card: HTMLElement): void {
   detailCtls.get(card)?.close();
   const toggle = card.querySelector<HTMLElement>(".tool-disclosure");
   if (toggle !== null) {
-    // No FOCUSED chevron can be removed here: the wire status is no longer consulted
-    // and `.tool-output` never shrinks, so every detach left runs inside
+    // No FOCUSED chevron reaches this: the wire status is not consulted and the
+    // update gate refuses blank output, so every detach left runs inside
     // `buildToolCard`, before the card is in the document. Reintroduce an in-document
-    // one and focus falls to <body> again; the target is then the card itself
-    // (`applyOutcome` already names it) at `tabindex="-1"` — click-focusable and NOT
-    // a tab stop — or `.tool-group-header`, which is already a trigger.
+    // one and focus falls to <body>; the target is then the card itself at
+    // `tabindex="-1"` — click-focusable, NOT a tab stop — or `.tool-group-header`.
     detachedToggles.set(card, toggle);
     toggle.remove();
   }

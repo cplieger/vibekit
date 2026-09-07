@@ -213,10 +213,9 @@ describe("tool card summary affordance", () => {
     // back, so the pointer affordance has to be withdrawn rather than merely never
     // granted.
     //
-    // The GUTTER stays reserved, which reverses what this case used to assert. It
-    // is keyed on having a details region, not on holding the chevron right now:
-    // the button comes and goes within one card's life, and a gutter that went
-    // with it moved the title row 32px away from its siblings in the same group.
+    // The GUTTER stays reserved: it is keyed on having a details region, not on
+    // holding the chevron right now, because the button comes and goes within one
+    // card's life and a gutter that went with it moved the title row 32px.
     const { buildToolCard } = await import("./tool-card.js");
     const bare = mount(
       buildToolCard({
