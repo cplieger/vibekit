@@ -671,9 +671,8 @@ func openBigTurn(t *testing.T, h *Runtime, chatID vibekit.ChatID) {
 }
 
 // TestReplayTurnState_MarksACappedSnapshotTruncated pins the marker to the CUT.
-// Without it a client renders the tail of a 10 MB turn as the whole reply, which
-// is the mistake design.md §3 retracted — the cap is admissible only because the
-// payload says it happened.
+// Without it a client renders the tail of a 10 MB turn as the whole reply; the cap
+// is admissible only because the payload says it happened.
 func TestReplayTurnState_MarksACappedSnapshotTruncated(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID vibekit.ChatID = "c1"

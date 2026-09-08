@@ -463,8 +463,8 @@ describe("tool_call_update", () => {
 //
 // The connect-time cap sends only the TAIL of a big in-flight turn, so a reader
 // shown that tail with nothing saying so reads a bounded payload as the whole
-// reply — the mistake design.md §3 retracted. `truncated` is a REQUIRED wire
-// field for exactly that reason, and this is its consumer.
+// reply. `truncated` is a REQUIRED wire field for exactly that reason, and this
+// is its consumer.
 // ---------------------------------------------------------------------------
 describe("turn_state truncation marker", () => {
   beforeEach(() => {

@@ -1489,15 +1489,14 @@ export function clearSnapshotSeq(chatID: string): void {
  *  server capped the turn_state payload and sent only the TAIL of the in-flight
  *  turn, so what the store holds for that id is not the whole reply.
  *
- *  It exists so the renderer can SAY so. Without a consumer the cap would be the
- *  mistake design.md §3 retracted — a client reading a bounded payload as
- *  complete — and `truncated` is a required wire field precisely so the marker
- *  cannot be missed. Keyed by chat because one in-flight turn per chat, and the
+ *  It exists so the renderer can SAY so. Without a consumer a client would read
+ *  a bounded payload as complete, and `truncated` is a required wire field
+ *  precisely so the marker cannot be missed. Keyed by chat because one
+ *  in-flight turn per chat, and the
  *  set rather than a flag because a reconnect can name a different message than
  *  the previous one. */
 const truncatedSnapshots = new Map<string, Set<string>>();
 
-/** Record that this message id arrived as a capped snapshot. */
 export function noteTruncatedSnapshot(chatID: string, messageID: string): void {
   if (chatID === "" || messageID === "") {
     return;

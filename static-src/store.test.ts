@@ -3551,8 +3551,8 @@ describe("subagentStatusFor maps a delegate's tool status to its dot state", () 
 //
 // A connect-time turn_state can carry only the TAIL of a big in-flight turn, and
 // this set is what lets the renderer say so. It is the CONSUMER the wire's
-// required `truncated` field exists for: without one the cap would be the mistake
-// design.md §3 retracted, a client reading a bounded payload as complete.
+// required `truncated` field exists for: without one a client would read a
+// bounded payload as complete.
 // ---------------------------------------------------------------------------
 describe("truncated snapshot markers", () => {
   it("records and reads one message id", () => {

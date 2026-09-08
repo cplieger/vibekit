@@ -483,7 +483,7 @@ func TestSnapshotCapped_CutsOnARuneBoundary(t *testing.T) {
 }
 
 // TestSnapshotCaps_MaxTextBytesMatchesTheWorstCasePayload is the arithmetic
-// FEAT-003's per-connect budget depends on: a maximally-full capped snapshot's
+// the connect replay's per-connect budget depends on: a maximally-full capped snapshot's
 // REAL marshaled length has to sit inside MaxTextBytes plus an envelope, or a
 // budget that subtracts MaxTextBytes per snapshot under-counts and the cold
 // connect exceeds its own gate.
