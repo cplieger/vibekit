@@ -42,6 +42,13 @@ class FakeEventSource {
       lastEventId: id,
     } as MessageEvent);
   }
+  /** Named-event listeners. A named SSE event never reaches `onmessage`, so the
+   *  transport registers its heartbeat listener here. Recorded rather than
+   *  dropped: a fake that discards a registration cannot be driven from it. */
+  readonly named: ((e: MessageEvent) => void)[] = [];
+  addEventListener(_type: string, fn: (e: MessageEvent) => void): void {
+    this.named.push(fn);
+  }
 }
 
 const OriginalES = globalThis.EventSource;
