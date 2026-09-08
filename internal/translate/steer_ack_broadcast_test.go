@@ -136,3 +136,48 @@ func TestHandleAssistantChunk_EmptyAcknowledgementIsNotBroadcast(t *testing.T) {
 		t.Errorf("got %d ack frames for a whitespace body, want none: %+v", len(acks), acks)
 	}
 }
+
+// The client reads this field with reqOneOf against user|agent and RETHROWS on a
+// miss, and decodeArray rethrows in turn — so an ack carrying the zero value loses
+// the whole frame rather than degrading, and the agent's sentence never arrives.
+// steerOrigin is total, so a real value is always available to send; what this pins
+// is that the ack path actually sends one.
+func TestHandleAssistantChunk_AcknowledgementCarriesAnOrigin(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
+	chatID := vibekit.ChatID("c1")
+
+	// An id the ledger does not know, which is the ORDINARY case for an ack: the
+	// steer was sent before this process started, or its TTL has expired.
+	feedChunk(t, tr, chatID, "done [STEERING steer-unknown: kept the existing shape]")
+
+	acks := steerAcksFrom(*events)
+	if len(acks) != 1 {
+		t.Fatalf("got %d ack frames, want 1: %v", len(acks), eventTypes(*events))
+	}
+	if got := acks[0].Origin; got != vibekit.SteerOriginUser && got != vibekit.SteerOriginAgent {
+		t.Errorf("Origin = %q, want %q or %q — the client rejects anything else and drops the frame",
+			got, vibekit.SteerOriginUser, vibekit.SteerOriginAgent)
+	}
+}
+
+// And the origin is the LEDGER's answer rather than a constant: a steer this server
+// sent on the user's behalf must not come back labelled the agent's, or the chip
+// reports the reader's own correction as a workflow's note.
+func TestHandleAssistantChunk_AcknowledgementCarriesTheLedgersOrigin(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	deps.userSteers = map[string]bool{"steer-mine": true}
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
+	chatID := vibekit.ChatID("c1")
+
+	feedChunk(t, tr, chatID, "done [STEERING steer-mine: rebased onto main instead]")
+
+	acks := steerAcksFrom(*events)
+	if len(acks) != 1 {
+		t.Fatalf("got %d ack frames, want 1: %v", len(acks), eventTypes(*events))
+	}
+	if got := acks[0].Origin; got != vibekit.SteerOriginUser {
+		t.Errorf("Origin = %q, want %q for a steer the ledger records as the user's",
+			got, vibekit.SteerOriginUser)
+	}
+}

@@ -130,6 +130,11 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 // acknowledgement marker just closed. Re-broadcasts steer_injected rather than a
 // new type, since the ack is a further fact about a steer the client tracks by
 // id; Text is empty because the client already holds it and must not lose it.
+//
+// Origin is carried even though the ack adds nothing to it: the generated
+// decoder reads the field with reqOneOf against user|agent, so a zero value
+// fails the whole frame and the client loses the ack. steerOrigin is total, so
+// this cannot reintroduce one.
 func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer, acks []steerAck) {
 	for _, ack := range acks {
 		if ack.SteerID == "" || ack.Text == "" {
@@ -137,6 +142,8 @@ func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID vibekit.Chat
 		}
 		t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
 			SteerID: ack.SteerID,
+			Text:    "",
+			Origin:  t.steerOrigin(chatID, ack.SteerID),
 			Ack:     ack.Text,
 		}))
 	}
