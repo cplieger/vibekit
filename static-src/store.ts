@@ -149,27 +149,17 @@ function scheduleMessages(chatID: string, cause: RenderCause, msgID?: string): v
   });
 }
 
-/** The cheap cause for a frame the transcript renders NOTHING for, or `shape`.
- *
- *  The STAMP alone answers it, because `messages-blocks.ts` `placeBlock` drops every
- *  DELEGATED block — a workflow step's and a subagent's alike — and keeps only the card.
- *  It used to have to parse the `wf:` shape, since a malformed one fell through to an
- *  inline delegate box that DID render; that box renders nothing now, so the distinction
- *  went with it. A dropped block needs no structural work, hence `chunk`. */
+/** The cheap cause for a frame the transcript renders NOTHING for, or `shape`. The
+ *  STAMP alone answers it, because `placeBlock` drops every DELEGATED block and
+ *  keeps only the card; a dropped block needs no structural work. */
 function droppedFrameCause(subtaskID: string): RenderCause {
   return subtaskID === "" ? "shape" : "chunk";
 }
 
 /** The cause for a block arriving for the FIRST time, where the two dropped kinds part.
- *
- *  A SUBAGENT's first block SEATS its card, which is structural work, and it is the only
- *  thing that will: a delegate with no invocation call — a malformed `wf:` id is one — gets
- *  no pass scheduled on its behalf anywhere else, and a cheap cause would leave it with no
- *  card and so no route to its output. A WORKFLOW STEP stays cheap because it seats nothing
- *  ever; its card is the RUN's, created by the launch call.
- *
- *  Once per block, not per delta, so the streaming path this exists to keep cheap is
- *  untouched. */
+ *  A SUBAGENT's first block SEATS its card and is the only thing that will, so a cheap
+ *  cause would leave a delegate with no invocation call no route to its output. A
+ *  WORKFLOW STEP stays cheap, seating nothing ever. Once per block, not per delta. */
 function newBlockCause(subtaskID: string): RenderCause {
   // Keyed on the PARSE, not the `wf:` prefix: a MALFORMED step id does not parse, falls to
   // the delegate path, and therefore needs its card seated like any other delegate's.
@@ -179,14 +169,10 @@ function newBlockCause(subtaskID: string): RenderCause {
   return "chunk";
 }
 
-/** The same question for a TOOL CALL. Two arms need the full pass, and both are arrivals
- *  that can SEAT a card rather than draw output:
- *
- *  A delegate's INVOCATION, which is what guarantees the pass its card is seated on. And a
- *  `wf:` id that does not PARSE, which is not a step at all: the dispatcher takes its
- *  delegate fallback for one, so the arrival is structural. Kept to those two so a
- *  delegate's ordinary member calls — the many — stay cheap, since those draw nothing and
- *  reach the card's footer through its own tool-call signal. */
+/** The same question for a TOOL CALL. Two arms need the full pass because both can SEAT
+ *  a card: a delegate's INVOCATION, and a `wf:` id that does not PARSE, which the
+ *  dispatcher treats as a delegate. Kept to those two so a delegate's ordinary member
+ *  calls stay cheap — they draw nothing and reach the footer through their own signal. */
 function droppedCallCause(call: ToolCall): RenderCause {
   const subtask = call.agent_subtask_id ?? "";
   if (isSubagentInvocation(call)) {
@@ -690,16 +676,14 @@ export function tabStatusFor(s: Session | undefined, pendingAsk = false): TabDot
  *  signals: `run-store.ts` owns that rule and hands the answer over already decided. */
 export type RunPauseClass = "" | "need_input";
 
-/** The same dot vocabulary for a workflow RUN, which owns a `run:<workflowId>` tab and has
- *  no `Session` behind it. Its own function rather than a branch in `tabStatusFor` because
- *  the inputs share not one field; what it shares is the OUTPUT vocabulary and precedence.
+/** The same dot vocabulary for a workflow RUN, which has no `Session` behind it. Its own
+ *  function rather than a branch in `tabStatusFor` because the two inputs share not one
+ *  field; what they share is the OUTPUT vocabulary and precedence.
  *
  *  `paused` is `waiting` — stopped, not finished — EXCEPT for a step parked on a person,
- *  which is `input`, the same dot an unanswered card raises; the park is the half that
- *  survives a client that never received the card. `cancelled` is `done` rather than
- *  `failed`: the reader asked for the stop, so nothing is owed. `pause` is read only in the
- *  `paused` arm, so a stale reason on a finished run cannot paint it yellow; `unknown`
- *  paints nothing. */
+ *  which is `input`, the park being the half that survives a client which never received
+ *  the card. `cancelled` is `done`: the reader asked for the stop. `pause` is read only in
+ *  the `paused` arm, so a stale reason on a finished run cannot paint it yellow. */
 export function runStatusFor(
   status: ClassifiedRunStatus | undefined,
   pendingAsk = false,
@@ -803,58 +787,30 @@ export function steerCount(id: string): number {
   return get(id)?.steers?.length ?? 0;
 }
 
-/** The steers that have left the dock and now belong to the transcript, each
- *  anchored where it can be DRAWN in the window that exists NOW.
+/** The steers that have left the dock, each anchored where it can be DRAWN in the
+ *  window that exists NOW.
  *
- *  TWO QUESTIONS, ONE FIELD, and separating them is the whole of this reader.
- *  `anchorFor` records where the steer WAS read, which is durable intent and
- *  stays as written; where the note can be drawn is a question about the resident
- *  window rather than about the steer, so it is answered here, at read time.
- *
- *  It lives in the STORE rather than in the renderer because the renderer sees one
- *  message at a time and cannot tell an ORPHANED anchor from a foreign one — and
- *  the store is what holds the window, so the answer gets exactly one owner.
- *
- *  What orphans an anchor, and why it is the reported symptom: neither steer field
- *  is re-derivable from anything durable (see the section header), so a mark that
- *  cannot be drawn is the whole of a lost record. The mark itself always survives
- *  — every rebuild path carries `steer_marks` over — while the MESSAGE it names
- *  does not: the in-flight assistant message is server-side buffer state until
- *  `turn_ended`, so `GET /api/chats/{id}` omits it and a refetch drops it once
- *  `liveTurnMessage` is clear (which `transport:gap` does for every chat), and an
- *  evicted-then-refetched window can start after the turn the anchor names.
- *
- *  A READ, never a write: the record does not move, so a window that regains the
- *  message draws the note where the steer was actually read.
- *
- *  A mark whose OWN id names a resident message is DROPPED: the persisted steer row
- *  renders the same note through the same primitive and survives a reload, which the
- *  mark does not, so the durable row wins and the two do not both draw. */
+ *  A READ, never a write: `anchorFor` records where the steer WAS read and stays as
+ *  written, so a window that regains the message draws the note where it belongs. It
+ *  answers here rather than in the renderer, which sees one message at a time and
+ *  cannot tell an ORPHANED anchor from a foreign one. A mark whose OWN id names a
+ *  resident message is DROPPED: the persisted row draws that note and survives. */
 export function steerMarks(id: string): readonly SteerMark[] {
   const s = get(id);
   const marks = s?.steer_marks;
-  // The common case by a wide margin, and what makes the scan below affordable on
-  // a reader this hot: most chats hold no marks at all, and this runs once per
-  // rendered assistant message per paint.
+  // Most chats hold no marks at all, and this runs once per rendered assistant message
+  // per paint, which is what makes the scan below affordable.
   if (s === undefined || marks === undefined || marks.length === 0) {
     return [];
   }
   return resolveAnchors(s, marks);
 }
 
-/** Drop every mark the transcript already holds as a durable row (see `steerMarks`),
- *  then rewrite every surviving mark whose anchor names no resident message to the
- *  window's own newest ASSISTANT message. Returns `marks` itself when nothing needs
- *  dropping or moving, so the ordinary live case allocates nothing and keeps array
- *  identity.
- *
- *  The tail is assistant-only rather than the newest message of any role, and that
- *  is a correctness bound rather than a preference: only an assistant body renders
- *  steer notes (`buildAssistantBody` → `flushSteerNotes`), so resolving to a user
- *  or event row would move the anchor somewhere the renderer never visits — a
- *  silent loss wearing a resolved anchor. With no assistant message resident the
- *  mark therefore keeps what it was written with and waits for a window that holds
- *  a reply; drawing it there at all needs the steer persisted into the turn. */
+/** Drop every mark the transcript already holds as a durable row, then move every
+ *  surviving orphaned anchor to the window's newest ASSISTANT message; returns `marks`
+ *  itself when nothing changes. Assistant-only is a correctness bound, because only an
+ *  assistant body renders steer notes, so a user or event row would put the anchor
+ *  somewhere the renderer never visits. */
 function resolveAnchors(s: Session, marks: readonly SteerMark[]): readonly SteerMark[] {
   const resident = new Set<string>();
   let tail: SteerAnchor | undefined;
@@ -868,9 +824,9 @@ function resolveAnchors(s: Session, marks: readonly SteerMark[]): readonly Steer
       tail = { msgID: m.id, blockIndex: (m.blocks ?? []).length };
     }
   }
-  // Both ids are KAS's own `steer-` id, so this is an equality test between two
-  // values vibekit received, never a prefix parse. Unconditional and BEFORE the two
-  // early returns: a mark set needing no anchor move would otherwise skip the drop.
+  // Both ids are KAS's own `steer-` id, so this is an equality test rather than a prefix
+  // parse. Unconditional and BEFORE the early returns: a mark set needing no anchor move
+  // would otherwise skip the drop.
   const live = marks.some((m) => resident.has(m.id))
     ? marks.filter((m) => !resident.has(m.id))
     : marks;
@@ -1087,16 +1043,10 @@ export function forgetSteers(id: string): void {
   scheduleMessages(id, "fact");
 }
 
-/** Whether `m` is a message a steer's anchor may NAME: the reply a steer was read
- *  into. Assistant-role and not a PLAN row, which is `RoleAssistant` too and is
- *  not a reply — the anchor means "the reply this steer was read into", so a plan
- *  row claiming one puts the note against the plan card.
- *
- *  ONE rule, two readers, which is why it is a function: `rebindPendingAnchors`'s
- *  caller decides which arriving message binds a pending anchor, and
- *  `resolveAnchors` decides which resident message an orphaned one resolves to. A
- *  gate written twice can disagree, and the disagreement reads as the anchor
- *  moving between two rows on its own. */
+/** Whether `m` is a message a steer's anchor may NAME: the reply it was read into. A PLAN
+ *  row is assistant-role and is not a reply, so one claiming an anchor puts the note
+ *  against the plan card. Shared by both readers, because a gate written twice can
+ *  disagree, which reads as the anchor moving between rows on its own. */
 function isTurnReply(m: Message): boolean {
   return m.role === "assistant" && (m.plan ?? []).length === 0;
 }
@@ -1400,8 +1350,7 @@ function ingestMessage(chatID: string, incoming: Message, persisted: boolean): v
     bumpMessages(chatID);
     if (isTurnReply(incoming)) {
       // The first moment there is an id to anchor a steer read before this turn produced
-      // anything. A PLAN row is skipped though it is RoleAssistant too — see isTurnReply,
-      // which `resolveAnchors` reads for the same question about a RESIDENT message.
+      // anything. `isTurnReply` is what skips a PLAN row, which is assistant-role too.
       rebindPendingAnchors(chatID, incoming.id);
     }
     return;
@@ -1413,16 +1362,12 @@ function ingestMessage(chatID: string, incoming: Message, persisted: boolean): v
   bumpMessages(chatID);
 }
 
-/** message_appended → merge path. It is also the PERSIST echo: the server writes the chat
- *  file before it broadcasts this, so an id arriving here is no longer the client's only
- *  copy and stops being the in-flight turn.
- *
- *  It is therefore also the HEAL for a capped connect-time snapshot: this frame carries the
- *  whole persisted message, so the tail the cap left is replaced and the marker goes. The
- *  clear lives HERE rather than in the shared merge path deliberately — `message_created`
- *  and `message_updated` route through the same merge and neither is a whole message, and
- *  the `turn_state` handler itself calls `upsertMessage` right after noting the marker, so a
- *  clear in the merge would erase the marker in the same tick it was set. */
+/** message_appended → merge path, and the PERSIST echo: an id arriving here is no
+ *  longer the client's only copy, so it stops being the in-flight turn and heals a
+ *  capped connect-time snapshot. Both clears live HERE rather than in the shared merge
+ *  path, which `message_created` and `message_updated` also route through carrying
+ *  partial messages — and the `turn_state` handler calls that merge right after noting
+ *  the marker, so a clear inside it would erase the marker in the same tick. */
 export function appendMessage(chatID: string, msg: Message): void {
   if (liveTurnMessage(chatID) === msg.id) {
     clearLiveTurnMessage(chatID);
@@ -1571,16 +1516,10 @@ export function clearSnapshotSeq(chatID: string): void {
   snapshotSeqs.delete(chatID);
 }
 
-/** Per-chat set of message ids whose connect-time snapshot was TRUNCATED: the
- *  server capped the turn_state payload and sent only the TAIL of the in-flight
- *  turn, so what the store holds for that id is not the whole reply.
- *
- *  It exists so the renderer can SAY so. Without a consumer a client would read
- *  a bounded payload as complete, and `truncated` is a required wire field
- *  precisely so the marker cannot be missed. Keyed by chat because one
- *  in-flight turn per chat, and the
- *  set rather than a flag because a reconnect can name a different message than
- *  the previous one. */
+/** Message ids whose connect-time snapshot was TRUNCATED — the server capped the
+ *  turn_state payload and sent only the TAIL — so the renderer can SAY so rather
+ *  than read a bounded payload as complete. A set rather than a flag because a
+ *  reconnect can name a different message than the previous one. */
 const truncatedSnapshots = new Map<string, Set<string>>();
 
 export function noteTruncatedSnapshot(chatID: string, messageID: string): void {
@@ -1800,8 +1739,8 @@ export function appendChunk(
 }
 
 /** Attach licensed-code attributions to an in-flight assistant message. The server sends
- *  the full deduped list each time, so replace rather than append. No-op if the target is
- *  not resident — the refs still persist server-side and render on reload. */
+ *  the full deduped list each time, so replace rather than append. A no-op off-window: the
+ *  refs persist server-side and render on reload. */
 export function setCodeReferences(chatID: string, messageID: string, refs: CodeReference[]): void {
   const s = get(chatID);
   if (s === undefined) {
@@ -1913,22 +1852,13 @@ export function upsertToolCall(
   republishToolCall(chatID, messageID, call);
 }
 
-/** Apply a `tool_call_update` DELTA to the held tool call.
+/** Apply a `tool_call_update` DELTA to the held tool call; an absent field means
+ *  unchanged.
  *
- *  The frame carries only what the server's fold changed — the whole accumulated
- *  call used to go on the wire, re-sending a Replace-in-File's 184 KB of diffs on
- *  every later frame for it. An absent field means unchanged.
- *
- *  A call this client does not hold is DROPPED, not created: a delta has nothing
- *  to apply to, and the channel for a client that missed the beginning is
- *  `turn_state`, which still carries whole objects. `undefined` reports that
- *  drop.
- *
- *  RETURNS the folded call, because the handler needs a field off it (the
- *  completed call's `kind`, to decide whether a repo moved) and this function has
- *  just done both lookups — the message through the store's index and the call
- *  through its own scan. Answering from the return value is what stops the
- *  handler walking the same two collections again. */
+ *  A call this client does not hold is DROPPED, not created: a delta has nothing to
+ *  apply to, and `turn_state` is the channel for a client that missed the beginning.
+ *  `undefined` reports that drop. RETURNS the folded call, so the handler can read a
+ *  field off it without walking the message index and the call array again. */
 export function applyToolCallDelta(chatID: string, d: ToolCallUpdatePayload): ToolCall | undefined {
   const s = get(chatID);
   if (s === undefined) {
@@ -1968,32 +1898,18 @@ export function applyToolCallDelta(chatID: string, d: ToolCallUpdatePayload): To
   return next;
 }
 
-/** Fold one delta onto a held tool call, returning the new value.
+/** Fold one delta onto a held tool call, returning the new value. A fresh object
+ *  rather than a mutation, because the card's signal dedups by identity.
  *
- *  A fresh object rather than a mutation, because the card's signal dedups by
- *  identity: repainting on a delta that changed nothing observable would undo
- *  the frame budget this shape exists to buy.
- *
- *  Fields are spread conditionally rather than assigned undefined — the client
- *  compiles under exactOptionalPropertyTypes.
- *
- *  EXPORTED for the cross-language contract test, and that is the only reason:
- *  `tool-call-delta.node.test.ts` drives this against the same fixture
- *  `internal/translate/streaming_tools_roundtrip_test.go` drives the BUILDER
- *  against, so the two halves cannot drift on a transition either side's own
- *  table happens not to cover. Every production caller reaches it through
- *  `applyToolCallDelta`. */
+ *  EXPORTED only for the cross-language contract test, which drives this against the
+ *  same fixture the Go builder is driven against so the two folds cannot drift.
+ *  Every production caller reaches it through `applyToolCallDelta`. */
 export function foldToolCallDelta(prev: ToolCall, d: ToolCallUpdatePayload): ToolCall {
-  // `output_replace` is the terminal's full stream winning over the ACP
-  // fragments at completion (adoptTerminalOutput server-side). It is the only
-  // case where the accumulated output legitimately shrinks or is rewritten.
-  //
-  // The flag is read FIRST and is authoritative on its own, because
-  // `output_delta` is `omitempty` on the Go side: a replace-to-empty travels as
-  // `{output_replace: true}` with no delta at all. Reading the delta's presence
-  // first made that frame mean "unchanged" here and `""` to the server's own
-  // spec, which is the two folds disagreeing on the one transition this contract
-  // exists to keep aligned.
+  // `output_replace` is the only case where accumulated output legitimately shrinks
+  // or is rewritten. The flag is read FIRST and is authoritative on its own, because
+  // the delta is `omitempty` on the Go side: a replace-to-empty travels as
+  // `{output_replace: true}` with no delta at all, which read the other way round
+  // means "unchanged" here and `""` to the server.
   const output =
     d.output_replace === true
       ? (d.output_delta ?? "")
@@ -2033,9 +1949,8 @@ function republishToolCall(chatID: string, messageID: string, call: ToolCall): v
     // state only — never a projection, never a mount.
     scheduleMessages(chatID, "tool", messageID);
   } else {
-    // Signal-absent fallback: nothing is mounted for this card, so the full pass puts its
-    // update on screen — unless nothing is MEANT to be, which is a delegate's own call.
-    // Read off the call itself, so the two callers cannot disagree about it either.
+    // Signal-absent fallback: nothing is mounted, so the full pass puts the update on
+    // screen — unless nothing is MEANT to be, which is a delegate's own call.
     scheduleMessages(chatID, droppedCallCause(call));
   }
 }

@@ -1,41 +1,9 @@
-// ---------------------------------------------------------------------------
 // Transport: SSE for server→client, fetch POST for client→server.
 //
-// Every command carries an Idempotency-Key header so the server can dedupe
-// retries; an action that declares idempotencyKey supplies its own, which is
-// what makes a RETRY dedupe (see send). The dispatcher receives typed
-// ServerEvents from SSE.
-//
-// Errors surface through send-state.ts (which drives the send-button
-// error face + tooltip). There is no inline error card; the button is
-// the single error surface, and it stays clickable so the next Send is the
-// retry. A plain 409 busy is a handshake, not an error — callers steer
-// instead; a 409 whose envelope carries `reason: "starting"` is a real
-// failure the caller renders through the send-error face (see SendResult).
-//
-// Reconnect model:
-//   - EventSource's native auto-reconnect covers transient drops, at the
-//     server's advertised `retry: 1500` (reconnectDelay, internal/agent).
-//   - On terminal errors (a non-2xx body, a proxy stripping keep-alives, iOS
-//     closing a backgrounded source), `readyState` goes CLOSED and the browser
-//     gives up. We tear down the source and reopen with exponential backoff.
-//   - A RESUME (visibilitychange, pageshow, online, resume) decides liveness
-//     from observed frames plus a timer gap, never from `readyState` alone: iOS
-//     reports OPEN for a stream the OS already tore down. See `maybeResume`.
-//   - The resume's liveness clock counts `onmessage` FRAMES only, so an idle
-//     stream ages out of it. The server does publish a named `heartbeat` every
-//     15s while idle (internal/agent/heartbeat.go), but it lands on that
-//     listener and the watchdog's clock, never this one: frames are the
-//     conservative input, declining to vouch for a stream that has carried no
-//     real traffic, and the cost is one reconnect per forced resume of an
-//     idle-but-healthy stream. So the window is a cost saver and the suspension
-//     detector is the mechanism.
-//   - A forced reconnect is the whole response to a resume: it re-runs the
-//     `connected` handshake, whose floor/head answer is the authoritative gap
-//     verdict (see handleConnected).
-//   - Every reconnect above carries the cursor itself, as a query parameter:
-//     only the browser's OWN retry sends Last-Event-ID. See `eventsURL`.
-// ---------------------------------------------------------------------------
+// Errors surface through send-state.ts. The send button is the single error
+// surface and stays clickable, so the next Send is the retry. A plain 409 busy
+// is a handshake the caller converts to a steer; a 409 carrying
+// `reason: "starting"` is a real failure it renders through the error face.
 
 import type { ServerEvent, ConnectedPayload, ConnectionStatus, TabKind } from "./types.js";
 import { setSSEStatus } from "./send-state.js";
@@ -118,28 +86,16 @@ export type TypedCommand =
   // Addresses a USER MESSAGE, not a turn ordinal: KAS's revertMultiple takes a
   // messageId and refuses a non-user one.
   | { type: "rewind_chat"; chat_id: string; payload: { message_id: string } }
-  // The three CREATING commands, and they are the only members here with NO
-  // `chat_id`: the server mints the chat id and returns it, so there is nothing
-  // for the envelope to address. That absence is the wire contract of stage 1b,
-  // which is why it is spelled in the type rather than left to a runtime default.
-  //
-  // `op_id` correlates every attempt of ONE create gesture so a repeat resolves to
-  // the chat the first attempt made. It is NOT the idempotency token — that is the
-  // header, per-dispatch, in a 5-minute cache; this one has to survive a retry the
-  // user makes minutes later. See command/create_ledger.go.
+  // The three CREATING commands: the only members with no `chat_id`, because the
+  // server mints the id and returns it. `op_id` correlates every attempt of ONE
+  // gesture and is NOT the idempotency token — that one is the header, per
+  // dispatch, in a 5-minute cache.
   | { type: "create_chat"; payload: { op_id: string; name?: string; model?: string } }
   | { type: "resume_session"; payload: { op_id: string; session_id: string; name: string } }
   | { type: "fork_chat"; payload: { op_id: string; parent_chat_id: string; title?: string } }
-  // The four TAB mutations, and they have no `chat_id` for a reason of their own:
-  // the open-tab set is workspace-global, so a tab command addresses a tab or a
-  // whole arrangement, never a conversation. A chat TAB names its chat in `ref`,
-  // which is a subject field rather than an envelope one — the envelope's chat id
-  // routes an event to a chat's topic, and `tabs_changed` is broadcast to every
-  // client with no topic at all.
-  //
-  // Every one carries `op_id`, echoed back on the frame so a client can tell its
-  // own committed mutation from another device's. That is its only job here: no
-  // TTL, no cache, no 409 branch, and no authority over what is open.
+  // The four TAB mutations, with no `chat_id` because the open-tab set is
+  // workspace-global; a chat tab names its chat in `ref` instead. `op_id` is echoed back
+  // on the frame so a client can tell its own committed mutation from another device's.
   | {
       type: "open_tab";
       payload: { kind: TabKind; op_id: string; ref?: string; parent?: string; owns?: boolean };
@@ -168,17 +124,10 @@ export interface SendResult {
   reason?: string;
   /** Structured error code for non-HTTP failures. */
   code?: string;
-  /** The success body, undecoded. Present only when the response parsed as JSON.
-   *
-   *  Almost every command answers `{"ok":true}` and its caller reads nothing, so
-   *  this stayed unread for a long time. The creating commands are what need it:
-   *  `create_chat`, `fork_chat` and `resume_session` MINT the chat id server-side
-   *  now, so the response is the only place the caller can learn the id of the
-   *  thing it just asked for. The alternative was waiting for the `chat_created`
-   *  SSE frame, which is the identity-the-caller-cannot-address problem inverted.
-   *
-   *  Undecoded on purpose: this module owns the transport, and which wire shape a
-   *  given command answers with is the action's business. */
+  /** The success body, undecoded, and present only when the response parsed as
+   *  JSON. The creating commands need it: the response is the only place a caller
+   *  learns the chat id the server just minted. Undecoded on purpose — which wire
+   *  shape a command answers with is the action's business, not the transport's. */
   body?: unknown;
 }
 
@@ -187,37 +136,22 @@ interface SendOptions {
   signal?: AbortSignal;
   /** Timeout in ms. Defaults to 15 minutes. */
   timeoutMs?: number;
-  /** When true (default), a failure is reported to the user through
-   *  failure-notice.ts (a bottom-right toast naming the reason). The action
-   *  framework adapter (transportAction) passes false because it owns the error
-   *  surface via its own toast — letting both fire produces duplicate user
-   *  feedback for one failure.
-   *
-   *  It no longer touches the send button: an attempt that failed is not a claim
-   *  that the agent is unreachable, and that button now says only the latter. See
-   *  send-state.ts. */
+  /** When true (default), a failure gets a failure-notice.ts toast.
+   *  `transportAction` passes false because it owns that surface itself, and both
+   *  firing is duplicate feedback for one failure. */
   reportSendState?: boolean;
 }
 
-/** Read the key an action attached to its command, if any.
- *
- *  The actions framework puts it on the command object under
- *  IDEMPOTENCY_COMMAND_FIELD. It is NOT forwarded as a body field: the server's
- *  envelope has no such member and never read one, so sending it would be a
- *  third spelling of a concept that now has exactly one. It becomes the header
- *  instead. */
+/** Read the key an action attached to its command, if any. It becomes the
+ *  HEADER, never a body field: the server's envelope has no such member. */
 function idempotencyKeyOf(cmd: TypedCommand | Command): string | undefined {
   const v = (cmd as Record<string, unknown>)[IDEMPOTENCY_COMMAND_FIELD];
   return typeof v === "string" && v !== "" ? v : undefined;
 }
 
-/** The chat a command is addressed to, or "" when it addresses none.
- *
- *  A helper rather than three `cmd.chat_id ?? ""` reads, because since the
- *  creating commands lost their `chat_id` the union genuinely has members without
- *  the field and each read would need its own narrowing. "" is what the envelope
- *  carries for them, and it is also what `reportFailure` treats as workspace-wide,
- *  which is correct: a failed create belongs to no chat. */
+/** The chat a command is addressed to, or "" when it addresses none. "" is what
+ *  the envelope carries for the creating commands, and what `reportFailure`
+ *  treats as workspace-wide — correct, since a failed create belongs to no chat. */
 function chatIDOf(cmd: TypedCommand | Command): string {
   return "chat_id" in cmd ? (cmd.chat_id ?? "") : "";
 }
@@ -241,18 +175,13 @@ export function newMessageID(): string {
   return newRequestID().replace("r-", "m-");
 }
 
-/** Generate a correlation id for ONE create gesture, so every attempt of it
- *  resolves to the same chat.
- *
- *  Distinct from `newRequestID()`'s idempotency role, which is per-DISPATCH and
- *  lives in a 5-minute cache. This one has to survive a retry the user makes
- *  minutes later from the failure toast, which is why the server keys its own
- *  ledger on it (command/create_ledger.go).
+/** A correlation id for ONE create gesture, so every attempt resolves to the same
+ *  chat; it has to survive a retry the user makes minutes later.
  *
  *  MINT IT AT THE DISPATCH SITE, never inside an action's `run()`: the framework
- *  re-invokes `run()` per retry attempt, so an id minted there would be fresh on
- *  every attempt and defeat its own purpose. The `op-` prefix keeps it inside
- *  ids.ValidIdent, which is what the command boundary gates it with. */
+ *  re-invokes `run()` per attempt, so an id minted there is fresh every time and
+ *  defeats its own purpose. The `op-` prefix keeps it inside the identifier shape
+ *  the command boundary gates it with. */
 export function newOpID(): string {
   return newRequestID().replace("r-", "op-");
 }
@@ -266,11 +195,9 @@ interface GapInfo {
 const HIDDEN_ABORT_MS = 30_000;
 
 /** How recently a frame must have arrived for a resume to trust the stream
- *  without reconnecting. Shorter than the server's 15s heartbeat cadence and NOT
- *  sized against it: the clock it reads counts real frames, so an idle stream
- *  ages past this window whatever the heartbeat does. A cost saver — it spares a
- *  working connection during a streaming turn — never the correctness
- *  mechanism. */
+ *  without reconnecting. NOT sized against the heartbeat: the clock it reads
+ *  counts real frames, so an idle stream ages past it whatever the beat does. A
+ *  cost saver, never the correctness mechanism. */
 const RESUME_LIVENESS_MS = 5_000;
 
 /** How long this page's own timers must have failed to run for a resume to treat
@@ -297,11 +224,8 @@ const SSE_HEARTBEAT_EVENT = "heartbeat";
 const SSE_WATCHDOG_TICK_MS = 15_000;
 
 /** How long the stream may deliver NO event before the watchdog reconnects it.
- *
- *  Five missed heartbeats. It has to clear 2x the heartbeat interval with margin
- *  rather than one interval: the beat is idle-gated, so a real event landing just
- *  before a tick pushes the next beat a whole interval out, which makes the
- *  worst-case silence on a perfectly healthy stream 30s. */
+ *  Five missed heartbeats, which has to clear 2x the interval with margin: the
+ *  beat is idle-gated, so worst-case silence on a healthy stream is 30s. */
 const SSE_SILENCE_MS = 75_000;
 
 /** Default timeout for bridge command channel (long-running agent turns). */
@@ -317,12 +241,9 @@ type ConnState =
   | { phase: "connected"; source: EventSource }
   | { phase: "reconnecting"; timer: ReturnType<typeof setTimeout> };
 
-/** How long a connection must stay open before the reconnect backoff
- *  ramp resets. Resetting on mere `onopen` (or on the first message —
- *  the server writes the `connected` handshake immediately) would let a
- *  connect→drop loop hammer the server at the 500ms base forever; the
- *  documented 500ms→30s ramp only works if short-lived connections
- *  carry the previous backoff forward. */
+/** How long a connection must stay open before the backoff ramp resets.
+ *  Resetting on `onopen`, or on the first message, would let a connect→drop loop
+ *  hammer the server at the 500ms base forever. */
 const BACKOFF_STABLE_RESET_MS = 30_000;
 
 /** How long the hydration gate waits for `markHydrated` before releasing what
@@ -337,13 +258,9 @@ const HYDRATE_TIMEOUT_MS = 20_000;
  *  move rather than grow a buffer without bound. */
 const MAX_PENDING_FRAMES = 2000;
 
-/** The chat this device is SHOWING, read at connect time.
- *
- *  An injected getter and not an import: this module deliberately holds no store
- *  state, and importing `store.ts` risks a cycle — the same
- *  `registerTabOpeners` / `setRefusalRewindHandler` idiom the codebase already
- *  uses. Registered from `app.ts` at composition time; unregistered it answers
- *  empty, which the server reads as "declare nothing" and serves every open chat. */
+/** The chat this device is SHOWING, read at connect time. An injected getter
+ *  rather than an import, because importing `store.ts` risks a cycle.
+ *  Unregistered it answers "", which the server reads as "declare nothing". */
 let snapshotChatProvider: () => string = () => "";
 
 /** Register the reader for the chat whose transcript is on screen. The server
@@ -354,20 +271,10 @@ export function setSnapshotChatProvider(fn: () => string): void {
   snapshotChatProvider = fn;
 }
 
-/** The events URL, carrying the replay cursor when there is one and the chat this
- *  device is showing when there is one.
- *
- *  EventSource sends `Last-Event-ID` on ITS OWN retry only, and `teardown` closes
- *  the source — so every reconnect below opens a fresh EventSource with no history
- *  and used to get no replay at all. Zero is omitted: a first connection has missed
- *  nothing. The server reads the parameter only when the header is absent, so the
- *  browser's own retry keeps deciding for itself (`internal/agent/sse.go`).
- *
- *  `snapshot` names the chat whose in-flight transcript this connect needs. Omitted
- *  when there is none, and composable with the cursor: both are ordinary query
- *  parameters and the server reads them independently. Without it the server serves
- *  a snapshot for every open busy chat, which is correct but pays for transcripts
- *  nobody is looking at. */
+/** The events URL. The cursor rides a query parameter because EventSource sends
+ *  `Last-Event-ID` on ITS OWN retry only and `teardown` closes the source; the server
+ *  reads the parameter only when the header is absent. `snapshot` names the chat whose
+ *  in-flight transcript this connect needs, so the server pays for no other. */
 function eventsURL(cursor: number): string {
   const params = new URLSearchParams();
   if (cursor > 0) {
@@ -391,12 +298,9 @@ class TransportController {
 
   private conn: ConnState = { phase: "idle" };
   private lastSeenEventID = 0;
-  /** lastSeenEventID snapshotted at the moment the CURRENT EventSource
-   *  was opened — the cursor gap detection compares against. onmessage
-   *  advances lastSeenEventID before handleConnected runs (the
-   *  `connected` handshake frame itself carries `id: head`), so
-   *  comparing the live cursor against floor/head could never detect a
-   *  wrapped ring; only this pre-connect snapshot can. */
+  /** lastSeenEventID as of the CURRENT source opening, and the only cursor gap
+   *  detection may compare: the handshake frame carries `id: head`, so onmessage
+   *  has already advanced the live cursor by the time `handleConnected` runs. */
   private cursorAtConnect = 0;
   /** Date.now() at the current connection's onopen; 0 while unopened.
    *  Cleared on every connect attempt so stability is measured on the
@@ -455,36 +359,11 @@ class TransportController {
     this.inflight.clear();
   }
 
-  /** Hold every incoming frame until the chat store has been populated, then
-   *  release them in arrival order.
-   *
-   *  WHY. The EventSource is opened synchronously during `init`, and the server
-   *  answers immediately with its whole connect replay: the `connected`
-   *  handshake, every unanswered permission ask, and ONE `turn_state` per BUSY
-   *  chat. That `turn_state` is the only channel carrying an in-flight turn's
-   *  state to a new client — it is connect-time synthesis and is never broadcast
-   *  live, so there is no second chance at it. Meanwhile the store is empty
-   *  until `GET /api/chats` resolves several awaits later, and every consumer of
-   *  a chat-scoped frame correctly bails when it cannot find the chat it names.
-   *
-   *  So on a manual page refresh the whole replay was dropped, and four
-   *  user-visible defects followed from that one ordering fact: every tab's
-   *  activity dot read `idle` (the busy signal never landed), the streaming
-   *  transcript came back blank (the accumulated message never landed), the
-   *  composer showed Send instead of Cancel over a live turn — which turns a
-   *  stale draft into a mid-turn steer, because a Send that meets a 409 steers —
-   *  and a reader with no dot to tell a live tab from a dead one closed the
-   *  wrong ones, and closing a chat tab cancels its turn.
-   *
-   *  A refresh was therefore a WEAKER recovery than a dropped connection: an SSE
-   *  blip reconnects with a non-zero cursor, which fires `transport:gap` and
-   *  runs the full reconcile. The first connection of a page load deliberately
-   *  skips that (nothing was missed yet), so nothing healed it.
-   *
-   *  Holding rather than replaying is what keeps the frames' ORDER intact, and
-   *  order is load-bearing here: a `message_chunk` that raced the snapshot is
-   *  made idempotent by the watermark the snapshot installs, so a chunk released
-   *  before its `turn_state` would be double-appended. */
+  /** Hold every incoming frame until the chat store is populated, then release them in
+   *  arrival order. The connect replay carries the one `turn_state` per busy chat that is
+   *  never broadcast live, so a frame an empty store drops has no second chance — and
+   *  ORDER is load-bearing, because a `message_chunk` released before the `turn_state`
+   *  whose watermark makes it idempotent is double-appended. */
   private holdUntilHydrated(): void {
     this.hydrated = false;
     this.pending = [];
@@ -593,11 +472,8 @@ class TransportController {
   }
 
   /** Undo `init` completely, for tests that boot the singleton more than once.
-   *
-   *  `vi.resetModules()` is not a substitute in Browser Mode: the module map is
-   *  URL-keyed, so a re-import hands back the same instance and the PREVIOUS
-   *  controller's document listeners stay live — inert only by luck, and not at
-   *  all once a resume can reconnect them. */
+   *  `vi.resetModules()` cannot substitute in Browser Mode: the module map is
+   *  URL-keyed, so a re-import hands back this instance with its listeners live. */
   _resetForTest(): void {
     this.listeners?.abort();
     this.listeners = null;
@@ -626,15 +502,10 @@ class TransportController {
     this.wasFrozen = false;
   }
 
-  /** Stamp `lastTickAt` so a missed tick is measurable.
-   *
-   *  A SECOND interval at the watchdog's cadence, and it may not be folded into
-   *  it: the watchdog belongs to a CONNECTION (`teardown` stops it, and the
-   *  backoff window between a teardown and its reconnect has none to watch),
-   *  while this detector belongs to the PAGE and has to keep stamping across a
-   *  reconnect — sharing the watchdog's timer would leave `lastTickAt` stale for
-   *  the length of every backoff and read that wait as a suspension. The cost is
-   *  an idle page waking twice per interval. */
+  /** Stamp `lastTickAt` so a missed tick is measurable. A SECOND interval at the
+   *  watchdog's cadence that may NOT be folded into it: the watchdog belongs to a
+   *  CONNECTION and stops at teardown, while this belongs to the PAGE and must keep
+   *  stamping across a reconnect, or every backoff wait reads as a suspension. */
   private startTick(): void {
     this.stopTick();
     this.lastTickAt = Date.now();
@@ -660,27 +531,11 @@ class TransportController {
     return Math.max(0, now - this.lastTickAt - RESUME_TICK_MS);
   }
 
-  /** Decide whether a page-lifecycle signal has to force a reconnect.
-   *
-   *  `readyState` is not a liveness signal here: iOS answers OPEN for a stream the
-   *  OS tore down while the app was backgrounded, so the tab returns holding a
-   *  socket that delivers nothing, no reconnect happens, the `connected` handshake
-   *  never re-runs, and `transport:gap` therefore never fires — which is what left
-   *  every chat marked fresh and a tab switch rendering the pre-sleep store.
-   *
-   *  So the decision reads, in order: a definitive CLOSED, then a frame observed
-   *  inside the liveness window (proof the pipe carries bytes, and the reason an
-   *  alt-tab during a streaming turn disturbs nothing), then the page's own
-   *  suspension. A forced reconnect is the whole response — the server's floor/head
-   *  answer is the authoritative gap verdict and reconnecting is what runs it.
-   *
-   *  It reconnects at delay 0 and deliberately does NOT take the backoff ramp:
-   *  the ramp bounds UNATTENDED retry, and a resume is a person waiting on a
-   *  stale screen. It pre-empts the ramp's wait without resetting it —
-   *  `lastBackoffMs` is untouched, so the failures after a forced attempt keep
-   *  escalating from where they were. Residual: `online` can fire repeatedly on a
-   *  flaky network, so against a persistently-down server an active user drives
-   *  one attempt per RESUME_COALESCE_MS, which is the gate's other job. */
+  /** Decide whether a page-lifecycle signal has to force a reconnect. `readyState` is
+   *  not a liveness signal here — iOS answers OPEN for a stream the OS tore down — so
+   *  the decision reads a definitive CLOSED, then a frame inside the liveness window,
+   *  then the page's own suspension. It reconnects at delay 0 without taking the backoff
+   *  ramp, which bounds UNATTENDED retry, and leaves `lastBackoffMs` untouched. */
   private maybeResume(force: boolean): void {
     const now = Date.now();
     if (now < this.resumeGateUntil) {
@@ -706,14 +561,10 @@ class TransportController {
     }
   }
 
-  /** Whether the stream is definitively gone — ONE input to the resume decision
-   *  above, not the whole of it.
-   *
-   *  The source's own `readyState`, not the phase: `onerror` demotes the phase only
-   *  on CLOSED, so the browser's internal retry — what the kick pre-empts — leaves
-   *  it at `connected`. Mid-handshake is ALIVE, which is why `connecting` gets its
-   *  own arm: `pageshow` fires on every cold load after `init` opened the source, so
-   *  a bare `!== OPEN` would tear that stream down and reopen it every load. */
+  /** Whether the stream is definitively gone — ONE input to the resume decision,
+   *  read off the source's `readyState` rather than the phase, which `onerror`
+   *  demotes only on CLOSED. Mid-handshake is ALIVE: `pageshow` fires on every
+   *  cold load, so a bare `!== OPEN` would reopen the stream every load. */
   private sseIsDead(): boolean {
     switch (this.conn.phase) {
       case "connected":
@@ -744,25 +595,10 @@ class TransportController {
     }
   }
 
-  /** Reconnect when the stream has delivered NO event for the whole silence window.
-   *
-   *  A SECOND, INDEPENDENT liveness signal — not a reinterpretation of `readyState`,
-   *  and it reads none. The one place that does (`sseIsDead`) must treat a
-   *  mid-handshake stream as ALIVE, because `pageshow` fires on every cold load after
-   *  `init` opened the source, so a bare `!== OPEN` there would tear that stream down
-   *  and reopen it on every page load. Byte recency answers the question `readyState`
-   *  cannot: iOS reports OPEN for a stream the OS already tore down.
-   *
-   *  Going through `nextBackoff` rather than reconnecting at delay 0 is what makes
-   *  REPEATED silence escalate — the ramp is client-owned. KNOWN LIMITATION, stated
-   *  narrowly: this bounds a SAME-DOCUMENT retry loop only. A fresh document starts
-   *  with `lastBackoffMs = 0`, so the ramp dies with every reloaded document, and a
-   *  persisted reload counter is deliberately out of scope.
-   *
-   *  Skipped while the document is HIDDEN: a backgrounded tab has throttled timers,
-   *  iOS kills the stream anyway, and the existing visibilitychange/pageshow kick
-   *  covers the return immediately — so reconnecting here is work nobody is waiting
-   *  for. */
+  /** Reconnect when the stream has delivered NO event for the whole silence window: a
+   *  second liveness signal that reads no `readyState` at all. Through `nextBackoff`
+   *  rather than delay 0 so REPEATED silence escalates, which bounds a SAME-DOCUMENT
+   *  loop only. Skipped while hidden — the visibilitychange kick covers the return. */
   private checkSilence(): void {
     if (document.visibilityState === "hidden") {
       return;
@@ -833,12 +669,9 @@ class TransportController {
         // ignore malformed frames
         return;
       }
-      // Opt-in runtime validation: if a decoder is registered for this
-      // event type, run it on the payload before dispatching. On decode
-      // failure, log the structured path and drop the event rather than
-      // letting handlers see a partial shape. Events without a decoder
-      // fall through to the existing untyped path so the integration is
-      // strictly additive. See validators.ts and bus.ts for details.
+      // Opt-in validation: a registered decoder runs before dispatch and a
+      // failure DROPS the event, so no handler sees a partial shape. An event
+      // with no decoder falls through untyped.
       const decoder = lookupSSEDecoder(evt.type);
       if (decoder !== undefined) {
         try {
@@ -924,15 +757,10 @@ class TransportController {
       // First connection of this page load: nothing to have missed.
       return;
     }
-    // Three gap classes, all judged against the PRE-connect cursor:
-    //  - floor === 0: the server restarted with an empty ring; anything
-    //    we saw before is gone.
-    //  - cursor < floor: the ring wrapped past our cursor during the
-    //    outage — events were evicted unseen.
-    //  - head < cursor: the server restarted and re-seeded ids below our
-    //    cursor (ids are per-process); without this arm the stale high
-    //    cursor also suppresses onmessage cursor advancement until the
-    //    new process catches up.
+    // Judged against the PRE-connect cursor. The third arm exists because ids
+    // are per-process: a restart re-seeds them BELOW our cursor, and without it
+    // the stale high cursor also suppresses onmessage advancement until the new
+    // process catches up.
     const gap = p.floor === 0 || cursor < p.floor || p.head < cursor;
     if (gap) {
       const info: GapInfo = { lastSeen: cursor, floor: p.floor, head: p.head };
@@ -946,17 +774,10 @@ class TransportController {
   // --- POST /api/command ---
 
   async send(cmd: TypedCommand | Command, opts?: SendOptions): Promise<SendResult> {
-    // An action declaring `idempotencyKey` generates ONE key per dispatch and
-    // the framework threads it through every retry attempt, so honouring it is
-    // what makes a retry dedupe. Minting a fresh key here for such a command
-    // would defeat the whole mechanism — which is exactly what this transport
-    // did before: it built the body field by field, so the framework's key was
-    // dropped and never reached the server at all. Rewind is the case that
-    // makes it matter (a second revert cuts from an already-truncated
-    // transcript), and its idempotency was decorative until this line.
-    //
-    // A bare send() has no such key and gets a fresh one, which is right: two
-    // deliberate sends are two operations.
+    // The framework threads an action's own key through every retry attempt, so
+    // honouring it here is what makes a retry dedupe; minting a fresh one would
+    // defeat the mechanism. A bare send() has none and gets a fresh one, which
+    // is right — two deliberate sends are two operations.
     const requestID = idempotencyKeyOf(cmd) ?? newRequestID();
     const timeoutMs = opts?.timeoutMs ?? COMMAND_TIMEOUT_MS;
     const ctrl = new AbortController();
@@ -973,12 +794,8 @@ class TransportController {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          // The idempotency token is a HEADER, not a body field. It used to ride
-          // the envelope as request_id, which meant the command dispatcher had to
-          // run its own dedup cache keyed on a body field — and that one had no
-          // in-flight marker, so two concurrent sends of the same id both
-          // executed. As a header it reaches the server's one idempotency
-          // middleware, which marks in-flight and answers 409 instead.
+          // A HEADER and never a body field: as a header it reaches the server's
+          // one idempotency middleware, which marks in-flight and answers 409.
           [IDEMPOTENCY_HEADER]: requestID,
         },
         signal: combined,
@@ -1016,13 +833,9 @@ class TransportController {
       } catch {
         /* non-JSON */
       }
-      // No failure toast for ANY 409. A plain 409 is a queue signal the caller
-      // converts to a steer, and a 409 with reason "starting" IS a failure —
-      // carved out of that collapse via `reason` on the result — but its
-      // surface is the send-error face submit.ts renders through send-state,
-      // not a toast. Otherwise honour the caller's reportSendState preference
-      // (defaults to true for legacy direct callers; transportAction sets it
-      // false to avoid double-feedback with its toast).
+      // No failure toast for ANY 409: a plain one is a queue signal the caller
+      // converts to a steer, and a "starting" one IS a failure whose surface is
+      // the send-error face rather than a toast.
       const reportSendState = opts?.reportSendState ?? true;
       if (r.status !== 409 && reportSendState) {
         reportFailure(chatIDOf(cmd), errMsg);

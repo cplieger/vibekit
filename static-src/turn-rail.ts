@@ -724,17 +724,10 @@ function render(): void {
   root.replaceChildren(...nodes);
 }
 
-/** Per-turn durations for the turns the STORE holds, keyed by the turn's opening
- *  message id — the same join `keyOf` runs, in the same direction.
- *
- *  THE RAIL'S OWN FEED CANNOT ANSWER THIS: `GET /api/chats/{id}/turns` carries no
- *  duration, and the value the footer renders is `turn_elapsed_ms` summed across a
- *  turn's body. So the answer is bounded by the paginated window, and a turn outside
- *  it gets no slot rather than a guessed one. `projectTurns` and `turnLedger` own the
- *  grouping and the sum; a local pass over the field would copy both rules.
- *
- *  Per render rather than cached: `ingestMessage` upserts in place, so an array
- *  identity is not a version. */
+/** Per-turn durations for the turns the STORE holds, keyed by the turn's opening message
+ *  id — the same join `keyOf` runs. THE RAIL'S OWN FEED CANNOT ANSWER THIS: the turns
+ *  index carries no duration, so the answer is bounded by the paginated window and a turn
+ *  outside it gets no slot. Per render, because `ingestMessage` upserts in place. */
 function residentElapsed(): Map<string, number> {
   const out = new Map<string, number>();
   const messages = get(chatID)?.messages;
@@ -844,9 +837,8 @@ function rowNode(row: Row, elapsed: Map<string, number>): HTMLElement {
   if (hit) {
     btn.dataset["hit"] = "";
   }
-  // A `<time>` carrying both spellings of one value, matching the turn footer's slot.
-  // No element at all when the store cannot answer, rather than an empty pill that
-  // reveals nothing; 29-turns.css owns the reveal and the gutter it grows into.
+  // A `<time>` carrying both spellings of one value, matching the turn footer's slot. No
+  // element at all when the store cannot answer, rather than a pill that reveals nothing.
   if (elapsedMs !== undefined) {
     btn.appendChild(
       el(

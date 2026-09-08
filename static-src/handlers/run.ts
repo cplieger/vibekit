@@ -1,26 +1,6 @@
-// ---------------------------------------------------------------------------
-// Workflow-run SSE handlers.
-//
-// `_kiro/workflow/inspect` is still the source of a run's state, but only
-// `run_started` and the frames a per-node patch cannot express reach it.
-// `run_progress` names one node by path and states what happened to it, so
-// the store applies it — see run-store.ts's header for which frames still
-// refetch and why.
-//
-// So this file routes and interprets nothing: one store write, one bus emit,
-// and toasts. Every surface that shows a run reads `run-store.ts` and
-// re-renders when that store changes.
-//
-// Surfaces: `run-store.ts` by direct import (a leaf over api-client, the one
-// fetch for all readers); the history list over the bus (importing
-// history.ts here would drag chat.ts in behind it); the toast stack by
-// direct import; the tab dot via `run-dots.ts` (needs to know whether the
-// run is parentless).
-//
-// A run's own transcript needs nothing here: a step's content arrives on
-// the launching chat's connection as ordinary blocks through the same
-// handlers that render every other block.
-// ---------------------------------------------------------------------------
+// Workflow-run SSE handlers: one store write, one bus emit, toasts. Every surface
+// that shows a run reads `run-store.ts` and re-renders when it changes; the history
+// list goes over the BUS, because importing history.ts here would drag chat.ts in.
 
 import { onSSE, emitBus, BUS_RUNS_CHANGED } from "../bus.js";
 import { info, success, error } from "../toast.js";

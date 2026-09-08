@@ -1,23 +1,7 @@
-// The exec view's detail pane: one node, at full width.
-//
-// In a conversation a delegated node gets a collapsed row, because N stream into
-// one column. Here there is one node on screen at a time, chosen by the reader,
-// so everything the source knows about it can be stated outright.
-//
-// Three regions, in reading order: IDENTITY (facts as a definition list — agent,
-// model, effort, signal, retries, a loop's bound, a session id), FAILURE
-// (verbatim), TRANSCRIPT (the live host, filled by the consumer's frames).
-//
-// What the node PRODUCED is deliberately not here. This pane used to render the
-// selected node's capture and artifacts as well, which is exactly what the page's
-// own results region renders now that it is per-step — and two renderings of one
-// capture on one screen is a measured defect (`subagent-exec-source.ts` records it).
-// The two merged into one region, above the panes.
-//
-// The transcript host is handed OUT (`bodyFor`), so this pane knows nothing about
-// where content comes from — `run-view.ts` supplies it to whichever step source is
-// feeding a node. It is the ONLY host for a step's transcript: the transcript's run
-// card used to hand out one of its own and no longer renders step content at all.
+// The exec view's detail pane: one node at full width — identity facts, failure,
+// and the live transcript host it hands OUT (`bodyFor`), so it knows nothing about
+// where content comes from. It renders no capture: the page's own results region is
+// per-step and does that.
 
 import { el } from "@cplieger/reactive";
 import { formatElapsed } from "../strings.js";

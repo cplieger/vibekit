@@ -135,11 +135,9 @@ function clearLiveAnchor(el: HTMLElement): void {
   rescanLiveAnchor();
 }
 
-// The open-container registry: which collapsible containers are open right now, so a
-// re-mount restores what the reader chose. Keyed `tool:` / `pipe:` / `run:` / `step:`.
-// A DELEGATE has no key, because its card is not a disclosure: its output renders on its
-// own page, so there is nothing for the transcript to fold. Detached renders register
-// nothing — a disclosure the reader set is a property of the transcript.
+// Which collapsible containers are open, so a re-mount restores what the reader chose.
+// A DELEGATE has no key, because its card is not a disclosure. Detached renders register
+// nothing: a disclosure the reader set is a property of the transcript.
 
 const openContainers = new Map<string, boolean>();
 
@@ -407,19 +405,10 @@ function buildBody(
   syncGroupCollapse(st, idx);
 }
 
-/** Where a mount's turn-lifetime cleanup goes.
- *
- *  A transcript render hands it to messages.ts, which disposes at TURN END as
- *  well as on unmount. A DETACHED render keeps it, because messages.ts does not
- *  know the render exists — and because a detached cleanup that cleared a shared
- *  signal would reach into the transcript's own live cards.
- *
- *  A detached render also creates no PER-BLOCK signal (see mountText): its message
- *  id is synthetic, so `ensureBlockTextSig` would mint a key `store.appendChunk`
- *  never writes, and a bubble subscribed to it would sit frozen while the real
- *  block streamed. The page subscribes to the REAL keys instead and pushes the
- *  text in through `syncMountedText`, which is the same fallback a mis-judged
- *  live block already relies on. */
+/** Where a mount's turn-lifetime cleanup goes. A transcript render hands it to
+ *  messages.ts, which disposes at TURN END as well as on unmount; a DETACHED render
+ *  keeps its own, or a cleanup clearing a shared signal would reach into the
+ *  transcript's live cards. */
 function pushLifetimeEffect(
   st: MsgRender,
   msgId: string,
@@ -574,22 +563,10 @@ const CLS_TRUNCATION_NOTE = "msg-truncated-note";
  *  reader cannot act on. */
 const TRUNCATION_NOTE_TEXT = "Earlier output is not shown. It arrives when the turn ends.";
 
-/** Mount or drop the withheld-output note at the TOP of a truncated message's body.
- *
- *  A STATIC note, never a show-more: the withheld bytes are not on the wire, so a
- *  control here could only fail, and `#vibekit-ui` forbids a control that does
- *  nothing outright — one teaches a reader to distrust every other one.
- *
- *  Idempotent mount/update, the shape `syncRefusal` and `syncCodeReferences`
- *  already use, because the marker's two lifetimes do not line up: it is set on the
- *  connect frame and cleared by `message_appended` at turn end, and neither moment
- *  rebuilds the body. So both the build and the update path ask, and the answer is
- *  read fresh rather than captured.
- *
- *  A DETACHED render needs no guard and gets none: `buildDetachedBody` renders under
- *  the SYNTHETIC id `detachedID` composes, which no marker is ever filed under — the
- *  subagent page shows one delegate's blocks while the cap is a property of the whole
- *  message's transfer, so the claim belongs in the transcript. */
+/** Mount or drop the withheld-output note at the TOP of a truncated message's body. A
+ *  STATIC note, never a show-more: the withheld bytes are not on the wire. Idempotent,
+ *  because the marker is set on the connect frame and cleared at turn end and neither
+ *  moment rebuilds the body, so both paths ask and read the answer fresh. */
 function syncTruncationNote(wrap: HTMLElement, chatID: string, msgID: string): void {
   const existing = wrap.querySelector(`:scope > .${CLS_TRUNCATION_NOTE}`);
   if (!isTruncatedSnapshot(chatID, msgID)) {
@@ -777,13 +754,10 @@ function renderRange(
 ): void {
   const blocks = m.blocks ?? [];
   const lastIdx = blocks.length - 1;
-  // Only a TAIL append moves the tail: a head insertion posts nothing after the live
-  // block, and nothing re-establishes a caret sealed by mistake. Nor does a range whose
-  // every block is DROPPED: nothing is placed, so ending the parent's caret would stop
-  // the reader's streaming reply for an arrival that renders nothing at all. Both drops
-  // count here, a delegate's and a step's, because a delegate's block places no prose
-  // either — only its card, which is chrome. Idempotent — `end()` nulls its own stream
-  // and `classList.remove` is a no-op when the class is absent.
+  // Only a TAIL append moves the tail, and nothing re-establishes a caret sealed by
+  // mistake. Nor does a range whose every block is DROPPED: nothing is placed, so
+  // ending the caret would stop the reader's streaming reply for an arrival that
+  // renders nothing. Idempotent.
   let places = false;
   for (let i = from; i < to; i++) {
     const block = blocks[i];
@@ -1004,10 +978,8 @@ function dropBlock(
   return hosted;
 }
 
-/** Drop the render state of the delegate card `el` IS, if it is one. The card is its
- *  invocation block's element, so the drop that takes that block takes the card with it —
- *  and a `st.subagents` entry pointing at a removed node would refuse to build the next
- *  one. */
+/** Drop the render state of the delegate card `el` IS, if it is one: an `st.subagents`
+ *  entry pointing at a removed node would refuse to build the next card. */
 function forgetSubagentCard(st: MsgRender, el: HTMLElement): void {
   const subtask = el.dataset["subtask"] ?? "";
   if (subtask !== "" && st.subagents.get(subtask)?.root === el) {
@@ -1015,17 +987,10 @@ function forgetSubagentCard(st: MsgRender, el: HTMLElement): void {
   }
 }
 
-/** Whether `el` is a CONTAINER whose lifetime this render owns somewhere other than the block
- *  that stamped it: a run card, or a pipeline box `pruneEmptyContainers` removes once nothing
- *  is left inside it. Released like an ordinary block it prices the whole box against one
- *  ordinal and removes it out from under blocks `st.window` still counts as mounted.
- *
- *  A DELEGATE's card is one of them, even though it holds no blocks: any of the delegate's
- *  blocks seats it, so the invocation that stamped it is NOT the whole of its lifetime and
- *  releasing it with that one ordinal would take the delegate's only route to its output
- *  while later blocks of its own are still mounted. `pruneOrphanedCards` ends it instead,
- *  on the question that actually decides it — whether the window still holds any block of
- *  that delegate's. */
+/** Whether `el` is a CONTAINER whose lifetime this render owns somewhere other than the
+ *  block that stamped it. Released like an ordinary block it would be removed out from
+ *  under blocks `st.window` still counts as mounted. A DELEGATE's card counts, and
+ *  `pruneOrphanedCards` ends that one instead. */
 function isContainerRoot(st: MsgRender, el: HTMLElement, card: RunCardView | undefined): boolean {
   if (el === card?.root) {
     return true;
@@ -1043,16 +1008,10 @@ function isContainerRoot(st: MsgRender, el: HTMLElement, card: RunCardView | und
   return false;
 }
 
-/** Remove every delegate card the surviving range no longer holds a block for.
- *
- *  Takes `keep` rather than reading `st.window`, so it can run BEFORE
- *  `pruneEmptyContainers`: a pipeline whose last stage card goes here has to look empty to
- *  that pass. A card is not a container of blocks, so DOM emptiness cannot answer this the
- *  way it answers for a pipeline box or a tool group.
- *
- *  The card's tail subscription is not released here: it is owned by the INVOCATION's
- *  lifetime effect, and an invocation inside `keep` puts its own subtask in `live`, so a
- *  card can only be pruned once that effect has already run. */
+/** Remove every delegate card the surviving range no longer holds a block for. Takes
+ *  `keep` rather than `st.window` so it can run BEFORE `pruneEmptyContainers`, which a
+ *  pipeline losing its last stage has to look empty to; a card holds no blocks, so DOM
+ *  emptiness cannot answer this. */
 function pruneOrphanedCards(st: MsgRender, m: Message, keep: BlockRange): void {
   if (st.subagents.size === 0) {
     return;
@@ -1141,13 +1100,10 @@ function seatAbove(
   return null;
 }
 
-/** Re-subscribe every PIPELINE box the drop left STANDING whose driver block it took. That
- *  block's cleanup released the binding and no path re-binds an existing box, so without this
- *  a pipeline whose stages are still in window keeps a frozen header, status and footer ledger
- *  until its driver re-mounts. `live` is false because every box here already exists.
- *
- *  A delegate CARD needs no such repair: it is its invocation block's own element, so a drop
- *  that takes the binding takes the card too. */
+/** Re-subscribe every PIPELINE box the drop left STANDING whose driver block it took: that
+ *  block's cleanup released the binding, no path re-binds an existing box, and the box
+ *  would keep a frozen header and ledger until its driver re-mounts. A delegate CARD needs
+ *  no repair — it IS its invocation block's element, so the drop takes both. */
 function rebindSurvivingBoxes(st: MsgRender): void {
   for (const pipelineID of st.pipelines.keys()) {
     const inv = st.tools.find((tc) => tc.id === pipelineID && isPipelineInvocation(tc));
@@ -1241,17 +1197,10 @@ function sealLiveBubble(st: MsgRender): void {
   st.liveBubble = null;
 }
 
-/** Get or build a delegate's CARD.
- *
- *  ANY of the delegate's blocks seats it, because the resident window is a range over
- *  block ordinals and the invocation that NAMES the card can fall outside it. So the card
- *  is the delegate's record whatever the window holds, and a pass that never sees the
- *  invocation leaves it at its fallback name rather than dropping the delegate from the
- *  transcript. `placeBlock` is the only caller; binding is `bindSubagent`'s, on the pass
- *  that does hold the invocation.
- *
- *  A PIPELINE STAGE is the two-level case: its subtask id is a bare uuid, so the pipeline
- *  that hosts its card comes from `st.stagePipeline` (`indexPipelines`). */
+/** Get or build a delegate's CARD. ANY of its blocks seats it, because the resident window
+ *  is a range over block ordinals and the invocation that NAMES the card can fall outside
+ *  it — so a pass that never sees the invocation leaves the card at its fallback name
+ *  rather than dropping the delegate. A stage's host pipeline is `st.stagePipeline`'s. */
 function subagentCardFor(st: MsgRender, subtask: string, live: boolean): SubagentCard {
   const existing = st.subagents.get(subtask);
   if (existing !== undefined) {
@@ -1336,14 +1285,11 @@ function stageHostFor(st: MsgRender, subtask: string, live: boolean): HTMLElemen
   return pipelineBoxFor(st, pipelineID, live).body;
 }
 
-/** Re-derive every mounted delegate card's host from `stageHostFor` and move the ones
- *  that no longer sit in it. Idempotent: it runs on every pass, and re-appending a card
- *  already in place would re-fire its `vk-slide-up` mount animation for nothing.
- *
- *  A host is chosen when the card is BUILT, from a count that is only a lower bound at
- *  that moment: a lone stage is PROMOTED to the top level, and the pipeline it belongs to
- *  grows a container when its second stage arrives or when its driver's declared count
- *  lands. Without this the stage would stay a sibling of its own pipeline. */
+/** Re-derive every mounted delegate card's host and move the ones that no longer sit in it.
+ *  A host is chosen when the card is BUILT, from a stage count that is only a lower bound
+ *  then — a lone stage is PROMOTED to the top level and its pipeline grows a container
+ *  later — so without this the stage stays a sibling of its own pipeline. Idempotent:
+ *  re-appending a card in place would re-fire its mount animation. */
 function rehomeStages(st: MsgRender, live: boolean): void {
   for (const [subtask, sa] of st.subagents) {
     const host = stageHostFor(st, subtask, live);
@@ -1687,13 +1633,9 @@ function isSubagentCardBlock(st: MsgRender, block: Block): boolean {
 }
 
 /** Whether the TRANSCRIPT renders nothing for this DELEGATE's block: everything it
- *  produced except the invocation above.
- *
- *  Gated on `st.detached`, and that gate is the subagent PAGE's own correctness: the page
- *  renders these same blocks through the detached path, so a drop that applied there would
- *  leave it blank. Its slice clears `agent_subtask_id` before it hands them over
- *  (`subagent-slice.ts`), which makes this the second lock on one door — deliberately, the
- *  failure it prevents is silent everywhere else. */
+ *  produced except the invocation above. The `st.detached` gate is the subagent PAGE's own
+ *  correctness — it renders these same blocks, so a drop applying there leaves it blank —
+ *  and is deliberately the second lock on that door. */
 function isDroppedDelegateBlock(st: MsgRender, block: Block): boolean {
   if (st.detached || (block.agent_subtask_id ?? "") === "") {
     return false;
@@ -1709,19 +1651,16 @@ function placeBlock(
   live: boolean,
   idx: GroupIndex,
 ): void {
-  // DROPPED, before anything is placed: a WORKFLOW STEP renders nowhere in the
-  // transcript, and a DELEGATE renders only its own card. Both cards are the RECORD of
-  // that work and its content is the tab that owns it. Explicit rather than a removed
-  // route — merely unrouting would let these fall through to `st.blocksEl` as loose
-  // top-level content.
+  // DROPPED before anything is placed: a WORKFLOW STEP renders nowhere here and a
+  // DELEGATE renders only its card, the content living in the tab that owns it.
+  // Explicit rather than unrouted, or these fall through as loose top-level content.
   if (isDroppedStep(block)) {
     return;
   }
   if (isDroppedDelegateBlock(st, block)) {
-    // SEATED from any of its blocks, not only from the invocation that names it: the
-    // resident window is a range over block ordinals, so the invocation can be outside
-    // it while this block is inside. A card that stood only with its invocation would
-    // take the delegate's only route to its output with it when the window moved.
+    // SEATED from any of its blocks: the invocation that names the card can sit outside
+    // the resident window, and a card standing only with it would take the delegate's
+    // only route to its output when the window moved.
     subagentCardFor(st, block.agent_subtask_id ?? "", live);
     return;
   }
@@ -1764,10 +1703,9 @@ function placeBlock(
         bindPipeline(st, m.id, tc, live, i);
         return;
       }
-      // The subagent invocation BECOMES the delegate's card, not a tool row — same shape
-      // as the two launches above, and its only creator. Stamped like every other kind,
-      // so a search hit on the invocation resolves to the card it opened; ahead of the
-      // bind, which returns early for a card already bound.
+      // The subagent invocation BECOMES the delegate's card rather than a tool row, and
+      // is its only creator. Stamped ahead of the bind, which returns early for a card
+      // already bound, so a search hit on the invocation resolves to the card.
       if (subtask !== "" && isSubagentInvocation(tc)) {
         const sa = subagentCardFor(st, subtask, live);
         stampBlock(st, sa.root, m.id, i);
@@ -2102,18 +2040,11 @@ function bindSubagent(
   });
 }
 
-/** The facts a delegate's footer can state honestly from the CLIENT's data: outcome,
- *  wall-clock, member command/read counts, and changed files with line counts. Credits
- *  and the resolved model are absent — nothing on this wire carries them per delegate.
- *
- *  The members are read out of the MESSAGE's tool calls rather than out of the per-tool
- *  signals: those signals are minted by a mounted card, and a delegate's own calls mount
- *  none any more, so a signal read would report a ledger of zeros. The store mutates this
- *  array in place, so a member's late diff is here by the time the invocation settles.
- *
- *  Membership is either side's stamp. The wire sets `agent_subtask_id` on a nested CALL and
- *  on the BLOCK that references it, and reading only the call would drop a member whose
- *  attribution arrived on the block. */
+/** The facts a delegate's footer can state honestly; credits and the resolved model are
+ *  absent, nothing on this wire carrying them per delegate. Members come out of the
+ *  MESSAGE's tool calls rather than the per-tool signals, which a mounted card mints and
+ *  which would report zeros; membership is EITHER side's stamp. The store mutates that
+ *  array in place, so a member's late diff is here by the time the invocation settles. */
 function subagentSummary(st: MsgRender, subtask: string, invocation: ToolCall): TurnSummaryData {
   let commands = 0;
   let reads = 0;

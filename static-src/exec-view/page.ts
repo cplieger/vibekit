@@ -1,24 +1,6 @@
-// The exec view page: a full tab for one delegated execution.
-//
-// Assembles the header, the alert, the timeline, the tree and the detail pane,
-// owns the selection between them, and runs one clock for all of them. Names no
-// source: a consumer hands it an `ExecRun` and it draws it.
-//
-// LAYOUT: header (identity/state/progress/elapsed/controls/inputs), alert (only
-// when it wants a person), timeline (where the time went), results (what the
-// SELECTED step produced, at full column width, once that step has settled), then
-// tree (structure, containers included) and detail (the selected node at full
-// width). Tree and detail sit side by side on a wide viewport and stack on a narrow
-// one, via a container query on the tab rather than the viewport (the sidebar
-// decides how much width the tab gets).
-//
-// ONE CLOCK: a live execution takes minutes and a paused one emits no frames at
-// all, so one interval drives all three panes and stops when nothing moves.
-//
-// TWO REGIONS ARE SIGNATURE-GUARDED, the inputs and the results: `render` runs on
-// every store invalidation — dozens of times a minute on a live execution — so
-// rebuilding either would discard the reader's show-more expansion and their scroll
-// position.
+// The exec view page: one full tab for one delegated execution — header, alert,
+// timeline, results, tree, detail — owning the selection between them and one clock
+// for all of them. It must name no source: a consumer hands it an `ExecRun`.
 
 import { el } from "@cplieger/reactive";
 import { attachClamp } from "../clamp-text.js";
@@ -52,38 +34,21 @@ export interface ExecPageOpts {
   /** The header's identity glyph. Defaults to the workflow one; a subagent page
    *  passes the agent hexagon. */
   icon?: string;
-  /** Fired when the node the DETAIL PANE is showing changes, OR when that node's
-   *  state moves, so a consumer can act on the reader's attention — arming an
-   *  on-demand fetch for the step now on screen is the case it exists for.
-   *
-   *  It is the only way a consumer can learn which node is shown: selection lives
-   *  here, and `emptyNote`/`emptyAction` must NOT be used to discover it. Both are
-   *  documented pure and cheap and are called on EVERY render, dozens of times a
-   *  minute on a live execution, so side-effecting one would fire a fetch per
-   *  repaint.
-   *
-   *  The STATE is part of that guard because a consumer's answer can depend on it:
-   *  a step's session cannot be read while it is in flight, and `select()` PINS the
-   *  selection, so a path-only guard never fires again for a step the reader clicked
-   *  while it was running — leaving the one node they are looking at as the one node
-   *  never acted on. A state is a small closed vocabulary and a node walks it a
-   *  handful of times, so this stays per-attention rather than per-repaint.
-   *
-   *  Additive and optional, exactly like `emptyAction`, so a consumer that needs
-   *  none passes none. */
+  /** Fired when the node the DETAIL PANE is showing changes, or when that node's
+   *  state moves — the seam a consumer arms an on-demand fetch on, and the only way
+   *  to learn which node is shown (`emptyNote`/`emptyAction` run on every render and
+   *  must stay pure). The STATE half is required because `select()` PINS the
+   *  selection: a path-only guard never re-fires for a step clicked while running. */
   onShowNode?: (node: ExecNode | undefined) => void;
 }
 
-/** The instructions clamp, in the shape `fundamentals/turn-header.ts` states it:
- *  the line count the STYLESHEET clamps to, plus the character threshold used only
- *  while the element is detached and cannot be measured. Both numbers in one place,
- *  and `clamp-line-count.test.ts` holds the first to the stylesheet's own. */
+/** The instructions clamp: the line count the STYLESHEET clamps to, plus the
+ *  character threshold used only while the element is detached and cannot be
+ *  measured. `clamp-line-count.test.ts` holds the first to the stylesheet's own. */
 const CLAMP = { lines: 3, fallbackChars: 220 } as const;
 
-/** The results clamp, in the same shape and for the same reason: the line count the
- *  STYLESHEET clamps `.ev-r-text` to, plus the character threshold the pre-layout
- *  frame guesses with. Twelve lines because a capture is a report rather than a
- *  label. */
+/** The results clamp, same shape: `.ev-r-text`'s stylesheet line count plus the
+ *  pre-layout character guess. */
 const RESULT_CLAMP = { lines: 12, fallbackChars: 900 } as const;
 
 export interface ExecPageView {
@@ -157,17 +122,6 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     el("div", { className: "ev-pane ev-pane-detail" }, detail.root),
   );
 
-  // Results: what the SELECTED step produced — its capture and its artifacts — at
-  // full column width, above the panes, and only once that step has settled.
-  //
-  // NO DISCLOSURE at either level. The region is either the thing a reader came to
-  // read or it is not there at all, so a chevron would be a control whose only
-  // states are "showing the answer" and "hiding the answer I asked for"; long
-  // captures are clamped with the page's own show-more instead (`resultItem`).
-  //
-  // The head is a plain label, and it says STEP results: `step` is already this
-  // module's word for a node, and an unqualified "Results" sitting above the
-  // selection UI reads as the whole run's.
   const resultsBody = el("div", { className: "ev-r-body" });
   const resultsHead = el(
     "div",
@@ -242,13 +196,9 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     }
   }
 
-  /** The header's instructions list — what this execution was ASKED to do — rebuilt
-   *  only when the SET changed.
-   *
-   *  The signature guard is REQUIRED, not an optimisation: `render` runs on every
-   *  store invalidation, so an unguarded `replaceChildren` would discard the
-   *  reader's show-more expansion and rebuild every clamp dozens of times a minute
-   *  on a live run. Same idiom and same reason as `renderResults` below. */
+  /** The header's instructions list, rebuilt only when the SET changed. The signature
+   *  guard is REQUIRED: `render` runs on every store invalidation, so an unguarded
+   *  `replaceChildren` would discard the reader's show-more expansion. */
   function renderInputs(run: ExecRun): void {
     const entries = Object.entries(run.inputs ?? {});
     if (entries.length === 0) {
@@ -270,11 +220,8 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
           type: "button",
           className: "ev-in-more",
         }) as HTMLButtonElement;
-        // Overflow is MEASURED (`clamp-text.ts` runs one shared `ResizeObserver`
-        // over every clamped element and compares `scrollHeight` against
-        // `clientHeight`), so a short instruction is never offered an opener that
-        // opens nothing. The character threshold is only the pre-layout guess for
-        // the frame in which the element is still detached, corrected before paint.
+        // `clamp-text.ts` MEASURES overflow, so a short instruction is never offered
+        // an opener that opens nothing.
         attachClamp(text, more, CLAMP);
         return [
           el("dt", { className: "ev-in-k" }, k),
@@ -284,19 +231,8 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     );
   }
 
-  /** The SELECTED step's own results, rebuilt only when the SET changed (guarded by
-   *  signature, since `repaint` runs on every invalidation over a live run and
-   *  re-parsing would reset the reader's scroll and drop their show-more).
-   *
-   *  DONE-GATED on `settled`: a step that has not run has produced nothing, and one
-   *  still in flight has produced nothing YET — a region appearing empty and then
-   *  filling itself is a claim the source cannot make good on, and `fail`/`warn` are
-   *  in because such a step can still carry a capture worth reading.
-   *
-   *  Sourced from the NODE and never from a run-level map: `RunState.capturedOutputs`
-   *  is keyed by capture name with no node attribution anywhere on the wire, so
-   *  filtering it by step is not implementable. The cost is stated: a step's own
-   *  capture is labelled `Output` rather than by the name the recipe gave it. */
+  /** The SELECTED step's own results, signature-guarded like `renderInputs`, and gated
+   *  on `settled` because a step still in flight has produced nothing yet. */
   function renderResults(node: ExecNode | undefined): void {
     const merged = new Map<string, string>();
     if (node !== undefined && settled(node.state)) {
@@ -324,21 +260,13 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     resultsBody.replaceChildren(...[...merged].map(([key, value]) => resultItem(key, value)));
   }
 
-  /** One capture as its own box: a plain key row over the report, clamped.
-   *
-   *  Per-entry boxes stay because a step with a capture plus two artifacts is
-   *  several entries and the boxes are what separate them; a second layout for the
-   *  N=1 case would be a second thing to keep true.
-   *
-   *  The opener is a SIBLING of the clipped box rather than a child, for the reason
-   *  `.ev-in-more` records: a clamped box is `overflow: hidden`, so a button inside
-   *  it is clipped away exactly when it becomes needed. */
+  /** One capture as its own box: a key row over the report, clamped. The opener is a
+   *  SIBLING of the clipped box, never a child — a clamped box is `overflow: hidden`,
+   *  so a button inside it is clipped away exactly when it becomes needed. */
   function resultItem(key: string, value: string): HTMLElement {
     const keyRow = el("span", { className: "ev-r-item-key" }, key === "" ? "Output" : key);
-    // An empty value is a fact, not an absence: a source writes a key only for a
-    // node that captured, so empty distinguishes "finished silently" from "never
-    // ran" — and it still earns a box, because that is the fact. Left unclamped:
-    // one sentence never overflows, and clamping it would put an opener under it.
+    // An empty value is a fact: a source writes a key only for a node that captured,
+    // so empty distinguishes "finished silently" from "never ran". Left unclamped.
     if (value.trim() === "") {
       return el(
         "div",
@@ -357,9 +285,6 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     }
     const text = el("div", { className: "ev-r-text" }, buildAssistantBubble(value, false).root);
     const more = el("button", { type: "button", className: "ev-r-more" }) as HTMLButtonElement;
-    // Overflow is MEASURED (`clamp-text.ts` compares `scrollHeight` against
-    // `clientHeight` under one shared `ResizeObserver`), so a short capture is never
-    // offered an opener that opens nothing.
     attachClamp(text, more, RESULT_CLAMP);
     return el(
       "div",

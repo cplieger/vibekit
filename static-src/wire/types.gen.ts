@@ -879,13 +879,10 @@ export interface Message {
   refusal?: RefusalInfo;
   plan?: PlanEntry[];
   /**
- * Attachments are the files attached to THIS prompt, on the user message so a
- * sent turn renders them as header pills. It must live on the record:
- * BuildPromptBlocks folds each one into a content block on the way OUT, so a
- * turn read back has nothing to recover the list from.
- * //
- * Absent on older records and on a steer, which joins the turn already running
- * and takes a plain string, so it carries no structured list.
+ * Attachments are the files attached to THIS prompt, on the user message so a sent
+ * turn renders them as header pills. It must live on the record: each one is folded
+ * into a content block on the way OUT, so a turn read back has nothing to recover
+ * the list from. Absent on older records, and on a steer, which takes a plain string.
  */
   attachments?: Attachment[];
   /**
@@ -2282,24 +2279,18 @@ export interface TurnStatePayload {
   chunk_seq?: number;
   /**
  * Truncated reports that the connect-time cap withheld part of Message: the payload
- * carries the TAIL of the in-flight turn, not the whole of it. A client that needs the
- * rest refetches through loadMessages when the turn ends, where message_appended
- * delivers the whole persisted message.
+ * carries the TAIL of the in-flight turn, and the rest arrives with message_appended.
  * //
- * NEVER `omitempty`. wiregen emits a REQUIRED TypeScript field for a field without it,
- * so a consumer cannot supply a fallback for a marker the type says is always present,
- * and an absent marker can never be read as "complete", which is what makes the cap
- * admissible at all. It is a property of THIS TRANSFER, so
- * it lives here and never on vibekit.Message, which is persisted verbatim into chat
- * files where the flag would be meaningless and permanent.
+ * NEVER `omitempty`: wiregen emits a REQUIRED field without it, so an absent marker
+ * can never be read as "complete", which is what makes the cap admissible. A property
+ * of this TRANSFER, so it never moves onto Message, which chat files persist verbatim.
  */
   truncated: boolean;
   /**
  * WorkflowStep marks a turn a workflow RUN opened on the launching chat's session.
  * Contract: APPLY the snapshot, do NOT set thinking. The snapshot is the only copy of
  * an in-flight step's transcript, so the event must still be emitted — but the chat's
- * own agent is idle, and a client reading this as the chat working says so for the
- * whole run, on every reconnect, with nothing to clear it.
+ * own agent is idle, and a client reading it as busy says so for the whole run.
  */
   workflow_step?: boolean;
 }

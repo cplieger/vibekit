@@ -1,59 +1,10 @@
-// ---------------------------------------------------------------------------
-// The three fields that are THIS SCREEN's, plus the theme's paint cache.
+// The per-device localStorage fields. ONE OWNER of the `vibekit.ui-state` key,
+// and no second writer may be added: every write is a read-modify-write of one
+// JSON blob, so a second module doing its own drops whatever landed between its
+// read and its write. The key name cannot change either — nothing is migrated.
 //
-// Everything about which tabs are open and how they are arranged is server-owned
-// (`internal/tabs`, projected by `tabs.ts`). These are the members that were
-// never about the workspace at all, and each is here for its own stated reason:
-//
-//   - `active_view` — which tab this screen is looking at. A phone must not move
-//     the desktop's active tab.
-//   - `shell_open` — whether the terminal panel is showing. The shell's CONTENT
-//     already travels without help: it is one global PTY on the server that
-//     replays screen and scrollback on connect, so a second device sees the same
-//     terminal whether or not the panel was open when it arrived. The panel can
-//     start closed.
-//   - `shell_h` — how tall that panel is dragged. A length is the one value here
-//     whose right answer genuinely depends on the screen in front of you: 700px
-//     is two thirds of a laptop and the whole of a phone. Losing it is not a
-//     loss worth engineering against.
-//
-// # Why this module exists rather than the fields living where they used to
-//
-// They were three fields inside `ui-state.ts`, a module whose other job was
-// mirroring a whole-document server arrangement — and that document is gone, so
-// they needed a home that is only about them. Having one is also what makes the
-// ownership rule below expressible.
-//
-// # ONE owner of the localStorage key, and that is the rule to keep
-//
-// The `vibekit.ui-state` key holds four fields and this module is the only writer
-// of any of them. It has to be: every write is a read-modify-write of one JSON
-// blob, so a second module doing its own read-modify-write drops whatever landed
-// between its read and its write. `ui-state.ts` had exactly that shape — a
-// `writeLocal` for the device fields beside a `cacheTheme` for the theme — and it
-// only worked because `writeLocal` remembered to re-read and re-attach the theme
-// by hand. The key name is unchanged deliberately: nothing is migrated, and a
-// rename would silently reset every reader's shell height and theme.
-//
-// # The theme field is a CACHE, and it is the one field with a second reader
-//
-// The inline pre-paint snippet in `static/index.html` reads this blob's `theme`
-// field before any module loads and before any fetch can resolve, which is what
-// stops a wrong-theme flash on every load. The AUTHORITY for the theme is
-// `config.json` (`settings.ts` owns the policy: refresh the cache on every
-// change, and adopt it once when the server has none). This module owns only the
-// bytes. `theme-init-snippet.test.ts` pins the snippet against the key and the
-// field name, so both must stay as they are.
-//
-// # A fourth group beside it: the three pointer fields
-//
-// `pointer` (the tier last DETECTED here), `pointer_mode` (the tier the user
-// CHOSE, if they ever did) and `pointer_coarse_seen` (has this screen ever been
-// touched). All three are `pointer-tier.ts`'s, and the split between them is that
-// module's precedence ladder rather than three ways of saying one thing — see its
-// header. They are per-device for `shell_h`'s reason: a phone must not tell a
-// desktop what it is being driven by.
-// ---------------------------------------------------------------------------
+// `static/index.html`'s inline pre-paint snippet reads this blob's `theme`
+// before any module loads; `theme-init-snippet.test.ts` pins both names.
 
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
 
@@ -145,27 +96,17 @@ export function setShellHeight(px: number): void {
   writeBlob({ shell_h: px });
 }
 
-/** The cached theme choice, or null when none was ever written.
- *
- *  A CACHE of `config.json`'s value, never a source of truth — see the header.
- *  It answers the one question a fetch cannot: which theme to paint before the
- *  first byte of the settings response arrives. */
+/** The cached theme choice, or null when none was ever written. A CACHE of
+ *  `config.json`'s value: it answers which theme to paint before the settings
+ *  response arrives, and never outranks it. */
 export function cachedTheme(): ThemeChoice | null {
   const t = readBlob()["theme"];
   return t === "dark" || t === "light" || t === "system" ? t : null;
 }
 
 /** The last pointer tier OBSERVED on this screen, or null when none has been.
- *
- *  Unlike `theme` this has exactly ONE reader: `pointer-tier.ts`'s resolution,
- *  where it is the middle rung — a real observation from a previous load, which is
- *  what makes it worth more than the capability guess below it and less than a
- *  choice the user stated. The inline pre-paint snippet reads `theme` and nothing
- *  else, so a returning device does not paint its tier before the first module
- *  loads.
- *
- *  The AUTHORITY is `pointer-tier.ts`, which records `PointerEvent.pointerType` as
- *  it arrives; this module owns only the bytes. */
+ *  The middle rung of `pointer-tier.ts`'s resolution: worth more than the
+ *  capability guess below it, less than a choice the user stated. */
 export function cachedPointerTier(): PointerTier | null {
   const t = readBlob()["pointer"];
   return t === "fine" || t === "coarse" ? t : null;
@@ -175,13 +116,10 @@ export function cachePointerTier(tier: PointerTier): void {
   writeBlob({ pointer: tier });
 }
 
-/** The tier the user CHOSE with the toggle, or null when they never have.
- *
- *  The top rung of the resolution: an explicit choice outranks both the previous
- *  load's observation and the capability guess, and no input event may overturn
- *  it. Kept separate from `pointer` precisely so it cannot be — a detector that
- *  wrote the same field would erase the choice on the session's first mouse
- *  move. */
+/** The tier the user CHOSE with the toggle, or null when they never have. The
+ *  top rung, and a separate field from `pointer` so no input event can overturn
+ *  it: a detector writing the same field would erase the choice on the first
+ *  mouse move. */
 export function pointerModeChoice(): PointerTier | null {
   const t = readBlob()["pointer_mode"];
   return t === "fine" || t === "coarse" ? t : null;
@@ -191,12 +129,9 @@ export function setPointerModeChoice(tier: PointerTier): void {
   writeBlob({ pointer_mode: tier });
 }
 
-/** Whether a coarse pointer has EVER driven this screen.
- *
- *  Sticky, and never cleared: it is what reveals the touch/mouse toggle, and a
- *  device that has been touched once keeps the button on every later load whatever
- *  it is being driven by at the time. A non-boolean value reads as false, so a
- *  hand-edited blob cannot reveal the control by accident. */
+/** Whether a coarse pointer has EVER driven this screen. Sticky and never
+ *  cleared, because it is what reveals the touch/mouse toggle. A non-boolean
+ *  value reads false, so a hand-edited blob cannot reveal the control. */
 export function coarseEverSeen(): boolean {
   return readBlob()["pointer_coarse_seen"] === true;
 }

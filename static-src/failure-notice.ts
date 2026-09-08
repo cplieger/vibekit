@@ -1,29 +1,8 @@
 // ---------------------------------------------------------------------------
-// How a send or turn failure reaches the user.
-//
-// The surface is a bottom-right error TOAST, and this module exists because the
-// surface it replaced was a hover tooltip on the send button. That tooltip was
-// unreachable in four ordinary situations, all measured: on a touch device there
-// is no hover and no :focus-visible, so a phone never showed it at all; the state
-// behind it is a module-level signal, so a reload discarded it; it was suppressed
-// for any chat that was not the active one; and the next Send cleared it. A user
-// who hit a 429 saw "Turn interrupted" in the transcript and nothing else.
-//
-// The toast is HALF the fix. The other half is server-side and durable: the
-// interrupted divider in the transcript now carries the same reason (see
-// appendInterruptedEvent in internal/agent/bridge_coord.go), so the toast is the
-// glance and the transcript is the record. That split is why this module caps the
-// text and does not care about being missed: nothing is lost if a toast times out.
-//
-// A toast is a CORNER OVERLAY, so it has to say what it is about. A reader on
-// Settings, the git panel or an editor tab has no chat in sight, so a bare reason
-// there names nothing. Every notice for a chat that is not the tab on screen
-// carries that chat's name and a jump button; see `raise`.
-//
-// NOT a retry surface, deliberately. The button is a jump, never a resend:
-// submit.ts already re-sends under the failed attempt's own message id, so
-// pressing Send IS the idempotent retry, and a retry button here would be a
-// second path to the same thing with its own state to get wrong.
+// How a send or turn failure reaches the user: a bottom-right error TOAST. The
+// toast is the GLANCE and the transcript is the RECORD (the interrupted divider
+// carries the same reason server-side), so nothing is lost if one times out. NOT a
+// retry surface: `submit.ts` re-sends under the failed attempt's own message id.
 // ---------------------------------------------------------------------------
 
 import { join } from "@cplieger/keyenc";
@@ -34,13 +13,9 @@ import { truncate } from "./strings.js";
 
 /** How long two reports of one failure are treated as the same failure.
  *
- *  A failed prompt is reported TWICE by design: the command POST answers 500
- *  with the reason in its body, and the SSE `error` frame carries the identical
- *  string (CmdPrompt renders it once and sends it on both, because a 400, 413 or
- *  network death carries no SSE frame and a dead POST with a live turn carries no
- *  useful body). They arrive milliseconds apart, so anything above a second or so
- *  would do; five leaves room for a slow POST teardown without ever swallowing a
- *  genuinely repeated failure, which only a fresh Send can produce. */
+ *  A failed prompt is reported TWICE by design — the command POST's own body and
+ *  the SSE `error` frame carry the identical string — milliseconds apart. Five
+ *  seconds leaves room for a slow POST teardown; only a fresh Send repeats. */
 const DEDUPE_WINDOW_MS = 5_000;
 
 /** Longest reason a toast shows. The server caps its own prose at 2 KiB
@@ -84,18 +59,11 @@ const live = new Map<string, () => void>();
  *  no-op. */
 const remedies = new Map<string, () => void>();
 
-/** Report a failure to the user.
+/** Report a failure to the user. `chatID` may be any chat, active or not; an empty one
+ *  is a workspace-global command and names no chat.
  *
- *  `chatID` may be any chat, active or not: a background chat's failure is named
- *  with its chat and carries a jump to it, so the toast cannot be read as being
- *  about whatever is on screen. That is the one thing the old send-button surface
- *  could not do, and why a background failure used to leave nothing but a tab
- *  dot. An empty `chatID` is a workspace-global command, which names no chat.
- *
- *  `action` is the route's own remedy (a Settings jump, the login modal). It takes
- *  the single action slot from the jump button and makes the toast STICKY,
- *  because a remedy offered nowhere else must not expire unread. The chat is still
- *  NAMED, which is the half that answers whose failure this is. */
+ *  `action` is the route's own remedy (a Settings jump, the login modal): it takes the
+ *  jump button's one action slot and makes the toast STICKY, being offered nowhere else. */
 export function reportFailure(
   chatID: string,
   message: string,
@@ -117,17 +85,15 @@ export function reportFailure(
     latched.set(chatID, { key, at: now });
     return;
   }
-  // Retract only what this raise supersedes. A sticky remedy is replaced by its
-  // own repeat and by nothing else; an ordinary notice is replaced by whatever
-  // this chat reports next.
+  // A sticky remedy is replaced by its own repeat and by nothing else; an ordinary
+  // notice is replaced by whatever this chat reports next.
   if (action !== undefined) {
     remedies.get(key)?.();
   } else {
     clearFailure(chatID);
   }
-  // Latch AFTER the retraction: clearFailure drops this chat's latch, so latching
-  // first leaves every failure after its first un-deduped, and its twin on the
-  // other channel re-raises the toast that was just replaced.
+  // Latch AFTER the retraction: `clearFailure` drops this chat's latch, so latching
+  // first leaves every failure after the first un-deduped.
   latched.set(chatID, { key, at: now });
   const dismiss = raise(chatID, truncate(reason, MAX_TOAST_CHARS), action);
   if (action !== undefined) {
@@ -137,41 +103,12 @@ export function reportFailure(
   }
 }
 
-/** Whether the reader is ALREADY LOOKING at the durable report of this failure, so
- *  a corner overlay would be a second copy of it over the top of the first.
- *
- *  Since the turn's own card carries the reason (`turn_failure_reason` →
- *  `.turn-notice`, present open and folded), a toast for the chat on screen
- *  duplicates a row that is both better placed and permanent. Off-screen it is the
- *  only thing that can report at all, which is why this suppresses and never
- *  replaces.
- *
- *  FOUR conjuncts, and each one is a case that must still toast:
- *
- *   1. `turnScoped`. Only a failure that FINALIZED a turn has an inline home; a
- *      `bridge_start_failed`, an `agent_config_error`, a prompt that never opened a
- *      turn at all has no transcript row to land in, so it keeps its toast whatever
- *      is on screen. The SERVER states this per frame (`ErrorPayload.turn_scoped`),
- *      because it is a property of the emission and not of the code — three of the
- *      five emitters behind `prompt_failed` and `recovery_failed` open no turn. It
- *      was a per-code flag on the route table until that was measured wrong; the
- *      note in error-routing.ts records what it cost.
- *   2. No `action`. A route's own remedy — Sign in, a Settings jump — is exactly
- *      what an inline row cannot offer, so an action-bearing notice is never
- *      suppressed. `auth_token_unavailable` is both turn-scoped and action-bearing,
- *      which is what makes this clause real rather than defensive.
- *   3. A named chat. An empty `chatID` is a workspace-global command that names no
- *      chat and therefore has no inline home either.
- *   4. THE CHAT IS ACTUALLY ON SCREEN, which needs BOTH signals and neither alone.
- *      Tab-active alone toasts into a window nobody is looking at, where a 12s
- *      notice expires unread and the report is spent for nothing.
- *      Document-visible alone suppresses a background chat's failure while the
- *      reader is looking at a different chat entirely.
- *
- *  Both reads are ones the app already makes: `raise` below reasons its way to the
- *  tab half and records why `store.getActiveId()` is the wrong question (nothing
- *  clears it when the reader moves to Settings or an editor tab), and `attention.ts`
- *  and `notify.ts` both already gate on document visibility. */
+/** Whether the reader is ALREADY LOOKING at the durable report of this failure, so a
+ *  corner overlay would be a second copy of it. Four conjuncts, each a case that must
+ *  still toast: only a `turnScoped` failure has an inline home (the SERVER states it
+ *  per frame, because it is a property of the emission and not of the code); an
+ *  `action` is a remedy no inline row can offer; an empty `chatID` names no chat; and
+ *  ON SCREEN needs both signals, or a hidden window is toasted into. */
 function suppressedAsAlreadyOnScreen(
   chatID: string,
   action: ToastRetry | undefined,
@@ -195,26 +132,14 @@ export function clearFailure(chatID: string): void {
     return;
   }
   live.delete(chatID);
-  // A retraction also clears the dedupe latch. Without this, the retracted
-  // failure keeps suppressing its own text for the rest of the window, so a
-  // genuine repeat inside five seconds would be silent.
+  // The latch too, or the retracted text stays suppressed for the rest of the window.
   latched.delete(chatID);
   dismiss();
 }
 
-/** Show the notice, naming and linking the affected chat unless its transcript is
- *  the thing on screen.
- *
- *  THE QUESTION IS "IS THIS CHAT ON SCREEN", NOT "IS THIS THE ACTIVE CHAT", and
- *  the difference is the whole reason this function exists. `store.getActiveId()`
- *  keeps naming the last chat a reader opened for as long as the app runs: nothing
- *  clears it when they move to Settings, the git panel, the file browser, a doc or
- *  an editor tab (`setActive` has exactly three callers, all inside chat.ts's
- *  activate path). So a reader sitting on Settings when a background chat throttles
- *  matched `chatID === getActiveId()`, and the notice arrived with no chat named
- *  and nothing to click — an unattributed failure on a screen with no chat in
- *  sight, which is worse than the tooltip it replaced. The tab id is the honest
- *  answer, because a chat tab's id IS the chat id. */
+/** Show the notice, naming and linking the affected chat unless it is the thing on
+ *  screen. THE TEST IS THE TAB, not `store.getActiveId()`: nothing clears that when
+ *  the reader moves to Settings or an editor tab, so it names a chat off screen. */
 function raise(chatID: string, reason: string, action?: ToastRetry): () => void {
   // Resolved once: it answers both "is this chat the one on screen" and "is there
   // a tab to jump to", and "" is the second answer's no.
@@ -222,14 +147,12 @@ function raise(chatID: string, reason: string, action?: ToastRetry): () => void 
   const onScreen = chatID === "" || tabID === getActiveTabId();
   const name = onScreen ? "" : truncate(get(chatID)?.name ?? "", MAX_NAME_CHARS);
   const message = name !== "" ? `${name}: ${reason}` : reason;
-  // A route's own remedy takes the one action slot, and takes it sticky: toast.ts
-  // times out an action reachable another way, and neither of these is.
+  // A route's own remedy takes the one action slot, sticky: it is reachable nowhere else.
   if (action !== undefined) {
     return toastError(message, action);
   }
-  // No tab, no button. `activateTab` no-ops on an id it does not hold, so offering
-  // the jump for a chat with no tab would render a control that does nothing —
-  // which teaches a reader to distrust every other one.
+  // No tab, no button: `activateTab` no-ops on an id it does not hold, so the jump
+  // would be a control that does nothing.
   if (onScreen || tabID === "") {
     return toastError(message);
   }

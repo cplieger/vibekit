@@ -1,31 +1,8 @@
 // ---------------------------------------------------------------------------
-// subagent-tail: ONE delegate's last few output lines, projected out of the
-// launching chat's messages.
-//
-// The card's tail answers "which of these delegates is progressing" while they
-// work. It used to be a DOM MIRROR: the transcript rendered the delegate's whole
-// output inside the card, a MutationObserver on that body harvested the last
-// three lines per animation frame, and the render existed for nothing else —
-// N parallel delegates meant N live markdown streams plus N per-frame backwards
-// DOM walks. The transcript renders none of it now (`messages-blocks.ts`
-// `placeBlock` drops a delegate's blocks, the same way it drops a workflow
-// step's), so the tail is derived from the blocks themselves.
-//
-// `subagent-slice.ts` is the precedent and this is its cheap sibling: the same
-// query over the same `agent_subtask_id` stamp, answering three lines instead of
-// a whole transcript. Pure and DOM-free over `readonly Message[]`, so the caller
-// owns how it reads the store.
-//
-// TWO COSTS ARE DELIBERATE, because neither has a cheaper honest form:
-//
-//   - The walk runs BACKWARDS and stops as soon as it has enough, so its cost is
-//     the tail rather than the delegate's whole output. It runs per streamed
-//     delta, and a delegate's report can be tens of kilobytes.
-//   - `bindSubagentTail` subscribes to the chat's transcript version as well as
-//     to the delegate's own block signals, because a NEW block arriving is the
-//     one change no per-block signal can carry — the signal for a block nobody
-//     has read yet does not exist. So a sibling delegate's delta does re-run this
-//     walk; what it does not do is repaint, which the binding's own guard stops.
+// ONE delegate's last few output lines, projected out of the launching chat's
+// messages. The transcript renders none of a delegate's blocks (`placeBlock` in
+// `messages-blocks.ts` drops them), so the tail is derived rather than harvested
+// from the DOM. Pure and DOM-free, so the caller owns how it reads the store.
 // ---------------------------------------------------------------------------
 
 import type { Block, Message, ToolCall } from "./types.js";
@@ -52,15 +29,13 @@ export interface SubagentTail {
   /** The trailing lines, oldest first, at most `want` of them. */
   readonly lines: string[];
   /** The blocks the lines came FROM, which are exactly the blocks whose growth can
-   *  change them: the walk stops as soon as it has `want` lines, so a block above
-   *  the ones it took can never reach the tail. */
+   *  change them: the walk stops at `want` lines, so nothing above them can reach. */
   readonly sources: TailSource[];
 }
 
-/** The last `want` non-empty lines of `s`, in order.
- *
- *  Backwards from the end, so a 40KB report costs its last three lines rather
- *  than a `split("\n")` over the whole of it on every delta. */
+/** The last `want` non-empty lines of `s`, in order. Backwards from the end, so a
+ *  40KB report costs its last three lines rather than a `split("\n")` over all of
+ *  it on every delta. */
 function tailOf(s: string, want: number): string[] {
   const out: string[] = [];
   let end = s.length;
@@ -78,15 +53,10 @@ function tailOf(s: string, want: number): string[] {
   return out;
 }
 
-/** The line a TOOL block contributes: its title, and nothing else.
- *
- *  The card's claim line (`Grep Search spaghetti`) is not reproduced here on
- *  purpose — that string is `tool-card.ts`'s presentation of a call's input, and a
- *  second derivation of it would be a second owner. The title is what moves as the
- *  delegate works, which is the whole question the tail answers.
- *
- *  Empty for the delegate's own INVOCATION, which the card's header already names,
- *  and for a call the transcript itself renders nothing for. */
+/** The line a TOOL block contributes: its title, and nothing else. The card's claim
+ *  line is `tool-card.ts`'s presentation of a call's input, so deriving it again
+ *  here would be a second owner. Empty for the delegate's own INVOCATION, which the
+ *  card's header names, and for a call the transcript renders nothing for. */
 function toolLine(block: Block, tools: readonly ToolCall[]): string[] {
   const tc = tools.find((c) => c.id === block.tool_call_id);
   if (tc === undefined || isSubagentInvocation(tc) || isInternalToolTitle(tc.title)) {
@@ -95,12 +65,10 @@ function toolLine(block: Block, tools: readonly ToolCall[]): string[] {
   return tailOf(tc.title, 1);
 }
 
-/** Project one delegate's trailing output out of a conversation.
- *
- *  Walks EVERY message backwards rather than stopping at the newest one holding
- *  the delegate, because a turn split by a mid-turn model switch puts one
- *  delegate's blocks in two assistant messages. An empty subtask id is nobody's
- *  delegate and answers nothing. */
+/** Project one delegate's trailing output out of a conversation. Walks EVERY message
+ *  backwards rather than stopping at the newest one holding the delegate, because a
+ *  turn split by a mid-turn model switch puts one delegate's blocks in two assistant
+ *  messages. An empty subtask id is nobody's delegate and answers nothing. */
 export function subagentTail(
   messages: readonly Message[],
   subtaskID: string,
@@ -135,18 +103,12 @@ export function subagentTail(
   return { lines, sources };
 }
 
-/** Repaint ONE delegate's tail whenever its own output grows. Returns the
- *  disposer.
+/** Repaint ONE delegate's tail whenever its own output grows. Returns the disposer.
  *
- *  `ensure` rather than `get` on the block signals, which is the opposite of what
- *  `subagent-view.ts` does and for the reason stated there: minting a signal
- *  silences `store.appendChunk`'s full-repaint fallback, which would freeze a
- *  MOUNTED bubble reading the same block. Nothing mounts a delegate's blocks in
- *  the transcript any more, so minting them here is what makes a delta arrive at
- *  all — without it the store has no fine-grained sink and no reason to repaint.
- *
- *  The guard is what keeps a sibling's delta from touching this card: the walk
- *  re-runs, the paint does not. */
+ *  `ensure` rather than `get` on the block signals, unlike `subagent-view.ts`:
+ *  nothing mounts a delegate's blocks, so minting the signal is what gives the store
+ *  a sink to repaint through. The guard keeps a sibling's delta off this card — the
+ *  walk re-runs, the paint does not. */
 export function bindSubagentTail(
   chatID: string,
   subtaskID: string,

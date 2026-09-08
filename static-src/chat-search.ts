@@ -106,20 +106,10 @@ export function searchHitCount(turn: number): number {
   return countsByTurn.get(turn) ?? 0;
 }
 
-/** How many matches the server found in the WHOLE conversation for the current
- *  query, or 0 when no server search is standing.
- *
- *  This is the figure the counter needs and did not have. The DOM pass can only
- *  count what it marked, and three populations are unreachable to it: every
- *  `aria-hidden` subtree (a closed reasoning `<details>`, a collapsed pipeline
- *  container — `createDisclosure` writes `aria-hidden` + `inert` on a closed
- *  region), every non-resident page, and every DELEGATED block's text — a workflow
- *  step's and a subagent's alike — which `messages-blocks.ts` drops outright rather
- *  than hiding. The server searches the chat FILE, so it sees all of it, which is
- *  why dropping a delegate's output cost the MARKS and not this count. Reporting
- *  only the DOM number let the overlay print "No matches" in the same tick the
- *  server had answered that the text occurs N times, which is the data-loss case
- *  this module's own header says the pre-pass exists to prevent. */
+/** How many matches the server found in the WHOLE conversation for the current query,
+ *  or 0 when no server search is standing. The DOM pass can only count what it marked,
+ *  and three populations are unreachable to it: every `aria-hidden` subtree, every
+ *  non-resident page, and every DELEGATED block, which the transcript drops outright. */
 export function searchHitTotal(): number {
   return hitTotal;
 }

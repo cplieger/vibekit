@@ -95,29 +95,14 @@ export interface TurnLedger {
  *  counted for completeness rather than because it has been observed. */
 const COMMAND_KINDS = new Set(["execute", "shell", "command"]);
 
-/** Group a flat message list into turns.
+/** Group a flat message list into turns. A user PROMPT opens a turn; everything else
+ *  joins the open one, or opens a HEADERLESS turn — the agent-initiated case and a
+ *  paginated window starting mid-turn, which render the same way.
  *
- *  A user PROMPT opens a turn. Everything else joins the open turn, or
- *  opens a headerless one when there is none — which happens two legitimate
- *  ways: an agent-initiated turn (no user row exists to promote), and a
- *  paginated window whose first page starts mid-turn. Both render the same
- *  way, so neither needs a special case here.
- *
- *  `live` marks the LAST turn as running, and it is not a message field for the
- *  same reason it is not called `thinking` any more: a turn in flight is only ever
- *  the last one, and whether one IS in flight is now TWO facts the caller composes
- *  — this client's own memory of a stream it has watched, plus the server's last
- *  statement that a turn is open (`store.ts` `turnLive`).
- *
- *  It has to be both, and `deriveOutcome`'s tail clause is why. The newest turn's
- *  carrier is absent in two completely different situations — nothing closed the
- *  turn, or the closing message is still in the server's in-memory buffer and
- *  therefore absent from `GET /api/chats/{id}` — and `unknown` is only honest for
- *  the first. `thinking` alone cannot separate them: it is client memory that starts
- *  false, so on a mid-turn reload it says "not running" about a turn the server knows
- *  is running, and the projection then paints a TERMINAL verdict during the one
- *  window in which nothing can know one. A parameter named for one of the two facts
- *  would be a lie about what the caller passes. */
+ *  `live` marks the LAST turn as running, and it is TWO facts the caller composes: this
+ *  client's memory of a stream it watched, plus the server's last statement that a turn
+ *  is open (`store.ts` `turnLive`). Both, because `thinking` alone starts false, so on a
+ *  mid-turn reload it paints a TERMINAL verdict in the window nothing can know one in. */
 export function projectTurns(messages: readonly Message[], live: boolean): Turn[] {
   const turns: Turn[] = [];
   let closed = false;
@@ -183,10 +168,9 @@ function isStepMessage(m: Message): boolean {
   return blocks.every((b) => parseStepSubtask(b.agent_subtask_id ?? "") !== null);
 }
 
-/** Is this the first persisted message of a turn with NO user trigger?
- *
- *  All three clauses are load-bearing; the shared fixture's `_segmentation_comment`
- *  owns the reasoning, and `closesTurn` the fragment carve-out. */
+/** Is this the first persisted message of a turn with NO user trigger? All three clauses
+ *  are load-bearing; the shared fixture's `_segmentation_comment` owns the reasoning and
+ *  `closesTurn` the fragment carve-out. */
 function opensHeaderlessTurn(m: Message, prevClosed: boolean): boolean {
   if (!prevClosed || isStepMessage(m)) {
     return false;

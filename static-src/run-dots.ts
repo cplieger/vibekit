@@ -99,25 +99,14 @@ function bump(): void {
   version.value = version.peek() + 1;
 }
 
-/** Fetch run state for every OPEN run tab this client has heard nothing about.
+/** Fetch run state for every OPEN run tab this client has heard nothing about — the
+ *  door a cold load reaches, since a restored subject names the run and says nothing
+ *  about it while `/api/runs/live` names only the runs still going.
  *
- *  A cold load restores a run tab from a subject that names the run and says
- *  nothing about it, and `/api/runs/live` names only the runs still going — so a
- *  settled run's row keeps the placeholder and no dot.
- *
- *  `tracked` is the latch, so this asks once per run per page session on top of
- *  `invalidateRun`'s coalescing. It records ASKED rather than ANSWERED, and the
- *  residual is stated rather than guarded: `fetchRun` writes no cell when the GET
- *  answers null, so a seed whose request fails (a boot that races
- *  `resolveIdentity`, a 503 while kiro-cli installs, any transient fault) leaves
- *  that row on the placeholder with no dot until a `transport:gap` refetch or an
- *  activation. Keying on the answer instead — `peekRunState` is exported and
- *  UNTRACKED, so it costs no subscription — trades that for re-asking on every
- *  tab-set change for a run the server has nothing for, because `fetchRun`
- *  collapses "no such run" and "the request failed" into one silent no-write.
- *  Closing it properly is the store's to fix: nothing here can tell the two
- *  apart. Not a regression either way — these rows were seeded by nothing at
- *  all before. */
+ *  `tracked` records ASKED rather than answered, so a failed seed leaves that row on
+ *  the placeholder until a `transport:gap` refetch or an activation. Keying on the
+ *  answer would re-ask on every tab-set change for a run the server has nothing for:
+ *  `fetchRun` collapses "no such run" and "request failed" into one silent no-write. */
 function seedOpenRunTabs(): void {
   for (const ref of openRunRefs()) {
     if (ref === "" || tracked.has(ref)) {
@@ -137,13 +126,9 @@ function repaint(): void {
     // files a parentless run's asks under; the tab's is opaque and server-minted.
     const id = tabIdFor("run", workflowID);
     if (id === "") {
-      // No tab YET — an `open_tab` round trip is still in flight — or none any
-      // more. KEEP the id: the effect depends on the tab set's version, so the
-      // dot paints the moment the row lands. The old sweep DELETED the id here,
-      // which raced that round trip: `trackRun` bumps only for a first-seen id,
-      // so a run that emitted no later frame (a paused run emits none at all)
-      // was swept out before its tab existed and its dot stayed blank until an
-      // unrelated dock churn repainted it.
+      // No tab yet (an `open_tab` round trip in flight) or none any more. KEEP the
+      // id: this effect depends on the tab set's version, so the dot paints the
+      // moment the row lands, and there is deliberately no sweep to race it.
       continue;
     }
     // The SAME join the other two run surfaces make (the transcript's card and the
@@ -189,13 +174,8 @@ function repaint(): void {
  *  restored yet, and `setTabStatus` parks its state on a spec that does not exist
  *  then. The tab-set dependency is what picks a tab up once it does. */
 export function installRunDotSubscriber(): void {
-  // The live-runs rebuild is the THIRD door into "this client knows about this
-  // run", beside a run frame and the run view's own paint; the seed below is the
-  // fourth, and the one a cold load reaches. The rebuild is still the only door a
-  // PAUSED run with no open tab reaches — it emits no frames at all, and the seed
-  // covers open tabs only. Registered from here rather than from the composition
-  // root because this module imports the store, and the store may not import this
-  // one.
+  // Registered from here rather than from the composition root because this module
+  // imports the store, and the store may not import this one.
   registerLiveRunObserver(trackRun);
   // A SECOND effect, because the seed writes the counter the paint effect below
   // reads: one effect doing both would write a signal it has subscribed to.
