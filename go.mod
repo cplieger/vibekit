@@ -9,8 +9,8 @@ require (
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
-	golang.org/x/mod v0.40.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 )
 
@@ -32,7 +32,7 @@ require (
 	github.com/cplieger/wiregen/v3 v3.0.1
 	github.com/evanw/esbuild v0.28.2
 	go.yaml.in/yaml/v3 v3.0.5
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 	pgregory.net/rapid v1.3.0
 )
 
