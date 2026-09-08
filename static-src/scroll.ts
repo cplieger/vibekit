@@ -147,12 +147,17 @@ class ScrollController {
   private pendingLoad: (() => void) | null = null;
 
   /** The observers rooted on `viewEl`, held as fields so `attach` can re-root
-   *  them on the incoming view. ONE ResizeObserver serves the scroller AND the
-   *  view's children — the scroller entry is permanent, the child set is
-   *  re-pointed per view. */
+   *  them on the incoming view. `resizeObserver` watches the view's CHILDREN
+   *  only — the child set is re-pointed per view — and reads; the scroller's own
+   *  box belongs to `gutterObserver`, which is the only one that WRITES. Two
+   *  observers rather than one, because css/13-messages.css reads `--scrollbar-w`
+   *  in this scroller's own `padding-inline`: a write from a callback that also
+   *  carries every card resizes an element already delivered at that depth, and
+   *  the observations that causes cannot be delivered in the same loop. */
   private contentObserver: MutationObserver | null = null;
   private childObserver: MutationObserver | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private gutterObserver: ResizeObserver | null = null;
   private observedChildren = new Set<Element>();
 
   /** The live edge's own element: a zero-height marker at the end of the
@@ -407,21 +412,24 @@ class ScrollController {
     // nothing and it keeps measuring directly — the mutation path is what had to
     // stop. It is also the one observer that sees a box change with no DOM
     // mutation behind it (browser zoom, a scrollbar swap, a code block
-    // expanding).
-    const resizeObserver = new ResizeObserver(() => {
-      // Re-measured here rather than on `window.resize`: this fires AFTER layout
-      // and only when the scroller's content box actually moved, which is exactly
-      // when the reserved gutter can have changed (browser zoom moves its width in
-      // CSS pixels; a classic bar swapped for an overlay one frees all 10px). A
-      // window listener read the pre-relayout value and left the bar reserving a
-      // strip that no longer existed. `stable` means overflow alone never resizes
-      // this box, so streaming costs no extra writes.
-      this.publishScrollbarWidth();
+    // expanding). It touches no document style, so a card growing can never
+    // invalidate style for the whole document mid-frame.
+    this.resizeObserver = new ResizeObserver(() => {
       this.revalidateReadingState(this.isAtBottom());
       this.autoScrollIfAnchored();
     });
-    resizeObserver.observe(this.scrollEl);
-    this.resizeObserver = resizeObserver;
+    // The gutter observer watches the scroller ALONE and owns the one write that
+    // reaches a shared ancestor. Re-measured here rather than on `window.resize`:
+    // this fires AFTER layout and only when the scroller's content box actually
+    // moved, which is exactly when the reserved gutter can have changed (browser
+    // zoom moves its width in CSS pixels; a classic bar swapped for an overlay one
+    // frees all 10px). A window listener read the pre-relayout value and left the
+    // bar reserving a strip that no longer existed. `stable` means overflow alone
+    // never resizes this box, so streaming costs no extra writes.
+    this.gutterObserver = new ResizeObserver(() => {
+      this.publishScrollbarWidth();
+    });
+    this.gutterObserver.observe(this.scrollEl);
     this.childObserver = new MutationObserver(() => {
       this.reobserveChildren();
     });

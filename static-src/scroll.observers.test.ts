@@ -213,7 +213,12 @@ async function settleFrames(): Promise<void> {
 
 interface Harness {
   scroll: typeof ScrollModule;
+  /** The CONTENT observer: the view's children, and the reads its callback makes.
+   *  It touches no document style. */
   ro: FakeResizeObserver;
+  /** The GUTTER observer: the scroller's own box, and the one write that reaches
+   *  a shared ancestor. */
+  gutter: FakeResizeObserver;
   /** The live-edge publisher, whose entries the mutation path consumes. */
   io: FakeIntersectionObserver;
   messagesEl: HTMLElement;
@@ -253,14 +258,18 @@ async function freshModule(opts: { withExistingRow?: boolean } = {}): Promise<Ha
     /* @vite-ignore */ `./scroll.ts?boot=${bootSeq}`
   )) as typeof ScrollModule;
   const scrollEl = scroll.getScrollEl();
+  // TWO ResizeObservers, in construction order: the content one, then the gutter
+  // one. Attributed by construction site rather than by target, so a regression
+  // that moves a callback between them names the observer it moved to.
   expect([
     FakeResizeObserver.instances.length,
     FakeIntersectionObserver.instances.length,
     scrollEl,
-  ]).toEqual([1, 1, wrap]);
+  ]).toEqual([2, 1, wrap]);
   return {
     scroll,
     ro: FakeResizeObserver.instances[0]!,
+    gutter: FakeResizeObserver.instances[1]!,
     io: FakeIntersectionObserver.instances[0]!,
     messagesEl: messages,
     scrollEl,
@@ -274,14 +283,36 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// The scroller's own resize observer: the reserved gutter and the re-pin.
+// The GUTTER observer: the scroller's own box, and the one write that reaches a
+// shared ancestor. It is a second observer because css/13-messages.css reads
+// `--scrollbar-w` in this scroller's own `padding-inline`.
 // ---------------------------------------------------------------------------
-describe("the scroller's resize observer", () => {
-  it("watches the scroller itself", async () => {
-    // The box whose reserved gutter and viewport height everything else is
-    // measured against.
+describe("the gutter observer", () => {
+  it("watches the scroller alone", async () => {
+    // The box whose reserved gutter is being published, and nothing else: an
+    // observation carrying every turn card as well is what made the write
+    // undeliverable.
     const h = await freshModule();
-    expect(h.ro.targets.has(h.scrollEl)).toBe(true);
+    expect([h.gutter.targets.has(h.scrollEl), h.gutter.targets.size]).toEqual([true, 1]);
+  });
+
+  it("keeps the write out of the content observer", async () => {
+    // The content observer reads and follows; it may not invalidate style for the
+    // whole document, or every card it also carries is re-laid-out mid-frame.
+    const h = await freshModule();
+    fakeGeometry(h.scrollEl, {
+      scrollHeight: 500,
+      clientHeight: 500,
+      scrollTop: 0,
+      offsetWidth: 1000,
+      clientWidth: 985,
+    });
+    h.ro.fire();
+    await settle();
+    expect([
+      h.ro.targets.has(h.scrollEl),
+      document.documentElement.style.getPropertyValue("--scrollbar-w"),
+    ]).toEqual([false, "0px"]);
   });
 
   it("re-measures the reserved gutter when the scroller's box changes", async () => {
@@ -298,7 +329,7 @@ describe("the scroller's resize observer", () => {
       offsetWidth: 1000,
       clientWidth: 985,
     });
-    h.ro.fire();
+    h.gutter.fire();
     expect(document.documentElement.style.getPropertyValue("--scrollbar-w")).toBe("15px");
   });
 
@@ -315,12 +346,18 @@ describe("the scroller's resize observer", () => {
       clientWidth: 985,
     });
     const setProperty = vi.spyOn(document.documentElement.style, "setProperty");
-    h.ro.fire();
-    h.ro.fire();
-    h.ro.fire();
+    h.gutter.fire();
+    h.gutter.fire();
+    h.gutter.fire();
     expect(setProperty.mock.calls.filter((c) => c[0] === "--scrollbar-w")).toHaveLength(1);
   });
+});
 
+// ---------------------------------------------------------------------------
+// The CONTENT observer: the view's children, the reads its callback makes, and
+// the re-pin. It writes no document style at all.
+// ---------------------------------------------------------------------------
+describe("the content resize observer", () => {
   it("releases Reading when the content shrinks to where the reader already is", async () => {
     // Collapsing a delegate's card: its body goes to `height: 0`, so the
     // document now ENDS at the reader. No node was inserted or removed, no
@@ -944,7 +981,7 @@ describe("the deferred boot", () => {
     expect(document.readyState).toBe("complete");
     stageDocument();
     (await import(/* @vite-ignore */ `./scroll.ts?boot=${bootSeq}`)) as typeof ScrollModule;
-    expect(FakeResizeObserver.instances).toHaveLength(1);
+    expect(FakeResizeObserver.instances).toHaveLength(2);
     expect(document.documentElement.style.getPropertyValue("--scrollbar-w")).toBe("0px");
   });
 
@@ -960,7 +997,7 @@ describe("the deferred boot", () => {
     expect(document.documentElement.style.getPropertyValue("--scrollbar-w")).toBe("");
 
     document.dispatchEvent(new Event("DOMContentLoaded"));
-    expect(FakeResizeObserver.instances).toHaveLength(1);
+    expect(FakeResizeObserver.instances).toHaveLength(2);
     expect(document.documentElement.style.getPropertyValue("--scrollbar-w")).toBe("0px");
   });
 });
