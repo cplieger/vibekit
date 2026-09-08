@@ -163,7 +163,7 @@
   --composer-rest-h: 2.5rem;
 
   padding: calc((var(--composer-rest-h) - 1lh) / 2) var(--sp-4);
-  font-size: var(--fs-md);
+  font-size: var(--fs-field);
   line-height: 1.4;
   font-family: var(--font-sans);
   resize: none;
