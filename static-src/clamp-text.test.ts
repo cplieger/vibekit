@@ -7,7 +7,33 @@
 // falls back to a character guess, which is exactly the case the observer
 // exists to correct.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { attachClamp } from "./clamp-text.js";
+import { attachClamp, releaseClamp, releaseClampsIn, clampObservationCount } from "./clamp-text.js";
+import clampSource from "./clamp-text.ts?raw";
+import type { Message, Session } from "./types.js";
+
+// The transcript's own fixture, for the `disposeChatView` case below. Built at
+// module scope and BEFORE `messages.js` is imported, because `scroll.ts`
+// self-initialises at import and reads the scroller out of the DOM registry.
+for (const id of [
+  "messages-wrap-outer",
+  "chat-view",
+  "scroll-bottom",
+  "send-btn",
+  "prompt-input",
+]) {
+  const d = document.createElement(id === "prompt-input" ? "textarea" : "div");
+  d.id = id;
+  document.body.appendChild(d);
+}
+const scrollerEl = document.createElement("div");
+scrollerEl.id = "messages-wrap";
+document.getElementById("messages-wrap-outer")?.appendChild(scrollerEl);
+const transcriptEl = document.createElement("div");
+transcriptEl.id = "messages";
+scrollerEl.appendChild(transcriptEl);
+
+const { setSessions, setActive, bumpMessages } = await import("./store.js");
+const { mountChatView, disposeChatView } = await import("./messages.js");
 
 const CSS = `
   .ct-text { font: 16px/20px monospace; overflow-wrap: anywhere; }
@@ -242,5 +268,113 @@ describe("releasing", () => {
     host.style.inlineSize = "120px";
     await observerRuns();
     expect(p.more.hidden, "nothing re-decided it").toBe(true);
+  });
+
+  it("takes the observation count back to zero when the host subtree is released", async () => {
+    // The reason the explicit release exists: the callback-inferred one needs a
+    // final zero-size entry, which WebKit may never deliver and which
+    // `content-visibility: hidden` on a parked view DEFERS on every engine — so
+    // for an element discarded while its view is parked nothing arrives at all,
+    // and an evicted view is never un-parked.
+    const before = clampObservationCount();
+    host.style.inlineSize = "400px";
+    const texts: HTMLElement[] = [];
+    for (let i = 0; i < 5; i++) {
+      const text = document.createElement("div");
+      text.className = "ct-text";
+      text.textContent = LONG;
+      const more = document.createElement("button");
+      more.type = "button";
+      host.append(text, more);
+      attachClamp(text, more, { lines: 3 });
+      texts.push(text);
+    }
+    await observerRuns();
+    expect(clampObservationCount() - before, "five more watched").toBe(5);
+
+    // The subtree is DISCARDED, which is the precondition the export states.
+    releaseClampsIn(host);
+    expect(clampObservationCount() - before, "and none after the sweep").toBe(0);
+    // Nothing re-decides a released element, so a width change moves no opener.
+    for (const text of texts) {
+      text.remove();
+    }
+    host.style.inlineSize = "120px";
+    await observerRuns();
+    expect(clampObservationCount() - before).toBe(0);
+  });
+
+  it("releases one element without touching its siblings", async () => {
+    const before = clampObservationCount();
+    const a = mount(LONG, 400);
+    const b = document.createElement("div");
+    b.className = "ct-text";
+    b.textContent = LONG;
+    const bMore = document.createElement("button");
+    bMore.type = "button";
+    host.append(b, bMore);
+    attachClamp(b, bMore, { lines: 3 });
+    await observerRuns();
+    expect(clampObservationCount() - before).toBe(2);
+
+    releaseClamp(a.text);
+    expect(clampObservationCount() - before, "only the named one went").toBe(1);
+    releaseClamp(b);
+    expect(clampObservationCount() - before).toBe(0);
+  });
+
+  it("releases a mounted chat view's header clamps when the view is disposed", async () => {
+    // The owner that matters: `disposeChatView` is the single per-view dispose
+    // chat close, chat delete, LRU eviction and `teardownAll` all run, so one
+    // sweep there covers every turn header of a whole chat.
+    const before = clampObservationCount();
+    mountChatView();
+    const chat = "c-clamp-dispose";
+    const messages: Message[] = [];
+    for (let t = 0; t < 4; t++) {
+      messages.push({
+        id: `t${String(t)}`,
+        role: "user",
+        ts: 1,
+        content: `a request long enough to be worth clamping, number ${String(t)}`,
+      } as Message);
+      messages.push({
+        id: `t${String(t)}-a`,
+        role: "assistant",
+        ts: 2,
+        content: "",
+        blocks: [{ type: "text", text: "reply" }],
+      } as unknown as Message);
+    }
+    setSessions([
+      {
+        id: chat,
+        name: "c",
+        messages,
+        message_count: messages.length,
+        has_more: false,
+        thinking: false,
+        working_label: "",
+      },
+    ] as unknown as Session[]);
+    setActive(chat);
+    bumpMessages(chat);
+    // One clamp per turn header, or the assertion below cannot fail.
+    expect(clampObservationCount() - before, "one per turn header").toBe(4);
+
+    disposeChatView(chat);
+    expect(clampObservationCount() - before).toBe(0);
+  });
+
+  it("keeps the callback-inferred sweep as well as the explicit release", () => {
+    // A source guard, because the failure mode is a SIMPLIFICATION: whichever half
+    // is deleted, the suite above still passes for the elements it does release,
+    // and the leak is invisible. The `isConnected` branch is belt and braces for an
+    // element discarded with no release; the export is the mechanism.
+    expect([
+      clampSource.includes("export function releaseClamp("),
+      clampSource.includes("export function releaseClampsIn("),
+      clampSource.includes("!entry.target.isConnected"),
+    ]).toEqual([true, true, true]);
   });
 });
