@@ -3,7 +3,7 @@
 // for all of them. It must name no source: a consumer hands it an `ExecRun`.
 
 import { el } from "@cplieger/reactive";
-import { attachClamp } from "../clamp-text.js";
+import { attachClamp, releaseClampsIn } from "../clamp-text.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN } from "../icons.js";
 import { buildAssistantBubble } from "../fundamentals/text-bubble.js";
@@ -204,6 +204,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     if (entries.length === 0) {
       inputs.hidden = true;
       delete inputs.dataset["sig"];
+      releaseClampsIn(inputs);
       inputs.replaceChildren();
       return;
     }
@@ -213,6 +214,9 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       return;
     }
     inputs.dataset["sig"] = sig;
+    // Before the discard, or the rows leaving take their clamp observations with
+    // them and the shared observer keeps watching detached elements.
+    releaseClampsIn(inputs);
     inputs.replaceChildren(
       ...entries.flatMap(([k, v]) => {
         const text = el("div", { className: "ev-in-text" }, v);
@@ -247,6 +251,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     if (merged.size === 0) {
       results.hidden = true;
       delete resultsBody.dataset["sig"];
+      releaseClampsIn(resultsBody);
       resultsBody.replaceChildren();
       return;
     }
@@ -257,6 +262,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       return;
     }
     resultsBody.dataset["sig"] = sig;
+    releaseClampsIn(resultsBody);
     resultsBody.replaceChildren(...[...merged].map(([key, value]) => resultItem(key, value)));
   }
 
