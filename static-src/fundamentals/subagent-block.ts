@@ -1,47 +1,11 @@
-// ---------------------------------------------------------------------------
-// Fundamental: the delegated-work boxes — a SUBAGENT's card, and the CONTAINER a
-// pipeline puts over its stages.
+// The delegated-work boxes. `buildSubagentCard` is a LEAF and renders NONE of its
+// delegate's output — that lives on the delegate's own page, reached through the
+// foot's link — so the card has no disclosure at all. `buildSubagentContainer` is a
+// pipeline over its stages, and its body holds THEIR cards.
 //
-// TWO BUILDERS, because the two stopped being one component with a flag:
-//
-//   - `buildSubagentCard` is a LEAF, and it renders NONE of its delegate's
-//     output. That output is the delegate's PAGE (`subagent-view.ts`), reached
-//     through the foot's link, exactly as a workflow run's steps are the run
-//     tab's. So the card is not a disclosure: an identity row, a rolling tail
-//     while it works, and a foot that states the result.
-//   - `buildSubagentContainer` is a pipeline over its stages, and its body holds
-//     THEIR cards. It keeps the disclosure (collapsed by default: the expanded
-//     state is worth nothing at the moment N stages all start at once) and shows
-//     activity dots rather than a tail — its stages carry their own rings, and a
-//     tail over cards would fold a whole stage into one glued line. The
-//     disclosure is WITHDRAWN while that body is empty: a driver that dispatched
-//     no stage has nothing to reveal, and its box is kept only so a failed
-//     dispatch stays visible.
-//
-// THE TAIL (last few lines, rolling) answers "which are progressing" while a
-// delegate works, and is removed on settle, when the footer is the card's last
-// word. It is PUSHED IN through `setTail` by `subagent-tail.ts`, which derives it
-// from the store; it used to be harvested off this card's own rendered body with
-// a MutationObserver, and there is no body to harvest.
-//
-// THE FOOT reuses turn-footer.ts: a delegate has an outcome, duration, changed
-// files and command/read counts, same as a turn.
-//
-// The header slot carries ONE mark and no status word, same vocabulary as a tool
-// card: the agent identity glyph tinted green for a success, and for a failure
-// that glyph is REPLACED by the shared silhouette (`icons.ts` `outcomeIcon`), so
-// hue is never the only channel. `applyIcon` depends on the `tool-icon` class for
-// the `.tool-icon.is-*` tint selectors. It does not route through
-// `applyOutcome` (tool-card.ts) because these boxes own their identity glyph and
-// spinner; what IS shared is the glyph set, which keeps the two from drifting.
-//
-// ACCESSIBILITY. The mark is decorative, so the state is announced as an
-// `.sr-only` word beside the name — the pair `tabs.ts` uses for a tab's dot. It
-// replaced an `aria-label` on the header, which a screen reader ignores on the
-// card, whose header is a plain `div` now that it discloses nothing. The foot's
-// link is named for its delegate rather than "Open", because after the drop it is
-// the ONLY way to that delegate's output and a transcript holds many of them.
-// ---------------------------------------------------------------------------
+// Two consequences of the leaf having no body: the tail is PUSHED IN through
+// `setTail` (`subagent-tail.ts` derives it from the store), and the state word is an
+// `.sr-only` span, because a screen reader ignores `aria-label` on a plain div.
 
 import { el } from "@cplieger/reactive";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
@@ -184,11 +148,8 @@ function buildShell(
     icon.classList.toggle("is-ok", !failed && !active);
     icon.classList.toggle("is-running", active);
     root.classList.toggle("running", active);
-    // ONE mark, and its SHAPE is what changes. A CARD empties the slot while active so
-    // CSS can spin it as a ring; a CONTAINER keeps its identity glyph for the whole run,
-    // because its stages carry the rings. On settle the glyph stands for a success
-    // (tinted green by `.tool-icon.is-ok`) and is REPLACED by the shared failure
-    // silhouette otherwise — same set as every other outcome surface.
+    // A CARD empties the slot while active so CSS can spin it as a ring; a CONTAINER
+    // keeps its identity glyph, because its stages carry the rings.
     const ring = active && !isContainer;
     icon.classList.toggle("subagent-spinner", ring);
     icon.replaceChildren(
@@ -285,9 +246,8 @@ export function buildSubagentContainer(
 ): SubagentContainer {
   const shell = buildShell(name, status, true);
   const startOpen = opts.startOpen ?? false;
-  // Built in its FULL form, chevron and affordance class included, and
-  // `syncDisclosure` below takes the control away when there is nothing to reveal —
-  // the shape `buildToolCard` and `refreshToolDisclosure` already have.
+  // Built in its FULL form; `syncDisclosure` below takes the control away when there
+  // is nothing to reveal.
   shell.root.classList.add("subagent-container", "has-disclosure");
   shell.root.classList.toggle("collapsed", !startOpen);
   // A span, not a button: the header is `role="button"` and carries the
@@ -335,12 +295,9 @@ export function buildSubagentContainer(
   shell.header.addEventListener("click", markToggled);
   shell.header.addEventListener("keydown", markToggled);
 
-  /** The disclosure's ONE writer, mirroring `tool-card.ts`'s `refreshToolDisclosure`.
-   *  An EMPTY body gets the primitive's region-only mode — the third use of it here,
-   *  after `tool-group.ts` — so the header keeps its glyph, its name and its state
-   *  word and loses the control: no `aria-expanded` over an empty region, no tab
-   *  stop, no chevron. It ends up the plain div a CARD's header already is, which is
-   *  the right answer for a header that discloses nothing. */
+  /** The disclosure's ONE writer. An EMPTY body gets the primitive's region-only mode,
+   *  so the header keeps its glyph, name and state word and loses the control: no
+   *  `aria-expanded` over an empty region, no tab stop, no chevron. */
   const syncDisclosure = (): void => {
     const populated = body.firstElementChild !== null;
     if (populated !== wired) {
@@ -371,10 +328,8 @@ export function buildSubagentContainer(
     }
   };
 
-  /** The failure auto-open, and the one place it can be refused. An empty body has no
-   *  chevron to close it again, so opening it strands the region — the refusal
-   *  `expandToolDetails` makes on a bare tool card, for the same reason. The ask is
-   *  HELD instead, and applied when the body gains its first stage. */
+  /** The failure auto-open's one enforcement point. An empty body has no chevron to
+   *  close it again, so the ask is HELD until the body gains its first stage. */
   const openBody = (): void => {
     if (body.firstElementChild === null) {
       pendingAutoOpen = true;
@@ -386,15 +341,12 @@ export function buildSubagentContainer(
   if (status === "failed") {
     openBody();
   }
-  // A MICROTASK, not the observer, decides the box built empty: the pass that builds
-  // it fills it synchronously or never will (`messages-blocks.ts` pipelineBoxFor
-  // takes the container first and then routes its stages), and a microtask runs
-  // before the frame is painted — so the withdrawal is invisible where a task-late
-  // wiring would pop the chevron in on every box in the transcript.
+  // A MICROTASK for the box built empty: the pass that builds it fills it
+  // synchronously or never will, and a microtask lands before the frame is painted,
+  // so the withdrawal is invisible where a task-late wiring would pop the chevron in.
   queueMicrotask(syncDisclosure);
-  // The observer covers the rest of the container's life: a stage can arrive after
-  // the driver's status frame, and `pipelineBoxFor` re-parents a promoted stage into
-  // a body that was empty when it was built.
+  // The observer covers the rest of the container's life: a stage can arrive after the
+  // driver's status frame, and `pipelineBoxFor` re-parents a promoted stage in.
   new MutationObserver(syncDisclosure).observe(body, { childList: true });
 
   return {

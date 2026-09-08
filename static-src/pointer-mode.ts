@@ -1,10 +1,8 @@
 // ---------------------------------------------------------------------------
-// The touch/mouse toggle in the sidebar header.
-//
-// MODE is what the reader asked for, TIER is what the document is in: this module
-// owns the button, `pointer-tier.ts` owns the tier, one-way (no cycle). It gates
-// the button on `coarseEverSeen()` and `50-mobile.css` on the viewport; both gates
-// hide, so neither can reveal what the other hid.
+// The touch/mouse toggle in the sidebar header. This module owns the button,
+// `pointer-tier.ts` owns the tier, one-way. Two gates hide it — `coarseEverSeen()`
+// here and the viewport in `50-mobile.css` — so neither can reveal what the other
+// hid.
 // ---------------------------------------------------------------------------
 
 import { coarseEverSeen, type PointerTier } from "./device-view.js";
@@ -22,14 +20,12 @@ const TOOLTIP: Record<PointerTier, string> = {
   coarse: "Touch mode. Switch to mouse mode",
 };
 
-/** What the reader can SEE, which `paint` animates from — null until the first
- *  paint, where there is nothing to slide out. */
+/** What the reader can SEE; null before the first paint, which slides nothing out. */
 let shown: PointerTier | null = null;
 
 /** Bumped by every `paint`, so a settle deferred behind the slide can tell whether
- *  it is still the newest one. Two clicks inside the 350ms window leave the first
- *  closure holding a superseded target, which would otherwise put the glyph the
- *  second click replaced back on screen until that closure converges. */
+ *  it is still the newest. Two clicks inside the 350ms window would otherwise let
+ *  the first closure put the glyph the second click replaced back on screen. */
 let generation = 0;
 
 /** The click binding, so a repeat init replaces its listener rather than stacking. */
@@ -46,8 +42,7 @@ function glyphFor(tier: PointerTier): Element | null {
  *
  *  `transitionend` carries a timeout because reduced motion zeroes the duration
  *  rather than suppressing the transition, and a never-fired event would leave both
- *  glyphs hidden. A mid-slide click is repaired rather than queued: the generation
- *  guard drops the superseded settle and this paint clears what it left. */
+ *  glyphs hidden. */
 function paint(tier: PointerTier): void {
   const btn = $.pointerModeBtn;
   const incoming = glyphFor(tier);
@@ -55,9 +50,8 @@ function paint(tier: PointerTier): void {
   if (incoming === null) {
     return;
   }
-  // An abandoned settle leaves its outgoing glyph parked below its resting
-  // position, and that glyph is this paint's INCOMING one, whose classes the settle
-  // below never clears.
+  // An abandoned settle parks its outgoing glyph below its resting position, and
+  // that glyph is this paint's INCOMING one; nothing else clears those classes.
   incoming.classList.remove("icon-setting", "icon-rising");
   other?.classList.remove("icon-setting", "icon-rising");
   // There is something to slide out only when the other glyph is on screen: the
@@ -111,8 +105,7 @@ export function initPointerModeToggle(): void {
   const btn = $.pointerModeBtn;
   btn.classList.toggle("hidden", !coarseEverSeen());
   shown = null;
-  // No attribute means nothing has applied a tier, which is the state the authored
-  // markup and 01-tokens.css's no-JS fallback both read as the compact one.
+  // No attribute means no tier applied yet, which 01-tokens.css reads as compact.
   paint(currentTier() ?? "fine");
 
   bound?.abort();

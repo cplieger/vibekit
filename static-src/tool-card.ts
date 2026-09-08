@@ -116,11 +116,10 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     // card is a claim line and a transcript mounts dozens of them.
     node.insertAdjacentHTML("beforeend", detailsShell());
     wireToggle(node, detailsBody(node, opts, depth1));
-    // One arm per thing `detailsBody` writes, read back by `refreshToolDisclosure`.
-    // The region cannot be read for them: it is empty until first open, so a card
-    // whose only content is deferred looks exactly like one with none. `outputBytes`
-    // is stamped only where the store cut the OUTPUT, so a `hasFull` from a
-    // diffs-only cut names a bulk `fetchOutputBulk` returns early on.
+    // One arm per thing `detailsBody` writes, read back by `refreshToolDisclosure`. The
+    // region cannot be read for them: it is empty until first open, so a card whose only
+    // content is deferred looks exactly like one with none. `outputBytes` is stamped only
+    // where the store cut the OUTPUT, so a diffs-only cut's `hasFull` names an early return.
     if (
       opts.denial !== undefined ||
       (opts.live && opts.input !== undefined) ||
@@ -662,20 +661,10 @@ function wireToggle(el: HTMLElement, buildBody: () => void): void {
   detailCtls.set(el, ctl);
 }
 
-/** Force-open a card's details (e.g. when the tool fails so the error output
- *  is visible without a click). The chevron follows from the `aria-expanded`
- *  the controller writes; a card without wired details is a no-op.
- *
- *  A BARE card is refused, and the refusal lives here rather than at each caller
- *  because a bare card has no chevron to close the region with again: opening one
- *  strands it. `messages-blocks.ts` restores a dropped card's open state from a
- *  persisted flag that outlives the chevron, so a caller-side gate would have to
- *  be remembered by every force-open written later.
- *
- *  The body is built BEFORE the open, for the reason `wireToggle`'s own listener
- *  is registered early: the controller measures the region to animate it. It also
- *  makes the output readable to the caller straight after — the failure path
- *  offers "Explain this error" from `.tool-output`'s text. */
+/** Force-open a card's details (e.g. when the tool fails so the error output is visible
+ *  without a click). A BARE card is refused HERE rather than at each caller, because a
+ *  bare card has no chevron to close the region with again. The body is built BEFORE the
+ *  open: the controller measures the region to animate it. */
 export function expandToolDetails(card: HTMLElement): void {
   if (card.querySelector(".tool-disclosure") === null) {
     return;
@@ -689,13 +678,9 @@ export function expandToolDetails(card: HTMLElement): void {
 // card that regains content needs no second createDisclosure.
 const detachedToggles = new WeakMap<HTMLElement, HTMLElement>();
 
-/** Whether the details region holds anything a reader can SEE, or will once opened.
- *  Non-blank text, the same reading `applyStatusUpdate`'s Explain gate takes of the
- *  same region.
- *
- *  The WIRE STATUS is not consulted: emptiness is a property of the region, and both
- *  production call sites pass `live: true`, so `data-outcome` cannot separate a call
- *  still filling one from a replayed call that never will. */
+/** Whether the details region holds anything a reader can SEE, or will once opened. The
+ *  WIRE STATUS is not consulted: emptiness is a property of the region, and both call
+ *  sites pass `live: true`, so `data-outcome` cannot separate filling from never-will. */
 function isDisclosable(card: HTMLElement): boolean {
   if (card.dataset["disclosable"] === "1") {
     return true;
@@ -704,13 +689,10 @@ function isDisclosable(card: HTMLElement): boolean {
   return out !== null && out.textContent.trim() !== "";
 }
 
-/** Give a card its disclosure, or take it away: the ONE writer of bare-ness, the
- *  discipline `refreshGroupHeader` has for `tool-group-bare`. Idempotent both ways,
- *  so output landing later restores the chevron and a card that goes bare while open
- *  is closed rather than stranded over an empty region.
- *
- *  DETACHED rather than `display: none`d, so a bare card meets the same
- *  no-`aria-expanded` bar a claim-only one already does, at no CSS cost. */
+/** Give a card its disclosure, or take it away: the ONE writer of bare-ness. Idempotent
+ *  both ways, so output landing later restores the chevron and a card that goes bare while
+ *  open is closed rather than stranded. DETACHED rather than `display: none`d, so a bare
+ *  card meets the same no-`aria-expanded` bar a claim-only one does, at no CSS cost. */
 export function refreshToolDisclosure(card: HTMLElement): void {
   // A claim-only card owns none of this: no details region, no toggle, and a
   // summary that never became clickable.
@@ -733,11 +715,9 @@ export function refreshToolDisclosure(card: HTMLElement): void {
   detailCtls.get(card)?.close();
   const toggle = card.querySelector<HTMLElement>(".tool-disclosure");
   if (toggle !== null) {
-    // No FOCUSED chevron reaches this: the wire status is not consulted, the update gate
-    // refuses blank output, and `writeChunkToCard` only reaches a terminal-bearing card,
-    // latched at build by the command in `opts.input`. So every detach left runs inside
-    // `buildToolCard`, before the card is in the document. Reintroduce an in-document one and
-    // focus falls to <body>; the fallback is the card at `tabindex="-1"` or `.tool-group-header`.
+    // No FOCUSED chevron reaches this: every detach left runs inside `buildToolCard`, before
+    // the card is in the document. Reintroduce an in-document one and focus falls to <body>;
+    // the fallback is the card at `tabindex="-1"` or `.tool-group-header`.
     detachedToggles.set(card, toggle);
     toggle.remove();
   }

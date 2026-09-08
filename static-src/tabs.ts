@@ -1396,17 +1396,9 @@ export function openSubagentRefs(): string[] {
   return state.tabs.filter((t) => t.subject.kind === "subagent").map((t) => t.subject.ref);
 }
 
-/** The run tabs' refs, as a TRACKED read: an effect calling this re-runs when a
- *  run tab lands or leaves, which is the dependency `run-dots.ts` needs to seed
- *  run state for a run it has been told nothing about.
- *
- *  EVERY run tab, sub-tab and top-level alike: a parentless run's tab is restored
- *  from the same persisted subject and arrives just as unaccompanied by run state,
- *  so it has the identical defect.
- *
- *  REFS rather than ids, because a ref is the workflow id the run store is keyed
- *  by while an id is opaque; the id is recovered with `tabIdFor`. No dedupe, for
- *  `openSubagentRefs`' reason. */
+/** The run tabs' refs, as a TRACKED read: an effect calling this re-runs when a run
+ *  tab lands or leaves. EVERY run tab, sub-tab and top-level alike. REFS, because a
+ *  ref is the workflow id the run store is keyed by; `tabIdFor` recovers the id. */
 export function openRunRefs(): string[] {
   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
   stateVersion.value;
@@ -2163,19 +2155,10 @@ function setSingletonRoute(kind: TabKind, route: Route): void {
 
 // --- Multi-instance openers ---
 
-/** Open (or focus) a workflow run's tab.
- *
- *  Not a singleton: several runs can be open side by side, keyed by run id.
- *
- *  `parent` makes it a SUB-TAB of the chat that launched it, which is what a run
- *  parented on a chat session should be: indented under that chat, sorted after
- *  it, closed when it closes. `owns: false` is the close contract that lets the
- *  two be joined safely — a VIEW tab tears nothing down, so the × on a run
- *  sub-tab REMOVES A VIEW and stops nothing at all, while the launching chat's ×
- *  is what cancels. A launcher-OWNED run keeps `owns: true`, so its × means stop.
- *
- *  Every caller is a reader asking for the run — a Run button, a footer link, a
- *  deep link, a History row. */
+/** Open (or focus) a workflow run's tab. Not a singleton: several runs can be open
+ *  side by side. `parent` makes it a SUB-TAB of the chat that launched it, and
+ *  `owns: false` is what makes that safe — a VIEW tab's × removes a view and stops
+ *  nothing, while a launcher-OWNED run's × means stop. */
 export async function openRunTab(
   workflowID: string,
   name: string,
@@ -2191,23 +2174,11 @@ export async function openRunTab(
   });
 }
 
-/** Open (or focus) a SUBAGENT execution's own page.
- *
- *  Not a singleton. This door only ever answers a reader who asked: every caller is
- *  a click or a deep link, and no SSE handler may call it.
- *
- *  `owns: false` always, so the × dismisses a view. There is nothing else it could
- *  be: the page is a projection of blocks the chat store owns, and closing it stops
- *  neither the delegate nor the transcript's own card, which keeps streaming.
- *
- *  `parent` nests it under the launching chat's tab, which is what puts a delegate
- *  beside the conversation that ran it rather than at the end of the strip. A chat
- *  with no tab here promotes it to top level rather than refusing it, the same
- *  fallback `insertRow` and the server's Open already apply.
- *
- *  It carries no NAME override: the factory derives the label from the invocation
- *  tool call in the chat store, so a tab restored on boot and a tab opened from a
- *  card's link read the same. */
+/** Open (or focus) a SUBAGENT execution's own page. Not a singleton, and only ever a
+ *  reader's own gesture; no SSE handler may call it. `owns: false` always, so the ×
+ *  dismisses a view. `parent` nests it under the launching chat, promoting to top
+ *  level when that chat has no tab. No NAME override: the factory derives the label,
+ *  so a boot-restored tab and one opened from a card's link read the same. */
 export async function openSubagentTab(chatID: string, subtaskID: string): Promise<void> {
   if (chatID === "" || subtaskID === "") {
     return;

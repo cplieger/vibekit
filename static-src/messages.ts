@@ -687,26 +687,10 @@ export function fadeInTranscript(): void {
 // The follow model's two client-side obligations (§3.4).
 // ---------------------------------------------------------------------------
 
-/** Blocks the reader can REACH, which is what the resume chip counts.
- *
- *  Blocks, not messages: a single streaming turn can produce dozens of blocks,
- *  and a chip reading "1 new message" for four minutes of work is a static badge
- *  rather than a progress read-out.
- *
- *  REACHABLE, not merely present, and that is the same argument one level down.
- *  DELEGATED blocks — a subagent's and a workflow step's alike — are members of the
- *  parent assistant message's `blocks` array, and `messages-blocks.ts` `placeBlock`
- *  DROPS every one of them: the transcript keeps a card and renders none of that
- *  work's content, which lives on the delegate's or the run's own tab. So they
- *  contribute zero document height in every fold state, and counting them would
- *  make the control promise a distance that does not exist — the reader resumes
- *  expecting nine blocks of new content and lands on the same view they parked at.
- *  The resume control is the only element on screen that knows the reader is behind,
- *  so it is the only one that says how far, and a number nothing on the page can
- *  account for is worse than no number.
- *
- *  So the test is the STAMP, not a fold state: a block with no `agent_subtask_id` is
- *  the parent stream, always inline and always counted. */
+/** Blocks the reader can REACH, which is what the resume chip counts. A DELEGATED
+ *  block is a member of the parent message's `blocks` array and is DROPPED by
+ *  `placeBlock`, so it adds no document height in any fold state and counting one
+ *  would promise a distance that does not exist. The test is the STAMP, not a fold. */
 function blockCount(msgs: readonly Message[]): number {
   let n = 0;
   for (const m of msgs) {
@@ -722,12 +706,9 @@ function blockCount(msgs: readonly Message[]): number {
 /** Blocks present when the reader last entered Reading. */
 let followBaseline = 0;
 
-/** The last FULL pass's reachable-block count. `refreshResumeLabel` runs on
- *  chunk- and tool-cause paints too, and those causes cannot add a REACHABLE
- *  block: a block this transcript draws arrives as `shape`, while the blocks that
- *  take `chunk` on first sighting are a DELEGATE's, which are never drawn and so
- *  cannot move this count. The walk therefore happens once per full pass
- *  instead of once per streamed delta. */
+/** The last FULL pass's reachable-block count. Chunk- and tool-cause paints cannot add
+ *  a REACHABLE block (a block this transcript draws arrives as `shape`), so the walk
+ *  runs once per full pass rather than once per streamed delta. */
 let reachableBlocks = 0;
 
 function initFollowModel(): void {
@@ -1601,12 +1582,10 @@ function isSpacerKey(key: string): boolean {
  *  read it. */
 let measuredRowHeights: ReadonlyMap<string, number> = new Map();
 
-/** Measure the rows `keys` names in ONE read-only pass, then run the mutation that
- *  drops them. `reconcile` runs `onRemove` in place between `el.remove()` calls, so the
- *  layout read `disposeMessage` needs costs one forced reflow PER removed row when it
- *  happens there, and one for the whole pass when it happens here. Callers pass only
- *  DEPARTING message keys: a surviving row's height is never asked for, and reading it
- *  would buy a forced reflow nothing reads back. */
+/** Measure the rows `keys` names in ONE read-only pass, then run the mutation that drops
+ *  them. `reconcile` runs `onRemove` between `el.remove()` calls, so `disposeMessage`'s
+ *  layout read costs one forced reflow PER row there and one for the whole pass here.
+ *  Callers pass DEPARTING keys only: a survivor's height is never read back. */
 function withMeasuredRows(body: ParentNode, keys: ReadonlySet<string>, mutate: () => void): void {
   const outer = measuredRowHeights;
   measuredRowHeights = measureRows(body, keys);
@@ -1642,11 +1621,9 @@ function mountedRowKeys(body: ParentNode): string[] {
   return held;
 }
 
-/** Whether `row` sits in a subtree the page is not rendering: a folded card's body
- *  (`content-visibility: hidden` plus `block-size: 0`, css/29-turns.css) or a parked
- *  view (css/13-messages.css). Reading a descendant's box there forces the browser to
- *  render what it skipped, and answers a height no spacer can hold anyway. A
- *  `closest()` test, never a geometry read — that is the thing being avoided. */
+/** Whether `row` sits in a subtree the page is not rendering: a folded card's body or a
+ *  parked view. A `closest()` test, never a geometry read — reading a descendant's box
+ *  there forces the browser to render what it skipped, which is the cost being avoided. */
 function geometrySkipped(row: Element): boolean {
   return (
     row.closest(".turn[data-folded] > .turn-body") !== null ||
@@ -1655,10 +1632,8 @@ function geometrySkipped(row: Element): boolean {
 }
 
 /** The ONE way a body's rows are reconciled: departing rows measured first, mutated
- *  second. A reconcile that drops NOTHING reads no layout at all — that is the
- *  streaming path, where `headUnchanged` lets a tail append through on every paint, and
- *  a measurement pass there would force a reflow per frame for a cache no `onRemove`
- *  ever reads. */
+ *  second. A reconcile that drops NOTHING reads no layout at all — the streaming path,
+ *  where a measurement pass would force a reflow per frame for a cache nobody reads. */
 function reconcileBody(body: HTMLElement, rows: readonly BodyRow[]): void {
   const departing = departingKeys(body, rows);
   if (departing.size === 0) {
@@ -1701,10 +1676,8 @@ function disposeBodyRows(body: ParentNode): void {
  *  card's rows — a removed card's inner list never reconciles again, so its
  *  own onRemove would never fire. */
 function disposeMessage(key: string): void {
-  // The spacer replacing this row holds the height the row measured in
-  // `withMeasuredRows`'s pass — read from there and never from the DOM, which this
-  // runs mid-mutation of. A row whose geometry was skipped has no entry, and a
-  // detached one answers 0, so both leave the recorded height alone.
+  // The spacer holds the height `withMeasuredRows` measured, never a DOM read: this runs
+  // mid-mutation. No entry and a detached row both leave the recorded height alone.
   const held = mountedWindow(key);
   const px = measuredRowHeights.get(key);
   if (held !== undefined && px !== undefined && px > 0) {
@@ -1734,10 +1707,9 @@ function disposeMessage(key: string): void {
 // Per-role builders + updaters
 // ---------------------------------------------------------------------------
 
-/** Build one message of a turn's BODY over `range`. The one user row that reaches
- *  here is a STEER, which joins the turn already running rather than opening one, so
- *  projectTurns leaves it in the body; a PROMPT is promoted to its turn's header. An
- *  unexpected role still renders as a plain system row rather than vanishing. */
+/** Build one message of a turn's BODY over `range`. The one user row that reaches here is
+ *  a STEER, which joins the turn already running rather than opening one; a PROMPT is
+ *  promoted to its turn's header. An unexpected role renders as a plain system row. */
 function buildMessage(m: Message, range: BlockRange): HTMLElement {
   switch (m.role) {
     case "assistant":
@@ -1943,11 +1915,9 @@ function collectWindowMove(
     const now = wantedWindow.get(t.id);
     return now?.from !== range.from || now.to !== range.to;
   };
-  // The PASS's own chat, threaded down from its caller, never `getActiveId()`:
-  // these marks are captured here and consumed inside closures that run at a
-  // later frame boundary (`deferWhileReading`), so an ambient read hands a chat
-  // switch inside the deferral the wrong chat's marks. Both callers of the fold
-  // pass already hold the session they are painting.
+  // The PASS's own chat, threaded down from its caller, never `getActiveId()`: these
+  // marks are consumed inside closures that run at a later frame boundary, so an
+  // ambient read hands a chat switch inside the deferral the wrong chat's marks.
   const marks = steerMarks(chatID);
   for (const [msgID, want] of sliceTurn(t, range)) {
     const m = t.body.find((x) => x.id === msgID);

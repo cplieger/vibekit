@@ -508,19 +508,11 @@ async function navigateToHit(hit: SearchHit): Promise<void> {
   if (chatID === "" || engine === null) {
     return;
   }
-  // A WORKFLOW STEP's hit goes to the RUN TAB, which is the only surface that
-  // renders it. Three facts the code below cannot show: a step's blocks are DROPPED
-  // by the transcript's dispatcher (`messages-blocks.ts` placeBlock), so there is no
-  // DOM segment for `resolveSegmentEl` to find and the old path ended at "could not
-  // be shown" on the launching turn's row; the run tab renders that step's
-  // transcript by slicing the same blocks (`run-view.ts` -> `run-step-slice.ts`), so
-  // this is a real destination; and the predicate is the renderer's own
-  // `parseStepSubtask`, so a malformed `wf:` id falls through to the DELEGATE branch
-  // below exactly as it does there.
-  //
-  // Skipping `ensureHitResident` and `revealHitTurn` is the point: the destination
-  // is another tab, so paging the launching chat's history in and revealing a turn
-  // would be work for a surface nobody is about to look at.
+  // A WORKFLOW STEP's hit goes to the RUN TAB, the only surface that renders it: the
+  // transcript's dispatcher drops a step's blocks, so there is no DOM segment for
+  // `resolveSegmentEl` to find. Skipping `ensureHitResident` and `revealHitTurn` is the
+  // point — the destination is another tab. The predicate is the renderer's own
+  // `parseStepSubtask`, so a malformed `wf:` id falls to the DELEGATE branch below.
   const step = parseStepSubtask(hit.agent_subtask_id ?? "");
   if (step !== null) {
     // Painted BEFORE the open: on success the tab switch tears the overlay down
@@ -544,12 +536,9 @@ async function navigateToHit(hit: SearchHit): Promise<void> {
     }
     return;
   }
-  // A DELEGATE's hit goes to that delegate's TAB, for the same three reasons and by the
-  // same route. Its blocks are dropped by the transcript too, so the DOM path below can
-  // only reach "could not be shown" for one — while the counter, which reads the SERVER's
-  // figure, says the text is there. Every non-empty subtask id that is not a step is a
-  // delegate, malformed `wf:` ids included: those fall through to the delegate path in the
-  // renderer as well.
+  // A DELEGATE's hit goes to that delegate's TAB, for the same reason and by the same
+  // route. Every non-empty subtask id that is not a step is a delegate, malformed `wf:`
+  // ids included, which is where the renderer sends them too.
   const subtask = hit.agent_subtask_id ?? "";
   if (subtask !== "") {
     if (countEl !== null) {
@@ -732,20 +721,10 @@ function resolveSegmentEl(hit: SearchHit): HTMLElement | null {
     : stamped;
 }
 
-/**
- * Open every closed disclosure between the hit's container and its row, so the
- * walker can reach the text: reasoning `<details>` by the platform API, and tool
- * groups by ACTIVATING their real header — the disclosure controller behind it
- * flips `aria-hidden` + `inert` synchronously, and going through it keeps its
- * state agreeing with the DOM. A tool_output hit additionally opens its card's own
- * disclosure, where the output body lives (and is often first BUILT).
- *
- * A DELEGATE's card is not in the walk: it discloses nothing, because the
- * transcript renders none of its delegate's output (`messages-blocks.ts`
- * `placeBlock`). A hit inside that output has no DOM segment here at all — the
- * same position a workflow step's hit is in, which `navigateToHit` answers by
- * sending the reader to the run tab.
- */
+/** Open every closed disclosure between the hit's container and its row, so the walker
+ *  can reach the text: reasoning `<details>` through the platform API, tool groups by
+ *  ACTIVATING their real header, so the controller behind it keeps agreeing with the DOM.
+ *  A tool_output hit also opens its card's own disclosure, where that body is first BUILT. */
 function openDisclosureChain(row: HTMLElement, target: HTMLElement, hit: SearchHit): void {
   for (let cur: HTMLElement | null = target; cur !== null && cur !== row.parentElement;) {
     if (cur instanceof HTMLDetailsElement && !cur.open) {

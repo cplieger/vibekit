@@ -54,19 +54,13 @@ type SteerOrigins interface {
 	SteerOrigin(chatID vibekit.ChatID, steerID string) vibekit.SteerOrigin
 }
 
-// SteerBuffer is the host's projection of KAS's own steering buffer: which steers
-// are still WAITING, so a client that reconnects can be re-offered them.
+// SteerBuffer is the host's projection of KAS's own steering buffer: which steers are
+// still WAITING, so a client that reconnects can be re-offered them. The host needs
+// telling because nothing can read that buffer back.
 //
-// A SECOND narrow role beside SteerOrigins rather than a widening of it, because
-// the two answer different questions with different lifetimes: an origin is TTL'd
-// (a 31-minute-old id legitimately reads as the agent's), while a waiting steer's
-// lifetime is KAS's buffer, which no clock this process holds can predict. One
-// type answering both would have to pick one of the two lifetimes.
-//
-// Why the host needs telling at all: `_session/steer` and `_session/steer/clear`
-// are the whole verb set, so nothing can read the buffer back, and
-// `streamInitialState` replayed nothing steer-shaped — a client that missed a
-// frame lost the row while the message was still queued.
+// A SECOND narrow role beside SteerOrigins rather than a widening of it: an origin is
+// TTL'd, while a waiting steer's lifetime is KAS's buffer, which no clock this process
+// holds can predict, so one type answering both would have to pick one lifetime.
 type SteerBuffer interface {
 	// SteerWaiting records a steer KAS has buffered and the model has not read.
 	// Idempotent by id: a reconnect replays the queued frame.

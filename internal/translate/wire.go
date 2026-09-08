@@ -14,15 +14,12 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// Shared ACP wire-format decode types for the translate layer. These
-// replace per-handler anonymous structs so the ACP protocol surface is
-// explicit, greppable, and maintained in one place. When kiro-cli adds
-// a field, it lands here once rather than in N handler-local structs.
+// Shared ACP wire-format decode types for the translate layer, so a field kiro-cli
+// adds lands here once rather than in N handler-local anonymous structs.
 
-// ACPChunkWire is the wire shape for agent_message_chunk and
-// agent_thought_chunk session updates. On v3 (KAS) a nested subagent's
-// chunks ride the parent session id and carry _meta.kiro.agentSubtaskId
-// identifying which agent-subtask tool call they belong to.
+// ACPChunkWire is the wire shape for agent_message_chunk and agent_thought_chunk
+// session updates. A nested subagent's chunks ride the parent session id and carry
+// _meta.kiro.agentSubtaskId naming the tool call they belong to.
 type ACPChunkWire struct {
 	Content struct {
 		Type string `json:"type"`
@@ -31,13 +28,12 @@ type ACPChunkWire struct {
 	Meta ACPKiroMeta `json:"_meta"`
 }
 
-// ACPToolCallContentBlock is one element in a tool_call or
-// tool_call_update's content array.
+// ACPToolCallContentBlock is one element in a tool_call or tool_call_update's content
+// array.
 //
-// On a type:"diff" block, OldText/NewText are KAS's whole-file contents for its
-// edit tools rather than the changed fragment (a hunk pair also arrives from
-// some tools). Anything deriving a line count from them must diff the two sides
-// — see internal/buffer/linediff.go.
+// On a type:"diff" block, OldText/NewText are whole-file contents for KAS's edit tools
+// rather than the changed fragment (some tools send a hunk pair instead), so anything
+// deriving a line count from them must diff the two sides.
 type ACPToolCallContentBlock struct {
 	Type    string `json:"type"`
 	Path    string `json:"path"`
@@ -52,141 +48,88 @@ type ACPToolCallContentBlock struct {
 	} `json:"content"`
 }
 
-// ACPKiroMeta is the top-level `_meta.kiro` block carried on v3 (KAS)
-// tool_call / tool_call_update session updates. When Kind=="agent-subtask"
-// the tool call is a subagent card (the model invoked invoke_sub_agent);
-// AgentSubtaskID is the stable id that links the card to its nested
-// agent_message_chunk / agent_thought_chunk deltas (which carry the same
-// id under their own _meta.kiro).
+// ACPKiroMeta is the top-level `_meta` carrying a `kiro` block. Kind=="agent-subtask"
+// marks a subagent card, and AgentSubtaskID links it to the nested chunk deltas that
+// carry the same id.
 //
-// HookAsk is present (non-empty) only on the synthetic tool call KAS emits
-// to surface a pre-tool-use hook's ask-permission gate: KAS sends a
-// kind:"other" tool_call/tool_call_update tagged
-// _meta.kiro.hookAsk={kind:"pre-tool-use",toolName,reason[,decision]} —
-// NOT a ToolKind "hook" (v3's zToolKind has no "hook"). Its presence is
-// the signal HandleToolCall uses to suppress hook cards when the
-// hooks.showStatus setting is off; the contents are opaque here.
+// Kiro.HookAsk is non-empty only on the synthetic kind:"other" tool call KAS emits for
+// a pre-tool-use hook's ask gate — there is no ToolKind "hook" — so its presence, not
+// the kind, is what suppresses hook cards when hooks.showStatus is off.
 type ACPKiroMeta struct {
 	Kiro ACPKiroBlock `json:"kiro"`
 }
 
-// ACPKiroBlock is the `kiro` object inside an `_meta`. A NAMED type rather than
-// an anonymous struct so it can carry the wire census below; every field access
-// site is unchanged.
+// ACPKiroBlock is the `kiro` object inside an `_meta`. A NAMED type rather than an
+// anonymous struct so it can carry the wire census below.
 type ACPKiroBlock struct {
-	// Refusal is present only on the agent_message_chunk carrying a
-	// model-refusal explanation (kiro-cli 2.13+, modelStopReason
-	// "content_filtered"). KAS calls it a progressive-enhancement
-	// marker: plain clients render the text, capable clients key off
-	// it for a distinct refusal affordance. The turn then ends with
-	// core stopReason "refusal".
+	// Refusal is present only on the agent_message_chunk carrying a model-refusal
+	// explanation. The turn then ends with core stopReason "refusal".
 	Refusal *ACPRefusalMeta `json:"refusal"`
-	// Checkpoint is KAS's snapshot mapping for a file-writing tool
-	// call. Probed 2026-08-02 (kiro-cli 2.16.0): it arrives ONLY on
-	// the tool_call_update whose status is "completed" — the initial
-	// tool_call and every in_progress/pending update carry none, which
-	// is why the value is folded in on update rather than set once.
-	//
-	// A sibling _meta.kiro.preview on that same frame repeats these
-	// URIs AND carries originalContent/modifiedContent in full. That
-	// is deliberately NOT decoded: persisting whole file bodies per
-	// tool call would bloat every chat file, and the snapshot URIs
-	// address the same bytes on demand.
-	// DisclosedContext identifies the skill or steering document a
-	// `disclose_context` call loaded. KAS persists it (its own comment: "the
-	// resolved skill/steering document. Persisted so the loaded item's type
-	// and source file survive a session reload"), which is what makes it
-	// worth decoding rather than deriving from the tool title.
-	//
-	// This is how a skill's body actually reaches the model on this platform:
-	// the AGENT activates it, under a standing instruction to check for a
-	// match before answering, so a client-side trigger matcher would be a
-	// second and worse guesser competing with that judgement. Decoding this
-	// is what makes the activation visible instead of a generic tool card.
+	// DisclosedContext identifies the skill or steering document a `disclose_context`
+	// call loaded. KAS persists it, so it survives a session reload, which is what
+	// makes it worth decoding rather than deriving from the tool title. Decoding it is
+	// also what renders an activation as itself rather than a generic tool card.
 	DisclosedContext *ACPDisclosedContext `json:"disclosedContext,omitempty"`
-	// PolicyDenial is KAS's structured reason for a tool call the Cedar
-	// policy refused, persisted so the explanation survives a reload. Without
-	// it a refusal is indistinguishable from a broken command, and the two
-	// want opposite reactions: edit the rule, or debug the tool.
+	// PolicyDenial is KAS's structured reason for a tool call the Cedar policy
+	// refused, persisted so the explanation survives a reload. Without it a refusal is
+	// indistinguishable from a broken command, and the two want opposite reactions:
+	// edit the rule, or debug the tool.
 	PolicyDenial   *ACPPolicyDenial   `json:"policyDenial,omitempty"`
 	Checkpoint     *ACPCheckpointMeta `json:"checkpoint"`
 	Kind           string             `json:"kind"`
 	AgentSubtaskID string             `json:"agentSubtaskId"`
-	// ToolID is KAS's machine name for a tool call (`execute_bash`,
-	// `fetch_cloud_config`, `user_input`), stamped on the tool_call frame's
-	// _meta.kiro. Unlike Title it is not model- or locale-composed, which is what
-	// makes it safe to key the internal-tool suppression on.
+	// ToolID is KAS's machine name for a tool call (`execute_bash`, `user_input`).
+	// Unlike Title it is not model- or locale-composed, which is what makes it safe to
+	// key the internal-tool suppression on.
 	ToolID string `json:"toolId"`
-	// MessageID and Timestamp are KAS's own identity for the message
-	// record a frame belongs to. Measured on the v3 wire (probe 23,
-	// kiro-cli 2.16.0): present on user_message_chunk (a bare uuid —
-	// vibekit's OWN prompt messageId when vibekit sent one),
-	// agent_message_chunk (`<uuid>-say`), tool_call (`<id>-call`) and
-	// tool_call_update (`<id>-result`). Timestamp is RFC3339 with
-	// milliseconds.
+	// MessageID and Timestamp are KAS's own identity for the message record a frame
+	// belongs to; Timestamp is RFC3339 with milliseconds.
 	//
-	// The replay projection depends on both: without MessageID it
-	// fabricates ids, so the same session projects differently on every
-	// load and nothing can address a message; without Timestamp every
-	// replayed turn is stamped with the load's wall clock and a resumed
-	// transcript claims all its history happened just now.
+	// The replay projection depends on both: without MessageID it fabricates ids, so
+	// one session projects differently on every load and nothing can address a message;
+	// without Timestamp a resumed transcript claims all its history happened just now.
 	MessageID string `json:"messageId"`
 	Timestamp string `json:"timestamp"`
-	// Source is stamped by the same replay builder as the two above, and it goes
-	// HERE rather than on the update object: the builder writes
-	// `{kiro:{…, messageId, timestamp, ...t.source==="steer"?{source:"steer"}:{}}}`.
-	// It marks the whole steering CHANNEL, so every workflow-progress row, step
-	// notice and steering-boundary row carries it too, not just a reader's steer.
+	// Source marks the whole steering CHANNEL, so a workflow-progress row, a step
+	// notice and a steering-boundary row all carry it, not just a reader's steer. It
+	// is stamped HERE by the replay builder rather than on the update object.
 	Source string `json:"source"`
-	// Notification tags a row KAS wrote onto a chat's transcript on
-	// something else's behalf. kind "workflow-progress" is a workflow
-	// step's progress persisted onto the LAUNCHING chat, which arrives as
-	// a user_message_chunk carrying JSON — see isWorkflowProgress.
+	// Notification tags a row KAS wrote onto a chat's transcript on something else's
+	// behalf. kind "workflow-progress" is a step's progress persisted onto the
+	// LAUNCHING chat, arriving as a user_message_chunk carrying JSON.
 	Notification struct {
 		Kind string `json:"kind"`
 	} `json:"notification"`
-	// Workflow is present on every frame of a workflow STEP's session
-	// (probe 17). It is what makes a step frame self-describing: the frame
-	// arrives on the launching chat's connection with a session id that is
-	// neither the chat's nor a subagent's, and this block is the only thing
-	// on the frame that says which.
-	//
-	// Note the nesting: this is `params.update._meta.kiro.workflow`, not
-	// `params._meta` — `params` carries only `sessionId` and `update`.
+	// Workflow is present on every frame of a workflow STEP's session, and is the only
+	// thing on the frame that says so: a step's frames arrive on the launching chat's
+	// connection under a session id that is neither the chat's nor a subagent's. Note
+	// the nesting — `params.update._meta.kiro.workflow`, not `params._meta`.
 	Workflow *ACPWorkflowMeta `json:"workflow"`
 	HookAsk  json.RawMessage  `json:"hookAsk,omitempty"`
-	// AgentInitiated marks a turn the ENGINE started — an auto-wake after a workflow
-	// run it launched, or a cross-session notification at warning severity.
-	//
-	// It rides CONTENT frames and never the bracket, which is why acknowledgement
-	// has to be provisional; and a zero-content or tool-only auto-wake never sends
-	// one, which is why the empty-turn gate cannot rest on it alone.
+	// AgentInitiated marks a turn the ENGINE started. It rides CONTENT frames and never
+	// the bracket, which is why acknowledgement has to be provisional; and a
+	// zero-content auto-wake sends none, so the empty-turn gate cannot rest on it.
 	AgentInitiated bool `json:"agentInitiated"`
 }
 
 // acpKiroBlockShadow strips the UnmarshalJSON method so the real decode can run
-// without recursing into it. The standard shadow-type trick; the alias must have
-// the same layout, which a defined type over the same struct does.
+// without recursing into it. The alias must keep the same layout, which a defined type
+// over the same struct does.
 type acpKiroBlockShadow ACPKiroBlock
 
-// UnmarshalJSON decodes the block and, on the way past, reports any
-// member KAS sent that this type does not read.
+// UnmarshalJSON decodes the block and, on the way past, reports any member KAS sent
+// that this type does not read.
 //
-// The census runs here rather than at the handlers because
-// encoding/json hands this method exactly the `_meta.kiro` object's
-// bytes, so probing a few hundred bytes per frame is cheap even when the
-// surrounding tool_call_update carries a multi-megabyte diff.
-//
-// The decode's own error is returned verbatim and the census cannot
-// contribute one: every call site drops the frame on a decode error, so
-// a probe that could fail would stop tool cards from rendering.
+// The census runs here rather than at the handlers because encoding/json hands this
+// method exactly the `_meta.kiro` bytes, so the probe stays cheap even when the
+// surrounding frame carries a multi-megabyte diff. It contributes no error of its own:
+// every call site drops the frame on a decode error.
 func (b *ACPKiroBlock) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*acpKiroBlockShadow)(b)); err != nil {
 		return err
 	}
-	// `preview` repeats the checkpoint URIs and adds originalContent and
-	// modifiedContent in full; it is skipped on purpose (see Checkpoint above), so
-	// reporting it would be noise on the first frame of every file write.
+	// `preview` is skipped on purpose (it repeats the checkpoint URIs and adds both
+	// file bodies in full), so reporting it would be noise on every file write.
 	censusMeta("_meta.kiro", data, reflect.TypeFor[acpKiroBlockShadow](), "preview")
 	return nil
 }
@@ -199,12 +142,10 @@ type ACPDisclosedContext struct {
 	URI         string `json:"uri"`
 }
 
-// ACPPolicyDenial is _meta.kiro.policyDenial on a tool call Cedar refused.
-//
-// MatchedRule is the rule that produced the verdict, which is the part worth
-// surfacing: a denial that names its rule is one click from the rule, and the
-// user owns the policy. `effect` on the outer object is always "deny", so it is
-// not decoded; the inner rule's effect can be deny or ask.
+// ACPPolicyDenial is _meta.kiro.policyDenial on a tool call Cedar refused. MatchedRule
+// is the part worth surfacing: a denial that names its rule is one click from the rule
+// the user owns. `effect` on the outer object is always "deny" and is not decoded; the
+// inner rule's effect can be deny or ask.
 type ACPPolicyDenial struct {
 	MatchedRule *ACPPolicyRule `json:"matchedRule"`
 	Capability  string         `json:"capability"`
@@ -223,19 +164,11 @@ type ACPPolicyRule struct {
 
 // ACPWorkflowMeta is the _meta.kiro.workflow block on a step session's frames.
 //
-// NodePath is KAS's own instance-unique address for a node — a repeat's second
-// iteration is `[wf…, loop, iter-1, step]` — which is why it, rather than
-// NodeID, is what a per-step attribution key is built from: two iterations of
-// one step share a NodeID and must not share a block.
-//
-// That `iter-<n>` is the FRAME spelling only. `_kiro/workflow/inspect`'s state
-// tree names the same container `<repeatId>#<n>`, so a client joining the two
-// translates the tree into this spelling rather than the reverse.
-//
-// WorkflowName, Iteration and BranchID are decoded because the transcript's run
-// card states them: an unnamed run reads as machinery, and two passes of one loop
-// body are otherwise the same row twice. KAS's WorkflowPersistedMetaSchema is the
-// full set, and `type` is always the literal "step" today.
+// NodePath, not NodeID, is what a per-step attribution key is built from: two
+// iterations of one step share a NodeID and must not share a block. Its `iter-<n>`
+// segment is the FRAME spelling only — inspect's state tree names the same container
+// `<repeatId>#<n>`, so a client joining the two translates the tree into this spelling.
+// WorkflowName, Iteration and BranchID are decoded because the run card states them.
 type ACPWorkflowMeta struct {
 	WorkflowID   string   `json:"workflowId"`
 	WorkflowName string   `json:"workflowName"`
@@ -246,26 +179,14 @@ type ACPWorkflowMeta struct {
 	Iteration    int      `json:"iteration"`
 }
 
-// SubtaskID is the per-block attribution key for a step's content.
+// SubtaskID is the per-block attribution key for a step's content. Without one, a
+// step's prose merges into the launching agent's own paragraph: the append extends a
+// block whenever kind and subtask match, and a step's text frame carries an empty
+// agentSubtaskId, so empty matched empty.
 //
-// A step's prose otherwise merges into the launching chat's own
-// paragraph: the chunk handlers append through
-// Buffer.AppendTextDelta(text, subtask), which extends a block only when
-// kind and subtask match, and a step's text frame carries an empty
-// agentSubtaskId (KAS sets that only on tool frames) — so empty matched
-// empty and the step's words landed inside the parent agent's block.
-//
-// Reusing agent_subtask_id rather than adding a parallel channel means
-// the client already groups same-subtask blocks into a collapsible
-// delegated-work block, so a step renders as delegated work with no
-// client change at all. The `wf:` prefix keeps the two id spaces from
-// colliding.
-//
-// Two segments, and the run id is the first: `wf:<workflowId>:<nodePath>`
-// lets the client render a step inside the run that started it. The format
-// itself lives in vibekit.StepSubtaskID, beside the parse that reads it
-// back; this method is only the decode site that knows where the two
-// segments come from.
+// It reuses agent_subtask_id rather than adding a channel, so a step renders through
+// the grouping the client already has. The format lives in vibekit.StepSubtaskID,
+// beside the parse that reads it back; this method only supplies the two segments.
 func (w *ACPWorkflowMeta) SubtaskID() string {
 	if w == nil || w.WorkflowID == "" {
 		return ""
@@ -273,9 +194,10 @@ func (w *ACPWorkflowMeta) SubtaskID() string {
 	return vibekit.StepSubtaskID(w.WorkflowID, runNodePath(w))
 }
 
-// ACPCheckpointMeta is the _meta.kiro.checkpoint object on a completed
-// file-writing tool_call_update. Every field is independently optional —
-// see vibekit.ToolCheckpoint for the create-has-no-pre-image case.
+// ACPCheckpointMeta is the _meta.kiro.checkpoint object on a file-writing
+// tool_call_update. It arrives only on the update whose status is "completed", which is
+// why it is merged per field rather than set once, and every field is independently
+// optional — see vibekit.ToolCheckpoint for the create-has-no-pre-image case.
 type ACPCheckpointMeta struct {
 	Original string `json:"original"`
 	Modified string `json:"modified"`
@@ -292,41 +214,23 @@ type ACPRefusalMeta struct {
 	RecommendedModel string `json:"recommendedModel"`
 }
 
-// ACPConsentMeta is the _meta.kiro.consent object on a
-// session/request_permission (kiro-cli 2.19.1). Both fields are present ONLY
-// when persisting a rule for this command would NOT work: KAS generates three
-// candidate shell patterns (base / partial / full), probes each through its own
-// policy engine, and reports not-persistable when any would fail to match or
-// the command already failed to parse. A non-shell capability and an explicit
-// ask always report persistable.
+// ACPConsentMeta is the _meta.kiro.consent object on a session/request_permission, sent
+// ONLY when persisting a rule for this command would NOT work.
 //
-// PersistableConsent is a *bool and the pointer is LOAD-BEARING, because the
-// polarity is absent-means-yes. A plain bool decodes the 2.19.0 wire — which
-// carries no consent object at all — as false, i.e. "not persistable", and that
-// would suppress the Always-allow row on every command of every request. It is
-// the loudest possible regression from the smallest possible mistake, so nil
-// has to stay distinguishable from present-and-false: nil means KAS said
-// nothing, which means the offer stands.
-//
-// PersistableConsentReason is decoded and deliberately dropped at the seam. It
-// is long, it names a permissions file the vibekit user never hand-edits, and
-// it carries a cmd.exe/PowerShell tail unreachable on Linux. KAS owns the
-// verdict; vibekit owns the copy — see vibekit.AlwaysAllowBlock. The field
-// stays declared because this is the only place in code the upstream contract
-// is written down, and a member nobody reads is still a member KAS sends.
+// PersistableConsent's pointer is LOAD-BEARING: the polarity is absent-means-yes, so a
+// plain bool would decode a wire that sends no consent object as "not persistable" and
+// suppress the Always-allow row on every request; nil means KAS said nothing. The reason
+// string is decoded and dropped at the seam: long, and it names a file the user never
+// hand-edits.
 type ACPConsentMeta struct {
 	PersistableConsent       *bool  `json:"persistableConsent"`
 	PersistableConsentReason string `json:"persistableConsentReason"`
 }
 
-// ACPPermissionMeta is the `_meta` on a session/request_permission.
-//
-// NAMED rather than declared inline inside the handler's decode struct because
-// this frame is the one human APPROVAL surface on the wire, and its `_meta`
-// now multiplexes three unrelated concerns — which kind of ask this is, a turn
-// approval's file list, and whether a rule for it could ever match. An inline
-// struct hides all three from anything but the handler that happens to decode
-// them today.
+// ACPPermissionMeta is the `_meta` on a session/request_permission. NAMED rather than
+// inline in the handler's decode struct because this frame is the one human APPROVAL
+// surface on the wire, and its `_meta` multiplexes three unrelated concerns an inline
+// struct would hide from everything but today's handler.
 type ACPPermissionMeta struct {
 	Kiro ACPPermissionKiroBlock `json:"kiro"`
 }
@@ -341,15 +245,12 @@ type ACPPermissionKiroBlock struct {
 	Consent ACPConsentMeta `json:"consent"`
 	// MCPTool carries the identity KAS verified for an MCP-backed tool.
 	MCPTool ACPMCPToolWire `json:"mcpTool"`
-	// Type marks a TURN APPROVAL ("turn_approval"). A turn approval is not a
-	// separate method — KAS raises it as an ordinary
-	// session/request_permission and puts the file list beside this — so this
-	// is the only thing distinguishing "may I run this tool" from "may I apply
-	// this turn's writes".
+	// Type marks a TURN APPROVAL ("turn_approval"), which KAS raises as an ordinary
+	// session/request_permission — so this is the only thing distinguishing "may I run
+	// this tool" from "may I apply this turn's writes".
 	Type string `json:"type"`
-	// Files is the turn approval's staged file list. Paths arrive ABSOLUTE and
-	// the action id arrives as `toolCallId`; both are renamed on the way out
-	// (see vibekit.ApprovalFile).
+	// Files is the turn approval's staged file list. Paths arrive ABSOLUTE and the
+	// action id arrives as `toolCallId`; both are renamed on the way out.
 	Files []ACPApprovalFile `json:"files"`
 }
 
@@ -382,13 +283,10 @@ type ACPToolCallWire struct {
 	Meta ACPKiroMeta `json:"_meta"`
 }
 
-// ACPToolCallUpdateWire is the wire shape for tool_call_update session
-// updates. KAS's zToolCallUpdate also carries optional title/kind (a
-// mid-flight card refinement) and rawOutput; we decode title/kind so the
-// card can be relabelled, and take ONE narrow field out of rawOutput —
-// see ACPRawOutput — while leaving the rest undecoded, because the tool's
-// textual output already arrives through the `content` blocks below and
-// the domain ToolCall has no general structured-output field.
+// ACPToolCallUpdateWire is the wire shape for tool_call_update session updates.
+// title/kind are decoded so a card can be relabelled mid-flight; rawOutput yields ONE
+// narrow field (see ACPRawOutput) and is otherwise left undecoded, because the tool's
+// textual output already arrives through the `content` blocks.
 type ACPToolCallUpdateWire struct {
 	ToolCallID string                    `json:"toolCallId"`
 	Title      string                    `json:"title"`
@@ -402,20 +300,13 @@ type ACPToolCallUpdateWire struct {
 	Meta ACPKiroMeta `json:"_meta"`
 }
 
-// ACPRawOutput is the whole of what this client reads out of a tool
-// call's `rawOutput`, which KAS types as `unknown` and fills with
-// whatever the tool returned.
+// ACPRawOutput is the whole of what this client reads out of a tool call's `rawOutput`,
+// which KAS types as `unknown` and fills with whatever the tool returned.
 //
-// `run_workflow` is the reason: its terminal update carries
-// `{message, workflowId, status}`, and the workflow id is the only
-// structural link from the invocation to the run it started. Without it
-// the transcript cannot render a run's steps inside the tool call that
-// launched them.
-//
-// Decoding is deliberately narrow and tolerant: rawOutputWorkflowID
-// returns "" for a non-object, a missing field or malformed JSON. Do not
-// widen this into a general structured-output channel — the content
-// blocks are that channel.
+// `run_workflow` is the reason: the workflow id on its terminal update is the only
+// structural link from the invocation to the run it started. Decoding stays narrow and
+// tolerant — do not widen it into a general structured-output channel, which is what
+// the content blocks are.
 type ACPRawOutput struct {
 	WorkflowID string `json:"workflowId"`
 	Error      string `json:"error"`
@@ -436,14 +327,10 @@ func rawOutputWorkflowID(raw json.RawMessage) string {
 	return out.WorkflowID
 }
 
-// rawOutputFailureText extracts the reason a failed tool call reports, or
-// "" when rawOutput is absent, malformed, neither a string nor an
-// object, or carries no text.
-//
-// Callers must gate on the terminal status being `failed` and on nothing
-// else having produced output: for a failed edit KAS puts a diff in the
-// content blocks and the reason nowhere else, so there is no content
-// channel to prefer on that path.
+// rawOutputFailureText extracts the reason a failed tool call reports, or "" when
+// rawOutput is absent, malformed, neither a string nor an object, or carries no text.
+// Callers must gate on the terminal status being `failed` and on nothing else having
+// produced output.
 func rawOutputFailureText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -467,12 +354,10 @@ type ACPPlanWire struct {
 	Entries []vibekit.PlanEntry `json:"entries"`
 }
 
-// ACPModeUpdateWire is the wire shape for the current_mode_update
-// session/update sub-kind. KAS keys the new mode on `currentModeId`
-// (the bundle's zCurrentModeUpdate object), NOT `modeId` — `modeId` is
-// the field name on the outbound session/set_mode REQUEST (command/mode.go),
-// a different message. Reading the wrong key here left ModeID empty, so
-// HandleModeUpdate never persisted agent-initiated mode changes.
+// ACPModeUpdateWire is the wire shape for the current_mode_update session/update
+// sub-kind. The new mode is keyed on `currentModeId`, NOT `modeId` — that is the field
+// name on the outbound set_mode REQUEST, a different message — and reading the wrong one
+// leaves ModeID empty, so no agent-initiated mode change is persisted.
 type ACPModeUpdateWire struct {
 	ModeID string `json:"currentModeId"`
 }
@@ -484,48 +369,32 @@ type ACPSessionUpdateEnvelope struct {
 	Update    json.RawMessage `json:"update"`
 }
 
-// ACPSessionUpdateBase extracts the two discriminators every
-// session/update dispatch needs: the sessionUpdate kind, and whether the
-// frame is a replay of stored history rather than something happening
-// now.
+// ACPSessionUpdateBase extracts the two discriminators every session/update dispatch
+// needs: the sessionUpdate kind, and whether the frame is a replay of stored history.
 //
-// KAS replays a session's whole transcript as ordinary session/update
-// notifications in response to session/load, tagging each replayed frame
-// `_meta.kiro.replay: true`. Note the nesting: the flag is on the update
-// object, not on params — reading it off params yields false for every
-// frame.
-//
-// Live frames leave it absent, and so does anything describing the
-// session's current state rather than its history. That is a rule
-// rather than an enumerable list, since the untagged set grows over
-// releases; do not replace this with "drop everything during a load",
-// which would suppress a notification family nobody listed.
+// A session/load replays the whole transcript as ordinary session/update notifications
+// tagged `_meta.kiro.replay: true`. Note the nesting: the flag is on the UPDATE object,
+// so reading it off params yields false for every frame. Absent means live, and also
+// means "describes current state rather than history" — a rule rather than a list, since
+// the untagged set grows over releases, so do not replace it with "drop during a load".
 type ACPSessionUpdateBase struct {
 	Kind vibekit.ACPUpdateKind `json:"sessionUpdate"`
 	Meta struct {
 		Kiro struct {
-			// Workflow is present on a workflow step's frames and is
-			// the discriminator the dispatcher classifies on.
+			// Workflow is the discriminator the dispatcher classifies a step on.
 			Workflow *ACPWorkflowMeta `json:"workflow"`
 			Replay   bool             `json:"replay"`
 		} `json:"kiro"`
 	} `json:"_meta"`
 }
 
-// JSON field name constants — the wire protocol uses these strings
-// in many places; constants keep them in one place and silence
-// goconst warnings.
-
 // ContentTypeContent is the ACP content-block type discriminator value "content".
-// Distinct from jsonFieldContent which is the JSON field *name* "content".
+// Distinct from jsonFieldContent, which is the JSON field *name* "content".
 const ContentTypeContent = "content"
 
-// ContentTypeDiff is the ACP content-block type for file-change diffs
-// in tool_call and tool_call_update payloads.
+// ContentTypeDiff is the ACP content-block type for file-change diffs.
 const ContentTypeDiff = "diff"
 
-// ContentTypeTerminal is the ACP content-block type that names the terminal
-// running an execute tool call. Its terminalId is how the tool card finds its
-// own output stream, which is what makes the transcript the rendering surface
-// for agent commands.
+// ContentTypeTerminal is the ACP content-block type naming the terminal running an
+// execute tool call. Its terminalId is how the tool card finds its own output stream.
 const ContentTypeTerminal = "terminal"

@@ -336,30 +336,13 @@ function mountPage(container: HTMLElement, workflowID: string): ExecPageView {
   return built;
 }
 
-/** Ask KAS for the shown step's transcript, when it is worth asking.
+/** Ask KAS for the shown step's transcript, when it is worth asking: the node must host
+ *  one, it must be SETTLED (a live KAS session cannot be `session/load`ed), and the
+ *  chat-route slice must be empty, or this fetches a second copy of rendered content.
  *
- *  THREE gates, each closing a way this would ask for something that cannot be
- *  served or is already on screen:
- *
- *   1. the node must HOST a transcript at all (`transcript === true`) — a container
- *      has nothing to read.
- *   2. it must be SETTLED. A `pending` or `skipped` step has no session, so the read
- *      would spend a round trip to be told what the vocabulary already answers
- *      locally; a step still in flight holds a busy session, which cannot be
- *      `session/load`ed at all, and its content reaches the pane by its own route
- *      meanwhile.
- *   3. the SLICE must be empty. That is what "preferred when the slice is empty"
- *      means, stated as a gate: the chat route's blocks are already the same content
- *      and are already rendered, so asking would be a second copy of what is there.
- *
- *  Armed from `onShowNode`, which fires when the shown node's PATH or its STATE
- *  moves, so this runs once per attention rather than once per repaint. The STATE
- *  half is what makes gate 2 a deferral rather than a refusal: a reader who clicks a
- *  running step is refused at that moment, `select()` PINS the selection so the path
- *  never moves again, and the read is armed by the repaint that shows the step
- *  SETTLED. The pair is also what bounds the `unavailable` retry — that verdict is
- *  the one worth asking again, and it is re-asked when the reader re-selects the step
- *  or its state moves, never once per repaint. */
+ *  `onShowNode`'s `(path, state)` guard is what makes the settled gate a DEFERRAL:
+ *  `select()` pins the selection, so a step clicked while running is read once it
+ *  settles, and the transient `unavailable` verdict is re-asked no more often. */
 function armStepRead(node: ExecNode | undefined): void {
   if (node?.transcript !== true || shownRun === "") {
     return;

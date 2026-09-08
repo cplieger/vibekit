@@ -47,15 +47,14 @@ const (
 	EventStepNotice EventKind = "step_notice"
 )
 
-// UserKind separates the two kinds of user row: a PROMPT, which opens a turn, and
-// a STEER, which joins the turn already running.
+// UserKind separates the two kinds of user row: a PROMPT, which opens a turn, and a
+// STEER, which joins the turn already running.
 //
-// ABSENT means prompt. That is the whole legacy population and the safe direction,
-// since an unreadable kind opens a turn rather than folding one away. A steer row
-// carries NO TurnOutcome: opensHeaderlessTurn's `m.TurnOutcome != ""` clause would
-// otherwise let one open a headerless turn. A third member is a coordinated wire
-// change — the generated client decoder THROWS on a value it does not know, so
-// this is not forward-tolerant.
+// ABSENT means prompt — the whole legacy population, and the safe direction, since an
+// unreadable kind opens a turn rather than folding one away. A steer row carries NO
+// TurnOutcome, or opensHeaderlessTurn would let one open a headerless turn. A third
+// member is a coordinated wire change: the generated client decoder THROWS on an
+// unknown value.
 type UserKind string
 
 // UserKindPrompt and UserKindSteer are the valid UserKind values for a user message.
@@ -424,13 +423,10 @@ type Message struct {
 	// and recommended model the client's refusal callout renders.
 	Refusal *RefusalInfo `json:"refusal,omitempty"`
 	Plan    []PlanEntry  `json:"plan,omitempty"`
-	// Attachments are the files attached to THIS prompt, on the user message so a
-	// sent turn renders them as header pills. It must live on the record:
-	// BuildPromptBlocks folds each one into a content block on the way OUT, so a
-	// turn read back has nothing to recover the list from.
-	//
-	// Absent on older records and on a steer, which joins the turn already running
-	// and takes a plain string, so it carries no structured list.
+	// Attachments are the files attached to THIS prompt, on the user message so a sent
+	// turn renders them as header pills. It must live on the record: each one is folded
+	// into a content block on the way OUT, so a turn read back has nothing to recover
+	// the list from. Absent on older records, and on a steer, which takes a plain string.
 	Attachments []Attachment `json:"attachments,omitempty"`
 	// TurnCredits / TurnElapsedMs complete the turn footer alongside ChangedFiles.
 	// omitempty drops the zero cases: a read-only turn has none.

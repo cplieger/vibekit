@@ -659,14 +659,10 @@ func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind v
 }
 
 // reportNoSubscribers states that a notification went nowhere for want of a
-// subscriber, ONCE per episode of that condition: a permission ask reaches
-// NotifyPush per tool call, so a line per drop would bury the rest of the log on
-// a workspace nobody has ever subscribed from. A subscriber arriving re-arms it,
-// so a later unsubscribe is reported again.
-//
-// Without it a dead push pipeline and a workspace nobody subscribed from produce
-// identical logs, which is what made the 2026-08 "push is broken" report
-// undiagnosable from the box.
+// subscriber, ONCE per episode of that condition: a permission ask reaches NotifyPush
+// per tool call, so a line per drop would bury the rest of the log. A subscriber
+// arriving re-arms it, so a later unsubscribe is reported again. Without the line, a
+// dead push pipeline and a workspace nobody subscribed from log identically.
 func (bc *BridgeCoordinator) reportNoSubscribers(kind vibekit.PushKind, chatID vibekit.ChatID) {
 	if !bc.noSubscribers.CompareAndSwap(false, true) {
 		return

@@ -36,24 +36,18 @@ type pushPayload struct {
 	vibekit.PushSubject
 }
 
-// Send delivers a push notification to all subscribers, debounced per KIND AND
-// SUBJECT (so one pull request settling does not suppress another's verdict).
+// Send delivers a push notification to all subscribers, debounced per KIND AND SUBJECT
+// (so one pull request settling does not suppress another's verdict). Pass a zero
+// subject for a workspace-global notification with nothing single behind it.
 //
-// subject names what the notification is about; see vibekit.PushSubject. Pass a
-// zero value for a workspace-global notification with nothing single behind it.
-//
-// preflightSend returns nil to mean DO NOT SEND (a gate refused), vs a non-nil
-// EMPTY slice meaning every gate passed but nobody is subscribed — only the
-// former is a return here; the latter still fans out to zero endpoints because
-// preflightSend stamps the debounce timestamp before snapshotting subscribers.
+// preflightSend returns nil to mean DO NOT SEND, against a non-nil EMPTY slice meaning
+// every gate passed but nobody is subscribed. Only the first returns here; the second
+// still fans out to zero endpoints, having already stamped the debounce.
 func (s *Service) Send(ctx context.Context, title, body string, notifyType vibekit.PushKind, subject vibekit.PushSubject) {
 	slog.Debug("push: send", "kind", string(notifyType))
-	// Trim against the *marshaled* size, not the raw title+body length. The
-	// JSON envelope (~22 bytes for {"title":...,"body":...}) plus any
-	// character escaping count toward pushBodyCap, so a naive title+body
-	// check leaves the encoded payload over the cap and push() rejects —
-	// drops — it. fitToCap guarantees the marshaled payload fits, so an
-	// oversize notification is delivered truncated instead of vanishing.
+	// Trim against the *marshaled* size, not the raw title+body length: the JSON envelope
+	// and any escaping count toward pushBodyCap, so a naive check leaves the encoded
+	// payload over the cap and push() drops it rather than truncating it.
 	if t, b, truncated := fitToCap(title, body, subject); truncated {
 		slog.Warn("push: payload too large, truncating",
 			"bytes", len(title)+len(body), "cap", pushBodyCap)
@@ -180,15 +174,13 @@ func classify(code int) disposition {
 	}
 }
 
-// deliver sends one payload to one subscriber, retrying the retryable, and
-// reports the disposition it ended on (a give-up reports dispRetry: keep).
+// deliver sends one payload to one subscriber, retrying the retryable, and reports the
+// disposition it ended on (a give-up reports dispRetry: keep).
 //
-// No queue and no dead-letter store, deliberately: nothing here is durable
-// work — an unanswered permission is replayed on reconnect by the runtime's
-// pending-permission tracker, and a finished turn is already in the transcript.
-// An undelivered notification costs a nudge, not state, so the retry budget is
-// wall-time (how long the notification stays meaningful) rather than an
-// attempt count.
+// No queue and no dead-letter store, deliberately: nothing here is durable work, since an
+// unanswered permission is replayed on reconnect and a finished turn is already in the
+// transcript. An undelivered notification costs a nudge rather than state, so the retry
+// budget is wall-time — how long the notification stays meaningful — not an attempt count.
 func (s *Service) deliver(
 	ctx context.Context,
 	sub vibekit.PushSubscription,
@@ -412,16 +404,12 @@ func urgencyFor(kind vibekit.PushKind) string {
 // service drops the message, which is the wanted outcome: an alert about
 // something that has stopped being true costs the reader more than silence.
 const (
-	// A permission ask blocks the turn, and the interaction dock replays every
-	// unanswered one on reconnect — so opening the app shows it whatever this TTL
-	// says, and all the notification itself buys is promptness. Ten minutes past
-	// the ask the container may have restarted (which cancels it) or another
-	// device may have answered, so a high-urgency alert landing later is noise
-	// about a turn that no longer exists.
+	// A permission ask blocks the turn and the dock replays every unanswered one on
+	// reconnect, so all this notification buys is promptness. Ten minutes on, the
+	// container may have restarted or another device answered.
 	ttlPermission = 10 * time.Minute
-	// "The agent finished" is moot an hour later: by then the reader has either
-	// come back to the chat or stopped waiting. Same window pushRetryBudget's own
-	// doc comment reasons from.
+	// "The agent finished" is moot an hour later: by then the reader has either come
+	// back to the chat or stopped waiting.
 	ttlAgentFinished = time.Hour
 	// A pull request's verdict does not expire — it is still true tomorrow — so
 	// this is the one kind worth delivering to a device that was away all day.
@@ -459,12 +447,9 @@ func (s *Service) push(
 	payload []byte,
 	kind vibekit.PushKind,
 ) (int, time.Duration, error) {
-	// Defense-in-depth: bound payload size before any allocation. The
-	// IETF web-push spec caps record size at 4096 bytes; pushBodyCap=3000
-	// is the project's pre-pad ceiling. This early check makes the
-	// `make([]byte, len(payload)+1)` allocation in encryptPayload
-	// provably bounded and silences CodeQL's go/allocation-size-overflow
-	// rule.
+	// Bound the payload before any allocation, which is what makes encryptPayload's
+	// len(payload)+1 provably bounded. The spec caps a record at 4096 bytes;
+	// pushBodyCap is the pre-pad ceiling.
 	if len(payload) > pushBodyCap {
 		return 0, 0, fmt.Errorf("payload too large: %d bytes (max %d)", len(payload), pushBodyCap)
 	}
@@ -477,12 +462,9 @@ func (s *Service) push(
 		return 0, 0, err
 	}
 
-	// Derive the request context from BOTH the caller's ctx and the
-	// service lifecycle, unconditionally. The previous fast path merged
-	// only when s.lifetime was ALREADY canceled, so a send started while
-	// healthy never observed a later Service.Close and ran until the
-	// client timeout. Three small allocations per subscriber per push is
-	// noise at push frequency.
+	// Derive from BOTH the caller's ctx and the service lifecycle, UNCONDITIONALLY:
+	// merging only when s.lifetime is already cancelled leaves a send that started
+	// healthy blind to a later Close, running until the client timeout.
 	reqCtx, mergeCleanup := mergeCtx(ctx, s.lifetime)
 	defer mergeCleanup()
 
@@ -501,11 +483,9 @@ func (s *Service) push(
 	if err != nil {
 		return 0, 0, err
 	}
-	// Drain + close so HTTP/1.1 keep-alive can reuse the connection
-	// for the next push to the same vendor host. Cap via LimitReader
-	// (vendor bodies are tiny; 64 KiB is ample for any legitimate
-	// response) and ignore errors — a failed drain closes the
-	// response anyway and the next push opens a fresh connection.
+	// Drain + close so keep-alive can reuse the connection for the next push to the
+	// same vendor host, capped because the body is untrusted. A failed drain is
+	// ignored: it closes the response anyway and the next push opens a connection.
 	if _, copyErr := io.Copy(io.Discard, io.LimitReader(resp.Body, pushResponseCap)); copyErr != nil {
 		// Already at debug level: drain failures are expected when
 		// the push service closes the connection immediately.
@@ -557,11 +537,9 @@ func encryptPayload(sub vibekit.PushSubscription, payload []byte) ([]byte, error
 		return nil, err
 	}
 
-	// RFC 8188 §2.1 single-record plaintext: payload followed by the 0x02
-	// padding delimiter (0x02 = last record, no additional padding). This is
-	// NOT a 2-byte zero prefix — that was the obsolete "aesgcm" draft scheme;
-	// a conformant browser DISCARDS an aes128gcm record whose delimiter octet
-	// isn't 0x02, so payloaded pushes silently failed before this fix.
+	// RFC 8188 §2.1 single-record plaintext: the payload followed by the 0x02 padding
+	// delimiter, NOT the obsolete "aesgcm" draft's 2-byte zero prefix. A conformant
+	// browser silently DISCARDS an aes128gcm record whose delimiter octet is not 0x02.
 	padded := make([]byte, len(payload)+1)
 	copy(padded, payload)
 	padded[len(payload)] = 0x02
@@ -591,17 +569,14 @@ func encryptPayload(sub vibekit.PushSubscription, payload []byte) ([]byte, error
 // exceeds the budget fitToCap hands it.
 const pushTruncMarker = "..."
 
-// fitToCap trims the body — then, only if an empty body still overflows, the
-// title — until the marshaled pushPayload is at most pushBodyCap bytes, and
-// reports whether anything was trimmed. Sizing against the marshaled form
-// (JSON envelope + escaping included) is required because push() rejects
-// anything over the cap outright.
+// fitToCap trims the body — then, only if an empty body still overflows, the title —
+// until the marshaled pushPayload is at most pushBodyCap bytes, and reports whether
+// anything was trimmed. Sizing against the MARSHALED form (JSON envelope and escaping
+// included) is required because push() rejects anything over the cap outright.
 //
-// Trimming goes through runesafe's Capped pair so the byte cap never splits a
-// multi-byte rune and the truncation marker is charged inside that cap (body
-// uses the CR/LF-keeping variant since notification bodies are legitimately
-// multi-line). The loop terminates because each pass strictly shrinks the
-// field being trimmed to a cap below its current length.
+// Trimming goes through runesafe's Capped pair, so the byte cap never splits a rune and
+// the marker is charged inside the cap (the body keeps CR/LF, being legitimately
+// multi-line). The loop terminates because each pass strictly shrinks one field.
 func fitToCap(title, body string, subject vibekit.PushSubject) (fitTitle, fitBody string, truncated bool) {
 	if marshaledLen(title, body, subject) <= pushBodyCap {
 		return title, body, false

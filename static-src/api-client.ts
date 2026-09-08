@@ -1,21 +1,6 @@
-// ---------------------------------------------------------------------------
-// Thin API client: one shared shape for every REST-style fetch call.
-// Each helper returns `null` on failure (apiDelete returns `false`); callers
-// narrow and decide. Errors are logged centrally via console.warn so devtools
-// has a consistent audit trail.
-//
-// The request/response core is @cplieger/fetch. This module is a thin adapter
-// that (1) pins vibekit's fetch config on an isolated createFetch instance,
-// (2) maps @cplieger/fetch's non-throwing ApiResult envelope onto vibekit's
-// historical null/false-collapsing convention, and (3) centralizes the
-// console.warn / console.error logging. The public surface (apiGet / apiPost /
-// apiDelete / apiGetTyped / apiPostTyped / apiPutOrError + CancellableSlot) is
-// unchanged, so the call sites don't move.
-//
-// NOT used for the POST /api/command envelope — that's a different contract
-// (Idempotency-Key dedup, typed SendResult with status codes) served by
-// transport.ts's `send()` function. Keep the two separate.
-// ---------------------------------------------------------------------------
+// Every REST-style call goes through here: each helper collapses failure to
+// `null` (`apiDelete` to `false`) and logs it once. The POST /api/command
+// envelope is transport.ts's — a different contract, deliberately not shared.
 
 import {
   createFetch,
@@ -24,23 +9,15 @@ import {
   type RequestOptions,
 } from "@cplieger/fetch";
 
-// API_TIMEOUT_MS and withTimeout come from @cplieger/fetch — the toolkit's
-// single timeout-composition implementation (actions dropped its duplicate
-// copies in v3). Re-exported here so existing consumers (e.g.
-// editor-openers.ts) keep importing them from "./api-client.js" unchanged.
 export { API_TIMEOUT_MS, withTimeout } from "@cplieger/fetch";
 
-// Re-export the local Decoder<T> type so callers don't need a second import.
 export type { Decoder } from "./validators.js";
 import type { Decoder } from "./validators.js";
 
-// vibekit's own isolated fetch layer. `credentials: "same-origin"` is the
-// browser default the hand-rolled core relied on; every call targets an
-// absolute same-origin path (e.g. "/api/whoami"), so there's no baseUrl and no
-// prepareHeaders hook — the client sends no CSRF token, and the server enforces
-// an Origin check instead (internal/server/security.go). An isolated
-// createFetch instance keeps this config off the module-global default so
-// nothing else can mutate vibekit's fetch layer.
+// No baseUrl and no prepareHeaders: every path is absolute same-origin and the
+// client sends no CSRF token, because the server enforces an Origin check
+// instead (internal/server/security.go). An ISOLATED instance, so nothing else
+// can mutate vibekit's fetch layer through the module-global default.
 const fx = createFetch({ credentials: "same-origin" });
 
 /** Build fetch RequestOptions, attaching `signal` only when defined —
@@ -49,17 +26,8 @@ function reqOpts<T>(base: RequestOptions<T>, signal: AbortSignal | undefined): R
   return signal ? { ...base, signal } : base;
 }
 
-/** Central failure logging for the collapsing helpers, mapping @cplieger/fetch's
- *  error envelope onto the log shapes the hand-rolled core used:
- *   - a deliberate caller abort (code "cancelled", status 0) is expected and
- *     never logged — a caller aborted an in-flight request via
- *     AbortController.abort() (e.g. the git Changes tab supersedes a refresh,
- *     or a CancellableSlot rotates);
- *   - a network error / timeout / client-side build failure (status 0) logs
- *     "api: fetch failed";
- *   - a 2xx body that failed JSON.parse or a decoder shape check (code
- *     "decode") logs "api: decode failed";
- *   - a real non-2xx HTTP response logs "api: non-ok". */
+/** Central failure logging for the collapsing helpers. A deliberate caller
+ *  abort is expected and stays silent; every other failure gets one line. */
 function logApiError(r: ApiErr, method: string, path: string): void {
   if (r.status === 0) {
     if (r.code === "cancelled") {
@@ -72,18 +40,12 @@ function logApiError(r: ApiErr, method: string, path: string): void {
     console.error("api: decode failed:", method, path, r.error);
     return;
   }
-  // r.error carries the server's own message (the `{"error": …}` body every
-  // api.* helper writes). It used to be dropped here, so a non-2xx logged its
-  // status and nothing about the cause, and `collapse` then returned null — so
-  // the message existed on the wire and reached neither the console nor the
-  // caller.
   console.warn("api: non-ok", method, path, r.status, r.error);
 }
 
-/** Collapse a @cplieger/fetch envelope to `data | null`, logging failures
- *  centrally. A 204 / empty-body response (data === undefined) collapses to
- *  null; a JSON `null` / `0` / `false` / `""` body is real data and passes
- *  through unchanged. */
+/** Collapse an envelope to `data | null`, logging failures centrally. An empty
+ *  body (`undefined`) becomes null; a JSON `null` / `0` / `false` / `""` is real
+ *  data and passes through. */
 function collapse<T>(r: FetchResult<T>, method: string, path: string): T | null {
   if (r.ok) {
     return r.data ?? null;
@@ -106,10 +68,8 @@ export async function apiPost<T>(
   return collapse(await fx.apiPostRaw<T>(path, body, reqOpts({}, signal)), "POST", path);
 }
 
-/** DELETE `path`. Returns true on success, false on failure. The response
- *  body is deliberately never read (`ignoreBody`) — the hand-rolled core
- *  never read DELETE bodies, so a 2xx with a non-JSON body counts as success
- *  and only 4xx/5xx and transport failures are real failures. */
+/** DELETE `path`. The body is never read (`ignoreBody`), so a 2xx carrying
+ *  non-JSON counts as success and only 4xx/5xx and transport failures fail. */
 export async function apiDelete(path: string, signal?: AbortSignal): Promise<boolean> {
   const r = await fx.apiDeleteRaw<unknown>(path, reqOpts({ ignoreBody: true }, signal));
   if (r.ok) {
@@ -119,43 +79,23 @@ export async function apiDelete(path: string, signal?: AbortSignal): Promise<boo
   return false;
 }
 
-/** Result shape for apiPutOrError: on 2xx `ok` is true and `data` is the
- *  parsed body; on 4xx/5xx `ok` is false, `status` is the HTTP status, and
- *  `error` is the parsed "error" field from the server's JSON body (empty
- *  string if the body didn't include one). Used by forms that need to surface
- *  specific failure reasons (400 validation errors, 409 conflicts) inline
- *  instead of silently failing. */
+/** A failure a caller has to distinguish rather than collapse. `error` is the
+ *  server's own "error" field, or "" when the body carried none. */
 interface ApiResult<T> {
   ok: boolean;
   status: number;
   data: T | null;
   error: string;
-  /** Parsed JSON body of a FAILED response, when the server sent one
-   *  (e.g. /api/health's 503 `{"status":"unready","reason":...}`,
-   *  which carries its detail outside the standard "error" key).
-   *  Undefined on success and on non-JSON/empty error bodies.
-   *  Server-controlled content — same trust level as `error`. */
+  /** Parsed body of a FAILED response whose detail sits outside the "error"
+   *  key (/api/health's 503 `reason`). Undefined on success and on a non-JSON
+   *  body. Server-controlled, at `error`'s trust level. */
   body?: unknown;
 }
 
-/** The ONE mapping from @cplieger/fetch's envelope onto `ApiResult`, for the three
- *  OrError helpers below.
- *
- *  It exists because the three had written the same construction three times and
- *  differed by one expression each, which is duplicated KNOWLEDGE in the module
- *  that is this app's single source of truth for server calls — the worst place in
- *  the client to keep three copies of one rule. What each helper still owns is what
- *  genuinely differs: the verb, whether a decoder is attached, and whether the
- *  failure is logged.
- *
- *  Two rules the shape encodes. `data` is collapsed to null on the failure side
- *  rather than passed through, because a caller that has been handed a status has
- *  no business reading a body the transport rejected. And `data ?? null` on the
- *  success side is what turns a 204 or an empty body (`undefined`) into a value a
- *  caller can test, while a JSON `null` / `0` / `false` / `""` body passes through
- *  as the real data it is.
- *
- *  Private, and it stays private: the public surface is the three helpers. */
+/** The ONE mapping onto `ApiResult`, shared by the three OrError helpers below;
+ *  each still owns its verb, its decoder and whether it logs. `data` is dropped
+ *  on the failure side — a caller handed a status has no business reading a body
+ *  the transport rejected. */
 function toApiResult<T>(r: FetchResult<T>): ApiResult<T> {
   if (r.ok) {
     return { ok: true, status: r.status, data: r.data ?? null, error: "" };
@@ -163,13 +103,10 @@ function toApiResult<T>(r: FetchResult<T>): ApiResult<T> {
   return { ok: false, status: r.status, data: null, error: r.error, body: r.body };
 }
 
-/** GET `path`, validate the response with `decoder`, return the typed value or
- *  null on non-2xx, network error, or decoder failure. Failures are logged
- *  centrally.
- *
- *  `timeoutMs` overrides the 30s library default, because a server budget LONGER
- *  than the client's is unreachable. A caller's `AbortSignal.timeout()` cannot
- *  substitute: signals compose with `AbortSignal.any`, so the shorter one wins. */
+/** GET `path` and validate it with `decoder`; null on non-2xx, network error or
+ *  decoder failure. `timeoutMs` overrides the 30s default, because a server
+ *  budget LONGER than the client's is unreachable and a caller's
+ *  `AbortSignal.timeout()` cannot substitute — signals compose, shorter wins. */
 export async function apiGetTyped<T>(
   path: string,
   decoder: Decoder<T>,
@@ -180,21 +117,12 @@ export async function apiGetTyped<T>(
   return collapse(await fx.apiGetRaw<T>(path, reqOpts(base, signal)), "GET", path);
 }
 
-/** `apiGetTyped`'s OrError twin: GET `path`, validate the 2xx body with
- *  `decoder`, and report WHICH failure happened instead of collapsing every one
- *  of them to null.
- *
- *  It exists because a caller sometimes has to tell an ANSWER from the absence of
- *  one. The live consumer asks the server whether a chat still exists: a 404 is
- *  authoritative and licenses a terminal claim, while a 5xx, a dead network or an
- *  aborted request licenses nothing — and `apiGetTyped` hands back `null` for all
- *  four. Deriving a verdict from that null is the defect, not the null.
- *
- *  A rejected decoder lands on the FAILURE side carrying the real 2xx status
- *  (@cplieger/fetch's `"decode"` code), so a caller keying on 404 can never
- *  mistake an undecodable 200 for one. Logs nothing, for `apiGetOrError`'s reason:
- *  a status this helper exists to report is an expected state, not a fault worth a
- *  console audit line. */
+/** `apiGetTyped`'s OrError twin, for a caller that has to tell an ANSWER from the
+ *  absence of one: a 404 licenses a terminal claim where a 5xx, a dead network and
+ *  an abort license nothing, and the collapsing form answers null for all four.
+ *  A rejected decoder lands on the failure side carrying the real 2xx status, so
+ *  a caller keying on 404 cannot mistake an undecodable 200 for one. Logs
+ *  nothing: an expected status is not a fault. */
 export async function apiGetTypedOrError<T>(
   path: string,
   decoder: Decoder<T>,
@@ -215,18 +143,10 @@ export async function apiPostTyped<T>(
 }
 
 /** PUT variant that surfaces error details. Use when the UI must show the
- *  server's validation message; otherwise prefer apiAction. On a non-2xx the
- *  `error` field carries the server's JSON "error" message (or "HTTP <status>"
- *  when the body didn't include one), matching the old hand-rolled behavior.
- *
- *  It is the one of the three that LOGS, and that difference is deliberate: a PUT
- *  is a mutation, so a failure is a fault worth a console audit line, where the
- *  other two exist precisely because their non-2xx statuses are expected states.
- *
- *  Sharing `toApiResult` also gives it `body` on the failure side, which it left
- *  undefined before. Additive and at `error`'s own trust level (both are
- *  server-controlled), and no caller reads it today — the alternative was keeping a
- *  fourth hand-written copy of the mapping to withhold one documented field. */
+ *  server's validation message; otherwise prefer apiAction. `error` falls back
+ *  to "HTTP <status>" when the body carried none. The one of the three that
+ *  LOGS: a PUT is a mutation, so a failure is a fault, where the other two exist
+ *  because their non-2xx statuses are expected. */
 export async function apiPutOrError<T>(
   path: string,
   body: unknown,
@@ -239,22 +159,15 @@ export async function apiPutOrError<T>(
   return toApiResult(r);
 }
 
-/** GET variant that surfaces error details instead of collapsing every
- *  failure to null. Use when a non-2xx body is itself meaningful —
- *  /api/health's 503 envelope is the canonical consumer (the degraded
- *  runtime banner needs the `reason` field). On failure, `body` carries
- *  the parsed error JSON when the server sent one. */
+/** GET variant for a caller to whom a non-2xx body is itself meaningful —
+ *  /api/health's 503 `reason` is the canonical consumer. */
 export async function apiGetOrError<T>(path: string, signal?: AbortSignal): Promise<ApiResult<T>> {
-  // No logApiError: the canonical consumer polls health where a 503 is
-  // an EXPECTED state, not a fault worth a console audit line.
+  // Unlogged: that consumer polls health, where a 503 is an expected state.
   return toApiResult(await fx.apiGetRaw<T>(path, reqOpts({}, signal)));
 }
 
-// --- CancellableSlot: reusable abort-controller lifecycle helper ---
-
-/** Manages a single AbortController slot. Calling start() aborts any
- *  prior in-flight request and returns a fresh signal. Eliminates the
- *  repeated `ctrl?.abort(); ctrl = new AbortController()` boilerplate. */
+/** One AbortController slot: `start()` aborts the previous in-flight request
+ *  and returns a fresh signal. */
 export class CancellableSlot {
   private ctrl: AbortController | null = null;
   /** Abort any in-flight request and return a fresh signal. */
