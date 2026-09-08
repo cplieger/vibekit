@@ -11,6 +11,9 @@
 
 import { subscribeByName } from "./actions/index.js";
 import { logout } from "./actions/settings.js";
+import { GLOBAL_BANNER, showBanner } from "./banner-stack.js";
+import { $ } from "./dom.js";
+import { bootMode, clearReloadGuard, noteBootAlive, reloadCount } from "./reload-guard.js";
 import { loadList } from "./store-load.js";
 import {
   getActive,
@@ -70,6 +73,20 @@ let deps: BootDeps | null = null;
 
 export async function startBoot(d: BootDeps): Promise<void> {
   deps = d;
+
+  // A page that crashes and reloads every ~1.5s retries at full rate forever, so past
+  // a threshold this boot withholds what it can (reload-guard.ts). Armed first: the
+  // stability clear is what makes a boot that STAYS up cost the next one nothing.
+  noteBootAlive();
+  const reduced = bootMode() === "reduced";
+  if (reduced) {
+    // `autofocus` has already fired by the time a deferred module runs, so a blur is
+    // the only lever left. The point is the on-screen KEYBOARD, which shortens the
+    // viewport — the axis every measurement in this investigation got worse on — not
+    // the zoom, which the composer's own 16px floor closes.
+    $.promptInput.blur();
+    announceReloadLoop();
+  }
 
   // `identity` needs no rejection handler: every failure IS its `unavailable` arm
   // (identity.ts). Nor does `snapshotRead`, which resolves null for every failure.
@@ -188,9 +205,12 @@ async function restoreWorkspace(
   // BEST-EFFORT: everything below is the authoritative restore, and a hint must not
   // cost the reader that. A throw leaves `resumed` false, so a half-painted resume
   // falls through to the tab set's own activation.
+  //
+  // A REDUCED boot skips the paint outright, so its first frame draws no transcript.
+  // Nothing else changes: the restore below is what the chat actually loads from.
   let resumed = false;
   try {
-    resumed = resumeSnapshot(hint);
+    resumed = bootMode() === "full" && resumeSnapshot(hint);
   } catch {
     /* best-effort */
   }
@@ -266,6 +286,29 @@ function reload(): void {
   location.reload();
 }
 
+/** Say what the reader saw and what it cost them.
+ *
+ *  Not dismissible: it explains why the screen is thinner than usual, so it stands
+ *  until the reader takes the way out of it. The link clears the count and reloads,
+ *  which is the only control that can — nothing else in the page decides this. */
+function announceReloadLoop(): void {
+  const n = reloadCount();
+  showBanner(
+    GLOBAL_BANNER,
+    "reload-loop",
+    `This page reloaded ${String(n)} times in a few seconds, so it started with less loaded.`,
+    "warning",
+    false,
+    {
+      label: "Start in full mode",
+      onClick: () => {
+        clearReloadGuard();
+        reload();
+      },
+    },
+  );
+}
+
 /** Drop the tab strip's authored placeholder (index.html #tab-strip-skeleton).
  *
  *  Removed by id rather than by clearing the container: `tabs.ts` owns the rows
@@ -291,16 +334,23 @@ export function initPostAuth(): void {
   initPostAuthUI();
   // Degraded-runtime banner; re-checks on every gap so recovery self-heals.
   initRuntimeHealth();
-  // The vibekit + kiro-cli build pair. Fire-and-forget: the lines repaint through a
-  // signal, so nothing waits on the `--version` subprocess behind it.
-  initStatusVersions();
-  void loadVersions();
-  // So the pickers have content before the first chat's session/new lands.
-  void fetchCatalog();
-  // The live-runs inventory (the other rebuild trigger is transport:gap). Its
-  // eviction exemption is registered here beside the subagent-tab one because
-  // store.ts is a leaf and may not import run-store.ts or tabs.ts.
-  void rebuildLiveRuns();
+  // The FETCH-ONLY fan-outs, and the whole of what a reduced boot withholds here: each
+  // is fire-and-forget with a usable empty state, so the app still reads a chat. The
+  // two calls above are KEPT — one gates capability, the other reports a degraded
+  // runtime, which is what a reader in this state needs most.
+  if (bootMode() === "full") {
+    // The vibekit + kiro-cli build pair. Fire-and-forget: the lines repaint through a
+    // signal, so nothing waits on the `--version` subprocess behind it.
+    initStatusVersions();
+    void loadVersions();
+    // So the pickers have content before the first chat's session/new lands.
+    void fetchCatalog();
+    // The live-runs inventory (the other rebuild trigger is transport:gap).
+    void rebuildLiveRuns();
+  }
+  // The live-run eviction exemption is registered here beside the subagent-tab one
+  // because store.ts is a leaf and may not import run-store.ts or tabs.ts. Both are
+  // registrations rather than reads, so a reduced boot keeps them.
   registerEvictionExemption(hasLiveRunForChat);
   registerEvictionExemption(subagentTabProjectsChat);
   startEvictionSweep();
