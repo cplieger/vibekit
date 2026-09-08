@@ -29,11 +29,10 @@ interface ContextBarUpdate {
   turnCount: number;
   lastTurnMs: number;
   model: string;
-  /** The reasoning tier to name beside the model, or "" for the ordinary case.
-   *  Already resolved by context-ui.ts: empty means the chat runs at the model's
-   *  own default, or the level is one the service resolved and no default is known
-   *  to call it a departure from. This module renders it and decides nothing about
-   *  it. */
+  /** The reasoning tier to name beside the model, or "" when there is none to
+   *  name. Already resolved by context-ui.ts: empty means the model advertises no
+   *  reasoning effort, or no level resolved at all. This module renders it and
+   *  decides nothing about it. */
   effort?: string;
   metering?: MeteringItem[];
   msgCount?: number;
@@ -70,7 +69,7 @@ class ContextBarController {
     // so the offset IS the unused remainder. The hardcoded 50.27 circumference
     // this replaced was the ring's one magic constant.
     $.contextRingFill.style.strokeDashoffset = String(100 - clamped);
-    $.contextRingFill.style.stroke = contextStroke(clamped, contextSize);
+    $.contextRingFill.style.stroke = contextStroke(clamped);
     const wedge = wedgeDash(summarizationPct);
     $.contextRingWedge.style.strokeDasharray = wedge.dasharray;
     $.contextRingWedge.style.strokeDashoffset = wedge.dashoffset;
@@ -84,10 +83,9 @@ class ContextBarController {
 
     // The tier rides its OWN element, not the model label, for two reasons. The
     // label is capped at 10rem with an ellipsis, so a concatenated tier is the
-    // half that gets clipped — and the tier is the exceptional information here,
-    // present only when the chat departs from the model's default. Hidden with
-    // the `.hidden` utility rather than emptied: `.pill` is a flex row with a
-    // gap, so an empty span would still pad the pill.
+    // half that gets clipped. And hidden with the `.hidden` utility rather than
+    // emptied: `.pill` is a flex row with a gap, so an empty span would still pad
+    // the pill.
     const effort = opts.effort ?? "";
     $.ctxEffortPill.textContent = effort === "" ? "" : `· ${effort}`;
     $.ctxEffortPill.classList.toggle("hidden", effort === "");

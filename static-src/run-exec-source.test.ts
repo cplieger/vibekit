@@ -457,25 +457,8 @@ describe("runToExec alert precedence", () => {
   });
 });
 
-describe("runToExec outputs", () => {
-  // KAS keeps artifacts and captured outputs apart because they are produced
-  // differently; to a reader they are one question. An artifact wins a key collision,
-  // being the value a step CHOSE to publish.
-  it("merges artifacts over captured outputs", () => {
-    const run = runToExec(
-      "wf_1",
-      stateWith(step("a", "completed"), {
-        capturedOutputs: { a: "from capture", b: "only capture" },
-        artifacts: { a: "from artifact" },
-      }),
-      undefined,
-      NO_ASKS,
-    );
-    expect(run.outputs).toEqual({ a: "from artifact", b: "only capture" });
-  });
-
-  it("reports no outputs rather than an empty map", () => {
-    const run = runToExec("wf_1", stateWith(step("a", "completed")), undefined, NO_ASKS);
-    expect(run.outputs).toBeUndefined();
-  });
-});
+// The run-level roll-up this file used to pin is GONE with `ExecRun.outputs`:
+// `RunState.capturedOutputs` and `RunState.artifacts` are keyed by capture name with
+// no node attribution anywhere on the wire, so a per-step region cannot be sourced
+// from them and the roll-up lost its only reader. Both fields stay on `RunState`,
+// which is a documented verbatim passthrough of KAS's own schema.

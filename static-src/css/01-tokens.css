@@ -52,13 +52,14 @@
     --c-red: oklch(75.6% 0.13 2.8deg);
     --c-yellow: oklch(91.9% 0.07 86.5deg);
 
-    /* The context indicator's compaction band: --c-yellow's hue with L sized per
-     * theme, a SEED rather than one mix over it. No single relationship serves
-     * both backdrops — the band has to read lighter than the --c-border track on
-     * dark and darker than it on light, and it must stay quieter than the fill
-     * that sweeps over it (3.55:1 / 3.46:1 vs that track, over WCAG 1.4.11's 3:1
-     * for a graphical object; `css-contrast.py pair`). */
-    --c-context-wedge: oklch(62% 0.07 86.5deg);
+    /* The context indicator's compaction band: --c-yellow's hue with L and C
+     * sized per theme, a SEED rather than one mix over it. No single
+     * relationship serves both backdrops — the band reads lighter than the
+     * --c-border track on dark and darker than it on light — and CHROMA is what
+     * separates it from the fill, whose hues run 2.8-142.7deg continuously and
+     * so cannot. 3.098:1 vs that track, 4.739:1 vs the page, over WCAG 1.4.11's
+     * 3:1 for a graphical object (`css-contrast.py pair`). */
+    --c-context-wedge: oklch(59% 0.12 86.5deg);
 
     /* Seeds rather than alpha washes of the status hues: alpha moves LIGHTNESS,
      * and no alpha from 12% to 26% reaches AA in either theme. These hold the
@@ -335,6 +336,36 @@
   }
 
   :root {
+    /* ---- The POPUP type scale -------------------------------------------- *
+     * A popup row's own text, and a caption beside it. Both popup families read
+     * them — `.popup` (11-popups.css) and `.pill-expand-content` (15-input.css) —
+     * and THE TIER IS THE POINTER, like --ctl-h and --hit-floor above, because a
+     * width query cannot separate a tablet from a desktop.
+     *
+     * TWO RUNGS RATHER THAN A COARSE TIER OVER THE WHOLE --fs-* SCALE: a popup
+     * lift re-assigns a rung (a caption becomes body text, 11px to 14px), so
+     * delivering it by moving --fs-xs would make that rung EQUAL --fs-md and
+     * collapse the two wherever they pair, at 179 and 30 reads. */
+    --fs-popup: var(--fs-base);
+    --fs-popup-meta: var(--fs-xs);
+  }
+
+  /* A caption stays one step under its row, so it cannot outsize the control it
+   * labels (`.effort-label` beside five `.effort-btn`s is the tight case), and
+   * --fs-sm is the floor every popup keeps on a finger. */
+  :root[data-pointer="coarse"] {
+    --fs-popup: var(--fs-md);
+    --fs-popup-meta: var(--fs-sm);
+  }
+
+  @media (width <= 48rem) {
+    :root:not([data-pointer="fine"]) {
+      --fs-popup: var(--fs-md);
+      --fs-popup-meta: var(--fs-sm);
+    }
+  }
+
+  :root {
     /* ---- The radius ladder ----------------------------------------------- *
      * lg 12px containers · md 8px a control inside one, away from its corners ·
      * base 6px a standalone control or chip · sm 4px a tiny box. THE LADDER DOES
@@ -433,8 +464,12 @@
     --c-yellow: oklch(47% 0.09 86.5deg);
 
     /* Sized against light's own track, which the band has to read DARKER than —
-     * see the dark declaration for why this is a seed. */
-    --c-context-wedge: oklch(54% 0.09 86.5deg);
+     * see the dark declaration for why this is a seed. Chroma goes the other way
+     * here: light's ramp carries 0.09-0.15, which the band cannot out-saturate
+     * inside its own L window, so being MUTED is the separation left — and 58%
+     * already drops under 3:1 against the near-white track, so L cannot pay for
+     * it either. 3.061:1 vs that track, 4.295:1 vs the page. */
+    --c-context-wedge: oklch(57% 0.06 86.5deg);
 
     /* At the dark block's hues exactly — only L and C move, because dark's four
      * inks read 1.099-1.678:1 here. Chroma is a gamut fact: yellow cannot hold

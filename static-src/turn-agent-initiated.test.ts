@@ -7,23 +7,23 @@
 // carry none, never close, and the NEXT agent-initiated turn would join it instead
 // of opening — one wrong count and one wrong marker, consistently on both sides.
 //
-// MEASURED, AND REFUTED. Projecting all 37 chat files on the live volume produced
-// 131 turns, 32 of them headerless, and EVERY headerless turn closes on a settled
-// outcome. The dominant shape is a two-message body `(unknown, completed)` — 23 of
-// 32, with 6 more carrying a subagent id alongside — which is precisely the fragment
-// case `closesTurn` documents and deliberately admits: the `unknown` marks a
-// displaced turn's persist, it does NOT terminate the segment, and `deriveOutcome`
-// lets the reply's settled outcome supersede it. A worked file (29 messages, 13
-// turns, 5 of them agent-initiated) showed every boundary landing where it should.
-// So the gate drops the step's turn_end and something else still stamps the
-// launching chat's outcome; the count is right.
+// MEASURED AGAINST ITSELF, WHICH IS WHY IT READ AS SETTLED. Projecting all 37 chat
+// files produced 131 turns, 32 of them headerless, every one closing on a settled
+// outcome — which checks the projection against the projection and never against
+// what a reader counts. A projection can be internally consistent and still
+// disagree with the person reading the rail, and that is what was reported (8
+// prompts against 9 rail turns) and separately measured (4 turns that render
+// nothing at all). The rail shows turns nobody opened, from three distinct causes:
+// a step's content opening a card, a mid-turn steer counted as a prompt, and an
+// auto-wake turn that legitimately has no prompt. The boundary rule and the
+// step-content rule are pinned by `internal/chat/testdata/turn_outcomes.json`.
 //
-// The cases below stage those measured shapes so the refutation is a test rather
-// than a note, and so the collapse becomes a REGRESSION rather than a rediscovery
-// if the outcome ever stops being stamped. The two defects the same audit found and
-// that were real — the trigger reaching only a border style, and a bare UA `title`
-// — are the rail's, and they are pinned in `rail-labels.test.ts` and
-// `turn-rail.test.ts`.
+// The cases below stage the shapes the volume held, and their subtask ids are the
+// ONE-segment `wf:<nodePath>` form, which is malformed under today's
+// `wf:<workflowId>:<nodePath>` — so they exercise the delegate-box fallback rather
+// than the step rule. The two defects the same audit found and that were real — the
+// trigger reaching only a border style, and a bare UA `title` — are the rail's, and
+// they are pinned in `rail-labels.test.ts` and `turn-rail.test.ts`.
 //
 // A browser test rather than a `.node` one: it reads no file. `turns.node.test.ts`
 // earns its suffix by loading the shared cross-language fixture off disk, and the

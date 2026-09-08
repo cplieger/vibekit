@@ -29,7 +29,11 @@ func (rt *Runtime) translateRoles() *translate.Roles {
 		Lines:   rt.lines,
 		// The ledger of steers this server sent — the discriminator between the
 		// user's own words and a workflow reporting into the same buffer.
-		Steers:       rt.steerLedger,
+		Steers: rt.steerLedger,
+		// The projection of KAS's own buffer the connect replay serves from. A
+		// different role from Steers above and deliberately a different owner: an
+		// origin is TTL'd, a waiting steer's lifetime is KAS's buffer.
+		SteerBuffer:  rt.bus,
 		PendingPerms: rt.bus,
 		// rt, not the coordinator: BridgeRespond resolves the reply bridge from
 		// the manager by chat id, which is this type's own reach.

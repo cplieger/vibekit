@@ -8,9 +8,12 @@ package push
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -269,6 +272,209 @@ func TestSend_StatusCodePruning(t *testing.T) {
 	}
 }
 
+// TestSend_AuthRejectionNeedsAWitnessBeforePruning pins the asymmetry between
+// the two ways a push service refuses a subscription for good.
+//
+// A 404/410 is the service stating the subscription is gone, so it is pruned on
+// its own answer (TestSend_StatusCodePruning). A 401/403 states only that the
+// VAPID authorization failed, which is equally the shape of a server-side
+// mistake — a replaced keypair, a wrong audience, a skewed clock — so pruning on
+// it alone would let one such mistake delete the whole store, and the remedy is
+// a human re-subscribing on every device. The witness is another subscriber
+// accepting the SAME notification, which is proof this server's own credentials
+// work.
+//
+// The three cases are the whole decision: refused with no witness (keep),
+// refused beside a delivery (prune), and refused across the whole store (keep
+// everything, which is the mass-delete guard at N>1).
+func TestSend_AuthRejectionNeedsAWitnessBeforePruning(t *testing.T) {
+	const (
+		witnessEP = "https://fcm.googleapis.com/fcm/send/witness"
+		refusedEP = "https://fcm.googleapis.com/fcm/send/refused"
+		refused2  = "https://fcm.googleapis.com/fcm/send/refused-two"
+
+		wholeStoreMsg = "push: every subscriber refused the VAPID authorization"
+		prunedMsg     = "push: pruning subscriptions this server has no key for"
+	)
+
+	// One handler answering by path: the in-memory client routes every host to
+	// it, so a single fan-out can be given two different answers.
+	answerByPath := func(refusal int) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Path, "refused") {
+				w.WriteHeader(refusal)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+		})
+	}
+	remaining := func(s *Service) []string {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return slices.Sorted(maps.Keys(s.subs))
+	}
+
+	t.Run("refused_with_no_witness_keeps_the_subscription", func(t *testing.T) {
+		s, _ := newServiceOnTestServer(t, answerByPath(http.StatusForbidden))
+		s.Subscribe(pushSubscriptionWithValidKeys(t, refusedEP))
+
+		capLog := capture.Default(t)
+		s.Send(t.Context(), "title", "body", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
+
+		if got := remaining(s); !slices.Equal(got, []string{refusedEP}) {
+			t.Errorf("subs after a 403 with nothing delivered = %v, want the subscription kept", got)
+		}
+		if n := capLog.CountExact(wholeStoreMsg); n != 1 {
+			t.Errorf("whole-store refusal logged %d times, want 1; logs = %q", n, capLog.Messages())
+		}
+		// The remedy has to ride the line: no retry and no prune fixes this
+		// state, only a person re-subscribing.
+		if !capLog.HasAttr(wholeStoreMsg, "hint", pushResubscribeHint) {
+			t.Errorf("the whole-store refusal carried no re-subscribe remedy; logs = %q", capLog.Messages())
+		}
+		if n := capLog.CountExact(prunedMsg); n != 0 {
+			t.Errorf("logged %d prune lines with nothing delivered, want 0", n)
+		}
+	})
+
+	t.Run("a_delivery_licenses_pruning_the_refused_one", func(t *testing.T) {
+		s, _ := newServiceOnTestServer(t, answerByPath(http.StatusForbidden))
+		s.Subscribe(pushSubscriptionWithValidKeys(t, witnessEP))
+		s.Subscribe(pushSubscriptionWithValidKeys(t, refusedEP))
+
+		capLog := capture.Default(t)
+		s.Send(t.Context(), "title", "body", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
+
+		if got := remaining(s); !slices.Equal(got, []string{witnessEP}) {
+			t.Errorf("subs after one 201 and one 403 = %v, want only the delivering endpoint", got)
+		}
+		if n := capLog.CountExact(prunedMsg); n != 1 {
+			t.Errorf("prune line logged %d times, want 1; logs = %q", n, capLog.Messages())
+		}
+		if n := capLog.CountExact(wholeStoreMsg); n != 0 {
+			t.Errorf("claimed every subscriber refused while one delivered (%d lines)", n)
+		}
+	})
+
+	t.Run("a_401_across_the_whole_store_deletes_nothing", func(t *testing.T) {
+		s, _ := newServiceOnTestServer(t, answerByPath(http.StatusUnauthorized))
+		s.Subscribe(pushSubscriptionWithValidKeys(t, refusedEP))
+		s.Subscribe(pushSubscriptionWithValidKeys(t, refused2))
+
+		capLog := capture.Default(t)
+		s.Send(t.Context(), "title", "body", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
+
+		if got := remaining(s); !slices.Equal(got, []string{refusedEP, refused2}) {
+			t.Errorf("subs after a store-wide 401 = %v, want both kept", got)
+		}
+		if n := capLog.CountExact(wholeStoreMsg); n != 1 {
+			t.Errorf("whole-store refusal logged %d times, want 1; logs = %q", n, capLog.Messages())
+		}
+	})
+}
+
+// urgencyRecorder answers every push 201 and keeps the RFC 8030 Urgency header
+// the request carried.
+type perKindHeaderRecorder struct {
+	mu  sync.Mutex
+	got []deliveryHeaders
+}
+
+// deliveryHeaders holds the two RFC 8030 headers a notification's KIND decides.
+type deliveryHeaders struct {
+	urgency string
+	ttl     string
+}
+
+func (u *perKindHeaderRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	u.mu.Lock()
+	u.got = append(u.got, deliveryHeaders{
+		urgency: r.Header.Get("Urgency"),
+		ttl:     r.Header.Get("TTL"),
+	})
+	u.mu.Unlock()
+	w.WriteHeader(http.StatusCreated)
+}
+
+func (u *perKindHeaderRecorder) snapshot() []deliveryHeaders {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return slices.Clone(u.got)
+}
+
+// sendOneAndRecordHeaders delivers one notification of kind and returns the
+// headers the push service saw, failing the test unless exactly one arrived.
+func sendOneAndRecordHeaders(t *testing.T, kind vibekit.PushKind) deliveryHeaders {
+	t.Helper()
+	rec := &perKindHeaderRecorder{}
+	s, _ := newServiceOnTestServer(t, rec)
+	s.Subscribe(pushSubscriptionWithValidKeys(t, "https://fcm.googleapis.com/fcm/send/headers"))
+
+	s.Send(t.Context(), "title", "body", kind, vibekit.PushSubject{})
+
+	got := rec.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("deliveries for %s = %d, want 1: this case has to reach the push service",
+			kind, len(got))
+	}
+	return got[0]
+}
+
+// TestSend_SetsUrgencyPerKind pins the RFC 8030 section 5.3 urgency each kind
+// travels with, because a push service is allowed to hold a lower-urgency
+// message back on a low-battery device and these two kinds must not be held
+// back together: a permission ask blocks the turn until it is answered, while a
+// finished turn and a pull-request verdict are chat-grade notices.
+//
+// It asserts through Send rather than push so the kind reaches the header the
+// way production sends it.
+func TestSend_SetsUrgencyPerKind(t *testing.T) {
+	cases := []struct {
+		kind vibekit.PushKind
+		want string
+	}{
+		{vibekit.PushKindAgentFinished, "normal"},
+		{vibekit.PushKindPRStatus, "normal"},
+		{vibekit.PushKindPermission, "high"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			if got := sendOneAndRecordHeaders(t, tc.kind).urgency; got != tc.want {
+				t.Errorf("Urgency for %s = %q, want %q", tc.kind, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSend_SetsTTLPerKind pins the RFC 8030 section 5.2 TTL each kind travels
+// with. The header is how long a push service may hold a notification for a
+// device that is OFFLINE, so it has to be the window the notification is still
+// worth reading in: a permission ask about a turn that has since been answered
+// or cancelled is noise, while a pull request's verdict is still true tomorrow.
+// One literal for every kind — what this replaced — meant the shortest-lived
+// notice was kept for a day and the longest-lived one was capped at a day for no
+// stated reason.
+//
+// The wanted values are spelled as seconds rather than reusing ttlFor, which
+// would assert the table against itself.
+func TestSend_SetsTTLPerKind(t *testing.T) {
+	cases := []struct {
+		kind vibekit.PushKind
+		want string
+	}{
+		{vibekit.PushKindPermission, "600"},
+		{vibekit.PushKindAgentFinished, "3600"},
+		{vibekit.PushKindPRStatus, "86400"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			if got := sendOneAndRecordHeaders(t, tc.kind).ttl; got != tc.want {
+				t.Errorf("TTL for %s = %q seconds, want %q", tc.kind, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSend_TruncatesOversizePayload(t *testing.T) {
 	// Capture the payload the push endpoint receives.
 	var receivedPayload []byte
@@ -376,7 +582,7 @@ func TestPush_PayloadSizeBoundary(t *testing.T) {
 	sub.Keys.Auth = "AAAA"
 
 	t.Run("exactly_cap_passes_size_guard", func(t *testing.T) {
-		_, _, err := s.push(t.Context(), sub, make([]byte, pushBodyCap))
+		_, _, err := s.push(t.Context(), sub, make([]byte, pushBodyCap), vibekit.PushKindAgentFinished)
 		if err == nil {
 			t.Fatalf("push(payload=%d) err = nil, want a downstream error", pushBodyCap)
 		}
@@ -390,7 +596,7 @@ func TestPush_PayloadSizeBoundary(t *testing.T) {
 	})
 
 	t.Run("over_cap_rejected", func(t *testing.T) {
-		_, _, err := s.push(t.Context(), sub, make([]byte, pushBodyCap+1))
+		_, _, err := s.push(t.Context(), sub, make([]byte, pushBodyCap+1), vibekit.PushKindAgentFinished)
 		if err == nil || !strings.Contains(err.Error(), "payload too large") {
 			t.Errorf("push(payload=%d) err = %v, want payload-too-large", pushBodyCap+1, err)
 		}
@@ -420,7 +626,7 @@ func pushExpectNoPanic(t *testing.T, s *Service, sub vibekit.PushSubscription, p
 				label, len(payload), r)
 		}
 	}()
-	_, _, err := s.push(t.Context(), sub, payload)
+	_, _, err := s.push(t.Context(), sub, payload, vibekit.PushKindAgentFinished)
 	if err == nil {
 		t.Errorf("push(%s) err = nil, want forced transport error", label)
 		return
@@ -436,11 +642,13 @@ func pushExpectNoPanic(t *testing.T, s *Service, sub vibekit.PushSubscription, p
 // maps onto, which is what decides whether a notification is retried, dropped
 // or the subscription forgotten.
 //
-// The vocabulary is deliberately three messages rather than one generic
-// "unexpected status", because the three outcomes need different reactions: a
+// The vocabulary is deliberately one message per disposition rather than one
+// generic "unexpected status", because each outcome needs a different reaction: a
 // permanent failure is vibekit's bug to fix (error level, with a hint naming
 // whose bug it is), a retryable one is the push service's weather (warn, then
-// try again), and an invalidated subscription is routine (info, prune).
+// try again), an invalidated subscription is routine (info, prune), and an
+// authorization refusal is ambiguous about whose key is wrong (warn, and the
+// fan-out decides).
 //
 // The retry ladder is collapsed to microseconds here so the 5xx case exercises
 // the give-up path without sleeping through a real backoff.
@@ -455,12 +663,15 @@ func TestSend_ResultStatusLogging(t *testing.T) {
 		want   string // the log message this status must produce
 		absent string // and one it must not
 	}{
-		// 400 and 401 are the same disposition by different doors: a malformed
-		// request and a VAPID mismatch are both ours, and neither is helped by
-		// trying again.
+		// 400 and 413 are ours to fix and no retry helps: the request shape is
+		// wrong, or pushBodyCap is above what the vendor accepts.
 		{"400_permanent", http.StatusBadRequest, "push: permanent delivery failure", "push: retryable status"},
-		{"401_permanent", http.StatusUnauthorized, "push: permanent delivery failure", "push: retryable status"},
 		{"413_permanent", http.StatusRequestEntityTooLarge, "push: permanent delivery failure", "push: retryable status"},
+		// An authorization refusal is its OWN disposition rather than a permanent
+		// failure, because whose key is wrong decides whether the subscription may
+		// be deleted; see TestSend_AuthRejectionNeedsAWitnessBeforePruning.
+		{"401_auth_refused", http.StatusUnauthorized, "push: subscription refused as unauthorized", "push: permanent delivery failure"},
+		{"403_auth_refused", http.StatusForbidden, "push: subscription refused as unauthorized", "push: permanent delivery failure"},
 		// 429 is the row the old code got wrong: a rate limit was logged and
 		// abandoned exactly like a permanent refusal.
 		{"429_retryable", http.StatusTooManyRequests, "push: retryable status", "push: permanent delivery failure"},
@@ -675,7 +886,7 @@ func TestPush_MergesCancelledServiceCtx(t *testing.T) {
 	callerCtx, callerCancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer callerCancel()
 
-	_, _, err := s.push(callerCtx, sub, []byte(`{"title":"t","body":"b"}`))
+	_, _, err := s.push(callerCtx, sub, []byte(`{"title":"t","body":"b"}`), vibekit.PushKindAgentFinished)
 	if err == nil {
 		t.Fatalf("push with cancelled service ctx returned nil error")
 	}

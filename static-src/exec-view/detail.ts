@@ -4,11 +4,15 @@
 // one column. Here there is one node on screen at a time, chosen by the reader,
 // so everything the source knows about it can be stated outright.
 //
-// Four regions, in reading order: IDENTITY (facts as a definition list — agent,
+// Three regions, in reading order: IDENTITY (facts as a definition list — agent,
 // model, effort, signal, retries, a loop's bound, a session id), FAILURE
-// (verbatim, above the output since it explains it), OUTPUT (what the node
-// produced, as markdown), TRANSCRIPT (the live host, filled by the consumer's
-// frames).
+// (verbatim), TRANSCRIPT (the live host, filled by the consumer's frames).
+//
+// What the node PRODUCED is deliberately not here. This pane used to render the
+// selected node's capture and artifacts as well, which is exactly what the page's
+// own results region renders now that it is per-step — and two renderings of one
+// capture on one screen is a measured defect (`subagent-exec-source.ts` records it).
+// The two merged into one region, above the panes.
 //
 // The transcript host is handed OUT (`bodyFor`), so this pane knows nothing about
 // where content comes from — `run-view.ts` supplies it to whichever step source is
@@ -16,7 +20,6 @@
 // card used to hand out one of its own and no longer renders step content at all.
 
 import { el } from "@cplieger/reactive";
-import { buildAssistantBubble } from "../fundamentals/text-bubble.js";
 import { formatElapsed } from "../strings.js";
 import { elapsed, type ExecNode } from "./model.js";
 import { STATE_WORD } from "./status.js";
@@ -60,7 +63,6 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
   );
   const facts = el("dl", { className: "ev-d-facts" });
   const failure = el("div", { className: "ev-d-fail", role: "status" });
-  const output = el("div", { className: "ev-d-out" });
   const bodies = el("div", { className: "ev-d-bodies" });
   const empty = el("div", { className: "ev-d-empty" });
   const emptyAct = el("div", { className: "ev-d-empty-action", hidden: true });
@@ -70,7 +72,6 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
     head,
     facts,
     failure,
-    output,
     bodies,
     empty,
     emptyAct,
@@ -78,55 +79,6 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
 
   const hosts = new Map<string, HTMLElement>();
   let shown: ExecNode | undefined;
-
-  function renderOutput(node: ExecNode): void {
-    const merged = new Map<string, string>();
-    if (node.output !== undefined) {
-      merged.set("", node.output);
-    }
-    for (const [k, v] of Object.entries(node.artifacts ?? {})) {
-      merged.set(k, v);
-    }
-    if (merged.size === 0) {
-      output.hidden = true;
-      delete output.dataset["sig"];
-      output.replaceChildren();
-      return;
-    }
-    // A signature over the whole set: `render` runs on every refetch, dozens
-    // over a live run, and re-parsing a settled report each time would reset
-    // the reader's scroll.
-    const sig = `${node.path}\u0000${[...merged].map(([k, v]) => `${k}\u0001${v}`).join("\u0002")}`;
-    if (output.dataset["sig"] === sig) {
-      return;
-    }
-    output.dataset["sig"] = sig;
-    output.hidden = false;
-    output.replaceChildren(
-      ...[...merged].flatMap(([key, value]) => {
-        const rows: HTMLElement[] = [];
-        rows.push(el("div", { className: "ev-d-out-key" }, key === "" ? "Output" : key));
-        if (value.trim() === "") {
-          // An empty value is a fact, not an absence: distinguishes "finished
-          // silently" from "never ran".
-          rows.push(
-            el(
-              "div",
-              { className: "ev-d-out-empty" },
-              "This step finished without producing any text.",
-            ),
-          );
-        } else {
-          // Through the transcript's own markdown bubble: a captured output IS
-          // an assistant message and should read as one.
-          rows.push(
-            el("div", { className: "ev-d-out-body" }, buildAssistantBubble(value, false).root),
-          );
-        }
-        return rows;
-      }),
-    );
-  }
 
   function render(node: ExecNode | undefined): void {
     shown = node;
@@ -138,7 +90,6 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
       facts.replaceChildren();
       facts.hidden = true;
       failure.hidden = true;
-      output.hidden = true;
       bodies.hidden = true;
       empty.hidden = false;
       empty.textContent = "Pick a step to see what it did.";
@@ -163,8 +114,6 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
 
     failure.hidden = node.failure === undefined;
     failure.textContent = node.failure ?? "";
-
-    renderOutput(node);
 
     // Only ONE node's transcript is on screen; the rest stay in the DOM since
     // their live content cannot be replayed.

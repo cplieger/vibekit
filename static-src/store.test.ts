@@ -913,6 +913,204 @@ describe("Store steer origin", () => {
   });
 });
 
+// A mark's anchor records where the steer WAS read, which is durable intent worth
+// keeping as written. Where it can be DRAWN is a different question — one about
+// the window that exists NOW — and `steerMarks` is the reader that answers it,
+// because the renderer sees one message at a time and cannot tell an ORPHANED
+// anchor from a foreign one.
+//
+// What orphans an anchor: the in-flight assistant message lives in the server's
+// in-memory buffer until `turn_ended`, so it is absent from
+// `GET /api/chats/{id}` and a refetch drops it (store-load.test.ts pins that);
+// eviction plus a refetch does the same to a whole window. Every rebuild path
+// carries `steer_marks` over, so the mark itself always survives.
+describe("Store steer anchor resolution", () => {
+  it("leaves an anchor that names a resident message untouched", () => {
+    chatWithTurn("chat-1", 2);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs", origin: "user" });
+    promoteSteer("chat-1", "steer-1", "use tabs", "user");
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 2 });
+  });
+
+  it("rewrites an anchor naming an absent message to the newest assistant message", () => {
+    chatWithTurn("chat-1", 2);
+    promoteSteer("chat-1", "steer-1", "the correction", "user");
+    // The window the reader comes back to: the anchored message is gone and a
+    // LATER assistant message is what the page holds, with three blocks of its own.
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        messages: [
+          { id: "u-1", role: "user", ts: 1, content: "do the thing" },
+          { id: "a-9", role: "assistant", ts: 3, blocks: turnBlocks(3) },
+        ],
+        steer_marks: [...steerMarks("chat-1")],
+      },
+    ]);
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-9", blockIndex: 3 });
+  });
+
+  // `anchorFor` records the empty anchor when the turn has produced nothing, and
+  // `rebindPendingAnchors` only fires for a message ARRIVING. A window refetched
+  // with the reply already in it never sees that arrival.
+  it("resolves the empty anchor produced by a turn that had output nothing", () => {
+    resetStore("chat-1");
+    promoteSteer("chat-1", "steer-1", "read before any output", "user");
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "", blockIndex: 0 });
+
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        messages: [{ id: "a-1", role: "assistant", ts: 2, blocks: turnBlocks(1) }],
+        steer_marks: [...steerMarks("chat-1")],
+      },
+    ]);
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 1 });
+  });
+
+  // The tail is the newest ASSISTANT message, never the newest message of any
+  // role: only an assistant body renders steer notes, so resolving to a user row
+  // would move the anchor somewhere the renderer will never visit — a silent loss
+  // wearing a resolved anchor. With none resident the mark keeps what it was
+  // written with, and the note renders nowhere; that residual is phase 3's
+  // (persisting the steer into the turn), not something this reader can fake.
+  it("keeps the recorded anchor when no assistant message is resident", () => {
+    chatWithTurn("chat-1", 2);
+    promoteSteer("chat-1", "steer-1", "the correction", "user");
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        messages: [{ id: "u-1", role: "user", ts: 1, content: "do the thing" }],
+        steer_marks: [...steerMarks("chat-1")],
+      },
+    ]);
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 2 });
+  });
+
+  // Nothing to resolve against, and nothing to render into either.
+  it("leaves the anchor alone when the window is empty", () => {
+    chatWithTurn("chat-1", 2);
+    promoteSteer("chat-1", "steer-1", "the correction", "user");
+    setSessions([{ ...makeSession("chat-1"), steer_marks: [...steerMarks("chat-1")] }]);
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 2 });
+  });
+
+  // The other half of the rule `rebindPendingAnchors` already applies to an
+  // ARRIVING message ("a plan row does not capture a pending steer anchor"
+  // below): a plan row is RoleAssistant and is not the reply the steer was read
+  // into, so resolving to it would put the note against the plan card. One
+  // predicate, two readers — a gate written twice can disagree, and the
+  // disagreement reads as the anchor moving between rows on its own.
+  it("does not resolve to a plan row, which is RoleAssistant and not a reply", () => {
+    chatWithTurn("chat-1", 2);
+    promoteSteer("chat-1", "steer-1", "the correction", "user");
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        messages: [
+          { id: "u-1", role: "user", ts: 1, content: "do the thing" },
+          {
+            id: "m-plan",
+            role: "assistant",
+            ts: 2,
+            content: "",
+            plan: [{ content: "step one", priority: "high", status: "pending" }],
+          },
+        ],
+        steer_marks: [...steerMarks("chat-1")],
+      },
+    ]);
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 2 });
+  });
+
+  // A trailing user row belongs to a LATER turn that has produced nothing yet — a
+  // prompt persists its row before it asks for the chat's admission slot — so the
+  // tail steps over it rather than reading it as the newest thing in the window.
+  it("resolves past a trailing user row to the assistant message before it", () => {
+    chatWithTurn("chat-1", 2);
+    promoteSteer("chat-1", "steer-1", "the correction", "user");
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        messages: [
+          { id: "a-9", role: "assistant", ts: 3, blocks: turnBlocks(3) },
+          { id: "u-2", role: "user", ts: 4, content: "next prompt" },
+        ],
+        steer_marks: [...steerMarks("chat-1")],
+      },
+    ]);
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-9", blockIndex: 3 });
+  });
+
+  // The resolution is a READ, so the stored intent is unchanged: a window that
+  // regains the message it lost draws the note where the steer was actually read.
+  it("does not write the resolved anchor back onto the session", () => {
+    chatWithTurn("chat-1", 2);
+    promoteSteer("chat-1", "steer-1", "the correction", "user");
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        messages: [{ id: "a-9", role: "assistant", ts: 3, blocks: turnBlocks(3) }],
+        steer_marks: [...steerMarks("chat-1")],
+      },
+    ]);
+    expect(steerMarks("chat-1")[0]?.anchor.msgID, "the read resolves").toBe("a-9");
+    expect(get("chat-1")?.steer_marks?.[0]?.anchor.msgID, "the record does not move").toBe("a-1");
+  });
+
+  it("answers with no marks for a chat it does not hold", () => {
+    resetStore("chat-1");
+    expect(steerMarks("nonexistent")).toEqual([]);
+  });
+
+  // The DOUBLE RENDER: once the replay projection persists a steer as a user row
+  // carrying `user_kind: "steer"`, the transcript draws that row through the same
+  // primitive the mark draws through, so a window holding both draws the note
+  // twice. Both ids are KAS's own `steer-` id, so the suppression is an equality
+  // test between two values vibekit received — never a prefix parse — and the
+  // DURABLE row wins, because it survives a reload and the mark does not.
+  it("omits a mark whose own id names a resident message", () => {
+    chatWithTurn("chat-1", 2);
+    promoteSteer("chat-1", "steer-1", "use tabs", "user");
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        messages: [
+          { id: "u-1", role: "user", ts: 1, content: "do the thing" },
+          { id: "steer-1", role: "user", ts: 2, content: "use tabs", user_kind: "steer" },
+          { id: "a-1", role: "assistant", ts: 3, blocks: turnBlocks(2) },
+        ],
+        steer_marks: [...steerMarks("chat-1")],
+      },
+    ]);
+    expect(steerMarks("chat-1")).toEqual([]);
+    // A READ, like the anchor resolution beside it: the record does not move, so a
+    // window that loses the durable row again draws the mark.
+    expect(get("chat-1")?.steer_marks).toHaveLength(1);
+  });
+
+  // The other direction, so the case above cannot pass by the filter dropping
+  // everything. Unconditional and BEFORE the early returns: this mark's anchor
+  // needs no move, which is the shape a filter written after them would skip.
+  it("returns a mark whose id is not resident, anchor-resolved as before", () => {
+    chatWithTurn("chat-1", 2);
+    promoteSteer("chat-1", "steer-1", "use tabs", "user");
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        messages: [
+          { id: "u-1", role: "user", ts: 1, content: "do the thing" },
+          { id: "steer-other", role: "user", ts: 2, content: "someone else", user_kind: "steer" },
+          { id: "a-1", role: "assistant", ts: 3, blocks: turnBlocks(2) },
+        ],
+        steer_marks: [...steerMarks("chat-1")],
+      },
+    ]);
+    expect(steerMarks("chat-1").map((m) => m.id)).toEqual(["steer-1"]);
+    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 2 });
+  });
+});
+
 describe("Store setName", () => {
   it("updates session name", () => {
     resetStore("chat-1");

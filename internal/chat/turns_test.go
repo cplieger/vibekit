@@ -36,13 +36,17 @@ type outcomeFixture struct {
 	} `json:"segmentation"`
 }
 
-// fixtureMessage is one persisted message in a segmentation case.
+// fixtureMessage is one persisted message in a segmentation case. `blocks` lists
+// one subtask id per block; absent means the message carries no blocks at all,
+// which is what every row predating the step rule needs.
 type fixtureMessage struct {
-	Role    string `json:"role"`
-	ID      string `json:"id"`
-	Event   string `json:"event"`
-	Outcome string `json:"outcome"`
-	Refusal bool   `json:"refusal"`
+	Role     string   `json:"role"`
+	ID       string   `json:"id"`
+	Event    string   `json:"event"`
+	Outcome  string   `json:"outcome"`
+	UserKind string   `json:"user_kind"`
+	Blocks   []string `json:"blocks"`
+	Refusal  bool     `json:"refusal"`
 }
 
 // message builds the persisted message this fixture row describes.
@@ -55,7 +59,11 @@ func (f fixtureMessage) message() vibekit.Message {
 	if f.Refusal {
 		m.Refusal = &vibekit.RefusalInfo{}
 	}
+	for _, subtask := range f.Blocks {
+		m.Blocks = append(m.Blocks, vibekit.Block{Type: vibekit.BlockText, AgentSubtaskID: subtask})
+	}
 	m.TurnOutcome = vibekit.TurnOutcome(f.Outcome)
+	m.UserKind = vibekit.UserKind(f.UserKind)
 	return m
 }
 

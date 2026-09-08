@@ -177,6 +177,18 @@
   appearance: none;
   touch-action: manipulation;
   outline: none;
+
+  /* The SHELL owns this control's focus ring: `.prompt-box` above keys on
+     `[id="prompt-input"]:focus`, a superset of `:focus-visible`, and draws a
+     border plus a spread shadow around the textarea AND the pill row. The
+     zero-specificity floor in 40-a11y.css would add a second accent rectangle
+     around the textarea alone, and the resting `outline: none` two lines up
+     cannot suppress it — both score (0,1,0) and that file sorts later. Nesting
+     this scores (0,2,0). Not `--focus-offset-field`: that token overlays a
+     field's own border, and this one has none. */
+  &:focus-visible {
+    outline: none;
+  }
 }
 
 /* --- Attachment pill row (between textarea and pill row) --- */
@@ -456,9 +468,8 @@
   }
 
   /* The reasoning tier never shrinks and never ellipsizes: it is one short word,
-   * it is present only when the chat departs from the model's default, and under
-   * width pressure the model name beside it is the half that can afford to lose
-   * characters. Dimmer than the name so the pill still reads name-first. */
+   * and under width pressure the model name beside it is the half that can afford
+   * to lose characters. Dimmer than the name so the pill still reads name-first. */
   & .pill-model-effort {
     flex-shrink: 0;
     /* Secondary, not tertiary: this readout also renders on the pill's accent
@@ -475,13 +486,27 @@
     display: none;
   }
 
+  /* 1rem IS the diameter this has always painted — `--icon-ui`'s value, which is
+     what it stands in for, since the rule above hides the pill's own glyph. It read
+     `0.75rem` plus a 2px border that the pseudo-element's content-box default put
+     outside that length, so the authored number was 12px and the mark was 16px. The
+     size moves here, not the render. */
   &.switching::before {
     content: "";
-    width: 0.75rem;
-    height: 0.75rem;
-    border: 0.125rem solid currentcolor;
-    border-top-color: transparent;
+    width: 1rem;
+    height: 1rem;
     border-radius: 50%;
+    background: conic-gradient(
+        from var(--vk-spin-arc),
+        transparent 0deg 90deg,
+        currentcolor 90deg 360deg
+      )
+      border-box;
+    mask: radial-gradient(
+      closest-side,
+      transparent calc(100% - 0.125rem),
+      #000 calc(100% - 0.125rem)
+    );
     animation: vk-spin var(--spin-dur) linear infinite;
   }
 
@@ -535,14 +560,12 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
-  min-width: 12rem;
 }
 
 .task-item {
   display: flex;
   align-items: flex-start;
   gap: var(--sp-1);
-  font-size: var(--fs-sm);
 }
 
 .task-icon {
@@ -606,7 +629,6 @@
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);
-  padding: var(--sp-2) var(--sp-3);
 
   /* THE CARD FAMILY'S NESTED RADIUS, derived once here for every card that
      holds rounded rows. Same rule as --pill-radius on .prompt-box: an inner
@@ -617,14 +639,27 @@
      6px or 8px, which put 8.00..10.07px of background around the card's corner
      where the straight edges hold 8.00px.
 
-     --card-inset names the BLOCK padding above, which is what the three cards
-     with rounded rows use on all four sides. This base rule keeps a wider
-     INLINE padding for the one-line detail strips (the context and status
-     popups), whose rows carry no radius; a rounded row added to one of those
-     could not nest until its card's padding is made uniform. */
+     --card-inset is the padding on ALL FOUR sides, and it has to be: equal
+     centres need an equal inset on both edges of a corner, so an anisotropic
+     inset is unsatisfiable at any single radius (web.md). */
   --card-inset: var(--sp-2);
   --card-radius: calc(var(--r-lg) - 1px - var(--card-inset));
 
+  padding: var(--card-inset);
+
+  /* A FLOOR, not a width: a card whose content is wider still grows past it, so
+     one value cannot cramp any of the six. 14rem is within 4px of `.popup`'s own
+     13.75rem (11-popups.css), so both popup families answer "how narrow may a
+     menu be" with one figure. */
+  min-inline-size: 14rem;
+
+  /* The cap needs the scroll: a card is an overlay anchored to the composer, and
+     the context card's metering section renders one row per unit kiro-cli
+     reports, which is upstream data with no bound. Both axes are stated because
+     an `overflow-y` beside a `visible` inline axis computes that axis to `auto`
+     anyway, and then nothing says which was meant. */
+  max-block-size: 16rem;
+  overflow: auto;
   box-shadow:
     var(--shadow-ambient),
     0 -0.25rem 1rem oklch(0% 0 none / 12%);
@@ -632,7 +667,11 @@
   align-items: center;
   gap: var(--sp-2);
   white-space: nowrap;
-  font-size: var(--fs-xs);
+
+  /* A row's own text. A caption beside a row takes --fs-popup-meta, and nothing
+     inside a card names an --fs-* rung directly — which is what keeps a caption
+     added later from sitting at 11px under a finger. */
+  font-size: var(--fs-popup);
   color: var(--c-text-secondary);
   opacity: 0;
   transform: scale(0.4);
@@ -673,8 +712,6 @@
   flex-direction: column;
   align-items: stretch;
   gap: 0;
-  padding: var(--sp-2) var(--sp-3);
-  min-width: 14rem;
 }
 
 .pill-ctx-row {
@@ -685,14 +722,16 @@
   padding: 0.15rem 0;
 }
 
+/* A LABEL AND ITS VALUE ARE THE SAME SIZE, in this card and in the status card
+   below: both are the row's own text, so the hierarchy between them is colour
+   (secondary label, primary value) and never size. Splitting them by rung would
+   also mean answering the split again at every tier. */
 .pill-ctx-label {
   color: var(--c-text-secondary);
-  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
 :where(.pill-context-content) .pill-detail {
-  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
@@ -721,13 +760,11 @@
 
 .pill-metering-label {
   color: var(--c-text-secondary);
-  font-size: var(--fs-xs);
 }
 
 .pill-metering-value {
   color: var(--c-text-primary);
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
   text-align: right;
 }
 
@@ -739,8 +776,13 @@
   flex-direction: column;
   align-items: stretch;
   gap: 0;
-  min-width: 12rem;
-  max-height: 16rem;
+
+  /* THE TWO DOCUMENTED DEPARTURES from the shared card geometry above, and both
+     are the same decision: the effort section must stay pinned below a list that
+     scrolls. The card gives up its own padding so that section can bleed to both
+     edges (`.pill-model-scroll` carries it), and the CARD does not scroll —
+     `.pill-model-scroll` does — so the tiers stay put however long the list
+     grows. */
   padding: 0;
   overflow: hidden;
 }
@@ -776,7 +818,11 @@
   background: transparent;
   border-radius: var(--card-radius);
   color: var(--c-text-primary);
-  font-size: var(--fs-sm);
+
+  /* Named rather than inherited: a <button> takes the UA's own font-size (Arial
+     13.3333px in Chromium) and the reset deliberately passes only the family
+     (web.md), so a row that dropped this declaration would answer no tier. */
+  font-size: var(--fs-popup);
   cursor: pointer;
   text-align: left;
   white-space: nowrap;
@@ -791,7 +837,7 @@
 
 .pill-model-meta {
   color: var(--c-text-tertiary);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-popup-meta);
 }
 
 /* Role pill: shows the active chat's agent role; expands to a role list.
@@ -817,15 +863,11 @@
   flex-direction: column;
   align-items: stretch;
   gap: var(--sp-1);
-  min-width: 12rem;
-  max-height: 16rem;
-  overflow-y: auto;
-  padding: var(--sp-2);
 }
 
 .pill-role-hint {
   padding: 0 var(--sp-2) var(--sp-1);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-popup-meta);
   color: var(--c-text-tertiary);
 }
 
@@ -845,7 +887,9 @@
   background: transparent;
   border-radius: var(--card-radius);
   color: var(--c-text-primary);
-  font-size: var(--fs-sm);
+
+  /* A <button> answers the UA font, not the card's: see `.pill-model-item`. */
+  font-size: var(--fs-popup);
   cursor: pointer;
   text-align: left;
   white-space: nowrap;
@@ -882,7 +926,7 @@
   margin-inline-start: auto;
   flex-shrink: 0;
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-popup-meta);
   color: var(--c-text-tertiary);
 }
 
@@ -892,7 +936,7 @@
 .pill-role-shadow {
   flex-shrink: 0;
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-popup-meta);
   padding: 0.0625rem var(--sp-1);
 
   /* --r-pill, not --r-sm: this is a status chip on a row whose own corner is
@@ -926,14 +970,16 @@
 }
 
 .effort-label {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-popup-meta);
   color: var(--c-text-tertiary);
   margin-inline-end: var(--sp-1);
   white-space: nowrap;
 }
 
 .effort-btn {
-  font-size: var(--fs-xs);
+  /* The caption rung rather than the row rung: five tier labels share one row's
+     width, and the label beside them reads the same size. */
+  font-size: var(--fs-popup-meta);
   padding: 0.125rem var(--sp-1);
   border: 1px solid var(--c-border);
   border-radius: var(--card-radius);
@@ -958,8 +1004,7 @@
  * upward instead. The card carries the status colour as an 8% wash only —
  * it had a 2px status-coloured left border too, which said the same thing
  * the dot two pixels away already says, in the one channel the card uses
- * for its own edge. Min-width ensures readability even when the individual
- * status lines are short. */
+ * for its own edge. */
 .pill-status-content {
   bottom: calc(100% + var(--sp-1));
   top: auto;
@@ -970,7 +1015,6 @@
     var(--status-color, var(--c-bg-secondary)) 8%,
     var(--c-bg-secondary)
   );
-  min-width: 11rem;
   flex-direction: column;
   align-items: flex-start;
   white-space: nowrap;
@@ -996,14 +1040,12 @@
 
 .pill-account-plan {
   color: var(--c-text-secondary);
-  font-size: var(--fs-xs);
 }
 
 .pill-account-meter {
   color: var(--c-text-primary);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: var(--fs-xs);
 }
 
 /* A toggle pill's ON state is keyed on the a11y attribute rather than a
@@ -1039,9 +1081,12 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
-  min-width: 18rem;
-  max-width: 22rem;
-  padding: var(--sp-2);
+
+  /* THE ONE DOCUMENTED WIDTH DEPARTURE: this card's rows wrap, so its floor is a
+     MEASURE for prose rather than a minimum for a one-line strip, and the cap is
+     what stops that prose running as wide as the longest hint. */
+  min-inline-size: 18rem;
+  max-inline-size: 22rem;
   text-align: start;
   white-space: normal;
   align-items: stretch;
@@ -1071,14 +1116,12 @@
      card's own corners. See --card-radius on .pill-expand-content. */
   border-radius: var(--card-radius);
   padding: var(--sp-1);
-}
 
-.chat-opt-btn {
+  /* The border, the hover and the press are SHARED because the six rows must read
+     as one list, and the border is also what puts their labels on one x: declared
+     on the button alone, it left the switch row's content box 1px to the left and
+     its fill 2px shorter than its five neighbours'. */
   border: 1px solid transparent;
-  background: none;
-  color: inherit;
-  font: inherit;
-  width: 100%;
   transition:
     background var(--dur-micro),
     border-color var(--dur-micro) var(--ease-standard);
@@ -1093,6 +1136,13 @@
   &:active {
     background: var(--c-press);
   }
+}
+
+.chat-opt-btn {
+  background: none;
+  color: inherit;
+  font: inherit;
+  width: 100%;
 
   /* Unavailable rather than offering an error: the tangent row is disabled until
    * its chat holds a conversation to branch. Kept visible (not hidden) so the
@@ -1104,11 +1154,15 @@
   }
 }
 
+/* The row's LEADING COLUMN, one width for a 14px glyph and for the switch row's
+   checkbox, so every row's label starts on the same x. 1rem is the checkbox's
+   painted size (02-reset.css owns it); the glyph centres inside it. */
 .chat-opt-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  inline-size: 1rem;
   margin-block-start: 0.125rem;
   color: var(--c-text-tertiary);
 }
@@ -1119,10 +1173,15 @@
     flex-shrink: 0;
     cursor: pointer;
   }
+}
 
-  &:hover {
-    background: var(--c-bg-tertiary);
-  }
+/* THE ROW IS THE TARGET HERE, so the switch drops the hit-target expander every
+   other native box control gets (61-mcp-tools.css). This label is 44px tall and
+   the card's full width, while the checkbox sits against the row's TOP edge — so
+   an expander centred on it overhangs upward, measured 4px into the row above on
+   a coarse pointer, which is that row's whole bottom chrome. */
+.chat-opt-row > input[type="checkbox"]::after {
+  content: none;
 }
 
 /* The goal row's inline input collection: an expanding row section, not a
@@ -1142,7 +1201,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.125rem;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-popup-meta);
   color: var(--c-text-tertiary);
 }
 
@@ -1158,8 +1217,10 @@
   border-radius: var(--card-radius);
   background: var(--c-bg-secondary);
   color: var(--c-text-primary);
+
+  /* `font: inherit` is the whole declaration: it takes the card's own row size,
+     where a named --fs-* rung would be a third answer to the card's type. */
   font: inherit;
-  font-size: var(--fs-xs);
 }
 
 .chat-opt-text {
@@ -1169,12 +1230,11 @@
 }
 
 .chat-opt-name {
-  font-size: var(--fs-sm);
   color: var(--c-text-primary);
 }
 
 .chat-opt-hint {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-popup-meta);
   color: var(--c-text-tertiary);
 }
 
@@ -1333,15 +1393,6 @@
     font-size: var(--fs-sm);
   }
 
-  /* No reasoning tier on a phone, at any level. The row is already full at
-     390px (the spacer measures 0), and the tier declares `flex-shrink: 0`, so
-     the model NAME is what pays for it: 36px of the 78px it asks for, rendering
-     `clau… · max`. Visual only — the button's aria-label still names the level
-     (status.ts), so a screen reader loses nothing. */
-  .pill-model-effort {
-    display: none;
-  }
-
   .send-btn {
     min-width: var(--btn-h);
   }
@@ -1356,38 +1407,28 @@
   }
 
   /* A popup card must fit the screen it is on. The width cap keeps an anchored
-     card from running off the right edge; the height caps trade the fixed
+     card from running off the right edge; the height cap trades the shared
      16rem for the visible viewport (dvh, so the iOS toolbars are already
      subtracted), which is what kept the effort row reachable under the
-     keyboardless viewport but clipped it off-screen with the composer low. */
+     keyboardless viewport but clipped it off-screen with the composer low.
+
+     The cap is the CARD's, not one card's: every card carries one, so a cap that
+     flipped for a single card would put the six out of step at exactly the width
+     where the screen is smallest.
+
+     NO FONT SIZE HERE. A popup's type lift is `--fs-popup` / `--fs-popup-meta`
+     (01-tokens.css), on the POINTER tier — a width query cannot reach an iPad,
+     and a rule here would have to name each caption to lift it. */
   .pill-expand-content {
     max-inline-size: calc(100dvw - 2 * var(--sp-3));
-  }
-
-  .pill-model-list {
     max-block-size: min(26rem, 55dvh);
   }
 
-  /* Rows a finger picks: the floor the pill row already has, plus the body
-     type step — 11px labels on 21px rows were a pointer design, and 12px is
-     still a caption on a phone. */
+  /* Rows a finger picks take the pill row's own floor. */
   .pill-model-item,
   .pill-role-item,
   .chat-opt-btn {
     min-block-size: var(--btn-h);
-    font-size: var(--fs-md);
-  }
-
-  /* Usage figures are body text on a phone, not captions. Both usage surfaces
-     used --fs-xs (11px): the prompt context card and the account credit block
-     in the sidebar status card. Lift every label and value together so the
-     hierarchy stays colour-based rather than size-split. */
-  .pill-context-content,
-  .pill-status-content,
-  .pill-context-content
-    :where(.pill-ctx-label, .pill-detail, .pill-metering-label, .pill-metering-value),
-  .pill-status-content :where(.pill-detail, .pill-account-plan, .pill-account-meter) {
-    font-size: var(--fs-md);
   }
 
   .pill-ctx-row {
@@ -1398,43 +1439,98 @@
     gap: var(--sp-2);
   }
 
-  /* The five tiers share the row's width instead of shrink-wrapping 11px
-     labels; 2.25rem clears comfortable-tap territory inside a card whose
-     neighbouring rows are 2.75rem, without the row reading as five buttons
-     stacked two lines tall. */
+  /* The five tiers share the row's width instead of shrink-wrapping; 2.25rem
+     clears comfortable-tap territory inside a card whose neighbouring rows are
+     2.75rem, without the row reading as five buttons stacked two lines tall. */
   .effort-btn {
     flex: 1 1 0;
     min-block-size: 2.25rem;
-    font-size: var(--fs-sm);
   }
 }
 
-/* CSS-driven spinner for the send button's busy state. The icon is
- * an arc (3/4 circle); we spin the whole SVG. Avoids needing a
- * dedicated keyframe; reuses the existing vk-spin rotation. */
+/* PHONE-SHAPED means narrow OR short, and a media-query list is CSS's OR:
+   a phone on its long edge is mostly wider than 48rem, so the narrow arm
+   alone leaves the tier on screen in landscape (derivation: vibekit-ui.md
+   "Hit targets"). Its own block rather than a second arm on the touch-sizing
+   one above, whose rules are width-driven geometry.
+
+   No reasoning tier on a phone, at any level. The row is already full at
+   390px (the spacer measures 0), and the tier declares `flex-shrink: 0`, so
+   the model NAME is what pays for it: 36px of the 78px it asks for, rendering
+   `clau… · max`. VISUAL ONLY — the button's aria-label still names the level
+   (status.ts), so a screen reader loses nothing. */
+@media (width <= 48rem), (height <= 30rem) {
+  .pill-model-effort {
+    display: none;
+  }
+}
+
+/* The one consumer that still ROTATES its box, because its mark is a stroked arc
+ * with round caps rather than a ring: a conic gradient cannot draw a cap, and the
+ * dash alternative is refused for a measured reason recorded at `ICON_SPINNER`
+ * (icons.ts). So it keeps its own keyframe — `vk-spin` animates a ring's arc angle
+ * now and would leave this static — and takes the same period token, which is what
+ * `spin-period.test.ts` sweeps for. */
+@keyframes vk-spin-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .icon-spinner {
-  animation: vk-spin var(--spin-dur) linear infinite;
   transform-origin: center;
+  animation: vk-spin-rotate var(--spin-dur) linear infinite;
 }
 
 [id="context-indicator"] {
   anchor-name: --context-indicator;
 }
 
+/* `--vk-ring-band` exists on these two because 17-settings.css narrows the band
+   of the save indicator's copy; the band is the mask's now, so there is no
+   `border-width` left for that rule to override. */
 .spinner {
+  --vk-ring-band: 0.125rem;
+
   width: 1rem;
   height: 1rem;
-  border: 0.125rem solid var(--c-border);
-  border-top-color: var(--c-text-primary);
+  flex-shrink: 0;
   border-radius: 50%;
+  background: conic-gradient(
+      from var(--vk-spin-arc),
+      var(--c-text-primary) 0deg 90deg,
+      var(--c-border) 90deg 360deg
+    )
+    border-box;
+  mask: radial-gradient(
+    closest-side,
+    transparent calc(100% - var(--vk-ring-band)),
+    #000 calc(100% - var(--vk-ring-band))
+  );
   animation: vk-spin var(--spin-dur) linear infinite;
 }
 
+/* `flex-shrink: 0` on both, like `.tool-spinner` and `.subagent-spinner`: these
+   two had none, and `.settings-save-status` is a flex row, so a long enough save
+   label squeezed the disc into an ELLIPSE — a ring that is not round cannot turn
+   without wobbling, whatever its rotation origin. */
 .spinner-sm {
+  --vk-ring-band: 0.125rem;
+
   width: 0.875rem;
   height: 0.875rem;
-  border: 0.125rem solid var(--c-border);
-  border-top-color: var(--c-text-primary);
+  flex-shrink: 0;
   border-radius: 50%;
+  background: conic-gradient(
+      from var(--vk-spin-arc),
+      var(--c-text-primary) 0deg 90deg,
+      var(--c-border) 90deg 360deg
+    )
+    border-box;
+  mask: radial-gradient(
+    closest-side,
+    transparent calc(100% - var(--vk-ring-band)),
+    #000 calc(100% - var(--vk-ring-band))
+  );
   animation: vk-spin var(--spin-dur) linear infinite;
 }

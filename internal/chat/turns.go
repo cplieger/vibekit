@@ -12,7 +12,7 @@ import (
 const turnFirstLineMax = 120
 
 // projectTurnSummaries groups a chat's flat message list into the session-wide turn
-// index the timeline rail draws from. A user message opens a turn, and so does the
+// index the timeline rail draws from. A PROMPT opens a turn, and so does the
 // first message of a turn with no user trigger (opensHeaderlessTurn), or an
 // agent-initiated reply lands in the PREVIOUS turn's body. `thinking` marks the LAST
 // turn as running and is the caller's: a chat file cannot see a live bridge.
@@ -27,18 +27,19 @@ func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnS
 	closed := false
 	for i := range msgs {
 		m := &msgs[i]
-		if m.Role == vibekit.RoleUser || len(out) == 0 || opensHeaderlessTurn(m, closed) {
+		// A prompt opens a turn; a steer joins the one already running.
+		if isPrompt(m) || len(out) == 0 || opensHeaderlessTurn(m, closed) {
 			var body []vibekit.Message
-			if m.Role != vibekit.RoleUser {
+			if !isPrompt(m) {
 				body = append(body, *m)
 			}
 			summary := vibekit.TurnSummary{
 				ID:             m.ID,
 				N:              len(out) + 1,
 				Ts:             m.Ts,
-				AgentInitiated: m.Role != vibekit.RoleUser,
+				AgentInitiated: !isPrompt(m),
 			}
-			if m.Role == vibekit.RoleUser {
+			if isPrompt(m) {
 				summary.FirstLine = firstLine(m.Content, turnFirstLineMax)
 			}
 			out = append(out, summary)
@@ -63,14 +64,32 @@ func closesTurn(outcome vibekit.TurnOutcome) bool {
 	return outcome != "" && outcome != vibekit.TurnOutcomeUnknown
 }
 
+// isPrompt reports whether m is a user PROMPT rather than a steer. Unexported; the
+// TypeScript twin is static-src/turns.ts.
+func isPrompt(m *vibekit.Message) bool {
+	return m.Role == vibekit.RoleUser && m.UserKind != vibekit.UserKindSteer
+}
+
+// isStepMessage reports whether every one of m's blocks is workflow-step content.
+func isStepMessage(m *vibekit.Message) bool {
+	// "every block parses" is vacuously true of a message with NO blocks, so without
+	// this an empty assistant or event message would lose the turn it opens.
+	if len(m.Blocks) == 0 {
+		return false
+	}
+	for i := range m.Blocks {
+		if _, ok := vibekit.ParseStepSubtask(m.Blocks[i].AgentSubtaskID); !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // opensHeaderlessTurn reports whether m is the first persisted message of a turn
-// with no user trigger. Derivable from a flat list because a turn's outcome-bearing
-// message closes it; closesTurn owns the fragment carve-out.
-//
-// Both clauses are load-bearing: without the close test a prompted empty turn's
-// marker splits off its own prompt, without the other an interrupted divider does.
+// with no user trigger. All three clauses are load-bearing; the shared fixture's
+// _segmentation_comment owns the reasoning, and closesTurn the fragment carve-out.
 func opensHeaderlessTurn(m *vibekit.Message, prevClosed bool) bool {
-	if !prevClosed {
+	if !prevClosed || isStepMessage(m) {
 		return false
 	}
 	return m.Role == vibekit.RoleAssistant || m.TurnOutcome != ""

@@ -49,10 +49,16 @@
 // ---------------------------------------------------------------------------
 
 import { effect, signal, touch } from "@cplieger/reactive";
-import { renameTab, setTabStatus, tabIdFor, tabSetVersion } from "./tabs.js";
+import { openRunRefs, renameTab, setTabStatus, tabIdFor, tabSetVersion } from "./tabs.js";
 import { runStatusFor, type RunPauseClass } from "./store.js";
 import { runPendingAsks } from "./decision-dock.js";
-import { isNeedInputPark, registerLiveRunObserver, runLabelOf, runState } from "./run-store.js";
+import {
+  invalidateRun,
+  isNeedInputPark,
+  registerLiveRunObserver,
+  runLabelOf,
+  runState,
+} from "./run-store.js";
 
 /** The runs this client has seen an event for, and the version counter that makes
  *  the effect depend on the set.
@@ -91,6 +97,37 @@ export function refreshRunDots(): void {
  *  reactive layer refuses with `Cycle detected` on every paint of a run view. */
 function bump(): void {
   version.value = version.peek() + 1;
+}
+
+/** Fetch run state for every OPEN run tab this client has heard nothing about.
+ *
+ *  A cold load restores a run tab from a subject that names the run and says
+ *  nothing about it, and `/api/runs/live` names only the runs still going — so a
+ *  settled run's row keeps the placeholder and no dot.
+ *
+ *  `tracked` is the latch, so this asks once per run per page session on top of
+ *  `invalidateRun`'s coalescing. It records ASKED rather than ANSWERED, and the
+ *  residual is stated rather than guarded: `fetchRun` writes no cell when the GET
+ *  answers null, so a seed whose request fails (a boot that races
+ *  `resolveIdentity`, a 503 while kiro-cli installs, any transient fault) leaves
+ *  that row on the placeholder with no dot until a `transport:gap` refetch or an
+ *  activation. Keying on the answer instead — `peekRunState` is exported and
+ *  UNTRACKED, so it costs no subscription — trades that for re-asking on every
+ *  tab-set change for a run the server has nothing for, because `fetchRun`
+ *  collapses "no such run" and "the request failed" into one silent no-write.
+ *  Closing it properly is the store's to fix: nothing here can tell the two
+ *  apart. Not a regression either way — these rows were seeded by nothing at
+ *  all before. */
+function seedOpenRunTabs(): void {
+  for (const ref of openRunRefs()) {
+    if (ref === "" || tracked.has(ref)) {
+      continue;
+    }
+    // Neither call alone: repaint never visits an untracked run, and a tracked
+    // run with no fetch behind it never gets state.
+    trackRun(ref);
+    invalidateRun(ref);
+  }
 }
 
 function repaint(): void {
@@ -153,11 +190,18 @@ function repaint(): void {
  *  then. The tab-set dependency is what picks a tab up once it does. */
 export function installRunDotSubscriber(): void {
   // The live-runs rebuild is the THIRD door into "this client knows about this
-  // run", beside a run frame and the run view's own paint, and it is the only one
-  // a PAUSED run restored on boot reaches. Registered from here rather than from
-  // the composition root because this module already imports the store, and the
-  // store may not import this one.
+  // run", beside a run frame and the run view's own paint; the seed below is the
+  // fourth, and the one a cold load reaches. The rebuild is still the only door a
+  // PAUSED run with no open tab reaches — it emits no frames at all, and the seed
+  // covers open tabs only. Registered from here rather than from the composition
+  // root because this module imports the store, and the store may not import this
+  // one.
   registerLiveRunObserver(trackRun);
+  // A SECOND effect, because the seed writes the counter the paint effect below
+  // reads: one effect doing both would write a signal it has subscribed to.
+  effect(() => {
+    seedOpenRunTabs();
+  });
   effect(() => {
     touch(version);
     // Subscribes to the tab SET as well, so a run tab arriving after its run's

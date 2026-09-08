@@ -174,6 +174,9 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// The rule producing it is implemented in BOTH languages, so a hand-written
 	// client union would be a second enumeration of one vocabulary.
 	"TurnOutcome": {},
+	// The client BRANCHES on it — a steer renders as a note rather than a system
+	// row — and that branch must be total.
+	"UserKind": {},
 	// Five client surfaces BRANCH on it, and those branches must be total over the
 	// vocabulary.
 	"TurnSeverity": {},

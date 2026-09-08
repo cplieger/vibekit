@@ -15,6 +15,9 @@ import {
   get,
   recordSteerQueued,
   steerCount,
+  steerMarks,
+  promoteSteer,
+  appendMessage,
   noteLiveTurnMessage,
   liveTurnMessage,
   setTurnDone,
@@ -448,6 +451,36 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     fireGap();
     expect(steerCount("a")).toBe(0);
     expect(steerCount("b")).toBe(0);
+  });
+
+  // The OTHER half of the same door, characterized because it is what makes the
+  // clear above admissible: a mark is a fact already established (the agent read
+  // this, or a boundary dropped it unread), and its lifetime is the loaded
+  // transcript rather than the turn. Clearing the dock without touching the
+  // record is the whole difference between "may still be queued" and "gone".
+  it("leaves the transcript marks alone, because those are facts and not claims", () => {
+    setSessions([makeSession("a")]);
+    setActive("a");
+    appendMessage("a", { id: "u-1", role: "user", ts: 1, content: "go" });
+    appendMessage("a", {
+      id: "a-1",
+      role: "assistant",
+      ts: 2,
+      content: "",
+      blocks: [{ type: "text", text: "hello" }],
+    });
+    recordSteerQueued("a", { id: "steer-read", text: "read one", origin: "user" });
+    promoteSteer("a", "steer-read", "read one", "user");
+    recordSteerQueued("a", { id: "steer-waiting", text: "unresolved", origin: "user" });
+
+    fireGap();
+
+    expect(steerCount("a"), "the dock is forgotten").toBe(0);
+    expect(
+      steerMarks("a").map((m) => m.id),
+      "the record survives",
+    ).toEqual(["steer-read"]);
+    expect(steerMarks("a")[0]?.dropped, "and claims nothing about delivery").toBeUndefined();
   });
 });
 

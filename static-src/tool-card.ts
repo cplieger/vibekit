@@ -272,8 +272,9 @@ function buildHeader(
       {
         className: "tool-file-link",
         "data-path": info.filePath,
-        title: info.filePath,
-        "data-tooltip": "Open the diff",
+        // The chip shows the BASENAME, so the full path is on no other surface
+        // and rides the tooltip rather than a second native one beside it.
+        "data-tooltip": `Open the diff\n${info.filePath}`,
       },
       el("span", { className: "tool-file-icon" }, iconEl(fileIcon(info.fileBasename, false))),
       el("span", { className: "tool-file-name" }, info.fileBasename),

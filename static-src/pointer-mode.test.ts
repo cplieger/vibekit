@@ -275,38 +275,162 @@ describe("the toolbar row at phone width", () => {
     app?.remove();
   });
 
-  it("keeps every toolbar button on one row at 390px with coarse controls", () => {
-    // Settings moved into this bar, so the row carries one more 44px touch target
-    // than it did. `.chat-toolbar` wraps below 30rem of chat area rather than
-    // overflowing, and this is the measurement that says whether it has to.
-    //
-    // The viewport here is the browser project's 1280px, so the `width <= 48rem`
-    // media query does not apply and `#menu-toggle` keeps its `display: none` — a
-    // real phone shows the hamburger too, and that is the one button this case
-    // cannot account for. MEASURED: these 7 render 44px each, so 7x44 + 6x2 + 24 of
-    // padding is 344 and the row still holds at 360px. Adding the hamburger makes
-    // it 8x44 + 7x2 + 24 = 390, which fits a 390px phone EXACTLY and wraps below
-    // it. That is a cost to report, not one to fix by shrinking a touch target:
-    // `.chat-toolbar` sets `flex-wrap: wrap` under this container query, so the
-    // 8th button drops to a second row rather than overflowing.
-    styleEl = mountAppCSS();
+  /** The bar at a stated chat-area width, with the coarse tier in force. Returns
+   *  the visible action buttons; the viewport here is the browser project's 1280px,
+   *  so `width <= 48rem` does not apply and `#menu-toggle` keeps its `display: none`
+   *  — a real phone shows the hamburger too, and that is the one button these cases
+   *  cannot account for. */
+  function mountBarAt(width: string): HTMLElement[] {
+    styleEl ??= mountAppCSS();
+    app?.remove();
     app = document.createElement("div");
     app.id = "app";
     app.innerHTML = `<main id="chat-area">${divAt('<div class="chat-toolbar">')}</main>`;
     document.body.appendChild(app);
-
     const area = app.querySelector<HTMLElement>("#chat-area");
     expect(area).not.toBeNull();
-    area?.style.setProperty("inline-size", "390px");
+    area?.style.setProperty("inline-size", width);
     document.documentElement.setAttribute("data-pointer", "coarse");
-
-    const buttons = [...app.querySelectorAll<HTMLElement>(".chat-toolbar > button")].filter(
+    return [...app.querySelectorAll<HTMLElement>(".chat-toolbar > button")].filter(
       (b) => b.offsetParent !== null,
     );
+  }
+
+  it("keeps every toolbar button on one row at 390px with coarse controls", () => {
+    // Settings moved into this bar, so the row carries one more 44px touch target
+    // than it did, and `.chat-toolbar` wraps rather than overflowing — this is the
+    // measurement that says whether it has to.
+    //
+    // MEASURED: these 7 render 44px each, so 7x44 + 6x2 + 24 of padding is 344 and
+    // the row still holds at 360px. Adding the hamburger makes it 8x44 + 7x2 + 24 =
+    // 390, which fits a 390px phone EXACTLY and wraps below it. That is a cost to
+    // report, not one to fix by shrinking a touch target.
+    const buttons = mountBarAt("390px");
     expect(buttons.length, "the persistent toolbar buttons").toBe(7);
     const tops = [...new Set(buttons.map((b) => b.offsetTop))];
     const widths = buttons.map((b) => `${b.id}:${String(b.offsetWidth)}`).join(" ");
     expect(tops, `one row expected; button widths were ${widths}`).toHaveLength(1);
+  });
+
+  it("ends the actions on the bar's own gutter, with the heading on their row", () => {
+    // The two halves of what the heading's own row cost, in one case because they
+    // are one layout. The actions were left-aligned on their line (measured at
+    // 430px: last button right edge 378 against a content edge of 418) and the
+    // heading sat under them, which is what made the bar 70px instead of 52.
+    //
+    // 520px rather than a phone width so the title is WIDE enough to fit and the
+    // heading is genuinely in flow: at 390px page-title.ts clips it, and a case
+    // measuring the clipped state would pass with `flex: 1 1 0` reverted.
+    const buttons = mountBarAt("520px");
+    const bar = app?.querySelector<HTMLElement>(".chat-toolbar");
+    const heading = app?.querySelector<HTMLElement>(".titlebar-heading");
+    expect(bar).not.toBeNull();
+    expect(heading).not.toBeNull();
+
+    const barBox = bar!.getBoundingClientRect();
+    const gutter = parseFloat(getComputedStyle(bar!).paddingInlineEnd);
+    const last = buttons[buttons.length - 1]!.getBoundingClientRect();
+    expect(barBox.right - gutter - last.right, "slack left of the actions").toBeCloseTo(0, 0);
+
+    // Same row as the actions, and to their left. CENTRES rather than top edges:
+    // the bar is `align-items: center` over a 19px heading and 44px buttons, so
+    // equal tops would be the wrong assertion and fail on a correct layout.
+    const headBox = heading!.getBoundingClientRect();
+    const mid = (r: DOMRect) => r.top + r.height / 2;
+    expect(mid(headBox), "the heading shares the actions' row").toBeCloseTo(mid(last), 0);
+    expect(headBox.left).toBeLessThan(buttons[0]!.getBoundingClientRect().left);
+  });
+
+  it("keeps the actions on the gutter once page-title.ts clips the heading", () => {
+    // The state a phone actually renders, and the only one that pins the bar's own
+    // `justify-content: flex-end`: `.sr-only` is `position: absolute`, so a clipped
+    // heading leaves the flex line and takes its growth with it. With the heading in
+    // flow the growth alone puts the actions right, so the in-flow case above stays
+    // green with `flex-end` deleted — this is the case that does not.
+    const buttons = mountBarAt("390px");
+    const bar = app?.querySelector<HTMLElement>(".chat-toolbar");
+    app?.querySelector<HTMLElement>(".titlebar-heading")?.classList.add("sr-only");
+
+    const barBox = bar!.getBoundingClientRect();
+    const gutter = parseFloat(getComputedStyle(bar!).paddingInlineEnd);
+    const last = buttons[buttons.length - 1]!.getBoundingClientRect();
+    expect(barBox.right - gutter - last.right, "slack left of the actions").toBeCloseTo(0, 0);
+  });
+
+  it("wraps rather than pushing an action off the start edge at 320px", () => {
+    // What the bar's `flex-wrap: wrap` is for, and the reason right-alignment cannot
+    // be the whole rule: the actions need 326px of a 320px phone (7x44 + 6x2 + 24 of
+    // padding here, 8 buttons on a real one), they cannot shrink into it because
+    // `min-width: var(--btn-h)` is the touch floor, and overflow past `flex-end`
+    // leaves a control left of the bar with no scroll to reach it.
+    const buttons = mountBarAt("320px");
+    const bar = app?.querySelector<HTMLElement>(".chat-toolbar");
+    const startEdge =
+      bar!.getBoundingClientRect().left + parseFloat(getComputedStyle(bar!).paddingInlineStart);
+    const offEdge = buttons.filter((b) => b.getBoundingClientRect().left < startEdge - 0.5);
+    expect(
+      offEdge.map((b) => b.id),
+      "actions left of the bar's own gutter",
+    ).toEqual([]);
+  });
+});
+
+describe("the phone-shaped gate, measured at real viewport sizes", () => {
+  // A media query answers about the VIEWPORT, so the only honest test of this gate
+  // resizes one — no amount of DOM setup can stand in for it. The block sits LAST
+  // in the file and restores the size in `afterAll`, because the toolbar case above
+  // reads the browser project's own width. `page.viewport` has no getter, so the
+  // size is READ off the frame on entry rather than copied from `vitest.config.ts`:
+  // a hand-copied pair would silently leave every later file measuring at the old
+  // size if that config moved.
+  let entry: { readonly width: number; readonly height: number } | null = null;
+  let styleEl: HTMLStyleElement | null = null;
+
+  beforeAll(() => {
+    entry = { width: window.innerWidth, height: window.innerHeight };
+    styleEl = mountAppCSS();
+  });
+
+  afterAll(async () => {
+    styleEl?.remove();
+    if (entry !== null) {
+      await page.viewport(entry.width, entry.height);
+    }
+  });
+
+  /** The button's computed `display` at one viewport size. `.hidden` is cleared
+   *  first: it is the JS gate's channel and carries `display: none !important`, so
+   *  leaving the authored class on would answer "none" for every case and the CSS
+   *  gate — the subject here — would go unmeasured. The resize is asserted, or a
+   *  `page.viewport` that stopped moving the frame would make every case below
+   *  report about the project's own size while still naming a phone. */
+  async function displayAt(width: number, height: number): Promise<string> {
+    await page.viewport(width, height);
+    expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
+      width,
+      height,
+    ]);
+    const btn = mountButton();
+    btn.classList.remove("hidden");
+    return getComputedStyle(btn).display;
+  }
+
+  it("hides the toggle on a narrow, tall viewport — a phone in portrait", async () => {
+    expect(await displayAt(360, 800)).toBe("none");
+  });
+
+  it("hides the toggle on a wide, SHORT viewport — the same phone rotated", async () => {
+    // The shape that used to slip the gate: past 48rem wide, so the narrow arm
+    // stops matching, on a device where every hit target should stay at 44px. One
+    // tap here pinned `fine`, and portrait then had no control to undo it with.
+    expect(await displayAt(900, 400)).toBe("none");
+  });
+
+  it("offers the toggle on a viewport that is neither narrow nor short", async () => {
+    // A tablet in landscape clears both arms, which is what measuring the SHORT
+    // edge buys over measuring the width: 1024x768 is wide and tall, 900x400 is
+    // wide and short, and only the first is a device with a pointer to choose.
+    expect(await displayAt(1024, 768)).not.toBe("none");
   });
 });
 

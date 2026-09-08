@@ -115,7 +115,7 @@ export function searchIconButton(
     type: "button",
     className,
     "aria-label": label,
-    title: hint,
+    "data-tooltip": hint,
   }) as HTMLButtonElement;
   btn.appendChild(iconEl(icon));
   btn.addEventListener("click", onClick);
@@ -148,7 +148,7 @@ export function matchCaseButton(
       type: "button",
       className,
       "aria-label": "Match case",
-      title: "Match case",
+      "data-tooltip": "Match case",
     },
     "Aa",
   ) as HTMLButtonElement;

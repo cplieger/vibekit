@@ -661,9 +661,22 @@ describe("the announced phrase names the subject of the tab it is on", () => {
         setTabStatus(id, state);
         const announced = srOf(row).textContent ?? "";
         expect(announced.startsWith(", ")).toBe(true);
-        expect(dotOf(row).title).toBe(announced.slice(2));
+        expect(dotOf(row).dataset["tooltip"]).toBe(announced.slice(2));
       }
     }
+  });
+
+  it("clears the tooltip with the state, so no phrase outlives its dot", async () => {
+    // The clear has to reach the attribute the paint writes. Miss it and a dot
+    // with nothing to show still answers a hover with the last state it held,
+    // which is the one reading a reader cannot check against anything on screen.
+    const { setTabStatus } = await import("./tabs.js");
+    const { id, row } = await openKind("chat");
+    setTabStatus(id, "working");
+    expect(dotOf(row).hasAttribute("data-tooltip")).toBe(true);
+    setTabStatus(id, "");
+    expect(dotOf(row).hasAttribute("data-tooltip")).toBe(false);
+    expect(dotOf(row).hasAttribute("title")).toBe(false);
   });
 });
 

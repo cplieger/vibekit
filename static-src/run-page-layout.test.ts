@@ -128,9 +128,9 @@ describe("the run page claims its height", () => {
   });
 
   // The floor this replaced (`min-block-size: 16rem`) existed because the results
-  // disclosure competed with the panes for a fixed page height and crushed them to
-  // ~90px when opened. With nothing clamped to the scrollport there is no
-  // competition, so the panes size to content and each shrink-wraps its own.
+  // region competed with the panes for a fixed page height and crushed them to
+  // ~90px. With nothing clamped to the scrollport there is no competition, so the
+  // panes size to content and each shrink-wraps its own.
   it("sizes the panes to their content rather than flooring them", () => {
     const panes = decls(loadCSS("31-exec-view.css"), ".ev-panes");
     expect(/flex:\s*0 0 auto/.test(panes)).toBe(true);
@@ -138,12 +138,17 @@ describe("the run page claims its height", () => {
     expect(/align-items:\s*start/.test(panes)).toBe(true);
   });
 
-  // The roll-up is the run's PRODUCT, so it renders whole and the page scrolls. A
-  // `max-block-size` here was a peek sized for scanning, and it only existed because
-  // the region was competing for a fixed height.
+  // The results are the selected step's PRODUCT, so they render whole and the page
+  // scrolls. A `max-block-size` on the region was a peek sized for scanning, and it
+  // only existed because the region was competing for a fixed height.
+  //
+  // `.ev-results` joined this case with the toggle's deletion: its `overflow: hidden`
+  // existed to clip the box's own corners while the disclosure animated its height,
+  // and with no animation it was left being a scroll container nothing scrolls.
   it("uncages the results region", () => {
     expect(decls(loadCSS("31-exec-view.css"), ".ev-r-body")).not.toMatch(/max-block-size:/);
     expect(overflowDecls(loadCSS("31-exec-view.css"), ".ev-r-body")).toEqual([]);
+    expect(overflowDecls(loadCSS("31-exec-view.css"), ".ev-results")).toEqual([]);
   });
 
   // A per-result box may carry NO `overflow` on either axis: an `auto` on one side
@@ -151,6 +156,38 @@ describe("the run page claims its height", () => {
   // how a 331px report ended up rendered in a 16px box.
   it("leaves a per-result box's overflow at its initial value", () => {
     expect(overflowDecls(loadCSS("31-exec-view.css"), ".ev-r-item-body")).toEqual([]);
+  });
+
+  // THE CLAMP IS THE ONE PLACE THAT SHAPE IS DELIBERATE, and it is the shape the
+  // `.ev-r-val` scar above warns about — so it is spelled out rather than left to
+  // read as the same mistake. `overflow: hidden` does make this box a scroll
+  // container, so its `min-block-size: auto` resolves to 0; what keeps that harmless
+  // is that NO ancestor is capped (`.ev-results` is `flex: 0 0 auto`, `.ev-r-item` is
+  // `flex-shrink: 0`, `.ev-r-body` has no cap), so nothing exerts shrink pressure and
+  // the only thing bounding the box is the `max-block-size` beside it.
+  //
+  // Both declarations are asserted together because either alone is a defect: a cap
+  // with no clip overflows the box visibly, and a clip with no cap clips nothing —
+  // which is also what silently withdraws the show-more, since `attachClamp` decides
+  // by measurement. The CAP is what this case owns; the COUNT inside it belongs to
+  // `clamp-line-count.test.ts`, which holds it against `RESULT_CLAMP` in
+  // `exec-view/page.ts` — so moving the clamp is one edit rather than three.
+  it("gives the clamped report exactly one overflow, beside its cap", () => {
+    const css = loadCSS("31-exec-view.css");
+    expect(overflowDecls(css, ".ev-r-text[data-clamped]")).toEqual(["overflow: hidden"]);
+    expect(decls(css, ".ev-r-text[data-clamped]")).toMatch(/max-block-size:\s*\d+lh/);
+  });
+
+  // ONE OWNER for the two clamp openers on this page. Asserted as MEMBERSHIP of the
+  // shared selector list rather than as two rules with equal declarations, for this
+  // file's own reason: equal declarations are exactly what a fork starts from, and
+  // only the membership says they cannot drift. `exec-view-css.test.ts` asserts the
+  // rendered halves match, which is the other direction.
+  it("gives both clamp openers one rule rather than a copy each", () => {
+    const css = loadCSS("31-exec-view.css");
+    const owners = allRules(css).filter((r) => /(^|,)\s*\.ev-r-more\s*$/m.test(r.selector));
+    expect(owners).toHaveLength(1);
+    expect(owners[0]?.selector).toBe(".ev-in-more,\n.ev-r-more");
   });
 
   // A container's state is a ROLL-UP of its children and must never repaint them.

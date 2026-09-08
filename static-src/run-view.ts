@@ -14,7 +14,7 @@ import { CONTROL_LABEL, offeredVerbs, refusalSentences, type RunVerb } from "./r
 import { get, isThinking, messagesVersionOf } from "./store.js";
 import { blockTextSigs, blockThinkingSigs } from "./store-signals.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
-import { inFlight, neverRan } from "./exec-view/status.js";
+import { inFlight, neverRan, settled } from "./exec-view/status.js";
 import { flatten, leaves, type ExecNode } from "./exec-view/model.js";
 import { runToExec } from "./run-exec-source.js";
 import type { RunStepStream } from "./run-step-blocks.js";
@@ -338,23 +338,23 @@ function mountPage(container: HTMLElement, workflowID: string): ExecPageView {
 
 /** Ask KAS for the shown step's transcript, when it is worth asking.
  *
- *  FOUR gates, each closing a way this would ask for something that cannot be
+ *  THREE gates, each closing a way this would ask for something that cannot be
  *  served or is already on screen:
  *
  *   1. the node must HOST a transcript at all (`transcript === true`) — a container
  *      has nothing to read.
- *   2. it must have RUN. A `pending` or `skipped` step has no session, so the read
- *      would spend a round trip to be told what `neverRan` already answers locally.
- *   3. it must not be IN FLIGHT. A busy session cannot be `session/load`ed, so a
- *      live step's read is refused by construction — and its content reaches the
- *      pane by its own route meanwhile.
- *   4. the SLICE must be empty. That is what "preferred when the slice is empty"
+ *   2. it must be SETTLED. A `pending` or `skipped` step has no session, so the read
+ *      would spend a round trip to be told what the vocabulary already answers
+ *      locally; a step still in flight holds a busy session, which cannot be
+ *      `session/load`ed at all, and its content reaches the pane by its own route
+ *      meanwhile.
+ *   3. the SLICE must be empty. That is what "preferred when the slice is empty"
  *      means, stated as a gate: the chat route's blocks are already the same content
  *      and are already rendered, so asking would be a second copy of what is there.
  *
  *  Armed from `onShowNode`, which fires when the shown node's PATH or its STATE
  *  moves, so this runs once per attention rather than once per repaint. The STATE
- *  half is what makes gate 3 a deferral rather than a refusal: a reader who clicks a
+ *  half is what makes gate 2 a deferral rather than a refusal: a reader who clicks a
  *  running step is refused at that moment, `select()` PINS the selection so the path
  *  never moves again, and the read is armed by the repaint that shows the step
  *  SETTLED. The pair is also what bounds the `unavailable` retry — that verdict is
@@ -364,7 +364,7 @@ function armStepRead(node: ExecNode | undefined): void {
   if (node?.transcript !== true || shownRun === "") {
     return;
   }
-  if (neverRan(node.state) || inFlight(node.state)) {
+  if (!settled(node.state)) {
     return;
   }
   if (chatSliceHasContent(shownRun, node.path)) {

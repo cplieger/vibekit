@@ -12,6 +12,7 @@
 // touching the renderer.
 // ---------------------------------------------------------------------------
 
+import { parseStepSubtask } from "./step-subtask.js";
 import { severityOf, defaultFailureReason } from "./turn-severity.js";
 import type { Message, FileChange } from "./types.js";
 import type { TurnOutcome } from "./wire/types.gen.js";
@@ -96,7 +97,7 @@ const COMMAND_KINDS = new Set(["execute", "shell", "command"]);
 
 /** Group a flat message list into turns.
  *
- *  A `user` message opens a turn. Everything else joins the open turn, or
+ *  A user PROMPT opens a turn. Everything else joins the open turn, or
  *  opens a headerless one when there is none — which happens two legitimate
  *  ways: an agent-initiated turn (no user row exists to promote), and a
  *  paginated window whose first page starts mid-turn. Both render the same
@@ -122,12 +123,13 @@ export function projectTurns(messages: readonly Message[], live: boolean): Turn[
   let closed = false;
   for (const m of messages) {
     const open = turns[turns.length - 1];
-    if (m.role === "user" || open === undefined || opensHeaderlessTurn(m, closed)) {
+    // A prompt opens a turn; a steer joins the one already running.
+    if (isPrompt(m) || open === undefined || opensHeaderlessTurn(m, closed)) {
       turns.push({
         id: m.id,
         n: turns.length + 1,
-        trigger: m.role === "user" ? m : undefined,
-        body: m.role === "user" ? [] : [m],
+        trigger: isPrompt(m) ? m : undefined,
+        body: isPrompt(m) ? [] : [m],
         ts: m.ts,
         outcome: "completed",
         rewindTo: undefined,
@@ -164,25 +166,29 @@ function closesTurn(outcome: TurnOutcome | undefined): boolean {
   return outcome !== undefined && outcome !== "unknown";
 }
 
+/** Whether this is a user PROMPT rather than a steer. The Go twin is
+ *  `internal/chat/turns.go` `isPrompt`. */
+function isPrompt(m: Message): boolean {
+  return m.role === "user" && m.user_kind !== "steer";
+}
+
+/** Whether every one of this message's blocks is workflow-step content. */
+function isStepMessage(m: Message): boolean {
+  const blocks = m.blocks ?? [];
+  // "every block parses" is vacuously true of a message with NO blocks, so without
+  // this an empty assistant or event message would lose the turn it opens.
+  if (blocks.length === 0) {
+    return false;
+  }
+  return blocks.every((b) => parseStepSubtask(b.agent_subtask_id ?? "") !== null);
+}
+
 /** Is this the first persisted message of a turn with NO user trigger?
  *
- *  The boundary rule, and reviewers caught it wrong in BOTH directions, which is
- *  why it is pinned by the shared fixture rather than described. A turn's
- *  outcome-bearing message CLOSES it (there is exactly one per turn — the message
- *  that finalized it), so after that a non-user message belongs to a turn nothing
- *  triggered.
- *
- *  Too narrow — only an empty turn's marker opens one — puts a NON-empty
- *  agent-initiated turn's outcome in the previous turn's body, which can flip a
- *  completed turn to failed on reload. Too broad — any non-user message opens one
- *  — splits a prompted empty turn that has a user message to attach to, and splits
- *  an interrupt divider off the turn it describes. Hence both clauses: after a
- *  close, and only an assistant message or an outcome marker.
- *
- *  A transcript persisted before `turn_outcome` existed carries none, so its turns
- *  never close and this projects exactly as it always did. */
+ *  All three clauses are load-bearing; the shared fixture's `_segmentation_comment`
+ *  owns the reasoning, and `closesTurn` the fragment carve-out. */
 function opensHeaderlessTurn(m: Message, prevClosed: boolean): boolean {
-  if (!prevClosed) {
+  if (!prevClosed || isStepMessage(m)) {
     return false;
   }
   return m.role === "assistant" || m.turn_outcome !== undefined;

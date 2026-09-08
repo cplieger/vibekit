@@ -87,7 +87,7 @@ export function error(message: string, retry?: ToastRetry): () => void {
  *
  *  `error(message, retry)` above goes sticky on purpose: a retry offered nowhere
  *  else must not time out unanswered. That reasoning does not reach a button whose
- *  destination is reachable another way — failure-notice.ts's "Open chat", whose
+ *  destination is reachable another way — failure-notice.ts's jump button, whose
  *  chat is one click away in the tab strip regardless — and a sticky notice per
  *  background failure is exactly the stack the 12s default exists to prevent. */
 export function errorWithAction(message: string, action: ToastRetry): () => void {

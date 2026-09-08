@@ -1116,14 +1116,17 @@ describe("renameTab and the name a row renders", () => {
   });
 });
 
-describe("setTabTooltip and the title a row carries", () => {
-  it("sets and clears the row's title", async () => {
-    expect.assertions(2);
+describe("setTabTooltip and the tooltip a row carries", () => {
+  it("sets and clears the row's tooltip", async () => {
+    expect.assertions(3);
     await openChat("a");
     await paint();
     setTabTooltip(chatID("a"), "Code · reading files");
-    expect(rows()[0]?.title).toBe("Code · reading files");
+    expect(rows()[0]?.dataset["tooltip"]).toBe("Code · reading files");
+    // The clear has to reach the attribute the write set, or the row keeps the
+    // agent's last description forever.
     setTabTooltip(chatID("a"), "");
+    expect(rows()[0]?.hasAttribute("data-tooltip")).toBe(false);
     expect(rows()[0]?.hasAttribute("title")).toBe(false);
   });
 
@@ -1139,7 +1142,7 @@ describe("setTabTooltip and the title a row carries", () => {
     tabServer.emitRaw({ version: tabServer.version() + 2 });
     await settleTabs();
     await paint();
-    expect(rows()[0]?.title).toBe("Code · reading files");
+    expect(rows()[0]?.dataset["tooltip"]).toBe("Code · reading files");
   });
 });
 
@@ -1487,6 +1490,47 @@ describe("openSubagentRefs", () => {
     // The COMPOSITE ref verbatim, because that is what carries the two halves the
     // dot needs; an id would say nothing.
     expect(openSubagentRefs()).toEqual(["c1/task-1"]);
+  });
+});
+
+// The seam `run-dots.ts` seeds run state through, and the TRACKED read is the
+// whole contract for the same reason as above: a run tab restored by a cold load
+// arrives with an empty run store and no frame coming, so the tab set landing is
+// the only signal that a fetch is owed. `run-dots.test.ts` mocks `tabs.js`, so its
+// fake supplies the subscription and cannot see this property.
+describe("openRunRefs", () => {
+  it("re-runs an effect that reads it when a run tab lands or leaves", async () => {
+    expect.assertions(3);
+    const { openRunRefs } = await import("./tabs.js");
+
+    const seen: string[][] = [];
+    const stop = effect(() => {
+      seen.push(openRunRefs());
+    });
+    expect(seen).toEqual([[]]);
+
+    await openRunTab("wf_seed", "A run");
+    expect(seen.at(-1)).toEqual(["wf_seed"]);
+
+    await closeTab(tabIdFor("run", "wf_seed"));
+    expect(seen.at(-1)).toEqual([]);
+    stop();
+  });
+
+  it("reports a run SUB-tab as well as a top-level one, and nothing else", async () => {
+    expect.assertions(1);
+    const { openRunRefs } = await import("./tabs.js");
+    await openChat("c1");
+    await openEditorView("/a.ts");
+    await openRunTab("wf_top", "Top-level");
+    // Nested under its launching chat, which is the shape the reported defect was
+    // seen on; both rows are restored from the same kind of persisted subject.
+    await openRunTab("wf_child", "Sub-tab", { parent: tabIdFor("chat", "c1") });
+
+    // WORKFLOW ids, not tab ids: the run store is keyed by the ref. Sorted because
+    // strip ORDER is not this seam's subject — the seed iterates the whole list, and
+    // a sub-tab's position is its parent's (pinned in the sub-tabs block below).
+    expect([...openRunRefs()].sort()).toEqual(["wf_child", "wf_top"]);
   });
 });
 

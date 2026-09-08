@@ -179,7 +179,7 @@ export function renderConflictOverlay(state: FileState): void {
       "button",
       {
         className: "conflict-btn conflict-btn-suggest",
-        title: "Propose a merged version using the utility AI bridge",
+        "data-tooltip": "Propose a merged version using the utility AI bridge",
         "aria-label": `Suggest a merged resolution for the conflict at line ${lineNo}`,
         disabled: suggestion?.loading === true,
         // BUSY, not unavailable: this button disables itself for the length of

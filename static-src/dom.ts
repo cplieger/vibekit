@@ -206,7 +206,9 @@ class Elements {
   }
   /** The reasoning tier beside the model name on the model pill. Its own element
    *  so the model name keeps the ellipsis and the tier is never the half that
-   *  gets clipped; `.hidden` when the chat runs at the model's default. */
+   *  gets clipped; `.hidden` only when there is no tier to name (the model
+   *  advertises none, or none resolved). CSS also hides it on a phone-shaped
+   *  viewport, where the button's `aria-label` still carries the tier. */
   get ctxEffortPill(): HTMLElement {
     return byId("ctx-effort-pill");
   }

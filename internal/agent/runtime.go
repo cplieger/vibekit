@@ -115,6 +115,10 @@ type bridges struct {
 type bus struct {
 	fanout       *sse.Hub
 	pendingPerms *pendingPermsTracker
+	// steers is the projection of KAS's steering buffer the connect replay serves
+	// from. Beside pendingPerms rather than folded into it: the two answer for
+	// different wire objects and neither removal path can settle the other's.
+	steers *steerBuffer
 	// chatStatus holds each chat's last self-declared status, the one turn_state
 	// input that lives on no message and in no replay (chat_status.go).
 	chatStatus *chatStatusCache
@@ -308,6 +312,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	sseP := &bus{
 		fanout:       sseHub,
 		pendingPerms: newPendingPermsTracker(),
+		steers:       newSteerBuffer(),
 		chatStatus:   newChatStatusCache(),
 	}
 	configP := newSettings(lc, nil) // broadcast assigned below, with the rest

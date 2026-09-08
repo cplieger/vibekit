@@ -47,6 +47,23 @@ const (
 	EventStepNotice EventKind = "step_notice"
 )
 
+// UserKind separates the two kinds of user row: a PROMPT, which opens a turn, and
+// a STEER, which joins the turn already running.
+//
+// ABSENT means prompt. That is the whole legacy population and the safe direction,
+// since an unreadable kind opens a turn rather than folding one away. A steer row
+// carries NO TurnOutcome: opensHeaderlessTurn's `m.TurnOutcome != ""` clause would
+// otherwise let one open a headerless turn. A third member is a coordinated wire
+// change — the generated client decoder THROWS on a value it does not know, so
+// this is not forward-tolerant.
+type UserKind string
+
+// UserKindPrompt and UserKindSteer are the valid UserKind values for a user message.
+const (
+	UserKindPrompt UserKind = "prompt"
+	UserKindSteer  UserKind = "steer"
+)
+
 // ToolKind identifies the category of a tool invocation, assigned by kiro-cli and
 // flowing through ACP unchanged.
 type ToolKind string
@@ -371,7 +388,10 @@ type Message struct {
 	// On the same message so the one-message-per-turn invariant holds.
 	Reasoning string    `json:"reasoning,omitempty"`
 	EventKind EventKind `json:"event_kind,omitempty"`
-	ID        string    `json:"id"`
+	// UserKind is which kind of user row this is, absent on every kind but a steer.
+	// See UserKind for what absent means and why a steer carries no TurnOutcome.
+	UserKind UserKind `json:"user_kind,omitempty"`
+	ID       string   `json:"id"`
 	// TurnOutcome is how this turn ENDED, stamped on the message that finalized
 	// it: the durable half of a fact otherwise carried only by the live
 	// turn_ended SSE. Its presence also CLOSES a turn for both projections, so an
@@ -409,8 +429,8 @@ type Message struct {
 	// BuildPromptBlocks folds each one into a content block on the way OUT, so a
 	// turn read back has nothing to recover the list from.
 	//
-	// Absent on older records and on a turn opened by a steer, which takes a plain
-	// string and so carries no structured list.
+	// Absent on older records and on a steer, which joins the turn already running
+	// and takes a plain string, so it carries no structured list.
 	Attachments []Attachment `json:"attachments,omitempty"`
 	// TurnCredits / TurnElapsedMs complete the turn footer alongside ChangedFiles.
 	// omitempty drops the zero cases: a read-only turn has none.

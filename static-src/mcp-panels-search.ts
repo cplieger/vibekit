@@ -12,6 +12,7 @@ import {
 } from "./actions/index.js";
 import type { DebouncedDispatch } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
+import { chevronEl } from "./chevron.js";
 import { el } from "@cplieger/reactive";
 
 // --- Types ---
@@ -102,9 +103,13 @@ export function initSearchPanel(): void {
   debouncedSearch = debouncedDispatch(searchRegistry, { wait: DEBOUNCE_MS });
 
   // The panel is re-initialised every time the modal opens on this mode, so the
-  // previous binding has to go or the button collects one per open.
+  // previous binding has to go or the button collects one per open. `pendingClass`
+  // is what makes the button say a query is running, and it covers the typed path
+  // as well as the click because both dispatch this action.
   searchBtnUnbind?.();
-  searchBtnUnbind = bindLoadingState("mcp.search_registry", btn);
+  searchBtnUnbind = bindLoadingState("mcp.search_registry", btn, {
+    pendingClass: "is-searching",
+  });
 
   searchUnsub = subscribeToActions((inst) => {
     if (inst.name !== "mcp.search_registry") {
@@ -224,33 +229,39 @@ function renderSearchError(results: HTMLDivElement, q: string): void {
   results.appendChild(retryBtn);
 }
 
-/** One search result row. Exported for its test: the deprecated badge and the
- *  requirements preview are the two things a reader relies on before installing,
- *  and both are decided here. */
+/** One search result: a compact row that expands. Exported for its test — the
+ *  deprecated badge and the requirements preview are the two things a reader
+ *  relies on before installing, and both are decided here.
+ *
+ *  The install buttons are SIBLINGS of the `<details>` rather than children of its
+ *  `<summary>`, which is what keeps installing reachable without opening the row
+ *  and what keeps a button out of a `role="button"` (axe's `nested-interactive`). */
 export function renderRegistryResult(entry: RegistryEntry): HTMLDivElement {
-  const head = el(
-    "div",
-    { className: "mcp-result-head" },
-    el("span", { className: "mcp-result-name" }, entry.title ?? entry.name),
-    el("span", { className: "mcp-result-version" }, entry.version ?? ""),
-  );
   // The registry still LISTS a deprecated entry (only deleted ones are filtered
   // upstream), so without this badge a dead server reads exactly like a live one.
   const status = entry.status ?? "";
-  if (status !== "") {
-    head.appendChild(el("span", { className: "mcp-result-status" }, status));
-  }
 
-  const row = el(
-    "div",
-    { className: "mcp-result" },
-    head,
-    el("p", { className: "mcp-result-desc" }, entry.description ?? entry.name),
-  ) as HTMLDivElement;
+  const summary = el(
+    "summary",
+    { className: "mcp-result-summary" },
+    chevronEl(),
+    el("span", { className: "mcp-result-name" }, entry.title ?? entry.name),
+  );
+  const version = (entry.version ?? "").trim();
+  if (version !== "") {
+    summary.appendChild(el("span", { className: "mcp-result-version" }, version));
+  }
   if (status !== "") {
-    row.classList.add("mcp-result-deprecated");
+    summary.appendChild(el("span", { className: "mcp-result-status" }, status));
+  }
+  summary.appendChild(
+    el("span", { className: "mcp-result-desc" }, entry.description ?? entry.name),
+  );
+
+  const body = el("div", { className: "mcp-result-body" });
+  if (status !== "") {
     const why = (entry.status_message ?? "").trim();
-    row.appendChild(
+    body.appendChild(
       el(
         "p",
         { className: "mcp-result-status-note" },
@@ -259,11 +270,41 @@ export function renderRegistryResult(entry: RegistryEntry): HTMLDivElement {
     );
   }
 
+  const actions = el("div", { className: "mcp-result-actions" });
+  for (const option of installOptions(entry)) {
+    actions.appendChild(option.btn);
+    body.appendChild(option.detail);
+  }
+
+  const row = el(
+    "div",
+    { className: "mcp-result" },
+    el("details", { className: "mcp-result-disc" }, summary, body),
+    actions,
+  ) as HTMLDivElement;
+  if (status !== "") {
+    row.classList.add("mcp-result-deprecated");
+  }
+  return row;
+}
+
+/** One install path, split across the row's two halves. */
+interface InstallOption {
+  /** Starts the install. Sits on the row, so it needs no expansion. */
+  btn: HTMLButtonElement;
+  /** The identifier and what installing it will ask for. Sits in the body. */
+  detail: HTMLDivElement;
+}
+
+/** Every path the publisher declared, in registry order: a package runs locally
+ *  under `npx`, a remote is a hosted URL. */
+function installOptions(entry: RegistryEntry): InstallOption[] {
+  const out: InstallOption[] = [];
   for (const pkg of entry.packages ?? []) {
-    row.appendChild(renderInstallOption(entry, "npm", pkg.identifier, pkg.env_vars ?? [], "env"));
+    out.push(renderInstallOption(entry, "npm", pkg.identifier, pkg.env_vars ?? [], "env"));
   }
   for (const rem of entry.remotes ?? []) {
-    row.appendChild(
+    out.push(
       renderInstallOption(
         entry,
         rem.type,
@@ -278,8 +319,7 @@ export function renderRegistryResult(entry: RegistryEntry): HTMLDivElement {
       ),
     );
   }
-
-  return row;
+  return out;
 }
 
 /** One install path: the button, plus what installing it will ask for.
@@ -293,17 +333,17 @@ function renderInstallOption(
   identifier: string,
   fields: InstallField[],
   fieldKind: "env" | "header",
-): HTMLDivElement {
-  const option = el(
+): InstallOption {
+  const detail = el(
     "div",
     { className: "mcp-install-option" },
-    renderInstallBtn(entry, kind, identifier, fields),
+    el("code", { className: "mcp-install-id" }, `${kind}: ${identifier}`),
   ) as HTMLDivElement;
   const preview = renderRequirements(fields, fieldKind);
   if (preview !== null) {
-    option.appendChild(preview);
+    detail.appendChild(preview);
   }
-  return option;
+  return { btn: renderInstallBtn(entry, kind, identifier, fields), detail };
 }
 
 /** The declared env vars / headers of one install path. Null when the publisher
@@ -338,12 +378,12 @@ function renderRequirements(
     }
     list.appendChild(item);
   }
-  // Open when something is required: the case this exists for is a user who did
-  // not know a token was needed, and a closed disclosure does not tell them.
-  const wrap = el("details", { className: "mcp-requires" }) as HTMLDetailsElement;
-  wrap.open = required > 0;
-  wrap.append(el("summary", {}, label), list);
-  return wrap;
+  return el(
+    "div",
+    { className: "mcp-requires" },
+    el("p", { className: "mcp-requires-label" }, label),
+    list,
+  );
 }
 
 function renderInstallBtn(
@@ -352,10 +392,19 @@ function renderInstallBtn(
   identifier: string,
   fields: InstallField[],
 ): HTMLButtonElement {
+  // The label names the TRANSPORT only, because the row is one line and an npm
+  // package or a hosted URL is longer than the rest of it. The identifier travels
+  // in the accessible name and the tooltip, so two remotes of one kind are not two
+  // buttons reading the same two words.
   const btn = el(
     "button",
-    { type: "button", className: "btn-small mcp-install-btn" },
-    `Use ${kind}: ${identifier}`,
+    {
+      type: "button",
+      className: "btn-small mcp-install-btn",
+      "aria-label": `Use ${kind}: ${identifier}`,
+      "data-tooltip": identifier,
+    },
+    `Use ${kind}`,
   ) as HTMLButtonElement;
   btn.addEventListener("click", () => {
     const slug = simplifyName(entry.name);

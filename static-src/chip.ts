@@ -42,9 +42,18 @@ export function buildChip(opts: ChipOptions): HTMLSpanElement {
     chip.appendChild(labelEl);
   }
 
+  // The aria-label is load-bearing, not a duplicate of the tooltip: this
+  // button's only child is an SVG, so without it the button has no accessible
+  // name at all (axe `button-name`, serious).
+  const removeLabel = opts.removeTitle ?? "Remove";
   const removeBtn = el(
     "button",
-    { className: "chip-remove", type: "button", title: opts.removeTitle ?? "Remove" },
+    {
+      className: "chip-remove",
+      type: "button",
+      "aria-label": removeLabel,
+      "data-tooltip": removeLabel,
+    },
     iconEl(ICON_CLOSE),
   );
   removeBtn.addEventListener("click", () => {

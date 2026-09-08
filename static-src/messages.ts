@@ -121,6 +121,7 @@ import {
   initToolViewCallbacks,
 } from "./messages-tools.js";
 import { buildEvent, updateEvent, buildSystemFallback } from "./messages-events.js";
+import { buildSteerNote } from "./fundamentals/steer-note.js";
 import {
   mountTurnFooterActions,
   resetTurnSourceView,
@@ -1207,7 +1208,7 @@ function paint(): void {
   // Tell the rail which cards exist so it can track the turn in view. Re-run per
   // full pass because the set changes as pages load and turns arrive.
   observeTurns(cards);
-  applyFoldPass(turns, cards, false);
+  applyFoldPass(session.id, turns, cards, false);
   // After the fold pass: a card that unmounted here is not owed a build, and a
   // card the pass folded is one the remaining slices land under invisibly.
   drainColdBuilds();
@@ -1275,7 +1276,7 @@ function windowPass(): void {
   }
   inWindowPass = true;
   try {
-    applyFoldPass(turns, turnCards(paintRoot()), true);
+    applyFoldPass(session.id, turns, turnCards(paintRoot()), true);
   } finally {
     inWindowPass = false;
   }
@@ -1733,9 +1734,10 @@ function disposeMessage(key: string): void {
 // Per-role builders + updaters
 // ---------------------------------------------------------------------------
 
-/** Build one message of a turn's BODY over `range`. A user message never reaches
- *  here: projectTurns promotes it to its turn's header. An unexpected role still
- *  renders as a plain system row rather than vanishing from the transcript. */
+/** Build one message of a turn's BODY over `range`. The one user row that reaches
+ *  here is a STEER, which joins the turn already running rather than opening one, so
+ *  projectTurns leaves it in the body; a PROMPT is promoted to its turn's header. An
+ *  unexpected role still renders as a plain system row rather than vanishing. */
 function buildMessage(m: Message, range: BlockRange): HTMLElement {
   switch (m.role) {
     case "assistant":
@@ -1743,7 +1745,11 @@ function buildMessage(m: Message, range: BlockRange): HTMLElement {
     case "event":
       return buildEvent(m) ?? buildSystemFallback(m);
     case "user":
-      return buildSystemFallback(m);
+      // `onRestore` and `ack` are OMITTED rather than passed undefined: a read steer
+      // cannot be unsent, and a persisted row carries no acknowledgement.
+      return m.user_kind === "steer"
+        ? buildSteerNote({ text: m.content ?? "", origin: "user", dropped: false })
+        : buildSystemFallback(m);
   }
 }
 
@@ -1771,6 +1777,7 @@ interface FoldChange {
  *  scrolling reader is Reading by definition. Every HEAD change runs before every TAIL one, so
  *  ONE compensation wraps them; the tail runs BARE, or it drags the reader's view. */
 function applyFoldPass(
+  chatID: string,
   turns: readonly Turn[],
   cards: readonly HTMLElement[],
   immediate: boolean,
@@ -1846,7 +1853,7 @@ function applyFoldPass(
         },
       });
     } else if (body !== null && t !== undefined) {
-      if (!collectWindowMove(changes, card, body, t, side, sideOf)) {
+      if (!collectWindowMove(chatID, changes, card, body, t, side, sideOf)) {
         refused = true;
       }
     }
@@ -1912,6 +1919,7 @@ function applyFoldPass(
  *  REFUSED rather than collected, which is what stops the pass recording a plan it
  *  did not bring the DOM to. */
 function collectWindowMove(
+  chatID: string,
   changes: FoldChange[],
   card: HTMLElement,
   body: HTMLElement,
@@ -1935,7 +1943,11 @@ function collectWindowMove(
     const now = wantedWindow.get(t.id);
     return now?.from !== range.from || now.to !== range.to;
   };
-  const chatID = getActiveId();
+  // The PASS's own chat, threaded down from its caller, never `getActiveId()`:
+  // these marks are captured here and consumed inside closures that run at a
+  // later frame boundary (`deferWhileReading`), so an ambient read hands a chat
+  // switch inside the deferral the wrong chat's marks. Both callers of the fold
+  // pass already hold the session they are painting.
   const marks = steerMarks(chatID);
   for (const [msgID, want] of sliceTurn(t, range)) {
     const m = t.body.find((x) => x.id === msgID);

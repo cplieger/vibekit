@@ -214,8 +214,11 @@
   overflow: hidden;
 }
 
-/* `.turn-req-more`'s skin: a text control, not a button-shaped one. */
-.ev-in-more {
+/* `.turn-req-more`'s skin: a text control, not a button-shaped one. ONE owner for
+   both of this page's clamp openers — the header's instructions and a result box's
+   report — rather than a copy in the Results section that can drift. */
+.ev-in-more,
+.ev-r-more {
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
   background: none;
@@ -406,9 +409,9 @@
 .ev-panes {
   /* SIZES TO CONTENT, like every other region now that the page scrolls. The
      `min-block-size: 16rem` floor that used to sit here existed because the
-     results disclosure was a flex sibling competing for a fixed height and
-     crushed the panes to ~90px when opened; with nothing clamped to the
-     scrollport, nothing crushes anything and there is no competition to floor. */
+     results region was a flex sibling competing for a fixed height and crushed
+     the panes to ~90px; with nothing clamped to the scrollport, nothing crushes
+     anything and there is no competition to floor. */
   flex: 0 0 auto;
   display: grid;
   grid-template-columns: minmax(0, 22rem) minmax(0, 1fr);
@@ -688,9 +691,17 @@
 
   /* `--dot-size`, so this column is ONE size: the two in-flight rings, the
      pending ring below and the three settled marks (`icons.ts` `outcomeIcon`, now
-     drawn at the tab dot's footprint) all measure 8px. It was 11px against their
-     8, which made the state a reader is waiting on the largest mark in the pane
-     and left the column at three sizes.
+     drawn at the tab dot's footprint) all measure 8px.
+
+     `box-sizing` is what makes that sentence TRUE, and its absence is why the
+     sentence was false for as long as it has been written here: the reset's `*`
+     does not reach a pseudo-element, so the default is content-box and the 2px
+     border landed OUTSIDE `--dot-size`. Measured before it was stated: the settled
+     disc 8px, this ring 12px, the pending ring below 11px — the column at three
+     sizes, which is the exact defect the paragraph claims to have fixed by moving
+     off a hand-picked 11px. Source text alone cannot see it, so
+     `state-column-size.test.ts` compares the RENDERED ring against the RENDERED
+     disc instead.
 
      The BAND is what still separates a ring from the hollow one below: 2px here
      against the 0.0938rem the pending ring declares, which Chromium snaps to 1px
@@ -699,14 +710,30 @@
      the same channel `12-tabs.css` relies on for its reduced-motion donut, so it
      is a separation this app already reads rather than one invented here; motion
      then carries `running` off `waiting`. */
+  box-sizing: border-box;
   inline-size: var(--dot-size);
   block-size: var(--dot-size);
   border: 0.125rem solid var(--c-accent);
   border-radius: 50%;
 }
 
+/* Painted arc, still box — see `--vk-spin-arc` (00-header.css). The border above
+   is neutralised rather than dropped: the still `waiting` and `unknown` rings share
+   that rule and DRAW with it, and it also reserves this ring's band inside
+   `--dot-size`, which the mask then paints over. */
 .ev-row[data-state="running"] > .ev-row-main > .ev-state::before {
-  border-top-color: transparent;
+  border-color: transparent;
+  background: conic-gradient(
+      from var(--vk-spin-arc),
+      transparent 0deg 90deg,
+      var(--c-accent) 90deg 360deg
+    )
+    border-box;
+  mask: radial-gradient(
+    closest-side,
+    transparent calc(100% - 0.125rem),
+    #000 calc(100% - 0.125rem)
+  );
   animation: vk-spin var(--spin-dur) linear infinite;
 }
 
@@ -734,6 +761,7 @@
 .ev-row[data-state="pending"] > .ev-row-main > .ev-state::before {
   content: "";
   display: block;
+  box-sizing: border-box;
   inline-size: var(--dot-size);
   block-size: var(--dot-size);
   border: 0.0938rem solid var(--c-text-tertiary);
@@ -918,8 +946,8 @@
   font-size: var(--fs-xs);
 }
 
-/* Above the output deliberately: the failure is WHY the output looks the way it
-   does, so a reader meets it first. */
+/* Above the transcript deliberately: the failure is WHY the rest of the pane looks
+   the way it does, so a reader meets it first. */
 .ev-d-fail {
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r);
@@ -932,39 +960,6 @@
 
 .ev-d-fail[hidden] {
   display: none;
-}
-
-.ev-d-out {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-  min-width: 0;
-}
-
-.ev-d-out[hidden] {
-  display: none;
-}
-
-.ev-d-out-key {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-}
-
-/* The output renders through the transcript's own markdown bubble, so a captured
-   report reads as the assistant message it is. The bubble brings its own prose
-   skin; this only gives it a surface to sit on and the radius rung below the pane's. */
-.ev-d-out-body {
-  padding: var(--sp-2) var(--sp-3);
-  background: var(--c-bg-primary);
-  border-radius: var(--r);
-  min-width: 0;
-  overflow-x: auto;
-}
-
-.ev-d-out-empty {
-  font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
 }
 
 .ev-d-bodies {
@@ -1050,20 +1045,19 @@
 }
 
 /* --------------------------------------------------------------------------
-   Results — what the execution produced, rolled up
+   Results — what the SELECTED step produced
    -------------------------------------------------------------------------- */
 
-/* A DISCLOSURE at the foot, OPEN by default. A run's product is what a reader opens
-   the page for, and with the page scrolling an open roll-up costs page height rather
-   than pane height — which is what made it collapsed before.
-
-   `overflow: hidden` clips the box's own rounded corners while the disclosure
-   animates its height. It is NOT a content cage: nothing inside is capped. */
+/* A FIXED REGION above the panes, at the column's full width, present only while
+   the selected step has settled and produced something. No disclosure at either
+   level, so no `overflow: hidden` either — that declaration existed to clip the
+   box's own corners while the disclosure animated its height, and with no animation
+   the region joins `.ev-pane`'s no-overflow rule rather than being a scroll
+   container nothing scrolls. */
 .ev-results {
   flex: 0 0 auto;
   background: var(--c-bg-secondary);
   border-radius: var(--r-lg);
-  overflow: hidden;
 }
 
 .ev-results[hidden] {
@@ -1075,38 +1069,6 @@
   align-items: baseline;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
-  cursor: pointer;
-  transition: background var(--dur-micro) var(--ease-standard);
-
-  &:hover {
-    background: var(--c-bg-tertiary);
-  }
-
-  &:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: var(--focus-offset-inset);
-  }
-}
-
-/* The disclosure's glyph, LEADING the header the way the app's other two section
-   headers do (`.tool-group-header`, `.reasoning-summary`) and the way `.ev-twist`
-   does in this same stylesheet — so the page ends up with one arrow position
-   rather than two. `align-self: center` because `.ev-r-head` is
-   `align-items: baseline` and an SVG-only grid box has no useful baseline. */
-.ev-r-twist {
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  align-self: center;
-  inline-size: 1rem;
-  color: var(--c-text-control);
-}
-
-/* Keyed on the TRIGGER's own `aria-expanded` — the flag `createDisclosure`
-   writes, and the shape every other disclosure here uses. `page.ts`'s
-   `.collapsed` class is its own `onToggle` bookkeeping, one step further out. */
-.ev-r-head[aria-expanded="true"] > .ev-r-twist > .disclosure-chevron {
-  --chev-turn: 0deg;
 }
 
 .ev-r-title {
@@ -1116,32 +1078,21 @@
   color: var(--c-text-tertiary);
 }
 
-.ev-r-count {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-
 /* FULL NATURAL HEIGHT. The `max-block-size: 12rem` + `overflow-y: auto` that used
    to sit here was a peek sized for scanning, and it existed because this region
    competed with the panes for a fixed page height. The page scrolls now, so a
-   report renders whole and the reader scrolls the document. `transition: height`
-   stays — that is the disclosure animating, not a cap. */
+   report renders whole and the reader scrolls the document. */
 .ev-r-body {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
   padding: 0 var(--sp-3) var(--sp-3);
-  transition: height var(--dur-standard) var(--ease-standard);
 }
 
-.ev-r-body[aria-hidden="true"] {
-  padding-block-end: 0;
-}
-
-/* ONE BOX PER CAPTURE, collapsible, `.run-step`'s skin in the `ev-` vocabulary —
-   the same bordered-box-with-a-filled-header shape the transcript card uses, so a
-   reader learns one idiom. */
+/* ONE BOX PER CAPTURE, `.run-step`'s skin in the `ev-` vocabulary — the same
+   bordered-box shape the transcript card uses, so a reader learns one idiom. A step
+   with a capture plus two artifacts is several entries and these boxes are what
+   separate them. */
 .ev-r-item {
   border: 1px solid var(--c-border);
   border-radius: var(--r);
@@ -1151,47 +1102,16 @@
   min-width: 0;
 }
 
-.ev-r-item-head {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-1) var(--sp-2);
-  min-block-size: var(--btn-h);
-  cursor: pointer;
-  user-select: none;
-  min-width: 0;
-  transition: background var(--dur-micro) var(--ease-standard);
-
-  &:hover {
-    background: var(--c-hover);
-  }
-
-  &:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: var(--focus-offset-inset);
-  }
-}
-
-/* `.ev-r-twist`'s box without its `align-self: center`: this head is
-   `align-items: center`, so the grid box is already centred. */
-.ev-r-item-twist {
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  inline-size: 1rem;
-  color: var(--c-text-control);
-}
-
-/* Keyed on the TRIGGER's own `aria-expanded`, like every other disclosure here. */
-.ev-r-item-head[aria-expanded="true"] > .ev-r-item-twist > .disclosure-chevron {
-  --chev-turn: 0deg;
-}
-
+/* A plain LABEL ROW. It carries the padding the retired `.ev-r-item-head` wrapper
+   used to, and `display: block` with it: `overflow`/`text-overflow` apply to a block
+   box only, and until the wrapper went this span was blockified for free by being
+   its flex item. */
 .ev-r-item-key {
+  display: block;
+  padding: var(--sp-1) var(--sp-2);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1200,26 +1120,37 @@
 /* NO `overflow` declaration here, and that is load-bearing rather than an omission:
    an `auto` on either axis makes this a scroll container with a per-row ceiling to
    fight, which is exactly the defect the retired `.ev-r-val` recorded (a 331px
-   report rendered in a 16px box, clipped through the middle of its glyphs).
-
-   It still COMPUTES to `hidden`, from `.uip-disclosure-region` in the ui-primitives
-   base — that is the height animation's clip, shared by every disclosure in the app
-   including `.ev-r-body`. It costs nothing now that nothing above is capped:
-   measured on the live page, all four regions report `scrollHeight ===
-   clientHeight`, with the tallest report at 913px. */
+   report rendered in a 16px box, clipped through the middle of its glyphs). The
+   clamp below owns the clip, on its own box, so the opener beside it stays visible. */
 .ev-r-item-body {
   padding: var(--sp-2) var(--sp-3);
   min-width: 0;
-  transition: height var(--dur-standard) var(--ease-standard);
 }
 
-/* A closed box is its header and nothing else. The disclosure takes the region's
-   HEIGHT to 0 and the padding survives it, so without this a collapsed box carries
-   a 16px empty strip under its head — measured. Same rule and same reason as
-   `.run-body[aria-hidden="true"]` (27-run-card.css) and
-   `.ev-r-body[aria-hidden="true"]` above. */
-.ev-r-item-body[aria-hidden="true"] {
-  padding-block: 0;
+/* THE CLAMP, and it carries the REPORT's own type metrics so `lh` below measures a
+   line of the report rather than a line of the page's base type: the bubble inside
+   is `.message`, which is `--fs-md` at line-height 1.6 (13-messages.css). */
+.ev-r-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-md);
+  line-height: 1.6;
+}
+
+/* `max-block-size` + `overflow: hidden` rather than `-webkit-line-clamp`: that
+   property needs `display: -webkit-box`, whose children become legacy box items, so
+   it does not reliably clamp the block children a markdown bubble is made of
+   (paragraphs, fences, lists, tables). `attachClamp` is mechanism-agnostic — it
+   compares `scrollHeight` against `clientHeight` — so the attribute, the labels and
+   the measured-overflow rule are unchanged.
+
+   12 lines at 14px × 1.6 is 268.8px, which leaves the panes their room under the
+   header and the timeline on a 900px viewport. The count is also
+   `RESULT_CLAMP.lines` in `exec-view/page.ts`, and `clamp-line-count.test.ts`
+   fails when the two disagree. */
+.ev-r-text[data-clamped] {
+  max-block-size: 12lh;
+  overflow: hidden;
 }
 
 /* An empty capture is a FACT — a source writes a key only for a node that

@@ -74,8 +74,10 @@
   height: 0.75rem;
 }
 
+/* Narrower band at 12px. It is the mask's width now rather than a border's, so
+   this sets the token 15-input.css declares for exactly this override. */
 .settings-save-status > .spinner-sm {
-  border-width: 1.5px;
+  --vk-ring-band: 1.5px;
 }
 
 /* The two save faces carry `currentColor` and a semantic class; the hue is the
@@ -1572,8 +1574,17 @@ dd.governance-off {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+
+  /* The row's height is the POINTER TIER's, not its tallest child's. A writable
+   * row carries a select and a remove button, both floored at --hit-floor
+   * (61-mcp-tools.css), while a read-only row is 12px mono spans that answer no
+   * tier at all — so the two variants of one row disagreed by ~10px on a mouse
+   * and ~30px under a finger. Stated as the floor plus this row's own chrome
+   * rather than as a second copy of the arithmetic; `border-box` (02-reset.css)
+   * is what makes the padding and border below part of it. */
+  min-block-size: calc(var(--hit-floor) + 2 * var(--sp-1) + 2 * var(--hairline));
   padding: var(--sp-1) var(--sp-2);
-  border: 1px solid var(--c-border);
+  border: var(--hairline) solid var(--c-border);
   border-radius: var(--r);
   background: var(--c-bg-secondary);
   font-size: var(--fs-sm);
@@ -1794,24 +1805,19 @@ select.native-rule-effect:focus-visible {
 /* --- Run diagnostics: copyable report surface (Settings → General) ---------
  * The full report renders into a readonly, selectable textarea (the durable
  * surface) instead of a truncated ephemeral string, so it's always obtainable
- * even when the clipboard API is blocked (non-HTTPS self-host). A version row +
- * explicit Copy button sit alongside it. */
+ * even when the clipboard API is blocked (non-HTTPS self-host). The textarea and
+ * the version row stack below the run row in the section's own flex column,
+ * whose gap spaces them; the Copy control takes the run button's slot inside that
+ * row, so it needs no rule here beyond `.btn-small`'s. */
 .diagnostics-version {
   font-family: var(--font-mono);
   color: var(--c-text-secondary);
-}
-
-.diagnostics-result-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-block-start: var(--sp-2);
 }
 
 .diagnostics-result {
   inline-size: 100%;
   min-block-size: 12rem;
   max-block-size: 24rem;
-  margin-block-start: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--c-border);
   border-radius: var(--r);

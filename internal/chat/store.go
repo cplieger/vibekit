@@ -425,8 +425,9 @@ func (s *Store) AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *v
 //
 // ONE row per turn, because ACP resends the WHOLE entries array on every update, so
 // an append per frame persists N snapshots of one plan. "This turn" is the tail up
-// to the first user message, matching projectTurns' rule that a user message opens
-// one. Ts is NOT restamped on update: it marks where the plan entered the chat.
+// to the first PROMPT, matching projectTurns' rule that a prompt opens a turn while
+// a steer joins the one running. Ts is NOT restamped on update: it marks where the
+// plan entered the chat.
 func (s *Store) UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
 	var updated *vibekit.Message
 	var appended bool
@@ -435,7 +436,7 @@ func (s *Store) UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *
 			return false
 		}
 		for i := len(c.Messages) - 1; i >= 0; i-- {
-			if c.Messages[i].Role == vibekit.RoleUser {
+			if isPrompt(&c.Messages[i]) {
 				break // turn boundary: this turn carries no plan row yet
 			}
 			if len(c.Messages[i].Plan) == 0 {

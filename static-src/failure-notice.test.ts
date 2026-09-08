@@ -148,7 +148,7 @@ describe("failure-notice says which chat it is about", () => {
   it("names and links a chat that is not on screen", () => {
     reportFailure("c2", "at capacity");
     expect(lastToast()).toBe("Write the docs: at capacity");
-    expect(lastAction()?.label).toBe("Open chat");
+    expect(lastAction()?.label).toBe("Open");
   });
 
   it("the link activates that chat's tab", () => {
@@ -166,7 +166,7 @@ describe("failure-notice says which chat it is about", () => {
     mockActiveTabId.mockReturnValue("__settings__");
     reportFailure("c1", "at capacity");
     expect(lastToast()).toBe("Fix the parser: at capacity");
-    expect(lastAction()?.label).toBe("Open chat");
+    expect(lastAction()?.label).toBe("Open");
   });
 
   it("names the chat while the reader is in an editor tab", () => {
@@ -190,7 +190,7 @@ describe("failure-notice says which chat it is about", () => {
   it("links an unnamed chat without a prefix", () => {
     reportFailure("c-unknown", "at capacity");
     expect(lastToast()).toBe("at capacity");
-    expect(lastAction()?.label).toBe("Open chat");
+    expect(lastAction()?.label).toBe("Open");
   });
 
   // activateTab no-ops on an id it does not hold, so a button for a chat with no
@@ -278,7 +278,7 @@ describe("failure-notice carries the route's own remedy", () => {
   const remedy = { label: "Open custom instructions", onClick: () => undefined };
 
   // A routed error's remedy is offered nowhere else, so it takes the one action
-  // slot from "Open chat" AND goes sticky. `error(msg, retry)` is toast.ts's sticky
+  // slot from the jump button AND goes sticky. `error(msg, retry)` is toast.ts's sticky
   // path and `errorWithAction` its 12s one, so which mock fires IS the assertion.
   it("names a background chat and carries the remedy, stickily", () => {
     reportFailure("c2", "bad agent front matter", remedy);
@@ -430,7 +430,7 @@ describe("a turn-scoped failure on the chat in front of you", () => {
     reportFailure("c2", "at capacity", undefined, true);
     expect(toastCount()).toBe(1);
     expect(lastToast()).toContain("Write the docs");
-    expect(lastAction()?.label).toBe("Open chat");
+    expect(lastAction()?.label).toBe("Open");
   });
 
   it("still raises one when the window is hidden", () => {
@@ -462,7 +462,7 @@ describe("a turn-scoped failure on the chat in front of you", () => {
     reportFailure("c1", "no access token", action, true);
     expect(toastCount()).toBe(1);
     // On screen the remedy takes the STICKY entry point rather than the
-    // "Open chat" one — see `raise` — so it is `lastStickyAction` that carries it.
+    // jump one — see `raise` — so it is `lastStickyAction` that carries it.
     expect(lastStickyAction()?.label).toBe("Sign in");
   });
 

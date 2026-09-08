@@ -78,6 +78,7 @@ export function tabsMock(): Record<string, unknown> {
     parentChatRef: vi.fn(() => ""),
     openChatRefs: vi.fn(() => []),
     openSubagentRefs: vi.fn(() => []),
+    openRunRefs: vi.fn(() => []),
     openTabSubjects: vi.fn(() => []),
     cueCandidates: vi.fn(() => []),
 

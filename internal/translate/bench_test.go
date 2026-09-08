@@ -69,6 +69,11 @@ type baseDeps struct {
 	// sealRefusals are the chats whose SealTurnSegment declines, standing in for
 	// the host refusing to split a turn holding an unsettled tool call.
 	sealRefusals map[vibekit.ChatID]bool
+	// waiting is the steers this double has been told are in KAS's buffer, per
+	// chat, standing in for the runtime's tracker. A map rather than a call log
+	// because what a test asserts is the SET a reconnect would replay, and the
+	// three arms of the cascade reach it as add / remove / remove-each.
+	waiting map[vibekit.ChatID][]vibekit.SteerQueuedPayload
 }
 
 // termRendered is one terminal's rendered output in the stub registry.
@@ -83,7 +88,38 @@ func newBaseDeps() *baseDeps {
 		bufStore:    newTurnBuffers(),
 		lineTracker: buffer.NewLineTracker(),
 		terminals:   map[string]termRendered{},
+		waiting:     map[vibekit.ChatID][]vibekit.SteerQueuedPayload{},
 	}
+}
+
+// SteerWaiting / SteerRead / SteerForgotten stand in for the runtime's steering
+// buffer tracker, holding what a reconnect would re-offer.
+func (d *baseDeps) SteerWaiting(chatID vibekit.ChatID, p vibekit.SteerQueuedPayload) {
+	for i, e := range d.waiting[chatID] {
+		if e.SteerID == p.SteerID {
+			d.waiting[chatID][i] = p
+			return
+		}
+	}
+	d.waiting[chatID] = append(d.waiting[chatID], p)
+}
+
+func (d *baseDeps) SteerRead(chatID vibekit.ChatID, steerID string) {
+	d.SteerForgotten(chatID, []string{steerID})
+}
+
+func (d *baseDeps) SteerForgotten(chatID vibekit.ChatID, steerIDs []string) {
+	gone := make(map[string]bool, len(steerIDs))
+	for _, id := range steerIDs {
+		gone[id] = true
+	}
+	kept := d.waiting[chatID][:0]
+	for _, e := range d.waiting[chatID] {
+		if !gone[e.SteerID] {
+			kept = append(kept, e)
+		}
+	}
+	d.waiting[chatID] = kept
 }
 
 func (d *baseDeps) Output(terminalID string) (string, []vibekit.TextSpan, bool) {

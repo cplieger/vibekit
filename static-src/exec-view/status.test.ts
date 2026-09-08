@@ -17,6 +17,7 @@ import {
   inFlight,
   neverRan,
   paintStateMark,
+  settled,
   type ExecState,
 } from "./status.js";
 
@@ -84,9 +85,11 @@ describe("STATE_MARK is total, and every state carries exactly one channel", () 
 // the third bucket, so these pin that the buckets are disjoint and that between them
 // they name every state — a ninth state added to `ALL` above then has to be
 // classified here rather than falling into whichever arm happens to be last.
-describe("inFlight and neverRan partition the vocabulary", () => {
-  it("agrees on no state", () => {
+describe("inFlight, neverRan and settled partition the vocabulary", () => {
+  it("agrees on no state, pairwise", () => {
     expect(ALL.filter((s) => inFlight(s) && neverRan(s))).toEqual([]);
+    expect(ALL.filter((s) => inFlight(s) && settled(s))).toEqual([]);
+    expect(ALL.filter((s) => neverRan(s) && settled(s))).toEqual([]);
   });
 
   it("names the in-flight four", () => {
@@ -97,8 +100,20 @@ describe("inFlight and neverRan partition the vocabulary", () => {
     expect(ALL.filter(neverRan)).toEqual(["pending", "skipped"]);
   });
 
-  it("leaves exactly the settled outcomes for neither predicate", () => {
-    expect(ALL.filter((s) => !inFlight(s) && !neverRan(s))).toEqual(["ok", "fail", "warn"]);
+  // Hardcoded rather than derived from the other two, or this case would restate
+  // their definitions instead of pinning this one: `settled` is what the results
+  // region's done-gate reads, and `fail`/`warn` being IN is the decision it carries
+  // (such a step can hold a capture worth reading) while `skipped` being OUT is the
+  // other half (terminal, but it never ran).
+  it("names exactly the three states that ran and stopped", () => {
+    expect(ALL.filter(settled)).toEqual(["ok", "fail", "warn"]);
+  });
+
+  it("covers every state exactly once between the three", () => {
+    for (const s of ALL) {
+      const buckets = [inFlight(s), neverRan(s), settled(s)].filter(Boolean);
+      expect(buckets, s).toHaveLength(1);
+    }
   });
 });
 

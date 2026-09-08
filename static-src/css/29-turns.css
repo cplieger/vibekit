@@ -1481,6 +1481,71 @@
   position: relative;
 }
 
+/* THE TURN'S OWN DURATION, revealed to the RIGHT of the marker on hover.
+ *
+ * ABSOLUTELY POSITIONED, which is what makes "expand right" and "reserve the box"
+ * the same thing here: out of flow, the slot carries its whole geometry at rest and
+ * revealing it moves neither the marker nor anything else. In flow it is a second
+ * item in a 24px row and the marker measures 44.5px, which is the rail's column
+ * silently becoming a table. The coupling the footer's slot protects against is out
+ * of reach by construction: the rail is an overlay in `#messages-wrap-outer`, a
+ * SIBLING of the scroller, so nothing here reaches `#messages`' scrollHeight and
+ * therefore nothing reaches `scrollableBy()`, the navigability gate at MIN_SCROLL_PX.
+ *
+ * THE CONTAINER FLOOR guarantees the gutter can hold the words: seven mono
+ * characters at `--fs-xs` plus padding, border and offset want about 60px clear of
+ * the window, which `--rail-inset-end` reaches at 64rem of chat area. 70rem is the
+ * threshold the resume label already derives for the same gutter, reused rather than
+ * adding a second number six rem from it.
+ *
+ * OUTSIDE `any-hover: hover` the slot is not rendered, and that is a decision rather
+ * than a fallback, unlike the footer's copy: there is no gesture to reveal it with,
+ * thirty permanently expanded rows turn a navigator into a two-column table, and the
+ * turn card's own footer shows this value unconditionally there. */
+.rail-marker-time {
+  display: none;
+}
+
+@container chat-area (width >= 70rem) {
+  @media (any-hover: hover) {
+    .rail-marker > .rail-marker-time {
+      position: absolute;
+      inset-inline-start: 100%;
+      inset-block: 0;
+      display: flex;
+      align-items: center;
+      margin-inline-start: var(--sp-1);
+      padding: 0 var(--sp-1);
+      border-radius: var(--r-sm);
+
+      /* The marker's own HOVER pair, so the digit and the duration read as one
+       * expanded box rather than as a box with a label stuck to it. */
+      background: var(--c-bg-tertiary);
+      color: var(--c-text-primary);
+      font-family: var(--font-mono);
+      font-size: var(--fs-xs);
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      white-space: nowrap;
+
+      /* The pointer never enters it, so the pill cannot take a hover away from the
+       * marker it belongs to and cannot intercept anything in the gutter. */
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity var(--dur-micro) var(--ease-standard);
+    }
+
+    /* `:focus-visible` beside `:hover`, or a keyboard user tabbing the rail never
+     * reaches the value at all. Reduced motion is 40-a11y.css's global sweep, which
+     * zeroes the duration; a zeroed transition still RUNS, so the reveal is instant
+     * rather than suppressed, which is what it should be. */
+    .rail-marker:hover > .rail-marker-time,
+    .rail-marker:focus-visible > .rail-marker-time {
+      opacity: 1;
+    }
+  }
+}
+
 /* `Review changes`: the multi-file seam, one per turn under the file rows. Only
    rendered when the turn touched more than one file — on a single-file turn the
    row above already opens that change. */

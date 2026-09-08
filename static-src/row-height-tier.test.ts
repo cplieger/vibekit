@@ -5,7 +5,7 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 // ---------------------------------------------------------------------------
 // A repeated list row takes its height from the TIER, not from its font.
 //
-// Ten row families declared no height at all, so each resolved to its line box
+// Row families declared no height at all, so each resolved to its line box
 // plus padding — measured 23px to 36px, and identical on a coarse pointer and a
 // fine one, while `.tab` beside them correctly went 36px to 44px. A finger got
 // the same 23px git-changes row as a mouse.
@@ -27,6 +27,13 @@ const LIST_ROWS = [
   ["pill-role-item", []],
   ["forge-account-repo-row", []],
   ["turn-file-row", []],
+  // Settings > Permissions. Its two variants disagreed by ~10px on a mouse and
+  // ~30px under a finger: a writable rule row carries a select AND a remove
+  // button, both floored at `--hit-floor`, while a read-only one is 12px mono
+  // spans that answer no tier at all. Its floor is `--hit-floor` plus the row's
+  // own chrome rather than `--ctl-h-sm`, which would satisfy this test and still
+  // leave the coarse tier 18px short.
+  ["native-rule", ["native-rule-cap"]],
 ] as const;
 
 /** Form WRAPPERS, deliberately NOT floored: each holds a control that carries

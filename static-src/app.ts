@@ -36,6 +36,7 @@ import { $, byId } from "./dom.js";
 import { guardDuplicateActivation, initSidebarSwipe } from "./platform.js";
 import { initPointerTier } from "./pointer-tier.js";
 import { initPointerModeToggle, revealPointerModeToggle } from "./pointer-mode.js";
+import { initPageTitleFit } from "./page-title.js";
 import { initRolePicker } from "./role-picker.js";
 import * as transport from "./transport.js";
 import { initUI, renderIdentity } from "./settings.js";
@@ -144,6 +145,11 @@ function init(): void {
   // HTML, so revealing it needs no wiring of its own.
   initPointerTier({ onCoarseSeen: revealPointerModeToggle });
   initPointerModeToggle();
+
+  // AFTER the tier, because the fit it measures is against the bar's action
+  // buttons and the tier is what sizes them (44px coarse, 36px fine). Reading the
+  // room before `data-pointer` is set measures the wrong row.
+  initPageTitleFit();
 
   initActions();
 
@@ -465,9 +471,9 @@ function fetchModelsFromREST(opts: { readonly reset?: boolean } = {}): Promise<v
         if (d.models.length > 0) {
           populatePickerModels(d.models.map(toModelInfo), "");
         }
-        // The model pill names a non-default reasoning tier, and it can only know which
-        // tier is default from the catalog this fetch just landed. Nothing else repaints
-        // the pill on this path.
+        // The model pill names the chat's reasoning tier, and the catalog this fetch just
+        // landed carries both the per-model capability gate (`has_effort`) and the `default`
+        // rung of the live-tier chain. Nothing else repaints the pill on this path.
         const active = getActive();
         if (active !== undefined) {
           refreshContextUI(active);

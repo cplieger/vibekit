@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/url"
@@ -22,15 +23,7 @@ func (s *Service) keysPath() string { return filepath.Join(s.dir, "vapid-keys.js
 func (s *Service) subsPath() string { return filepath.Join(s.dir, "push-subs.json") }
 
 func (s *Service) loadKeys() {
-	data, err := os.ReadFile(s.keysPath())
-	if err == nil && json.Unmarshal(data, &s.keys) == nil && s.keys.PublicKey != "" {
-		priv, decErr := s.decodeVAPIDPrivateKey()
-		if decErr != nil {
-			slog.Error("push: decode VAPID private key at startup", "error", decErr)
-			s.healthy = false
-			return
-		}
-		s.vapidPriv = priv
+	if s.adoptStoredKeys() {
 		return
 	}
 	priv, err := ecdh.P256().GenerateKey(rand.Reader)
@@ -59,20 +52,94 @@ func (s *Service) loadKeys() {
 		return
 	}
 	s.vapidPriv = ecdsaKey
+	s.keysGenerated = true
 	slog.Info("push: generated VAPID keys")
 }
 
-func (s *Service) loadSubs() {
-	data, err := os.ReadFile(s.subsPath())
+// adoptStoredKeys loads vapid-keys.json and reports whether the service now has
+// its keypair settled. false means the caller must generate one.
+//
+// Every outcome short of a missing file is logged, because the contents of this
+// file are the only explanation a reader gets for the stored subscriptions
+// dying: a replacement keypair cannot sign for any of them.
+func (s *Service) adoptStoredKeys() bool {
+	data, err := os.ReadFile(s.keysPath())
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			slog.Warn("push: read subs", "error", err)
+			slog.Error("push: read VAPID keys", "error", err, "path", s.keysPath())
 		}
+		return false
+	}
+	if unusable := s.adoptKeyPair(data); unusable != nil {
+		slog.Error("push: stored VAPID keys unusable, generating a replacement",
+			"path", s.keysPath(), "error", unusable, "hint", pushResubscribeHint)
+		return false
+	}
+	return true
+}
+
+// adoptKeyPair takes the keypair in data as the service's own, or reports why it
+// cannot sign. s.vapidPriv is set only on success.
+//
+// A file present but unable to sign is reported as unusable, so adoptStoredKeys
+// treats it exactly like a MISSING one and the caller's generate-and-persist path
+// heals it. Adopting one left the service permanently unhealthy with no way back:
+// a half-written {"publicKey":"…"} was accepted, every send was then dropped by
+// preflightSend's health gate, and no later boot could repair it (invariant 6).
+func (s *Service) adoptKeyPair(data []byte) error {
+	if err := json.Unmarshal(data, &s.keys); err != nil {
+		return err
+	}
+	switch {
+	case s.keys.PublicKey == "":
+		return errors.New("no public key")
+	case s.keys.PrivateKey == "":
+		return errors.New("no private key")
+	}
+	priv, err := s.decodeVAPIDPrivateKey()
+	if err != nil {
+		return fmt.Errorf("decode private key: %w", err)
+	}
+	s.vapidPriv = priv
+	return nil
+}
+
+// reportOrphanedSubs states what a freshly generated keypair cost. Those
+// subscriptions were signed against the key that just went away, so they answer
+// 401/403 forever and nothing here can tell them from working ones — which is
+// how push comes to be silently dead with no cause on the box.
+//
+// stored is the count loadSubs already read, so this costs no second read of
+// push-subs.json. A read or parse failure reaches loadSubs' own warning instead.
+func (s *Service) reportOrphanedSubs(stored int) {
+	if !s.keysGenerated || stored == 0 {
 		return
+	}
+	slog.Error("push: the new VAPID keypair orphaned every stored subscription",
+		"count", stored, "hint", pushResubscribeHint)
+}
+
+// readPersistedSubs decodes push-subs.json. A missing file is the first-boot
+// state, reported as no subscriptions and no error.
+func (s *Service) readPersistedSubs() ([]vibekit.PushSubscription, error) {
+	data, err := os.ReadFile(s.subsPath())
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	var subs []vibekit.PushSubscription
 	if err := json.Unmarshal(data, &subs); err != nil {
-		slog.Warn("push: parse subs", "error", err, "size", len(data))
+		return nil, fmt.Errorf("parse %d bytes: %w", len(data), err)
+	}
+	return subs, nil
+}
+
+func (s *Service) loadSubs() {
+	subs, err := s.readPersistedSubs()
+	if err != nil {
+		slog.Warn("push: read subs", "error", err)
 		return
 	}
 	// Re-run the allowlist at load time so a prior looser ruleset
@@ -92,6 +159,10 @@ func (s *Service) loadSubs() {
 		s.subs[sub.Endpoint] = sub
 	}
 	s.mu.Unlock()
+	// Last, so the count comes off the read above rather than a second one. The
+	// count is what was STORED, not what survived the allowlist: a replaced
+	// keypair orphaned every one of them either way.
+	s.reportOrphanedSubs(len(subs))
 }
 
 func (s *Service) saveSubsAsync(ctx context.Context) {

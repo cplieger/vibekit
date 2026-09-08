@@ -269,6 +269,13 @@ func (rt *Runtime) streamInitialState(
 		return err
 	}
 
+	// The steering buffer, for the same reason and on the same terms: KAS holds it,
+	// nothing can read it back, and the gap door empties the client's dock without
+	// promoting anything. See replayPendingSteers for what it cannot recover.
+	if err := rt.replayPendingSteers(writeEvent, chatFilter); err != nil {
+		return err
+	}
+
 	// ONE read of the open-turn set serves both replays below, so the busy chats
 	// the second one skips are exactly the chats the first one described.
 	open := rt.coord.turns.openTurns()

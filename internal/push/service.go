@@ -118,6 +118,12 @@ type Service struct {
 	dir           string
 	mu            sync.Mutex
 	healthy       bool
+	// keysGenerated records that loadKeys minted a replacement keypair, which is
+	// what makes every stored subscription undeliverable. loadSubs reads it to
+	// report that cost off the read it already performs. Unguarded on purpose: New
+	// runs loadKeys then loadSubs on the constructing goroutine, before the write
+	// loop starts and before any caller holds the service.
+	keysGenerated bool
 }
 
 // saveRequest pairs a subscription snapshot with a done channel

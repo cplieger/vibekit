@@ -266,3 +266,128 @@ func TestSteeringQueued_ASeverityStillPreemptsTheSteerEntirely(t *testing.T) {
 		t.Fatalf("events = %+v, want one agent_notice and no steer", *events)
 	}
 }
+
+// --- The waiting SET: what a reconnect has to be able to re-offer ---
+//
+// KAS's steering buffer is the only place a waiting steer exists, and nothing
+// client-callable reads it back (`_session/steer` and `_session/steer/clear` are
+// the whole verb set — there is no list). So a client that loses a frame loses the
+// row: its dock empties with the message still queued, and the reader watches
+// their correction vanish and reasonably re-sends it. These three cases pin the
+// projection the connect replay serves from, one per arm of the sub-kind cascade.
+
+// waitingOf returns the buffer's entries for one chat, keyed by steer id.
+func waitingOf(t *testing.T, d *baseDeps, chatID vibekit.ChatID) map[string]vibekit.SteerQueuedPayload {
+	t.Helper()
+	out := map[string]vibekit.SteerQueuedPayload{}
+	for _, p := range d.waiting[chatID] {
+		out[p.SteerID] = p
+	}
+	return out
+}
+
+func TestSteeringQueued_RecordsTheSteerAsWaiting(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	deps.userSteers = map[string]bool{"steer-1": true}
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_queued", map[string]any{
+			"messageId": "steer-1",
+			"content":   "use tabs",
+		}), FrameAttribution{})
+
+	got := waitingOf(t, deps, "c1")
+	if len(got) != 1 {
+		t.Fatalf("waiting = %+v, want one entry", got)
+	}
+	e := got["steer-1"]
+	if e.Text != "use tabs" || e.Origin != vibekit.SteerOriginUser {
+		t.Errorf("entry = %+v, want the text and the resolved origin", e)
+	}
+}
+
+// The AGENT's own notice is not a steer on any surface, so it must not enter the
+// set either — replaying one would put a line the agent wrote in the composer's
+// chip row, which is the defect the split exists to prevent.
+//
+// A real steer rides alongside it deliberately: asserting an EMPTY set would pass
+// for a build that records nothing at all, which is the one mutant this case has
+// to be able to see.
+func TestSteeringQueued_AnAgentNoticeIsNotRecordedAsWaiting(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_queued", map[string]any{
+			"messageId": "steer-1",
+			"content":   "use tabs",
+		}), FrameAttribution{})
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_queued", map[string]any{
+			"messageId":            "notify-1",
+			"content":              "[notification/warning] a step is waiting",
+			"notificationSeverity": "warning",
+		}), FrameAttribution{})
+
+	got := waitingOf(t, deps, "c1")
+	if len(got) != 1 {
+		t.Fatalf("waiting = %+v, want the steer alone", got)
+	}
+	if _, ok := got["notify-1"]; ok {
+		t.Errorf("waiting = %+v, want the notice absent", got)
+	}
+}
+
+// The model READ it, so it is no longer waiting: replaying it afterwards would
+// offer a delivered message back to the dock.
+//
+// A SIBLING steer stays behind, for the same reason as above: an empty-set
+// assertion would pass for a build that never recorded either one.
+func TestSteeringInjected_RemovesTheSteerFromTheWaitingSet(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	for _, id := range []string{"steer-1", "steer-2"} {
+		tr.HandleSessionInfoUpdate(t.Context(), "c1",
+			steerFrame(t, "steering_queued", map[string]any{
+				"messageId": id,
+				"content":   "text of " + id,
+			}), FrameAttribution{})
+	}
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_injected", map[string]any{
+			"messageId": "steer-1",
+			"content":   "text of steer-1",
+		}), FrameAttribution{})
+
+	got := waitingOf(t, deps, "c1")
+	if len(got) != 1 {
+		t.Fatalf("waiting = %+v, want only steer-2", got)
+	}
+	if _, ok := got["steer-2"]; !ok {
+		t.Errorf("waiting = %+v, want steer-2 kept", got)
+	}
+}
+
+// A boundary cleared KAS's buffer, so every id it names is gone server-side
+// whether the model read it or not. Named ids only, matching the frame.
+func TestSteeringCleared_RemovesEachNamedSteerFromTheWaitingSet(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	for _, id := range []string{"steer-1", "steer-2", "steer-3"} {
+		tr.HandleSessionInfoUpdate(t.Context(), "c1",
+			steerFrame(t, "steering_queued", map[string]any{
+				"messageId": id,
+				"content":   "text of " + id,
+			}), FrameAttribution{})
+	}
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_cleared", map[string]any{
+			"messageIds": []string{"steer-1", "steer-3"},
+		}), FrameAttribution{})
+
+	got := waitingOf(t, deps, "c1")
+	if len(got) != 1 {
+		t.Fatalf("waiting = %+v, want only steer-2", got)
+	}
+	if _, ok := got["steer-2"]; !ok {
+		t.Errorf("waiting = %+v, want steer-2 kept", got)
+	}
+}

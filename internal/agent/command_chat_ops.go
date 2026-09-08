@@ -27,8 +27,12 @@ func (rt *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, 
 	}
 	rt.lines.Clear(chatID)
 	// A steer's lifetime is one turn, so the chat going away means every id
-	// recorded for it can only ever answer a frame that will not arrive.
+	// recorded for it can only ever answer a frame that will not arrive. Both
+	// registries, because they answer different questions and neither clears the
+	// other: the ledger holds whose WORDS an id carried, the buffer holds which ids
+	// are still waiting to be read.
 	rt.steerLedger.ForgetChat(chatID)
+	rt.bus.ClearWaitingSteersForChat(chatID)
 }
 
 // reapChatSession removes the chat's on-disk KAS session state on permanent

@@ -90,7 +90,7 @@ import type { PendingSteer } from "./types.js";
 /** Lines a dock row shows before its opener appears. Four, matching the
  *  transcript note: the bar grows upward into the transcript, so an unbounded row
  *  here costs the reader the conversation, and four plus an opener is the
- *  compromise — the row already carries the whole text in its `title` and in its
+ *  compromise — the row already carries the whole text in its tooltip and in its
  *  accessible name. */
 const DOCK_CLAMP_LINES = 4;
 
@@ -200,7 +200,7 @@ function buildRow(steer: PendingSteer, waiting: number): HTMLElement {
       // second class to keep in sync.
       "data-state": sending ? "sending" : "sent",
       // The RAW text, not the clamped one: the visible row is clamped by layout.
-      title: steer.text,
+      "data-tooltip": steer.text,
       // The state is carried by the glyph AND the label, both visual, so it has
       // to be in the accessible name too.
       "aria-label": accessibleName(steer.text, sending),
@@ -277,8 +277,8 @@ function actionButton(
     iconEl(icon),
   );
   btn.addEventListener("click", (e: Event) => {
-    // The row carries a title tooltip and is not itself interactive, but stop
-    // here anyway so a future row-level affordance cannot fire off a button.
+    // The row carries a tooltip and is not itself interactive, but stop here
+    // anyway so a future row-level affordance cannot fire off a button.
     e.stopPropagation();
     onClick();
   });
@@ -334,8 +334,8 @@ async function discardSteers(waiting: number): Promise<void> {
 // Nothing is shortened here. The text is collapsed to one line, because an
 // accessible name is announced as a single string and stray newlines buy
 // nothing, but the whole of it is present: the visible row clamps to fit, and a
-// reader who cannot see it is not subject to that constraint. The title
-// attribute carries the same string for a mouse.
+// reader who cannot see it is not subject to that constraint. The row's
+// data-tooltip carries the same string for a mouse.
 function accessibleName(text: string, sending: boolean): string {
   const steerText = oneLine(text);
   return sending

@@ -49,9 +49,79 @@ const subtitles = new Map<string, string>();
  *  it is enough, because every view switch repaints from the map. */
 let shownKind = "";
 
+/** The class a heading wears when the title cannot render in the room the bar's
+ *  actions leave it: the app's screen-reader-only utility (40-a11y.css), so the
+ *  document keeps its `<h1>` and only the pixels go. `display: none` would take the
+ *  page's one heading out of the accessibility tree on exactly the devices where
+ *  this bar is the only thing naming the view. */
+const CLIPPED = "sr-only";
+
+/** Clip the heading when its title would render truncated.
+ *
+ *  MEASURED, never keyed to a width, for `tab-bar-fit.ts`'s reason: the answer
+ *  depends on the TEXT (a chat's name against "Git") and on how many actions the
+ *  bar is showing — `#find-btn` collapses on views with nothing to search, and the
+ *  hamburger only exists below 48rem — so no container width knows it. Measured at
+ *  390px on the coarse tier: eight 44px targets plus the bar's 24px of padding fill
+ *  the row exactly, leaving the heading 0px, while at 768px it gets 378px against a
+ *  title wanting 230px.
+ *
+ *  The read is taken with the heading SHOWN — the class comes off, the measurement
+ *  happens, the class goes back — so the decision never depends on its own outcome.
+ *  Without that, a clipped heading measures 1px, reports no overflow, and unclips
+ *  itself on the next pass forever. */
+function fitHeading(): void {
+  // Null-tolerant, unlike the WRITE below, and the asymmetry is the point: a title
+  // with no element to land in is a bug and `byId` should say so, while a FIT is a
+  // refinement over a laid-out bar and having no bar is not an error. Hard-failing
+  // here made `setPageTitle` throw for any caller that owns a subtitle span without
+  // a toolbar around it.
+  const heading = document.getElementById("titlebar-heading");
+  const title = document.getElementById("titlebar-title");
+  if (heading === null || title === null) {
+    return;
+  }
+  heading.classList.remove(CLIPPED);
+  // A hidden view, and an empty title (`.titlebar-title:empty` is `display: none`),
+  // both report 0/0 — no overflow, so shown. The observer fires again when the bar
+  // gains real geometry, so a bar measured before layout self-corrects.
+  const truncated = title.scrollWidth > title.clientWidth;
+  heading.classList.toggle(CLIPPED, truncated);
+}
+
+/** Watch the heading and keep the title's presence fitted to the room the actions
+ *  leave. Call once at init; the bar is a static singleton, so there is nothing to
+ *  release.
+ *
+ *  The observer watches the HEADING rather than the bar because the bar's width is
+ *  not the only input — a collapsing find button changes the room without changing
+ *  the bar. That costs one redundant pass per flip (clipping the heading resizes it,
+ *  which re-notifies), and the second pass re-measures the same shown layout,
+ *  reaches the same verdict and mutates nothing, so it settles there. */
+export function initPageTitleFit(): void {
+  const ro = new ResizeObserver(() => {
+    // Deferred a frame: mutating class state inside the RO delivery cycle is what
+    // produces the browser's benign "loop completed with undelivered
+    // notifications" console error.
+    requestAnimationFrame(fitHeading);
+  });
+  ro.observe(byId<HTMLElement>("titlebar-heading"));
+  fitHeading();
+}
+
 function paint(title: string, subtitle: string): void {
-  byId<HTMLElement>("titlebar-title").textContent = title;
-  byId<HTMLElement>("titlebar-subtitle").textContent = subtitle;
+  const titleEl = byId<HTMLElement>("titlebar-title");
+  const subtitleEl = byId<HTMLElement>("titlebar-subtitle");
+  // Guarded because this runs from the view effect, which re-runs on every
+  // projection mutation: a rename, a dot change and a background tab's close all
+  // repaint the same two strings, and `fitHeading` forces layout to read
+  // `scrollWidth`. A width change is the observer's job, not this one's.
+  const moved = titleEl.textContent !== title || subtitleEl.textContent !== subtitle;
+  titleEl.textContent = title;
+  subtitleEl.textContent = subtitle;
+  if (moved) {
+    fitHeading();
+  }
 }
 
 /** Show `title`, with whatever subtitle `kind` last recorded.
@@ -70,9 +140,15 @@ export function setPageTitle(title: string, kind = ""): void {
  *  half the heading without knowing what the other half says. */
 export function setPageSubtitle(kind: string, subtitle: string): void {
   subtitles.set(kind, subtitle);
-  if (kind === shownKind) {
-    byId<HTMLElement>("titlebar-subtitle").textContent = subtitle;
+  if (kind !== shownKind) {
+    return;
   }
+  const el = byId<HTMLElement>("titlebar-subtitle");
+  if (el.textContent === subtitle) {
+    return;
+  }
+  el.textContent = subtitle;
+  fitHeading();
 }
 
 /** Clear the heading. Used when no tab is open, where a stale title would name a

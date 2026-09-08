@@ -18,7 +18,7 @@
 // A toast is a CORNER OVERLAY, so it has to say what it is about. A reader on
 // Settings, the git panel or an editor tab has no chat in sight, so a bare reason
 // there names nothing. Every notice for a chat that is not the tab on screen
-// carries that chat's name and an "Open chat" button; see `raise`.
+// carries that chat's name and a jump button; see `raise`.
 //
 // NOT a retry surface, deliberately. The button is a jump, never a resend:
 // submit.ts already re-sends under the failed attempt's own message id, so
@@ -54,8 +54,12 @@ const MAX_TOAST_CHARS = 240;
  *  title, so the prefix takes the leading words and no more. */
 const MAX_NAME_CHARS = 40;
 
-/** The label on the jump-to-the-affected-chat button. */
-const OPEN_LABEL = "Open chat";
+/** The label on the jump-to-the-affected-chat button. ONE WORD, because the button
+ *  sits inline with the message (04-uip-skin.css) inside a card capped at 384px, so
+ *  every character it takes is a character the reason loses. "chat" was also saying
+ *  it twice: this button is offered ONLY when the chat is not on screen, which is
+ *  the same condition that puts that chat's name at the front of the message. */
+const OPEN_LABEL = "Open";
 
 /** What a failure with no message from the server says. Reaching this means the
  *  server sent an error code with an empty message, which is a server bug, so the
@@ -89,7 +93,7 @@ const remedies = new Map<string, () => void>();
  *  dot. An empty `chatID` is a workspace-global command, which names no chat.
  *
  *  `action` is the route's own remedy (a Settings jump, the login modal). It takes
- *  the single action slot from the "Open chat" jump and makes the toast STICKY,
+ *  the single action slot from the jump button and makes the toast STICKY,
  *  because a remedy offered nowhere else must not expire unread. The chat is still
  *  NAMED, which is the half that answers whose failure this is. */
 export function reportFailure(

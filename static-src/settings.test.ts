@@ -12,6 +12,7 @@ import { settingsPayload } from "./__test-helpers__/settings.js";
 const H = vi.hoisted(() => ({
   mockRun: vi.fn(),
   mockBind: vi.fn(),
+  mockCleanup: vi.fn(),
   mockApplyTheme: vi.fn(),
   mockKiroDispatch: vi.fn(),
   mockInitGitBadge: vi.fn(),
@@ -23,7 +24,7 @@ vi.mock("./actions/tools.js", () => ({
 }));
 vi.mock("./actions/index.js", () => ({
   bindLoadingState: (...a: unknown[]) => H.mockBind(...a),
-  registerCleanup: vi.fn(),
+  registerCleanup: (...a: unknown[]) => H.mockCleanup(...a),
   debouncedDispatch: vi.fn(() =>
     Object.assign(() => undefined, { isPending: () => false, flush: vi.fn() }),
   ),
@@ -326,6 +327,75 @@ describe("initDiagnostics", () => {
     expect(document.getElementById("diagnostics-status")?.textContent).toBe(
       "Copied report to clipboard.",
     );
+  });
+
+  // The Copy control takes the run button's own slot, so hiding goes through the
+  // `.hidden` utility for both: `.btn`/`.btn-small` each declare `display`, and an
+  // author-origin `display` beats the UA's `[hidden]` rule at any specificity.
+  it("offers no Copy control until a report exists", () => {
+    initDiagnostics();
+
+    const run = document.getElementById("diagnostics-run");
+    const copy = document.querySelector<HTMLButtonElement>(".diagnostics-copy");
+    expect(copy).not.toBeNull();
+    expect(copy?.classList.contains("hidden")).toBe(true);
+    expect(run?.classList.contains("hidden")).toBe(false);
+    // One slot, so the two controls are siblings in the run row.
+    expect(copy?.parentElement).toBe(run?.parentElement);
+  });
+
+  it("swaps Copy into the run button's slot once the report lands", async () => {
+    H.mockRun.mockResolvedValue({ report: "some report" });
+    stubClipboard(() => Promise.resolve());
+
+    initDiagnostics();
+    clickRun();
+    await flush();
+
+    expect(
+      document.querySelector<HTMLButtonElement>(".diagnostics-copy")?.classList.contains("hidden"),
+    ).toBe(false);
+    expect(document.getElementById("diagnostics-run")?.classList.contains("hidden")).toBe(true);
+  });
+
+  it("returns the run button after the slot expires, keeping the report", async () => {
+    vi.useFakeTimers();
+    try {
+      H.mockRun.mockResolvedValue({ report: "some report" });
+      stubClipboard(() => Promise.resolve());
+
+      initDiagnostics();
+      clickRun();
+      await flush();
+
+      vi.advanceTimersByTime(15 * 60 * 1000);
+
+      expect(document.getElementById("diagnostics-run")?.classList.contains("hidden")).toBe(false);
+      expect(
+        document
+          .querySelector<HTMLButtonElement>(".diagnostics-copy")
+          ?.classList.contains("hidden"),
+      ).toBe(true);
+      // The textarea is the report's only store, so the timer never drops it.
+      const result = document.querySelector<HTMLTextAreaElement>(".diagnostics-result");
+      expect(result?.hidden).toBe(false);
+      expect(result?.value).toBe("some report");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases the slot timer on unload", async () => {
+    H.mockRun.mockResolvedValue({ report: "some report" });
+    stubClipboard(() => Promise.resolve());
+
+    initDiagnostics();
+    clickRun();
+    await flush();
+
+    const release = H.mockCleanup.mock.calls.at(-1)?.[0] as (() => void) | undefined;
+    expect(typeof release).toBe("function");
+    expect(() => release?.()).not.toThrow();
   });
 });
 

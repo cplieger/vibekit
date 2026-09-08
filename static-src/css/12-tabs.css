@@ -220,10 +220,13 @@
    inherited clock has no per-element creation moment, so a dot that starts
    working mid-cycle is already in step with every other one.
 
-   Peak 0.55 rather than 1: with every dot now beating together the strip reads as
-   one pulse instead of a field of them, and at that amplitude it does not need to
-   be bright to be seen. Two dozen dots flashing to full opacity in unison would
-   trade a noisy strip for a throbbing one.
+   TWO NUMBERS, and the visibility lives in the CEILING rather than in the
+   amplitude. 0.55 rather than 1 keeps the strip reading as one pulse instead of a
+   field of them; the 40% white is what gives that amplitude something to scale,
+   because the overlay composites over a SOLID disc of its own hue and a mix close
+   to that hue has almost no headroom above its own backdrop. Measured peak swing:
+   4.9 points of OKLab L in dark, 9.7 in light — a breathe rather than a throb, and
+   clear of the band where an 8px disc reads as still.
 
    Geometry is load-bearing: a HARD-edged overlay at this size shows any half-pixel
    layer snap as an off-centre pulse, so this is a radial with a solid bright core
@@ -236,7 +239,7 @@
   border-radius: 50%;
   background: radial-gradient(
     closest-side,
-    color-mix(in oklch, var(--dot-color) 78%, #fff) 0 70%,
+    color-mix(in oklch, var(--dot-color) 60%, #fff) 0 70%,
     transparent 92%
   );
   opacity: calc(var(--vk-beat) * 0.55);

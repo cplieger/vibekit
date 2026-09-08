@@ -152,7 +152,8 @@ RUN mkdir -p static-src/node_modules/@cplieger/keyenc && \
 # Build the browser client, then the Go server (static files embedded via
 # go:embed). BUILD_VERSION is stamped into internal/version.Build via
 # -ldflags so the running binary can report what tag it was built from.
-# Defaults to "dev" for local test builds; CI sets it to the date-sha tag.
+# Defaults to "dev" for local test builds; the release workflow passes the
+# release tag.
 #
 # Step 1: tsc --noEmit is the TYPE gate over the app + service-worker
 # configs (esbuild transpiles without typechecking, so tsc keeps failing
@@ -197,8 +198,11 @@ RUN /tmp/package/lib/tsc --project static-src/tsconfig.build.json --noEmit && \
     /tmp/package/lib/tsc --project static-src/tsconfig.sw.json --noEmit && \
     go run ./cmd/bundle
 
+# The -X path must be go.mod's full module path. The linker discards a path
+# matching no package in the build with no error and no warning, so a wrong one
+# ships the "dev" fallback from a build that reported success.
 RUN CGO_ENABLED=0 go build \
-    -ldflags="-s -w -X vibekit/internal/version.Build=${BUILD_VERSION}" \
+    -ldflags="-s -w -X github.com/cplieger/vibekit/internal/version.Build=${BUILD_VERSION}" \
     -o /app/vibekit .
 
 # --- Final stage: minimal runtime ---

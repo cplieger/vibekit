@@ -376,8 +376,9 @@
  *
  * A control that must stay visually small grows its TARGET rather than its box,
  * with an absolutely positioned `::after` expander sized by `inset` off
- * `--hit-floor`, so it follows the tier with no second declaration. Two members:
- * `.status-dot` (10-shell-app.css) and `.shell-resize` (21-shell-panel.css).
+ * `--hit-floor`, so it follows the tier with no second declaration. Two named
+ * members, `.status-dot` (10-shell-app.css) and `.shell-resize`
+ * (21-shell-panel.css), plus the native box controls below.
  *
  * `all: unset` ESCAPES this floor, and it is the trap worth knowing. It resets
  * `min-width`/`min-height` to their initial `auto` at whatever specificity the
@@ -403,6 +404,36 @@
 :where([tabindex]:not([tabindex="-1"])) {
   min-width: var(--hit-floor);
   min-height: var(--hit-floor);
+}
+
+/* A NATIVE CHECKBOX OR RADIO PAINTS AT ITS OWN DECLARED SIZE, so the floor grows
+ * the MARK rather than the target. Measured before this rule: a 16px box
+ * rendering 24x24 on a mouse and 44x44 under a finger, in Settings >
+ * Permissions, the composer's `+` menu and every task list in the transcript.
+ * 44px is Apple HIG's minimum TARGET and WCAG 2.5.5's, never a minimum control,
+ * so the box keeps its size and the expander carries the target.
+ *
+ * A control whose own LABEL already clears the floor may drop the expander,
+ * because a target that overhangs its row reaches into its neighbour's: the
+ * composer's `+` menu is the one such case (15-input.css). */
+input[type="checkbox"],
+input[type="radio"] {
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+
+  &::after {
+    content: "";
+    position: absolute;
+    inset: calc((var(--hit-floor) - 100%) / -2);
+  }
+}
+
+/* 02-reset.css owns the checkbox's 1rem. A radio keeps the UA appearance, so it
+   has no size of its own: 13px against that checkbox in the same panel. */
+input[type="radio"] {
+  width: 1rem;
+  height: 1rem;
 }
 
 /* WCAG 2.5.8's INLINE exception: a target inside a sentence, or one whose size is

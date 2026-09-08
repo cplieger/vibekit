@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/keyenc"
@@ -77,6 +78,10 @@ type BridgeCoordinator struct {
 	// credits on a two-word title.
 	acpArgs     []string `wiring:"optional"`
 	primeFromMu sync.Mutex
+	// noSubscribers latches that the no-subscriber drop has been reported, so the
+	// line is one per episode rather than one per notification. See
+	// reportNoSubscribers.
+	noSubscribers atomic.Bool
 }
 
 // PrimeFromChat records that chatID's first session should be primed with
@@ -636,13 +641,38 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID vibekit.C
 // configured. It keeps its chat-id parameter rather than taking a vibekit.PushSubject
 // because every caller here is chat-scoped, so the conversion belongs at this one
 // boundary; a notification with no chat behind it calls push.Send directly.
+//
+// A nil service is silent: composition always builds one, so that branch is a
+// direct package test rather than a state an operator can be in.
 func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind vibekit.PushKind, chatID vibekit.ChatID) {
-	if bc.push == nil || !bc.push.HasSubscribers() {
+	if bc.push == nil {
 		return
 	}
+	if !bc.push.HasSubscribers() {
+		bc.reportNoSubscribers(kind, chatID)
+		return
+	}
+	bc.noSubscribers.Store(false)
 	bc.lifecycle.inflight.Go(func() {
 		bc.push.Send(ctx, push.DefaultTitle, body, kind, vibekit.ChatSubject(chatID))
 	})
+}
+
+// reportNoSubscribers states that a notification went nowhere for want of a
+// subscriber, ONCE per episode of that condition: a permission ask reaches
+// NotifyPush per tool call, so a line per drop would bury the rest of the log on
+// a workspace nobody has ever subscribed from. A subscriber arriving re-arms it,
+// so a later unsubscribe is reported again.
+//
+// Without it a dead push pipeline and a workspace nobody subscribed from produce
+// identical logs, which is what made the 2026-08 "push is broken" report
+// undiagnosable from the box.
+func (bc *BridgeCoordinator) reportNoSubscribers(kind vibekit.PushKind, chatID vibekit.ChatID) {
+	if !bc.noSubscribers.CompareAndSwap(false, true) {
+		return
+	}
+	slog.Info("no push subscribers; notifications are being dropped until a browser subscribes",
+		"chat_id", chatID, "kind", string(kind))
 }
 
 // SettleTurnOnResponse closes the turn named by epoch on the response that

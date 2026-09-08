@@ -26,6 +26,7 @@ import {
   ICON_TAB_RUN,
   ICON_TAB_SETTINGS,
   ICON_TAB_SPEC,
+  ICON_TOOL_TERMINAL,
 } from "./icons.js";
 
 /** Collapse whitespace runs and trim, and nothing else. Whitespace INSIDE path
@@ -62,6 +63,7 @@ const PAIRS: readonly (readonly [label: string, anchor: string, registry: string
   ["sidebar Files", 'id="files-btn"', ICON_TAB_FILES],
   ["sidebar Git", 'id="git-btn"', ICON_TAB_GIT],
   ["toolbar Settings", 'id="settings-btn"', ICON_TAB_SETTINGS],
+  // The shell toggle is deliberately NOT here — see the divergence test below.
   // Docs categories that name something the app already draws elsewhere.
   ["docs tab Agents", 'data-docs-tab="agents"', ICON_TAB_AGENT],
   ["docs tab Specs", 'data-docs-tab="specs"', ICON_TAB_SPEC],
@@ -110,5 +112,41 @@ describe("hand-authored glyphs in static/index.html", () => {
     // Moon, sun, system half-disc, mouse, hand, close.
     expect(glyphs).toHaveLength(6);
     expect(new Set(glyphs).size, "sidebar-header glyphs sharing one mark").toBe(glyphs.length);
+  });
+
+  // The ONE sanctioned divergence, pinned so a one-glyph-per-concept sweep cannot
+  // fold it back into the table above. The toolbar's shell toggle draws a BOXED
+  // prompt where a tool card draws the bare `>_`: a bare prompt reaches 12 of the
+  // grid's 15 units, so among boxed neighbours it reads short and sits optically
+  // high, and the frame is what aligns it. It has been removed once already.
+  it("keeps the shell toggle's prompt in a box, unlike the bare tool glyph", () => {
+    const shell = glyphOf('id="shell-btn"');
+    expect(shell, "the frame is the whole point of the divergence").toContain("<rect");
+    expect(shell).not.toBe(inner(ICON_TOOL_TERMINAL));
+    expect(inner(ICON_TOOL_TERMINAL), "the tool glyph stays bare").not.toContain("<rect");
+  });
+
+  // …and the reason it was reported as blurry, which is arithmetic rather than
+  // taste: `--icon-ui` is 16px here, so one viewBox unit is 2/3 of a CSS pixel and
+  // a 1px stroke is crispest when its centre lands halfway between two pixel
+  // boundaries. Unit 3 resolves to exactly 2.0 — the worst case, straddling two
+  // columns evenly — which is what the old rect at x=3 did.
+  it("puts the shell box's strokes on the pixel grid at 16px", () => {
+    const rect = /<rect\b[^>]*>/.exec(glyphOf('id="shell-btn"'))?.[0] ?? "";
+    const num = (attr: string): number =>
+      Number.parseFloat(new RegExp(`${attr}="([\\d.]+)"`).exec(rect)?.[1] ?? "NaN");
+
+    const x = num("x");
+    const y = num("y");
+    for (const [name, edge] of [
+      ["x", x],
+      ["y", y],
+      ["right", x + num("width")],
+      ["bottom", y + num("height")],
+    ] as const) {
+      // Distance from the nearest pixel boundary, in CSS px. 0.5 is dead centre.
+      const offBoundary = Math.abs(((edge * 2) / 3) % 1);
+      expect(offBoundary, `${name} edge of the shell box`).toBeCloseTo(0.5, 2);
+    }
   });
 });

@@ -22,6 +22,9 @@ import {
   upsertToolCall,
   setThinking,
   removeChat,
+  recordSteerQueued,
+  promoteSteer,
+  steerCount,
   evictChatMessages,
   registerEvictionExemption,
   startEvictionSweep,
@@ -265,6 +268,70 @@ describe("residency", () => {
     // Only a successful newest-page load may set `loaded`; plain ingest on a
     // never-loaded chat leaves the state absent.
     expect(get("c1")?.residency).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Eviction and the two steer fields: the DISPROVEN hypothesis, pinned so it
+// cannot quietly become true.
+//
+// "Leaving the tab for a while loses my steers" reads like eviction — the sweep
+// is the one time-based mechanism in the store, and a steer in flight looks
+// exactly like state that must survive one. It is not: the sweep clears the
+// MESSAGE WINDOW and its side tables, and neither steer field is among them.
+// Eviction is still implicated, but only through the window it empties, which the
+// next activation refetches — and a mark's anchor names a message that refetch may
+// not carry (store.ts `steerMarks`, messages-steer-note.test.ts).
+// ---------------------------------------------------------------------------
+
+describe("eviction and the two steer fields", () => {
+  it("cannot evict a chat holding a waiting steer, because such a chat is busy", () => {
+    seedIdlePair("c-act", "c-steer");
+    // A waiting steer implies a live turn implies `thinking`, so the busy
+    // exemption already covers it by a route nobody wrote for it. Asserted
+    // through the exemption rather than trusted: if the invariant ever breaks,
+    // this is where the reader finds out.
+    setThinking("c-steer", true);
+    recordSteerQueued("c-steer", { id: "steer-1", text: "waiting", origin: "user" });
+    vi.advanceTimersByTime(EVICT_IDLE_MS + 1);
+    startEvictionSweep();
+    tick();
+
+    expect(get("c-steer")?.residency).toBeUndefined();
+    expect(steerCount("c-steer")).toBe(1);
+  });
+
+  it("leaves both steer fields intact when it does evict a window", () => {
+    setSessions([
+      session("c1", {
+        messages: [
+          { id: "u-1", role: "user", ts: 1, content: "go" } as Message,
+          {
+            id: "a-1",
+            role: "assistant",
+            ts: 2,
+            content: "",
+            blocks: [{ type: "text", text: "hi" }],
+          } as unknown as Message,
+        ],
+        message_count: 2,
+      }),
+    ]);
+    setActive("c1");
+    recordSteerQueued("c1", { id: "steer-read", text: "read one", origin: "user" });
+    promoteSteer("c1", "steer-read", "read one", "user");
+    recordSteerQueued("c1", { id: "steer-waiting", text: "still waiting", origin: "user" });
+
+    evictChatMessages("c1");
+
+    expect(get("c1")?.messages, "the window goes").toHaveLength(0);
+    expect(get("c1")?.residency).toBe("evicted");
+    expect(steerCount("c1"), "the dock stays").toBe(1);
+    expect(
+      get("c1")?.steer_marks?.map((m) => m.id),
+      "and so does the record, anchor and all",
+    ).toEqual(["steer-read"]);
+    expect(get("c1")?.steer_marks?.[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 1 });
   });
 });
 

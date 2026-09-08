@@ -411,17 +411,60 @@
       position: relative;
     }
 
+    /* SEPARATED border model, so the outer edge can sit on the table and carry the
+     * radius its peers have (`.code-wrap` above, `.tool-call` and `.subagent-block`
+     * in 14-tools.css — border + `var(--r)`). Under `collapse` neither half is
+     * reachable: the visible box is the union of the outer CELLS' borders, and a
+     * `border-radius` on a collapsed cell is ignored outright. */
     & table {
-      border-collapse: collapse;
+      border-collapse: separate;
+      border-spacing: 0;
+      border: 1px solid var(--c-border);
+      border-radius: var(--r);
       width: 100%;
       margin: var(--sp-2) 0;
       font-size: var(--fs-sm);
     }
 
+    /* ONE SIDE PER CELL, or an interior line is two adjacent borders and draws at
+     * 2px — which `collapse` used to fold for us. Columns are separated by the
+     * inline-start edge, rows by the tbody cells' block-start edge, so the table's
+     * own border owns the top, the bottom and both outer sides. */
     & th,
     & td {
-      border: 1px solid var(--c-border);
+      border-inline-start: 1px solid var(--c-border);
       padding: var(--sp-1) var(--sp-2);
+    }
+
+    & tbody :where(th, td) {
+      border-block-start: 1px solid var(--c-border);
+    }
+
+    & tr > :first-child {
+      border-inline-start: 0;
+    }
+
+    /* `th` is the only cell kind with a fill, so it is the only one that can spill
+     * past a rounded corner. Inner radius = outer minus the border it nests in. */
+    & thead th:first-child {
+      border-start-start-radius: calc(var(--r) - 1px);
+    }
+
+    & thead th:last-child {
+      border-start-end-radius: calc(var(--r) - 1px);
+    }
+
+    /* A header-only table is a real rendered shape: the renderer puts row 1 in a
+     * `thead` and only creates a `tbody` for a row 2, so `| h |` over `| - |` is a
+     * `thead` alone and its fill meets the BOTTOM corners as well.
+     * `thead:only-child` rather than `table:not(:has(tbody))`, which reads (0,3,4)
+     * against `.stylelintrc.json`'s 0,4,3 specificity ceiling. */
+    & thead:only-child th:first-child {
+      border-end-start-radius: calc(var(--r) - 1px);
+    }
+
+    & thead:only-child th:last-child {
+      border-end-end-radius: calc(var(--r) - 1px);
     }
 
     & th {
@@ -995,21 +1038,56 @@
  * AN OVERLAY, NOT A BAND IN FLOW: in flow it reserved height, and the region the
  * transcript vacated painted the `body` canvas, which read as a hard box past the
  * banner. Nothing painted that box, so there is no `background` to remove.
- * A child of `#chat-view` for both halves of its placement: the containing block
- * is `#chat-area`, whose content-box top is the view area's top because
- * `.chat-toolbar` is absolute, and `showView` hides a non-active
- * `[data-tab-view]`, which keeps a per-chat banner off Settings. */
+ * A child of `#chat-view` for both halves of its placement: the containing block is
+ * `#chat-area`, whose content box starts ABOVE the in-flow title bar — which is what
+ * the `--below-chat-toolbar` clearance below is for — and `showView` hides a
+ * non-active `[data-tab-view]`, which keeps a per-chat banner off Settings. */
 .banner-stack {
   position: absolute;
+
+  /* Two declarations, and the second is the exact one. `--below-chat-toolbar`
+   * describes a ONE-ROW bar, and the toolbar reaches two below about 375px of chat
+   * area, where eight 44px targets no longer fit a row and the actions wrap
+   * (12-chat.css) — the token would leave this band over the second row of buttons.
+   * `anchor()` reads the real bottom edge. Its own fallback is the one-row edge, so
+   * an engine with no anchor positioning drops the second declaration and keeps the
+   * first. `.chat-toolbar` carries the `anchor-name` and is a SIBLING of the views
+   * rather than inside one, so it is rendered on every route. */
   inset-block-start: var(--below-chat-toolbar);
+  inset-block-start: calc(
+    anchor(--chat-toolbar bottom, calc(var(--titlebar-h) + env(safe-area-inset-top, 0))) +
+      var(--sp-2)
+  );
   inset-inline: var(--sp-3) calc(var(--chat-toolbar-w, 0px) + var(--sp-3) + var(--sp-2));
   z-index: 9;
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
 
+  /* The band's own bottom edge, for the toast stack (04-uip-skin.css): a toast
+   * lands BELOW any banner, because a banner is a CONDITION and a toast is an
+   * EVENT, so the persistent rows own the top of the band and a transient one
+   * never pushes them down. */
+  anchor-name: --notice-band;
+
+  /* The gap between the last banner and the first toast, charged to the BAND so
+   * its border box carries it: `anchor(bottom)` reads the border box, so a gap the
+   * toast added to its own inset would also apply with no banner present and
+   * offset a lone toast from where a lone banner sits. */
+  &:not(:empty) {
+    padding-block-end: var(--sp-1);
+  }
+
   &:empty {
-    display: none;
+    /* NOT `display: none`. A `display: none` box is not laid out, so it is not a
+     * valid anchor, and the toast stack anchors to this element. An empty flex
+     * column is already zero-height (a `gap` applies only BETWEEN items), so the
+     * box reserves nothing and its bottom edge is exactly where a first banner
+     * would start — which is the fallback the toast stack wants, and it is derived
+     * rather than restated. `visibility: hidden` keeps an empty live region out of
+     * the a11y tree and stops applying the moment a banner lands, because `:empty`
+     * stops matching. */
+    visibility: hidden;
   }
 }
 
@@ -1323,10 +1401,24 @@
     min-inline-size: var(--rail-w);
     max-inline-size: max(var(--rail-w), calc(var(--rail-inset-end) + var(--rail-w) - var(--sp-3)));
 
-    /* Height is the app's button token, NOT `--rail-w`. Only the glyph COLUMN below
-     * is bound to the column, because that is what puts the glyph on the axis; a
-     * height read off the same token made this a square, which stopped meaning
-     * anything once the column was sized for a cluster range. */
+    /* IT READS AS A RAIL ROW, because that is what it is: the foot of the rail's own
+     * column, and it was the one thing in that column drawn as a floating pill —
+     * raised surface, visible border, 36px tall, sans at `--fs-sm`, no tabular figures
+     * under a label that is mostly a COUNT. Each declaration is one of those measured
+     * gaps against `.rail-marker` (29-turns.css), which owns the vocabulary.
+     *
+     * The height is `--hit-floor` rather than the marker's literal `1.5rem`: the two
+     * are the same 24px on a fine pointer, and on a coarse one this keeps a 44px
+     * target instead of inheriting a trade the rail's own rows made for themselves.
+     * The GLYPH column stays bound to `--rail-w` below, which is what puts it on the
+     * axis. */
+    min-block-size: var(--hit-floor);
+    background: var(--c-bg-primary);
+    border-color: transparent;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
     justify-content: flex-start;
     gap: 0;
     padding: 0;
@@ -1350,10 +1442,20 @@
   }
 }
 
-/* The label pops out to the right of the glyph. 70rem is where
- * `--rail-inset-end` reaches 6.75rem: the longest label is about 5rem at
- * `--fs-sm` and the rest is the glyph column, its end padding and the `--sp-3`
- * the box stops short by. Past that the ellipsis is the guard. */
+/* THE LABEL IS THE CONTROL'S WHOLE VALUE — it says how far behind the reader is
+ * ("N new blocks"), which no glyph can — so it is REVEALED rather than dropped, and
+ * this width query is a FLOOR on that reveal rather than the reveal itself.
+ *
+ * 70rem is where `--rail-inset-end` reaches 6.75rem: the longest label is about 5rem
+ * at `--fs-sm` and the rest is the glyph column, its end padding and the `--sp-3` the
+ * box stops short by. Below that the gutter cannot hold the words, so hovering could
+ * only produce a clipped or empty expansion; past it the ellipsis is the guard.
+ *
+ * Growing the box is safe here in a way it would not be in the transcript: this is
+ * `position: absolute` in `#messages-wrap-outer`, a sibling of the scroller, pinned by
+ * its inline-START edge and bounded by `max-inline-size`, so it grows RIGHT into the
+ * gutter, no other element's box moves, and `#messages`' scrollHeight is out of
+ * reach. */
 @container chat-area (width >= 70rem) {
   [id="scroll-bottom"] > span {
     display: block;
@@ -1361,6 +1463,28 @@
     padding-inline-end: var(--sp-2);
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* ICON-ONLY AT REST, and the reveal is HOVER rather than width. A width query
+   * decides for every reader at once; the control is a navigator sitting over the
+   * last lines of the transcript, so at rest it earns the rail's own footprint and
+   * the words arrive when a pointer or the keyboard asks for them.
+   *
+   * `any-hover: hover`, never `hover: hover`: those report only the PRIMARY input
+   * and iPadOS answers `hover: none` with a trackpad attached. OUTSIDE this query
+   * the rule above stands unchanged and the label is simply always visible, which is
+   * the right default for a device that has no hover to reveal it with rather than a
+   * fallback — and `:focus-visible` is paired with `:hover` so a keyboard user is
+   * not the one reader who can never see it. */
+  @media (any-hover: hover) {
+    [id="scroll-bottom"] > span {
+      display: none;
+    }
+
+    [id="scroll-bottom"]:hover > span,
+    [id="scroll-bottom"]:focus-visible > span {
+      display: block;
+    }
   }
 }
 

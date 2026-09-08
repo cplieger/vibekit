@@ -690,20 +690,70 @@
      had already drifted from `.settings-tab.active` by one declaration. */
 }
 
+/* THE PANEL IS THE ONE SCROLLER, and the two added declarations answer a measured
+ * defect each.
+ *
+ * `overflow-y: auto` beside a `visible` inline axis COMPUTES to `auto` (CSS
+ * Overflow 3), so this box clips all four sides — and the inline clearance was
+ * 0px, so every control's focus ring (2px at a 1px offset, 40-a11y.css) was cut
+ * off left and right. `--sp-1` is 4px, one more than the ring asks for.
+ *
+ * The reserved gutter stops the column stepping 10px inward the moment content
+ * overflows. `.mcp-search-results` no longer scrolls on its own, so the search row
+ * and the result rows share THIS content box and cannot disagree about their
+ * inline edges. */
 .mcp-mode-panel {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
   overflow-y: auto;
+  padding-inline: var(--sp-1);
+  scrollbar-gutter: stable;
 }
 
 /* Registry search input + magnifier button on one row. The input
  * stretches; the button is a fixed-width action-pill matching the
- * input's height so the pair reads as a single search field. */
+ * input's height so the pair reads as a single search field.
+ *
+ * PINNED, because the panel above is what a 20-row result list scrolls: without
+ * this the query box leaves the viewport as soon as a reader browses the results
+ * it produced. The block padding and its matching negative margin extend the
+ * background's cover by the panel's own gap and leave the resting layout alone. */
 .mcp-search-row {
   display: flex;
   align-items: stretch;
   gap: var(--sp-2);
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  background: var(--c-bg-secondary);
+  padding-block: var(--sp-2);
+  margin-block: calc(-1 * var(--sp-2));
+}
+
+/* THE SEARCH BUTTON IS THE PENDING FACE, for a click and for a typed query alike
+ * (both dispatch the one action `bindLoadingState` watches). The glyph is REPLACED
+ * rather than joined, because the pill is icon-only at 36px and `.btn-loading`'s
+ * ring-beside-a-label does not fit one. Ring idiom and period token:
+ * `.tool-spinner` (14-tools.css); the full opacity is the busy face in 40-a11y,
+ * which reads the `aria-busy` this same binding sets. */
+[id="mcp-search-btn"].is-searching > .ic-ui {
+  display: none;
+}
+
+[id="mcp-search-btn"].is-searching::after {
+  content: "";
+  inline-size: var(--icon-ui);
+  block-size: var(--icon-ui);
+  border-radius: 50%;
+  background: conic-gradient(
+      from var(--vk-spin-arc),
+      var(--c-accent) 0deg 90deg,
+      var(--c-border) 90deg 360deg
+    )
+    border-box;
+  mask: radial-gradient(closest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+  animation: vk-spin var(--spin-dur) linear infinite;
 }
 
 :where(.mcp-search-row) .tool-form-input {
@@ -822,48 +872,122 @@
   }
 }
 
-/* Registry search results */
+/* Registry search results.
+ *
+ * A COMPACT LIST THAT EXPANDS, and the heights forced it: the card this replaces
+ * measured ~96px at its floor, ~143px typical and 240-260px for a dual-transport
+ * server against a 352px box, so one or two results filled it. A row is one line
+ * now, and what a reader needs before committing — the identifier, the deprecation
+ * reason, the declared variables and headers — hangs behind the disclosure.
+ *
+ * NOT A SCROLL CONTAINER, the other half of the alignment fix: a nested scroller
+ * takes its scrollbar out of THIS box alone, which is what put every result 10px
+ * left of the search button's right edge. */
 .mcp-search-results {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
-  max-height: 22rem;
-  overflow-y: auto;
+  gap: var(--sp-1);
 }
 
+/* The disclosure takes the measure; the install buttons sit beside it and stay on
+   the summary's line when the row opens (`align-items: start`). */
 .mcp-result {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-  padding: var(--sp-2) var(--sp-3);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
 }
 
-.mcp-result-head {
+.mcp-result-disc {
+  min-width: 0;
+}
+
+/* One line while closed. The height matches the install button's dense tier so
+   the two read as one row, and `align-items: center` aligns each FLEX LINE's own
+   items — which is what keeps line 1 level with the button after the description
+   has moved to line 2. `list-style: none` or the native marker paints beside the
+   real chevron. */
+.mcp-result-summary {
   display: flex;
-  align-items: baseline;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--sp-2);
+  min-block-size: var(--ctl-h-dense);
+  list-style: none;
+  cursor: pointer;
+}
+
+.mcp-result-summary::-webkit-details-marker {
+  display: none;
+}
+
+.mcp-result-disc[open] > .mcp-result-summary > .disclosure-chevron {
+  --chev-turn: 0deg;
+}
+
+/* The slide, in `.compaction::details-content`'s shape (13-messages.css). */
+.mcp-result-disc::details-content {
+  overflow: clip;
+  block-size: 0;
+  transition:
+    block-size var(--dur-standard) var(--ease-standard),
+    content-visibility var(--dur-standard) allow-discrete;
+}
+
+.mcp-result-disc[open]::details-content {
+  block-size: auto;
+}
+
+.mcp-result-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding-block-start: var(--sp-1);
+}
+
+.mcp-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
 }
 
 .mcp-result-name {
+  flex: none;
   font-weight: var(--fw-semibold);
   color: var(--c-text-primary);
   font-size: var(--fs-md);
 }
 
 .mcp-result-version {
+  flex: none;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
 }
 
+/* The description is what gives on a narrow row, because it is the one part of
+   the line a reader gets back in full by opening the row. Open, it moves to its
+   own full-width line rather than wrapping into the column left of the name. */
 .mcp-result-desc {
+  flex: 1 1 0;
+  min-width: 0;
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
-  margin: 0;
   line-height: 1.45;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mcp-result-disc[open] > .mcp-result-summary > .mcp-result-desc {
+  flex-basis: 100%;
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
 }
 
 /* The registry still LISTS a deprecated entry, so the badge is the only thing
@@ -896,15 +1020,23 @@
   gap: var(--sp-1);
 }
 
+/* The identifier the button installs: an npm package or a remote URL, either of
+   which can outrun the row. */
+.mcp-install-id {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  overflow-wrap: anywhere;
+}
+
 /* What installing this option will ask for. Disclosure, not a gate: the form
-   behind it saves whether or not a required field is filled. */
+   behind it saves whether or not a required field is filled. It sits plainly in
+   the row's body rather than behind a second <details> — one disclosure per row,
+   so a reader who has already opened the row is not asked to open a second thing
+   inside it. */
 .mcp-requires {
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
-}
-
-.mcp-requires > summary {
-  cursor: pointer;
 }
 
 .mcp-requires-list {
@@ -932,10 +1064,16 @@
   min-width: 0;
 }
 
+/* The dense control tier, because this is an action inside a dense row rather
+   than one standing alone; `.btn-small`'s own `--btn-h` would set the row's floor
+   at 36px and undo most of the compaction. The hit-target floor in 61-mcp-tools
+   still lifts it to 44px on a coarse pointer. */
 .mcp-install-btn {
-  align-self: flex-start;
+  min-block-size: var(--ctl-h-dense);
+  padding-block: 0;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
+  white-space: nowrap;
 }
 
 .mcp-raw-input {
@@ -997,7 +1135,8 @@
 /* ---------- Reconnect button + prompts/resources discovery ---------- */
 
 /* The reconnect icon-btn reuses .icon-btn; its spinning state swaps in
- * ICON_SPINNER (.icon-spinner animates via vk-spin). Hidden when idle. */
+ * ICON_SPINNER (.icon-spinner rotates via vk-spin-rotate, 15-input.css). Hidden
+ * when idle. */
 .mcp-discovery {
   margin-block-start: 0.25rem;
 }

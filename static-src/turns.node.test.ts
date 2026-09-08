@@ -369,6 +369,12 @@ interface FixtureMessage {
   event?: string;
   outcome?: string;
   refusal?: boolean;
+  /** Absent means the row carries no kind at all, which is what every legacy row
+   *  and every non-steer user row needs. */
+  user_kind?: string;
+  /** One subtask id per block; absent means the message carries no blocks at all,
+   *  which is what every row predating the step rule needs. */
+  blocks?: string[];
 }
 
 interface OutcomeFixture {
@@ -446,6 +452,15 @@ describe("the turn-segmentation contract shared with the Go implementation", () 
       }
       if (fm.refusal === true) {
         (extra as { refusal?: unknown }).refusal = {};
+      }
+      if (fm.user_kind !== undefined) {
+        extra.user_kind = fm.user_kind as NonNullable<Message["user_kind"]>;
+      }
+      if (fm.blocks !== undefined) {
+        (extra as { blocks?: unknown }).blocks = fm.blocks.map((agentSubtaskID) => ({
+          type: "text",
+          agent_subtask_id: agentSubtaskID,
+        }));
       }
       if (fm.role === "user") {
         return { ...user(fm.id ?? "", "req"), ...extra } as Message;

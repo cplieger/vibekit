@@ -14,15 +14,25 @@
 // failure the caller renders through the send-error face (see SendResult).
 //
 // Reconnect model:
-//   - EventSource's native auto-reconnect covers transient drops with
-//     a spec-defined retry (Firefox/Chrome default 3s, resettable via
-//     `retry:` fields the server doesn't emit).
+//   - EventSource's native auto-reconnect covers transient drops, at the
+//     server's advertised `retry: 1500` (reconnectDelay, internal/agent).
 //   - On terminal errors (a non-2xx body, a proxy stripping keep-alives, iOS
 //     closing a backgrounded source), `readyState` goes CLOSED and the browser
 //     gives up. We tear down the source and reopen with exponential backoff.
-//   - visibilitychange + pageshow kick an immediate reconnect attempt
-//     when the tab returns to the foreground. Covers the common case
-//     where iOS killed the stream while the tab was in the background.
+//   - A RESUME (visibilitychange, pageshow, online, resume) decides liveness
+//     from observed frames plus a timer gap, never from `readyState` alone: iOS
+//     reports OPEN for a stream the OS already tore down. See `maybeResume`.
+//   - The resume's liveness clock counts `onmessage` FRAMES only, so an idle
+//     stream ages out of it. The server does publish a named `heartbeat` every
+//     15s while idle (internal/agent/heartbeat.go), but it lands on that
+//     listener and the watchdog's clock, never this one: frames are the
+//     conservative input, declining to vouch for a stream that has carried no
+//     real traffic, and the cost is one reconnect per forced resume of an
+//     idle-but-healthy stream. So the window is a cost saver and the suspension
+//     detector is the mechanism.
+//   - A forced reconnect is the whole response to a resume: it re-runs the
+//     `connected` handshake, whose floor/head answer is the authoritative gap
+//     verdict (see handleConnected).
 //   - Every reconnect above carries the cursor itself, as a query parameter:
 //     only the browser's OWN retry sends Last-Event-ID. See `eventsURL`.
 // ---------------------------------------------------------------------------
@@ -255,6 +265,27 @@ interface GapInfo {
 
 const HIDDEN_ABORT_MS = 30_000;
 
+/** How recently a frame must have arrived for a resume to trust the stream
+ *  without reconnecting. Shorter than the server's 15s heartbeat cadence and NOT
+ *  sized against it: the clock it reads counts real frames, so an idle stream
+ *  ages past this window whatever the heartbeat does. A cost saver — it spares a
+ *  working connection during a streaming turn — never the correctness
+ *  mechanism. */
+const RESUME_LIVENESS_MS = 5_000;
+
+/** How long this page's own timers must have failed to run for a resume to treat
+ *  the stream as suspect. Errs low: a wrong "suspect" costs one small reconnect,
+ *  a wrong "alive" costs the whole stale-tab defect. */
+const RESUME_SUSPECT_FROZEN_MS = 10_000;
+
+/** How long one resume decision suppresses the next. A resume fires several
+ *  signals at once (pageshow beside visibilitychange, online behind both), and a
+ *  rapid visible→hidden→visible must not open several streams. */
+const RESUME_COALESCE_MS = 1_000;
+
+/** Interval of the suspension detector. See `lastTickAt`. */
+const RESUME_TICK_MS = 15_000;
+
 /** The server's NAMED keepalive (`heartbeatEventName`, internal/agent/heartbeat.go).
  *  A named event never reaches `onmessage`, so it needs its own listener — which is
  *  the whole reason the server publishes a named event rather than relying on the
@@ -378,6 +409,25 @@ class TransportController {
   private lastBackoffMs = 0;
   private hiddenSince: number | null = null;
 
+  /** Every `document`/`window` listener this controller installed. `init` aborts
+   *  the previous one, so calling it twice replaces the listeners instead of
+   *  doubling them. */
+  private listeners: AbortController | null = null;
+  /** Date.now() when the last `onmessage` frame was OBSERVED — deliberately NOT
+   *  stamped by the named heartbeat, which stamps `lastEventAt`. A recent frame
+   *  proves the pipe carried bytes and that this page was running to receive
+   *  them; an old one proves nothing, because an idle stream carries none. */
+  private lastFrameAt = Date.now();
+  /** Stamped by an interval that exists to be MISSED: a suspended page runs no
+   *  timers, so the shortfall against RESUME_TICK_MS is how long this page was
+   *  not running. Nothing depends on the tick firing. */
+  private lastTickAt = Date.now();
+  private tickTimer: ReturnType<typeof setInterval> | null = null;
+  /** Date.now() until which a further resume signal is a duplicate. */
+  private resumeGateUntil = 0;
+  /** Whether the page reported its own suspension on the way out. */
+  private wasFrozen = false;
+
   /** Date.now() when this connection last delivered an EVENT — an `onmessage` frame
    *  or a named heartbeat. Keepalives are comments the parser discards, so an event's
    *  arrival is the only byte-recency signal a browser has. Stamped when the watchdog
@@ -472,39 +522,192 @@ class TransportController {
   }
 
   init(msg: MsgHandler, status: StatusHandler): void {
+    this.listeners?.abort();
+    const listeners = new AbortController();
+    this.listeners = listeners;
+    const { signal } = listeners;
+
     this.onMsg = msg;
     this.holdUntilHydrated();
     this.onStatus = (s) => {
       setSSEStatus(s);
       status(s);
     };
+    this.startTick();
     this.connectSSE();
 
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && this.sseIsDead()) {
-        this.scheduleReconnect({ delay: 0 });
-      }
-      // Hidden-abort logic
-      if (document.visibilityState === "hidden") {
-        this.hiddenSince = Date.now();
-      } else {
-        if (this.hiddenSince !== null && Date.now() - this.hiddenSince >= HIDDEN_ABORT_MS) {
-          for (const ctrl of this.inflight) {
-            ctrl.abort();
-          }
-          this.inflight.clear();
+    document.addEventListener(
+      "visibilitychange",
+      () => {
+        if (document.visibilityState === "visible") {
+          this.maybeResume(false);
         }
-        this.hiddenSince = null;
-      }
-    });
-    window.addEventListener("pageshow", (e: PageTransitionEvent) => {
-      if (e.persisted || this.sseIsDead()) {
-        this.scheduleReconnect({ delay: 0 });
-      }
-    });
+        // Hidden-abort logic
+        if (document.visibilityState === "hidden") {
+          this.hiddenSince = Date.now();
+        } else {
+          if (this.hiddenSince !== null && Date.now() - this.hiddenSince >= HIDDEN_ABORT_MS) {
+            for (const ctrl of this.inflight) {
+              ctrl.abort();
+            }
+            this.inflight.clear();
+          }
+          this.hiddenSince = null;
+        }
+      },
+      { signal },
+    );
+    window.addEventListener(
+      "pageshow",
+      (e: PageTransitionEvent) => {
+        this.maybeResume(e.persisted);
+      },
+      { signal },
+    );
+    // A network coming back says nothing about the socket that was open across
+    // the outage, so it is a forced decision rather than an input to one.
+    window.addEventListener(
+      "online",
+      () => {
+        this.maybeResume(true);
+      },
+      { signal },
+    );
+    // The Page Lifecycle pair, where the platform reports its own suspension
+    // rather than leaving it to be inferred. Absent on iOS, which is why the
+    // timer gap exists.
+    document.addEventListener(
+      "resume",
+      () => {
+        this.maybeResume(true);
+      },
+      { signal },
+    );
+    document.addEventListener(
+      "freeze",
+      () => {
+        this.wasFrozen = true;
+      },
+      { signal },
+    );
   }
 
-  /** Whether the stream needs help coming back.
+  /** Undo `init` completely, for tests that boot the singleton more than once.
+   *
+   *  `vi.resetModules()` is not a substitute in Browser Mode: the module map is
+   *  URL-keyed, so a re-import hands back the same instance and the PREVIOUS
+   *  controller's document listeners stay live — inert only by luck, and not at
+   *  all once a resume can reconnect them. */
+  _resetForTest(): void {
+    this.listeners?.abort();
+    this.listeners = null;
+    this.stopTick();
+    this.teardown();
+    if (this.hydrateTimer !== null) {
+      clearTimeout(this.hydrateTimer);
+      this.hydrateTimer = null;
+    }
+    this.onMsg = () => {
+      /* noop */
+    };
+    this.onStatus = () => {
+      /* noop */
+    };
+    this.lastSeenEventID = 0;
+    this.cursorAtConnect = 0;
+    this.openedAt = 0;
+    this.lastBackoffMs = 0;
+    this.hiddenSince = null;
+    this.hydrated = false;
+    this.pending = [];
+    this.lastFrameAt = Date.now();
+    this.lastTickAt = Date.now();
+    this.resumeGateUntil = 0;
+    this.wasFrozen = false;
+  }
+
+  /** Stamp `lastTickAt` so a missed tick is measurable.
+   *
+   *  A SECOND interval at the watchdog's cadence, and it may not be folded into
+   *  it: the watchdog belongs to a CONNECTION (`teardown` stops it, and the
+   *  backoff window between a teardown and its reconnect has none to watch),
+   *  while this detector belongs to the PAGE and has to keep stamping across a
+   *  reconnect — sharing the watchdog's timer would leave `lastTickAt` stale for
+   *  the length of every backoff and read that wait as a suspension. The cost is
+   *  an idle page waking twice per interval. */
+  private startTick(): void {
+    this.stopTick();
+    this.lastTickAt = Date.now();
+    this.tickTimer = setInterval(() => {
+      this.lastTickAt = Date.now();
+    }, RESUME_TICK_MS);
+  }
+
+  /** Release the suspension detector. Public because the module-level unload
+   *  cleanup owns it, beside `cancelInflight`. */
+  stopTick(): void {
+    if (this.tickTimer !== null) {
+      clearInterval(this.tickTimer);
+      this.tickTimer = null;
+    }
+  }
+
+  /** How long this page's own timers were not running: scheduling jitter on a
+   *  live page, the suspension length on a resumed one. Chromium's background
+   *  throttling reads as tens of seconds for a long-backgrounded tab, which is
+   *  not a false positive — that connection may well be gone too. */
+  private frozenGapMs(now: number): number {
+    return Math.max(0, now - this.lastTickAt - RESUME_TICK_MS);
+  }
+
+  /** Decide whether a page-lifecycle signal has to force a reconnect.
+   *
+   *  `readyState` is not a liveness signal here: iOS answers OPEN for a stream the
+   *  OS tore down while the app was backgrounded, so the tab returns holding a
+   *  socket that delivers nothing, no reconnect happens, the `connected` handshake
+   *  never re-runs, and `transport:gap` therefore never fires — which is what left
+   *  every chat marked fresh and a tab switch rendering the pre-sleep store.
+   *
+   *  So the decision reads, in order: a definitive CLOSED, then a frame observed
+   *  inside the liveness window (proof the pipe carries bytes, and the reason an
+   *  alt-tab during a streaming turn disturbs nothing), then the page's own
+   *  suspension. A forced reconnect is the whole response — the server's floor/head
+   *  answer is the authoritative gap verdict and reconnecting is what runs it.
+   *
+   *  It reconnects at delay 0 and deliberately does NOT take the backoff ramp:
+   *  the ramp bounds UNATTENDED retry, and a resume is a person waiting on a
+   *  stale screen. It pre-empts the ramp's wait without resetting it —
+   *  `lastBackoffMs` is untouched, so the failures after a forced attempt keep
+   *  escalating from where they were. Residual: `online` can fire repeatedly on a
+   *  flaky network, so against a persistently-down server an active user drives
+   *  one attempt per RESUME_COALESCE_MS, which is the gate's other job. */
+  private maybeResume(force: boolean): void {
+    const now = Date.now();
+    if (now < this.resumeGateUntil) {
+      return;
+    }
+    this.resumeGateUntil = now + RESUME_COALESCE_MS;
+    // Consumed BEFORE any early return, so a freeze cannot leak into a later
+    // resume that has to decide on its own evidence. Reading it after the dead
+    // check left it set whenever a resume met an already-dead stream, so the next
+    // resume — deciding about a fresh connection — inherited it and forced one
+    // more reconnect.
+    const frozen = this.wasFrozen;
+    this.wasFrozen = false;
+    if (this.sseIsDead()) {
+      this.scheduleReconnect({ delay: 0 });
+      return;
+    }
+    if (now - this.lastFrameAt < RESUME_LIVENESS_MS) {
+      return;
+    }
+    if (force || frozen || this.frozenGapMs(now) >= RESUME_SUSPECT_FROZEN_MS) {
+      this.scheduleReconnect({ delay: 0 });
+    }
+  }
+
+  /** Whether the stream is definitively gone — ONE input to the resume decision
+   *  above, not the whole of it.
    *
    *  The source's own `readyState`, not the phase: `onerror` demotes the phase only
    *  on CLOSED, so the browser's internal retry — what the kick pre-empts — leaves
@@ -612,6 +815,9 @@ class TransportController {
       this.onStatus("connected");
     };
     source.onmessage = (e: MessageEvent): void => {
+      // Before the cursor read and before any decoder can drop the payload: the
+      // liveness question is whether BYTES arrived, not whether they parsed.
+      this.lastFrameAt = Date.now();
       // The watchdog's clock: an EVENT arrived, whether or not it parses below.
       this.lastEventAt = Date.now();
       if (e.lastEventId !== "") {
@@ -866,10 +1072,17 @@ const instance = new TransportController();
 registerCleanup(() => {
   instance.cancelInflight();
   instance.stopWatchdog();
+  instance.stopTick();
 });
 
 export function init(msg: MsgHandler, status: StatusHandler): void {
   instance.init(msg, status);
+}
+
+/** Reset the singleton to its pre-`init` state. Test-only; see `_resetForTest`
+ *  on the controller for why `vi.resetModules()` cannot stand in for it. */
+export function _resetForTest(): void {
+  instance._resetForTest();
 }
 
 /** Tell the transport the chat store is populated, releasing every frame held
