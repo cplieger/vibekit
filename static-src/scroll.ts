@@ -160,6 +160,10 @@ class ScrollController {
   private gutterObserver: ResizeObserver | null = null;
   private observedChildren = new Set<Element>();
 
+  /** The frame the gutter write has queued (0 = none), a single slot so a resize
+   *  storm costs one write. */
+  private gutterFrame = 0;
+
   /** The live edge's own element: a zero-height marker at the end of the
    *  transcript's flow, watched by `edgeObserver`. Moves with the attached view.
    *
@@ -427,7 +431,7 @@ class ScrollController {
     // bar reserving a strip that no longer existed. `stable` means overflow alone
     // never resizes this box, so streaming costs no extra writes.
     this.gutterObserver = new ResizeObserver(() => {
-      this.publishScrollbarWidth();
+      this.scheduleScrollbarWidth();
     });
     this.gutterObserver.observe(this.scrollEl);
     this.childObserver = new MutationObserver(() => {
@@ -519,6 +523,33 @@ class ScrollController {
    *  in the measure the column shares with the composer. Reads the real element
    *  rather than a probe div, so the number is the gutter actually reserved on the
    *  box being compensated. */
+  /** Defer the gutter write one animation frame, behind a single slot.
+   *
+   *  THE WRITE MAY NOT LAND INSIDE THE RESIZE DELIVERY. `--scrollbar-w` is read
+   *  by the scroller's own `padding-inline`, so writing it from the callback
+   *  produces a new observation of a box already delivered in this loop, which
+   *  Chromium cannot deliver and reports as "ResizeObserver loop completed with
+   *  undelivered notifications" having invalidated the whole document's style
+   *  mid-frame. A frame later the resize it causes is delivered cleanly by the
+   *  next pass. The change-guard in `publishScrollbarWidth` is a separate saving
+   *  and is not what makes this safe. */
+  private scheduleScrollbarWidth(): void {
+    if (this.gutterFrame !== 0) {
+      return;
+    }
+    this.gutterFrame = requestAnimationFrame(() => {
+      this.gutterFrame = 0;
+      this.publishScrollbarWidth();
+    });
+  }
+
+  private cancelScrollbarWidth(): void {
+    if (this.gutterFrame !== 0) {
+      cancelAnimationFrame(this.gutterFrame);
+      this.gutterFrame = 0;
+    }
+  }
+
   private publishScrollbarWidth(): void {
     const next = `${String(this.scrollEl.offsetWidth - this.scrollEl.clientWidth)}px`;
     if (next === this.scrollbarWidth) {
@@ -879,6 +910,7 @@ class ScrollController {
     this.deferred = [];
     this.abandonLoadPass();
     this.cancelPinPass();
+    this.cancelScrollbarWidth();
     this.forgetReaderGesture();
     this.onLoadMore = null;
     this.hasMoreMessages = false;
@@ -952,6 +984,7 @@ class ScrollController {
     this.deferred = [];
     this.abandonLoadPass();
     this.cancelPinPass();
+    this.cancelScrollbarWidth();
     this.forgetReaderGesture();
     this.setLoadMore(null, false);
     this.setState("following");

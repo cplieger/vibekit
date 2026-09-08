@@ -330,13 +330,33 @@ describe("the gutter observer", () => {
       clientWidth: 985,
     });
     h.gutter.fire();
+    await settle();
+    expect(document.documentElement.style.getPropertyValue("--scrollbar-w")).toBe("15px");
+  });
+
+  it("writes nothing inside the resize delivery itself", async () => {
+    // The whole of the fix: a write landing in the callback produces a new
+    // observation of a box this loop has already delivered, which Chromium
+    // reports as an undelivered notification. A frame later it is deliverable.
+    const h = await freshModule();
+    fakeGeometry(h.scrollEl, {
+      scrollHeight: 500,
+      clientHeight: 500,
+      scrollTop: 0,
+      offsetWidth: 1000,
+      clientWidth: 985,
+    });
+    h.gutter.fire();
+    expect(document.documentElement.style.getPropertyValue("--scrollbar-w")).toBe("0px");
+    await settle();
     expect(document.documentElement.style.getPropertyValue("--scrollbar-w")).toBe("15px");
   });
 
   it("writes the gutter once across a resize storm", async () => {
     // Same width twice must cost one style invalidation, not two: a browser-zoom
     // or overlay-scrollbar change moves this box repeatedly and every write
-    // invalidates the whole document's style.
+    // invalidates the whole document's style. The single frame slot is the first
+    // saving; the change-guard is the second.
     const h = await freshModule();
     fakeGeometry(h.scrollEl, {
       scrollHeight: 500,
@@ -349,7 +369,25 @@ describe("the gutter observer", () => {
     h.gutter.fire();
     h.gutter.fire();
     h.gutter.fire();
+    await settle();
     expect(setProperty.mock.calls.filter((c) => c[0] === "--scrollbar-w")).toHaveLength(1);
+  });
+
+  it("leaves no scheduled write behind when the controller is reset", async () => {
+    // A parked or disposed view may not write document style a frame after it
+    // stopped being the transcript.
+    const h = await freshModule();
+    fakeGeometry(h.scrollEl, {
+      scrollHeight: 500,
+      clientHeight: 500,
+      scrollTop: 0,
+      offsetWidth: 1000,
+      clientWidth: 985,
+    });
+    h.gutter.fire();
+    h.scroll.resetScrollState();
+    await settle();
+    expect(document.documentElement.style.getPropertyValue("--scrollbar-w")).toBe("0px");
   });
 });
 
