@@ -268,6 +268,13 @@
     --ctl-h-sm: 1.5rem;
     --hit-floor: 1.5rem;
     --btn-h: var(--ctl-h);
+    /* ---- The TEXT-ENTRY floor -------------------------------------------- *
+     * iOS zooms the page when a text control under 16px takes focus, and the app
+     * carries `autofocus` on the composer, so a fresh load on a finger zooms
+     * before anything is typed. 16px is the threshold, so this is a PLATFORM
+     * fact on the pointer tier rather than a rung of the --fs-* scale: --fs-lg is
+     * 1rem today and a retune of it would silently move the threshold. */
+    --fs-field: var(--fs-md);
   }
 
   /* A finger or a pen: 44px is Apple's HIG figure and WCAG 2.5.5 (AAA), against
@@ -277,6 +284,7 @@
     --ctl-h-dense: 2.5rem;
     --ctl-h-sm: 2.25rem;
     --hit-floor: 2.75rem;
+    --fs-field: 1rem;
   }
 
   /* NO-JS FALLBACK. A capability query cannot decide this tier: Chromium reports
@@ -289,6 +297,7 @@
       --ctl-h-dense: 2.5rem;
       --ctl-h-sm: 2.25rem;
       --hit-floor: 2.75rem;
+      --fs-field: 1rem;
     }
   }
 
