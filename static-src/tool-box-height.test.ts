@@ -93,24 +93,43 @@ describe("a collapsed tool box", () => {
     }
   });
 
+  /** The `auto <length>` reserve a box renders at before its first layout. */
+  function reservedSize(sel: string): number {
+    const el = document.createElement("div");
+    el.className = sel.slice(1);
+    host.appendChild(el);
+    const declared = getComputedStyle(el).containIntrinsicSize;
+    const reserved = Number.parseFloat(declared.replace(/^auto\s+/, ""));
+    expect(Number.isNaN(reserved), `${sel} containIntrinsicSize was ${declared}`).toBe(false);
+    el.remove();
+    return reserved;
+  }
+
   // The placeholder a card renders at while `content-visibility: auto` skips its
   // layout. A value that disagrees with the real collapsed height is a resize on
   // scroll, not a static mismatch — and `contain-intrinsic-size` sizes the
   // CONTENT box, so the card's own borders must NOT be in it.
-  it("reserves the header floor, borders excluded, on every contained card", () => {
+  //
+  // `.tool-call` is the ONLY box on the header floor, because it is the only one
+  // whose collapsed state is a bare header. The three below always carry
+  // something under theirs, so the floor would under-reserve them.
+  it("reserves the header floor, borders excluded, on a claim-only card", () => {
+    mountBoxes();
+    expect(reservedSize(".tool-call")).toBeCloseTo(controlHeight(), 1);
+  });
+
+  // Stated as a RELATION rather than a value: re-encoding each box's own length
+  // here would just restate the stylesheet. What this catches is the one edit the
+  // relation forbids — pulling a header-plus-more box down onto the bare-header
+  // floor, which reserves less than the box can ever render at.
+  it("reserves more than that floor wherever the collapsed state carries content", () => {
     mountBoxes();
     const floor = controlHeight();
 
-    for (const sel of [".tool-call", ".subagent-block"] as const) {
-      const el = document.createElement("div");
-      el.className = sel.slice(1);
-      host.appendChild(el);
-      const declared = getComputedStyle(el).containIntrinsicSize;
-      // `auto <length>`; the length is what is reserved before first render.
-      const reserved = Number.parseFloat(declared.replace(/^auto\s+/, ""));
-      expect(Number.isNaN(reserved), `${sel} containIntrinsicSize was ${declared}`).toBe(false);
-      expect(reserved, sel).toBeCloseTo(floor, 1);
-      el.remove();
+    // .subagent-block keeps a foot, and a tail while it runs; .plan-message
+    // always has an entry under its header; .run-card has its first step row.
+    for (const sel of [".subagent-block", ".plan-message", ".run-card"] as const) {
+      expect(reservedSize(sel), sel).toBeGreaterThan(floor);
     }
   });
 });

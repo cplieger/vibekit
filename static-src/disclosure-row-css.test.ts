@@ -306,6 +306,9 @@ describe("tool card summary affordance", () => {
     const card = mount(
       buildToolCard({
         id: "css-subtitle-gutter",
+        // A disclosable card, because the chevron this measures against is
+        // detached at build for a card with nothing to reveal.
+        output: "ok\tvibekit\t0.5s\n",
         title: "Run Command",
         kind: "execute",
         status: "completed",
@@ -332,6 +335,8 @@ describe("tool card summary affordance", () => {
     const card = mount(
       buildToolCard({
         id: "css-move-gutter",
+        // Disclosable, for the same reason as the subtitle case above.
+        output: "moved 1 file\n",
         title: "Move File",
         kind: "move",
         status: "completed",
