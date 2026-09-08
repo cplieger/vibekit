@@ -20,8 +20,8 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// Fixture sizes, all deliberately OVER the state sse-gap.md measured on the live
-// instance (18 open tabs, 6 concurrent runs, one 33.5 MB chat file): a gate sized
+// Fixture sizes, all deliberately OVER the state measured on the live instance
+// (18 open tabs, 6 concurrent runs, one 33.5 MB chat file): a gate sized
 // at the observation would pass the moment the observation moved.
 const (
 	fixtureReasoningBytes  = 3 << 20

@@ -2909,8 +2909,8 @@ describe("blockElement resolves a block's own element", () => {
 // admissible.
 //
 // A connect-time turn_state carries only the TAIL of a big in-flight turn, so
-// without a note the reader takes that tail for the whole reply — the mistake
-// design.md §3 retracted. It is a STATIC line and never a show-more: the withheld
+// without a note the reader takes that tail for the whole reply. It is a STATIC
+// line and never a show-more: the withheld
 // bytes are not on the wire, and `#vibekit-ui` forbids a control that does
 // nothing.
 // ---------------------------------------------------------------------------

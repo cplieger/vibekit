@@ -2281,8 +2281,8 @@ export interface TurnStatePayload {
  * //
  * NEVER `omitempty`. wiregen emits a REQUIRED TypeScript field for a field without it,
  * so a consumer cannot supply a fallback for a marker the type says is always present,
- * and an absent marker can never be read as "complete" — which is the whole reason the
- * cap is not the mistake design.md §3 retracted. It is a property of THIS TRANSFER, so
+ * and an absent marker can never be read as "complete", which is what makes the cap
+ * admissible at all. It is a property of THIS TRANSFER, so
  * it lives here and never on vibekit.Message, which is persisted verbatim into chat
  * files where the flag would be meaningless and permanent.
  */
