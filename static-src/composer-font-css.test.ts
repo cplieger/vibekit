@@ -156,6 +156,15 @@ describe("the composer, measured at real viewport sizes", () => {
     expect(fontPx(input)).toBe(16);
   });
 
+  it("computes 16px on a WIDE coarse viewport, which is the tier arm's own population", async () => {
+    // An iPad in landscape: a finger past 48rem, where the no-JS width fallback
+    // does not reach and only the pointer-tier arm can carry the token. THE TIER
+    // IS THE POINTER, NOT THE WIDTH, and this is the case that says so — at 390px
+    // the fallback arm alone would answer 16px.
+    const { input } = await mountAt(1024, 768, "coarse");
+    expect(fontPx(input)).toBe(16);
+  });
+
   it("computes 16px on a phone with no pointer tier resolved yet", async () => {
     // The no-JS fallback arm. `pointer-tier.ts` seeds the attribute from a
     // capability query and corrects it on the first real PointerEvent, so there
