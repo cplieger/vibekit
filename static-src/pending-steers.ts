@@ -76,8 +76,9 @@
 // ---------------------------------------------------------------------------
 
 import { el, computed, effect, touch } from "@cplieger/reactive";
-import { attachClamp } from "./clamp-text.js";
+import { attachClamp, releaseClampsIn } from "./clamp-text.js";
 import { announce } from "@cplieger/ui-primitives/announce";
+import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
 import { activeSession, getActiveId } from "./store.js";
 import { clearSteers } from "./actions/chat.js";
@@ -133,8 +134,8 @@ function render(stack: HTMLUListElement): void {
   // actually address, which is what decides whether Edit is offerable.
   const waiting = steers.filter((e) => e.pending !== true).length;
 
-  stack.replaceChildren();
   if (steers.length === 0) {
+    reconcile(stack, [], rowSpec(waiting));
     stack.classList.add("hidden");
     // Reset the announce baseline so arriving at a chat that already has steers
     // reads them out fresh, while the empty case stays silent.
@@ -142,13 +143,13 @@ function render(stack: HTMLUListElement): void {
     prevId = id;
     return;
   }
+  // Un-hidden BEFORE the rows land, because `.hidden` is `display: none` and an
+  // element inserted into a subtree with no box has its first style resolution
+  // there — which is the one the entry transition below reads.
   stack.classList.remove("hidden");
-
   // Arrival order, so the newest sits at the bottom nearest the box it was typed
   // into and every earlier one moves up.
-  for (const steer of steers) {
-    stack.appendChild(buildRow(steer, waiting));
-  }
+  reconcile(stack, steers, rowSpec(waiting));
 
   // Announce only on the same chat, and only the WAITING count — the number the
   // user is waiting to see fall. A pure chat switch is not news.
@@ -163,6 +164,103 @@ function render(stack: HTMLUListElement): void {
   }
   prevWaiting = waiting;
   prevId = id;
+}
+
+/** KEYED BY THE STEER'S OWN ID, so a row survives its own confirmation.
+ *
+ *  The node is what has to be kept. `.steer-row` enters through `@starting-style`
+ *  (26-dock.css), which supplies a before-change style to every element being
+ *  rendered for the FIRST time — so a freshly inserted node always fades in from
+ *  `opacity: 0` and `translateY(4px)`, and one Send produces two renders a round
+ *  trip apart (`recordSteerSent`, then `recordSteerQueued` off the POST's own
+ *  reply). Rebuilding the row on the second one therefore replayed that entry
+ *  fade over a row already on screen, interrupting the first fade mid-flight:
+ *  the row appeared, dropped back to invisible and appeared again. Keeping the
+ *  node makes the second render an attribute write, which `@starting-style`
+ *  cannot re-fire.
+ *
+ *  Two things ride along. The clamp keys its state to the text element
+ *  (`clamp-text.ts`), so a message the reader opened stays open through the
+ *  confirmation instead of re-collapsing, and its measured verdict is not thrown
+ *  away and re-guessed on a detached node.
+ *
+ *  `waiting` is stack-wide rather than per-entry, so the spec is built per render
+ *  rather than held as a module constant. */
+function rowSpec(waiting: number): ReconcileSpec<PendingSteer> {
+  return {
+    key: (steer) => steer.id,
+    mount: (steer) => buildRow(steer, waiting),
+    update: (row, steer) => {
+      updateRow(row, steer, waiting);
+    },
+    // The row's message clamp goes with the row. A dock row leaves on a promote
+    // or a clear, and this is the whole of that teardown — the release has to be
+    // explicit, because the observer's own zero-size callback may never arrive
+    // (`clamp-text.ts` `releaseClamp`).
+    onRemove: (row) => {
+      releaseClampsIn(row);
+    },
+  };
+}
+
+/** Bring an existing row up to date in place. Everything a render can change is
+ *  written here: the state (attribute, word and accessible name), the message, and
+ *  the controls. `sending` -> `sent` is the transition every steer makes. */
+function updateRow(row: HTMLElement, steer: PendingSteer, waiting: number): void {
+  const sending = steer.pending === true;
+  row.dataset["state"] = sending ? "sending" : "sent";
+  row.dataset["tooltip"] = steer.text;
+  row.setAttribute("aria-label", accessibleName(steer.text, sending));
+
+  const label = row.querySelector(".steer-state-label");
+  if (label !== null) {
+    label.textContent = sending ? "Sending" : "Sent";
+  }
+
+  syncText(row, steer.text);
+  syncActions(row, steer, sending, waiting);
+}
+
+/** No path in the store rewrites the text of an id it already holds, so this is
+ *  the update being TOTAL over the item rather than a live case. It goes through
+ *  the clamp's own handle because new content invalidates both an expansion and
+ *  the opener's verdict. */
+function syncText(row: HTMLElement, text: string): void {
+  const textEl = row.querySelector<HTMLElement>(".steer-text");
+  const more = row.querySelector<HTMLButtonElement>(".steer-more");
+  if (textEl === null || more === null) {
+    return;
+  }
+  const body = oneLine(text);
+  if (textEl.textContent === body) {
+    return;
+  }
+  textEl.textContent = body;
+  attachClamp(textEl, more, { lines: DOCK_CLAMP_LINES }).collapse();
+}
+
+/** The signature the row's controls were last built for. */
+const actionSig = new WeakMap<HTMLElement, string>();
+
+/** Build, replace or remove the controls, and leave them alone when neither input
+ *  moved. Leaving them alone is the point: replacing a button takes focus off one
+ *  a keyboard reader is on, and a second message arriving is a render where every
+ *  earlier row's controls are unchanged. */
+function syncActions(
+  row: HTMLElement,
+  steer: PendingSteer,
+  sending: boolean,
+  waiting: number,
+): void {
+  const sig = `${sending ? "1" : "0"}\u0001${String(waiting)}`;
+  if (actionSig.get(row) === sig) {
+    return;
+  }
+  actionSig.set(row, sig);
+  const column = row.querySelector<HTMLElement>(".steer-actions");
+  if (column !== null) {
+    fillActions(column, steer, sending, waiting);
+  }
 }
 
 /** One full-width row. `waiting` is the stack-wide confirmed count, which is what
@@ -192,6 +290,11 @@ function buildRow(steer: PendingSteer, waiting: number): HTMLElement {
   // A SIBLING of the clamped element, or the clamp would hide its own opener.
   const body = el("span", { className: "steer-body" }, text, more);
 
+  // Built empty and kept for the row's life: it is what reserves the height a
+  // control needs, so the confirmation reveals buttons into a box that was always
+  // there rather than growing the row under the reader. See `fillActions`.
+  const actions = el("span", { className: "steer-actions" });
+
   const row = el(
     "li",
     {
@@ -207,30 +310,44 @@ function buildRow(steer: PendingSteer, waiting: number): HTMLElement {
     },
     state,
     body,
+    actions,
   );
 
-  const actions = buildActions(steer, sending, waiting);
-  if (actions !== null) {
-    row.appendChild(actions);
-  }
+  // Through the same helper the update path uses, so the signature it compares
+  // against is recorded for the row's first paint too.
+  syncActions(row, steer, sending, waiting);
   attachClamp(text, more, { lines: DOCK_CLAMP_LINES });
   return row;
 }
 
-/** The right-hand controls, or null for a row that honestly has none.
+/** Put the right-hand controls into the column, or empty it.
  *
- *  A row still SENDING gets nothing: its id is derived rather than confirmed, so
+ *  A row still SENDING gets NONE: its id is derived rather than confirmed, so
  *  `_session/steer/clear` has nothing to address yet and a control would be one
- *  that cannot act. It gains them when `steer_queued` lands. */
-function buildActions(steer: PendingSteer, sending: boolean, waiting: number): HTMLElement | null {
+ *  that cannot act. It gains them when `steer_queued` lands.
+ *
+ *  The COLUMN is there in both states, and that is what stops the confirmation
+ *  moving anything: a control is floored to the hit-target size, so a column
+ *  arriving with its buttons grew the row — 8px on a mouse, 28px on a phone — and
+ *  the bar grows UPWARD, so the transcript moved by the same amount in the same
+ *  frame the row was still fading in. `.steer-actions` reserves that height while
+ *  the column is empty (26-dock.css), which is the reserved-box rule the turn
+ *  footer's elapsed slot already follows. */
+function fillActions(
+  column: HTMLElement,
+  steer: PendingSteer,
+  sending: boolean,
+  waiting: number,
+): void {
   if (sending) {
-    return null;
+    column.replaceChildren();
+    return;
   }
-  const actions = el("span", { className: "steer-actions" });
+  const controls: HTMLElement[] = [];
   // Edit is discard-plus-retype, so it is only offered when discarding cannot
   // take anything else with it.
   if (waiting === 1) {
-    actions.appendChild(
+    controls.push(
       actionButton(
         ICON_EDIT,
         "Edit this message",
@@ -241,7 +358,7 @@ function buildActions(steer: PendingSteer, sending: boolean, waiting: number): H
       ),
     );
   }
-  actions.appendChild(
+  controls.push(
     actionButton(
       ICON_TRASH,
       waiting === 1 ? "Discard this message" : `Discard all ${String(waiting)} unread messages`,
@@ -256,7 +373,7 @@ function buildActions(steer: PendingSteer, sending: boolean, waiting: number): H
       "steer-act-danger",
     ),
   );
-  return actions;
+  column.replaceChildren(...controls);
 }
 
 function actionButton(
