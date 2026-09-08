@@ -87,7 +87,9 @@ func (b *bus) idleFor(d time.Duration) bool {
 // runs its first line, and this package leaves dozens of runtimes alive for the whole
 // test binary — so a loop reading the package var lazily can read it at any later
 // instant, which races the write a test makes to drive the cadence in milliseconds.
-// Captured here, the goroutine never touches the var at all.
+// Captured here, the goroutine never touches the var at all — which is why the
+// captured value is threaded on into publishHeartbeat's idle gate rather than that
+// gate re-reading the var, the one read that kept the race alive.
 func (rt *Runtime) heartbeatLoopEvery(interval time.Duration) func() {
 	return func() { rt.heartbeatLoop(interval) }
 }
@@ -101,7 +103,7 @@ func (rt *Runtime) heartbeatLoop(interval time.Duration) {
 		case <-rt.lifecycle.done:
 			return
 		case <-ticker.C:
-			seq = rt.publishHeartbeat(seq)
+			seq = rt.publishHeartbeat(seq, interval)
 		}
 	}
 }
@@ -121,11 +123,15 @@ func (rt *Runtime) heartbeatLoop(interval time.Duration) {
 // heartbeat published on a chat's topic would never reach a client connected with a
 // different chat_id — and a topic-filtered client is the common case here. An empty
 // topic broadcasts to every subscriber.
-func (rt *Runtime) publishHeartbeat(seq uint64) uint64 {
+//
+// interval is the caller's OWN cadence, passed in rather than read off
+// heartbeatInterval here: this runs on the loop goroutine, and a lazy read of the
+// package var races the write a test makes to drive the cadence in milliseconds.
+func (rt *Runtime) publishHeartbeat(seq uint64, interval time.Duration) uint64 {
 	if rt.bus.fanout.ClientCount() == 0 {
 		return seq
 	}
-	if !rt.bus.idleFor(heartbeatInterval) {
+	if !rt.bus.idleFor(interval) {
 		return seq
 	}
 	next := seq + 1
