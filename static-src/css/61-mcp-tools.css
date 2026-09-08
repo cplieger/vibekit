@@ -447,6 +447,47 @@ input[type="radio"] {
   min-height: 0;
 }
 
+/* THE TEXT-ENTRY FLOOR, the hit floor's twin: no focusable text control renders
+ * under 16px on a coarse pointer, because iOS zooms the page when one takes
+ * focus. Raising the composer alone closed the composer's own seven focus sites
+ * and nothing else; the app focuses around eighteen OTHER text controls
+ * programmatically, several declaring --fs-sm or --fs-xs, so this is a mechanical
+ * floor rather than a per-control sweep — the same correction the hit floor's own
+ * history records, where the hand-kept allow-list WAS the defect.
+ *
+ * IT CANNOT BE A ZERO-SPECIFICITY `:where()` FLOOR THE WAY THE HIT FLOOR IS, and
+ * that asymmetry is the thing to understand before editing it. The hit floor sets
+ * `min-width`/`min-height`, properties NO component declares, so it wins at zero
+ * specificity by being the only writer. `font-size` is declared by component
+ * classes all over this app, so a zero-specificity floor would lose to every one
+ * of them. (0,2,1) beats a single class and ties with two, which source order
+ * then decides in this file's favour.
+ *
+ * `max(..., 1em)` so a control that is larger BECAUSE ITS CONTEXT IS keeps its
+ * size: `1em` on `font-size` resolves against the parent, which is the closest
+ * CSS gets to "whatever this would otherwise have been".
+ *
+ * NO EXCLUSION FOR THE BOX CONTROLS, and that is measured rather than assumed. A
+ * native checkbox and radio paint at a font-relative size, so a floor would grow
+ * them — but in this app both carry an explicit `width`/`height` of `1rem`
+ * (02-reset.css and the rule below), so the type scale cannot reach them, and
+ * `type="range"` has no instance anywhere in the client. A `:not()` chain over the
+ * three would also put this selector over four of the repo's stylelint ceilings.
+ *
+ * Two arms, the tier idiom 01-tokens.css uses for --fs-field itself: the pointer
+ * tier, and the no-JS width fallback for the window before `pointer-tier.ts` has
+ * a real PointerEvent to classify. The token alone is not enough — it is 1rem in
+ * both arms, but a rule has to APPLY for the control to read it. */
+:root[data-pointer="coarse"] :is(input, textarea, select) {
+  font-size: max(var(--fs-field), 1em);
+}
+
+@media (width <= 48rem) {
+  :root:not([data-pointer="fine"]) :is(input, textarea, select) {
+    font-size: max(var(--fs-field), 1em);
+  }
+}
+
 /* Shared summary style for history table rows. Lives under the name
  * row in the History view, same grey-smaller-text treatment. */
 .list-row-title {
