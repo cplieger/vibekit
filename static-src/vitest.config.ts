@@ -170,6 +170,11 @@ export default defineConfig({
           name: "browser",
           include: ["**/*.test.ts"],
           exclude: [...sharedExclude, "**/*.node.test.ts"],
+          // Merged with the root list, not replacing it: `extends: true` merges
+          // array options. Browser-only on purpose — the gate reads `window`,
+          // which the node project does not have, and a `ResizeObserver` loop is
+          // an engine verdict only a real engine can produce.
+          setupFiles: ["./ro-loop-gate.ts"],
           // One test file at a time. Not a preference: the browser mocker
           // registers its module-interception routes on the playwright browser
           // CONTEXT, which is shared by the pages running in parallel, so two

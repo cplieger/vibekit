@@ -17,6 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, afterAll, beforeAll, beforeEach } from "vitest";
+import { framesBudgetMs, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 import type { Message, Session } from "./types.js";
 
 // NESTED as the shipped page nests them (static/index.html): `#messages-wrap` is
@@ -184,10 +185,14 @@ function paint(): void {
   bumpMessages(id);
 }
 
+/** Frames the settle waits for: the deferred write lands on the next one, the
+ *  resize it causes is delivered on the one after, and the rest are margin. */
+const SETTLE_FRAMES = 6;
+
 /** Let the engine finish delivering: several frames plus a macrotask, which is
  *  where a deferred observation lands and where the loop error would arrive. */
 async function settle(): Promise<void> {
-  for (let f = 0; f < 8; f++) {
+  for (let f = 0; f < SETTLE_FRAMES; f++) {
     await new Promise<void>((r) => {
       requestAnimationFrame(() => {
         r();
@@ -225,59 +230,68 @@ function report(): string {
     .join("; ");
 }
 
-describe("the transcript's resize observers over real layout", () => {
-  let style: HTMLStyleElement;
+// The subject IS frames, and a browser running the whole suite delivers them at
+// 1Hz partway through (`__test-helpers__/frame-budget.ts`), so the per-test
+// timeout has to be sized in seconds per frame waited for. Cold and full is the
+// only mode that reaches the throttle, so the default 5s reads as a bare timeout
+// exactly where the case is working.
+describe(
+  "the transcript's resize observers over real layout",
+  { timeout: testTimeoutFor(framesBudgetMs(SETTLE_FRAMES)) },
+  () => {
+    let style: HTMLStyleElement;
 
-  beforeAll(() => {
-    style = mountAppCSS();
-  });
-
-  afterAll(() => {
-    style.remove();
-    window.ResizeObserver = NativeResizeObserver;
-    rootStyle.setProperty = nativeSetProperty;
-  });
-
-  beforeEach(() => {
-    mountChatView();
-    loopErrors.length = 0;
-    baseline = snapshot();
-  });
-
-  // `#messages-wrap-outer` is `flex: 1` of a column this fixture does not build,
-  // so without an explicit height the absolutely-positioned scroller inside it is
-  // 0 tall and nothing overflows — which is the one state that cannot reserve a
-  // gutter and therefore cannot reproduce the write.
-  for (const viewport of [600, 720]) {
-    it(`delivers every observation at a ${String(viewport)}px scrollport`, async () => {
-      const outer = document.getElementById("messages-wrap-outer")!;
-      outer.style.height = `${String(viewport)}px`;
-      paint();
-      await settle();
-
-      expect(loopErrors, report()).toEqual([]);
-      const observed = since();
-      // TWO observers from `scroll.ts` — the content one and the gutter one — and
-      // between them at least one delivered entry, or the bound below is a loop
-      // over nothing.
-      const fromScroll = [...observed].filter(([site]) => site.startsWith("scroll.ts"));
-      expect(
-        [fromScroll.length, fromScroll.reduce((n, [, t]) => n + t.entries, 0) > 0],
-        report(),
-      ).toEqual([2, true]);
-      for (const [site, t] of observed) {
-        expect(t.calls, `${site} — ${report()}`).toBeLessThanOrEqual(MAX_CALLS_PER_SITE);
-      }
+    beforeAll(() => {
+      style = mountAppCSS();
     });
-  }
 
-  it("still reserves the gutter, so the pass above is not vacuous", () => {
-    // The error only ever occurred on a pass that WROTE `--scrollbar-w`. A run
-    // that never wrote it would pass the two cases above having reproduced
-    // nothing.
-    expect([gutterWrites > 0, rootStyle.getPropertyValue("--scrollbar-w")]).toEqual([
-      true,
-      expect.stringMatching(/^\d+px$/),
-    ]);
-  });
-});
+    afterAll(() => {
+      style.remove();
+      window.ResizeObserver = NativeResizeObserver;
+      rootStyle.setProperty = nativeSetProperty;
+    });
+
+    beforeEach(() => {
+      mountChatView();
+      loopErrors.length = 0;
+      baseline = snapshot();
+    });
+
+    // `#messages-wrap-outer` is `flex: 1` of a column this fixture does not build,
+    // so without an explicit height the absolutely-positioned scroller inside it is
+    // 0 tall and nothing overflows — which is the one state that cannot reserve a
+    // gutter and therefore cannot reproduce the write.
+    for (const viewport of [600, 720]) {
+      it(`delivers every observation at a ${String(viewport)}px scrollport`, async () => {
+        const outer = document.getElementById("messages-wrap-outer")!;
+        outer.style.height = `${String(viewport)}px`;
+        paint();
+        await settle();
+
+        expect(loopErrors, report()).toEqual([]);
+        const observed = since();
+        // TWO observers from `scroll.ts` — the content one and the gutter one — and
+        // between them at least one delivered entry, or the bound below is a loop
+        // over nothing.
+        const fromScroll = [...observed].filter(([site]) => site.startsWith("scroll.ts"));
+        expect(
+          [fromScroll.length, fromScroll.reduce((n, [, t]) => n + t.entries, 0) > 0],
+          report(),
+        ).toEqual([2, true]);
+        for (const [site, t] of observed) {
+          expect(t.calls, `${site} — ${report()}`).toBeLessThanOrEqual(MAX_CALLS_PER_SITE);
+        }
+      });
+    }
+
+    it("still reserves the gutter, so the pass above is not vacuous", () => {
+      // The error only ever occurred on a pass that WROTE `--scrollbar-w`. A run
+      // that never wrote it would pass the two cases above having reproduced
+      // nothing.
+      expect([gutterWrites > 0, rootStyle.getPropertyValue("--scrollbar-w")]).toEqual([
+        true,
+        expect.stringMatching(/^\d+px$/),
+      ]);
+    });
+  },
+);
