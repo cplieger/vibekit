@@ -53,7 +53,7 @@ import {
 } from "./store.js";
 import { initPendingSteers } from "./pending-steers.js";
 import type { Session } from "./types.js";
-import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
 function makeSession(chatID: string): Session {
   return {
@@ -412,6 +412,202 @@ describe("the steer stack", () => {
       expect(confirmMock).toHaveBeenCalled();
     });
     expect(clearDispatch).not.toHaveBeenCalled();
+  });
+});
+
+// THE ROW SURVIVES ITS OWN CONFIRMATION, measured against real layout under the
+// shipped stylesheet, because the defect was invisible to every assertion about
+// what a row SAYS.
+//
+// One Send produces two renders a round trip apart — `recordSteerSent` draws the
+// pending row, `recordSteerQueued` confirms it off the POST's own reply — and
+// `.steer-row` enters through `@starting-style` (26-dock.css), which supplies a
+// before-change style to any element being rendered for the first time. A render
+// that rebuilt the row therefore replayed that entry fade over a row already on
+// screen, interrupting the first fade mid-flight: the row appeared, dropped back
+// to invisible and appeared again, which is what a reader reported as a flicker.
+//
+// So the subject here is the NODE rather than its content, and the stack element
+// is the module's own (captured at init), re-parented into a host with the
+// stylesheet mounted the way the clamp block below does it.
+describe("the row across its own confirmation", () => {
+  let styleEl: HTMLStyleElement;
+  let host: HTMLElement;
+
+  beforeAll(() => {
+    styleEl = mountAppCSS();
+    host = document.createElement("div");
+    host.style.inlineSize = "600px";
+    document.body.appendChild(host);
+    const stack = document.getElementById("steer-stack");
+    if (stack === null) {
+      throw new Error("no #steer-stack");
+    }
+    host.appendChild(stack);
+  });
+
+  beforeEach(() => {
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+  });
+
+  afterAll(() => {
+    styleEl.remove();
+    // The tier cases below write this, and it changes `--hit-floor` and every
+    // control height for the whole document, so it must not reach the clamp block.
+    delete document.documentElement.dataset["pointer"];
+    // Back to the body rather than removed with the host: the module renders into
+    // this element for the rest of the file, and the clamp block below looks it up
+    // by id.
+    const stack = document.getElementById("steer-stack");
+    if (stack !== null) {
+      document.body.appendChild(stack);
+    }
+    host.remove();
+  });
+
+  /** Two frames span one full layout-and-resize delivery. */
+  async function settles(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    });
+  }
+
+  /** The row's own ENTRY transitions, which are the two `@starting-style` declares.
+   *  Filtered rather than the whole list, because a confirmation deliberately
+   *  animates the row's ink — so "nothing is running" would forbid the settle as
+   *  well as the re-entry, and `border-color` alone reports one per side. */
+  function entryAnimations(row: HTMLElement): Animation[] {
+    return row
+      .getAnimations()
+      .filter((a) =>
+        ["opacity", "transform"].includes((a as CSSTransition).transitionProperty ?? ""),
+      );
+  }
+
+  /** The entry transition `@starting-style` starts, once it is running. */
+  async function entering(row: HTMLElement): Promise<Animation[]> {
+    await vi.waitFor(() => {
+      expect(entryAnimations(row).length, "the row fades in on its first paint").toBeGreaterThan(0);
+    });
+    return entryAnimations(row);
+  }
+
+  // The premise, asserted rather than assumed: without an entry transition on the
+  // row there is nothing for a rebuild to replay, and the two cases below would
+  // pass over a stylesheet that had lost it.
+  it("enters through a starting style, so a replacement would re-animate", async () => {
+    expect(ruleBody(loadCSS("26-dock.css"), ".steer-row")).toContain("@starting-style");
+
+    recordSteerSent("chat-1", "m-1", "use tabs instead");
+    const anims = await entering(firstRow());
+    expect(anims.map((a) => (a as CSSTransition).transitionProperty).sort()).toEqual([
+      "opacity",
+      "transform",
+    ]);
+  });
+
+  it("updates the same element rather than replacing it on the confirmation", () => {
+    recordSteerSent("chat-1", "m-1", "use tabs instead");
+    const sending = firstRow();
+    expect(sending.dataset["state"]).toBe("sending");
+
+    recordSteerQueued("chat-1", { id: "steer-m-1", text: "use tabs instead", origin: "user" });
+
+    expect(firstRow(), "the node is updated in place, not rebuilt").toBe(sending);
+    expect(sending.dataset["state"]).toBe("sent");
+    expect(actions(sending)).toEqual(["Edit this message", "Discard this message"]);
+  });
+
+  it("does not fade a second time when the confirmation lands", async () => {
+    recordSteerSent("chat-1", "m-1", "use tabs instead");
+    const row = firstRow();
+    await Promise.all((await entering(row)).map((a) => a.finished));
+
+    recordSteerQueued("chat-1", { id: "steer-m-1", text: "use tabs instead", origin: "user" });
+
+    expect(entryAnimations(row), "no second fade over a row already on screen").toEqual([]);
+    expect(getComputedStyle(row).opacity, "and it stays fully painted").toBe("1");
+  });
+
+  // A steer arriving beside one already on screen is the other render that used to
+  // rebuild every row: the new one is entitled to its entry fade, the settled one
+  // is not.
+  it("leaves an established row alone when a second message arrives", async () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "first", origin: "user" });
+    const first = firstRow();
+    await Promise.all((await entering(first)).map((a) => a.finished));
+
+    recordSteerSent("chat-1", "m-2", "second");
+
+    expect(rows()).toHaveLength(2);
+    expect(rows()[0], "the established row is the same node").toBe(first);
+    expect(entryAnimations(first), "and it does not re-enter").toEqual([]);
+  });
+
+  // THE ROW MUST NOT CHANGE HEIGHT WHEN IT CONFIRMS, and this is measured at both
+  // pointer tiers because the size of the jump was the hit-target floor: the
+  // controls arrive with the confirmation and each is floored to `--hit-floor`, so
+  // the row went 34px -> 42px on a mouse and 34px -> 62px on a phone. The bar grows
+  // UPWARD, so that reached the reader as the transcript jumping by the same amount
+  // in the same frame the row was still fading in.
+  //
+  // `.steer-actions` reserves that height while it is empty, so what the
+  // confirmation changes is the buttons' opacity and the row's ink.
+  for (const tier of ["fine", "coarse"] as const) {
+    it(`keeps its height across the confirmation on a ${tier} pointer`, async () => {
+      document.documentElement.dataset["pointer"] = tier;
+      recordSteerSent("chat-1", "m-1", "use tabs instead");
+      const row = firstRow();
+      await settles();
+      const before = row.getBoundingClientRect().height;
+      // The floor is what makes the two tiers different measurements rather than
+      // one measurement run twice, so the premise is asserted.
+      expect(
+        getComputedStyle(document.documentElement).getPropertyValue("--hit-floor").trim(),
+        "the tier is in force",
+      ).toBe(tier === "fine" ? "1.5rem" : "2.75rem");
+
+      recordSteerQueued("chat-1", { id: "steer-m-1", text: "use tabs instead", origin: "user" });
+      await settles();
+
+      expect(actions(row), "the controls did arrive").toHaveLength(2);
+      expect(
+        row.getBoundingClientRect().height,
+        "and the row did not grow under the reader",
+      ).toBeCloseTo(before, 2);
+    });
+  }
+
+  // The clamp keys its state to the text element, so keeping the node keeps a
+  // measured verdict AND an expansion the reader asked for. Rebuilding threw both
+  // away and re-guessed from character count on a detached node.
+  it("keeps a message the reader opened open through the confirmation", async () => {
+    const long = "rebase onto main and re-run the census against both bundles first ".repeat(6);
+    recordSteerSent("chat-1", "m-1", long);
+    const row = firstRow();
+    const more = row.querySelector<HTMLButtonElement>(".steer-more");
+    if (more === null) {
+      throw new Error("no .steer-more");
+    }
+    await vi.waitFor(() => {
+      expect(more.hidden, "the opener is offered for a message past four lines").toBe(false);
+    });
+    more.click();
+    expect(row.querySelector(".steer-text")?.hasAttribute("data-clamped")).toBe(false);
+
+    recordSteerQueued("chat-1", { id: "steer-m-1", text: long, origin: "user" });
+
+    expect(firstRow()).toBe(row);
+    expect(
+      row.querySelector(".steer-text")?.hasAttribute("data-clamped"),
+      "still open, and the opener still says so",
+    ).toBe(false);
+    expect(more.textContent).toBe("Show less");
   });
 });
 

@@ -405,6 +405,12 @@
 }
 
 .steer-row {
+  /* ONE owner of the control's size, read by the button that takes it and by the
+     column that reserves room for it. The used height is the LARGER of this and
+     the hit-target floor (61-mcp-tools.css floors every button), so the two
+     readers must agree on both terms or the reservation is the wrong height. */
+  --steer-act-size: 1.5rem;
+
   /* state | message | actions. minmax(0, 1fr) on the middle track is what lets
      the clamp below actually clamp: an auto track would size to the text and
      push the actions off the row. */
@@ -421,9 +427,19 @@
   border-radius: var(--r);
   background: color-mix(in srgb, var(--c-accent) 6%, var(--c-bg-secondary));
   font-size: var(--fs-sm);
+
+  /* The entry, plus the SETTLE into the confirmed state. Without the second pair
+     the row's edge and wash snapped between the two `data-state` treatments in one
+     frame, which read as a second flicker on top of the geometry one; both are
+     paint-only properties at `--dur-micro`, which is the exception `vibekit-ui.md`
+     names to the transform-and-opacity rule. Geometry is deliberately NOT
+     animated: the row's height is reserved instead, so there is nothing to
+     interpolate. */
   transition:
     opacity var(--dur-enter) var(--ease-enter),
-    transform var(--dur-enter) var(--ease-enter);
+    transform var(--dur-enter) var(--ease-enter),
+    border-color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 
   /* Enters from below: a new message arrives at the bottom of the stack. */
   @starting-style {
@@ -453,6 +469,7 @@
   align-items: center;
   gap: 0.3rem;
   color: var(--c-accent);
+  transition: color var(--dur-micro) var(--ease-standard);
 }
 
 .steer-state-icon {
@@ -507,6 +524,7 @@
 .steer-text {
   color: var(--c-text-primary);
   line-height: 1.35;
+  transition: color var(--dur-micro) var(--ease-standard);
 }
 
 /* FOUR lines at the full width of the bar, behind the attribute the opener
@@ -548,11 +566,27 @@
 
 /* --- Actions column ----------------------------------------------------- */
 
+/* PRESENT IN BOTH STATES, AND EMPTY WHILE SENDING, because this column is what
+   sets the row's height: a control is floored to `--hit-floor`, so a column that
+   arrived with its buttons took the row from 34px to 42px on a mouse and to 62px
+   on a phone. The bar grows UPWARD, so that landed as the transcript jumping by
+   the same amount, in the same frame the row was still fading in.
+
+   So the box is reserved and only its CONTENTS change — the rule `.turn-elapsed`
+   (29-turns.css) already follows, for the reason stated there: a row that changes
+   the transcript's height also moves `#messages`' `scrollHeight`, which is what
+   the timeline rail reads to decide whether it has anywhere to navigate.
+
+   Reserving the WIDTH is deliberately not attempted: the column holds one control
+   or two depending on how many messages are unread, so there is no single width to
+   hold open, and holding one open would spend a phone row's message space on a
+   control that is not there yet. */
 .steer-actions {
   display: inline-flex;
   flex: none;
   align-items: center;
   gap: var(--sp-1);
+  min-block-size: max(var(--steer-act-size), var(--hit-floor));
 }
 
 .steer-act {
@@ -560,8 +594,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.5rem;
-  height: 1.5rem;
+  width: var(--steer-act-size);
+  height: var(--steer-act-size);
   padding: 0;
   border: 0;
   border-radius: var(--r-sm);
@@ -574,6 +608,14 @@
     opacity var(--dur-micro) var(--ease-standard),
     background var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
+
+  /* The controls MOUNT on the confirmation, into the box above, so this is the
+     one entry animation on this surface that is honest — the buttons really are
+     new. It fades to the resting 0.75 rather than to 1, so the hover step still
+     has somewhere to go. */
+  @starting-style {
+    opacity: 0;
+  }
 }
 
 .steer-act:hover {
