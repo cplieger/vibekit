@@ -80,6 +80,32 @@ export function neverRan(state: ExecState): boolean {
   return state === "pending" || state === "skipped";
 }
 
+/** Whether a node RAN and stopped — the third bucket of the MECE partition
+ *  `inFlight` and `neverRan` are the other two, so a consumer branching on one of
+ *  them has a name for the rest rather than an open-coded pair.
+ *
+ *  `fail` and `warn` are IN: such a node can carry a capture worth reading, and the
+ *  three members are exactly the three `STATE_MARK` gives an outcome icon. `skipped`
+ *  is OUT though it is terminal, because it never ran and produced nothing.
+ *
+ *  An exhaustive `switch` with no `default`, like `stateOf`, so a tenth state fails
+ *  the type check here instead of silently reading as done. */
+export function settled(state: ExecState): boolean {
+  switch (state) {
+    case "ok":
+    case "fail":
+    case "warn":
+      return true;
+    case "pending":
+    case "running":
+    case "waiting":
+    case "input":
+    case "unknown":
+    case "skipped":
+      return false;
+  }
+}
+
 /** Fold a classified wire status onto the presentation vocabulary. `skipped` stays
  *  its own state (a branch that never ran did not succeed) and both stops — `aborted`
  *  and `cancelled` — map to `warn`, not `fail`: a stop is not a fault. No `default`, so

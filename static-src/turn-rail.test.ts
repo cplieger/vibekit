@@ -1915,3 +1915,199 @@ describe("what a rail row says", () => {
     expect(out?.getAttribute("data-tooltip")).toBe(`Showing turns ${range}`);
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE TURN'S DURATION on the rail.
+//
+// The user asked for the turn's time to move into the turn's own box on hover. On the
+// rail that value does not exist on the rail's feed: `GET /api/chats/{id}/turns`
+// carries no duration, and the number the footer renders is `turn_elapsed_ms` on a
+// turn's final assistant message, summed across the body. So the rail derives it from
+// the transcript STORE, which is a paginated window — and the honest consequence is
+// that a turn outside that window gets no slot rather than a guessed one.
+//
+// These cases pin the derivation and the gap. The reveal itself (reserved box,
+// opacity, keyboard reach, nothing else moves) is `rail-mark-css.test.ts`'s subject,
+// over real layout.
+// ---------------------------------------------------------------------------
+
+describe("the duration a rail marker can show", () => {
+  const host = document.createElement("div");
+  let rail: HTMLElement;
+
+  beforeAll(() => {
+    document.body.appendChild(host);
+    mountTurnRail(host);
+    const mounted = document.querySelector<HTMLElement>(".turn-rail");
+    if (mounted === null) {
+      throw new Error("rail not mounted");
+    }
+    rail = mounted;
+    rail.style.height = "600px";
+    rail.style.display = "block";
+  });
+
+  beforeEach(() => {
+    scrollable.by = 500;
+    resetTurnRail();
+  });
+
+  /** A turn as the STORE holds it: the user message that opens it (whose id is what
+   *  the rail's index joins on) plus one assistant message carrying the stamp. */
+  function storedTurn(n: number, elapsedMs?: number): Message[] {
+    const opener: Message = { id: `m${String(n)}`, role: "user", content: "ask", ts: n * 1000 };
+    const reply: Message = {
+      id: `a${String(n)}`,
+      role: "assistant",
+      content: "answer",
+      ts: n * 1000 + 1,
+      ...(elapsedMs === undefined ? {} : { turn_elapsed_ms: elapsedMs }),
+    };
+    return [opener, reply];
+  }
+
+  function seed(chatID: string, messages: Message[]): void {
+    setSessions([
+      {
+        id: chatID,
+        name: chatID,
+        model: "",
+        acp_session_id: "",
+        current_mode_id: "",
+        usage: {
+          context_pct: 0,
+          context_size: 0,
+          credits: 0,
+          turn_count: 0,
+          last_turn_ms: 0,
+          has_real_data: false,
+        },
+        message_count: messages.length,
+        messages,
+        has_more: true,
+        thinking: false,
+        working_label: "Thinking",
+      },
+    ]);
+    setActive(chatID);
+  }
+
+  function marker(n: number): HTMLElement {
+    const found = [...rail.querySelectorAll<HTMLElement>(".rail-marker")].find(
+      (b) => b.firstChild?.textContent === String(n),
+    );
+    if (found === undefined) {
+      throw new Error(`no marker for turn ${String(n)}`);
+    }
+    return found;
+  }
+
+  function slot(n: number): HTMLElement | null {
+    return marker(n).querySelector<HTMLElement>(".rail-marker-time");
+  }
+
+  it("renders the turn's own duration, in both spellings", async () => {
+    seed("c-dur", storedTurn(1, 92_000));
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
+    await loadTurnRail("c-dur");
+
+    const time = slot(1);
+    expect(time).not.toBeNull();
+    // Hardcoded rather than computed through the formatters the renderer uses, or the
+    // case would assert the code against itself. 92s is `1m 32s` / `PT1M32S`.
+    expect(time?.textContent).toBe("1m 32s");
+    expect(time?.getAttribute("datetime")).toBe("PT1M32S");
+    // A `<time>`, because the two spellings are the machine and human forms of one
+    // value and the turn footer's own slot already made that pairing the convention.
+    expect(time?.tagName).toBe("TIME");
+  });
+
+  it("sums the turn's body rather than reading one message", async () => {
+    // A turn splits across two assistant messages when the model is switched mid-turn,
+    // and each carries its own stamp. `turnLedger` owns the sum; this is the case that
+    // proves the rail goes through it rather than taking the last value it sees.
+    const messages = storedTurn(1, 60_000);
+    messages.push({
+      id: "a1b",
+      role: "assistant",
+      content: "more",
+      ts: 1002,
+      turn_elapsed_ms: 32_000,
+    });
+    seed("c-sum", messages);
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
+    await loadTurnRail("c-sum");
+
+    expect(slot(1)?.textContent).toBe("1m 32s");
+  });
+
+  it("shows nothing for a turn the store does not hold", async () => {
+    // THE HONEST GAP. The rail spans the session; the store holds a window. Turn 1 is
+    // resident, turn 2 is not, and the rail cannot know turn 2's duration without a
+    // wire field it has not got — so that marker carries no slot at all.
+    seed("c-window", storedTurn(1, 92_000));
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
+    await loadTurnRail("c-window");
+
+    expect(slot(1)).not.toBeNull();
+    expect(slot(2)).toBeNull();
+  });
+
+  it("shows nothing for a resident turn nobody stamped", async () => {
+    // A duration nobody stamped is not a duration of zero — the rule the turn footer's
+    // own slot follows — so an unstamped turn gets no element rather than `0.0s`.
+    seed("c-unstamped", storedTurn(1));
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
+    await loadTurnRail("c-unstamped");
+
+    expect(marker(1).textContent).toBe("1");
+    expect(slot(1)).toBeNull();
+  });
+
+  it("reads the store at RENDER time, so a turn that pages in gains its slot", async () => {
+    // The map is rebuilt per render rather than captured with the fetch: `ingestMessage`
+    // upserts in place, so an array identity is not a version and a cached answer would
+    // go stale exactly when history arrives.
+    seed("c-late", []);
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
+    await loadTurnRail("c-late");
+    expect(slot(1)).toBeNull();
+
+    const session = get("c-late");
+    if (session === undefined) {
+      throw new Error("session gone");
+    }
+    session.messages = storedTurn(1, 92_000);
+    await refreshTurnRail("c-late");
+
+    expect(slot(1)?.textContent).toBe("1m 32s");
+  });
+
+  it("puts the duration in the DESCRIPTION channel and keeps the name short", async () => {
+    // `aria-label` wins over a button's own text, so the slot's words never reach a
+    // screen reader; the tooltip is republished as `aria-describedby`, which is the
+    // channel the footer's own hover-revealed slot uses for the same reason. The NAME
+    // is read on every focus and stays what it was, and the two channels stay
+    // different, which is the rule the zoom-out row exists to state.
+    seed("c-channels", storedTurn(1, 92_000));
+    vi.mocked(apiGet).mockResolvedValue({
+      turns: [turn(1, { first_line: "do the thing", outcome: "failed" })],
+    });
+    await loadTurnRail("c-channels");
+
+    const btn = marker(1);
+    expect(btn.getAttribute("data-tooltip")).toBe(
+      "do the thing \u00b7 This turn failed \u00b7 1m 32s",
+    );
+    expect(btn.getAttribute("aria-label")).toBe("Go to turn 1, failed");
+    expect(btn.getAttribute("data-tooltip")).not.toBe(btn.getAttribute("aria-label"));
+  });
+
+  it("says nothing about a duration it does not have", async () => {
+    seed("c-quiet", storedTurn(1));
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1, { first_line: "do the thing" })] });
+    await loadTurnRail("c-quiet");
+
+    expect(marker(1).getAttribute("data-tooltip")).toBe("do the thing");
+  });
+});

@@ -362,19 +362,42 @@
    use: a spinning gap means work is happening, a still ring means the step is open
    and nothing is moving. `paused` used to render the spinner, which claimed
    progress that was not there. */
+/* `--dot-size` and `box-sizing`, which together make this ring the size of the
+   settled mark that shares the slot — the rule the exec tree and the run bar state
+   for the same column. It was the furthest off of the three: a hand-picked 0.75rem
+   plus a 2px border the pseudo-element's content-box default put OUTSIDE it rendered
+   16px, filling the whole 1rem slot at exactly twice its own settled disc. The
+   `margin: 0 auto` that used to sit here went with that overflow; the slot is
+   `place-items: center`, so it centres what fits. Pinned by
+   `state-column-size.test.ts`, which measures the ring against the disc. */
 .run-step[data-status="running"] .run-step-glyph::before,
 .run-step[data-status="waiting"] .run-step-glyph::before {
   content: "";
   display: block;
-  inline-size: 0.75rem;
-  block-size: 0.75rem;
-  margin: 0 auto;
+  box-sizing: border-box;
+  inline-size: var(--dot-size);
+  block-size: var(--dot-size);
   border: 0.125rem solid var(--c-accent);
   border-radius: 50%;
 }
 
+/* Painted arc, still box — see `--vk-spin-arc` (00-header.css). The border above
+   is neutralised rather than dropped: the still `waiting` ring shares that rule and
+   DRAWS with it, and it also reserves this ring's band inside `--dot-size` for the
+   mask to paint over. */
 .run-step[data-status="running"] .run-step-glyph::before {
-  border-top-color: transparent;
+  border-color: transparent;
+  background: conic-gradient(
+      from var(--vk-spin-arc),
+      transparent 0deg 90deg,
+      var(--c-accent) 90deg 360deg
+    )
+    border-box;
+  mask: radial-gradient(
+    closest-side,
+    transparent calc(100% - 0.125rem),
+    #000 calc(100% - 0.125rem)
+  );
   animation: vk-spin var(--spin-dur) linear infinite;
 }
 

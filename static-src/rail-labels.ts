@@ -33,6 +33,7 @@
 // re-derived here.
 // ---------------------------------------------------------------------------
 
+import { formatElapsed } from "./strings.js";
 import { OUTCOME_LABEL, OUTCOME_TOOLTIP, severityOf } from "./turn-severity.js";
 import type { TurnOutcome } from "./turns.js";
 
@@ -53,8 +54,8 @@ export interface MarkerSubject {
   agent_initiated?: boolean;
 }
 
-/** The transient facts the SUBJECT cannot carry: they are the rail's own view
- *  state, not the turn's.
+/** The facts the SUBJECT cannot carry: the rail's own view state, plus the one
+ *  property of the turn that its own feed does not report.
  *
  *  Deliberately no `current`. Currency travels on `aria-current`, which is what
  *  that attribute means, and naming it here too would be the "two renderings of one
@@ -66,6 +67,14 @@ export interface MarkerState {
   pending: boolean;
   /** A live search matches inside this turn. */
   hit: boolean;
+  /** How long the turn took, when the transcript store still holds it.
+   *
+   *  Not on the subject because `vibekit.TurnSummary` has no duration field: the
+   *  value is `turn_elapsed_ms` on the turn's final assistant message, summed by
+   *  `turnLedger`, so it exists only for a turn inside the paginated window and is
+   *  ABSENT rather than zero for one outside it — a duration nobody stamped is not
+   *  a duration of zero, the same rule the turn footer's own slot follows. */
+  elapsedMs?: number | undefined;
 }
 
 /** The app's own separator, matching `turn-footer.ts`'s ledger line. */
@@ -92,6 +101,13 @@ export function markerLabel(s: MarkerSubject, state: MarkerState): RailLabel {
   tip.push(line !== "" ? line : agentInitiated ? "Agent-initiated turn" : `Turn ${String(s.n)}`);
   if (s.outcome !== "completed") {
     tip.push(OUTCOME_TOOLTIP[s.outcome]);
+  }
+  // The DESCRIPTION channel, not the name: an `aria-label` wins over a button's own
+  // text, so the revealed slot's words reach no screen reader — the correction
+  // `turn-footer.ts` records for its own hover-revealed slot. Beside the outcome
+  // because it is a property of the turn, and ahead of the two transient facts.
+  if (state.elapsedMs !== undefined && state.elapsedMs > 0) {
+    tip.push(formatElapsed(state.elapsedMs));
   }
   if (state.pending) {
     tip.push("Loading this turn\u2026");

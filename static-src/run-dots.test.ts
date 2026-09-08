@@ -32,6 +32,12 @@ const m = {
   asks: [] as { chatID: string; runID: string }[],
   states: new Map<string, RunState>(),
   names: new Map<string, string>(),
+  /** The run refs the projection holds, as `openRunRefs` answers them. Separate
+   *  from `tabs` above, which is keyed by the readable TAB id the fake resolves. */
+  runTabs: new Set<string>(),
+  /** One entry per `invalidateRun` call, in order, so the seed's bound is
+   *  assertable. */
+  invalidated: [] as string[],
 };
 
 const tabsVersion = signal(0);
@@ -57,6 +63,11 @@ vi.mock("./tabs.js", () => ({
   // A signal read, like production: the effect's re-run on a tab mutation IS the
   // dependency under test.
   tabSetVersion: vi.fn(() => tabsVersion.value),
+  // TRACKED like production's, so the seed effect re-runs when a run tab lands.
+  openRunRefs: vi.fn(() => {
+    void tabsVersion.value;
+    return [...m.runTabs];
+  }),
 }));
 
 // All three dependencies have to stay SIGNAL reads, or the effect under test
@@ -97,6 +108,11 @@ vi.mock("./run-store.js", () => ({
   // consumer registers at all is the half a store-side test cannot see.
   registerLiveRunObserver: vi.fn((fn: (workflowID: string) => void) => {
     observer = fn;
+  }),
+  // The fetch the seed asks for. Recorded rather than resolved: a case drives the
+  // cell write itself, so the request and its answer are separately assertable.
+  invalidateRun: vi.fn((id: string) => {
+    m.invalidated.push(id);
   }),
   // The REAL rule, not a stub. The dot's yellow arm is decided by it, so a stub
   // answering `false` would leave the park case green while production could not
@@ -153,6 +169,8 @@ beforeEach(() => {
   m.asks.length = 0;
   m.states.clear();
   m.names.clear();
+  m.runTabs.clear();
+  m.invalidated.length = 0;
   if (!installed) {
     installRunDotSubscriber();
     installed = true;
@@ -411,6 +429,59 @@ describe("the live-runs rebuild reaches the dot, which a boot-restored run needs
     // That extra pass is the documented bound, not a behaviour to pin.
     expect(m.painted).toContainEqual({ id: "run:wf_boot", status: "waiting" });
     expect(m.named).toEqual([{ id: "run:wf_boot", name: "nightly sweep" }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The FOURTH door: an open run tab seeds its own run state.
+//
+// A cold load — the iPad shape, where the tab is evicted and the page reloads —
+// restores every open run tab from a persisted subject that names the run and says
+// nothing about it, so the row carries the factory's placeholder and no dot. The
+// three doors above cannot repair it: no frame arrives for a run nobody prompted,
+// the run view's own paint needs the tab activated, and `/api/runs/live` is
+// presence over LEASES, so every settled run is outside it. The ids below appear
+// nowhere else in this file on purpose: `tracked` has no reset, so a reused id
+// arrives already seeded and the case would assert nothing.
+// ---------------------------------------------------------------------------
+
+describe("an open run tab seeds its own run state, with no activation", () => {
+  it("fetches for a restored tab, then paints and names it when the cell resolves", () => {
+    // The cold-load shape: the tab set holds the run and the store holds nothing.
+    m.tabs.add("run:wf_resumed");
+    m.runTabs.add("wf_resumed");
+    tabsChanged();
+
+    expect(m.invalidated).toEqual(["wf_resumed"]);
+    // Nothing is claimed before the fetch answers, which is run-dots' own rule.
+    expect(m.named).toEqual([]);
+    expect(m.painted.at(-1)).toEqual({ id: "run:wf_resumed", status: "" });
+
+    // The resolved fetch, as a cell write. `completed` deliberately: a settled run
+    // is exactly the population `/api/runs/live` cannot name.
+    m.states.set("wf_resumed", {
+      workflowId: "wf_resumed",
+      runLabel: "Nightly audit",
+      status: "completed",
+    });
+    storeChanged();
+
+    // No trackRun, no refreshRunDots and no showRun in this case: both halves are
+    // repaired without the sub-tab ever being activated.
+    expect(m.named).toEqual([{ id: "run:wf_resumed", name: "Nightly audit" }]);
+    expect(m.painted.at(-1)).toEqual({ id: "run:wf_resumed", status: "done" });
+  });
+
+  it("asks once per run however often the tab set moves", () => {
+    m.tabs.add("run:wf_bounded");
+    m.runTabs.add("wf_bounded");
+    tabsChanged();
+    expect(m.invalidated).toEqual(["wf_bounded"]);
+
+    tabsChanged();
+    tabsChanged();
+    tabsChanged();
+    expect(m.invalidated).toHaveLength(1);
   });
 });
 

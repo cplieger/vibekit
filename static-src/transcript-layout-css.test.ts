@@ -34,9 +34,12 @@ describe("transcript containment", () => {
         /content-visibility:\s*auto\s*;/u,
       );
       // `auto` as the first value is what makes the fallback a pre-first-render
-      // estimate rather than a permanent lie about the card's height.
+      // estimate rather than a permanent lie about the card's height. The size
+      // may be a token: a card whose collapsed height IS a control height reads
+      // `var(--btn-h)` so it stays right on a coarse pointer, which a literal
+      // cannot, and `tool-box-height.test.ts` is what checks the resolved value.
       expect(body, `${selector} declares contain-intrinsic-size: auto <size>`).toMatch(
-        /contain-intrinsic-size:\s*auto\s+[\d.]+rem\s*;/u,
+        /contain-intrinsic-size:\s*auto\s+(?:[\d.]+rem|var\(--[\w-]+\))\s*;/u,
       );
     });
   }

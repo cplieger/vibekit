@@ -18,6 +18,7 @@ import {
   setAgentStatus,
   setCurrentMode,
   forgetSteers,
+  steerCount,
   clearTurnFailed,
   clearTurnDone,
   bumpSyncEpoch,
@@ -71,7 +72,9 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   // Bump FIRST: the heals below must capture the new epoch to count as
   // fresh. Background chats are not refetched — they heal on next activation.
   bumpSyncEpoch();
-  for (const s of getSessions()) {
+  const sessions = getSessions();
+  let forgotten = 0;
+  for (const s of sessions) {
     // Agent-declared status is as untrustworthy as `thinking` after a gap.
     setAgentStatus(s.id, "", "");
     clearTurnFailed(s.id);
@@ -81,11 +84,20 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
     dropDecisions(s.id);
     // Steers are KAS's state; a gap may have dropped the frames that
     // resolved them. FORGOTTEN, not promoted — asserting "never read" here
-    // would be a guess, and `streamInitialState` does not replay the
-    // steering buffer, so a gap mid-turn loses the rest of that turn's rows.
+    // would be a guess. The connect replay DOES re-offer whatever is still in
+    // KAS's buffer (`replayPendingSteers`), so a row still waiting comes back
+    // under its own id; what a gap cannot recover is a steer the agent read
+    // during the outage, whose note the mark already carries.
+    forgotten += steerCount(s.id);
     forgetSteers(s.id);
     clearTurnState(s.id);
   }
+  // The one line that separates the two triggers behind "my steer vanished while
+  // I was away": a gap here means the dock was force-emptied and the connect
+  // replay is what refills it, and its ABSENCE with a dock that emptied anyway
+  // means the turn simply ended and the steer was never read. Nothing else on
+  // either path is observable from the outside.
+  console.warn("[gap] tore down", sessions.length, "sessions, forgot", forgotten, "waiting steers");
   // A run's own asks are keyed to `run:<workflowId>`, which is no chat and so has
   // no session row for the loop above to reach. Same reasoning as dropDecisions:
   // the connect replay re-offers whatever is still open, and it does NOT replay

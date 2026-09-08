@@ -73,9 +73,9 @@ describe("applyOriginChip", () => {
     applyOriginChip(chip, "power");
     expect(chip.hidden).toBe(false);
     expect(chip.textContent).toContain("Power");
-    // The title has to say what the reader can DO about it, since the row
+    // The tooltip has to say what the reader can DO about it, since the row
     // deliberately carries no edit or remove control.
-    expect(chip.title).toContain("cannot edit or remove");
+    expect(chip.dataset["tooltip"]).toContain("cannot edit or remove");
   });
 
   it("says an unattributable server is not managed here", () => {
@@ -91,7 +91,7 @@ describe("applyOriginChip", () => {
     applyOriginChip(chip, "user");
     expect(chip.hidden).toBe(true);
     expect(chip.textContent).toBe("");
-    expect(chip.hasAttribute("title")).toBe(false);
+    expect(chip.hasAttribute("data-tooltip")).toBe(false);
   });
 });
 

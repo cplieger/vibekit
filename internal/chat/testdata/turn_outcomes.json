@@ -239,8 +239,32 @@
     "message and the real reply. Closing on it split that turn in two — a phantom",
     "'Agent-initiated turn' holding the actual answer, and a rail one turn long.",
     "",
+    "THIS PARAGRAPH IS THE ONE OWNER OF THE TWO OPENING RULES, and neither",
+    "projection twin restates them. A PROMPT opens a turn, and a STEER — a user row",
+    "carrying `user_kind: steer` — joins the turn already running, because the reader",
+    "was correcting work in flight rather than asking for more. A message whose EVERY",
+    "block is workflow-step content opens nothing, because the transcript draws none",
+    "of it: `messages-blocks.ts` placeBlock DROPS a block whose subtask id parses as",
+    "`wf:<workflowId>:<nodePath>`, so a card opened for such a message renders an",
+    "empty body. One block of the agent's own prose, one malformed `wf:` id (which",
+    "still renders, as a delegate box) or no blocks at all is drawn, so such a",
+    "message keeps its card.",
+    "",
+    "A FRAGMENT IS A CORRELATION, NOT THE CAUSE. Keying either rule on a",
+    "`turn_outcome` of `unknown` reaches some of the same messages and does so for",
+    "the wrong reason: what stops a card is that the message renders nothing, which a",
+    "fragment neither implies nor is implied by — a settled step message renders",
+    "nothing, and a fragment carrying the agent's own prose renders.",
+    "",
+    "Measured 2026-09-08 and stated as DELTAS, because every absolute total here",
+    "rots as the live volume grows: the step rule removes 5 rail turns and the",
+    "steer rule a further 13, each chat's steer-rule move equalling its own count",
+    "of persisted steer rows.",
+    "",
     "`messages` is the flat persisted list. `want` is one entry per expected turn:",
-    "its opening message id, whether it has a user trigger, and its outcome."
+    "its opening message id, whether it has a user trigger, and its outcome.",
+    "`blocks` lists one subtask id per block; absent means the message carries no",
+    "blocks at all."
   ],
   "segmentation": [
     {
@@ -341,6 +365,77 @@
       ]
     },
     {
+      "name": "a message whose every block is workflow-step content opens no turn",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "assistant", "id": "a2", "blocks": ["wf:wf1:n/s"] }
+      ],
+      "want": [{ "id": "u1", "agent_initiated": false, "outcome": "completed" }]
+    },
+    {
+      "name": "a message mixing step blocks with its own prose still opens a turn",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "assistant", "id": "a2", "blocks": ["wf:wf1:n/s", ""] }
+      ],
+      "want": [
+        { "id": "u1", "agent_initiated": false, "outcome": "completed" },
+        { "id": "a2", "agent_initiated": true, "outcome": "completed" }
+      ]
+    },
+    {
+      "name": "an assistant message with no blocks still opens a turn",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "assistant", "id": "a2" }
+      ],
+      "want": [
+        { "id": "u1", "agent_initiated": false, "outcome": "completed" },
+        { "id": "a2", "agent_initiated": true, "outcome": "completed" }
+      ]
+    },
+    {
+      "name": "a malformed step subtask id still opens a turn",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "assistant", "id": "a2", "blocks": ["wf:only-one-segment"] }
+      ],
+      "want": [
+        { "id": "u1", "agent_initiated": false, "outcome": "completed" },
+        { "id": "a2", "agent_initiated": true, "outcome": "completed" }
+      ]
+    },
+    {
+      "name": "a settled reply after step content opens its own turn",
+      "_comment": [
+        "THE DISCRIMINATOR: every other row here answers the same way whether the rule",
+        "keys on step content or on a fragment, and this one does not. The step message",
+        "stays in the prompt's turn and `a3`, the settled reply, opens one of its own —",
+        "so the turn is RELOCATED rather than suppressed, and that is the ACCEPTED",
+        "answer rather than an oversight.",
+        "",
+        "Measured 2026-09-08: this rule removes 5 rail turns and the steer rule a",
+        "further 13. The turns a segment-closing rule would ALSO suppress — 86, of",
+        "which 81 carry renderable content — are agent-initiated turns opened by",
+        "settled assistant messages carrying real prose: a separate mechanism, out of",
+        "scope for this rule, and suppressing them would cost real work its own card."
+      ],
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "assistant", "id": "a2", "outcome": "unknown", "blocks": ["wf:wf1:n/s"] },
+        { "role": "assistant", "id": "a3", "outcome": "completed" }
+      ],
+      "want": [
+        { "id": "u1", "agent_initiated": false, "outcome": "completed" },
+        { "id": "a3", "agent_initiated": true, "outcome": "completed" }
+      ]
+    },
+    {
       "name": "a legacy transcript with no durable outcomes segments as it always did",
       "messages": [
         { "role": "user", "id": "u1" },
@@ -348,6 +443,66 @@
         { "role": "assistant", "id": "a2" }
       ],
       "want": [{ "id": "u1", "agent_initiated": false, "outcome": "completed" }]
+    },
+    {
+      "name": "a steer joins the turn already running",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1" },
+        { "role": "user", "id": "s1", "user_kind": "steer" },
+        { "role": "assistant", "id": "a2", "outcome": "completed" }
+      ],
+      "want": [{ "id": "u1", "agent_initiated": false, "outcome": "completed" }]
+    },
+    {
+      "name": "two steers in one turn are still one turn",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1" },
+        { "role": "user", "id": "s1", "user_kind": "steer" },
+        { "role": "user", "id": "s2", "user_kind": "steer" },
+        { "role": "assistant", "id": "a2", "outcome": "completed" }
+      ],
+      "want": [{ "id": "u1", "agent_initiated": false, "outcome": "completed" }]
+    },
+    {
+      "name": "a steer after a settled close joins the closed turn and opens nothing",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "user", "id": "s1", "user_kind": "steer" }
+      ],
+      "want": [{ "id": "u1", "agent_initiated": false, "outcome": "completed" }]
+    },
+    {
+      "name": "a steer opening the window gets a headerless turn",
+      "_comment": [
+        "THE ACCEPTED RENDERING, pinned so a later reader does not 'fix' it into a",
+        "trigger. The label says agent-initiated for a row the reader typed, because",
+        "`agent_initiated` really means 'this turn has no PROMPT to head it' and a steer",
+        "is not a prompt. It is unreachable for the rail, which projects the whole",
+        "session, and reachable only for the client's paginated window when the first",
+        "page starts mid-turn — the same shape a page opening on an assistant message",
+        "already produces. Fixing it means renaming the `agent_initiated` wire field,",
+        "which is a separate change."
+      ],
+      "messages": [
+        { "role": "user", "id": "s1", "user_kind": "steer" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" }
+      ],
+      "want": [{ "id": "s1", "agent_initiated": true, "outcome": "completed" }]
+    },
+    {
+      "name": "a user row with no user_kind opens a turn",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "user", "id": "u2" }
+      ],
+      "want": [
+        { "id": "u1", "agent_initiated": false, "outcome": "completed" },
+        { "id": "u2", "agent_initiated": false, "outcome": "unknown" }
+      ]
     }
   ]
 }

@@ -389,15 +389,6 @@ export function runToExec(
           )
         : [toNode(root, [], plans, asks)];
 
-  const outputs = new Map<string, string>();
-  for (const [k, v] of Object.entries(state.capturedOutputs ?? {})) {
-    outputs.set(k, v);
-  }
-  // Artifacts win a key collision, being the value a step CHOSE to publish.
-  for (const [k, v] of Object.entries(state.artifacts ?? {})) {
-    outputs.set(k, v);
-  }
-
   const runState = stateOf(state.status);
   const out: ExecRun = {
     id: workflowID,
@@ -408,9 +399,6 @@ export function runToExec(
   };
   if (state.inputs !== undefined && Object.keys(state.inputs).length > 0) {
     out.inputs = state.inputs;
-  }
-  if (outputs.size > 0) {
-    out.outputs = Object.fromEntries(outputs);
   }
   const alert = alertOf(state, asks, nodes);
   if (alert !== undefined) {

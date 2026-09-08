@@ -1154,3 +1154,107 @@ func TestProjection_InternalToolIsDropped(t *testing.T) {
 		}
 	}
 }
+
+// replaySteerFrame builds a replayed user_message_chunk on KAS's steering channel: the
+// `source` discriminator sits at `_meta.kiro.source`, never on the update object.
+func replaySteerFrame(t *testing.T, id, text string) (vibekit.ACPUpdateKind, json.RawMessage) {
+	t.Helper()
+	return replayFrame(t, replayUserChunkKind, text, "", map[string]any{
+		"messageId": id,
+		"timestamp": "2026-09-08T20:01:00.000Z",
+		"source":    "steer",
+	})
+}
+
+// TestProjection_SteerJoinsTheTurnItWasReadIn: a `steer-` row is a user message the
+// reader sent mid-turn, so it is projected as a user row carrying UserKindSteer —
+// which is what makes both turn projections join it to the turn already running
+// instead of opening one.
+func TestProjection_SteerJoinsTheTurnItWasReadIn(t *testing.T) {
+	p := NewProjection(seqIDs())
+	k, raw := replaySteerFrame(t, "steer-m-1", "use tabs")
+	p.Ingest(k, raw)
+
+	got := p.Messages()
+	if len(got) != 1 {
+		t.Fatalf("projected %d messages, want 1:\n%s", len(got), dumpMessages(got))
+	}
+	if got[0].Role != vibekit.RoleUser {
+		t.Errorf("role = %q, want %q", got[0].Role, vibekit.RoleUser)
+	}
+	if got[0].UserKind != vibekit.UserKindSteer {
+		t.Errorf("user_kind = %q, want %q", got[0].UserKind, vibekit.UserKindSteer)
+	}
+	if got[0].Content != "use tabs" {
+		t.Errorf("content = %q, want the steer verbatim", got[0].Content)
+	}
+	if got[0].TurnOutcome != "" {
+		t.Errorf("turn_outcome = %q, want empty — a steer must not be able to open a headerless turn", got[0].TurnOutcome)
+	}
+}
+
+// TestProjection_EmptyBoundaryRowDoesNotHijackTheNextPrompt is the INVERSION the
+// id-change flush exists to prevent, and the reason the field cannot land without it.
+//
+// KAS's steering-boundary row is `{id:"steering_boundary_<uuid>", content:"",
+// source:"steer"}`, on the same frame type a prompt uses. Without the flush the two
+// rows merge into one message carrying the FIRST row's identity, so the reader's own
+// prompt is persisted as a steer and stops opening its turn — the rail gets WORSE
+// than before the field existed.
+func TestProjection_EmptyBoundaryRowDoesNotHijackTheNextPrompt(t *testing.T) {
+	p := NewProjection(seqIDs())
+	k, raw := replaySteerFrame(t, "steering_boundary_3f2b1a04-0000-4000-8000-000000000000", "")
+	p.Ingest(k, raw)
+	k2, raw2 := replayFrame(t, replayUserChunkKind, "a real question", "", map[string]any{
+		"messageId": "m-real",
+		"timestamp": "2026-09-08T20:02:00.000Z",
+	})
+	p.Ingest(k2, raw2)
+
+	got := p.Messages()
+	if len(got) != 1 {
+		t.Fatalf("projected %d messages, want 1 (the prompt only):\n%s", len(got), dumpMessages(got))
+	}
+	if got[0].ID != "m-real" {
+		t.Errorf("id = %q, want m-real — the boundary row must not lend the prompt its identity", got[0].ID)
+	}
+	if got[0].UserKind != "" {
+		t.Errorf("user_kind = %q, want empty — the prompt is not a steer", got[0].UserKind)
+	}
+	if got[0].Content != "a real question" {
+		t.Errorf("content = %q, want the prompt verbatim", got[0].Content)
+	}
+}
+
+// TestProjection_TwoSteersWithDifferentIDsAreTwoMessages: KAS records one row per
+// steer, so two rows must not concatenate into one. Measured on the live volume,
+// where a single `steer-` row held two steers run together with no separator.
+func TestProjection_TwoSteersWithDifferentIDsAreTwoMessages(t *testing.T) {
+	p := NewProjection(seqIDs())
+	for _, s := range []struct{ id, text string }{
+		{"steer-m-1", "use tabs"},
+		{"steer-m-2", "and sort them"},
+	} {
+		k, raw := replaySteerFrame(t, s.id, s.text)
+		p.Ingest(k, raw)
+	}
+
+	got := p.Messages()
+	if len(got) != 2 {
+		t.Fatalf("projected %d messages, want 2:\n%s", len(got), dumpMessages(got))
+	}
+	for i, want := range []struct{ id, text string }{
+		{"steer-m-1", "use tabs"},
+		{"steer-m-2", "and sort them"},
+	} {
+		if got[i].ID != want.id {
+			t.Errorf("message %d id = %q, want %q", i, got[i].ID, want.id)
+		}
+		if got[i].Content != want.text {
+			t.Errorf("message %d content = %q, want %q", i, got[i].Content, want.text)
+		}
+		if got[i].UserKind != vibekit.UserKindSteer {
+			t.Errorf("message %d user_kind = %q, want %q", i, got[i].UserKind, vibekit.UserKindSteer)
+		}
+	}
+}

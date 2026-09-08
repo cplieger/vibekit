@@ -266,11 +266,11 @@ function applyStatusDotForeign(dot: HTMLSpanElement, name: string, st: RuntimeSt
   const meta = STATUS_META[st.state] ?? STATUS_META.idle; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
   dot.classList.add(meta.css);
   if (isFailedWithError(st)) {
-    dot.title = `Failed to initialise: ${st.error}`;
+    dot.dataset["tooltip"] = `Failed to initialise: ${st.error}`;
     dot.setAttribute("aria-label", `${name}: failed — ${st.error}`);
     return;
   }
-  dot.title = meta.title;
+  dot.dataset["tooltip"] = meta.title;
   dot.setAttribute("aria-label", `${name}: ${meta.title.toLowerCase()}`);
 }
 
@@ -449,13 +449,13 @@ export function applyOriginChip(chip: HTMLSpanElement, origin: Origin): void {
   if (origin === "user") {
     chip.hidden = true;
     chip.textContent = "";
-    chip.removeAttribute("title");
+    chip.removeAttribute("data-tooltip");
     return;
   }
   const meta = ORIGIN_META[origin];
   chip.hidden = false;
   chip.textContent = meta.label;
-  chip.title = meta.title;
+  chip.dataset["tooltip"] = meta.title;
 }
 
 /** Type-narrowing guard for the "failed" RuntimeStatus variant. */
@@ -470,17 +470,17 @@ function applyStatusDot(dot: HTMLSpanElement, s: Server, st: RuntimeStatus): voi
   dot.className = "mcp-dot";
   if (!s.enabled) {
     dot.classList.add("disabled");
-    dot.title = "Disabled";
+    dot.dataset["tooltip"] = "Disabled";
     dot.setAttribute("aria-label", `${s.name}: disabled`);
     return;
   }
   const meta = STATUS_META[st.state] ?? STATUS_META.idle; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
   dot.classList.add(meta.css);
   if (isFailedWithError(st)) {
-    dot.title = `Failed to initialise: ${st.error}`;
+    dot.dataset["tooltip"] = `Failed to initialise: ${st.error}`;
     dot.setAttribute("aria-label", `${s.name}: failed — ${st.error}`);
   } else {
-    dot.title = meta.title;
+    dot.dataset["tooltip"] = meta.title;
     dot.setAttribute("aria-label", `${s.name}: ${meta.title.toLowerCase()}`);
   }
 }

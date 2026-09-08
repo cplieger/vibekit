@@ -1,13 +1,11 @@
 // ---------------------------------------------------------------------------
-// Reasoning-effort vocabulary: which tiers exist, which one is live, and whether
-// the live one is a departure from what the current model would have done.
+// Reasoning-effort vocabulary: which tiers exist and which one is live.
 //
 // A leaf module because TWO surfaces read this and they have to agree. The model
 // card's tier row (model-switcher.ts) marks the live tier; the model pill
-// (context-ui.ts -> status.ts) names it when the user departed from the model's
-// default. A second copy of the resolution order is a second thing that can be
-// wrong, and the failure mode is a pill claiming a level the session does not run
-// at.
+// (context-ui.ts -> status.ts) names it. A second copy of the resolution order is
+// a second thing that can be wrong, and the failure mode is a pill claiming a
+// level the session does not run at.
 //
 // THE DEFAULT IS NEVER A LOCAL TABLE. It arrives per model on the catalog
 // (`ModelInfo.default_effort_level`, from KAS `_meta.kiro.defaultEffortLevel`),
@@ -20,8 +18,8 @@
 // with no bridge, not an edge case: the pre-session feed runs on a lazily-spawned
 // utility bridge, degrades to empty lists on any failure, may answer with no models
 // at all because KAS resolves its model list asynchronously, and nothing retries.
-// That is why the pill's departure test asks WHO decided the level rather than only
-// comparing it to a default — see EffortSource.
+// That is why the pill is a READOUT of the level in force: it names whatever tier
+// resolved, so what it says never depends on whether a boot fetch landed.
 // ---------------------------------------------------------------------------
 
 import type { ModelInfo, Session, SessionEffortLevel } from "./types.js";
@@ -72,22 +70,14 @@ function fallbackEffortLevels(): SessionEffortLevel[] {
 }
 
 /** The current model's OWN default tier, or "" when the catalog does not say.
- *  The one definition of "default" in the client; both the live-tier fallback
- *  chain and the pill's departure test read it here. */
+ *  ONE reader: the live-tier fallback chain below, where it is the last
+ *  model-scoped candidate. It is never a local model-to-default table — the value
+ *  is a property of the model and arrives on the catalog. */
 function modelDefaultEffort(session: Session | undefined, models: readonly ModelInfo[]): string {
   return models.find((m) => m.model_id === session?.model)?.default_effort_level ?? "";
 }
 
-/** WHO decided the live tier.
- *
- *  It exists because the pill's departure test cannot be answered from the level
- *  alone: a tier the USER decided (this chat's own pick, or the remembered pick
- *  for this model) is worth naming even with no default to compare against, while
- *  one the SERVICE resolved is what everyone gets anyway and naming it would turn
- *  the pill into a permanent readout. */
-export type EffortSource = "chosen" | "reported" | "seeded" | "default" | "none";
-
-/** The tiers to render, the tier that is live, and who decided it, for a chat.
+/** The tiers to render and the tier that is live, for a chat.
  *
  *  Levels: the session's own catalog, else the pre-session template's, else the
  *  canonical five (nothing has landed yet — a control with no tiers would be a
@@ -103,9 +93,9 @@ export type EffortSource = "chosen" | "reported" | "seeded" | "default" | "none"
  *
  *  A candidate TABLE rather than a chain of ternaries, because the order is the
  *  contract: two other readers resolve the same seed under the same per-model gate
- *  (`nonDefaultEffortLabel` here, `BridgeCoordinator.effortFor` server-side), and a
- *  pill that resolves differently from the session it describes is the failure
- *  this module exists to prevent.
+ *  (`effortPillLabel` here, `BridgeCoordinator.effortFor` server-side), and a pill
+ *  that resolves differently from the session it describes is the failure this
+ *  module exists to prevent.
  *
  *  The chat's choice and the seed are both reconciled against `levels`; the model
  *  default is not, being in its own list by construction. A tier list is per
@@ -120,7 +110,7 @@ export function effortVocabulary(
   session: Session | undefined,
   models: readonly ModelInfo[],
   seed: string,
-): { levels: readonly SessionEffortLevel[]; active: string; source: EffortSource } {
+): { levels: readonly SessionEffortLevel[]; active: string } {
   const fromSession = session?.effort_levels ?? [];
   const levels =
     fromSession.length > 0
@@ -128,18 +118,16 @@ export function effortVocabulary(
       : catalogEfforts.length > 0
         ? catalogEfforts
         : fallbackEffortLevels();
-  const candidates: readonly (readonly [string, EffortSource])[] = [
-    [ifOffered(session?.effort ?? "", levels), "chosen"],
-    [session?.effort_active ?? "", "reported"],
-    [ifOffered(seed, levels), "seeded"],
-    [modelDefaultEffort(session, models), "default"],
-    // The pre-session template's own active level is the service's answer too,
-    // so it shares the `default` source.
-    [catalogEffortActive, "default"],
+  const candidates: readonly string[] = [
+    ifOffered(session?.effort ?? "", levels),
+    session?.effort_active ?? "",
+    ifOffered(seed, levels),
+    modelDefaultEffort(session, models),
+    // The pre-session template's own active level is the service's answer too.
+    catalogEffortActive,
   ];
-  const unresolved: readonly [string, EffortSource] = ["", "none"];
-  const [active, source] = candidates.find(([level]) => level !== "") ?? unresolved;
-  return { levels, active, source };
+  const active = candidates.find((level) => level !== "") ?? "";
+  return { levels, active };
 }
 
 /** `level` when the current model offers it, else "" — the reconciliation both a
@@ -177,31 +165,24 @@ export function modelHasEffort(models: readonly ModelInfo[], modelID: string): b
 
 /** The tier to name on the model pill, or "" when the pill has nothing to say.
  *
- *  It names the tier when the level was DECIDED — this chat's own pick, or the
- *  remembered pick for this model — and otherwise only when a known default proves
- *  the level is a departure. Empty in four cases, each for its own reason:
+ *  It ALWAYS names the tier the chat runs at: the pill is a readout of the level
+ *  in force, not a marker for an exception. Empty in two cases, each for its own
+ *  reason:
  *
  *  - The model advertises no effort, so there is no tier.
  *  - No level resolved at all, so naming one would invent it.
- *  - The live level IS the model's own default, which is the point of the control:
- *    the pill stays quiet until the user departs from what the model would have
- *    done anyway.
- *  - Or nothing knows the default AND the level is one the SERVICE resolved. Those
- *    are what everyone gets anyway, so naming one with nothing to compare against
- *    would put a permanent readout on every model rather than the exception this
- *    pill exists to mark.
  *
- *  A DECIDED level is named in that last case rather than withheld, and it is not
- *  a guess: `ifOffered` has already reconciled it against the current model's own
- *  tier list, and the server resolves the same seed into `StartOpts.Effort` under
- *  the same per-model gate, so the pill states what the session will run at. The
- *  withholding used to cover both, which is why a click on a tier showed nothing
- *  until a bridge existed: no bridge means no per-model catalog, so no default is
- *  known, and that is the ordinary state of a new chat.
+ *  The departure test this replaced compared the live tier against the model's own
+ *  `default_effort_level` and withheld a match. That default arrives on the
+ *  per-model catalog, which is empty on any bridgeless chat, so the readout was a
+ *  function of whether a boot fetch had landed rather than of the level — a click
+ *  on a tier showed nothing until a bridge existed. `default_effort_level` is
+ *  still read, as the last rung of the live-tier chain above, and is still never
+ *  tabulated locally.
  *
  *  It reads the live tier through the same resolution order the card's mark uses,
  *  so the two surfaces can never disagree about what the session runs at. */
-export function nonDefaultEffortLabel(
+export function effortPillLabel(
   session: Session | undefined,
   models: readonly ModelInfo[],
   seed: string,
@@ -209,12 +190,8 @@ export function nonDefaultEffortLabel(
   if (!modelHasEffort(models, session?.model ?? "")) {
     return "";
   }
-  const { levels, active, source } = effortVocabulary(session, models, seed);
-  const dflt = modelDefaultEffort(session, models);
-  const decided = source === "chosen" || source === "seeded";
-  // `active === dflt` needs no non-empty guard on dflt: active is already
-  // non-empty here, so the two can only match on a real default.
-  if (active === "" || active === dflt || (dflt === "" && !decided)) {
+  const { levels, active } = effortVocabulary(session, models, seed);
+  if (active === "") {
     return "";
   }
   return effortLabel(levels.find((l) => l.id === active) ?? { id: active });

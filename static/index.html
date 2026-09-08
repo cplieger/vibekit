@@ -127,11 +127,12 @@
       <div class="chat-toolbar">
         <!-- The page's heading, for every view, written by page-title.ts. Left
              aligned, and the bar's only non-action content; the actions take the
-             row's other end because this takes its slack. Below 30rem of chat
-             area it wraps to its own row (12-chat.css), because seven 44px touch
-             targets leave a 390px bar 44px of text room for a title that wants
-             259px. -->
-        <div class="titlebar-heading">
+             row's other end because this takes its slack. ONE row at every width:
+             when the actions leave too little space to render the title in full,
+             page-title.ts clips this whole heading to screen-reader-only rather
+             than wrapping it onto a second row or showing a three-character stub.
+             The id is that module's handle; the styling is by class. -->
+        <div id="titlebar-heading" class="titlebar-heading">
           <h1 id="titlebar-title" class="titlebar-title">Vibekit</h1>
           <span class="titlebar-sep" aria-hidden="true"></span>
           <span id="titlebar-subtitle" class="titlebar-subtitle"></span>
@@ -148,22 +149,29 @@
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg>
         </button>
         <button type="button" id="files-btn" class="icon-btn" data-tooltip="File browser" aria-label="File browser">
-          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 19a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h4l2 4h8a2 2 0 012 2z"/></svg>
+          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.5h4l3 5h4a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H6.5a3 3 0 0 1-3-3v-11a3 3 0 0 1 3-3z"/></svg>
         </button>
         <button type="button" id="git-btn" class="icon-btn" data-tooltip="Toggle git" aria-label="Toggle git">
-          <svg class="git-btn-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="17" r="3"/><circle cx="6" cy="5" r="3"/><path d="M6 20V8a9 9 0 009 9"/></svg>
+          <svg class="git-btn-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>
           <span id="git-badge" class="git-badge hidden"></span>
         </button>
         <button type="button" id="shell-btn" class="icon-btn" data-tooltip="Toggle shell" aria-label="Toggle shell">
-          <!-- Boxed prompt, unlike the bare `>_` on the shell panel's own header
-               and on tool cards: a bare prompt reaches 12px of the grid's 15px and
-               only stretches if pushed further. The box needs 18px — at 14px its
-               chevron and underscore blur into the frame, so the 14px sites keep
-               the bare glyph. -->
-          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 9.5l2.5 2.5L8 14.5"/><path d="M13 15h4"/></svg>
+          <!-- Boxed prompt, DELIBERATELY not the bare `>_` on the shell panel's own
+               header and on tool cards: a bare prompt reaches 12 of the grid's 15
+               units, so in this row it reads short against its boxed neighbours and
+               sits optically high. The frame is what aligns it, and the divergence
+               is pinned by menu-icons.test.ts so a one-glyph-per-concept sweep
+               cannot quietly undo it again.
+
+               The coordinates are three-quarter units because `--icon-ui` is 16px
+               here: one unit is 0.667 CSS px, so unit 3 lands on exactly 2.0 and a
+               1px stroke straddles two pixel columns — maximally blurred, which is
+               what a reader sees. 3.75 and 20.25 land on 2.5 and 13.5, a half pixel
+               off the boundary, which is the crispest a 1px stroke gets. -->
+          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3.75" y="3.75" width="16.5" height="16.5" rx="3"/><path d="M8.25 9.75l2.25 2.25-2.25 2.25"/><path d="M12.75 15.75h4.5"/></svg>
         </button>
         <button type="button" id="docs-btn" class="icon-btn" data-tooltip="Kiro docs" aria-label="Kiro docs">
-          <svg class="icon-book ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5A2.5 2.5 0 014.5 2H9a2 2 0 012 2v16a1.5 1.5 0 00-1.5-1.5H4.5A2.5 2.5 0 012 16z"/><path d="M22 4.5A2.5 2.5 0 0019.5 2H15a2 2 0 00-2 2v16a1.5 1.5 0 011.5-1.5h5A2.5 2.5 0 0022 16z"/></svg>
+          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7.5 8.25 4.5H4.5A2.5 2.5 0 0 0 2 7v10a2.5 2.5 0 0 0 2.5 2.5h15a2.5 2.5 0 0 0 2.5-2.5V7a2.5 2.5 0 0 0-2.5-2.5h-3.75z"/><path d="M12 7.5v12"/></svg>
         </button>
         <button type="button" id="history-btn" class="icon-btn" data-tooltip="History" aria-label="History">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
@@ -176,7 +184,7 @@
              its click, tabs.ts puts it in ACTIVE_BTN, app.ts clicks it from the
              keyboard shortcut, and 61-mcp-tools.css rotates its glyph on `.active`. -->
         <button type="button" id="settings-btn" class="icon-btn" data-tooltip="Settings" aria-label="Settings">
-          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1.08-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1.08 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001.08 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1.08z"/></svg>
+          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.5"/><path d="M14.07 19.73L14.85 22.63A11 11 0 0 1 9.15 22.63L9.93 19.73A8 8 0 0 1 6.34 17.66L4.22 19.78A11 11 0 0 1 1.37 14.85L4.27 14.07A8 8 0 0 1 4.27 9.93L1.37 9.15A11 11 0 0 1 4.22 4.22L6.34 6.34A8 8 0 0 1 9.93 4.27L9.15 1.37A11 11 0 0 1 14.85 1.37L14.07 4.27A8 8 0 0 1 17.66 6.34L19.78 4.22A11 11 0 0 1 22.63 9.15L19.73 9.93A8 8 0 0 1 19.73 14.07L22.63 14.85A11 11 0 0 1 19.78 19.78L17.66 17.66A8 8 0 0 1 14.07 19.73Z"/></svg>
         </button>
         <button type="button" id="menu-toggle" class="icon-btn mobile-only" data-tooltip="Menu" aria-label="Menu">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h18M3 12h18M3 20h18"/></svg>
@@ -311,8 +319,7 @@
                   <!-- icons.ts ICON_MODEL, prepended by model-switcher.ts's
                        init(). Same `d` as the picker heading's 20px copy. -->
                   <span id="ctx-model-pill">auto</span>
-                  <!-- The reasoning tier, written by status.ts and shown only
-                       when the chat departs from the model's own default tier.
+                  <!-- The reasoning tier the chat runs at, written by status.ts.
                        Its own span so the model name above ellipsizes first. -->
                   <span id="ctx-effort-pill" class="pill-model-effort hidden"></span>
                 </button>
@@ -1153,10 +1160,16 @@
       </button>
     </div>
     <div class="tool-form">
-      <label class="tool-form-label">Search the catalog
-        <input id="tool-search" class="tool-form-input" type="search" placeholder="ripgrep, terraform, pyright…" autocomplete="off">
+      <div class="tool-form-label">
+        <label for="tool-search">Search the catalog</label>
+        <div class="tool-search-row">
+          <input id="tool-search" class="tool-form-input" type="search" placeholder="ripgrep, terraform, pyright…" autocomplete="off">
+          <!-- Both glyphs are installed by tools.ts from the icons registry, so the
+               magnifier and the spinner each keep one drawing in the app. -->
+          <button type="button" id="tool-search-btn" class="action-pill tool-search-go" data-tooltip="Search" aria-label="Search"></button>
+        </div>
         <span class="tool-form-hint">Runtimes, language servers and CLIs from the mise + aqua registries, plus this container&rsquo;s Debian packages. Versions resolve to the latest release; the pin icon freezes them afterwards.</span>
-      </label>
+      </div>
       <div class="tool-results-bar">
         <label class="tool-results-order">Order
           <select id="tool-sort" class="tool-form-select tool-sort-select">
@@ -1169,6 +1182,7 @@
       </div>
       <div id="tool-search-results" class="list-container tool-search-results" role="group" aria-label="Search results"></div>
     </div>
+    <p id="tool-shell-note" class="tool-shell-note">Not listed? Install it in the shell; the engine only manages what it installed.<span id="tool-shell-note-apt" class="hidden"> Debian packages are not searchable here: apt needs root and this container has none.</span></p>
   </div>
 
   <!-- MCP connect / edit modal -->

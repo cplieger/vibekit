@@ -76,17 +76,27 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 			}))
 			return true
 		}
-		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerQueued, chatID, vibekit.SteerQueuedPayload{
+		queued := vibekit.SteerQueuedPayload{
 			SteerID: k.MessageID,
 			Text:    k.Content,
 			Origin:  t.steerOrigin(chatID, k.MessageID),
-		}))
+		}
+		// RECORDED as well as broadcast, and this is the whole of the reconnect
+		// half: the buffer is KAS's, nothing can read it back, and a client that
+		// missed this frame had its dock empty with the message still queued.
+		// Recorded from the SAME payload the broadcast carries, so a replay and a
+		// live frame are indistinguishable to the client's own reconcile.
+		t.steerBufferWaiting(chatID, queued)
+		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerQueued, chatID, queued))
 		return true
 
 	case kindSteeringInjected:
 		if k.MessageID == "" {
 			return true
 		}
+		// No longer waiting: the model has read it, so replaying it would offer a
+		// delivered message back to the dock.
+		t.steerBufferRead(chatID, k.MessageID)
 		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
 			SteerID: k.MessageID,
 			Text:    k.Content,
@@ -101,12 +111,37 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 			// Broadcasting it would put one dead event on the wire per turn.
 			return true
 		}
+		// KAS's buffer no longer holds these, whether the model read them or a
+		// boundary dropped them unread, so nothing may re-offer them.
+		t.steerBufferForgotten(chatID, k.MessageIDs)
 		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerCleared, chatID, vibekit.SteerClearedPayload{
 			SteerIDs: k.MessageIDs,
 		}))
 		return true
 	}
 	return false
+}
+
+// The three buffer writes, each nil-guarded for the same reason steerOrigin is:
+// the role is optional at construction, and a Translator built without it has to
+// translate rather than panic.
+
+func (t *Translator) steerBufferWaiting(chatID vibekit.ChatID, p vibekit.SteerQueuedPayload) {
+	if t.steerBuffer != nil {
+		t.steerBuffer.SteerWaiting(chatID, p)
+	}
+}
+
+func (t *Translator) steerBufferRead(chatID vibekit.ChatID, steerID string) {
+	if t.steerBuffer != nil {
+		t.steerBuffer.SteerRead(chatID, steerID)
+	}
+}
+
+func (t *Translator) steerBufferForgotten(chatID vibekit.ChatID, steerIDs []string) {
+	if t.steerBuffer != nil {
+		t.steerBuffer.SteerForgotten(chatID, steerIDs)
+	}
 }
 
 // steerOrigin answers whose words a steer carries.

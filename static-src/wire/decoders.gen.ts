@@ -24,6 +24,7 @@ const TAB_KINDS = ["chat", "editor", "run", "subagent", "settings", "git", "file
 const TOOL_KINDS = ["execute", "shell", "read", "search", "fetch", "edit", "think", "hook", "write", "delete", "move", "command", "browser", "switch_mode", "mcp", "other"] as const;
 const TOOL_STATUSS = ["pending", "in_progress", "completed", "failed"] as const;
 const TURN_OUTCOMES = ["running", "completed", "cancelled", "interrupted", "failed", "refused", "unknown"] as const;
+const USER_KINDS = ["prompt", "steer"] as const;
 const WHOAMI_STATES = ["signed_in", "signed_out", "unavailable"] as const;
 
 export const decodeAccountUsage: Decoder<AccountUsage> = (v) => {
@@ -584,6 +585,7 @@ export const decodeMessage: Decoder<Message> = (v) => {
   const reasoning = o["reasoning"] === null ? undefined : optStr(o, "reasoning", "$.message");
   if (reasoning !== undefined) out.reasoning = reasoning;
   if (o["event_kind"] !== undefined && o["event_kind"] !== null) out.event_kind = reqOneOf(o, "event_kind", EVENT_KINDS, "$.message");
+  if (o["user_kind"] !== undefined && o["user_kind"] !== null) out.user_kind = reqOneOf(o, "user_kind", USER_KINDS, "$.message");
   if (o["turn_outcome"] !== undefined && o["turn_outcome"] !== null) out.turn_outcome = reqOneOf(o, "turn_outcome", TURN_OUTCOMES, "$.message");
   if (o["turn_stop_reason_raw"] !== undefined && o["turn_stop_reason_raw"] !== null) out.turn_stop_reason_raw = reqOneOf(o, "turn_stop_reason_raw", STOP_REASONS, "$.message");
   const turnFailureReason = o["turn_failure_reason"] === null ? undefined : optStr(o, "turn_failure_reason", "$.message");

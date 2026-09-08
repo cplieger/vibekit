@@ -77,18 +77,51 @@
 /* ==========================================================================
    Toast — ephemeral notifications. Skin ports the old .vk-toast look; the
    base owns the enter/leave lifecycle (is-entering/is-shown/is-leaving) and
-   the progress-bar countdown. Position is bottom-right, newest nearest the
-   corner (column-reverse), overriding the base's top-right default.
+   the progress-bar countdown.
+
+   TOP right, not bottom right (2026-09). The bottom corner is the composer's,
+   so every status message covered the controls it was reporting on and an error
+   toast's Retry button sat on top of Send. Measured on the 390x844 preset before
+   the phone rule below existed: the stack occupied y 696..810 against a textarea
+   at 703..756 and a pill row at 756..809. The same collision holds on a desktop,
+   where that corner is where the reader is typing.
    ========================================================================== */
 
 .uip-toast-stack {
-  inset-block: auto max(var(--sp-4), env(safe-area-inset-bottom, 0px));
+  /* BELOW any banner rather than at a fixed offset, because the two share one
+     band and the count of banners is unknowable in CSS. `.banner-stack`
+     (13-messages.css) carries the `anchor-name` and keeps a zero-height box while
+     empty, so the no-banner case needs no separate fallback and the band's own
+     wrapped-toolbar correction is inherited rather than restated. Two
+     declarations: the first is what an engine with no anchor positioning takes.
+     Anchor positioning is Baseline as of Firefox 147 (2026-01). */
+  inset-block: var(--below-chat-toolbar) auto;
+  inset-block-start: anchor(--notice-band bottom, var(--below-chat-toolbar));
   inset-inline: auto max(var(--sp-4), env(safe-area-inset-right, 0px));
-  flex-direction: column-reverse; /* newest at the bottom, by the corner */
+
+  /* Newest at the BOTTOM, so a second toast appears under the first and nothing
+     the reader has already started reading moves. `column-reverse` is the
+     bottom-anchored stack's rule and inverts here: it would put the newest at the
+     top and shift every older one down. */
+  flex-direction: column;
 }
 
 .uip-toast {
-  background: var(--c-bg-secondary);
+  /* ONE ROW, not the base's column: the action belongs on the message's own line,
+     the way `.banner` puts its link there. Under the column the button sat on a
+     line of its own, right-aligned, which on a full-width phone strip left it
+     stranded a whole row below the sentence it answers. The base's
+     `--uip-toast-row-gap` becomes the inline gap and already resolves to `--sp-2`,
+     which is `.banner`'s gap. */
+  flex-direction: row;
+  align-items: center;
+
+  /* THE CANVAS TOKEN, NOT THE RAISED ONE, which is what makes `info` need no rule
+     of its own: it IS this neutral base, and the two severity rules below are the
+     same base with 8% of a hue mixed into it. `--c-bg-secondary` is the raised
+     surface the transcript's own turn cards use, so a neutral toast over one had
+     no edge but its border. */
+  background: var(--c-bg-primary);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   padding: var(--sp-2) var(--sp-3);
@@ -99,12 +132,19 @@
     0 0.25rem 0.75rem color-mix(in srgb, #000 25%, transparent);
   overflow-wrap: break-word;
 
-  /* Enter from below (slide up), matching the old bottom-anchored stack; the
-     base's default was translateY(-8px) for a top stack. */
-  transform: translateY(0.5rem);
+  /* Enter from ABOVE (slide down), which is the edge a top-anchored stack is
+     pinned to. This is the base's own default direction, restated because the
+     bottom-anchored skin had inverted it. */
+  transform: translateY(-0.5rem);
 
-  /* Info/default progress bar tints with the text color. */
-  --uip-toast-progress-color: color-mix(in srgb, var(--c-text-primary) 30%, transparent);
+  /* ONE declaration for every level, because the severity rules below put the hue
+     on `color`: the bar tints itself and a level added later needs no rule. It is
+     decorative and `aria-hidden` (the message is the content, and the toast
+     expires whether or not the bar is read), so WCAG 1.4.11's 3:1 for a graphical
+     object does not bind it — measured over the error wash it reaches 2.4:1 dark
+     and 1.8:1 light, and raising the alpha until it cleared would make a countdown
+     louder than the message it counts down. */
+  --uip-toast-progress-color: color-mix(in srgb, currentcolor 45%, transparent);
 }
 
 .uip-toast.is-leaving {
@@ -116,32 +156,65 @@
   outline-offset: var(--focus-offset);
 }
 
-/* Status toasts carry --c-on-accent ink, not #fff: like the accent, the
-   red/green fills are pastel in dark mode (white ink read at 1.5-2.3:1) and
-   deep in light mode, so the ink flips with the theme. */
+/* Severity is the WASH plus the ink, byte-identical in shape to `.banner-*`
+   (13-messages.css), so a toast and a banner sharing the band read as one
+   component rather than two. A SOLID `--c-red`/`--c-green` fill with
+   `--c-on-accent` ink is the rejected alternative, and it is rejected on the BAND
+   rather than on contrast: it measures 7.59:1 dark and 5.98:1 light, so it is
+   perfectly legible and still reads as a different component beside a banner.
+
+   THE BASE IS THE CANVAS TOKEN, NOT THE RAISED ONE, for the reason the banner
+   records: in light mode `--c-bg-secondary` is darker than the canvas and put the
+   error level at 4.23:1 against the 4.5 its text needs. Measured on this pair with
+   `scripts/css-contrast.py`: red 7.73:1 dark / 5.09:1 light, green 11.67:1 / 5.30:1.
+
+   THE BORDER STAYS, where the solid fill set it transparent: the wash sits within
+   a few percent of the canvas, so an unbordered rectangle reads as a hole punched
+   in the transcript underneath it. `.banner` keeps one for the same reason.
+
+   There is deliberately no `--info` rule. `info` is the neutral base above, which
+   is where a toast's level vocabulary and a banner's stop agreeing: a banner's
+   lowest level is a CONDITION worth acting on and takes the accent wash, while
+   most of this app's `toast.info` calls are statements of fact, and accent ink is
+   this app's text-control idiom (vibekit-ui.md "Color system"). */
 
 /* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by @cplieger/ui-primitives */
 .uip-toast--error {
-  background: var(--c-red);
-  color: var(--c-on-accent);
-  border-color: transparent;
-
-  --uip-toast-progress-color: color-mix(in srgb, var(--c-on-accent) 50%, transparent);
+  background: color-mix(in srgb, var(--c-red) 8%, var(--c-bg-primary));
+  color: var(--c-red);
 }
 
 /* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by @cplieger/ui-primitives */
 .uip-toast--success {
-  background: var(--c-green);
-  color: var(--c-on-accent);
-  border-color: transparent;
+  background: color-mix(in srgb, var(--c-green) 8%, var(--c-bg-primary));
+  color: var(--c-green);
+}
 
-  --uip-toast-progress-color: color-mix(in srgb, var(--c-on-accent) 50%, transparent);
+/* The message takes the row's slack, which is what pushes the action to the end.
+   Deliberately NOT `.banner-msg`'s ellipsis: a banner states a condition in one
+   line, while a toast's text carries the server's own reason, so it wraps rather
+   than hiding the half that says what went wrong. */
+.uip-toast-msg {
+  flex: 1;
+  min-width: 0;
 }
 
 .uip-toast-retry {
+  /* `auto`, because the base right-aligns this against a COLUMN
+     (`align-self: flex-end`) and in a row that would push it to the bottom edge.
+     `flex-shrink: 0` keeps the longest live label ("Open custom instructions")
+     from being squeezed narrower than its own text in a 384px card. */
+  align-self: auto;
+  flex-shrink: 0;
   padding: var(--sp-1) var(--sp-2);
   background: transparent;
-  border: 1px solid color-mix(in srgb, currentcolor 60%, transparent);
+
+  /* The alpha is COUPLED to what `currentcolor` resolves to, so it moves whenever
+     the level fills do. On the wash `currentcolor` is the hue and the backdrop is
+     nearly the canvas: 60% measures 2.53:1 in light, under the 3:1 a control's
+     boundary wants, while 80% reads 3.60:1 light and 5.36:1 dark. 60% is correct
+     only against a saturated fill, where `currentcolor` is a near-white ink. */
+  border: 1px solid color-mix(in srgb, currentcolor 80%, transparent);
   border-radius: var(--r);
   color: inherit;
   font-size: var(--fs-xs);
@@ -159,53 +232,18 @@
   }
 }
 
-/* PHONE: a toast is a full-width TOP BANNER, not a bottom-right card.
-   Measured on the 390x844 preset, the bottom-right stack occupied y 696..810
-   while the composer's textarea ran 703..756 and its pill row 756..809 — so
-   every status message covered the controls it was reporting on, and an error
-   toast with a Retry button sat on top of the Send button. There is no width
-   at which a corner card and a full-width composer can share the bottom of a
-   phone screen, so the stack moves to the one band with nothing interactive in
-   it. It starts BELOW the chat toolbar (`--below-chat-toolbar`, which folds in
-   the notch inset) rather than at the viewport top, or it would cover the menu
-   button for the toast's whole lifetime. */
+/* PHONE: the card becomes a full-width strip. Only the INLINE axis moves — the
+   block axis is the base rule's, already anchored under the band. At 390px a
+   24rem cap is 94% of the screen anyway, so the corner card's proportions buy
+   nothing and cost an asymmetric gutter. */
 @media (width <= 48rem) {
   .uip-toast-stack {
-    /* Two declarations, and the second is the exact one. Below 30rem of chat area
-       the toolbar WRAPS its heading onto a second row (12-chat.css), so its
-       height is content-driven — the title's line box plus an optional subtitle —
-       and no token can state it: `--below-chat-toolbar` describes the one-row bar
-       and left the banner over the page title by 10px. `anchor()` reads the real
-       bottom edge, which is what this mechanism is for. Its own fallback is the
-       one-row edge, so a missing anchor lands where the token would; an engine
-       with no anchor positioning at all drops the second declaration and keeps
-       the first. `.chat-toolbar` carries the `anchor-name` (12-chat.css) and is a
-       SIBLING of the views rather than inside one, so it is rendered on every
-       route and precedes this body-level stack in the box tree. */
-    inset-block: var(--below-chat-toolbar) auto;
-    inset-block-start: calc(
-      anchor(--chat-toolbar bottom, calc(var(--titlebar-h) + env(safe-area-inset-top, 0))) +
-        var(--sp-2)
-    );
     inset-inline: var(--sp-2);
-
-    /* Newest at the BOTTOM of a top-anchored stack, so an arriving toast pushes
-       the older ones down and away from the edge it entered from. The
-       bottom-right stack reverses for the mirror-image reason. */
-    flex-direction: column;
-
-    /* The banner spans the width the two insets leave, so the 24rem card cap
-       does not shrink-wrap it back to a corner card's proportions. */
     max-inline-size: none;
   }
 
-  /* Enter and leave UPWARD. Both transforms are the bottom stack's flipped: the
-     pre-enter offset is where the toast slides in FROM, and the leave offset is
-     where it exits to, and a top-anchored banner does both at its own edge. */
-  .uip-toast {
-    transform: translateY(-0.5rem);
-  }
-
+  /* Leaves UPWARD rather than sideways: a full-width strip has no side edge to
+     exit past, so it withdraws to the edge it is pinned to. */
   .uip-toast.is-leaving {
     transform: translateY(-0.5rem);
   }

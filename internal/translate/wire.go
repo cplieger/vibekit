@@ -132,6 +132,12 @@ type ACPKiroBlock struct {
 	// transcript claims all its history happened just now.
 	MessageID string `json:"messageId"`
 	Timestamp string `json:"timestamp"`
+	// Source is stamped by the same replay builder as the two above, and it goes
+	// HERE rather than on the update object: the builder writes
+	// `{kiro:{…, messageId, timestamp, ...t.source==="steer"?{source:"steer"}:{}}}`.
+	// It marks the whole steering CHANNEL, so every workflow-progress row, step
+	// notice and steering-boundary row carries it too, not just a reader's steer.
+	Source string `json:"source"`
 	// Notification tags a row KAS wrote onto a chat's transcript on
 	// something else's behalf. kind "workflow-progress" is a workflow
 	// step's progress persisted onto the LAUNCHING chat, which arrives as
@@ -256,13 +262,15 @@ type ACPWorkflowMeta struct {
 // colliding.
 //
 // Two segments, and the run id is the first: `wf:<workflowId>:<nodePath>`
-// lets the client render a step inside the run that started it. A node
-// path cannot contain a colon, so one SplitN is an unambiguous parse.
+// lets the client render a step inside the run that started it. The format
+// itself lives in vibekit.StepSubtaskID, beside the parse that reads it
+// back; this method is only the decode site that knows where the two
+// segments come from.
 func (w *ACPWorkflowMeta) SubtaskID() string {
 	if w == nil || w.WorkflowID == "" {
 		return ""
 	}
-	return "wf:" + w.WorkflowID + ":" + runNodePath(w)
+	return vibekit.StepSubtaskID(w.WorkflowID, runNodePath(w))
 }
 
 // ACPCheckpointMeta is the _meta.kiro.checkpoint object on a completed

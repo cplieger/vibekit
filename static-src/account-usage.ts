@@ -68,7 +68,7 @@ function renderAccountUsage(u: AccountUsage | null): void {
   if (u === null) {
     planEl.textContent = "Usage unavailable";
     meterEl.textContent = "";
-    meterEl.removeAttribute("title");
+    meterEl.removeAttribute("data-tooltip");
     return;
   }
 
@@ -81,7 +81,7 @@ function renderAccountUsage(u: AccountUsage | null): void {
     // No usage line (e.g. admin-managed plan). The plan label already
     // carries the note, so leave the meter empty.
     meterEl.textContent = "";
-    meterEl.removeAttribute("title");
+    meterEl.removeAttribute("data-tooltip");
     return;
   }
 
@@ -94,8 +94,8 @@ function renderAccountUsage(u: AccountUsage | null): void {
     meterEl.textContent = `${used} ${unit}`;
   }
   if (u.billing_cycle_reset !== undefined && u.billing_cycle_reset !== "") {
-    meterEl.title = `Resets ${u.billing_cycle_reset}`;
+    meterEl.dataset["tooltip"] = `Resets ${u.billing_cycle_reset}`;
   } else {
-    meterEl.removeAttribute("title");
+    meterEl.removeAttribute("data-tooltip");
   }
 }

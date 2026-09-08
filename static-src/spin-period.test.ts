@@ -52,13 +52,24 @@ describe("the spinner period", () => {
 
     for (const [path, css] of Object.entries(sheets)) {
       for (const { selector, body } of allRules(css)) {
-        // `allRules` descends into at-rules and hands back style rules only, so
-        // the `@keyframes vk-spin` definition itself is never a subject here.
+        // `allRules` descends into at-rules, so a `@keyframes` STEP arrives here
+        // as a style rule whose selector is `from` / `to` / a percentage list.
+        // `vk-spin`'s own step now mentions the token it animates
+        // (`--vk-spin-arc`), which made the definition read as a consumer that
+        // declares no animation — this file used to claim steps never reached it,
+        // which was only true while that step read `transform: rotate(360deg)`.
+        if (/^(?:from|to|-?[\d.]+%)(?:\s*,\s*(?:from|to|-?[\d.]+%))*$/.test(selector)) {
+          continue;
+        }
         if (!body.includes("vk-spin")) {
           continue;
         }
         consumers++;
-        if (!/animation:\s*vk-spin\s+var\(--spin-dur\)/.test(body)) {
+        // `vk-spin[\w-]*` rather than `vk-spin`, because the idiom has two
+        // keyframes now: `vk-spin` turns a ring's painted arc and `vk-spin-dash`
+        // marches the one mark that is a stroked arc instead. One period for
+        // both is the rule; which property carries it is not.
+        if (!/animation:\s*vk-spin[\w-]*\s+var\(--spin-dur\)/.test(body)) {
           offenders.push(`${path} { ${selector} }`);
         }
       }

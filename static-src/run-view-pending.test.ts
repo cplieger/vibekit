@@ -46,6 +46,8 @@ vi.mock("./tabs.js", () => ({
   }),
   tabIdFor: vi.fn(() => ""),
   tabSetVersion: vi.fn(() => 0),
+  // The open run tabs run-dots seeds run state for. Empty keeps the seed inert.
+  openRunRefs: vi.fn(() => []),
   // A run's tab row is renamed once its state arrives (run-dots.ts). Inert here for
   // `tabIdFor`'s reason: with no tab id to resolve there is no row to rename.
   renameTab: vi.fn(),

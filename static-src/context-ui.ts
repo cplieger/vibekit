@@ -22,7 +22,7 @@ import type { Session, MeteringItem } from "./types.js";
 import { updateContextBar } from "./status.js";
 import { getActiveId } from "./store.js";
 import { contextFull } from "./prompt-input.js";
-import { nonDefaultEffortLabel } from "./effort.js";
+import { effortPillLabel } from "./effort.js";
 import { getCachedModels } from "./picker.js";
 import { getLastEffortFor } from "./session-context.js";
 import { KAS_SUMMARIZATION_PCT, KAS_TRUNCATION_PCT } from "./context-ring.js";
@@ -78,14 +78,13 @@ export function refreshContextUI(s: Session): void {
     turnCount: u.turn_count,
     lastTurnMs: u.last_turn_ms,
     model: s.model,
-    // The reasoning tier, when the user decided it or a known default proves it
-    // is a departure (effort.ts owns that test, and the default is the catalog's
-    // per-model field rather than anything stored here). Resolved HERE rather
-    // than in status.ts so the renderer keeps writing what it is handed: this
-    // module already runs on every active-session change, so the pill repaints
-    // when an optimistic set_effort write lands, when the session reports a new
-    // currentValue, and when a model switch changes which default applies.
-    effort: nonDefaultEffortLabel(s, getCachedModels(), getLastEffortFor(s.model)),
+    // The reasoning tier the chat runs at (effort.ts resolves it, under the
+    // per-model capability gate). Resolved HERE rather than in status.ts so the
+    // renderer keeps writing what it is handed: this module already runs on every
+    // active-session change, so the pill repaints when an optimistic set_effort
+    // write lands, when the session reports a new currentValue, and when a model
+    // switch changes which default applies.
+    effort: effortPillLabel(s, getCachedModels(), getLastEffortFor(s.model)),
     metering,
     msgCount,
     toolCount,

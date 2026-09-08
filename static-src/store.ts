@@ -803,9 +803,82 @@ export function steerCount(id: string): number {
   return get(id)?.steers?.length ?? 0;
 }
 
-/** The steers that have left the dock and now belong to the transcript. */
+/** The steers that have left the dock and now belong to the transcript, each
+ *  anchored where it can be DRAWN in the window that exists NOW.
+ *
+ *  TWO QUESTIONS, ONE FIELD, and separating them is the whole of this reader.
+ *  `anchorFor` records where the steer WAS read, which is durable intent and
+ *  stays as written; where the note can be drawn is a question about the resident
+ *  window rather than about the steer, so it is answered here, at read time.
+ *
+ *  It lives in the STORE rather than in the renderer because the renderer sees one
+ *  message at a time and cannot tell an ORPHANED anchor from a foreign one — and
+ *  the store is what holds the window, so the answer gets exactly one owner.
+ *
+ *  What orphans an anchor, and why it is the reported symptom: neither steer field
+ *  is re-derivable from anything durable (see the section header), so a mark that
+ *  cannot be drawn is the whole of a lost record. The mark itself always survives
+ *  — every rebuild path carries `steer_marks` over — while the MESSAGE it names
+ *  does not: the in-flight assistant message is server-side buffer state until
+ *  `turn_ended`, so `GET /api/chats/{id}` omits it and a refetch drops it once
+ *  `liveTurnMessage` is clear (which `transport:gap` does for every chat), and an
+ *  evicted-then-refetched window can start after the turn the anchor names.
+ *
+ *  A READ, never a write: the record does not move, so a window that regains the
+ *  message draws the note where the steer was actually read.
+ *
+ *  A mark whose OWN id names a resident message is DROPPED: the persisted steer row
+ *  renders the same note through the same primitive and survives a reload, which the
+ *  mark does not, so the durable row wins and the two do not both draw. */
 export function steerMarks(id: string): readonly SteerMark[] {
-  return get(id)?.steer_marks ?? [];
+  const s = get(id);
+  const marks = s?.steer_marks;
+  // The common case by a wide margin, and what makes the scan below affordable on
+  // a reader this hot: most chats hold no marks at all, and this runs once per
+  // rendered assistant message per paint.
+  if (s === undefined || marks === undefined || marks.length === 0) {
+    return [];
+  }
+  return resolveAnchors(s, marks);
+}
+
+/** Drop every mark the transcript already holds as a durable row (see `steerMarks`),
+ *  then rewrite every surviving mark whose anchor names no resident message to the
+ *  window's own newest ASSISTANT message. Returns `marks` itself when nothing needs
+ *  dropping or moving, so the ordinary live case allocates nothing and keeps array
+ *  identity.
+ *
+ *  The tail is assistant-only rather than the newest message of any role, and that
+ *  is a correctness bound rather than a preference: only an assistant body renders
+ *  steer notes (`buildAssistantBody` → `flushSteerNotes`), so resolving to a user
+ *  or event row would move the anchor somewhere the renderer never visits — a
+ *  silent loss wearing a resolved anchor. With no assistant message resident the
+ *  mark therefore keeps what it was written with and waits for a window that holds
+ *  a reply; drawing it there at all needs the steer persisted into the turn. */
+function resolveAnchors(s: Session, marks: readonly SteerMark[]): readonly SteerMark[] {
+  const resident = new Set<string>();
+  let tail: SteerAnchor | undefined;
+  for (const m of s.messages) {
+    resident.add(m.id);
+    // Backwards would exit sooner, but the residency set needs the whole window
+    // anyway, so one forward pass answers both questions. A TRAILING user row
+    // belongs to a later turn that has produced nothing yet, and stepping over it
+    // is exactly what `isTurnReply` does.
+    if (isTurnReply(m)) {
+      tail = { msgID: m.id, blockIndex: (m.blocks ?? []).length };
+    }
+  }
+  // Both ids are KAS's own `steer-` id, so this is an equality test between two
+  // values vibekit received, never a prefix parse. Unconditional and BEFORE the two
+  // early returns: a mark set needing no anchor move would otherwise skip the drop.
+  const live = marks.some((m) => resident.has(m.id))
+    ? marks.filter((m) => !resident.has(m.id))
+    : marks;
+  if (tail === undefined || live.every((m) => resident.has(m.anchor.msgID))) {
+    return live;
+  }
+  const at = tail;
+  return live.map((m) => (resident.has(m.anchor.msgID) ? m : { ...m, anchor: at }));
 }
 
 /** Record a steer this client has just POSTed, before any server frame. `pending` says the
@@ -1012,6 +1085,20 @@ export function forgetSteers(id: string): void {
   }
   sessions.update(id, (cur) => withSteers(cur, []));
   scheduleMessages(id, "fact");
+}
+
+/** Whether `m` is a message a steer's anchor may NAME: the reply a steer was read
+ *  into. Assistant-role and not a PLAN row, which is `RoleAssistant` too and is
+ *  not a reply — the anchor means "the reply this steer was read into", so a plan
+ *  row claiming one puts the note against the plan card.
+ *
+ *  ONE rule, two readers, which is why it is a function: `rebindPendingAnchors`'s
+ *  caller decides which arriving message binds a pending anchor, and
+ *  `resolveAnchors` decides which resident message an orphaned one resolves to. A
+ *  gate written twice can disagree, and the disagreement reads as the anchor
+ *  moving between two rows on its own. */
+function isTurnReply(m: Message): boolean {
+  return m.role === "assistant" && (m.plan ?? []).length === 0;
 }
 
 /** Where a steer read RIGHT NOW belongs: after everything the turn's assistant message has
@@ -1311,11 +1398,10 @@ function ingestMessage(chatID: string, incoming: Message, persisted: boolean): v
     }
     s.message_count = Math.max(s.message_count, s.messages.length);
     bumpMessages(chatID);
-    if (incoming.role === "assistant" && (incoming.plan ?? []).length === 0) {
+    if (isTurnReply(incoming)) {
       // The first moment there is an id to anchor a steer read before this turn produced
-      // anything. A PLAN row is skipped though it is RoleAssistant too — the anchor means "the
-      // reply this steer was read into" — or it captures every pending mark and the reply's own
-      // message_created finds none left.
+      // anything. A PLAN row is skipped though it is RoleAssistant too — see isTurnReply,
+      // which `resolveAnchors` reads for the same question about a RESIDENT message.
       rebindPendingAnchors(chatID, incoming.id);
     }
     return;

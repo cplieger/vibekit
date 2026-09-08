@@ -41,7 +41,11 @@
  *
  * The fallback size is only ever used BEFORE a card has rendered once —
  * `contain-intrinsic-size: auto` remembers the real size afterwards — so it is
- * the collapsed claim line: `--btn-h` of header plus the 1px borders. */
+ * the collapsed claim line, which is `.tool-header`'s floor and NOT that plus the
+ * borders: the property sizes the CONTENT box, so adding them here counts them
+ * twice and rendered a skipped card 4px taller than the `.tool-group` beside it.
+ * Reading the token also keeps it right on a coarse pointer, where a literal
+ * cannot. */
 .tool-call {
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
@@ -51,7 +55,7 @@
   flex-shrink: 0;
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
   content-visibility: auto;
-  contain-intrinsic-size: auto 2.5rem;
+  contain-intrinsic-size: auto var(--btn-h);
 }
 
 /* A claim-only card (read, delete, hook, think, switch_mode) has no depth 1, and
@@ -300,11 +304,23 @@
 }
 
 /* The absolute chevron spans the summary rather than the title row, so a two-line
-   search/fetch card centres it against the whole clickable box. Keyed on HAVING a
-   region rather than on `has-disclosure`: the chevron comes and goes within one
-   card's life, and a gutter that went with it moved the title row 32px off its
-   siblings. The pointer affordance stays on the dynamic class above. */
-.tool-call:has(> .tool-details) > .tool-summary > .tool-header {
+   search/fetch card centres it against the whole clickable box.
+
+   Keyed on HAVING a region rather than on `has-disclosure`: the chevron comes and
+   goes within one card's life (`refreshToolDisclosure` withdraws and restores it
+   while the region stays), and a gutter that went with it moved the title row 32px
+   off its siblings. The pointer affordance stays on the dynamic class above.
+
+   EVERY ROW OF THE SUMMARY reserves its hit target plus the normal trailing
+   gutter, not just the title row. The chevron is out of flow, so a row reserving
+   only the plain gutter runs its content box — and therefore its `text-overflow`
+   ellipsis — under the glyph: measured at a 1280px card, the subtitle's clip edge
+   sat 24px past the chevron's leading edge, which is the chevron's own width, so a
+   run-command card's `...` rendered beneath the `>`. `.tool-header` carried the
+   reservation from the start and the rows below it did not. */
+.tool-call:has(> .tool-details) > .tool-summary > .tool-header,
+.tool-call:has(> .tool-details) > .tool-summary > .tool-subtitle,
+.tool-call:has(> .tool-details) > .tool-summary > .tool-move-row {
   padding-inline-end: calc(0.75rem + 1.5rem + var(--sp-2));
 }
 
@@ -407,13 +423,24 @@
   content: "• ";
 }
 
+/* The arc is PAINTED and the box never turns (`--vk-spin-arc`, 00-header.css):
+   a 12px bordered circle under a rotate animation is resampled at every angle
+   off a right angle, which is the wobble this replaces. The band is the mask's,
+   not a border's, so the box is already the outer diameter — and the trailing
+   `border-box` is the gradient's ORIGIN, load-bearing on every ring that keeps a
+   border, so it is not spare punctuation to tidy away. */
 .tool-spinner {
   width: 0.75rem;
   height: 0.75rem;
   flex-shrink: 0;
-  border: 2px solid var(--c-border);
-  border-top-color: var(--c-accent);
   border-radius: 50%;
+  background: conic-gradient(
+      from var(--vk-spin-arc),
+      var(--c-accent) 0deg 90deg,
+      var(--c-border) 90deg 360deg
+    )
+    border-box;
+  mask: radial-gradient(closest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
   animation: vk-spin var(--spin-dur) linear infinite;
 }
 
@@ -753,9 +780,18 @@
   width: 1rem;
   height: 1rem;
   flex-shrink: 0;
-  border: 0.125rem solid var(--c-accent);
-  border-top-color: transparent;
   border-radius: 50%;
+  background: conic-gradient(
+      from var(--vk-spin-arc),
+      transparent 0deg 90deg,
+      var(--c-accent) 90deg 360deg
+    )
+    border-box;
+  mask: radial-gradient(
+    closest-side,
+    transparent calc(100% - 0.125rem),
+    #000 calc(100% - 0.125rem)
+  );
   animation: vk-spin var(--spin-dur) linear infinite;
 }
 
@@ -1346,15 +1382,26 @@
   position: relative;
 }
 
+/* 1rem IS the diameter this has always painted, and stating it is the fix: it read
+   `0.75rem` plus a 2px border that the pseudo-element's content-box default put
+   OUTSIDE that length, so the authored number was 12px and the mark was 16px. This
+   spinner sits beside a label rather than in a sized slot, so 16px is not wrong —
+   only the source was — which is why the size moves here and not the render. With
+   no border left there is nothing for `box-sizing` to decide. */
 .btn-loading::before {
   content: "";
   display: inline-block;
-  width: 0.75rem;
-  height: 0.75rem;
+  width: 1rem;
+  height: 1rem;
   margin-inline-end: var(--sp-1);
-  border: 2px solid var(--c-border);
-  border-top-color: var(--c-accent);
   border-radius: 50%;
+  background: conic-gradient(
+      from var(--vk-spin-arc),
+      var(--c-accent) 0deg 90deg,
+      var(--c-border) 90deg 360deg
+    )
+    border-box;
+  mask: radial-gradient(closest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
   animation: vk-spin var(--spin-dur) linear infinite;
   vertical-align: middle;
 }
@@ -1895,16 +1942,27 @@
   opacity: 0.55;
 }
 
+/* A chip rides INLINE with the name, so a badged row measures what a chipless one
+   does. The column below was unconditional, which made a badged row 14.4px taller
+   by construction (measured 46.4 against 32.0). `wrap` is what keeps that honest
+   at a narrow width: name plus chips breaks rather than crushing the ellipsis. */
 .tool-name-wrap {
-  /* A column, not a row: the name on its own line, the .tool-hit-chips line
-     under it, both starting at the same x (the Add modal's rule, applied to
-     the table too — chips inline after the name land wherever it ends). */
   display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.125rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
   min-width: 0;
   flex: 1;
+}
+
+/* Under a finger the chip takes its own line at double that gap, and both lines
+   fit the slack this row's 44px buttons already force, so the tier stays uniform
+   too (52.0 against 52.0; a `padding-block` here measured 56.4). Keyed on the
+   POINTER because a touch laptop is wide (01-tokens.css "Control heights"). */
+:root[data-pointer="coarse"] .tool-name-wrap {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
 }
 
 /* The wrap owns the flex slot, so the name inside it needs no share of the

@@ -42,6 +42,26 @@ func assetCachePolicy(assetPath string) string {
 	}
 }
 
+// serviceWorkerPath is where app.ts registers the worker, so it is the name a
+// browser fetches and the one whose absence makes push unreachable.
+const serviceWorkerPath = "sw.js"
+
+// reportMissingServiceWorker states at boot that this build cannot be subscribed
+// to for push notifications. `static/**/*.js` is gitignored and /sw.js is emitted
+// only by `go run ./cmd/bundle`, so a plain `go build` of a fresh clone embeds a
+// tree without it; the SPA fallback then answers /sw.js with index.html, which
+// fails registration in one tab's console and nowhere else. Without this line
+// "push is broken" and "built without the bundle" produce identical server logs.
+//
+// spaHandler is built once per ListenAndServe, so this is one line per boot.
+func reportMissingServiceWorker(staticFS fs.FS) {
+	if _, err := fs.Stat(staticFS, serviceWorkerPath); err == nil {
+		return
+	}
+	slog.Warn("server: no service worker in the embedded static tree; push notifications cannot be subscribed to",
+		"path", serviceWorkerPath, "remedy", "go run ./cmd/bundle, then rebuild")
+}
+
 // spaHandler serves the embedded FS, falling back to index.html for any path
 // that is not a real file (History-API client routing). Assets get their ETag,
 // gzip and cache policy from webhttp.StaticHandler; HTML is no-store so a
@@ -59,6 +79,7 @@ func spaHandler(staticFS fs.FS) http.Handler {
 	if err != nil {
 		panic("server: static handler: read index.html: " + err.Error())
 	}
+	reportMissingServiceWorker(staticFS)
 	shellLen := strconv.Itoa(len(shell))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(r.URL.Path, "/")

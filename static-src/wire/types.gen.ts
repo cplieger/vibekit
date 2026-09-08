@@ -48,6 +48,8 @@ export type TurnOutcome = "running" | "completed" | "cancelled" | "interrupted" 
 
 export type TurnSeverity = "running" | "clean" | "stopped" | "broken";
 
+export type UserKind = "prompt" | "steer";
+
 export type WhoamiState = "signed_in" | "signed_out" | "unavailable";
 
 /**
@@ -824,6 +826,11 @@ export interface Message {
  */
   reasoning?: string;
   event_kind?: EventKind;
+  /**
+ * UserKind is which kind of user row this is, absent on every kind but a steer.
+ * See UserKind for what absent means and why a steer carries no TurnOutcome.
+ */
+  user_kind?: UserKind;
   id: string;
   /**
  * TurnOutcome is how this turn ENDED, stamped on the message that finalized
@@ -877,8 +884,8 @@ export interface Message {
  * BuildPromptBlocks folds each one into a content block on the way OUT, so a
  * turn read back has nothing to recover the list from.
  * //
- * Absent on older records and on a turn opened by a steer, which takes a plain
- * string and so carries no structured list.
+ * Absent on older records and on a steer, which joins the turn already running
+ * and takes a plain string, so it carries no structured list.
  */
   attachments?: Attachment[];
   /**

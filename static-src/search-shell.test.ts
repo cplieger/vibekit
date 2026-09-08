@@ -79,7 +79,10 @@ describe("searchIconButton", () => {
     expect(btn.querySelector("svg")).not.toBeNull();
     expect(btn.textContent).toBe("");
     expect(btn.getAttribute("aria-label")).toBe("Close find");
-    expect(btn.title).toBe("Close (Esc)");
+    // The app's own styled tooltip, never a bare `title`: a native one renders
+    // the browser's grey chip beside every other hover in the app.
+    expect(btn.getAttribute("data-tooltip")).toBe("Close (Esc)");
+    expect(btn.getAttribute("title")).toBeNull();
     expect(btn.type).toBe("button");
   });
 
@@ -101,6 +104,10 @@ describe("matchCaseButton", () => {
     expect(btn.querySelector("svg")).toBeNull();
     expect(btn.getAttribute("aria-pressed")).toBe("false");
     expect(btn.getAttribute("aria-label")).toBe("Match case");
+    // Both hover channels, and neither is the other's substitute: the styled
+    // tooltip is the app's, and the name survives it being dismissed.
+    expect(btn.getAttribute("data-tooltip")).toBe("Match case");
+    expect(btn.getAttribute("title")).toBeNull();
 
     btn.click();
     expect(btn.getAttribute("aria-pressed")).toBe("true");

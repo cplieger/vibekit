@@ -99,6 +99,8 @@ type Projection struct {
 	// userID is the wire identity of the user message being accumulated, taken from
 	// the FIRST chunk of it (its timestamp is userTs, below with the other scalars).
 	userID string
+	// userKind is that message's kind, also taken from its FIRST chunk.
+	userKind vibekit.UserKind
 	// turnID is the open assistant turn's id, adopted from the first content frame
 	// inside the turn. turn_start itself carries none (measured).
 	turnID string
@@ -175,11 +177,26 @@ func (p *Projection) ingestUserText(raw json.RawMessage) {
 		p.appendStepNotice(&c)
 		return
 	}
+	// Two user rows with no assistant frame between them merge into one message
+	// carrying the FIRST row's identity, so an empty steering-boundary row hijacks
+	// the prompt that follows it and stamps `steer` onto the reader's own words.
+	if id := c.Meta.Kiro.MessageID; p.userPending && id != "" && id != p.userID {
+		// flushUser also owns the prime-preamble drop and arms dropNextTurn, neither
+		// of which the observed frame order reaches from here.
+		p.flushUser()
+	}
 	if !p.userPending {
 		// First chunk owns the identity: KAS echoes back the messageId vibekit sent on
 		// session/prompt, so this is the id the chat record already knows.
 		p.userID = c.Meta.Kiro.MessageID
 		p.userTs = replayTS(c.Meta.Kiro.Timestamp)
+		// KAS stamps source="steer" on ALL FOUR steering shapes, so the two returns
+		// above must stay above this, and a boundary row must flush EMPTY so
+		// flushUser's `text == ""` check drops it rather than opening a steer row.
+		p.userKind = ""
+		if c.Meta.Kiro.Source == "steer" {
+			p.userKind = vibekit.UserKindSteer
+		}
 	}
 	p.userText += c.Content.Text
 	p.userPending = true
@@ -428,8 +445,8 @@ func (p *Projection) flushUser() {
 		return
 	}
 	text := p.userText
-	id, ts := p.userID, p.userTs
-	p.userText, p.userID, p.userTs = "", "", 0
+	id, ts, kind := p.userID, p.userTs, p.userKind
+	p.userText, p.userID, p.userTs, p.userKind = "", "", 0, ""
 	p.userPending = false
 	if text == "" {
 		return
@@ -443,10 +460,11 @@ func (p *Projection) flushUser() {
 		return
 	}
 	p.messages = append(p.messages, vibekit.Message{
-		ID:      p.idOr(id),
-		Role:    vibekit.RoleUser,
-		Content: text,
-		Ts:      ts,
+		ID:       p.idOr(id),
+		Role:     vibekit.RoleUser,
+		UserKind: kind,
+		Content:  text,
+		Ts:       ts,
 	})
 }
 

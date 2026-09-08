@@ -34,7 +34,7 @@ import { initNotificationToggles } from "./settings-notifications.js";
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { logout, setKiroSetting } from "./actions/settings.js";
 import { runDiagnostics } from "./actions/tools.js";
-import { bindLoadingState } from "./actions/index.js";
+import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { initSteeringEditor, loadSteeringDoc } from "./settings-steering.js";
 
 // Per-key write generation for the kiro-cli settings endpoint; same rule as
@@ -501,13 +501,19 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
+/** How long the Copy control holds the run button's slot before the button comes
+ *  back. Long enough to paste the report into an issue and return for a second
+ *  copy; past it a reader wants a fresh report rather than a stale one, and the
+ *  textarea keeps this one either way. */
+const COPY_SLOT_MS = 15 * 60 * 1000;
+
 /** Wires the "Run diagnostics" button. Shows a spinner (keeping the label)
  *  while kiro-cli collects its report, then renders the FULL report into a
- *  readonly, selectable textarea with an explicit Copy button — the report can
- *  be large and the clipboard is unreachable on non-HTTPS self-hosts, so a
- *  truncated ephemeral string is never the only surface. A kiro-cli version row
- *  is shown when the payload carries one. Failures surface as an error status
- *  so the user can re-run. */
+ *  readonly, selectable textarea — the report can be large and the clipboard is
+ *  unreachable on non-HTTPS self-hosts, so a truncated ephemeral string is never
+ *  the only surface. A kiro-cli version row is shown when the payload carries
+ *  one. The run button's own slot then carries the Copy control for
+ *  COPY_SLOT_MS. Failures surface as an error status so the user can re-run. */
 export function initDiagnostics(): void {
   const btn = document.getElementById("diagnostics-run") as HTMLButtonElement | null;
   const status = document.getElementById("diagnostics-status") as HTMLParagraphElement | null;
@@ -517,13 +523,15 @@ export function initDiagnostics(): void {
 
   // Announce the transient status transitions (collecting / ready / error) to
   // assistive tech. Setting the live-region role here keeps announcements
-  // working regardless of the static markup (see the index.html note in the
-  // task report).
+  // working regardless of the static markup.
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
 
-  // Build the copyable result surface once, right under the status line.
-  const host = status.parentElement ?? btn.parentElement;
+  // The run ROW is the `.section-option` holding the button and the status line.
+  // The report surface stacks below it in the section's own flex column, whose
+  // gap spaces it — which is what leaves the row free for the Copy control to
+  // take the button's place in.
+  const row = status.parentElement ?? btn.parentElement;
   const versionRow = el("p", {
     className: "section-hint diagnostics-version",
   }) as HTMLParagraphElement;
@@ -542,14 +550,29 @@ export function initDiagnostics(): void {
     { type: "button", className: "btn-small diagnostics-copy" },
     "Copy report",
   ) as HTMLButtonElement;
-  const copyWrap = el(
-    "div",
-    { className: "diagnostics-result-actions" },
-    copyBtn,
-  ) as HTMLDivElement;
-  copyWrap.hidden = true;
 
-  host?.append(versionRow, copyWrap, result);
+  // `#diagnostics-run` is a deep-link target (runtime-health.ts) and cannot be
+  // removed from the DOM, so the two controls SHARE the slot and hiding goes
+  // through the `.hidden` utility for both: `.btn` and `.btn-small` each declare
+  // `display`, and an author-origin `display` beats the UA's `[hidden]` rule at
+  // any specificity. The version row and the textarea declare none, so the
+  // attribute is honest there.
+  const showCopy = (on: boolean): void => {
+    copyBtn.classList.toggle("hidden", !on);
+    btn.classList.toggle("hidden", on);
+  };
+
+  btn.after(copyBtn);
+  showCopy(false);
+  row?.after(versionRow, result);
+
+  // One timer, cleared before it is re-armed, and released on unload — the only
+  // disposal hook there is, since `initDiagnostics` runs once per page and the
+  // Settings tab has no per-view teardown.
+  let slotTimer: ReturnType<typeof setTimeout> | undefined;
+  registerCleanup(() => {
+    clearTimeout(slotTimer);
+  });
 
   copyBtn.addEventListener("click", () => {
     void copyToClipboard(result.value).then((ok) => {
@@ -573,7 +596,6 @@ export function initDiagnostics(): void {
     status.hidden = false;
     status.textContent = "Collecting diagnostics\u2026";
     result.hidden = true;
-    copyWrap.hidden = true;
     versionRow.hidden = true;
     const out = await runDiagnostics.dispatch(undefined);
     if (out === null || out.error !== undefined) {
@@ -582,16 +604,22 @@ export function initDiagnostics(): void {
     }
     const report = out.report ?? "";
     // Full report in a selectable, newline-preserving textarea (the durable
-    // surface), plus a version row when the payload carries one.
+    // surface), plus a version row when the payload carries one. Both OUTLIVE the
+    // slot's expiry: the textarea is the report's only store, so dropping it on a
+    // timer would destroy the thing this feature exists to hand over.
     result.value = report;
     result.hidden = false;
-    copyWrap.hidden = false;
     const version = extractDiagnosticVersion(report);
     if (version !== "") {
       versionRow.textContent = `kiro-cli ${version}`;
       versionRow.hidden = false;
     }
-    // Clipboard copy is a convenience; the textarea above works regardless.
+    clearTimeout(slotTimer);
+    showCopy(true);
+    slotTimer = setTimeout(() => {
+      showCopy(false);
+    }, COPY_SLOT_MS);
+    // Clipboard copy is a convenience; the textarea below works regardless.
     const copied = await copyToClipboard(report);
     status.textContent = copied
       ? `Report ready — copied ${report.length.toLocaleString()} characters to your clipboard.`

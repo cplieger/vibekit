@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/slogx/capture"
@@ -111,6 +112,139 @@ func TestLoadSubs_DropsDisallowedHostLogged(t *testing.T) {
 	}
 	if got != "evil.example.com" {
 		t.Errorf("dropped-endpoint host = %v, want %q", got, "evil.example.com")
+	}
+}
+
+// writeSubsFile stages a push-subs.json holding the given endpoints: the
+// pre-existing subscription store every orphan case below starts from.
+func writeSubsFile(t *testing.T, dir string, endpoints ...string) {
+	t.Helper()
+	subs := make([]vibekit.PushSubscription, 0, len(endpoints))
+	for _, ep := range endpoints {
+		subs = append(subs, vibekit.PushSubscription{Endpoint: ep})
+	}
+	data, err := json.Marshal(subs)
+	if err != nil {
+		t.Fatalf("marshal subs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "push-subs.json"), data, 0o600); err != nil {
+		t.Fatalf("write subs file: %v", err)
+	}
+}
+
+// TestLoadKeys_ReportsOrphanedSubscriptions pins the one moment this state is
+// cheap to detect: a keypair generated on a volume that already holds
+// subscriptions has just made every one of them undeliverable, because RFC 8292
+// section 4.2 requires the user agent to create the replacement. Nothing later
+// can tell an orphaned subscription from a working one — it simply answers
+// 401/403 forever — so without this line push is silently dead with no cause on
+// the box.
+func TestLoadKeys_ReportsOrphanedSubscriptions(t *testing.T) {
+	const msg = "push: the new VAPID keypair orphaned every stored subscription"
+
+	t.Run("a_generated_keypair_beside_a_subscription_store_says_so", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSubsFile(t, dir,
+			"https://fcm.googleapis.com/fcm/send/a",
+			"https://updates.push.services.mozilla.com/b")
+
+		capLog := capture.Default(t)
+		s := New(t.Context(), dir, testSubject)
+		defer s.Close()
+
+		if n := capLog.CountExact(msg); n != 1 {
+			t.Fatalf("orphan report logged %d times, want 1; logs = %q", n, capLog.Messages())
+		}
+		if got, _ := capLog.AttrValue(msg, "count"); got != "2" {
+			t.Errorf("orphaned count = %q, want %q", got, "2")
+		}
+		if !capLog.HasAttr(msg, "hint", pushResubscribeHint) {
+			t.Error("the orphan report carried no re-subscribe remedy")
+		}
+	})
+
+	t.Run("an_adopted_keypair_orphans_nothing", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSubsFile(t, dir, "https://fcm.googleapis.com/fcm/send/a")
+		s1 := New(t.Context(), dir, testSubject) // generates: reports
+		s1.Close()
+
+		capLog := capture.Default(t)
+		s2 := New(t.Context(), dir, testSubject) // adopts the stored key: silent
+		defer s2.Close()
+
+		if n := capLog.CountExact(msg); n != 0 {
+			t.Errorf("a restart that reused its keypair reported %d orphan lines, want 0", n)
+		}
+	})
+
+	t.Run("a_first_boot_reports_nothing", func(t *testing.T) {
+		capLog := capture.Default(t)
+		s := New(t.Context(), t.TempDir(), testSubject)
+		defer s.Close()
+
+		if n := capLog.CountExact(msg); n != 0 {
+			t.Errorf("a first boot with no subscriptions reported %d orphan lines, want 0", n)
+		}
+	})
+}
+
+// TestLoadKeys_ReportsUnusableStoredKeys pins the other door into the same
+// state, and it needs nobody to have deleted anything: a vapid-keys.json that is
+// present but unusable (a truncated write, a partial restore) is REPLACED, which
+// heals the service and kills every stored subscription at once. The service
+// stays healthy on purpose — refusing to send would leave no way to recover —
+// so this line is the only record of what happened.
+//
+// half_written is the case the guard used to miss, and it is the one a persistent
+// volume produces: the file is valid JSON carrying only the public half, so a
+// PublicKey-only check adopted it, left vapidPriv nil, and every send was then
+// dropped by preflightSend's health gate with no boot able to repair it. Signing
+// is what the assertion reads for that reason — a fresh public key alone would
+// pass while the service still could not send. Invariant 6: a broken state must
+// be able to heal itself.
+func TestLoadKeys_ReportsUnusableStoredKeys(t *testing.T) {
+	const msg = "push: stored VAPID keys unusable, generating a replacement"
+	cases := []struct {
+		name    string
+		content string
+		wantWhy string // the reason attr, which names WHICH half of the file is wrong
+	}{
+		{"unparseable", "{not json", "invalid character"},
+		{"no_public_key", `{"privateKey":"AAAA"}`, "no public key"},
+		{"half_written", `{"publicKey":"BM7WFPsFDlXH-h3nMzE0cJmS1oO-cCXQxUvKPqR6TdE"}`, "no private key"},
+		// Both halves present, the private one decoding to the wrong length: the
+		// file a PublicKey-only guard cannot tell from a working keypair either.
+		{"undecodable_private_key", `{"privateKey":"broken","publicKey":"also-broken"}`, "decode private key"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "vapid-keys.json"), []byte(tc.content), 0o600); err != nil {
+				t.Fatalf("write keys file: %v", err)
+			}
+
+			capLog := capture.Default(t)
+			s := New(t.Context(), dir, testSubject)
+			defer s.Close()
+
+			if n := capLog.CountExact(msg); n != 1 {
+				t.Errorf("unusable keys file logged %d replacement lines, want 1; logs = %q",
+					n, capLog.Messages())
+			}
+			// The reason is the operator's only description of what was wrong with
+			// the file, and each case has its own: a half-written file and one whose
+			// private key will not decode are different things to go and look at.
+			if why, ok := capLog.AttrValue(msg, "error"); !ok || !strings.Contains(why, tc.wantWhy) {
+				t.Errorf("replacement reason = %q (found=%v), want one naming %q",
+					why, ok, tc.wantWhy)
+			}
+			if s.PublicKey() == "" || !s.healthy || s.vapidPriv == nil {
+				t.Errorf("after replacing an unusable keys file: publicKey=%q healthy=%v signingKey=%v, "+
+					"want a fresh keypair the service can sign with",
+					s.PublicKey(), s.healthy, s.vapidPriv != nil)
+			}
+		})
 	}
 }
 
@@ -283,26 +417,5 @@ func TestDecodeVAPIDPrivateKey_WrongLength(t *testing.T) {
 
 	if _, err := s.decodeVAPIDPrivateKey(); err == nil {
 		t.Fatal("decodeVAPIDPrivateKey with 16-byte key = nil error, want error")
-	}
-}
-
-// TestVAPIDHeader_InvalidKeyPropagatesError verifies that a service
-// constructed with an invalid VAPID key is marked unhealthy at startup.
-// With the cached key approach, invalid keys are caught at construction
-// time rather than at per-push time.
-func TestVAPIDHeader_InvalidKeyPropagatesError(t *testing.T) {
-	dir := t.TempDir()
-	// Write an invalid key file so loadKeys finds it but can't decode it.
-	badKeys := `{"privateKey":"broken","publicKey":"also-broken"}`
-	if err := os.WriteFile(filepath.Join(dir, "vapid-keys.json"), []byte(badKeys), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	s := New(t.Context(), dir, "mailto:test@example.com")
-	if s.vapidPriv != nil {
-		t.Fatal("vapidPriv should be nil for invalid key")
-	}
-	// The service should be unhealthy.
-	if s.healthy {
-		t.Fatal("service should be unhealthy with invalid VAPID key")
 	}
 }

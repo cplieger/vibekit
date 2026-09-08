@@ -31,7 +31,9 @@ import { el } from "@cplieger/reactive";
 import { apiGet } from "./api-client.js";
 import { jumpTo, scrollableBy, getScrollEl, onReaderGesture } from "./scroll.js";
 import { clusterLabel, markerLabel, zoomOutLabel } from "./rail-labels.js";
+import { formatElapsed, isoDuration } from "./strings.js";
 import { severityOf } from "./turn-severity.js";
+import { projectTurns, turnLedger } from "./turns.js";
 import type { TurnOutcome } from "./turns.js";
 import { searchHitTurns } from "./chat-search.js";
 import { get, syncEpoch } from "./store.js";
@@ -714,10 +716,38 @@ function render(): void {
   if (zoom !== undefined) {
     nodes.push(zoomOutButton(zoom));
   }
+  // Once per render, not once per row: the walk is over the whole resident window.
+  const elapsed = residentElapsed();
   for (const row of rows) {
-    nodes.push(rowNode(row));
+    nodes.push(rowNode(row, elapsed));
   }
   root.replaceChildren(...nodes);
+}
+
+/** Per-turn durations for the turns the STORE holds, keyed by the turn's opening
+ *  message id — the same join `keyOf` runs, in the same direction.
+ *
+ *  THE RAIL'S OWN FEED CANNOT ANSWER THIS: `GET /api/chats/{id}/turns` carries no
+ *  duration, and the value the footer renders is `turn_elapsed_ms` summed across a
+ *  turn's body. So the answer is bounded by the paginated window, and a turn outside
+ *  it gets no slot rather than a guessed one. `projectTurns` and `turnLedger` own the
+ *  grouping and the sum; a local pass over the field would copy both rules.
+ *
+ *  Per render rather than cached: `ingestMessage` upserts in place, so an array
+ *  identity is not a version. */
+function residentElapsed(): Map<string, number> {
+  const out = new Map<string, number>();
+  const messages = get(chatID)?.messages;
+  if (messages === undefined) {
+    return out;
+  }
+  for (const t of projectTurns(messages, false)) {
+    const ms = turnLedger(t).elapsedMs;
+    if (ms > 0) {
+      out.set(t.id, ms);
+    }
+  }
+  return out;
 }
 
 /** A height to reason about before the rail has been laid out (first paint, and
@@ -729,7 +759,7 @@ function fallbackHeight(): number {
   return 600;
 }
 
-function rowNode(row: Row): HTMLElement {
+function rowNode(row: Row, elapsed: Map<string, number>): HTMLElement {
   if (row.kind === "gap") {
     return el("div", { className: "rail-gap", "aria-hidden": "true" }, formatGap(row.ms));
   }
@@ -767,10 +797,11 @@ function rowNode(row: Row): HTMLElement {
   const s = row.s;
   const hit = searchHitTurns().has(s.n);
   const isPending = pending.has(s.n);
+  const elapsedMs = elapsed.get(s.id);
   // ONE composer for both channels, and NO native `title`: a UA tooltip misses the
   // styled `.uip-tooltip` treatment every other hover in the app uses, and it
   // publishes no `aria-describedby`, so it reached mouse users only.
-  const label = markerLabel(s, { pending: isPending, hit });
+  const label = markerLabel(s, { pending: isPending, hit, elapsedMs });
   const btn = el(
     "button",
     {
@@ -812,6 +843,18 @@ function rowNode(row: Row): HTMLElement {
   // before the reader goes looking for it.
   if (hit) {
     btn.dataset["hit"] = "";
+  }
+  // A `<time>` carrying both spellings of one value, matching the turn footer's slot.
+  // No element at all when the store cannot answer, rather than an empty pill that
+  // reveals nothing; 29-turns.css owns the reveal and the gutter it grows into.
+  if (elapsedMs !== undefined) {
+    btn.appendChild(
+      el(
+        "time",
+        { className: "rail-marker-time", datetime: isoDuration(elapsedMs) },
+        formatElapsed(elapsedMs),
+      ),
+    );
   }
   btn.addEventListener("click", () => {
     // BEFORE the jump and unconditionally, which is the whole point: the jump is

@@ -291,6 +291,64 @@ describe("tool card summary affordance", () => {
     expect(Math.abs(t.y + t.height / 2 - (s.y + s.height / 2))).toBeLessThanOrEqual(1);
   });
 
+  // THE CHEVRON'S COLUMN IS RESERVED BY EVERY ROW OF THE SUMMARY, not only the
+  // title row. The chevron is absolutely positioned against the whole summary
+  // (the rule above), so a second row reserving only the plain gutter runs its
+  // own content box — and therefore its ellipsis — under the glyph. `.tool-header`
+  // carried the reservation from the start and these two did not, which a reader
+  // sees on a run-command card as the `...` ending underneath the `>`.
+  //
+  // The clip edge is the CONTENT box, because that is where `text-overflow`
+  // renders, and reading it as a box rather than as text keeps the assertion
+  // independent of the font.
+  it("keeps the subtitle's clip edge clear of the chevron", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = mount(
+      buildToolCard({
+        id: "css-subtitle-gutter",
+        title: "Run Command",
+        kind: "execute",
+        status: "completed",
+        input: { command: "go test ./... && go vet ./... && golangci-lint run ./..." },
+        live: false,
+      }),
+    );
+    const subtitle = card.querySelector<HTMLElement>(".tool-subtitle")!;
+    const header = card.querySelector<HTMLElement>(".tool-header")!;
+    const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
+    const clipRight =
+      subtitle.getBoundingClientRect().right - Number.parseFloat(css(subtitle, "padding-right"));
+    expect(clipRight).toBeLessThanOrEqual(toggle.getBoundingClientRect().left);
+    // One gutter for the whole summary: the second row ends where the title row
+    // ends, so a partial reservation fails here rather than merely reading tight.
+    expect(clipRight).toBeCloseTo(
+      header.getBoundingClientRect().right - Number.parseFloat(css(header, "padding-right")),
+      1,
+    );
+  });
+
+  it("keeps the move row's clip edge clear of the chevron", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = mount(
+      buildToolCard({
+        id: "css-move-gutter",
+        title: "Move File",
+        kind: "move",
+        status: "completed",
+        input: {
+          sourcePath: "static-src/css/14-tools.css",
+          destinationPath: "static-src/css/15-tool-cards.css",
+        },
+        live: false,
+      }),
+    );
+    const row = card.querySelector<HTMLElement>(".tool-move-row")!;
+    const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
+    const clipRight =
+      row.getBoundingClientRect().right - Number.parseFloat(css(row, "padding-right"));
+    expect(clipRight).toBeLessThanOrEqual(toggle.getBoundingClientRect().left);
+  });
+
   it("nothing paints a claim-only summary", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const card = mount(

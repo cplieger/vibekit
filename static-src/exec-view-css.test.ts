@@ -10,7 +10,7 @@
 // the selectors, and the browser project computes real boxes.
 //
 // Markup is hand-built to mirror the builders (`exec-view/tree.ts` `buildRow`,
-// `exec-view/page.ts` `resultsHead`, `fundamentals/run-card.ts`'s step row)
+// `exec-view/page.ts` `renderInputs`, `fundamentals/run-card.ts`'s step row)
 // rather than driven through them: the subject is the stylesheet, and importing
 // the builders drags `chat.ts` and the run store in behind them for facts they
 // do not decide.
@@ -191,71 +191,6 @@ describe("the tree's disclosure arrow follows the app's direction convention", (
   });
 });
 
-describe("the results roll-up carries the standard disclosure arrow", () => {
-  function results(collapsed: boolean): HTMLElement {
-    const twist = document.createElement("span");
-    twist.className = "ev-r-twist";
-    twist.setAttribute("aria-hidden", "true");
-    twist.appendChild(chevronEl());
-    const title = document.createElement("span");
-    title.className = "ev-r-title";
-    title.textContent = "Results";
-    const count = document.createElement("span");
-    count.className = "ev-r-count";
-    count.textContent = "3";
-
-    const head = document.createElement("div");
-    head.className = "ev-r-head";
-    head.setAttribute("role", "button");
-    head.tabIndex = 0;
-    // `createDisclosure` writes `aria-expanded` on the TRIGGER, and that is what
-    // the flip keys on; `page.ts`'s own `.collapsed` class on the root is its
-    // `onToggle` bookkeeping. Both are set here because production sets both.
-    head.setAttribute("aria-expanded", String(!collapsed));
-    head.append(twist, title, count);
-
-    const body = document.createElement("div");
-    body.className = "ev-r-body";
-
-    const root = document.createElement("div");
-    root.className = collapsed ? "ev-results collapsed" : "ev-results";
-    root.append(head, body);
-    return root;
-  }
-
-  it("renders exactly one chevron, and no nested interactive element", () => {
-    const box = mount(results(true));
-    const head = box.querySelector<HTMLElement>(".ev-r-head")!;
-    expect(head.querySelectorAll(".disclosure-chevron")).toHaveLength(1);
-    // `.ev-r-head` is `role="button"`, so a `<button>` or `<a>` inside it is
-    // axe's `nested-interactive` and `aria-hidden` does not clear it.
-    expect(head.querySelectorAll("button, a, input, [tabindex]:not([tabindex='-1'])")).toHaveLength(
-      0,
-    );
-  });
-
-  it("points RIGHT while collapsed and DOWN once open", () => {
-    for (const collapsed of [true, false]) {
-      const box = mount(results(collapsed));
-      const glyph = box.querySelector<HTMLElement>(".ev-r-twist > .disclosure-chevron")!;
-      expect(css(glyph, "--chev-turn").trim(), collapsed ? "collapsed" : "open").toBe(
-        collapsed ? "-90deg" : "0deg",
-      );
-    }
-  });
-
-  it("centres the glyph on the header rather than riding its baseline", () => {
-    // `.ev-r-head` is `align-items: baseline` and an SVG-only grid box has no
-    // useful baseline, which is what `align-self: center` answers.
-    const box = mount(results(true));
-    const head = box.querySelector<HTMLElement>(".ev-r-head")!;
-    const twist = box.querySelector<HTMLElement>(".ev-r-twist")!;
-    const h = head.getBoundingClientRect();
-    const t = twist.getBoundingClientRect();
-    expect(Math.abs(t.y + t.height / 2 - (h.y + h.height / 2))).toBeLessThanOrEqual(1);
-  });
-});
-
 describe("the run's task instructions read as a card", () => {
   function inputs(hidden: boolean): HTMLElement {
     const dl = document.createElement("dl");
@@ -297,6 +232,35 @@ describe("the run's task instructions read as a card", () => {
     const box = mount(inputs(true));
     expect(css(box, "display")).toBe("none");
     expect(box.getBoundingClientRect().height).toBe(0);
+  });
+});
+
+// The page has TWO clamps — the header's instructions and a result box's report —
+// and one opener skin between them. `run-page-layout.test.ts` asserts the shared
+// selector list, which is what makes a fork unrepresentable; this is the other
+// direction, that what the reader sees is in fact one control twice.
+describe("both clamp openers wear one skin", () => {
+  it("resolves to the same ink, size and underline", () => {
+    const row = document.createElement("div");
+    const instructions = document.createElement("button");
+    instructions.type = "button";
+    instructions.className = "ev-in-more";
+    instructions.textContent = "Show more";
+    const report = document.createElement("button");
+    report.type = "button";
+    report.className = "ev-r-more";
+    report.textContent = "Show more";
+    row.append(instructions, report);
+    mount(row);
+
+    // The premise: the skin really is in force, rather than both reading as the UA
+    // button default — a bare `<button>` is not underlined and is not this ink.
+    expect(css(instructions, "text-decoration-line")).toBe("underline");
+    expect(css(instructions, "background-color")).toBe("rgba(0, 0, 0, 0)");
+
+    for (const prop of ["color", "font-size", "text-decoration-line", "border-top-width"]) {
+      expect(css(report, prop), prop).toBe(css(instructions, prop));
+    }
   });
 });
 

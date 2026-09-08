@@ -93,9 +93,18 @@ export const ICON_SPARKLE = svg(
   '<path d="m12 3-1.9 5.8a2 2 0 01-1.3 1.3L3 12l5.8 1.9a2 2 0 011.3 1.3L12 21l1.9-5.8a2 2 0 011.3-1.3L21 12l-5.8-1.9a2 2 0 01-1.3-1.3z"/>' +
     '<path d="M5 3v4M3 5h4M19 17v4M17 19h4"/>',
 );
-// Busy-state spinner rendered INTO the send button. CSS `.icon-spinner` drives
-// the rotation; the arc is an SVG path rather than a bordered box so its
-// geometry does not move with the browser's font metrics.
+// Busy-state spinner rendered INTO a button. A quarter-circle arc with round
+// caps, ROTATED by 15-input.css — the one spinner that still is, because the
+// rings all paint their arc instead (`--vk-spin-arc`, 00-header.css).
+//
+// A marching `stroke-dashoffset` over a full circle was built and measured as the
+// alternative, and it lost: `vector-effect: non-scaling-stroke` (which every
+// `.ic-ui` glyph inherits from 03-base.css so a scaled icon keeps its weight)
+// makes Chromium compute the dash pattern in a space `stroke-dasharray` does not
+// agree with, so the arc collapsed to a dot twice a revolution — total ink varied
+// 142% against this path's 0.1%, with and without `pathLength` normalisation.
+// `vector-effect: none` fixes the dash (8.6%) at the price of the icon's stroke
+// weight, which is a worse trade than the resampling this would have avoided.
 export const ICON_SPINNER =
   '<svg class="icon-spinner ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-9 9"/></svg>';
 /* A SYMMETRIC hourglass, and the redraw is a bug fix rather than a restyle: the
@@ -301,7 +310,9 @@ const ICON_TOOL_FOLDER = svg(
   "ui",
   '<path d="M21 19a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h4l2 4h8a2 2 0 012 2z"/>',
 );
-const ICON_TOOL_TERMINAL = svg(
+/** The bare prompt. Exported because the chat toolbar's shell toggle draws it
+ *  too, and `menu-icons.test.ts` pins that pairing. */
+export const ICON_TOOL_TERMINAL = svg(
   "ui",
   '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
 );
@@ -533,27 +544,46 @@ export const ICON_TAB_AUTONOMOUS = svg(
   "ui",
   '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
 );
-export const ICON_TAB_SETTINGS = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1.08-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1.08 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001.08 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1.08z"/></svg>`;
+/* SIX teeth, because the count is a 16px budget: one unit is 0.667 CSS px at
+ * `--icon-ui` against a flat 1 CSS px stroke, and a 30-degree tooth on a
+ * 30-degree gap is what holds adjacent strokes 2.76 CSS px apart. A finer gear
+ * merges into a grey disc at that size. */
+export const ICON_TAB_SETTINGS = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.5"/><path d="M14.07 19.73L14.85 22.63A11 11 0 0 1 9.15 22.63L9.93 19.73A8 8 0 0 1 6.34 17.66L4.22 19.78A11 11 0 0 1 1.37 14.85L4.27 14.07A8 8 0 0 1 4.27 9.93L1.37 9.15A11 11 0 0 1 4.22 4.22L6.34 6.34A8 8 0 0 1 9.93 4.27L9.15 1.37A11 11 0 0 1 14.85 1.37L14.07 4.27A8 8 0 0 1 17.66 6.34L19.78 4.22A11 11 0 0 1 22.63 9.15L19.73 9.93A8 8 0 0 1 19.73 14.07L22.63 14.85A11 11 0 0 1 19.78 19.78L17.66 17.66A8 8 0 0 1 14.07 19.73Z"/></svg>`;
 // The git-branch glyph (Lucide "git-branch"), under two names for the two
 // jobs it does: the git TAB's icon, and the leading glyph of the branch popover's
 // create field. One path, so the two can never drift apart.
+//
+// Shifted 1 unit down from the redraw this replaced, whose ink box was 3..21 x
+// 2..20 — centre y 11, so it sat 0.67 CSS px above every other glyph in the
+// toolbar. Lucide's own git-branch is centred on (12,12) and the redraw lost that;
+// nothing about the shape changed here, only where it sits in the box.
 export const ICON_GIT_BRANCH = svg(
   "ui",
-  '<circle cx="18" cy="17" r="3"/><circle cx="6" cy="5" r="3"/><path d="M6 20V8a9 9 0 009 9"/>',
+  '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/>',
 );
 export const ICON_TAB_GIT = ICON_GIT_BRANCH;
 export const ICON_TAB_EDITOR = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>`;
+/* HALF-UNIT coordinates on purpose: one unit is 0.667 CSS px at `--icon-ui`, so a
+ * coordinate on a multiple of 3 puts the 1 CSS px stroke exactly astride two pixel
+ * columns. 3.5 / 8.5 / 20.5 sit a third of a pixel off a boundary at 16px and at
+ * the coarse-pointer 18px; rounding them to integers undoes that. */
 export const ICON_TAB_FILES = svg(
   "ui",
-  '<path d="M21 19a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h4l2 4h8a2 2 0 012 2z"/>',
+  '<path d="M6.5 3.5h4l3 5h4a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H6.5a3 3 0 0 1-3-3v-11a3 3 0 0 1 3-3z"/>',
 );
 export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
-/** The Kiro configuration browser: an open book. Also the sidebar button that
- *  opens the page, which is pinned to this constant by `menu-icons.test.ts` — the
- *  two used to draw different books. */
+/** The Kiro configuration browser: an open book, ONE closed outline plus ONE
+ *  spine line. Also the sidebar button that opens the page, pinned to this
+ *  constant by `menu-icons.test.ts`.
+ *
+ *  Two cover paths sharing a spine on x=12 is not one stroke. Measured on a 16px
+ *  raster, that column pair painted 55% alpha each where every other stroke in
+ *  the glyph paints 33%, so the centre carried double weight and read as a
+ *  double spine. Those covers also ended at y=18.5, putting the ink centre at
+ *  y=10.25 — 1.17 CSS px above every neighbour in the toolbar. */
 export const ICON_TAB_DOCS = svg(
   "ui",
-  '<path d="M2 4.5A2.5 2.5 0 014.5 2H9a2 2 0 012 2v16a1.5 1.5 0 00-1.5-1.5H4.5A2.5 2.5 0 012 16z"/><path d="M22 4.5A2.5 2.5 0 0019.5 2H15a2 2 0 00-2 2v16a1.5 1.5 0 011.5-1.5h5A2.5 2.5 0 0022 16z"/>',
+  '<path d="M12 7.5 8.25 4.5H4.5A2.5 2.5 0 0 0 2 7v10a2.5 2.5 0 0 0 2.5 2.5h15a2.5 2.5 0 0 0 2.5-2.5V7a2.5 2.5 0 0 0-2.5-2.5h-3.75z"/><path d="M12 7.5v12"/>',
 );
 /** Workflow run: three nodes joined top-to-bottom, the shape of a run's node
  *  plan. Distinct from the chat and subagent glyphs so a run tab is never

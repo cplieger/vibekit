@@ -69,8 +69,6 @@ export interface ExecRun {
   nodes: ExecNode[];
   /** What this execution was asked to do. */
   inputs?: Record<string, string>;
-  /** Run-level named results, merged from artifacts and captured outputs. */
-  outputs?: Record<string, string>;
   /** One line about why the execution wants a person, pre-composed by the adapter. */
   alert?: { kind: "input" | "paused" | "stopped" | "failed"; text: string };
   /** The node the page should open on when the reader has not clicked one.

@@ -531,6 +531,12 @@
      own height: measured, this moves desktop by at most 1px and gives every
      list row a real 36px target on touch. */
   min-block-size: var(--ctl-h-sm);
+
+  /* The `min-block-size` above REPLACES a flex item's automatic minimum size, so
+     inside a capped `.list-container` (the Add modal's 17rem scroller) the row
+     shrank to that floor and, with no `overflow` here, painted the surplus over
+     the rows below: measured a 24px box holding 39px of content. */
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -839,6 +845,14 @@
   flex-direction: column;
   gap: 1px;
   min-inline-size: 0;
+  flex: 1;
+}
+
+/* The text column owns the row's flex slot, so the name needs no share of its own.
+   Same pairing as `.tool-name-wrap > .list-row-name` (14-tools.css). */
+.tool-hit-text > .list-row-name {
+  flex: initial;
+  max-inline-size: 100%;
 }
 
 .tool-hit-desc {
@@ -871,16 +885,43 @@
   line-height: 1.4;
 }
 
-/* The closing note, shown under EVERY result set including a full one: the
- * catalog is large but finite, and a reader who cannot find their tool needs
- * to know the shell is the answer rather than concluding it does not exist. */
+/* The modal's FOOTER rather than a row appended to the result set: inside the
+ * capped scroller the note scrolled away from exactly the empty result that
+ * needed it. House `.modal-status` pattern (16-login.css). */
 .tool-shell-note {
-  padding: var(--sp-3) var(--sp-1) var(--sp-1);
+  padding-block-start: var(--sp-3);
   font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--c-text-tertiary);
   border-block-start: 1px solid var(--c-border);
-  margin-block-start: var(--sp-2);
+  margin-block: var(--sp-2) 0;
+}
+
+/* Search field and its button on one row, the MCP registry bar's shape
+ * (`.mcp-search-row`, 60-mcp.css) so the two popups read alike. */
+.tool-search-row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-2);
+}
+
+:where(.tool-search-row) .tool-form-input {
+  flex: 1;
+  min-inline-size: 0;
+}
+
+/* Both glyphs ship in the button so the swap moves no nodes and cannot resize the
+ * row. `is-busy` is what `bindLoadingState("tools.search", …)` adds. */
+.tool-search-go > .tool-search-spinner {
+  display: none;
+}
+
+.tool-search-go.is-busy > .tool-search-glyph {
+  display: none;
+}
+
+.tool-search-go.is-busy > .tool-search-spinner {
+  display: block;
 }
 
 /* --- History rows: chats and workflow runs in one list -------------------- */

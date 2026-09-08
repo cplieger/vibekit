@@ -143,9 +143,12 @@
   }
 }
 
+/* One full turn of a ring's ARC, not of its box — see `--vk-spin-arc`
+   (00-header.css) for why rotating the box made every ring wobble. -45 to 315 is
+   360deg from that property's own starting angle. */
 @keyframes vk-spin {
   to {
-    transform: rotate(360deg);
+    --vk-spin-arc: 315deg;
   }
 }
 

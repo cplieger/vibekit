@@ -40,6 +40,7 @@ import {
   get,
   appendMessage,
   recordSteerSent,
+  forgetSteers,
   steerIDFor,
   steerCount,
   steerMarks,
@@ -233,6 +234,72 @@ describe("steer_injected", () => {
     expect(steerCount("c1")).toBe(0);
     expect(get("c1")?.steers).toBeUndefined();
     expect(steerMarks("c1")).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The GAP, then the connect burst: the ordering the reconnect actually produces.
+//
+// `transport:gap` forgets every chat's dock without promoting anything, because a
+// gap means the frames that resolved those steers may be among the lost ones and
+// promoting would assert "the agent never read this" on no evidence
+// (handlers/system.test.ts pins that door; `forgetSteers` is called directly here
+// because this file's bus is mocked to capture registrations). What refills the
+// dock is the connect replay in the same burst — the server re-offers every steer
+// still in KAS's buffer as a `steer_queued`, so a row still WAITING comes back
+// under its own id while a DELIVERED one stays out.
+//
+// This is the client half of that contract, and it is what makes the server half
+// safe to add: `recordSteerQueued` is idempotent in all three branches and checks
+// `steer_marks` FIRST, so the replay cannot put a read message back in the dock.
+// ---------------------------------------------------------------------------
+
+describe("a gap and then the connect replay", () => {
+  it("brings a still-waiting steer back into the dock", () => {
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs", origin: "user" });
+    expect(steerCount("c1")).toBe(1);
+
+    forgetSteers("c1");
+    expect(get("c1")?.steers, "the gap empties the dock").toBeUndefined();
+
+    // The connect replay, arriving in the same burst.
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs", origin: "user" });
+    expect(get("c1")?.steers).toEqual([{ id: "steer-1", text: "use tabs", origin: "user" }]);
+  });
+
+  it("does not bring back a steer the agent read during the outage", () => {
+    turnOnC1();
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs", origin: "user" });
+    fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "use tabs", origin: "user" });
+    forgetSteers("c1");
+
+    // KAS's buffer no longer holds it, so the server replays nothing for it — but a
+    // frame that predates the read can still be in flight, and the mark is what
+    // refuses it.
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs", origin: "user" });
+
+    expect(get("c1")?.steers, "the delivered message stays out of the dock").toBeUndefined();
+    expect(steerMarks("c1"), "and keeps its one note").toHaveLength(1);
+  });
+
+  // The two halves at once, which is the state a reconnect mid-turn produces: one
+  // steer read before the outage and one still queued behind it.
+  it("refills only the waiting half of a mixed set", () => {
+    turnOnC1();
+    fireSSE("steer_queued", "c1", { steer_id: "steer-read", text: "first", origin: "user" });
+    fireSSE("steer_injected", "c1", { steer_id: "steer-read", text: "first", origin: "user" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-waiting", text: "second", origin: "user" });
+
+    forgetSteers("c1");
+    for (const [id, text] of [
+      ["steer-read", "first"],
+      ["steer-waiting", "second"],
+    ]) {
+      fireSSE("steer_queued", "c1", { steer_id: id, text, origin: "user" });
+    }
+
+    expect(get("c1")?.steers?.map((e) => e.id)).toEqual(["steer-waiting"]);
+    expect(steerMarks("c1").map((m) => m.id)).toEqual(["steer-read"]);
   });
 });
 

@@ -54,6 +54,30 @@ type SteerOrigins interface {
 	SteerOrigin(chatID vibekit.ChatID, steerID string) vibekit.SteerOrigin
 }
 
+// SteerBuffer is the host's projection of KAS's own steering buffer: which steers
+// are still WAITING, so a client that reconnects can be re-offered them.
+//
+// A SECOND narrow role beside SteerOrigins rather than a widening of it, because
+// the two answer different questions with different lifetimes: an origin is TTL'd
+// (a 31-minute-old id legitimately reads as the agent's), while a waiting steer's
+// lifetime is KAS's buffer, which no clock this process holds can predict. One
+// type answering both would have to pick one of the two lifetimes.
+//
+// Why the host needs telling at all: `_session/steer` and `_session/steer/clear`
+// are the whole verb set, so nothing can read the buffer back, and
+// `streamInitialState` replayed nothing steer-shaped — a client that missed a
+// frame lost the row while the message was still queued.
+type SteerBuffer interface {
+	// SteerWaiting records a steer KAS has buffered and the model has not read.
+	// Idempotent by id: a reconnect replays the queued frame.
+	SteerWaiting(chatID vibekit.ChatID, p vibekit.SteerQueuedPayload)
+	// SteerForgotten drops every named steer: KAS's buffer no longer holds them,
+	// whether the model read them or a turn boundary cleared them unread.
+	SteerForgotten(chatID vibekit.ChatID, steerIDs []string)
+	// SteerRead is SteerForgotten for the one id an injected frame names.
+	SteerRead(chatID vibekit.ChatID, steerID string)
+}
+
 // ChatRecords is the chat store as this package uses it. Every write lands after
 // the frame that caused it, so chat.ErrTombstoned is an expected outcome here.
 type ChatRecords interface {
@@ -82,6 +106,8 @@ type Roles struct {
 	Lines LineRecorder
 	// Steers answers whose words a steer carries.
 	Steers SteerOrigins
+	// SteerBuffer is the projection of KAS's steering buffer a reconnect replays.
+	SteerBuffer SteerBuffer
 	// PendingPerms registers an unanswered decision for reconnect replay.
 	PendingPerms PendingPermAdder
 	// Respond answers a server-to-client request on the chat's bridge.
@@ -186,6 +212,7 @@ type Translator struct {
 	turns         TurnBoundary
 	lines         LineRecorder
 	steers        SteerOrigins
+	steerBuffer   SteerBuffer
 	pendingPerms  PendingPermAdder
 	respond       Responder
 	push          Pusher
@@ -215,6 +242,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		turns:         r.Turns,
 		lines:         r.Lines,
 		steers:        r.Steers,
+		steerBuffer:   r.SteerBuffer,
 		pendingPerms:  r.PendingPerms,
 		respond:       r.Respond,
 		push:          r.Push,

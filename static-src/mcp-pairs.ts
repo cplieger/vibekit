@@ -94,7 +94,7 @@ export function appendKeyPair(host: HTMLDivElement, kv: EditablePair, kind: Pair
   const del = el("button", {
     type: "button",
     className: "icon-btn mcp-pair-del",
-    title: "Remove",
+    "data-tooltip": "Remove",
     "aria-label": "Remove",
   });
   del.innerHTML = ICON_CLOSE;

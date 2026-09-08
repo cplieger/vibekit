@@ -1182,13 +1182,13 @@ function paintDot(node: HTMLElement, kind: TabKind, status: TabDotStatus | ""): 
   }
   if (status === "") {
     dot.removeAttribute("data-status");
-    dot.removeAttribute("title");
+    dot.removeAttribute("data-tooltip");
     sr.textContent = "";
     return;
   }
   const phrase = dotPhrase(kind, status);
   dot.dataset["status"] = status;
-  dot.title = phrase;
+  dot.dataset["tooltip"] = phrase;
   sr.textContent = `, ${phrase}`;
 }
 
@@ -1265,9 +1265,9 @@ export function setTabTooltip(id: string, text: string): void {
     return;
   }
   if (text === "") {
-    node.removeAttribute("title");
+    node.removeAttribute("data-tooltip");
   } else {
-    node.title = text;
+    node.dataset["tooltip"] = text;
   }
 }
 
@@ -1394,6 +1394,23 @@ export function openSubagentRefs(): string[] {
   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
   stateVersion.value;
   return state.tabs.filter((t) => t.subject.kind === "subagent").map((t) => t.subject.ref);
+}
+
+/** The run tabs' refs, as a TRACKED read: an effect calling this re-runs when a
+ *  run tab lands or leaves, which is the dependency `run-dots.ts` needs to seed
+ *  run state for a run it has been told nothing about.
+ *
+ *  EVERY run tab, sub-tab and top-level alike: a parentless run's tab is restored
+ *  from the same persisted subject and arrives just as unaccompanied by run state,
+ *  so it has the identical defect.
+ *
+ *  REFS rather than ids, because a ref is the workflow id the run store is keyed
+ *  by while an id is opaque; the id is recovered with `tabIdFor`. No dedupe, for
+ *  `openSubagentRefs`' reason. */
+export function openRunRefs(): string[] {
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+  stateVersion.value;
+  return state.tabs.filter((t) => t.subject.kind === "run").map((t) => t.subject.ref);
 }
 
 /** The open tab set, in projection order, for `boot-snapshot.ts` to persist.
@@ -1896,7 +1913,7 @@ function createTabEl(row: TabRow): HTMLElement {
   // rewrite it until this chat's own inputs churn, and a rebuilt row must not
   // sit tooltipless until then.
   if (row.tooltip !== undefined) {
-    node.title = row.tooltip;
+    node.dataset["tooltip"] = row.tooltip;
   }
 
   // Right-click context menu for chat tabs: pin/unpin, then export (md/json).

@@ -16,6 +16,8 @@ import {
   get,
   recordSteerQueued,
   steerCount,
+  steerMarks,
+  appendMessage,
   setAgentStatus,
   tabStatusFor,
   relatchTurnVerdict,
@@ -361,6 +363,11 @@ describe("turn_ended side effects", () => {
     expect(steerCount("chat-1")).toBe(0);
   });
 
+  // NO active-chat gate here, deliberately, and this is the store half of the
+  // reported symptom: the reader leaves the tab, the turn ends server-side, and
+  // the dock they come back to is empty. It is RIGHT to be empty — KAS clears its
+  // steering buffer at every boundary, so a row still waiting was never read and
+  // can never post — which is exactly why the record has to survive it.
   it("clears them for a background (non-active) chat too", () => {
     setSessions([makeSession("chat-1"), makeSession("chat-2")]);
     setActive("chat-2");
@@ -368,6 +375,46 @@ describe("turn_ended side effects", () => {
 
     fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
     expect(steerCount("chat-1")).toBe(0);
+  });
+
+  // A boundary drop is not a deletion: "I sent this and the agent never read it"
+  // is the one fact about a steer the reader could not learn any other way, so
+  // each waiting row leaves the dock as a `dropped: true` mark carrying its text,
+  // which the note offers to put back in the composer. Characterized on a
+  // BACKGROUND chat because that is the trigger the reader described.
+  it("promotes each waiting steer of a background chat as undelivered", () => {
+    setSessions([makeSession("chat-1"), makeSession("chat-2")]);
+    setActive("chat-2");
+    appendMessage("chat-1", { id: "u-1", role: "user", ts: 1, content: "go" });
+    appendMessage("chat-1", {
+      id: "a-1",
+      role: "assistant",
+      ts: 2,
+      content: "",
+      blocks: [{ type: "text", text: "partial" }],
+    });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "first", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "second", origin: "user" });
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+
+    expect(steerCount("chat-1")).toBe(0);
+    expect(steerMarks("chat-1")).toEqual([
+      {
+        id: "steer-1",
+        text: "first",
+        origin: "user",
+        dropped: true,
+        anchor: { msgID: "a-1", blockIndex: 1 },
+      },
+      {
+        id: "steer-2",
+        text: "second",
+        origin: "user",
+        dropped: true,
+        anchor: { msgID: "a-1", blockIndex: 1 },
+      },
+    ]);
   });
 
   // turn_ended is the only moment the set of turns changes, so it is the only

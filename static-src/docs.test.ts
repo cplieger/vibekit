@@ -41,6 +41,7 @@ vi.mock("./tabs.js", () => ({
   hasTab: undefined,
   tabIdFor: undefined,
   tabSetVersion: undefined,
+  openRunRefs: undefined,
   renameTab: undefined,
   // Also reached through run-view.js, via the run card's markdown bubble and the
   // linkifier behind it.

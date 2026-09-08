@@ -5,30 +5,29 @@
 // source: a consumer hands it an `ExecRun` and it draws it.
 //
 // LAYOUT: header (identity/state/progress/elapsed/controls/inputs), alert (only
-// when it wants a person), timeline (where the time went), tree (structure,
-// containers included), detail (the selected node at full width). Tree and
-// detail sit side by side on a wide viewport and stack on a narrow one, via a
-// container query on the tab rather than the viewport (the sidebar decides how
-// much width the tab gets).
+// when it wants a person), timeline (where the time went), results (what the
+// SELECTED step produced, at full column width, once that step has settled), then
+// tree (structure, containers included) and detail (the selected node at full
+// width). Tree and detail sit side by side on a wide viewport and stack on a narrow
+// one, via a container query on the tab rather than the viewport (the sidebar
+// decides how much width the tab gets).
 //
 // ONE CLOCK: a live execution takes minutes and a paused one emits no frames at
 // all, so one interval drives all three panes and stops when nothing moves.
 //
-// TWO REGIONS ARE SIGNATURE-GUARDED, the inputs and the results, and for the same
-// reason `detail.ts`'s `renderOutput` is: `render` runs on every store
-// invalidation — dozens of times a minute on a live execution — so rebuilding
-// either would discard the reader's expansion and their scroll position.
+// TWO REGIONS ARE SIGNATURE-GUARDED, the inputs and the results: `render` runs on
+// every store invalidation — dozens of times a minute on a live execution — so
+// rebuilding either would discard the reader's show-more expansion and their scroll
+// position.
 
 import { el } from "@cplieger/reactive";
-import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
-import { chevronEl } from "../chevron.js";
 import { attachClamp } from "../clamp-text.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN } from "../icons.js";
 import { buildAssistantBubble } from "../fundamentals/text-bubble.js";
 import { formatElapsed } from "../strings.js";
 import { counters, leaves, window as execWindow, type ExecNode, type ExecRun } from "./model.js";
-import { STATE_WORD } from "./status.js";
+import { STATE_WORD, settled } from "./status.js";
 import { buildExecTree, nodeAt, attentionRank, type ExecTreeView } from "./tree.js";
 import { buildExecTimeline, type ExecTimelineView } from "./timeline.js";
 import {
@@ -78,8 +77,14 @@ export interface ExecPageOpts {
 /** The instructions clamp, in the shape `fundamentals/turn-header.ts` states it:
  *  the line count the STYLESHEET clamps to, plus the character threshold used only
  *  while the element is detached and cannot be measured. Both numbers in one place,
- *  so the CSS and the fallback cannot drift apart. */
+ *  and `clamp-line-count.test.ts` holds the first to the stylesheet's own. */
 const CLAMP = { lines: 3, fallbackChars: 220 } as const;
+
+/** The results clamp, in the same shape and for the same reason: the line count the
+ *  STYLESHEET clamps `.ev-r-text` to, plus the character threshold the pre-layout
+ *  frame guesses with. Twelve lines because a capture is a report rather than a
+ *  label. */
+const RESULT_CLAMP = { lines: 12, fallbackChars: 900 } as const;
 
 export interface ExecPageView {
   readonly root: HTMLElement;
@@ -152,35 +157,26 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     el("div", { className: "ev-pane ev-pane-detail" }, detail.root),
   );
 
-  // Results: the execution's PRODUCT, as a roll-up, deliberately distinct from
-  // the detail pane's per-node output ("what did this step do" vs "what did the
-  // run produce"). Mirrors the transcript run card's `.run-outputs` pattern.
+  // Results: what the SELECTED step produced — its capture and its artifacts — at
+  // full column width, above the panes, and only once that step has settled.
   //
-  // OPEN by default: a run's product is what a reader opens the page for, and with
-  // the page scrolling (18-pages.css) an open roll-up costs page height rather than
-  // pane height — which is the whole reason it used to be shut.
-  const resultsCount = el("span", { className: "ev-r-count" });
+  // NO DISCLOSURE at either level. The region is either the thing a reader came to
+  // read or it is not there at all, so a chevron would be a control whose only
+  // states are "showing the answer" and "hiding the answer I asked for"; long
+  // captures are clamped with the page's own show-more instead (`resultItem`).
+  //
+  // The head is a plain label, and it says STEP results: `step` is already this
+  // module's word for a node, and an unqualified "Results" sitting above the
+  // selection UI reads as the whole run's.
   const resultsBody = el("div", { className: "ev-r-body" });
-  // The disclosure glyph LEADS, as the app's other section headers do. A span
-  // and not a button: `.ev-r-head` is `role="button"`, so a nested control is
-  // axe's `nested-interactive`, which `aria-hidden` + `tabindex="-1"` does not
-  // clear. `chevronEl()` already returns an `aria-hidden` span.
   const resultsHead = el(
     "div",
-    { className: "ev-r-head", role: "button", tabindex: "0" },
-    el("span", { className: "ev-r-twist", "aria-hidden": "true" }, chevronEl()),
-    el("span", { className: "ev-r-title" }, "Results"),
-    resultsCount,
+    { className: "ev-r-head" },
+    el("span", { className: "ev-r-title" }, "Step results"),
   );
   const results = el("div", { className: "ev-results", hidden: true }, resultsHead, resultsBody);
-  createDisclosure(resultsHead, resultsBody, {
-    open: true,
-    onToggle: (open) => {
-      results.classList.toggle("collapsed", !open);
-    },
-  });
 
-  const root = el("div", { className: "ev-page" }, head, alert, timeline.root, panes, results);
+  const root = el("div", { className: "ev-page" }, head, alert, timeline.root, results, panes);
 
   let current: ExecRun | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -228,6 +224,9 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     timeline.render(run.nodes, selected, run.live);
     const node = nodeAt(run.nodes, selected);
     detail.render(node);
+    // In `repaint` rather than in `render`, because the region is the SELECTED node's:
+    // a selection change is a change of subject, and only this path runs on one.
+    renderResults(node);
     // AFTER the pane has been told, so a consumer reacting synchronously finds the
     // host it is about to write into already created. Guarded on the shown node's
     // PATH and STATE: `repaint` runs on every store invalidation and on every
@@ -249,8 +248,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
    *  The signature guard is REQUIRED, not an optimisation: `render` runs on every
    *  store invalidation, so an unguarded `replaceChildren` would discard the
    *  reader's show-more expansion and rebuild every clamp dozens of times a minute
-   *  on a live run. Same idiom and same reason as `renderResults` below and
-   *  `detail.ts`'s `renderOutput`. */
+   *  on a live run. Same idiom and same reason as `renderResults` below. */
   function renderInputs(run: ExecRun): void {
     const entries = Object.entries(run.inputs ?? {});
     if (entries.length === 0) {
@@ -286,57 +284,89 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     );
   }
 
-  /** The results roll-up, rebuilt only when the SET changed (guarded by
-   *  signature, since `render` runs on every invalidation over a live run and
-   *  re-parsing would reset the reader's scroll). */
-  function renderResults(run: ExecRun): void {
-    const entries = Object.entries(run.outputs ?? {});
-    if (entries.length === 0) {
+  /** The SELECTED step's own results, rebuilt only when the SET changed (guarded by
+   *  signature, since `repaint` runs on every invalidation over a live run and
+   *  re-parsing would reset the reader's scroll and drop their show-more).
+   *
+   *  DONE-GATED on `settled`: a step that has not run has produced nothing, and one
+   *  still in flight has produced nothing YET — a region appearing empty and then
+   *  filling itself is a claim the source cannot make good on, and `fail`/`warn` are
+   *  in because such a step can still carry a capture worth reading.
+   *
+   *  Sourced from the NODE and never from a run-level map: `RunState.capturedOutputs`
+   *  is keyed by capture name with no node attribution anywhere on the wire, so
+   *  filtering it by step is not implementable. The cost is stated: a step's own
+   *  capture is labelled `Output` rather than by the name the recipe gave it. */
+  function renderResults(node: ExecNode | undefined): void {
+    const merged = new Map<string, string>();
+    if (node !== undefined && settled(node.state)) {
+      if (node.output !== undefined) {
+        merged.set("", node.output);
+      }
+      // Artifacts win a key collision, being the value a step CHOSE to publish.
+      for (const [k, v] of Object.entries(node.artifacts ?? {})) {
+        merged.set(k, v);
+      }
+    }
+    if (merged.size === 0) {
       results.hidden = true;
       delete resultsBody.dataset["sig"];
       resultsBody.replaceChildren();
       return;
     }
     results.hidden = false;
-    resultsCount.textContent = String(entries.length);
-    const sig = entries.map(([k, v]) => `${k}\u0001${v}`).join("\u0002");
+    const body = [...merged].map(([k, v]) => `${k}\u0001${v}`).join("\u0002");
+    const sig = `${node?.path ?? ""}\u0000${body}`;
     if (resultsBody.dataset["sig"] === sig) {
       return;
     }
     resultsBody.dataset["sig"] = sig;
-    resultsBody.replaceChildren(...entries.map(([key, value]) => resultItem(key, value)));
+    resultsBody.replaceChildren(...[...merged].map(([key, value]) => resultItem(key, value)));
   }
 
-  /** One capture as its own collapsible box, at full natural height.
+  /** One capture as its own box: a plain key row over the report, clamped.
    *
-   *  OPEN by default, matching the region around it and the run card's rule for the
-   *  thing a reader just asked to see. The head is the trigger and the chevron is a
-   *  SPAN: `createDisclosure` writes `role="button"` and `tabindex="0"` on a
-   *  non-`<button>` trigger itself, and a real control nested inside that role is
-   *  axe's `nested-interactive`, which `aria-hidden` does not clear. */
+   *  Per-entry boxes stay because a step with a capture plus two artifacts is
+   *  several entries and the boxes are what separate them; a second layout for the
+   *  N=1 case would be a second thing to keep true.
+   *
+   *  The opener is a SIBLING of the clipped box rather than a child, for the reason
+   *  `.ev-in-more` records: a clamped box is `overflow: hidden`, so a button inside
+   *  it is clipped away exactly when it becomes needed. */
   function resultItem(key: string, value: string): HTMLElement {
-    const head = el(
-      "div",
-      { className: "ev-r-item-head" },
-      el("span", { className: "ev-r-item-twist", "aria-hidden": "true" }, chevronEl()),
-      el("span", { className: "ev-r-item-key" }, key === "" ? "Output" : key),
-    );
+    const keyRow = el("span", { className: "ev-r-item-key" }, key === "" ? "Output" : key);
     // An empty value is a fact, not an absence: a source writes a key only for a
     // node that captured, so empty distinguishes "finished silently" from "never
-    // ran" — and it still earns a box, because that is the fact.
-    const body = el(
-      "div",
-      { className: "ev-r-item-body" },
-      value.trim() === ""
-        ? el(
+    // ran" — and it still earns a box, because that is the fact. Left unclamped:
+    // one sentence never overflows, and clamping it would put an opener under it.
+    if (value.trim() === "") {
+      return el(
+        "div",
+        { className: "ev-r-item" },
+        keyRow,
+        el(
+          "div",
+          { className: "ev-r-item-body" },
+          el(
             "div",
             { className: "ev-r-item-empty" },
             "This step finished without producing any text.",
-          )
-        : buildAssistantBubble(value, false).root,
+          ),
+        ),
+      );
+    }
+    const text = el("div", { className: "ev-r-text" }, buildAssistantBubble(value, false).root);
+    const more = el("button", { type: "button", className: "ev-r-more" }) as HTMLButtonElement;
+    // Overflow is MEASURED (`clamp-text.ts` compares `scrollHeight` against
+    // `clientHeight` under one shared `ResizeObserver`), so a short capture is never
+    // offered an opener that opens nothing.
+    attachClamp(text, more, RESULT_CLAMP);
+    return el(
+      "div",
+      { className: "ev-r-item" },
+      keyRow,
+      el("div", { className: "ev-r-item-body" }, text, more),
     );
-    createDisclosure(head, body, { open: true });
-    return el("div", { className: "ev-r-item" }, head, body);
   }
 
   function setClock(live: boolean): void {
@@ -402,8 +432,6 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       } else if (controlsHost.firstChild !== row || controlsHost.childNodes.length !== 1) {
         controlsHost.replaceChildren(row);
       }
-
-      renderResults(run);
 
       // A render carrying NO focus clears the watermark, so the next assertion of
       // the same path is honoured. Without it a door could name a node only once

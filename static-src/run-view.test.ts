@@ -32,7 +32,6 @@ interface RunInspectReply {
   state?: {
     workflowId: string;
     status?: string;
-    capturedOutputs?: Record<string, string>;
     root?: unknown;
     inputs?: Record<string, string>;
     /** KAS's own answer to "was this launched by an agent": an ACP session id,
@@ -128,6 +127,8 @@ vi.mock("./tabs.js", () => ({
   // no real tabs, so there is no dot to paint.
   tabIdFor: vi.fn(() => ""),
   tabSetVersion: vi.fn(() => 0),
+  // The open run tabs run-dots seeds run state for. Empty keeps the seed inert.
+  openRunRefs: vi.fn(() => []),
   // A run's tab row is renamed once its state arrives (run-dots.ts). Inert here;
   // a Browser-Mode mock is linked as real ESM, so a name any module in the graph
   // reaches has to exist on it.
@@ -298,7 +299,6 @@ const CONTROLS_FOR: Record<string, ControlsReply> = {
 async function paint(
   door: (id: string, name: string) => void,
   status: string,
-  capturedOutputs?: Record<string, string>,
   opts: {
     controls?: ControlsReply;
     /** Answer the affordance fetch with nothing, which is what a failed fetch and
@@ -329,7 +329,6 @@ async function paint(
     state: {
       workflowId: id,
       status,
-      ...(capturedOutputs === undefined ? {} : { capturedOutputs }),
       ...(opts.root === undefined ? {} : { root: opts.root }),
       ...(opts.inputs === undefined ? {} : { inputs: opts.inputs }),
       ...(parentSessionId === "" ? {} : { parentSessionId }),
@@ -412,6 +411,21 @@ function stepMessage(id: string, nodePath: string, text: string, workflowID = "w
   };
 }
 
+/** Let a clamp's ResizeObserver deliver its post-layout verdict. A callback is
+ *  delivered after layout and before paint, so ONE frame is the settle; the second is
+ *  margin for the cold-cache full-suite run, not a second mechanism (measured: every
+ *  clamp case here passes at one frame). Module-scope so the instructions clamp and
+ *  the result clamp share one wait rather than keeping a copy each. */
+async function settleClamp(): Promise<void> {
+  for (let i = 0; i < 2; i++) {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  }
+}
+
 // The shipped stylesheet, because the instructions clamp DECIDES on a measurement:
 // with no `-webkit-line-clamp` in force nothing is ever clipped, so every clamp case
 // would report "fits" and pass for the wrong reason. Mounted for the whole file so
@@ -471,7 +485,7 @@ describe("run view controls", () => {
   // runs — false for exactly this status, so the run had no recovery path and no
   // door in either product. The server now offers retry and the page draws it.
   it("offers retry on an aborted CHAT-PARENTED run", async () => {
-    const painted = await paint(openRunView, "aborted", undefined, {
+    const painted = await paint(openRunView, "aborted", {
       controls: { verbs: ["retry"], parent_chat_id: "c-launcher" },
     });
     expect(painted.labels).toEqual(["Retry failed steps"]);
@@ -490,7 +504,7 @@ describe("run view controls", () => {
   // never told WHY a run offered nothing. A refusal renders in the place they are
   // already looking for the control.
   it("shows the server's sentence where the buttons would have been", async () => {
-    const painted = await paint(openRunView, "running", undefined, {
+    const painted = await paint(openRunView, "running", {
       controls: {
         verbs: ["cancel"],
         refused: { pause: 'This run is driven by an agent in "Findings cleanup"' },
@@ -500,7 +514,7 @@ describe("run view controls", () => {
     // A partly-refused row keeps its buttons: the sentence is for a row with none.
     expect(painted.labels).toEqual(["Cancel"]);
 
-    const stuck = await paint(openRunView, "running", undefined, {
+    const stuck = await paint(openRunView, "running", {
       controls: {
         verbs: [],
         refused: { pause: "This run has no live engine on this server." },
@@ -515,7 +529,7 @@ describe("run view controls", () => {
   // guess: the same degradation the old table gave an unknown status, now covering
   // the moment between the tab opening and the fetch resolving.
   it("renders nothing while the affordance is still in flight", async () => {
-    const painted = await paint(openRunView, "running", undefined, {
+    const painted = await paint(openRunView, "running", {
       noControls: true,
       id: "wf_never_fetched",
     });
@@ -549,86 +563,338 @@ describe("run view controls", () => {
   });
 });
 
-// A step only gets a capturedOutputs key when it captured, and the captured value
-// is its last assistant text. So an EMPTY value is a fact about the run, not an
-// absence — hiding it made a silent step indistinguishable from one that never ran,
-// on the surface whose whole job is reading a finished run.
+// ---------------------------------------------------------------------------
+// THE RESULTS REGION, and it is the SELECTED STEP's rather than the run's.
 //
-// The vocabulary is the EXEC VIEW's (`ev-*`), which is neither this page's old
-// hand-rolled one nor the transcript card's: the page renders a generic
-// delegated-execution view that a subagent tab will reuse, so nothing on it is
-// named for workflows. Results roll up into a foot disclosure; a single step's own
-// output lives in the detail pane.
-describe("run view captured output", () => {
-  it("rolls every capture up into the results region", async () => {
-    const { body } = await paint(openRunView, "completed", { build: "ok", review: "done" });
-    const keys = [...body.querySelectorAll(".ev-r-item-key")].map((n) => n.textContent);
-    expect(keys).toEqual(["build", "review"]);
-    expect(body.querySelector(".ev-r-count")?.textContent).toBe("2");
+// It used to render `ExecRun.outputs`, the run-level merge of `capturedOutputs` and
+// `artifacts` — literally every step's capture at once, in a foot disclosure, while
+// the detail pane rendered the selected step's capture a second time on the same
+// screen. Both halves are gone: the run-level roll-up had no node attribution
+// anywhere on the wire to filter by (`ExecRun.outputs` and the merge are deleted with
+// it), and `detail.ts`'s own output region went with the duplication.
+//
+// What is here now is one region, sourced from `ExecNode.output` + `ExecNode.artifacts`,
+// gated on `settled(node.state)`, fixed above the panes, with no disclosure at either
+// level and a measured show-more on a long report. The accepted cost is stated: a
+// step's own capture is labelled `Output`, because the NAME (`build`, `review`) is a
+// run-level key nothing attributes to a node.
+// ---------------------------------------------------------------------------
+
+/** One step node carrying whatever a case needs it to have produced. */
+function resultStep(
+  nodeId: string,
+  status: string,
+  extra: { capturedOutput?: string; artifacts?: Record<string, string> } = {},
+): unknown {
+  return { nodeId, type: "step", status, children: [], ...extra };
+}
+
+/** A sequence root over the steps, which is the shape KAS sends: `runToExec` unwraps
+ *  it, so each step is a top-level node addressed `wf_1/<nodeId>`. */
+function resultPlan(...steps: unknown[]): unknown {
+  return { nodeId: "wf_1", type: "sequence", status: "running", children: steps };
+}
+
+function resultKeys(body: HTMLElement): (string | null)[] {
+  return [...body.querySelectorAll(".ev-r-item-key")].map((n) => n.textContent);
+}
+
+/** Click a tree row, which is how a reader changes the region's subject. */
+function selectRow(body: HTMLElement, path: string): void {
+  body.querySelector<HTMLElement>(`.ev-row[data-path="${path}"] > .ev-row-main`)?.click();
+}
+
+describe("run view step results", () => {
+  // PER-STEP SCOPING. Two settled steps with different captures: only the selected
+  // one's is on screen, and clicking the other row swaps which. The old region
+  // showed both at once, keyed by capture name, with no way to tell whose was whose.
+  it("shows only the selected step's capture, and swaps on a selection change", async () => {
+    const { body } = await paint(openRunView, "completed", {
+      root: resultPlan(
+        resultStep("build", "completed", { capturedOutput: "built it" }),
+        resultStep("review", "completed", { capturedOutput: "reviewed it" }),
+      ),
+    });
+    // The auto-follow opens on the first leaf, so `build` is the subject.
+    expect(body.querySelector(".ev-d-title")?.textContent).toBe("build");
+    expect(body.querySelector(".ev-r-text")?.textContent).toContain("built it");
+    expect(body.querySelector(".ev-r-text")?.textContent).not.toContain("reviewed it");
+
+    selectRow(body, "wf_1/review");
+    expect(body.querySelector(".ev-d-title")?.textContent).toBe("review");
+    expect(body.querySelector(".ev-r-text")?.textContent).toContain("reviewed it");
+    expect(body.querySelector(".ev-r-text")?.textContent).not.toContain("built it");
   });
 
+  it("labels a step's own capture Output, and its artifacts by key", async () => {
+    const { body } = await paint(openRunView, "completed", {
+      root: resultPlan(
+        resultStep("build", "completed", {
+          capturedOutput: "the report",
+          artifacts: { diff: "a patch" },
+        }),
+      ),
+    });
+    expect(resultKeys(body)).toEqual(["Output", "diff"]);
+  });
+
+  // THE DONE GATE. A step still in flight has produced nothing YET and one that
+  // never ran has produced nothing at all, so a region that appeared empty and then
+  // filled itself would be a claim the source cannot make good on. `failed` and
+  // `aborted` are IN, because such a step can carry a capture worth reading.
+  it.each([
+    ["running", false],
+    ["pending", false],
+    ["skipped", false],
+    ["completed", true],
+    ["failed", true],
+    ["aborted", true],
+  ])("renders the region for a %s step: %s", async (status, shown) => {
+    const { body } = await paint(openRunView, "running", {
+      root: resultPlan(resultStep("build", status, { capturedOutput: "a capture" })),
+    });
+    expect(body.querySelector(".ev-results")?.hasAttribute("hidden")).toBe(!shown);
+  });
+
+  // NOT IN THE DOM AT ALL, which is stronger than hidden and is what the `hidden`
+  // attribute plus `.ev-results[hidden] { display: none }` buys: nothing inside the
+  // region is reachable, by a reader or by find-in-page, until it has a subject.
+  it("renders no entry for an unsettled step even though the node holds one", async () => {
+    const { body } = await paint(openRunView, "running", {
+      root: resultPlan(resultStep("build", "running", { capturedOutput: "a capture" })),
+    });
+    expect(body.querySelectorAll(".ev-r-item")).toHaveLength(0);
+  });
+
+  it("hides the region for a settled step that captured nothing", async () => {
+    const { body } = await paint(openRunView, "completed", {
+      root: resultPlan(resultStep("build", "completed")),
+    });
+    expect(body.querySelector(".ev-results")?.hasAttribute("hidden")).toBe(true);
+  });
+
+  // A step only gets a capture when it captured, and the captured value is its last
+  // assistant text. So an EMPTY value is a fact about the step, not an absence —
+  // dropping it made a silent step indistinguishable from one that never ran, on the
+  // surface whose whole job is reading a finished run.
   it("renders an empty capture with its reason instead of dropping it", async () => {
-    const { body } = await paint(openRunView, "completed", { review: "   " });
-    expect([...body.querySelectorAll(".ev-r-item-key")].map((n) => n.textContent)).toEqual([
-      "review",
-    ]);
+    const { body } = await paint(openRunView, "completed", {
+      root: resultPlan(resultStep("build", "completed", { capturedOutput: "   " })),
+    });
+    expect(resultKeys(body)).toEqual(["Output"]);
     expect(body.querySelector(".ev-r-item-empty")?.textContent).toContain(
       "without producing any text",
     );
+    // Unclamped: one sentence never overflows, and an opener under it would open
+    // nothing.
+    expect(body.querySelectorAll(".ev-r-more")).toHaveLength(0);
   });
 
   it("renders a non-empty capture as MARKDOWN, not as preformatted text", async () => {
     // A captured report is a step's last assistant message, so it is markdown and
     // the review page is where it gets read. Rendered through the transcript's own
     // bubble: before this it sat in a `<pre>`, showing its own asterisks.
-    const { body } = await paint(openRunView, "completed", { build: "**shipped** ok" });
-    expect(body.querySelector(".ev-r-item-body strong")?.textContent).toBe("shipped");
+    const { body } = await paint(openRunView, "completed", {
+      root: resultPlan(resultStep("build", "completed", { capturedOutput: "**shipped** ok" })),
+    });
+    expect(body.querySelector(".ev-r-text strong")?.textContent).toBe("shipped");
     expect(body.querySelector("pre.run-output-body")).toBeNull();
   });
 
-  // No keys at all means no region: a run whose steps all declared
-  // captureOutput:false has nothing to say here, and a visible empty disclosure
-  // would claim otherwise.
-  it("hides the region when the run captured nothing", async () => {
-    const { body } = await paint(openRunView, "completed", {});
-    expect(body.querySelector(".ev-results")?.hasAttribute("hidden")).toBe(true);
+  it("gives every entry its own box", async () => {
+    const { body } = await paint(openRunView, "completed", {
+      root: resultPlan(
+        resultStep("build", "completed", {
+          capturedOutput: "the report",
+          artifacts: { diff: "a patch" },
+        }),
+      ),
+    });
+    expect(body.querySelectorAll(".ev-r-item")).toHaveLength(2);
   });
 
-  // OPEN by default, both levels. A run's product is what a reader opens the page
-  // for, and with the page scrolling an open roll-up costs page height rather than
-  // pane height — which is the whole reason it used to be shut.
-  it("opens the region on first render rather than collapsed", async () => {
-    const { body } = await paint(openRunView, "completed", { build: "ok" });
-    const region = body.querySelector(".ev-results");
-    expect(region?.classList.contains("collapsed")).toBe(false);
-    expect(body.querySelector(".ev-r-head")?.getAttribute("aria-expanded")).toBe("true");
+  // THE DETAIL PANE NO LONGER RENDERS A CAPTURE, and this is the guard that keeps the
+  // duplicate from coming back: with the region per-step, `.ev-d-out` rendered exactly
+  // what `.ev-r-item` renders, one pane apart on the same screen.
+  it("renders the capture once, in the results region and not in the detail pane", async () => {
+    const { body } = await paint(openRunView, "completed", {
+      root: resultPlan(resultStep("build", "completed", { capturedOutput: "the report" })),
+    });
+    expect(body.querySelectorAll(".ev-d-out")).toHaveLength(0);
+    expect(
+      [...body.querySelectorAll("*")].filter((n) => n.textContent?.trim() === "the report").length,
+    ).toBeGreaterThan(0);
+    expect(body.querySelectorAll(".ev-r-text")).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NO TOGGLE, AT EITHER LEVEL. The region used to be a disclosure holding N
+// disclosures, and requirement 4 makes it always-open when present — so a surviving
+// per-entry chevron would contradict it. Nothing persisted the open state (grepped
+// `localStorage`, `per-chat-store`, `device-view` and the router across
+// `exec-view/**`, `run-view.ts` and `run-store.ts`: zero hits, and the only run
+// fragment is `#node=`), so the deletion is code-only and there is no stored key to
+// purge.
+// ---------------------------------------------------------------------------
+
+describe("run view step results have no toggle", () => {
+  async function region(): Promise<HTMLElement> {
+    const { body } = await paint(openRunView, "completed", {
+      root: resultPlan(
+        resultStep("build", "completed", {
+          capturedOutput: "the report",
+          artifacts: { diff: "a patch" },
+        }),
+      ),
+    });
+    const el = body.querySelector<HTMLElement>(".ev-results");
+    if (el === null) {
+      throw new Error("the results region did not render");
+    }
+    return el;
+  }
+
+  it("carries no chevron, no role=button, and no aria-expanded of its own", async () => {
+    const el = await region();
+    expect(el.querySelectorAll(".disclosure-chevron")).toHaveLength(0);
+    expect(el.querySelectorAll('[role="button"]')).toHaveLength(0);
+    expect(el.querySelectorAll("[tabindex]")).toHaveLength(0);
+    // The clamp opener is EXEMPT and its `aria-expanded` is not the toggle's: it
+    // states whether the report below it is clipped, which is a fact about that one
+    // box's text, not about whether the region is showing anything.
+    expect(el.querySelectorAll("[aria-expanded]:not(.ev-r-more)")).toHaveLength(0);
   });
 
-  it("gives every capture its own open box", async () => {
-    const { body } = await paint(openRunView, "completed", { build: "ok", review: "done" });
-    const heads = [...body.querySelectorAll(".ev-r-item > .ev-r-item-head")];
-    expect(heads).toHaveLength(2);
-    expect(heads.map((h) => h.getAttribute("aria-expanded"))).toEqual(["true", "true"]);
+  // The clamp opener is the ONE button the region may hold, and it is a real
+  // `<button>` rather than a `role`-bearing div for that reason.
+  it("holds no button other than a clamp opener", async () => {
+    const el = await region();
+    const buttons = [...el.querySelectorAll("button")];
+    for (const b of buttons) {
+      expect(b.className).toBe("ev-r-more");
+    }
   });
 
-  // A real activation target: `createDisclosure` puts `role="button"` and
-  // `tabindex="0"` on a non-`<button>` trigger itself, so the head is reachable by
-  // keyboard, and the chevron beside it stays a span (nested-interactive).
-  it("makes each box's header a keyboard-reachable button with no nested control", async () => {
-    const { body } = await paint(openRunView, "completed", { build: "ok" });
-    const head = body.querySelector<HTMLElement>(".ev-r-item-head");
-    expect(head?.getAttribute("role")).toBe("button");
-    expect(head?.getAttribute("tabindex")).toBe("0");
-    expect(head?.querySelectorAll("button, a[href], input")).toHaveLength(0);
+  it("changes nothing when the head is clicked", async () => {
+    const el = await region();
+    const before = el.querySelectorAll(".ev-r-item").length;
+    const keysBefore = el.textContent;
+    el.querySelector<HTMLElement>(".ev-r-head")?.click();
+    expect(el.querySelectorAll(".ev-r-item")).toHaveLength(before);
+    expect(el.textContent).toBe(keysBefore);
+    expect(el.hasAttribute("hidden")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PLACEMENT: the region is a child of `.ev-page` sitting BEFORE `.ev-panes`, at the
+// column's full width. `.ev-page` is a `flex-direction: column` with the default
+// `align-items: stretch`, so no CSS is needed to make it full width — which is
+// exactly why the width is asserted rather than assumed.
+// ---------------------------------------------------------------------------
+
+describe("run view step results placement", () => {
+  async function page(): Promise<HTMLElement> {
+    const { body } = await paint(openRunView, "completed", {
+      root: resultPlan(
+        resultStep("build", "completed", { capturedOutput: "the report" }),
+        resultStep("review", "completed", { capturedOutput: "reviewed it" }),
+      ),
+    });
+    const el = body.querySelector<HTMLElement>(".ev-page");
+    if (el === null) {
+      throw new Error("the page did not render");
+    }
+    return el;
+  }
+
+  it("precedes the step and output boxes among the page's children", async () => {
+    const el = await page();
+    const kids = [...el.children].map((n) => n.className.split(" ")[0]);
+    expect(kids.indexOf("ev-results")).toBeGreaterThanOrEqual(0);
+    expect(kids.indexOf("ev-results")).toBeLessThan(kids.indexOf("ev-panes"));
   });
 
-  it("collapses only the box whose header was clicked", async () => {
-    const { body } = await paint(openRunView, "completed", { build: "ok", review: "done" });
-    const heads = [...body.querySelectorAll<HTMLElement>(".ev-r-item-head")];
-    heads[0]?.click();
-    expect(heads.map((h) => h.getAttribute("aria-expanded"))).toEqual(["false", "true"]);
-    // And the outer region is untouched: the two levels are independent.
-    expect(body.querySelector(".ev-results")?.classList.contains("collapsed")).toBe(false);
+  it("renders at the same width as the panes below it", async () => {
+    const el = await page();
+    const results = el.querySelector<HTMLElement>(".ev-results")!;
+    const panes = el.querySelector<HTMLElement>(".ev-panes")!;
+    // The premise: both boxes really were laid out.
+    expect(panes.getBoundingClientRect().width).toBeGreaterThan(0);
+    expect(results.getBoundingClientRect().width).toBe(panes.getBoundingClientRect().width);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE CLAMP on a result box, reusing the page's own affordance: `clamp-text.ts`
+// `attachClamp`, the `data-clamped` attribute and the `.ev-in-more` opener skin, the
+// same three the header's instructions use. Overflow is MEASURED, so an opener that
+// opens nothing is unrepresentable — which is what the last case here proves, and it
+// is the one a character-count implementation gets wrong.
+// ---------------------------------------------------------------------------
+
+describe("run view step result clamp", () => {
+  async function capture(output: string): Promise<HTMLElement> {
+    const { body } = await paint(openRunView, "completed", {
+      root: resultPlan(resultStep("build", "completed", { capturedOutput: output })),
+    });
+    await settleClamp();
+    return body;
+  }
+
+  function openers(body: HTMLElement): HTMLButtonElement[] {
+    return [...body.querySelectorAll<HTMLButtonElement>(".ev-r-more")];
+  }
+
+  it("offers NO opener on a short capture", async () => {
+    const body = await capture("shipped");
+    const text = body.querySelector<HTMLElement>(".ev-r-text")!;
+    // The premise: this report really is not clipped.
+    expect(text.scrollHeight - text.clientHeight).toBeLessThanOrEqual(1);
+    expect(openers(body).map((b) => b.hidden)).toEqual([true]);
+  });
+
+  it("round-trips the opener on a capture that overflows the clamp", async () => {
+    // Twelve lines is the clamp, so a paragraph per line comfortably exceeds it at
+    // any width this suite runs at.
+    const long = Array.from({ length: 40 }, (_, i) => `line ${String(i)} of the report`).join(
+      "\n\n",
+    );
+    const body = await capture(long);
+    const text = body.querySelector<HTMLElement>(".ev-r-text")!;
+    const [more] = openers(body);
+    // The premise: the clamp really is clipping this report.
+    expect(text.scrollHeight - text.clientHeight).toBeGreaterThan(1);
+    expect(more?.hidden).toBe(false);
+    expect(more?.tagName).toBe("BUTTON");
+    expect(more?.getAttribute("aria-expanded")).toBe("false");
+    expect(more?.textContent).toBe("Show more");
+    expect(text.hasAttribute("data-clamped")).toBe(true);
+
+    more?.click();
+    expect(text.hasAttribute("data-clamped")).toBe(false);
+    expect(more?.getAttribute("aria-expanded")).toBe("true");
+    expect(more?.textContent).toBe("Show less");
+
+    more?.click();
+    expect(text.hasAttribute("data-clamped")).toBe(true);
+    expect(more?.getAttribute("aria-expanded")).toBe("false");
+    expect(more?.textContent).toBe("Show more");
+  });
+
+  // THE MEASUREMENT CASE. Longer than `RESULT_CLAMP.fallbackChars` and still inside
+  // twelve lines at this width, so the pre-layout guess says "overflows" and the
+  // observer has to overrule it. A character-count implementation leaves an opener
+  // here that opens nothing.
+  it("withdraws the opener when layout says the long capture fits", async () => {
+    const long = "shipped ".repeat(150).trim();
+    expect(long.length).toBeGreaterThan(900);
+    const body = await capture(long);
+    const text = body.querySelector<HTMLElement>(".ev-r-text")!;
+    // The premise, or this case would assert nothing.
+    expect(text.scrollHeight - text.clientHeight).toBeLessThanOrEqual(1);
+    expect(openers(body).map((b) => b.hidden)).toEqual([true]);
   });
 });
 
@@ -639,24 +905,12 @@ describe("run view captured output", () => {
 // element is still detached in, and these cases pin that the measurement is what
 // decides — a character-count implementation gets the third one wrong.
 describe("run view instructions", () => {
-  /** Let the clamp's ResizeObserver deliver its post-layout verdict. A callback is
-   *  delivered after layout and before paint, so one frame is the settle. */
-  async function settle(): Promise<void> {
-    for (let i = 0; i < 2; i++) {
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          resolve();
-        });
-      });
-    }
-  }
-
   function openers(body: HTMLElement): HTMLButtonElement[] {
     return [...body.querySelectorAll<HTMLButtonElement>(".ev-in-more")];
   }
 
   it("renders the value in its own clamped box", async () => {
-    const { body } = await paint(openRunView, "running", undefined, {
+    const { body } = await paint(openRunView, "running", {
       inputs: { repo: "vibekit", target: "static-src" },
     });
     expect([...body.querySelectorAll(".ev-in-k")].map((n) => n.textContent)).toEqual([
@@ -672,11 +926,11 @@ describe("run view instructions", () => {
   // The case the user called out, and the one a character count also gets right —
   // so it is the floor rather than the proof.
   it("offers NO opener on a short instruction", async () => {
-    const { body } = await paint(openRunView, "running", undefined, {
+    const { body } = await paint(openRunView, "running", {
       inputs: { repo: "vibekit" },
     });
     expect(openers(body).map((b) => b.hidden)).toEqual([true]);
-    await settle();
+    await settleClamp();
     expect(openers(body).map((b) => b.hidden)).toEqual([true]);
   });
 
@@ -685,10 +939,10 @@ describe("run view instructions", () => {
     // Newlines would NOT do it: the value is not preformatted, so they collapse to
     // spaces — which is exactly why the character/newline guess cannot be trusted
     // and the observer has the last word.
-    const { body } = await paint(openRunView, "running", undefined, {
+    const { body } = await paint(openRunView, "running", {
       inputs: { task: "converge the chevrons and then the boxes ".repeat(80).trim() },
     });
-    await settle();
+    await settleClamp();
     const [more] = openers(body);
     const text = body.querySelector<HTMLElement>(".ev-in-text");
     // The premise: the clamp really is clipping this value.
@@ -713,8 +967,8 @@ describe("run view instructions", () => {
   it("withdraws the opener when layout says the long value fits", async () => {
     const long = "shipped ".repeat(40).trim();
     expect(long.length).toBeGreaterThan(220);
-    const { body } = await paint(openRunView, "running", undefined, { inputs: { task: long } });
-    await settle();
+    const { body } = await paint(openRunView, "running", { inputs: { task: long } });
+    await settleClamp();
     const text = body.querySelector<HTMLElement>(".ev-in-text");
     // The premise, or this case would assert nothing: the text really is not
     // clipped at this width.
@@ -722,21 +976,32 @@ describe("run view instructions", () => {
     expect(openers(body).map((b) => b.hidden)).toEqual([true]);
   });
 
+  /** A settled step whose capture this render carries. The results region is
+   *  rebuilt whenever its own signature changes, so the capture read back off the
+   *  rendered entry is the independent witness that a second render really ran —
+   *  the retired `.ev-r-count` used to be, and it no longer exists (nor does the
+   *  run-level roll-up it counted). */
+  const capturing = (output: string): unknown => ({
+    nodeId: "wf_1",
+    type: "sequence",
+    status: "running",
+    children: [
+      { nodeId: "build", type: "step", status: "completed", capturedOutput: output, children: [] },
+    ],
+  });
+
   /** Re-render the SAME mounted page from a fresh `inspect` reply.
    *
    *  A fresh `state` object is what makes this a real second render: the store
-   *  assigns it to a reactive cell, and an identical reference would notify nobody.
-   *  `capturedOutputs` is carried so every case can prove the render actually ran —
-   *  the results region is rebuilt whenever its own set changes, so it is the
-   *  independent witness the inputs assertion needs. */
+   *  assigns it to a reactive cell, and an identical reference would notify nobody. */
   async function rerender(
     tabID: string,
     inputs: Record<string, string>,
-    capturedOutputs: Record<string, string>,
+    capture: string,
   ): Promise<void> {
     m.reply.current = {
       workflowId: "wf_1",
-      state: { workflowId: "wf_1", status: "running", inputs, capturedOutputs },
+      state: { workflowId: "wf_1", status: "running", inputs, root: capturing(capture) },
     } satisfies RunInspectReply;
     showRun(tabID);
     for (let i = 0; i < 10; i++) {
@@ -748,23 +1013,25 @@ describe("run view instructions", () => {
   // run — so an unguarded rebuild would discard the reader's expansion and re-wire
   // every clamp. Node identity is the assertion because that is what survives.
   it("does not rebuild the list when the inputs are unchanged", async () => {
-    const { body, tab } = await paint(openRunView, "running", undefined, {
+    const { body, tab } = await paint(openRunView, "running", {
       inputs: { repo: "vibekit" },
+      root: capturing("first"),
     });
     const before = body.querySelector(".ev-in-v");
-    await rerender(tab.id, { repo: "vibekit" }, { build: "ok" });
+    await rerender(tab.id, { repo: "vibekit" }, "second");
 
     // The premise, or this case asserts nothing: the page really did re-render.
-    expect(body.querySelector(".ev-r-count")?.textContent).toBe("1");
+    expect(body.querySelector(".ev-r-text")?.textContent).toContain("second");
     expect(body.querySelector(".ev-in-v")).toBe(before);
   });
 
   it("rebuilds the list when the inputs change", async () => {
-    const { body, tab } = await paint(openRunView, "running", undefined, {
+    const { body, tab } = await paint(openRunView, "running", {
       inputs: { repo: "vibekit" },
+      root: capturing("first"),
     });
     const before = body.querySelector(".ev-in-v");
-    await rerender(tab.id, { repo: "subflux" }, {});
+    await rerender(tab.id, { repo: "subflux" }, "second");
 
     expect(body.querySelector(".ev-in-v")).not.toBe(before);
     expect(body.querySelector(".ev-in-text")?.textContent).toBe("subflux");
@@ -806,7 +1073,7 @@ describe("run view structure", () => {
   };
 
   it("renders control-flow containers as rows, not as an indent", async () => {
-    const { body } = await paint(openRunView, "running", undefined, { root: looping });
+    const { body } = await paint(openRunView, "running", { root: looping });
     const kinds = [...body.querySelectorAll(".ev-row")].map((r) => r.getAttribute("data-kind"));
     // The repeat is a row of its own, and its two steps are rows beneath it. Before
     // this the leaf flattening left only the steps, so a loop was invisible.
@@ -816,7 +1083,7 @@ describe("run view structure", () => {
   it("states a repeat's bound and stop condition from the node PLAN", async () => {
     // `nodePlan` had ZERO client readers: it is passed through verbatim by
     // GET /api/runs/{id} and its only content the state tree lacks is exactly this.
-    const { body } = await paint(openRunView, "running", undefined, {
+    const { body } = await paint(openRunView, "running", {
       root: looping,
       nodePlan: [
         { nodeId: "fix-loop", maxIterations: 5, stopCondition: "verify.output contains PASS" },
@@ -831,7 +1098,7 @@ describe("run view structure", () => {
   // open, which tells a reader nothing. What is worth surfacing is the worst outcome
   // beneath it, so a collapsed group still says a step inside it failed.
   it("rolls a failure up to the container that holds it", async () => {
-    const { body } = await paint(openRunView, "running", undefined, {
+    const { body } = await paint(openRunView, "running", {
       root: {
         ...looping,
         children: [
@@ -850,7 +1117,7 @@ describe("run view structure", () => {
   // Every node carries its own timestamps, so the execution's shape over time is on
   // the wire and no surface had ever drawn it. One lane per leaf.
   it("draws a lane per leaf on the timeline", async () => {
-    const { body } = await paint(openRunView, "running", undefined, {
+    const { body } = await paint(openRunView, "running", {
       root: {
         nodeId: "wf_1",
         type: "sequence",
@@ -888,7 +1155,7 @@ describe("run view structure", () => {
   // own row as the filled header — and a top-level leaf does not. The common flat
   // workflow is all depth-0 leaves, so this item is a no-op for it by design.
   it("boxes a top-level container and leaves a top-level leaf plain", async () => {
-    const { body } = await paint(openRunView, "running", undefined, {
+    const { body } = await paint(openRunView, "running", {
       root: {
         nodeId: "wf_1",
         type: "sequence",
@@ -907,7 +1174,7 @@ describe("run view structure", () => {
   // A direct child of a group needs no marker — the box says whose it is. A
   // sub-sub-item gets the `↳` glyph plus one step of indent.
   it("marks a sub-sub-item with the nesting glyph and not a direct child", async () => {
-    const { body } = await paint(openRunView, "running", undefined, {
+    const { body } = await paint(openRunView, "running", {
       root: {
         nodeId: "wf_1",
         type: "sequence",
@@ -950,7 +1217,7 @@ describe("run view structure", () => {
   // STEPS MUST NOT BECOME COLLAPSIBLE. A childless row has no disclosure at all, and
   // the grouping change must not have given it one.
   it("leaves a step row non-collapsible", async () => {
-    const { body } = await paint(openRunView, "running", undefined, { root: looping });
+    const { body } = await paint(openRunView, "running", { root: looping });
     const steps = [...body.querySelectorAll<HTMLElement>('.ev-row[data-kind="step"]')];
     expect(steps).toHaveLength(2);
     for (const step of steps) {
@@ -1020,7 +1287,7 @@ describe("run view door focus", () => {
   it("selects the node the door named, not the one the page would follow", async () => {
     // The auto-follow would pick `build` (it is running), so the door has to name
     // the OTHER step for this to say anything.
-    const { body } = await paint(rowDoor("wf_1/lint"), "running", undefined, {
+    const { body } = await paint(rowDoor("wf_1/lint"), "running", {
       root: plan(["build", "running"], ["lint", "pending"]),
     });
     expect(selectedPath(body)).toBe("wf_1/lint");
@@ -1029,7 +1296,7 @@ describe("run view door focus", () => {
 
   it("re-selects the same node after the reader has moved off it", async () => {
     const two = plan(["build", "running"], ["lint", "pending"]);
-    const { body } = await paint(rowDoor("wf_1/build"), "running", undefined, { root: two });
+    const { body } = await paint(rowDoor("wf_1/build"), "running", { root: two });
     expect(selectedPath(body)).toBe("wf_1/build");
 
     // The reader moves in the tree, and a frame lands meanwhile — which is the
@@ -1059,21 +1326,16 @@ describe("run view door focus", () => {
     const node = r.kind === "run" ? (r.node ?? "") : "";
     // The auto-follow would pick the running `build`, so a lost fragment shows up
     // as that step being selected instead.
-    const { body } = await paint(
-      (id, name) => openRunView(id, name, "", node),
-      "running",
-      undefined,
-      {
-        root: plan(["build", "running"], ["lint", "pending"]),
-      },
-    );
+    const { body } = await paint((id, name) => openRunView(id, name, "", node), "running", {
+      root: plan(["build", "running"], ["lint", "pending"]),
+    });
     expect(selectedPath(body)).toBe("wf_1/lint");
   });
 
   it("holds a pick the plan does not describe yet rather than losing it", async () => {
     // The click-beats-fetch race: the row was clicked before `inspect` answered, so
     // the first paint has no such node and the request must survive to the next one.
-    const { body } = await paint(rowDoor("wf_1/lint"), "running", undefined, {
+    const { body } = await paint(rowDoor("wf_1/lint"), "running", {
       root: plan(["build", "running"], ["publish", "pending"]),
     });
     expect(selectedPath(body)).toBe("wf_1/build");
@@ -1131,7 +1393,7 @@ describe("run view empty step notes", () => {
     status: string,
     opts: { parentless?: boolean; root?: unknown } = {},
   ): Promise<string> {
-    const { body } = await paint(openRunView, status, undefined, { root, ...opts });
+    const { body } = await paint(openRunView, status, { root, ...opts });
     return body.querySelector(".ev-d-empty")?.textContent ?? "";
   }
 
@@ -1304,7 +1566,7 @@ describe("run view chat-route steps", () => {
   it("renders the launching chat's blocks in the step's own body", async () => {
     setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "compiling")])]);
     m.parentChat.current = "c-1";
-    const { body } = await paint(openRunView, "running", undefined, {
+    const { body } = await paint(openRunView, "running", {
       parentless: false,
       root: twoSteps,
     });
@@ -1323,7 +1585,7 @@ describe("run view chat-route steps", () => {
   it("mints a host only for a step the slice has content for", async () => {
     setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "compiling")])]);
     m.parentChat.current = "c-1";
-    const { body } = await paint(openRunView, "running", undefined, {
+    const { body } = await paint(openRunView, "running", {
       parentless: false,
       root: twoSteps,
     });
@@ -1338,7 +1600,7 @@ describe("run view chat-route steps", () => {
   it("ignores another run's step blocks", async () => {
     setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "theirs", "wf_2")])]);
     m.parentChat.current = "c-1";
-    await paint(openRunView, "running", undefined, { parentless: false, root: twoSteps });
+    await paint(openRunView, "running", { parentless: false, root: twoSteps });
     // A fixed short settle rather than the poll above: nothing will ever arrive here,
     // so a poll would spend its whole budget proving it.
     for (let i = 0; i < 20; i++) {
@@ -1353,7 +1615,7 @@ describe("run view chat-route steps", () => {
   it("finds the launching chat through the run tab's own parent", async () => {
     setSessions([chatSession("c-9", [stepMessage("m1", "wf_1/coder", "compiling")])]);
     m.parentChat.current = "c-9";
-    await paint(openRunView, "completed", undefined, {
+    await paint(openRunView, "completed", {
       parentless: false,
       root: {
         ...twoSteps,
@@ -1384,7 +1646,7 @@ describe("run view chat-route steps", () => {
   it("re-projects a step when a delta grows its block", async () => {
     setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "compil")])]);
     m.parentChat.current = "c-1";
-    const { body } = await paint(openRunView, "running", undefined, {
+    const { body } = await paint(openRunView, "running", {
       parentless: false,
       root: twoSteps,
     });
@@ -1407,7 +1669,7 @@ describe("run view chat-route steps", () => {
     setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "compil")])]);
     m.parentChat.current = "c-1";
     ensureBlockTextSig("m1", 0, "compil");
-    const { body } = await paint(openRunView, "running", undefined, {
+    const { body } = await paint(openRunView, "running", {
       parentless: false,
       root: twoSteps,
     });
@@ -1476,7 +1738,7 @@ describe("run view KAS-route step reads", () => {
   // The ARM, and the case every gate below is measured against: a settled leaf whose
   // slice is empty is exactly what the read exists for.
   it("arms a read for a settled step with no chat slice", async () => {
-    await paint(openRunView, "completed", undefined, { root: oneStep("completed") });
+    await paint(openRunView, "completed", { root: oneStep("completed") });
     expect(m.requested).toEqual(["wf_1/coder"]);
   });
 
@@ -1485,7 +1747,7 @@ describe("run view KAS-route step reads", () => {
   it("arms no read for a step that never ran", async () => {
     for (const status of ["pending", "skipped"]) {
       m.requested.length = 0;
-      await paint(openRunView, "running", undefined, { root: oneStep(status) });
+      await paint(openRunView, "running", { root: oneStep(status) });
       expect(m.requested).toEqual([]);
     }
   });
@@ -1496,7 +1758,7 @@ describe("run view KAS-route step reads", () => {
   it("arms no read for a step still in flight", async () => {
     for (const status of ["running", "paused"]) {
       m.requested.length = 0;
-      await paint(openRunView, "running", undefined, { root: oneStep(status) });
+      await paint(openRunView, "running", { root: oneStep(status) });
       expect(m.requested).toEqual([]);
     }
   });
@@ -1507,7 +1769,7 @@ describe("run view KAS-route step reads", () => {
   // viewing — and the step they are looking at is then the one node never read. The
   // step SETTLING is what arms it.
   it("arms the read when the step the reader picked settles where it stands", async () => {
-    const { body } = await paint(openRunView, "running", undefined, {
+    const { body } = await paint(openRunView, "running", {
       root: twoLeaves("running", "pending"),
     });
     expect(m.requested).toEqual([]);
@@ -1542,7 +1804,7 @@ describe("run view KAS-route step reads", () => {
   it("arms no read when the launching chat already holds the step's blocks", async () => {
     setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "compiled")])]);
     m.parentChat.current = "c-1";
-    await paint(openRunView, "completed", undefined, {
+    await paint(openRunView, "completed", {
       parentless: false,
       root: oneStep("completed"),
     });
@@ -1555,7 +1817,7 @@ describe("run view KAS-route step reads", () => {
   it("arms a read when the launching chat is resident but holds no blocks", async () => {
     setSessions([chatSession("c-1", [])]);
     m.parentChat.current = "c-1";
-    await paint(openRunView, "completed", undefined, {
+    await paint(openRunView, "completed", {
       parentless: false,
       root: oneStep("completed"),
     });
@@ -1572,7 +1834,7 @@ describe("run view KAS-route step reads", () => {
   // click selects it (`exec-view/tree.ts`), so this is a real gesture rather than a
   // reach into internals.
   it("arms no read for a container the reader selects", async () => {
-    const { body } = await paint(openRunView, "completed", undefined, {
+    const { body } = await paint(openRunView, "completed", {
       root: {
         nodeId: "wf_1",
         type: "sequence",
@@ -1604,7 +1866,7 @@ describe("run view KAS-route step reads", () => {
   it("renders a KAS read's blocks in the step's own body", async () => {
     m.reads.set("wf_1/coder", { state: "ready" });
     m.kasSlices.set("wf_1/coder", kasSlice());
-    const { body } = await paint(openRunView, "completed", undefined, {
+    const { body } = await paint(openRunView, "completed", {
       root: oneStep("completed"),
     });
     await loaded();
@@ -1631,7 +1893,7 @@ describe("run view KAS-route step reads", () => {
     m.parentChat.current = "c-1";
     m.reads.set("wf_1/coder", { state: "ready" });
     m.kasSlices.set("wf_1/coder", kasSlice());
-    await paint(openRunView, "completed", undefined, {
+    await paint(openRunView, "completed", {
       parentless: false,
       root: oneStep("completed"),
     });
@@ -1650,7 +1912,7 @@ describe("run view KAS-route step reads", () => {
   // transcript lands in the cache and stays off screen until some unrelated frame
   // happens to repaint.
   it("repaints when a read resolves after the first paint", async () => {
-    const { body } = await paint(openRunView, "completed", undefined, {
+    const { body } = await paint(openRunView, "completed", {
       root: oneStep("completed"),
     });
     await loaded();
@@ -1678,7 +1940,7 @@ describe("run view KAS-route step reads", () => {
   // its whole bound is this call: a run tab retargeting or closing is the one moment
   // an entry stops being wanted.
   it("drops every read on mount", async () => {
-    await paint(openRunView, "completed", undefined, { root: oneStep("completed") });
+    await paint(openRunView, "completed", { root: oneStep("completed") });
     expect(m.cleared.count).toBeGreaterThan(0);
   });
 });
@@ -1695,7 +1957,7 @@ describe("run view empty step action", () => {
 
   it("offers a link to the launching chat when one is known", async () => {
     m.parentChat.current = "c-1";
-    const { body } = await paint(openRunView, "completed", undefined, {
+    const { body } = await paint(openRunView, "completed", {
       parentless: false,
       root,
     });
@@ -1709,7 +1971,7 @@ describe("run view empty step action", () => {
   // chat-parented run through a bare `/run/{id}` link can prove the run WAS
   // chat-parented and cannot name the chat, so it gets the sentence and no door.
   it("offers no link when the launching chat is unknown", async () => {
-    const { body } = await paint(openRunView, "completed", undefined, {
+    const { body } = await paint(openRunView, "completed", {
       parentless: false,
       root,
     });
@@ -1723,7 +1985,7 @@ describe("run view empty step action", () => {
 
   it("offers no link on a parentless run", async () => {
     m.parentChat.current = "";
-    const { body } = await paint(openRunView, "completed", undefined, { root });
+    const { body } = await paint(openRunView, "completed", { root });
     expect(body.querySelector(".ev-d-link")).toBeNull();
   });
 
@@ -1734,7 +1996,7 @@ describe("run view empty step action", () => {
   // withholding the link.
   it("offers no link for a step that never ran, with the chat known", async () => {
     m.parentChat.current = "c-1";
-    const { body } = await paint(openRunView, "running", undefined, {
+    const { body } = await paint(openRunView, "running", {
       parentless: false,
       root: {
         ...root,
@@ -1774,7 +2036,7 @@ describe("run view empty step action", () => {
 
   it("opens the conversation on a plain click", async () => {
     m.parentChat.current = "c-1";
-    const { body } = await paint(openRunView, "completed", undefined, {
+    const { body } = await paint(openRunView, "completed", {
       parentless: false,
       root,
     });
@@ -1786,7 +2048,7 @@ describe("run view empty step action", () => {
   // gets the browser's behaviour, which is what the real `href` is for.
   it("stands aside for a modified click", async () => {
     m.parentChat.current = "c-1";
-    const { body } = await paint(openRunView, "completed", undefined, {
+    const { body } = await paint(openRunView, "completed", {
       parentless: false,
       root,
     });
@@ -1796,7 +2058,7 @@ describe("run view empty step action", () => {
 
   it("stands aside for a middle click", async () => {
     m.parentChat.current = "c-1";
-    const { body } = await paint(openRunView, "completed", undefined, {
+    const { body } = await paint(openRunView, "completed", {
       parentless: false,
       root,
     });
@@ -1809,7 +2071,7 @@ describe("run view empty step action", () => {
   // minute on a live run.
   it("returns the same element across repaints", async () => {
     m.parentChat.current = "c-1";
-    const { body, tab } = await paint(openRunView, "running", undefined, {
+    const { body, tab } = await paint(openRunView, "running", {
       parentless: false,
       root: {
         ...root,

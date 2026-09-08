@@ -120,12 +120,12 @@ function fiveTiers(): SessionEffortLevel[] {
 }
 
 /** A catalog entry: its default tier, and whether it advertises effort at all. */
-function model(id: string, dflt?: string): ModelInfo {
+function model(id: string, dflt?: string, hasEffort = true): ModelInfo {
   return {
     model_id: id,
     model_name: id,
     rate_multiplier: 1,
-    has_effort: true,
+    has_effort: hasEffort,
     ...(dflt === undefined ? {} : { default_effort_level: dflt }),
   };
 }
@@ -244,24 +244,40 @@ describe("the model pill's reasoning tier", () => {
   // CASE C, the control. Without it a passing A and B would prove only that the
   // harness reaches SOME code — this is the path that already worked, so it
   // proves the chain is the real one.
-  it("names a chosen tier that departs from a default the catalog does know", async () => {
+  it("names a chosen tier when the catalog knows a different default", async () => {
     staged.models = [model("claude-opus-5", "high")];
     mount(session("c", { effort: "max" }));
     expect(await tier()).toEqual({ text: "· max", hidden: false });
   });
 
-  // The guard that keeps the pill an EXCEPTION marker. A level the SERVICE
-  // resolved is what everyone gets anyway, so naming it with no default to
-  // compare against would put a permanent readout on every model — which is the
-  // thing the withholding rule exists to prevent.
-  it("says nothing about a level only the service resolved", async () => {
+  // The pill is a READOUT of what the session runs at, not a marker for an
+  // exception, so who decided the level is not a question it asks: a level the
+  // service resolved is the level in force and is named like any other.
+  it("names a level the service resolved", async () => {
     mount(session("d", { effort_active: "high" }));
+    expect(await tier()).toEqual({ text: "· high", hidden: false });
+  });
+
+  // The case the report was about: with the departure test in place this painted
+  // nothing, because the resolved tier matched the catalog's default for the
+  // model.
+  it("names the tier when the resolved tier EQUALS the model's own default", async () => {
+    staged.models = [model("claude-opus-5", "high")];
+    mount(session("e", { effort: "high" }));
+    expect(await tier()).toEqual({ text: "· high", hidden: false });
+  });
+
+  it("says nothing for a model that advertises no reasoning effort", async () => {
+    staged.models = [model("auto", undefined, false)];
+    mount(session("x", { model: "auto", effort: "max" }));
     expect(await tier()).toEqual({ text: "", hidden: true });
   });
 
-  it("says nothing when the chosen tier IS the model's own default", async () => {
-    staged.models = [model("claude-opus-5", "high")];
-    mount(session("e", { effort: "high" }));
+  it("says nothing when no level resolves at all", async () => {
+    // No choice, no reported level, no remembered pick, no per-model default and
+    // an empty pre-session template: naming a tier here would invent one.
+    staged.models = [model("claude-opus-5")];
+    mount(session("y"));
     expect(await tier()).toEqual({ text: "", hidden: true });
   });
 
@@ -337,8 +353,9 @@ describe("a click on a tier", () => {
   it("paints the pill, through the real action", async () => {
     staged.models = [model("claude-opus-5", "high")];
     mount(session("k", { model: "claude-opus-5" }));
-    // The model's own default, so the pill says nothing until a pick departs from it.
-    expect(await tier()).toEqual({ text: "", hidden: true });
+    // The chat opens on the model's own default, which the pill names like any
+    // other level in force — so what the click proves is that the readout MOVES.
+    expect(await tier()).toEqual({ text: "· high", hidden: false });
 
     arm();
     const max = tierButtons().find((b) => b.dataset["level"] === "max");

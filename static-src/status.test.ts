@@ -42,10 +42,10 @@ describe("formatMetering", () => {
 
 // --- The model pill's label ---
 //
-// The pill names the model, and beside it the reasoning tier WHEN that tier is a
-// departure from the model's own default. status.ts is the single writer of both
-// spans; the departure test itself is effort.ts's (see effort.test.ts) and this
-// module decides nothing about it.
+// The pill names the model, and beside it whatever reasoning tier it is handed.
+// status.ts is the single writer of both spans plus the button's aria-label; which
+// tier to hand it is effort.ts's answer (see effort.test.ts) and this module
+// renders the string and decides nothing about it.
 
 /** Every element updateContextBar writes, so the registry's throwing getters
  *  resolve. The two under test are `ctx-model-pill` and `ctx-effort-pill`. */
@@ -98,7 +98,7 @@ async function paint(model: string, effort: string): Promise<void> {
 }
 
 describe("the model pill", () => {
-  it("names the model alone when the tier is the model's default", async () => {
+  it("names the model alone when it is handed no tier", async () => {
     mountContextBar();
 
     await paint("claude-opus-5", "");
@@ -114,7 +114,7 @@ describe("the model pill", () => {
     );
   });
 
-  it("names the tier beside the model when it is not the default", async () => {
+  it("names the tier beside the model when it is handed one", async () => {
     mountContextBar();
 
     await paint("claude-opus-5", "max");
@@ -147,15 +147,15 @@ describe("the model pill", () => {
     await paint("claude-opus-5", "max");
     await paint("claude-sonnet-5", "");
 
-    // A model switch changes which default applies, so the span has to empty
-    // again rather than keep the previous model's departure.
+    // A model switch can leave the new model with no tier to name, so the span
+    // has to empty again rather than keep the previous model's.
     const { $ } = await import("./dom.js");
     expect($.ctxModelPill.textContent).toBe("claude sonnet 5");
     expect($.ctxEffortPill.textContent).toBe("");
     expect($.ctxEffortPill.classList.contains("hidden")).toBe(true);
   });
 
-  it("labels an empty model auto and still names a non-default tier", async () => {
+  it("labels an empty model auto and still names the tier", async () => {
     mountContextBar();
 
     await paint("", "high");
@@ -199,12 +199,14 @@ describe("the context ring", () => {
   it("writes the fill's sweep and stroke and the band's dash from one update", async () => {
     mountContextBar();
 
-    await paintRing(25, 200_000, 80);
+    // 65% sits inside the ramp's second segment, so the stroke is a mix rather
+    // than a saturated token — a constant would satisfy a green or a red arm.
+    await paintRing(65, 200_000, 80);
 
     const { $ } = await import("./dom.js");
-    expect($.contextRingFill.style.strokeDashoffset).toBe("75");
+    expect($.contextRingFill.style.strokeDashoffset).toBe("35");
     expect($.contextRingFill.style.stroke).toBe(
-      "color-mix(in oklch, var(--c-yellow) 50.0%, var(--c-green))",
+      "color-mix(in oklch, var(--c-red) 50.0%, var(--c-yellow))",
     );
     // Read back COMMA-separated: the CSSOM reserializes a dash list, so
     // `wedgeDash`'s own "20 80" is not what the element reports.

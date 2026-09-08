@@ -64,7 +64,10 @@ describe("loadAccountUsage", () => {
     expect($.acctPlan.textContent).toBe("KIRO POWER");
     expect($.acctMeter.textContent).toContain("(1337%)");
     expect($.acctMeter.textContent).toContain("cr");
-    expect($.acctMeter.title).toContain("2026-08-01");
+    // The reset date appears on no other surface, so the tooltip is its only
+    // home — and the styled controller republishes it as aria-describedby,
+    // which a native title never did.
+    expect($.acctMeter.dataset["tooltip"]).toContain("2026-08-01");
   });
 
   it("shows 'Usage unavailable' when the fetch fails", async () => {

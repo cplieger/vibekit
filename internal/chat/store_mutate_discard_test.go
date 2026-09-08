@@ -18,9 +18,13 @@ import (
 var discardedMutate = regexp.MustCompile(`_\s*=\s*[^=\n]*\bMutate\(`)
 
 // scanSkipDirs are directories with nothing to say about production callers.
+// `.worktrees` holds checkouts of this same repo at other commits, so its
+// production files are another branch's, not this tree's — scanning them makes
+// the verdict depend on whoever has a worktree open.
 var scanSkipDirs = map[string]bool{
 	".git":         true,
 	".kiro":        true,
+	".worktrees":   true,
 	"node_modules": true,
 	"static":       true,
 	"static-src":   true,

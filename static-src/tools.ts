@@ -14,7 +14,7 @@
 
 import { closeModal, openModal, RollingOutput } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { ICON_PIN, ICON_PIN_FILLED, ICON_SPINNER, ICON_TRASH } from "./icons.js";
+import { findGlyph, ICON_PIN, ICON_PIN_FILLED, ICON_SPINNER, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import {
   loadTools,
@@ -47,18 +47,26 @@ import type {
   ToolInfo,
 } from "./types.js";
 
-/** Trailing-edge debounce for the catalog search input. */
-function debounce(fn: () => void, ms: number): () => void {
+/** Trailing-edge debounce for the catalog search input. `cancel` exists because
+ *  the same search has two immediate doors (Enter, the button): without it each
+ *  one is followed 200ms later by an identical query. */
+function debounce(fn: () => void, ms: number): { (): void; cancel: () => void } {
   let timer: ReturnType<typeof setTimeout> | null = null;
-  return () => {
+  const cancel = (): void => {
     if (timer !== null) {
       clearTimeout(timer);
+      timer = null;
     }
+  };
+  const run = (): void => {
+    cancel();
     timer = setTimeout(() => {
       timer = null;
       fn();
     }, ms);
   };
+  run.cancel = cancel;
+  return run;
 }
 
 type ListEntry =
@@ -202,6 +210,12 @@ const f = {
   get search(): HTMLInputElement {
     return byId("tool-search");
   },
+  get searchBtn(): HTMLButtonElement {
+    return byId("tool-search-btn");
+  },
+  get shellNoteApt(): HTMLSpanElement {
+    return byId("tool-shell-note-apt");
+  },
   get sort(): HTMLSelectElement {
     return byId("tool-sort");
   },
@@ -327,13 +341,35 @@ class ToolsManager {
       }),
     );
 
-    // Add-modal wiring: a debounced search over the catalog and apt, plus the
-    // order picker over the result set. The picker re-paints the cached
-    // response rather than re-querying: it is a decision about a set in hand.
+    // Add-modal wiring: three doors into one search, plus the order picker over
+    // the result set. The picker re-paints the cached response rather than
+    // re-querying: it is a decision about a set in hand.
     const runSearch = debounce(() => {
       void this.renderSearch(f.search.value);
     }, 200);
     f.search.addEventListener("input", runSearch);
+    // Enter and the button both mean NOW, so each cancels the pending debounce
+    // rather than racing it into a second identical query.
+    const searchNow = (): void => {
+      runSearch.cancel();
+      void this.renderSearch(f.search.value);
+    };
+    f.search.addEventListener("keydown", (ev: KeyboardEvent) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        searchNow();
+      }
+    });
+    f.searchBtn.addEventListener("click", searchNow);
+    // Both faces come from the registry rather than the markup, so each glyph keeps
+    // ONE drawing. A MAGNIFIER because this box reaches past what is on screen,
+    // which is the distinction `findGlyph` exists to make.
+    const magnifier = iconEl(findGlyph("search"));
+    magnifier.classList.add("tool-search-glyph");
+    const spinner = iconEl(ICON_SPINNER);
+    spinner.classList.add("tool-search-spinner");
+    f.searchBtn.replaceChildren(magnifier, spinner);
+    bindLoadingState("tools.search", f.searchBtn, { pendingClass: "is-busy" });
     f.sort.addEventListener("change", () => {
       this.paintSearch();
     });
@@ -947,6 +983,8 @@ class ToolsManager {
     const hits = this.orderHits(d.results);
     f.resultCount.textContent = hits.length === 0 ? "" : `${String(hits.length)} shown`;
 
+    this.paintShellNote(d.apt_available);
+
     if (hits.length === 0) {
       box.appendChild(
         el(
@@ -957,13 +995,11 @@ class ToolsManager {
             : `Nothing matches "${this.lastQuery}".`,
         ),
       );
-      box.appendChild(this.shellNote(d.apt_available));
       return;
     }
     for (const hit of hits) {
       box.appendChild(this.renderSearchHit(hit));
     }
-    box.appendChild(this.shellNote(d.apt_available));
   }
 
   /** Apply the chosen order. `relevance` returns the server's own order, which
@@ -978,25 +1014,12 @@ class ToolsManager {
     return [...hits].sort((a, b) => dir * a.name.localeCompare(b.name));
   }
 
-  /** The closing note. Present on EVERY result set, including a full one:
-   *  the catalog is large but finite, and a reader who cannot find their tool
-   *  needs to know the shell is the answer rather than concluding the tool is
-   *  unavailable. */
-  private shellNote(aptAvailable: boolean): HTMLElement {
-    const parts: string[] = [
-      "Not listed? Install it in the shell — anything you can run there works. ",
-      "The engine only manages what it installed.",
-    ];
-    // Said explicitly rather than left as an absent block. With apt
-    // unavailable the engine returns no Debian hits at all, so a reader
-    // searching for a package sees nothing and cannot tell "no such package"
-    // from "this container cannot install one".
-    if (!aptAvailable) {
-      parts.push(
-        " Debian packages are not searchable here: apt needs root and this container has none.",
-      );
-    }
-    return el("div", { className: "tool-shell-note" }, ...parts);
+  /** The footer's one variable half; the shell sentence is permanent markup. With
+   *  apt unavailable the engine returns no Debian hits at all, so silence leaves a
+   *  reader unable to tell "no such package" from "this container cannot install
+   *  one" — a fact about the RESULT SET, which is why it toggles both ways. */
+  private paintShellNote(aptAvailable: boolean): void {
+    f.shellNoteApt.classList.toggle("hidden", aptAvailable);
   }
 
   private renderSearchHit(hit: SearchHit): HTMLElement {
@@ -1043,11 +1066,10 @@ class ToolsManager {
       el(
         "div",
         { className: "tool-hit-text" },
-        el(
-          "div",
-          { className: "tool-hit-title" },
-          el("span", { className: "list-row-name" }, hit.name),
-        ),
+        // A DIRECT child of the column, so it is blockified and its declared
+        // ellipsis applies. Wrapped in the `.tool-hit-title` block it used to have,
+        // it was a non-replaced inline box, which `overflow` does not apply to.
+        el("span", { className: "list-row-name" }, hit.name),
         el("div", { className: "tool-hit-chips" }, ...chips),
         el("span", { className: "tool-hit-desc" }, hit.description ?? ""),
       ),

@@ -704,18 +704,40 @@
 /* Running and waiting carry no character, so the RING is the glyph and the two
    differ by MOTION — the axis the tab dot, the tool card, the run card and the
    exec tree all use. A still ring is a run stopped with nothing moving. */
+/* `box-sizing` so `--dot-size` IS the painted diameter, which is what puts this
+   ring at the size of the settled mark that shares the slot: the reset's `*` does
+   not reach a pseudo-element, so without it the 2px border landed outside the token
+   and the ring rendered 12px against the disc's 8. Pinned by
+   `state-column-size.test.ts`, which measures both rather than reading either. */
 .run-bar-row[data-state="running"] .run-bar-glyph::before,
 .run-bar-row[data-state="waiting"] .run-bar-glyph::before {
   content: "";
   display: block;
+  box-sizing: border-box;
   inline-size: var(--dot-size);
   block-size: var(--dot-size);
   border: 0.125rem solid var(--c-accent);
   border-radius: 50%;
 }
 
+/* The ARC is painted and the box never turns (`--vk-spin-arc`, 00-header.css) —
+   rotating a ring this small resamples it at every angle off a right angle, and
+   that was the wobble. The border above is neutralised rather than dropped: the
+   still `waiting` ring shares that rule and DRAWS with it, and it also reserves
+   this ring's band inside `--dot-size` for the mask to paint over. */
 .run-bar-row[data-state="running"] .run-bar-glyph::before {
-  border-top-color: transparent;
+  border-color: transparent;
+  background: conic-gradient(
+      from var(--vk-spin-arc),
+      transparent 0deg 90deg,
+      var(--c-accent) 90deg 360deg
+    )
+    border-box;
+  mask: radial-gradient(
+    closest-side,
+    transparent calc(100% - 0.125rem),
+    #000 calc(100% - 0.125rem)
+  );
   animation: vk-spin var(--spin-dur) linear infinite;
 }
 

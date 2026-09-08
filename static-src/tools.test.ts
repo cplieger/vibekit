@@ -3,8 +3,9 @@
 // row rendering from the composite GET (state dots, versions, update
 // badges), the action wiring (install / pin / cascade delete), the
 // search-first add modal, and the SSE job-following output panel.
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from "vitest";
 
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type { ToolInfo, Job, Inventory } from "./types.js";
 
 const mocks = vi.hoisted(() => ({
@@ -92,9 +93,26 @@ function mountToolsDOM(): void {
   addPill("tool-catalog-refresh-btn", "Refresh catalog", "Refresh the tool catalog");
   add("p", "tool-catalog-meta").classList.add("hidden");
   add("div", "tool-update-output");
-  add("div", "tools-list");
+  // Both list hosts carry the classes index.html gives them, because the
+  // geometry guards below measure real layout against the shipped stylesheet and
+  // the cap that produced the overlap is `.tool-search-results`'s.
+  add("div", "tools-list").className = "list-container";
   add("div", "tool-modal");
-  add("input", "tool-search");
+  add("input", "tool-search").className = "tool-form-input";
+  // Mirrors index.html's classes: the button's two glyph faces are picked by
+  // `.tool-search-go`, so a bare fixture button would show both at once.
+  add("button", "tool-search-btn").className = "action-pill tool-search-go";
+  // The footer's permanent sentence lives in the markup; the module only toggles
+  // the apt caveat, so the fixture has to carry both the way index.html does.
+  const note = add("p", "tool-shell-note");
+  note.textContent =
+    "Not listed? Install it in the shell; the engine only manages what it installed.";
+  const apt = document.createElement("span");
+  apt.id = "tool-shell-note-apt";
+  apt.className = "hidden";
+  apt.textContent =
+    " Debian packages are not searchable here: apt needs root and this container has none.";
+  note.appendChild(apt);
   // Mirrors static/index.html: the order picker carries its three options,
   // because the module reads `value` and falls back to relevance on anything
   // it does not recognise — an optionless select would read "" and take that
@@ -106,7 +124,7 @@ function mountToolsDOM(): void {
     sort.appendChild(opt);
   }
   add("output", "tool-results-count");
-  add("div", "tool-search-results");
+  add("div", "tool-search-results").className = "list-container tool-search-results";
 }
 
 function addPill(id: string, label: string, aria: string): HTMLButtonElement {
@@ -392,6 +410,11 @@ describe("add modal", () => {
   // Chips on their own line under the name. Inline after the name they started
   // wherever that name ended, so a column of rows put them at as many
   // different offsets as there were name lengths.
+  //
+  // The name is a DIRECT child of `.tool-hit-text` rather than wrapped in a
+  // `.tool-hit-title` block: that block carried no CSS rule, and `overflow` does
+  // not apply to a non-replaced inline box, so the ellipsis `.list-row-name`
+  // declares could never fire through it.
   it("puts every row's chips in a row of their own, under the name", async () => {
     initWith(listWith([]));
     mocks.searchDispatch.mockResolvedValue({
@@ -402,9 +425,9 @@ describe("add modal", () => {
 
     const text = byId("tool-search-results").querySelector(".tool-hit-text");
     const kids = [...(text?.children ?? [])].map((e) => e.className);
-    expect(kids).toEqual(["tool-hit-title", "tool-hit-chips", "tool-hit-desc"]);
+    expect(kids).toEqual(["list-row-name", "tool-hit-chips", "tool-hit-desc"]);
     // Every chip is in the chip row, none left beside the name.
-    expect(text?.querySelectorAll(".tool-hit-title .tool-source-chip")).toHaveLength(0);
+    expect(text?.querySelectorAll(".list-row-name .tool-source-chip")).toHaveLength(0);
     expect(
       [...(text?.querySelectorAll(".tool-hit-chips .tool-source-chip") ?? [])].map(
         (e) => e.textContent,
@@ -470,16 +493,73 @@ describe("add modal", () => {
   // With apt unavailable the engine returns no Debian hits at all, so silence
   // would leave a reader unable to tell "no such package" from "this container
   // cannot install one".
+  //
+  // Both halves are read off the FOOTER rather than the result list: the shell
+  // sentence is permanent markup at the modal's bottom, and the apt caveat is the
+  // one clause the module decides. Inside the capped scroller they scrolled away
+  // from exactly the empty result that needed them.
   it("says why Debian packages are missing when apt is unavailable", async () => {
     initWith(listWith([]));
     mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: false });
     byId<HTMLButtonElement>("tool-add-btn").click();
     await flush();
 
-    const text = byId("tool-search-results").textContent ?? "";
-    expect(text).toContain("apt needs root");
-    // The shell is always the fallback, stated on every result set.
-    expect(text).toContain("Install it in the shell");
+    const note = byId("tool-shell-note");
+    expect(byId("tool-shell-note-apt").classList.contains("hidden")).toBe(false);
+    expect(note.textContent ?? "").toContain("apt needs root");
+    // The shell is always the fallback, and it is out of the list entirely.
+    expect(note.textContent ?? "").toContain("Install it in the shell");
+    expect(byId("tool-search-results").textContent ?? "").not.toContain("Install it in the shell");
+  });
+
+  // The caveat is a fact about the RESULT SET, so an available-apt search has to
+  // take it back down: a footer is permanent, so a one-way write would leave the
+  // claim standing over a search that contradicts it.
+  it("drops the apt caveat again once apt is available", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: false });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+    expect(byId("tool-shell-note-apt").classList.contains("hidden")).toBe(false);
+
+    mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: true });
+    const input = byId<HTMLInputElement>("tool-search");
+    input.value = "sl";
+    byId<HTMLButtonElement>("tool-search-btn").click();
+    await flush();
+    expect(byId("tool-shell-note-apt").classList.contains("hidden")).toBe(true);
+  });
+
+  // The bar was a debounced input alone: no button, no Enter, and nothing to
+  // press when a reader wanted the search to run now. Both immediate doors CANCEL
+  // the pending debounce rather than racing it into a second identical query,
+  // which is what the call count pins.
+  it("searches on the button and on Enter, once per gesture", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({ results: [] });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+    const opening = mocks.searchDispatch.mock.calls.length;
+
+    const input = byId<HTMLInputElement>("tool-search");
+    input.value = "ripgrep";
+    input.dispatchEvent(new Event("input"));
+    byId<HTMLButtonElement>("tool-search-btn").click();
+    await flush();
+    expect(mocks.searchDispatch).toHaveBeenLastCalledWith({ q: "ripgrep" });
+    expect(mocks.searchDispatch.mock.calls.length).toBe(opening + 1);
+
+    input.value = "terraform";
+    input.dispatchEvent(new Event("input"));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", cancelable: true }));
+    await flush();
+    expect(mocks.searchDispatch).toHaveBeenLastCalledWith({ q: "terraform" });
+    expect(mocks.searchDispatch.mock.calls.length).toBe(opening + 2);
+
+    // The debounce is still armed for the plain typing path; neither gesture
+    // left a trailing timer behind that would fire a third query.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(mocks.searchDispatch.mock.calls.length).toBe(opening + 2);
   });
 });
 
@@ -927,5 +1007,202 @@ describe("row honesty chips", () => {
   it("keeps the LSP badge alongside an honesty chip", () => {
     initWith(listWith([tool({ name: "gopls", lsp: true, checksum: "unverified" })]));
     expect(chips("gopls")).toEqual(["LSP", "no checksum"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Real-layout guards, measured against the shipped stylesheet.
+//
+// Both defects here were geometry, so neither is reachable from a structural
+// assertion: the DOM was correct in each case and the boxes were not.
+// ---------------------------------------------------------------------------
+
+describe("a capped result list never shrinks a row below its content", () => {
+  let style: HTMLStyleElement;
+
+  beforeAll(() => {
+    style = mountAppCSS();
+  });
+
+  afterAll(() => {
+    style.remove();
+  });
+
+  /** Enough hits to overflow `.tool-search-results`' 17rem cap, each with the
+   *  three-line body a real hit renders (name, chips, description). Below the cap
+   *  there is no shrink pressure and the defect cannot appear. */
+  async function overflowingResults(n: number): Promise<HTMLElement[]> {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({
+      results: Array.from({ length: n }, (_v, i) => ({
+        name: `tool-number-${String(i)}`,
+        source: "aqua:owner/repo",
+        version: "1.2.3",
+        lsp: true,
+        description: "A representative catalog description for this entry",
+      })),
+    });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+    return [...byId("tool-search-results").querySelectorAll<HTMLElement>(".tool-hit")];
+  }
+
+  it("gives every row a box at least as tall as what it paints", async () => {
+    const rows = await overflowingResults(12);
+    expect(rows).toHaveLength(12);
+
+    for (const row of rows) {
+      // `.list-row` states a `min-block-size`, which REPLACES a flex item's
+      // automatic minimum size — so without `flex-shrink: 0` the row collapsed to
+      // that floor under content needing three times it, and with no `overflow`
+      // here it painted the surplus over the rows below.
+      expect(
+        row.clientHeight,
+        `${row.textContent ?? ""} overflows its own box by ${String(row.scrollHeight - row.clientHeight)}px`,
+      ).toBeGreaterThanOrEqual(row.scrollHeight);
+
+      // The same fact from the paint side: no child may cross the row's edge.
+      const box = row.getBoundingClientRect();
+      for (const kid of row.children) {
+        const k = kid.getBoundingClientRect();
+        expect(k.bottom, `${kid.className} paints below its row`).toBeLessThanOrEqual(
+          box.bottom + 0.5,
+        );
+        expect(k.top, `${kid.className} paints above its row`).toBeGreaterThanOrEqual(
+          box.top - 0.5,
+        );
+      }
+    }
+  });
+
+  it("still honours the 17rem cap, so the fix is the row and not the scroller", async () => {
+    const rows = await overflowingResults(12);
+    const box = byId("tool-search-results");
+
+    // 272px is 17rem. The container is what scrolls; the rows keep their height.
+    expect(box.clientHeight).toBeLessThanOrEqual(273);
+    expect(box.scrollHeight).toBeGreaterThan(box.clientHeight);
+    const total = rows.reduce((sum, r) => sum + r.getBoundingClientRect().height, 0);
+    expect(total).toBeGreaterThan(box.clientHeight);
+  });
+});
+
+describe("an installed row measures the same whether or not it carries a badge", () => {
+  let style: HTMLStyleElement;
+
+  beforeAll(() => {
+    style = mountAppCSS();
+  });
+
+  afterAll(() => {
+    style.remove();
+    document.documentElement.removeAttribute("data-pointer");
+  });
+
+  /** One row that earns a chip and one that earns none, rendered by the real
+   *  row builder. `apt` is the cheapest chip to provoke; a plain aqua source with
+   *  a verified checksum earns nothing. */
+  function twoRows(): { badged: HTMLElement; plain: HTMLElement } {
+    initWith(
+      listWith([
+        tool({ name: "gcc", source: "apt:gcc" }),
+        tool({ name: "ripgrep", checksum: "verified" }),
+      ]),
+    );
+    const badged = rowFor("gcc");
+    const plain = rowFor("ripgrep");
+    expect(badged?.querySelector(".tool-source-chip")).not.toBeNull();
+    expect(plain?.querySelector(".tool-source-chip")).toBeNull();
+    if (badged === null || plain === null) {
+      throw new Error("both rows must render");
+    }
+    return { badged, plain };
+  }
+
+  it("keeps the chip inline with the name on a fine pointer", () => {
+    document.documentElement.dataset["pointer"] = "fine";
+    const { badged, plain } = twoRows();
+
+    // The wrap was an unconditional flex COLUMN, so the chip took its own line
+    // and added 20-22px to every badged row — the reported ragged column.
+    const name = badged.querySelector<HTMLElement>(".list-row-name");
+    const chip = badged.querySelector<HTMLElement>(".tool-source-chip");
+    expect(name).not.toBeNull();
+    expect(chip).not.toBeNull();
+    const nameBox = name?.getBoundingClientRect();
+    const chipBox = chip?.getBoundingClientRect();
+    expect(chipBox?.top, "the chip shares the name's line").toBeGreaterThanOrEqual(
+      (nameBox?.top ?? 0) - 1,
+    );
+    expect(chipBox?.left, "the chip sits after the name").toBeGreaterThan(nameBox?.right ?? 0);
+
+    expect(badged.getBoundingClientRect().height).toBeCloseTo(
+      plain.getBoundingClientRect().height,
+      1,
+    );
+  });
+
+  it("gives the chip its own line under a finger, at no cost in row height", () => {
+    document.documentElement.dataset["pointer"] = "coarse";
+    const { badged, plain } = twoRows();
+
+    const nameBox = badged.querySelector<HTMLElement>(".list-row-name")?.getBoundingClientRect();
+    const chipBox = badged.querySelector<HTMLElement>(".tool-source-chip")?.getBoundingClientRect();
+    expect(chipBox?.top, "the chip drops below the name").toBeGreaterThan(nameBox?.bottom ?? 0);
+
+    // And it FITS: both lines sit inside the slack this row's own 44px action
+    // buttons already force at this tier, so the column costs no extra height and
+    // the table stays uniform on a finger too. A `padding-block` here was measured
+    // taking the badged row to 56.4 against the plain one's 52.
+    expect(plain.getBoundingClientRect().height).toBeGreaterThanOrEqual(36);
+    expect(badged.getBoundingClientRect().height).toBeCloseTo(
+      plain.getBoundingClientRect().height,
+      1,
+    );
+  });
+
+  it("centres a chipless row's text in the floored box", () => {
+    document.documentElement.dataset["pointer"] = "coarse";
+    const { plain } = twoRows();
+    const row = plain.getBoundingClientRect();
+    const name = plain.querySelector<HTMLElement>(".list-row-name")?.getBoundingClientRect();
+    const above = (name?.top ?? 0) - row.top;
+    const below = row.bottom - (name?.bottom ?? 0);
+    expect(Math.abs(above - below), "the label is vertically centred").toBeLessThanOrEqual(1);
+  });
+});
+
+describe("the search bar reports that a search is running", () => {
+  let style: HTMLStyleElement;
+
+  beforeAll(() => {
+    style = mountAppCSS();
+  });
+
+  afterAll(() => {
+    style.remove();
+  });
+
+  const shown = (el: Element | null): boolean =>
+    el !== null && getComputedStyle(el).display !== "none";
+
+  it("swaps the magnifier for a spinning glyph while tools.search is pending", () => {
+    initWith(listWith([]));
+    const btn = byId<HTMLButtonElement>("tool-search-btn");
+    const glyph = btn.querySelector(".tool-search-glyph");
+    const spinner = btn.querySelector(".tool-search-spinner");
+
+    // Both faces ship in the button, so the swap moves no nodes and cannot
+    // resize the row. Idle shows the magnifier alone.
+    expect(shown(glyph)).toBe(true);
+    expect(shown(spinner)).toBe(false);
+
+    // `is-busy` is the pending class `bindLoadingState("tools.search", …)` adds.
+    btn.classList.add("is-busy");
+    expect(shown(glyph)).toBe(false);
+    expect(shown(spinner)).toBe(true);
+    // And it is a SPINNER rather than a static arc: the registry glyph carries
+    // `.icon-spinner`, which is what 15-input.css rotates.
+    expect(getComputedStyle(spinner as Element).animationName).toBe("vk-spin-rotate");
   });
 });

@@ -39,13 +39,14 @@
      bar above it. */
   --chat-toolbar-h: var(--titlebar-h);
 
-  /* Clearance for an overlay that is absolutely positioned inside `#chat-area`:
-     `.chat-find` and `.search-pop` (24-find.css). Both sit in that container, so
-     both start at its padding-box top, above the bar.
+  /* Clearance for an overlay whose containing block is `#chat-area`, which starts
+     ABOVE the in-flow bar: `.page-find` (24-find.css) and `.banner-stack`
+     (13-messages.css). `.page-find` is `position: fixed` and still resolves here,
+     because this element's own `container` declaration gives it layout containment.
 
-     `.turn-rail` (29-turns.css) is NOT one of these any more and must not read
-     this: it lives in `#messages-wrap-outer`, which is inside the view and so
-     already below the bar. Its inset is `var(--sp-3)` now. */
+     A box inside `#messages-wrap-outer` must NOT read this — that element is
+     already below the bar, so the clearance is dead offset. `.chat-find` and
+     `.turn-rail` both live there and both take `var(--sp-3)`. */
   --below-chat-toolbar: calc(var(--titlebar-h) + var(--sp-2) + env(safe-area-inset-top, 0));
 
   /* Was published from JS by chat-toolbar-metrics.ts, a ResizeObserver whose only
@@ -61,16 +62,33 @@
 .chat-toolbar {
   --toolbar-gap: 0.125rem;
 
-  /* The bar's rendered bottom edge, for the ONE surface that has to sit under it
-     and cannot derive it: the phone toast banner (04-uip-skin.css). Below 30rem of
-     chat area this bar wraps its heading onto a second row, so its height stops
-     being `--titlebar-h` and becomes content-driven. Every other overlay that
-     needs this clearance is positioned INSIDE `#chat-area` and reads
-     `--below-chat-toolbar` instead; the banner is a body-level fixed box, which is
-     why it needs an anchor rather than a token. */
+  /* The bar's rendered bottom edge, for the notice band (`.banner-stack`,
+     13-messages.css), which no token can place: below about 375px of chat area the
+     actions no longer fit a row and wrap, so the bar's height stops being
+     `--titlebar-h` and becomes content-driven. The band reads this and then
+     publishes its OWN bottom edge as `--notice-band` for the toast stack, so the
+     correction is made once and inherited rather than restated per surface. Every
+     other overlay that needs the clearance sits INSIDE `#chat-area` and takes
+     `--below-chat-toolbar`, which is exact for the one-row bar. */
   anchor-name: --chat-toolbar;
   display: flex;
   align-items: center;
+
+  /* The actions sit hard right at every width. The heading is what normally puts
+     them there (it grows into the slack, below), so this only decides the case
+     where the heading is NOT on the line: page-title.ts clips it with `.sr-only`,
+     which is `position: absolute`, so it leaves the flex line entirely. */
+  justify-content: flex-end;
+
+  /* The LAST resort, and it is the actions that wrap rather than the title. Eight
+     44px targets plus 14px of gaps and 24px of padding need 390px exactly, so a
+     360px or 320px phone cannot hold the row however the title is treated — and
+     with no wrap those items overflow past `flex-end` off the START edge, which
+     puts a control off-screen with no scroll to reach it (they cannot shrink into
+     it either: `min-width: var(--btn-h)` below is the touch floor). The heading's
+     `flex-basis: 0` is what keeps this from firing early — it contributes nothing
+     to line breaking, so the buttons alone decide when a row breaks. */
+  flex-wrap: wrap;
   gap: var(--toolbar-gap);
   flex-shrink: 0;
   inline-size: 100%;
@@ -113,12 +131,11 @@
    and app.ts writes this class from that answer.
 
    NOT the `.hidden` utility, which is `display: none !important` (40-a11y.css):
-   `display` is discrete, so the button would vanish in one frame and the bar's
-   width would jump. The dock makes the same choice for the same reason
-   (26-dock.css) and collapses a live element instead. Here the axis is inline,
-   and the toolbar is a right-anchored floating pill whose width follows its
-   content, so collapsing the item IS the bar shrinking — nothing has to animate
-   the bar itself.
+   `display` is discrete, so the button would vanish in one frame and the row would
+   jump. The dock makes the same choice for the same reason (26-dock.css) and
+   collapses a live element instead. Here the axis is inline and the bar is
+   full-bleed, so collapsing the item slides its right-packed neighbours across and
+   hands the width back to the heading; nothing has to animate the bar itself.
 
    THREE THINGS MUST GO TO ZERO, not one. The box (`inline-size`, and
    `min-inline-size` because the rule above sets a floor of `--btn-h` that would
@@ -188,8 +205,15 @@
   align-items: center;
   gap: var(--sp-2);
 
-  /* Takes the row's slack, which is what puts the actions hard right. */
-  margin-inline-end: auto;
+  /* GROWS into the row's slack, which is what puts the actions hard right — and it
+     is `flex: 1 1 0` rather than the `margin-inline-end: auto` it replaces, for two
+     reasons that are not style. An auto margin consumes free space BEFORE any item
+     grows, so paired with a growing heading it would take everything and leave the
+     title a 0px box to measure, clipping the title at every width. And a base size
+     of 0 keeps the heading out of the wrap decision above, so a row breaks only
+     when the ACTIONS genuinely do not fit; at its content width it would push
+     buttons onto a second row from 390px down. */
+  flex: 1 1 0;
 
   /* An extra flex layer means a child's automatic minimum size no longer reaches
      the bar, so the title cannot ellipsize without this. */
@@ -256,46 +280,30 @@
 }
 
 /* ==========================================================================
-   Narrow: the heading takes its own row.
+   The heading shares the actions' row or it is not shown at all.
 
-   A CONTAINER query, not a viewport one, because the sidebar decides how much
-   width the chat area gets — the same reasoning `.turn-rail` uses. Measured at
-   390px with the coarse tier: seven 44px buttons plus the bar's own 24px of
-   padding is 332px of a 390px bar, which leaves the title 44px for text that
-   wants 259px. It rendered 17% of itself.
+   It used to take its OWN row below 30rem of chat area (`order: 1;
+   flex-basis: 100%` under the bar's `flex-wrap`), and that is deleted rather than
+   tuned. Two defects came with it, both measured at 430px: the bar was 70px tall
+   instead of 52, and the actions were left-aligned on their line, so the last
+   button's right edge sat at 378 against a content edge of 418 — the menu stopped
+   40px short of the right edge for no reason a reader could see.
 
-   Wrapping is what lets ONE element serve both layouts: the heading keeps its
-   single writer and CSS decides whether it sits beside the actions or under them.
-   `order` puts it second so the chrome stays on top and the title labels the
-   content directly beneath it.
+   Whether the title FITS is measured in page-title.ts, never keyed to a width, for
+   `tab-bar-fit.ts`'s reason: the answer depends on the TEXT (a chat's name against
+   "Git") and on how many actions the bar is showing, and no container width knows
+   either. A title that cannot render in full is clipped to screen-reader-only
+   rather than deleted, so the document keeps its `<h1>` on exactly the devices
+   where this bar is the only thing naming the view.
+
+   The consequence, stated because it is a real loss rather than an edge: on a
+   390-430px phone the title never shows, because eight 44px touch targets and the
+   bar's own padding leave the heading 0-40px. Recovering it means dropping an
+   action from the phone row, which is a product decision and not this rule's.
    ========================================================================== */
 
 @container chat-area (inline-size < 34rem) {
   .titlebar-heading :is(.titlebar-subtitle, .titlebar-sep) {
-    display: none;
-  }
-}
-
-@container chat-area (inline-size < 30rem) {
-  .chat-toolbar {
-    flex-wrap: wrap;
-    padding-block-end: var(--sp-1);
-  }
-
-  .titlebar-heading {
-    order: 1;
-    flex-basis: 100%;
-    margin-inline-end: 0;
-  }
-
-  /* The subtitle fits again on its own row, so it comes back — the 34rem rule
-     above is about competing with the actions, not about the text being too long. */
-  .titlebar-heading :is(.titlebar-subtitle, .titlebar-sep) {
-    display: revert;
-  }
-
-  .titlebar-heading .titlebar-subtitle:empty,
-  .titlebar-heading:has(> .titlebar-subtitle:empty) > .titlebar-sep {
     display: none;
   }
 }
