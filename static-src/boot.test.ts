@@ -94,6 +94,18 @@ const m = vi.hoisted(() => {
     suppressPush: vi.fn((v: boolean) => {
       suppression.depth = v ? suppression.depth + 1 : Math.max(0, suppression.depth - 1);
     }),
+    initGovernance: vi.fn(),
+    initRuntimeHealth: vi.fn(),
+    initStatusVersions: vi.fn(),
+    loadVersions: vi.fn(),
+    fetchCatalog: vi.fn(),
+    rebuildLiveRuns: vi.fn(),
+    showBanner: vi.fn(),
+    bootMode: vi.fn(() => "full"),
+    reloadCount: vi.fn(() => 1),
+    clearReloadGuard: vi.fn(),
+    noteBootAlive: vi.fn(),
+    blur: vi.fn(),
     // Typed, because the cases below read the registered listener back OFF the mock
     // and call it: an inferred zero-arg signature makes `mock.calls` an empty tuple.
     subscribeByName: vi.fn<
@@ -127,7 +139,7 @@ vi.mock("./session-context.js", () => ({
   restoreLastModel: vi.fn(),
 }));
 vi.mock("./identity.js", () => ({ resolveIdentity: m.resolveIdentity }));
-vi.mock("./session-catalog.js", () => ({ fetchCatalog: vi.fn() }));
+vi.mock("./session-catalog.js", () => ({ fetchCatalog: m.fetchCatalog }));
 vi.mock("./transport.js", () => ({ markHydrated: m.markHydrated }));
 vi.mock("./modals.js", () => ({ showLoginModal: m.showLoginModal }));
 vi.mock("./tabs.js", () => ({
@@ -141,14 +153,17 @@ vi.mock("./router.js", () => ({
   suppressPush: m.suppressPush,
 }));
 vi.mock("./chat.js", () => ({ createSession: m.createSession }));
-vi.mock("./governance.js", () => ({ initGovernance: vi.fn() }));
-vi.mock("./runtime-health.js", () => ({ initRuntimeHealth: vi.fn() }));
-vi.mock("./status.js", () => ({ initStatusVersions: vi.fn(), setStatus: m.setStatus }));
-vi.mock("./versions.js", () => ({ loadVersions: vi.fn() }));
+vi.mock("./governance.js", () => ({ initGovernance: m.initGovernance }));
+vi.mock("./runtime-health.js", () => ({ initRuntimeHealth: m.initRuntimeHealth }));
+vi.mock("./status.js", () => ({
+  initStatusVersions: m.initStatusVersions,
+  setStatus: m.setStatus,
+}));
+vi.mock("./versions.js", () => ({ loadVersions: m.loadVersions }));
 vi.mock("./retention.js", () => ({ refreshRetention: m.refreshRetention }));
 vi.mock("./run-store.js", () => ({
   hasLiveRunForChat: vi.fn(),
-  rebuildLiveRuns: vi.fn(),
+  rebuildLiveRuns: m.rebuildLiveRuns,
 }));
 vi.mock("./subagent-view.js", () => ({ subagentTabProjectsChat: vi.fn() }));
 vi.mock("./view-swap.js", () => ({ markBootDone: m.markBootDone }));
@@ -162,6 +177,15 @@ vi.mock("./boot-snapshot.js", () => ({
 }));
 vi.mock("./ls-keys.js", () => ({ clearDeviceKeys: m.clearDeviceKeys }));
 vi.mock("./fold-state.js", () => ({ resetFoldState: m.resetFoldState }));
+vi.mock("./banner-stack.js", () => ({ GLOBAL_BANNER: "*", showBanner: m.showBanner }));
+// The composer, reached for one call only: a reduced boot blurs it.
+vi.mock("./dom.js", () => ({ $: { promptInput: { blur: m.blur } } }));
+vi.mock("./reload-guard.js", () => ({
+  bootMode: m.bootMode,
+  reloadCount: m.reloadCount,
+  clearReloadGuard: m.clearReloadGuard,
+  noteBootAlive: m.noteBootAlive,
+}));
 
 /** A fresh module per test: `postAuthInitDone` and the connected latch are module
  *  state, and `vi.resetModules()` does not re-evaluate a module in Browser Mode —
@@ -201,6 +225,10 @@ function arrangeHappy(settings: EffectiveSettings = settingsPayload()): void {
   m.getActiveTabRoute.mockReturnValue(null);
   m.readBootSnapshot.mockResolvedValue(null);
   m.paintBootSnapshot.mockReturnValue(false);
+  // `clearAllMocks` drops a mock's implementation as well as its calls, so the two
+  // guard readers are re-armed here rather than at their declaration.
+  m.bootMode.mockReturnValue("full");
+  m.reloadCount.mockReturnValue(1);
   m.clearBootSnapshot.mockResolvedValue(undefined);
 }
 
@@ -753,5 +781,69 @@ describe("the tab strip's pending state", () => {
       "Couldn't restore your tabs.",
       expect.objectContaining({ label: "Reload" }),
     );
+  });
+});
+
+// The rapid-reload bound. `reload-guard.ts` owns the count and the threshold (and its
+// own suite pins them); what is under test here is what the boot WITHHOLDS once the
+// guard says reduced, and — just as load-bearing — that a full boot withholds nothing.
+describe("a boot inside a reload loop", () => {
+  it("paints no transcript, blurs the composer and says why", async () => {
+    m.bootMode.mockReturnValue("reduced");
+    m.reloadCount.mockReturnValue(4);
+    // A snapshot IS there to paint, so a case that skipped it is distinguishable from
+    // one that had nothing.
+    m.readBootSnapshot.mockResolvedValue(SNAPSHOT);
+    m.paintBootSnapshot.mockReturnValue(true);
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.paintBootSnapshot).not.toHaveBeenCalled();
+    // The authoritative restore is unchanged, which is what keeps reduced mode a
+    // lighter boot rather than a broken one.
+    expect(m.listTabs).toHaveBeenCalledTimes(1);
+    expect(m.activateRestoredTab).toHaveBeenCalledTimes(1);
+    expect(m.blur).toHaveBeenCalledTimes(1);
+    // Names what the reader saw and what it cost them, and offers the one way out.
+    expect(m.showBanner).toHaveBeenCalledWith(
+      "*",
+      "reload-loop",
+      "This page reloaded 4 times in a few seconds, so it started with less loaded.",
+      "warning",
+      false,
+      expect.objectContaining({ label: "Start in full mode" }),
+    );
+  });
+
+  it("skips the fetch-only fan-outs and keeps the two that report state", async () => {
+    m.bootMode.mockReturnValue("reduced");
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.fetchCatalog).not.toHaveBeenCalled();
+    expect(m.loadVersions).not.toHaveBeenCalled();
+    expect(m.initStatusVersions).not.toHaveBeenCalled();
+    expect(m.rebuildLiveRuns).not.toHaveBeenCalled();
+    // Capability, and a degraded runtime: what a reader in this state needs most.
+    expect(m.initGovernance).toHaveBeenCalledTimes(1);
+    expect(m.initRuntimeHealth).toHaveBeenCalledTimes(1);
+  });
+
+  it("withholds nothing on an ordinary boot, and arms the stability clear", async () => {
+    m.readBootSnapshot.mockResolvedValue(SNAPSHOT);
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.paintBootSnapshot).toHaveBeenCalledWith(SNAPSHOT);
+    expect(m.blur).not.toHaveBeenCalled();
+    expect(m.showBanner).not.toHaveBeenCalled();
+    expect(m.fetchCatalog).toHaveBeenCalledTimes(1);
+    expect(m.loadVersions).toHaveBeenCalledTimes(1);
+    expect(m.rebuildLiveRuns).toHaveBeenCalledTimes(1);
+    // A page that stays up costs the next boot nothing, and only this call arms it.
+    expect(m.noteBootAlive).toHaveBeenCalledTimes(1);
   });
 });
