@@ -102,7 +102,7 @@ func TestHeartbeat_PublishesANamedEventWhenIdle(t *testing.T) {
 	rt.bus.lastPublishAt.Store(0)
 	before := headID(rt)
 
-	if got := rt.publishHeartbeat(0); got != 1 {
+	if got := rt.publishHeartbeat(0, heartbeatInterval); got != 1 {
 		t.Errorf("publishHeartbeat(0) = %d, want 1: a published beat advances the sequence", got)
 	}
 
@@ -126,7 +126,7 @@ func TestHeartbeat_SkipsWhenAnEventWasJustPublished(t *testing.T) {
 	rt.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 	before := headID(rt)
 
-	if got := rt.publishHeartbeat(3); got != 3 {
+	if got := rt.publishHeartbeat(3, heartbeatInterval); got != 3 {
 		t.Errorf("publishHeartbeat(3) = %d, want 3: a skipped beat consumes no sequence number", got)
 	}
 	if beats := heartbeatsSince(t, rt, before); len(beats) != 0 {
@@ -145,10 +145,10 @@ func TestHeartbeat_SkipsTheTickAfterItsOwnBeat(t *testing.T) {
 
 	rt.bus.lastPublishAt.Store(0)
 	before := headID(rt)
-	seq := rt.publishHeartbeat(0)
+	seq := rt.publishHeartbeat(0, heartbeatInterval)
 
 	// The interval has not elapsed since that beat, so the next tick is a skip.
-	if got := rt.publishHeartbeat(seq); got != seq {
+	if got := rt.publishHeartbeat(seq, heartbeatInterval); got != seq {
 		t.Errorf("the tick after a beat returned %d, want %d: it published again", got, seq)
 	}
 	if beats := heartbeatsSince(t, rt, before); len(beats) != 1 {
@@ -165,7 +165,7 @@ func TestHeartbeat_SkipsWithNoSubscribers(t *testing.T) {
 	rt.bus.lastPublishAt.Store(0)
 	before := headID(rt)
 
-	if got := rt.publishHeartbeat(0); got != 0 {
+	if got := rt.publishHeartbeat(0, heartbeatInterval); got != 0 {
 		t.Errorf("publishHeartbeat(0) = %d, want 0: a beat nobody could receive consumes no sequence number", got)
 	}
 	if beats := heartbeatsSince(t, rt, before); len(beats) != 0 {
@@ -184,7 +184,7 @@ func TestHeartbeat_SequenceIsMonotonic(t *testing.T) {
 		// Each published beat stamps the publish clock, so reopening the idle gate
 		// is what stands in for the interval of quiet between two ticks.
 		rt.bus.lastPublishAt.Store(0)
-		seq = rt.publishHeartbeat(seq)
+		seq = rt.publishHeartbeat(seq, heartbeatInterval)
 	}
 	if seq != 3 {
 		t.Errorf("three beats left the sequence at %d, want 3", seq)
@@ -242,7 +242,11 @@ func TestHandleSSE_HeartbeatReachesATopicFilteredClient(t *testing.T) {
 
 	// The connect replay cannot carry it: sse.subscribe snapshots the ring only for
 	// a RESUMING client (lastID > 0), and this connect sends no cursor. So the beat
-	// has to be published into the live loop, from beside it.
+	// has to be published into the live loop, from beside it. The cadence is read
+	// HERE rather than inside the goroutine, which is heartbeatLoopEvery's own rule:
+	// a lazy read of the package var off the test's goroutine races the write another
+	// test in this binary makes to drive the cadence in milliseconds.
+	interval := heartbeatInterval
 	published := make(chan struct{})
 	go func() {
 		defer close(published)
@@ -250,7 +254,7 @@ func TestHandleSSE_HeartbeatReachesATopicFilteredClient(t *testing.T) {
 		for time.Now().Before(deadline) {
 			if rt.bus.fanout.ClientCount() > 0 {
 				rt.bus.lastPublishAt.Store(0)
-				rt.publishHeartbeat(0)
+				rt.publishHeartbeat(0, interval)
 				return
 			}
 			runtime.Gosched()
