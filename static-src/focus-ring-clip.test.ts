@@ -484,29 +484,29 @@ function gitFileList(): { clipper: HTMLElement; path: HTMLElement; discard: HTML
   return { clipper, path, discard };
 }
 
-/** A diff pane's header, whose whitespace checkbox is its only focusable. TWO header
- *  shapes, because `renderDiffPane` builds the labelled one when it has labels and a
- *  toolbar-only one when it has only the toggle, and the two clear the clip box by
- *  different amounts. */
+/** A diff pane's chrome, whose whitespace checkbox is its only focusable. ONE shape:
+ *  the checkbox lives in `.diff-pane-toolbar` whether or not the pane carries column
+ *  labels, so its clearance is that row's own `padding-block` and a label row below it
+ *  cannot move the number. */
 function diffPane(opts: { labelled: boolean }): { clipper: HTMLElement; toggle: HTMLElement } {
   const toggle = node("input", "", { type: "checkbox" });
   const label = node("label", "diff-pane-ws-toggle");
   label.append(toggle, span("", "Ignore whitespace"));
-  const header = node(
-    "div",
-    opts.labelled ? "diff-pane-header" : "diff-pane-header diff-pane-header-toolbar",
-  );
+  const toolbar = node("div", "diff-pane-toolbar");
+  toolbar.appendChild(label);
+  const clipper = node("div", "diff-pane");
+  clipper.appendChild(toolbar);
   if (opts.labelled) {
+    const header = node("div", "diff-pane-header");
     header.append(
       span("diff-pane-label diff-pane-label-old", "HEAD"),
       span("diff-pane-label diff-pane-label-new", "working tree"),
     );
+    clipper.appendChild(header);
   }
-  header.appendChild(label);
-  const clipper = node("div", "diff-pane");
   const body = node("div", "diff-pane-body");
   body.textContent = "diff rows";
-  clipper.append(header, body);
+  clipper.appendChild(body);
   return { clipper: mount(clipper), toggle };
 }
 
@@ -900,26 +900,23 @@ describe("the exclusions: a focusable whose clipper clears the reach", () => {
     expectClears("git file Discard", discard, clipper);
   });
 
-  it("pins the diff pane's whitespace checkbox in the labelled header", async () => {
-    // The clipper's header gives 4px of block padding against 3px of reach, and the
-    // label's own `padding-inline` holds the inline edges. A floor rather than an
-    // equality: the labels' line box is taller than the checkbox here, so the exact
-    // number is half a pixel of font metrics on top of that padding.
-    const { clipper, toggle } = diffPane({ labelled: true });
+  it("pins the diff pane's whitespace checkbox against its toolbar's padding", async () => {
+    // The checkbox is the tallest thing in that row, so the clearance is
+    // `.diff-pane-toolbar`'s `padding-block` exactly: 4px against 3px of reach.
+    const { clipper, toggle } = diffPane({ labelled: false });
     await focusByTab(toggle);
-    expect(inset(toggle, clipper).top).toBeGreaterThanOrEqual(4);
+    expect(inset(toggle, clipper).top, "the toolbar's own padding-block").toBe(4);
     expectClears("whitespace checkbox", toggle, clipper);
   });
 
-  it("pins it in the toolbar-only header, which is the tighter of the two shapes", async () => {
-    // Half a pixel tighter than the labelled shape, because with no label beside it the
-    // checkbox is the tallest thing in the line and the clearance is the header's
-    // `padding-block` exactly. `.diff-pane-header-toolbar` is a rule of its own, so a
-    // `padding-block` declared there moves this number and not the one above.
-    const { clipper, toggle } = diffPane({ labelled: false });
+  it("keeps that number when the pane also carries column labels", async () => {
+    // The label row is a SIBLING of the toolbar rather than the line the checkbox
+    // shares, which is what makes the two shapes one number instead of two — and is
+    // also what keeps each caption over its own column.
+    const { clipper, toggle } = diffPane({ labelled: true });
     await focusByTab(toggle);
-    expect(inset(toggle, clipper).top, "the header's own padding-block").toBe(4);
-    expectClears("whitespace checkbox (toolbar-only)", toggle, clipper);
+    expect(inset(toggle, clipper).top).toBe(4);
+    expectClears("whitespace checkbox (labelled pane)", toggle, clipper);
   });
 
   it("pins the tool card's disclosure, whose clearance is no padding at all", async () => {
