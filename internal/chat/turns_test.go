@@ -173,7 +173,7 @@ func turnOpeningIndexes(msgs []vibekit.Message) []int {
 	}
 	out := make([]int, 0, 8)
 	for _, s := range projectTurnSummaries(msgs, false) {
-		out = append(out, byID[string(s.ID)])
+		out = append(out, byID[s.ID])
 	}
 	return out
 }

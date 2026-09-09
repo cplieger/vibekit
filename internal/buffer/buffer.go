@@ -526,16 +526,3 @@ func (buf *Buffer) MarkInFlightToolsAborted() (messageID string, changed []vibek
 	}
 	return buf.MessageID, changed
 }
-
-// Snapshot returns the WHOLE in-flight turn as a vibekit.Message plus the chunk-sequence
-// watermark, for a caller that needs the accumulated transcript rather than only the next
-// delta. This is the buffer serving its own cross-goroutine read. Reports false when the
-// turn has produced nothing yet, which the caller sends as a bare busy signal.
-//
-// One call into SnapshotCapped with no caps, so there is ONE implementation of the read and
-// the unbounded path cannot drift from the bounded one. A caller writing to a bounded
-// channel — the SSE connect replay is the one in tree — uses SnapshotCapped directly.
-func (buf *Buffer) Snapshot() (vibekit.Message, int64, bool) {
-	msg, seq, _, ok := buf.SnapshotCapped(SnapshotCaps{})
-	return msg, seq, ok
-}
