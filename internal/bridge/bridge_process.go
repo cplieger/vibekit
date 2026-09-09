@@ -153,6 +153,43 @@ func waitStatus(err error) string {
 	return err.Error()
 }
 
+// reapProcess signals the tree, reaps it, and reports what it found. Stop's caller has
+// already closed stdin, which is what gives kiro-cli its chance to exit gracefully.
+//
+// The GROUP, not the head: kiro-cli passes its stdio down, so the stdin close reaches
+// the whole chain, but on 2.18.0 that stopped reclaiming the tree and a head-only kill
+// left `kiro-cli-chat` plus its `node` child alive at ~250 MB, reparented to init, on
+// every model switch, tab close and idle cull. See procgroup.Kill.
+func (b *Bridge) reapProcess() {
+	// Before the signal empties it; procgroup.GroupOf owns why.
+	pgid, owns := procgroup.GroupOf(b.cmd.Process)
+	killErr := procgroup.Kill(b.cmd.Process, syscall.SIGKILL)
+	// Already gone means kiro-cli ended on its OWN, so the wait status below is the only
+	// record of why. procgroup.AlreadyGone owns which errors mean that.
+	endedItself := procgroup.AlreadyGone(killErr)
+	if killErr != nil && !endedItself {
+		slog.Error("kill kiro-cli", "error", killErr)
+	}
+	// Wait releases the OS process entry, so repeated chat switch and cull-idle cycles
+	// do not leak zombies.
+	waitErr := b.cmd.Wait()
+	// The child's wait status is the whole diagnosis when the stream died for no stated
+	// reason, and discarding it is why such a death reads as silent. Debug when we killed
+	// it, because then the status is our own signal.
+	if endedItself {
+		slog.Warn("kiro-cli ended on its own", "wait", waitStatus(waitErr))
+	} else {
+		slog.Debug("kiro-cli reaped", "wait", waitStatus(waitErr))
+	}
+	// Reaping the head is not proof the tree went, and a surviving acp-server holds
+	// KAS's workflow lease against every later resume.
+	if owns && !procgroup.WaitGone(pgid, bridgeGroupGrace) {
+		slog.Error("kiro-cli process group outlived its bridge; it still holds any workflow lease it owned",
+			"pgid", pgid,
+			"grace_ms", bridgeGroupGrace.Milliseconds())
+	}
+}
+
 // Stop kills the subprocess and closes NotifCh. Safe to call multiple
 // times; subsequent calls are no-ops. Multiple call sites (agent.Shutdown,
 // tab close, model switch, session/load recovery) can race to stop the
@@ -166,50 +203,7 @@ func (b *Bridge) Stop() {
 			b.stdin.Close()
 		}
 		if b.cmd != nil && b.cmd.Process != nil {
-			// The GROUP, not the head. kiro-cli passes its stdio down, so the
-			// stdin close above reaches the whole chain and is what lets it exit
-			// gracefully — but on kiro-cli 2.18.0 that no longer reclaims the
-			// tree, and a head-only kill left `kiro-cli-chat` plus its `node`
-			// child alive at ~250 MB, reparented to init, on every model switch,
-			// tab close and idle cull. See procgroup.Kill.
-			//
-			// Demote the expected case (process already exited after stdin
-			// close) to Debug so every graceful teardown doesn't emit an ERROR.
-			//
-			// procgroup.AlreadyGone owns which errors mean "already reaped",
-			// rather than this site naming one of them. Only os.ErrProcessDone
-			// is reachable through procgroup.Kill (os folds a bare ESRCH into it),
-			// so the previous spelling was correct — but it was the fourth copy
-			// of the condition in this repo, and the predicate is where the
-			// question gets answered once.
-
-			// Before the signal empties it; procgroup.GroupOf owns why.
-			pgid, owns := procgroup.GroupOf(b.cmd.Process)
-			killErr := procgroup.Kill(b.cmd.Process, syscall.SIGKILL)
-			// Already gone means kiro-cli ended on its OWN, so the wait status below
-			// is the only record of why. Our SIGKILL overwrites nothing in that case.
-			endedItself := procgroup.AlreadyGone(killErr)
-			if killErr != nil && !endedItself {
-				slog.Error("kill kiro-cli", "error", killErr)
-			}
-			// Wait releases the OS process entry so repeated chat
-			// switch / cull-idle cycles do not leak zombies.
-			waitErr := b.cmd.Wait()
-			// The child's wait status is the whole diagnosis when the stream died for
-			// no stated reason, and discarding it is why such a death reads as silent.
-			// Debug when we killed it, because then the status is our own signal.
-			if endedItself {
-				slog.Warn("kiro-cli ended on its own", "wait", waitStatus(waitErr))
-			} else {
-				slog.Debug("kiro-cli reaped", "wait", waitStatus(waitErr))
-			}
-			// Reaping the head is not proof the tree went, and a surviving
-			// acp-server holds KAS's workflow lease against every later resume.
-			if owns && !procgroup.WaitGone(pgid, bridgeGroupGrace) {
-				slog.Error("kiro-cli process group outlived its bridge; it still holds any workflow lease it owned",
-					"pgid", pgid,
-					"grace_ms", bridgeGroupGrace.Milliseconds())
-			}
+			b.reapProcess()
 		}
 	})
 }
