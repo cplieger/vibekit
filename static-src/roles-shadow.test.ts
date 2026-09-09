@@ -43,6 +43,19 @@ describe("mergeCatalogAndWorkspace", () => {
     expect(row?.shadowed).toBe("bundled");
   });
 
+  it("withholds the mark when the colliding entry is itself workspace-sourced", () => {
+    // The live catalog carries the workspace agents, so the merge matches an
+    // entry against itself; "shadows workspace" claims two definitions of one.
+    const live: readonly SessionMode[] = [
+      { id: "app-implementer", name: "app-implementer", source: "workspace" },
+    ];
+    const merged = mergeCatalogAndWorkspace(live, ["app-implementer"]);
+    const rows = merged.filter((p) => p.mode.id === "app-implementer");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.mode.source).toBe("workspace");
+    expect(rows[0]?.shadowed).toBeUndefined();
+  });
+
   it("leaves a non-colliding workspace agent unmarked", () => {
     const merged = mergeCatalogAndWorkspace(catalog, ["only-here"]);
     const row = merged.find((p) => p.mode.id === "only-here");

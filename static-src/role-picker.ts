@@ -149,21 +149,22 @@ function modeOption(entry: PickerMode, currentMode: string): HTMLButtonElement {
     el("span", { className: "pill-role-item-icon" }, iconEl(iconForMode(mode.id))),
     el("span", { className: "pill-role-name" }, displayModeName(mode.name || mode.id)),
   ];
+  // The shadowed entry, marked. There is one row per id, so without this the
+  // collision is invisible: the user sees a "workspace" agent and cannot tell
+  // that a same-named global definition exists and is NOT the one a run loads.
+  // Ahead of the scope chip, which holds the row's final slot at every mix.
+  let tooltip = mode.description ?? "";
+  if (entry.shadowed !== undefined) {
+    children.push(el("span", { className: "pill-role-shadow" }, "shadows " + entry.shadowed));
+    const note = `This workspace agent shadows the ${entry.shadowed} agent of the same name; the workspace definition is the one a run uses.`;
+    tooltip = tooltip === "" ? note : tooltip + " " + note;
+  }
   // Scope on the row. It was already on the wire and already read (the grouping
   // above keys on it) and simply was not shown, so a user looking at two custom
   // agents could not tell which tree each came from.
   const scope = scopeLabel(mode.source);
   if (scope !== "") {
     children.push(el("span", { className: "pill-role-scope" }, scope));
-  }
-  // The shadowed entry, marked. There is one row per id, so without this the
-  // collision is invisible: the user sees a "workspace" agent and cannot tell
-  // that a same-named global definition exists and is NOT the one a run loads.
-  let tooltip = mode.description ?? "";
-  if (entry.shadowed !== undefined) {
-    children.push(el("span", { className: "pill-role-shadow" }, "shadows " + entry.shadowed));
-    const note = `This workspace agent shadows the ${entry.shadowed} agent of the same name; the workspace definition is the one a run uses.`;
-    tooltip = tooltip === "" ? note : tooltip + " " + note;
   }
   const opt = el(
     "button",
