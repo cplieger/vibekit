@@ -23,13 +23,18 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { confirmChatExists } from "./store-load.js";
+// The store's shape, for the `importOriginal` call in its mock factory below.
+import type * as Store from "./store.js";
 
 const { mockUpsertHeader } = vi.hoisted(() => ({ mockUpsertHeader: vi.fn() }));
 
 // The store is mocked because this file's subject is the WIRE, not adoption — and
 // `upsertHeader` is spied rather than stubbed away, because the value it receives is
 // the decoder's OUTPUT and is therefore the assertion that proves the decoder ran.
-vi.mock("./store.js", () => ({
+vi.mock("./store.js", async (importOriginal) => ({
+  // The REAL rule rather than a copy of it: a hand-written one goes stale silently
+  // the first time the rule gains a term, and both suites stay green.
+  derivedHasMore: (await importOriginal<typeof Store>()).derivedHasMore,
   get: () => undefined,
   getSessions: () => [],
   setSessions: vi.fn(),

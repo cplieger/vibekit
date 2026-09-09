@@ -122,6 +122,9 @@ type bus struct {
 	// chatStatus holds each chat's last self-declared status, the one turn_state
 	// input that lives on no message and in no replay (chat_status.go).
 	chatStatus *chatStatusCache
+	// stageStatusDesc records a declared description on the chat's open turn, which is
+	// what the agent_finished push body reads.
+	stageStatusDesc func(vibekit.ChatID, string)
 	// lastPublishAt is the unix-nano instant something last reached the fan-out,
 	// read by the heartbeat's idle gate (heartbeat.go). An atomic rather than a
 	// mutexed field because emit is on every broadcast path and the heartbeat
@@ -348,6 +351,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h.mcpRegistry = newMCPRegistry(bridgeP.mgr, sseP, lc, h.mcpConfig)
 	h.replay = &replay{chats: chatStore, lifetime: lc, projections: map[vibekit.ChatID]*loadProjection{}}
 	h.coord = newBridgeCoordinator(h)
+	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
 	// Built here rather than in the struct literal because two of its collaborators
 	// (coord, and the ignore matcher installed below) do not exist yet at that point.
 	h.inbound = &inbound{

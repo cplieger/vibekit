@@ -208,7 +208,7 @@ func (buf *Buffer) ToolsSettled() bool {
 	defer buf.mu.Unlock()
 	for i := range buf.ToolCalls {
 		switch buf.ToolCalls[i].Status {
-		case vibekit.ToolCompleted, vibekit.ToolFailed:
+		case vibekit.ToolCompleted, vibekit.ToolFailed, vibekit.ToolAborted:
 		default:
 			return false
 		}
@@ -510,16 +510,17 @@ func (buf *Buffer) HasToolInFlight() bool {
 	return false
 }
 
-// MarkCancelledToolsFailed sets every in-progress tool call to failed and returns the turn's
-// message id alongside them, so a cancel leaves no stuck spinners. The id travels WITH the calls
+// MarkInFlightToolsAborted settles every in-progress tool call as aborted and returns the turn's
+// message id alongside them, so a close leaves no stuck spinners. `aborted` rather than `failed`
+// because nothing malfunctioned: the turn ended under the call. The id travels WITH the calls
 // because the caller broadcasts each one keyed by it, and reading it separately would be an
 // unguarded field read off the dispatch goroutine.
-func (buf *Buffer) MarkCancelledToolsFailed() (messageID string, changed []vibekit.ToolCall) {
+func (buf *Buffer) MarkInFlightToolsAborted() (messageID string, changed []vibekit.ToolCall) {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
 	for i := range buf.ToolCalls {
 		if buf.ToolCalls[i].Status == vibekit.ToolInProgress || buf.ToolCalls[i].Status == vibekit.ToolPending {
-			buf.ToolCalls[i].Status = vibekit.ToolFailed
+			buf.ToolCalls[i].Status = vibekit.ToolAborted
 			changed = append(changed, buf.ToolCalls[i])
 		}
 	}

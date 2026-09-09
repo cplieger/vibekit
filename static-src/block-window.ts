@@ -4,7 +4,9 @@
 // the caller's policy.
 // ---------------------------------------------------------------------------
 
-import type { Message } from "./types.js";
+import { parseStepSubtask } from "./step-subtask.js";
+import { isSubagentInvocation } from "./tool-schema.js";
+import type { Block, Message, ToolCall } from "./types.js";
 import type { Turn } from "./turns.js";
 
 /** What one paint's WINDOW may mount. TWO budgets, because a tool card is a whole
@@ -64,6 +66,78 @@ export type ResidencyPlan = ReadonlyMap<string, TurnRange>;
  *  and this is the one place that rule is spelled. */
 function messageSpan(m: Message): number {
   return Math.max(1, (m.blocks ?? []).length);
+}
+
+/** Whether the TRANSCRIPT renders nothing for this block, so it owes neither a budget
+ *  slot here nor a pixel in `block-heights.ts`. Two populations, both dropped by
+ *  `messages-blocks.ts` `placeBlock`: a WORKFLOW STEP's block, and every block a
+ *  DELEGATE produced except the invocation that becomes its card. The tab that owns the
+ *  content renders it, out of the store rather than through this module.
+ *
+ *  Exported because the BUDGET and the PRICE must answer it identically: a spacer
+ *  pricing ordinals the window charges nothing for is the same defect as the reverse.
+ *  Keyed on the step PARSE, never the `wf:` prefix — a malformed id parses to null and
+ *  falls to the delegate arm, which drops it too, because the card is the only thing
+ *  `placeBlock` builds for one.
+ *
+ *  A `tool_use` whose call is not in the store yet counts as dropped, matching
+ *  `placeBlock`, which cannot recognise an invocation it cannot resolve. */
+export function isDroppedBlock(block: Block, toolCalls: readonly ToolCall[]): boolean {
+  const subtask = block.agent_subtask_id ?? "";
+  if (subtask === "") {
+    return false;
+  }
+  if (parseStepSubtask(subtask) !== null || block.type !== "tool_use") {
+    return true;
+  }
+  const tc = toolCalls.find((c) => c.id === block.tool_call_id);
+  return tc === undefined || !isSubagentInvocation(tc);
+}
+
+/** Whether the transcript renders ANYTHING for `m` — the message-scoped reading of
+ *  `isDroppedBlock`, which is why it lives beside it rather than being spelled again
+ *  wherever it is asked. A non-assistant row always renders (an event badge, a steer
+ *  note, the system fallback); an assistant one renders its plan card, or any block the
+ *  dispatcher does not drop. Measured on 107 chat files: 11 body messages render nothing
+ *  by this rule, each an assistant message whose every block is a workflow step, one of
+ *  them 603 blocks long. */
+export function messageRendersContent(m: Message): boolean {
+  if (m.role !== "assistant") {
+    return true;
+  }
+  if ((m.plan ?? []).length > 0) {
+    return true;
+  }
+  const calls = m.tool_calls ?? [];
+  return (m.blocks ?? []).some((b) => !isDroppedBlock(b, calls));
+}
+
+/** The body messages a LATER message of their own turn renders content after, which is
+ *  what extends the newest-element rule from message scope to TURN scope: everything in
+ *  such a message is superseded, because the whole of it precedes the whole of its
+ *  successor in the card.
+ *
+ *  Derived here rather than at the render, because only the projection knows a message's
+ *  neighbours — a `MsgRender` is per message and cannot see past its own blocks, which
+ *  is exactly the gap this closes. Measured on the same 107 chats: 44% of turns hold
+ *  more than one body message, so a message-scoped verdict is the common shape rather
+ *  than an edge. */
+export function supersededMessages(turns: readonly Turn[]): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const t of turns) {
+    let laterContent = false;
+    for (let i = t.body.length - 1; i >= 0; i -= 1) {
+      const m = t.body[i];
+      if (m === undefined) {
+        continue;
+      }
+      if (laterContent) {
+        out.add(m.id);
+      }
+      laterContent = laterContent || messageRendersContent(m);
+    }
+  }
+  return out;
 }
 
 /** What mounting `t`'s body costs, and the LENGTH of its ordinal span.
@@ -135,16 +209,21 @@ export function planResidency(
   const plan = new Map<string, TurnRange>();
   const bases: number[] = [];
   const spans: number[] = [];
-  // The tool charge is a property of the ORDINAL, so it cannot come from
-  // `turnCost`: one flat pass mints the sequence and the flag together.
+  // Both charges are properties of the ORDINAL, so neither can come from
+  // `turnCost`: one flat pass mints the sequence and the flags together.
   const isTool: boolean[] = [];
+  const isFree: boolean[] = [];
   for (const t of turns) {
     const base = isTool.length;
     for (const m of t.body) {
       const blocks = m.blocks ?? [];
+      const calls = m.tool_calls ?? [];
       const span = messageSpan(m);
       for (let j = 0; j < span; j++) {
-        isTool.push(blocks[j]?.type === "tool_use");
+        const b = blocks[j];
+        const free = b !== undefined && isDroppedBlock(b, calls);
+        isFree.push(free);
+        isTool.push(!free && b?.type === "tool_use");
       }
     }
     bases.push(base);
@@ -172,7 +251,7 @@ export function planResidency(
   // The budget is SHARED, so a side latched at the sequence end reserves nothing.
   let lo = at;
   let hi = at + 1;
-  let blocks = 1;
+  let blocks = isFree[at] === true ? 0 : 1;
   let toolCalls = isTool[at] === true ? 1 : 0;
   let headLatched = lo === 0;
   let tailLatched = hi === total;
@@ -181,14 +260,22 @@ export function planResidency(
     if (head ? !headLatched : !tailLatched) {
       const next = head ? lo - 1 : hi;
       const tool = isTool[next] === true ? 1 : 0;
-      if (blocks + 1 > budget.blocks || toolCalls + tool > budget.toolCalls) {
+      // A FREE ordinal is taken unconditionally and latches nothing: the transcript
+      // renders no block for it, so a budget spent on one buys the reader nothing. It
+      // stays an ORDINAL — the span is the renderer's own coordinate system.
+      if (
+        isFree[next] !== true &&
+        (blocks + 1 > budget.blocks || toolCalls + tool > budget.toolCalls)
+      ) {
         if (head) {
           headLatched = true;
         } else {
           tailLatched = true;
         }
       } else {
-        blocks++;
+        if (isFree[next] !== true) {
+          blocks++;
+        }
         toolCalls += tool;
         if (head) {
           lo = next;

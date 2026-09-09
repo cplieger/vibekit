@@ -3,11 +3,11 @@
 // No DOM dependencies — independently unit-testable.
 // ---------------------------------------------------------------------------
 
-import type { FileEntry } from "./files-shared.js";
+import { FB_ROOT, type FileEntry } from "./files-shared.js";
 
 export class FileBrowserState {
-  currentPath = ".";
-  history: string[] = ["."];
+  currentPath = FB_ROOT;
+  history: string[] = [FB_ROOT];
   historyIdx = 0;
   selected = new Set<string>();
   lastClickedName = "";
@@ -48,9 +48,9 @@ export class FileBrowserState {
   }
 
   reset(): void {
-    this.currentPath = ".";
+    this.currentPath = FB_ROOT;
     this.history.length = 0;
-    this.history.push(".");
+    this.history.push(FB_ROOT);
     this.historyIdx = 0;
     this.selected.clear();
     this.lastClickedName = "";

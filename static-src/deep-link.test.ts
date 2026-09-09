@@ -16,16 +16,23 @@
 // click or a back press does and reads the location back afterwards.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { settleDeepLinkedChat } from "./deep-link.js";
+import { admitLocation, settleDeepLinkedChat } from "./deep-link.js";
 
-const { mockResolve, mockListLoaded, mockMayAnswer, mockToastError, mockActiveTabRoute } =
-  vi.hoisted(() => ({
-    mockResolve: vi.fn(),
-    mockListLoaded: vi.fn(() => true),
-    mockMayAnswer: vi.fn(() => true),
-    mockToastError: vi.fn(),
-    mockActiveTabRoute: vi.fn(() => null as unknown),
-  }));
+const {
+  mockResolve,
+  mockListLoaded,
+  mockMayAnswer,
+  mockToastError,
+  mockActiveTabRoute,
+  mockTabIdForRoute,
+} = vi.hoisted(() => ({
+  mockResolve: vi.fn(),
+  mockListLoaded: vi.fn(() => true),
+  mockMayAnswer: vi.fn(() => true),
+  mockToastError: vi.fn(),
+  mockActiveTabRoute: vi.fn(() => null as unknown),
+  mockTabIdForRoute: vi.fn(() => ""),
+}));
 
 vi.mock("./chat.js", () => ({ resolveUnknownChat: mockResolve }));
 vi.mock("./store-load.js", () => ({
@@ -38,6 +45,7 @@ vi.mock("./store-load.js", () => ({
 vi.mock("./tabs.js", async () => ({
   ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
   getActiveTabRoute: mockActiveTabRoute,
+  tabIdForRoute: mockTabIdForRoute,
 }));
 vi.mock("./toast.js", () => ({ error: mockToastError }));
 
@@ -60,6 +68,8 @@ beforeEach(() => {
   mockListLoaded.mockReturnValue(true);
   mockMayAnswer.mockReturnValue(true);
   mockActiveTabRoute.mockReturnValue(null);
+  // The empty answer, which is `tabs.ts`'s own for a route no open tab carries.
+  mockTabIdForRoute.mockReturnValue("");
 });
 
 afterEach(() => {
@@ -260,5 +270,92 @@ describe("settleDeepLinkedChat", () => {
 
     expect(await settleDeepLinkedChat("c-asked")).toBe("opened");
     expect(location.pathname).toBe("/files/src");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `admitLocation`: whether a location may OPEN the view it names.
+//
+// The cross-device defect this closes: device A sleeps, device B closes a tab,
+// device A wakes as a fresh document load, and its URL still names the closed tab.
+// The resync itself is a clean replace and drops the row correctly — and then the
+// boot applied that URL as a deep link, which RE-CREATED the tab server-side and
+// broadcast it back to every device, including the one that closed it.
+//
+// A restored location is `active_view`'s twin, and it was the copy with no guard:
+// `tabs.ts` only adopts a saved `active_view` when a row for it exists, while the
+// URL was applied unconditionally.
+// ---------------------------------------------------------------------------
+
+describe("admitLocation", () => {
+  it("admits a deliberate navigation to a tab nothing has open", () => {
+    // A pasted or shared link is the case the openers exist for.
+    expect.assertions(1);
+    mockTabIdForRoute.mockReturnValue("");
+
+    expect(admitLocation({ kind: "docs", tab: "hooks" }, "deeplink")).toBe("opens");
+  });
+
+  it("admits a RESTORED location whose tab is still open", () => {
+    // The ordinary reload: the tab survived the resync, so the URL names something
+    // real and its opener is idempotent by subject.
+    expect.assertions(1);
+    mockTabIdForRoute.mockReturnValue("t-docs");
+
+    expect(admitLocation({ kind: "docs", tab: "hooks" }, "restore")).toBe("opens");
+  });
+
+  it("refuses a RESTORED location whose tab was closed on another device", () => {
+    // The reported defect. `openTab` is a server mutation, so admitting this is what
+    // put the closed tab back on every screen.
+    expect.assertions(1);
+    mockTabIdForRoute.mockReturnValue("");
+
+    expect(admitLocation({ kind: "docs", tab: "hooks" }, "restore")).toBe("canonicalized");
+  });
+
+  it("points a refused location at the tab that IS active", () => {
+    expect.assertions(1);
+    at("/chat/c-gone");
+    mockTabIdForRoute.mockReturnValue("");
+    mockActiveTabRoute.mockReturnValue({ kind: "chat", id: "c-survivor" });
+
+    admitLocation({ kind: "chat", id: "c-gone" }, "restore");
+
+    expect(location.pathname).toBe("/chat/c-survivor");
+  });
+
+  it("points a refused location at the empty state when no tab survived", () => {
+    // The remote close that emptied the strip: `activateSuccessor` reaches the empty
+    // state and respawns nothing, so there is no route to name.
+    expect.assertions(1);
+    at("/chat/c-gone");
+    mockTabIdForRoute.mockReturnValue("");
+    mockActiveTabRoute.mockReturnValue(null);
+
+    admitLocation({ kind: "chat", id: "c-gone" }, "restore");
+
+    expect(location.pathname).toBe("/");
+  });
+
+  it("refuses a back press onto a tab this device closed, as it always has", () => {
+    // The `history` origin's own rule, unchanged: the widening added `restore` beside
+    // it rather than replacing it.
+    expect.assertions(1);
+    mockTabIdForRoute.mockReturnValue("");
+
+    expect(admitLocation({ kind: "history" }, "history")).toBe("canonicalized");
+  });
+
+  it("leaves the URL alone for every location it admits", () => {
+    // A guard that canonicalized on the way through would rewrite the address bar
+    // under a reader who navigated deliberately.
+    expect.assertions(2);
+    at("/chat/c-linked");
+    mockTabIdForRoute.mockReturnValue("");
+    mockActiveTabRoute.mockReturnValue({ kind: "chat", id: "c-other" });
+
+    expect(admitLocation({ kind: "chat", id: "c-linked" }, "deeplink")).toBe("opens");
+    expect(location.pathname).toBe("/chat/c-linked");
   });
 });

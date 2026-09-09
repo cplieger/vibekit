@@ -164,7 +164,6 @@
 .popup-item.active:active,
 .picker-btn.active:active,
 .effort-btn.active:active,
-.fb-row.fb-row-selected:active,
 .repo-picker-chip-active:active,
 .repo-picker-row-selected:active,
 .git-branch-popover-row.current:active,
@@ -189,6 +188,69 @@
      selected state, its hover and its press. */
   box-shadow: none;
 }
+
+/* A ROW YIELDS ITS PRESS TO A CONTROL INSIDE IT.
+
+   `:active` matches the element being activated AND its ancestors, so a press on
+   the tab strip's × is a press on the row as far as the rule above can tell: the
+   whole row took the selected press fill while the × answered with nothing, which
+   reads as the wrong thing lighting up under the finger. The × grew a press of its
+   own in 10-shell-app.css; this is the other half, and neither is sufficient alone.
+
+   Scored (0,4,0) against that rule's (0,3,0), so it wins on specificity wherever
+   either file sits rather than on this file's position in the MANIFEST. It cannot be
+   written as the honest `:not(:has(.tab-close:active))` guard ON that rule: four
+   pseudo-classes is over the fleet's `selector-max-pseudo-class` of 3 and (0,5,0) is
+   over its `selector-max-specificity`, and those numbers are canonical in
+   cplieger/ci rather than vibekit's to raise.
+
+   The value is the RAMP'S MIDDLE RUNG, not a claim that the row is hovered — the
+   selected fill runs resting, `-hover` at 12% of the ink, `-press` at 22%, and a row
+   whose child is taking the press wants the rung one short of its own press. That is
+   why it is ungated where the hover rule two blocks up is `@media (any-hover: hover)`:
+   that gate exists because a touchscreen's `:hover` LATCHES after a tap, and this
+   keys on `:active` inside, which unlatches on pointerup. So a finger holding the ×
+   lifts the row one rung and the × wears the press, which is the same ordering a
+   mouse gets.
+
+   TABS ONLY, and that is a swept answer rather than a scoping decision. Asking the
+   same question of the other 21 members of the list found exactly ONE more surface
+   with a control inside it, `.fb-row.fb-row-selected`, and it wanted the opposite
+   remedy — it left the list (see the block below). Every remaining member is a
+   `<button>` or a `div[role="option"]` whose children are spans and text, so there is
+   nothing nested to yield to; `.popup-item` and the two `.repo-picker-*` entries have
+   no production construction site at all and render nowhere. The app's OTHER pressed
+   containers — the `role="button"` heads and the four `<summary>` elements that take
+   03-base.css's wash — are control-free by construction, because axe's
+   `nested-interactive` forced it and four of them carry a comment saying so. */
+.tab.active:has(.tab-close:active) {
+  background: var(--c-selected-bg-hover);
+}
+
+/* `.fb-row.fb-row-selected` IS NOT IN THE PRESS LIST, and its absence is the finding
+   rather than an omission.
+
+   A press is feedback for an ACTIVATION, and a file-browser listing row has none: no
+   listener is attached to the row element, nothing is delegated on `#fb-list`, and
+   the row is a `div[role="listitem"]` rather than a label wrapping its checkbox
+   (`files.ts` `entryRow`). All three of its activations belong to CHILDREN — the name
+   span navigates or opens, the checkbox selects, and the git letter (`role="button"`,
+   so it takes 03-base.css's wash on its own) opens that file's diff. So the fill
+   marked two different lies: pressing the row's meta text or its dead space promised
+   an action that does not exist, and pressing one of those three children lit the
+   whole row up beside the control that was actually pressed — the tab strip's defect,
+   reached from its root instead of patched with a `:has()` yield.
+
+   The one `.fb-row` that IS a control cannot reach this rule anyway: a search hit
+   carries a click and a keydown, and it renders into `#fb-search-results` with no
+   `data-name`, so `updateRowHighlights` never marks it selected. That it has no press
+   of its own is a separate gap — a control shaped as a `listitem` gets nothing from
+   the app-wide rule — and not one to close by putting a press back on the row that
+   does nothing.
+
+   The resting and hover rungs above KEEP it: a selected fill states which rows an
+   action would apply to, and a hover fill on a row hosting three controls says which
+   row the pointer is on. Neither claims the row itself can be activated. */
 
 /* ==========================================================================
    THE INK THAT DOES NOT INHERIT.
@@ -278,4 +340,7 @@
 
 /* A tab's selected fill never rewrites its activity dot. Selection belongs to
    the row; status belongs to the chat, and its hue stays byte-identical whether
-   or not this device is reading that tab (user ruling, 2026-08-31). */
+   or not this device is reading that tab (user ruling, 2026-08-31).
+   The workflow mark beside it (`.tab-run-dot`) is governed by the same ruling and
+   likewise has no rule here: it reads the same --dot-color and the same
+   --c-dot-* family, so a selected row inherits both marks unchanged. */

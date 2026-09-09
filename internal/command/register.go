@@ -29,6 +29,12 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		Retention: func(ctx context.Context) bool {
 			return settings.RetentionEnabled(ctx, r.Workspace.ConfigDir)
 		},
+		// The SAME reader prompt.go's auto-create branch uses, so the two seed
+		// sites cannot disagree about what the setting says. Fails closed to
+		// false.
+		SupervisedDefault: func(ctx context.Context) bool {
+			return supervisedDefaultSetting(ctx, r.Workspace.ConfigDir)
+		},
 		Runs: r.Runs,
 	})
 
@@ -69,6 +75,8 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		turnOutcome: r.TurnOutcome,
 		auth:        r.AuthReadiness,
 	}, CmdPrompt))
+
+	d.status = r.Status
 	return mem
 }
 

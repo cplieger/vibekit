@@ -32,6 +32,7 @@ import {
   EVICT_SWEEP_MS,
   EVICT_IDLE_MS,
 } from "./store.js";
+import { hasExecutingRunForChat, noteRunLive, noteRunSettled } from "./run-store.js";
 import {
   blockTextSigs,
   blockThinkingSigs,
@@ -188,7 +189,7 @@ describe("the five exemptions, each alone", () => {
   });
 
   it("never evicts a chat a registered LIVE-RUN predicate names", () => {
-    // The seam the composition root wires hasLiveRunForChat through; the
+    // The seam the composition root wires hasExecutingRunForChat through; the
     // predicate's own behavior (event-fed, rebuilt, degrade rules) is
     // run-store.test.ts's subject.
     seedIdlePair("c-act", "c-run");
@@ -197,6 +198,25 @@ describe("the five exemptions, each alone", () => {
     tick();
     expect(get("c-run")?.residency).toBeUndefined();
     expect(get("c-run")?.messages).toHaveLength(1);
+  });
+
+  // The REAL predicate through the real sweep, because each half is green while the
+  // other is wrong: the case above registers a synthetic one, and run-store.test.ts
+  // reads the real one's return value with no sweep behind it. What neither pins is
+  // the sentence both imply — a chat with a run in flight keeps its window.
+  it("keeps the window of a chat with an EXECUTING run, and lets a PARKED one go", () => {
+    seedIdlePair("c-act", "c-live");
+    exempt(hasExecutingRunForChat);
+    noteRunLive("wf-e2e", "c-live", true);
+    startEvictionSweep();
+    tick();
+    expect(get("c-live")?.messages, "frames are still arriving into this window").toHaveLength(1);
+
+    // A park writes nothing into the transcript, so the exemption lapses.
+    noteRunLive("wf-e2e", "c-live", false);
+    tick();
+    expect(get("c-live")?.residency).toBe("evicted");
+    noteRunSettled("wf-e2e");
   });
 
   it("never evicts a chat a registered PARKED-VIEW predicate names", () => {

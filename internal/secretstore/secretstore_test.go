@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -301,12 +302,21 @@ func TestCorruptStoreReportsTheQuarantineNotAFailure(t *testing.T) {
 // captureLogs swaps the slog default to a buffer-backed debug handler for the
 // duration of the test and restores it on cleanup. The handler is global, so
 // this package's tests never run in parallel.
+//
+// The log package's writer and flags are restored too: slog.SetDefault also points
+// log at the new handler, and it skips pointing it back when the restored handler
+// is the stock one (which reaches log.Output), so every later line in the package
+// would land in this buffer.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	prev := slog.Default()
+	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
+	t.Cleanup(func() {
+		slog.SetDefault(prevLogger)
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	})
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
 	return buf
 }
 

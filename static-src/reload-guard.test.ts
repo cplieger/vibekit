@@ -57,8 +57,26 @@ async function boot(): Promise<typeof Guard> {
   return (await import(/* @vite-ignore */ `./reload-guard.ts?boot=${seq}`)) as typeof Guard;
 }
 
+/** `n` boots, `gap` apart, each one ASKING for its verdict — which is what records
+ *  it, exactly as a document does on its first consumer. Returns the last instance.
+ *
+ *  A helper rather than a loop per case, because the two loop cases below differ only
+ *  in how many boots they run. */
+async function bootRun(n: number, gap: number): Promise<typeof Guard> {
+  let guard = await boot();
+  guard.bootMode();
+  for (let i = 2; i <= n; i++) {
+    vi.advanceTimersByTime(gap);
+    guard = await boot();
+    guard.bootMode();
+  }
+  return guard;
+}
+
 const WINDOW_MS = 10_000;
 const STABLE_MS = 20_000;
+/** The measured cadence of the crash the bound was built for. */
+const LOOP_GAP_MS = 1500;
 
 let store: ReturnType<typeof fakeStore>;
 
@@ -99,6 +117,37 @@ describe("the reload guard counts one tab's boots", () => {
     const third = await boot();
     expect(third.bootMode()).toBe("reduced");
     expect(third.reloadCount()).toBe(3);
+  });
+
+  it("stays reduced through a SUSTAINED loop, past the window's own length", async () => {
+    // Eight boots 1500ms apart: the run lasts 10.5s, past WINDOW_MS. Anchored on the
+    // run's first boot it is the EIGHTH that crosses — t=10500 against the 10000
+    // window, where the seventh is still inside it at t=9000 with n=7 — so the eighth
+    // reset to 1 and read FULL: a full boot, with every suppression lifted, in the
+    // middle of the loop the bound exists to end. The assertion below is on that
+    // eighth boot, which is why the red check reads `['full', 1]`.
+    const latest = await bootRun(8, LOOP_GAP_MS);
+
+    expect([latest.bootMode(), latest.reloadCount()]).toEqual(["reduced", 8]);
+  });
+
+  it("does not cap the count, so a long loop reports what it cost", async () => {
+    const latest = await bootRun(30, LOOP_GAP_MS);
+
+    // The banner names this number, so a cap would understate it. 30 boots is 45s of
+    // reloading, which the anchored window would have reset four times over.
+    expect([latest.bootMode(), latest.reloadCount()]).toEqual(["reduced", 30]);
+  });
+
+  it("reads a record another build wrote before the window slid", async () => {
+    // A tab that picks up a new bundle mid-loop: the retired anchor is the only stamp
+    // it has, so it is read as the previous boot. Costs that one tab a wrong gap,
+    // never the count.
+    store.setItem("vibekit.reload-guard", JSON.stringify({ n: 2, first: Date.now() }));
+
+    const guard = await boot();
+
+    expect([guard.bootMode(), guard.reloadCount()]).toEqual(["reduced", 3]);
   });
 
   it("answers every consumer of one document the same way", async () => {

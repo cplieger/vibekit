@@ -34,13 +34,15 @@ export type SettledBy = "user" | "unattended" | "moot";
 
 export type SteerOrigin = "user" | "agent";
 
+export type SteerState = "read" | "dropped";
+
 export type StopReason = "end_turn" | "cancelled" | "interrupted" | "refusal" | "unknown" | "error" | "content_filtered" | "max_tokens" | "max_turn_requests";
 
 export type TabKind = "chat" | "editor" | "run" | "subagent" | "settings" | "git" | "files" | "history" | "docs";
 
 export type ToolKind = "execute" | "shell" | "read" | "search" | "fetch" | "edit" | "think" | "hook" | "write" | "delete" | "move" | "command" | "browser" | "switch_mode" | "mcp" | "other";
 
-export type ToolStatus = "pending" | "in_progress" | "completed" | "failed";
+export type ToolStatus = "pending" | "in_progress" | "completed" | "failed" | "aborted";
 
 export type Transport = "stdio" | "http" | "sse";
 
@@ -510,7 +512,7 @@ export interface EffectiveSettings {
   tool_search_enabled: boolean;
   memory_enabled: boolean;
   /**
- * NotificationsEnabled is the push master switch, default off. The two per-kind
+ * NotificationsEnabled is the push master switch, default off. The three per-kind
  * switches below default ON, mirroring push.kindRegistry — the polarity differs
  * between the master and the kinds on purpose, and that asymmetry is exactly
  * why the client must not guess either of them.
@@ -518,6 +520,7 @@ export interface EffectiveSettings {
   notifications_enabled: boolean;
   notify_agent_finished: boolean;
   notify_pr_status: boolean;
+  notify_run_outcome: boolean;
   /**
  * SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
  * unattended run's permission ask at its deadline and is fail-closed by
@@ -831,6 +834,21 @@ export interface Message {
  * See UserKind for what absent means and why a steer carries no TurnOutcome.
  */
   user_kind?: UserKind;
+  /**
+ * SteerState is whether the model READ this steer, present only on a steer row.
+ * Absent means not known — see SteerState, which owns what that means and how it
+ * renders. It is what makes a reload able to say "the agent never saw this".
+ */
+  steer_state?: SteerState;
+  /**
+ * SteerOrigin is whose words a steer row carries, present only on a steer row.
+ * On the ROW as well as on the live frames because the note's TITLE comes from
+ * it, and the durable row REPLACES the live mark once it is resident (store.ts
+ * resolveAnchors). Without it a workflow's report would read as something the
+ * reader typed after every reload — the defect SteerOrigin exists to prevent.
+ * Absent means the user's, matching what the renderer has always assumed.
+ */
+  steer_origin?: SteerOrigin;
   id: string;
   /**
  * TurnOutcome is how this turn ENDED, stamped on the message that finalized
@@ -1913,7 +1931,7 @@ export interface TextSpan {
 
 /**
  * ToolCall is a tool invocation inside an assistant message. Each can be updated
- * in place as status changes (pending → in_progress → completed/failed).
+ * in place as status changes (pending → in_progress → completed/failed/aborted).
  */
 export interface ToolCall {
   id: string;

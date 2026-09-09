@@ -11,6 +11,64 @@ import (
 	"testing/fstest"
 )
 
+// missingWorkerLine is reportMissingServiceWorker's message, anchored whole with
+// its closing quote so a reworded line fails here rather than matching a prefix.
+const missingWorkerLine = `msg="server: no service worker in the embedded static tree;` +
+	` push notifications cannot be subscribed to"`
+
+// Without /sw.js there is no push-subscription path at all, and the SPA fallback
+// answers /sw.js with index.html, so a browser reports the failure in one tab's
+// console and nowhere else. This line is the only server-side signal separating
+// "push is broken" from "built without the bundle" — and it is a claim about the
+// WORKER, so a build that ships one must stay silent.
+func TestSpaHandler_WarnsOnlyWhenTheServiceWorkerIsAbsent(t *testing.T) {
+	tests := map[string]struct {
+		shipsWorker bool
+		wantLines   int
+	}{
+		"a tree without the worker is reported": {shipsWorker: false, wantLines: 1},
+		"a tree carrying the worker is silent":  {shipsWorker: true, wantLines: 0},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			fsys := fstest.MapFS{"index.html": {Data: []byte("<html></html>")}}
+			if tc.shipsWorker {
+				fsys[serviceWorkerPath] = &fstest.MapFile{Data: []byte("self.addEventListener('push', () => {})")}
+			}
+			logs := captureLogs(t)
+
+			spaHandler(fsys)
+
+			if n := strings.Count(logs.String(), missingWorkerLine); n != tc.wantLines {
+				t.Errorf("spaHandler over a tree with sw.js=%v logged the missing-worker line %d times,"+
+					" want %d; captured: %s", tc.shipsWorker, n, tc.wantLines, logs.String())
+			}
+		})
+	}
+}
+
+// The report belongs to the BOOT, not to a request: spaHandler is built once per
+// ListenAndServe, and a per-request line would put one in the log for every asset
+// and every client route a browser asks for.
+func TestSpaHandler_ReportsTheMissingServiceWorkerOncePerBoot(t *testing.T) {
+	fsys := fstest.MapFS{"index.html": {Data: []byte("<html>shell</html>")}}
+	logs := captureLogs(t)
+
+	h := spaHandler(fsys)
+	for _, path := range []string{"/", "/chat/abc"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200", path, rec.Code)
+		}
+	}
+
+	if n := strings.Count(logs.String(), missingWorkerLine); n != 1 {
+		t.Errorf("two requests through one handler logged the missing-worker line %d times, want 1;"+
+			" the report is per boot, not per request. Captured: %s", n, logs.String())
+	}
+}
+
 // Assets carry a startup-computed strong ETag, and a matching
 // If-None-Match revalidation gets its 304 from net/http.
 func TestSpaHandler_assetETagRevalidation(t *testing.T) {

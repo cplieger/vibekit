@@ -293,13 +293,37 @@ function parsePct(display: string | undefined): number | null {
   return m ? Math.min(100, Number(m[1])) : null;
 }
 
+/** The in-flight indexing readout: a native <progress> plus its text.
+ *
+ *  <progress> rather than <meter>, and the distinction is the element's own: a
+ *  meter is a static measurement within a range (a quota, a score), while this
+ *  row exists only while `indexing` is true and moves toward completion. The
+ *  server contract agrees — `internal/agent/knowledge.go` distinguishes an
+ *  indexed context from an in-flight operation, and a stall-bounded poll drives
+ *  the value.
+ *
+ *  `aria-label` rather than `aria-labelledby` at the sibling text: the list
+ *  renders one of these per indexing base, and an id-based name would need a
+ *  unique id minted per row. Native <progress> reports the value itself, so the
+ *  name is the only ARIA authored here — the bare `role="progressbar"` this
+ *  replaced carried no value and no name at all.
+ *
+ *  The `pct !== null` guard is preserved deliberately: `items_display` can read
+ *  "Cancelled" or "Failed", where a valueless <progress> would render an
+ *  animated indeterminate bar claiming work beside text saying there is none. */
 function progressEl(display: string | undefined): HTMLElement {
   const wrap = el("span", { className: "knowledge-progress" });
   const pct = parsePct(display);
   if (pct !== null) {
-    const fill = el("span", { className: "knowledge-bar-fill" });
-    fill.style.inlineSize = `${String(pct)}%`;
-    wrap.appendChild(el("span", { className: "knowledge-bar", role: "progressbar" }, fill));
+    // `value`/`max` assigned on the typed element rather than passed to `el`,
+    // which routes some names to a DOM property and the rest to setAttribute.
+    const bar = el("progress", {
+      className: "knowledge-bar",
+      "aria-label": "Indexing",
+    }) as HTMLProgressElement;
+    bar.max = 100;
+    bar.value = pct;
+    wrap.appendChild(bar);
   }
   const text = display !== undefined && display !== "" ? `Indexing… ${display}` : "Indexing…";
   wrap.appendChild(el("span", { className: "knowledge-progress-text" }, text));

@@ -139,9 +139,37 @@ describe("loadKnowledge render", () => {
     loadKnowledge();
     await flush();
     expect(list().textContent).toContain("Indexing… 42%");
-    const fill = list().querySelector<HTMLElement>(".knowledge-bar-fill");
-    expect(fill?.style.inlineSize).toBe("42%");
+    // A native <progress>, so the value is the element's own and the UA reports
+    // it. `position` rather than `value` alone, because it is the pair with `max`
+    // that decides what is drawn — a value of 42 against a max of 1 is full.
+    const bar = list().querySelector<HTMLProgressElement>("progress.knowledge-bar");
+    expect(bar).not.toBeNull();
+    expect(bar?.max).toBe(100);
+    expect(bar?.value).toBe(42);
+    expect(bar?.position).toBeCloseTo(0.42, 5);
+    // The one ARIA it authors. Native <progress> reports its own value, so a name
+    // is all it needs — and the bare `role="progressbar"` this replaced had none.
+    expect(bar?.getAttribute("aria-label")).toBe("Indexing");
   });
+
+  // The indeterminate case, and the reason the `pct !== null` guard survived the
+  // conversion: a valueless <progress> renders an ANIMATED indeterminate bar, so
+  // emitting one beside the word "Cancelled" would claim work that has stopped.
+  // Rendering no bar at all is the honest answer.
+  for (const display of ["Cancelled", "Failed", undefined]) {
+    it(`renders no bar at all while indexing reports ${display ?? "nothing"}`, async () => {
+      mockGet.mockResolvedValue({
+        contexts: [
+          { name: "big", id: "op1", item_count: 0, items_display: display, indexing: true },
+        ],
+      });
+      loadKnowledge();
+      await flush();
+      expect(list().querySelector("progress")).toBeNull();
+      // The text still says what happened, which is what the row is for.
+      expect(list().textContent).toContain(display === undefined ? "Indexing…" : display);
+    });
+  }
 
   it("merges duplicate names during an add, preferring the indexing entry", async () => {
     mockGet.mockResolvedValue({

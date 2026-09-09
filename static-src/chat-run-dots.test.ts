@@ -1,0 +1,743 @@
+// ---------------------------------------------------------------------------
+// The workflow mark on a CHAT's tab row.
+//
+// Five properties carry the feature, and each one is the reason it exists rather
+// than a detail of it:
+//
+//  1. THE FOLD. N live runs land on ONE mark, by the dot vocabulary's own
+//     precedence minus the outcome states: input > waiting > working > nothing.
+//     Get the order wrong and a run blocked on a decision is masked by a sibling
+//     that needs nothing from anyone — the same masking `tabStatusFor`'s own
+//     precedence exists to prevent, one element over.
+//
+//  2. PER-CHAT SCOPING, and it is the whole point of putting the mark on the strip.
+//     `run-bar.ts` already renders the ACTIVE chat's live runs, so it can say runs
+//     exist and cannot say WHICH chat. A mark that leaked across rows would answer
+//     the bar's question instead of this one.
+//
+//  3. IT IS NOT GATED ON THE READER. A run launched from chat A must show on A's
+//     row while the reader sits in chat B — that is the reported defect verbatim,
+//     and the reason the producer reads a GLOBAL inventory rather than the active
+//     session.
+//
+//  4. THE RESERVED SLOT. The mark's box is present in every state, so a run
+//     starting must not move the title beside it. Asserted against real layout
+//     with the shipped stylesheet mounted, because it is a geometry claim and
+//     nothing about the markup implies it.
+//
+//  5. WITHDRAWAL ON SETTLE. The live inventory deletes a run's row at its terminal
+//     status, so an OUTCOME is not available to paint. The mark has to disappear
+//     rather than turn green, and a `done` leaking through would be a claim this
+//     producer cannot support.
+//
+// The projection is REAL here — rows arrive through an `open_tab` round trip
+// against the fake collection and `createTabEl` builds them — because three of the
+// five properties are about the row's DOM rather than about the fold. The run store
+// and the dock are the two mocks, so a case can drive an inventory and an ask
+// directly; both are signal-backed, or the effect under test loses the dependency
+// that makes it repaint.
+// ---------------------------------------------------------------------------
+
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { signal } from "@cplieger/reactive";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import type { RunNode, RunState } from "./run-store.js";
+import type { TabKind } from "./types.js";
+
+const m = {
+  /** workflow id -> the chat that launched it, as the live inventory holds it. */
+  live: new Map<string, string>(),
+  states: new Map<string, RunState>(),
+  /** One entry per unanswered ask, by the RUN it names. */
+  asks: [] as string[],
+};
+
+const runsVersion = signal(0);
+const queueVersion = signal(0);
+
+/** Bump the mocked inventory/state the way a resolved fetch or a lifecycle frame
+ *  does, so the effect re-runs. */
+function runsChanged(): void {
+  runsVersion.value = runsVersion.value + 1;
+}
+
+/** Bump the mocked dock queue the way a real push does. */
+function dockChanged(): void {
+  queueVersion.value = queueVersion.value + 1;
+}
+
+vi.mock("./run-store.js", () => ({
+  // TRACKED like production's: the inventory's version is what repaints a row when
+  // a run starts or settles with no tab mutation behind it.
+  liveRunIDsForChat: vi.fn((chatID: string) => {
+    void runsVersion.value;
+    if (chatID === "") {
+      return [];
+    }
+    return [...m.live.entries()].filter(([, chat]) => chat === chatID).map(([id]) => id);
+  }),
+  // TRACKED too: the cell resolving is the moment the mark can paint at all.
+  runState: vi.fn((id: string) => {
+    void runsVersion.value;
+    return m.states.get(id);
+  }),
+  // The REAL rule, not a stub answering false: the mark's `input` arm is decided by
+  // it, so a stub would leave a run parked on a person reading as an ordinary wait.
+  // BOTH arms, because a park inside a parallel branch reaches only the second.
+  isNeedInputPark: (state: RunState | undefined): boolean => {
+    if (state?.status !== "paused") {
+      return false;
+    }
+    const reason = state.pauseReason;
+    const byReason =
+      reason === "Step requested user input via send_message." ||
+      (reason !== undefined &&
+        reason.startsWith("Step '") &&
+        (reason.endsWith("' is waiting for user input.") ||
+          reason.endsWith("' is waiting for the next user message.")));
+    const parked = (function find(n: RunNode | undefined): boolean {
+      if (n === undefined) {
+        return false;
+      }
+      if (n.status === "paused" && n.completionSignal === "need_input") {
+        return true;
+      }
+      return (n.children ?? []).some(find);
+    })(state.root);
+    return byReason || parked;
+  },
+  // The tab factory's own read, inert: a Browser-Mode mock is linked as real ESM,
+  // so a name any module in the graph reaches has to exist on it.
+  runLabelOf: vi.fn(() => ""),
+}));
+
+vi.mock("./decision-dock.js", () => ({
+  // The RUN-scoped reader, joined by run id: a chat-parented run's ask is filed
+  // under the LAUNCHING chat with the run stamped on the payload, so only a scan
+  // over that field finds it.
+  runPendingAsks: vi.fn((workflowID: string) => {
+    void queueVersion.value;
+    return {
+      count: m.asks.filter((a) => a === workflowID).length,
+      nodes: new Set<string>(),
+      label: "",
+    };
+  }),
+}));
+
+// --- The projection harness, as tab-dot.test.ts assembles it -----------------
+
+vi.mock("./router.js", () => ({
+  pushRoute: vi.fn(),
+  buildPath: vi.fn(() => "/"),
+  parseRoute: vi.fn(),
+}));
+vi.mock("./tabs-drag.js", () => ({
+  attachDrag: vi.fn(),
+  isDragHandled: vi.fn(() => false),
+  setReorderCallback: vi.fn(),
+}));
+vi.mock("./transport.js", () =>
+  import("./__test-helpers__/tabs-server.js").then((mod) => mod.tabTransportMock()),
+);
+vi.mock("./device-view.js", () => {
+  let active = "";
+  return {
+    activeView: vi.fn(() => active),
+    setActiveView: vi.fn((id: string) => {
+      active = id;
+    }),
+  };
+});
+vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
+vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
+
+const { mockApiGetTyped } = vi.hoisted(() => ({ mockApiGetTyped: vi.fn() }));
+vi.mock("./api-client.js", () =>
+  import("./__test-helpers__/tabs-server.js").then((mod) => {
+    const listTabs = mod.tabListRead();
+    return {
+      apiGetTyped: vi.fn((path: string, decode: unknown) =>
+        path === "/api/tabs" ? listTabs(path) : mockApiGetTyped(path, decode),
+      ),
+      apiGetTypedOrError: vi.fn(),
+    };
+  }),
+);
+vi.mock("./toast.js", () =>
+  import("./__test-helpers__/toast-mock.js").then((mod) => mod.toastMock()),
+);
+
+/** The tab strip's real render target, so renderDOM runs for real. */
+vi.mock("./dom.js", () => {
+  const cache = new Map<string, HTMLElement>();
+  return {
+    $: new Proxy(
+      {},
+      {
+        get(_t, prop: string) {
+          if (prop === "tabList") {
+            let list = cache.get("tabList");
+            if (list === undefined || !list.isConnected) {
+              list = document.getElementById("tab-list") ?? document.createElement("div");
+              cache.set("tabList", list);
+            }
+            return list;
+          }
+          return document.createElement("div");
+        },
+      },
+    ),
+    byId: vi.fn(() => document.createElement("div")),
+    forceReflow: vi.fn(() => 0),
+  };
+});
+
+const { installChatRunDotSubscriber } = await import("./chat-run-dots.js");
+
+async function paint(): Promise<void> {
+  await new Promise((r) => requestAnimationFrame(() => r(null)));
+}
+
+async function resetProjection(): Promise<void> {
+  const { _resetForTest } = await import("./tabs.js");
+  const { registerTabOpeners, _resetTabOpenersForTest } = await import("./tab-materialize.js");
+  const { _resetTabsSyncForTest, ingestTabsChanged, listTabs } = await import("./tabs-sync.js");
+  const { resetActionFramework } = await import("./actions/__test-helpers__/action-test-setup.js");
+  const { bindTabsSync, tabServer } = await import("./__test-helpers__/tabs-server.js");
+  bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
+  tabServer.reset();
+  _resetTabsSyncForTest();
+  _resetTabOpenersForTest();
+  registerTabOpeners({
+    chat: { show: vi.fn(), close: vi.fn(), dot: () => "" },
+    editor: { show: vi.fn(), close: vi.fn() },
+    run: { show: vi.fn() },
+    subagent: { show: vi.fn() },
+  });
+  resetActionFramework();
+  _resetForTest();
+  document.body.innerHTML = '<div id="tab-list"></div>';
+}
+
+/** Open a tab of any kind and answer with its minted id. */
+async function openSubject(kind: TabKind, ref = "", activate = true): Promise<string> {
+  const { openTab, tabIdFor } = await import("./tabs.js");
+  await openTab({ kind, ref, activate });
+  return tabIdFor(kind, ref);
+}
+
+function rowOf(id: string): HTMLElement {
+  const row = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
+  if (row === null) {
+    throw new Error(`tab ${id} did not render`);
+  }
+  return row;
+}
+
+function markOf(id: string): HTMLElement {
+  const mark = rowOf(id).querySelector<HTMLElement>(".tab-run-dot");
+  if (mark === null) {
+    throw new Error(`tab ${id} carries no workflow mark`);
+  }
+  return mark;
+}
+
+/** What the mark is painting: the state CSS keys off, or "" for withdrawn. */
+function markState(id: string): string {
+  return markOf(id).dataset["status"] ?? "";
+}
+
+/** A CSS length RESOLVED by the page, so a geometry expectation is derived from
+ *  the token the rule names instead of restating its value. The tokens are authored
+ *  in rem and one of them changes on a coarse pointer, so reading them off `:root`
+ *  and converting here would put a second unit rule in the test. */
+function probe(value: string): number {
+  const p = document.createElement("div");
+  p.style.inlineSize = value;
+  document.body.append(p);
+  const w = p.getBoundingClientRect().width;
+  p.remove();
+  return w;
+}
+
+/** Where a row's title starts, which is the one number every alignment case here
+ *  is about. */
+function titleLeft(id: string): number {
+  const name = rowOf(id).querySelector<HTMLElement>(".tab-name");
+  if (name === null) {
+    throw new Error(`tab ${id} has no name element`);
+  }
+  return name.getBoundingClientRect().left;
+}
+
+/** Record a run as live for a chat, with the status its own cell reports. */
+function liveRun(runID: string, chatID: string, state: Partial<RunState> = {}): void {
+  m.live.set(runID, chatID);
+  m.states.set(runID, { workflowId: runID, ...state } as RunState);
+  runsChanged();
+}
+
+/** A run reaching a terminal status: the inventory row goes, which is the only
+ *  thing the client is told. */
+function settleRun(runID: string): void {
+  m.live.delete(runID);
+  runsChanged();
+}
+
+let installed = false;
+
+beforeEach(async () => {
+  m.live.clear();
+  m.states.clear();
+  m.asks.length = 0;
+  await resetProjection();
+  if (!installed) {
+    installChatRunDotSubscriber();
+    installed = true;
+  }
+  // The install above ran once; every later case relies on the effect's own
+  // dependencies to re-run it, which is exactly the production path.
+  runsChanged();
+});
+
+// ---------------------------------------------------------------------------
+// 1. The mark exists, on chat rows and nowhere else.
+// ---------------------------------------------------------------------------
+
+describe("the workflow mark rides a chat row's leading cluster", () => {
+  it("sits immediately after the activity dot and before the name", async () => {
+    const id = await openSubject("chat", "c1");
+    await paint();
+    const kids = [...rowOf(id).children].map((e) => e.className.split(" ")[0]);
+    expect(kids.slice(0, 3)).toEqual(["tab-status-dot", "tab-run-dot", "tab-name"]);
+  });
+
+  it("hides itself from the accessibility tree and speaks through a phrase span", async () => {
+    const id = await openSubject("chat", "c1");
+    await paint();
+    // Colour and shape are one channel; the word beside it is the other. Both
+    // marks follow the name, so the row announces the title first.
+    expect(markOf(id).getAttribute("aria-hidden")).toBe("true");
+    const order = [...rowOf(id).children].map((e) => e.className.split(" ")[0]);
+    expect(order.indexOf("tab-run-sr")).toBeGreaterThan(order.indexOf("tab-name"));
+    expect(order.indexOf("tab-run-sr")).toBeGreaterThan(order.indexOf("tab-status-sr"));
+  });
+
+  it("is never given the grab-me-to-reorder class", async () => {
+    const id = await openSubject("chat", "c1");
+    await paint();
+    // `.tab-icon` also means "grab me", which is why the nesting arrow declines it
+    // too. A status mark is not a drag handle.
+    expect(markOf(id).classList.contains("tab-icon")).toBe(false);
+  });
+
+  it("goes on a chat SUB-TAB too, which is its own chat with its own runs", async () => {
+    const { openTab, tabIdFor } = await import("./tabs.js");
+    const parent = await openSubject("chat", "c1");
+    await openTab({ kind: "chat", ref: "c2", parent });
+    const child = tabIdFor("chat", "c2");
+    await paint();
+    const kids = [...rowOf(child).children].map((e) => e.className.split(" ")[0]);
+    expect(kids.slice(0, 4)).toEqual(["tab-nest", "tab-status-dot", "tab-run-dot", "tab-name"]);
+  });
+
+  it("goes on no other kind, because nothing else in the strip launches a run", async () => {
+    const files = await openSubject("files");
+    const run = await openSubject("run", "wf_1");
+    await paint();
+    expect(rowOf(files).querySelector(".tab-run-dot")).toBeNull();
+    expect(rowOf(run).querySelector(".tab-run-dot")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2. The fold.
+// ---------------------------------------------------------------------------
+
+describe("N live runs fold onto one mark", () => {
+  let chat = "";
+
+  beforeEach(async () => {
+    chat = await openSubject("chat", "c1");
+    await paint();
+  });
+
+  it("shows nothing at all for a chat with no live run", () => {
+    expect(markState(chat)).toBe("");
+  });
+
+  it("works while a run is executing", () => {
+    liveRun("wf_1", "c1", { status: "running" });
+    expect(markState(chat)).toBe("working");
+  });
+
+  it("waits for a run that is parked with nothing moving", () => {
+    liveRun("wf_1", "c1", { status: "paused" });
+    expect(markState(chat)).toBe("waiting");
+  });
+
+  it("needs a decision when a run is parked on a person", () => {
+    liveRun("wf_1", "c1", {
+      status: "paused",
+      pauseReason: "Step requested user input via send_message.",
+    });
+    expect(markState(chat)).toBe("input");
+  });
+
+  it("needs a decision when the dock holds an unanswered ask for the run", () => {
+    liveRun("wf_1", "c1", { status: "running" });
+    m.asks.push("wf_1");
+    dockChanged();
+    // The ask arrives with the run still `running`, exactly as KAS reports it, so
+    // without this join a run blocked on a permission reads as making progress.
+    expect(markState(chat)).toBe("input");
+  });
+
+  it("puts a parked run AHEAD of an executing sibling", () => {
+    liveRun("wf_working", "c1", { status: "running" });
+    liveRun("wf_parked", "c1", { status: "paused" });
+    // A run that stopped is the one a reader can act on; the one still going needs
+    // nothing from anyone, so reporting it would mask the other.
+    expect(markState(chat)).toBe("waiting");
+  });
+
+  it("puts a run wanting a decision ahead of both", () => {
+    liveRun("wf_working", "c1", { status: "running" });
+    liveRun("wf_parked", "c1", { status: "paused" });
+    liveRun("wf_asking", "c1", {
+      status: "paused",
+      pauseReason: "Step requested user input via send_message.",
+    });
+    expect(markState(chat)).toBe("input");
+  });
+
+  it("says nothing for a live run whose state has not been fetched yet", () => {
+    // "We do not know" is not "it is working": the inventory row proves a run was
+    // put on the wire and says nothing about what it is doing, and `run-bar.ts`
+    // paints nothing in the same case rather than claiming a state.
+    m.live.set("wf_unknown", "c1");
+    runsChanged();
+    expect(markState(chat)).toBe("");
+  });
+
+  it("still reports a sibling whose state HAS arrived", () => {
+    m.live.set("wf_unknown", "c1");
+    liveRun("wf_known", "c1", { status: "running" });
+    expect(markState(chat)).toBe("working");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. Scoping, and the reader's own position.
+// ---------------------------------------------------------------------------
+
+describe("the mark is scoped to the chat that launched the run", () => {
+  it("leaves another chat's row alone", async () => {
+    const a = await openSubject("chat", "cA");
+    const b = await openSubject("chat", "cB");
+    await paint();
+    liveRun("wf_1", "cA", { status: "running" });
+    expect(markState(a)).toBe("working");
+    expect(markState(b)).toBe("");
+  });
+
+  it("shows chat A's run on A's row while the reader sits in chat B", async () => {
+    const a = await openSubject("chat", "cA");
+    // Opening B activates it, so the reader is looking at B — the reported defect
+    // verbatim: from another tab there was no way to see that A had a run going.
+    const b = await openSubject("chat", "cB");
+    await paint();
+    const { getActiveTabId } = await import("./tabs.js");
+    expect(getActiveTabId()).toBe(b);
+
+    liveRun("wf_1", "cA", { status: "running" });
+    expect(markState(a)).toBe("working");
+  });
+
+  it("marks a row for a run that started before that chat's tab was rendered", async () => {
+    // The inventory is GLOBAL and rebuilt from GET /api/runs/live, so a run can
+    // predate the row. The state is parked on the row and repainted by
+    // createTabEl, which is what makes a boot restore correct.
+    liveRun("wf_1", "cA", { status: "running" });
+    const a = await openSubject("chat", "cA");
+    await paint();
+    expect(markState(a)).toBe("working");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. Withdrawal on settle.
+// ---------------------------------------------------------------------------
+
+describe("the mark withdraws when a run ends", () => {
+  let chat = "";
+
+  beforeEach(async () => {
+    chat = await openSubject("chat", "c1");
+    await paint();
+  });
+
+  it("goes away rather than turning green", () => {
+    liveRun("wf_1", "c1", { status: "running" });
+    expect(markState(chat)).toBe("working");
+    // A terminal `run_finished` deletes the inventory row, so an OUTCOME is not
+    // available to paint. `done` here would be a claim this producer cannot make.
+    settleRun("wf_1");
+    expect(markState(chat)).toBe("");
+  });
+
+  it("refuses a settled outcome even if one reaches the fold", () => {
+    // The status arm exists in `runStatusFor`, so the refusal has to be at the
+    // FOLD rather than left to an inventory that happens never to hold the row.
+    m.live.set("wf_done", "c1");
+    m.states.set("wf_done", { workflowId: "wf_done", status: "completed" } as RunState);
+    m.live.set("wf_failed", "c1");
+    m.states.set("wf_failed", { workflowId: "wf_failed", status: "failed" } as RunState);
+    runsChanged();
+    expect(markState(chat)).toBe("");
+  });
+
+  it("keeps a sibling that is still going", () => {
+    liveRun("wf_1", "c1", { status: "running" });
+    liveRun("wf_2", "c1", { status: "running" });
+    settleRun("wf_1");
+    expect(markState(chat)).toBe("working");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. The count and its breakdown.
+// ---------------------------------------------------------------------------
+
+describe("the fold's arithmetic survives in the phrase and the tooltip", () => {
+  let chat = "";
+
+  beforeEach(async () => {
+    chat = await openSubject("chat", "c1");
+    await paint();
+  });
+
+  function spoken(): string {
+    return rowOf(chat).querySelector(".tab-run-sr")?.textContent ?? "";
+  }
+
+  it("paints the tooltip and the announced word from one string", () => {
+    liveRun("wf_1", "c1", { status: "running" });
+    const phrase = "1 workflow run, working";
+    expect(markOf(chat).dataset["tooltip"]).toBe(phrase);
+    expect(spoken()).toBe(`, ${phrase}`);
+  });
+
+  it("names the run rather than the turn, which is the dot's subject", () => {
+    liveRun("wf_1", "c1", { status: "running" });
+    expect(markOf(chat).dataset["tooltip"]).toContain("workflow run");
+  });
+
+  it("breaks three runs down so one wanting a decision does not read as one run", () => {
+    liveRun("wf_a", "c1", { status: "running" });
+    liveRun("wf_b", "c1", { status: "running" });
+    liveRun("wf_c", "c1", {
+      status: "paused",
+      pauseReason: "Step requested user input via send_message.",
+    });
+    // The fold shows ONE mark, so this string is the only place the count and the
+    // split survive. Without it "three runs, one wanting a decision" is
+    // indistinguishable from "one run".
+    expect(markOf(chat).dataset["tooltip"]).toBe("3 workflow runs, 1 needs a decision");
+  });
+
+  it("clears the phrase with the state, so nothing outlives its mark", () => {
+    liveRun("wf_1", "c1", { status: "running" });
+    settleRun("wf_1");
+    expect(markOf(chat).hasAttribute("data-tooltip")).toBe(false);
+    expect(spoken()).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. The reserved slot, against real layout.
+//
+// The mark's box is present in every state, so a run starting must not move the
+// title beside it. Nothing about the markup implies that — it is a `visibility`
+// rather than a `display` rule — so the claim is measured with the shipped
+// stylesheet mounted rather than read off the source.
+// ---------------------------------------------------------------------------
+
+describe("the reserved slot keeps a title still", () => {
+  let style: HTMLStyleElement;
+
+  beforeAll(() => {
+    style = mountAppCSS();
+  });
+
+  afterAll(() => {
+    style.remove();
+  });
+
+  it("does not move the name when a run starts, or when it ends", async () => {
+    const chat = await openSubject("chat", "c1");
+    const { renameTab } = await import("./tabs.js");
+    renameTab(chat, "Fix the parser");
+    await paint();
+    const name = rowOf(chat).querySelector<HTMLElement>(".tab-name");
+    expect(name).not.toBeNull();
+    const before = name?.getBoundingClientRect().left;
+
+    liveRun("wf_1", "c1", { status: "running" });
+    expect(markState(chat)).toBe("working");
+    expect(name?.getBoundingClientRect().left).toBe(before);
+
+    settleRun("wf_1");
+    expect(markState(chat)).toBe("");
+    expect(name?.getBoundingClientRect().left).toBe(before);
+  });
+
+  it("keeps the box and drops only the ink while no run is going", async () => {
+    const chat = await openSubject("chat", "c1");
+    await paint();
+    const mark = markOf(chat);
+    // `visibility`, never `display`: the slot has to be charged for in every state
+    // or the whole strip's titles shift the moment a run starts.
+    expect(getComputedStyle(mark).display).not.toBe("none");
+    expect(getComputedStyle(mark).visibility).toBe("hidden");
+    expect(mark.getBoundingClientRect().width).toBeGreaterThan(0);
+
+    liveRun("wf_1", "c1", { status: "running" });
+    expect(getComputedStyle(mark).visibility).toBe("visible");
+  });
+
+  it("charges the cluster exactly one glyph slot, one gap and one mark", async () => {
+    const chat = await openSubject("chat", "c1");
+    await paint();
+    const row = rowOf(chat);
+    const dot = row.querySelector<HTMLElement>(".tab-status-dot");
+    const mark = markOf(chat);
+    const name = row.querySelector<HTMLElement>(".tab-name");
+    // The arithmetic 12-tabs.css states, DERIVED rather than restated as numbers, so
+    // a token retune moves the expectation instead of failing it. Probes resolve the
+    // tokens; nothing here is a literal but the glyph slot the dot's own rule names.
+    const slot = probe("0.875rem");
+    const size = probe("var(--dot-size)");
+    const gap = probe("var(--sp-2)");
+    // The mark is charged the row's own gap and nothing else, and the dot keeps the
+    // trailing half of its 14px glyph slot: that is the whole of the pair's extra
+    // chrome, so the cluster is one glyph slot plus one gap plus one mark.
+    const dotToMark = mark.getBoundingClientRect().left - (dot?.getBoundingClientRect().right ?? 0);
+    expect(dotToMark).toBeCloseTo((slot - size) / 2 + gap, 1);
+    // And the name follows the mark on that same gap, so the cluster ends where a
+    // single-dot cluster used to.
+    const markToName =
+      (name?.getBoundingClientRect().left ?? 0) - mark.getBoundingClientRect().right;
+    expect(markToName).toBeCloseTo(gap, 1);
+  });
+
+  it("keeps every chat row's title on ONE origin whatever its runs are doing", async () => {
+    const a = await openSubject("chat", "cA");
+    const b = await openSubject("chat", "cB");
+    await paint();
+    liveRun("wf_1", "cA", {
+      status: "paused",
+      pauseReason: "Step requested user input via send_message.",
+    });
+    // `input` is the state that also carries a halo, which is a box-shadow and so
+    // takes no layout — the row it sits on has to line up with a row showing
+    // nothing at all.
+    expect(markState(a)).toBe("input");
+    expect(titleLeft(a)).toBe(titleLeft(b));
+  });
+
+  it("does not move a chat SUB-TAB's name when a run starts, either", async () => {
+    // A sub-tab's cluster is a different rule from a top-level row's — the nesting
+    // arrow holds the glyph slot and `.tab-nest + .tab-status-dot` zeroes the dot's
+    // own margin — so the no-shift claim has to be measured on that shape too. The
+    // dot's reservation for the two kinds that NEST is also a separate rule from the
+    // mark's, and this is the row where the two meet.
+    const { openTab, tabIdFor, renameTab } = await import("./tabs.js");
+    const parent = await openSubject("chat", "c1");
+    await openTab({ kind: "chat", ref: "c2", parent });
+    const child = tabIdFor("chat", "c2");
+    renameTab(child, "A tangent");
+    await paint();
+    const before = titleLeft(child);
+
+    liveRun("wf_1", "c2", { status: "running" });
+    expect(markState(child)).toBe("working");
+    expect(titleLeft(child)).toBe(before);
+
+    settleRun("wf_1");
+    expect(markState(child)).toBe("");
+    expect(titleLeft(child)).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. The cluster's arithmetic reaches rows this feature does not paint.
+//
+// `.tab-status-dot:first-child` puts a chat row's leading dot in the glyph's 14px
+// slot for one reason: so a chat row's title lines up with a settings or files
+// row's. The pair cannot fit in that slot at any margin, so keeping the strip on
+// ONE text origin means giving the rows WITHOUT a mark the width they are missing
+// — which is a claim about eight kinds this producer never writes to, and the
+// reason it is measured here rather than reasoned about.
+// ---------------------------------------------------------------------------
+
+describe("a mixed strip keeps one text origin", () => {
+  let style: HTMLStyleElement;
+
+  beforeAll(() => {
+    style = mountAppCSS();
+  });
+
+  afterAll(() => {
+    style.remove();
+  });
+
+  it("lines a chat row's title up with every other top-level kind's", async () => {
+    const chat = await openSubject("chat", "c1");
+    const kinds: TabKind[] = ["files", "git", "history", "settings", "docs"];
+    const ids = [];
+    for (const kind of kinds) {
+      ids.push(await openSubject(kind));
+    }
+    await paint();
+    const origin = titleLeft(chat);
+    for (const [i, id] of ids.entries()) {
+      expect(titleLeft(id), `a ${kinds[i]} row's title must share the chat row's origin`).toBe(
+        origin,
+      );
+    }
+    // And the shared origin is the PAIR's, not the single dot's: one glyph slot, one
+    // gap, one mark, one gap. Derived from the tokens, so a retune moves it.
+    const row = rowOf(chat).getBoundingClientRect();
+    const border = probe("1px");
+    const pad = probe("var(--sp-3)");
+    const cluster = probe("0.875rem") + probe("var(--sp-2)") + probe("var(--dot-size)");
+    expect(origin - row.left).toBeCloseTo(border + pad + cluster + probe("var(--sp-2)"), 1);
+  });
+
+  it("lines a chat SUB-TAB's title up with the other kinds that nest", async () => {
+    // A run sub-tab and a subagent sub-tab are the two kinds that sit here and
+    // cannot carry a mark, and their arrow is --icon-ui exactly like a chat
+    // sub-tab's — so what they are missing is one gap and one mark, not the whole
+    // cluster the top-level rule replaces.
+    const { openTab, tabIdFor } = await import("./tabs.js");
+    const parent = await openSubject("chat", "c1");
+    await openTab({ kind: "chat", ref: "c2", parent });
+    await openTab({ kind: "run", ref: "wf_1", parent, owns: false });
+    await openTab({ kind: "subagent", ref: "c1/task-1", parent, owns: false });
+    await paint();
+    const chatChild = titleLeft(tabIdFor("chat", "c2"));
+    expect(titleLeft(tabIdFor("run", "wf_1"))).toBe(chatChild);
+    expect(titleLeft(tabIdFor("subagent", "c1/task-1"))).toBe(chatChild);
+    // The two SHAPES do not share an origin with each other, and that is by design
+    // rather than a gap in the derivation: a sub-tab's whole ROW is indented 1rem
+    // and its nesting arrow holds the glyph slot, so its title is further right by
+    // both. What the rule buys is one origin per shape, which is what a reader scans.
+    expect(chatChild).toBeGreaterThan(titleLeft(parent));
+    expect(
+      rowOf(tabIdFor("chat", "c2")).getBoundingClientRect().left -
+        rowOf(parent).getBoundingClientRect().left,
+    ).toBeCloseTo(probe("1rem"), 1);
+  });
+});

@@ -2,12 +2,13 @@
 
 import type { Session, ChatHeader, Message } from "./types.js";
 import { apiGetTyped, apiGetTypedOrError } from "./api-client.js";
-import { asObject, decodeArray, reqBool, type Decoder } from "./validators.js";
+import { asObject, decodeArray, optBool, optNum, reqBool, type Decoder } from "./validators.js";
 import { decodeChatHeader, decodeMessage } from "./wire/decoders.gen.js";
 import { registerCleanup } from "./actions/index.js";
 import { RESIDENT_BLOCKS, RESIDENT_TOOL_CALLS } from "./block-window.js";
 import {
   setSessions,
+  derivedHasMore,
   get,
   getSessions,
   rebuildMsgIndex,
@@ -36,18 +37,44 @@ const decodeChatGetResponseLocal: Decoder<{
   has_more: boolean;
   draft: string;
   turn_open: boolean;
+  turn_offset: number | undefined;
+  turn_segment_closed: boolean | undefined;
 }> = (v) => {
   const o = asObject(v, "$.chat_get");
   return {
     chat: decodeChatHeader(o["chat"]),
     messages: decodeArray(o["messages"], decodeMessage, "$.chat_get.messages"),
     has_more: reqBool(o, "has_more", "$.chat_get"),
-    // Both fields are optional-tolerant: an older server, or a proxy that strips one,
-    // must not fail the whole chat load. `store.ts` turnLive is turn_open's one reader.
+    // Every field below is optional-tolerant: an older server, or a proxy that strips
+    // one, must not fail the whole chat load. `store.ts` turnLive is turn_open's one
+    // reader; `turnBaseOf` is the window base's.
     turn_open: o["turn_open"] === true,
+    // The window base is UNDEFINED rather than 0/false when absent, so the session
+    // records "the server said nothing" instead of "the window starts the session" —
+    // the same distinction `has_more`'s guess-versus-answer split turns on.
+    turn_offset: optNum(o, "turn_offset", "$.chat_get"),
+    turn_segment_closed: optBool(o, "turn_segment_closed", "$.chat_get"),
     draft: typeof o["draft"] === "string" ? o["draft"] : "",
   };
 };
+
+/** Record the server's statement about the window's LEFT EDGE, or forget the one the
+ *  session held. A half-present answer is a stripped field rather than a partial fact,
+ *  and forgetting beats keeping: `turnBaseOf`'s fallback numbers the window from 1,
+ *  where a stale offset numbers it from a place nothing in the window corresponds to. */
+function adoptTurnBase(
+  session: Session,
+  offset: number | undefined,
+  closed: boolean | undefined,
+): void {
+  if (offset === undefined || closed === undefined) {
+    delete session.turn_offset;
+    delete session.turn_segment_closed;
+    return;
+  }
+  session.turn_offset = offset;
+  session.turn_segment_closed = closed;
+}
 
 /** Re-order re-adopted rows the way the live path puts them; `store.ts` insertIndexFor owns
  *  that rule. Inert when the live message is not among them — nothing to insert against. */
@@ -316,10 +343,15 @@ export async function loadList(): Promise<boolean> {
       usage: h.usage,
       message_count: h.message_count,
       messages: existing?.messages ?? [],
-      has_more:
-        existing !== undefined
-          ? existing.has_more || h.message_count > existing.messages.length
-          : h.message_count > 0,
+      // A header carries no window, so this is the DERIVATION and never an answer —
+      // one rule, `store.ts` `derivedHasMore`, over the count the server just sent
+      // and whatever window is carried over above.
+      //
+      // The `existing.has_more ||` this replaces made the value STICKY, and a sticky
+      // true can only ever be wrong in the direction of a button with nothing behind
+      // it: once set, no later reconnect could return it to false, and this runs on
+      // boot, on login and on every `connected` handshake.
+      has_more: derivedHasMore(h.message_count, existing?.messages.length ?? 0),
       thinking: existing?.thinking ?? false,
       working_label: existing?.working_label ?? "Thinking",
       ...(existing?.steers !== undefined && { steers: existing.steers }),
@@ -350,6 +382,15 @@ export async function loadList(): Promise<boolean> {
       // other half of the same claim and travels for the same reason.
       ...(existing?.residency !== undefined && { residency: existing.residency }),
       ...(existing?.loadedEpoch !== undefined && { loadedEpoch: existing.loadedEpoch }),
+      // The window BASE describes that same window, and it travels TOGETHER or not
+      // at all, matching `adoptTurnBase`'s half-present rule. A reconnect does not
+      // bump `syncEpoch`, so nothing refetches to replace a dropped base and the
+      // next repaint renumbers a paged chat from 1.
+      ...(existing?.turn_offset !== undefined &&
+        existing.turn_segment_closed !== undefined && {
+          turn_offset: existing.turn_offset,
+          turn_segment_closed: existing.turn_segment_closed,
+        }),
       ...(h.compaction_watermark !== undefined && { compaction_watermark: h.compaction_watermark }),
     };
     next.push(session);
@@ -422,11 +463,12 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
     msgControllers.delete(chatID);
     return false;
   }
-  // Whether this load left the client's OLDEST message where it was, in which
-  // case the answer's `has_more` describes a different question than the one the
-  // session's flag answers. Only the no-cursor re-adopt below can cause it: a
-  // `before_id` page becomes the new oldest, so its `has_more` is exactly right.
-  let keepHasMore = false;
+  // Whether the page this load applies STARTS the client's window — the subject the
+  // server's `has_more` and its window base both describe (the OLDEST MESSAGE HELD).
+  // A `before_id` page always does: it becomes the new oldest. A no-cursor page does
+  // only when nothing older was re-adopted in front of it, which the branch below
+  // decides.
+  let pageStartsWindow = true;
   if (beforeID !== undefined) {
     // Prepend older-page messages, deduped by id. The cursor is a message ID and
     // the server treats it as exclusive, so a boundary message cannot come back
@@ -487,18 +529,24 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
       .slice(anchor > 0 ? anchor : 0)
       .filter((m) => !fetchedIDs.has(m.id) && (m.id === liveID || !knownBefore.has(m.id)));
     session.messages = [...older, ...fetched, ...reorderKept(kept, liveID)];
-    // `has_more` describes what is older than the OLDEST MESSAGE HELD, and
-    // re-adopting older pages does not move that — the client's oldest is
-    // unchanged, so its previous answer still stands. `d.has_more` describes what
-    // is older than the PAGE, which is only the same question when the page starts
-    // the window.
-    if (older.length > 0) {
-      keepHasMore = true;
-    }
+    // The answer describes what is older than the PAGE, which is only the same
+    // question the session's flag and base answer when nothing older sits in front
+    // of it.
+    pageStartsWindow = older.length === 0;
   }
+  // Before the two reads below, so both see the server's own count.
   session.message_count = d.chat.message_count;
-  if (!keepHasMore) {
+  if (pageStartsWindow) {
     session.has_more = d.has_more;
+    adoptTurnBase(session, d.turn_offset, d.turn_segment_closed);
+  } else {
+    // The page said nothing about this window's left edge, so `has_more` falls back
+    // to the derivation. What this replaces PRESERVED the previous value, which is
+    // only right when that value was an answer — for a header-built row it is the
+    // guess, and preserving it left a button on a chat holding every message it has.
+    // The base is left alone for the mirror reason: the edge did not move, so
+    // whatever was recorded for it still describes it.
+    session.has_more = derivedHasMore(session.message_count, session.messages.length);
   }
   rebuildMsgIndex(chatID, session.messages);
   msgControllers.delete(chatID);

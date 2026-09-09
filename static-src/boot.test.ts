@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type * as BootModule from "./boot.js";
+import type { Route, RouteOrigin } from "./router.js";
 import type { BootSnapshot } from "./boot-snapshot.js";
 import type { IdentityVerdict } from "./identity.js";
 import type { EffectiveSettings } from "./persist.js";
@@ -36,20 +37,31 @@ const m = vi.hoisted(() => {
   // boundaries — and while this was a bare `vi.fn()` both boundaries were wrong
   // and the suite was green.
   const suppression = { depth: 0 };
+  // The router's location CLAIM, modelled for the same reason the depth is: it is
+  // what decides whether a push to a DIFFERENT location lands (router.ts), so
+  // whether one stands at each boot-time write is the question, not that the
+  // function was called.
+  const claim = { path: "" };
   /** The depth each URL-writing call was made at, in order. */
   const depths = {
     activate: [] as number[],
     replaceRoute: [] as number[],
     share: [] as number[],
   };
+  /** The claim standing at each call that applies a route, in order. */
+  const claims = { applyRoute: [] as string[] };
   return {
     suppression,
+    claim,
     depths,
+    claims,
     resetDepths: (): void => {
       suppression.depth = 0;
+      claim.path = "";
       depths.activate.length = 0;
       depths.replaceRoute.length = 0;
       depths.share.length = 0;
+      claims.applyRoute.length = 0;
     },
     loadList: vi.fn(),
     loadSettings: vi.fn(),
@@ -80,7 +92,15 @@ const m = vi.hoisted(() => {
     getActiveId: vi.fn(),
     getActiveTabRoute: vi.fn(),
     setStatus: vi.fn(),
-    applyRoute: vi.fn(),
+    // Records the claim standing when the route is applied: the two lazily-imported
+    // arms of app.ts's `applyRoute` open their view after the call returns, so the
+    // claim has to outlive the promise rather than the call. TYPED, because the
+    // origin cases below read the second argument back off `mock.calls`.
+    applyRoute: vi.fn<(route: Route, origin?: RouteOrigin) => Promise<void>>(() => {
+      claims.applyRoute.push(claim.path);
+      return Promise.resolve();
+    }),
+    navigationOrigin: vi.fn<() => RouteOrigin>(() => "deeplink"),
     readBootSnapshot: vi.fn(),
     paintBootSnapshot: vi.fn(),
     clearBootSnapshot: vi.fn(),
@@ -94,12 +114,24 @@ const m = vi.hoisted(() => {
     suppressPush: vi.fn((v: boolean) => {
       suppression.depth = v ? suppression.depth + 1 : Math.max(0, suppression.depth - 1);
     }),
+    claimLocation: vi.fn((path: string) => {
+      claim.path = path;
+    }),
+    releaseLocation: vi.fn(() => {
+      claim.path = "";
+    }),
     initGovernance: vi.fn(),
     initRuntimeHealth: vi.fn(),
     initStatusVersions: vi.fn(),
     loadVersions: vi.fn(),
     fetchCatalog: vi.fn(),
     rebuildLiveRuns: vi.fn(),
+    registerEvictionExemption: vi.fn(),
+    // Both live-run predicates, so a case can say WHICH one the exemption takes.
+    hasExecutingRunForChat: vi.fn(),
+    hasLiveRunForChat: vi.fn(),
+    runTabProjectsChat: vi.fn(),
+    subagentTabProjectsChat: vi.fn(),
     showBanner: vi.fn(),
     bootMode: vi.fn(() => "full"),
     reloadCount: vi.fn(() => 1),
@@ -124,7 +156,7 @@ vi.mock("./store.js", () => ({
   getActive: m.getActive,
   getActiveId: m.getActiveId,
   getSessions: m.getSessions,
-  registerEvictionExemption: vi.fn(),
+  registerEvictionExemption: m.registerEvictionExemption,
   startEvictionSweep: vi.fn(),
 }));
 vi.mock("./settings.js", () => ({
@@ -148,9 +180,12 @@ vi.mock("./tabs.js", () => ({
 }));
 vi.mock("./tabs-sync.js", () => ({ listTabs: m.listTabs }));
 vi.mock("./router.js", () => ({
+  navigationOrigin: m.navigationOrigin,
   parseRoute: m.parseRoute,
   replaceRoute: m.replaceRoute,
   suppressPush: m.suppressPush,
+  claimLocation: m.claimLocation,
+  releaseLocation: m.releaseLocation,
 }));
 vi.mock("./chat.js", () => ({ createSession: m.createSession }));
 vi.mock("./governance.js", () => ({ initGovernance: m.initGovernance }));
@@ -162,10 +197,12 @@ vi.mock("./status.js", () => ({
 vi.mock("./versions.js", () => ({ loadVersions: m.loadVersions }));
 vi.mock("./retention.js", () => ({ refreshRetention: m.refreshRetention }));
 vi.mock("./run-store.js", () => ({
-  hasLiveRunForChat: vi.fn(),
+  hasExecutingRunForChat: m.hasExecutingRunForChat,
+  hasLiveRunForChat: m.hasLiveRunForChat,
   rebuildLiveRuns: m.rebuildLiveRuns,
 }));
-vi.mock("./subagent-view.js", () => ({ subagentTabProjectsChat: vi.fn() }));
+vi.mock("./run-view.js", () => ({ runTabProjectsChat: m.runTabProjectsChat }));
+vi.mock("./subagent-view.js", () => ({ subagentTabProjectsChat: m.subagentTabProjectsChat }));
 vi.mock("./view-swap.js", () => ({ markBootDone: m.markBootDone }));
 vi.mock("./share-target.js", () => ({ applyShareTarget: m.applyShareTarget }));
 vi.mock("./toast.js", () => ({ error: m.toastError }));
@@ -204,8 +241,7 @@ const SIGNED_IN: IdentityVerdict = { state: "signed_in", email: "someone@example
 const SNAPSHOT: BootSnapshot = {
   tabs: [{ id: "t1", kind: "chat", ref: "c1", parent: "", pinned: false, owns: true }],
   chats: [],
-  transcript_chat_id: "",
-  messages: [],
+  window: null,
 };
 
 /** The default happy answers: settings load, one chat, the tab set adopts, and no
@@ -230,6 +266,7 @@ function arrangeHappy(settings: EffectiveSettings = settingsPayload()): void {
   m.bootMode.mockReturnValue("full");
   m.reloadCount.mockReturnValue(1);
   m.clearBootSnapshot.mockResolvedValue(undefined);
+  m.navigationOrigin.mockReturnValue("deeplink");
 }
 
 beforeEach(() => {
@@ -531,6 +568,99 @@ describe("the push-suppression window", () => {
 
     expect(m.depths.share).toEqual([0]);
   });
+
+  it("leaves the tab-set read OUTSIDE it, and the claim guards the deep link across it", async () => {
+    // A window spanning an await silences every push the shell makes while the
+    // request is out. What protects the deep link across these awaits is the
+    // location claim, not the window.
+    const depthAtListTabs: number[] = [];
+    m.listTabs.mockImplementation(() => {
+      depthAtListTabs.push(m.suppression.depth);
+      return Promise.resolve(true);
+    });
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(depthAtListTabs).toEqual([0]);
+    // And the restore itself is still covered — narrowing must not open it.
+    expect(m.depths.activate).toEqual([1]);
+  });
+});
+
+// The location CLAIM. It replaces what the widened suppression window was doing
+// for a deep link, and it is what makes narrowing that window safe: a claim
+// silences only a push to a DIFFERENT location, so the claimed one still lands.
+describe("the location claim", () => {
+  it("claims the location the DOCUMENT loaded at, before anything can push", async () => {
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    // `location.pathname + location.hash`, not the parsed route: the claim has to
+    // name what the reader asked for, and nothing has parsed it yet.
+    expect(m.claimLocation).toHaveBeenCalledWith(location.pathname + location.hash);
+  });
+
+  it("still stands while the route is being applied", async () => {
+    // A route that names something, so `applyInitialRoute` hands off rather than
+    // taking the default-"/" canonicalization branch.
+    m.parseRoute.mockReturnValue({ kind: "run", id: "wf_1" });
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.claims.applyRoute).toEqual([location.pathname + location.hash]);
+  });
+
+  it("outlives an opener that resolves after applyRoute RETURNS", async () => {
+    // The measured defect: `/run/{id}` reaches its opener through a dynamic import,
+    // so the view is not open when the call returns. The claim must be released on
+    // the PROMISE, or the window it defends closes one tick too early.
+    // `undefined` rather than `void`: the boot only awaits the promise, and the
+    // linter forbids `void` as a type argument.
+    const opened = deferred<undefined>();
+    m.parseRoute.mockReturnValue({ kind: "run", id: "wf_1" });
+    m.applyRoute.mockReturnValue(opened.promise);
+
+    const { startBoot } = await freshBoot();
+    const booted = startBoot({ applyRoute: m.applyRoute });
+
+    await vi.waitFor(() => {
+      expect(m.applyRoute).toHaveBeenCalledTimes(1);
+    });
+    expect(m.releaseLocation).not.toHaveBeenCalled();
+
+    opened.resolve(undefined);
+    await booted;
+    expect(m.releaseLocation).toHaveBeenCalledTimes(1);
+  });
+
+  it("is released even when the restore throws, so the app can write its own URL", async () => {
+    m.listTabs.mockRejectedValue(new Error("boom"));
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.releaseLocation).toHaveBeenCalledTimes(1);
+  });
+
+  it("is released when a throw lands BEFORE the workspace region exists", async () => {
+    // The region's own `finally` is the release on every other path, and it cannot
+    // cover this one: the throw is in the synchronous window between the claim and
+    // that region being constructed. An unreleased claim makes `pushRoute` refuse
+    // every navigation to a different pathname for the life of the page.
+    m.bootMode.mockReturnValue("reduced");
+    m.blur.mockImplementation(() => {
+      throw new Error("no composer");
+    });
+
+    const { startBoot } = await freshBoot();
+    await expect(startBoot({ applyRoute: m.applyRoute })).rejects.toThrow("no composer");
+
+    expect(m.releaseLocation).toHaveBeenCalledTimes(1);
+    // The boot is dead on this path, so nothing claims it finished.
+    expect(m.markBootDone).not.toHaveBeenCalled();
+  });
 });
 
 // A resume paints what this screen was showing before the network answers. The
@@ -777,9 +907,144 @@ describe("the tab strip's pending state", () => {
     await startBoot({ applyRoute: m.applyRoute });
 
     expect(document.getElementById("tab-strip-skeleton")).toBeNull();
+    // A RE-READ rather than a reload: the GET is the only thing that failed, and a
+    // reload restarts the whole boot.
     expect(m.toastError).toHaveBeenCalledWith(
       "Couldn't restore your tabs.",
-      expect.objectContaining({ label: "Reload" }),
+      expect.objectContaining({ label: "Retry" }),
+    );
+  });
+});
+
+// The tab set's own boot read. The boot CONNECTION raises no gap by design
+// (transport.ts: nothing can have been missed on the first connection of a page
+// load), and `app.ts` answers a gap with `listTabs` — so a boot read that never
+// landed is the one hole neither mechanism covers, and it left the stale IndexedDB
+// paint standing with every tab that had been closed elsewhere still on screen.
+//
+// Asserted by CALL COUNT throughout: a "nothing broke" assertion passes with the
+// recovery deleted.
+describe("the tab set is re-read when the boot's own read failed", () => {
+  /** The retry the tab-set notice offered. */
+  function offeredTabRetry(): (() => void) | undefined {
+    const call = m.toastError.mock.calls.find((c) => c[0] === "Couldn't restore your tabs.");
+    return (call?.[1] as { onClick?: () => void } | undefined)?.onClick;
+  }
+
+  it("recovers a read that FAILED while the stream was already up", async () => {
+    // The case nothing else covers: the connection that would have carried a re-list
+    // arrived before the read settled, and a stream that never dropped delivers no
+    // later `connected`.
+    m.listTabs.mockResolvedValue(false);
+
+    const { startBoot, onTransportStatus } = await freshBoot();
+    onTransportStatus("connected");
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.listTabs).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not recover a read that SUCCEEDED", async () => {
+    const { startBoot, onTransportStatus } = await freshBoot();
+    onTransportStatus("connected");
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.listTabs).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-reads on the connection that comes up LATER", async () => {
+    // An offline boot: the read fails with no stream to retry over, and the link
+    // comes up seconds afterwards.
+    m.listTabs.mockResolvedValue(false);
+
+    const { startBoot, onTransportStatus } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+    expect(m.listTabs).toHaveBeenCalledTimes(1);
+
+    onTransportStatus("connected");
+
+    expect(m.listTabs).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops re-reading on every connection once a read has answered", async () => {
+    // Deliberately NARROWER than the chat list's every-connection rule: the tab set
+    // has a gap mechanism the chat list lacks, so a healthy reconnect costs no GET.
+    m.listTabs.mockResolvedValue(false);
+
+    const { startBoot, onTransportStatus } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+    m.listTabs.mockResolvedValue(true);
+    offeredTabRetry()?.();
+    await vi.waitFor(() => {
+      expect(m.listTabs).toHaveBeenCalledTimes(2);
+    });
+
+    onTransportStatus("connected");
+    onTransportStatus("disconnected");
+    onTransportStatus("connected");
+
+    expect(m.listTabs).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-READS on the notice's retry rather than reloading the page", async () => {
+    m.listTabs.mockResolvedValue(false);
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+    expect(m.listTabs).toHaveBeenCalledTimes(1);
+
+    offeredTabRetry()?.();
+
+    await vi.waitFor(() => {
+      expect(m.listTabs).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("says so again when the retry fails too, because the button dismissed the notice", async () => {
+    m.listTabs.mockResolvedValue(false);
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+    const said = (): number =>
+      m.toastError.mock.calls.filter((c) => c[0] === "Couldn't restore your tabs.").length;
+    expect(said()).toBe(1);
+
+    offeredTabRetry()?.();
+
+    await vi.waitFor(() => {
+      expect(said()).toBe(2);
+    });
+  });
+});
+
+// The ORIGIN the boot's own location is applied under. A restored document load
+// names the tab this device was last on rather than one that still exists, so
+// applying it as a deep link RE-OPENED a tab closed on another device — server-side,
+// and broadcast back to every screen. `deep-link.ts` owns the decision; what is
+// under test here is that the boot states which kind of load this was.
+describe("the boot states where its location came from", () => {
+  it("applies a restored document's location as a RESTORE", async () => {
+    m.navigationOrigin.mockReturnValue("restore");
+    m.parseRoute.mockReturnValue({ kind: "chat", id: "c-gone" });
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.applyRoute).toHaveBeenCalledExactlyOnceWith({ kind: "chat", id: "c-gone" }, "restore");
+  });
+
+  it("applies a deliberate navigation's location as a DEEP LINK", async () => {
+    // The control. Without it the case above passes for a boot that simply stopped
+    // applying its route.
+    m.navigationOrigin.mockReturnValue("deeplink");
+    m.parseRoute.mockReturnValue({ kind: "chat", id: "c-gone" });
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.applyRoute).toHaveBeenCalledExactlyOnceWith(
+      { kind: "chat", id: "c-gone" },
+      "deeplink",
     );
   });
 });
@@ -809,7 +1074,7 @@ describe("a boot inside a reload loop", () => {
     expect(m.showBanner).toHaveBeenCalledWith(
       "*",
       "reload-loop",
-      "This page reloaded 4 times in a few seconds, so it started with less loaded.",
+      "This page reloaded 4 times in a row, so it started with less loaded.",
       "warning",
       false,
       expect.objectContaining({ label: "Start in full mode" }),
@@ -825,10 +1090,13 @@ describe("a boot inside a reload loop", () => {
     expect(m.fetchCatalog).not.toHaveBeenCalled();
     expect(m.loadVersions).not.toHaveBeenCalled();
     expect(m.initStatusVersions).not.toHaveBeenCalled();
-    expect(m.rebuildLiveRuns).not.toHaveBeenCalled();
     // Capability, and a degraded runtime: what a reader in this state needs most.
     expect(m.initGovernance).toHaveBeenCalledTimes(1);
     expect(m.initRuntimeHealth).toHaveBeenCalledTimes(1);
+    // The live-runs rebuild is NOT in the withheld set: it seeds a run tab's own label
+    // and its `launchedBy` nesting plus the eviction exemption, so withholding it is
+    // wrong UI for the whole pause rather than an empty state the app reads around.
+    expect(m.rebuildLiveRuns).toHaveBeenCalledTimes(1);
   });
 
   it("withholds nothing on an ordinary boot, and arms the stability clear", async () => {
@@ -845,5 +1113,33 @@ describe("a boot inside a reload loop", () => {
     expect(m.rebuildLiveRuns).toHaveBeenCalledTimes(1);
     // A page that stays up costs the next boot nothing, and only this call arms it.
     expect(m.noteBootAlive).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the eviction exemptions", () => {
+  it("registers all three, and takes the EXECUTING-run predicate over the wider one", async () => {
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    // The SET, because each of these predicates was declared an exemption where it
+    // is defined while the registration was the half that did not land. The narrowing
+    // is `run-store.ts`'s: the wider predicate answers for a PARKED run, which writes
+    // nothing to pin, and the run TAB is what keeps a parked or finished run's slice.
+    expect(m.registerEvictionExemption.mock.calls.flat()).toEqual([
+      m.hasExecutingRunForChat,
+      m.runTabProjectsChat,
+      m.subagentTabProjectsChat,
+    ]);
+    expect(m.registerEvictionExemption).not.toHaveBeenCalledWith(m.hasLiveRunForChat);
+  });
+
+  it("registers on a REDUCED boot too, being registrations rather than reads", async () => {
+    m.bootMode.mockReturnValue("reduced");
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.registerEvictionExemption).toHaveBeenCalledWith(m.hasExecutingRunForChat);
+    expect(m.registerEvictionExemption).toHaveBeenCalledTimes(3);
   });
 });

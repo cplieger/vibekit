@@ -74,13 +74,16 @@ export function sortEntries<T extends { name: string; isDir: boolean }>(entries:
 }
 
 /** Wire an editable path input with click-to-edit, Enter/Escape/blur handling.
- *  `onNavigate` is called with the cleaned path on Enter. `getDisplayPath`
- *  returns the display string to restore on Escape/blur. */
+ *  `onNavigate` is called with the normalised path on Enter — this is one of the
+ *  three doors `normalizeDirPath` exists for, since the text is whatever the user
+ *  typed. `getCurrentPath` returns the path to restore on Escape/blur, which is
+ *  the path itself: the browser's space IS the user-facing spelling now, so there
+ *  is no display form to convert to. */
 export function initEditablePath(
   input: HTMLInputElement,
   opts: {
     onNavigate: (path: string) => void;
-    getDisplayPath: () => string;
+    getCurrentPath: () => string;
   },
 ): void {
   input.addEventListener("click", () => {
@@ -93,20 +96,18 @@ export function initEditablePath(
   input.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      const raw = input.value.trim().replace(/^\/+/, "").replace(/\/+$/, "");
-      const target = raw === "" ? "." : raw;
       input.readOnly = true;
-      opts.onNavigate(target);
+      opts.onNavigate(normalizeDirPath(input.value));
       input.blur();
     } else if (e.key === "Escape") {
       input.readOnly = true;
-      input.value = opts.getDisplayPath();
+      input.value = opts.getCurrentPath();
       input.blur();
     }
   });
   input.addEventListener("blur", () => {
     input.readOnly = true;
-    input.value = opts.getDisplayPath();
+    input.value = opts.getCurrentPath();
   });
 }
 
@@ -132,25 +133,43 @@ export function formatDate(ms: number): string {
   );
 }
 
+/** The browser's ROOT listing — the synthetic list of granted mounts, which
+ *  `/api/files` answers for this exact path. It is not a real directory in the
+ *  allow-list model, but its PATH is the one every child is composed from, so it
+ *  belongs to the same space as the rest of them.
+ *
+ *  This used to be ".", and that one character was the whole of a year-long
+ *  silent defect: `joinPath(".", "workspace")` returned "workspace", so every
+ *  path the listing produced was rootless while the git-status index, the editor
+ *  and `/api/files/search` all speak container-absolute. No key could match, so
+ *  the status letters and the directory rollups were dead on every file. */
+export const FB_ROOT = "/";
+
+/** Join a listing's path with one entry NAME. The base is always in the
+ *  container-absolute space (`FB_ROOT` or below), so the result is too. */
 export function joinPath(base: string, name: string): string {
-  if (base === ".") {
-    return name;
-  }
   return `${base.replace(/\/+$/, "")}/${name}`;
 }
 
+/** The listing one level up. Bottoms out at `FB_ROOT` rather than walking past
+ *  it: above the mounts listing there is nothing browsable. */
 export function parentPath(p: string): string {
-  if (p === "." || p === "") {
-    return ".";
-  }
   const parts = p.split("/").filter((s) => s !== "");
   parts.pop();
-  return parts.length === 0 ? "." : parts.join("/");
+  return parts.length === 0 ? FB_ROOT : `/${parts.join("/")}`;
 }
 
-/** Convert a raw path (where "." means root) to a user-facing display string. */
-export function displayPath(currentPath: string): string {
-  return currentPath === "." ? "/" : `/${currentPath}`;
+/** The ONE door into the browser's path space, for a path arriving from outside
+ *  the module: the persisted `fb_path`, a `/files/<path>` deep link, or the text
+ *  a user typed into the path input.
+ *
+ *  It exists so `currentPath` is absolute by construction rather than by every
+ *  entry point remembering to make it so — and it is what lets a bookmark or a
+ *  setting written by an older build resolve instead of quietly reviving the
+ *  rootless space. "." is accepted for the same reason `/api/files` accepts it. */
+export function normalizeDirPath(raw: string): string {
+  const trimmed = raw.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  return trimmed === "" || trimmed === "." ? FB_ROOT : `/${trimmed}`;
 }
 
 /** Expand a set of workspace-relative paths with every ancestor directory.
@@ -177,10 +196,25 @@ export function withAncestors(rels: Iterable<string>): Set<string> {
 /** Whether an absolute row path is in a set of workspace-relative paths.
  *
  *  A suffix rule on a `/`-delimited boundary, so `src/a.go` matches
- *  `/workspace/src/a.go` but never `/workspace/other-src/a.go`. */
+ *  `/workspace/src/a.go` but never `/workspace/other-src/a.go`. The rule is
+ *  load-bearing for the multi-mount case: a `/config/...` row has no
+ *  workspace-relative form, so it must not match a workspace-relative set.
+ *
+ *  Generates the row's OWN suffixes and probes the set, rather than walking the
+ *  set testing `endsWith`: the set is every path this chat touched plus every
+ *  ancestor, which runs to hundreds after a long session, while a row's depth is
+ *  about six. Called once per row per render pass, so the difference is
+ *  O(rows x depth) against O(rows x |changed|). */
 export function matchesRelative(absPath: string, rels: ReadonlySet<string>): boolean {
-  for (const p of rels) {
-    if (absPath === p || absPath.endsWith(`/${p}`)) {
+  if (rels.has(absPath)) {
+    return true;
+  }
+  // Every `/`-boundary suffix of the row's path, shortest-first from each
+  // separator. `cut + 1` skips the separator itself, which is what makes
+  // "other-src/a.go" fail to match "src/a.go" — the only boundary offered is the
+  // one after the `/`, never mid-segment.
+  for (let cut = absPath.indexOf("/"); cut !== -1; cut = absPath.indexOf("/", cut + 1)) {
+    if (rels.has(absPath.slice(cut + 1))) {
       return true;
     }
   }

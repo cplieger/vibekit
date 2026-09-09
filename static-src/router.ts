@@ -119,6 +119,31 @@ export type Route =
   | RouteSubagent
   | RouteSettings;
 
+// --- Where a route came from ---
+
+/** Where a route came from, because the three answer "this names nothing that is
+ *  open" differently.
+ *
+ *  A `deeplink` MAY open what it names. A `history` entry and a `restore` may only
+ *  ACTIVATE something already open: both name a location this browser was at rather
+ *  than one that still exists, so applying either as a deep link RE-CREATES the tab —
+ *  server-side, and broadcast to every other device. */
+export type RouteOrigin = "deeplink" | "history" | "restore";
+
+/** Whether the document was RESTORED rather than navigated to.
+ *
+ *  Fails toward `deeplink` on an absent or unrecognised entry, deliberately: that
+ *  keeps a genuine deep link working on any engine that reports nothing, which is the
+ *  direction that loses no capability. Measured in Chromium 1234 — a reload answers
+ *  `reload`, a cross-document back or forward answers `back_forward`, and a
+ *  same-document `pushState` mints no entry, so the answer describes the DOCUMENT's
+ *  load. What an iOS WebContent eviction reports cannot be measured here and is
+ *  carried as unverified. */
+export function navigationOrigin(): RouteOrigin {
+  const [entry] = performance.getEntriesByType("navigation") as PerformanceNavigationTiming[];
+  return entry?.type === "reload" || entry?.type === "back_forward" ? "restore" : "deeplink";
+}
+
 // --- Parse current URL into a Route ---
 
 /** Wrapper around decodeURIComponent that returns the raw input on
@@ -183,12 +208,18 @@ export function parseRoute(pathname: string, hash: string = location.hash): Rout
     }
 
     case "files": {
-      // /files → workspace root; /files/<path> → specific path.
+      // /files → the mounts listing; /files/<path> → a specific directory.
+      //
+      // "/" rather than "." because the file surface has ONE path space,
+      // container-absolute, and the browser's root listing is a path in it (see
+      // `files-shared.ts` FB_ROOT). Spelled as a literal rather than imported:
+      // the router must not depend on a feature module, and the two are held to
+      // one answer by a test instead (`files-path-space.test.ts`).
       if (segments.length <= 1) {
-        return { kind: "files", path: "." };
+        return { kind: "files", path: "/" };
       }
       const filePath = safeDecode(segments.slice(1).join("/"));
-      return { kind: "files", path: filePath === "" ? "." : filePath };
+      return { kind: "files", path: filePath === "" ? "/" : filePath };
     }
 
     case "file": {
@@ -300,7 +331,11 @@ export function buildPath(route: Route): string {
     case "subagent":
       return `/chat/${encodeURIComponent(route.chat)}/subagent/${encodeURIComponent(route.id)}`;
     case "files":
-      return route.path === "." || route.path === ""
+      // The root listing has no path segment of its own. "." is still accepted
+      // here because a URL can carry it (and `/api/files` does too); anything
+      // else is an absolute path, whose leading slash makes the URL `/files//…`
+      // — the same shape `/file//…` already produces for an absolute file.
+      return route.path === "/" || route.path === "." || route.path === ""
         ? "/files"
         : `/files/${encodePath(route.path)}`;
     case "file":
@@ -335,6 +370,31 @@ export function suppressPush(v: boolean): void {
   suppressDepth = v ? suppressDepth + 1 : Math.max(0, suppressDepth - 1);
 }
 
+/** The path the router is mid-way through applying, or "" when none. A CLAIM rather
+ *  than a second suppression window: a window silences every push, a claim silences
+ *  only a push to a DIFFERENT location, so the claimed location's own activation still
+ *  lands. It defends a deep link whose opener is reached through a dynamic `import()`:
+ *  until that resolves the active row is still whatever the boot restored, and the tab
+ *  projection writes the URL from the active row on EVERY mutation. */
+let claimedPath = "";
+
+/** Claim a location for the duration of applying it. `releaseLocation` in a `finally`;
+ *  a second claim replaces the first, which is what a mid-boot re-entry means. The claim
+ *  is a PATHNAME, so a push that only moves the fragment is a real move inside the
+ *  claimed location and stays admissible. */
+export function claimLocation(path: string): void {
+  claimedPath = pathnameOf(path);
+}
+
+export function releaseLocation(): void {
+  claimedPath = "";
+}
+
+function pathnameOf(path: string): string {
+  const hash = path.indexOf("#");
+  return hash === -1 ? path : path.slice(0, hash);
+}
+
 export function pushRoute(route: Route): void {
   if (suppressDepth > 0) {
     return;
@@ -342,6 +402,11 @@ export function pushRoute(route: Route): void {
   const target = buildPath(route);
   const current = location.pathname + location.hash;
   if (target === current) {
+    return;
+  }
+  // Guards `pushRoute` ONLY: a replace cannot leave a history entry, which is the whole
+  // defect, and `applyInitialRoute`'s own canonicalisation is a replace.
+  if (claimedPath !== "" && pathnameOf(target) !== claimedPath) {
     return;
   }
   // A push that only DROPS the current fragment REPLACES instead. A fragment here

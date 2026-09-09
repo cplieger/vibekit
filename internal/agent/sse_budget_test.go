@@ -254,26 +254,128 @@ func measureColdConnect(t *testing.T, n int) int {
 	return coldConnect(t, rt, "").Body.Len()
 }
 
-// TestHandleSSE_ColdConnectDeclaringOneChatCarriesOneSnapshot fails today on the
-// parameter being ignored, which is correct: nothing reads ?snapshot= yet.
+// snapshotFrames counts the connect frames carrying a turn_state SNAPSHOT. Keyed on
+// the message marker rather than on the event type, because a bare busy signal is a
+// turn_state too and whether the message travels IS the cut being measured.
+func snapshotFrames(body string) int {
+	n := 0
+	for frame := range strings.SplitSeq(body, fixtureFrameSeparator) {
+		if strings.Contains(frame, fixtureSnapshotMarker) {
+			n++
+		}
+	}
+	return n
+}
+
 func TestHandleSSE_ColdConnectDeclaringOneChatCarriesOneSnapshot(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	ids := busyChatsWithHugeTurns(t, rt, fixtureBusyChats)
 
-	body := coldConnect(t, rt, "?snapshot="+string(ids[0])).Body.String()
+	body := coldConnect(t, rt, "?"+snapshotParam+"="+string(ids[0])).Body.String()
 
-	withSnapshot := 0
-	for frame := range strings.SplitSeq(body, fixtureFrameSeparator) {
-		if strings.Contains(frame, fixtureSnapshotMarker) {
-			withSnapshot++
-		}
-	}
-	if withSnapshot != 1 {
+	if withSnapshot := snapshotFrames(body); withSnapshot != 1 {
 		t.Errorf("declaring 1 of %d busy chats, %d frames carry a snapshot, want exactly 1",
 			fixtureBusyChats, withSnapshot)
 	}
 	if got := len(body); got >= fixtureDeclaredBudget {
 		t.Errorf("declaring 1 of %d busy chats wrote %d bytes, want < %d (maxColdConnectBytes/2)",
 			fixtureBusyChats, got, fixtureDeclaredBudget)
+	}
+}
+
+// TestHandleSSE_TheTwoStatesAnIDListCannotSeparate pins the pair the parameter's
+// encoding exists for, and it is the pair every other gate in this file is blind to
+// because both of them declare an EMPTY set of chats. An old client and a curl never
+// declared, so they must keep receiving every snapshot; a reduced boot declares
+// NOTHING, so it must receive none. The declaring-one state is the case above.
+func TestHandleSSE_TheTwoStatesAnIDListCannotSeparate(t *testing.T) {
+	t.Run("no parameter at all reads as every open chat", func(t *testing.T) {
+		rt := newBudgetRuntime(t)
+		ids := busyChatsWithHugeTurns(t, rt, fixtureBusyChats)
+
+		undeclared := snapshotFrames(coldConnect(t, rt, "").Body.String())
+		everyChat := snapshotFrames(coldConnect(t, rt, declareQuery(ids...)).Body.String())
+
+		// Compared against DECLARING THEM ALL rather than against the chat count,
+		// because the per-connect budget refuses the tail either way: what fail-open
+		// has to mean is "the same as if the client had named every open chat", and a
+		// hardcoded 6 would assert the budget instead.
+		if undeclared == 0 || undeclared != everyChat {
+			t.Errorf("undeclared connect carries %d snapshot frames against %d for a connect naming "+
+				"all %d busy chats; want equal and non-zero: a client that never declared must fail OPEN",
+				undeclared, everyChat, fixtureBusyChats)
+		}
+	})
+
+	t.Run("the sentinel reads as no chat at all", func(t *testing.T) {
+		rt := newBudgetRuntime(t)
+		busyChatsWithHugeTurns(t, rt, fixtureBusyChats)
+
+		body := coldConnect(t, rt, "?"+snapshotParam+"="+snapshotNone).Body.String()
+
+		if got := snapshotFrames(body); got != 0 {
+			t.Errorf("declaring %q over %d busy chats carries %d snapshot frames, want 0",
+				snapshotNone, fixtureBusyChats, got)
+		}
+		// Every busy chat is still ANNOUNCED, or the count above would be satisfied by
+		// a connect that replayed nothing at all.
+		if signals := strings.Count(body, string(vibekit.EventTurnState)); signals != fixtureBusyChats {
+			t.Errorf("the connect carries %d turn_state frames, want %d: a busy chat must keep saying so",
+				signals, fixtureBusyChats)
+		}
+	})
+}
+
+// declareQuery is the query one connect sends to declare these chats, so a test says
+// WHICH chats it is naming rather than assembling a parameter by hand.
+func declareQuery(ids ...vibekit.ChatID) string {
+	raw := make([]string, 0, len(ids))
+	for _, id := range ids {
+		raw = append(raw, string(id))
+	}
+	return "?" + snapshotParam + "=" + strings.Join(raw, ",")
+}
+
+// TestHandleSSE_TheSentinelIsNotAChatID is the ONE assertion that separates the
+// sentinel branch from the behaviour today's code produces by accident, and it is why
+// the branch has to sit BEFORE the id loop: ids.ValidChatID is a charset check, so
+// `none` parses as a perfectly good chat id. Without the branch, a chat literally
+// named `none` is the one chat a client asking for NO snapshot receives one for.
+func TestHandleSSE_TheSentinelIsNotAChatID(t *testing.T) {
+	rt := newBudgetRuntime(t)
+	openSmallTurn(t, rt, snapshotNone, "a reply nobody asked to be sent")
+	openBudgetChatTab(t, rt, snapshotNone)
+
+	body := coldConnect(t, rt, "?"+snapshotParam+"="+snapshotNone).Body.String()
+
+	if got := snapshotFrames(body); got != 0 {
+		t.Errorf("a chat named %q got %d snapshot frames from ?%s=%s, want 0: the sentinel was read as its id",
+			snapshotNone, got, snapshotParam, snapshotNone)
+	}
+	if signals := strings.Count(body, string(vibekit.EventTurnState)); signals != 1 {
+		t.Errorf("the connect carries %d turn_state frames, want 1: the fixture is not busy, so the count above is vacuous",
+			signals)
+	}
+}
+
+// TestHandleSSE_TheDeclarationOrdersTheConnectPayload is the assertion this file was
+// missing: every gate above measures ONE spelling of the parameter against a ceiling,
+// so a change that made declaring nothing the most expensive answer would pass all of
+// them. Three measurements, one runtime, one fixture, so the only variable is what the
+// client said.
+func TestHandleSSE_TheDeclarationOrdersTheConnectPayload(t *testing.T) {
+	rt := newBudgetRuntime(t)
+	ids := busyChatsWithHugeTurns(t, rt, fixtureBusyChats)
+
+	none := coldConnect(t, rt, "?"+snapshotParam+"="+snapshotNone).Body.Len()
+	declaredOne := coldConnect(t, rt, "?"+snapshotParam+"="+string(ids[0])).Body.Len()
+	undeclared := coldConnect(t, rt, "").Body.Len()
+
+	// All three numbers whichever comparison failed, because the ORDER is the subject
+	// and a message naming one pair leaves the reader measuring the rest by hand.
+	if none >= declaredOne || declaredOne >= undeclared {
+		t.Errorf("connect bytes over %d busy chats: sentinel=%d, one declared=%d, undeclared=%d; "+
+			"want sentinel < one declared < undeclared",
+			fixtureBusyChats, none, declaredOne, undeclared)
 	}
 }

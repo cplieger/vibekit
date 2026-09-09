@@ -12,10 +12,10 @@ import type { FileState } from "./editor-types.js";
 // --- restoreUI (dispatches to mode-specific renderers) ---
 
 export function restoreUI(state: FileState): void {
-  if (state.error !== "") {
+  if (state.error.value !== "") {
     $.editorCode.textContent = "";
     $.editorGutter.textContent = "";
-    $.editorError.textContent = state.error;
+    $.editorError.textContent = state.error.value;
     $.editorError.classList.remove("hidden");
     $.editorEditBtn.disabled = true;
     $.editorEditBtn.classList.add("hidden");

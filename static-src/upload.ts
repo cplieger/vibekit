@@ -8,6 +8,7 @@
 
 import { $ } from "./dom.js";
 import { hasErrorString } from "./actions/index.js";
+import { joinPath } from "./files-shared.js";
 
 export interface UploadOptions {
   files: FileList;
@@ -30,12 +31,18 @@ export interface UploadOptions {
 // split strings.ts uses for windowOutput; the surrounding uploadFiles is the
 // untestable shell (a singleton progress bar plus a live request).
 
-/** Server-returned filenames mapped onto workspace paths under the target
- *  directory. Shared by the success and failure paths so a partial batch's
- *  paths are spelled exactly like a whole one's. */
+/** Server-returned filenames mapped onto container-absolute paths under the
+ *  target directory. Shared by the success and failure paths so a partial batch's
+ *  paths are spelled exactly like a whole one's.
+ *
+ *  Through `joinPath`, not a local separator rule. It carried a third copy of the
+ *  join, whose root case (`""` or `"."`) returned the BARE FILENAME — and these
+ *  paths become chat ATTACHMENTS, which the server resolves against the workspace
+ *  root, so a bare name named a file that was never there. Every target is
+ *  absolute now (`UPLOADS_DIR`, or the browser's own listing path), so there is
+ *  no root case to have. */
 export function resolvePaths(targetDir: string, names: string[]): string[] {
-  const sep = targetDir === "" || targetDir === "." ? "" : `${targetDir.replace(/\/+$/, "")}/`;
-  return names.map((name) => sep + name);
+  return names.map((name) => joinPath(targetDir, name));
 }
 
 /** The `uploaded` names out of a response body, empty when the body carries
@@ -89,17 +96,21 @@ export function uploadFiles(opts: UploadOptions): void {
   }
 
   const progress = $.uploadProgress;
-  const fill = $.uploadProgressFill;
+  const bar = $.uploadProgressBar;
   const label = $.uploadProgressLabel;
   const cancelBtn = $.uploadProgressCancel;
 
+  // The container is a plain layout div. It used to carry `role="progressbar"`
+  // plus every `aria-*`, which flattened its children out of the accessibility
+  // tree — and one of them is the Cancel button, so the only way to stop an
+  // upload was unreachable to a screen reader. The native <progress> reports its
+  // own value, so the ARIA it needs is a NAME and nothing else; `aria-label`
+  // rather than `aria-labelledby` at the label span, because that span's text
+  // becomes the percentage and then the outcome, and a name that restates the
+  // value churns on every tick.
   progress.classList.remove("upload-closed");
-  progress.setAttribute("role", "progressbar");
-  progress.setAttribute("aria-valuemin", "0");
-  progress.setAttribute("aria-valuemax", "100");
-  progress.setAttribute("aria-valuenow", "0");
-  progress.setAttribute("aria-label", `Uploading ${String(opts.files.length)} file(s)`);
-  fill.style.width = "0%";
+  bar.setAttribute("aria-label", `Uploading ${String(opts.files.length)} file(s)`);
+  bar.value = 0;
   label.textContent = `Uploading ${String(opts.files.length)} file(s)...`;
 
   const xhr = new XMLHttpRequest();
@@ -126,22 +137,21 @@ export function uploadFiles(opts: UploadOptions): void {
   xhr.upload.addEventListener("progress", (e: ProgressEvent) => {
     if (e.lengthComputable) {
       const pct = Math.round((e.loaded / e.total) * 100);
-      fill.style.width = `${String(pct)}%`;
+      bar.value = pct;
       label.textContent = `Uploading... ${String(pct)}%`;
-      progress.setAttribute("aria-valuenow", String(pct));
     } else {
-      // Total size unknown: mark the progressbar indeterminate. Per ARIA, an
-      // indeterminate progressbar omits aria-valuenow rather than reporting 0.
-      progress.removeAttribute("aria-valuenow");
+      // Total size unknown. A <progress> with no `value` IS the indeterminate
+      // rendering, which is the native spelling of the aria-valuenow removal
+      // this replaced; the next determinate tick assigns one again.
+      bar.removeAttribute("value");
       label.textContent = "Uploading...";
     }
   });
   xhr.addEventListener("load", () => {
     teardownCancelUI();
     if (xhr.status >= 200 && xhr.status < 300) {
-      fill.style.width = "100%";
+      bar.value = 100;
       label.textContent = "Upload complete";
-      progress.setAttribute("aria-valuenow", "100");
       setTimeout(() => {
         progress.classList.add("upload-closed");
       }, 1500);

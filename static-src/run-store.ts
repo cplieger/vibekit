@@ -116,11 +116,20 @@ function classifyRunState(state: RawRunState): RunState {
 const cells = new Map<string, Signal<RunState | undefined>>();
 
 /** Runs with a fetch in flight, and runs invalidated while one was. Together they
- *  collapse an event storm into at most two requests: KAS emits a `run_progress`
- *  per node event, so a twenty-step run produces dozens, and the state that
- *  matters is the one AFTER the last of them. */
+ *  collapse an event storm into at most two requests: KAS emits a `run_progress` per
+ *  node event, and the state that matters is the one AFTER the last of them. `stale`
+ *  carries the CAUSE the trailing fetch will run under, so the token below survives a
+ *  coalesce. */
 const inFlight = new Set<string>();
-const stale = new Set<string>();
+const stale = new Map<string, string>();
+
+/** The invalidation CAUSE behind each run's current answer: recorded when its fetch is
+ *  ISSUED and kept once that fetch has answered, which is what makes one cause cost one
+ *  request per run however the two callers interleave — a second invalidation naming a
+ *  cause this run was already READ for is a no-op, because that read was issued after
+ *  the cause. A failed read records NOTHING, so a repeat retries rather than inheriting
+ *  a claim nothing answered. Dropped by `forgetRun`. */
+const answeredCause = new Map<string, string>();
 
 /** Per-run node plans, beside the signal rather than inside it.
  *
@@ -311,39 +320,44 @@ function nodeStatus(v: string | undefined): RunNode["status"] | undefined {
   return NODE_STATUSES.find((s) => s === v);
 }
 
-/** Re-read a run from the server. Safe to call on every SSE frame: a second call
- *  while a fetch is in flight sets a flag rather than issuing a request, and one
- *  trailing fetch runs when the first settles. */
-export function invalidateRun(workflowID: string): void {
+/** Re-read a run from the server. Safe to call on every SSE frame: a second call while a
+ *  fetch is in flight sets a flag rather than issuing a request, and one trailing fetch
+ *  runs when the first settles. `cause` names WHY, for a caller that can say two
+ *  invalidations are the same event; the default is uncaused, which always fetches,
+ *  because an SSE frame is its own cause and must not be swallowed by an earlier one. */
+export function invalidateRun(workflowID: string, cause = ""): void {
   if (workflowID === "") {
     return;
   }
-  if (inFlight.has(workflowID)) {
-    stale.add(workflowID);
+  if (cause !== "" && answeredCause.get(workflowID) === cause) {
     return;
   }
-  void fetchRun(workflowID);
+  if (inFlight.has(workflowID)) {
+    stale.set(workflowID, cause);
+    return;
+  }
+  void fetchRun(workflowID, cause);
 }
 
-/** Re-read every run this client holds state for. The gap-recovery half of the
- *  push contract.
- *
- *  `run_progress` frames are applied rather than refetched, so an outage that
- *  swallows them leaves the cached tree stale with nothing to notice it — a node
- *  that completed during the gap keeps reading `running` and its clock keeps
- *  ticking. A gap is the one moment the client knows it missed frames, so it is
- *  where the refetch belongs.
- *
- *  Bounded by the cache: at most one request per run already on screen, collapsed
- *  by `invalidateRun`'s in-flight guard. */
-export function invalidateCachedRuns(): void {
+/** Re-read every run this client holds state for. The gap-recovery half of the push
+ *  contract: `run_progress` frames are APPLIED rather than refetched, so an outage that
+ *  swallows them leaves a node reading `running` with its clock ticking and nothing to
+ *  notice it. Bounded by the cache, collapsed by `invalidateRun`'s in-flight guard;
+ *  `cause` is the caller's token, see `answeredCause`. */
+export function invalidateCachedRuns(cause = ""): void {
   for (const id of cells.keys()) {
-    invalidateRun(id);
+    invalidateRun(id, cause);
   }
 }
 
-async function fetchRun(workflowID: string): Promise<void> {
+async function fetchRun(workflowID: string, cause = ""): Promise<void> {
   inFlight.add(workflowID);
+  // Recorded at ISSUE, which is what lets ONE rule in `invalidateRun` serve both cases:
+  // a same-cause invalidation arriving while this read is open is already covered.
+  if (cause !== "") {
+    answeredCause.set(workflowID, cause);
+  }
+  let answered = false;
   try {
     const d = await apiGet<RawRunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
     if (d?.state !== undefined) {
@@ -356,12 +370,20 @@ async function fetchRun(workflowID: string): Promise<void> {
         plans.set(workflowID, d.nodePlan);
       }
       cell(workflowID).value = classifyRunState(d.state);
+      answered = true;
     }
   } finally {
     inFlight.delete(workflowID);
+    if (!answered && cause !== "") {
+      // The read produced nothing, so it claims nothing: a cause standing over an
+      // answer nobody got would turn the gap's own recovery into a no-op.
+      answeredCause.delete(workflowID);
+    }
   }
-  if (stale.delete(workflowID)) {
-    await fetchRun(workflowID);
+  const next = stale.get(workflowID);
+  if (next !== undefined) {
+    stale.delete(workflowID);
+    await fetchRun(workflowID, next);
   }
 }
 
@@ -371,6 +393,7 @@ async function fetchRun(workflowID: string): Promise<void> {
 export function forgetRun(workflowID: string): void {
   cells.delete(workflowID);
   stale.delete(workflowID);
+  answeredCause.delete(workflowID);
   plans.delete(workflowID);
   controlCells.delete(workflowID);
   controlsInFlight.delete(workflowID);
@@ -611,10 +634,12 @@ export function registerLiveRunObserver(fn: (workflowID: string) => void): void 
   noteRunKnown = fn;
 }
 
-/** Rebuild the inventory from the server. A FAILED fetch keeps the event-fed
- *  state — degrading to cautious means a stale exemption (memory), never a
- *  wrongly-evicted live chat (correctness); the next gap or boot retries. */
-export async function rebuildLiveRuns(): Promise<void> {
+/** Rebuild the inventory from the server. A FAILED fetch keeps the event-fed state: a
+ *  stale exemption costs memory, a wrongly-evicted live chat costs correctness, and the
+ *  next gap or boot retries. `cause` is threaded into each row's own invalidation, so a
+ *  gap that also ran `invalidateCachedRuns` re-reads each run once rather than twice,
+ *  and a run that FINISHED during the outage is still re-read by that pass. */
+export async function rebuildLiveRuns(cause = ""): Promise<void> {
   const d = await apiGetTyped("/api/runs/live", decodeLiveRunsResponse);
   if (d === null) {
     return;
@@ -627,7 +652,7 @@ export async function rebuildLiveRuns(): Promise<void> {
       liveRunChats.set(r.workflow_id, { chat: r.chat_id, executing: r.executing });
       noteRunChat(r.workflow_id, r.chat_id);
       noteRunKnown?.(r.workflow_id);
-      invalidateRun(r.workflow_id);
+      invalidateRun(r.workflow_id, cause);
     }
   }
   // ONE bump for the whole rebuild rather than one per row.

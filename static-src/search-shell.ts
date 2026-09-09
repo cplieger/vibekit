@@ -1,109 +1,27 @@
-// ---------------------------------------------------------------------------
-// The search box every surface shares.
-//
-// Six surfaces ask a reader to type a query: the transcript's Ctrl-F, the file
-// browser's recursive grep, the editor's in-buffer find, the History page's
-// cross-chat search, the configuration browser's metadata filter, and the git
-// view's two panel filters. They had four hand-authored copies of the same box
-// between them — the input's attribute set alone was duplicated in three places
-// — and the copies had already drifted: two spellings of the match-case toggle's
-// size, two debounce constants with the same value, and one box with
-// `role="search"` and one without.
-//
-// WHAT IS SHARED IS MECHANICAL, NOT VISUAL. This module owns the box shell, the
-// input's attributes, the debounce, the supersession guard, the `Aa` latched
-// toggle and its `?case=1` convention, the status note, and the Escape/Enter key
-// contract. Each consumer supplies a placeholder, a query function and a
-// renderer.
-//
-// PLACEMENT AND REVEAL ARE STILL NOT HERE, and that is unchanged — but the
-// population underneath it has changed. Two groups own it now instead of six
-// one-offs:
-//
-//   - search-popup.ts is the FLOATING form: the four page boxes (History, the
-//     configuration browser, the git view's two panels), which share one popup
-//     lifecycle, one position and one clear-on-close rule. It sits ON TOP of this
-//     module rather than inside it.
-//   - The transcript's box is its own popup call (find-in-chat.ts), because it
-//     has a cursor and a teardown that unwraps DOM it wrote into the page; the
-//     file browser's and the editor's stay IN-FLOW, because each changes the
-//     layout of the thing it searches — the browser's results REPLACE the
-//     listing, and a docked editor bar shrinks the scroller instead of covering
-//     the first lines of the file. 19-files.css and 20-editor.css record that.
-//
-// THE COUNTER VERSUS THE NOTE stays a real difference: a cursor reports "3 of
-// 17"; a ranked list reports how much it read. Those answer different questions.
-// And THE CURSOR HALF — marks, prev/next, scroll-into-view — belongs to the two
-// surfaces that have a position in a document, arriving through `compose` as
-// ordinary controls.
-//
-// There is NO mode flag, and that is a decision this codebase has already taken
-// once: settings-highlight.ts refused a registry for the same reason. A flag
-// would put the surfaces' differences inside one function's branches, where the
-// next surface adds another value and every existing branch has to be re-read to
-// know whether it applies.
-// ---------------------------------------------------------------------------
+// The search box every surface shares: the field's attributes, the debounce, the
+// supersession guard, the `Aa` toggle, the status note and the Escape/Enter
+// contract. A caller supplies a placeholder, a query and a renderer, and owns
+// PLACEMENT and REVEAL — a surface that differs arranges the built parts through
+// `compose` rather than adding a mode flag here.
 
 import { el } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
+import { ICON_X } from "./icons.js";
 
-/** The default typing debounce. Small enough to feel instant, large enough to
- *  coalesce a burst of keystrokes; it was authored twice with this value, in two
- *  files, each with a comment saying it matched the other.
- *
- *  Overridable per box, because one surface has a real reason to differ: the
- *  cross-chat search reads up to 500 files per query, so its pause is longer.
- *  What is shared is the MECHANISM — one timer, one abort, one supersession
- *  guard — not the number. */
+/** The default typing pause. Overridable per box: the cross-chat search reads up
+ *  to 500 files per query, so its pause is longer. */
 export const SEARCH_DEBOUNCE_MS = 90;
 
-/* THERE IS NO IN-FIELD MAGNIFIER HERE ANY MORE, and its removal retired a
-   question rather than answering it. This module used to export one, with a rule
-   attached: a magnifier on a box that reaches past what is on screen, nothing on
-   a box that only narrows it. Two consumers disagreed under that rule — History
-   carried the glyph, the docs filter carried none — and the git panels carried a
-   third spelling of their own. Every page box is opened BY a magnifier now (the
-   toolbar's, through find-dispatch), so a second one inside the field is the same
-   glyph twice; what a box reaches is stated in its placeholder instead. */
-
-/** The close ×, local for the same reason the magnifier is: it is this
- *  component's own furniture, and importing it from icons.ts would make every
- *  consumer's test extend an icons mock to build a search box. */
-const CLOSE_GLYPH =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-  'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-
-/** The `?case=1` convention, in one place.
- *
- *  Every server that takes it reads an ABSENT parameter as insensitive, so the
- *  flag is only ever sent when asked. Two boxes spelled this inline and a third
- *  endpoint does not accept it at all; keeping the spelling here is what stops
- *  the two that do from disagreeing. */
+/** The `?case=1` convention. Every server that takes it reads an ABSENT parameter
+ *  as insensitive, so the flag is only ever sent when asked. */
 export function caseParam(caseSensitive: boolean): string {
   return caseSensitive ? "1" : "";
 }
 
-/**
- * An icon button for a search bar: an SVG glyph, vertically centred by
- * construction.
- *
- * THE CENTRING IS THE POINT, and it is why this factory exists rather than each
- * bar spelling its own. A TEXT glyph becomes an anonymous flex item whose LINE
- * BOX `align-items: center` centres — not its ink — and the two are only the
- * same when the ink happens to fill the line box symmetrically. `×` is a math
- * operator drawn about the math axis, an arrow follows neither the cap nor the
- * x-height band, and each font answers differently, so the offset is
- * platform-dependent by construction and no authored value can correct it.
- *
- * An SVG is a REPLACED element: its box IS its ink box, so centring the box
- * centres the glyph in every font. `line-height: 0` (on the button, in CSS)
- * collapses the strut that would otherwise oversize the line box around it.
- * That pairing is this app's convention for every correctly-centred icon button
- * — `.tab-close` and `.shell-header-btn` both carry it — and label-centring.test.ts
- * already records why the strut, not a line-height value, is the lever for a
- * replaced element.
- */
+/** An icon button for a search bar. The glyph must be an SVG: a text glyph is an
+ *  anonymous flex item whose LINE BOX gets centred rather than its ink, and no
+ *  authored offset corrects that across fonts. An SVG's box IS its ink box, and
+ *  the button's `line-height: 0` (in CSS) collapses the strut around it. */
 export function searchIconButton(
   className: string,
   label: string,
@@ -122,21 +40,10 @@ export function searchIconButton(
   return btn;
 }
 
-/**
- * The `Aa` match-case toggle.
- *
- * The ONE button in a search bar that keeps its text, because the letters ARE
- * the affordance: an icon for "match case" would have to be learned, while `Aa`
- * shows a capital and a lowercase beside each other. So it does not take the SVG
- * answer above, and it needs the other one — `text-box: trim-both cap alphabetic`
- * in CSS, which makes the box edges the cap band so centring the box centres the
- * letterforms. That works here and would NOT work for `×` or an arrow: the trim
- * addresses the cap-to-baseline band, and only a letterform fills it.
- *
- * Latched, so it carries `aria-pressed` rather than relying on a tint —
- * 70-selection.css owns the fill for both bars' toggles and there is no local
- * selected state.
- */
+/** The `Aa` toggle, the one search-bar button that keeps its text: the letters ARE
+ *  the affordance. Its centring is CSS's `text-box: trim-both cap alphabetic`,
+ *  which addresses the cap band and so works only on a letterform. Latched
+ *  through `aria-pressed`; 70-selection.css owns the fill. */
 export function matchCaseButton(
   className: string,
   initial: boolean,
@@ -161,12 +68,9 @@ export function matchCaseButton(
   return btn;
 }
 
-/** The query field's attribute set, which was duplicated in three places.
- *
- *  `autocapitalize` and `spellcheck` off because a query is not prose, and
- *  `enterkeyhint="search"` so a phone's return key says what it does. `type`
- *  is the caller's: a `search` input draws the platform's clear affordance,
- *  which belongs on a permanent box and not on one that has its own × . */
+/** The query field's attribute set. `type` is the caller's: a `search` input draws
+ *  the platform's own clear affordance, which belongs on a permanent box and not
+ *  on one that carries its own ×. */
 export function searchField(opts: {
   id: string;
   className: string;
@@ -192,9 +96,8 @@ export function searchField(opts: {
   return input;
 }
 
-/** The "what wasn't read" line. A polite live region, because it lands after the
- *  results and a reader who cannot see them needs to hear that the scan stopped
- *  — otherwise an empty answer claims the text is nowhere. */
+/** The "what wasn't read" line: a polite live region, so an empty answer cannot
+ *  claim the text is nowhere when the scan simply stopped short. */
 function statusNote(id: string, className: string): HTMLElement {
   return el("div", {
     id,
@@ -205,9 +108,8 @@ function statusNote(id: string, className: string): HTMLElement {
   });
 }
 
-/** The `role="search"` region. Named so every box is one landmark of the same
- *  kind; the History box was a bare `<div>` and so was not reachable by landmark
- *  navigation at all. */
+/** The `role="search"` landmark, so every box is reachable by landmark
+ *  navigation. */
 function searchRegion(opts: { id: string; className: string; label: string }): HTMLElement {
   return el("div", {
     id: opts.id,
@@ -217,10 +119,7 @@ function searchRegion(opts: { id: string; className: string; label: string }): H
   });
 }
 
-/** Escape and Enter on a search field.
- *
- *  Both actions are the caller's: Escape closes a revealable box, and Enter means
- *  step to the next match on a cursor and re-run on a list. What is shared is that Escape is CONSUMED here
+/** Escape and Enter on a search field. Escape is CONSUMED here
  *  (`stopPropagation`) so it does not also reach a modal or a global handler
  *  behind the box. */
 export function wireSearchKeys(
@@ -273,32 +172,25 @@ export interface SearchShellSpec<R> {
    *  escape hatch here. */
   inputTitle?: string;
   inputType?: "text" | "search";
-  /** Offer the `Aa` toggle. FALSE is a real answer, not a default: the
-   *  cross-chat endpoint is case-insensitive by decision, and a toggle wired to
-   *  a parameter the server does not read would silently do nothing. */
+  /** Offer the `Aa` toggle. FALSE where the endpoint ignores the parameter, or the
+   *  toggle silently does nothing. */
   matchCase?: boolean;
   /** Offer the status note. */
   note?: boolean;
   /** Offer a × that calls `onDismiss`. */
   closeButton?: boolean;
-  /** What the × closes, for its accessible name: "Close find" by default, so a
-   *  box that is a FILTER can say so instead. The word a reader hears has to
-   *  match the glyph they see. */
+  /** What the × closes, for its accessible name, so the word a reader hears
+   *  matches the glyph they see. "find" by default. */
   closeNoun?: string;
   /** Typing pause before a run. Defaults to SEARCH_DEBOUNCE_MS. */
   debounceMs?: number;
   /** Arrange the built parts into the region. Extra controls (a glob row, a
    *  match counter, prev/next) go in here. */
   compose: (parts: SearchShellParts) => (Node | null)[];
-  /** Run one query. Returning null means "nothing to render" (a failed fetch is
-   *  already logged centrally by the api client).
-   *
-   *  MAY BE SYNCHRONOUS, and four of the six boxes are: the editor's find reads a
-   *  string already in memory, and the docs filter and the git view's two filters
-   *  narrow an inventory that is already here. A synchronous answer renders in the same tick, which matters
-   *  because a counter that appears a microtask late is a counter a keystroke can
-   *  overtake — and it keeps the substrate out of the contract, so a box does not
-   *  have to pretend to be asynchronous to use this shell. */
+  /** Run one query. Null means "nothing to render"; a failed fetch is already
+   *  logged by the api client. MAY BE SYNCHRONOUS, and four of the six boxes are:
+   *  such an answer renders in the same tick, so a keystroke cannot overtake a
+   *  counter that would otherwise appear a microtask late. */
   query: (query: string, ctx: SearchQueryContext) => R | null | Promise<R | null>;
   /** Paint a result. Called only when the query it answers is still current. */
   render: (result: R | null, query: string) => void;
@@ -328,23 +220,13 @@ export interface SearchShell {
   setNote: (text: string) => void;
 }
 
-/**
- * Build one search box and own its query lifecycle.
- *
- * THE SUPERSESSION GUARD IS DOUBLE, and both halves are needed. The
- * `AbortSignal` cancels the transport, which is what stops a stale response
- * being decoded; the value comparison on resolve is what stops a response that
- * already arrived from painting over a newer query, since a fetch that completed
- * cannot be aborted. All three hand-written copies re-checked the box's value
- * against the in-flight query, which is the tell that this belonged in one place.
- */
 /** Duck-typed rather than `instanceof Promise`: an api-client helper may return a
- *  thenable from a different realm, and the only property this branch needs is
- *  the one that decides whether to await. */
+ *  thenable from another realm. */
 function isThenable<R>(v: R | null | Promise<R | null>): v is Promise<R | null> {
   return typeof (v as { then?: unknown } | null)?.then === "function";
 }
 
+/** Build one search box and own its query lifecycle. */
 export function createSearchShell<R>(spec: SearchShellSpec<R>): SearchShell {
   let caseSensitive = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -373,10 +255,8 @@ export function createSearchShell<R>(spec: SearchShellSpec<R>): SearchShell {
           caseSensitive,
           (on) => {
             caseSensitive = on;
-            // FORCED, not scheduled. The query STRING did not change, so every
-            // guard that compares it would treat this as a no-op — while the
-            // match SET changed underneath, which is the whole point of the
-            // toggle.
+            // Forced, not scheduled: the query string did not change, so every
+            // guard that compares it would read this as a no-op.
             run();
           },
         )
@@ -388,7 +268,7 @@ export function createSearchShell<R>(spec: SearchShellSpec<R>): SearchShell {
           spec.buttonClass,
           `Close ${spec.closeNoun ?? "find"}`,
           "Close (Esc)",
-          CLOSE_GLYPH,
+          ICON_X,
           dismiss,
         )
       : null;
@@ -424,16 +304,15 @@ export function createSearchShell<R>(spec: SearchShellSpec<R>): SearchShell {
     const issued = input.value;
     const result = spec.query(issued, { caseSensitive, signal: ctrl.signal });
     if (!isThenable<R>(result)) {
-      // Synchronous substrate: render in this tick. Wrapping it in a resolved
-      // promise would push the paint a microtask out for no reason and let a fast
-      // keystroke land between the run and its own result.
+      // Rendered in this tick: a resolved promise here would let a keystroke land
+      // between the run and its own result.
       spec.render(result, issued);
       return;
     }
     void result
       .then((res) => {
-        // Superseded: a newer keystroke is in the box, or this query was
-        // cancelled while its transport was still open.
+        // The value check is not redundant with the abort: a fetch that already
+        // resolved cannot be cancelled, and would paint over a newer query.
         if (ctrl.signal.aborted || input.value !== issued) {
           return;
         }

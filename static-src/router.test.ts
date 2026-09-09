@@ -3,7 +3,10 @@ import * as fc from "fast-check";
 import {
   parseRoute,
   buildPath,
+  claimLocation,
+  navigationOrigin,
   pushRoute,
+  releaseLocation,
   replaceRoute,
   suppressPush,
   type Route,
@@ -72,19 +75,23 @@ describe("parseRoute (table-driven)", () => {
       expected: { kind: "chat", id: "" },
     },
     {
-      name: "/files → workspace root",
+      name: "/files → the mounts listing",
       pathname: "/files",
       hash: "",
-      expected: { kind: "files", path: "." },
+      expected: { kind: "files", path: "/" },
     },
     {
-      name: "/files/ → workspace root",
+      name: "/files/ → the mounts listing",
       pathname: "/files/",
       hash: "",
-      expected: { kind: "files", path: "." },
+      expected: { kind: "files", path: "/" },
     },
     {
-      name: "/files/src/main.go",
+      // Verbatim, root-slash and all: the router parses, and the file browser
+      // NORMALISES at its own entry (`restoreFileBrowser` → `normalizeDirPath`),
+      // which is what lets a bookmark written by an older build still resolve.
+      // One normaliser, at the module that owns the space.
+      name: "/files/src/main.go (a rootless legacy link, normalised by the browser)",
       pathname: "/files/src/main.go",
       hash: "",
       expected: { kind: "files", path: "src/main.go" },
@@ -268,9 +275,12 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
     ),
     // history
     fc.constant<Route>({ kind: "history" }),
-    // files with path "." (root)
-    fc.constant<Route>({ kind: "files", path: "." }),
-    // files with non-trivial path (segments without slashes or empty parts)
+    // files at the root listing
+    fc.constant<Route>({ kind: "files", path: "/" }),
+    // files with non-trivial path (segments without slashes or empty parts).
+    // Container-absolute, like every path the file surface speaks, so the URL
+    // carries the leading slash as an empty first segment (`/files//a/b`) — the
+    // shape `/file//a/b` already has for an absolute file.
     fc
       .array(
         fc
@@ -278,7 +288,7 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
           .filter((s) => !s.includes("/") && !s.includes("#") && s !== "." && s !== ""),
         { minLength: 1, maxLength: 4 },
       )
-      .map((segs): Route => ({ kind: "files", path: segs.join("/") })),
+      .map((segs): Route => ({ kind: "files", path: `/${segs.join("/")}` })),
     // file without line
     fc
       .array(
@@ -554,5 +564,156 @@ describe("pushRoute", () => {
 
     expect(push).not.toHaveBeenCalled();
     expect(replace).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The location CLAIM.
+//
+// A deep link whose opener is reached through a dynamic import is not open when
+// `applyRoute` returns, and the tab projection writes the URL from the ACTIVE ROW
+// on every mutation — so the first unrelated emit used to push the restored tab's
+// route over the location the reader opened, and their first Back press landed on
+// a chat they never navigated to.
+//
+// Not a second suppression window: a window silences every push, while the claim
+// silences only a push to a DIFFERENT location, which is what leaves the claimed
+// location's own activation able to land.
+// ---------------------------------------------------------------------------
+
+describe("claimLocation", () => {
+  const originalHref = location.pathname + location.search + location.hash;
+
+  afterEach(() => {
+    releaseLocation();
+    vi.restoreAllMocks();
+    history.replaceState(null, "", originalHref);
+  });
+
+  it("drops a push to a location other than the claimed one", () => {
+    expect.assertions(1);
+    history.replaceState(null, "", "/run/wf_1");
+    claimLocation("/run/wf_1");
+    const push = vi.spyOn(history, "pushState");
+
+    // The shape of the defect: the projection's view effect writing the restored
+    // tab's route while the run view's chunk is still loading.
+    pushRoute({ kind: "chat", id: "c-restored" });
+
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("lets the claimed location's OWN activation land", () => {
+    expect.assertions(2);
+    history.replaceState(null, "", "/chat/c-other");
+    claimLocation("/run/wf_1");
+    const push = vi.spyOn(history, "pushState");
+
+    pushRoute({ kind: "run", id: "wf_1" });
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push.mock.calls[0]?.[2]).toBe("/run/wf_1");
+  });
+
+  it("admits a push that only moves the position INSIDE the claimed location", () => {
+    // A fragment is a position inside the page the claimed route already names, so
+    // moving it is a real move rather than a competing location. This is also why
+    // the claim is compared as a pathname: the document may have loaded at
+    // `/run/wf_1#node=…` and the tab's own route carries no fragment at all.
+    expect.assertions(2);
+    history.replaceState(null, "", "/run/wf_1");
+    claimLocation("/run/wf_1#node=wf_1%2Fplan");
+    const push = vi.spyOn(history, "pushState");
+
+    pushRoute({ kind: "run", id: "wf_1", node: "wf_1/build" });
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push.mock.calls[0]?.[2]).toBe("/run/wf_1#node=wf_1%2Fbuild");
+  });
+
+  it("leaves replaceRoute alone, because a replace leaves no history entry", () => {
+    // The whole defect is a spurious ENTRY, and `applyInitialRoute`'s own
+    // canonicalization is a replace — guarding it would leave the address bar
+    // naming nothing on a `/` boot.
+    expect.assertions(2);
+    history.replaceState(null, "", "/run/wf_1");
+    claimLocation("/run/wf_1");
+    const replace = vi.spyOn(history, "replaceState");
+
+    replaceRoute({ kind: "chat", id: "c-restored" });
+
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(replace.mock.calls[0]?.[2]).toBe("/chat/c-restored");
+  });
+
+  it("stops guarding once released", () => {
+    expect.assertions(2);
+    history.replaceState(null, "", "/run/wf_1");
+    claimLocation("/run/wf_1");
+    releaseLocation();
+    const push = vi.spyOn(history, "pushState");
+
+    pushRoute({ kind: "chat", id: "c-restored" });
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push.mock.calls[0]?.[2]).toBe("/chat/c-restored");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// navigationOrigin: whether the DOCUMENT was restored rather than navigated to.
+//
+// The signal for the one copy of "which tab this device was last on" that had no
+// guard. A restored load's URL means "activate this if it is open"; a deliberate
+// navigation means "open this". Measured in Chromium 1234: a reload answers
+// `reload`, a cross-document back or forward answers `back_forward`, a fresh load
+// answers `navigate`, and a same-document `pushState` mints no entry at all.
+// ---------------------------------------------------------------------------
+
+describe("navigationOrigin", () => {
+  /** The navigation entry the engine reports, or none at all. */
+  function reports(type: string | null): void {
+    vi.spyOn(performance, "getEntriesByType").mockReturnValue(
+      type === null ? [] : [{ type } as unknown as PerformanceEntry],
+    );
+  }
+
+  it("reads a reload as a restore", () => {
+    expect.assertions(1);
+    reports("reload");
+
+    expect(navigationOrigin()).toBe("restore");
+  });
+
+  it("reads a history traversal as a restore", () => {
+    expect.assertions(1);
+    reports("back_forward");
+
+    expect(navigationOrigin()).toBe("restore");
+  });
+
+  it("reads a deliberate navigation as a deep link", () => {
+    expect.assertions(1);
+    reports("navigate");
+
+    expect(navigationOrigin()).toBe("deeplink");
+  });
+
+  it("fails toward a deep link when the engine reports no entry", () => {
+    // The direction that loses no capability: an engine reporting nothing keeps
+    // genuine deep links working, where the other default would stop them opening.
+    expect.assertions(1);
+    reports(null);
+
+    expect(navigationOrigin()).toBe("deeplink");
+  });
+
+  it("fails toward a deep link on a type it does not recognise", () => {
+    // `prerender` is the live member of this set: the page was navigated to, just
+    // early. Anything a later engine adds lands here too.
+    expect.assertions(1);
+    reports("prerender");
+
+    expect(navigationOrigin()).toBe("deeplink");
   });
 });

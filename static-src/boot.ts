@@ -47,8 +47,15 @@ import * as transport from "./transport.js";
 import { showLoginModal } from "./modals.js";
 import { activateRestoredTab, getActiveTabRoute } from "./tabs.js";
 import { listTabs } from "./tabs-sync.js";
-import { parseRoute, replaceRoute, suppressPush } from "./router.js";
-import type { Route } from "./router.js";
+import {
+  claimLocation,
+  navigationOrigin,
+  parseRoute,
+  releaseLocation,
+  replaceRoute,
+  suppressPush,
+} from "./router.js";
+import type { Route, RouteOrigin } from "./router.js";
 import { createSession } from "./chat.js";
 import { initGovernance } from "./governance.js";
 import { initRuntimeHealth } from "./runtime-health.js";
@@ -56,7 +63,8 @@ import { initStatusVersions, setStatus } from "./status.js";
 import type { ConnectionStatus } from "./types.js";
 import { loadVersions } from "./versions.js";
 import { refreshRetention } from "./retention.js";
-import { hasLiveRunForChat, rebuildLiveRuns } from "./run-store.js";
+import { hasExecutingRunForChat, rebuildLiveRuns } from "./run-store.js";
+import { runTabProjectsChat } from "./run-view.js";
 import { subagentTabProjectsChat } from "./subagent-view.js";
 import { markBootDone } from "./view-swap.js";
 import { applyShareTarget } from "./share-target.js";
@@ -65,8 +73,9 @@ import { error as toastError } from "./toast.js";
 /** What the boot chain needs from the composition root. */
 export interface BootDeps {
   /** Navigate to a route. Owned by `app.ts`, which is the only place that can
-   *  reach every view a route can name. */
-  applyRoute: (route: Route) => void;
+   *  reach every view a route can name. RESOLVES when the view is open, which is
+   *  what the router's location claim is held across. */
+  applyRoute: (route: Route, origin?: RouteOrigin) => Promise<void>;
 }
 
 let deps: BootDeps | null = null;
@@ -74,39 +83,51 @@ let deps: BootDeps | null = null;
 export async function startBoot(d: BootDeps): Promise<void> {
   deps = d;
 
-  // A page that crashes and reloads every ~1.5s retries at full rate forever, so past
-  // a threshold this boot withholds what it can (reload-guard.ts). Armed first: the
-  // stability clear is what makes a boot that STAYS up cost the next one nothing.
-  noteBootAlive();
-  const reduced = bootMode() === "reduced";
-  if (reduced) {
-    // `autofocus` has already fired by the time a deferred module runs, so a blur is
-    // the only lever left. The point is the on-screen KEYBOARD, which shortens the
-    // viewport — the axis every measurement in this investigation got worse on — not
-    // the zoom, which the composer's own 16px floor closes.
-    $.promptInput.blur();
-    announceReloadLoop();
+  // Claim the location the DOCUMENT loaded at, before anything can push: it is the one
+  // thing here that knows what the reader asked for, and it stands until the route has
+  // been applied. Released in the workspace region's `finally` below.
+  claimLocation(location.pathname + location.hash);
+
+  try {
+    // Past a threshold this boot withholds what it can (reload-guard.ts). Armed first:
+    // the stability clear is what makes a boot that STAYS up cost the next one nothing.
+    noteBootAlive();
+    const reduced = bootMode() === "reduced";
+    if (reduced) {
+      // `autofocus` has already fired by the time a deferred module runs, so a blur is
+      // the only lever left. The point is the on-screen KEYBOARD, which shortens the
+      // viewport, not the zoom, which the composer's own 16px floor closes.
+      $.promptInput.blur();
+      announceReloadLoop();
+    }
+
+    // `identity` needs no rejection handler: every failure IS its `unavailable` arm
+    // (identity.ts). Nor does `snapshotRead`, which resolves null for every failure.
+    const settingsRead = loadSettings();
+    const identity = resolveIdentity();
+    const chatsRead = loadList();
+    const retentionRead = refreshRetention();
+    const snapshotRead = readBootSnapshot();
+
+    // The workspace region owns every view the boot swaps, so it is what the animation
+    // flag waits on: a slow whoami must not hold the first tab switch's transition back.
+    const workspace = restoreWorkspace(chatsRead, retentionRead, snapshotRead).finally(() => {
+      // The route has been applied (or the region failed), so ordinary pushes resume.
+      // This covers a throw inside the region; the catch below covers one before it.
+      releaseLocation();
+      markBootDone();
+    });
+    await Promise.allSettled([
+      settingsRead.then(adoptSettings),
+      identity.then((v) => adoptIdentity(v, workspace)),
+      workspace,
+    ]);
+  } catch (err) {
+    // The region's `finally` above cannot run for a throw before that region exists,
+    // and an unreleased claim freezes the address bar for the life of the page.
+    releaseLocation();
+    throw err;
   }
-
-  // `identity` needs no rejection handler: every failure IS its `unavailable` arm
-  // (identity.ts). Nor does `snapshotRead`, which resolves null for every failure.
-  const settingsRead = loadSettings();
-  const identity = resolveIdentity();
-  const chatsRead = loadList();
-  const retentionRead = refreshRetention();
-  const snapshotRead = readBootSnapshot();
-
-  // The workspace region owns every view the boot swaps, so it is what the
-  // animation flag waits on: a slow whoami must not hold the first tab switch's
-  // transition back.
-  const workspace = restoreWorkspace(chatsRead, retentionRead, snapshotRead).finally(() => {
-    markBootDone();
-  });
-  await Promise.allSettled([
-    settingsRead.then(adoptSettings),
-    identity.then((v) => adoptIdentity(v, workspace)),
-    workspace,
-  ]);
 }
 
 /** The settings answer: theme, the model and effort seeds, the UI-state restore.
@@ -202,12 +223,9 @@ async function restoreWorkspace(
     ),
   ]);
 
-  // BEST-EFFORT: everything below is the authoritative restore, and a hint must not
-  // cost the reader that. A throw leaves `resumed` false, so a half-painted resume
-  // falls through to the tab set's own activation.
-  //
-  // A REDUCED boot skips the paint outright, so its first frame draws no transcript.
-  // Nothing else changes: the restore below is what the chat actually loads from.
+  // BEST-EFFORT: the restore below is authoritative, so a throw leaves `resumed` false
+  // and a half-painted resume falls through to the tab set's own activation. A REDUCED
+  // boot skips the paint outright, so its first frame draws no transcript.
   let resumed = false;
   try {
     resumed = bootMode() === "full" && resumeSnapshot(hint);
@@ -226,35 +244,42 @@ async function restoreWorkspace(
   // Idempotent. See transport.ts holdUntilHydrated.
   transport.markHydrated();
 
-  suppressPush(true);
   try {
-    // Runs on every path: a chat list and a tab set are different collections, and
-    // only the first can be empty here without the second being meaningless.
+    // Runs on every path: a chat list and a tab set are different collections, and only
+    // the first can be empty here without the second being meaningless. BOTH awaits sit
+    // OUTSIDE the suppression window below, because a window spanning an await silences
+    // every push the shell makes; the deep link is the location claim's to protect.
     try {
       await retentionRead;
     } catch {
       /* the close path reads the default */
     }
-    if (!(await listTabs())) {
-      // Nothing retries on its own: there is no gap to detect on a boot connection,
-      // and a timer would re-list under a reader already using the strip.
-      toastError("Couldn't restore your tabs.", { label: "Reload", onClick: reload });
-    }
-    clearTabStripSkeleton();
-    if (!resumed) {
-      activateRestoredTab();
+    // The rule both of these follow is at `bootTabsRead`.
+    await readTabSet();
+    recoverFailedBootTabs();
+    // The window is the RESTORE itself and nothing else: `activateRestoredTab` ends in
+    // `pushRoute`, which would add a history entry for a tab nobody navigated to.
+    suppressPush(true);
+    try {
+      clearTabStripSkeleton();
+      if (!resumed) {
+        activateRestoredTab();
+      }
+    } finally {
+      suppressPush(false);
     }
   } finally {
     // A throw above must not leave the placeholder shimmering forever.
     clearTabStripSkeleton();
-    suppressPush(false);
   }
 
   // OUTSIDE the window: both WRITE the URL and a suppressed write is a no-op —
   // `applyInitialRoute`'s `replaceRoute` is what makes the address bar agree with
   // the screen, and a `?agent=planner` launch needs the chat the share created.
   await applyShareTarget();
-  applyInitialRoute();
+  // AWAITED: the claim is released when this region settles, and an arm that opens its
+  // view through a dynamic import has not opened it yet when the call returns.
+  await applyInitialRoute();
   return chatsOK;
 }
 
@@ -286,17 +311,16 @@ function reload(): void {
   location.reload();
 }
 
-/** Say what the reader saw and what it cost them.
- *
- *  Not dismissible: it explains why the screen is thinner than usual, so it stands
- *  until the reader takes the way out of it. The link clears the count and reloads,
- *  which is the only control that can — nothing else in the page decides this. */
+/** Say what the reader saw and what it cost them. Not dismissible: it explains why the
+ *  screen is thinner than usual, and its link is the only control that clears the count.
+ *  No DURATION claim, because the count is a sliding run with no ceiling and a sustained
+ *  loop reaches numbers no span of seconds could hold. */
 function announceReloadLoop(): void {
   const n = reloadCount();
   showBanner(
     GLOBAL_BANNER,
     "reload-loop",
-    `This page reloaded ${String(n)} times in a few seconds, so it started with less loaded.`,
+    `This page reloaded ${String(n)} times in a row, so it started with less loaded.`,
     "warning",
     false,
     {
@@ -334,10 +358,9 @@ export function initPostAuth(): void {
   initPostAuthUI();
   // Degraded-runtime banner; re-checks on every gap so recovery self-heals.
   initRuntimeHealth();
-  // The FETCH-ONLY fan-outs, and the whole of what a reduced boot withholds here: each
-  // is fire-and-forget with a usable empty state, so the app still reads a chat. The
-  // two calls above are KEPT — one gates capability, the other reports a degraded
-  // runtime, which is what a reader in this state needs most.
+  // The FETCH-ONLY fan-outs a reduced boot withholds: three calls across two concerns,
+  // each fire-and-forget with a usable empty state, so the app still reads a chat. The
+  // two above are KEPT: one gates capability, the other reports a degraded runtime.
   if (bootMode() === "full") {
     // The vibekit + kiro-cli build pair. Fire-and-forget: the lines repaint through a
     // signal, so nothing waits on the `--version` subprocess behind it.
@@ -345,13 +368,14 @@ export function initPostAuth(): void {
     void loadVersions();
     // So the pickers have content before the first chat's session/new lands.
     void fetchCatalog();
-    // The live-runs inventory (the other rebuild trigger is transport:gap).
-    void rebuildLiveRuns();
   }
-  // The live-run eviction exemption is registered here beside the subagent-tab one
-  // because store.ts is a leaf and may not import run-store.ts or tabs.ts. Both are
-  // registrations rather than reads, so a reduced boot keeps them.
-  registerEvictionExemption(hasLiveRunForChat);
+  // NOT withheld: it seeds a run tab's own label, its `launchedBy` nesting and the
+  // eviction exemption below, so its absence is wrong UI rather than an empty state.
+  void rebuildLiveRuns();
+  // Registered here because store.ts is a leaf and may not import run-store.ts or
+  // tabs.ts. Registrations rather than reads, so a reduced boot keeps them.
+  registerEvictionExemption(hasExecutingRunForChat);
+  registerEvictionExemption(runTabProjectsChat);
   registerEvictionExemption(subagentTabProjectsChat);
   startEvictionSweep();
   // The logout button leaves the page running, so without this the debounce keeps
@@ -376,10 +400,10 @@ function forgetDeviceState(): void {
   resetFoldState();
 }
 
-function applyInitialRoute(): void {
+async function applyInitialRoute(): Promise<void> {
   const route = parseRoute(location.pathname);
   if (route.kind !== "chat" || route.id !== "") {
-    deps?.applyRoute(route);
+    await deps?.applyRoute(route, navigationOrigin());
     return;
   }
   // Default "/": canonicalize the URL to what is visible. An active chat wins,
@@ -404,6 +428,13 @@ function applyInitialRoute(): void {
  *  it. `recoverFailedBootRead` reads the answer. */
 let bootChatsRead: boolean | undefined;
 
+/** The same latch for the TAB set, and only the ANSWER half is consumed: a
+ *  connection is not on its own a reason to re-list, because the tab set has a gap
+ *  mechanism the chat list lacks (app.ts wires `transport:gap` to `listTabs`). The
+ *  one hole that leaves is a BOOT read that never landed, and the boot connection
+ *  raises no gap by design (transport.ts, first connection of a page load). */
+let bootTabsRead: boolean | undefined;
+
 /** Whether the EventSource is open, as last reported. */
 let streamUp = false;
 
@@ -417,6 +448,30 @@ let streamUp = false;
 function recoverFailedBootRead(): void {
   if (bootChatsRead === false && streamUp) {
     void loadList();
+  }
+}
+
+/** The tab set's twin of `recoverFailedBootRead`, for the same uncovered case. */
+function recoverFailedBootTabs(): void {
+  if (bootTabsRead === false && streamUp) {
+    void listTabs();
+  }
+}
+
+/** Read the tab set, record the answer, and say so when it did not answer.
+ *
+ *  The notice re-enters HERE rather than reloading: a reload restarts the whole boot,
+ *  and the GET is the only thing that failed. Its button dismisses the toast, so a
+ *  retry that fails again has to raise it again. */
+async function readTabSet(): Promise<void> {
+  bootTabsRead = await listTabs();
+  if (!bootTabsRead) {
+    toastError("Couldn't restore your tabs.", {
+      label: "Retry",
+      onClick: () => {
+        void readTabSet();
+      },
+    });
   }
 }
 
@@ -438,4 +493,7 @@ export function onTransportStatus(status: ConnectionStatus): void {
     return;
   }
   void loadList();
+  if (bootTabsRead === false) {
+    void listTabs();
+  }
 }

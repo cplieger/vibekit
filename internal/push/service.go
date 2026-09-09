@@ -254,6 +254,7 @@ func (s *Service) HasSubscribers() bool {
 var kindRegistry = []KindPref{
 	{vibekit.PushKindAgentFinished, settings.KeyNotifyAgentFinished, true},
 	{vibekit.PushKindPRStatus, settings.KeyNotifyPRStatus, true},
+	{vibekit.PushKindRunOutcome, settings.KeyNotifyRunOutcome, true},
 	{vibekit.PushKindPermission, "", true},
 }
 

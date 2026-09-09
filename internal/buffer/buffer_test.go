@@ -298,7 +298,7 @@ func TestTrackFileChanges(t *testing.T) {
 	}
 }
 
-func TestMarkCancelledToolsFailed(t *testing.T) {
+func TestMarkInFlightToolsAborted(t *testing.T) {
 	tests := []struct {
 		name    string
 		tools   []vibekit.ToolCall
@@ -318,18 +318,24 @@ func TestMarkCancelledToolsFailed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := &Buffer{ToolCalls: tt.tools}
-			_, changed := buf.MarkCancelledToolsFailed()
+			_, changed := buf.MarkInFlightToolsAborted()
 			if len(changed) != tt.wantLen {
 				t.Errorf("changed = %d, want %d", len(changed), tt.wantLen)
 			}
 			for _, tc := range changed {
-				if tc.Status != vibekit.ToolFailed {
-					t.Errorf("status = %q, want failed", tc.Status)
+				if tc.Status != vibekit.ToolAborted {
+					t.Errorf("status = %q, want aborted", tc.Status)
 				}
+			}
+			// The terminal SET has to admit this status too: an outcome-only
+			// assertion cannot see a missed `case` in ToolsSettled, and a buffer
+			// reporting unsettled after this call blocks a compaction split forever.
+			if !buf.ToolsSettled() {
+				t.Error("ToolsSettled() = false after settling every in-flight call")
 			}
 			// Idempotent: second call returns nil.
 			if tt.wantLen > 0 {
-				if _, got := buf.MarkCancelledToolsFailed(); len(got) != 0 {
+				if _, got := buf.MarkInFlightToolsAborted(); len(got) != 0 {
 					t.Errorf("second call returned %d, want 0", len(got))
 				}
 			}

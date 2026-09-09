@@ -67,8 +67,12 @@ func newFlakyMembership(t *testing.T, chats ChatStore) (*Membership, *flakyTabs,
 // recordingTeardown is the delete path's teardown seam: the escalation cases read
 // back which grade ran and what chain travelled.
 type recordingTeardown struct {
-	deleted        []vibekit.ChatID
+	// onByChain runs AT teardown time, so a test can observe the world as the teardown
+	// sees it. That is the only way to assert the teardown ran BEFORE the tab close
+	// rather than after it, which is what proves it runs outside the operation lock.
+	onByChain      func()
 	deletedByChain map[vibekit.ChatID][]string
+	deleted        []vibekit.ChatID
 	closed         []vibekit.ChatID
 	mu             sync.Mutex
 }
@@ -80,6 +84,12 @@ func (r *recordingTeardown) DeleteChatState(_ context.Context, id vibekit.ChatID
 }
 
 func (r *recordingTeardown) DeleteChatStateByChain(_ context.Context, id vibekit.ChatID, chain []string) {
+	// Outside r.mu: the hook reads the REAL tab store, which is a different lock, and
+	// holding this one across it would make the ordering test's own fixture the thing
+	// under suspicion when it deadlocks.
+	if r.onByChain != nil {
+		r.onByChain()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.deletedByChain == nil {
@@ -573,7 +583,7 @@ func TestDeleteChatAndCloseTabs_AnnouncesTheRemovalEvenWhenTheCloseKeepsFailing(
 // opened between that check and the remove, and resolves it in the same pass.
 func TestRetentionClose_ClosesWhatThePredicateRaced(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	mem, st, bus := newTabbedMembership(t, store)
+	mem, st, bus, _ := newTornDownMembership(t, store)
 	opened := createChat(t, mem, "op-a")
 	chatID := vibekit.ChatID(opened.Chat.ID)
 	// The reaper removed the file directly, so the record is already gone when the
@@ -582,7 +592,7 @@ func TestRetentionClose_ClosesWhatThePredicateRaced(t *testing.T) {
 		t.Fatalf("delete: %v", err)
 	}
 
-	mem.RetentionClose(t.Context(), chatID)
+	mem.RetentionClose(t.Context(), chatID, nil)
 
 	if got := tabIDsFor(st, chatID); len(got) != 0 {
 		t.Errorf("tabs for the purged chat = %v, want none", got)
@@ -592,6 +602,67 @@ func TestRetentionClose_ClosesWhatThePredicateRaced(t *testing.T) {
 	}
 	if last := bus.frames(t); last[len(last)-1].OpID != "" {
 		t.Errorf("the retention frame carries op_id %q, want none: no client asked for it", last[len(last)-1].OpID)
+	}
+}
+
+// The purge was the ONE chat-removal path that ran no teardown, so a purged chat kept its
+// bridge, terminals, pending perms, turn-registry entry and retained chat_status for the
+// process's life. The grade is BY-CHAIN, not the record-reading one: the record is already
+// gone by the time the hook fires, so a record-reading teardown would silently no-op.
+func TestRetentionClose_RunsTheDeleteGradeTeardown(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	mem, _, _, td := newTornDownMembership(t, store)
+	opened := createChat(t, mem, "op-a")
+	chatID := vibekit.ChatID(opened.Chat.ID)
+	if err := store.Delete(t.Context(), chatID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	chain := []string{"sess-old", "sess-current"}
+
+	mem.RetentionClose(t.Context(), chatID, chain)
+
+	td.mu.Lock()
+	gotChain, ran := td.deletedByChain[chatID]
+	deleted, closed := slices.Clone(td.deleted), slices.Clone(td.closed)
+	td.mu.Unlock()
+
+	if !ran {
+		t.Fatalf("no by-chain teardown for %q: the purge ran none, which is the gap this closes", chatID)
+	}
+	if !slices.Equal(gotChain, chain) {
+		t.Errorf("teardown chain = %v, want %v: the reap and the run cancel are driven from it", gotChain, chain)
+	}
+	if len(deleted) != 0 {
+		t.Errorf("the record-reading grade ran for %v: the record is already gone, so it would no-op", deleted)
+	}
+	if len(closed) != 0 {
+		t.Errorf("the close grade ran for %v: a purge is a delete, so the KAS session is reaped too", closed)
+	}
+}
+
+// The teardown runs OUTSIDE the operation lock, which is observable only as an ordering:
+// at teardown time the doomed tab is still open. That is the ordering the delete path
+// documents, and the run cancel depends on it because it reaches the bridge.
+func TestRetentionClose_TearsDownBeforeClosingTabs(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	mem, st, _, td := newTornDownMembership(t, store)
+	opened := createChat(t, mem, "op-a")
+	chatID := vibekit.ChatID(opened.Chat.ID)
+	if err := store.Delete(t.Context(), chatID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	// Read the REAL tab store from inside the teardown.
+	var openAtTeardown []string
+	td.onByChain = func() { openAtTeardown = tabIDsFor(st, chatID) }
+
+	mem.RetentionClose(t.Context(), chatID, []string{"sess-current"})
+
+	if !slices.Contains(openAtTeardown, opened.Subject.ID) {
+		t.Errorf("tabs open at teardown = %v, want the doomed tab %q: the teardown must precede the close",
+			openAtTeardown, opened.Subject.ID)
+	}
+	if got := tabIDsFor(st, chatID); len(got) != 0 {
+		t.Errorf("tabs after the pass = %v, want none", got)
 	}
 }
 

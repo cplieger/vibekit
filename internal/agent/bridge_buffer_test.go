@@ -157,7 +157,7 @@ func TestEmitTurnEnded_NoBufferPersistsOnlyTheOutcomeMarker(t *testing.T) {
 	}
 }
 
-func TestEmitTurnEnded_CancelledMarksToolsFailed(t *testing.T) {
+func TestEmitTurnEnded_CancelledAbortsInFlightTools(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -173,8 +173,9 @@ func TestEmitTurnEnded_CancelledMarksToolsFailed(t *testing.T) {
 	if len(assistantMsg.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call, got %d", len(assistantMsg.ToolCalls))
 	}
-	if assistantMsg.ToolCalls[0].Status != vibekit.ToolFailed {
-		t.Errorf("tool status = %q, want %q", assistantMsg.ToolCalls[0].Status, vibekit.ToolFailed)
+	// `aborted`, not `failed`: the reader stopped the turn, so nothing malfunctioned.
+	if assistantMsg.ToolCalls[0].Status != vibekit.ToolAborted {
+		t.Errorf("tool status = %q, want %q", assistantMsg.ToolCalls[0].Status, vibekit.ToolAborted)
 	}
 }
 
@@ -192,7 +193,7 @@ func TestToolStartTimeTracking(t *testing.T) {
 	}
 }
 
-func TestMarkCancelledToolsFailed(t *testing.T) {
+func TestMarkInFlightToolsAborted(t *testing.T) {
 	buf := &buffer.Buffer{
 		ToolCalls: []vibekit.ToolCall{
 			{ID: "tc1", Status: vibekit.ToolInProgress},
@@ -200,18 +201,18 @@ func TestMarkCancelledToolsFailed(t *testing.T) {
 			{ID: "tc3", Status: vibekit.ToolPending},
 		},
 	}
-	_, changed := buf.MarkCancelledToolsFailed()
+	_, changed := buf.MarkInFlightToolsAborted()
 	if len(changed) != 2 {
 		t.Fatalf("changed = %d, want 2", len(changed))
 	}
-	if buf.ToolCalls[0].Status != vibekit.ToolFailed {
-		t.Errorf("tc1 status = %q, want failed", buf.ToolCalls[0].Status)
+	if buf.ToolCalls[0].Status != vibekit.ToolAborted {
+		t.Errorf("tc1 status = %q, want aborted", buf.ToolCalls[0].Status)
 	}
 	if buf.ToolCalls[1].Status != vibekit.ToolCompleted {
 		t.Errorf("tc2 status = %q, want completed (unchanged)", buf.ToolCalls[1].Status)
 	}
-	if buf.ToolCalls[2].Status != vibekit.ToolFailed {
-		t.Errorf("tc3 status = %q, want failed", buf.ToolCalls[2].Status)
+	if buf.ToolCalls[2].Status != vibekit.ToolAborted {
+		t.Errorf("tc3 status = %q, want aborted", buf.ToolCalls[2].Status)
 	}
 }
 

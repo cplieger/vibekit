@@ -235,6 +235,41 @@ describe("editor.load_diff", () => {
     expect(o.value.newContent).toBe("work");
   });
 
+  it("captions an untracked file 'not in HEAD' rather than HEAD", async () => {
+    // git owns the file's directory but this ref holds no revision of it — an
+    // untracked or staged-new file. `handleShow` answers empty content, which
+    // renders as a correct all-add diff, and the pane captioned with the ref
+    // would claim the ref holds the file and holds it empty. Distinct from
+    // 'not in git' above, which means no repository owns the path at all.
+    expect.assertions(4);
+    setWorkspaceRoot("/workspace");
+    answer({ content: "", absent: true }, ok("brand new\n"));
+    const { loadDiff } = await import("./editor.js");
+    const o = await loadDiff.dispatch({ path: "/workspace/a.go", repo: "", ref: "HEAD" }).outcome;
+    expect(o.status).toBe("success");
+    if (o.status !== "success") {
+      return;
+    }
+    expect(o.value.baseLabel).toBe("not in HEAD");
+    expect(o.value.oldContent).toBe("");
+    // An all-add diff is a correct rendering, not an error state.
+    expect(o.value.error).toBe("");
+  });
+
+  it("names the ref the file is absent from, not a hardcoded HEAD", async () => {
+    expect.assertions(2);
+    setWorkspaceRoot("/workspace");
+    answer({ content: "", absent: true }, ok("brand new\n"));
+    const { loadDiff } = await import("./editor.js");
+    const o = await loadDiff.dispatch({ path: "/workspace/a.go", repo: "", ref: "origin/main" })
+      .outcome;
+    expect(o.status).toBe("success");
+    if (o.status !== "success") {
+      return;
+    }
+    expect(o.value.baseLabel).toBe("not in origin/main");
+  });
+
   it("renders a deleted file as an all-deletions diff captioned 'deleted'", async () => {
     // A 404 from the file route is the CHANGE, not a failure to read it: the
     // working copy is gone, so the diff is every line of the base removed. The

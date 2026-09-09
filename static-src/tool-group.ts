@@ -186,12 +186,12 @@ export function buildToolGroupShell(): HTMLDivElement {
     // states now and rotates, like every other disclosure in the app.
     chevronEl(),
     // The header's verdict slot: an ICON slot, sharing `.tool-icon` for the tint
-    // classes. paintGroupOutcome writes `outcomeIcon("ok")` / `outcomeIcon("fail")`
-    // into it as a node, so a collapsed group of twelve searches shows a verdict
-    // rather than a magnifier — the KIND is named in the summary text instead. It
-    // writes NO node while the group runs, because there is no verdict yet;
-    // `14-tools.css` draws the hollow ring that says so, and the box is sized by the
-    // slot either way so the count text does not shift when the group settles.
+    // classes. paintGroupOutcome writes one of `outcomeIcon("ok")` / `("fail")` /
+    // `("warn")` into it as a node, so a collapsed group of twelve searches shows a
+    // verdict rather than a magnifier — the KIND is named in the summary text
+    // instead. It writes NO node while the group runs, because there is no verdict
+    // yet; `14-tools.css` draws the hollow ring that says so, and the box is sized
+    // by the slot either way so the count text does not shift when it settles.
     el("span", { className: "tool-group-icon tool-icon" }),
     el("span", { className: "tool-group-count" }),
   ) as HTMLDivElement;
@@ -228,40 +228,71 @@ export function refreshGroupHeader(group: HTMLElement): void {
   if (header === null) {
     return;
   }
-  const failures = countFailures(calls);
-  // The summary states the aggregate FACT and names any failure in it. It never
-  // counts cards: "Read 5 files" is right, "5 tool calls" is a bug.
-  const summary = summarize(calls) + (failures > 0 ? ` \u00b7 ${String(failures)} failed` : "");
+  const counts = countOutcomes(calls);
+  // The summary states the aggregate FACT and names every non-clean population in
+  // it, so a COLLAPSED group still says what happened. It never counts cards:
+  // "Read 5 files" is right, "5 tool calls" is a bug.
+  const summary = summarize(calls) + namedCounts(counts);
   // No "(collapsed)" suffix: the group is one box whose chevron and
   // aria-expanded already carry the state, so the word restated the chrome.
   header.textContent = summary;
-  paintGroupOutcome(group, calls, failures);
+  paintGroupOutcome(group, calls, counts);
 }
 
-/** How many settled members of a group failed. */
-function countFailures(calls: HTMLElement[]): number {
-  return calls.filter((c) => c.dataset["outcome"] === "fail").length;
+/** How many settled members of a group failed, and how many were stopped. ONE
+ *  walk, because the roll-up needs both and the FOLD needs only `failures` — a
+ *  stopped member must keep folding, which is the ruling the delegate card
+ *  already carries. */
+interface GroupCounts {
+  readonly failures: number;
+  readonly aborted: number;
 }
 
-/** Tint the group's mark to the worst status inside it, and give it the SHAPE
- *  that state carries. Reads the members' own `data-outcome`, so there is one
- *  source for the state.
+function countOutcomes(calls: HTMLElement[]): GroupCounts {
+  let failures = 0;
+  let aborted = 0;
+  for (const c of calls) {
+    const outcome = c.dataset["outcome"];
+    if (outcome === "fail") {
+      failures++;
+    } else if (outcome === "warn") {
+      aborted++;
+    }
+  }
+  return { failures, aborted };
+}
+
+/** `aborted` is the word a tool ROW announces for this state (`tool-card.ts`
+ *  `outcomeWord("warn")`), so the group and its members agree. */
+function namedCounts({ failures, aborted }: GroupCounts): string {
+  const parts: string[] = [];
+  if (failures > 0) {
+    parts.push(`${String(failures)} failed`);
+  }
+  if (aborted > 0) {
+    parts.push(`${String(aborted)} aborted`);
+  }
+  return parts.map((p) => ` \u00b7 ${p}`).join("");
+}
+
+/** Tint the group's mark to the worst status inside it, and give it the SHAPE that
+ *  state carries. Reads the members' own `data-outcome`, so there is one source for
+ *  the state. `denied` folds onto `ok` deliberately: the summary has no word for a
+ *  policy refusal that is not this app's word for a stop.
  *
- *  The mark comes from the shared set (`icons.ts` `outcomeIcon`) rather than from
- *  `applyOutcome`: this slot has no identity glyph to keep for a success, so the
- *  silhouette is what a clean group shows too. `running` writes no node, because a
- *  running group has no verdict — the mark for that state is the hollow ring
- *  `14-tools.css` draws on the slot, which is the in-flight vocabulary rather than
- *  a fifth member of the settled set. */
-function paintGroupOutcome(group: HTMLElement, calls: HTMLElement[], failures: number): void {
+ *  The mark is `icons.ts` `outcomeIcon` rather than `applyOutcome`: this slot has no
+ *  identity glyph to keep for a success. `running` writes no node — its mark is the
+ *  hollow ring `14-tools.css` draws on the slot. */
+function paintGroupOutcome(group: HTMLElement, calls: HTMLElement[], counts: GroupCounts): void {
   const icon = group.querySelector<HTMLElement>(".tool-group-icon");
   if (icon === null) {
     return;
   }
   const running = calls.some((c) => c.dataset["outcome"] === "running");
-  const state = failures > 0 ? "fail" : running ? "running" : "ok";
+  const state =
+    counts.failures > 0 ? "fail" : running ? "running" : counts.aborted > 0 ? "warn" : "ok";
   group.dataset["outcome"] = state;
-  icon.classList.remove("is-ok", "is-fail", "is-running");
+  icon.classList.remove("is-ok", "is-fail", "is-warn", "is-running");
   icon.classList.add(`is-${state}`);
   if (state === "running") {
     icon.replaceChildren();
@@ -469,7 +500,8 @@ export function maybeCollapseGroup(node: HTMLElement): void {
   // auto-collapse, and it re-opens a group that already auto-collapsed before
   // the failing member settled. Without the second half a failure inside a run
   // of twelve is invisible — the group closed while everything still looked fine.
-  if (countFailures(calls) > 0) {
+  // The FAILURE count alone: a stopped member folds like any other settle.
+  if (countOutcomes(calls).failures > 0) {
     if (
       group.classList.contains(CLS_AUTO_COLLAPSED) &&
       !group.classList.contains(CLS_USER_TOGGLED)
@@ -516,7 +548,9 @@ export function autoCollapseGroup(group: HTMLElement): void {
   const calls = [
     ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
   ] as HTMLElement[];
-  if (countFailures(calls) > 0) {
+  // The FAILURE count alone, never the stopped one: a stopped member neither
+  // blocks the fold nor auto-opens the body, matching the delegate card.
+  if (countOutcomes(calls).failures > 0) {
     return;
   }
   for (const c of calls) {

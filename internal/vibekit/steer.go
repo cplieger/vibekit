@@ -22,3 +22,25 @@ const (
 	// workflow step's report, or a run-completion nudge.
 	SteerOriginAgent SteerOrigin = "agent"
 )
+
+// SteerState says whether the model ever READ a mid-turn steer. Rendering an
+// undelivered correction like a delivered one is a false statement about the
+// reader's own message.
+//
+// ABSENT means NOT KNOWN, a third answer rather than a missing value: neither the
+// legacy population nor a session/load replay row carries one, because KAS's log
+// records a steer without saying whether the model consumed it. Unknown renders as
+// the NEUTRAL note; dropped would claim non-delivery for a steer that may have landed.
+type SteerState string
+
+// The two states vibekit can observe, each from its own frame. There is
+// deliberately no "unknown" member: absence carries that, and a third value
+// would put on the wire a state the note has no wording for.
+const (
+	// SteerStateRead is a steer the model read, from steering_injected.
+	SteerStateRead SteerState = "read"
+	// SteerStateDropped is a steer a turn boundary cleared unread, from
+	// steering_cleared for an id KAS's buffer still held. The wire word is the
+	// buffer's; the reader sees "Not delivered".
+	SteerStateDropped SteerState = "dropped"
+)

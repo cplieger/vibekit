@@ -64,17 +64,30 @@ func (b *steerBuffer) SteerRead(chatID vibekit.ChatID, steerID string) {
 }
 
 // SteerForgotten drops every named steer, for the frame that says KAS's buffer no
-// longer holds them. Named ids only, matching the wire: a turn boundary reports
-// exactly which ids it cleared.
-func (b *steerBuffer) SteerForgotten(chatID vibekit.ChatID, steerIDs []string) {
+// longer holds them, and RETURNS the ones it was still holding. Named ids only,
+// matching the wire: a turn boundary reports exactly which ids it cleared.
+//
+// The return is what separates a DROP from HOUSEKEEPING. KAS clears at every turn
+// boundary, so the cleared frame also names ids the model already read — and an
+// injected frame removed those here, so an id still present is one nothing read.
+// It comes back with its PAYLOAD because the cleared frame carries ids and no text,
+// so this set is the only place the words survive. Atomic with the removal on
+// purpose: read-then-forget is two acquisitions of one lock over one decision.
+func (b *steerBuffer) SteerForgotten(chatID vibekit.ChatID, steerIDs []string) []vibekit.SteerQueuedPayload {
 	if len(steerIDs) == 0 {
-		return
+		return nil
 	}
 	b.mu.Lock()
+	defer b.mu.Unlock()
+	var held []vibekit.SteerQueuedPayload
 	for _, id := range steerIDs {
-		delete(b.waiting, steerKey{chat: chatID, id: id})
+		k := steerKey{chat: chatID, id: id}
+		if p, ok := b.waiting[k]; ok {
+			held = append(held, p)
+			delete(b.waiting, k)
+		}
 	}
-	b.mu.Unlock()
+	return held
 }
 
 // ClearForChat drops every waiting steer owned by chatID, at its teardown. A
@@ -149,8 +162,8 @@ func (b *bus) SteerRead(chatID vibekit.ChatID, steerID string) {
 	b.steers.SteerRead(chatID, steerID)
 }
 
-func (b *bus) SteerForgotten(chatID vibekit.ChatID, steerIDs []string) {
-	b.steers.SteerForgotten(chatID, steerIDs)
+func (b *bus) SteerForgotten(chatID vibekit.ChatID, steerIDs []string) []vibekit.SteerQueuedPayload {
+	return b.steers.SteerForgotten(chatID, steerIDs)
 }
 
 // ClearWaitingSteersForChat drops every waiting steer owned by chatID.

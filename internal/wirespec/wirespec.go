@@ -182,7 +182,11 @@ var wireEnums = map[string]wiregen.EnumDef{
 	"TurnSeverity": {},
 	"SafetyStatus": {},
 	// The client's label switch over it must be TOTAL.
-	"SteerOrigin":     {},
+	"SteerOrigin": {},
+	// The renderer BRANCHES on it — a not-delivered steer renders as a different
+	// note from a delivered one — and absence is a third answer that branch has to
+	// keep, so a hand-written union would be a second enumeration of one vocabulary.
+	"SteerState":      {},
 	"RunProgressKind": {},
 	// Registered for the same reason: the client folds over both status
 	// vocabularies, and every fold must stay total.

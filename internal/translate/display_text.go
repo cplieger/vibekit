@@ -5,12 +5,12 @@ package translate
 import "github.com/cplieger/runesafe/v2"
 
 // maxDisplayTextBytes bounds one upstream string on its way to a banner, a
-// permission card, or a question card. Nothing on the wire bounds any of them:
-// KAS's notification params, a tool call's title and the agent's own question
-// text all arrive length-free, and each lands in an SSE payload the server also
-// logs. 512 bytes is comfortably above every legitimate value (the longest real
-// tool-call title measured in this repo's fixtures is under 60) and below the
-// point where one card can push the rest of the dock off screen.
+// permission card, a question card, or a chat tab's status tooltip. Nothing on the
+// wire bounds any of them: KAS's notification params, a tool call's title, the
+// agent's own question text and its focus description all arrive length-free, and
+// each lands in an SSE payload the server also logs. 512 is comfortably above the
+// widest legitimate value measured (a 303-byte focus description, over 336 live
+// session files) and below the point where one card can push the dock off screen.
 const maxDisplayTextBytes = 512
 
 // displayText prepares one upstream string for a single-line human-read surface:

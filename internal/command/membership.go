@@ -104,6 +104,9 @@ type Membership struct {
 	runs RunOwner
 	// retentionWake asks the purge scheduler for a pass now; nil leaves its timer.
 	retentionWake func()
+	// supervisedDefault reads the workspace-wide Supervised default a fresh
+	// record is seeded from. Nil reads as false — see supervisedDefaultValue.
+	supervisedDefault func(context.Context) bool
 	// ops is the create ledger, op_id -> chat id, so a retry resolves to the chat
 	// its first attempt made. Here rather than in the handlers because resolving
 	// an op and reserving a tab slot must happen in the same critical section.
@@ -114,7 +117,8 @@ type Membership struct {
 }
 
 // MembershipDeps is Membership's constructor argument. Every field is required
-// except Tabs, DeleteChat and Retention, which default to the safe direction.
+// except Tabs, DeleteChat, Retention and SupervisedDefault, which default to
+// the safe direction.
 type MembershipDeps struct {
 	Chats      ChatStore
 	Tabs       TabSet
@@ -123,22 +127,41 @@ type MembershipDeps struct {
 	CloseChat  chatCloser
 	DeleteChat chatDeleter
 	Retention  retentionRead
-	Runs       RunOwner
+	// SupervisedDefault answers the workspace-wide Supervised default that a
+	// newly minted record is seeded from. A FUNCTION rather than a config-dir
+	// path, mirroring retentionWake: the settings read stays out of the
+	// coordinator, so the coordinator keeps no filesystem knowledge and its
+	// callers cannot disagree with the prompt path's own reader. Nil is false
+	// (fail closed), never a panic.
+	SupervisedDefault func(context.Context) bool
+	Runs              RunOwner
 }
 
 // NewMembership builds the coordinator.
 func NewMembership(deps *MembershipDeps) *Membership {
 	return &Membership{
-		chats:      deps.Chats,
-		tabs:       deps.Tabs,
-		bus:        deps.Bus,
-		teardown:   deps.Teardown,
-		closeChat:  deps.CloseChat,
-		deleteChat: deps.DeleteChat,
-		retention:  deps.Retention,
-		runs:       deps.Runs,
-		ops:        newCreateLedger(),
+		chats:             deps.Chats,
+		tabs:              deps.Tabs,
+		bus:               deps.Bus,
+		teardown:          deps.Teardown,
+		closeChat:         deps.CloseChat,
+		deleteChat:        deps.DeleteChat,
+		retention:         deps.Retention,
+		runs:              deps.Runs,
+		supervisedDefault: deps.SupervisedDefault,
+		ops:               newCreateLedger(),
 	}
+}
+
+// supervisedDefaultValue answers the Supervised default for a fresh record.
+// An unwired reader is FALSE rather than a panic: a build with no settings
+// reader mints unsupervised chats, which is what every chat did before the
+// default reached this path at all.
+func (m *Membership) supervisedDefaultValue(ctx context.Context) bool {
+	if m.supervisedDefault == nil {
+		return false
+	}
+	return m.supervisedDefault(ctx)
 }
 
 // ChatCreate is one create-and-open request: what to write on the new
@@ -196,6 +219,13 @@ type TabOpened struct {
 // A failed tab write leaves the chat created and returns the error; a retry carrying the
 // same op_id finishes it.
 func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (ChatOpened, error) {
+	// Hoisted above every lock: the read is file I/O, and both the operation
+	// lock and the chat record lock m.chats.Mutate takes are held below here.
+	// Resolved unconditionally, replay included — the read is cached, so the
+	// cost is a stat, and a conditional resolve would have to run inside the
+	// lock this hoist exists to stay out of.
+	supervisedDefault := m.supervisedDefaultValue(ctx)
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -222,6 +252,9 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (Cha
 		if exists {
 			return false
 		}
+		// BEFORE Init, so Init stays the per-command override channel: a fork
+		// inherits its parent's posture on top of this.
+		c.SupervisedMode = supervisedDefault
 		req.Init(c)
 		return true
 	})
@@ -518,10 +551,15 @@ func (m *Membership) DeleteChatAndCloseTabs(ctx context.Context, chatID vibekit.
 	return nil
 }
 
-// RetentionClose closes the tabs of a chat the retention purge has already removed.
-// Normally a no-op — HasOpenTab already skips a chat with an open tab, so reaching this
-// with tabs to close means one was opened between the predicate and the remove.
-func (m *Membership) RetentionClose(ctx context.Context, chatID vibekit.ChatID) {
+// RetentionClose tears down the work of a chat the retention purge has already removed and
+// then closes its tabs. The BY-CHAIN grade, because the record is already gone and a
+// record-reading teardown would silently no-op. The teardown runs BEFORE the operation lock,
+// where DeleteChatAndCloseTabs runs its own and for the same reason: the run cancel must
+// precede the bridge going down and it reaches the bridge. Closing tabs is normally a no-op
+// — HasOpenTab already skips a chat with an open tab, so reaching it with tabs to close
+// means one was opened between the predicate and the remove.
+func (m *Membership) RetentionClose(ctx context.Context, chatID vibekit.ChatID, sessionChain []string) {
+	m.teardown.DeleteChatStateByChain(ctx, chatID, sessionChain)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.closeTabsFor(ctx, chatID, "")

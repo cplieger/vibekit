@@ -2,7 +2,7 @@
 // syntax highlighting.
 import { describe, it, expect } from "vitest";
 import { renderDiffPane } from "./diff-pane.js";
-import type { DiffLine } from "./diff.js";
+import { lineDiff, type DiffLine } from "./diff.js";
 
 function ctx(oldNo: number, newNo: number, text = ""): DiffLine {
   return { kind: "ctx", oldNo, newNo, text };
@@ -86,6 +86,40 @@ describe("renderDiffPane with nothing changed", () => {
     const pane = renderDiffPane([ctx(1, 1, "same"), add(2, "new")], {});
     expect(pane.querySelector(".diff-none")).toBeNull();
     expect(pane.querySelector(".diff-pane-body")).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The reported symptom, pinned at the pane rather than at the split: a
+// newline-terminated file used to render one added row too many, because
+// `splitLines` kept the empty element the final newline produces and this pane
+// draws a row per `DiffLine`. Measured on the live instance: 28 `.diff-row-add`
+// against `git diff`'s 27, and 380 for a 379-line untracked file.
+//
+// This is the case that fails if the drop is ever reverted at the renderer's
+// expense — and the pane is deliberately NOT where it could be fixed, since it
+// holds `DiffLine[]` and cannot tell a genuine trailing empty line from the
+// artifact ("a\n\n" yields two empty elements and only the second is one).
+// ---------------------------------------------------------------------------
+
+describe("renderDiffPane over a real lineDiff", () => {
+  it("draws no phantom trailing row for a newline-terminated file", () => {
+    const pane = renderDiffPane(lineDiff("", "a\nb\n"), { unified: true });
+    expect(Array.from(pane.querySelectorAll(".diff-row-add"), (r) => r.textContent)).toHaveLength(
+      2,
+    );
+    expect(pane.querySelectorAll(".diff-row")).toHaveLength(2);
+    expect(
+      Array.from(pane.querySelectorAll(".diff-row-add .diff-line-text"), (n) => n.textContent),
+      "no empty-text row at the end",
+    ).toEqual(["a", "b"]);
+  });
+
+  it("renders the same pane for a file that does not end in a newline", () => {
+    const pane = renderDiffPane(lineDiff("", "a\nb"), { unified: true });
+    expect(
+      Array.from(pane.querySelectorAll(".diff-row-add .diff-line-text"), (n) => n.textContent),
+    ).toEqual(["a", "b"]);
   });
 });
 

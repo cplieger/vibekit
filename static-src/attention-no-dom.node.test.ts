@@ -459,6 +459,23 @@ describe("summarize folds the chat tabs into one value", () => {
     expect(summarize([{ id: "editor:/a.go", status: "dirty" }], seen())).toEqual(NO_ATTENTION);
   });
 
+  it("folds a RUN tab's cue into the count and the worst pick", () => {
+    // `cueCandidates` reports run tabs as well as owned chat tabs (tabs.ts), and a
+    // run's dot speaks this same vocabulary through store.ts `runStatusFor` — so a
+    // run needs no CueStatus member of its own and no arm here. This case is what
+    // says the fold takes it as one more candidate rather than a special case: it
+    // counts beside the chat and it can win the severity pick.
+    expect(
+      summarize(
+        [
+          { id: "tab-chat", status: "done" },
+          { id: "tab-run", status: "failed" },
+        ],
+        seen(),
+      ),
+    ).toEqual({ count: 2, worst: "failed" });
+  });
+
   it("counts one per chat and never twice for the same id", () => {
     // The count is set-valued, which is what makes it needs-no-tiebreak. Ids are
     // unique in the tab store, and this is the assertion that the fold does not
@@ -1056,6 +1073,23 @@ describe("acknowledging what the reader can see", () => {
     h.setRowsInView(["a"]);
     h.controller.ackSeen();
     expect(h.stored()).toBeNull();
+  });
+
+  it("acknowledges a RUN row in view, because the seen map is keyed by TAB id", () => {
+    // The claim worth pinning is the KEY, not the loop: every id here is a tab id
+    // (the rows-in-view scan reads `data-tab-id`), so a run row acknowledges
+    // exactly like a chat row and needs nothing of its own. The chat beside it
+    // keeps its cue, which is what says the run's row was the one acknowledged.
+    const h = harness();
+    h.setActive("");
+    h.setCandidates([
+      { id: "tab-chat", status: "done" },
+      { id: "tab-run", status: "failed" },
+    ]);
+    h.setRowsInView(["tab-run"]);
+    h.controller.ackSeen();
+    expect(h.latest()).toEqual({ count: 1, worst: "done" });
+    expect(h.stored()).toBe('{"tab-run":"failed"}');
   });
 
   it("ignores an in-view row holding no cue", () => {

@@ -829,6 +829,8 @@ describe("MRU activation history", () => {
   // anywhere — `mostRecentOpenTab` also filters on `hasRow` and server-minted ids
   // are never reused, so a stale entry is inert and no test could distinguish it.
   // What is observable is the pick, so that is what these two pin.
+  // (The THIRD door, a re-list that simply no longer holds the row, is its own
+  // describe below: a device that was asleep receives no frame at all.)
   it("hands over to the most recent survivor when another device closes the active tab", async () => {
     expect.assertions(2);
     await openChats("a", "b", "c");
@@ -1027,6 +1029,74 @@ describe("MRU activation history", () => {
     expect(getActiveTabId()).toBe(chatID("b"));
     await closeTab(chatID("b"));
     expect(getActiveTabId()).toBe(chatID("a"));
+  });
+});
+
+// The RESYNC door: a device that was ASLEEP when another one closed a tab never
+// receives the `tabs_changed` frame at all, so the removal reaches it as a
+// `GET /api/tabs` answer that simply does not hold the row. Characterization —
+// the projection has always been right here, and these cases exist so a future
+// edit cannot quietly make a re-list a union or leave the active row pinned.
+describe("a resync that drops the active tab", () => {
+  /** The set the server holds minus `gone`, adopted through a real re-list. */
+  async function resyncWithout(...gone: readonly string[]): Promise<void> {
+    tabServer.queueList({
+      tabs: tabServer.subjects().filter((s) => !gone.includes(s.id)),
+      version: tabServer.version() + 1,
+    });
+    await listTabs();
+  }
+
+  it("keeps a tab closed while this device was disconnected", async () => {
+    expect.assertions(2);
+    const ids = await openChats("a", "b");
+
+    await resyncWithout(ids["b"] ?? "");
+
+    // A snapshot is a COMPLETE set, so the row it does not name is gone rather
+    // than merged back in.
+    expect(hasTab("chat", "b")).toBe(false);
+    expect(hasTab("chat", "a")).toBe(true);
+  });
+
+  it("hands the view to the most recently visited survivor", async () => {
+    // `b` is active and gone. The MRU survivor is `c` while position 0 is `a`, so
+    // the assertion separates the two rules rather than agreeing with both.
+    expect.assertions(2);
+    const ids = await openChats("a", "c", "b"); // history [b, c, a]
+
+    await resyncWithout(ids["b"] ?? "");
+
+    expect(getActiveTabId()).toBe(ids["c"]);
+    expect(openers.chatShow).toHaveBeenLastCalledWith("c");
+  });
+
+  it("falls back to the first survivor when the history holds none", async () => {
+    // The boot-shaped strip: two tabs the reader never visited, so nothing but the
+    // departing row has a history entry.
+    expect.assertions(1);
+    await openChat("a", { activate: false });
+    await openChat("z", { activate: false });
+    await openChat("b"); // history [b] alone
+
+    await resyncWithout(chatID("b"));
+
+    expect(getActiveTabId()).toBe(chatID("a"));
+  });
+
+  it("reaches the empty state and respawns nothing when the whole set went", async () => {
+    // `local: false`: a strip emptied by another device must not mint a chat here,
+    // which is the shape of the loop that minted one every 1.5s on the live instance.
+    expect.assertions(2);
+    const onEmpty = vi.fn();
+    setOnEmpty(onEmpty);
+    const ids = await openChats("a", "b");
+
+    await resyncWithout(ids["a"] ?? "", ids["b"] ?? "");
+
+    expect(getActiveTabId()).toBe("");
+    await new Promise((r) => setTimeout(r, 700));
+    expect(onEmpty).not.toHaveBeenCalled();
   });
 });
 
@@ -1392,18 +1462,47 @@ describe("cueCandidates", () => {
     expect(cueCandidates()).toEqual([{ id: chatID("c-owned"), status: "done" }]);
   });
 
-  it("excludes every non-chat kind, whatever dot it carries", async () => {
+  it("reports a RUN tab's dot, which is the one non-chat kind that bears a cue", async () => {
     expect.assertions(1);
     const { setTabStatus, cueCandidates } = await import("./tabs.js");
-    // A run tab's dot speaks the same vocabulary (run-dots.ts `runStatusFor`) and
-    // a `run:` subject is genuinely `done` when its run finishes, so the filter is
-    // what keeps a background run out of the favicon rather than the dot's value.
+    // A run tab's dot speaks the same vocabulary (store.ts `runStatusFor`), and
+    // every value it can answer is a `CueStatus` member or one `isCueStatus`
+    // rejects — so the run kind inherits the fold's severity handling with no new
+    // member. A finished run wants the reader exactly as a finished turn does, and
+    // a run outlives the turn that launched it, so nothing else carries it
+    // off-page.
     await openRunTab("wf_1", "A run");
-    await openEditorView("/a.ts");
     setTabStatus(tabIdFor("run", "wf_1"), "done");
+
+    expect(cueCandidates()).toEqual([{ id: tabIdFor("run", "wf_1"), status: "done" }]);
+  });
+
+  it("excludes an editor tab, whose dirty mark is not an agent state", async () => {
+    expect.assertions(1);
+    const { setTabStatus, cueCandidates } = await import("./tabs.js");
+    await openEditorView("/a.ts");
     setTabStatus(tabIdFor("editor", "/a.ts"), "dirty");
 
     expect(cueCandidates()).toEqual([]);
+  });
+
+  // The reasoning the `owns` conjunct is SCOPED on, asserted rather than only
+  // written in the comment: the double-counting rule is about CHATS. A run tab is
+  // a window onto a RUN, a different subject, so a chat and the run it launched
+  // are two things wanting the reader and both are counted — even though
+  // tab-materialize.ts gives that run tab `owns: false`.
+  it("counts a run tab AND its launching chat, because they are two subjects", async () => {
+    expect.assertions(1);
+    const { setTabStatus, cueCandidates } = await import("./tabs.js");
+    await openChat("c-launcher");
+    await openRunTab("wf_2", "Its run", { parent: chatID("c-launcher"), owns: false });
+    setTabStatus(chatID("c-launcher"), "failed");
+    setTabStatus(tabIdFor("run", "wf_2"), "done");
+
+    expect(cueCandidates()).toEqual([
+      { id: chatID("c-launcher"), status: "failed" },
+      { id: tabIdFor("run", "wf_2"), status: "done" },
+    ]);
   });
 
   // The value the SERVER writes, rather than the one `openTab` defaults to.

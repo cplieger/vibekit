@@ -25,9 +25,15 @@ describe("resolvePaths", () => {
     expect(resolvePaths("/workspace/uploads/", ["a.png"])).toEqual(["/workspace/uploads/a.png"]);
   });
 
-  it("leaves a bare name bare for the workspace-root targets", () => {
-    expect(resolvePaths("", ["a.png"])).toEqual(["a.png"]);
-    expect(resolvePaths(".", ["a.png"])).toEqual(["a.png"]);
+  it("keeps a browser-listing target absolute, because the path becomes an attachment", () => {
+    // This case used to assert a BARE NAME for a `""` / `"."` target, which is
+    // what the file browser's rootless path space produced. An attachment path is
+    // resolved against the workspace root server-side, so a bare name — and a
+    // rootless directory — named a file that was never there.
+    expect(resolvePaths("/workspace/vibekit/static-src", ["a.png"])).toEqual([
+      "/workspace/vibekit/static-src/a.png",
+    ]);
+    expect(resolvePaths("/config", ["mcp.json"])).toEqual(["/config/mcp.json"]);
   });
 });
 

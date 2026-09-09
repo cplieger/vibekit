@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/testsupport"
@@ -227,6 +228,56 @@ func TestToResumable_ExcludesEverySessionNoChatOwns(t *testing.T) {
 	}
 	if got[0].SessionID != "sess_real" || got[0].ChatID != "c1" {
 		t.Errorf("surviving row = %+v, want sess_real owned by c1", got[0])
+	}
+}
+
+// TestToResumable_SanitizesAndBoundsTheDescription pins the SECOND channel carrying the
+// agent's self-declared description. translate's focus door treats the live chat_status
+// copy; this one arrives on session/list, read back out of KAS's persisted session.json,
+// so nothing upstream of here bounds it or rewrites a bidi control before the History row
+// renders it.
+func TestToResumable_SanitizesAndBoundsTheDescription(t *testing.T) {
+	tests := []struct {
+		name string
+		desc string
+		want string
+	}{
+		{
+			name: "a_bidi_override_becomes_a_space",
+			desc: "Running \u202Ednuof-eman\u202C now",
+			want: "Running  dnuof-eman  now",
+		},
+		{
+			name: "a_control_character_and_a_newline_become_spaces",
+			desc: "line one\nline\x07two",
+			want: "line one line two",
+		},
+		{
+			name: "an_over_long_description_is_marked_at_the_bound",
+			desc: strings.Repeat("x", 700),
+			want: strings.Repeat("x", maxSessionDescBytes) + "...",
+		},
+		{
+			name: "a_realistic_description_passes_through_byte_identical",
+			desc: "Reviewing the retention purge and its teardown ordering.",
+			want: "Reviewing the retention purge and its teardown ordering.",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := ownedBy(t, map[string][]string{"c1": {"sess_a"}})
+			r := row("sess_a", "A conversation", "2026-08-02T10:00:00.000Z", false)
+			r.Meta.Kiro.Description = tc.desc
+
+			got := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{r})
+
+			if len(got) != 1 {
+				t.Fatalf("got %d rows, want 1", len(got))
+			}
+			if got[0].Description != tc.want {
+				t.Errorf("row description for %q =\n\t%q, want\n\t%q", tc.desc, got[0].Description, tc.want)
+			}
+		})
 	}
 }
 

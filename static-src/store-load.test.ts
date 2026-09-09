@@ -8,6 +8,10 @@ import type { Message, Session } from "./types.js";
 // `chatListLoaded` is module state, so its cases re-evaluate the module and need a
 // type for what the dynamic import hands back.
 import type * as StoreLoad from "./store-load.js";
+// The store's shape, for the `importOriginal` call in its mock factory below. A
+// type-only import, so it adds no runtime edge the `vi.mock` would have to reach
+// around.
+import type * as Store from "./store.js";
 
 const {
   sessions,
@@ -51,34 +55,43 @@ vi.mock("./api-client.js", () => ({
   apiGetTyped: mockApiGetTyped,
   apiGetTypedOrError: mockApiGetTypedOrError,
 }));
-vi.mock("./store.js", () => ({
-  get: (id: string) => sessions.get(id),
-  getSessions: () => [...sessions.values()],
-  setSessions: mockSetSessions,
-  upsertHeader: mockUpsertHeader,
-  rebuildMsgIndex: vi.fn(),
-  bumpMessages: mockBumpMessages,
-  // The outcome relatch loadMessages owes a newest-page load. A fn so the
-  // wiring cases below can assert the call and its ordering against bump.
-  relatchTurnVerdict: mockRelatch,
-  latchFieldsFor: mockLatchFields,
-  syncEpoch: () => epoch.n,
-  // Identity here — the block-synthesis path is covered by store.test.ts; these
-  // tests assert pagination/dedupe by id.
-  normalizeMessage: (m: Message) => m,
-  // The store's in-flight marker: which message id the chat's current turn is
-  // streaming into, and therefore which one the chat file cannot carry yet.
-  liveTurnMessage: (id: string) => liveIDs.get(id),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
-  getActive: vi.fn(() => undefined),
-  tabStatusFor: vi.fn(() => ""),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
-  apiGet: vi.fn(),
-}));
+vi.mock("./store.js", async (importOriginal) => {
+  // `derivedHasMore` is the REAL one, and that is deliberate: it is the rule the
+  // `has_more` cases below are ABOUT, so a hand-written copy here would assert the
+  // mock rather than the production rule and would go stale silently the first time
+  // the rule moved. Pure, two numbers in, no store state, so importing it costs
+  // nothing this factory exists to avoid.
+  const { derivedHasMore } = await importOriginal<typeof Store>();
+  return {
+    derivedHasMore,
+    get: (id: string) => sessions.get(id),
+    getSessions: () => [...sessions.values()],
+    setSessions: mockSetSessions,
+    upsertHeader: mockUpsertHeader,
+    rebuildMsgIndex: vi.fn(),
+    bumpMessages: mockBumpMessages,
+    // The outcome relatch loadMessages owes a newest-page load. A fn so the
+    // wiring cases below can assert the call and its ordering against bump.
+    relatchTurnVerdict: mockRelatch,
+    latchFieldsFor: mockLatchFields,
+    syncEpoch: () => epoch.n,
+    // Identity here — the block-synthesis path is covered by store.test.ts; these
+    // tests assert pagination/dedupe by id.
+    normalizeMessage: (m: Message) => m,
+    // The store's in-flight marker: which message id the chat's current turn is
+    // streaming into, and therefore which one the chat file cannot carry yet.
+    liveTurnMessage: (id: string) => liveIDs.get(id),
+    // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+    // this graph and these names are imported somewhere in it. No case here calls
+    // them.
+    getActive: vi.fn(() => undefined),
+    tabStatusFor: vi.fn(() => ""),
+    // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+    // this graph and these names are imported somewhere in it. No case here calls
+    // them.
+    apiGet: vi.fn(),
+  };
+});
 
 import { loadMessages, loadList, confirmChatExists } from "./store-load.js";
 
@@ -390,6 +403,283 @@ describe("loadMessages pagination dedupe", () => {
     await loadMessages("c1");
     const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
     expect(ids).toEqual(["old1", "old2", "c"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `has_more` carried TWO kinds of value under one spelling — a server ANSWER, and
+// a client GUESS spelled `message_count > 0` for every row built from a header,
+// which carries no window at all. Two mechanisms propagated the guess to the "Load
+// older messages" button: this branch's own preservation rule, and `loadList`'s
+// sticky OR.
+//
+// The reported shape is the button appearing for no reason and one click making it
+// go away: the click fetched `before_id = messages[0].id`, got an empty page, and
+// `session.has_more = d.has_more` removed it.
+// ---------------------------------------------------------------------------
+describe("has_more is derived, never a guess preserved", () => {
+  it("answers false when a re-adopting page leaves every message held", async () => {
+    // The reported shape, with every input as it arrives in production. The row's
+    // `has_more` is the GUESS, planted when it was built from a header. The window
+    // then came to hold the WHOLE eight-message chat — the boot snapshot pushes up to
+    // 40 messages of the active chat, so a short one goes whole. And the newest page
+    // is cut short by a BUDGET rather than by the chat's length (a handful of
+    // tool-heavy turns is enough), so older messages are re-adopted in front of it
+    // and the answer describes a page rather than this window.
+    //
+    // The window has to hold EVERYTHING for the guess to be wrong: with a genuine
+    // tail resident, `has_more: true` is the right answer and the preservation was
+    // correct by accident (the case below is that direction).
+    seedSession(
+      "c1",
+      [1, 2, 3, 4, 5, 6, 7, 8].map((n) => msg(`m${String(n)}`, n)),
+    );
+    sessions.get("c1")!.has_more = true; // the guess
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 8 },
+      messages: [6, 7, 8].map((n) => msg(`m${String(n)}`, n)),
+      has_more: true,
+      draft: "",
+    });
+
+    await loadMessages("c1");
+
+    const s = sessions.get("c1");
+    // Every message the chat has is held, so there is nothing older to fetch and the
+    // button has nothing behind it.
+    expect(s?.messages.map((m) => m.id)).toEqual(["m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"]);
+    expect(s?.message_count).toBe(8);
+    expect(s?.has_more).toBe(false);
+  });
+
+  it("still answers true when the window genuinely holds only part of the chat", async () => {
+    // The other direction, so the fix cannot be read as "always false": the same
+    // re-adopting shape over a chat with real history above the window.
+    seedSession(
+      "c1",
+      [3, 4, 5, 6].map((n) => msg(`m${String(n)}`, n)),
+    );
+    sessions.get("c1")!.has_more = false;
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 40 },
+      messages: [5, 6].map((n) => msg(`m${String(n)}`, n)),
+      has_more: true,
+      draft: "",
+    });
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.has_more).toBe(true);
+  });
+
+  it("takes the server's own answer when the page STARTS the window", async () => {
+    // The page is the whole window, so its `has_more` describes exactly the question
+    // the session's flag answers and the derivation must not overrule it. The count
+    // is deliberately HIGHER than the window: only the answer can be right here,
+    // because the server knows the cursor and the derivation does not.
+    seedSession("c1", [msg("m1", 1)]);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 9 },
+      messages: [msg("m1", 1)],
+      has_more: false,
+      draft: "",
+    });
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.has_more).toBe(false);
+  });
+
+  it("takes the server's answer on a before_id page, which becomes the new oldest", async () => {
+    seedSession("c1", [msg("m2", 2)]);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 2 },
+      messages: [msg("m1", 1)],
+      has_more: false,
+    });
+
+    await loadMessages("c1", "m2");
+    expect(sessions.get("c1")?.has_more).toBe(false);
+  });
+});
+
+describe("loadList's has_more is derived too", () => {
+  // The SECOND propagation mechanism, and it could only ever be wrong in the
+  // direction of a spurious button: `existing.has_more ||` made the value sticky, so
+  // once true no reconnect could clear it — and this runs on boot, on login and on
+  // every `connected` handshake.
+  it("clears a stale true when the header's count matches what is resident", async () => {
+    seedSession("c1", [msg("m1", 1), msg("m2", 2)]);
+    sessions.get("c1")!.has_more = true;
+    mockApiGetTyped.mockResolvedValue({
+      chats: [{ id: "c1", name: "C", message_count: 2, usage: {} }],
+    });
+
+    await loadList();
+    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
+    expect(passed.find((s) => s.id === "c1")?.has_more).toBe(false);
+  });
+
+  it("answers true for a genuinely paged chat", async () => {
+    seedSession("c1", [msg("m9", 9)]);
+    sessions.get("c1")!.has_more = false;
+    mockApiGetTyped.mockResolvedValue({
+      chats: [{ id: "c1", name: "C", message_count: 9, usage: {} }],
+    });
+
+    await loadList();
+    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
+    expect(passed.find((s) => s.id === "c1")?.has_more).toBe(true);
+  });
+
+  it("answers true for a chat with messages and no resident window", async () => {
+    // A row the client has never loaded: the derivation and the retired
+    // `message_count > 0` guess agree here, which is why the guess survived so long.
+    mockApiGetTyped.mockResolvedValue({
+      chats: [{ id: "fresh", name: "F", message_count: 3, usage: {} }],
+    });
+
+    await loadList();
+    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
+    expect(passed.find((s) => s.id === "fresh")?.has_more).toBe(true);
+  });
+
+  it("answers false for an empty chat", async () => {
+    mockApiGetTyped.mockResolvedValue({
+      chats: [{ id: "empty", name: "E", message_count: 0, usage: {} }],
+    });
+
+    await loadList();
+    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
+    expect(passed.find((s) => s.id === "empty")?.has_more).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The window BASE travels on the same subject `has_more` does — the oldest message
+// held — so it is adopted under the same condition.
+// ---------------------------------------------------------------------------
+describe("the window base", () => {
+  it("adopts the server's answer when the page starts the window", async () => {
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 30 },
+      messages: [msg("m1", 1)],
+      has_more: true,
+      turn_offset: 7,
+      turn_segment_closed: true,
+      draft: "",
+    });
+
+    await loadMessages("c1");
+    const s = sessions.get("c1");
+    expect(s?.turn_offset).toBe(7);
+    expect(s?.turn_segment_closed).toBe(true);
+  });
+
+  it("adopts it on a before_id page, whose page becomes the new oldest", async () => {
+    seedSession("c1", [msg("m9", 9)]);
+    sessions.get("c1")!.turn_offset = 7;
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 30 },
+      messages: [msg("m8", 8)],
+      has_more: true,
+      turn_offset: 4,
+      turn_segment_closed: false,
+    });
+
+    await loadMessages("c1", "m9");
+    expect(sessions.get("c1")?.turn_offset).toBe(4);
+  });
+
+  it("leaves the recorded base alone when older pages sit in front of the page", async () => {
+    // The edge did not move, so whatever was recorded for it still describes it —
+    // and the page's own offset describes a DIFFERENT message.
+    seedSession("c1", [msg("m1", 1), msg("m2", 2), msg("m3", 3)]);
+    sessions.get("c1")!.turn_offset = 2;
+    sessions.get("c1")!.turn_segment_closed = true;
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 3 },
+      messages: [msg("m3", 3)],
+      has_more: true,
+      turn_offset: 99,
+      turn_segment_closed: false,
+      draft: "",
+    });
+
+    await loadMessages("c1");
+    const s = sessions.get("c1");
+    expect(s?.turn_offset).toBe(2);
+    expect(s?.turn_segment_closed).toBe(true);
+  });
+
+  it("forgets a recorded base when the server answers without one", async () => {
+    // A stripped field is read as no answer at all, and a base recorded for a
+    // DIFFERENT left edge is worse than none: `turnBaseOf`'s fallback numbers the
+    // window from 1, where a stale offset numbers it from nowhere.
+    seedSession("c1", [msg("m1", 1)]);
+    sessions.get("c1")!.turn_offset = 7;
+    sessions.get("c1")!.turn_segment_closed = true;
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [msg("m1", 1)],
+      has_more: false,
+      draft: "",
+    });
+
+    await loadMessages("c1");
+    const s = sessions.get("c1");
+    expect(s?.turn_offset).toBeUndefined();
+    expect(s?.turn_segment_closed).toBeUndefined();
+  });
+
+  // `loadList` rebuilds a Session from a header, so every client-only projection it
+  // does not name is dropped — and a reconnect does not bump `syncEpoch`, so nothing
+  // refetches to put the base back.
+  it("survives a loadList that carries the window it describes", async () => {
+    seedSession("c1", [msg("m1", 1)]);
+    sessions.get("c1")!.turn_offset = 7;
+    sessions.get("c1")!.turn_segment_closed = true;
+    mockApiGetTyped.mockResolvedValue({
+      chats: [{ id: "c1", name: "C", message_count: 30, usage: {} }],
+    });
+
+    await loadList();
+    const rebuilt = ((mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[]).find(
+      (s) => s.id === "c1",
+    );
+    expect(rebuilt?.messages.map((m) => m.id)).toEqual(["m1"]);
+    expect(rebuilt?.turn_offset).toBe(7);
+    expect(rebuilt?.turn_segment_closed).toBe(true);
+  });
+
+  it("is absent after a loadList when the row recorded none", async () => {
+    seedSession("c1", [msg("m1", 1)]);
+    mockApiGetTyped.mockResolvedValue({
+      chats: [{ id: "c1", name: "C", message_count: 30, usage: {} }],
+    });
+
+    await loadList();
+    const rebuilt = ((mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[]).find(
+      (s) => s.id === "c1",
+    );
+    expect(rebuilt?.turn_offset).toBeUndefined();
+    expect(rebuilt?.turn_segment_closed).toBeUndefined();
+  });
+
+  it("carries neither half when the row holds only one", async () => {
+    // `adoptTurnBase`'s rule from the other side: one field is a stripped answer, not
+    // a partial fact, so an offset with no seed beside it must not travel alone.
+    seedSession("c1", [msg("m1", 1)]);
+    sessions.get("c1")!.turn_offset = 7;
+    mockApiGetTyped.mockResolvedValue({
+      chats: [{ id: "c1", name: "C", message_count: 30, usage: {} }],
+    });
+
+    await loadList();
+    const rebuilt = ((mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[]).find(
+      (s) => s.id === "c1",
+    );
+    expect(rebuilt?.turn_offset).toBeUndefined();
+    expect(rebuilt?.turn_segment_closed).toBeUndefined();
   });
 });
 
@@ -1221,10 +1511,10 @@ describe("the no-cursor reload keeps the older pages already resident", () => {
     expect(sessions.get("c1")?.messages.map((m) => m.id)).toEqual(["m1", "m2", "m3", "m4"]);
   });
 
-  // `has_more` answers "is there anything older than the OLDEST MESSAGE HELD".
-  // Re-adopting does not move that, so the page's own answer — which is about the
-  // PAGE's start — must not overwrite it.
-  it("leaves has_more alone when it re-adopted, because the client's oldest did not move", async () => {
+  // The page's answer is about the PAGE's start, so a re-adopting page says nothing
+  // about this window's left edge and `has_more` falls back to the derivation. Here
+  // all three messages are held against a count of 3, so the derivation answers false.
+  it("derives has_more when it re-adopted, rather than taking the page's answer", async () => {
     seedSession("c1", [msg("m1", 1), msg("m2", 2), msg("m3", 3)]);
     sessions.get("c1")!.has_more = false;
     mockApiGetTyped.mockResolvedValue({

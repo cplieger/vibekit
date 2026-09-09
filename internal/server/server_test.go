@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io/fs"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -785,11 +786,40 @@ func TestScanKiroDirFS_returnsAllSections(t *testing.T) {
 // captureLogs swaps the slog default to a buffer-backed debug handler for the
 // duration of the test and restores it on cleanup. The default is process-wide,
 // so a test using it must not run in parallel.
+//
+// The log package's writer and flags are restored too: slog.SetDefault also points
+// log at the new handler, and it skips pointing it back when the restored handler
+// is the stock one (which reaches log.Output), so every later line in the package
+// would land in this buffer.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	prev := slog.Default()
+	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
+	t.Cleanup(func() {
+		slog.SetDefault(prevLogger)
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	})
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
 	return buf
+}
+
+func TestCaptureLogs_LeavesTheLogPackageWhereItFoundIt(t *testing.T) {
+	sink := &bytes.Buffer{}
+	prevWriter, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(sink)
+	log.SetFlags(log.LstdFlags)
+	t.Cleanup(func() { log.SetOutput(prevWriter); log.SetFlags(prevFlags) })
+
+	t.Run("one capturing test runs and cleans up", func(t *testing.T) { captureLogs(t) })
+
+	slog.Warn("a line after the capture")
+
+	if got := sink.String(); !strings.Contains(got, "a line after the capture") {
+		t.Errorf("after captureLogs cleaned up, slog.Warn reached %q, want it in the log package's writer;"+
+			" captureLogs left log.Writer pointed at its own buffer", got)
+	}
+	if got := log.Flags(); got != log.LstdFlags {
+		t.Errorf("after captureLogs cleaned up, log.Flags() = %d, want %d", got, log.LstdFlags)
+	}
 }

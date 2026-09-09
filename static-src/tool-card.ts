@@ -315,11 +315,11 @@ function buildHeader(
   return header;
 }
 
-/** What a caller may state. `ToolStatus` is the tool wire enum; `aborted` is the
- *  one run-level status with no tool counterpart, admitted because the History
- *  page states a run's verdict through this same writer and a stopped run is
- *  neither a success nor a failure of the work. */
-type OutcomeStatus = ToolStatus | "aborted";
+/** What a caller may state. `aborted` is a member of the tool wire enum as well as
+ *  a run-level status, so one union serves both callers: the History page states a
+ *  run's verdict through this same writer, and a stopped run is neither a success
+ *  nor a failure of the work. */
+type OutcomeStatus = ToolStatus;
 
 /** The verdicts the vocabulary paints. Not the wire enums: `pending` and
  *  `in_progress` are one thing to a reader, and a refusal is its own state. */

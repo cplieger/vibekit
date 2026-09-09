@@ -83,6 +83,22 @@ export const fetchAgentLines = apiAction<
   error: false,
 });
 
+/** The base pane's caption: what the load FOUND on the left, in three cases.
+ *
+ *  No repository owns the path at all ("not in git"); a repository owns it but
+ *  this ref holds no revision of it, which is an untracked or staged-new file
+ *  ("not in <ref>"); or the ref holds it (the ref itself). The middle case is
+ *  what `handleShow`'s `absent` marker is for: its content is legitimately
+ *  empty, so without the marker the pane reads as "<ref> holds this file and
+ *  holds it empty" — the same dishonesty the not_in_repo mapping was added to
+ *  fix, one case short. */
+function baseLabelFor(ref: string, gitErr: string, absentAtRef: boolean): string {
+  if (gitErr === GIT_ERR_NOT_IN_REPO) {
+    return "not in git";
+  }
+  return absentAtRef ? `not in ${ref}` : ref;
+}
+
 /** Fetches git diff sources for the editor diff view.
  *
  *  The two endpoints speak different path languages: `/api/file` wants
@@ -110,7 +126,7 @@ export const loadDiff = defineAction<
     // apiGetOrError because two of the working-copy's failure statuses are
     // answers (HTTP_NOT_FOUND / HTTP_BINARY above), not dead requests.
     const [oldD, newD] = await Promise.all([
-      apiGet<{ content?: string; error?: string; detail?: string }>(
+      apiGet<{ content?: string; error?: string; detail?: string; absent?: boolean }>(
         `/api/git/show?path=${encodeURIComponent(gitPath)}&ref=${encodeURIComponent(ref)}${repoParam}`,
         signal,
       ),
@@ -143,7 +159,7 @@ export const loadDiff = defineAction<
       error: binary
         ? `${gitPath} is a binary file — there is no text diff to show.`
         : (newD.data?.error ?? ""),
-      baseLabel: gitErr === GIT_ERR_NOT_IN_REPO ? "not in git" : ref,
+      baseLabel: baseLabelFor(ref, gitErr, oldD.absent === true),
       workingLabel: deleted ? "deleted" : "working tree",
     };
   },

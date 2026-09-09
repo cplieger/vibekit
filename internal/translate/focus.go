@@ -108,7 +108,12 @@ func (t *Translator) handleFocusUpdate(ctx context.Context, chatID vibekit.ChatI
 		t.applyFocusTitle(ctx, chatID, title)
 	}
 	status := strings.TrimSpace(f.Status)
-	desc := strings.TrimSpace(f.Description)
+	// displayText alone, without the title's sanitize.Output wrapper: display_text.go
+	// owns why a single-line surface replaces a hidden rune rather than deleting it.
+	// It runs BEFORE the both-empty return because a description of nothing but
+	// control characters empties here, and chatStatusCache.Merge reads a both-empty
+	// payload as a clear of the retained status.
+	desc := strings.TrimSpace(displayText(f.Description))
 	if status == "" && desc == "" {
 		return
 	}

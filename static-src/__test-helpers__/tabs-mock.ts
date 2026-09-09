@@ -60,6 +60,7 @@ export function tabsMock(): Record<string, unknown> {
     paintProvisionalTabs: vi.fn(),
     renameTab: vi.fn(),
     setTabStatus: vi.fn(),
+    setTabRunStatus: vi.fn(),
     setTabDirty: vi.fn(),
     setTabTooltip: vi.fn(),
     setSettingsTab: vi.fn(),
@@ -77,6 +78,11 @@ export function tabsMock(): Record<string, unknown> {
     activeChatRef: vi.fn(() => ""),
     parentChatRef: vi.fn(() => ""),
     openChatRefs: vi.fn(() => []),
+    // The empty answer here is a statement of DEMAND, not just "nothing to see":
+    // `subagent-view.ts` drops its mounted page when no open subagent tab names a
+    // member of the group that page projects. So a test that mounts a subagent page
+    // must override this with the tabs its scenario implies, or the page it mounted is
+    // released under it.
     openSubagentRefs: vi.fn(() => []),
     openRunRefs: vi.fn(() => []),
     openTabSubjects: vi.fn(() => []),

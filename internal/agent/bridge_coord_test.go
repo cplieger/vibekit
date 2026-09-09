@@ -63,13 +63,16 @@ type recordingPush struct {
 	// reloads counts ReloadPreferences calls, for the SSE reconnect rule. Atomic
 	// because the handler that calls it may not be on the test's goroutine.
 	reloads atomic.Int32
+	// noSubs flips HasSubscribers to false for the drop path. The zero value keeps a
+	// subscriber present, so every fixture that predates it is unchanged.
+	noSubs  atomic.Bool
 	subject vibekit.PushSubject
 }
 
 func (p *recordingPush) RegisterRoutes(*http.ServeMux)            {}
 func (p *recordingPush) Subscribe(vibekit.PushSubscription)       {}
 func (p *recordingPush) Unsubscribe(string)                       {}
-func (p *recordingPush) HasSubscribers() bool                     { return true }
+func (p *recordingPush) HasSubscribers() bool                     { return !p.noSubs.Load() }
 func (p *recordingPush) SetPreferences(map[vibekit.PushKind]bool) {}
 func (p *recordingPush) ReloadPreferences(context.Context)        { p.reloads.Add(1) }
 func (p *recordingPush) Close()                                   {}

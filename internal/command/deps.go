@@ -344,6 +344,9 @@ type Roles struct {
 	// Steers records the steers this server sent, so the translate layer can
 	// tell the user's own words from a workflow reporting into the same buffer.
 	Steers SteerRecorder
+	// Status ends a chat's retained waiting_on_user claim after a command that IS
+	// the user answering.
+	Status ChatStatus
 	// AuthReadiness carries prompt authentication outcomes to readiness.
 	AuthReadiness *AuthReadiness
 	// Workspace is last for fieldalignment (a trailing length word stops

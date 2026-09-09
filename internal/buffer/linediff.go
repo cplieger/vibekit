@@ -30,7 +30,8 @@ type lineHunk struct {
 // trailing "\r" per line so a CRLF-to-LF rewrite is not read as a whole-file
 // change, and drop the single empty element a final newline produces — so
 // "a\nb\n" and "a\nb" are both two lines, and "\n" is one empty line. Its
-// TypeScript twin is splitDeltaLines in static-src/diff.ts.
+// TypeScript twin is splitLines in static-src/diff.ts, which serves that whole
+// diff surface — the renderers as well as the counters.
 func splitDiffLines(s string) []string {
 	if s == "" {
 		return nil

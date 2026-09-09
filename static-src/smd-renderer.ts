@@ -404,6 +404,19 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
       return;
     }
     node.setAttribute(attrName, rewriteWorkspaceImageSrc(value));
+    // Defer the fetch until the image is near the viewport, and set it HERE
+    // rather than at add_token so it reaches exactly the nodes that are still
+    // images with a real src: the unsafe-URL gate above returned early with
+    // `src="#"`, and `mediaElementFor` may already have replaced this `<img>`
+    // with an `<audio>` or a download link. Three consumers read off-screen
+    // transcript images — a whole markdown FILE in the editor, the compaction
+    // summary inside a collapsed `<details>`, and replayed history — and
+    // `.msg-row`'s `content-visibility: auto` does not help, because it skips
+    // layout and paint and not loading. No `width`/`height` to pair with it:
+    // the transcript wire carries no image dimensions. Two costs accepted with
+    // it: the `error` event defers too, so the fallback below waits for the
+    // scroll, and a late load reflows content that may sit above the reader.
+    node.setAttribute("loading", "lazy");
     // Name the file when it fails to load. The browser's default broken-image
     // icon identifies nothing, and "the picture did not appear" is the
     // characteristic failure of the agent's screenshot loop — the one fact

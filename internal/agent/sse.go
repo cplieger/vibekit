@@ -31,8 +31,17 @@ func (b *bus) PendingPermsAdd(requestID int64, evt vibekit.ServerEvent) {
 func (b *bus) emit(evt vibekit.ServerEvent) {
 	switch evt.Type {
 	case vibekit.EventChatStatus:
+		// A producer of this event may NOT hold chatLifecycle.mu: stageStatusDesc takes it
+		// and sync.Mutex is not reentrant, so that is a self-deadlock -race hangs on
+		// rather than reports.
 		if p, ok := evt.Payload.(vibekit.ChatStatusPayload); ok {
-			b.chatStatus.Set(evt.ChatID, p)
+			// The RAW description, before the merge: Turn.statusDesc is what the agent
+			// declared during THIS turn, and stageStatusDescription drops an empty one.
+			b.stageStatusDesc(evt.ChatID, p.Description)
+			// The MERGED payload on the wire: the client replaces both fields, so a
+			// description-only declaration would delete a retained waiting_on_user there.
+			// evt is a value, so this reaches the marshal below and no caller sees it.
+			evt.Payload = b.chatStatus.Merge(evt.ChatID, p)
 		}
 	case vibekit.EventTurnEnded:
 		b.chatStatus.ClearAtTurnEnd(evt.ChatID)
@@ -53,10 +62,14 @@ func (b *bus) emit(evt vibekit.ServerEvent) {
 // the connected handshake and the initial per-client state replay.
 func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	chatFilter := vibekit.ChatID(r.URL.Query().Get("chat_id"))
-	declared := parseSnapshotChats(r)
+	declared, stated := parseSnapshotChats(r)
 	lastRaw := adoptCursorParam(r)
+	// Both halves of the declaration, because the count alone cannot separate the two
+	// states that answer zero: an old client that never declared (fail open) and a
+	// client declaring nothing (bare busy signals only).
 	slog.Info("SSE connected", "chat_filter", logsafe.Field(string(chatFilter)),
-		"last_event_id", logsafe.Field(lastRaw), "declared_snapshots", len(declared))
+		"last_event_id", logsafe.Field(lastRaw), "snapshots_declared", stated,
+		"declared_snapshots", len(declared))
 
 	// A reconnect reloads push preferences from disk so settings edited while SSE
 	// was down take effect without a restart.
@@ -67,7 +80,7 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	rt.bus.fanout.Serve(w, r,
 		sse.WithTopic(string(chatFilter)),
 		sse.OnConnect(func(sw *sse.Writer, b sse.ReplayBounds) error {
-			return rt.streamInitialState(sw, b.Floor, b.Head, chatFilter, declared)
+			return rt.streamInitialState(sw, b.Floor, b.Head, chatFilter, declared, stated)
 		}),
 	)
 	slog.Info("SSE disconnected", "chat_filter", logsafe.Field(string(chatFilter)))
@@ -108,18 +121,47 @@ const maxCursorDigits = 20
 // and leave the tab dots, the sidebar and the strip dark.
 const snapshotParam = "snapshot"
 
-// parseSnapshotChats reads the chats a client declares as on-screen. A malformed
-// entry is DROPPED and reported rather than failing the connect, because the stream
-// is the client's only recovery channel.
+// snapshotNone is how a client says NO chat needs its in-flight transcript: a
+// reduced boot, which wants the bare busy signals and nothing else.
 //
-// An EMPTY result means "declare nothing", which reads downstream as "every open
-// chat", bounded by connectSnapshotBudget rather than by the parameter.
-func parseSnapshotChats(r *http.Request) map[vibekit.ChatID]struct{} {
+// A SENTINEL rather than an empty value, because presence-versus-emptiness cannot
+// carry this: `?snapshot=` is also what a client with no chat active yet would send,
+// so the two states this parameter exists to separate would collapse again one layer
+// up. An empty-valued pair is also a load-bearing character any URL canonicaliser may
+// drop silently, and the drop fails OPEN — straight back to the whole payload.
+const snapshotNone = "none"
+
+// parseSnapshotChats reads the chats a client declares as on-screen, and whether it
+// declared at ALL. A malformed entry is DROPPED and reported rather than failing the
+// connect, because the stream is the client's only recovery channel.
+//
+// THREE wire states, and the second return is what separates the two an empty map
+// collapses. An ABSENT (or empty-valued) parameter answers (nil, false) — an old
+// client or a curl, which fails OPEN downstream so nothing withholds state a client
+// needs. `?snapshot=none` answers (nil, true): the client spoke and named nothing, so
+// every open chat gets the bare busy signal. A list answers (set, true).
+//
+// The sentinel is tested BEFORE the id loop, because ids.ValidChatID is a charset
+// check rather than a shape check (internal/ids/valid.go) and so accepts this word:
+// parsed as an id it would give a chat literally named `none` a snapshot the client
+// asked not to receive, and would report one declared id in the log line above.
+// Residual, stated: such a chat cannot be declared. Nothing mints one —
+// vibekit.NewChatID is `c-` plus hex of 16 random bytes.
+//
+// A list whose every entry is malformed answers (empty, true), so it reads as
+// "declared nothing" rather than failing open. That client HAS the parameter, so it
+// can recover through turn_ended's whole message, which is the cost this package
+// already accepts for an undeclared busy chat; failing open on mangled input is the
+// 265 KB path instead.
+func parseSnapshotChats(r *http.Request) (declared map[vibekit.ChatID]struct{}, stated bool) {
 	raw := r.URL.Query().Get(snapshotParam)
 	if raw == "" {
-		return nil
+		return nil, false
 	}
-	declared := make(map[vibekit.ChatID]struct{}, maxDeclaredSnapshotChats)
+	if raw == snapshotNone {
+		return nil, true
+	}
+	declared = make(map[vibekit.ChatID]struct{}, maxDeclaredSnapshotChats)
 	malformed, overCap := 0, 0
 	for entry := range strings.SplitSeq(raw, ",") {
 		if !ids.ValidChatID(entry) {
@@ -136,7 +178,7 @@ func parseSnapshotChats(r *http.Request) map[vibekit.ChatID]struct{} {
 		slog.Warn("SSE snapshot parameter partly ignored", "declared", len(declared),
 			"malformed", malformed, "over_cap", overCap, "cap", maxDeclaredSnapshotChats)
 	}
-	return declared
+	return declared, true
 }
 
 // hasOpenTab reports whether this chat has a row in the tab strip, matching a
@@ -204,6 +246,7 @@ func (rt *Runtime) streamInitialState(
 	floor, head uint64,
 	chatFilter vibekit.ChatID,
 	declared map[vibekit.ChatID]struct{},
+	stated bool,
 ) error {
 	connectedEvt := vibekit.NewEvent(vibekit.EventConnected, "", vibekit.ConnectedPayload{
 		Workspace: rt.lifecycle.workDir,
@@ -250,7 +293,7 @@ func (rt *Runtime) streamInitialState(
 	// ONE read of the open-turn set serves both replays below, so the busy chats
 	// the second one skips are exactly the chats the first one described.
 	open := rt.coord.turns.openTurns()
-	if err := rt.replayTurnState(writeEvent, chatFilter, open, declared); err != nil {
+	if err := rt.replayTurnState(writeEvent, chatFilter, open, declared, stated); err != nil {
 		return err
 	}
 	// turn_state cannot carry a chat that is waiting on a person: its client
@@ -362,11 +405,16 @@ func (rt *Runtime) turnStateCandidates(
 // A busy chat with NO OPEN TAB gets nothing (no row in the strip, so no dot to feed);
 // an open chat the client did not DECLARE gets the bare busy signal, which is what
 // makes the payload O(1) in the number of busy chats.
+//
+// `stated` is the client's own answer to "did you declare", from parseSnapshotChats.
+// Its zero value is the fail-open one, so a caller that cannot say keeps the
+// old-client behaviour rather than silently withholding every snapshot.
 func (rt *Runtime) replayTurnState(
 	writeFn func(vibekit.ServerEvent) (int, error),
 	chatFilter vibekit.ChatID,
 	open map[vibekit.ChatID]openTurnFacts,
 	declared map[vibekit.ChatID]struct{},
+	stated bool,
 ) error {
 	candidates := rt.turnStateCandidates(chatFilter, open, declared)
 	remaining := connectSnapshotBudget
@@ -380,9 +428,12 @@ func (rt *Runtime) replayTurnState(
 			// transcript, but unmarked it makes the launching chat read as busy.
 			WorkflowStep: cand.facts.Source == vibekit.TurnSourceWorkflowStep,
 		}
-		// An empty declared set reads as "every open chat", so an older client and a
-		// curl still get snapshots — bounded by the budget rather than the parameter.
-		wantSnapshot := len(declared) == 0 || cand.declared
+		// A client that never DECLARED reads as "every open chat", so an older client
+		// and a curl still get snapshots — bounded by the budget rather than by the
+		// parameter. A client that declared and named nothing gets none: keyed on
+		// `stated` rather than on len(declared), because those are the two states an
+		// empty set cannot tell apart.
+		wantSnapshot := !stated || cand.declared
 		// SnapshotCapped rather than Snapshot: an uncapped snapshot is a whole
 		// transcript. ChunkSeq is taken either way, being a fact about the turn.
 		msg, seq, cut, ok := cand.facts.Buf.SnapshotCapped(narrowedConnectCaps(remaining))

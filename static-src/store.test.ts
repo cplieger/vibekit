@@ -3621,6 +3621,13 @@ describe("subagentStatusFor maps a delegate's tool status to its dot state", () 
     // The red diamond. Distinct from `completed` because the wire distinguishes
     // them, and this is the arm a reader has to be able to see.
     failed: "failed",
+    // The reader's own cancel. It FOLDS onto `done` rather than earning a fifth
+    // value, which is the CSS question this table's header asks answered: the
+    // strip already paints `done`, so no rule, phrase or ink is added — and it is
+    // the same fold `runStatusFor` makes for a cancelled run two arms above it.
+    // The distinction is not lost, it is carried by the delegate's own card,
+    // which paints the yellow stopped mark.
+    aborted: "done",
   };
 
   for (const [status, want] of Object.entries(DOT_BY_TOOL_STATUS) as (readonly [

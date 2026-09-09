@@ -266,9 +266,8 @@ describe("outcome is the row's one mark, not a word and not a badge", () => {
     expect(card.getAttribute("aria-label")).toContain("failed");
   });
 
-  // `aborted` has no tool counterpart — it is a run-level status, admitted to
-  // this vocabulary so the History page states a run's verdict through the same
-  // writer instead of growing a second one.
+  // `aborted` is a tool status as well as a run-level one, which is why
+  // `OutcomeStatus` serves the History page's run verdict through this same writer.
   it("paints an aborted subject amber with the stop silhouette, not as a failure", async () => {
     const { buildToolCard, applyOutcome } = await import("./tool-card.js");
     const { outcomeIcon } = await import("./icons.js");

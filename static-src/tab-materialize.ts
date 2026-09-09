@@ -301,11 +301,12 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         onShow: () => {
           reg.subagent.show(chatID, subtaskID);
         },
-        // No onClose, and unlike the run REVIEW's absence this one is
-        // unconditional: the page is a projection of blocks the chat store owns,
-        // so there is nothing a close could stop. Every door opens it with
-        // `owns: false`, which is what makes an owned subagent tab
-        // unrepresentable rather than merely unhandled.
+        // No onClose: the page is a projection of blocks the chat store owns, so
+        // a close destroys nothing. Every door opens it with `owns: false`, which
+        // is what makes an owned subagent tab unrepresentable rather than merely
+        // unhandled. The page and the renders mounted into it are released by
+        // `subagent-view.ts`'s demand effect, which drops them when no open tab
+        // names a member of the group that page projects.
       };
     }
     case "settings":

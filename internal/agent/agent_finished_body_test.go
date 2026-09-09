@@ -52,13 +52,14 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	// Recorded the way translate/focus.go's chat_status path records it.
-	h.bus.chatStatus.Set("c1", vibekit.ChatStatusPayload{
+	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	// Broadcast the way translate/focus.go's chat_status path does it: MID-turn, on a
+	// session_info_update, through the production write. Only that path stages the
+	// description on the open TURN, which is what the push body reads.
+	h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventChatStatus, "c1", vibekit.ChatStatusPayload{
 		Status:      "in_progress",
 		Description: "Wiring the PR status poller",
-	})
-
-	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	}))
 	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
 	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
 
@@ -104,12 +105,12 @@ func TestEmitTurnEnded_PushReadsTheSeverity(t *testing.T) {
 			h.mcpRegistry.SignalReady()
 			ctx := t.Context()
 			_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
-			// Present for every case, so an arm leaking it fails visibly rather than absently.
-			h.bus.chatStatus.Set("c1", vibekit.ChatStatusPayload{
-				Status: "in_progress", Description: "Wiring the PR status poller",
-			})
-
 			epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+			// Present for every case, so an arm leaking it fails visibly rather than absently.
+			// Broadcast mid-turn, where the real frame lands: see the sibling test above.
+			h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventChatStatus, "c1", vibekit.ChatStatusPayload{
+				Status: "in_progress", Description: "Wiring the PR status poller",
+			}))
 			h.SettleTurnOnResponse(ctx, "c1", epoch, 0,
 				&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": string(tc.stop)})})
 
@@ -131,6 +132,82 @@ func TestEmitTurnEnded_PushReadsTheSeverity(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPushBody_CarriesOnlyThisTurnsDescription: the body is the description the agent
+// declared DURING the turn that is ending, and a retained waiting_on_user claim outlives
+// its turn on purpose — so a chat's copy cannot answer for one turn without handing the
+// next turn the previous turn's words.
+//
+// Turn N+1 opens with TurnSourceWireTurnStart deliberately. A prompt-class source would
+// discharge the retention first, emptying the cache, so a cache-reading implementation
+// would also produce the default and the case could never go red.
+func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
+	newFixture := func(t *testing.T) (*Runtime, *recordingPush) {
+		t.Helper()
+		cs := newFakeChatStore()
+		fp := &recordingPush{sends: make(chan string, 4)}
+		h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+		cs.Bus = h
+		h.mcpRegistry.SignalReady()
+		_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+		return h, fp
+	}
+	endTurn := func(t *testing.T, h *Runtime, epoch vibekit.TurnEpoch) {
+		t.Helper()
+		h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0,
+			&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
+	}
+	awaitBody := func(t *testing.T, fp *recordingPush) string {
+		t.Helper()
+		select {
+		case body := <-fp.sends:
+			return body
+		case <-time.After(2 * time.Second):
+			t.Fatal("no push sent for a clean turn")
+			return ""
+		}
+	}
+
+	t.Run("the declaring turn gets its own words", func(t *testing.T) {
+		h, fp := newFixture(t)
+		epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+		h.Broadcast(t.Context(), vibekit.NewEvent(vibekit.EventChatStatus, "c1", vibekit.ChatStatusPayload{
+			Status:      vibekit.ChatStatusWaitingOnUser,
+			Description: "waiting on the user to disposition both proposals",
+		}))
+		endTurn(t, h, epoch)
+
+		if got := awaitBody(t, fp); got != "waiting on the user to disposition both proposals" {
+			t.Errorf("push body = %q, want the description this turn declared", got)
+		}
+	})
+
+	t.Run("the next turn does not inherit it", func(t *testing.T) {
+		h, fp := newFixture(t)
+		nEpoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+		h.Broadcast(t.Context(), vibekit.NewEvent(vibekit.EventChatStatus, "c1", vibekit.ChatStatusPayload{
+			Status:      vibekit.ChatStatusWaitingOnUser,
+			Description: "waiting on the user to disposition both proposals",
+		}))
+		endTurn(t, h, nEpoch)
+		_ = awaitBody(t, fp)
+		// The claim is RETAINED past turn end; that is the feature. So the cache still
+		// holds a description turn N+1 never declared.
+		if got := h.bus.chatStatus.Get("c1"); got.Status != vibekit.ChatStatusWaitingOnUser {
+			t.Fatalf("the fixture lost the retention: status is %q", got.Status)
+		}
+
+		nextEpoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourceWireTurnStart)
+		if nextEpoch == 0 {
+			t.Fatal("the fixture could not open a wire-started turn")
+		}
+		endTurn(t, h, nextEpoch)
+
+		if got := awaitBody(t, fp); got != defaultAgentFinishedBody {
+			t.Errorf("push body = %q, want %q: this turn declared nothing", got, defaultAgentFinishedBody)
+		}
+	})
 }
 
 // A chat notification must still travel as a chat SUBJECT rather than a bare key, or it

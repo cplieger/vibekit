@@ -505,7 +505,14 @@
    A top-level LEAF gets no box, which is the common case: `runToExec` unwraps a
    sequential root, so a flat workflow is all depth-0 leaves and renders exactly as
    before. Confirm this item against a run whose recipe has a `repeat` or a
-   `parallel`. */
+   `parallel`.
+
+   `overflow: hidden` is what rounds the corners of whatever row is FIRST and LAST
+   inside it, so nothing under here may add block padding: `.ev-kids` must reach
+   both inner edges or the box's own fill shows past the last selectable row. That
+   also means no row restates a corner radius, which is the only shape that holds at
+   any depth, since the visually-last row can be the last descendant of a nested
+   container. */
 .ev-row.ev-group {
   border: 1px solid var(--c-border);
   border-radius: var(--r);
@@ -513,10 +520,26 @@
   overflow: hidden;
 }
 
-/* The filled header. Radius 0 because the box's `overflow: hidden` clips the
-   corners, while `.ev-row-main` carries its own `--r` for the un-boxed case. */
+/* The filled header. */
 .ev-row.ev-group > .ev-row-main {
   background: var(--c-bg-tertiary);
+}
+
+/* EVERY ROW INSIDE THE BOX IS SQUARE, the header included. A row spans the box's
+   whole inner width — `.ev-kids` adds no inline padding — so a rounded hover or
+   selection fill on a row with rows above and below it reads as a floating pill
+   rather than as a band in a list, which is what was reported. The BOX owns the
+   corners and its `overflow: hidden` clips whatever reaches them, which is
+   `web.md`'s flush-inside-a-clipping-parent exemption rather than a nesting
+   violation.
+
+   A DESCENDANT selector on purpose, unlike the state and chevron rules in this
+   file: those answer for the row that OWNS the attribute, so reaching a subtree
+   would repaint rows that are not their subject, while mid-list-ness is a property
+   of every row in the box at any depth. `.ev-row-main` keeps its own `--r` for the
+   un-boxed top-level case, where a row genuinely is its own box in a gapped
+   column. */
+.ev-row.ev-group .ev-row-main {
   border-radius: 0;
 }
 
@@ -525,11 +548,6 @@
    head already filled with it. */
 .ev-row.ev-group > .ev-row-main:hover {
   background: color-mix(in srgb, var(--c-text-primary) 8%, var(--c-bg-tertiary));
-}
-
-/* So the last child row does not sit flush on the box edge. */
-.ev-row.ev-group > .ev-kids {
-  padding-block-end: var(--sp-1);
 }
 
 /* The NESTING MARKER for a sub-sub-item, `ICON_TAB_SUBTAB` — the same glyph and the
@@ -628,9 +646,13 @@
    row while the chevron already owns its own closed -90deg, so the two composed
    to -180deg — UP when closed, and a bare RIGHT when open.
 
-   Child combinators are load-bearing here for the reason `.ev-state` records
-   below: `.ev-kids` nests INSIDE `.ev-row`, so a descendant selector would flip
-   every chevron in the subtree from one expanded ancestor.
+   Child combinators for the reason `.ev-state` records below — `.ev-kids` nests
+   INSIDE `.ev-row`, so a descendant selector reaches every chevron in the subtree
+   from one expanded ancestor. That is no longer a REACHABLE defect: only a
+   top-level container folds (`tree.ts`, ONE FOLD PER BOX), so a nested row carries
+   neither a chevron in layout nor an `aria-expanded` to bleed from. The
+   combinators stay because they are the correct shape and they cost nothing; the
+   guard that used to pin a nested chevron's own turn went with the shape.
 
    A leading `.ev-row` would be a fifth compound part, breaching
    `selector-max-specificity` (0,4,3), and buys nothing: only a row has an

@@ -82,6 +82,12 @@ var durableWriteSites = []durableSite{{
 	fn:      "HandlePlan",
 	calls:   []string{"UpsertTurnPlan"},
 	because: "the turn's plan row, which the replay wire carries none of and nothing regenerates",
+}, {
+	file:  "internal/translate/steering.go",
+	fn:    "persistSteer",
+	calls: []string{"Mutate"},
+	because: "the reader's own mid-turn message and whether the agent read it — " +
+		"a replay re-derives the row from KAS's log but never its delivery state",
 }}
 
 // Writes ruled NOT durable, each row naming its reason: the next frame or load

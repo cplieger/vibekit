@@ -75,9 +75,23 @@ func (rt *Runtime) CloseChatState(ctx context.Context, chatID vibekit.ChatID) {
 	rt.cleanupChatState(ctx, chatID, false)
 }
 
+// DischargeWaiting ends a chat's retained waiting_on_user claim: the user has
+// answered, so the claim is false. Only that claim — a status the running turn
+// declared belongs to that turn. Broadcast as well as cleared, or a second connected
+// device paints the dot until its next message_chunk.
+func (rt *Runtime) DischargeWaiting(ctx context.Context, chatID vibekit.ChatID) {
+	if !rt.bus.chatStatus.ClearWaiting(chatID) {
+		return
+	}
+	rt.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventChatStatus, chatID, vibekit.ChatStatusPayload{}))
+}
+
 // StartTurn opens the chat's turn at bridge-ready, immediately before the call that
 // drives it, returning the epoch the caller holds a completion handle on.
 func (rt *Runtime) StartTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch {
+	if source.UserAnswered() {
+		rt.DischargeWaiting(ctx, chatID)
+	}
 	return rt.coord.StartTurn(ctx, chatID, source)
 }
 

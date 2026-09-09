@@ -383,6 +383,111 @@ func TestCostOfMessage_MirrorsTheClientsAccounting(t *testing.T) {
 	}
 }
 
+// A paged client cannot number its turns: its own projection starts at the window,
+// so turn 1 there is only turn 1 of the session when nothing was cut. The window
+// response therefore carries the segmentation state at its LEFT EDGE, and this
+// pins the handler's half of that — `turnWindowBase`'s own rule is the shared
+// fixture's (testdata/turn_windows.json, TestTurnWindowBaseContract).
+//
+// The block budget is what cuts each window here, so the three cases are three
+// genuinely different left edges rather than three spellings of one.
+func TestHandleOne_ServesTheWindowBase(t *testing.T) {
+	settled := func(id string, blocks int) vibekit.Message {
+		m := blockyMessage(id, blocks)
+		m.TurnOutcome = vibekit.TurnOutcomeCompleted
+		return m
+	}
+	// Three turns, each a prompt plus a settled 40-block reply.
+	msgs := []vibekit.Message{
+		user("u1", "a", 100), settled("a1", 40),
+		user("u2", "b", 200), settled("a2", 40),
+		user("u3", "c", 300), blockyMessage("a3", 40),
+	}
+
+	tests := []struct {
+		name         string
+		query        string
+		wantIDs      []string
+		wantMore     bool
+		wantOffset   int
+		wantClosed   bool
+		whyTheEdgeIs string
+	}{
+		{
+			name:         "the whole conversation fits, so the window IS the session",
+			query:        "?blocks=8192&max_bytes=8388608",
+			wantIDs:      []string{"u1", "a1", "u2", "a2", "u3", "a3"},
+			wantMore:     false,
+			wantOffset:   0,
+			wantClosed:   false,
+			whyTheEdgeIs: "nothing precedes turn 1 and no segment closed before it",
+		},
+		{
+			name:         "cut on a PROMPT, so the window's first turn opens inside it",
+			query:        "?blocks=100&max_bytes=8388608",
+			wantIDs:      []string{"u2", "a2", "u3", "a3"},
+			wantMore:     true,
+			wantOffset:   1,
+			wantClosed:   true,
+			whyTheEdgeIs: "turn 1 precedes the window and its reply settled, so the segment had closed",
+		},
+		{
+			name:  "cut MID-TURN, so the window's first turn is one it only continues",
+			query: "?blocks=40&max_bytes=8388608",
+			// The newest message goes through whole even over budget, and its own
+			// prompt does not fit — the shape that made `n` restart at 1.
+			wantIDs:      []string{"a3"},
+			wantMore:     true,
+			wantOffset:   2,
+			wantClosed:   false,
+			whyTheEdgeIs: "a3 continues turn 3, so two turns precede it and its own segment is open",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newTestStore(t)
+			_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+				c.Name = "A"
+				c.Messages = msgs
+				return true
+			})
+			req := httptest.NewRequest(http.MethodGet, "/api/chats/c1"+tc.query, nil)
+			rec := httptest.NewRecorder()
+			NewRouter(s).handleOne(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			var got struct {
+				Messages          []vibekit.Message `json:"messages"`
+				HasMore           bool              `json:"has_more"`
+				TurnOffset        int               `json:"turn_offset"`
+				TurnSegmentClosed bool              `json:"turn_segment_closed"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			ids := make([]string, len(got.Messages))
+			for i, m := range got.Messages {
+				ids[i] = string(m.ID)
+			}
+			if !slices.Equal(ids, tc.wantIDs) {
+				t.Fatalf("window = %v, want %v — the budget cut somewhere else, so the "+
+					"left edge this case is about is not the one served", ids, tc.wantIDs)
+			}
+			if got.HasMore != tc.wantMore {
+				t.Errorf("has_more = %v, want %v", got.HasMore, tc.wantMore)
+			}
+			if got.TurnOffset != tc.wantOffset {
+				t.Errorf("turn_offset = %d, want %d (%s)", got.TurnOffset, tc.wantOffset, tc.whyTheEdgeIs)
+			}
+			if got.TurnSegmentClosed != tc.wantClosed {
+				t.Errorf("turn_segment_closed = %v, want %v (%s)",
+					got.TurnSegmentClosed, tc.wantClosed, tc.whyTheEdgeIs)
+			}
+		})
+	}
+}
+
 func TestParseBlocksParam_HonoursTheInclusiveRange(t *testing.T) {
 	tests := []struct {
 		name  string

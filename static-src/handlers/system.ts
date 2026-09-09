@@ -31,6 +31,11 @@ import { refreshRetention } from "../retention.js";
 import { invalidateCachedRuns, rebuildLiveRuns } from "../run-store.js";
 import { fetchCatalog } from "../session-catalog.js";
 
+/** Numbers the gaps, so each one's run readers share a token no other gap can
+ *  match. Monotonic per page: a counter rather than a random id because the only
+ *  property needed is that two gaps differ. */
+let gapSeq = 0;
+
 // The handshake states the workspace root — the only way the client learns
 // where the workspace is, needed to make relative agent paths openable.
 // Recorded here rather than in transport.ts, whose handshake hook returns
@@ -107,26 +112,22 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   // so a gap is answered by re-reading it (app.ts wires `transport:gap` to
   // `listTabs`); a deleted chat's tabs are already closed by the coordinator.
   void loadList();
+  // ONE token for both run readers below: they act on the same event a network round
+  // trip apart, so without it every live run is fetched twice. Minted here because the
+  // gap is the cause; run-store.ts `answeredCause` owns what the token means.
+  const cause = `gap:${String(++gapSeq)}`;
   // The live-runs inventory is event-fed, so a gap leaves it blind to any
   // run that started or settled during the outage; re-read the server's
   // presence-based projection.
-  void rebuildLiveRuns();
+  void rebuildLiveRuns(cause);
   // A run's node state is APPLIED from `run_progress` rather than refetched, so
   // frames lost in the outage leave a stale tree with nothing to notice it. This
   // is the one moment the client knows it missed some.
-  invalidateCachedRuns();
-  // The mode/model catalog is a workspace fact the server holds in memory and
-  // announces on no frame, so a `config_option_update` during the outage — or a
-  // server restart, which empties the holder until a bridge respawns — leaves the
-  // picker on whatever boot answered. A gap is the one signal this client gets
-  // that either happened.
-  //
-  // FRESHNESS, recorded because it is a decision rather than an oversight: a
-  // model set that changes while the page is open and the connection is healthy
-  // still needs this gap or a reload. That is bounded by what the set IS — the
-  // models the account is served, an account fact rather than a session one —
-  // whereas the model a chat is ON is per-chat state, rides the chat record, and
-  // reaches the picker on its own broadcast (v3_updates.go's `applyTo`).
+  invalidateCachedRuns(cause);
+  // The mode/model catalog is a workspace fact the server holds in memory and announces on
+  // no frame, so a `config_option_update` during the outage, or a server restart that
+  // empties the holder, leaves the picker on whatever boot answered. A gap is the one
+  // signal this client gets, and this handler is the ONE reader of that endpoint.
   void fetchCatalog();
   const id = getActiveId();
   if (id !== "") {

@@ -70,8 +70,7 @@ export const ICON_EXPORT =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 export const ICON_DIFF =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M12 4v16"/></svg>';
-export const ICON_X =
-  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+export const ICON_X = svg("ui", '<path d="M18 6L6 18M6 6l12 12"/>');
 export const ICON_PLAY = svg("ui", '<polygon points="5 3 19 12 5 21 5 3"/>');
 export const ICON_CHEVRON_DOWN = svg("ui", '<path d="M6 9l6 6 6-6"/>');
 export const ICON_CHEVRON_UP = svg("ui", '<path d="M18 15l-6-6-6 6"/>');
@@ -466,6 +465,18 @@ export const ICON_GIT_BRANCH = svg(
   '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/>',
 );
 export const ICON_TAB_GIT = ICON_GIT_BRANCH;
+/** The commit glyph (Lucide "git-commit-horizontal"), for the editor toolbar's
+ *  diff-vs-HEAD control: a centred node with the history running through it.
+ *
+ *  Distinct from ICON_GIT_BRANCH above — that one is two OFF-centre circles and a
+ *  curve, this one is a single centred circle between two straight runs — and from
+ *  all four glyphs already in that toolbar (the diff brackets, the pencil, the
+ *  floppy, the X), so the unique-within-its-bar rule holds. Centred on (12,12) like
+ *  Lucide's own, for the reason stated above. */
+export const ICON_GIT_COMMIT = svg(
+  "ui",
+  '<circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/>',
+);
 export const ICON_TAB_EDITOR = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>`;
 /* HALF-UNIT coordinates on purpose: one unit is 0.667 CSS px at `--icon-ui`, so a
  * coordinate on a multiple of 3 puts the 1 CSS px stroke exactly astride two pixel

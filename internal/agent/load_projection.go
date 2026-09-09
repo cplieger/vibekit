@@ -277,6 +277,7 @@ func mergeProjection(existing, projected []vibekit.Message) []vibekit.Message {
 
 	out := make([]vibekit.Message, 0, len(projected)+len(existing))
 	out = append(out, projected...)
+	carrySteerFacts(out, existing)
 	// Indexed, not ranged by value: vibekit.Message is 216 bytes (gocritic rangeValCopy).
 	for i := range existing {
 		if _, dup := projectedIDs[existing[i].ID]; dup {
@@ -294,6 +295,43 @@ func mergeProjection(existing, projected []vibekit.Message) []vibekit.Message {
 		return cmp.Compare(a.Ts, b.Ts)
 	})
 	return out
+}
+
+// carrySteerFacts copies the two steer facts a replay cannot speak for — whether the
+// model READ the steer, and whose words it carries — onto the projected rows sharing
+// an id with a record this process already held. KAS's log says nothing about
+// consumption and the origin comes from vibekit's own ledger, so dropping them turned
+// an undelivered correction into a note claiming it landed.
+//
+// Per FIELD rather than per row, because both copies carry KAS's own `steer-` id, so
+// the projected one supersedes and there is no preserved row to keep. Fills only what
+// the projection LEFT EMPTY: the wire's own row is newer than the record.
+func carrySteerFacts(projected, existing []vibekit.Message) {
+	var held map[string]*vibekit.Message
+	for i := range existing {
+		if existing[i].UserKind != vibekit.UserKindSteer {
+			continue
+		}
+		if held == nil {
+			held = make(map[string]*vibekit.Message)
+		}
+		held[existing[i].ID] = &existing[i]
+	}
+	if held == nil {
+		return
+	}
+	for i := range projected {
+		was, ok := held[projected[i].ID]
+		if !ok {
+			continue
+		}
+		if projected[i].SteerState == "" {
+			projected[i].SteerState = was.SteerState
+		}
+		if projected[i].SteerOrigin == "" {
+			projected[i].SteerOrigin = was.SteerOrigin
+		}
+	}
 }
 
 // isPlanRow reports whether m is a turn's plan row: an assistant message whose ONLY

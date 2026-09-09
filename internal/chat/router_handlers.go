@@ -90,17 +90,23 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		end = indexOfMessage(msgs, beforeID)
 	}
 	window, start := messageWindow(msgs[:end], parseWindowBudget(r))
+	// `start` indexes `msgs` directly: `msgs[:end]` is a PREFIX, so an index into it
+	// is the same index into the whole array and no re-basing is needed.
+	turnOffset, segmentClosed := turnWindowBase(msgs, start)
 
-	// `draft` is its own field, keeping the composer autosave off the SSE fan-out.
 	// `turn_open` ships with the transcript because the in-flight reply has no
 	// carrier in `messages` until turn end, so a client deriving an outcome from
-	// that silence would answer `unknown` mid-turn.
+	// that silence would answer `unknown` mid-turn. `has_more`, `turn_offset` and
+	// `turn_segment_closed` all describe the window's LEFT EDGE, which the client's
+	// projection cannot know: its own scan starts at the window.
 	webhttp.WriteJSON(w, map[string]any{
-		"chat":      c.Header(),
-		"messages":  window,
-		"has_more":  start > 0,
-		"draft":     c.Draft,
-		"turn_open": rt.store.TurnOpen(vibekit.ChatID(id)),
+		"chat":                c.Header(),
+		"messages":            window,
+		"has_more":            start > 0,
+		"draft":               c.Draft,
+		"turn_open":           rt.store.TurnOpen(vibekit.ChatID(id)),
+		"turn_offset":         turnOffset,
+		"turn_segment_closed": segmentClosed,
 	})
 }
 

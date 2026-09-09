@@ -171,23 +171,77 @@ describe("the tree's disclosure arrow follows the app's direction convention", (
     }
   });
 
-  it("flips only the row that owns the chevron, never its subtree", () => {
-    // `.ev-kids` nests INSIDE `.ev-row`, so a descendant selector would turn a
-    // collapsed child's arrow down from its expanded ancestor. Same defect the
-    // `.ev-state` rules record, which is why both use child combinators.
-    const parent = evRow({ depth: 0, kids: true, expanded: true });
-    const child = evRow({ depth: 1, kids: true, expanded: false });
-    parent.querySelector<HTMLElement>(".ev-kids")!.appendChild(child);
-    mount(evTree(parent));
+  // DELETED with the shape it pinned: "flips only the row that owns the chevron,
+  // never its subtree" hand-built an expanded top-level container holding a
+  // COLLAPSED one, and `tree.ts` cannot produce that any more — only a top-level
+  // container folds, so a nested row has no chevron in layout and no
+  // `aria-expanded` to bleed from. The child combinators it defended are still in
+  // `31-exec-view.css` and still correct; there is simply nothing left that a
+  // descendant selector could visibly repaint.
+});
 
-    const parentGlyph = parent.querySelector<HTMLElement>(
-      ":scope > .ev-row-main > .ev-twist > .disclosure-chevron",
-    )!;
-    const childGlyph = child.querySelector<HTMLElement>(
-      ":scope > .ev-row-main > .ev-twist > .disclosure-chevron",
-    )!;
-    expect(css(parentGlyph, "--chev-turn").trim()).toBe("0deg");
-    expect(css(childGlyph, "--chev-turn").trim()).toBe("-90deg");
+describe("a row inside the group box is a band, not a pill", () => {
+  // Reported: a row on the group box's dark fill took a ROUNDED hover and
+  // selection fill while sitting mid-list. A row spans the box's whole inner width
+  // (`.ev-kids` adds no inline padding), so the corners belong to the box and a
+  // radius on the row reads as a floating pill rather than a band in a list.
+  it("squares the header and every row inside the box, and leaves the box its corners", () => {
+    const box = evRow({ depth: 0, kids: true, expanded: true });
+    box.classList.add("ev-group");
+    // A direct child of a box indents by ZERO (`tree.ts` writes `--ev-depth` 0 for
+    // depth 0 AND depth 1), which is what this harness's `depth` models.
+    const child = evRow({ depth: 0, kids: false });
+    box.querySelector<HTMLElement>(":scope > .ev-kids")!.appendChild(child);
+    mount(evTree(box));
+
+    expect(Number.parseFloat(css(box, "border-top-left-radius"))).toBeGreaterThan(0);
+    const mains: readonly [string, HTMLElement][] = [
+      ["header", box.querySelector<HTMLElement>(":scope > .ev-row-main")!],
+      ["child", child.querySelector<HTMLElement>(".ev-row-main")!],
+    ];
+    for (const [name, main] of mains) {
+      for (const corner of ["top-left", "top-right", "bottom-left", "bottom-right"]) {
+        expect(css(main, `border-${corner}-radius`), `${name}: ${corner}`).toBe("0px");
+      }
+    }
+  });
+
+  it("leaves an UN-BOXED top-level row its own radius", () => {
+    // The other direction, and the reason the fix is scoped to the box: outside one,
+    // each row is its own box in a gapped column, so rounding it is correct.
+    const row = evRow({ depth: 0, kids: false });
+    mount(evTree(row));
+    const main = row.querySelector<HTMLElement>(".ev-row-main")!;
+    expect(Number.parseFloat(css(main, "border-top-left-radius"))).toBeGreaterThan(0);
+  });
+
+  // Reported: the box's dark fill continued past the last selectable row. It was
+  // `padding-block-end: var(--sp-1)` on `.ev-kids` — 4px measured — which reads as a
+  // list that carries on after its last item. Flush is also what gives that row its
+  // rounded bottom corners, since the box clips them.
+  it("runs the last row to the box's inner bottom edge, and clips its corners there", () => {
+    const box = evRow({ depth: 0, kids: true, expanded: true });
+    box.classList.add("ev-group");
+    const kids = box.querySelector<HTMLElement>(":scope > .ev-kids")!;
+    for (const _ of [0, 1]) {
+      kids.appendChild(evRow({ depth: 0, kids: false }));
+    }
+    mount(evTree(box));
+
+    expect(css(kids, "padding-block-end")).toBe("0px");
+    expect(css(kids, "padding-block-start")).toBe("0px");
+
+    const last = kids.lastElementChild!.querySelector<HTMLElement>(".ev-row-main")!;
+    const innerBottom =
+      box.getBoundingClientRect().bottom - Number.parseFloat(css(box, "border-bottom-width"));
+    expect(last.getBoundingClientRect().bottom).toBeCloseTo(innerBottom, 1);
+
+    // The corner is the BOX's, taken through the clip rather than restated on the
+    // row: `web.md`'s flush-inside-a-clipping-parent exemption, and the only shape
+    // that works at any nesting depth, since the visually-last row can be the last
+    // descendant of a nested container.
+    expect(css(box, "overflow")).toBe("hidden");
+    expect(Number.parseFloat(css(box, "border-bottom-left-radius"))).toBeGreaterThan(0);
   });
 });
 

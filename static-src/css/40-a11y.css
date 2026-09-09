@@ -57,6 +57,74 @@
   outline-offset: var(--focus-offset);
 }
 
+/* A CONTROL ITS CLIPPING CARD DOES NOT CLEAR TAKES THE RING INSIDE ITS OWN EDGE.
+ *
+ * THE CRITERION IS THE RING'S REACH, `--focus-offset` plus the ring's own width — 3px
+ * at the floor above — against the measured distance from the member's border box to
+ * the padding box of the nearest ancestor that clips. A member is here because that
+ * distance is under the reach on an edge the clip applies to, which is a wider
+ * condition than being FLUSH: seven members are flush on the edges they lose (0px in,
+ * so the whole band falls outside), `.code-act-btn` sits 2px inside `.code-wrap` and
+ * loses 1px of its top band, and `.forge-account-repos-summary` is flush on both
+ * inline edges and on the block-end edge while its own `details` is closed. Without
+ * this rule, measured: 3px lost per flush edge, leaving the bottom band alone where a
+ * region follows the head, two edges of four on the PRs tab's toggle, and NOTHING
+ * where the control is the whole card (a delegate as born, a run step) — 2.4.7 failing
+ * rather than 2.4.11 degrading.
+ *
+ * What keeps a clipper's OTHER controls out is measured against that same reach, and
+ * for all but one of them it is inner padding: an account row's own actions clear by
+ * 8px and its repo rows by 4px, `.git-file-list`'s path button by 14px, `.diff-pane`'s
+ * whitespace checkbox by 4px, `.mcp-row`'s buttons and `.pill-model-list`'s rows and
+ * tiers by 8px. `.tool-call`'s disclosure is the exception and its numbers move with
+ * something else: it is absolutely positioned, so 12px of inline clearance is a
+ * declared `inset-inline-end` and 6px of block clearance is half the card's spare
+ * height, which a `min-height`, a font-size or a second summary row changes without
+ * touching any padding. `focus-ring-clip.test.ts` pins every one of those numbers, so a
+ * clearance that thins to under the reach fails there rather than silently clipping a
+ * ring.
+ *
+ * `.git-repo-section` holds TWO members, because its tabs build the header
+ * differently: the Changes tab's `.git-repo-section-header` is itself the button,
+ * while the PRs tab makes that class a `padding: 0` row hosting a nested
+ * `.git-repo-section-header-toggle` beside the + New PR button — so the toggle is
+ * flush on the top and the left, and the row is not focusable at all.
+ *
+ * Dropping the clip is not the remedy: `.subagent-block` and `.run-card` also carry
+ * `content-visibility: auto`, whose paint containment clips to the same edge by itself,
+ * and on the other three the clip is what rounds the card's corners under a flush
+ * child's hover fill (the rule `31-exec-view.css` states for its own group box). Nor
+ * is a `box-shadow`, clipped identically — ancestor overflow clips all descendant
+ * painting.
+ *
+ * Same token and same reasoning as `.turn-file-row` and `.ev-tl-lane`, and the offset
+ * is all this declares — the floor above keeps the ring's width and colour. Because it
+ * EQUALS that width the band lands in [0, 2px] inside the border box, so each member's
+ * own padding is what clears its icon and name (5px at the tightest, the code block's
+ * action button); `focus-ring-clip.test.ts` pins that on all four edges, so a member
+ * with thinner padding fails there rather than painting the ring over its own text.
+ *
+ * RESIDUAL: a square ring inside a ROUNDED clip loses its corner, since every member
+ * computes `border-radius: 0` while its card clips to an arc. The figures below are
+ * COMPUTED FROM THAT ARC rather than read off a pixel: the padding-box corner is a
+ * quarter circle of `radius - border` whose centre sits `radius` in from both edges, so
+ * the full 2px of width is back at the distance where the arc has passed the band's own
+ * depth, y = 2. That is 3px along each edge on a `--r` card (radius 5 centred (6,6))
+ * and 7.42px on `.run-card` (radius 11 centred (12,12)). Left as is: rounding it means
+ * a per-card `border-radius` on every member, several rules across four stylesheets, to
+ * round an outline the cards already clip identically at rest and on hover. */
+a.subagent-header:focus-visible,
+.subagent-container.has-disclosure > .subagent-header:focus-visible,
+.run-head:focus-visible,
+a.run-step-head:focus-visible,
+.tool-group-header:focus-visible,
+.code-act-btn:focus-visible,
+.git-repo-section-header:focus-visible,
+.git-repo-section-header-toggle:focus-visible,
+.forge-account-repos-summary:focus-visible {
+  outline-offset: var(--focus-offset-inset);
+}
+
 /* THE UNAVAILABLE FACE, over every disabled control rather than per component.
  *
  * Nine families each spelled it themselves and no two agreed: opacity came out

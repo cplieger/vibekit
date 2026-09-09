@@ -1196,6 +1196,47 @@ describe("activateChatView routes on the staleness verdict", () => {
     expect(loadTurnRail).toHaveBeenCalledWith("c-fresh");
   });
 
+  // The "Load older messages" button's ONE producer, and its only input is
+  // `session.has_more` — which used to carry a client GUESS (`message_count > 0`)
+  // wearing a server answer's name, so a chat holding every message it has still
+  // got a button, and one click (an empty page, then `has_more = d.has_more`) made
+  // it go away. `store-load.ts` now derives the value; this is the other half of
+  // that pair: what the derived value does at the seam.
+  //
+  // The ARGUMENTS rather than a rendered element, because `./scroll.js` is mocked
+  // wholesale here — asserting DOM through the mock would be asserting the mock.
+  // `scroll.test.ts` owns the rendering half (`setLoadMore(fn, true)` prepends
+  // `#load-more-indicator`, `(null, false)` removes it).
+  it("offers no pagination for a chat with nothing older", () => {
+    vi.mocked(get).mockReturnValue(loadedChat("c-whole"));
+    vi.mocked(transcriptStale).mockReturnValue(false);
+
+    activateChatView("c-whole");
+
+    expect(setLoadMore).toHaveBeenCalledWith(null, false);
+  });
+
+  it("offers pagination for a chat that genuinely has older messages", () => {
+    // The other direction, so the case above cannot be satisfied by never offering
+    // pagination at all. Written out rather than spread over `loadedChat`, whose
+    // return type is `never`.
+    vi.mocked(get).mockReturnValue({
+      id: "c-paged",
+      name: "seeded",
+      model: "",
+      messages: [{ id: "m1", role: "user", ts: 1 }],
+      message_count: 40,
+      has_more: true,
+      usage: { context_size: 1 },
+      draft: "",
+    } as never);
+    vi.mocked(transcriptStale).mockReturnValue(false);
+
+    activateChatView("c-paged");
+
+    expect(setLoadMore).toHaveBeenCalledWith(expect.any(Function), true);
+  });
+
   it("a stale window refetches messages, then forces the rail behind the load", async () => {
     vi.mocked(get).mockReturnValue(loadedChat("c-stale"));
     vi.mocked(transcriptStale).mockReturnValue(true);

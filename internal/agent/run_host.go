@@ -117,7 +117,7 @@ func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]str
 	rs.bridges.insert(runChatID(wfID), &sharedBridge{bridge: bridge, state: bridgeIdle})
 	// The run's envelope, before anything can execute — see runlease.Lease.
 	rs.grantLease(cctx, wfID, recipe.Name, o)
-	go rs.coord.Forward(runChatID(wfID), bridge)
+	rs.coord.goForward(runChatID(wfID), bridge)
 
 	if _, err := bridge.Call(cctx, methodKiroWorkflowInvoke, map[string]any{keyWorkflowID: wfID}); err != nil {
 		// The run was created but never started, so nothing is executing.
@@ -830,7 +830,7 @@ func (rs *Runs) rehost(
 			"workflow_id", workflowID)
 		return resident, func(error) {}, nil
 	}
-	go rs.coord.Forward(chatID, bridge)
+	rs.coord.goForward(chatID, bridge)
 	slog.Info("re-hosted a run nothing was holding", "workflow_id", workflowID)
 	return resident, func(cause error) {
 		if isCtxErr(cause) {

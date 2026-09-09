@@ -40,7 +40,7 @@ import { buildReasoning } from "./fundamentals/reasoning.js";
 
 describe("a live reasoning block's cues", () => {
   it("mounts open, labelled, marked streaming, and counted", () => {
-    const r = buildReasoning("weighing the options", true);
+    const r = buildReasoning("weighing the options", true, true);
     expect(r.root.open).toBe(true);
     expect(r.root.querySelector(".reasoning-label")?.textContent).toBe("Thinking…");
     // State bookkeeping only: the class marks a live trace and seal() removes
@@ -53,7 +53,7 @@ describe("a live reasoning block's cues", () => {
   });
 
   it("drops the streaming mark when the trace seals", () => {
-    const r = buildReasoning("weighing the options", true);
+    const r = buildReasoning("weighing the options", true, true);
     r.seal();
     // `[open]` flips back to true whenever the reader re-expands a finished
     // trace, which is why live state hangs off this class instead.
@@ -61,11 +61,32 @@ describe("a live reasoning block's cues", () => {
     expect(r.root.querySelector(".reasoning-label")?.textContent).toBe("Thinking completed");
   });
 
-  it("never marks a replayed trace, which mounts settled and collapsed", () => {
-    const r = buildReasoning("weighing the options", false);
+  it("never marks a replayed trace, and its disclosure is the caller's to decide", () => {
+    // The pulse and the disclosure are TWO inputs, because a settled trace that is
+    // still the newest element in its lane renders expanded: nothing about a trace
+    // finishing is positional, so `live` cannot answer for the fold.
+    const closed = buildReasoning("weighing the options", false, false);
+    expect(closed.root.classList.contains("streaming")).toBe(false);
+    expect(closed.root.open).toBe(false);
+    expect(closed.root.querySelector(".reasoning-label")?.textContent).toBe("Reasoning");
+
+    const open = buildReasoning("weighing the options", false, true);
+    expect(open.root.classList.contains("streaming")).toBe(false);
+    expect(open.root.open).toBe(true);
+    expect(open.root.querySelector(".reasoning-label")?.textContent).toBe("Reasoning");
+  });
+
+  it("settles without collapsing, and only a seal folds it", () => {
+    // The two exits, and the reason they are two: turn end SETTLES (the label and the
+    // pulse) while a successor arriving SEALS.
+    const r = buildReasoning("weighing the options", true, true);
+    r.settle();
     expect(r.root.classList.contains("streaming")).toBe(false);
+    expect(r.root.querySelector(".reasoning-label")?.textContent).toBe("Thinking completed");
+    expect(r.root.open).toBe(true);
+
+    r.seal();
     expect(r.root.open).toBe(false);
-    expect(r.root.querySelector(".reasoning-label")?.textContent).toBe("Reasoning");
   });
 });
 
@@ -75,7 +96,7 @@ describe("the summary's word count", () => {
   }
 
   it("grows with the trace, and is a sibling of the label rather than part of it", () => {
-    const r = buildReasoning("", true);
+    const r = buildReasoning("", true, true);
     // Zero words renders NOTHING. "0 words" on a trace that has not started is
     // a measurement of nothing dressed up as information.
     expect(countOf(r)).toBe("");
@@ -98,7 +119,7 @@ describe("the summary's word count", () => {
   it("recounts on the replace-to-full path, which is the one streaming uses", () => {
     // messages-blocks.ts drives a live block through setText from a signal, not
     // through append, so the count has to track that path too.
-    const r = buildReasoning("one", true);
+    const r = buildReasoning("one", true, true);
     expect(countOf(r)).toBe("1 word");
     r.setText("one two three");
     expect(countOf(r)).toBe("3 words");
@@ -110,7 +131,7 @@ describe("the summary's word count", () => {
 
   it("counts a replayed trace at mount and groups the thousands", () => {
     const words = Array.from({ length: 1204 }, (_, i) => `w${String(i)}`).join(" ");
-    const r = buildReasoning(words, false);
+    const r = buildReasoning(words, false, false);
     // Computed rather than a "1,204" literal: the separator belongs to the
     // platform formatter, and what this pins is that one is used at all.
     expect(countOf(r)).toBe(`${(1204).toLocaleString()} words`);
@@ -118,7 +139,7 @@ describe("the summary's word count", () => {
 
   it("renders nothing for a trace that is only whitespace", () => {
     // Reachable on replay: the mount guard only skips an EMPTY settled block.
-    expect(countOf(buildReasoning("  \n  ", false))).toBe("");
+    expect(countOf(buildReasoning("  \n  ", false, false))).toBe("");
   });
 
   it("counts a long single token as the one word it is", () => {
@@ -127,11 +148,11 @@ describe("the summary's word count", () => {
     // spaces, then removed) cannot tell those apart from an English trace holding
     // one long token, so a trace that was a single URL reported its character
     // count as though it were a different language.
-    expect(countOf(buildReasoning("https://github.com/cplieger/vibekit/pull/1234", false))).toBe(
-      "1 word",
-    );
-    expect(countOf(buildReasoning("uncharacteristically", false))).toBe("1 word");
-    expect(countOf(buildReasoning("weighing the options carefully", false))).toBe("4 words");
+    expect(
+      countOf(buildReasoning("https://github.com/cplieger/vibekit/pull/1234", false, false)),
+    ).toBe("1 word");
+    expect(countOf(buildReasoning("uncharacteristically", false, false))).toBe("1 word");
+    expect(countOf(buildReasoning("weighing the options carefully", false, false))).toBe("4 words");
   });
 
   it("reads a space-less script as one word, which is the measure's known floor", () => {
@@ -139,9 +160,9 @@ describe("the summary's word count", () => {
     // inside a Chinese trace, so this reads "1 word" at any length. Accepted over
     // a threshold that misreads the common case above; the real fix is
     // `Intl.Segmenter` and it is separate work.
-    expect(countOf(buildReasoning("先考虑各种可能的做法然后逐一排除掉行不通的那些", false))).toBe(
-      "1 word",
-    );
+    expect(
+      countOf(buildReasoning("先考虑各种可能的做法然后逐一排除掉行不通的那些", false, false)),
+    ).toBe("1 word");
   });
 });
 
@@ -175,7 +196,7 @@ describe("the count and the summary's accessible name", () => {
     // control for the length of the stream. `aria-hidden` never comes off: an
     // attribute removed at seal() would rename the row one last time, under a
     // reader whose focus may already be sitting on it.
-    const r = buildReasoning("weighing", true);
+    const r = buildReasoning("weighing", true, true);
     const count = r.root.querySelector(".reasoning-count");
     expect(count?.getAttribute("aria-hidden")).toBe("true");
     r.append(" the options");
@@ -188,7 +209,7 @@ describe("the count and the summary's accessible name", () => {
   });
 
   it("hides it on a replayed trace too, which mounts settled", () => {
-    const r = buildReasoning("weighing the options", false);
+    const r = buildReasoning("weighing the options", false, false);
     expect(r.root.querySelector(".reasoning-count")?.getAttribute("aria-hidden")).toBe("true");
   });
 
@@ -196,7 +217,7 @@ describe("the count and the summary's accessible name", () => {
     // The point of hiding the count: what is left is exactly the state. If this
     // ever reads "Thinking… 3 words" the churn is back; if it reads "" the label
     // was hidden by mistake and the control has no name at all.
-    const r = buildReasoning("weighing the options", true);
+    const r = buildReasoning("weighing the options", true, true);
     const summary = r.root.querySelector(".reasoning-summary");
     expect(summary).not.toBeNull();
     expect(accessibleName(summary as Element)).toBe("Thinking…");
@@ -314,7 +335,7 @@ describe("the count's alignment and digit metrics, computed", () => {
 
   /** A live block, mounted in the styled host. */
   function row(): { summary: DOMRect; label: DOMRect; count: HTMLElement } {
-    const r = buildReasoning("weighing the options carefully", true);
+    const r = buildReasoning("weighing the options carefully", true, true);
     host.appendChild(r.root);
     const summary = r.root.querySelector(".reasoning-summary");
     const label = r.root.querySelector(".reasoning-label");
@@ -396,7 +417,7 @@ describe("chunk boundaries cannot change the count", () => {
 
   /** Mount with the first chunk, append the rest, read the row. */
   function countAfterAppends(chunks: readonly string[]): string {
-    const r = buildReasoning(chunks[0] ?? "", true);
+    const r = buildReasoning(chunks[0] ?? "", true, true);
     for (const c of chunks.slice(1)) {
       r.append(c);
     }
@@ -405,7 +426,7 @@ describe("chunk boundaries cannot change the count", () => {
 
   /** The same trace assembled the way a live block really is: replace-to-full. */
   function countAfterSetText(chunks: readonly string[]): string {
-    const r = buildReasoning("", true);
+    const r = buildReasoning("", true, true);
     let acc = "";
     for (const c of chunks) {
       acc += c;
@@ -458,7 +479,7 @@ describe("chunk boundaries cannot change the count", () => {
   it("counts a word split across three deltas once", () => {
     // The case the fold exists to get right, spelled out rather than left to the
     // generators: a boundary INSIDE a word, twice over. Three deltas, one word.
-    const r = buildReasoning("unchar", true);
+    const r = buildReasoning("unchar", true, true);
     expect(r.root.querySelector(".reasoning-count")?.textContent).toBe("1 word");
     r.append("acteristic");
     expect(r.root.querySelector(".reasoning-count")?.textContent).toBe("1 word");
@@ -470,7 +491,7 @@ describe("chunk boundaries cannot change the count", () => {
     // The mirror of the case above, and the one a fold that always subtracted
     // would break: the trace ends on whitespace, so the next chunk starts a NEW
     // word rather than continuing the previous one.
-    const r = buildReasoning("weighing ", true);
+    const r = buildReasoning("weighing ", true, true);
     expect(r.root.querySelector(".reasoning-count")?.textContent).toBe("1 word");
     r.append("the");
     expect(r.root.querySelector(".reasoning-count")?.textContent).toBe("2 words");
@@ -479,7 +500,7 @@ describe("chunk boundaries cannot change the count", () => {
   it("holds the count across a delta that is only whitespace", () => {
     // Such a delta ends the open word without adding one, so both halves of the
     // fold's state have to move: the count stays and `openWord` clears.
-    const r = buildReasoning("weighing", true);
+    const r = buildReasoning("weighing", true, true);
     r.append("   \n");
     expect(r.root.querySelector(".reasoning-count")?.textContent).toBe("1 word");
     r.append("the");

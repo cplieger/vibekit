@@ -208,7 +208,7 @@ export async function fetchGitDiffSources(
     state.loaded = true;
     // The diff pane is the primary failure surface; show the real reason
     // alongside the framework's toast instead of a generic placeholder.
-    state.error = `Failed to load diff: ${o.error.message}`;
+    state.error.value = `Failed to load diff: ${o.error.message}`;
     if (getActiveFilePath() === state.path) {
       restoreUI(state);
     }
@@ -243,7 +243,7 @@ export async function fetchGitDiffSources(
     state.current.value = newContent;
   }
   state.loaded = true;
-  state.error = error;
+  state.error.value = error;
   if (getActiveFilePath() === state.path) {
     restoreUI(state);
   }
@@ -254,12 +254,20 @@ export function activateFile(path: string): void {
   abortSuggestion(); // cancel any in-flight suggestion for the old file
   activeLoadController?.abort();
   activeLoadController = new AbortController();
-  setActiveFilePath(path);
   // CREATED if absent. This is the editor tab's `onShow`, so it runs for a tab
   // this device did not open — restored from the server's set at boot, or opened
   // on another device — and returning early there left the view blank with a tab
   // above it. The path is all the state needs.
+  //
+  // BEFORE `setActiveFilePath`, which is load-bearing: that write is the active-path
+  // signal, and editor-core's git-diff effect re-runs on it and reads this file's
+  // `error` and `mode` signals. Created afterwards, the effect's run for this path
+  // finds no state, so it subscribes to neither and never re-runs for the load that
+  // follows — leaving the control's answer for a restored tab pinned until the next
+  // git-status scan. `open()` already creates the state first, which is why only the
+  // restored-tab route was affected.
   const state = ensureFileState(path);
+  setActiveFilePath(path);
   $.editorFilename.textContent = routeForPath(path).displayPath;
   $.editorError.classList.add("hidden");
   $.editorHighlight.parentElement?.scrollTo(0, 0);
@@ -319,13 +327,13 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
     return;
   }
   if (d === null) {
-    state.error = "Failed to load file";
+    state.error.value = "Failed to load file";
     state.loaded = true;
     restoreUI(state);
     return;
   }
   if (d.error !== undefined) {
-    state.error = d.error;
+    state.error.value = d.error;
     state.loaded = true;
     restoreUI(state);
     return;
@@ -334,7 +342,7 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
   state.current.value = state.original.value;
   state.loadedHash = d.content_hash ?? "";
   state.loaded = true;
-  state.error = "";
+  state.error.value = "";
   const parsed = parseConflicts(state.current.value);
   if (parsed.hunks.length > 0 && state.mode.value.kind === "edit") {
     state.mode.value = { kind: "conflict", conflict: parsed, editing: true };

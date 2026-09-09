@@ -465,6 +465,11 @@ func TestSend_SetsTTLPerKind(t *testing.T) {
 		{vibekit.PushKindPermission, "600"},
 		{vibekit.PushKindAgentFinished, "3600"},
 		{vibekit.PushKindPRStatus, "86400"},
+		// A run's outcome takes ttlFor's DEFAULT arm on purpose — a run that failed
+		// overnight is still worth reading in the morning, which is the same window a
+		// PR's verdict wants — so the default's coverage of this kind is asserted here
+		// rather than assumed.
+		{vibekit.PushKindRunOutcome, "86400"},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.kind), func(t *testing.T) {

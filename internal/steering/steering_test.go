@@ -3,6 +3,7 @@ package steering
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -398,9 +399,16 @@ func TestGenerate_LogsWroteOnSuccess(t *testing.T) {
 	configDir := t.TempDir()
 
 	var buf bytes.Buffer
-	prev := slog.Default()
+	// slog.SetDefault also points the log package at the new handler, and it skips
+	// pointing it back when the restored handler is the stock one (which reaches
+	// log.Output), so log's writer and flags are restored too.
+	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
+	t.Cleanup(func() {
+		slog.SetDefault(prevLogger)
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	})
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	g := New(workDir, configDir)
 	g.Generate(t.Context())

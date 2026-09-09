@@ -203,6 +203,11 @@ interface PushPageMessage {
  *  each side and asserted against the Go one by a test. */
 const PR_SUBJECT_PREFIX = "pr:";
 
+/** Subject-key prefix for a workflow run (vibekit.RunSubjectPrefix), spelled once on
+ *  each side for PR_SUBJECT_PREFIX's reason and asserted against the Go one by the
+ *  same test. */
+const RUN_SUBJECT_PREFIX = "run:";
+
 /** Where to open when NO page is up at all — the one path that needs a URL.
  *  A focus lands on an existing page, which routes itself from the posted subject.
  *  These two literals are spelled here rather than imported from router.ts because
@@ -212,6 +217,10 @@ const PR_SUBJECT_PREFIX = "pr:";
 function subjectPath(data: { chatId: string; subject: string }): string {
   if (data.subject.startsWith(PR_SUBJECT_PREFIX)) {
     return "/git";
+  }
+  if (data.subject.startsWith(RUN_SUBJECT_PREFIX)) {
+    // The id AFTER the prefix, spelled the way router.ts buildPath spells that route.
+    return `/run/${encodeURIComponent(data.subject.slice(RUN_SUBJECT_PREFIX.length))}`;
   }
   return data.chatId === "" ? "/" : `/chat/${encodeURIComponent(data.chatId)}`;
 }

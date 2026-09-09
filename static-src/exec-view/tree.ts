@@ -14,9 +14,17 @@
 // sub-sub-item (depth >= 2) indents, and it takes the `↳` glyph as well.
 //
 // SELECTION, not disclosure: unfolding a step in place pushes every later row
-// down, moving what a live-run reader is watching. Containers still collapse
-// (hiding a finished loop's twelve passes is a real want), and a STEP never does —
-// `paint` hides a childless row's chevron, which is what keeps it non-collapsible.
+// down, moving what a live-run reader is watching. A STEP never collapses —
+// `paint` hides a childless row's chevron, which is what keeps it
+// non-collapsible.
+//
+// ONE FOLD PER BOX. Only a TOP-LEVEL container discloses; a container nested
+// inside a box always shows its children. Two folds over one tree meant the box's
+// chevron did not answer "show me what is in here" — opening it revealed rows that
+// were themselves still shut — and the inner fold hid the loop passes a reader
+// opens the box to read. `collapsible` is `depth === 0` and `applyCollapse` is the
+// one writer that honours it, so a nested container carries no chevron and no
+// `aria-expanded` rather than a control that does nothing.
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
@@ -72,6 +80,9 @@ interface Row {
   start?: string;
   end?: string;
   collapsed: boolean;
+  /** Whether this row's children may be folded away at all. Top-level only — see
+   *  the ONE FOLD PER BOX note at the top of this file. */
+  collapsible: boolean;
 }
 
 /** Build the tree pane. `onSelect` is injected so this file points only
@@ -138,12 +149,13 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
       chevron,
       kids: null,
       collapsed: false,
+      collapsible: depth === 0,
     };
 
     head.addEventListener("click", (e) => {
       // The twist is a zone of the row, not a nested control; the handler tells
       // them apart by target, keeping the row one activation target.
-      if (chevron.contains(e.target as Node) && row.kids !== null) {
+      if (row.collapsible && chevron.contains(e.target as Node) && row.kids !== null) {
         row.collapsed = !row.collapsed;
         applyCollapse(row);
         return;
@@ -159,11 +171,20 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     return row;
   }
 
+  /** The one writer of a row's fold state, in all three channels. It reads
+   *  `collapsible` rather than trusting `collapsed`, so a nested container is held
+   *  open and carries no `aria-expanded` — announcing a disclosure state for a row
+   *  with no disclosure is the defect the hidden chevron would otherwise leave. */
   function applyCollapse(row: Row): void {
-    row.root.classList.toggle("ev-collapsed", row.collapsed);
-    row.root.setAttribute("aria-expanded", String(!row.collapsed));
+    const collapsed = row.collapsible && row.collapsed;
+    row.root.classList.toggle("ev-collapsed", collapsed);
+    if (row.collapsible) {
+      row.root.setAttribute("aria-expanded", String(!collapsed));
+    } else {
+      row.root.removeAttribute("aria-expanded");
+    }
     if (row.kids !== null) {
-      row.kids.hidden = row.collapsed;
+      row.kids.hidden = collapsed;
     }
   }
 
@@ -220,7 +241,7 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
       row.root.removeAttribute("aria-expanded");
       return;
     }
-    row.chevron.hidden = false;
+    row.chevron.hidden = !row.collapsible;
     row.kids ??= el("div", { className: "ev-kids", role: "group" });
     row.root.appendChild(row.kids);
     // Rebuilt as an ordering pass: appending in plan order moves the existing

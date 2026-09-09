@@ -78,7 +78,11 @@ func statusOf(err error) int {
 // POST /api/command HTTP endpoint.
 type Dispatcher struct {
 	handlers map[vibekit.CommandType]Handler
-	mu       sync.RWMutex
+	// status ends a chat's retained waiting_on_user claim after a command that IS the
+	// user answering. Assigned once at registration, before the dispatcher serves, so
+	// it is read without mu; commandDischarges is the classification.
+	status ChatStatus
+	mu     sync.RWMutex
 }
 
 // New constructs a Dispatcher. A handler's own collaborators arrive at
@@ -164,6 +168,8 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		body = responseOK
 	}
 	webhttp.WriteJSON(w, body)
+	// After the write, so a fan-out cannot sit between the handler and the ack.
+	d.noteAnswer(r.Context(), &cmd)
 }
 
 // SessionParams builds the base ACP parameter map with the "sessionId" key

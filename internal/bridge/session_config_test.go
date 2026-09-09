@@ -1,9 +1,7 @@
 package bridge
 
 import (
-	"bytes"
 	"context"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -328,10 +326,7 @@ func TestNewSession_SuccessfulConfigCallsStayQuiet(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := configOptionFake(t, filepath.Join(dir, "requests.log"))
 
-	logs := &bytes.Buffer{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logs := captureLogs(t)
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)

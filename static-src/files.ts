@@ -39,7 +39,8 @@ import {
   formatDate,
   joinPath,
   parentPath,
-  displayPath,
+  FB_ROOT,
+  normalizeDirPath,
   withAncestors,
   matchesRelative,
   errorRow,
@@ -203,11 +204,17 @@ export function initFileBrowser(): void {
  *  so a transient server error isn't papered over. */
 let pendingRestore = false;
 
-/** Restore the file browser path from settings (called from restoreAll). */
+/** Restore the file browser path from settings or a `/files/<path>` deep link.
+ *
+ *  Normalised, because both of those arrive from outside this module and neither
+ *  can be trusted to be in its space: a URL carries whatever was bookmarked and
+ *  `fb_path` carries whatever an older build persisted. `""` still means "nothing
+ *  saved" and leaves the browser on its own root. */
 export function restoreFileBrowser(path: string): void {
   if (path !== "") {
-    state.currentPath = path;
-    state.history[0] = path;
+    const dir = normalizeDirPath(path);
+    state.currentPath = dir;
+    state.history[0] = dir;
     pendingRestore = true;
   }
 }
@@ -238,7 +245,7 @@ function initPathInput(): void {
     onNavigate: (target) => {
       navigate(target);
     },
-    getDisplayPath: () => displayPath(state.currentPath),
+    getCurrentPath: () => state.currentPath,
   });
 }
 
@@ -273,7 +280,7 @@ function loadDir(): void {
       // Restored path no longer loads (outside the granted roots, or
       // deleted since): heal to the root mount listing once instead of
       // stranding the user on an error row they never navigated to.
-      if (pendingRestore && state.currentPath !== ".") {
+      if (pendingRestore && state.currentPath !== FB_ROOT) {
         pendingRestore = false;
         state.reset();
         void patchSettings({ fb_path: "" });
@@ -326,10 +333,10 @@ function showError(msg: string): void {
   // Anywhere but the root: offer the way back to the mount listing.
   // Covers e.g. ".." above a nested granted root (its parent is not
   // browsable) and a directory deleted from under the browser.
-  if (state.currentPath !== ".") {
+  if (state.currentPath !== FB_ROOT) {
     const home = el("button", { type: "button", className: "btn-small" }, "Go to root");
     home.addEventListener("click", () => {
-      navigate(".");
+      navigate(FB_ROOT);
     });
     row.appendChild(home);
   }
@@ -382,7 +389,7 @@ function loadWithTransition(): void {
 function updateNavButtons(): void {
   $.fbBack.disabled = state.historyIdx <= 0;
   $.fbForward.disabled = state.historyIdx >= state.history.length - 1;
-  $.fbPath.value = displayPath(state.currentPath);
+  $.fbPath.value = state.currentPath;
   $.fbPath.readOnly = true;
   updateToolbarContext();
 }
@@ -422,6 +429,11 @@ function updateWriteButtons(): void {
 function renderList(opts: { transition?: boolean } = {}): void {
   updateNavButtons();
 
+  // Once per PASS, not once per row. `changedPathsOf` folds every message of the
+  // session into a set, so calling it inside `entryRow` made a render
+  // O(rows x messages). `repaintRows` already hoists it — one shape across both.
+  const changed = chatFilterOn ? changedPathsOf(activeSession.peek()) : new Set<string>();
+
   const swap = (): HTMLElement => {
     const sorted = sortEntries(state.entries);
     state.sortedNames = sorted.map((e) => e.name);
@@ -429,7 +441,7 @@ function renderList(opts: { transition?: boolean } = {}): void {
     $.fbList.setAttribute("role", "list");
 
     const items: FbEntry[] = [];
-    if (state.currentPath !== ".") {
+    if (state.currentPath !== FB_ROOT) {
       items.push({ kind: "parent" });
     }
     for (const entry of sorted) {
@@ -438,7 +450,7 @@ function renderList(opts: { transition?: boolean } = {}): void {
 
     reconcile($.fbList, items, {
       key: (e: FbEntry) => (e.kind === "parent" ? "__parent__" : `entry:${e.entry.name}`),
-      mount: (e: FbEntry) => (e.kind === "parent" ? parentRow() : entryRow(e.entry)),
+      mount: (e: FbEntry) => (e.kind === "parent" ? parentRow() : entryRow(e.entry, changed)),
       update: (row: HTMLElement, e: FbEntry) => {
         if (e.kind !== "entry") {
           return;
@@ -565,7 +577,9 @@ function statusBadge(absPath: string, isDir: boolean): HTMLElement | null {
   return badge;
 }
 
-function entryRow(entry: FileEntry): HTMLDivElement {
+/** One listing row. `changed` is the pass's attribution set, threaded in by
+ *  `renderList` rather than folded here — see the note at its call site. */
+function entryRow(entry: FileEntry, changed: ReadonlySet<string>): HTMLDivElement {
   const check = el("input", {
     type: "checkbox",
     className: FB_CHECK,
@@ -606,7 +620,7 @@ function entryRow(entry: FileEntry): HTMLDivElement {
 
   const abs = joinPath(state.currentPath, entry.name);
   const badge = statusBadge(abs, entry.isDir);
-  const mine = chatFilterOn && matchesRelative(abs, changedPathsOf(activeSession.peek()));
+  const mine = chatFilterOn && matchesRelative(abs, changed);
 
   const row = el(
     "div",

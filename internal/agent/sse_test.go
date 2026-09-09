@@ -567,7 +567,9 @@ func TestReplayTurnState_MarksAStepDrivenTurnAsTheRunsOwn(t *testing.T) {
 				}
 				got = append(got, p)
 				return 0, nil
-			}, chatID, h.coord.turns.openTurns(), nil)
+				// Nothing declared and nothing SAID, which is the fail-open shape: this
+				// case is about whether the step's frame is emitted at all.
+			}, chatID, h.coord.turns.openTurns(), nil, false)
 			if err != nil {
 				t.Fatalf("replayTurnState: %v", err)
 			}
@@ -590,7 +592,7 @@ func TestReplayTurnState_MarksAStepDrivenTurnAsTheRunsOwn(t *testing.T) {
 // holds, so the drive belongs in one place.
 func replayedTurnState(t *testing.T, h *Runtime, chatID vibekit.ChatID) vibekit.TurnStatePayload {
 	t.Helper()
-	got := orderedTurnStates(t, h, chatID, nil)
+	got := orderedTurnStates(t, h, chatID, nil, false)
 	if len(got) != 1 {
 		t.Fatalf("turn_state events = %d, want 1", len(got))
 	}
@@ -608,11 +610,16 @@ type replayedTurn struct {
 // orderedTurnStates drives replayTurnState and returns every turn_state it wrote, in
 // WIRE ORDER — a slice rather than a map, because the order is what two of the tests
 // below assert.
+//
+// `stated` is passed through rather than derived from `declared`, because deriving it
+// would put the nil-versus-empty reading this parameter exists to delete back into the
+// one helper every test here drives.
 func orderedTurnStates(
 	t *testing.T,
 	rt *Runtime,
 	chatFilter vibekit.ChatID,
 	declared map[vibekit.ChatID]struct{},
+	stated bool,
 ) []replayedTurn {
 	t.Helper()
 	var got []replayedTurn
@@ -633,7 +640,7 @@ func orderedTurnStates(
 		// would charge it. A test-side zero would make the budget unspendable and every
 		// assertion over it vacuous.
 		return len(data), nil
-	}, chatFilter, rt.coord.turns.openTurns(), declared)
+	}, chatFilter, rt.coord.turns.openTurns(), declared, stated)
 	if err != nil {
 		t.Fatalf("replayTurnState: %v", err)
 	}
@@ -775,7 +782,7 @@ func TestReplayTurnState_SkipsAChatWithNoOpenTab(t *testing.T) {
 	openSmallTurn(t, rt, untabbed, "nobody has this open")
 	openBudgetChatTab(t, rt, tabbed)
 
-	got := servedChats(orderedTurnStates(t, rt, "", nil))
+	got := servedChats(orderedTurnStates(t, rt, "", nil, false))
 
 	want := []vibekit.ChatID{tabbed}
 	if !slices.Equal(got, want) {
@@ -800,7 +807,7 @@ func TestReplayTurnState_ServesEveryBusyChatWhenTheTabStoreIsUnwired(t *testing.
 	openSmallTurn(t, rt, first, "one")
 	openSmallTurn(t, rt, second, "two")
 
-	got := orderedTurnStates(t, rt, "", nil)
+	got := orderedTurnStates(t, rt, "", nil, false)
 
 	want := []vibekit.ChatID{first, second}
 	if ids := servedChats(got); !slices.Equal(ids, want) {
@@ -828,7 +835,7 @@ func TestReplayTurnState_ServesTheDeclaredChatsSnapshotAndABareSignalForTheRest(
 	openBudgetChatTab(t, rt, onScreen)
 	openBudgetChatTab(t, rt, background)
 
-	got := orderedTurnStates(t, rt, "", declaredSet(onScreen))
+	got := orderedTurnStates(t, rt, "", declaredSet(onScreen), true)
 
 	if len(got) != 2 {
 		t.Fatalf("turn_state events = %d, want 2: an undeclared chat is still busy", len(got))
@@ -865,7 +872,7 @@ func TestReplayTurnState_ServesDeclaredChatsFirstWhenTheBudgetIsShort(t *testing
 		// would put them at the end of the wire behind four bare signals.
 		lateA, lateB := ids[len(ids)-2], ids[len(ids)-1]
 
-		got := orderedTurnStates(t, rt, "", declaredSet(lateA, lateB))
+		got := orderedTurnStates(t, rt, "", declaredSet(lateA, lateB), true)
 
 		if lead := servedChats(got)[:2]; !slices.Equal(lead, []vibekit.ChatID{lateA, lateB}) {
 			t.Errorf("the wire leads with %v, want the declared chats %v first",
@@ -886,7 +893,7 @@ func TestReplayTurnState_ServesDeclaredChatsFirstWhenTheBudgetIsShort(t *testing
 		rt := newBudgetRuntime(t)
 		ids := busyChatsWithHugeTurns(t, rt, fixtureBusyChats)
 
-		got := orderedTurnStates(t, rt, "", declaredSet(ids...))
+		got := orderedTurnStates(t, rt, "", declaredSet(ids...), true)
 
 		if served := servedChats(got); !slices.Equal(served, ids) {
 			t.Fatalf("replayTurnState served %v, want every busy chat in id order %v", served, ids)
@@ -940,7 +947,7 @@ func TestReplayTurnState_IsDeterministicallyOrdered(t *testing.T) {
 	var first []shape
 	for i := range 20 {
 		got := make([]shape, 0, len(ids))
-		for _, tn := range orderedTurnStates(t, rt, "", nil) {
+		for _, tn := range orderedTurnStates(t, rt, "", nil, false) {
 			got = append(got, shape{id: tn.chatID, snapshot: tn.payload.Message != nil})
 		}
 		if i == 0 {
@@ -977,36 +984,63 @@ func TestParseSnapshotChats(t *testing.T) {
 		// 1.27's address-of-an-expression.
 		query *string
 		want  []vibekit.ChatID
+		// wantStated is the half an id list cannot carry: whether the client SPOKE.
+		// It is what separates the old-client fail-open from a client declaring
+		// nothing, and both of those answer an empty id set.
+		wantStated bool
 	}{
-		{name: "absent, which reads as declare nothing", query: nil, want: nil},
-		{name: "present but empty", query: new(""), want: nil},
-		{name: "one chat", query: new("c-1"), want: []vibekit.ChatID{"c-1"}},
+		{name: "absent, so the client never declared and fails open", query: nil, want: nil, wantStated: false},
 		{
-			name:  "several chats",
-			query: new("c-1,c-2,c-3"),
-			want:  []vibekit.ChatID{"c-1", "c-2", "c-3"},
+			name: "present but empty, which is indistinguishable from absent",
+			// The whole reason `none` is a sentinel rather than an empty value: this
+			// is also what a client with no chat active yet would send.
+			query:      new(""),
+			want:       nil,
+			wantStated: false,
 		},
 		{
-			name:  "a malformed entry is dropped and the rest still declared",
-			query: new("c-1,../etc/passwd,c-2"),
-			want:  []vibekit.ChatID{"c-1", "c-2"},
+			name: "the sentinel declares NOTHING rather than a chat named none",
+			// Read as an id it would pass ids.ValidChatID, land in the set, and report
+			// one declared id. Tested before the loop, so the set stays empty and the
+			// client is recorded as having spoken.
+			query:      new(snapshotNone),
+			want:       nil,
+			wantStated: true,
+		},
+		{name: "one chat", query: new("c-1"), want: []vibekit.ChatID{"c-1"}, wantStated: true},
+		{
+			name:       "several chats",
+			query:      new("c-1,c-2,c-3"),
+			want:       []vibekit.ChatID{"c-1", "c-2", "c-3"},
+			wantStated: true,
+		},
+		{
+			name:       "a malformed entry is dropped and the rest still declared",
+			query:      new("c-1,../etc/passwd,c-2"),
+			want:       []vibekit.ChatID{"c-1", "c-2"},
+			wantStated: true,
 		},
 		{
 			name: "every entry malformed reads as declare nothing rather than failing the connect",
 			// The stream is the client's only recovery channel, so a mangled parameter
-			// must not be the thing that keeps it closed.
-			query: new("../,,%00"),
-			want:  nil,
+			// must not be the thing that keeps it closed. It stays STATED: that client
+			// has the parameter, so turn_ended is its recovery, where failing open on
+			// mangled input is the whole payload.
+			query:      new("../,,%00"),
+			want:       nil,
+			wantStated: true,
 		},
 		{
-			name:  "a blank between separators is dropped",
-			query: new("c-1,,c-2"),
-			want:  []vibekit.ChatID{"c-1", "c-2"},
+			name:       "a blank between separators is dropped",
+			query:      new("c-1,,c-2"),
+			want:       []vibekit.ChatID{"c-1", "c-2"},
+			wantStated: true,
 		},
 		{
-			name:  "over the cap, truncated to the first entries",
-			query: new(strings.Join(overCap, ",")),
-			want:  wantOverCap,
+			name:       "over the cap, truncated to the first entries",
+			query:      new(strings.Join(overCap, ",")),
+			want:       wantOverCap,
+			wantStated: true,
 		},
 	}
 	for _, tc := range cases {
@@ -1017,7 +1051,7 @@ func TestParseSnapshotChats(t *testing.T) {
 			}
 			req := httptest.NewRequest(http.MethodGet, target, nil)
 
-			got := parseSnapshotChats(req)
+			got, stated := parseSnapshotChats(req)
 
 			ids := make([]vibekit.ChatID, 0, len(got))
 			for id := range got {
@@ -1025,7 +1059,10 @@ func TestParseSnapshotChats(t *testing.T) {
 			}
 			slices.Sort(ids)
 			if !slices.Equal(ids, tc.want) {
-				t.Errorf("parseSnapshotChats(%q) = %v, want %v", target, ids, tc.want)
+				t.Errorf("parseSnapshotChats(%q) declared %v, want %v", target, ids, tc.want)
+			}
+			if stated != tc.wantStated {
+				t.Errorf("parseSnapshotChats(%q) stated = %v, want %v", target, stated, tc.wantStated)
 			}
 		})
 	}

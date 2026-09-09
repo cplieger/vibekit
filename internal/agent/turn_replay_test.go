@@ -29,9 +29,9 @@ func replayedTurnStates(tb testing.TB, rt *Runtime) (turnStates map[vibekit.Chat
 		return 0, nil
 	}
 	open := rt.coord.turns.openTurns()
-	// Nothing declared, so every open chat is served: these tests are about WHICH
-	// turns the replay reads, not about which of them a client can show.
-	if err := rt.replayTurnState(collect, "", open, nil); err != nil {
+	// Nothing declared and nothing said, so every open chat is served: these tests are
+	// about WHICH turns the replay reads, not about which of them a client can show.
+	if err := rt.replayTurnState(collect, "", open, nil, false); err != nil {
 		tb.Fatalf("replayTurnState: %v", err)
 	}
 	if err := rt.replayWaitingStatus(collect, "", open); err != nil {
@@ -103,7 +103,7 @@ func TestReplayTurnState_APrimeIsNeverServed(t *testing.T) {
 	buf.AppendTextDelta("The context was just switched", "")
 	// A retained waiting status, so the second assertion below can fail: without
 	// one there is nothing for replayWaitingStatus to emit and the check is vacuous.
-	rt.bus.chatStatus.Set("c1", vibekit.ChatStatusPayload{Status: vibekit.ChatStatusWaitingOnUser})
+	rt.bus.chatStatus.Merge("c1", vibekit.ChatStatusPayload{Status: vibekit.ChatStatusWaitingOnUser})
 
 	states, statuses := replayedTurnStates(t, rt)
 	if got, ok := states["c1"]; ok {

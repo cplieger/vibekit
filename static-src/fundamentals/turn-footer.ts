@@ -106,11 +106,16 @@ export function buildTurnFooter(d: TurnSummaryData): HTMLDivElement {
     className: "turn-ledger-summary",
     type: "button",
   }) as HTMLButtonElement;
-  summary.appendChild(el("span", { className: "turn-ledger-glyph" }));
-  summary.appendChild(el("span", { className: "turn-ledger-text" }));
+  // LEADS the row, because it DISCLOSES the per-file list under it. One rule
+  // across the transcript (chevron.ts): a disclosure chevron comes first and
+  // rotates, a navigation chevron sits at the trailing edge and does not. It used
+  // to follow the ledger text, which is a third position — neither edge — so this
+  // row agreed with nothing.
   const caret = chevronEl();
   caret.classList.add("turn-ledger-caret");
   summary.appendChild(caret);
+  summary.appendChild(el("span", { className: "turn-ledger-glyph" }));
+  summary.appendChild(el("span", { className: "turn-ledger-text" }));
   summary.addEventListener("click", () => {
     setFilesOpen(footer, !filesOpen(footer));
   });

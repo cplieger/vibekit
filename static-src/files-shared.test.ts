@@ -5,7 +5,6 @@ import {
   formatSize,
   joinPath,
   parentPath,
-  displayPath,
   sortEntries,
   withAncestors,
   matchesRelative,
@@ -35,14 +34,19 @@ describe("formatSize", () => {
   }
 });
 
+// These two used to assert the ROOTLESS space — `joinPath(".", "file.txt")` was
+// "file.txt" and `parentPath("src")` was "." — so the suite agreed with the
+// defect and could not see it. The space is container-absolute; the JOIN against
+// the git-status index, the normaliser and the route agreement live in
+// `files-path-space.test.ts`, which is the file that pins the contract itself.
 describe("joinPath", () => {
   const cases: [string, string, string][] = [
-    [".", "file.txt", "file.txt"],
-    [".", "subdir", "subdir"],
-    ["src", "main.ts", "src/main.ts"],
-    ["src/lib", "utils.ts", "src/lib/utils.ts"],
-    ["src/", "main.ts", "src/main.ts"],
-    ["src//", "main.ts", "src/main.ts"],
+    ["/", "workspace", "/workspace"],
+    ["/", "file.txt", "/file.txt"],
+    ["/workspace", "vibekit", "/workspace/vibekit"],
+    ["/workspace/vibekit", "static-src", "/workspace/vibekit/static-src"],
+    ["/workspace/", "vibekit", "/workspace/vibekit"],
+    ["/workspace//", "vibekit", "/workspace/vibekit"],
   ];
 
   for (const [base, name, expected] of cases) {
@@ -54,33 +58,17 @@ describe("joinPath", () => {
 
 describe("parentPath", () => {
   const cases: [string, string][] = [
-    [".", "."],
-    ["", "."],
-    ["file.txt", "."],
-    ["src", "."],
-    ["src/lib", "src"],
-    ["src/lib/utils", "src/lib"],
-    ["a/b/c/d", "a/b/c"],
+    ["/", "/"],
+    ["", "/"],
+    ["/workspace", "/"],
+    ["/workspace/vibekit", "/workspace"],
+    ["/workspace/vibekit/static-src", "/workspace/vibekit"],
+    ["/a/b/c/d", "/a/b/c"],
   ];
 
   for (const [input, expected] of cases) {
     it(`parent of "${input}" → "${expected}"`, () => {
       expect(parentPath(input)).toBe(expected);
-    });
-  }
-});
-
-describe("displayPath", () => {
-  const cases: [string, string][] = [
-    [".", "/"],
-    ["src", "/src"],
-    ["src/lib", "/src/lib"],
-    ["a/b/c", "/a/b/c"],
-  ];
-
-  for (const [input, expected] of cases) {
-    it(`displays "${input}" as "${expected}"`, () => {
-      expect(displayPath(input)).toBe(expected);
     });
   }
 });
@@ -364,5 +352,50 @@ describe("matchesRelative", () => {
   it("does not match an unrelated path or an empty set", () => {
     expect(matchesRelative("/workspace/vibekit/main.go", changed)).toBe(false);
     expect(matchesRelative("/workspace/vibekit/static-src/files.ts", new Set())).toBe(false);
+  });
+
+  // The match probes the ROW's own suffixes against the set rather than walking the
+  // set, so the answer must not depend on how big the set is — after a long session
+  // it holds every path the chat touched plus every ancestor. A thousand entries is
+  // where a set-walking implementation was O(|changed|) per row.
+  describe("against a large change set", () => {
+    const big = withAncestors(
+      Array.from({ length: 1000 }, (_, i) => `pkg/mod${String(i)}/file${String(i)}.go`),
+    );
+
+    it("finds a depth-2 match", () => {
+      expect(matchesRelative("/workspace/app/pkg/mod742/file742.go", big)).toBe(true);
+    });
+
+    it("finds the containing folder of a depth-2 match", () => {
+      expect(matchesRelative("/workspace/app/pkg/mod742", big)).toBe(true);
+    });
+
+    it("answers false for a path the set does not hold", () => {
+      expect(matchesRelative("/workspace/app/pkg/mod742/other.go", big)).toBe(false);
+      expect(matchesRelative("/workspace/app/pkg/mod1000/file1000.go", big)).toBe(false);
+    });
+  });
+
+  // The multi-mount case. The browser lists an allow-list of mounts, so a
+  // `/config/...` row has no workspace-relative form at all — and a chat's change
+  // set is workspace-relative, so such a row must not be attributed to it.
+  it("does not attribute a /config row to a workspace-relative set", () => {
+    const rels = withAncestors(["static-src/files.ts"]);
+    expect(matchesRelative("/config/chats/c-1.json", rels)).toBe(false);
+    expect(matchesRelative("/config", rels)).toBe(false);
+  });
+
+  it("DOES match a /config row whose tail coincides with a relative path", () => {
+    // Characterization, not a goal. The rule is a suffix rule on a `/` boundary,
+    // so a mount row whose tail happens to spell a workspace-relative path is
+    // attributed. Pinned because it is the one place the suffix rule is loose, and
+    // because it is what proves the O(depth) inversion changed no semantics: the
+    // set-walking form answered true here too (`"/config/mcp.json".endsWith(
+    // "/config/mcp.json")`). Closing it needs the row's own mount, which the
+    // listing does not carry.
+    const rels = withAncestors(["config/mcp.json"]);
+    expect(matchesRelative("/config/mcp.json", rels)).toBe(true);
+    expect(matchesRelative("/config", rels)).toBe(true);
   });
 });

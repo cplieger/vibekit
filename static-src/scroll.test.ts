@@ -1165,10 +1165,13 @@ describe("a large tool card below the streaming block", () => {
   });
 
   it("keeps Following when the anchor sits in a collapsed disclosure", async () => {
-    // A subagent's live text block streams inside a box that is collapsed by
-    // default. `height: 0` + `overflow: hidden` clips it without removing it
-    // from layout, so it still reports the offsets the pin arithmetic reads —
-    // offsets that overflow a document the box contributes no height to.
+    // A COLLAPSED disclosure holding a live text block, built here by hand: no
+    // transcript surface streams into one any more (a delegate's own blocks are
+    // dropped, and a folded box is one the store already holds something after), so
+    // this is the geometry rule rather than a live shape. `height: 0` + `overflow:
+    // hidden` clips the block without removing it from layout, so it still reports the
+    // offsets the pin arithmetic reads — offsets that overflow a document the box
+    // contributes no height to.
     block(1500);
     const box = block(0);
     box.style.cssText = "height:0;overflow:hidden;";
@@ -1752,6 +1755,75 @@ describe("the bottom pin's settle window", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The STREAMING follow write's licence, and that it is re-read where it is spent.
+//
+// `autoScrollIfAnchored` decides on the frame it RUNS in and writes in the next
+// one. `queuePinFrame` re-reads its conditions in that next frame and this one did
+// not, so a revocation arriving inside the gap was ignored: the reader's own
+// wheel, or the transcript being handed to another chat.
+//
+// Real layout, because the whole subject is a write landing a frame after the
+// gesture that should have stopped it: `fakeScroller` shadows `scrollTo` with an
+// assignment to its own number and fires no scroll event, so under it the
+// reader's gesture never reaches the listener and both cases pass either way.
+// ---------------------------------------------------------------------------
+
+describe("the streaming follow write's licence", () => {
+  beforeEach(realLayoutReset);
+
+  /** Following at the live edge with the pin pass DEAD, which is the state that
+   *  licenses a follow write and nothing else. `land(800)` outlasts
+   *  PIN_SETTLE_MS, so a write observed afterwards is this pass's own rather than
+   *  the pin's re-assert. */
+  async function followingAtEdge(): Promise<HTMLElement> {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    scroll.scrollToBottom();
+    await land(800);
+    return wrap;
+  }
+
+  it("does not take the reader back when they scroll up inside its frame", async () => {
+    const wrap = await followingAtEdge();
+    expect(scroll.readingState()).toBe("following");
+
+    // The mutation licenses ONE write, and awaiting a microtask is the
+    // MutationObserver's own delivery — so the frame is queued and has not run.
+    block(400);
+    await Promise.resolve();
+    readerScrollTo(wrap, 0);
+    await land(300);
+
+    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      scrollTop: 0,
+      state: "reading",
+    });
+  });
+
+  it("does not land on a view handed over while it was queued", async () => {
+    // The parked-chat case, and the one that lets `messages-parked-views.test.ts`
+    // stop waiting out frames before a gesture: `attach` restores the incoming
+    // view's own Reading, so the re-read refuses a write the outgoing view
+    // licensed. `readingState: "reading"` is the subject rather than the setup —
+    // an incoming FOLLOWING view legitimately belongs at its live edge, so there
+    // is nothing to protect there and no cancellation to add.
+    const wrap = await followingAtEdge();
+
+    block(400);
+    await Promise.resolve();
+    scroll.detach();
+    scroll.attach({ el: messagesEl, scrollTop: 250, readingState: "reading" });
+    await land(300);
+
+    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      scrollTop: 250,
+      state: "reading",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // `onReaderGesture`: the seam for "the reader said where they want to be".
 //
 // TWO publishers, and the second is the one this block exists to pin: a scroll,
@@ -2052,5 +2124,79 @@ describe("the scrollbar as an input surface", () => {
     block(1500);
     await land();
     expect(wrap.scrollTop).toBe(wrap.scrollHeight - wrap.clientHeight);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EVERY PAGINATION LOOKUP IS SCOPED TO THE ATTACHED VIEW.
+//
+// The multiplexer keeps one `.transcript-view` per resident chat and hands the
+// scroller between them (`attach`/`detach`), so a PARKED view's own pagination
+// furniture — its "Load older messages" button, and the skeleton of a fetch that
+// was in flight when it was parked — is DOM this controller does not own.
+// `maybeLoadMore` and `updateLoadMoreIndicator` were already `viewEl`-scoped;
+// `abandonLoadPass` reached for the skeleton by document id, which contradicted
+// them two functions apart and took the parked view's skeleton down with it.
+//
+// Real elements rather than the shared transcript, because the property IS which
+// element a lookup reaches: two views under `#messages`, exactly as the
+// multiplexer nests them.
+// ---------------------------------------------------------------------------
+describe("pagination furniture belongs to its own view", () => {
+  /** Two sibling transcript views under the scroller, and the scroller attached to
+   *  the first — the shape after one chat switch. */
+  function twoViews(): { parked: HTMLElement; active: HTMLElement } {
+    const wrap = realScroller();
+    wrap.style.cssText = "height:400px;overflow-y:auto;position:relative;";
+    const parked = document.createElement("div");
+    parked.className = "transcript-view";
+    const active = document.createElement("div");
+    active.className = "transcript-view";
+    messagesEl.replaceChildren(parked, active);
+    return { parked, active };
+  }
+
+  /** The skeleton a load pass in flight leaves in a view. Built by hand because
+   *  what is under test is which element a REMOVAL reaches, not how one is mounted. */
+  function plantSkeleton(view: HTMLElement): HTMLElement {
+    const skel = document.createElement("div");
+    skel.id = "load-more-skeleton";
+    view.prepend(skel);
+    return skel;
+  }
+
+  it("abandons only the attached view's load pass, leaving a parked view's skeleton", () => {
+    const { parked, active } = twoViews();
+    const parkedSkeleton = plantSkeleton(parked);
+    scroll.attach({ el: active, scrollTop: 0, readingState: "following" });
+    const activeSkeleton = plantSkeleton(active);
+
+    // `resetScrollState` ends in `abandonLoadPass`, and it is the reachable door:
+    // a chat switch runs it for the INCOMING view.
+    scroll.resetScrollState();
+
+    expect({
+      parkedKept: parked.contains(parkedSkeleton),
+      activeGone: !active.contains(activeSkeleton),
+    }).toEqual({ parkedKept: true, activeGone: true });
+  });
+
+  it("leaves a parked view's Load-older-messages button alone", () => {
+    // The other half of the same scoping, from the indicator's side: parking wires
+    // the button through the view that owned it, and the incoming view's own reset
+    // must not reach it.
+    const { parked, active } = twoViews();
+    scroll.attach({ el: parked, scrollTop: 0, readingState: "following" });
+    scroll.setLoadMore(() => undefined, true);
+    const button = parked.querySelector(`[id="load-more-indicator"]`);
+    expect(button).not.toBeNull();
+
+    scroll.attach({ el: active, scrollTop: 0, readingState: "following" });
+    scroll.resetScrollState();
+
+    expect({
+      parkedKept: button !== null && parked.contains(button),
+      activeHasNone: active.querySelector(`[id="load-more-indicator"]`) === null,
+    }).toEqual({ parkedKept: true, activeHasNone: true });
   });
 });

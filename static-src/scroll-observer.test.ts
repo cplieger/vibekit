@@ -78,6 +78,14 @@ function constructionSite(): string {
 
 const NativeResizeObserver = window.ResizeObserver;
 
+/** Whether the engine is currently INSIDE a resize delivery.
+ *
+ *  The invariant the last case asserts is about a moment rather than a count: a
+ *  mutation of an observed child is safe in any other task and undeliverable here.
+ *  A module-level flag because every observer in the page goes through the wrapper
+ *  below, so it answers for the whole delivery loop and not for one observer. */
+let inDelivery = false;
+
 /** A delegating wrapper rather than a subclass: the tally has to be reachable
  *  from the callback, and a derived constructor cannot touch anything of its own
  *  before `super()`. */
@@ -88,7 +96,14 @@ class ProbeResizeObserver implements ResizeObserver {
     this.inner = new NativeResizeObserver((entries, observer) => {
       tally.calls += 1;
       tally.entries += entries.length;
-      cb(entries, observer);
+      inDelivery = true;
+      try {
+        cb(entries, observer);
+      } finally {
+        // Restored in a `finally`, so a callback that throws cannot leave the flag
+        // standing and make every later case read as a violation.
+        inDelivery = false;
+      }
     });
   }
   observe(target: Element, options?: ResizeObserverOptions): void {
@@ -129,6 +144,7 @@ rootStyle.setProperty = (name: string, value: string | null, priority?: string):
 
 const { setSessions, setActive, bumpMessages } = await import("./store.js");
 const { mountChatView } = await import("./messages.js");
+const scroll = await import("./scroll.js");
 const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
 
 /** Turns and blocks per turn: the resting shape the loop reproduces on. Sixty
@@ -137,9 +153,13 @@ const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
 const TURNS = 60;
 const BLOCKS = 12;
 
-/** One callback per observed pass, with room for the settle: a BOUND, so a
- *  regression that re-couples the write to the delivery shows up as a callback
- *  storm even on a build where the engine declines to report the loop. */
+/** A GROSS-REGRESSION GUARD, not evidence about the invariant: measured tallies
+ *  with the fix in are 1-2 calls per site, and the 42-callback amplitude it is
+ *  sized against comes from the streaming and momentum scenarios THIS fixture
+ *  does not reproduce, so it sits 4-8x above the observed floor and far below the
+ *  regression it names. It catches a callback storm even on a build where the
+ *  engine declines to report the loop, and nothing subtler; the loop-error
+ *  assertion beside it is the load-bearing half. */
 const MAX_CALLS_PER_SITE = 8;
 
 let seq = 0;
@@ -188,6 +208,16 @@ function paint(): void {
 /** Frames the settle waits for: the deferred write lands on the next one, the
  *  resize it causes is delivered on the one after, and the rest are margin. */
 const SETTLE_FRAMES = 6;
+
+/** One animation-frame phase. Resolved from inside the callback, so the awaiting
+ *  code runs in that same phase, ahead of any callback registered after this one. */
+async function frame(): Promise<void> {
+  await new Promise<void>((r) => {
+    requestAnimationFrame(() => {
+      r();
+    });
+  });
+}
 
 /** Let the engine finish delivering: several frames plus a macrotask, which is
  *  where a deferred observation lands and where the loop error would arrive. */
@@ -284,13 +314,117 @@ describe(
       });
     }
 
+    // A promotion to Following releases `deferWhileReading`'s queue, whose payloads
+    // change the boxes this observer carries — and ISOLATING THE RESIZE PATH is the
+    // difficulty, because getting it wrong makes the case pass whatever the resize
+    // callback does. Three other callers reach the same re-derivation, so a SHRINK
+    // lets the scroll listener (a clamped reader) or the live-edge observer (a
+    // sentinel crossing its margin) release the state first — measured — while the
+    // MutationObserver sees no style change at all. A small GROWTH under a reader
+    // already at the edge excludes all three.
+    it(
+      "releases the deferred batch OUTSIDE the resize delivery",
+      { timeout: testTimeoutFor(framesBudgetMs(SETTLE_FRAMES * 3)) },
+      async () => {
+        const outer = document.getElementById("messages-wrap-outer")!;
+        outer.style.height = "600px";
+        paint();
+        const view = document.querySelector<HTMLElement>(".transcript-view.is-active")!;
+        // An observed child whose height the case owns: `childObserver` re-observes on
+        // every childList change, so appending one puts it in the ResizeObserver's set.
+        // Resizing a real turn card instead would make the fixture depend on which
+        // block heights the transcript happened to lay out.
+        const spacer = document.createElement("div");
+        spacer.style.blockSize = "400px";
+        spacer.style.flexShrink = "0";
+        view.appendChild(spacer);
+        await settle();
+
+        // At the live edge, then parked ON it: `setUserScrolledUp` enters Reading
+        // through `setState` and marks no input, so the reader does not own the
+        // scroller and the promotion path below is reachable.
+        scrollerEl.scrollTop = scrollerEl.scrollHeight;
+        await settle();
+        scroll.setUserScrolledUp(true);
+
+        let deliveryAtFlush: boolean | null = null;
+        scroll.deferWhileReading(() => {
+          deliveryAtFlush = inDelivery;
+          // What a released fold does: change the box of a child this observer watches.
+          spacer.style.blockSize = "10px";
+        });
+
+        // 50px, well inside BOTTOM_TOLERANCE_PX (100): the reader is still at the
+        // bottom afterwards, so the state is released — and `scrollTop` never moves, so
+        // no scroll event and no sentinel crossing can be the thing that releases it.
+        spacer.style.blockSize = "450px";
+        await settle();
+
+        // `null` would mean the batch never ran, which is the vacuous pass this
+        // assertion has to exclude as well.
+        expect([deliveryAtFlush, loopErrors], report()).toEqual([false, []]);
+      },
+    );
+
+    // The other half of that release: content appended BETWEEN the delivery and the
+    // frame that applies it takes the reader off the edge with no input, no scroll
+    // event and no sentinel crossing, so a measurement carried across the frame
+    // releases a reader who is 450px above the end.
+    //
+    // Timed by FRAME PHASE rather than by a delay: two `frame()`s land in the same
+    // animation-frame phase as the deferred apply and ahead of it, both before that
+    // frame's layout, so the growth is invisible to the previous delivery.
+    it(
+      "keeps the batch held when the content grows before the deferred apply",
+      { timeout: testTimeoutFor(framesBudgetMs(SETTLE_FRAMES * 3)) },
+      async () => {
+        const outer = document.getElementById("messages-wrap-outer")!;
+        outer.style.height = "600px";
+        paint();
+        const view = document.querySelector<HTMLElement>(".transcript-view.is-active")!;
+        const spacer = document.createElement("div");
+        spacer.style.blockSize = "400px";
+        spacer.style.flexShrink = "0";
+        view.appendChild(spacer);
+        await settle();
+
+        scrollerEl.scrollTop = scrollerEl.scrollHeight;
+        await settle();
+        scroll.setUserScrolledUp(true);
+
+        let flushed = false;
+        scroll.deferWhileReading(() => {
+          flushed = true;
+        });
+
+        // 50px, inside BOTTOM_TOLERANCE_PX (100), so this delivery measures the reader
+        // at the edge — the release the case above asserts.
+        spacer.style.blockSize = "450px";
+        await frame();
+        await frame();
+        // 450px more, well outside it. Nothing else can notice: no gesture, and the
+        // sentinel's own crossing is not delivered until after this frame's apply.
+        spacer.style.blockSize = "900px";
+        await settle();
+
+        expect([flushed, scroll.readingState(), loopErrors], report()).toEqual([
+          false,
+          "reading",
+          [],
+        ]);
+      },
+    );
+
     it("still reserves the gutter, so the pass above is not vacuous", () => {
-      // The error only ever occurred on a pass that WROTE `--scrollbar-w`. A run
-      // that never wrote it would pass the two cases above having reproduced
-      // nothing.
+      // The error only ever occurred on a pass that WROTE `--scrollbar-w`, so a run
+      // that never wrote one would pass the two cases above having reproduced nothing.
+      // `0px` HAS TO BE EXCLUDED or the count alone lets that through: `scroll.ts`
+      // initialises `scrollbarWidth` to `""`, so the first publish writes whatever it
+      // measured, `"0px"` included — and that equals the fallback already in force in
+      // `css/13-messages.css`, so it changes no box and raises no loop error.
       expect([gutterWrites > 0, rootStyle.getPropertyValue("--scrollbar-w")]).toEqual([
         true,
-        expect.stringMatching(/^\d+px$/),
+        expect.stringMatching(/^([1-9]\d*)px$/),
       ]);
     });
   },

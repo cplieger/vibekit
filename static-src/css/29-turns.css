@@ -884,11 +884,9 @@
 
 /* The ledger's chevron. Was two rotated borders — its own third technique, with
  * a hardcoded 1.5px stroke that scaled with nothing — now the shared
- * `.disclosure-chevron` (chevron.ts). */
-.turn-ledger-caret {
-  --chev-size: 0.75rem;
-}
-
+ * `.disclosure-chevron` (chevron.ts), at the shared SIZE too: this rule used to
+ * override `--chev-size` to 0.75rem, so one glyph rendered at 12px here and 14px
+ * on every box header in the same turn, with nothing recording the reason. */
 /* `display: none`, not `visibility: hidden`. The readout is RIGHT-aligned, so a
    reserved 0.75rem box plus the summary's own gap in front of it held the line
    20px off the card's gutter on every turn that changed no files — which is most
@@ -1404,10 +1402,6 @@
    `-90deg` stays declared exactly once, in the base rule. */
 .turn:not([data-folded]) .turn-fold-toggle > .disclosure-chevron {
   --chev-turn: 0deg;
-}
-
-.turn-fold-toggle > .disclosure-chevron {
-  --chev-size: 0.75rem;
 }
 
 .turn-fold-toggle:hover {

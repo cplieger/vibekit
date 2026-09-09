@@ -30,7 +30,8 @@ vi.mock("./api-client.js", () => ({
 vi.mock("./navigate.js", () => ({
   openAtLine: (path: string, line?: number) => openAtLine(path, line),
 }));
-vi.mock("./icons.js", () => ({ fileIcon: () => "<svg></svg>" }));
+// ICON_X is inert: search-shell.ts imports it, so ESM linking needs the name.
+vi.mock("./icons.js", () => ({ fileIcon: () => "<svg></svg>", ICON_X: "<svg></svg>" }));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));
 
 const mod = await import("./files-search.js");
@@ -160,16 +161,16 @@ describe("searchNote", () => {
 
 describe("hitLabel", () => {
   it("shows a path relative to the folder searched", () => {
-    expect(hitLabel("workspace/src", "/workspace/src/a/b.go")).toBe("a/b.go");
+    expect(hitLabel("/workspace/src", "/workspace/src/a/b.go")).toBe("a/b.go");
   });
 
   it("falls back to the absolute path for a root search, which spans mounts", () => {
-    expect(hitLabel(".", "/config/notes/x.md")).toBe("/config/notes/x.md");
+    expect(hitLabel("/", "/config/notes/x.md")).toBe("/config/notes/x.md");
     expect(hitLabel("", "/config/notes/x.md")).toBe("/config/notes/x.md");
   });
 
   it("keeps the absolute form for a path outside the folder searched", () => {
-    expect(hitLabel("workspace/src", "/config/x.md")).toBe("/config/x.md");
+    expect(hitLabel("/workspace/src", "/config/x.md")).toBe("/config/x.md");
   });
 });
 

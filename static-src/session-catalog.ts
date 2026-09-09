@@ -1,25 +1,16 @@
-// ---------------------------------------------------------------------------
-// The workspace's mode, model and effort catalog: one reader, one feed.
-//
-// `GET /api/config-template` is that feed, and it is the ONLY one. The catalog
-// used to travel per chat as `ChatHeader.available_modes` and
-// `available_models` — 59 modes copied onto each of 29 chats, measured at
-// 1,236,118 B of a 1.25 MiB `/api/chats` response (93.1%), fetched twice per
-// boot — and a per-session effect re-populated the picker from whichever chat
-// was active. Both are gone: the catalog is a workspace fact, so it is fetched
-// once and held once (`roles.ts` for the modes, `effort.ts` for the tiers,
-// `picker.ts` for the models).
-//
-// Its own module rather than three functions in the composition root. `app.ts`
-// is wiring, and a catalog fetcher that maps a wire shape, seeds a context-size
-// table and repaints two controls is a job with its own subject.
-// ---------------------------------------------------------------------------
+// The workspace's mode, model and effort catalog: ONE reader of `GET /api/config-template`,
+// because the endpoint is a utility-bridge RPC and a second reader seeding the same
+// surfaces costs another subprocess round trip per boot and per gap. `model-catalog.ts`
+// owns the freshness policy and the single in-flight slot that makes a second caller free.
 
-import type { ModelInfo, SessionEffortLevel, SessionMode, SessionModel } from "./types.js";
-import { apiGet } from "./api-client.js";
+import type { ModelInfo, SessionModel } from "./types.js";
+import { apiGetTyped } from "./api-client.js";
+import { decodeConfigTemplateResponse } from "./wire/decoders.gen.js";
+import type { ConfigTemplateResponse } from "./wire/types.gen.js";
+import { CATALOG_REQUEST_TIMEOUT_MS, refreshCatalog } from "./model-catalog.js";
 import { setCatalogModes } from "./roles.js";
 import { setCatalogEfforts } from "./effort.js";
-import { refreshPickerIfVisible, setPickerModels } from "./picker.js";
+import { refreshPickerIfVisible, setCatalogPhase, setPickerModels } from "./picker.js";
 import { refreshContextUI } from "./context-ui.js";
 import { MODEL_CONTEXT_SIZES, contextSizeFor, getActive, parseContextSize } from "./store.js";
 
@@ -46,43 +37,59 @@ function toModelInfo(m: SessionModel): ModelInfo {
 
 /** Fetch the workspace catalog and seed every control that reads it.
  *
- *  `/api/config-template` is kiro-cli's session-less `_kiro/config/template`,
- *  and the server prefers a LIVE session's report over the template when one
- *  exists — so this one feed carries the authoritative catalog whether or not a
- *  bridge has spawned, which is what let the per-session feed go.
- *
- *  Fire-and-forget by convention: every control it seeds renders a usable empty
- *  state, so a failed fetch degrades the picker rather than blocking a boot. */
-export async function fetchCatalog(): Promise<void> {
-  const d = await apiGet<{
-    modes: SessionMode[];
-    models: SessionModel[];
-    default_model?: string;
-    effort_levels?: SessionEffortLevel[];
-    effort_active?: string;
-  }>("/api/config-template");
-  if (d === null) {
-    return;
-  }
-  // Pre-session effort vocabulary: a chat with no bridge has no session catalog,
-  // so without this the effort control has neither its tier list nor the level
-  // the next session would run at.
-  setCatalogEfforts(d.effort_levels ?? [], d.effort_active ?? "");
-  if (d.modes.length > 0) {
-    setCatalogModes(d.modes);
-  }
-  const active = getActive();
-  if (d.models.length > 0) {
-    populatePickerModels(d.models.map(toModelInfo), active?.model ?? "");
-  }
-  // The context-size seed and the pill's tier name both need the catalog, and
-  // this is the only feed that carries it.
-  if (active !== undefined) {
-    if (active.usage.context_size === 0 && active.model !== "") {
-      active.usage.context_size = contextSizeFor(active.model);
-    }
-    refreshContextUI(active);
-  }
+ *  The server prefers a LIVE session's report over the template, so this one feed is
+ *  authoritative whether or not a bridge has spawned. `reset` RESTARTS a retry loop
+ *  already running; every other caller declines, so a second call on one gap is free. */
+export function fetchCatalog(opts: { readonly reset?: boolean } = {}): Promise<void> {
+  return refreshCatalog<ConfigTemplateResponse>(
+    {
+      // Through the GENERATED decoder: an inline `apiGet<{modes: …}>` is a CLAIM
+      // rather than a check, so a server answering `{}` or `modes: null` produced a
+      // TypeError inside the boot path.
+      read: (signal) =>
+        apiGetTyped(
+          "/api/config-template",
+          decodeConfigTemplateResponse,
+          signal,
+          CATALOG_REQUEST_TIMEOUT_MS,
+        ),
+      // Only a USABLE answer reaches here: an `unavailable` template emits an empty
+      // effort list by construction, so a login-triggered fetch that degraded used to
+      // replace the tiers a successful boot fetch had landed.
+      apply: (d) => {
+        // ONE rule over all three: an EMPTY list is the absence of a vocabulary rather
+        // than a value, so it never replaces one an earlier answer landed. Per list
+        // because each arrives empty on its own, a merely COLD cache included.
+        if (d.effort_levels.length > 0) {
+          // A chat with no bridge has no session catalog, so without this the effort
+          // control has neither its tier list nor the level the next session would run at.
+          setCatalogEfforts(d.effort_levels, d.effort_active ?? "");
+        }
+        if (d.modes.length > 0) {
+          setCatalogModes(d.modes);
+        }
+        if (d.models.length > 0) {
+          // The active chat's model moves the picker's highlight; "" leaves it where it is.
+          populatePickerModels(d.models.map(toModelInfo), getActive()?.model ?? "");
+        }
+        // Re-read the session: the highlight above may have repainted the picker, and a
+        // stale reference is how the pill and the picker desynced before.
+        const active = getActive();
+        if (active !== undefined) {
+          // The context-size table is filled from the model DESCRIPTIONS just landed, so
+          // this is the first moment a chat whose window nothing stated can learn it.
+          if (active.usage.context_size === 0 && active.model !== "") {
+            active.usage.context_size = contextSizeFor(active.model);
+          }
+          // The model pill names the chat's reasoning tier from the catalog's own
+          // capability gate and default rung. Nothing else repaints it on this path.
+          refreshContextUI(active);
+        }
+      },
+      setPhase: setCatalogPhase,
+    },
+    opts,
+  );
 }
 
 /** Merge a model list into the picker cache + context-size table.

@@ -16,7 +16,7 @@
 // tests rather than a corrected sentence.
 // ---------------------------------------------------------------------------
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Message, SteerMark, SteerOrigin, ToolCall } from "./types.js";
 
 // The dispatcher's import graph reaches the shared DOM registry, which throws on
@@ -46,9 +46,17 @@ const {
   mountHeadRange,
   dropHead,
   dropTail,
+  initBlockRenderer,
+  setSupersededMessages,
 } = await import("./messages-blocks.js");
-const { blockKey, blockTextSigs, blockThinkingSigs, ensureBlockTextSig, clearAllBlockSigs } =
-  await import("./store-signals.js");
+const {
+  blockKey,
+  blockTextSigs,
+  blockThinkingSigs,
+  ensureBlockTextSig,
+  ensureToolCallSig,
+  clearAllBlockSigs,
+} = await import("./store-signals.js");
 const { forgetHeights, spacerHeight } = await import("./block-heights.js");
 const { setActive, noteTruncatedSnapshot, clearTruncatedSnapshot, clearTruncatedSnapshots } =
   await import("./store.js");
@@ -711,21 +719,41 @@ describe("a pipeline's stages render inside the orchestrate call that started th
   });
 
   it("carries activity dots, and a leaf carries none", () => {
-    const wrap = render([toolUse("d-dots")], [driver("d-dots", 2, "in_progress")]);
+    // The CSS gate is `.collapsed.running`, so the fixture has to be a SUPERSEDED
+    // pipeline — the trailing text block is what folds it, and folded is the only
+    // state the dots are shown in.
+    const wrap = render(
+      [toolUse("d-dots"), text("and then some prose")],
+      [driver("d-dots", 2, "in_progress")],
+    );
     const pipeline = boxes(wrap)[0];
     expect(
       pipeline?.querySelector(".subagent-busy")?.querySelectorAll(".activity-dot"),
     ).toHaveLength(3);
-    // The CSS gate is `.collapsed.running`, and collapsed-by-default is what
-    // makes them visible now.
-    expect(pipeline?.classList.contains("collapsed")).toBe(true);
     expect(pipeline?.classList.contains("running")).toBe(true);
+    // Collapsed even though a stage is still running: the carve-outs are refusals to
+    // FOLD, never reasons to open, so a box the store already holds something after is
+    // BORN from the verdict and the reader is one click from its stages.
+    expect(pipeline?.classList.contains("collapsed")).toBe(true);
 
     const leaf = render(
       [toolUse("tc-leaf", "u-leaf")],
       [loneSubagent("tc-leaf", "u-leaf", "in_progress")],
     );
     expect(leaf.querySelector(".subagent-busy")).toBeNull();
+  });
+
+  it("shows the dots on a pipeline the verdict folded, and not on the newest one", () => {
+    // The two halves of the gate, through the policy rather than through a default: a
+    // SETTLED pipeline with prose after it folds, and one nothing follows stays open.
+    const folded = render(
+      [toolUse("d-fold"), text("and then some prose")],
+      [driver("d-fold", 2, "completed")],
+    );
+    expect(boxes(folded)[0]?.classList.contains("collapsed")).toBe(true);
+
+    const newest = render([toolUse("d-newest")], [driver("d-newest", 2, "completed")]);
+    expect(boxes(newest)[0]?.classList.contains("collapsed")).toBe(false);
   });
 
   it("gives the pipeline no rolling tail, because its body holds cards not prose", () => {
@@ -797,11 +825,11 @@ describe("a pipeline's stages render inside the orchestrate call that started th
       [toolUse("d-link"), toolUse(stageID("d-link", "plan"), "u-link")],
       [driver("d-link", 1), stage("d-link", "plan", "u-link")],
     );
-    // Direct-child `.subagent-foot`, because a container IS a `.subagent-block`
-    // too: a descendant selector would find the nested stage's own link and pass
+    // Direct-child `.subagent-header`, because a container IS a `.subagent-block`
+    // too: a descendant selector would find the nested stage's own head and pass
     // whether or not the stage was promoted.
     const link = wrap.querySelector<HTMLAnchorElement>(
-      ".assistant-blocks > .subagent-block > .subagent-foot > a.subagent-open",
+      ".assistant-blocks > .subagent-block > a.subagent-header",
     );
     expect(link?.getAttribute("href")).toBe("/chat/c-blocks/subagent/u-link");
 
@@ -819,7 +847,7 @@ describe("a pipeline's stages render inside the orchestrate call that started th
         stage("d-link2", "code", "u-link2-b"),
       ],
     );
-    expect(boxes(multi)[0]?.querySelector(":scope > .subagent-foot a.subagent-open")).toBeNull();
+    expect(boxes(multi)[0]?.querySelector(":scope > a.subagent-header")).toBeNull();
   });
 
   it("upgrades a promoted stage into a container when a sibling arrives", () => {
@@ -846,12 +874,14 @@ describe("a pipeline's stages render inside the orchestrate call that started th
     expect(nested(wrap)).toEqual(["u-up-a", "u-up-b"]);
     // MOVED into the container. The streamed text that used to evidence "moved, not
     // rebuilt" is no longer rendered anywhere, so what remains asserted is the seat and
-    // the page link; a rebuild would be indistinguishable here.
+    // the moved card's own door; a rebuild would be indistinguishable here.
     const moved = wrap.querySelector(
       '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-up-a"]',
     );
     expect(moved).not.toBeNull();
-    expect(moved?.querySelector(".subagent-foot a.subagent-open")).not.toBeNull();
+    expect(moved?.querySelector(":scope > a.subagent-header")?.getAttribute("href")).toBe(
+      "/chat/c-blocks/subagent/u-up-a",
+    );
     // The upgraded container paints its OWN header: the count comes from the
     // stages it now holds, and the status from the DRIVER, which has settled — not
     // from `live`, which would read as running over finished work.
@@ -1094,10 +1124,12 @@ describe("the auto-collapse registry: which arrivals close a tool group", () => 
     expect(cards[0]?.classList.contains("collapsed")).toBe(false);
   });
 
-  it("leaves a subagent box the reader opened open when the next block lands", () => {
-    // A box mounts collapsed and the only toggle is the reader's, so the falsifiable
-    // half is that nothing re-folds it. If the box registered with `continues: []`,
-    // the parent's prose arriving after it would put `.collapsed` back.
+  it("leaves a leaf card's collapsed class alone when the next block lands", () => {
+    // The UPDATE-pass half of the case above: a LEAF card has no disclosure and no body,
+    // so `.collapsed` on one is a skin hook and nothing in the dispatcher may write it.
+    // The class is cleared by hand here to make a re-fold observable — if the card were
+    // enrolled in the supersede path the way a pipeline box is, the parent's prose
+    // arriving after it would put `.collapsed` back.
     const wrap = render([text("delegate prose", "sub-A")], []);
     const box = wrap.querySelector<HTMLElement>(".subagent-block")!;
     box.classList.remove("collapsed");
@@ -1924,19 +1956,31 @@ describe("thinking blocks mount open per LANE and seal on the next sibling", () 
     expect(all[0]?.open).toBe(true);
   });
 
-  it("finalize seals every open trace", () => {
+  it("finalize settles every trace and leaves the newest one expanded", () => {
+    // The turn ending is not another element being posted, and the trigger for a fold
+    // is POSITIONAL — so finalize flips the label and drops the pulse, and the trace
+    // nothing followed keeps its body on screen. (What this replaced collapsed every
+    // trace at turn end, which is the one non-positional trigger the rule forbids.)
     const wrap = document.createElement("div");
     const blocks: Record<string, unknown>[] = [
-      thinking("delegate trace", "sub-A"),
-      thinking("parent trace"),
+      thinking("first trace"),
+      text("in between"),
+      thinking("last trace"),
     ];
     const m = liveMsg(blocks);
     buildAssistantBody(wrap, m, CHAT_ID, true);
     finalizeAssistantBody(m.id);
-    for (const t of traces(wrap)) {
-      expect(t.open).toBe(false);
+
+    const all = traces(wrap);
+    expect(all).toHaveLength(2);
+    for (const t of all) {
       expect(labelOf(t)).toBe("Thinking completed");
+      expect(t.classList.contains("streaming")).toBe(false);
     }
+    // The first was superseded by the text block, so it was already sealed at its own
+    // mount; the last is still the newest thing in its lane.
+    expect(all[0]?.open).toBe(false);
+    expect(all[1]?.open).toBe(true);
   });
 });
 
@@ -1952,6 +1996,8 @@ describe("thinking blocks mount open per LANE and seal on the next sibling", () 
 describe("a body mounts a block RANGE, and the grouping is derived", () => {
   beforeEach(() => {
     resetBlockRenders();
+    // The paint installs this per pass; cleared here so no case inherits another's.
+    setSupersededMessages(new Set());
   });
 
   const cmd = (id: string): ToolCall => call(id, "Run Command");
@@ -2154,6 +2200,64 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
     );
     expect(shape(wrap)).toEqual(["group(2)", "text(prose)", "group(2)"]);
     expect(collapsed(wrap)).toEqual([true, false]);
+  });
+
+  it("collapses a TRAILING run when a later message of the turn follows it", () => {
+    // Turn scope. Nothing in this message follows the run, so the message-scoped
+    // verdict leaves it open — which is the state the pair below is asserting the
+    // difference between, and the reason the control comes first.
+    const open = renderRange([toolUse("t1"), toolUse("t2")], [cmd("t1"), cmd("t2")], {
+      id: "m-tail-open",
+    });
+    expect(collapsed(open.wrap)).toEqual([false]);
+
+    setSupersededMessages(new Set(["m-tail-super"]));
+    const folded = renderRange([toolUse("t1"), toolUse("t2")], [cmd("t1"), cmd("t2")], {
+      id: "m-tail-super",
+    });
+    expect(shape(folded.wrap)).toEqual(["group(2)"]);
+    expect(collapsed(folded.wrap)).toEqual([true]);
+  });
+
+  it("supersedes a BOX at the message tail too", () => {
+    // A PIPELINE container, because it is a box that discloses: a leaf delegate card
+    // carries no body, and a run card refuses to fold on a state the store has not
+    // answered for yet, so neither can show this either way.
+    const pipe = {
+      id: "d-super",
+      title: "Orchestrate Sub-agent",
+      kind: "other",
+      status: "completed",
+      input: { stages: [{}, {}] },
+    } as unknown as ToolCall;
+    const open = renderRange([toolUse("d-super")], [pipe], { id: "m-pipe-open" });
+    const openBox = open.wrap.querySelector(".subagent-container");
+    expect(openBox?.classList.contains("collapsed")).toBe(false);
+
+    setSupersededMessages(new Set(["m-pipe-super"]));
+    const { wrap } = renderRange([toolUse("d-super")], [pipe], { id: "m-pipe-super" });
+    expect(shape(wrap)).toEqual(["pipeline(d-super)"]);
+    expect(wrap.querySelector(".subagent-container")?.classList.contains("collapsed")).toBe(true);
+  });
+
+  it("exempts a DETACHED render, whose lane no turn follows", () => {
+    // An OUTCOME test, and it does not isolate the `st.detached` guard: TWO mechanisms
+    // deliver this and either alone suffices, because `buildDetachedBody` renders under
+    // `detachedID` so the projection's own message id is not the id the derivation is
+    // asked about. Red-checked as failing only when BOTH go. The guard stays as the
+    // statement of the rule — a detached lane has no turn after it — rather than
+    // leaving this resting on another module's id convention.
+    setSupersededMessages(new Set(["m-detached"]));
+    const host = document.createElement("div");
+    const m = {
+      id: "m-detached",
+      role: "assistant",
+      content: "",
+      blocks: [toolUse("t1"), toolUse("t2")],
+      tool_calls: [cmd("t1"), cmd("t2")],
+    } as unknown as Message;
+    buildDetachedBody(host, m, CHAT_ID, "sub-D", false, []);
+    expect(collapsed(host)).toEqual([false]);
   });
 
   /** Whether the group holding `toolID`'s card is auto-collapsed. */
@@ -2508,9 +2612,12 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
   // where its own launch put it" below, and the step-row content assertion it also carried
   // is retired outright — the card hosts no step content at all.
 
-  it("brings a run card back COLLAPSED when the reader had closed it before the drop", () => {
-    // The one container that mounts OPEN, so the reader-set state runs the other way:
-    // its default is the only thing deciding unless the re-mount reads what they left.
+  it("carries the reader's own run-card state across a drop, in both directions", () => {
+    // The card is BORN COLLAPSED here — the launch has a text block after it, so the
+    // newest-element verdict folds it — which is what makes the reader's click the
+    // OPEN one and the re-mount's job to bring that back. It also proves the registry
+    // records a reader's toggle rather than the card's own: the fold that happened at
+    // build wrote nothing, so the only entry is the one the click made.
     const wf = {
       id: "l-shut",
       title: "Run Workflow",
@@ -2521,17 +2628,17 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
     const blocks = [toolUse("l-shut"), text("after the launch")];
     const { wrap, m } = renderRange(blocks, [wf], { id: "m-shut" });
     const cardEl = (): HTMLElement | null => wrap.querySelector<HTMLElement>(".run-card");
-    expect(cardEl()?.classList.contains("collapsed")).toBe(false);
-    wrap.querySelector<HTMLElement>(".run-head")?.click();
     expect(cardEl()?.classList.contains("collapsed")).toBe(true);
+    wrap.querySelector<HTMLElement>(".run-head")?.click();
+    expect(cardEl()?.classList.contains("collapsed")).toBe(false);
 
     dropHead(m, { from: 1, to: 2 }, []);
     expect(cardEl()).toBeNull();
     mountHeadRange(m, { from: 0, to: 2 }, false, []);
 
     expect(cardEl()).not.toBeNull();
-    expect(cardEl()?.classList.contains("collapsed")).toBe(true);
-    expect(wrap.querySelector(".run-head")?.getAttribute("aria-expanded")).toBe("false");
+    expect(cardEl()?.classList.contains("collapsed")).toBe(false);
+    expect(wrap.querySelector(".run-head")?.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("leaves a card the insertion itself placed where its own launch put it", () => {
@@ -2765,7 +2872,7 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
       outcome: "completed" as const,
       rewindTo: undefined,
     };
-    expect(spacerHeight(t, { from: 0, to: 1 }, "tail")).toBe(64);
+    expect(spacerHeight(t, { from: 0, to: 1 }, "tail")).toBe(79);
     wrap.remove();
   });
 
@@ -3028,5 +3135,421 @@ describe("truncated-snapshot note", () => {
       [],
     );
     expect(wrap.querySelector(NOTE)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE NEWEST TOP-LEVEL ELEMENT RENDERS EXPANDED, and the moment another element is
+// posted after it, it folds. One policy, applied to every collapsible kind, and the
+// trigger is POSITIONAL — never a count and never a timer.
+//
+// This is the DISPATCHER's half: which seat each box takes and what the store says is
+// posted after it. The per-kind CARVE-OUTS (a running stage, a failure, an unanswered
+// ask, an unfetched run state) are refusals to COLLAPSE and are pinned against real
+// states in `fundamentals/subagent-block.test.ts` and `fundamentals/run-card.test.ts`,
+// where a state can be handed in directly; this file fetches no run state, so a card
+// here only ever shows the seat it was born from.
+//
+// ONLY THE OUTERMOST LAYER OPENS: the newest-ness test is over the message's own
+// top-level lane, so a box nested inside an expanded box is refused by the gate rather
+// than trusted to inherit. The observable form of that is the last case.
+// ---------------------------------------------------------------------------
+
+describe("the newest top-level box renders expanded", () => {
+  beforeEach(() => {
+    resetBlockRenders();
+  });
+
+  const stageID = (driverID: string, name: string): string =>
+    `invoke_subagent_${driverID}_stage_${name}`;
+
+  const driver = (id: string, stages = 2, status = "completed"): ToolCall =>
+    ({
+      id,
+      title: "Orchestrate Sub-agent",
+      kind: "other",
+      status,
+      input: { stages: Array.from({ length: stages }, (_, i) => ({ name: `s${String(i)}` })) },
+    }) as unknown as ToolCall;
+
+  const stage = (driverID: string, name: string, subtask: string, status = "completed"): ToolCall =>
+    ({
+      id: stageID(driverID, name),
+      title: `Sub-agent: ${name}`,
+      kind: "other",
+      status,
+      agent_subtask_id: subtask,
+    }) as unknown as ToolCall;
+
+  const launch = (id: string, wf: string): ToolCall =>
+    ({
+      id,
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      workflow_id: wf,
+    }) as unknown as ToolCall;
+
+  const pipelines = (wrap: HTMLElement): HTMLElement[] => [
+    ...wrap.querySelectorAll<HTMLElement>(".assistant-blocks > .subagent-container"),
+  ];
+  const folded = (e: Element | undefined): boolean => e?.classList.contains("collapsed") ?? false;
+
+  /** A pipeline of two stages, as blocks and calls, so each fixture below differs only
+   *  in what sits AROUND it. */
+  function pipelineOf(id: string, status = "completed"): [Record<string, unknown>[], ToolCall[]] {
+    return [
+      [
+        toolUse(id),
+        toolUse(stageID(id, "plan"), `${id}-a`),
+        toolUse(stageID(id, "code"), `${id}-b`),
+      ],
+      [driver(id, 2, status), stage(id, "plan", `${id}-a`), stage(id, "code", `${id}-b`)],
+    ];
+  }
+
+  it("opens the newest pipeline and folds the one before it", () => {
+    const [b1, c1] = pipelineOf("d-first");
+    const [b2, c2] = pipelineOf("d-second");
+    const wrap = render([...b1, ...b2], [...c1, ...c2]);
+    const [first, second] = pipelines(wrap);
+    expect(folded(first)).toBe(true);
+    expect(folded(second)).toBe(false);
+  });
+
+  it("folds a pipeline the next text block follows", () => {
+    const [blocks, calls] = pipelineOf("d-before");
+    const before = render([...blocks, text("and then some prose")], calls);
+    expect(folded(pipelines(before)[0])).toBe(true);
+
+    const after = render([text("some prose first"), ...blocks], calls);
+    expect(folded(pipelines(after)[0])).toBe(false);
+  });
+
+  it("does not fold a pipeline its own stages follow", () => {
+    // A stage posts into its PIPELINE's box, never into the top-level lane, so a
+    // pipeline is not superseded by its own contents. That routing is what the
+    // whole verdict depends on.
+    const [blocks, calls] = pipelineOf("d-own");
+    const wrap = render(blocks, calls);
+    expect(pipelines(wrap)).toHaveLength(1);
+    expect(folded(pipelines(wrap)[0])).toBe(false);
+  });
+
+  it("folds a pipeline already on screen when the next block arrives", () => {
+    // The UPDATE path, which is the live-stream shape: the box exists and its seed is
+    // spent, so nothing but the per-pass verdict can fold it. This is what makes the
+    // policy a rule about the store rather than about how a box happened to be born.
+    const [blocks, calls] = pipelineOf("d-live");
+    const id = `m-${String(Math.random())}`;
+    const msg = (b: Record<string, unknown>[]): Message =>
+      ({ id, role: "assistant", content: "", blocks: b, tool_calls: calls }) as unknown as Message;
+    const wrap = document.createElement("div");
+    buildAssistantBody(wrap, msg(blocks), CHAT_ID, true);
+    expect(folded(pipelines(wrap)[0])).toBe(false);
+
+    updateAssistantBody(wrap, msg([...blocks, text("and then some prose")]), CHAT_ID, true);
+    expect(folded(pipelines(wrap)[0])).toBe(true);
+  });
+
+  it("folds a run card the next block follows, and leaves the newest one open", () => {
+    const before = render([toolUse("l-a"), text("after the launch")], [launch("l-a", "wf-a")]);
+    expect(folded(before.querySelector<HTMLElement>(".run-card") ?? undefined)).toBe(true);
+
+    const newest = render([text("before the launch"), toolUse("l-b")], [launch("l-b", "wf-b")]);
+    expect(folded(newest.querySelector<HTMLElement>(".run-card") ?? undefined)).toBe(false);
+  });
+
+  it("opens the newest pipeline and gives its stage cards no open state", () => {
+    // THE NO-CASCADE GUARANTEE, in its only falsifiable form: the outer box opens and
+    // nothing inside it gains a disclosure to inherit that from. A stage card has no
+    // body, no disclosure toggle and no `aria-expanded` at all, so "the container
+    // opened" cannot reach one level down.
+    const [blocks, calls] = pipelineOf("d-cascade");
+    const wrap = render(blocks, calls);
+    const box = pipelines(wrap)[0];
+    expect(folded(box)).toBe(false);
+    const stages = [
+      ...(box?.querySelectorAll<HTMLElement>(":scope > .subagent-body > .subagent-block") ?? []),
+    ];
+    expect(stages).toHaveLength(2);
+    for (const card of stages) {
+      expect(card.querySelector(".subagent-body")).toBeNull();
+      expect(card.querySelector(".subagent-toggle")).toBeNull();
+      expect(card.querySelector("[aria-expanded]")).toBeNull();
+      expect(card.hasAttribute("aria-expanded")).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A DELEGATE CARD'S STATUS FOLLOWS ITS INVOCATION CALL, NOT ITS BLOCK'S RESIDENCY.
+//
+// A window drop leaves the card STANDING (`isContainerRoot`) while releasing its
+// binding, and `pruneOrphanedCards` keeps it while the delegate's other blocks are
+// resident; unsubscribed, it freezes at whatever it last painted. The invocation
+// CALL is message-level, so only its BLOCK's residency is the window's to decide.
+// ---------------------------------------------------------------------------
+describe("a delegate card's status follows its invocation CALL", () => {
+  // THE HARNESS HAS TO DISPOSE, or the drop case below asserts nothing. Every other
+  // suite in this file leaves `cbs` at its until-init no-ops, so `pushBlockEffect` and
+  // `disposeBlockEffects` are both dead there — the binding survives a drop for a
+  // reason production does not supply, and a card that would freeze live stays
+  // painting. This is `messages.ts`'s own registry, the two functions the drop's
+  // contract is between, restored to the stubs afterwards so no sibling suite inherits
+  // a disposal it was not written against.
+  const blockEffects = new Map<string, Map<number, (() => void)[]>>();
+  beforeEach(() => {
+    blockEffects.clear();
+    initBlockRenderer({
+      pushStreamingEffect: () => {
+        /* the turn-lifetime axis is not this suite's subject */
+      },
+      pushBlockEffect: (id, blockIndex, fn) => {
+        const per = blockEffects.get(id) ?? new Map<number, (() => void)[]>();
+        blockEffects.set(id, per);
+        per.set(blockIndex, [...(per.get(blockIndex) ?? []), fn]);
+      },
+      disposeBlockEffects: (id, indices) => {
+        const per = blockEffects.get(id);
+        if (per === undefined) {
+          return;
+        }
+        for (const i of indices) {
+          const arr = per.get(i);
+          per.delete(i);
+          for (const fn of arr ?? []) {
+            fn();
+          }
+        }
+      },
+      makeRow: () => document.createElement("div"),
+      restoreSteer: () => {
+        /* no composer here */
+      },
+    });
+  });
+  afterEach(() => {
+    initBlockRenderer({
+      pushStreamingEffect: () => {
+        /* until init */
+      },
+      pushBlockEffect: () => {
+        /* until init */
+      },
+      disposeBlockEffects: () => {
+        /* until init */
+      },
+      makeRow: () => document.createElement("div"),
+      restoreSteer: () => {
+        /* until init */
+      },
+    });
+  });
+
+  const liveSubagent = (id: string, subtask: string): ToolCall =>
+    ({
+      id,
+      title: "Sub-agent: general-task-execution",
+      kind: "other",
+      status: "in_progress",
+      agent_subtask_id: subtask,
+    }) as unknown as ToolCall;
+
+  const cardOf = (wrap: HTMLElement, subtask: string): HTMLElement | null =>
+    wrap.querySelector<HTMLElement>(`.subagent-block[data-subtask="${subtask}"]`);
+
+  /** The card left the running state for the yellow stopped mark. */
+  function expectCancelled(card: HTMLElement | null): void {
+    expect(card).not.toBeNull();
+    expect(card?.querySelector(".subagent-spinner")).toBeNull();
+    expect(card?.classList.contains("running")).toBe(false);
+    const icon = card?.querySelector<HTMLElement>(".subagent-icon");
+    expect(icon?.classList.contains("is-warn")).toBe(true);
+    expect(icon?.querySelector("svg")?.outerHTML).toBe(
+      (iconEl(outcomeIcon("warn")) as HTMLElement).outerHTML,
+    );
+  }
+
+  function buildLive(
+    id: string,
+    subtask: string,
+    range?: { from: number; to: number },
+  ): { wrap: HTMLElement; m: Message; inv: ToolCall } {
+    const inv = liveSubagent(`inv-${id}`, subtask);
+    const blocks = [
+      toolUse(inv.id, subtask),
+      text("delegate output", subtask),
+      text("more delegate output", subtask),
+    ];
+    const wrap = document.createElement("div");
+    const m = {
+      id,
+      role: "assistant",
+      content: "",
+      blocks,
+      tool_calls: [inv],
+    } as unknown as Message;
+    buildAssistantBody(wrap, m, CHAT_ID, true, [], range);
+    return { wrap, m, inv };
+  }
+
+  /** Publish a new value for the invocation, the way `republishToolCall` does. */
+  function cancel(inv: ToolCall): void {
+    ensureToolCallSig(CHAT_ID, inv.id, inv).value = {
+      ...inv,
+      status: "aborted",
+    } as unknown as ToolCall;
+  }
+
+  it("keeps painting after the window drops the invocation block", () => {
+    const { wrap, m, inv } = buildLive("m-stall-drop", "u-drop-x");
+    expect(cardOf(wrap, "u-drop-x")?.querySelector(".subagent-spinner")).not.toBeNull();
+
+    // The invocation block leaves the window; the delegate's two output blocks keep
+    // the card alive.
+    dropHead(m, { from: 1, to: 3 }, []);
+    expect(cardOf(wrap, "u-drop-x")).not.toBeNull();
+
+    cancel(inv);
+
+    expectCancelled(cardOf(wrap, "u-drop-x"));
+  });
+
+  it("paints a card the DROPPED-BLOCK path seated, whose invocation never mounted", () => {
+    // The card's other door: a range that never contains the invocation block, so
+    // only `isDroppedDelegateBlock` seats the card. It had no subscription at all.
+    const { wrap, inv } = buildLive("m-stall-seat", "u-seat-x", { from: 1, to: 3 });
+    const card = cardOf(wrap, "u-seat-x");
+    expect(card).not.toBeNull();
+    expect(blockElement("m-stall-seat", 0)).toBeUndefined();
+    expect(card?.querySelector(".subagent-spinner")).not.toBeNull();
+
+    cancel(inv);
+
+    expectCancelled(cardOf(wrap, "u-seat-x"));
+  });
+
+  it("says CANCELLED in the footer of a card built from a persisted aborted call", () => {
+    // The reload path: the status is already terminal in the chat file, so the card is
+    // BUILT from it rather than transitioned into it by a frame. What the two cases
+    // above cannot see is what the card then claims HAPPENED — `delegateOutcome` folding
+    // `aborted` onto `completed` leaves the mark yellow and the footer reading clean.
+    const inv = {
+      ...liveSubagent("inv-m-persisted", "u-persisted"),
+      status: "aborted",
+    } as unknown as ToolCall;
+    const wrap = document.createElement("div");
+    buildAssistantBody(
+      wrap,
+      {
+        id: "m-persisted",
+        role: "assistant",
+        content: "",
+        blocks: [toolUse(inv.id, "u-persisted"), text("delegate output", "u-persisted")],
+        tool_calls: [inv],
+      } as unknown as Message,
+      CHAT_ID,
+      false,
+    );
+
+    const card = cardOf(wrap, "u-persisted");
+    expectCancelled(card);
+    const footer = card?.querySelector<HTMLElement>(".subagent-footer");
+    expect(footer?.dataset["outcome"]).toBe("cancelled");
+    expect(footer?.querySelector(".turn-ledger-text")?.textContent).toContain("Cancelled");
+  });
+
+  // RELEASING A CARD RELEASES ITS BINDING, or the card that replaces it is refused one.
+  //
+  // A card's binding is filed against a BOX, not against a block, because the two have
+  // different lifetimes: `isContainerRoot` keeps the element through the drop of its own
+  // invocation block, and the card then dies at `pruneOrphanedCards`, which no block
+  // bucket is reached by. So the drop → prune → re-mount sequence is what separates a
+  // binding released with its box from one left naming a card that is gone: the second
+  // makes a FRESH card take the already-bound early return and freeze permanently.
+  for (const door of [
+    { name: "the window drop", range: undefined },
+    { name: "the dropped-block path", range: { from: 1, to: 3 } },
+  ] as const) {
+    it(`re-binds a card rebuilt after a prune, seated by ${door.name}`, () => {
+      const id = door.range === undefined ? "m-remount-drop" : "m-remount-seat";
+      const subtask = door.range === undefined ? "u-remount-drop" : "u-remount-seat";
+      const { m, wrap, inv } = buildLive(id, subtask, door.range);
+      expect(cardOf(wrap, subtask)).not.toBeNull();
+
+      // The invocation block leaves the window; the delegate's output blocks keep the
+      // card, so `rebindSurvivingBoxes` re-files the binding at that block's index —
+      // now outside the window, where no later drop reaches it.
+      dropHead(m, { from: 1, to: 3 }, []);
+      expect(cardOf(wrap, subtask)).not.toBeNull();
+
+      // Every delegate block leaves: the card itself is pruned.
+      dropHead(m, { from: 3, to: 3 }, []);
+      expect(cardOf(wrap, subtask)).toBeNull();
+
+      // The window grows back over the invocation block, seating a FRESH card.
+      mountHeadRange(m, { from: 0, to: 3 }, true, []);
+      expect(cardOf(wrap, subtask)?.querySelector(".subagent-spinner")).not.toBeNull();
+
+      cancel(inv);
+
+      expectCancelled(cardOf(wrap, subtask));
+    });
+  }
+
+  it("re-binds a PIPELINE box rebuilt after its last stage was pruned", () => {
+    // The other survivor, and the same rule: `pruneEmptyContainers` releases a box whose
+    // stages have all gone, so the driver's own block can bind a fresh one. Held by the
+    // stale guard, the re-mounted invocation block binds nothing — so it stamps no
+    // element and the window counts a mounted block that has none.
+    const driverID = "d-remount";
+    const stageID = (name: string): string => `invoke_subagent_${driverID}_stage_${name}`;
+    const driver = {
+      id: driverID,
+      title: "Orchestrate Sub-agent",
+      kind: "other",
+      status: "in_progress",
+      input: { stages: [{ name: "plan" }, { name: "code" }] },
+    } as unknown as ToolCall;
+    const stageCall = (name: string, subtask: string): ToolCall =>
+      ({
+        id: stageID(name),
+        title: `Sub-agent: ${name}`,
+        kind: "other",
+        status: "in_progress",
+        agent_subtask_id: subtask,
+      }) as unknown as ToolCall;
+
+    const wrap = document.createElement("div");
+    const m = {
+      id: "m-remount-pipe",
+      role: "assistant",
+      content: "",
+      blocks: [
+        toolUse(driverID),
+        toolUse(stageID("plan"), "u-pipe-a"),
+        toolUse(stageID("code"), "u-pipe-b"),
+      ],
+      tool_calls: [driver, stageCall("plan", "u-pipe-a"), stageCall("code", "u-pipe-b")],
+    } as unknown as Message;
+    buildAssistantBody(wrap, m, CHAT_ID, true);
+    const box = (): HTMLElement | null =>
+      wrap.querySelector<HTMLElement>(`.subagent-container[data-pipeline="${driverID}"]`);
+    expect(box()).not.toBeNull();
+    expect(blockElement("m-remount-pipe", 0)).toBe(box());
+
+    // The driver's block leaves; the stage cards keep the box.
+    dropHead(m, { from: 1, to: 3 }, []);
+    expect(box()).not.toBeNull();
+
+    // Both stages leave, so the box is empty and is pruned with them.
+    dropHead(m, { from: 3, to: 3 }, []);
+    expect(box()).toBeNull();
+
+    mountHeadRange(m, { from: 0, to: 3 }, true, []);
+
+    expect(box()).not.toBeNull();
+    expect(blockElement("m-remount-pipe", 0)).toBe(box());
   });
 });

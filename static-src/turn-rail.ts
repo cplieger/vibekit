@@ -734,6 +734,8 @@ function residentElapsed(): Map<string, number> {
   if (messages === undefined) {
     return out;
   }
+  // Default base, deliberately: this map is keyed by the turn's opening message id
+  // and never reads `n`, so the window's own offset would change nothing here.
   for (const t of projectTurns(messages, false)) {
     const ms = turnLedger(t).elapsedMs;
     if (ms > 0) {
@@ -960,20 +962,13 @@ export function initTurnRailCallbacks(cbs: {
  *  a jump onto a resident turn today lands on its folded row, and this keeps
  *  that exactly.
  *
- *  THE TARGET IS RESOLVED BY MESSAGE ID, NOT BY `#turn-{n}`, and that is the fix
- *  for a click landing on the wrong turn. There are two numbering spaces both
- *  spelled `turn-{n}`: `TurnSummary.n` is SESSION-ABSOLUTE (the server owns it —
- *  `internal/vibekit/turns.go`) while a card's `id` is WINDOW-LOCAL (`Turn.n`, an
- *  ordinal within the paginated store — `turns.ts`). So addressing the card by the
- *  marker's number landed on the card whose WINDOW ordinal matched, missing by
- *  exactly the number of turns paged out — zero on a short chat and growing with
- *  every page loaded, which is why it read as intermittent. It also swallowed the
- *  fetch: a wrong-but-resident card resolved, so an off-window turn scrolled to a
- *  neighbour instead of paging history in, and the pending marker never appeared
- *  for the one case it exists for.
- *
- *  `keyOf` already joined the two spaces in the other direction. This is the same
- *  join, so the rail now has ONE mapping between them and runs it both ways. */
+ *  THE TARGET IS RESOLVED BY MESSAGE ID, and it stays that way now that `Turn.n` is
+ *  session-absolute (`turns.ts` `TurnWindowBase`): a window's FIRST turn can be a
+ *  FRAGMENT whose opening message was paged out, so it carries no matching id in the
+ *  absolute projection, and parked views keep their cards, so one `turn-{n}` id exists
+ *  per resident view. Resolving by id also keeps the FETCH: a wrong-but-resident card
+ *  always resolved, so an off-window turn scrolled to a neighbour instead of paging
+ *  history in, and the pending marker never appeared for the case it exists for. */
 async function jumpToTurn(s: TurnSummary): Promise<void> {
   const resident = turnCard(s.id);
   if (resident !== null) {

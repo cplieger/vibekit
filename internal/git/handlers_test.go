@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -271,6 +272,52 @@ func TestHandleShow_MissingFileInARepoReturnsEmptyContent(t *testing.T) {
 	}
 	if body := rec.Body.String(); !strings.Contains(body, `"content":""`) {
 		t.Errorf("body = %q, want empty content for a file absent at the ref", body)
+	}
+}
+
+// The empty base above is only half the answer. Without a marker the client
+// captions that pane with the ref it asked for, so an untracked or staged-new
+// file renders as "HEAD holds this file and holds it empty" — the same
+// dishonesty the not_in_repo mapping was added to fix, one case short. The key
+// is present ONLY when the path is genuinely absent at the ref, so a caller can
+// tell the two apart without a second request.
+func TestHandleShow_AbsentAtRefCarriesTheMarker(t *testing.T) {
+	work := t.TempDir()
+	initFixtureRepo(t, work)
+	h := NewHandler(work)
+
+	tests := []struct {
+		name        string
+		path        string
+		wantPresent bool
+	}{
+		{name: "absent_at_head", path: "never-committed.txt", wantPresent: true},
+		{name: "present_at_head", path: "README.md", wantPresent: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/git/show?path="+tc.path, nil)
+			rec := httptest.NewRecorder()
+			h.handleShow(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("unmarshal %q: %v", rec.Body.String(), err)
+			}
+			// Presence rather than truthiness: a key that is always emitted, false
+			// on the ordinary path, would read as a marker the client can trust
+			// while saying nothing about which case it is in.
+			marker, present := body["absent"]
+			if present != tc.wantPresent {
+				t.Fatalf("absent key present = %v, want %v for path %q (body = %s)",
+					present, tc.wantPresent, tc.path, rec.Body.String())
+			}
+			if present && marker != true {
+				t.Errorf("absent = %v, want true for path %q", marker, tc.path)
+			}
+		})
 	}
 }
 
@@ -1695,12 +1742,21 @@ func writeCommit(t *testing.T, dir, file, content, msg string) {
 // captureLogs swaps the slog default to a buffer-backed debug handler for
 // the duration of the test and restores it on cleanup. Safe because the
 // git package's tests never run in parallel.
+//
+// The log package's writer and flags are restored too: slog.SetDefault also points
+// log at the new handler, and it skips pointing it back when the restored handler
+// is the stock one (which reaches log.Output), so every later line in the package
+// would land in this buffer.
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	prev := slog.Default()
+	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
+	t.Cleanup(func() {
+		slog.SetDefault(prevLogger)
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	})
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
 	return buf
 }
 

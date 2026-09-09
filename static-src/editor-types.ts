@@ -102,7 +102,13 @@ export interface FileState {
    *  unknown (a source that did not supply one), which degrades to the old
    *  write-unconditionally behaviour rather than blocking the save. */
   loadedHash: string;
-  error: string;
+  /** Load/save failure for this file, "" when there is none. Reactive because a
+   *  PREDICATE depends on it: `#editor-git-diff-btn` has exactly one writer, an
+   *  effect in editor-core.ts, and `loadFile` assigns this field long after the
+   *  file is activated — so a plain field left that effect unable to observe the
+   *  one transition it exists to hide the control for. `restoreUI` reads it too,
+   *  imperatively, which a signal serves unchanged. */
+  error: Signal<string>;
   mode: Signal<FileMode>;
   /** Dirty flag: true when `current` differs from `original`. Derived
    *  (computed) from those two signals; recomputes on every edit and on
@@ -168,7 +174,7 @@ class EditorState {
       current,
       loaded: false,
       loadedHash: "",
-      error: "",
+      error: signal(""),
       mode,
       dirty,
       suggestions: new Map(),

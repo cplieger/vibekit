@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"log/slog"
 	"strings"
 	"testing"
@@ -49,10 +50,19 @@ var _ ChatRecords = (*recStore)(nil)
 
 // captureSlog redirects the default slog logger to buf and returns a
 // restore function. Not parallel-safe (mutates the global slog default).
+//
+// The log package's writer and flags are restored too: slog.SetDefault also points
+// log at the new handler, and it skips pointing it back when the restored handler
+// is the stock one (which reaches log.Output), so every later line in the package
+// would land in buf.
 func captureSlog(buf *bytes.Buffer) func() {
-	prev := slog.Default()
+	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	return func() { slog.SetDefault(prev) }
+	return func() {
+		slog.SetDefault(prevLogger)
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	}
 }
 
 // chunkProcessed pre-fills the content/reasoning builders to the given

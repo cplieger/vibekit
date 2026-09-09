@@ -64,13 +64,14 @@ type EffectiveSettings struct {
 	// the standing memory veto respectively.
 	ToolSearchEnabled bool `json:"tool_search_enabled"`
 	MemoryEnabled     bool `json:"memory_enabled"`
-	// NotificationsEnabled is the push master switch, default off. The two per-kind
+	// NotificationsEnabled is the push master switch, default off. The three per-kind
 	// switches below default ON, mirroring push.kindRegistry — the polarity differs
 	// between the master and the kinds on purpose, and that asymmetry is exactly
 	// why the client must not guess either of them.
 	NotificationsEnabled bool `json:"notifications_enabled"`
 	NotifyAgentFinished  bool `json:"notify_agent_finished"`
 	NotifyPRStatus       bool `json:"notify_pr_status"`
+	NotifyRunOutcome     bool `json:"notify_run_outcome"`
 	// SupervisedDefault seeds newly created chats; ScheduledAutoApprove decides an
 	// unattended run's permission ask at its deadline and is fail-closed by
 	// decision. DebugLogs raises the log level. All three default off.

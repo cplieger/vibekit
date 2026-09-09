@@ -215,12 +215,39 @@ describe("the run page claims its height", () => {
 
   // The page is not prose, so it gets its own measure — and a BOUNDED one, because
   // a step row puts its duration at `margin-inline-start: auto`.
-  it("gives the page its own bounded measure rather than the reading one", () => {
-    expect(
-      /max-width:\s*var\(--run-page-max-w\)/.test(
-        ruleBody(loadCSS("18-pages.css"), '[id="run-view"] .page-content'),
-      ),
-    ).toBe(true);
+  //
+  // WHICH BOX carries it is the half worth pinning, and it moved: a capped scroller
+  // puts its scrollbar against the right edge of the cards rather than the view's,
+  // which reads as a panel's inner scroller instead of the page's. `#messages-wrap`
+  // / `.transcript-view` has always been the other shape — full-width scroller,
+  // capped child — and both exec pages now match it. Both halves are asserted
+  // because either alone is a defect: an uncapped scroller over an uncapped body is
+  // a page with no measure at all, and a capped scroller over a capped body puts the
+  // scrollbar back on the content.
+  it.each([
+    ['[id="run-view"] .page-content', '[id="run-body"]'],
+    ['[id="subagent-view"] .page-content', '[id="subagent-body"]'],
+  ])("measures %s at its body rather than at its scroller", (scroller, body) => {
+    const css = loadCSS("18-pages.css");
+    expect(decls(css, scroller)).toMatch(/max-width:\s*none/);
+    expect(decls(css, body)).toMatch(/max-width:\s*var\(--run-page-max-w\)/);
+  });
+
+  // An `auto` cross-axis margin suppresses a flex item's `stretch`, so the cap
+  // WITHOUT this shrink-wraps the column to its content and the measure never
+  // binds — the trap `vibekit-ui.md` records for `.code-refs` and
+  // `.refusal-callout`, whose inert `margin-inline: auto` sat against a cap that
+  // never bound either.
+  it.each(['[id="run-body"]', '[id="subagent-body"]'])(
+    "lets %s fill its measure rather than shrink-wrapping to content",
+    (selector) => {
+      const body = decls(loadCSS("18-pages.css"), selector);
+      expect(body).toMatch(/width:\s*100%/);
+      expect(body).toMatch(/margin-inline:\s*auto/);
+    },
+  );
+
+  it("keeps the page measure a real token", () => {
     expect(loadCSS("01-tokens.css")).toMatch(/--run-page-max-w:\s*\d/);
   });
 });

@@ -14,6 +14,12 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+// Every describe below whose tests wait on a REAL FRAME declares its bound in the
+// unit this harness charges — two of them through `settledFrames`, two through a
+// `vi.waitFor` on frame-driven output. Why a frame here is not 16ms, and why the
+// per-test timeout has to be lifted above the poll's own budget rather than the
+// poll tightened, is in `__test-helpers__/frame-budget.ts`.
+import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 import type { Block, Message, Session, ToolCall } from "./types.js";
 
 // messages.ts's graph reads the shared DOM registry at module scope / mount,
@@ -147,8 +153,12 @@ async function flushed(): Promise<void> {
   await Promise.resolve();
 }
 
-/** Two frames: enough for the mount's rAF-paced scrollToBottom to land, so a
- *  test gesture that follows cannot be undone by it. */
+/** Two frames, for work the browser PACES rather than a race to outrun: the
+ *  block window's cold build drains per frame (measured: 32 blocks resident
+ *  without this, 320 with), a `content-visibility: auto` row stays SKIPPED until
+ *  the first rendering pass resolves its relevance, and a park's own queued
+ *  callbacks land before the freeze spies are armed. Every wait here costs a real
+ *  frame, so a case whose subject is none of those three does not take one. */
 async function settledFrames(): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => r(undefined)));
   await new Promise((r) => requestAnimationFrame(() => r(undefined)));
@@ -177,7 +187,7 @@ beforeEach(() => {
 // The freeze: a parked view receives NOTHING.
 // ---------------------------------------------------------------------------
 
-describe("a parked view is frozen", () => {
+describe("a parked view is frozen", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
   it("takes zero DOM writes, rAF and observer callbacks under appends, tool updates and terminal output", async () => {
     const a = freshID("c-frz");
     const b = freshID("c-frz");
@@ -245,7 +255,7 @@ describe("a parked view is frozen", () => {
 // Unpark correctness: nothing missed while frozen, nothing doubled after.
 // ---------------------------------------------------------------------------
 
-describe("park → grow → unpark", () => {
+describe("park → grow → unpark", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
   it("shows the exact text after park-after-chunk → append-many-parked → unpark → append-again", async () => {
     const a = freshID("c-txt");
     const b = freshID("c-txt");
@@ -401,12 +411,16 @@ describe("park → grow → unpark", () => {
 // The saved handle: reading state, scroll position, bottom alignment.
 // ---------------------------------------------------------------------------
 
-describe("the view handle", () => {
-  /** Enough turns to overflow a 400px scroller even once older turns fold to
-   *  header stubs: thirty headers alone overrun it. */
+describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
+  /** Enough turns to overflow the 400px scroller with five of them folded to
+   *  header stubs (TURNS_WARM), which is the precondition each case below asserts
+   *  for itself. TEN, measured: 2196px of content against the 550 the assertion
+   *  needs. It was thirty, and the overshoot was the test's own cost — the paint is
+   *  superlinear in turn count, so those twenty extra turns were 1863ms of the one
+   *  case that timed out under a full suite against 280ms at ten. */
   function longChat(id: string): Session {
     const msgs: Message[] = [];
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 10; i++) {
       msgs.push(user(freshID("u"), `prompt ${String(i)}`));
       msgs.push(assistant(freshID("m"), [textBlock(`reply ${String(i)}`)]));
     }
@@ -423,7 +437,17 @@ describe("the view handle", () => {
       session(c, { messages: [user(freshID("u"), "x")], message_count: 1 }),
     );
     await flushed();
-    await settledFrames();
+
+    // NO frame wait before the gesture, and its absence is the assertion's other
+    // half. Every step below is synchronous or a microtask, so this case's verdict
+    // no longer depends on how fast the compositor is producing frames — which is
+    // what made it the file's one load-dependent failure: it waited SIX frames
+    // (three pairs), and a frame is 16ms with an idle compositor and hundreds of ms
+    // under a full suite, so the accumulated waits alone crossed the 5s timeout.
+    // Those waits were there to let the mount's queued follow write land before the
+    // gesture, i.e. to outrun `scroll.ts`'s own race rather than to observe
+    // anything; the write re-reads its licence now, so the gesture wins whichever
+    // frame it falls in ("the streaming follow write's licence" in scroll.test.ts).
 
     // Chat A: the reader scrolls UP — Reading. Three parts, all load-bearing. The
     // wheel is what makes it the READER's (the controller reads intent from input,
@@ -439,13 +463,11 @@ describe("the view handle", () => {
 
     switchTo(b);
     await flushed();
-    await settledFrames();
     // Chat B stays at the live edge — Following.
     expect(scroll.readingState()).toBe("following");
 
     switchTo(c);
     await flushed();
-    await settledFrames();
 
     // Unpark A: Reading and the parked scroll offset come back.
     switchTo(a);
@@ -552,7 +574,7 @@ describe("the view handle", () => {
 // Focus and reachability.
 // ---------------------------------------------------------------------------
 
-describe("focus and reachability", () => {
+describe("focus and reachability", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
   it("relocates focus to the composer when the focused element parks, and marks the view inert", async () => {
     const a = freshID("c-foc");
     const b = freshID("c-foc");
@@ -730,5 +752,46 @@ describe("disposal", () => {
     store.bumpMessages(b);
     await flushed();
     expect(viewOf(b).querySelectorAll(".turn").length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A NEW VIEW'S RESET MAY NOT REACH THE OUTGOING ONE.
+//
+// `activateView` resets the scroll controller for a view it CREATED, and that
+// reset ends in `setLoadMore(null, false)` — which removes the attached view's
+// "Load older messages" button. Run BEFORE the attach, the attached view was still
+// the OUTGOING one, so switching to a never-seen chat stripped the button off the
+// chat being parked, and that view came back with its pagination affordance gone
+// and no gesture to restore it (the reset also nulls the callback, so the reader
+// had to switch away and back to have `setupLoadMore` re-wire it).
+//
+// REAL scroll controller, for that file's reason: the property is which element a
+// lookup reaches, and a mocked `setLoadMore` cannot have it.
+// ---------------------------------------------------------------------------
+describe("activating a new view", () => {
+  it("leaves the outgoing view's pagination button in place", async () => {
+    const a = freshID("c");
+    const b = freshID("c");
+    seed(session(a, { messages: [user(freshID("u"), "x")], message_count: 1 }));
+    await flushed();
+    // What `chat.ts setupLoadMore` does for a chat the server says has more.
+    scroll.setLoadMore(() => undefined, true);
+    const button = viewOf(a).querySelector(`[id="load-more-indicator"]`);
+    expect(button).not.toBeNull();
+
+    // A chat with no resident view yet: the branch that creates one.
+    store.setSessions([
+      ...store.getSessions(),
+      session(b, { messages: [user(freshID("u"), "y")], message_count: 1 }),
+    ]);
+    switchTo(b);
+    await flushed();
+
+    expect({
+      created: messages.transcriptViewFor(b) !== null,
+      outgoingKept: button !== null && viewOf(a).contains(button),
+      incomingHasNone: viewOf(b).querySelector(`[id="load-more-indicator"]`) === null,
+    }).toEqual({ created: true, outgoingKept: true, incomingHasNone: true });
   });
 });

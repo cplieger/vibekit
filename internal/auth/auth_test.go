@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -1451,16 +1452,27 @@ func TestClassifyLoginStartErr(t *testing.T) {
 
 // --- slog-capture helpers, and the log assertions that use them ---
 
-// captureSlogJSON swaps the default slog logger for a JSON handler writing
-// to an in-memory buffer at the given level, runs fn, restores the previous
-// default, and returns the parsed log records. fn must be synchronous (no
-// background goroutines) so every record is flushed before parsing.
+// captureSlogJSON swaps the default slog logger for a JSON handler writing to an
+// in-memory buffer at the given level, runs fn, and returns the parsed log
+// records. fn must be synchronous (no background goroutines) so every record is
+// flushed before parsing. The default is process-wide, so a test using it must not
+// run in parallel; it is restored through t.Cleanup rather than defer, so a nested
+// capture unwinds in reverse order at test end.
+//
+// The log package's writer and flags are restored too: slog.SetDefault also points
+// log at the new handler, and it skips pointing it back when the restored handler
+// is the stock one (which reaches log.Output), so every later line in the package
+// would land in this buffer.
 func captureSlogJSON(t *testing.T, level slog.Level, fn func()) []map[string]any {
 	t.Helper()
 	var buf bytes.Buffer
-	prev := slog.Default()
+	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
+	t.Cleanup(func() {
+		slog.SetDefault(prevLogger)
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	})
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: level})))
-	defer slog.SetDefault(prev)
 	fn()
 	var recs []map[string]any
 	for line := range bytes.SplitSeq(bytes.TrimSpace(buf.Bytes()), []byte{'\n'}) {

@@ -179,7 +179,25 @@
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
+
+  /* ASYMMETRIC INLINE PADDING, and the trailing value is the × 's own inset.
+   *
+   * `--sp-2 --sp-3` is this app's row padding (`.fb-row` and `.sidebar-action-btn`
+   * declare the same pair) and it is authored for TEXT at both ends. This row's
+   * trailing child is not text: `.tab-close` paints a 24px box on hover and on
+   * press, so its distance from the row's edge is a visible relationship, and at
+   * `--sp-3` it read 12px against the 8px it has above, below and toward the name
+   * — measured in Chromium, and reported as the × looking pushed off-centre. The
+   * trailing rung is therefore `--sp-2`, which is the row's own `gap` and the
+   * padding-block, so the box is inset equally on all four sides. The 4px it gives
+   * back goes to `.tab-name`, which is the row's ellipsised element.
+   *
+   * The LEADING rung stays `--sp-3` deliberately: the first child is an 8px dot or
+   * a nesting arrow, neither of which paints a box, so it has no corner to be
+   * centred in and cutting its inset would only crowd the row's own edge. */
+  padding-block: var(--sp-2);
+  padding-inline: var(--sp-3) var(--sp-2);
+
   /* A transparent border is reserved on EVERY tab so toggling the active
    * outline below never shifts the row. This is what the old design got wrong
    * in miniature: it drew a 2px accent border on the active tab only and paid
@@ -477,6 +495,26 @@
 .tab-close:hover {
   color: var(--c-text-primary);
   background: color-mix(in srgb, var(--c-text-primary) 12%, transparent);
+}
+
+/* THE PRESS, and the × needs one of its own because it is a SPAN. `role="tab"` is
+   Children Presentational, so this affordance cannot be a <button> (tabs.ts records
+   why), and 03-base.css's app-wide press reaches `button`, `summary` and
+   `[role="button"]` only — so the control a reader presses most in this strip
+   answered a press with nothing at all, while the ROW under it took the press fill.
+   70-selection.css owns that other half.
+
+   One rung deeper on the hover's own axis rather than a new mechanism: `--c-press`
+   IS a 25% --c-text-primary wash, the same construction as the 12% hover above, so
+   the two read as two depths of one wash and the press still lifts whatever fill the
+   × sits on — flat row, hovered row, or the active tab's violet chip. `background`
+   is already in the transition list above, which is why the wash is spelled as a
+   fill here rather than as the base sheet's inset shadow: `box-shadow` is absent
+   from that list, so an inset press would appear and leave in one frame. `color` is
+   restated because a bare touchscreen has no hover to have supplied it. */
+.tab-close:active {
+  color: var(--c-text-primary);
+  background: var(--c-press);
 }
 
 /* Sidebar footer */

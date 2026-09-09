@@ -28,7 +28,7 @@ func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnS
 	for i := range msgs {
 		m := &msgs[i]
 		// A prompt opens a turn; a steer joins the one already running.
-		if isPrompt(m) || len(out) == 0 || opensHeaderlessTurn(m, closed) {
+		if opensTurn(m, len(out) == 0, closed) {
 			var body []vibekit.Message
 			if !isPrompt(m) {
 				body = append(body, *m)
@@ -54,6 +54,51 @@ func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnS
 		out[i].Outcome = deriveTurnOutcome(bodies[i], thinking && i == len(out)-1)
 	}
 	return out
+}
+
+// opensTurn reports whether m OPENS a turn rather than joining the one already
+// running. `first` marks the scan's first message, which opens a turn whatever it
+// carries; `prevClosed` is the segmentation state as of the message before it.
+//
+// One predicate with two callers — projectTurnSummaries and turnWindowBase — so the
+// boundary rule has exactly one home and a window's ordinals cannot disagree with
+// the summaries the rail draws from.
+func opensTurn(m *vibekit.Message, first, prevClosed bool) bool {
+	return isPrompt(m) || first || opensHeaderlessTurn(m, prevClosed)
+}
+
+// turnWindowBase reports the segmentation state at a WINDOW'S LEFT EDGE: how many
+// turns precede the turn CONTAINING msgs[start], and whether the segment before
+// msgs[start] had already closed. `offset + 1` is that first turn's session-absolute
+// ordinal, and `segmentClosed` seeds the client projection's carried state.
+//
+// The offset counts to the CONTAINING turn rather than to the window, because those
+// differ by one exactly when the window opens mid-turn — the common case, since the
+// cut falls at a message boundary. A `start` past len(msgs) is an empty window.
+func turnWindowBase(msgs []vibekit.Message, start int) (offset int, segmentClosed bool) {
+	start = max(start, 0)
+	count := 0
+	closed := false
+	for i := range min(start, len(msgs)) {
+		m := &msgs[i]
+		if opensTurn(m, count == 0, closed) {
+			count++
+			closed = closesTurn(m.TurnOutcome)
+			continue
+		}
+		closed = closed || closesTurn(m.TurnOutcome)
+	}
+	if start >= len(msgs) {
+		return count, closed
+	}
+	if opensTurn(&msgs[start], count == 0, closed) {
+		return count, closed
+	}
+	// msgs[start] continues the turn before it, so the window's FIRST turn is that
+	// turn and one fewer turn precedes it. Reachable only with start > 0, where the
+	// scan above has already counted at least one turn (its first message always
+	// opens one), so the subtraction cannot go negative.
+	return count - 1, closed
 }
 
 // closesTurn reports whether an outcome value ENDS a segment. A settled outcome

@@ -66,8 +66,10 @@ type SteerBuffer interface {
 	// Idempotent by id: a reconnect replays the queued frame.
 	SteerWaiting(chatID vibekit.ChatID, p vibekit.SteerQueuedPayload)
 	// SteerForgotten drops every named steer: KAS's buffer no longer holds them,
-	// whether the model read them or a turn boundary cleared them unread.
-	SteerForgotten(chatID vibekit.ChatID, steerIDs []string)
+	// whether the model read them or a turn boundary cleared them unread. It
+	// returns the ones it WAS holding, with their payloads, which is the only
+	// evidence anywhere that those were never read — see the host's own doc.
+	SteerForgotten(chatID vibekit.ChatID, steerIDs []string) []vibekit.SteerQueuedPayload
 	// SteerRead is SteerForgotten for the one id an injected frame names.
 	SteerRead(chatID vibekit.ChatID, steerID string)
 }

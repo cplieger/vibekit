@@ -28,6 +28,7 @@ vi.mock("./editor-openers.js", () => ({ openFile: vi.fn(), openFileGitDiff: vi.f
 vi.mock("./chat.js", () => ({ attachPathsToActiveChat: vi.fn() }));
 
 import { toggleChatFilter, _repaintRowsForTest } from "./files.js";
+import { FB_ROOT, joinPath } from "./files-shared.js";
 import { openFileGitDiff } from "./editor-openers.js";
 import { _setReposForTest } from "./git-status-store.js";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
@@ -90,8 +91,20 @@ function session(paths: string[]): Session {
 }
 
 /** One row, shaped exactly as entryRow builds it: the decoration reads only
- *  `data-path` / `data-is-dir` and inserts before `.fb-meta`. */
-function row(path: string, isDir = false): HTMLElement {
+ *  `data-path` / `data-is-dir` and inserts before `.fb-meta`.
+ *
+ *  The path is COMPOSED the way entryRow composes it — `joinPath` walked down
+ *  from the browser's own root listing — rather than written as a literal. That
+ *  is not ceremony: these cases were green for a year while every row the shipped
+ *  browser produced carried a ROOTLESS path (`w/r/a/b.go`) that no key in the
+ *  git-status index could match, because the fixture supplied a space the
+ *  composition did not. Composing it here means a regression in the space fails
+ *  these DOM cases too, not only the contract test. */
+function row(segments: string[], isDir = false): HTMLElement {
+  let path = FB_ROOT;
+  for (const seg of segments) {
+    path = joinPath(path, seg);
+  }
   const r = document.createElement("div");
   r.className = "fb-row";
   r.dataset["path"] = path;
@@ -143,7 +156,7 @@ beforeEach(() => {
 describe("git letter decoration", () => {
   it("puts the file's own letter on its row, before the meta column", () => {
     _setReposForTest([repo("r", [{ path: "a/b.go", status: "M" }])]);
-    list().append(row("/w/r/a/b.go"));
+    list().append(row(["w", "r", "a", "b.go"]));
     _repaintRowsForTest();
     expect(letters()).toEqual(["M"]);
     expect(list().firstElementChild?.children[0]?.className).toContain("fb-git-letter");
@@ -151,7 +164,7 @@ describe("git letter decoration", () => {
 
   it("reuses the app's git-st-* colour vocabulary rather than a browser-local one", () => {
     _setReposForTest([repo("r", [{ path: "a.go", status: "M" }])]);
-    list().append(row("/w/r/a.go"));
+    list().append(row(["w", "r", "a.go"]));
     _repaintRowsForTest();
     expect(list().querySelector(".fb-git-letter")?.className).toContain("git-st-m");
   });
@@ -163,21 +176,21 @@ describe("git letter decoration", () => {
         { path: "a/conflict.go", status: "U" },
       ]),
     ]);
-    list().append(row("/w/r/a", true));
+    list().append(row(["w", "r", "a"], true));
     _repaintRowsForTest();
     expect(letters()).toEqual(["U"]);
   });
 
   it("leaves a clean row undecorated", () => {
     _setReposForTest([repo("r", [{ path: "a.go", status: "M" }])]);
-    list().append(row("/w/r/clean.go"));
+    list().append(row(["w", "r", "clean.go"]));
     _repaintRowsForTest();
     expect(letters()).toEqual([]);
   });
 
   it("opens the file's diff when its letter is clicked, without selecting the row", () => {
     _setReposForTest([repo("r", [{ path: "a.go", status: "M" }])]);
-    const r = row("/w/r/a.go");
+    const r = row(["w", "r", "a.go"]);
     let rowClicks = 0;
     r.addEventListener("click", () => {
       rowClicks++;
@@ -194,7 +207,7 @@ describe("git letter decoration", () => {
 
   it("does not make a directory's rollup letter clickable — it has no one diff", () => {
     _setReposForTest([repo("r", [{ path: "a/b.go", status: "M" }])]);
-    list().append(row("/w/r/a", true));
+    list().append(row(["w", "r", "a"], true));
     _repaintRowsForTest();
     const badge = list().querySelector<HTMLElement>(".fb-git-letter");
     expect(badge?.classList.contains("fb-git-clickable")).toBe(false);
@@ -204,7 +217,7 @@ describe("git letter decoration", () => {
 
   it("repaints in place: the same row elements survive, so selection is untouched", () => {
     _setReposForTest([repo("r", [{ path: "a.go", status: "M" }])]);
-    const r = row("/w/r/a.go");
+    const r = row(["w", "r", "a.go"]);
     r.classList.add("fb-row-selected");
     list().append(r);
     _repaintRowsForTest();
@@ -214,7 +227,7 @@ describe("git letter decoration", () => {
 
   it("replaces the letter on the next poll rather than stacking a second one", () => {
     _setReposForTest([repo("r", [{ path: "a.go", status: "M" }])]);
-    list().append(row("/w/r/a.go"));
+    list().append(row(["w", "r", "a.go"]));
     _repaintRowsForTest();
     _setReposForTest([repo("r", [{ path: "a.go", status: "D" }])]);
     _repaintRowsForTest();
@@ -223,7 +236,7 @@ describe("git letter decoration", () => {
 
   it("drops the letter when the tree goes clean", () => {
     _setReposForTest([repo("r", [{ path: "a.go", status: "M" }])]);
-    list().append(row("/w/r/a.go"));
+    list().append(row(["w", "r", "a.go"]));
     _repaintRowsForTest();
     _setReposForTest([repo("r", [])]);
     _repaintRowsForTest();
@@ -235,7 +248,11 @@ describe("changed-by-this-chat filter", () => {
   beforeEach(() => {
     setSessions([session(["a/mine.go"])]);
     setActive("c1");
-    list().append(row("/w/r/a/mine.go"), row("/w/r/a/theirs.go"), row("/w/r/a", true));
+    list().append(
+      row(["w", "r", "a", "mine.go"]),
+      row(["w", "r", "a", "theirs.go"]),
+      row(["w", "r", "a"], true),
+    );
   });
 
   it("decorates nothing while off", () => {

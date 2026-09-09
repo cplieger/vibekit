@@ -246,8 +246,12 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	out, err := gitShowCmd(r.Context(), dir, ref, file)
 	if err != nil {
 		if errors.Is(err, ErrPathNotInRef) {
-			// Absent at ref: empty content renders as an all-add diff.
-			webhttp.WriteJSON(w, map[string]string{"content": ""})
+			// Absent at ref: empty content renders as an all-add diff, and the
+			// marker is what stops the base pane being captioned with the ref —
+			// which would claim the ref holds the file and holds it empty. An
+			// additive key on an untyped response, so nothing is regenerated;
+			// emitted only in this branch, so its PRESENCE is the answer.
+			webhttp.WriteJSON(w, map[string]any{"content": "", "absent": true})
 			return
 		}
 		slog.Warn("git show failed", "repo", logsafe.Field(dir), "ref", ref, "path", logsafe.Field(file), "error", logsafe.Field(err.Error()), "out", scrubAuth(out))

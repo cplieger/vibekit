@@ -30,8 +30,17 @@ import {
   paintBootSnapshot,
   readBootSnapshot,
   startBootSnapshot,
+  type BootSnapshot,
 } from "./boot-snapshot.js";
-import { get, setActive, setSessions, transcriptStale, upsertMessage } from "./store.js";
+import {
+  get,
+  setActive,
+  setSessions,
+  transcriptStale,
+  turnBaseOf,
+  upsertMessage,
+} from "./store.js";
+import { projectTurns, type Turn, type TurnWindowBase } from "./turns.js";
 
 const DB_NAME = "vibekit-boot";
 const STORE_NAME = "snapshot";
@@ -64,6 +73,85 @@ function session(id: string, name: string, messages: Message[] = []): Session {
     thinking: false,
     working_label: "Thinking",
   };
+}
+
+/** A snapshot window, defaulting to the session-start base a whole-session capture
+ *  produces, so a case that is not about the base does not have to state one. */
+function snapWindow(
+  chatID: string,
+  messages: Message[],
+  base: TurnWindowBase = { offset: 0, closed: false },
+): BootSnapshot["window"] {
+  return { chat_id: chatID, messages, base };
+}
+
+/** The captured window, asserted PRESENT. A `?? []` fallback would let a null window
+ *  satisfy an "these ids are gone" assertion for the wrong reason. */
+function capturedWindow(): NonNullable<BootSnapshot["window"]> {
+  const win = captureBootSnapshot().window;
+  if (win === null) {
+    throw new Error("captureBootSnapshot carried no window");
+  }
+  return win;
+}
+
+/** A session whose window is a PAGE: a tail of a longer transcript, plus the base
+ *  `loadMessages` adopts from the window response's own left edge. */
+function pagedSession(id: string, messages: Message[], base: TurnWindowBase): Session {
+  return {
+    ...session(id, "One", messages),
+    // Older messages exist, which is what makes the base mean anything.
+    message_count: messages.length + 20,
+    has_more: true,
+    turn_offset: base.offset,
+    turn_segment_closed: base.closed,
+  };
+}
+
+function stepRow(i: number): Message {
+  return { id: `r${String(i)}`, role: "assistant", ts: 100 + i, content: "step" };
+}
+
+/** Which turn NUMBER each message lands in.
+ *
+ *  MESSAGE-keyed rather than turn-keyed, because the over-budget cut is inside a turn:
+ *  the fragment's first message is not the parent turn's first, so `Turn.id` (that
+ *  first message's id) legitimately differs while every carried card must still
+ *  render the same number. */
+function turnNumberByMessage(turns: Turn[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const t of turns) {
+    if (t.trigger !== undefined) {
+      out.set(t.trigger.id, t.n);
+    }
+    for (const msg of t.body) {
+      out.set(msg.id, t.n);
+    }
+  }
+  return out;
+}
+
+/** The property this design exists for, expressed over the production projection
+ *  rather than restated as literals: project the SESSION's window with the base the
+ *  session holds, project the SNAPSHOT's with the base it carried, and every message
+ *  present in both must land in the same numbered turn. */
+function expectSameTurnNumbers(win: NonNullable<BootSnapshot["window"]>, s: Session): void {
+  const carried = turnNumberByMessage(projectTurns(win.messages, false, win.base));
+  const parent = turnNumberByMessage(projectTurns(s.messages, false, turnBaseOf(s)));
+  const ids = [...carried.keys()];
+
+  // Or the comparison below is vacuous.
+  expect(ids.length).toBeGreaterThan(0);
+  expect(ids.map((id) => carried.get(id))).toEqual(ids.map((id) => parent.get(id)));
+}
+
+/** The store row for a chat, asserted present. */
+function row(id: string): Session {
+  const s = get(id);
+  if (s === undefined) {
+    throw new Error(`no store row for ${id}`);
+  }
+  return s;
 }
 
 /** One user prompt and one closing assistant reply: a complete turn, which is the
@@ -160,8 +248,33 @@ describe("readBootSnapshot", () => {
           usage: EMPTY_USAGE,
         },
       ],
-      transcript_chat_id: "c1",
-      messages: [{ id: "m1", role: "narrator", ts: 1 }],
+      window: {
+        chat_id: "c1",
+        messages: [{ id: "m1", role: "narrator", ts: 1 }],
+        base: { offset: 0, closed: false },
+      },
+    });
+
+    expect(await readBootSnapshot()).toBeNull();
+  });
+
+  it("rejects a window whose BASE is half-present", async () => {
+    // The half-present rule `store-load.ts` `adoptTurnBase` implements by FORGETTING;
+    // here there is nothing yet to forget, so the honest answer is to refuse the
+    // record rather than paint a tail numbered from an edge nobody stated.
+    await plantRecord({
+      tabs: [{ id: "t1", kind: "chat", ref: "c1", parent: "", pinned: false, owns: true }],
+      chats: [
+        {
+          id: "c1",
+          name: "One",
+          model: "",
+          current_mode_id: "",
+          message_count: 2,
+          usage: EMPTY_USAGE,
+        },
+      ],
+      window: { chat_id: "c1", messages: turn(1), base: { closed: false } },
     });
 
     expect(await readBootSnapshot()).toBeNull();
@@ -183,8 +296,8 @@ describe("the capture", () => {
     const snap = await readBootSnapshot();
     expect(snap?.tabs).toEqual([chatTab("t1", "c1")]);
     expect(snap?.chats.map((c) => c.name)).toEqual(["Refactor the boot"]);
-    expect(snap?.transcript_chat_id).toBe("c1");
-    expect(snap?.messages.map((msg) => msg.id)).toEqual(["u1", "a1"]);
+    expect(snap?.window?.chat_id).toBe("c1");
+    expect(snap?.window?.messages.map((msg) => msg.id)).toEqual(["u1", "a1"]);
   });
 
   it("writes nothing until the projection has stood still", async () => {
@@ -209,7 +322,7 @@ describe("the capture", () => {
       }
     }
 
-    expect(captureBootSnapshot().messages.map((msg) => msg.id)).toEqual([
+    expect(capturedWindow().messages.map((msg) => msg.id)).toEqual([
       "u3",
       "a3",
       "u4",
@@ -264,7 +377,7 @@ describe("the capture", () => {
       upsertMessage("c1", { id: `t${String(i)}`, role: "assistant", ts: 11 + i, content: "step" });
     }
 
-    const ids = captureBootSnapshot().messages.map((msg) => msg.id);
+    const ids = capturedWindow().messages.map((msg) => msg.id);
 
     expect(ids).toHaveLength(40);
     // The trigger survives: a body with no trigger renders as a card with no
@@ -299,7 +412,7 @@ describe("the capture", () => {
       }
     }
 
-    const ids = captureBootSnapshot().messages.map((msg) => msg.id);
+    const ids = capturedWindow().messages.map((msg) => msg.id);
 
     // Two whole turns, not a 40-message tail: a tail slice would have kept 40, the
     // oldest 15 of them a headerless fragment of turn 1.
@@ -318,6 +431,65 @@ describe("the capture", () => {
 
     expect(captureBootSnapshot().chats.map((c) => c.id)).toEqual(["c1"]);
   });
+
+  it("numbers a PAGED window's turns the way the session numbers them", () => {
+    m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
+    setSessions([
+      pagedSession("c1", [...turn(1), ...turn(2), ...turn(3), ...turn(4), ...turn(5)], {
+        offset: 7,
+        closed: true,
+      }),
+    ]);
+    setActive("c1");
+
+    expectSameTurnNumbers(capturedWindow(), row("c1"));
+  });
+
+  it("numbers them the same way through the OVER-BUDGET cut", () => {
+    m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
+    // A page that opens MID-TURN: 60 rows, no trigger, so the 40-message cap cuts
+    // inside the turn — the one cut in this module that is not at a turn boundary. The
+    // row the fragment opens on is an EVENT carrying no outcome, which is the shape a
+    // wrongly-seeded `closed` lets open a spurious turn: an assistant row would open
+    // one itself and reset the seed before it could cascade.
+    setSessions([
+      pagedSession(
+        "c1",
+        [
+          ...Array.from({ length: 20 }, (_, i) => stepRow(i)),
+          { id: "r20", role: "event", ts: 120, content: "checkpoint" },
+          ...Array.from({ length: 39 }, (_, i) => stepRow(21 + i)),
+        ],
+        { offset: 7, closed: true },
+      ),
+    ]);
+    setActive("c1");
+
+    const win = capturedWindow();
+
+    // The cut is where the fixture puts it, or the case below is a boundary cut
+    // wearing this name.
+    expect(win.messages).toHaveLength(40);
+    expect(win.messages[0]?.id).toBe("r20");
+    expectSameTurnNumbers(win, row("c1"));
+  });
+
+  it("round-trips a snapshot with no active chat, and paints rows with no transcript", async () => {
+    m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
+    setSessions([session("c1", "One", turn(1))]);
+    setActive("");
+
+    startBootSnapshot();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    const snap = await readBootSnapshot();
+    // `null` decodes as the VALUE it is, so the rows and the strip still paint.
+    expect(snap?.window).toBeNull();
+    expect(paintBootSnapshot(snap)).toBe(true);
+    expect(row("c1").messages).toEqual([]);
+    expect(row("c1").turn_offset).toBeUndefined();
+    expect(row("c1").turn_segment_closed).toBeUndefined();
+  });
 });
 
 describe("paintBootSnapshot", () => {
@@ -327,9 +499,7 @@ describe("paintBootSnapshot", () => {
   });
 
   it("paints nothing when the snapshot holds no tabs", () => {
-    expect(paintBootSnapshot({ tabs: [], chats: [], transcript_chat_id: "", messages: [] })).toBe(
-      false,
-    );
+    expect(paintBootSnapshot({ tabs: [], chats: [], window: null })).toBe(false);
     expect(m.paintProvisionalTabs).not.toHaveBeenCalled();
   });
 
@@ -346,8 +516,7 @@ describe("paintBootSnapshot", () => {
           usage: EMPTY_USAGE,
         },
       ],
-      transcript_chat_id: "c1",
-      messages: turn(1),
+      window: snapWindow("c1", turn(1)),
     });
 
     expect(painted).toBe(true);
@@ -371,8 +540,7 @@ describe("paintBootSnapshot", () => {
           usage: EMPTY_USAGE,
         },
       ],
-      transcript_chat_id: "c1",
-      messages: turn(1),
+      window: snapWindow("c1", turn(1)),
     });
 
     const row = get("c1");
@@ -381,6 +549,90 @@ describe("paintBootSnapshot", () => {
     // `activateChatView` keys its fetch on, and a painted window must not pass for
     // one the server answered.
     expect(row !== undefined && transcriptStale(row)).toBe(true);
+  });
+
+  it("numbers a PAGED window's turns absolutely, not from #1", () => {
+    // The live defect: the row and its window used to be assembled by two calls, so
+    // neither held both and the row got no base. `turnBaseOf` then fell back to
+    // `WHOLE_SESSION` and the pre-network paint numbered a partial tail #1..#3 — both
+    // the `.turn-n` text and each card's `turnAnchorID` — until the activation refetch
+    // landed and every number moved.
+    const base: TurnWindowBase = { offset: 9, closed: true };
+
+    paintBootSnapshot({
+      tabs: [chatTab("t1", "c1")],
+      chats: [
+        {
+          id: "c1",
+          name: "One",
+          model: "",
+          current_mode_id: "",
+          message_count: 40,
+          usage: EMPTY_USAGE,
+        },
+      ],
+      window: snapWindow("c1", [...turn(1), ...turn(2), ...turn(3)], base),
+    });
+
+    const painted = row("c1");
+    expect(turnBaseOf(painted)).toEqual(base);
+    expect(projectTurns(painted.messages, false, turnBaseOf(painted)).map((t) => t.n)).toEqual([
+      10, 11, 12,
+    ]);
+  });
+
+  it("claims no more messages for a short chat carried WHOLE", () => {
+    // The corollary the restructure makes unspellable: `has_more` was derived against
+    // ZERO resident messages and then up to 40 of them arrived through a second call,
+    // so a chat holding every message it has claimed older ones existed.
+    paintBootSnapshot({
+      tabs: [chatTab("t1", "c1")],
+      chats: [
+        {
+          id: "c1",
+          name: "One",
+          model: "",
+          current_mode_id: "",
+          message_count: 2,
+          usage: EMPTY_USAGE,
+        },
+      ],
+      window: snapWindow("c1", turn(1)),
+    });
+
+    expect(row("c1").has_more).toBe(false);
+  });
+
+  it("gives a base to the transcript chat and to no other row", () => {
+    paintBootSnapshot({
+      tabs: [chatTab("t1", "c1"), chatTab("t2", "c2")],
+      chats: [
+        {
+          id: "c1",
+          name: "Active",
+          model: "",
+          current_mode_id: "",
+          message_count: 40,
+          usage: EMPTY_USAGE,
+        },
+        {
+          id: "c2",
+          name: "Open, not showing",
+          model: "",
+          current_mode_id: "",
+          message_count: 12,
+          usage: EMPTY_USAGE,
+        },
+      ],
+      window: snapWindow("c1", turn(1), { offset: 4, closed: true }),
+    });
+
+    expect(turnBaseOf(row("c1"))).toEqual({ offset: 4, closed: true });
+    // A base held against no messages would number the NEXT page from an edge nothing
+    // in the row corresponds to, which is what `evictChatMessages` deletes it for.
+    expect(row("c2").messages).toEqual([]);
+    expect(row("c2").turn_offset).toBeUndefined();
+    expect(row("c2").turn_segment_closed).toBeUndefined();
   });
 
   it("is replaced whole by the server's own chat list", () => {
@@ -396,8 +648,7 @@ describe("paintBootSnapshot", () => {
           usage: EMPTY_USAGE,
         },
       ],
-      transcript_chat_id: "c1",
-      messages: turn(1),
+      window: snapWindow("c1", turn(1)),
     });
 
     // What `loadList` does when it lands.

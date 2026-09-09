@@ -100,7 +100,9 @@ export function createRunStepStream(hostFor: StepHost): RunStepStream {
       return;
     }
     sealTail(s);
-    const view = buildReasoning("", true);
+    // Open: it is live AND it is the newest thing in this step's stream, and
+    // `sealTail` is what folds it when the next element lands.
+    const view = buildReasoning("", true, true);
     s.host.appendChild(view.root);
     view.append(delta);
     s.tail = { kind: "thinking", view };

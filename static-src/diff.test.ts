@@ -12,6 +12,16 @@ import {
   type DiffLine,
 } from "./diff.js";
 
+/** What a valid edit script reconstructs from `newText`.
+ *
+ *  The rows carry no terminator, so replaying add+ctx and joining with "\n" gives
+ *  back every LINE and not the final newline that ended the file. Spelled once for
+ *  the time-budget case and the reconstruction invariant, which is what stops the
+ *  two drifting into two different claims about the same script. */
+function withoutFinalNewline(s: string): string {
+  return s.endsWith("\n") ? s.slice(0, -1) : s;
+}
+
 describe("lineDiff", () => {
   const cases: {
     name: string;
@@ -160,7 +170,11 @@ describe("lineDiff", () => {
     expect(s.dels + s.ctx).toBe(n);
     expect(s.adds + s.ctx).toBe(n);
     const reconstructed = result.filter((l) => l.kind !== "del").map((l) => l.text);
-    expect(reconstructed).toEqual(newText.split("\n"));
+    // Against the same expression the reconstruction invariant uses, rather than a
+    // raw `split`: this `newText` is `join("\n")`ed from non-empty strings so it
+    // never ends in a newline today, and a raw split would silently stop agreeing
+    // with the invariant if the generator ever produced one that did.
+    expect(reconstructed.join("\n")).toBe(withoutFinalNewline(newText));
   });
 
   it("bounded time: shared prefix/suffix keeps huge similar files on the exact path", () => {
@@ -315,21 +329,133 @@ describe("lineDelta", () => {
     });
   }
 
-  it("counts a file creation without the trailing empty line splitLines keeps", () => {
-    // lineDiff itself reports 3 adds here: splitLines keeps the empty line a
-    // final newline produces, because the diff renderer draws that row.
-    expect(stats(lineDiff("", "a\nb\n")).adds).toBe(3);
+  it("counts a 2-line file creation as 2 lines on both surfaces", () => {
+    // This case used to PIN THE DEFECT, asserting 3 against 2 with its own name
+    // recording that the author knew: `splitLines` kept the empty element a final
+    // newline produces and the renderer drew its row, while `splitDeltaLines`
+    // dropped it. So one app answered a file's added-line count two ways — the
+    // pane said 28 where the turn footer and `git diff` both said 27.
+    expect(stats(lineDiff("", "a\nb\n")).adds).toBe(2);
     expect(lineDelta("", "a\nb\n").added).toBe(2);
   });
 });
 
+// ---------------------------------------------------------------------------
+// A file's final newline is the writer's terminator, not a line.
+//
+// One split now serves the whole diff surface — the pane, the tool card's
+// preview, the editor's diff mode and the turn footer's `+N -M` — so a phantom
+// trailing added row is unrepresentable rather than filtered downstream. That
+// rule is `internal/buffer/linediff.go`'s `splitDiffLines` character for
+// character, which is what makes the two languages agree about one file.
+//
+// Three of the five agree-table rows below were GREEN before the change (the
+// non-terminated pair, the CRLF pair, and the terminated pair, where the phantom
+// row appeared on BOTH sides and cancelled out of the counts); the creation and
+// the emptied file are the two that were not. Every number is `git diff`'s.
+// ---------------------------------------------------------------------------
+describe("a file's final newline is not a line", () => {
+  it("renders a newline-terminated creation as exactly its own lines", () => {
+    expect(lineDiff("", "a\nb\n")).toEqual([
+      { kind: "add", oldNo: 0, newNo: 1, text: "a" },
+      { kind: "add", oldNo: 0, newNo: 2, text: "b" },
+    ]);
+  });
+
+  it("renders a file NOT ending in a newline identically — the CONTROL", () => {
+    // Green before this change and after it, so it covers the arm that was always
+    // right rather than the fix. It is here to state the property the fix bought:
+    // the two spellings of a two-line file produce ONE answer.
+    expect(lineDiff("", "a\nb")).toEqual([
+      { kind: "add", oldNo: 0, newNo: 1, text: "a" },
+      { kind: "add", oldNo: 0, newNo: 2, text: "b" },
+    ]);
+  });
+
+  it("counts a file that is only newlines by its empty lines", () => {
+    // Why the drop is a POP rather than stripping the trailing "\n" off the string
+    // first: a file holding one newline holds one (empty) line, which is what
+    // `git diff` counts, and stripping would leave "" — no lines at all.
+    expect(lineDiff("", "\n")).toEqual([{ kind: "add", oldNo: 0, newNo: 1, text: "" }]);
+    expect(lineDiff("", "\n\n")).toEqual([
+      { kind: "add", oldNo: 0, newNo: 1, text: "" },
+      { kind: "add", oldNo: 0, newNo: 2, text: "" },
+    ]);
+  });
+
+  const agree: {
+    name: string;
+    old: string;
+    new: string;
+    added: number;
+    removed: number;
+  }[] = [
+    { name: "a newline-terminated pair", old: "a\nb\n", new: "a\nB\nc\n", added: 2, removed: 1 },
+    { name: "a pair with no trailing newline", old: "a\nb", new: "a\nB\nc", added: 2, removed: 1 },
+    { name: "a CRLF pair", old: "a\r\nb\r\n", new: "a\r\nB\r\nc\r\n", added: 2, removed: 1 },
+    { name: "a file creation", old: "", new: "a\nb\n", added: 2, removed: 0 },
+    { name: "a file emptied", old: "x\ny\n", new: "", added: 0, removed: 2 },
+  ];
+
+  for (const c of agree) {
+    it(`states one count for ${c.name}, on both surfaces`, () => {
+      // Both sides hardcoded rather than compared against each other: with one
+      // split behind both entry points, `stats(lineDiff(...)) === lineDelta(...)`
+      // is a tautology that could not fail for any change to the vocabulary.
+      const s = stats(lineDiff(c.old, c.new));
+      expect({ added: s.adds, removed: s.dels }, "the diff pane's count").toEqual({
+        added: c.added,
+        removed: c.removed,
+      });
+      expect(lineDelta(c.old, c.new), "the turn footer's count").toEqual({
+        added: c.added,
+        removed: c.removed,
+      });
+    });
+  }
+
+  it("renders a newline-only change as an UNCHANGED file — ACCEPTED RESIDUAL", () => {
+    // CHARACTERIZATION, not a property. `git diff` shows this change as one
+    // deletion plus one insertion carrying `\ No newline at end of file`; here both
+    // sides split to the same lines, so every row is CONTEXT and the change is
+    // invisible. Composed with `renderDiffPane`'s own all-context state (pinned in
+    // `diff-pane.test.ts`), the reader is told "No changes between these versions"
+    // for a file that did change.
+    //
+    // Accepted for three reasons. Newline-terminated files are near-universal, so
+    // the phantom row was on essentially every diff while a newline-only change is
+    // rare. `lineDelta` and the Go twin already reported 0/0 for it, so after the
+    // change the pane and the footer AGREE where they used to contradict each
+    // other — which is the property the whole fix is about. And the git-faithful
+    // remedy is that marker, which needs a new `DiffLine` kind threaded through
+    // `stats`, `windowHunks`, `wordMarks`, the pane's four row builders and the
+    // tool card's preview: larger than the bug, and a separate item.
+    //
+    // Pinned so nobody rediscovers it as a defect, and so a reader who does add
+    // the marker updates this case deliberately instead of reading it as a bug.
+    for (const [before, after] of [
+      ["a\nb", "a\nb\n"],
+      ["a\nb\n", "a\nb"],
+    ] as const) {
+      const d = lineDiff(before, after);
+      expect(d.map((l) => l.kind)).toEqual(["ctx", "ctx"]);
+      expect(stats(d)).toEqual({ adds: 0, dels: 0, ctx: 2 });
+    }
+  });
+});
+
 describe("lineDiff property-based invariants", () => {
-  /** Helper: count lines in a string (matching splitLines logic). */
+  /** Count the lines in a string, the way `splitLines` does but spelled
+   *  independently — a helper that called the production split would make every
+   *  invariant below a tautology. The `s === ""` guard is the no-lines case, and a
+   *  final newline is the writer's terminator rather than a line, so it does not
+   *  add one. */
   function countLines(s: string): number {
     if (s === "") {
       return 0;
     }
-    return s.split("\n").length;
+    const n = s.split("\n").length;
+    return s.endsWith("\n") ? n - 1 : n;
   }
 
   /** Reconstruct the new text from diff output by taking add+ctx text in order. */
@@ -368,11 +494,11 @@ describe("lineDiff property-based invariants", () => {
     );
   });
 
-  it("invariant 3: applying diff reconstructs newText", () => {
+  it("invariant 3: applying diff reconstructs newText, minus its terminator", () => {
     fc.assert(
       fc.property(smallText, smallText, (a, b) => {
         const d = lineDiff(a, b);
-        expect(reconstructNew(d)).toBe(b);
+        expect(reconstructNew(d)).toBe(withoutFinalNewline(b));
       }),
     );
   });
@@ -434,7 +560,7 @@ describe("lineDiff property-based invariants", () => {
         const s = stats(d);
         expect(s.adds + s.ctx).toBe(countLines(b));
         expect(s.dels + s.ctx).toBe(countLines(a));
-        expect(reconstructNew(d)).toBe(b);
+        expect(reconstructNew(d)).toBe(withoutFinalNewline(b));
       }),
       { numRuns: 3, interruptAfterTimeLimit: 60_000 },
     ); // fewer runs due to cost

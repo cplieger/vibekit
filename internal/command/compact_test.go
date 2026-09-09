@@ -1,27 +1,12 @@
 package command
 
 import (
-	"bytes"
-	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/testsupport"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
-
-// captureSlog swaps the process-global default logger for the duration of one
-// test. Released through t.Cleanup rather than defer: a defer does not run on a
-// subtest's failure path and would leak the test handler into the rest of the
-// package. These tests therefore may not call t.Parallel.
-func captureSlog(t *testing.T) *bytes.Buffer {
-	t.Helper()
-	buf := &bytes.Buffer{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	return buf
-}
 
 func compactReq(chatID vibekit.ChatID) *vibekit.ClientCommand {
 	return &vibekit.ClientCommand{Type: vibekit.CmdCompact, ChatID: chatID}
@@ -37,7 +22,7 @@ func compactReq(chatID vibekit.ChatID) *vibekit.ClientCommand {
 // nothing" reads this line first, so a line saying the chat WAS compacted tells
 // them the opposite of what they need.
 func TestCmdCompact_ReportsAcceptanceNotCompaction(t *testing.T) {
-	buf := captureSlog(t)
+	buf := captureLogs(t)
 	b := &recordingBridge{result: map[string]any{"success": true}, sessionID: "sess-1"}
 
 	if _, err := CmdCompact(t.Context(), newBridgeHost(testsupport.NewInMemoryChatStore(), b), compactReq("c1")); err != nil {

@@ -37,10 +37,11 @@ type PushState =
  *  would stall every later turn with nothing on screen to say why. That absence is
  *  why this map exists as a map and not as an exhaustive record over PushKind. */
 export const KEYED_PUSH_KINDS: Readonly<
-  Record<string, "notify_agent_finished" | "notify_pr_status">
+  Record<string, "notify_agent_finished" | "notify_pr_status" | "notify_run_outcome">
 > = {
   agent_finished: "notify_agent_finished",
   pr_status: "notify_pr_status",
+  run_outcome: "notify_run_outcome",
 };
 
 let swRegistration: ServiceWorkerRegistration | null = null;

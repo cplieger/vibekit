@@ -187,3 +187,48 @@ func TestRenderChatMarkdown_OmitsWhatTheMessageDoesNotCarry(t *testing.T) {
 		t.Errorf("markdown missing the bare location path\n---\n%s", md)
 	}
 }
+
+// A steer is the reader's own words arriving mid-turn, and whether the agent read
+// it is the fact they most want back. Rendered as `## User` the export said
+// neither: a correction the agent never saw read exactly like the prompt above it.
+func TestRenderChatMarkdown_DistinguishesASteerAndItsDeliveryState(t *testing.T) {
+	c := &vibekit.Chat{
+		ID:   "c1",
+		Name: "Steered",
+		Messages: []vibekit.Message{
+			{ID: "u1", Role: vibekit.RoleUser, Content: "go"},
+			{
+				ID: "steer-1", Role: vibekit.RoleUser, Content: "use tabs",
+				UserKind: vibekit.UserKindSteer, SteerState: vibekit.SteerStateRead,
+			},
+			{
+				ID: "steer-2", Role: vibekit.RoleUser, Content: "actually target main",
+				UserKind: vibekit.UserKindSteer, SteerState: vibekit.SteerStateDropped,
+			},
+			// The whole legacy population, plus every row the replay projection
+			// writes: the state is not known, so the heading claims neither.
+			{
+				ID: "steer-3", Role: vibekit.RoleUser, Content: "and rename it",
+				UserKind: vibekit.UserKindSteer,
+			},
+		},
+	}
+
+	md := renderChatMarkdown(c)
+
+	for _, want := range []string{
+		"## User\n\ngo",
+		"## User (mid-turn)\n\nuse tabs",
+		"## User (mid-turn, not delivered)\n\nactually target main",
+		"## User (mid-turn)\n\nand rename it",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("markdown missing %q\n---\n%s", want, md)
+		}
+	}
+	// Every steer's text survives whatever its heading says: losing a word is
+	// worse than an ambiguous label.
+	if n := strings.Count(md, "## User"); n != 4 {
+		t.Errorf("user headings = %d, want 4", n)
+	}
+}

@@ -15,7 +15,8 @@ import {
   fetchDir,
   joinPath,
   parentPath,
-  displayPath,
+  FB_ROOT,
+  normalizeDirPath,
   errorRow,
   sortEntries,
   initEditablePath,
@@ -37,7 +38,7 @@ import { el } from "@cplieger/reactive";
 
 type DirEntry = { kind: "up" } | { kind: "file"; name: string; isDir: boolean };
 
-let currentPath = ".";
+let currentPath = FB_ROOT;
 const selected = new Set<string>();
 let onUploadComplete: (() => void) | null = null;
 
@@ -49,8 +50,8 @@ export function setOnUploadComplete(fn: () => void): void {
   onUploadComplete = fn;
 }
 
-export function openFilePicker(preUploadFiles?: FileList, startPath = "."): void {
-  currentPath = startPath;
+export function openFilePicker(preUploadFiles?: FileList, startPath = FB_ROOT): void {
+  currentPath = normalizeDirPath(startPath);
   selected.clear();
   loadDir();
   syncAttachBtn();
@@ -100,7 +101,7 @@ export function initFilePicker(): void {
       loadDir();
       syncAttachBtn();
     },
-    getDisplayPath: () => displayPath(currentPath),
+    getCurrentPath: () => currentPath,
   });
 }
 
@@ -142,7 +143,7 @@ function syncAttachBtn(): void {
 function loadDir(): void {
   const list = byId<HTMLDivElement>("filepicker-list");
   const pathEl = byId<HTMLInputElement>("filepicker-path");
-  pathEl.value = displayPath(currentPath);
+  pathEl.value = currentPath;
   pathEl.readOnly = true;
 
   void fetchDir(currentPath, pickerFetchHolder).then((d) => {
@@ -170,7 +171,7 @@ function loadDir(): void {
 
     const sorted = sortEntries(d.files);
     const entries: DirEntry[] = [];
-    if (currentPath !== ".") {
+    if (currentPath !== FB_ROOT) {
       entries.push({ kind: "up" });
     }
     for (const f of sorted) {
@@ -191,7 +192,7 @@ function loadDir(): void {
       },
     });
 
-    if (sorted.length === 0 && currentPath === ".") {
+    if (sorted.length === 0 && currentPath === FB_ROOT) {
       list.appendChild(
         el("div", { className: FB_ROW }, el("span", { className: FB_META }, "Empty")),
       );

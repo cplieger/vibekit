@@ -66,22 +66,42 @@
   min-inline-size: 0;
 }
 
+/* A native <progress>: track and fill on one element, so the UA reports the
+   value. Every engine has to be named — `appearance: none` plus the element's
+   own `background` is Gecko's track, `::-webkit-progress-bar` is Blink's, and
+   the fill is written twice (`::-webkit-progress-value` and
+   `::-moz-progress-bar`) — or that engine draws its default control. */
 .knowledge-bar {
+  appearance: none;
   flex: 1;
   block-size: 4px;
   min-inline-size: 3rem;
   max-inline-size: 10rem;
   overflow: hidden;
   background: color-mix(in srgb, var(--c-accent) 20%, transparent);
+  border: 0;
   border-radius: var(--r-sm);
 }
 
-.knowledge-bar-fill {
-  display: block;
-  block-size: 100%;
+.knowledge-bar::-webkit-progress-bar {
+  background: color-mix(in srgb, var(--c-accent) 20%, transparent);
+  border-radius: var(--r-sm);
+}
+
+/* Chromium only, like the upload bar's: Gecko does not animate
+   `::-moz-progress-bar`, so the bar there steps per poll. `width` and not the
+   logical `inline-size`, matching `.upload-progress-bar`: the engine sizes this
+   pseudo-element physically, and a progress fill is never in a vertical writing
+   mode. */
+.knowledge-bar::-webkit-progress-value {
   background: var(--c-accent);
   border-radius: var(--r-sm);
-  transition: inline-size var(--dur-standard) var(--ease-standard);
+  transition: width var(--dur-standard) var(--ease-standard);
+}
+
+.knowledge-bar::-moz-progress-bar {
+  background: var(--c-accent);
+  border-radius: var(--r-sm);
 }
 
 .knowledge-progress-text {

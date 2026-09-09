@@ -478,6 +478,117 @@ describe("the turn-segmentation contract shared with the Go implementation", () 
 });
 
 // ---------------------------------------------------------------------------
+// The WINDOW-BASE half of the pin, over its own fixture.
+//
+// The store is a paginated window, so this scan cannot know how many turns
+// precede its first message. It is told, by `turn_offset` /
+// `turn_segment_closed` on the window response — and Go's
+// TestTurnWindowBaseContract answers the same table for the producing side.
+// ---------------------------------------------------------------------------
+
+interface WindowFixture {
+  cases: {
+    name: string;
+    messages: FixtureMessage[];
+    windows: {
+      name: string;
+      start: number;
+      turn_offset: number;
+      turn_segment_closed: boolean;
+      n: number[];
+    }[];
+  }[];
+}
+
+const WINDOW_FIXTURE_PATH = "../internal/chat/testdata/turn_windows.json";
+
+/** Build the fixture's message array. Shares the segmentation table's row shape,
+ *  so a row means the same thing in both contracts. */
+function fixtureMessages(rows: FixtureMessage[]): Message[] {
+  return rows.map((fm) => {
+    const extra: Partial<Message> = {};
+    if (fm.outcome !== undefined) {
+      extra.turn_outcome = fm.outcome as NonNullable<Message["turn_outcome"]>;
+    }
+    if (fm.refusal === true) {
+      (extra as { refusal?: unknown }).refusal = {};
+    }
+    if (fm.user_kind !== undefined) {
+      extra.user_kind = fm.user_kind as NonNullable<Message["user_kind"]>;
+    }
+    if (fm.blocks !== undefined) {
+      (extra as { blocks?: unknown }).blocks = fm.blocks.map((agentSubtaskID) => ({
+        type: "text",
+        agent_subtask_id: agentSubtaskID,
+      }));
+    }
+    if (fm.role === "user") {
+      return { ...user(fm.id ?? "", "req"), ...extra } as Message;
+    }
+    if (fm.role === "event") {
+      return { ...event(fm.id ?? "", fm.event ?? ""), ...extra } as Message;
+    }
+    return assistant(fm.id ?? "", extra);
+  });
+}
+
+describe("the window-base contract shared with the Go implementation", () => {
+  const raw = readFileSync(new URL(WINDOW_FIXTURE_PATH, import.meta.url), "utf8");
+  const fx = JSON.parse(raw) as WindowFixture;
+
+  it("carries cases (an empty table would pass forever)", () => {
+    expect(fx.cases.length).toBeGreaterThan(0);
+  });
+
+  for (const c of fx.cases) {
+    describe(c.name, () => {
+      const msgs = fixtureMessages(c.messages);
+      it("carries windows", () => {
+        expect(c.windows.length).toBeGreaterThan(0);
+      });
+      it.each(c.windows.map((w) => [w.name, w] as const))("%s", (_name, w) => {
+        const turns = projectTurns(msgs.slice(w.start), false, {
+          offset: w.turn_offset,
+          closed: w.turn_segment_closed,
+        });
+        expect(turns.map((t) => t.n)).toEqual(w.n);
+      });
+    });
+  }
+
+  // The property the fixture cannot state, expressed over the production code
+  // rather than restated as a table: a turn visible before a page loads keeps its
+  // number after it. Every window is projected with its own base and compared
+  // against the whole-session projection, so a shift of one anywhere fails here
+  // even for a shape nobody wrote a row for.
+  it.each(fx.cases.map((c) => [c.name, c] as const))(
+    "numbers do not shift under the reader: %s",
+    (_name, c) => {
+      const msgs = fixtureMessages(c.messages);
+      const whole = new Map(projectTurns(msgs, false).map((t) => [t.id, t.n]));
+      expect(whole.size).toBeGreaterThan(0);
+      for (const w of c.windows) {
+        const windowed = projectTurns(msgs.slice(w.start), false, {
+          offset: w.turn_offset,
+          closed: w.turn_segment_closed,
+        });
+        for (const t of windowed) {
+          // A window's FIRST turn can be a fragment whose opening message was paged
+          // out, so it keys on a different message than the whole-array turn it is
+          // part of; every other turn opens on the same message in both.
+          const absolute = whole.get(t.id);
+          if (absolute !== undefined) {
+            expect(`${c.name} @${String(w.start)} ${t.id}=${String(t.n)}`).toBe(
+              `${c.name} @${String(w.start)} ${t.id}=${String(absolute)}`,
+            );
+          }
+        }
+      }
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
 // The collapsed turn's FACE content: input in the header, these in the footer.
 // ---------------------------------------------------------------------------
 

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp/v2"
@@ -21,6 +22,13 @@ import (
 // sessionListTimeout bounds the round-trip. The first call may lazily start the utility
 // bridge (session/new plus the auth handshake), hence configTemplateTimeout's value.
 const sessionListTimeout = 45 * time.Second
+
+// maxSessionDescBytes bounds the agent's self-declared description on its way to the
+// History row. The same 512 as translate's maxDisplayTextBytes: this is the SAME
+// upstream field, read back out of KAS's persisted session.json rather than off the
+// focus channel, so translate's door never reaches it and a second number would
+// truncate one channel's copy of one value differently from the other's.
+const maxSessionDescBytes = 512
 
 // kasSessionList is the session/list result shape.
 type kasSessionList struct {
@@ -136,7 +144,7 @@ func toResumable(claimed map[string]vibekit.ChatID, rows []kasSessionRow) []vibe
 			CreatedAt:   parseKASTime(row.Meta.Kiro.CreatedAt),
 			AgentMode:   row.Meta.Kiro.AgentMode,
 			Status:      row.Meta.Kiro.Status,
-			Description: row.Meta.Kiro.Description,
+			Description: runesafe.SanitizeSingleLineBounded(row.Meta.Kiro.Description, maxSessionDescBytes),
 			ChatID:      string(chatID),
 		})
 	}

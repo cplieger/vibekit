@@ -17,7 +17,7 @@
 
 import { describe, it, expect } from "vitest";
 import { subagentToExec, subagentPath } from "./subagent-exec-source.js";
-import { sliceSubagent, pipelineOf, stageName, groupOf } from "./subagent-slice.js";
+import { sliceSubagentGroup, pipelineOf, stageName, groupOf } from "./subagent-slice.js";
 import type { Message, ToolCall } from "./types.js";
 
 /** An invocation tool call. `id` carries the pipeline join when stage-shaped. */
@@ -66,7 +66,7 @@ function msg(calls: ToolCall[], texts: [string, string][] = []): Message {
 }
 
 function exec(messages: Message[], subtask: string, live = false) {
-  return subagentToExec(messages, subtask, sliceSubagent(messages, subtask, live));
+  return subagentToExec(subtask, sliceSubagentGroup(messages, subtask, live));
 }
 
 describe("the stage/driver join", () => {
@@ -216,6 +216,16 @@ describe("the single-delegate shape", () => {
     );
     expect(run.nodes[0]?.state).toBe("running");
     expect(run.state).toBe("running");
+  });
+
+  // `warn`, which `exec-view/status.ts` words as "stopped" and gives the yellow
+  // road-sign mark. The arm compiles whatever it answers, so the VALUE needs the
+  // assertion: `ok` would report the reader's own cancel as a clean finish and
+  // `fail` as a malfunction.
+  it("maps aborted onto warn", () => {
+    const run = exec([msg([invocation("tooluse_1", "sub_1", { status: "aborted" })])], "sub_1");
+    expect(run.nodes[0]?.state).toBe("warn");
+    expect(run.state).toBe("warn");
   });
 
   // The duration is on screen twice already — the detail pane's header and the node's

@@ -35,6 +35,7 @@ import { fileIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { caseParam, createSearchShell, searchField, wireSearchKeys } from "./search-shell.js";
 import type { SearchShell } from "./search-shell.js";
+import { FB_ROOT } from "./files-shared.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 
 // --- Wire types ------------------------------------------------------------
@@ -143,10 +144,16 @@ export function searchNote(res: FileSearchResult): string {
  *  when it sits under it, absolute otherwise (a root search spans mounts, where
  *  there is no one folder to be relative to). */
 export function hitLabel(searchPath: string, abs: string): string {
-  if (searchPath === "" || searchPath === ".") {
+  // A hit's `path` is container-absolute (`FileMatch.Path`: "the same namespace
+  // every other /api/file* route speaks"), and so is the folder that was
+  // searched, so the prefix is the search path itself. It used to be spelled
+  // `/${searchPath}` because the browser's own paths were rootless — the one
+  // place that mismatch was visible, since a label that failed to strip simply
+  // showed the whole path.
+  if (searchPath === "" || searchPath === FB_ROOT) {
     return abs;
   }
-  const root = `/${searchPath.replace(/\/+$/, "")}/`;
+  const root = `${searchPath.replace(/\/+$/, "")}/`;
   return abs.startsWith(root) ? abs.slice(root.length) : abs;
 }
 

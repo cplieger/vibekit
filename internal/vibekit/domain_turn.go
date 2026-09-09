@@ -58,13 +58,31 @@ const (
 	// a turn through the bracket path — agent.Runs.observeComplete does, at the
 	// run's terminal transition.
 	TurnSourceWorkflowStep
+	// turnSourceCount bounds the enum and is not a source: a member added above it
+	// fails TestTurnSourcePredicates's completeness check.
+	turnSourceCount
 )
 
 // PromptClass reports whether a turn opened by this source is a user prompt
 // vibekit dispatched — the holders a second prompt can reach with a steer, which
-// is what the admission refusal arm keys on. A prime is deliberately not one: a
-// steer aimed into the prime window is consumed by a throwaway turn.
+// is what the admission refusal arm keys on and its ONLY reader. A prime is
+// deliberately not one: a steer aimed into the prime window is consumed by a
+// throwaway turn.
 func (s TurnOpenSource) PromptClass() bool {
+	switch s {
+	case TurnSourcePrompt, TurnSourceEmptyRetry:
+		return true
+	default:
+		return false
+	}
+}
+
+// UserAnswered reports whether opening a turn from this source IS the user
+// answering a question the agent left standing, which is what discharges the
+// retained waiting_on_user status. A `!cmd` is not one: it reaches no agent.
+// Separate from PromptClass because that predicate answers for admission, and
+// widening one for admission reasons must not move a cache lifecycle.
+func (s TurnOpenSource) UserAnswered() bool {
 	switch s {
 	case TurnSourcePrompt, TurnSourceEmptyRetry:
 		return true

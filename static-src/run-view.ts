@@ -481,9 +481,9 @@ function stepEmptyNote(node: ExecNode): string {
  *  middle-click and copy-link work, with a click handler that lets the app's own
  *  routing own a plain click and steps aside for a modified one.
  *
- *  NO `#turn-{n}` permalink, deliberately: `Turn.n` is an ordinal within the
- *  paginated window rather than within the session, so a computed anchor names the
- *  wrong turn on any chat long enough to page. */
+ *  NO `#turn-{n}` permalink, and the reason CHANGED: `Turn.n` is session-absolute now
+ *  (`turns.ts` `TurnWindowBase`), so a computed anchor names the right turn but still
+ *  resolves nowhere — `router.ts parseHashLine` matches only `/^#L(\d+)/`. */
 function stepEmptyAction(node: ExecNode): HTMLElement | null {
   if (node.transcript !== true || !shownRunChatParented || neverRan(node.state)) {
     return null;

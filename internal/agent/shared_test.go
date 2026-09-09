@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -206,12 +207,21 @@ func (b *logCapture) String() string {
 
 // captureLogs mutates the global slog default, so a test using it must NOT call
 // t.Parallel. The previous logger is restored at test end.
+//
+// The log package's writer and flags are restored too: slog.SetDefault also points
+// log at the new handler, and it skips pointing it back when the restored handler
+// is the stock one (which reaches log.Output), so every later line in the package
+// would land in this buffer.
 func captureLogs(t *testing.T) *logCapture {
 	t.Helper()
 	out := &logCapture{}
-	prev := slog.Default()
+	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
+	t.Cleanup(func() {
+		slog.SetDefault(prevLogger)
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	})
 	slog.SetDefault(slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
 	return out
 }
 

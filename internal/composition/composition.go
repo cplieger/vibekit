@@ -234,11 +234,10 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// Injected post-construction for WithLive's reason — the store cannot import the agent.
 	chat.WithTurnOpen(h.HasOpenTurn)(chatStore)
 	chat.WithOnPurge(func(id vibekit.ChatID, sessionChain []string) {
-		for _, sid := range sessionChain {
-			sessionReaper.Reap(sid)
-		}
 		// After the per-chat record lock is released: it keeps the lock order acyclic.
-		h.Membership().RetentionClose(appCtx, id)
+		// RetentionClose reaps the chain itself, through the same reaper wired above, so
+		// a loop here would be a second reap site for one purge.
+		h.Membership().RetentionClose(appCtx, id, sessionChain)
 	})(chatStore)
 	// An exempt chat contributes no wake-up deadline, so closing its tab must trigger
 	// a pass; without this the purge noticed up to an hour later.

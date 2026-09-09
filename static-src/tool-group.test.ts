@@ -239,7 +239,11 @@ describe("summarize", () => {
 // ---------------------------------------------------------------------------
 
 /** A settled card, as the group's DOM sees it. */
-function card(kind: string, outcome: "ok" | "fail" | "running", filename = ""): HTMLElement {
+function card(
+  kind: string,
+  outcome: "ok" | "fail" | "warn" | "running",
+  filename = "",
+): HTMLElement {
   const c = document.createElement("div");
   c.className = "tool-call";
   c.dataset["kind"] = kind;
@@ -308,6 +312,31 @@ describe("grouping amendments", () => {
     expect(both.querySelector(".tool-group-icon")?.classList.contains("is-fail")).toBe(true);
   });
 
+  it("paints a group of stopped members warn and names the stop in the summary", () => {
+    const g = groupWith(card("execute", "warn"), card("execute", "warn"), card("execute", "warn"));
+    const icon = g.querySelector(".tool-group-icon");
+    // A reader who cancelled three commands must not get the green success mark.
+    expect(icon?.classList.contains("is-warn")).toBe(true);
+    expect(icon?.classList.contains("is-ok")).toBe(false);
+    expect(icon?.querySelector("svg")?.outerHTML).toBe(
+      (iconEl(outcomeIcon("warn")) as HTMLElement).outerHTML,
+    );
+    expect(g.dataset["outcome"]).toBe("warn");
+    // A COLLAPSED group still says what happened, in the word a tool row uses.
+    expect(g.querySelector(".tool-group-count")?.textContent ?? "").toContain("3 aborted");
+  });
+
+  it("a failure outranks a stop", () => {
+    const g = groupWith(card("execute", "fail"), card("execute", "warn"));
+    const icon = g.querySelector(".tool-group-icon");
+    expect(icon?.classList.contains("is-fail")).toBe(true);
+    expect(icon?.classList.contains("is-warn")).toBe(false);
+    expect(g.dataset["outcome"]).toBe("fail");
+    const text = g.querySelector(".tool-group-count")?.textContent ?? "";
+    expect(text).toContain("1 failed");
+    expect(text).toContain("1 aborted");
+  });
+
   it("never auto-collapses a group holding a failure", () => {
     const g = groupWith(card("execute", "ok"), card("execute", "fail"), card("execute", "ok"));
     maybeCollapseGroup(groupBody(g).firstElementChild as HTMLElement);
@@ -338,6 +367,14 @@ describe("grouping amendments", () => {
     const g = groupWith(card("read", "ok"), card("read", "fail"));
     autoCollapseGroup(g);
     expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
+  });
+
+  it("DOES collapse a superseded group holding a stop", () => {
+    // A stopped member is not a failure: it neither blocks the fold nor auto-opens
+    // the body, which is what the delegate card already rules.
+    const g = groupWith(card("read", "ok"), card("read", "warn"));
+    autoCollapseGroup(g);
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
   });
 
   it("does not collapse a superseded group while a member still runs", () => {
