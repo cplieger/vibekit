@@ -13,6 +13,13 @@
 // from a different stylesheet at zero specificity, so the chip's own rule reads
 // correct either way. Real layout, and the paragraph is IN the viewport, because
 // the claim is about a rendered line box.
+//
+// Bounded by the FLOOR, never by a delta against the chipless line. That line
+// inherits `line-height: normal` and so measures whatever the machine's font stack
+// gives (18px here, 16px in CI), while the chip's box is 17.45px either way — its
+// `line-height` is a length computed from `font-size`. A delta between them is a
+// font-metric assertion wearing a leading assertion's name, and it read 0.45px
+// locally against 2.45px in CI. The floor is what the defect substitutes in.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
@@ -39,10 +46,19 @@ afterEach(() => {
   host.replaceChildren();
 });
 
+/** The tier's hit-target floor in px, read off an ordinary button rather than off
+ *  `--hit-floor`, which is a rem token — and what the test is about is the height
+ *  the cascade hands a button here. */
+function hitFloorPx(): number {
+  const probe = document.createElement("button");
+  host.append(probe);
+  const h = probe.getBoundingClientRect().height;
+  probe.remove();
+  return h;
+}
+
 /** A prose paragraph with a chip in the middle of a sentence, plus a plain
- *  paragraph beside it as the control — the comparison is against the leading a
- *  line WITHOUT a chip gets, never against a literal, so a type-scale change
- *  moves both sides. */
+ *  paragraph beside it carrying the premise the bound depends on. */
 function prose(): { withChip: HTMLElement; plain: HTMLElement; chip: HTMLElement } {
   const plain = document.createElement("p");
   plain.className = "msg-body";
@@ -66,19 +82,21 @@ describe("a path chip inside prose", () => {
     "leaves the line at the leading of a chipless line on a %s pointer",
     (tier) => {
       document.documentElement.dataset["pointer"] = tier;
+      const floor = hitFloorPx();
       const { withChip, plain, chip } = prose();
 
-      // One line either way, so the only thing that can differ is its height. Stated
-      // as a bound on the DELTA rather than as equality, because an inline-flex box on
-      // the baseline legitimately adds a fraction of a pixel: measured 0.45px here,
-      // against 26px with the floor in force on a coarse pointer and 6px on a fine one.
-      const line = plain.getBoundingClientRect().height;
-      expect(withChip.getBoundingClientRect().height - line).toBeLessThan(1);
-      // The mechanism rather than a second symptom: the chip is its own content's
-      // height, so there is no floor left to push the line apart. A substitution back
-      // to the floor fails here at BOTH tiers, where the delta above only catches it on
-      // a pointer whose floor exceeds the line box.
-      expect(chip.getBoundingClientRect().height).toBeLessThan(line + 1);
+      // The premise the two bounds below rest on, asserted so a font whose `normal`
+      // leading exceeded the floor fails here and names itself rather than reading as
+      // a chip regression.
+      expect(plain.getBoundingClientRect().height, "prose sits under the floor").toBeLessThan(
+        floor,
+      );
+      // The leading is the chip's own, not the hit target's — with the floor in force
+      // this line painted at the floor: 44px on a coarse pointer, 24px on a fine one.
+      expect(withChip.getBoundingClientRect().height, "the line").toBeLessThan(floor);
+      // The mechanism rather than a second symptom: the chip's box is its content's, so
+      // there is no floor left to push the line apart.
+      expect(chip.getBoundingClientRect().height, "the chip").toBeLessThan(floor);
     },
   );
 
