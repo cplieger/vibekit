@@ -5,6 +5,7 @@
     "vitest*.config.ts",
     "fc-strict-setup.ts",
     "waitfor-budget-setup.ts",
+    "ro-loop-gate.ts",
     "**/__test-helpers__/**",
     "**/*.test.ts",
     "**/*.fuzz.test.ts",
