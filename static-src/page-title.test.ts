@@ -1,12 +1,7 @@
-// ---------------------------------------------------------------------------
-// The title bar's heading: the measured fit that decides whether the page title
-// is shown beside the actions or clipped to screen-reader-only.
-//
-// The bar is mounted from `static/index.html` rather than a copy of its markup,
-// because what the fit measures is the ACTIONS — how many there are and how wide
-// the tier makes them — so a hand-written fixture would keep passing after the
-// page stopped agreeing with it. Same reason `pointer-mode.test.ts` does it.
-// ---------------------------------------------------------------------------
+// The bar is mounted from `static/index.html` rather than a copy of its markup, because what
+// the fit measures is the ACTIONS — how many, and how wide the tier makes them — so a
+// hand-written fixture would keep passing after the page stopped agreeing with it. Same
+// reason `pointer-mode.test.ts` does it.
 
 import { describe, it, expect, afterEach } from "vitest";
 import indexHtml from "../static/index.html?raw";
@@ -109,27 +104,22 @@ describe("the title bar's measured fit", () => {
   });
 
   it("re-decides when a subtitle lands, because it competes for the same room", () => {
-    // `setPageSubtitle` writes half the heading without touching the title, so it
-    // owns its own re-measure. A width just past the title's own need is what makes
-    // the subtitle the deciding term.
-    const heading = mountBar("620px");
+    // `setPageSubtitle` writes half the heading without touching the title, so it owns its
+    // own re-measure. Both terms carry margin rather than straddling the fit boundary, which
+    // moves with the font stack — 768px is where the sibling above measures it untruncated.
+    const heading = mountBar("768px");
     setPageTitle(LONG, "git");
-    expect(heading.classList.contains("sr-only"), "the title alone fits at 620px").toBe(false);
+    expect(heading.classList.contains("sr-only"), "the title alone fits at 768px").toBe(false);
 
-    setPageSubtitle("git", "Changes and a long enough section name to overflow the row");
+    setPageSubtitle("git", "Changes and section names ".repeat(12));
     expect(heading.classList.contains("sr-only"), "the subtitle pushes it over").toBe(true);
   });
 
   it("writes a title for a caller with no bar mounted", () => {
-    // The fit is a refinement over a laid-out bar, so having no bar is not an error
-    // — unlike the WRITE, which must fail loudly if its target is missing. That
-    // asymmetry is what a hard `byId` in the fit broke: it made `setPageTitle` throw
-    // for every fixture that owns a heading's spans without a toolbar around them,
-    // which is how `git-tabs.test.ts` failed.
-    //
-    // `initPageTitleFit` is deliberately NOT in this case: it runs once from the
-    // composition root, which owns the bar, so an unwired bar there is a real bug
-    // and it still throws.
+    // The fit is a refinement over a laid-out bar, so no bar is not an error — unlike the
+    // WRITE, which must fail loudly if its target is missing. `initPageTitleFit` is
+    // deliberately not in this case: it runs once from the composition root, which owns the
+    // bar, so an unwired bar there is a real bug and still throws.
     document.body.innerHTML = `<h1 id="titlebar-title"></h1><span id="titlebar-subtitle"></span>`;
     setPageTitle("Git", "git");
     expect(document.getElementById("titlebar-title")?.textContent).toBe("Git");
