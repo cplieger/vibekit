@@ -422,6 +422,79 @@ func TestSettingsGet_PatchAgainstANullDocumentDoesNotPanic(t *testing.T) {
 	}
 }
 
+// TestSettingsRoundTrip_RunOutcomeToggle is the HTTP rung the per-key unit tests
+// cannot reach on their own. Each of those pins one hop — the registry seeds the
+// preference, syncPushPreferences carries the key to SetPreferences, preflightSend
+// consults it — and a toggle can be wired at every hop and still not round-trip,
+// because GET and PATCH resolve the value through different code (EffectiveDefaults
+// under the stored document, against a merge onto that document).
+//
+// So this drives the whole sequence a user's click performs: read the default,
+// write the opposite, read it back, and confirm the file holds it. The push gate is
+// asserted in the same pass, because a value that persists without reaching the
+// service is a switch that changes only what the settings page displays.
+func TestSettingsRoundTrip_RunOutcomeToggle(t *testing.T) {
+	dir := seedConfig(t, "")
+	path := filepath.Join(dir, settings.Filename)
+
+	// A fresh volume answers the registry default, which is ON for every keyed
+	// kind. Asserted rather than assumed: the whole round trip below is a
+	// statement about moving OFF this value.
+	if !getEffective(t, dir).NotifyRunOutcome {
+		t.Fatal("GET on a fresh config dir = notify_run_outcome false, want true (the registry row is DefaultOn)")
+	}
+
+	mp := &testPush{}
+	s := &Server{agent: &fakeEngine{}, push: mp, configDir: dir}
+	req := httptest.NewRequest(http.MethodPatch, "/api/settings",
+		bytes.NewReader([]byte(`{"notify_run_outcome":false}`)))
+	rec := httptest.NewRecorder()
+	s.handleSettingsWrite(rec, req, path)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH notify_run_outcome=false = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	// The gate, not just the key: preflightSend drops a kind whose preference is
+	// false, so this is the hop that makes the toggle silence anything.
+	if on, known := mp.prefs[vibekit.PushKindRunOutcome]; !known || on {
+		t.Errorf("prefs[run_outcome] = (%v, known=%v) after the patch, want (false, true)", on, known)
+	}
+
+	// The value round-trips on the next read...
+	if got := getEffective(t, dir); got.NotifyRunOutcome {
+		t.Error("GET after the patch = notify_run_outcome true, want false — the write did not reach the read")
+	}
+	// ...and it is on disk, so a restart honours it rather than reverting to the
+	// registry default.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	var onDisk map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &onDisk); err != nil {
+		t.Fatalf("parse %s: %v", raw, err)
+	}
+	if got := string(onDisk[settings.KeyNotifyRunOutcome]); got != "false" {
+		t.Errorf("config.json[%s] = %q, want \"false\" (whole file: %s)",
+			settings.KeyNotifyRunOutcome, got, raw)
+	}
+
+	// Back on, so the test cannot pass by the key being stuck at one value.
+	req = httptest.NewRequest(http.MethodPatch, "/api/settings",
+		bytes.NewReader([]byte(`{"notify_run_outcome":true}`)))
+	rec = httptest.NewRecorder()
+	s.handleSettingsWrite(rec, req, path)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH notify_run_outcome=true = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !getEffective(t, dir).NotifyRunOutcome {
+		t.Error("GET after re-enabling = notify_run_outcome false, want true")
+	}
+	if !mp.prefs[vibekit.PushKindRunOutcome] {
+		t.Error("prefs[run_outcome] = false after re-enabling, want true")
+	}
+}
+
 // effectiveEqual compares two views over EVERY field, including any added later —
 // which is why it is one DeepEqual rather than a written-out list that would need
 // maintaining in step with the struct.

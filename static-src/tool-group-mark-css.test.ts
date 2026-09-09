@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // A TOOL GROUP'S HEADER ALWAYS CARRIES A MARK, including while it runs.
 //
-// The header's verdict slot is a reserved 14px square that `paintGroupOutcome`
+// The header's verdict slot is a reserved `--icon-ui` square that `paintGroupOutcome`
 // fills with a shared silhouette on settle and writes NO node into while the group
-// is running. That left a chevron, a 14px hole with a `--sp-2` gap either side, then
+// is running. That left a chevron, an empty hole with a `--sp-2` gap either side, then
 // the count — reported as a blank space that looks strange beside a settled group's
 // dot. `14-tools.css` now draws a hollow ring there, and every assertion below is
 // numeric because none of it is visible in source: the mark is a pseudo-element, so
@@ -202,5 +202,51 @@ describe("the ring belongs to the running state alone", () => {
     expect(run.width).toBe(done.width);
     expect(run.height).toBe(done.height);
     expect(run.width, "and it is a real box").toBeGreaterThan(0);
+  });
+});
+
+describe("the mark sits on the header's own centre line", () => {
+  // The reported defect, and it needed a rect rather than a style read: the SLOT was
+  // centred correctly the whole time and the silhouette inside it was not. The slot
+  // was a fixed 0.875rem holding an `--icon-ui` glyph, and a grid slot smaller than
+  // its content does not centre that content in the BLOCK axis — the implicit row is
+  // `auto`, so it sizes to the item and starts at the slot's top, which puts the whole
+  // overflow at the bottom. Measured 1px low on a fine pointer and 2px low on a coarse
+  // one, where the token is 1.125rem. The inline axis WAS symmetric, because that
+  // track is constrained by the slot's definite inline size, which is why it read as
+  // a droop rather than a break.
+  const centreY = (el: Element): number => {
+    const r = el.getBoundingClientRect();
+    return r.y + r.height / 2;
+  };
+
+  it.each(["fine", "coarse"] as const)(
+    "centres the settled silhouette in its bar on a %s pointer",
+    (tier) => {
+      document.documentElement.dataset["pointer"] = tier;
+      const slot = settled();
+      const header = slot.closest<HTMLElement>(".tool-group-header")!;
+      const mark = slot.querySelector("svg")!;
+
+      // Against the HEADER, not against the slot: the slot was already centred while
+      // the mark was not, so a slot-relative assertion passes with the defect in place.
+      expect(centreY(mark), "the mark is on the bar's centre line").toBeCloseTo(centreY(header), 1);
+      // And the mark fills the slot, which is the mechanism rather than a second
+      // symptom: a slot that cannot be overflowed has nothing to mis-align.
+      expect(mark.getBoundingClientRect().height).toBeCloseTo(
+        slot.getBoundingClientRect().height,
+        1,
+      );
+    },
+  );
+
+  it("puts the running ring on that same centre line, so the mark does not jump on settle", () => {
+    document.documentElement.dataset["pointer"] = "coarse";
+    const slot = running();
+    const header = slot.closest<HTMLElement>(".tool-group-header")!;
+    // The ring is a pseudo-element, so its own box is unmeasurable; the SLOT is what
+    // centres it (`place-items: center` over a box the ring is smaller than), so the
+    // slot's centre line is the assertion.
+    expect(centreY(slot)).toBeCloseTo(centreY(header), 1);
   });
 });

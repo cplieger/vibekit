@@ -206,9 +206,9 @@ export function isToolActive(s: ToolStatus): boolean {
   return s === "pending" || s === "in_progress";
 }
 
-/** Reports whether a tool call has settled (completed or failed). */
+/** Reports whether a tool call has settled (completed, failed or aborted). */
 export function isToolDone(s: ToolStatus): boolean {
-  return s === "completed" || s === "failed";
+  return s === "completed" || s === "failed" || s === "aborted";
 }
 
 /** Resolve the profile for (title, kind) pair. Title wins when it matches

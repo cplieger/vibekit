@@ -332,6 +332,19 @@ export interface Session {
    *  Three writers and one deliberate non-writer; the table is on `turnLive` in
    *  store.ts, which is the ONE reader. */
   turn_open?: boolean;
+  /** The server's statement about the OLDEST MESSAGE HELD — `has_more`'s own
+   *  subject: how many turns precede the turn that message belongs to, so
+   *  `turn_offset + 1` is that turn's session-absolute ordinal. `store.ts`
+   *  `turnBaseOf` is the reader.
+   *
+   *  Absent is treated as the session's start, which IS a guess and deliberately the
+   *  same one the code made before these fields existed; it is only reachable for a
+   *  chat whose transcript the activation refetches anyway. */
+  turn_offset?: number;
+  /** Whether the segment before the oldest message held had already closed —
+   *  `projectTurns`' carried state, seeded. See `turns.ts` `TurnWindowBase` for why
+   *  the count alone is insufficient. */
+  turn_segment_closed?: boolean;
   working_label: string;
   /** Agent-declared activity status from the KAS focus_update channel
    *  (chat_status SSE): "in_progress" | "waiting_on_user" | "completed" |

@@ -121,7 +121,7 @@ export type { TabDotStatus, TabViewSpec };
  *  `parentId`) is immutable after open, which is exactly why `pinned` is not
  *  among them and is read from the subject instead.
  *
- *  `name`, `dotStatus` and `tooltip` are the three mutable local fields, and
+ *  `name`, `dotStatus`, `tooltip` and `runDot` are the four mutable local fields, and
  *  each has a reason. A name because six run sites and two chat sites
  *  legitimately know a better label than a subject can carry (see
  *  tab-materialize.ts's header). A dot and a tooltip because both are LIVE
@@ -135,7 +135,43 @@ interface TabRow {
   name: string;
   dotStatus?: TabDotStatus | undefined;
   tooltip?: string | undefined;
+  /** The WORKFLOW mark's state and the breakdown its phrase needs, parked as ONE
+   *  field so a rebuilt row cannot repaint the state without the count that
+   *  qualifies it. A fourth mutable local field, live like the dot beside it. */
+  runDot?: { status: TabRunDotStatus; tally: TabRunTally } | undefined;
 }
+
+/** The four states the workflow mark can be in, NARROWED from the dot's own
+ *  vocabulary rather than declared beside it: `Extract` is what makes a rename in
+ *  tab-view.ts a type error here instead of a second table that drifts.
+ *
+ *  No `done` and no `failed`, and that is a statement about the INPUT rather than
+ *  a simplification. `run-store.ts`'s live inventory deletes a run's row the
+ *  moment it reaches a terminal status, so an OUTCOME is not available to paint —
+ *  the mark WITHDRAWS when a run ends, which is the same answer `run-bar.ts`
+ *  gives over the same inventory. No `idle` either: the hollow ring already means
+ *  "has not initiated" one element to the left, and a chat with no live run has
+ *  nothing to report rather than a state to report. */
+export type TabRunDotStatus = Extract<TabDotStatus, "working" | "waiting" | "input">;
+
+/** How many live runs the ONE mark is standing for, and how they split.
+ *
+ *  The FOLD is the producer's (`chat-run-dots.ts` owns the precedence); this is
+ *  the breakdown a single folded state cannot carry, and it exists because "three
+ *  runs, one wanting a decision" would otherwise read exactly like "one run". The
+ *  strip has no count-badge idiom — `run-bar.ts` renders "step 3 of 7" as TEXT —
+ *  so the count goes where it costs no second visual channel: the tooltip and the
+ *  announced phrase. */
+export interface TabRunTally {
+  readonly total: number;
+  readonly working: number;
+  readonly waiting: number;
+  readonly input: number;
+}
+
+/** No live run. A named constant rather than an inline literal because it is the
+ *  value a REBUILT row paints from before its producer next churns. */
+const NO_RUNS: TabRunTally = { total: 0, working: 0, waiting: 0, input: 0 };
 
 /** What `openTab` needs. `kind` plus `ref` names the subject; everything else is
  *  a choice about this particular open. */
@@ -1157,6 +1193,8 @@ function dotPhrase(kind: TabKind, status: TabDotStatus): string {
 
 const CLS_DOT = "tab-status-dot";
 const CLS_DOT_SR = "tab-status-sr";
+const CLS_RUN_DOT = "tab-run-dot";
+const CLS_RUN_DOT_SR = "tab-run-sr";
 
 function elementOf(id: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`);
@@ -1215,6 +1253,92 @@ export function setTabStatus(id: string, status: TabDotStatus | ""): void {
     return;
   }
   paintDot(node, row.subject.kind, status);
+}
+
+/** The workflow mark's announced phrase and tooltip, ONE string for both exactly
+ *  as `dotPhrase` is for the dot beside it.
+ *
+ *  The noun comes from `DOT_SUBJECT` so the app spells a run one way, and the
+ *  state word from `NEUTRAL_PHRASE` so two marks on one row say "working" the same
+ *  way. The COUNT is the whole reason this is not just `dotPhrase(kind, status)`:
+ *  N runs fold onto one mark, so "3 workflow runs, 1 needs a decision" is the only
+ *  place the fold's arithmetic survives. */
+function runDotPhrase(status: TabRunDotStatus, tally: TabRunTally): string {
+  const noun = tally.total === 1 ? DOT_SUBJECT.run : `${DOT_SUBJECT.run}s`;
+  const word = NEUTRAL_PHRASE[status];
+  // A single run needs no second number: "1 workflow run, 1 working" states the
+  // same fact twice.
+  return tally.total <= 1
+    ? `${tally.total} ${noun}, ${word}`
+    : `${tally.total} ${noun}, ${tally[status]} ${word}`;
+}
+
+/** Paint one chat row's workflow mark: the attribute CSS keys off, the tooltip a
+ *  pointer reveals, and the phrase a screen reader hears.
+ *
+ *  The same three writes `paintDot` makes, and the phrase span sits AFTER the
+ *  dot's own for the reason that one sits after `.tab-name`: a tab's accessible
+ *  name is computed from its contents in DOM order, so both marks read out behind
+ *  the title rather than ahead of it.
+ *
+ *  An empty status REMOVES the attribute, which is the CSS reveal condition — and
+ *  the slot stays reserved either way (12-tabs.css), so nothing moves when a run
+ *  starts. A no-op on a row that carries no mark, which is every non-chat kind. */
+function paintRunDot(node: HTMLElement, status: TabRunDotStatus | "", tally: TabRunTally): void {
+  const mark = node.querySelector<HTMLElement>(`.${CLS_RUN_DOT}`);
+  const sr = node.querySelector<HTMLElement>(`.${CLS_RUN_DOT_SR}`);
+  if (mark === null || sr === null) {
+    return;
+  }
+  if (status === "") {
+    mark.removeAttribute("data-status");
+    mark.removeAttribute("data-tooltip");
+    sr.textContent = "";
+    return;
+  }
+  const phrase = runDotPhrase(status, tally);
+  mark.dataset["status"] = status;
+  mark.dataset["tooltip"] = phrase;
+  sr.textContent = `, ${phrase}`;
+}
+
+/** Set a chat tab's WORKFLOW mark: whether a run this chat launched is still
+ *  going, and what it wants. `chat-run-dots.ts` derives the fold; this is the
+ *  writer.
+ *
+ *  `tally` rides alongside `status` rather than being derived from it because the
+ *  two answer different questions and only one of them is a fold: the status is
+ *  what the mark PAINTS, the tally is what its phrase SAYS. The producer owns the
+ *  precedence; this module owns the words.
+ *
+ *  Records on the ROW before painting, for `setTabStatus`'s reason: a row rebuilt
+ *  later starts from the real state instead of a blank slot. Deliberately does NOT
+ *  `emit()` — a mark is not a structural change — and deliberately does not bump
+ *  `dotVersion`: that signal feeds attention.ts's out-of-page fold, and the fold
+ *  reads `setTabStatus`'s dot rather than this mark. Which of the two writers it
+ *  reads is now DECIDED for run TABS — `cueCandidates` reports a run tab's own dot
+ *  — and still undecided for this chat-row mark, which folds N runs onto one row
+ *  the launching chat's own cue already speaks for. So the product decision is
+ *  outstanding for this writer alone, not for run state generally. */
+export function setTabRunStatus(
+  id: string,
+  status: TabRunDotStatus | "",
+  tally: TabRunTally,
+): void {
+  const row = rowOfID(id);
+  if (row === undefined) {
+    return;
+  }
+  if (status === "") {
+    delete row.runDot;
+  } else {
+    row.runDot = { status, tally };
+  }
+  const node = elementOf(id);
+  if (node === null) {
+    return;
+  }
+  paintRunDot(node, status, tally);
 }
 
 /** Mark an editor tab as having unsaved changes (a steady accent disc).
@@ -1364,8 +1488,13 @@ export function parentChatRef(tabID: string): string {
 
 /** The chat refs with an open tab, deduplicated (an owning tab and a view tab
  *  can project one chat), as a TRACKED read: an effect calling this re-runs on
- *  every projection mutation and never on a dot write. The strip's per-row
- *  store effects (chat.ts) sync their registry on it. */
+ *  every projection mutation and never on a dot write.
+ *
+ *  TWO consumers, and the dedupe serves both: the strip's per-row store effects
+ *  (chat.ts) sync their registry on it, and `chat-run-dots.ts` enumerates the rows
+ *  that can carry a workflow mark. Both resolve the row with `tabIdFor("chat",
+ *  ref)`, so the pair of tabs a duplicated ref would produce paints the first —
+ *  which is the residual the activity dot already has, not a new one. */
 export function openChatRefs(): string[] {
   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
   stateVersion.value;
@@ -1426,23 +1555,40 @@ export function paintProvisionalTabs(subjects: readonly TabSubject[]): void {
   reset(subjects);
 }
 
-/** The chat tabs and their current dot states, for the out-of-page attention
- *  fold (attention.ts). A pure projection read: the dot state is parked on the
- *  row, so nothing here reads the DOM and a row whose element has not been built
- *  yet still counts.
+/** The cue-bearing tabs and their current dot states, for the out-of-page
+ *  attention fold (attention.ts). A pure projection read: the dot state is parked
+ *  on the row, so nothing here reads the DOM and a row whose element has not been
+ *  built yet still counts.
  *
  *  The list is heterogeneous, so the filter is the whole correctness argument:
  *
- *   - `kind === "chat"` is the only cue-bearing kind. It excludes the five
- *     singletons and every run tab, which carry no chat dot, and it excludes
- *     editor tabs, whose `dirty` mark rides the same element and is not a chat
- *     state. `isCueStatus` rejects `dirty` as well, so it cannot reach the fold by
- *     either route.
- *   - `owns` excludes a VIEW tab — one watching work another chat owns. Such a tab
- *     is a window onto a chat, not the chat, so counting it would count one chat
- *     twice whenever the chat's own tab is also open. A SUB-TAB is NOT excluded: a
- *     tangent carries a parent and the default `owns`, because it is its own chat
- *     with its own bridge and its own cue.
+ *   - TWO kinds bear a cue, `chat` and `run`. A run tab is not dotless: store.ts
+ *     `runStatusFor` writes one through `setTabStatus`, and every value it can
+ *     answer is either a `CueStatus` member (`input`, `waiting`, `failed`, `done`)
+ *     or one `isCueStatus` rejects (`""`, `working`). So the run kind inherits the
+ *     fold's severity handling BY CONSTRUCTION — `CUE_SEVERITY` needs no new
+ *     member and `CUE_ICON` no new entry, which is why the ratified design's "run
+ *     arm" is this sentence rather than a branch that would do nothing.
+ *   - EDITOR tabs and the five singletons stay excluded. An editor's `dirty` mark
+ *     rides the same element and is not an agent state at all; `isCueStatus`
+ *     rejects `dirty` as well, so it cannot reach the fold by either route.
+ *   - `owns` is scoped to the CHAT kind, deliberately, because the rule it encodes
+ *     is a statement about chats. A chat VIEW tab is a window onto a chat, so
+ *     counting it would count one chat twice whenever that chat's own tab is also
+ *     open. That does not transfer to a run: a run tab is a window onto a RUN, a
+ *     different subject, so one chat plus one run genuinely is two things wanting
+ *     the reader. Hence the conjunct stays on the kind it was written for rather
+ *     than being loosened globally — tab-materialize.ts hard-codes `owns: false`
+ *     for run AND subagent, so loosening it would sweep both in. A chat SUB-TAB is
+ *     NOT excluded: a tangent carries a parent and the default `owns`, because it
+ *     is its own chat with its own bridge and its own cue. The `subagent` kind is
+ *     left out: its asks are filed under its launching chat, whose row already
+ *     carries them.
+ *
+ *  The dot this reads is `setTabStatus`'s single `TabDotState` slot, NOT
+ *  `setTabRunStatus`'s workflow mark on a chat row — that writer deliberately does
+ *  not bump `dotVersion`, and folding it in is still an open product decision (see
+ *  its own comment).
  *
  *  The id is the TAB id, which is what every other key in that module is (the
  *  rows-in-view scan reads `data-tab-id`, the switch acknowledgement reads the
@@ -1450,7 +1596,7 @@ export function paintProvisionalTabs(subjects: readonly TabSubject[]): void {
  *  vocabulary, so no two of those can disagree. */
 export function cueCandidates(): { id: string; status: string }[] {
   return state.tabs
-    .filter((t) => t.subject.kind === "chat" && t.spec.owns)
+    .filter((t) => (t.subject.kind === "chat" && t.spec.owns) || t.subject.kind === "run")
     .map((t) => ({ id: t.subject.id, status: t.dotStatus ?? "" }));
 }
 
@@ -1834,6 +1980,21 @@ function createTabEl(row: TabRow): HTMLElement {
   const statusDot = el("span", { className: CLS_DOT, "aria-hidden": "true" });
   const statusSR = el("span", { className: `${CLS_DOT_SR} sr-only` });
 
+  // The WORKFLOW mark, and its own announced phrase. A CHAT row only, because a
+  // run is launched from a chat and nothing else in the strip has one to report.
+  //
+  // A second element rather than a second state on the dot beside it: the two
+  // facts are genuinely independent, since `run_workflow` returns as soon as the
+  // run is created, so the launching turn ends and that dot goes green while the
+  // run carries on for another forty minutes. Compounding them either keeps the
+  // green (no signal, which is the reported defect) or overwrites it (a lie about
+  // the turn).
+  //
+  // NOT a `.tab-icon`, for the nesting arrow's reason: that class also means "grab
+  // me to reorder".
+  const runDot = el("span", { className: CLS_RUN_DOT, "aria-hidden": "true" });
+  const runSR = el("span", { className: `${CLS_RUN_DOT_SR} sr-only` });
+
   // The pin marker rides every row and CSS reveals it under `.tab-pinned`, so
   // renderDOM toggles one class instead of adding and removing a node. The glyph
   // is decorative; the .sr-only word beside it is what a screen reader hears,
@@ -1867,7 +2028,15 @@ function createTabEl(row: TabRow): HTMLElement {
     // Keyed on the SUBJECT's parent, the same predicate `renderDOM` toggles
     // `tab-child` with, so the indent and the marker cannot disagree. Safe to
     // decide once at creation: `Parent` is set at open and never reassigned.
-    node.append(nest, statusDot, name, statusSR, pin, close);
+    //
+    // A chat sub-tab (a tangent) carries the workflow mark too: it is its own chat
+    // with its own bridge, so it can launch its own runs. The two kinds that cannot
+    // get one here are `run` and `subagent`.
+    if (kind === "chat") {
+      node.append(nest, statusDot, runDot, name, statusSR, runSR, pin, close);
+    } else {
+      node.append(nest, statusDot, name, statusSR, pin, close);
+    }
     // The `idle` floor is the CHAT rule below and it generalizes to neither other
     // kind that can sit here, for the same reason in both: the hollow ring means
     // the row has not initiated (store.ts `outcomeLatch`), and a run with no frame
@@ -1882,7 +2051,7 @@ function createTabEl(row: TabRow): HTMLElement {
     // used to hold. That is the replacement, not a supplement: the strip exists
     // to say what is happening in the chats you are not looking at, and a chat's
     // role does not change between glances while its activity does.
-    node.append(statusDot, name, statusSR, pin, close);
+    node.append(statusDot, runDot, name, statusSR, runSR, pin, close);
     // Painted from the ROW, falling back to `idle`. The fallback is why the dot
     // is seeded at all rather than left blank for the store effect to fill: the
     // effect paints on a later tick, so an unseeded dot would leave the row one
@@ -1897,6 +2066,11 @@ function createTabEl(row: TabRow): HTMLElement {
     node.append(icon, name, statusSR, pin, statusDot, close);
     paintDot(node, kind, row.dotStatus ?? "");
   }
+  // The workflow mark, repainted from the row for the dot's reason: the producer
+  // effect rewrites only when its own inputs churn, and a DOM rebuild is not one of
+  // them. One call site rather than one per branch — it is a no-op on a row that
+  // carries no mark.
+  paintRunDot(node, row.runDot?.status ?? "", row.runDot?.tally ?? NO_RUNS);
   // A sub-tab is not independently draggable: its position is its parent's.
   // attachTabInteraction wires click/keyboard AND drag, so the flag rides along.
   attachTabInteraction(node, id, row.subject.parent === "");

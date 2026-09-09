@@ -1,0 +1,257 @@
+{
+  "_comment": [
+    "The WINDOW-BASE rule, as a table both languages must satisfy.",
+    "",
+    "A client's message store is a paginated newest-first window, so its own turn",
+    "projection cannot know how many turns precede the window's first message. It is",
+    "told: `GET /api/chats/{id}` answers `turn_offset` and `turn_segment_closed`, and",
+    "`offset + 1` is the session-absolute ordinal of the window's first turn.",
+    "",
+    "This file is the contract between the two halves. It is read by",
+    "TestTurnWindowBaseContract (Go, over turnWindowBase) and by turns.node.test.ts",
+    "(TypeScript, over projectTurns with a base). Changing the boundary rule in one",
+    "language fails the other language's test, which is the only mechanism keeping",
+    "them in agreement — there is no code generation for behaviour.",
+    "",
+    "`messages` is one persisted message array. `blocks` lists one subtask id per",
+    "block; absent means the message carries no blocks at all, which is what every",
+    "row predating the step rule needs. `windows` lists the cuts: `start` is the",
+    "index the window begins at, `turn_offset` and `turn_segment_closed` are what the",
+    "server must answer for it, and `n` is the absolute ordinal expected for each",
+    "turn the window's own projection produces.",
+    "",
+    "TWO SPLITS ARE THE REASON `turn_segment_closed` EXISTS, and both are named in",
+    "the table below: a window opening on a STEP-ONLY message and one opening on an",
+    "EVENT row carrying no outcome. `opensHeaderlessTurn` returns false for either,",
+    "so each CONTINUES the closed turn before it — and a local scan seeded",
+    "`closed: false` instead reads the next assistant message as joining that",
+    "fragment rather than opening a turn of its own, which shifts every later",
+    "ordinal. Drop the seed and those two rows go red; drop the",
+    "continues-a-turn subtraction from the offset and every mid-turn split does.",
+    "",
+    "The EMPTY window (`start` past the last message) is rendered by nothing, and it",
+    "is pinned so the value is deliberate rather than accidental: it reports the",
+    "state after the whole array, which is what a `before_id` naming the first",
+    "message asks for."
+  ],
+  "cases": [
+    {
+      "name": "a plain two-turn conversation",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1" },
+        { "role": "user", "id": "u2" },
+        { "role": "assistant", "id": "a2" }
+      ],
+      "windows": [
+        {
+          "name": "the whole array",
+          "start": 0,
+          "turn_offset": 0,
+          "turn_segment_closed": false,
+          "n": [1, 2]
+        },
+        {
+          "name": "cut on the second turn's own prompt",
+          "start": 2,
+          "turn_offset": 1,
+          "turn_segment_closed": false,
+          "n": [2]
+        },
+        {
+          "name": "cut MID-TURN, so the window's first turn is the one it continues",
+          "start": 3,
+          "turn_offset": 1,
+          "turn_segment_closed": false,
+          "n": [2]
+        },
+        {
+          "name": "an empty window reports the state after the whole array",
+          "start": 4,
+          "turn_offset": 2,
+          "turn_segment_closed": false,
+          "n": []
+        }
+      ]
+    },
+    {
+      "name": "a settled turn followed by an agent-initiated one",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "assistant", "id": "a2", "outcome": "completed" },
+        { "role": "user", "id": "u2" },
+        { "role": "assistant", "id": "a3" }
+      ],
+      "windows": [
+        {
+          "name": "the whole array",
+          "start": 0,
+          "turn_offset": 0,
+          "turn_segment_closed": false,
+          "n": [1, 2, 3]
+        },
+        {
+          "name": "cut on the agent-initiated turn, whose segment had closed",
+          "start": 2,
+          "turn_offset": 1,
+          "turn_segment_closed": true,
+          "n": [2, 3]
+        },
+        {
+          "name": "cut on the prompt after it",
+          "start": 3,
+          "turn_offset": 2,
+          "turn_segment_closed": true,
+          "n": [3]
+        }
+      ]
+    },
+    {
+      "name": "a window opening on a STEP-ONLY message after a closed turn",
+      "_comment": [
+        "The divergent case the seed exists for. `isStepMessage` makes",
+        "`opensHeaderlessTurn` false, so s1 CONTINUES turn 1 — and the next assistant",
+        "message opens turn 2 only because the segment is still closed. Seeded false,",
+        "the local scan reads a2 as joining s1's fragment and answers ONE turn."
+      ],
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "assistant", "id": "s1", "blocks": ["wf:wf_1:step-a"] },
+        { "role": "assistant", "id": "a2", "outcome": "completed" },
+        { "role": "user", "id": "u2" },
+        { "role": "assistant", "id": "a3" }
+      ],
+      "windows": [
+        {
+          "name": "the whole array",
+          "start": 0,
+          "turn_offset": 0,
+          "turn_segment_closed": false,
+          "n": [1, 2, 3]
+        },
+        {
+          "name": "cut on the step message, which continues turn 1",
+          "start": 2,
+          "turn_offset": 0,
+          "turn_segment_closed": true,
+          "n": [1, 2, 3]
+        },
+        {
+          "name": "cut on the assistant message the step message precedes",
+          "start": 3,
+          "turn_offset": 1,
+          "turn_segment_closed": true,
+          "n": [2, 3]
+        }
+      ]
+    },
+    {
+      "name": "a window opening on an EVENT row carrying no outcome",
+      "_comment": [
+        "The second divergent shape: a non-assistant row with no `turn_outcome` fails",
+        "both clauses of `opensHeaderlessTurn`, so it joins the closed turn before it",
+        "and the assistant message after it opens the next one."
+      ],
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "event", "id": "e1", "event": "model_switched" },
+        { "role": "assistant", "id": "a2", "outcome": "completed" },
+        { "role": "user", "id": "u2" },
+        { "role": "assistant", "id": "a3" }
+      ],
+      "windows": [
+        {
+          "name": "the whole array",
+          "start": 0,
+          "turn_offset": 0,
+          "turn_segment_closed": false,
+          "n": [1, 2, 3]
+        },
+        {
+          "name": "cut on the event row, which continues turn 1",
+          "start": 2,
+          "turn_offset": 0,
+          "turn_segment_closed": true,
+          "n": [1, 2, 3]
+        },
+        {
+          "name": "cut on the assistant message after it",
+          "start": 3,
+          "turn_offset": 1,
+          "turn_segment_closed": true,
+          "n": [2, 3]
+        }
+      ]
+    },
+    {
+      "name": "a mid-turn STEER joins the turn already running",
+      "_comment": [
+        "`isPrompt` is false for a steer, so it may not open a turn — and it carries no",
+        "`turn_outcome`, so a window opening on one is a third continues-a-turn shape."
+      ],
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1" },
+        { "role": "user", "id": "s1", "user_kind": "steer" },
+        { "role": "assistant", "id": "a2", "outcome": "completed" },
+        { "role": "user", "id": "u2" },
+        { "role": "assistant", "id": "a3" }
+      ],
+      "windows": [
+        {
+          "name": "the whole array",
+          "start": 0,
+          "turn_offset": 0,
+          "turn_segment_closed": false,
+          "n": [1, 2]
+        },
+        {
+          "name": "cut on the steer, which continues turn 1",
+          "start": 2,
+          "turn_offset": 0,
+          "turn_segment_closed": false,
+          "n": [1, 2]
+        },
+        {
+          "name": "cut on the reply the steer was read into",
+          "start": 3,
+          "turn_offset": 0,
+          "turn_segment_closed": false,
+          "n": [1, 2]
+        }
+      ]
+    },
+    {
+      "name": "a transcript that begins agent-initiated",
+      "_comment": [
+        "The first message opens a turn whatever it carries, so a window at 0 has no",
+        "offset and no closed segment behind it — which is exactly what the default",
+        "base a whole-session projection uses must answer."
+      ],
+      "messages": [
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a2" }
+      ],
+      "windows": [
+        {
+          "name": "the whole array",
+          "start": 0,
+          "turn_offset": 0,
+          "turn_segment_closed": false,
+          "n": [1, 2]
+        },
+        {
+          "name": "cut on the prompt after it",
+          "start": 1,
+          "turn_offset": 1,
+          "turn_segment_closed": true,
+          "n": [2]
+        }
+      ]
+    }
+  ]
+}

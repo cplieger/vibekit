@@ -10,6 +10,7 @@ import { describe, it, expect } from "vitest";
 import {
   planResidency,
   sliceTurn,
+  supersededMessages,
   turnCost,
   turnOrdinalOf,
   OVERSCAN_BLOCKS,
@@ -326,5 +327,63 @@ describe("planResidency", () => {
     const range = planResidency([t], undefined, { blocks: 3, toolCalls: 8 }).get("t") as TurnRange;
     expect(range).toEqual({ from: 5, to: 8 });
     expect([...sliceTurn(t, range)]).toEqual([["b", { from: 1, to: 4 }]]);
+  });
+});
+
+describe("supersededMessages", () => {
+  /** An assistant message whose every block is a WORKFLOW STEP's, so the transcript
+   *  renders none of it. Measured on the live volume as 11 real body messages, one of
+   *  them 603 blocks long — the population a bare "is there a later row" test gets
+   *  wrong. */
+  function stepMsg(id: string, n: number): Message {
+    return {
+      id,
+      role: "assistant",
+      ts: 2,
+      blocks: Array.from({ length: n }, (_, i) => ({
+        type: "text",
+        text: `step ${String(i)}`,
+        agent_subtask_id: "wf:wk-1:seq/step",
+      })),
+      tool_calls: [],
+    } as unknown as Message;
+  }
+
+  function eventMsg(id: string): Message {
+    return { id, role: "event", ts: 2, event_kind: "compacted" } as unknown as Message;
+  }
+
+  it("names every message a later one renders content after", () => {
+    const ids = supersededMessages([turn("t1", [msg("a", 2), msg("b", 2), msg("c", 2)])]);
+    expect([...ids].sort()).toEqual(["a", "b"]);
+  });
+
+  it("leaves the turn's last message alone", () => {
+    expect(supersededMessages([turn("t1", [msg("only", 3)])]).has("only")).toBe(false);
+  });
+
+  it("does not let a message the transcript renders NOTHING for supersede one", () => {
+    // The whole reason the predicate is not "is there a later row": those blocks are
+    // dropped by the dispatcher, so folding `a` would fold it behind nothing visible.
+    expect(supersededMessages([turn("t1", [msg("a", 2), stepMsg("wf", 603)])]).has("a")).toBe(
+      false,
+    );
+  });
+
+  it("counts an EVENT row as content, because a badge is a row of its own", () => {
+    expect(supersededMessages([turn("t1", [msg("a", 2), eventMsg("e")])]).has("a")).toBe(true);
+  });
+
+  it("looks past a renders-nothing message to a real one behind it", () => {
+    const ids = supersededMessages([turn("t1", [msg("a", 2), stepMsg("wf", 4), msg("c", 1)])]);
+    expect([...ids].sort()).toEqual(["a", "wf"]);
+  });
+
+  it("scopes the verdict to one turn", () => {
+    // The newest turn's own tail is not superseded by an OLDER turn, and nothing in an
+    // older turn is superseded by a newer turn's content — that axis is the turn card's
+    // own fold (`fold-state.ts`), not this one.
+    const ids = supersededMessages([turn("t1", [msg("a", 2)]), turn("t2", [msg("b", 2)])]);
+    expect([...ids]).toEqual([]);
   });
 });

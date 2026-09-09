@@ -215,18 +215,33 @@ describe(
       }
     });
 
-    it("lets a COARSE pointer grow a member row past that shared floor, because its file chip is a 44px touch target", async () => {
-      // Not a regression and not a tolerance: `.tool-file-link` is a real `<button>`,
-      // so `61-mcp-tools.css`'s zero-specificity hit-target floor gives it 44px on a
-      // coarse pointer and the row has to contain it. The HEADER holds only spans, so
-      // nothing pushes it off its floor. Stated here so the difference is not "fixed"
-      // by shrinking a touch target — which is what item 1 refused to do to the header.
+    it("RENDERS a header and its member rows at one height on a coarse pointer too, because the file chip declares its own box", async () => {
+      // OVERTURNS the case this replaces, which asserted the coarse row was TALLER
+      // than its header and called that "not a regression": `.tool-file-link` is a
+      // real `<button>` declaring no size, so `61-mcp-tools.css`'s hit-target floor
+      // arrived as its BOX — 44px square around a 15.4px line box — and the row grew
+      // to 52px to contain it. The earlier reading mistook that for a designed touch
+      // target and defended it; the floor's own contract is that a control keeps its
+      // declared size and the floor lifts the box, with `.send-btn` as the named
+      // precedent for overriding it. Measured in the units it was reported in: the
+      // chip read 44px against the row's own 44px header.
+      //
+      // The chip now reads `--ctl-h-sm`, so the row equals its header at BOTH tiers
+      // and the coarse exemption is gone. Chip height is asserted against WCAG
+      // 2.5.8's 24px minimum rather than a literal, and against the row, so shrinking
+      // it to its line box fails here.
       document.documentElement.dataset["pointer"] = "coarse";
-      const g = await run(1);
-      const row = members(g)[0]!.querySelector<HTMLElement>(".tool-header")!;
-      const chip = row.querySelector<HTMLElement>("button.tool-file-link")!;
-      expect(h(chip), "the chip is at the coarse hit floor").toBeGreaterThanOrEqual(44);
-      expect(h(row), "so the row clears the chip").toBeGreaterThanOrEqual(h(chip));
+      const g = await run(3);
+      const head = h(headerOf(g));
+      const chip = members(g)[0]!.querySelector<HTMLElement>("button.tool-file-link")!;
+      expect(h(chip), "the chip clears the AA target minimum").toBeGreaterThanOrEqual(24);
+      expect(h(chip), "and stays inside the row it sits in").toBeLessThan(head);
+      for (const [i, m] of members(g).entries()) {
+        expect(
+          h(m.querySelector(".tool-header")),
+          `member ${String(i)}'s row must be exactly the header's height on a finger too`,
+        ).toBe(head);
+      }
     });
 
     it("leaves the member's OUTER box exactly 1px taller than its row: the separator hairline", async () => {

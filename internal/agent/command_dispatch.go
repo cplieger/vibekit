@@ -22,6 +22,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		MCP:           rt.mcpRegistry,
 		TurnOutcome:   rt,
 		Steers:        rt.steerLedger,
+		Status:        rt,
 		AuthReadiness: rt.authReadiness,
 	})
 

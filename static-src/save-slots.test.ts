@@ -32,6 +32,7 @@ const EXPECTED_KEYS = [
   "notifications_enabled",
   "notify_agent_finished",
   "notify_pr_status",
+  "notify_run_outcome",
   // Chat retention — one value, two controls, so one slot on the section title
   "chat_retention_days",
   // Agent capabilities (settings.ts agentCapabilities)

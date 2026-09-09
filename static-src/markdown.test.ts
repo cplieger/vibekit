@@ -1867,7 +1867,7 @@ describe("renderMarkdown brackets inside a link label", () => {
 
   it("keeps a bracketed run inside an image alt", () => {
     expect(renderMarkdown("![alt [x] y](https://e.com/i.png)")).toBe(
-      '<p><img alt="alt [x] y" src="https://e.com/i.png"></p>',
+      '<p><img alt="alt [x] y" src="https://e.com/i.png" loading="lazy"></p>',
     );
   });
 
@@ -1982,7 +1982,7 @@ describe("renderMarkdown link destinations and titles", () => {
     {
       name: "an image title",
       input: '![a](http://e.com/i.png "t")',
-      expected: '<p><img alt="a" src="http://e.com/i.png" title="t"></p>',
+      expected: '<p><img alt="a" src="http://e.com/i.png" loading="lazy" title="t"></p>',
     },
     {
       name: "an escaped quote inside a title",
@@ -2192,7 +2192,7 @@ describe("renderMarkdown unclosed inline openers", () => {
     {
       name: "closed image",
       input: "![r](http://e.com/r.png)",
-      expected: '<p><img alt="r" src="http://e.com/r.png"></p>',
+      expected: '<p><img alt="r" src="http://e.com/r.png" loading="lazy"></p>',
     },
     {
       name: "closed emphasis inside a link label",

@@ -126,6 +126,40 @@ func TestSyncPushPreferences_SparsePatchDoesNotResetAnOmittedKind(t *testing.T) 
 	}
 }
 
+// A THIRD keyed kind needs no code in syncPushPreferences: that function derives its
+// kind set from push.Kinds(), so a registry row is the whole wiring. This is the case
+// that would fail if the resolution ever went back to naming its kinds by hand.
+func TestSyncPushPreferences_CarriesTheRunOutcomeKind(t *testing.T) {
+	for name, tc := range map[string]struct {
+		patch string
+		want  bool
+	}{
+		"the patch switches it off": {patch: `{"notify_run_outcome":false}`, want: false},
+		"the patch switches it on":  {patch: `{"notify_run_outcome":true}`, want: true},
+		// Absent from both the patch and the file, so the registry's DefaultOn answers.
+		"absent takes the registry default": {patch: `{}`, want: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var patch map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(tc.patch), &patch); err != nil {
+				t.Fatalf("unmarshal patch %s: %v", tc.patch, err)
+			}
+			mp := &testPush{}
+			s := &Server{push: mp, configDir: t.TempDir()}
+
+			s.syncPushPreferences(patch)
+
+			got, known := mp.prefs[vibekit.PushKindRunOutcome]
+			if !known {
+				t.Fatal("run_outcome reached SetPreferences with no entry; preflightSend drops such a kind")
+			}
+			if got != tc.want {
+				t.Errorf("prefs[run_outcome] = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestSyncPushPreferences_MergedPatchNeedsNoDiskRead pins the fast path: when the
 // caller passes the whole merged document, every configurable key is present and
 // the persisted file is never consulted. Asserted by writing a config.json that

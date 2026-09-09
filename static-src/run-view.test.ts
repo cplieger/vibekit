@@ -1228,6 +1228,69 @@ describe("run view structure", () => {
       expect(step.querySelector(":scope > .ev-kids")).toBeNull();
     }
   });
+
+  // ONE FOLD PER BOX. The top-level box discloses and a container inside it does
+  // not, so a loop's passes are always on screen. Reported: the box's chevron could
+  // open onto rows that were themselves still shut, and the inner fold hid the very
+  // rows a reader opens the box to read.
+  const nested = {
+    nodeId: "wf_1",
+    type: "sequence",
+    status: "running",
+    children: [
+      {
+        nodeId: "outer",
+        type: "parallel",
+        status: "running",
+        children: [
+          {
+            nodeId: "inner",
+            type: "repeat",
+            status: "running",
+            children: [{ nodeId: "coder", type: "step", status: "running", children: [] }],
+          },
+        ],
+      },
+    ],
+  };
+
+  it("gives the top-level box a fold and a container inside it none", async () => {
+    const { body } = await paint(openRunView, "running", { root: nested });
+    const row = (id: string): HTMLElement =>
+      body.querySelector<HTMLElement>(`.ev-row[data-path$="/${id}"]`)!;
+    const twistHidden = (id: string) =>
+      row(id).querySelector<HTMLElement>(":scope > .ev-row-main > .ev-twist")?.hidden;
+
+    expect(row("outer").classList.contains("ev-group")).toBe(true);
+    expect(twistHidden("outer")).toBe(false);
+    expect(row("outer").getAttribute("aria-expanded")).toBe("true");
+
+    // No chevron AND no `aria-expanded`: announcing a disclosure state for a row
+    // with no disclosure is the half that hiding the chevron alone would leave.
+    expect(twistHidden("inner")).toBe(true);
+    expect(row("inner").hasAttribute("aria-expanded")).toBe(false);
+    expect(row("inner").querySelector<HTMLElement>(":scope > .ev-kids")?.hidden).toBe(false);
+    expect(row("coder").isConnected).toBe(true);
+  });
+
+  it("still folds the box on its own twist, and the loop stays open under it", async () => {
+    const { body } = await paint(openRunView, "running", { root: nested });
+    const box = body.querySelector<HTMLElement>('.ev-row[data-path$="/outer"]')!;
+    const kidsOf = (row: HTMLElement): HTMLElement =>
+      row.querySelector<HTMLElement>(":scope > .ev-kids")!;
+    const inner = body.querySelector<HTMLElement>('.ev-row[data-path$="/inner"]')!;
+
+    box.querySelector<HTMLElement>(":scope > .ev-row-main > .ev-twist")!.click();
+    expect(kidsOf(box).hidden).toBe(true);
+    expect(box.getAttribute("aria-expanded")).toBe("false");
+    // The loop's own children never fold, so reopening the box reveals the whole
+    // subtree rather than a second layer of shut rows.
+    expect(kidsOf(inner).hidden).toBe(false);
+
+    box.querySelector<HTMLElement>(":scope > .ev-row-main > .ev-twist")!.click();
+    expect(kidsOf(box).hidden).toBe(false);
+    expect(box.getAttribute("aria-expanded")).toBe("true");
+  });
 });
 
 // ---------------------------------------------------------------------------

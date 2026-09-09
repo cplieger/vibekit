@@ -332,6 +332,23 @@ function spacersIn(turnID: string): string[] {
     .filter((k) => k.startsWith("__space_"));
 }
 
+/** Every turn whose body holds a SPACER and no message row: pure reserved height,
+ *  which is what the reader sees as a blank card. Named so a failure lists them. */
+function rowlessBodies(): string[] {
+  const root = activeTranscriptView() ?? messagesEl;
+  const out: string[] = [];
+  for (const child of root.children) {
+    const turnID = child.getAttribute(KEY_ATTR);
+    if (turnID === null || !child.classList.contains("turn")) {
+      continue;
+    }
+    if (spacersIn(turnID).length > 0 && rowsIn(turnID) === 0) {
+      out.push(turnID);
+    }
+  }
+  return out;
+}
+
 let seq = 0;
 /** A fresh chat id per case, so fold overrides and search reveals cannot bleed. */
 function chatID(): string {
@@ -401,30 +418,33 @@ describe("the mounted derivation", () => {
     }
   });
 
-  it("bodies a turn the fold policy wants OPEN even where the window cannot reach it", () => {
+  it("STUBS a turn the fold policy wants open where the window cannot reach it", () => {
     const id = chatID();
-    // The reader opened it, and the newest turn is over budget on its own, so the
-    // window sits entirely inside that turn. Presence is what keeps this one's
-    // height on the page: a body holding no row, and a spacer standing in for
-    // every ordinal it has.
+    // OVERTURNED. This case claimed presence keeps such a turn's height on the page
+    // — "a body holding no row, and a spacer standing in for every ordinal it has" —
+    // and that shape is the defect, not the design: the card renders OPEN with one
+    // whole-turn spacer as its only child, which a reader sees as a blank box
+    // (measured 23,988px on a 400-block turn, reported as "a huge empty space").
+    // Height is not worth that: a stub folds to its face and offers the toggle.
     setTurnOpen(id, "u1", true);
     activate(id, [...toolTurns(1), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
-    expect(hasBody("u1")).toBe(true);
-    expect(isFolded("u1")).toBe(false);
-    expect(rowsIn("u1")).toBe(0);
-    expect(spacersIn("u1")).toEqual(["__space_tail__"]);
+    expect(hasBody("u1")).toBe(false);
+    expect(isFolded("u1")).toBe(true);
+    expect(card("u1").hasAttribute("data-no-fold")).toBe(false);
   });
 
-  it("floors such a turn's spacer at 1px, so an all-empty body is not read as bodiless", () => {
+  it("floors a partial window's spacer at 1px, so no ordinal is priced out of the document", () => {
     const id = chatID();
     // Every block is an unfilled PAD, which is priced at zero: the ordinals are
-    // real, the estimated height is not, and a 0px spacer would leave the body
-    // looking like the one shape `.is-bodyless` is for.
-    setTurnOpen(id, "pad", true);
-    activate(id, [...padTurn("pad", 64), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
+    // real and their estimated height is not. The turn is the NEWEST and over
+    // budget, so the window sits inside it and the head spacer stands in for pads
+    // alone. (This case used to reach that spacer through an all-empty body on an
+    // unreachable open turn, which is the state the case above overturned.)
+    activate(id, padTurn("pad", RESIDENT_BLOCKS + 64));
     const spacer = card("pad").querySelector<HTMLElement>(":scope > .turn-body > .turn-space");
+    expect(spacersIn("pad")).toEqual(["__space_head__"]);
     expect(spacer?.style.blockSize).toBe("1px");
-    expect(card("pad").classList.contains("is-bodyless")).toBe(false);
+    expect(rowsIn("pad")).toBeGreaterThan(0);
   });
 
   it("bodies a turn holding NO block even behind the budget, because .is-bodyless needs a body", () => {
@@ -492,6 +512,39 @@ describe("the mounted derivation", () => {
   });
 });
 
+// --- The invariant the two shapes above share ----------------------------------
+//
+// Nothing pinned this until 2026-09: the renderer had a rule for OPEN and a rule
+// for MOUNTED and no rule relating them, so an open card with nothing in it was a
+// representable state — and the one the reader reported. A spacer prices the
+// ordinals it stands in for, so a body holding one and no row is a card of pure
+// reserved height.
+
+describe("the open-turn invariant", () => {
+  it("never renders a turn body as a spacer with no row beside it", () => {
+    const id = chatID();
+    // Three revealed turns against one over-budget newest one: the window is
+    // contiguous and seeded at the live edge, so it reaches none of them, and the
+    // single demand pin can speak for at most one.
+    for (const turnID of ["u1", "old", "mid"]) {
+      setTurnOpen(id, turnID, true);
+    }
+    activate(id, [
+      ...toolTurns(1),
+      ...heavyTurn("old", 400),
+      ...heavyTurn("mid", 120),
+      ...heavyTurn("big", RESIDENT_BLOCKS + 64),
+    ]);
+    expect(rowlessBodies()).toEqual([]);
+    // The fixture reaches the state it is guarding: those three turns really are
+    // outside the window, and the newest one really is windowed.
+    for (const turnID of ["u1", "old", "mid"]) {
+      expect(hasBody(turnID), `${turnID} stub`).toBe(false);
+    }
+    expect(spacersIn("big")).toEqual(["__space_head__"]);
+  });
+});
+
 // --- Disclosure, which residency does not decide -------------------------------
 
 describe("the fold policy over residency", () => {
@@ -543,9 +596,11 @@ describe("the fold policy over residency", () => {
 
   it("never stubs the NEWEST turn, so its missing toggle strands nobody", () => {
     const id = chatID();
-    // The fold policy wants the newest turn open, and presence follows that
-    // answer rather than the budget — so the one turn that offers no toggle is
-    // also the one that can never need it.
+    // Presence follows the WINDOW, not the fold policy — a policy-open turn the
+    // window cannot reach is a stub. The newest turn is the one that can never be
+    // one while the reader is at the live edge, because that is where the window is
+    // seeded. Nothing is stranded when it IS one either: `canFold` reads true for
+    // every stub, so the toggle appears exactly where the fold rules withhold it.
     activate(id, heavyTurn("big", RESIDENT_BLOCKS + 64));
     expect(hasBody("big")).toBe(true);
     expect(card("big").hasAttribute("data-no-fold")).toBe(true);
@@ -740,6 +795,29 @@ describe("expanding a stub", () => {
     bumpMessages(id);
     expect(isFolded("u1")).toBe(false);
     expect(hasBody("u1")).toBe(true);
+  });
+
+  it("keeps the rows a reveal built after the pin's clock runs out", async () => {
+    const id = chatID();
+    activate(id, [...heavyTurn("old", 400), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
+    expect(hasBody("old")).toBe(false);
+
+    (card("old").querySelector(".turn-fold-toggle") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(rowsIn("old")).toBeGreaterThan(0);
+    });
+
+    // Past PIN_GOAL_MS with the reader still where they were. The reveal is a
+    // standing request, so the grant outlives its clock; the clock alone used to
+    // expire under them and replace every row with one whole-turn spacer on a card
+    // still rendering OPEN — the reader's own content becoming a blank box two
+    // seconds after they asked for it.
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 10_000);
+    bumpMessages(id, "shape");
+
+    expect(rowsIn("old")).toBeGreaterThan(0);
+    expect(isFolded("old")).toBe(false);
+    expect(rowlessBodies()).toEqual([]);
   });
 
   it("keyboard activation on the stub header's toggle mounts it too", async () => {

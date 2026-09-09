@@ -47,15 +47,22 @@ export interface ReasoningView {
   append(delta: string): void;
   /** Replace-to-full: append only the tail beyond what's rendered. */
   setText(full: string): void;
-  /** Seal the trace: flip the summary, drop the pulse, collapse. Idempotent. */
+  /** Settle the trace: flip the summary, drop the pulse. Says nothing about the
+   *  disclosure — a trace that has finished thinking is not a trace something was
+   *  posted after. Idempotent. */
+  settle(): void;
+  /** Settle, then COLLAPSE. What a successor arriving means: the trace is finished AND
+   *  no longer the newest element in its lane. Idempotent. */
   seal(): void;
 }
 
 /**
- * Build a reasoning block. `live` opens it with the streaming pulse; replay
- * mounts it collapsed and labelled "Reasoning".
+ * Build a reasoning block. `live` owns the pulse and the label ("Thinking…" against
+ * "Reasoning"); `open` owns the disclosure, and it is the CALLER's to decide — under
+ * the newest-element policy a settled trace nothing followed still renders expanded,
+ * so the two inputs are genuinely separate.
  */
-export function buildReasoning(initial: string, live: boolean): ReasoningView {
+export function buildReasoning(initial: string, live: boolean, open: boolean): ReasoningView {
   const root = el("details", {
     className: "reasoning-block msg-reasoning",
   }) as HTMLDetailsElement;
@@ -77,14 +84,15 @@ export function buildReasoning(initial: string, live: boolean): ReasoningView {
   );
   const body = el("blockquote", { className: "reasoning-body" }, initial);
   root.append(summary, body);
+  root.open = open;
   if (live) {
-    root.open = true;
     root.classList.add("streaming");
   }
 
   // Also the watermark setText() slices against.
   let text = initial;
-  let sealed = false;
+  let settled = false;
+  let collapsed = false;
   let words = 0;
   let openWord = false;
 
@@ -102,6 +110,18 @@ export function buildReasoning(initial: string, live: boolean): ReasoningView {
   }
   countIn(initial);
   showCount();
+
+  /** The label-and-pulse half, shared by both exits so a detached `seal` reference
+   *  cannot miss it. */
+  function settleNow(): void {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    label.textContent = "Thinking completed";
+    root.classList.remove("streaming");
+    showCount();
+  }
 
   return {
     root,
@@ -124,15 +144,15 @@ export function buildReasoning(initial: string, live: boolean): ReasoningView {
       countIn(tail);
       showCount();
     },
+    settle: settleNow,
     seal(): void {
-      if (sealed) {
+      settleNow();
+      if (collapsed) {
         return;
       }
-      sealed = true;
-      label.textContent = "Thinking completed";
-      root.classList.remove("streaming");
-      showCount();
-      // No animation on a bare `open = false`, so compensate scroll position.
+      collapsed = true;
+      // No animation on a bare `open = false`, so compensate scroll position. The
+      // wrapper stays on the COLLAPSE half only: settling moves no height.
       preserveReadingPosition(() => {
         root.open = false;
       }, "content-growth");

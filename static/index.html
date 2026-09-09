@@ -279,7 +279,7 @@
                    open menu, and a card nested in the trigger would put
                    interactive content inside a <button>. -->
               <span class="pill-slot">
-                <button id="context-indicator" class="pill pill-context pill-expandable" type="button" data-tooltip="Context usage — tokens, credits and turns for this chat" aria-label="Context usage">
+                <button id="context-indicator" class="pill pill-context pill-expandable" type="button" data-tooltip="Context usage — tokens, credits and turns for this chat. The grey band marks where the conversation will be compacted once usage reaches it." aria-label="Context usage">
                   <!-- A PIE, not a ring. Both circles share one radius and
                        one stroke width: r=4 with an 8-wide stroke spans r 0..8,
                        so each stroke IS a filled sector, and pathLength="100"
@@ -414,7 +414,7 @@
                     <span class="section-option-label">Push notifications</span>
                     <span class="settings-save-status hidden" data-save-status="notifications_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Receive notifications on all your devices, even when the app is closed.</p>
+                  <p class="section-hint">Receive notifications on all your devices, even when the app is closed. While this tab is focused the alert appears in the app instead, so testing with it open shows nothing on your desktop.</p>
                   <p id="notify-hint" class="section-hint hidden"></p>
                 </div>
               </div>
@@ -443,6 +443,19 @@
                       <span class="settings-save-status hidden" data-save-status="notify_pr_status" aria-live="polite"></span>
                     </div>
                     <p class="section-hint">Notify when CI on a pull request you opened turns green or red. Checked every minute while you have an open pull request in a repository checked out here, and every five minutes otherwise. Coverage follows what each host reports: GitHub sends both outcomes, GitLab reports a failure but cannot report a recovery, and Gitea or Codeberg report neither.</p>
+                  </div>
+                </div>
+                <div class="section-option">
+                  <label class="toggle">
+                    <input type="checkbox" id="notify-run-outcome-toggle" aria-label="Workflow runs" checked>
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <div>
+                    <div class="section-title-status-row">
+                      <span class="section-option-label">Workflow runs</span>
+                      <span class="settings-save-status hidden" data-save-status="notify_run_outcome" aria-live="polite"></span>
+                    </div>
+                    <p class="section-hint">Notify when a workflow run finishes, fails, or is stopped. Covers every run this server started — launched by you from the Workflows tab, launched by the agent from a chat, or started by a schedule — whether or not it belongs to a conversation. A run outlives the turn that launched it, so without this a run that ends while you are elsewhere reaches nobody. If your deployment already alerts on failed scheduled runs, expect a second notice for those.</p>
                   </div>
                 </div>
                 <div class="section-option section-option-fixed">
@@ -637,7 +650,7 @@
 
           <!-- Permissions: active (Cedar) policy + supervised mode + agent ignore files -->
           <div class="settings-panel hidden" data-settings-panel="permissions">
-            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces — including shell commands. The layers under it (supervised mode, agent ignore files) are vibekit's own complementary controls. Defaults here apply to new conversations; the Supervised pill next to the chat prompt toggles the per-chat review gate.</p>
+            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces — including shell commands. Supervised mode and agent ignore files are separate layers under it; the review gate is kiro-cli's own, and vibekit only sets a value for it. Defaults here apply to new conversations, and the chat-actions menu next to the prompt changes the conversation you are in.</p>
 
             <div class="page-section" id="security-profile-section">
               <h2 class="section-title">Security profile</h2>
@@ -713,7 +726,7 @@
                 <h2 class="section-title">Supervised mode (default for new chats)</h2>
                 <span class="settings-save-status hidden" data-save-status="supervised_default" aria-live="polite"></span>
               </div>
-              <p class="section-hint">A separate layer from the Active policy above. That policy decides whether the agent needs permission to <em>run</em> a write tool; Supervised mode decides whether the <em>resulting file change</em> needs your review before it's saved to disk. When on, every file change (create, edit, delete) shows up in the chat with Accept / Reject buttons and the write only lands after you approve. The Supervised pill next to the chat prompt toggles the current conversation; this setting only picks the default for new ones.</p>
+              <p class="section-hint">A separate layer from the Active policy above. That policy decides whether the agent may <em>run</em> a write tool; supervised mode decides whether the turn's file changes are <em>kept</em>. When it is on, the agent writes its changes for a turn to disk, then the turn pauses and one review card appears in the bar at the bottom of the chat, listing the files it changed. Every file starts ticked, so confirming keeps all of them; you untick anything you want reverted. The changes are on disk while you review, so a running dev server, build watcher or test runner can pick up a change you are about to reject. A rename that spans several paths is one decision you cannot split. To turn supervised mode on for the conversation you are in, use the chat-actions menu next to the prompt; this setting only picks the default for new ones.</p>
               <label class="perm-mode">
                 <input type="checkbox" id="supervised-default-checkbox">
                 <span>Turn on Supervised mode for new conversations</span>
@@ -975,6 +988,11 @@
             <div class="view-toolbar-inner">
               <span id="editor-filename" class="editor-filename"></span>
               <div class="editor-actions">
+                <!-- Deliberately EMPTY: the glyph is injected from icons.ts in
+                     initEditor, because a concept with a registry entry may not be
+                     redrawn here. Its four neighbours below predate that rule and
+                     are pinned by menu-icons.test.ts instead. -->
+                <button type="button" id="editor-git-diff-btn" class="icon-btn hidden" aria-pressed="false" aria-label="View diff vs HEAD" data-tooltip="View diff vs HEAD"></button>
                 <button type="button" id="editor-diff-btn" class="icon-btn" data-tooltip="View as diff (vs saved)" aria-label="View as diff (vs saved)">
                   <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 00-2 2v14a2 2 0 002 2h4M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M12 4v16"/></svg>
                 </button>
@@ -1025,7 +1043,7 @@
                 <button type="button" id="fb-download" class="icon-btn" data-tooltip="Download" aria-label="Download" disabled>
                   <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                 </button>
-                <details class="fb-new-menu" name="fb-new-menu">
+                <details class="fb-new-menu">
                   <summary class="icon-btn fb-new-trigger" data-tooltip="New file or folder" aria-label="New file or folder">
                     <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
                   </summary>
@@ -1054,7 +1072,7 @@
 
       <!-- Global upload progress (shared by file browser and chat attach) -->
       <div id="upload-progress" class="upload-progress upload-closed">
-        <div class="upload-progress-bar"><div id="upload-progress-fill" class="upload-progress-fill"></div></div>
+        <progress id="upload-progress-bar" class="upload-progress-bar" max="100" value="0" aria-label="Upload progress"></progress>
         <span id="upload-progress-label" class="upload-progress-label">Uploading...</span>
         <button type="button" id="upload-progress-cancel" class="upload-progress-cancel hidden" aria-label="Cancel upload" data-tooltip="Cancel upload">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>

@@ -52,14 +52,22 @@
     --c-red: oklch(75.6% 0.13 2.8deg);
     --c-yellow: oklch(91.9% 0.07 86.5deg);
 
-    /* The context indicator's compaction band: --c-yellow's hue with L and C
-     * sized per theme, a SEED rather than one mix over it. No single
-     * relationship serves both backdrops — the band reads lighter than the
-     * --c-border track on dark and darker than it on light — and CHROMA is what
-     * separates it from the fill, whose hues run 2.8-142.7deg continuously and
-     * so cannot. 3.098:1 vs that track, 4.739:1 vs the page, over WCAG 1.4.11's
-     * 3:1 for a graphical object (`css-contrast.py pair`). */
-    --c-context-wedge: oklch(59% 0.12 86.5deg);
+    /* The context indicator's compaction band: a NEUTRAL at the surface family's
+     * hue, sized per theme, a SEED rather than one mix over anything. It carries
+     * effectively no chroma, and that is what separates it from the fill: the
+     * fill's hues run 2.8-142.7deg continuously, so a band with chroma of its own
+     * reads as a point on that ramp — which is what the amber band this replaced
+     * was doing.
+     *
+     * L is then the one free axis, and it is boxed in from both sides. Above 3:1
+     * against the --c-border track and against the page (WCAG 1.4.11 for a
+     * graphical object) puts a floor under it here at L 58%; staying QUIETER than
+     * every hue the fill can take — a band as loud as the fill reads as
+     * already-filled — puts a ceiling at L 72%, because --c-red is the quietest
+     * fill at 5.561:1 against that track. Mid-window: 4.11:1 vs the track, 6.29:1
+     * vs the page, 0.1603 in OKLab from the nearest stroke the fill can emit
+     * (`css-contrast.py pair`, and context-wedge-contrast.node.test.ts). */
+    --c-context-wedge: oklch(66% 0.01 284.1deg);
 
     /* Seeds rather than alpha washes of the status hues: alpha moves LIGHTNESS,
      * and no alpha from 12% to 26% reaches AA in either theme. These hold the
@@ -473,12 +481,13 @@
     --c-yellow: oklch(47% 0.09 86.5deg);
 
     /* Sized against light's own track, which the band has to read DARKER than —
-     * see the dark declaration for why this is a seed. Chroma goes the other way
-     * here: light's ramp carries 0.09-0.15, which the band cannot out-saturate
-     * inside its own L window, so being MUTED is the separation left — and 58%
-     * already drops under 3:1 against the near-white track, so L cannot pay for
-     * it either. 3.061:1 vs that track, 4.295:1 vs the page. */
-    --c-context-wedge: oklch(57% 0.06 86.5deg);
+     * see the dark declaration for the two sides the window is boxed in by. It is
+     * NARROWER here: light's fills are all mid-dark, so --c-red is the quietest at
+     * 4.086:1 against a near-white track and the whole window is L 52-56%. The two
+     * themes' windows are adjacent and do NOT overlap, which is why this cannot
+     * collapse into one value. 3.46:1 vs that track, 4.85:1 vs the page, 0.1217 in
+     * OKLab from the nearest fill stroke. */
+    --c-context-wedge: oklch(54% 0.01 284.1deg);
 
     /* At the dark block's hues exactly — only L and C move, because dark's four
      * inks read 1.099-1.678:1 here. Chroma is a gamut fact: yellow cannot hold

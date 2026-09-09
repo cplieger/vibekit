@@ -1113,18 +1113,32 @@ button.list-row-name:focus-visible {
   flex-direction: column;
 }
 
-/* WIDER than the shared 50rem measure, and bounded rather than removed.
-   `--content-max-w` is a READING measure for a conversation, and this page is not
-   prose: it is a node tree, tool cards, diffs and captured reports, so 50rem left
-   240px of dead gutter on each side of a 1440 desktop while the content it was
-   protecting was machine output. The same argument deleted the 40.75rem cap inside
-   the transcript's turn card (29-turns.css). Bounded because a step row puts its
-   duration at `margin-inline-start: auto`, so an uncapped page floats that number
-   arbitrarily far from the name it belongs to. */
+/* THE SCROLLER SPANS THE VIEW AND THE MEASURE SITS INSIDE IT, which is the shape
+   `#messages-wrap` / `.transcript-view` has always had (13-messages.css) and the
+   shape this page did not. Capping the scroller put its scrollbar against the
+   right edge of the cards, a bar floating mid-page that reads as a panel's inner
+   scroller rather than the page's own — reported on the subagent tab, and this
+   page had it too. Moving the cap to `[id="run-body"]` below also stops the
+   measure paying for this box's own `--sp-4` inset, which is the same correction
+   the transcript made when `#messages` gave its inline padding up. */
 [id="run-view"] .page-content {
-  max-width: var(--run-page-max-w);
+  max-width: none;
   flex: 1 1 0;
   min-height: 0;
+
+  /* `stable` so the column below neither widens nor shifts the moment content
+     passes the scrollport, and `both-edges` so it stays centred on the SCROLLER
+     rather than on the scroller minus its scrollbar. A classic scrollbar takes its
+     width out of the content box, so with `stable` alone the column's centre sat
+     5px left of `.decision-dock`'s in the bar underneath — measured at 1440 —
+     because that dock is centred on the bar's full width. `#messages-wrap` fixes
+     the same 'half a scrollbar left of the composer' offset by subtracting
+     `--scrollbar-w` from its own inline-end inset instead; that variable is
+     measured off THAT scroller by scroll.ts and is `0px` until a chat view has
+     been attached, so a cold `/run/{id}` deep link would land unaligned. Reserving
+     both edges needs no JS and no cross-module coupling, and it costs nothing on a
+     touch device, where the scrollbar is an overlay of zero width. */
+  scrollbar-gutter: stable both-edges;
 
   /* THE ONE SCROLLER, and it is this element rather than the VIEW because
      `.run-bottom-bar` is pinned OUTSIDE it — which is why `16-login.css` leaves
@@ -1143,24 +1157,41 @@ button.list-row-name:focus-visible {
   overflow: hidden auto;
 }
 
-/* The run body passes the SCROLLER's width through and sizes to its content, so
-   the page's own height is the sum of its regions. `flex: 1 0 auto` is this
-   file's established page-scrolling shape (see the `[id="git-view"] >
-   .page-content` group at the top); `flex-basis: 0` plus `min-height: 0` is what
-   pinned it to the scrollport and made a scrollbar unreachable. */
+/* The run body sizes to its content, so the page's own height is the sum of its
+   regions. `flex: 1 0 auto` is this file's established page-scrolling shape (see
+   the `[id="git-view"] > .page-content` group at the top); `flex-basis: 0` plus
+   `min-height: 0` is what pinned it to the scrollport and made a scrollbar
+   unreachable.
+
+   It also carries THE MEASURE, wider than the shared 50rem and bounded rather
+   than removed. `--content-max-w` is a READING measure for a conversation, and
+   this page is not prose: it is a node tree, tool cards, diffs and captured
+   reports, so 50rem left 240px of dead gutter on each side of a 1440 desktop
+   while the content it was protecting was machine output. The same argument
+   deleted the 40.75rem cap inside the transcript's turn card (29-turns.css).
+   Bounded because a step row puts its duration at `margin-inline-start: auto`, so
+   an uncapped page floats that number arbitrarily far from the name it belongs to.
+
+   `width: 100%` is load-bearing beside the auto margins rather than a belt: an
+   `auto` cross-axis margin suppresses a flex item's `stretch`, so the cap alone
+   would shrink-wrap this column to its content and the measure would never bind.
+   `.transcript-view` carries the same trio for the same reason. */
 [id="run-body"] {
   display: flex;
   flex-direction: column;
   flex: 1 0 auto;
+  max-width: var(--run-page-max-w);
+  width: 100%;
+  margin-inline: auto;
 }
 
 /* --- The subagent page ---------------------------------------------------- */
 
-/* The same three rules the run page needs, and for the same reasons: a column so
-   the content grows, a machine-output measure rather than the prose one, and a
-   growing body that passes the height through to the exec page's own panes. The
-   page itself is the shared `.ev-page` (31-exec-view.css), so nothing about its
-   internals is repeated here.
+/* The same rules the run page needs, and for the same reasons: a column so the
+   content grows, a full-width scroller with a machine-output measure inside it
+   rather than the prose one, and a growing body that passes the height through to
+   the exec page's own panes. The page itself is the shared `.ev-page`
+   (31-exec-view.css), so nothing about its internals is repeated here.
 
    No bottom bar, unlike the run page: a delegate's permission asks are queued
    under its launching chat, so there is nothing for a dock here to answer. */
@@ -1170,7 +1201,12 @@ button.list-row-name:focus-visible {
 }
 
 [id="subagent-view"] .page-content {
-  max-width: var(--run-page-max-w);
+  /* UNCAPPED, so the scrollbar rides the view's inline-end edge instead of the
+     cards'. This is the surface the defect was reported on; the run page's rule
+     above carries the reasoning, because both consumers of the exec page have to
+     answer it the same way. */
+  max-width: none;
+  scrollbar-gutter: stable both-edges;
   flex: 1 1 0;
   min-height: 0;
 
@@ -1182,10 +1218,15 @@ button.list-row-name:focus-visible {
   overflow: hidden auto;
 }
 
+/* THE MEASURE, and the `width: 100%` that makes it bind against the auto margins.
+   `[id="run-body"]` above carries the reasoning for all three. */
 [id="subagent-body"] {
   display: flex;
   flex-direction: column;
   flex: 1 0 auto;
+  max-width: var(--run-page-max-w);
+  width: 100%;
+  margin-inline: auto;
 }
 
 /* --- The run tab's bottom bar --------------------------------------------- */

@@ -154,6 +154,132 @@ describe("the fetch is coalesced, because a busy run invalidates dozens of times
   });
 });
 
+// The CAUSE token. A transport gap invalidates every cached run and then, a
+// network round trip later, invalidates every LIVE run again from the rebuild's
+// answer — so at 7 live runs the gap cost 14 of its 24 requests. The token says
+// the two are the same event, and the guard has to hold however the pair
+// interleaves, because which response lands first is not something the client
+// controls.
+describe("one cause costs one request per run", () => {
+  it("fetches once when the second invalidation lands AFTER the first answered", async () => {
+    responses = [{ workflowId: "r1", status: "running" }];
+
+    store.invalidateRun("r1", "gap:1");
+    await settle();
+    expect(fetches).toEqual(["/api/runs/r1"]);
+
+    // This is the interleaving an in-flight-only guard misses: `rebuildLiveRuns`
+    // awaits `/api/runs/live` first, so its invalidation can arrive after the
+    // per-run read it would be duplicating has already come back.
+    store.invalidateRun("r1", "gap:1");
+    await settle();
+    expect(fetches).toEqual(["/api/runs/r1"]);
+  });
+
+  it("fetches once when the second lands WHILE the first is still open", async () => {
+    responses = [{ workflowId: "r1", status: "running" }];
+
+    store.invalidateRun("r1", "gap:1");
+    store.invalidateRun("r1", "gap:1");
+    expect(fetches).toHaveLength(1);
+
+    await settle();
+    // No trailing fetch either: the read in flight was already answering for this
+    // cause, so there is nothing left to be stale about.
+    expect(fetches).toEqual(["/api/runs/r1"]);
+  });
+
+  it("still fetches for a DIFFERENT cause, or a second gap would be swallowed", async () => {
+    responses = [
+      { workflowId: "r1", status: "running" },
+      { workflowId: "r1", status: "completed" },
+    ];
+
+    store.invalidateRun("r1", "gap:1");
+    await settle();
+    store.invalidateRun("r1", "gap:2");
+    await settle();
+
+    expect(fetches).toEqual(["/api/runs/r1", "/api/runs/r1"]);
+    expect(store.runState("r1")?.status).toBe("completed");
+  });
+
+  it("still fetches for an UNCAUSED invalidation, because an SSE frame is its own cause", async () => {
+    responses = [
+      { workflowId: "r1", status: "running" },
+      { workflowId: "r1", status: "completed" },
+    ];
+
+    store.invalidateRun("r1", "gap:1");
+    await settle();
+    store.invalidateRun("r1");
+    await settle();
+
+    expect(fetches).toEqual(["/api/runs/r1", "/api/runs/r1"]);
+  });
+
+  it("claims nothing when the read FAILED, so the same cause retries", async () => {
+    // A cause recorded over an answer nobody got would make the gap's own recovery
+    // a no-op — the one direction this guard must not fail in.
+    responses = [undefined, { workflowId: "r1", status: "running" }];
+
+    store.invalidateRun("r1", "gap:1");
+    await settle();
+    store.invalidateRun("r1", "gap:1");
+    await settle();
+
+    expect(fetches).toEqual(["/api/runs/r1", "/api/runs/r1"]);
+    expect(store.runState("r1")?.status).toBe("running");
+  });
+
+  it("threads the gap's token through BOTH of its readers, so each run is read once", async () => {
+    // The production pair: `invalidateCachedRuns` over what is cached, then
+    // `rebuildLiveRuns` over what the server says is live, on one token.
+    responses = [
+      { workflowId: "r1", status: "running" },
+      { workflowId: "r2", status: "running" },
+    ];
+    store.invalidateRun("r1");
+    store.invalidateRun("r2");
+    await settle();
+    fetches.length = 0;
+
+    responses = [
+      { workflowId: "r1", status: "completed" },
+      { workflowId: "r2", status: "completed" },
+    ];
+    liveRunsReply = {
+      runs: [
+        { workflow_id: "r1", chat_id: "c1", executing: true },
+        { workflow_id: "r2", chat_id: "c1", executing: true },
+      ],
+    };
+
+    const cause = "gap:7";
+    store.invalidateCachedRuns(cause);
+    const rebuilt = store.rebuildLiveRuns(cause);
+    await settle();
+    await rebuilt;
+    await settle();
+
+    expect(fetches.filter((p) => p === "/api/runs/r1")).toHaveLength(1);
+    expect(fetches.filter((p) => p === "/api/runs/r2")).toHaveLength(1);
+  });
+
+  it("forgets the claim with the run, so a re-tracked run is read again", async () => {
+    responses = [{ workflowId: "r1", status: "running" }];
+    store.invalidateRun("r1", "gap:1");
+    await settle();
+
+    store.forgetRun("r1");
+    responses = [{ workflowId: "r1", status: "completed" }];
+    store.invalidateRun("r1", "gap:1");
+    await settle();
+
+    expect(fetches).toEqual(["/api/runs/r1", "/api/runs/r1"]);
+  });
+});
+
 describe("leafNodes walks to the work and skips the scaffolding", () => {
   it("returns the steps of a nested plan in plan order", () => {
     const root: RunNode = {

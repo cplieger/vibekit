@@ -43,9 +43,19 @@ export function renderDiffModeUI(state: FileState): void {
   // showDiffMode inline
   showDiffMode();
 
-  $.editorDiffBtn.classList.remove("hidden");
-  $.editorDiffBtn.setAttribute("data-tooltip", "Exit diff view");
-  $.editorDiffBtn.setAttribute("aria-label", "Exit diff view");
+  // Each button owns its own diff KIND, so a fromGit diff is exited by
+  // #editor-git-diff-btn (which entered it) and this one stays hidden. Offering
+  // both would make "enter with B, exit with A" spellable, and the add is not
+  // redundant: renderEditModeUI un-hides this button whenever the buffer is
+  // dirty, so a dirty file entering a git diff arrives here with it visible.
+  // Nothing here writes #editor-git-diff-btn — editor-core.ts is its one writer.
+  if (src.fromGit) {
+    $.editorDiffBtn.classList.add("hidden");
+  } else {
+    $.editorDiffBtn.classList.remove("hidden");
+    $.editorDiffBtn.setAttribute("data-tooltip", "Exit diff view");
+    $.editorDiffBtn.setAttribute("aria-label", "Exit diff view");
+  }
   $.editorEditBtn.classList.remove("hidden");
   $.editorEditBtn.disabled = false;
   $.editorCancelBtn.classList.add("hidden");

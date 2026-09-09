@@ -53,11 +53,9 @@ interface ClampEntry {
 
 const clamps = new WeakMap<HTMLElement, ClampEntry>();
 
-/** Every element the shared observer is watching.
- *
- *  No new retention: the observer already holds each target strongly, so this set
- *  adds a second reference to something already reachable. It exists because a
- *  WeakMap cannot be enumerated and a subtree sweep has to be. */
+/** Every element the shared observer is watching. No new retention: the observer already
+ *  holds each target strongly. It exists because a WeakMap cannot be enumerated and a
+ *  subtree sweep has to be. */
 const observed = new Set<HTMLElement>();
 
 /** Clamp `text` behind `more`, and return the handle a repaint drives it with.
@@ -155,32 +153,22 @@ function writeExpanded(text: HTMLElement, s: ClampState, on: boolean): void {
   s.more.setAttribute("aria-expanded", on ? "true" : "false");
 }
 
-/** Stop clamping `text` and release its observation.
- *
- *  PRECONDITION: the element is being DISCARDED. Releasing a LIVE element is a
- *  defect — `attachClamp` is idempotent through the `clamps` entry, so a released
- *  element that is re-attached wires a SECOND click listener on its `more` button
- *  and one press then toggles the expansion twice. Nothing here can check that, so
- *  it is the caller's to get right: release at a teardown, never at a repaint.
- *
- *  Explicit rather than inferred from the callback, because the callback cannot be
- *  relied on to arrive. WebKit may never deliver the final zero-size entry, and
- *  `content-visibility: hidden` on a parked view DEFERS a notification on every
- *  engine rather than delivering a zero — so for an element discarded while its
- *  view is parked nothing arrives until something un-parks it, and a view that is
- *  EVICTED is never un-parked. */
+/** Stop clamping `text` and release its observation. PRECONDITION, the caller's: the
+ *  element is being DISCARDED, so release at a teardown and never at a repaint.
+ *  `attachClamp` is idempotent through the `clamps` entry, so releasing a LIVE element
+ *  that is re-attached later wires a SECOND click listener and one press toggles twice.
+ *  Explicit rather than callback-driven because WebKit may never deliver the final
+ *  zero-size entry, and a parked view's `content-visibility: hidden` defers it while an
+ *  EVICTED view never un-parks. */
 export function releaseClamp(text: HTMLElement): void {
   clampWatcher?.unobserve(text);
   observed.delete(text);
   clamps.delete(text);
 }
 
-/** Release every clamp inside `root`, `root` itself included.
- *
- *  Same precondition as {@link releaseClamp}: the subtree is being discarded. A
- *  sweep rather than a per-element call is what keeps the owner count at one per
- *  teardown instead of one per attach site, and it is what lets `disposeChatView`
- *  cover an arbitrary number of turn headers without knowing they exist. */
+/** Release every clamp inside `root`, `root` itself included. Same precondition as
+ *  {@link releaseClamp}. A sweep rather than a per-element call keeps the owner count at
+ *  one per teardown, and lets `disposeChatView` cover any number of turn headers. */
 export function releaseClampsIn(root: HTMLElement): void {
   for (const text of [...observed]) {
     if (root === text || root.contains(text)) {
@@ -189,9 +177,8 @@ export function releaseClampsIn(root: HTMLElement): void {
   }
 }
 
-/** How many elements the shared observer is watching. Test-only: `knip.json`
- *  treats every `*.test.ts` as an entry, so an export a test consumes is not an
- *  unused export. */
+/** How many elements the shared observer is watching. Test-only: `knip.json` treats every
+ *  `*.test.ts` as an entry, so a test-consumed export is not an unused one. */
 export function clampObservationCount(): number {
   return observed.size;
 }
@@ -210,8 +197,7 @@ function watchClamp(text: HTMLElement): void {
   clampWatcher ??= new ResizeObserver((entries) => {
     for (const entry of entries) {
       // BELT AND BRACES, not the mechanism: an element discarded without a
-      // `releaseClamp` still gets swept if this callback happens to arrive. The
-      // reasons it may not are on `releaseClamp`.
+      // `releaseClamp` is swept if this callback happens to arrive. See `releaseClamp`.
       if (!entry.target.isConnected) {
         releaseClamp(entry.target as HTMLElement);
         continue;

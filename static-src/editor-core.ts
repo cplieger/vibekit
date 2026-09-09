@@ -17,11 +17,11 @@ import { $ } from "./dom.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { parseConflicts } from "./conflict.js";
 import { saveFile as saveFileAction } from "./actions/editor.js";
-import { isPending } from "./actions/index.js";
+import { isPending, registerCleanup } from "./actions/index.js";
 import { renderConflictOverlay } from "./editor-conflict.js";
 import { showEditMode, updateGutter, renderReadSurface, renderEditModeUI } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
-import { fetchGitDiffSources } from "./editor-openers.js";
+import { fetchGitDiffSources, openFileGitDiff } from "./editor-openers.js";
 import {
   fileStates,
   getActiveFilePath,
@@ -32,6 +32,10 @@ import {
 import type { FileState } from "./editor-types.js";
 import { markGitDirty } from "./git.js";
 import { relToWorkspace } from "./workspace.js";
+import { iconEl } from "./icon-el.js";
+import { ICON_GIT_COMMIT } from "./icons.js";
+import { isViewableImage } from "./file-extensions.js";
+import { onGitStatusChange, statusForPath } from "./git-status-store.js";
 
 // --- Re-exports for backward compatibility ---
 // Consumers that import from editor-core.ts continue to work.
@@ -89,6 +93,111 @@ export function initEditor(): void {
   effect(() => {
     $.editorSaveBtn.disabled = !activeDirty.value || isPending("editor.save_file");
   });
+
+  // The glyph is injected rather than drawn in static/index.html, because a
+  // concept with an icons.ts entry may not be redrawn there. One drawing, so
+  // drift is unrepresentable and menu-icons.test.ts needs no pair for it.
+  $.editorGitDiffBtn.replaceChildren(iconEl(ICON_GIT_COMMIT));
+  $.editorGitDiffBtn.addEventListener("click", toggleGitDiffMode);
+
+  // Sole owner of the git-diff button's visibility and its toggle attributes.
+  // TWO triggers because it has two kinds of input: this effect for the active
+  // path, that file's error and its mode (all three signals), and the imperative
+  // git-status subscription armed below for a letter arriving after the file is
+  // open.
+  // `statusForPath` reads a plain Map, so it is deliberately NOT tracked here —
+  // which is exactly why the second trigger has to exist.
+  effect(() => {
+    // Arming HERE rather than from `activateFile` is the one departure from the
+    // brief, and it is forced by direction: the writer belongs in this module
+    // (one writer) and `editor-openers.ts` importing it back would close a
+    // cycle. The trigger is the same — `activateFile` is what sets the active
+    // path — so the store's first-subscriber walk of every worktree is still
+    // paid on the first file activation and never at boot.
+    if (getActiveFilePath() !== "") {
+      armGitStatusWatch();
+    }
+    paintGitDiffBtn();
+  });
+}
+
+/** Whether the git-status store is being watched for this surface yet. */
+let gitStatusWatched = false;
+
+function armGitStatusWatch(): void {
+  if (gitStatusWatched) {
+    return;
+  }
+  gitStatusWatched = true;
+  registerCleanup(onGitStatusChange(paintGitDiffBtn));
+}
+
+/** Paint #editor-git-diff-btn. The ONE writer — see the effect above.
+ *
+ *  Shown when the active file is a text file with no error, being READ or in a
+ *  git diff, and differing from the ref. The last clause carries an OR: once the
+ *  reader is looking at the diff the control must not vanish if the file gets
+ *  committed underneath them, because it is also the way out.
+ *
+ *  Two clauses that are deliberately NOT here. `state.loaded` is absent because
+ *  this control fetches both of its own sides (`openFileGitDiff` routes into
+ *  `fetchGitDiffSources`), so it is complete before the buffer arrives and
+ *  withholding it during the read would withdraw a working affordance; the
+ *  window is bounded by one `/api/file` round trip and a failed one lands on the
+ *  error clause above. And `statusForPath` is read here rather than tracked
+ *  because it is a plain Map — which is exactly why the second, imperative
+ *  trigger exists. */
+function paintGitDiffBtn(): void {
+  const btn = $.editorGitDiffBtn;
+  const path = getActiveFilePath();
+  const state = path === "" ? undefined : fileStates.get(path);
+  const m = state?.mode.value;
+  const inGitDiff = m?.kind === "diff" && m.diffSource.fromGit;
+  // `state.error !== ""` is what hides it for a BINARY file, and that is
+  // verified rather than assumed: /api/file answers 415 for one, apiGet
+  // collapses every non-2xx to null, and `loadFile`'s null branch sets the
+  // error. So a git-dirty .zip reaches the error state and needs no clause of
+  // its own here. An image never loads at all, hence the extension test.
+  const show =
+    // `state?.error.value === ""` carries the existence check too: an absent
+    // state yields undefined, which is not "".
+    state?.error.value === "" &&
+    !isViewableImage(path) &&
+    // `!m.editing` puts this control in the set `startEditing` withdraws. Edit
+    // mode is left through Cancel, which confirms a discard, or through Save; a
+    // third sideways exit replaces the textarea with a two-pane diff on one
+    // click, which reads as losing the edit even though the buffer survives
+    // (`open` captures it into `current` and `startEditing` restores it).
+    ((m?.kind === "edit" && !m.editing) || inGitDiff) &&
+    (statusForPath(path) !== "" || inGitDiff);
+  btn.classList.toggle("hidden", !show);
+  btn.setAttribute("aria-pressed", inGitDiff ? "true" : "false");
+  // The accessible NAME is stable across both states and the state travels on
+  // aria-pressed alone; the tooltip is the one surface with no state channel
+  // beside it, so it carries state plus action. Written unconditionally so this
+  // effect owns the attribute and nothing else can flip it.
+  btn.setAttribute("aria-label", "View diff vs HEAD");
+  btn.setAttribute(
+    "data-tooltip",
+    inGitDiff ? "Diff vs HEAD. Exit diff view" : "View diff vs HEAD",
+  );
+}
+
+/** Enter or leave the diff against HEAD. A different question from
+ *  `toggleDiffMode`'s buffer-vs-saved, so it is a different control — but the
+ *  EXIT is the same path, so the two cannot diverge. */
+function toggleGitDiffMode(): void {
+  const state = fileStates.get(getActiveFilePath());
+  if (state === undefined) {
+    return;
+  }
+  const m = state.mode.value;
+  if (m.kind === "diff" && m.diffSource.fromGit) {
+    state.mode.value = { kind: "edit", editing: false };
+    renderEditModeUI(state);
+    return;
+  }
+  openFileGitDiff(state.path, "HEAD");
 }
 
 // --- Mode switches ---

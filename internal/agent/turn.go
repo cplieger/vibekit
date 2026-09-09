@@ -66,6 +66,10 @@ type Turn struct {
 	Chat    vibekit.ChatID
 	// Interrupt is the first cause claimed for this turn.
 	Interrupt vibekit.InterruptCause
+	// statusDesc is the description the agent declared DURING this turn, which is what
+	// the agent_finished push body says. On the turn rather than the chat, because the
+	// chat's copy outlives its turn on purpose and so cannot answer for one.
+	statusDesc string
 	// result is immutable once done is closed.
 	result  vibekit.TurnResult
 	Epoch   vibekit.TurnEpoch
@@ -522,6 +526,34 @@ func (r *turnRegistry) interruptCause(t *Turn) vibekit.InterruptCause {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	return t.Interrupt
+}
+
+// stageStatusDescription records a declared description on the chat's open turn.
+// Uses lookup rather than lifecycleFor: a declaration for a chat with no lifecycle
+// must not mint one. An empty description is not a declaration and is dropped, so
+// the discharge's own frame cannot wipe a turn's words.
+func (r *turnRegistry) stageStatusDescription(chatID vibekit.ChatID, desc string) {
+	if desc == "" {
+		return
+	}
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.cur != nil {
+		lc.cur.statusDesc = desc
+	}
+}
+
+// statusDescription reads a claimed turn's staged description, under the turn's OWN
+// lifecycle for interruptCause's reason.
+func (r *turnRegistry) statusDescription(t *Turn) string {
+	lc := t.lc
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return t.statusDesc
 }
 
 // recordCarrier remembers which persisted message carries t's outcome, under the

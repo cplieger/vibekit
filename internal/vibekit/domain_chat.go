@@ -100,6 +100,11 @@ const (
 	ToolInProgress ToolStatus = "in_progress"
 	ToolCompleted  ToolStatus = "completed"
 	ToolFailed     ToolStatus = "failed"
+	// ToolAborted is a call nothing can still settle because its turn closed: the
+	// reader's cancel, or a run whose step end never arrived. Its own value rather
+	// than `failed`, which means the tool ran and reported an error. vibekit mints
+	// it at turn close; it never arrives on the wire.
+	ToolAborted ToolStatus = "aborted"
 )
 
 // ACPUpdateKind identifies the subtype of an ACP session/update notification.
@@ -163,7 +168,7 @@ type Block struct {
 }
 
 // ToolCall is a tool invocation inside an assistant message. Each can be updated
-// in place as status changes (pending → in_progress → completed/failed).
+// in place as status changes (pending → in_progress → completed/failed/aborted).
 type ToolCall struct {
 	ID     string     `json:"id"`
 	Title  string     `json:"title"`
@@ -390,7 +395,18 @@ type Message struct {
 	// UserKind is which kind of user row this is, absent on every kind but a steer.
 	// See UserKind for what absent means and why a steer carries no TurnOutcome.
 	UserKind UserKind `json:"user_kind,omitempty"`
-	ID       string   `json:"id"`
+	// SteerState is whether the model READ this steer, present only on a steer row.
+	// Absent means not known — see SteerState, which owns what that means and how it
+	// renders. It is what makes a reload able to say "the agent never saw this".
+	SteerState SteerState `json:"steer_state,omitempty"`
+	// SteerOrigin is whose words a steer row carries, present only on a steer row.
+	// On the ROW as well as on the live frames because the note's TITLE comes from
+	// it, and the durable row REPLACES the live mark once it is resident (store.ts
+	// resolveAnchors). Without it a workflow's report would read as something the
+	// reader typed after every reload — the defect SteerOrigin exists to prevent.
+	// Absent means the user's, matching what the renderer has always assumed.
+	SteerOrigin SteerOrigin `json:"steer_origin,omitempty"`
+	ID          string      `json:"id"`
 	// TurnOutcome is how this turn ENDED, stamped on the message that finalized
 	// it: the durable half of a fact otherwise carried only by the live
 	// turn_ended SSE. Its presence also CLOSES a turn for both projections, so an

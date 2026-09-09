@@ -138,7 +138,29 @@ describe("the base pane's caption", () => {
     await fetchGitDiffSources(state, "", "HEAD");
     expect(labelOf(state)).toBe("not in git");
     // Still a correct all-add diff: the file exists, it just has no "before".
-    expect(state.error).toBe("");
+    expect(state.error.value).toBe("");
+  });
+
+  it("says 'not in HEAD' when the repo owns the file but the ref does not", async () => {
+    // The third base-pane state, and the only one where git DOES own the file:
+    // untracked or staged-new, so `handleShow` answers empty content plus the
+    // `absent` marker. The opener staged "HEAD" as the placeholder, so the load
+    // has to overwrite it — captioned "HEAD" an empty pane claims HEAD holds
+    // the file and holds it empty.
+    expect.assertions(3);
+    diffResult = {
+      oldContent: "",
+      newContent: "brand new\n",
+      error: "",
+      baseLabel: "not in HEAD",
+      workingLabel: "working tree",
+    };
+    const state = stageDiffState("HEAD");
+    await fetchGitDiffSources(state, "", "HEAD");
+    expect(labelOf(state)).toBe("not in HEAD");
+    expect(workingLabelOf(state)).toBe("working tree");
+    // An all-add diff is a correct rendering, not an error state.
+    expect(state.error.value).toBe("");
   });
 
   it("carries a non-HEAD ref through unchanged", async () => {
@@ -188,6 +210,6 @@ describe("the working pane's caption", () => {
     expect(workingLabelOf(state)).toBe("deleted");
     expect(labelOf(state)).toBe("HEAD");
     // An all-deletions diff is a correct rendering, not an error state.
-    expect(state.error).toBe("");
+    expect(state.error.value).toBe("");
   });
 });

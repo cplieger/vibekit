@@ -1,13 +1,15 @@
 // ---------------------------------------------------------------------------
 // Tests for fundamentals/subagent-block.ts — the delegated-work boxes.
 //
-// Four subjects. The header identity glyph: while active the slot shows the
+// Five subjects. The header identity glyph: while active the slot shows the
 // spinner, once settled the SVG icon — the shared agent hexagon by default, or
 // the per-known-subagent glyph installed via setIcon (roles.ts iconForSubagent
 // keys it off the invoke_sub_agent input name). The two SHAPES: a card discloses
-// nothing and takes its tail from outside, a container discloses its stages. The
-// container's WITHDRAWAL: a body with nothing in it loses the control. And what a
-// screen reader is told about any of them.
+// nothing, takes its tail from outside, and its head is the door to the delegate's
+// page; a container discloses its stages. The card's HEAD AS A CONTROL: what
+// activating it does, what a modified click does instead, and that nothing
+// interactive sits inside it. The container's WITHDRAWAL: a body with nothing in it
+// loses the control. And what a screen reader is told about any of them.
 //
 // The tail's CONTENT is not tested here any more, because this file no longer
 // derives it: `subagent-tail.test.ts` owns the projection and this one owns the
@@ -15,7 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
-import { loadCSS } from "../__test-helpers__/css-rules.js";
+import { loadCSS, mountAppCSS } from "../__test-helpers__/css-rules.js";
 
 // Partial mock: the card now imports turn-footer (whose navigate → tabs chain
 // reads the whole icon table), so only the identity glyph is overridden.
@@ -24,11 +26,20 @@ vi.mock("../icons.js", async (importOriginal) => ({
   ICON_TAB_AGENT: '<svg data-icon="agent-hexagon"></svg>',
 }));
 
+// scroll.ts is a self-initialising singleton over a real `#messages`; the canonical
+// mock is what every other suite in this graph uses, and its compensation helpers run
+// their mutation, so a fold still reaches the DOM. It is also what makes the
+// compensation itself observable — see "the compensator wraps both height changes".
+vi.mock("../scroll.js", () =>
+  import("../__test-helpers__/scroll-mock.js").then((m) => m.scrollMock),
+);
+
 import {
   buildSubagentCard,
   buildSubagentContainer,
   type SubagentContainer,
 } from "./subagent-block.js";
+import { scrollMock } from "../__test-helpers__/scroll-mock.js";
 import type { ToolStatus } from "../types.js";
 import { outcomeIcon } from "../icons.js";
 import { iconEl } from "../icon-el.js";
@@ -57,6 +68,32 @@ async function populate(box: { body: HTMLElement }): Promise<void> {
 
 const tailLines = (root: HTMLElement): (string | null)[] =>
   [...root.querySelectorAll(".subagent-tail-line")].map((n) => n.textContent);
+
+/** The href every opener below hands the head. */
+const HREF = "/chat/c/subagent/u-1";
+
+const opener = (open: () => void = () => undefined): { href: string; open: () => void } => ({
+  href: HREF,
+  open,
+});
+
+/** A click carrying modifiers or a non-primary button, which `HTMLElement.click()`
+ *  cannot express. Returns whether the head cancelled it.
+ *
+ *  The trailing guard is what keeps a NOT-cancelled click from navigating the test
+ *  page — an anchor follows its href even detached. Registered after the head's own
+ *  listener, so it reads that listener's verdict before stopping the default. */
+function clickWith(head: HTMLElement, init: MouseEventInit): boolean {
+  let prevented = false;
+  const guard = (e: Event): void => {
+    prevented = e.defaultPrevented;
+    e.preventDefault();
+  };
+  head.addEventListener("click", guard);
+  head.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
+  head.removeEventListener("click", guard);
+  return prevented;
+}
 
 describe("buildSubagentCard icon", () => {
   it("shows the spinner while active, the default hexagon once settled", () => {
@@ -99,13 +136,36 @@ describe("buildSubagentCard icon", () => {
     sa.setStatus("completed");
     expect(iconSlot(sa.root).querySelector('svg[data-icon="introspect"]')).not.toBeNull();
   });
+
+  // A delegate the reader STOPPED is a third terminal state, not a slow success and
+  // not a failure to debug.
+  it("leaves the running state for the warn mark when the turn is cancelled", () => {
+    const sa = buildSubagentCard("Subagent", "in_progress");
+    expect(iconSlot(sa.root).classList.contains("subagent-spinner")).toBe(true);
+    expect(sa.root.classList.contains("running")).toBe(true);
+
+    sa.setStatus("aborted");
+
+    expect(iconSlot(sa.root).classList.contains("subagent-spinner")).toBe(false);
+    expect(sa.root.classList.contains("running")).toBe(false);
+    expect(sa.root.querySelector(".subagent-tail")).toBeNull();
+    // Yellow, and its own SHAPE: `is-ok` would claim a result this delegate never
+    // produced, `is-fail` would send the reader to debug work nothing broke in.
+    expect(iconSlot(sa.root).classList.contains("is-warn")).toBe(true);
+    expect(iconSlot(sa.root).classList.contains("is-ok")).toBe(false);
+    expect(iconSlot(sa.root).classList.contains("is-fail")).toBe(false);
+    expect(iconSlot(sa.root).querySelector("svg")?.outerHTML).toBe(
+      (iconEl(outcomeIcon("warn")) as HTMLElement).outerHTML,
+    );
+    expect(iconSlot(sa.root).querySelectorAll("svg")).toHaveLength(1);
+  });
 });
 
 // A CARD HAS NO BODY, which is the whole of this change: the transcript renders
 // none of a delegate's output, so there is nothing here to disclose and a toggle
 // that toggles nothing is worse than no toggle.
 describe("a delegate's card is not a disclosure", () => {
-  it("has no body, no chevron and no button role", () => {
+  it("has no body, no disclosure toggle and no aria-expanded", () => {
     const sa = buildSubagentCard("Subagent", "in_progress");
     expect(sa.root.querySelector(".subagent-body")).toBeNull();
     expect(sa.root.querySelector(".subagent-toggle")).toBeNull();
@@ -113,14 +173,30 @@ describe("a delegate's card is not a disclosure", () => {
     expect(header?.getAttribute("role")).toBeNull();
     expect(header?.getAttribute("tabindex")).toBeNull();
     expect(header?.getAttribute("aria-expanded")).toBeNull();
+
+    // A card WITH an opener is a plain anchor: nothing expands, so it takes none of
+    // the disclosure's attributes and its `href` is the whole state it carries.
+    const door = buildSubagentCard("Subagent", "in_progress", { open: opener() });
+    const head = headerOf(door.root);
+    expect(head.tagName).toBe("A");
+    expect(head.getAttribute("href")).toBe(HREF);
+    expect(head.getAttribute("role")).toBeNull();
+    expect(head.getAttribute("aria-expanded")).toBeNull();
+    expect(door.root.querySelector(".subagent-toggle")).toBeNull();
   });
 
-  it("does not fold when its header is activated", () => {
-    const sa = buildSubagentCard("Subagent", "in_progress");
-    sa.root.querySelector<HTMLElement>(".subagent-header")?.click();
+  it("opens the delegate's page when its header is activated, and folds nothing", () => {
+    const opened: number[] = [];
+    const sa = buildSubagentCard("Subagent", "in_progress", {
+      open: opener(() => opened.push(1)),
+    });
+    // Through `clickWith` rather than `.click()`, so a head that stops cancelling the
+    // event fails the case below by name instead of navigating the test page.
+    clickWith(headerOf(sa.root), {});
+    expect(opened).toHaveLength(1);
     expect(sa.root.classList.contains("collapsed")).toBe(false);
     // Nor on a failure, which used to open the box to show the reason. The reason
-    // is on the delegate's page now, and the foot's link is the way to it.
+    // is on the delegate's page now, and the head is the way to it.
     sa.setStatus("failed");
     expect(sa.root.classList.contains("collapsed")).toBe(false);
   });
@@ -130,6 +206,88 @@ describe("a delegate's card is not a disclosure", () => {
     expect(sa.root.classList.contains("running")).toBe(true);
     sa.setStatus("completed");
     expect(sa.root.classList.contains("running")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The card's HEAD is the door to the delegate's page. One `it` per claim, so a
+// failure names one thing.
+// ---------------------------------------------------------------------------
+describe("the card's head is the door to the delegate's page", () => {
+  /** A card with an opener, plus the calls its head made. */
+  function door(): { head: HTMLElement; opened: number[]; root: HTMLElement } {
+    const opened: number[] = [];
+    const sa = buildSubagentCard("Subagent", "in_progress", {
+      open: opener(() => opened.push(1)),
+    });
+    return { head: headerOf(sa.root), opened, root: sa.root };
+  }
+
+  it("routes a plain click through the app instead of the href", () => {
+    const { head, opened } = door();
+    expect(clickWith(head, { button: 0 })).toBe(true);
+    expect(opened).toHaveLength(1);
+  });
+
+  it("lets a modified or non-primary click fall through to the browser", () => {
+    // The deliberate escape from routing: a new tab or window is the reader asking
+    // the platform rather than the app.
+    for (const init of [
+      { metaKey: true },
+      { ctrlKey: true },
+      { shiftKey: true },
+      { altKey: true },
+      { button: 1 },
+    ]) {
+      const { head, opened } = door();
+      expect(clickWith(head, init), JSON.stringify(init)).toBe(false);
+      expect(opened, JSON.stringify(init)).toHaveLength(0);
+    }
+  });
+
+  it("is keyboard-reachable and natively activated", () => {
+    // A real `a[href]` gets its tab stop and its Enter activation from the platform,
+    // which is why the head carries no `role`, no `tabindex` and no keydown handler.
+    const { head } = door();
+    expect(head.tagName).toBe("A");
+    expect(head.getAttribute("href")).toBe(HREF);
+    expect(head.tabIndex).toBe(0);
+    // Both lines are wanted: `tabIndex === 0` is the platform's answer and an explicit
+    // `tabindex="0"` satisfies it too, so it cannot say the head takes its tab stop
+    // from being an anchor.
+    expect(head.hasAttribute("tabindex")).toBe(false);
+  });
+
+  it("holds no interactive descendant", () => {
+    // The binding constraint: anything interactive inside the control is axe's
+    // `nested-interactive`, which is why the foot is OUTSIDE it — turn-footer builds a
+    // real button plus one per changed file.
+    const { head } = door();
+    expect(
+      head.querySelector(
+        "a, button, input, select, textarea, summary, [role='button'], [tabindex]",
+      ),
+    ).toBeNull();
+  });
+
+  it("carries the shared chevron, and a detached render carries none", () => {
+    const { head } = door();
+    expect(head.querySelector(".subagent-head-chevron > .disclosure-chevron")).not.toBeNull();
+
+    const inert = buildSubagentCard("Subagent", "in_progress");
+    expect(inert.root.querySelector(".subagent-head-chevron")).toBeNull();
+    expect(inert.root.querySelector(".disclosure-chevron")).toBeNull();
+    expect(headerOf(inert.root).tagName).toBe("DIV");
+  });
+
+  it("has no separate open link, in either shape or in the stylesheet", () => {
+    // The source guard is what catches a rule left behind for an element nothing builds.
+    const { root } = door();
+    expect(root.querySelector(".subagent-open")).toBeNull();
+    expect(buildSubagentCard("Subagent", "completed").root.querySelector(".subagent-open")).toBe(
+      null,
+    );
+    expect(loadCSS("14-tools.css")).not.toContain("subagent-open");
   });
 });
 
@@ -176,51 +334,196 @@ describe("the pipeline container", () => {
     expect(box.root.querySelector(".subagent-toggle")).not.toBeNull();
     const header = headerOf(box.root);
     expect(header.getAttribute("role")).toBe("button");
+    // The newest box is expanded, and the control SAYS so — the aria state has to
+    // track the fold in both directions or a screen-reader user is told the box is
+    // open while the reader sees it shut.
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+
+    box.setStatus("completed");
+    box.setSuperseded(true);
     expect(header.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("is collapsed by default and opens on the reader's click", async () => {
-    // The old policy (open while running, auto-close on settle) was exactly
-    // backwards: it spent the expanded state on the moment N stages start at
-    // once, and folded the box right when its result became worth reading.
-    const box = buildSubagentContainer("pipeline", "in_progress");
+  it("renders expanded while it is the newest box, and folds when it is superseded", async () => {
+    // The rule, at box scope. The expanded state goes to the box the reader is
+    // currently being shown; the next element posted after it is what earns the fold.
+    // (What this replaced asserted the inverse — born collapsed, no auto-toggle in
+    // either direction — and called the newest-is-open reading "exactly backwards".)
+    const box = buildSubagentContainer("pipeline", "completed");
     await populate(box);
+    expect(box.root.classList.contains("collapsed")).toBe(false);
+
+    box.setSuperseded(true);
     expect(box.root.classList.contains("collapsed")).toBe(true);
+
+    // And the reader outranks it for life: re-opening a folded box is not undone by a
+    // later verdict.
     headerOf(box.root).click();
     expect(box.root.classList.contains("collapsed")).toBe(false);
-    // Settling must not fold the box the user opened — there is no auto-toggle in
-    // either direction.
+    box.setSuperseded(true);
+    expect(box.root.classList.contains("collapsed")).toBe(false);
+  });
+
+  it("a settle alone folds nothing: only being superseded does", async () => {
+    // The "never a timer" half of the rule. Nothing about a pipeline finishing is
+    // positional, so it cannot fold the box.
+    const box = buildSubagentContainer("pipeline", "in_progress");
+    await populate(box);
+    expect(box.root.classList.contains("collapsed")).toBe(false);
     box.setStatus("completed");
     expect(box.root.classList.contains("collapsed")).toBe(false);
   });
 
-  it("stays collapsed across a settle when the reader has not opened it", async () => {
-    // The other direction of the same rule: a settle opens nothing either.
+  it("does not fold a container while a stage is still running", async () => {
+    // A still-running member keeps it open, exactly as it does for a tool group —
+    // and the later settle is what releases the refusal for a verdict already given.
     const box = buildSubagentContainer("pipeline", "in_progress");
     await populate(box);
-    expect(box.root.classList.contains("collapsed")).toBe(true);
+    box.setSuperseded(true);
+    expect(box.root.classList.contains("collapsed")).toBe(false);
     box.setStatus("completed");
     expect(box.root.classList.contains("collapsed")).toBe(true);
+  });
+
+  it("does not fold a container whose body is empty", async () => {
+    // The INVERTED bare carve-out: an empty body withdraws the whole control, so the
+    // disclosure is not the box's to drive — folding one would animate a box shut on
+    // its way to having no chevron at all.
+    //
+    // Asserted BEFORE the withdrawal microtask, which is the window the guard is
+    // reachable in and the one production takes: composition builds a box and runs
+    // `syncContainerCollapse` in the same synchronous pass. After the microtask the
+    // withdrawn controller is already closed, so a fold there is a no-op and the
+    // assertion could not fail.
+    const box = buildSubagentContainer("pipeline", "completed");
+    box.setSuperseded(true);
+    expect(box.root.classList.contains("collapsed")).toBe(false);
+
+    await nextTask();
+    expect(box.root.querySelector("[aria-expanded]")).toBeNull();
+    expect(box.root.querySelector(".subagent-toggle")).toBeNull();
   });
 
   // FAILURE IS NOT NOISE: the header can only say THAT a stage failed, and which
   // one is the reader's next question — same rule as the tool group.
   it("pops open when the pipeline fails", async () => {
-    const box = buildSubagentContainer("pipeline", "in_progress");
+    const box = buildSubagentContainer("pipeline", "in_progress", { startOpen: false });
     await populate(box);
     expect(box.root.classList.contains("collapsed")).toBe(true);
     box.setStatus("failed");
     expect(box.root.classList.contains("collapsed")).toBe(false);
   });
 
+  // AN ABORT IS NOT A FAILURE, so it takes neither half of the failure carve-out: a
+  // pipeline the reader stopped has no error to investigate, so it folds like any
+  // other settled box and never pops open demanding attention.
+  it("folds a superseded pipeline the reader cancelled, and never pops it open", async () => {
+    const box = buildSubagentContainer("pipeline", "in_progress");
+    await populate(box);
+    box.setSuperseded(true);
+    expect(box.root.classList.contains("collapsed")).toBe(false);
+
+    box.setStatus("aborted");
+
+    expect(box.root.classList.contains("collapsed")).toBe(true);
+    expect(box.root.classList.contains("running")).toBe(false);
+    // It keeps its identity glyph rather than emptying the slot — a container's
+    // stages carry the rings, so its own mark is the warn silhouette.
+    expect(iconSlot(box.root).classList.contains("subagent-spinner")).toBe(false);
+    expect(iconSlot(box.root).querySelectorAll("svg")).toHaveLength(1);
+  });
+
+  it("re-opens a box the verdict had already folded when a stage fails", async () => {
+    // The other half of the same carve-out, and the one the fold makes reachable: a
+    // failure acquired AFTER the fold is the one state the header cannot stand in for.
+    const box = buildSubagentContainer("pipeline", "completed");
+    await populate(box);
+    box.setSuperseded(true);
+    expect(box.root.classList.contains("collapsed")).toBe(true);
+    box.setStatus("failed");
+    expect(box.root.classList.contains("collapsed")).toBe(false);
+  });
+
+  it("routes the fold through the scroll compensator", async () => {
+    // `scroll.ts` calls `preserveReadingPosition` THE ONE ENTRY POINT for a transcript
+    // height change, and an auto fold removes height ABOVE the reader — this body is N
+    // stage cards, taller than the tool-group case the helper was made mandatory for.
+    // `autoCollapseGroup` wraps its own fold for exactly this reason.
+    //
+    // Withholding the wrapped mutation is what makes the wrapping falsifiable: a
+    // `ctl.close()` sitting OUTSIDE the wrapper folds the box regardless, so the last
+    // two assertions go red the moment the compensation is dropped.
+    const box = buildSubagentContainer("pipeline", "completed");
+    await populate(box);
+    scrollMock.preserveReadingPosition.mockImplementation(() => undefined);
+
+    box.setSuperseded(true);
+
+    expect(scrollMock.preserveReadingPosition).toHaveBeenCalledTimes(1);
+    expect(scrollMock.preserveReadingPosition.mock.calls[0]?.[1]).toBe("content-growth");
+    expect(box.root.classList.contains("collapsed")).toBe(false);
+    expect(headerOf(box.root).getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("routes the failure re-open through it as well", async () => {
+    // The other direction, which `maybeCollapseGroup` also wraps: this ADDS the stage
+    // cards' height back above the reader.
+    const box = buildSubagentContainer("pipeline", "completed", { startOpen: false });
+    await populate(box);
+    expect(box.root.classList.contains("collapsed")).toBe(true);
+    scrollMock.preserveReadingPosition.mockImplementation(() => undefined);
+
+    box.setStatus("failed");
+
+    expect(scrollMock.preserveReadingPosition).toHaveBeenCalledTimes(1);
+    expect(scrollMock.preserveReadingPosition.mock.calls[0]?.[1]).toBe("content-growth");
+    expect(box.root.classList.contains("collapsed")).toBe(true);
+  });
+
   it("respects a reader who closed it: a later failure stays closed", async () => {
     const box = buildSubagentContainer("pipeline", "in_progress");
     await populate(box);
-    const header = headerOf(box.root);
-    header.click(); // open
-    header.click(); // close — the reader has taken control
+    headerOf(box.root).click(); // close — the reader has taken control
     box.setStatus("failed");
     expect(box.root.classList.contains("collapsed")).toBe(true);
+  });
+
+  it("respects a reader who decided in a PREVIOUS mount, in both directions", async () => {
+    // The cross-mount layer: the registry entry IS the latch, so a box re-created for
+    // a reader who had closed it refuses the verdict AND the failure auto-open.
+    const box = buildSubagentContainer("pipeline", "in_progress", {
+      startOpen: false,
+      userDecided: true,
+    });
+    await populate(box);
+    expect(box.root.classList.contains("collapsed")).toBe(true);
+    box.setStatus("failed");
+    expect(box.root.classList.contains("collapsed")).toBe(true);
+
+    const open = buildSubagentContainer("pipeline", "completed", {
+      startOpen: true,
+      userDecided: true,
+    });
+    await populate(open);
+    open.setSuperseded(true);
+    expect(open.root.classList.contains("collapsed")).toBe(false);
+  });
+
+  it("writes the reader's choice and never its own", async () => {
+    // The registry records a DECISION, so the view's own folds and its failure
+    // auto-open must leave no entry — otherwise every auto-collapse would come back
+    // as "the reader closed this".
+    const seen: boolean[] = [];
+    const box = buildSubagentContainer("pipeline", "completed", {
+      onOpenChange: (open) => seen.push(open),
+    });
+    await populate(box);
+    box.setSuperseded(true);
+    box.setStatus("failed");
+    expect(seen).toEqual([]);
+
+    headerOf(box.root).click();
+    expect(seen).toEqual([false]);
   });
 
   it("carries no tail: its stages each have their own", () => {
@@ -335,9 +638,11 @@ describe("a container with nothing in its body", () => {
     expect(box.root.querySelector(".subagent-toggle")).not.toBeNull();
     expect(box.root.classList.contains("has-disclosure")).toBe(true);
 
-    expect(header.getAttribute("aria-expanded")).toBe("false");
-    header.click();
+    // Restored to the newest-element default rather than to a remembered state: the
+    // box is the newest thing in its lane until something says otherwise.
     expect(header.getAttribute("aria-expanded")).toBe("true");
+    header.click();
+    expect(header.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("keeps its control when the pass that built it DID fill the body", async () => {
@@ -347,7 +652,7 @@ describe("a container with nothing in its body", () => {
     box.body.appendChild(document.createElement("div")).textContent = "a stage card";
     await nextTask();
     expect(box.root.querySelector(".subagent-toggle")).not.toBeNull();
-    expect(headerOf(box.root).getAttribute("aria-expanded")).toBe("false");
+    expect(headerOf(box.root).getAttribute("aria-expanded")).toBe("true");
   });
 });
 
@@ -366,19 +671,26 @@ describe("accessible names", () => {
     expect(state()).toBe("failed");
     sa.setStatus("completed");
     expect(state()).toBe("succeeded");
+    // The DISPLAYED word is not the wire enum: the wire spells it `aborted` and the
+    // reader is told `cancelled`, which is what the enclosing turn card's own footer
+    // says about the same stop.
+    sa.setStatus("aborted");
+    expect(state()).toBe("cancelled");
   });
 
-  it("names the link for its delegate, and follows a rename", () => {
-    const sa = buildSubagentCard("Subagent", "in_progress", {
-      open: { href: "/chat/c/subagent/u-1", open: () => undefined },
-    });
-    const link = sa.root.querySelector<HTMLAnchorElement>("a.subagent-open");
-    // The visible word stays "Open"; the accessible name is what disambiguates a
-    // list of them.
-    expect(link?.textContent).toContain("Open");
-    expect(link?.getAttribute("aria-label")).toBe("Open Subagent");
+  it("names the head for its delegate and its state, and follows both", () => {
+    const sa = buildSubagentCard("Subagent", "in_progress", { open: opener() });
+    const head = headerOf(sa.root);
+    // `<thing>, <state word>` and nothing else: the anchor already says it opens
+    // something, so a second sentence would restate the role.
+    expect(head.getAttribute("aria-label")).toBe("Subagent, running");
+    sa.setStatus("failed");
+    expect(head.getAttribute("aria-label")).toBe("Subagent, failed");
     sa.setName("context-gatherer");
-    expect(link?.getAttribute("aria-label")).toBe("Open context-gatherer");
+    expect(head.getAttribute("aria-label")).toBe("context-gatherer, failed");
+    // ONE owner: the `.sr-only` span is not built at all here, so the state word
+    // cannot be announced twice.
+    expect(head.querySelector(".sr-only")).toBeNull();
   });
 });
 
@@ -441,10 +753,20 @@ describe("lazy rendering of a closed container, computed", () => {
     host.remove();
   });
 
-  /** A mounted pipeline container plus its body, in the styled host. Populated,
-   *  because the disclosure these cases read is withdrawn while the body is empty. */
+  /** A mounted pipeline container plus its body, in the styled host, born CLOSED —
+   *  which is what composition passes for a box the store already holds something
+   *  after, and the state every case below is about.
+   *
+   *  Born closed rather than folded by `setSuperseded`, deliberately: a fold ANIMATES,
+   *  and `content-visibility` is a discrete property under `allow-discrete`, so it
+   *  still reads its from-value for the length of the transition (the last two cases
+   *  are about exactly that). `createDisclosure` does not animate at construction, so
+   *  this is the resting closed state with no transition in the question.
+   *
+   *  Populated, because the disclosure these cases read is withdrawn while the body is
+   *  empty. */
   async function container(): Promise<{ root: HTMLElement; body: HTMLElement }> {
-    const box = buildSubagentContainer("pipeline", "in_progress");
+    const box = buildSubagentContainer("pipeline", "completed", { startOpen: false });
     host.appendChild(box.root);
     await populate(box);
     return { root: box.root, body: box.body };
@@ -515,25 +837,73 @@ describe("lazy rendering of a closed container, computed", () => {
   it("advertises the header as a control only while there is one", async () => {
     // The three `.subagent-header` affordance declarations were UNGATED, so a
     // container whose control had been withdrawn still answered the pointer like
-    // one — and so did a card, which never had a control at all.
+    // one — and so did a card with no opener, which controls nothing at all.
     const bareBox = buildSubagentContainer("pipeline", "completed");
     host.appendChild(bareBox.root);
     const card = buildSubagentCard("Subagent", "completed");
     host.appendChild(card.root);
+    const door = buildSubagentCard("Subagent", "completed", { open: opener() });
+    host.appendChild(door.root);
     const { root: full } = await container();
     expect(getComputedStyle(headerOf(bareBox.root)).cursor).toBe("auto");
     expect(getComputedStyle(headerOf(card.root)).cursor).toBe("auto");
+    expect(getComputedStyle(headerOf(door.root)).cursor).toBe("pointer");
     expect(getComputedStyle(headerOf(full)).cursor).toBe("pointer");
   });
 
-  it("keeps that header's own text selectable", async () => {
-    // The other half of the same gate: `user-select: none` exists so a drag across
-    // a live header toggles instead of selecting its label, and a header that
-    // toggles nothing has no reason to take the selection away.
+  it("keeps an INERT header's own text selectable, and a control's not", async () => {
+    // The other half of the same gate: `user-select: none` exists so a drag across a
+    // live header activates instead of selecting its label, and a header that does
+    // nothing has no reason to take the selection away.
+    //
+    // The accepted loss: a card whose head IS the control matches the tool card, so
+    // the delegate's NAME can no longer be dragged out of it. The tail's lines, which
+    // carry the delegate's own output, sit outside the control and stay selectable.
     const bareBox = buildSubagentContainer("pipeline", "completed");
     host.appendChild(bareBox.root);
+    const door = buildSubagentCard("Subagent", "completed", { open: opener() });
+    host.appendChild(door.root);
     const { root: full } = await container();
     expect(getComputedStyle(headerOf(bareBox.root)).userSelect).toBe("auto");
+    expect(getComputedStyle(headerOf(door.root)).userSelect).toBe("none");
     expect(getComputedStyle(headerOf(full)).userSelect).toBe("none");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The leaf's chevron points RIGHTWARD, permanently.
+//
+// The closed angle lives in 10-shell-app.css and the container's open rule in
+// 14-tools.css, so only the ASSEMBLED bundle answers the cascade question — hence
+// `mountAppCSS()` rather than this file's two-sheet host.
+// ---------------------------------------------------------------------------
+describe("the leaf's navigation chevron never turns", () => {
+  let style: HTMLStyleElement;
+  let host: HTMLElement;
+
+  beforeEach(() => {
+    style = mountAppCSS();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
+
+  afterEach(() => {
+    style.remove();
+    host.remove();
+  });
+
+  it("resolves the closed angle and keeps it through every settle", () => {
+    const sa = buildSubagentCard("Subagent", "in_progress", { open: opener() });
+    host.appendChild(sa.root);
+    const chev = sa.root.querySelector<HTMLElement>(".subagent-head-chevron > .disclosure-chevron");
+    if (chev === null) {
+      throw new Error("the card's head has no chevron");
+    }
+    const turn = (): string => getComputedStyle(chev).getPropertyValue("--chev-turn").trim();
+    expect(turn()).toBe("-90deg");
+    sa.setStatus("completed");
+    expect(turn()).toBe("-90deg");
+    sa.setStatus("failed");
+    expect(turn()).toBe("-90deg");
   });
 });

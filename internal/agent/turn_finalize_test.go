@@ -329,6 +329,87 @@ func TestFlushInFlightTurnOnSwitch_ConcludesCancelledOnBothChannels(t *testing.T
 	}
 }
 
+// abortedToolIDs returns the tool call ids named by every broadcast
+// tool_call_update carrying the aborted status, in order. The frame is what a
+// client already holding the card applies; the persisted status only reaches a
+// LATER reload, so the two channels have to be asserted separately.
+func abortedToolIDs(t *testing.T, h *Runtime) []string {
+	t.Helper()
+	var out []string
+	for _, e := range bufferedSince(h, 0) {
+		var msg struct {
+			Type    vibekit.EventType `json:"type"`
+			Payload struct {
+				ToolCallID string             `json:"tool_call_id"`
+				Status     vibekit.ToolStatus `json:"status"`
+			} `json:"payload"`
+		}
+		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
+			t.Fatalf("unmarshal event: %v", err)
+		}
+		if msg.Type == vibekit.EventToolCallUpdate && msg.Payload.Status == vibekit.ToolAborted {
+			out = append(out, msg.Payload.ToolCallID)
+		}
+	}
+	return out
+}
+
+// TestEmitTurnEnded_EndTurnAbortsInFlightTools pins that a close settles what it makes
+// unsettleable, whatever the stop reason: the buffer is taken at the close and
+// HandleToolCallUpdate drops every later frame, so a call left non-terminal here is a
+// permanent spinner on each later reload of that chat.
+func TestEmitTurnEnded_EndTurnAbortsInFlightTools(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
+	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0,
+		&vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
+
+	c, _ := cs.Get(t.Context(), "c1")
+	var assistant *vibekit.Message
+	for i := range c.Messages {
+		if c.Messages[i].Role == vibekit.RoleAssistant {
+			assistant = &c.Messages[i]
+		}
+	}
+	if assistant == nil {
+		t.Fatalf("no assistant message persisted: %+v", c.Messages)
+	}
+	if len(assistant.ToolCalls) != 1 {
+		t.Fatalf("persisted %d tool calls, want 1", len(assistant.ToolCalls))
+	}
+	if got := assistant.ToolCalls[0].Status; got != vibekit.ToolAborted {
+		t.Errorf("persisted tool status = %q, want aborted — nothing can settle it after the "+
+			"close, so a reload renders it as a permanent spinner", got)
+	}
+	// The LIVE channel, which is what a client watching this turn applies.
+	if got := abortedToolIDs(t, h); !slices.Equal(got, []string{"tc1"}) {
+		t.Errorf("aborted tool_call_update ids = %v, want exactly [tc1]", got)
+	}
+}
+
+// TestFlushInFlightTurnOnSwitch_AbortsInFlightTools is the discard closer's own half
+// of the same rule, and only the BROADCAST matters here: the content is thrown away,
+// so nothing is persisted to reload — but every connected client keeps the streamed
+// message in its store, so its cards spin until one.
+func TestFlushInFlightTurnOnSwitch_AbortsInFlightTools(t *testing.T) {
+	h, cs, _ := newTestHub()
+	startedTurnOn(t, h, cs, "c1", "half an answer")
+	buf := h.liveTurnBuffer("c1")
+	if buf == nil {
+		t.Fatal("the fixture opened no turn buffer")
+	}
+	buf.AppendToolCall(&vibekit.ToolCall{ID: "tc-1", Title: "Run command", Status: vibekit.ToolInProgress})
+
+	h.coord.FlushInFlightTurnOnSwitch(t.Context(), "c1")
+
+	if got := abortedToolIDs(t, h); !slices.Equal(got, []string{"tc-1"}) {
+		t.Errorf("aborted tool_call_update ids = %v, want exactly [tc-1]", got)
+	}
+}
+
 // TestFlushInFlightTurnOnSwitch_AnIdleChatRecordsNothing is the other half of the
 // discard rule: a switch with nothing in flight is invisible, so it must not leave
 // a marker or announce an end for a turn the reader never saw start.

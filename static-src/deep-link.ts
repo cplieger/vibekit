@@ -1,13 +1,14 @@
 // ---------------------------------------------------------------------------
-// Settling a deep-linked chat id the store holds NO row for.
+// What a LOCATION is allowed to mean: whether it may open the view it names, and
+// what a chat id the store holds no row for settles to.
 //
 // This is the whole of what the router used to do inline, and it moved here for
 // two reasons that are the same reason twice: `applyRoute` is a private function
 // in the composition root, so nothing it holds has a test address, and what it
-// held was not routing. Three of the four rules below are about EVIDENCE — what
-// licenses a terminal claim, what licenses silence, and whether a verdict that
-// arrived a round trip late still describes the screen — and every one of them
-// had shipped unpinned.
+// held was not routing. Three of `settleDeepLinkedChat`'s four rules are about
+// EVIDENCE — what licenses a terminal claim, what licenses silence, and whether a
+// verdict that arrived a round trip late still describes the screen — and every one
+// of them had shipped unpinned.
 //
 // The standing principle they implement: never derive a terminal verdict from
 // data this client may simply not have yet, and never let a failure be silent.
@@ -18,7 +19,8 @@
 import { resolveUnknownChat } from "./chat.js";
 import { chatListLoaded, serverMayAnswer } from "./store-load.js";
 import { parseRoute, replaceRoute } from "./router.js";
-import { getActiveTabRoute } from "./tabs.js";
+import type { Route, RouteOrigin } from "./router.js";
+import { getActiveTabRoute, tabIdForRoute } from "./tabs.js";
 import { error as toastError } from "./toast.js";
 
 /** What settling a deep-linked id did, for a test to read.
@@ -63,6 +65,36 @@ function stillNames(id: string): boolean {
  *  for "/". */
 function canonicalize(): void {
   replaceRoute(getActiveTabRoute() ?? { kind: "chat", id: "" });
+}
+
+/** What a location was allowed to mean, for the caller and for a test to read. */
+export type LocationVerdict =
+  /** It may open the view it names. */
+  | "opens"
+  /** It named a view this workspace no longer holds, so the URL was pointed at
+   *  what IS on screen and nothing is to be applied. */
+  | "canonicalized";
+
+/** Whether a location may OPEN the view it names.
+ *
+ *  A deliberate navigation always may. Anything else may only ACTIVATE something
+ *  already open, and a `history` entry and a RESTORED document load are the same
+ *  case: each names a location this browser WAS at rather than one that still
+ *  exists. A restored location is `active_view`'s twin — a second per-device record
+ *  of the tab this screen was last on — and it is the one copy with no guard, which
+ *  is why waking a device whose tabs were closed elsewhere brought them back.
+ *
+ *  Opening on such a location is not mere clutter: `openTab` is a server mutation,
+ *  so it persists and broadcasts to every other device, and the tab reappears on all
+ *  of them. `canonicalize` rather than `history.go(-1)`: skipping the entry walks
+ *  back through however many dead ones sit behind it and can leave the app, while a
+ *  replace consumes exactly the one location that no longer resolves. */
+export function admitLocation(route: Route, origin: RouteOrigin): LocationVerdict {
+  if (origin === "deeplink" || tabIdForRoute(route) !== "") {
+    return "opens";
+  }
+  canonicalize();
+  return "canonicalized";
 }
 
 /** Settle a deep-linked chat id the store has no row for, by ASKING the server.

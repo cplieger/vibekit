@@ -93,7 +93,7 @@ describe("every disclosure builder emits the shared chevron", () => {
   });
 
   it("reasoning summary, and sealing rewrites the LABEL not the summary", () => {
-    const r = buildReasoning("thinking about it", true);
+    const r = buildReasoning("thinking about it", true, true);
     expect(r.root.querySelectorAll(".disclosure-chevron")).toHaveLength(1);
     // The word count is the summary's other sibling of the label, so it is the
     // second thing a `summary.textContent = …` would delete.
@@ -119,6 +119,95 @@ describe("every disclosure builder emits the shared chevron", () => {
   it("turn footer ledger caret", () => {
     const f = buildTurnFooter({ commands: 1, reads: 2, changedFiles: {} });
     expect(f.querySelectorAll(".disclosure-chevron.turn-ledger-caret")).toHaveLength(1);
+  });
+});
+
+// POSITION CARRIES THE INTERACTION TYPE, and nothing but this asserts it: a
+// disclosure chevron leads its header, a navigating one trails. Rotation cannot
+// carry the distinction on its own, because a closed disclosure and a navigation
+// glyph resolve to the same angle — and a tool card's region is born closed, so
+// nearly every card in a transcript shows one. Before the rule, a delegate leaf's
+// navigating head and a tool card's closed disclosure were the same glyph at the
+// same angle in the same trailing slot.
+//
+// Asserted on DOM ORDER rather than on geometry, which is what makes it a cheap
+// guard on the builders: the boxes measure differently (a centred divider, an
+// absolutely positioned tool chevron) and a rect assertion would be a layout test
+// wearing a convention's name.
+describe("position carries the interaction type", () => {
+  /** Which end of `header` the chevron sits at, by child index. */
+  function chevronEnd(header: Element): "leading" | "trailing" | "absent" {
+    const kids = [...header.children];
+    const i = kids.findIndex(
+      (k) =>
+        k.querySelector(".disclosure-chevron") !== null ||
+        k.classList.contains("disclosure-chevron"),
+    );
+    if (i === -1) {
+      return "absent";
+    }
+    return i === 0 ? "leading" : i === kids.length - 1 ? "trailing" : "absent";
+  }
+
+  it("the tool group's disclosure leads", () => {
+    const g = buildToolGroupShell();
+    expect(chevronEnd(g.querySelector(".tool-group-header")!)).toBe("leading");
+  });
+
+  it("the pipeline container's disclosure leads", async () => {
+    const sa = buildSubagentContainer("orchestrate", "in_progress");
+    sa.body.appendChild(document.createElement("div")).textContent = "stage";
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    expect(chevronEnd(sa.root.querySelector(".subagent-header")!)).toBe("leading");
+  });
+
+  it("a delegate LEAF's navigation chevron trails, in the same header class", async () => {
+    const { buildSubagentCard } = await import("./fundamentals/subagent-block.js");
+    const leaf = buildSubagentCard("context-gatherer", "completed", {
+      open: { href: "/chat/c-1/subagent/s-1", open: () => undefined },
+    });
+    const head = leaf.root.querySelector(".subagent-header")!;
+    // Same class as the container's above: the position is the only thing telling a
+    // reader that this one opens a page and that one expands in place.
+    expect(head.tagName).toBe("A");
+    expect(chevronEnd(head)).toBe("trailing");
+  });
+
+  it("the run card's disclosure leads", async () => {
+    const { buildRunCard } = await import("./fundamentals/run-card.js");
+    const rc = buildRunCard("wf-1", "recipe", () => undefined);
+    expect(chevronEnd(rc.root.querySelector(".run-head")!)).toBe("leading");
+  });
+
+  it("the reasoning trace's disclosure leads", () => {
+    const r = buildReasoning("thinking", false, false);
+    expect(chevronEnd(r.root.querySelector(".reasoning-summary")!)).toBe("leading");
+  });
+
+  it("the turn fold and the turn ledger both lead", () => {
+    const h = buildTurnHeader({
+      n: 4,
+      outcome: "completed",
+      ts: Date.now(),
+      request: "converge the chevrons",
+      attachments: [],
+    });
+    expect(chevronEnd(h.querySelector(".turn-head-row")!)).toBe("leading");
+    const f = buildTurnFooter({ commands: 1, reads: 2, changedFiles: {} });
+    expect(chevronEnd(f.querySelector(".turn-ledger-summary")!)).toBe("leading");
+  });
+
+  it("the tool card's disclosure leads, by CSS rather than by DOM order", async () => {
+    // The one site where DOM order cannot answer: the button is appended last (it is
+    // built and withdrawn as the card's output comes and goes) and placed by
+    // `inset-inline-start`, so the stylesheet is where the rule lives. Read off the
+    // shipped sheet, since this page loads no app stylesheet.
+    const body = stripComments(loadCSS("14-tools.css"));
+    const rule = /\.tool-disclosure\s*\{([^}]*)\}/u.exec(body)?.[1] ?? "";
+    expect(rule).toMatch(/inset-inline-start:/u);
+    expect(rule).not.toMatch(/inset-inline-end:/u);
   });
 });
 

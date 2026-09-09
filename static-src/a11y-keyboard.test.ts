@@ -87,6 +87,58 @@ describe("a11y: tool-group header keyboard and aria", () => {
   });
 });
 
+// The same claim for the two other kinds the newest-element policy folds. Every one of
+// them keeps `aria-expanded` on its header control in sync with the fold, or a screen
+// reader is told the box is open while the reader sees it shut — and an auto collapse
+// is the one path with no user gesture behind it to make that obvious.
+//
+// Each fixture gets a POPULATED body, for the reason this file's header states for the
+// group: an empty pipeline container withdraws its control entirely, so a case over one
+// would exercise a control no reader can drive.
+describe("a11y: an auto-collapse keeps aria-expanded in sync", () => {
+  it("an auto-collapsed pipeline reports aria-expanded=false", async () => {
+    const { buildSubagentContainer } = await import("./fundamentals/subagent-block.js");
+    const box = buildSubagentContainer("Subagent pipeline · 2 stages", "completed");
+    box.body.appendChild(document.createElement("div")).textContent = "a stage card";
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    const header = box.root.querySelector(".subagent-header")!;
+    expect(header.getAttribute("role")).toBe("button");
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+
+    box.setSuperseded(true);
+    expect(box.root.classList.contains("collapsed")).toBe(true);
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("an auto-collapsed run card reports aria-expanded=false", async () => {
+    const { buildRunCard } = await import("./fundamentals/run-card.js");
+    const card = buildRunCard("wf_1", "Workflow run", () => {
+      /* the footer link is not under test */
+    });
+    // A settled clean run, so the fold's four refusals all stand aside; its steps are
+    // what populate the body.
+    card.render({
+      workflowId: "wf_1",
+      status: "completed",
+      root: {
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "completed",
+        children: [{ nodeId: "build", type: "step", status: "completed" }],
+      },
+    });
+    const head = card.root.querySelector(".run-head")!;
+    expect(head.getAttribute("role")).toBe("button");
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+
+    card.setSuperseded(true);
+    expect(card.root.classList.contains("collapsed")).toBe(true);
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
 describe("a11y: a bare group's header is not a tab stop", () => {
   let style: HTMLStyleElement;
 

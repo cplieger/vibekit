@@ -17,6 +17,7 @@ func requireCollaborators(h *Runtime) {
 		name string
 	}{
 		{name: "runs", v: h.runs},
+		{name: "bus", v: h.bus},
 		{name: "config", v: h.config},
 		{name: "inbound", v: h.inbound},
 		{name: "agentTerms", v: h.agentTerms},

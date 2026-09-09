@@ -62,6 +62,7 @@ document.head.appendChild(style);
 
 const store = await import("./store.js");
 const messages = await import("./messages.js");
+const { clampObservationCount } = await import("./clamp-text.js");
 
 messages.mountChatView();
 
@@ -386,5 +387,54 @@ describe("the not-delivered record survives the turn boundary and the refetch", 
 
     expect(store.steerMarks(a), "the record survives").toHaveLength(1);
     expect(notes(a), "and has nowhere to render").toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A CLAMP IS OBSERVED, so whoever discards its element owes the release, and
+// `rebuildMessageBody` is the one teardown that keeps its row and replaces the
+// row's children. Every park/unpark of a STREAMING message runs it, re-attaching
+// a clamp through `flushSteerNotes` — and a steer note is the one thing in an
+// assistant body that clamps, so without the release the observer's target set
+// grows by one per tab switch for the life of the page.
+// ---------------------------------------------------------------------------
+
+describe("rebuilding a message body releases the clamps it discards", () => {
+  /** One tab switch away and back: parks `a`'s view and unparks it, which is what
+   *  routes its streaming message through `rebuildMessageBody`. */
+  async function switchAwayAndBack(away: string, back: string): Promise<void> {
+    store.setActive(away);
+    await flushed();
+    store.setActive(back);
+    await flushed();
+  }
+
+  it("holds the observed-clamp count steady across repeated rebuilds", async () => {
+    const a = freshID("c-clamp");
+    const b = freshID("c-clamp");
+    const m = freshID("m");
+    store.setSessions([liveTurn(a, m), session(b, { messages: [user(`${b}-u`, "other")] })]);
+    store.setActive(a);
+    store.bumpMessages(a);
+    await flushed();
+
+    store.recordSteerQueued(a, { id: "steer-1", text: "use tabs", origin: "user" });
+    store.promoteSteer(a, "steer-1", "use tabs", "user");
+    await flushed();
+    expect(notes(a), "the note the clamp belongs to").toHaveLength(1);
+
+    // The baseline is taken AFTER one switch, because the first one also builds
+    // `b`'s own view and its turn header clamps once — a one-off (that view is
+    // PARKED, not disposed) which a baseline taken before it would read as growth.
+    // The subject is per-rebuild growth, so measure between rebuilds.
+    await switchAwayAndBack(b, a);
+    const observed = clampObservationCount();
+
+    await switchAwayAndBack(b, a);
+    await switchAwayAndBack(b, a);
+    await switchAwayAndBack(b, a);
+
+    expect(notes(a), "one note, rebuilt three more times").toHaveLength(1);
+    expect(clampObservationCount(), "one clamp per note, not one per rebuild").toBe(observed);
   });
 });

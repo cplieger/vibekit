@@ -263,6 +263,31 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     expect(mockInvalidateCachedRuns).toHaveBeenCalledTimes(1);
   });
 
+  // ONE token for both run readers, which is what takes a gap's run cost from two
+  // requests per live run to one. They act on the same event a network round trip
+  // apart — `rebuildLiveRuns` invalidates each live run only once
+  // `/api/runs/live` has answered — so the token is the only thing that can say
+  // they are the same event. What the token MEANS is run-store.test.ts's subject.
+  it("threads ONE cause through both of its run readers", () => {
+    setSessions([makeSession("a")]);
+    fireGap();
+
+    const cause = mockInvalidateCachedRuns.mock.calls[0]?.[0];
+    expect(typeof cause).toBe("string");
+    expect(cause).not.toBe("");
+    expect(mockRebuildLiveRuns).toHaveBeenCalledWith(cause);
+  });
+
+  it("mints a DIFFERENT cause per gap, or the second gap would refetch nothing", () => {
+    setSessions([makeSession("a")]);
+    fireGap();
+    fireGap();
+
+    const first = mockInvalidateCachedRuns.mock.calls[0]?.[0];
+    const second = mockInvalidateCachedRuns.mock.calls[1]?.[0];
+    expect(second).not.toBe(first);
+  });
+
   // The catalog left ChatHeader for one workspace-global holder, and nothing
   // broadcasts a change to it: `fetchCatalog` used to run at boot and after login
   // only, so a model list that moved during the outage — or a server restart, which

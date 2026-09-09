@@ -27,14 +27,32 @@ import type { TurnOutcome } from "./wire/types.gen.js";
  *  arrives on the message that finalized its turn. */
 export type { TurnOutcome };
 
+/** The segmentation state at a window's LEFT EDGE, which is what lets a projection
+ *  over a PAGINATED window number its turns the way a whole-session scan would.
+ *  Both halves come from the window response; `store.ts` `turnBaseOf` reads them.
+ *  `closed` is not redundant with `offset`: this scan carries no other state, so a
+ *  window opening on a message that CONTINUES a closed segment diverges one later. */
+export interface TurnWindowBase {
+  /** Turns preceding the window's FIRST turn, so `offset + 1` is that turn's
+   *  session-absolute ordinal. */
+  readonly offset: number;
+  /** Whether the segment before the window's first message had already closed. */
+  readonly closed: boolean;
+}
+
+/** The base for a projection over a whole session: nothing precedes it and no
+ *  segment closed before it. The default, so every caller that genuinely holds the
+ *  whole array — and every caller that reads only ids — needs no argument. */
+export const WHOLE_SESSION: TurnWindowBase = { offset: 0, closed: false };
+
 export interface Turn {
   /** Reconcile key: the id of the turn's first message. Stable across
    *  repaints because a turn's opening message never changes identity. */
   id: string;
-  /** 1-based ordinal within the LOADED window. Not session-absolute: the
-   *  store is paginated, so turn 1 here is only turn 1 of the session when
-   *  `has_more` is false. The rail resolves absolute numbers from its own
-   *  session-wide fetch. */
+  /** The turn's 1-based ordinal: SESSION-ABSOLUTE when a base is supplied, which
+   *  every paint-path caller does, and window-local under `WHOLE_SESSION`, which is
+   *  correct for a caller holding the whole array or reading only ids. The base is
+   *  what makes this agree with `TurnSummary.n` by construction. */
   n: number;
   /** The user's prompt. Absent when the turn was not user-initiated (a
    *  run-completion wake, a scheduled trigger), in which case the header
@@ -97,29 +115,40 @@ const COMMAND_KINDS = new Set(["execute", "shell", "command"]);
 
 /** Group a flat message list into turns. A user PROMPT opens a turn; everything else
  *  joins the open one, or opens a HEADERLESS turn — the agent-initiated case and a
- *  paginated window starting mid-turn, which render the same way.
+ *  paginated window starting mid-turn. `base` is that window's left edge (see
+ *  `TurnWindowBase`), so a PAGE numbers its turns session-absolutely.
  *
- *  `live` marks the LAST turn as running, and it is TWO facts the caller composes: this
- *  client's memory of a stream it watched, plus the server's last statement that a turn
- *  is open (`store.ts` `turnLive`). Both, because `thinking` alone starts false, so on a
- *  mid-turn reload it paints a TERMINAL verdict in the window nothing can know one in. */
-export function projectTurns(messages: readonly Message[], live: boolean): Turn[] {
+ *  `live` marks the LAST turn as running, composed by the caller from this client's
+ *  memory of a stream it watched PLUS the server's `turn_open` (`store.ts` `turnLive`):
+ *  `thinking` alone starts false, so a mid-turn reload would paint a terminal verdict. */
+export function projectTurns(
+  messages: readonly Message[],
+  live: boolean,
+  base: TurnWindowBase = WHOLE_SESSION,
+): Turn[] {
   const turns: Turn[] = [];
-  let closed = false;
+  let closed = base.closed;
   for (const m of messages) {
     const open = turns[turns.length - 1];
     // A prompt opens a turn; a steer joins the one already running.
-    if (isPrompt(m) || open === undefined || opensHeaderlessTurn(m, closed)) {
+    const opens = isPrompt(m) || opensHeaderlessTurn(m, closed);
+    if (opens || open === undefined) {
       turns.push({
         id: m.id,
-        n: turns.length + 1,
+        n: base.offset + turns.length + 1,
         trigger: isPrompt(m) ? m : undefined,
         body: isPrompt(m) ? [] : [m],
         ts: m.ts,
         outcome: "completed",
         rewindTo: undefined,
       });
-      closed = closesTurn(m.turn_outcome);
+      // The false arm is the FORCED-OPEN first message of a mid-turn window: it did
+      // not close the segment it continues, so the base's state carries through it
+      // and the next assistant message opens a turn here exactly as it does in the
+      // whole-array scan. On a genuine open the segment starts fresh, and with
+      // `WHOLE_SESSION`'s `closed: false` seed the two arms agree, which is what
+      // keeps the default behaviour byte-identical.
+      closed = opens ? closesTurn(m.turn_outcome) : closed || closesTurn(m.turn_outcome);
       continue;
     }
     open.body.push(m);
@@ -300,25 +329,13 @@ export function turnLedger(t: Turn): TurnLedger {
   return led;
 }
 
-/** The stable DOM id a turn permalink targets, so `/chat/{id}#turn-{n}` can
- *  address a precise point from a ledger row, a run's launch record or a search
- *  hit. Lives here rather than in the renderer because the anchor is a property
- *  of the turn, and more than one surface has to be able to compute it without
- *  reaching into the DOM.
+/** The stable DOM id a turn anchor targets. Lives here rather than in the renderer
+ *  because the anchor is a property of the turn, and more than one surface computes
+ *  it without reaching into the DOM.
  *
- *  THE `n` HERE IS WINDOW-LOCAL (`Turn.n`), NOT the rail's session-absolute
- *  `TurnSummary.n`. Two numbering spaces, one spelling, and conflating them is
- *  what made the rail's click land on the wrong card: the error is exactly the
- *  number of turns paged out, so it is zero on a short chat. This function cannot
- *  learn the absolute number — `projectTurns` is pure and DOM-free and the
- *  absolute index only exists behind the rail's own fetch — which is why anything
- *  addressing a turn ACROSS that boundary joins on the opening message id instead
- *  (`turn-rail.ts` `keyOf` / `turnCard`).
- *
- *  Recorded because it is a trap rather than a defect: `router.ts` parses no
- *  `#turn-` fragment at all (`parseHashLine` matches only `/^#L(\d+)/`), so the
- *  documented `/chat/{id}#turn-{n}` permalink is aspirational. If it is ever built
- *  it must resolve through the rail's index, or it inherits that exact bug. */
+ *  A genuine SESSION anchor wherever a base is supplied, so it agrees with the
+ *  rail's `TurnSummary.n`. Still not a working PERMALINK: `router.ts parseHashLine`
+ *  matches only `/^#L(\d+)/`, so nothing resolves a `#turn-` fragment. */
 export function turnAnchorID(n: number): string {
   return `turn-${String(n)}`;
 }

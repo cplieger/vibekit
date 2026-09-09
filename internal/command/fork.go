@@ -156,6 +156,12 @@ func forkCreate(p vibekit.ForkChatCommand, chatID vibekit.ChatID, parent *vibeki
 			c.Model = parent.Model
 			c.CurrentModeID = parent.CurrentModeID
 			c.Effort = parent.Effort
+			// The review gate is inherited like the rest, overriding the global
+			// default the coordinator seeded: a tangent continues the same
+			// conversation, so taking the model, the mode and the effort while
+			// dropping the gate would silently downgrade safety — a supervised
+			// chat's tangent would start writing files without asking.
+			c.SupervisedMode = parent.SupervisedMode
 			if sessionID != "" {
 				// RecordSession, not assignment: it is the sanctioned writer
 				// of this field and keeps the reaper's keep-list chain

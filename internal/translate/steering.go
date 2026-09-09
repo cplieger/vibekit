@@ -26,7 +26,10 @@ package translate
 
 import (
 	"context"
+	"log/slog"
+	"time"
 
+	"github.com/cplieger/vibekit/internal/durable"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -94,13 +97,17 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 		if k.MessageID == "" {
 			return true
 		}
+		origin := t.steerOrigin(chatID, k.MessageID)
 		// No longer waiting: the model has read it, so replaying it would offer a
 		// delivered message back to the dock.
 		t.steerBufferRead(chatID, k.MessageID)
+		// DURABLE before the broadcast, because the broadcast's own surface dies
+		// with the page: see persistSteer.
+		t.persistSteer(ctx, chatID, k.MessageID, k.Content, origin, vibekit.SteerStateRead)
 		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
 			SteerID: k.MessageID,
 			Text:    k.Content,
-			Origin:  t.steerOrigin(chatID, k.MessageID),
+			Origin:  origin,
 		}))
 		return true
 
@@ -112,14 +119,68 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 			return true
 		}
 		// KAS's buffer no longer holds these, whether the model read them or a
-		// boundary dropped them unread, so nothing may re-offer them.
-		t.steerBufferForgotten(chatID, k.MessageIDs)
+		// boundary dropped them unread, so nothing may re-offer them. What comes
+		// BACK is the subset the buffer still held, which is exactly the steers
+		// nothing read — an injected frame removed the others above.
+		for _, p := range t.steerBufferForgotten(chatID, k.MessageIDs) {
+			t.persistSteer(ctx, chatID, p.SteerID, p.Text, p.Origin, vibekit.SteerStateDropped)
+		}
 		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerCleared, chatID, vibekit.SteerClearedPayload{
 			SteerIDs: k.MessageIDs,
 		}))
 		return true
 	}
 	return false
+}
+
+// persistSteer writes the steer's DURABLE row: the two arms above are the only places
+// that know its delivery state, and an F5 on a live bridge replays nothing.
+//
+// IT BROADCASTS NOTHING, deliberately — the client drops a mark whose row is resident,
+// so an echo would replace the live mark with a copy carrying no ack. The next FETCH
+// serves this row, swapProjectedTranscript's discipline. The ID is KAS's own steer id,
+// the one the replay projection stamps, so mergeProjection dedupes instead of rendering
+// the note twice; a failure is swallowed, chat.ErrTombstoned being ordinary here.
+func (t *Translator) persistSteer(
+	ctx context.Context,
+	chatID vibekit.ChatID,
+	steerID, text string,
+	origin vibekit.SteerOrigin,
+	state vibekit.SteerState,
+) {
+	if steerID == "" || text == "" {
+		// A boundary row carries no text, and a row with none renders an empty
+		// note — the replay projection drops the same shape for the same reason.
+		return
+	}
+	err := t.chats.Mutate(durable.Context(ctx), chatID, func(c *vibekit.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		// Idempotent by id, which is required rather than defensive: a repeat frame
+		// would otherwise stack a second note for one steer. The state is NOT
+		// re-stamped — read is terminal, and the cleared frame that follows an
+		// injected one is housekeeping (see SteerClearedPayload).
+		for i := range c.Messages {
+			if c.Messages[i].ID == steerID {
+				return false
+			}
+		}
+		c.Messages = append(c.Messages, vibekit.Message{
+			ID:          steerID,
+			Role:        vibekit.RoleUser,
+			UserKind:    vibekit.UserKindSteer,
+			SteerState:  state,
+			SteerOrigin: origin,
+			Content:     text,
+			Ts:          time.Now().UnixMilli(),
+		})
+		return true
+	})
+	if err != nil {
+		slog.Warn("steer: persisting the durable row failed",
+			"chat_id", chatID, "steer_id", steerID, "error", err)
+	}
 }
 
 // The three buffer writes, each nil-guarded for the same reason steerOrigin is:
@@ -138,10 +199,11 @@ func (t *Translator) steerBufferRead(chatID vibekit.ChatID, steerID string) {
 	}
 }
 
-func (t *Translator) steerBufferForgotten(chatID vibekit.ChatID, steerIDs []string) {
-	if t.steerBuffer != nil {
-		t.steerBuffer.SteerForgotten(chatID, steerIDs)
+func (t *Translator) steerBufferForgotten(chatID vibekit.ChatID, steerIDs []string) []vibekit.SteerQueuedPayload {
+	if t.steerBuffer == nil {
+		return nil
 	}
+	return t.steerBuffer.SteerForgotten(chatID, steerIDs)
 }
 
 // steerOrigin answers whose words a steer carries.

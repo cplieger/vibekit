@@ -1,8 +1,6 @@
 package bridge
 
 import (
-	"bytes"
-	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -199,10 +197,7 @@ func TestBuildACPArgsPrecedesExtraArgs(t *testing.T) {
 //
 // Not parallel: it swaps the process-wide slog default.
 func TestParseACPArgs_LogsHowManyItKeptAndRefused(t *testing.T) {
-	logs := &bytes.Buffer{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logs := captureLogs(t)
 
 	const raw = "--agent-engine v2 -v"
 	ParseACPArgs(raw)

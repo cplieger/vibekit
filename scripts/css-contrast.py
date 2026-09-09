@@ -648,7 +648,8 @@ DOT_HELD = ["resting", "hover"]
 #   fill     hollow | solid | donut   (donut only under prefers-reduced-motion)
 #   surround none | ring               (a static hard 2px ring)
 #   motion   still | animated          (the glow beat + travelling wave)
-#   shape    circle | diamond
+#   shape    circle | diamond | square
+#   band     the ring's width in px, or "" for a state with no ring to measure
 #
 # Transcribed rather than parsed, so it is a claim this script CHECKS rather
 # than derives: the pairwise test below fails if any two states that can appear
@@ -656,43 +657,147 @@ DOT_HELD = ["resting", "hover"]
 # twice — once with motion available and once with it removed, because
 # 40-a11y.css zeroes every animation under prefers-reduced-motion and the
 # vocabulary has to survive that.
+#
+# `band` is the axis the workflow mark below made necessary, and it is not
+# cosmetic: that mark is a ring in EVERY state, so the four axes above cannot say
+# what separates two of its states at all — transcribed without it, its `waiting`
+# resolved to the activity dot's `waiting` tuple exactly and this script reported
+# PASS over a strip where the two were byte-identical. A band is also the one axis
+# whose difference can be too small to see, so the pairwise check below gates its
+# RATIO rather than its inequality; see BAND_RATIO_FLOOR.
 DOT_STATES: list[tuple[str, str, dict[str, str]]] = [
     (
         "idle",
         "var(--c-dot-idle)",
-        {"fill": "hollow", "surround": "none", "motion": "still", "shape": "circle"},
+        {
+            "fill": "hollow",
+            "surround": "none",
+            "motion": "still",
+            "shape": "circle",
+            "band": "1.5",
+        },
     ),
     (
         "working",
         "--c-dot-working",
-        {"fill": "solid", "surround": "none", "motion": "animated", "shape": "circle"},
+        {
+            "fill": "solid",
+            "surround": "none",
+            "motion": "animated",
+            "shape": "circle",
+            "band": "",
+        },
     ),
     (
         "waiting",
         "--c-dot-input",
-        {"fill": "hollow", "surround": "ring", "motion": "still", "shape": "circle"},
+        {
+            "fill": "hollow",
+            "surround": "ring",
+            "motion": "still",
+            "shape": "circle",
+            "band": "1.5",
+        },
     ),
     (
         "input",
         "--c-dot-input",
-        {"fill": "solid", "surround": "ring", "motion": "still", "shape": "circle"},
+        {
+            "fill": "solid",
+            "surround": "ring",
+            "motion": "still",
+            "shape": "circle",
+            "band": "",
+        },
     ),
     (
         "failed",
         "--c-dot-failed",
-        {"fill": "solid", "surround": "none", "motion": "still", "shape": "diamond"},
+        {
+            "fill": "solid",
+            "surround": "none",
+            "motion": "still",
+            "shape": "diamond",
+            "band": "",
+        },
     ),
     (
         "done",
         "--c-dot-done",
-        {"fill": "solid", "surround": "none", "motion": "still", "shape": "circle"},
+        {
+            "fill": "solid",
+            "surround": "none",
+            "motion": "still",
+            "shape": "circle",
+            "band": "",
+        },
     ),
     # Editor tabs only. It can never share a strip position with a chat state,
     # so the pairwise check excludes it rather than demanding a channel for it.
     (
         "dirty",
         "--c-accent",
-        {"fill": "solid", "surround": "none", "motion": "still", "shape": "circle"},
+        {
+            "fill": "solid",
+            "surround": "none",
+            "motion": "still",
+            "shape": "circle",
+            "band": "",
+        },
+    ),
+]
+
+# ---------------------------------------------------------------------------
+# The WORKFLOW MARK (12-tabs.css `.tab-run-dot`): the SECOND mark in a chat row's
+# leading cluster, 8px right of the dot above.
+#
+# It is in this section rather than a new one because it is the same vocabulary:
+# the same four --c-dot-* inks through the same --dot-color indirection, so the
+# ratio table above already measures its ink — contrast is per pixel, and a band
+# has less AREA than a disc rather than a different ratio. What it does NOT
+# inherit is the channel budget, and that is what has to be checked here: the two
+# marks are ADJACENT and permanently co-present, so a pair drawn from one element
+# each is exactly as confusable as a pair drawn from one element's own states.
+# Both populations therefore go through one pairwise pass.
+#
+# A ring in every state, so `fill` is spent before it starts and `band` is the
+# axis it separates its own states on. Its SILHOUETTE is a rounded square, which
+# is the one channel that answers every cross-mark pair at once — including the
+# reduced-motion pair, where a circular mark provably could not (the arithmetic is
+# at the mark's block header in 12-tabs.css).
+RUN_MARK_STATES: list[tuple[str, str, dict[str, str]]] = [
+    (
+        "working",
+        "--c-dot-working",
+        {
+            "fill": "hollow",
+            "surround": "none",
+            "motion": "animated",
+            "shape": "square",
+            "band": "2",
+        },
+    ),
+    (
+        "waiting",
+        "--c-dot-input",
+        {
+            "fill": "hollow",
+            "surround": "ring",
+            "motion": "still",
+            "shape": "square",
+            "band": "1",
+        },
+    ),
+    (
+        "input",
+        "--c-dot-input",
+        {
+            "fill": "hollow",
+            "surround": "ring",
+            "motion": "still",
+            "shape": "square",
+            "band": "2",
+        },
     ),
 ]
 
@@ -714,7 +819,20 @@ DOT_FLOOR = 3.0
 # hole, so its channels are rewritten before the second pairwise pass. It does
 # NOT gain a ring: the ring is the wants-you marker, and `working` borrowing it
 # would put a false signal on the one state that needs nothing from the reader.
-REDUCED_MOTION_SUBSTITUTION = {"fill": "donut", "motion": "still"}
+REDUCED_MOTION_SUBSTITUTION = {"fill": "donut", "motion": "still", "band": "2.2"}
+
+# The workflow mark's substitution is a DIFFERENT one, because its `working` is
+# already hollow: it has no fill left to spend, so what replaces the motion is the
+# channel it already reads, at the heaviest band in the cluster.
+RUN_REDUCED_MOTION_SUBSTITUTION = {"motion": "still", "band": "3"}
+
+# Two states separated ONLY by band width have to clear this ratio. The exec view's
+# state column is the precedent and the source of the number: it separates an
+# in-flight ring from a hollow `pending` one at 2px against a declared 0.0938rem
+# that Chromium snaps to 1px. Inequality alone is not enough on this axis — a
+# 1.5px/2px pair is a third of a pixel of ink at 8px, which this script can measure
+# and a reader cannot, and it is the shape that shipped once.
+BAND_RATIO_FLOOR = 2.0
 
 # The sibling app's own declaration for each state, and the vibekit token that
 # answers to it. web-terminal-kiro themes @cplieger/web-terminal-ui's --status-*
@@ -837,40 +955,76 @@ def show_dot(themes: list[Theme]) -> None:
     show_dot_sizing(themes)
 
     print("NON-COLOUR CHANNELS (WCAG 1.4.1: colour may not be the only means of")
-    print("conveying a state). Every pair of chat states must differ on at least one")
-    print("of fill / surround / motion / shape, with motion available AND removed.")
+    print("conveying a state). Every pair of marks a chat ROW can present — the")
+    print("activity dot's states AND the workflow mark's, which sit 8px apart and are")
+    print("permanently co-present — must differ on at least one of fill / surround /")
+    print("motion / shape / band, with motion available AND removed. A pair separated")
+    print(
+        f"by band ALONE must clear {BAND_RATIO_FLOOR}:1, the exec column's own ratio."
+    )
+    print("The mark's inks are the dot's own tokens, so the ratio table above already")
+    print("measures them: a band has less AREA than a disc, not a different ratio.")
     print()
-    print(f"  {'state':<10} {'fill':<8} {'surround':<9} {'motion':<10} shape")
-    for state, _ink, ch in DOT_STATES:
-        tag = "  (editor tab)" if state == DOT_CHAT_ONLY else ""
-        print(
-            f"  {state:<10} {ch['fill']:<8} {ch['surround']:<9} {ch['motion']:<10} {ch['shape']}{tag}"
-        )
+    print(
+        f"  {'mark':<15} {'fill':<8} {'surround':<9} {'motion':<10} {'shape':<8} band"
+    )
+    for element, states in (("dot", DOT_STATES), ("run", RUN_MARK_STATES)):
+        for state, _ink, ch in states:
+            tag = "  (editor tab)" if state == DOT_CHAT_ONLY else ""
+            band = f"{ch['band']}px" if ch["band"] else "-"
+            print(
+                f"  {element + ':' + state:<15} {ch['fill']:<8} {ch['surround']:<9} "
+                f"{ch['motion']:<10} {ch['shape']:<8} {band}{tag}"
+            )
     print()
 
     aliases = {frozenset(p) for p in DOT_ALIASES}
-    chat = [(s, ch) for s, _ink, ch in DOT_STATES if s != DOT_CHAT_ONLY]
+    # ONE population, labelled by the element each state is painted on, because the
+    # two marks share a ROW rather than a position: a reader comparing them is
+    # looking at both at once, so a cross-element pair is exactly as confusable as
+    # two states of one element.
+    chat = [(f"dot:{s}", ch, False) for s, _ink, ch in DOT_STATES if s != DOT_CHAT_ONLY]
+    chat += [(f"run:{s}", ch, True) for s, _ink, ch in RUN_MARK_STATES]
     for pass_name, reduce_motion in (
         ("motion available", False),
         ("prefers-reduced-motion", True),
     ):
         resolved = []
-        for state, ch in chat:
+        for state, ch, is_run in chat:
             eff = dict(ch)
             if reduce_motion and ch["motion"] == "animated":
-                eff.update(REDUCED_MOTION_SUBSTITUTION)
+                eff.update(
+                    RUN_REDUCED_MOTION_SUBSTITUTION
+                    if is_run
+                    else REDUCED_MOTION_SUBSTITUTION
+                )
             resolved.append((state, eff))
-        collisions = []
+        collisions, thin = [], []
         for i, (a, ca) in enumerate(resolved):
             for b, cb in resolved[i + 1 :]:
                 if frozenset((a, b)) in aliases:
                     continue
                 if ca == cb:
                     collisions.append((a, b))
+                    continue
+                # A band-ONLY difference is the one this axis can report as a
+                # separation and a reader cannot see, so it is gated on the ratio.
+                differing = [k for k in ca if ca[k] != cb[k]]
+                if differing != ["band"] or "" in (ca["band"], cb["band"]):
+                    continue
+                lo, hi = sorted((float(ca["band"]), float(cb["band"])))
+                if lo <= 0 or hi / lo < BAND_RATIO_FLOOR:
+                    thin.append((a, b, lo, hi))
         verdict = "PASS  every pair differs on a non-colour channel"
         if collisions:
             pairs = ", ".join(f"{a}/{b}" for a, b in collisions)
             verdict = f"FAIL  hue is the only separator for: {pairs}"
+        elif thin:
+            pairs = ", ".join(f"{a}/{b} ({lo}px vs {hi}px)" for a, b, lo, hi in thin)
+            verdict = (
+                f"FAIL  band is the only separator and it is under "
+                f"{BAND_RATIO_FLOOR}:1 for: {pairs}"
+            )
         print(f"  {pass_name:<24} {verdict}")
     for a, b in DOT_ALIASES:
         print(

@@ -179,10 +179,15 @@ function buildCompactionBreak(icon: string, label: string, summary: string): HTM
     el(
       "summary",
       { className: "compaction-head" },
+      // LEADS the row, because it DISCLOSES. One rule across the transcript: a
+      // chevron that opens a region below it comes first and rotates, a chevron
+      // that navigates sits at the trailing edge and does not — see chevron.ts.
+      // It used to trail here while the reasoning block's led, so the two native
+      // `<details>` in a transcript disagreed with each other.
+      chevronEl(),
       el("span", { className: "compaction-icon" }, icon),
       el("span", { className: "compaction-label" }, label),
       el("span", { className: "compaction-note" }, "· summary"),
-      chevronEl(),
     ),
     body,
   );

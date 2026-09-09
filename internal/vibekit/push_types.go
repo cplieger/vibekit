@@ -35,6 +35,12 @@ const (
 	// finishes minutes after the turn that pushed, often with nothing open, which
 	// is exactly why the poll is server-side.
 	PushKindPRStatus PushKind = "pr_status"
+	// PushKindRunOutcome fires when a workflow run reaches a terminal state. Like
+	// PushKindPRStatus it outlives the turn that launched it — run_workflow returns
+	// as soon as the run is created, so the launching turn ends while the run carries
+	// on for minutes — and a manual or scheduled run never had a chat at all, so
+	// nothing else tells anyone it finished.
+	PushKindRunOutcome PushKind = "run_outcome"
 )
 
 // pushKinds is the authoritative set of valid push notification kinds.
@@ -50,6 +56,7 @@ var pushKinds = map[PushKind]struct{}{
 	PushKindAgentFinished: {},
 	PushKindPermission:    {},
 	PushKindPRStatus:      {},
+	PushKindRunOutcome:    {},
 }
 
 // Valid reports whether k is a known push notification kind.
@@ -94,4 +101,21 @@ const PRSubjectPrefix = "pr:"
 // their own tray slots.
 func PRSubject(forgeID, repo string, number int) PushSubject {
 	return PushSubject{Key: PRSubjectPrefix + forgeID + ":" + repo + "#" + strconv.Itoa(number)}
+}
+
+// RunSubjectPrefix marks a subject key naming a workflow run. Declared here for
+// PRSubjectPrefix's reason: the service worker keys its route on it, so the two
+// halves of the contract are in different languages and one of them is TypeScript.
+//
+// The literal coincides with internal/agent's own private runChatPrefix
+// (run_host.go, the synthetic chat-id namespace a run bridge registers under) and
+// neither may be derived from the other: that one is a chat-id namespace private to
+// that package, this one is a push-subject vocabulary shared with the worker.
+const RunSubjectPrefix = "run:"
+
+// RunSubject is the subject of a notification about one workflow run. A workflow id
+// is unique per run, so two runs finishing inside one debounce window still occupy
+// their own tray slots.
+func RunSubject(workflowID string) PushSubject {
+	return PushSubject{Key: RunSubjectPrefix + workflowID}
 }

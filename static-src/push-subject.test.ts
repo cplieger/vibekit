@@ -19,18 +19,29 @@ const tsCopies: Record<string, string> = {
   "static-src/handlers/push-message.ts": pushMessageSrc,
 };
 
-describe("PR subject prefix", () => {
-  it("is the same literal in Go, the service worker and the page handler", () => {
-    const m = /PRSubjectPrefix = "([^"]+)"/.exec(pushTypesGo);
-    expect(m, "vibekit.PRSubjectPrefix not found in internal/vibekit/push_types.go").not.toBeNull();
-    const want = m?.[1] ?? "";
-    expect(want).not.toBe("");
-    for (const [rel, ts] of Object.entries(tsCopies)) {
-      expect(ts, `${rel} does not carry the Go prefix ${want}`).toContain(
-        `PR_SUBJECT_PREFIX = "${want}"`,
-      );
-    }
-  });
+/** Each subject-key prefix, by the Go constant that declares it and the TypeScript
+ *  constant every copy has to spell. A run's prefix is the second member: it is read
+ *  by the worker's route and by the page handler's, so it is three copies for the
+ *  same reason the PR one is. */
+const prefixes = [
+  { goConst: "PRSubjectPrefix", tsConst: "PR_SUBJECT_PREFIX" },
+  { goConst: "RunSubjectPrefix", tsConst: "RUN_SUBJECT_PREFIX" },
+];
+
+describe("subject prefixes", () => {
+  for (const { goConst, tsConst } of prefixes) {
+    it(`${goConst} is the same literal in Go, the service worker and the page handler`, () => {
+      const m = new RegExp(`${goConst} = "([^"]+)"`).exec(pushTypesGo);
+      expect(m, `vibekit.${goConst} not found in internal/vibekit/push_types.go`).not.toBeNull();
+      const want = m?.[1] ?? "";
+      expect(want).not.toBe("");
+      for (const [rel, ts] of Object.entries(tsCopies)) {
+        expect(ts, `${rel} does not carry the Go prefix ${want}`).toContain(
+          `${tsConst} = "${want}"`,
+        );
+      }
+    });
+  }
 });
 
 // The keyed-kind table drives both the settings rows and the per-kind state, so

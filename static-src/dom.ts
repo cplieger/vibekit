@@ -417,6 +417,12 @@ class Elements {
   get editorDiffBtn(): HTMLButtonElement {
     return byId("editor-diff-btn");
   }
+  /** The diff-vs-HEAD control, a different question from editorDiffBtn's
+   *  buffer-vs-saved. Its visibility has exactly ONE writer, an effect in
+   *  editor-core.ts; the mode renderers never touch it. */
+  get editorGitDiffBtn(): HTMLButtonElement {
+    return byId("editor-git-diff-btn");
+  }
   get editorMarkdown(): HTMLDivElement {
     return byId("editor-markdown");
   }
@@ -462,8 +468,8 @@ class Elements {
   get uploadProgress(): HTMLDivElement {
     return byId("upload-progress");
   }
-  get uploadProgressFill(): HTMLDivElement {
-    return byId("upload-progress-fill");
+  get uploadProgressBar(): HTMLProgressElement {
+    return byId("upload-progress-bar");
   }
   get uploadProgressLabel(): HTMLElement {
     return byId("upload-progress-label");

@@ -39,16 +39,37 @@ export function stats(lines: DiffLine[]): DiffStats {
   return s;
 }
 
-/** Split on \n, keeping empty trailing line if text ended with \n.
- *  CRLF content is normalized by stripping the trailing \r from each
- *  line: consumers own the rejoin EOL (buildPartialMergeText joins with
- *  detectEOL(original)), so lines carrying \r would double the CR on
- *  reconstruction — and the \r is invisible-but-real in rendered diffs. */
+/** Split `s` into LINES: split on "\n", strip one trailing "\r" per line, and drop
+ *  the single empty element a final newline produces — so "a\nb\n" and "a\nb" are
+ *  both two lines, and "\n" is one empty line.
+ *
+ *  ONE vocabulary for the whole diff surface. A file's final newline is the
+ *  writer's terminator, not a line, so the renderer must not draw a row for it:
+ *  every consumer here — `lineDiff` for the pane, the tool card's preview and the
+ *  editor's diff mode, and `lineDelta` for the turn footer's `+N -M` — reads this
+ *  same function, which is what makes them agree about one file. They used to
+ *  differ by exactly that row, so the pane said 28 where the footer and `git diff`
+ *  both said 27. The `\r` strip is what keeps a CRLF-to-LF rewrite from reading as
+ *  a whole-file change; nothing rejoins these lines back into a file, so no
+ *  consumer owns an EOL.
+ *
+ *  Its Go twin is `splitDiffLines` in `internal/buffer/linediff.go`, character for
+ *  character, and the two must agree on every input.
+ *
+ *  RESIDUAL, accepted: a change that only ADDS OR REMOVES a file's final newline
+ *  is now INVISIBLE — both sides split to the same lines, so `lineDiff` returns
+ *  all context and the pane draws its "No changes" state — where `git diff` shows
+ *  one deletion plus one insertion carrying `\ No newline at end of file`.
+ *  `diff.test.ts` pins it as characterization and states the three reasons and the
+ *  remedy. */
 function splitLines(s: string): string[] {
   if (s === "") {
     return [];
   }
   const lines = s.split("\n");
+  if (s.endsWith("\n")) {
+    lines.pop();
+  }
   if (s.includes("\r")) {
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
@@ -231,11 +252,8 @@ export function lineDiff(
   return diffLineArrays(splitLines(oldText), splitLines(newText), opts);
 }
 
-/** Diff two already-split line arrays.
- *
- *  The array seam exists for `lineDelta`, whose line vocabulary differs from the
- *  renderer's and cannot be reached through a string: a lone "\n" is ONE empty
- *  line, and stripping that newline leaves "", which `splitLines` reads as none. */
+/** Diff two already-split line arrays: the engine both entry points share, so
+ *  `lineDiff` and `lineDelta` cannot disagree about anything but their options. */
 function diffLineArrays(
   a: string[],
   b: string[],
@@ -295,9 +313,10 @@ function diffMiddle(
   }
 
   // Time-budget fallback: a coarse but valid edit script (delete the
-  // whole old middle, add the whole new middle). Reconstruction
-  // consumers (buildPartialMergeText) hold for any valid script; the
-  // cost is hunk granularity, which is the honest trade at this size.
+  // whole old middle, add the whole new middle). Every consumer holds for
+  // any valid script — the renderers draw what they are given, `stats`
+  // and `windowHunks` count it — so the cost is hunk granularity, which
+  // is the honest trade at this size.
   if (m * n > TIME_BUDGET_CELLS) {
     const out: DiffLine[] = [];
     for (let i = p; i < aHi; i++) {
@@ -356,28 +375,20 @@ function diffMiddle(
   return out;
 }
 
-/** Split for COUNTING: `splitLines` minus the element a final newline produces.
- *
- *  Its Go twin is `splitDiffLines` in `internal/buffer/linediff.go`, and the two
- *  must agree on every input or the footers below disagree about one file.
- *  `splitLines` keeps that element because the diff RENDERER draws its row, so
- *  "a\nb\n" is three lines there and two here. */
-function splitDeltaLines(s: string): string[] {
-  const lines = splitLines(s);
-  if (s.endsWith("\n")) {
-    lines.pop();
-  }
-  return lines;
-}
-
 /** How many lines a change added and removed — the numbers a footer states.
+ *
+ *  Reads `splitLines` like `lineDiff` does, which is what makes the pane's count
+ *  and this one one number rather than two that have to be kept in step. There
+ *  used to be a second split here (`splitDeltaLines`, `splitLines` minus the
+ *  element a final newline produces) because the renderer drew that row; the row
+ *  is gone, so the second split is too.
  *
  *  Its Go twin is `lineDelta` in `internal/buffer/linediff.go`, which computes
  *  the same counts for the turn footer; the two footers render the same
  *  component, so they must agree on the same file or one of them is lying. The
  *  shared fixture is `internal/buffer/testdata/line_delta.json`. */
 export function lineDelta(oldText: string, newText: string): { added: number; removed: number } {
-  const s = stats(diffLineArrays(splitDeltaLines(oldText), splitDeltaLines(newText), {}));
+  const s = stats(diffLineArrays(splitLines(oldText), splitLines(newText), {}));
   return { added: s.adds, removed: s.dels };
 }
 

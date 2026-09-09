@@ -79,6 +79,18 @@ export const storeMock = {
   // spreading suite on the behaviour it was written against — the transcript's
   // liveness input used to be `session.thinking` read at the call site.
   turnLive: vi.fn((s: Session) => s.thinking || s.turn_open === true),
+  // The real derivations too, for `turnLive`'s reason: both are pure functions of
+  // what they are handed, so there is nothing to fake and a flat answer would
+  // contradict the session a suite planted. `turnBaseOf`'s fallback is what makes a
+  // suite that plants neither field number its turns from 1, which is what almost
+  // every one of them expects.
+  turnBaseOf: vi.fn((s: Session) => ({
+    offset: s.turn_offset ?? 0,
+    closed: s.turn_segment_closed === true,
+  })),
+  derivedHasMore: vi.fn(
+    (messageCount: number, residentCount: number) => messageCount > residentCount,
+  ),
   setTurnFailed: vi.fn(),
   clearTurnFailed: vi.fn(),
   setTurnDone: vi.fn(),

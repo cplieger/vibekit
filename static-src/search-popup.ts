@@ -1,47 +1,15 @@
-// ---------------------------------------------------------------------------
-// The page-level search box, as a popup.
+// The page-level search box: `search-shell.ts`'s field under the transcript's
+// reveal, for every page whose search narrows or re-scopes a LIST. It owns the
+// popup lifecycle (outside click, document-level Escape, the single-open group,
+// the trigger's ARIA), the hidden-before-first-open normalization, focus save and
+// restore, and one rule the shell has no reason to have:
 //
-// FOUR PAGES HAD FOUR ANSWERS to the same question — History, the configuration
-// browser, the git Changes tab and the git Pull-requests tab — and none of them
-// was the transcript's. Two were permanent in-flow boxes built through the
-// shared shell; two were hand-authored `<input type="search">` elements in
-// index.html with a magnifier SVG beside them and no shell at all. So a reader
-// who learned Ctrl-F on a chat found a floating box with a ×, then found a
-// full-width field on /history, then found nothing at all on the git view, where
-// the toolbar's magnifier was a dead door.
+//   CLOSING CLEARS THE QUERY, because a hidden box is not its own explanation for
+//   a narrowed list. One closed holding `redis` leaves three of forty rows on
+//   screen with nothing saying why.
 //
-// This module is the one answer: the transcript's reveal, over the shared shell,
-// for every page whose search narrows or re-scopes a LIST. `search-shell.ts`
-// deliberately does not own reveal, and that reasoning still holds — it declined
-// to share reveal because the surfaces genuinely differed, and reveal is
-// placement's consequence. What changed is that four of them now WANT the same
-// placement, so the sharing has a subject.
-//
-// WHAT IS SHARED HERE, on top of the shell: the popup lifecycle (outside click,
-// document-level Escape, the single-open group, the trigger's ARIA), the
-// hidden-before-first-open normalization, focus save and restore, the toolbar
-// magnifier as the trigger, and the ONE rule a hidden filter needs that a
-// permanent one did not:
-//
-//   CLOSING CLEARS THE QUERY. A permanent box is its own explanation for a
-//   narrowed list; a hidden one is not. A popup that closed holding `redis`
-//   would leave the page showing three of forty rows with nothing on screen
-//   saying why, and the only way back would be to reopen a box the reader has
-//   no reason to think is still armed. So close() empties the field and re-runs,
-//   which is what repaints the full list.
-//
-// WHAT STAYS PER SURFACE: the placeholder (it is where the scope is stated — a
-// cross-chat search and a metadata filter ask different questions), the query
-// and render functions, and whether there is a note. Not the classes: every page
-// popup carries the same ones, because looking the same is the point.
-//
-// NOT A HOME FOR THE TRANSCRIPT'S OWN BOX. find-in-chat.ts keeps its own
-// createPopup call: it has a cursor (marks, prev/next, a counter, scroll-into-
-// view), its teardown unwraps DOM it wrote into the page, and its Escape must
-// not clear — reopening on the same chat remembering the query is what the
-// browser's own find does. Folding those into this module would put its
-// differences inside branches here.
-// ---------------------------------------------------------------------------
+// The transcript's box stays in find-in-chat.ts: it has a cursor, its teardown
+// unwraps DOM it wrote into the page, and its Escape must not clear.
 
 import { el } from "@cplieger/reactive";
 import { createPopup } from "@cplieger/ui-primitives/popup";
@@ -58,33 +26,19 @@ import type { FindKind, PageFind } from "./find-registry.js";
 const TRIGGER_ID = "find-btn";
 const GROUP = "app-search";
 
-/** The leading glyph's size, matching the × beside it. */
-
 export interface SearchPopupSpec<R> {
   /** Element id prefix. The input becomes `<id>-input`, the note `<id>-note`. */
   id: string;
-  /** Search or filter. Decides the leading glyph and the control wording, and
-   *  nothing structural — one component, two readings.
-   *
-   *  A MAGNIFIER for a box that reaches past what is on screen (History reads
-   *  every chat file on disk); a FUNNEL for one that narrows rows already loaded
-   *  (the configuration browser, the git panels). The distinction was already in
-   *  this codebase as prose and the boxes disagreed with each other about it; it
-   *  is a parameter now, sharing one glyph producer with the toolbar button, so a
-   *  page cannot promise a search and open a filter. */
+  /** Search or filter: decides the glyph and the control wording, nothing
+   *  structural. `findGlyph` owns which mark means what, and it feeds the toolbar
+   *  button too, so a page cannot promise a search and open a filter. */
   kind: FindKind;
   /** The region's accessible name. */
   label: string;
-  /** The one string these boxes genuinely differ on beyond their kind: it states
-   *  the SCOPE — which conversations, which rows — where the glyph states only the
-   *  reach. */
+  /** States the SCOPE — which conversations, which rows — where the glyph states
+   *  only the reach. */
   placeholder: string;
-  /** Offer the status note.
-   *
-   *  It reads differently per kind, and both readings are load-bearing: a filter's
-   *  note says how much of the list is showing, while a search's says what it did
-   *  NOT read, because "no matches" from a truncated scan implies the text is
-   *  nowhere. */
+  /** Offer the status note. */
   note?: boolean;
   /** Typing pause before a run. The shell's default unless the query costs a
    *  request per pause. */
@@ -101,34 +55,26 @@ export interface SearchPopupSpec<R> {
 /** A page popup satisfies `PageFind` by construction, so a page hands the object
  *  itself to the find registry rather than adapting it. */
 export interface SearchPopup extends PageFind {
-  /** The shell, for a caller that needs the field itself (a test, a page that
-   *  reads the current value). Null until the first open builds it. */
+  /** The shell, for a caller that needs the field itself. Null until the first
+   *  open builds it. */
   readonly shell: SearchShell | null;
   isOpen: () => boolean;
-  /** Open, or refocus an already-open box. False means the page declined —
-   *  there was no host to build into — so the caller leaves Ctrl-F to the
-   *  browser's native find. */
+  /** Open, or refocus an already-open box. False means there was no host to build
+   *  into, so the caller leaves Ctrl-F to the browser's native find. */
   open: () => boolean;
   /** Close, clearing the query so the page repaints unfiltered. */
   close: () => void;
-  /** Close and clear WITHOUT the repaint — for a page tearing its view down,
-   *  where the render the clear exists for is the next mount's job and running
-   *  it here would be a fetch for a page that just went away. */
+  /** Close and clear WITHOUT the repaint, for a page tearing its view down: the
+   *  render belongs to the next mount. */
   reset: () => void;
   toggle: () => void;
-  /** Whether the caret is in this box. The second-press escape hatch: Ctrl-F
-   *  again from inside an open find belongs to the browser. */
+  /** Whether the caret is in this box. Ctrl-F again from inside an open find
+   *  belongs to the browser. */
   focused: () => boolean;
 }
 
-/**
- * One page search popup, built on first open.
- *
- * Lazy because these pages are lazily loaded and their hosts arrive with them;
- * eager construction would also put a `position: fixed` panel in the layout
- * before anything had asked for it, which is the trap `[hidden]` normalization
- * below exists to close.
- */
+/** One page search popup, built on first open: these pages are lazily loaded, so
+ *  the host arrives with them. */
 export function createSearchPopup<R>(spec: SearchPopupSpec<R>): SearchPopup {
   let shell: SearchShell | null = null;
   let popup: PopupController | null = null;
@@ -150,48 +96,37 @@ export function createSearchPopup<R>(spec: SearchPopupSpec<R>): SearchPopup {
     if (host === null) {
       return false;
     }
-    // The kind's two visible consequences, resolved once. `verb` is the wording
-    // for every control in the box; `glyph` is the same node the toolbar button
-    // paints, from the same producer.
     const verb = spec.kind === "search" ? "Search" : "Filter";
     const glyph = iconEl(findGlyph(spec.kind));
-    glyph.setAttribute("class", "page-find-icon");
+    // ADD, never `setAttribute("class", …)`: the tier class is this glyph's only
+    // source of size, and a flex row may not squeeze an unsized SVG back.
+    glyph.classList.add("page-find-icon");
     const built = createSearchShell<R>({
       id: spec.id,
-      // `page-find` is placement and layout; `search-pop` is the skin and the
-      // reveal states, shared with the transcript's box; `uip-popup` is the
-      // primitive's own hook. 24-find.css owns all three.
+      // Placement, then the reveal skin the transcript's box shares, then the
+      // primitive's hook. 24-find.css owns all three.
       regionClass: "page-find search-pop uip-popup",
       inputClass: "page-find-input",
       buttonClass: "page-find-btn",
       noteClass: "page-find-note",
       label: spec.label,
       placeholder: spec.placeholder,
-      // The chord's escape hatch, in the words of whichever thing this is.
       inputTitle: `${verb} this page. Press Ctrl+F again to use the browser's find.`,
-      // No `type="search"`: the platform's own clear affordance belongs on a
-      // permanent box, and this one carries its own ×. Two clear controls a
-      // thumb-width apart, doing different things, is worse than one.
+      // No `type="search"`: two clear controls a thumb-width apart, doing
+      // different things, is worse than one.
       ...(spec.note === true ? { note: true } : {}),
       ...(spec.debounceMs !== undefined ? { debounceMs: spec.debounceMs } : {}),
       closeButton: true,
       closeNoun: verb.toLowerCase(),
-      // No `Aa` on either kind, and for two different reasons that happen to
-      // agree here: a FILTER folds the query and the row it matches it against, so
-      // there is nothing a toggle could change; and the one page SEARCH is
-      // case-insensitive at the endpoint by decision (`chat.searchOneChat`), which
-      // reads no `case` parameter at all. The surfaces that DO offer it are the
-      // ones with a cursor — the transcript and the file browser — and they build
-      // it through the shell directly.
+      // No `Aa`: a filter folds both sides of its comparison, and the one page
+      // search is case-insensitive at the endpoint.
       compose: ({ input, note, closeButton }) => [
         el("div", { className: "page-find-row" }, glyph, input, closeButton),
         note,
       ],
       query: spec.query,
       render: spec.render,
-      // Escape CLOSES, and the close is what clears. On a permanent box Escape
-      // meant "clear", because there was nothing to dismiss; here the two
-      // collapse into one gesture with one outcome.
+      // Escape CLOSES, and the close is what clears.
       onDismiss: close,
       onSubmit:
         spec.onSubmit ??
@@ -201,31 +136,26 @@ export function createSearchPopup<R>(spec: SearchPopupSpec<R>): SearchPopup {
     });
     shell = built;
 
-    // HIDDEN BEFORE THE FIRST OPEN. The primitive only writes `[hidden]` at the
-    // END of a leave, so a freshly built panel is visible to the layout — and
-    // this one is a fixed-position box at `opacity: 0` over the page, so without
-    // this it would swallow every click in its rectangle before search had ever
-    // been opened. find-in-chat.ts and pill-expand.ts normalize the same way.
+    // Hidden before the first open: the primitive writes `[hidden]` only at the END
+    // of a leave, so this `opacity: 0` fixed box would otherwise swallow every
+    // click in its rectangle before search had ever been opened.
     built.region.hidden = true;
     host.appendChild(built.region);
 
     popup = createPopup(built.region, {
       trigger: trigger(),
       group: GROUP,
-      // The app's global Escape coordinator still sees the key, the same
-      // contract find-in-chat.ts and pill-expand.ts keep.
+      // The app's global Escape coordinator still sees the key.
       isolateEscape: false,
       haspopup: "dialog",
       onOpen: () => {
-        // aria-pressed, not aria-expanded: find is a TOGGLE. 70-selection.css
-        // already styles `.icon-btn[aria-pressed="true"]`, so the visual is the
-        // app's one selected treatment with no local rule.
+        // aria-pressed, not aria-expanded: find is a TOGGLE, and 70-selection.css
+        // already paints `.icon-btn[aria-pressed="true"]`.
         trigger()?.setAttribute("aria-pressed", "true");
       },
       onClose: () => {
         built.cancel();
-        // The clear is guarded on there being something to clear, so closing an
-        // untouched box is not a refetch of the list already on screen.
+        // Guarded, so closing an untouched box is not a refetch.
         if (built.input.value !== "") {
           built.input.value = "";
           built.run();
@@ -252,9 +182,8 @@ export function createSearchPopup<R>(spec: SearchPopupSpec<R>): SearchPopup {
     if (!popup.isOpen) {
       lastFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     }
-    // show() on an already-open popup is a no-op reveal, so the focus happens
-    // here rather than in onOpen alone: the toolbar button and the chord both
-    // reach an open box and both should land the caret in it.
+    // Focus here rather than in onOpen alone: `show()` on an open popup is a no-op
+    // reveal, and both doors have to land the caret in the box.
     popup.show();
     shell.focus();
     return true;

@@ -254,7 +254,6 @@
 }
 
 .tool-summary {
-  position: relative;
   min-width: 0;
   transition: background var(--dur-micro) var(--ease-standard);
 }
@@ -275,10 +274,14 @@
  * a member comes from the flattened chrome (no border, no radius, no background),
  * not from 4px of height. */
 .tool-header {
+  /* The chevron is centred on THIS row rather than on the whole summary, so this
+     row is its containing block. */
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-2) 0.75rem;
+  padding-block: var(--sp-2);
+  padding-inline: 0.75rem;
   min-height: var(--btn-h);
   min-width: 0; /* allow ellipsis on flex children */
 }
@@ -303,25 +306,46 @@
   background: var(--c-hover);
 }
 
-/* The absolute chevron spans the summary rather than the title row, so a two-line
-   search/fetch card centres it against the whole clickable box.
+/* THE CHEVRON'S COLUMN, HELD OPEN ON EVERY CARD RATHER THAN ONLY THE DISCLOSABLE
+   ONES — which is what makes a run of cards read as a list instead of a ragged
+   one. The chevron leads now (a disclosure chevron leads and rotates, chevron.ts),
+   and ~20% of a transcript's tool calls are claim-only `read`s with nothing to
+   reveal, so a gutter conditional on the region would step every kind glyph in and
+   out by 32px down a mixed tool group. Held open, a claim-only card is a leaf with
+   an empty twist and its glyph lines up with its siblings' — the file-tree reading,
+   and the same relationship `.tool-group-header`'s own chevron already has with the
+   rows under it.
 
-   Keyed on HAVING a region rather than on `has-disclosure`: the chevron comes and
-   goes within one card's life (`refreshToolDisclosure` withdraws and restores it
-   while the region stays), and a gutter that went with it moved the title row 32px
-   off its siblings. The pointer affordance stays on the dynamic class above.
+   That also retires the reason the OLD trailing gutter had to be keyed on
+   `:has(> .tool-details)`: the chevron comes and goes within one card's life
+   (`refreshToolDisclosure` withdraws and restores it while the region stays), and a
+   gutter that went with it moved the title row 32px off its siblings. An
+   unconditional gutter cannot move.
 
-   EVERY ROW OF THE SUMMARY reserves its hit target plus the normal trailing
-   gutter, not just the title row. The chevron is out of flow, so a row reserving
-   only the plain gutter runs its content box — and therefore its `text-overflow`
-   ellipsis — under the glyph: measured at a 1280px card, the subtitle's clip edge
-   sat 24px past the chevron's leading edge, which is the chevron's own width, so a
-   run-command card's `...` rendered beneath the `>`. `.tool-header` carried the
-   reservation from the start and the rows below it did not. */
-.tool-call:has(> .tool-details) > .tool-summary > .tool-header,
-.tool-call:has(> .tool-details) > .tool-summary > .tool-subtitle,
-.tool-call:has(> .tool-details) > .tool-summary > .tool-move-row {
-  padding-inline-end: calc(0.75rem + 1.5rem + var(--sp-2));
+   EVERY ROW OF THE SUMMARY takes it, so the subtitle and the move row align with
+   the TITLE rather than with the chevron: they are the same row's second line, not
+   children of the disclosure.
+
+   ONE LENGTH, read here and by the button, because the two must agree at every
+   pointer tier and a literal did not: it reserved 1.5rem for a box the hit floor
+   grows to 44px on coarse, so a phone rendered the title row and the subtitle 12px
+   under the glyph — the defect a reserve exists to prevent, reappearing one tier
+   over. The button pins its own size for the same reason. `--tool-chev-box` and the
+   `position: relative` the chevron is centred against are on `.tool-header`. */
+.tool-call {
+  /* DECLARED ON THE CARD, not on `.tool-header`, because the two rows below the
+     header are its SIBLINGS: a custom property inherits down, so a `var()` read
+     from a sibling is invalid at computed-value time and the whole declaration is
+     dropped. That failed silently and looked like a specificity problem — the
+     subtitle simply kept the 0.75rem from its own shorthand and sat 32px left of
+     the title. */
+  --tool-chev-box: 1.5rem;
+}
+
+.tool-header,
+.tool-subtitle,
+.tool-move-row {
+  padding-inline-start: calc(0.75rem + var(--tool-chev-box) + var(--sp-2));
 }
 
 /* THE OUTCOME LIVES HERE, AS THE ROW'S ONE MARK. On success the row keeps its own
@@ -449,7 +473,8 @@
    completed", which restates nothing the row does not already say. */
 
 /* THE GROUP HEADER CARRIES A VERDICT RATHER THAN A KIND, and it shares
-   `.tool-icon` for the tint classes (`is-ok` / `is-fail` / `is-running`).
+   `.tool-icon` for the tint classes (`is-ok` / `is-fail` / `is-warn` /
+   `is-running`).
    `tool-group.ts` paintGroupOutcome writes an `outcomeIcon` node here — the same
    shared silhouette set every other outcome surface reads — so a collapsed group
    of twelve searches shows a verdict and not a magnifier; the KIND is named in
@@ -457,13 +482,24 @@
 
    THE SQUARE IS SIZED HERE, never by whatever it holds. That is what keeps the
    counted summary beside it from shifting when the group settles, and it is the box
-   the running ring below is centred in. It is the old text slot's fixed width, kept
-   as an icon slot's own size. */
+   the running ring below is centred in.
+
+   IT READS THE SAME TOKEN AS THE GLYPH IT HOLDS, because a slot SMALLER than its
+   content does not centre that content in the block axis: the implicit grid row is
+   `auto`, so it sizes to the item and starts at the slot's top, putting the whole
+   overflow at the bottom while `place-items: center` centres the item in a row that
+   is already the item's size. It was the old text slot's 0.875rem against an
+   `--icon-ui` silhouette, so the mark sat 1px low on a fine pointer and 2px low on a
+   coarse one, where that token is 1.125rem. The inline axis was symmetric — that
+   track is constrained by the slot's definite inline size — which is what made it
+   read as a slight droop rather than a break. Sizing it to a fixed length (rather
+   than letting the content size it, `.tool-icon`-style) is still what keeps the
+   summary still: the ring and the silhouette share one declared box. */
 .tool-group-icon {
   display: grid;
   place-items: center;
-  inline-size: 0.875rem;
-  block-size: 0.875rem;
+  inline-size: var(--icon-ui);
+  block-size: var(--icon-ui);
   flex-shrink: 0;
 }
 
@@ -515,16 +551,54 @@
  * The affordance is the GLYPH, so the button is a bare 24px hit target (the
  * desktop floor; `--btn-h` would make a tool row 36px tall for a decoration) and
  * the glyph inside it is the shared `.disclosure-chevron` — which owns the
- * centring, the size and the rotation. */
+ * centring, the size and the rotation.
+ *
+ * CENTRED ON THE TITLE ROW, NOT ON THE WHOLE SUMMARY, which is what makes this
+ * box's chevron agree with every other box's. Its containing block used to be
+ * `.tool-summary`, so on a two-line card (a subtitle under the title) the glyph
+ * sat BETWEEN the lines: measured 10.2px below the title's centre against 0 on
+ * all eight other transcript boxes, which is the reported "some arrows are
+ * vertically centered and some in line with the box title". `.tool-header` is
+ * the positioned ancestor now and the 50% is that row's.
+ *
+ * STILL OUT OF FLOW, deliberately, and the alternative was measured: as the last
+ * flex child of the title row a 24px box exceeds the title's 20px line box, so
+ * the header went 36px to 40px on the fine tier while `.tool-group-header` stayed
+ * 36 — a member row taller than the group header above it, which is the
+ * looks-random height defect `.tool-header` itself records. Out of flow it
+ * contributes no height at either tier.
+ *
+ * LEADING, because it DISCLOSES: one rule across the transcript (chevron.ts) is
+ * that a chevron opening a region below it comes first and rotates, while one that
+ * navigates sits at the trailing edge and never turns. It trailed here, in the same
+ * slot and at the same angle as the delegate leaf card's navigation glyph, so a
+ * closed tool card and a link to a subagent page were pixel-identical.
+ *
+ * `inset-inline-start` is measured from the containing block's PADDING box, whose
+ * leading edge is the row's own leading edge — the padding is inside it, not before
+ * it. So this is the card's plain gutter, the same 0.75rem the row would use with no
+ * chevron column at all, and the column the gutter holds open sits to its right. */
 .tool-disclosure {
   position: absolute;
   inset-block-start: 50%;
-  inset-inline-end: 0.75rem;
+  inset-inline-start: 0.75rem;
   translate: 0 -50%;
+
+  /* OPTS OUT OF THE COARSE HIT FLOOR, because the target already exists
+     somewhere bigger: `wireRowToggle(summary, toggle)` runs unconditionally
+     whenever this button exists (`tool-card.ts`), so the whole summary activates
+     it — 330x60 on a 390px phone, well past WCAG 2.5.8. Left to the floor
+     (61-mcp-tools.css) this box is 24px on the fine tier and 44px on the coarse
+     one, and the gutter below has to reserve exactly one of those numbers: a
+     literal was correct on fine and 20px short on coarse, which put the title
+     row 12px under the glyph on every phone. Pinning the box makes the reserve
+     true at both tiers rather than at one. */
+  min-width: 0;
+  min-height: 0;
   display: grid;
   place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
+  width: var(--tool-chev-box);
+  height: var(--tool-chev-box);
   padding: 0;
   appearance: none;
   background: none;
@@ -610,6 +684,22 @@
   overflow: hidden;
   white-space: nowrap;
   max-width: 12.5rem;
+
+  /* THE CHIP DECLARES ITS OWN BOX, so `61-mcp-tools.css`'s hit-target floor lifts
+     it rather than becoming it. Declaring nothing made the FLOOR the box: 44px
+     square on a coarse pointer around a 15.4px line box, which reads as a badge
+     with a filename lost inside it and took the member row to 52px against its own
+     header's 44px — the one height a group is supposed to have. `--ctl-h-sm` is
+     24px on a fine pointer, which is what the floor already gave it, so nothing
+     moves on a mouse; on a coarse one it is 36px, clearing WCAG 2.5.8's 24px
+     minimum and landing the row back on its header's height. The reach the AAA
+     44px would have bought is the ROW's: the whole summary is the card's target.
+
+     PHYSICAL properties, or this does not override at all — the floor sets
+     `min-width`/`min-height`, and a logical property is a DIFFERENT one resolved
+     against it by cascade order rather than by specificity. */
+  min-width: var(--ctl-h-sm);
+  min-height: var(--ctl-h-sm);
   transition:
     background var(--dur-micro),
     border-color var(--dur-micro),
@@ -658,6 +748,17 @@
   cursor: pointer;
   text-decoration: none;
   vertical-align: baseline;
+
+  /* WCAG 2.5.8's INLINE exception, the same one `61-mcp-tools.css` grants a prose
+     `a[href]`: this chip is a run of text inside a line, so the line height
+     constrains it and the sentence around it carries the reach. That rule cannot
+     reach this one because `linkify.ts` emits a `<button>`, so the floor made the
+     chip 44px tall on a coarse pointer and any 24px paragraph line holding one
+     painted 44px — exactly the broken leading the exception exists to prevent.
+     Declared here rather than added to that rule's container list, because the chip
+     is also inline inside `.tool-output`, which is not in it. */
+  min-width: 0;
+  min-height: 0;
   transition:
     background var(--dur-micro),
     border-color var(--dur-micro),
@@ -702,11 +803,14 @@
  *
  * THE CARD IS NOT A DISCLOSURE and has no body: the transcript renders NONE of a
  * delegate's output (`messages-blocks.ts` placeBlock drops it, the way it drops a
- * workflow step's), so the card is an identity row, a rolling tail of the last 3
- * lines while it works, and a foot whose link is the way to the delegate's own
- * page. The CONTAINER keeps a body, because what it holds is its stages' cards
- * rather than a transcript, and it is collapsed by default: the expanded state is
- * worth nothing at the moment N stages all start at once. */
+ * workflow step's), so the card is an identity row that is itself the way to the
+ * delegate's own page, a rolling tail of the last 3 lines while it works, and a
+ * foot carrying the ledger. The CONTAINER keeps a body, because what it holds is
+ * its stages' cards rather than a transcript, and it renders EXPANDED while it is
+ * the newest
+ * top-level element of the transcript and folds when the next element is posted
+ * after it — the one positional rule every collapsible element here follows, with
+ * the same carve-outs as a tool group. */
 .subagent-block {
   background: var(--c-bg-secondary);
   border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
@@ -716,12 +820,54 @@
   flex-shrink: 0;
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 
-  /* Containment: see `.tool-call`. The fallback is the identity row plus the foot,
-     which is what both kinds are before anything is disclosed. The collapsed-body
-     rule below is a different element and a different keying (`hidden`, on
-     `.subagent-body`); both apply. */
+  /* Containment: see `.tool-call` for the mechanism. What is specific here is which
+     regions a skipped box is made of: the RESTING shape both kinds share, which is
+     the identity row plus the FOOT ROW. A settled card's tail is removed by its
+     builder and a running one's is `:empty` at zero size, so no state of either box
+     has a third region at rest — and a COLLAPSED CONTAINER measures the same, because
+     `.subagent-block.collapsed > .subagent-body` is driven to zero, which is what lets
+     one reserve serve both kinds. That collapsed-body rule below is a different
+     element on a different keying (`hidden`, on `.subagent-body`); both apply.
+
+     A CONTENT height: the box model adds the 2px card border on top, to a skipped box
+     and a rendered one alike, so 69px of content renders at 71px. Adding the border
+     here is the error `.plan-message` recorded — it counts it twice.
+
+     An expression rather than a literal because TWO of its terms move on the pointer
+     tier: `--btn-h` is the identity row's own floor (36 -> 44) and `--hit-floor` sizes
+     the ledger row's tallest child, which is `.turn-ledger-summary`'s BUTTON, floored
+     by 61-mcp-tools.css's universal hit target (24 -> 44). The remaining two terms sit
+     on DIFFERENT elements: the 1px is `.subagent-foot`'s own `border-block-start`
+     (below), and the `--sp-1 * 2` is the padding-block of the `.turn-footer` NESTED
+     inside it (29-turns.css, `padding: var(--sp-1) var(--sp-3)`), which
+     `.subagent-foot > .subagent-footer` overrides on the inline axis only.
+     `.subagent-foot` itself declares no padding at all, so a reader auditing that rule
+     for this term will not find it there.
+
+     MEASURED over 200 boxes (`subagent-card-metrics.test.ts`), against `auto 4rem`'s
+     rendered 66px:
+
+       tier     settled / collapsed container   running
+       fine     71px                            38px
+       coarse   99px                            46px
+
+     So 4rem UNDER-stated the 96.6% resting case and the list grew as the reader
+     scrolled. ONE ESTIMATE CANNOT BE EXACT FOR BOTH, and this one is the LARGER,
+     which is the inverse of `--run-card-content`'s trade: it over-states a running
+     card by 33 / 53px. The populations differ, which is the whole reason. A run card's
+     two states are DISCLOSURE states, both of which persist throughout history in
+     unknowable proportions, so that reserve takes the floor and never over-states. A
+     delegate's two states are LIFECYCLE states and only the settled one persists —
+     census over 107 chat files on one live volume: 372 settled with a footer, 8
+     settled without, 5 running — and the fallback is consulted only before a box has
+     rendered once, so its population is the boxes the reader has not reached, which is
+     history. A RUNNING card is by construction the newest delegated work, at the live
+     edge where the reader already is, so it renders on arrival and never consults this
+     value at all. */
+  --subagent-content: calc(var(--btn-h) + var(--hit-floor) + var(--sp-1) * 2 + 1px);
+
   content-visibility: auto;
-  contain-intrinsic-size: auto 4rem;
+  contain-intrinsic-size: auto var(--subagent-content);
 }
 
 /* Same floor as `.tool-header` and `.tool-group-header`, and for the same
@@ -737,20 +883,30 @@
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
-/* Only a CONTAINER's header is a control, and only while it HAS one. A card's
-   discloses nothing, so it takes no pointer, no hover response and stays selectable:
-   its name is content. `has-disclosure` is the same class name and the same writer
-   discipline the tool card uses (`subagent-block.ts` syncDisclosure is the one
-   writer): a container whose body is empty keeps its header on screen — that box is
-   what makes a failed dispatch visible — but must not advertise a control it has
-   withdrawn. */
-.subagent-container.has-disclosure > .subagent-header {
+/* A header is a control in two shapes: a CONTAINER's while it HAS a disclosure, and
+   a LEAF's when it is the anchor that opens the delegate's page. A leaf with no
+   opener — a detached render, which IS that page — is the one inert header left.
+   `has-disclosure` is the same class name and the same writer discipline the tool
+   card uses (`subagent-block.ts` syncDisclosure is the one writer): a container whose
+   body is empty keeps its header on screen — that box is what makes a failed dispatch
+   visible — but must not advertise a control it has withdrawn. One selector list
+   rather than a parallel pair, because these are one affordance. */
+.subagent-container.has-disclosure > .subagent-header,
+a.subagent-header {
   cursor: pointer;
   user-select: none;
 }
 
-.subagent-container.has-disclosure > .subagent-header:hover {
+.subagent-container.has-disclosure > .subagent-header:hover,
+a.subagent-header:hover {
   background: color-mix(in srgb, var(--c-accent) 8%, transparent);
+}
+
+/* The reset layer gives `a` the link colour and the UA underlines `a[href]`; this
+   header is a box header rather than a link in prose. */
+a.subagent-header {
+  color: inherit;
+  text-decoration: none;
 }
 
 /* The delegate's ONE mark. On success it is the identity glyph — an SVG per known
@@ -805,17 +961,20 @@
   white-space: nowrap;
 }
 
-/* The chevron beside a PIPELINE's name; a card has none, because it discloses
-   nothing. The glyph is the shared `.disclosure-chevron`, replacing a
+/* The glyph at the trailing edge of a header, in one slot with two meanings:
+   `.subagent-toggle` is a PIPELINE's disclosure glyph, `.subagent-head-chevron` is a
+   leaf's NAVIGATION glyph. The second declares no `--chev-turn`, deliberately, so the
+   base rule's closed angle is permanent — nothing expands, so nothing turns.
+
+   The glyph is the shared `.disclosure-chevron`, replacing a
    `content: "\25BE"`/`"\25B8"` pair — a FONT triangle, whose vertical position came
    from whatever font resolved rather than from the box, which is why it read as
    off-centre. */
-.subagent-toggle {
+.subagent-toggle,
+.subagent-head-chevron {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  background: none;
-  border: none;
 
   /* A control's label, not a hint (see --c-text-control in 01-tokens.css). */
   color: var(--c-text-control);
@@ -825,8 +984,10 @@
 
 /* Open: the chevron turns down. Stated with `:not(.collapsed)` because this box
    tracks its state as a collapsed CLASS on the root rather than an expanded
-   flag, and one open rule keeps it the same shape as every other site. */
-.subagent-block:not(.collapsed) .subagent-toggle > .disclosure-chevron {
+   flag, and one open rule keeps it the same shape as every other site. Scoped to the
+   CONTAINER: a leaf card never carries `.collapsed`, so the wider selector would
+   rotate its navigation glyph. */
+.subagent-container:not(.collapsed) .subagent-toggle > .disclosure-chevron {
   --chev-turn: 0deg;
 }
 
@@ -851,6 +1012,11 @@
  * stage card inside all twenty on every reflow — and a reflow happens on each
  * streamed delta, because the live text above them grows. `content-visibility:
  * hidden` takes the subtree out of layout as well.
+ *
+ * The win survives the newest-element rule that decides WHICH pipeline is open: at
+ * most one per lane is expanded at a time (the rest have something posted after
+ * them), so a transcript still lays out at most one stage set however many
+ * pipelines it holds.
  *
  * THREE CHOICES HERE ARE NOT INTERCHANGEABLE.
  *
@@ -902,19 +1068,56 @@
    `TAIL_LINES` (3) caps the count and each line is `nowrap`, so a burst of long
    lines cannot grow the card. Adding a cap would reproduce `.run-step-capture`'s
    defect, since `overflow: hidden` clips at the PADDING box and a capped box with
-   block-end padding paints the clipped line inside that band. */
+   block-end padding paints the clipped line inside that band.
+
+   THE RESTING STATE IS EMPTY AND ZERO-SIZED, and the shown state is the
+   `:not(:empty)` pair below — `.page-find-note` (24-find.css) exactly, for the
+   same two reasons. A card is built before its delegate has said anything, so the
+   band a padded empty box paints is claimed space nothing fills: reported as an
+   empty line that then GREW when the first line landed, because 12px of padding
+   is not a line of text. And keying the resting state on `:empty` rather than
+   `display: none` is what makes the growth animate in CSS alone, `block-size:
+   0 → auto` interpolating because `interpolate-size: allow-keywords` is set on
+   :root (01-tokens.css).
+
+   The padding is SPLIT for that reason: inline padding is constant, block padding
+   is part of what grows, or the box would appear at 12px and animate from there.
+
+   THE HAZARD 13-messages.css RECORDS DOES NOT REACH THIS BOX — a height
+   transition on content that changes faster than the animation. `auto` is the
+   computed value in every shown state, so the FIRST line is the only step that
+   transitions at all: measured on a real card, a delta that rewrites the last
+   line re-runs nothing and holds 27px, and the two line-COUNT steps a rolling
+   3-line window has left (27 → 42 → 57) jump, because auto → auto is not a change
+   in the computed value and no CSS-only transition can observe it. Animating
+   those needs the line count expressed as a length, which is the block-size cap
+   the paragraph above refuses. Reduced motion is 40-a11y.css's global duration
+   override, and nothing waits on transitionend. */
 .subagent-tail {
-  padding: var(--sp-1) var(--sp-3) var(--sp-2);
+  padding-inline: var(--sp-3);
+  padding-block: 0;
+  block-size: 0;
+  opacity: 0;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
   overflow: hidden;
+  transition:
+    block-size var(--dur-exit) var(--ease-exit),
+    padding-block var(--dur-exit) var(--ease-exit),
+    opacity var(--dur-exit) var(--ease-exit);
 }
 
-/* Empty until the delegate's first line lands, and a padded empty band reads as a
-   layout bug. */
-.subagent-tail:empty {
-  display: none;
+/* The delegate has said something: the tail's own height, and the padding that
+   separates it from the identity row above and the foot below. */
+.subagent-tail:not(:empty) {
+  block-size: auto;
+  padding-block: var(--sp-1) var(--sp-2);
+  opacity: 1;
+  transition:
+    block-size var(--dur-enter) var(--ease-enter),
+    padding-block var(--dur-enter) var(--ease-enter),
+    opacity var(--dur-enter) var(--ease-enter);
 }
 
 /* THE PIPELINE CONTAINER (subagent-block.ts `buildSubagentContainer`). Its body
@@ -961,19 +1164,14 @@
   white-space: nowrap;
 }
 
-/* The FOOT ROW: the ledger and the way to this delegate's own page, in the same
-   composition `.run-foot` uses (ledger first, the link right-aligned). It sits
-   The LAST region of either box, so a collapsed pipeline still states its result
-   and a card's link sits under the tail it is the destination for.
+/* The FOOT ROW: the ledger, and nothing else. The LAST region of either box, so a
+   collapsed pipeline still states its result.
 
-   Created eagerly by subagent-block.ts and invisible when empty, because the
-   ledger is withheld until there is something worth a row and a link that appeared
-   halfway through a run would be one the reader had already looked for. */
+   Created eagerly by subagent-block.ts and withheld by `:empty` until the ledger has
+   something worth a row — which is the common resting state. */
 .subagent-foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-3);
   border-block-start: 1px solid var(--c-border);
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
@@ -998,39 +1196,6 @@
   border-block-start: none;
   border-radius: 0;
   padding-inline: var(--sp-2);
-}
-
-/* The link to the delegate's page. Same geometry and the same hover as
-   `.run-open` in 27-run-card.css, because it is the same affordance on the same
-   kind of card and a reader should learn one control. */
-.subagent-open {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
-  flex-shrink: 0;
-  margin-inline-end: var(--sp-2);
-  color: var(--c-text-secondary);
-  text-decoration: none;
-
-  /* 24px minimum hit target on a row whose text is 11px (web.md hit targets);
-     the padding is what supplies it rather than a taller row. */
-  min-height: 1.5rem;
-  padding-inline: var(--sp-1);
-  border-radius: var(--r-sm);
-  transition:
-    color var(--dur-micro),
-    background var(--dur-micro) var(--ease-standard);
-}
-
-.subagent-open:hover {
-  color: var(--c-text-primary);
-  background: color-mix(in srgb, var(--c-text-primary) 8%, transparent);
-}
-
-.subagent-open-icon {
-  display: inline-flex;
-  align-items: center;
-  line-height: 1;
 }
 
 /* Nested prose fills the subagent body, and now it does so with no rule here.
@@ -1147,10 +1312,20 @@
   flex-shrink: 0;
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 
-  /* Containment: see `.tool-call`. The fallback is the header row plus this
-     block padding — a plan always has at least one entry under it. */
+  /* Containment: see `.tool-call` for the mechanism. The fallback is the CONTENT
+     height alone — the header line box, its `margin-block-end`, and one entry row,
+     because a plan always has at least one entry under it. The block padding above
+     and the border are the box model's to add, to a skipped card exactly as to a
+     rendered one; the value used to claim the padding as well, so a skipped card
+     resolved to 90px against a real 70.
+
+     MEASURED at 44px on all three pointer/width tiers (`plan-card-metrics.test.ts`),
+     and one value covers them because nothing here reads a control-height token or a
+     width query — the height is two line boxes plus a spacing token. `.plan-entries`
+     and `.plan-entry` carry no rule at all, so the row's height is the base line box
+     for its font and its emoji status glyph. */
   content-visibility: auto;
-  contain-intrinsic-size: auto 4rem;
+  contain-intrinsic-size: auto 2.75rem;
 }
 
 .plan-header {

@@ -75,11 +75,11 @@
    `.reasoning-content` rule for a class no builder has ever emitted (the trace
    element is `.reasoning-body`). Later source order made the block rule win, so
    a trace carried two bars 14px apart and its text sat 12px right of the prose.
-   Only the chevron sizing belongs here. */
-.reasoning-summary > .disclosure-chevron {
-  --chev-size: 0.75rem;
-}
-
+   Only the chevron's open angle belongs here. Its SIZE used to as well, at
+   0.75rem, and that was one of four sites overriding the token default — so the
+   one shared glyph rendered at 12px on a reasoning trace and 14px on the tool card
+   directly under it, with no rule anywhere recording why. Removed 2026-09 with the
+   other three; `--chev-size` in 10-shell-app.css is the only size now. */
 .reasoning-block[open] .reasoning-summary > .disclosure-chevron {
   --chev-turn: 0deg;
 }
@@ -463,9 +463,13 @@ input[type="radio"] {
  * of them. (0,2,1) beats a single class and ties with two, which source order
  * then decides in this file's favour.
  *
- * `max(..., 1em)` so a control that is larger BECAUSE ITS CONTEXT IS keeps its
- * size: `1em` on `font-size` resolves against the parent, which is the closest
- * CSS gets to "whatever this would otherwise have been".
+ * THIS RULE OWNS THE FONT-SIZE OF EVERY TEXT CONTROL ON A COARSE POINTER, up as
+ * well as down. Inside a `font-size` declaration `1em` resolves against the
+ * PARENT's computed size, so the term preserves inheritance from a larger
+ * ANCESTOR and CANNOT preserve a control's own larger declared size. A control
+ * that wants more than the floor needs its own carve-out selector;
+ * `text-field-floor-css.test.ts` asserts no coarse-tier control computes above
+ * the threshold, so the day one appears it says so.
  *
  * NO EXCLUSION FOR THE BOX CONTROLS, and that is measured rather than assumed. A
  * native checkbox and radio paint at a font-relative size, so a floor would grow

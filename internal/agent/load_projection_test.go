@@ -599,6 +599,70 @@ func TestMergeProjection(t *testing.T) {
 		}
 	})
 
+	// A steer's DELIVERY STATE is a fact a replay cannot speak for: KAS's log
+	// records the steer without saying whether the model consumed it, so the
+	// projected row carries none. The two rows share an id (both are KAS's own
+	// `steer-` id), so the projected copy supersedes — and without carrying the
+	// state across, a resume silently turned "the agent never read this" into a
+	// note that claims it landed.
+	t.Run("a steer's delivery state survives the swap", func(t *testing.T) {
+		steer := vibekit.Message{
+			ID:          "steer-1",
+			Role:        vibekit.RoleUser,
+			Ts:          150,
+			Content:     "actually target main",
+			UserKind:    vibekit.UserKindSteer,
+			SteerState:  vibekit.SteerStateDropped,
+			SteerOrigin: vibekit.SteerOriginUser,
+		}
+		existing := []vibekit.Message{
+			msg("u1", vibekit.RoleUser, 100, "hi"),
+			steer,
+			msg("m-old", vibekit.RoleAssistant, 200, "hello"),
+		}
+		projected := []vibekit.Message{
+			msg("u1", vibekit.RoleUser, 100, "hi"),
+			// What the replay projection produces: the row, no state, no origin.
+			{
+				ID:       "steer-1",
+				Role:     vibekit.RoleUser,
+				Ts:       150,
+				Content:  "actually target main",
+				UserKind: vibekit.UserKindSteer,
+			},
+			msg("abc-say", vibekit.RoleAssistant, 200, "hello"),
+		}
+		got := mergeProjection(existing, projected)
+		want := []string{"u1", "steer-1", "abc-say"}
+		if !slices.Equal(ids(got), want) {
+			t.Fatalf("got %v, want %v — one row per steer, whichever copy wins", ids(got), want)
+		}
+		if got[1].SteerState != vibekit.SteerStateDropped {
+			t.Errorf("SteerState = %q, want %q", got[1].SteerState, vibekit.SteerStateDropped)
+		}
+		if got[1].SteerOrigin != vibekit.SteerOriginUser {
+			t.Errorf("SteerOrigin = %q, want %q", got[1].SteerOrigin, vibekit.SteerOriginUser)
+		}
+	})
+
+	// The projected copy still wins where it SPEAKS: a state on the wire's own row
+	// is newer than anything this process recorded before the resume.
+	t.Run("a projected steer state is not overwritten by the record's", func(t *testing.T) {
+		existing := []vibekit.Message{{
+			ID: "steer-1", Role: vibekit.RoleUser, Ts: 150, Content: "x",
+			UserKind: vibekit.UserKindSteer, SteerState: vibekit.SteerStateDropped,
+		}}
+		projected := []vibekit.Message{{
+			ID: "steer-1", Role: vibekit.RoleUser, Ts: 150, Content: "x",
+			UserKind: vibekit.UserKindSteer, SteerState: vibekit.SteerStateRead,
+		}}
+		got := mergeProjection(existing, projected)
+		if len(got) != 1 || got[0].SteerState != vibekit.SteerStateRead {
+			t.Errorf("got %d rows, state %q; want 1 row reading %q",
+				len(got), got[0].SteerState, vibekit.SteerStateRead)
+		}
+	})
+
 	// The other half of the shape rule: a real reply is superseded even when it
 	// happens to carry a plan, or the projection's copy and this one both render.
 	t.Run("an assistant turn carrying a plan is still superseded", func(t *testing.T) {

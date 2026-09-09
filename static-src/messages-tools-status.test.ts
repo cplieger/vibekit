@@ -57,6 +57,8 @@ scrollBottom.appendChild(document.createElement("span"));
 document.body.appendChild(scrollBottom);
 
 const { buildToolCard } = await import("./tool-card.js");
+const { buildToolGroupShell, groupBody, refreshGroupHeader, autoCollapseGroup } =
+  await import("./tool-group.js");
 const { updateToolCall, mountToolCallCard, appendTerminalChunk, disposeAllToolEffects } =
   await import("./messages-tools.js");
 
@@ -193,5 +195,31 @@ describe("a call that failed having produced nothing", () => {
     expect(card.querySelector(".tool-disclosure")).not.toBeNull();
     disposeAllToolEffects();
     card.remove();
+  });
+});
+
+describe("a group whose members ran LIVE and then settled", () => {
+  it("folds once the next element supersedes it", () => {
+    // The live path end to end, which is the population the transcript-level
+    // fixtures miss: they build cards born `completed`, so nothing there ever
+    // carries the in-flight marker. Two cards mounted in flight, settled by a
+    // terminal frame carrying the SERVER's duration, then superseded.
+    const group = buildToolGroupShell();
+    const a = liveCard("st-fold-a");
+    const b = liveCard("st-fold-b");
+    groupBody(group).append(a, b);
+    document.body.appendChild(group);
+    refreshGroupHeader(group);
+
+    updateToolCall(a, frame("st-fold-a", { status: "completed", duration_ms: 1200 }), "c1");
+    updateToolCall(b, frame("st-fold-b", { status: "completed", duration_ms: 3400 }), "c1");
+    expect(a.dataset["startMs"]).toBeUndefined();
+    expect(b.dataset["startMs"]).toBeUndefined();
+
+    autoCollapseGroup(group);
+
+    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(group.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("false");
+    group.remove();
   });
 });

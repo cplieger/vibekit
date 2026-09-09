@@ -620,16 +620,16 @@ function applyStatusUpdate(
   if (done) {
     card.querySelector(".tool-spinner")?.remove();
     untrackInProgress(card);
+    // `data-start-ms` MEANS this card is in flight — the elapsed ticker reads it and
+    // `autoCollapseGroup` refuses to fold a group holding one — so it is dropped on
+    // every settle, not only when it is the duration's source. The server sends
+    // `duration_ms` for any tool that took a millisecond, so the fallback below never
+    // ran on the live path and every group kept a member marked running for the rest
+    // of the session, which is what stopped superseded groups folding.
+    const startedAt = card.dataset["startMs"];
+    delete card.dataset["startMs"];
     const ms =
-      serverDurationMs ??
-      (() => {
-        const start = card.dataset["startMs"];
-        if (start === undefined) {
-          return 0;
-        }
-        delete card.dataset["startMs"];
-        return Date.now() - parseInt(start, 10);
-      })();
+      serverDurationMs ?? (startedAt === undefined ? 0 : Date.now() - parseInt(startedAt, 10));
     const dur = card.querySelector(".tool-duration");
     if (dur !== null && ms >= 1000) {
       dur.textContent = formatDuration(ms);

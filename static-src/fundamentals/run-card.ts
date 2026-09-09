@@ -19,9 +19,26 @@
 // whether or not a row was ever opened, because `content-visibility` skips layout
 // and paint and not construction.
 //
-// OPEN BY DEFAULT — the inverse of the delegated-work card, deliberately:
-// there is exactly one run card per launch and it runs for minutes, where
-// the delegate card's N-at-once reasoning does not apply.
+// IT RENDERS EXPANDED WHILE IT IS THE NEWEST TOP-LEVEL ELEMENT, and folds when the
+// next element is posted after it — the positional rule every collapsible element in
+// the transcript follows, driven by the dispatcher through `setSuperseded` because
+// only it knows where this card sits in the store.
+//
+// FOUR REFUSALS keep a fold from hiding something a person is waiting on, and each is
+// a refusal to COLLAPSE rather than a reason to expand: a FAILURE (a failed launch, a
+// failed run, or any failed step), a run still LIVE (running, paused, or a state that
+// has not been fetched — not knowing is not the same as finished), an unanswered ASK
+// (the run reads `running` regardless, and the alert wants a person), and a reader who
+// has decided about this card. That is the reference's three plus the ask, and no
+// wider: an `aborted` or `cancelled` run FOLDS like any other settled one, because a
+// run the reader stopped is not a run anybody is waiting on. There is deliberately NO
+// bare carve-out either: the head is always present with a chevron, so an empty body is
+// closable. A failure acquired AFTER the fold re-opens the card, which is the one state
+// the head cannot substitute for.
+//
+// BOTH of those height changes go through `scroll.ts`'s `preserveReadingPosition`, the
+// transcript's one entry point for a layout change, exactly as `tool-group.ts` wraps its
+// own fold and its own failure re-open.
 //
 // Renders from `inspect`, never from accumulated events: `run-store.ts` owns
 // the fetch, this file is a pure view. The invocation tool call is persisted
@@ -35,6 +52,7 @@ import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN, ICON_EXTERNAL } from "../icons.js";
 import { buildPath } from "../router.js";
+import { preserveReadingPosition } from "../scroll.js";
 import { formatElapsed, truncate } from "../strings.js";
 import type { ToolStatus } from "../types.js";
 import {
@@ -141,6 +159,10 @@ export interface RunCardView {
    *  call is the only witness. Silent on a successful launch, since the
    *  run's own state already covers it. */
   setLaunch(status: ToolStatus, output: string | undefined): void;
+  /** Whether another element has been posted after this card in the store. Pushed in
+   *  because only the dispatcher holds the block index that answers it. True FOLDS
+   *  the card subject to the four refusals; false never opens one. */
+  setSuperseded(superseded: boolean): void;
 }
 
 interface StepRow {
@@ -155,12 +177,20 @@ interface StepRow {
   endedAt?: string;
 }
 
-/** Both halves of the disclosure bookkeeping this view delegates: what a row was
- *  last left at, and where a flip goes. Keyed by node path, `null` for the card
- *  itself. `wasOpen` returning undefined leaves the card's own default standing. */
+/** The card's disclosure bookkeeping, which this view delegates because the registry
+ *  is keyed by ids it never learns.
+ *
+ *  `wasOpen` is the READER's own state and nothing else, so `undefined` means "the
+ *  reader has not decided" rather than "closed" — and it is what turns this card's
+ *  auto path off for life. `defaultOpen` is the newest-element verdict, which stands
+ *  when the reader has not decided.
+ *
+ *  There is no `nodePath`: a step row is a DOOR into the run tab rather than a
+ *  disclosure, so the only disclosure here is the card's own. */
 export interface RunDisclosure {
-  readonly wasOpen: (nodePath: string | null) => boolean | undefined;
-  readonly onOpenChange: (nodePath: string | null, open: boolean) => void;
+  readonly wasOpen: () => boolean | undefined;
+  readonly defaultOpen: boolean;
+  readonly onOpenChange: (open: boolean) => void;
 }
 
 /** Build a run card. `name` is the best label at creation (recipe name from
@@ -168,7 +198,10 @@ export interface RunDisclosure {
  *  `runLabel`. `onOpen` and `disclosure` are injected so this `fundamentals/`
  *  view avoids importing the feature module that owns run tabs and its
  *  open-container bookkeeping; `onOpen`'s third argument is the node a STEP ROW
- *  names, absent for the footer link, which means "the run". Card mounts open. */
+ *  names, absent for the footer link, which means "the run".
+ *
+ *  With no `disclosure` the card mounts OPEN: that is the policy's floor, and only
+ *  composition knows the reader's state or this card's position. */
 export function buildRunCard(
   workflowID: string,
   name: string,
@@ -188,7 +221,11 @@ export function buildRunCard(
    *  downward, and the producer then cannot spell the route differently from the
    *  parser (`messages-blocks.ts` already does this for the subagent href). */
   const runHref = buildPath({ kind: "run", id: workflowID });
-  const cardOpen = disclosure?.wasOpen(null) ?? true;
+  // The reader's own state outranks the verdict, and having one at all is what turns
+  // the auto path off for this card's whole life.
+  const readerState = disclosure?.wasOpen();
+  const cardOpen = readerState ?? disclosure?.defaultOpen ?? true;
+  let userToggled = readerState !== undefined;
   root.classList.toggle("collapsed", !cardOpen);
 
   // --- head -----------------------------------------------------------------
@@ -206,10 +243,15 @@ export function buildRunCard(
   const head = el(
     "div",
     { className: "run-head", role: "button", tabindex: "0" },
+    // The chevron LEADS, because it DISCLOSES the step rows below it. One rule
+    // across the transcript (chevron.ts): a disclosure chevron comes first and
+    // rotates, a navigation chevron sits at the trailing edge and does not — which
+    // is what tells this head apart from a step row's, and from a delegate leaf's
+    // head, at rest rather than only when clicked.
+    chevron,
     icon,
     nameEl,
     el("span", { className: "run-head-meta" }, statusEl, countEl, clockEl),
-    chevron,
   );
 
   // --- alert ------------------------------------------------------------
@@ -249,16 +291,25 @@ export function buildRunCard(
 
   root.append(head, alert, body, foot);
 
-  createDisclosure(head, body, {
+  const ctl = createDisclosure(head, body, {
     open: cardOpen,
-    onToggle: (isOpen) => {
+    onToggle: (isOpen, source) => {
+      // The class write is for BOTH sources — it is what the skin keys on, and an
+      // auto collapse has to reach it. The LATCH and the registry write are the
+      // reader's alone, or the card would record its own folds as their choice.
       root.classList.toggle("collapsed", !isOpen);
-      disclosure?.onOpenChange(null, isOpen);
+      if (source !== "user") {
+        return;
+      }
+      userToggled = true;
+      disclosure?.onOpenChange(isOpen);
     },
   });
 
   const rows = new Map<string, StepRow>();
   let liveClock = false;
+  /** Whether the store holds another element after this card. */
+  let superseded = false;
   /** Set when the LAUNCH itself failed, so the alert stays on the tool call's
    *  reason instead of being overwritten by a state that will never arrive. */
   let launchError = "";
@@ -544,6 +595,69 @@ export function buildRunCard(
     ledger.textContent = bits.join(" \u00b7 ");
   }
 
+  /** Whether this run holds a FAILURE a reader has to see: a failed launch, a failed
+   *  run, or any failed step. The one carve-out that works in both directions. */
+  function holdsFailure(): boolean {
+    if (launchError !== "") {
+      return true;
+    }
+    if (lastState === undefined) {
+      return false;
+    }
+    return stateOf(lastState.status) === "fail" || runCounters(lastState).failed > 0;
+  }
+
+  /** The newest-element fold, and the only place the four refusals are spelled.
+   *
+   *  Both directions, like `maybeCollapseGroup`: a failure RE-OPENS a card that folded
+   *  before it arrived, and blocks a fold thereafter. The collapse half is idempotent
+   *  and monotone in `superseded`, so calling this on every render is the same
+   *  function as collapsing at the moment of supersession. */
+  function applyAutoCollapse(): void {
+    if (userToggled) {
+      return;
+    }
+    if (holdsFailure()) {
+      if (!ctl.isOpen) {
+        // Compensated like the fold below: this adds the step rows' height back ABOVE
+        // the reader. Gated on the state actually moving, because `render` re-asks the
+        // fold on every frame and the compensator measures the scroller each call.
+        preserveReadingPosition(() => {
+          ctl.open();
+        }, "content-growth");
+      }
+      return;
+    }
+    if (
+      !superseded ||
+      // Not knowing is not the same as finished: the card is built before its first
+      // `inspect` lands.
+      lastState === undefined ||
+      // An ask outranks the run's own status, and it is the one refusal a status
+      // cannot express — the head reads "needs input" whatever the run says.
+      lastAsks.count > 0 ||
+      // STILL LIVE, which is the reference's third carve-out and covers `paused`
+      // (waiting on a person) and `unknown` (not knowing is not finished) as well as
+      // `running`. Deliberately NOT "settled clean": `stateOf` maps `aborted` and
+      // `cancelled` to `warn`, so admitting only `completed` exempted a run the reader
+      // STOPPED from ever folding — a carve-out wider than the reference's three, over
+      // the one settled state nobody is waiting on. `failed` is covered above by
+      // `holdsFailure`, which is the only settled state that refuses the fold.
+      runIsLive(lastState) ||
+      !ctl.isOpen
+    ) {
+      return;
+    }
+    // An AUTO collapse removes height ABOVE the reader, so it is compensated —
+    // `scroll.ts` is THE ONE ENTRY POINT for a transcript height change, and this
+    // card's body is one row per leaf plus a capture preview. Wrapped HERE and not at
+    // the dispatcher's `syncContainerCollapse` arm: the helper adjusts scrollTop by a
+    // delta it measures itself, so a nested pair would compensate the same delta twice.
+    preserveReadingPosition(() => {
+      ctl.close();
+    }, "content-growth");
+  }
+
   function render(state: RunState | undefined, asks: RunAsks = lastAsks): void {
     lastState = state;
     lastAsks = asks;
@@ -578,6 +692,9 @@ export function buildRunCard(
     renderOutputs(state);
     renderFoot(state);
     head.setAttribute("aria-label", `Workflow run ${nameEl.textContent}, ${statusEl.textContent}`);
+    // Every state change re-asks the fold: a run that settled clean is now foldable,
+    // and one that failed re-opens.
+    applyAutoCollapse();
   }
 
   function tick(): void {
@@ -617,7 +734,13 @@ export function buildRunCard(
       const text = (output ?? "").trim();
       launchError = text === "" ? "The workflow could not be started" : truncate(text, 200);
       liveClock = false;
+      // `render` ends in `applyAutoCollapse`, so a launch failing after a fold
+      // re-opens the card through the same door a failed state does.
       render(lastState);
+    },
+    setSuperseded(next: boolean): void {
+      superseded = next;
+      applyAutoCollapse();
     },
   };
 }

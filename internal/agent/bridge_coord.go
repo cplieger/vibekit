@@ -60,9 +60,6 @@ type BridgeCoordinator struct {
 	// SPAWN time: a bool captured here runs before NewHub opens the store, so it
 	// would be false for every bridge this process ever starts.
 	secretStorage func() bool `wiring:"optional"`
-	// chatStatus reads a chat's last self-declared status, which is what the
-	// agent-finished push body says instead of a fixed literal.
-	chatStatus func(vibekit.ChatID) vibekit.ChatStatusPayload
 	// unknownStops records the stop reasons already warned about, so an unmapped
 	// wire value produces one line rather than one per turn.
 	unknownStops sync.Map
@@ -111,6 +108,15 @@ func (bc *BridgeCoordinator) takePrimeFrom(chatID vibekit.ChatID) vibekit.ChatID
 	return src
 }
 
+// forgetPrimeFrom drops a chat's unspent prime note. takePrimeFrom is the ordinary
+// discharge (the read IS the claim); this is the teardown twin, for a forked chat
+// closed or deleted before it was ever prompted.
+func (bc *BridgeCoordinator) forgetPrimeFrom(chatID vibekit.ChatID) {
+	bc.primeFromMu.Lock()
+	defer bc.primeFromMu.Unlock()
+	delete(bc.primeFrom, chatID)
+}
+
 // newBridgeCoordinator constructs a BridgeCoordinator from the Runtime's fields,
 // once, from NewHub after all options are applied.
 func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
@@ -127,7 +133,6 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 		retireUtility:  h.stopUtilityBridge,
 		// h implements replayProjector via load_projection.go.
 		replayProjection: h.replay,
-		chatStatus:       h.bus.chatStatus.Get,
 		agentEngine:      resolveAgentEngine(),
 		acpArgs:          h.acpArgs,
 		secretStorage:    func() bool { return h.secrets != nil },
@@ -273,7 +278,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 	// but _kiro/terminal/shell_type is still a server->client REQUEST on the
 	// session-creation path, so attaching Forward after Start deadlocks every
 	// fresh session.
-	go bc.Forward(chatID, sb.bridge)
+	bc.goForward(chatID, sb.bridge)
 	// Supervised is passed at creation only: KAS persists `autopilot` in its own
 	// session metadata, so session/load need not repeat it.
 	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
@@ -309,7 +314,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	// The attachment is taken HERE, not inside the goroutine: the load's read-loop
 	// position below is only comparable within one attachment. See replay_drain.go.
 	gen := bc.turns.attachForward(chatID)
-	go bc.forwardAt(chatID, sb.bridge, gen)
+	bc.lifecycle.inflight.Go(func() { bc.forwardAt(chatID, sb.bridge, gen) })
 	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), SessionID: acpSessionID, Model: model, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
@@ -510,6 +515,28 @@ func (bc *BridgeCoordinator) Forward(chatID vibekit.ChatID, bridge ACPBridge) {
 	bc.forwardAt(chatID, bridge, bc.turns.attachForward(chatID))
 }
 
+// goForward starts a forward loop ON THE GROUP SHUTDOWN WAITS ON — the one spawn
+// door, because a bare `go` here is a goroutine whose effects are part of
+// Shutdown's own contract and were not covered by it.
+//
+// What this loop still owes after its channel closes is `closeTurnOnBridgeDeath`,
+// the ONLY closer for a turn a process exit left open: it appends the interrupted
+// turn's outcome row and broadcasts its `turn_ended`. Untracked, both landed after
+// `runtime shutdown complete` — after `bus.fanout.Shutdown()` had taken the SSE
+// clients down, and racing the process exit for a chat-file write, which leaves the
+// turn with no outcome carrier and so reads back as `unknown` rather than
+// interrupted. Reachable whenever a spawn is in flight as the signal arrives: a
+// bridge registered AFTER `mgr.drain()` is not in the set Shutdown stops, so it
+// dies on the cancelled context and IS a death rather than a teardown.
+//
+// No deadlock, for the reason `NotifyPushSubject` records: Shutdown stops every
+// bridge BEFORE this wait, which closes `NotifCh` and ends the range. A bridge that
+// somehow never closes it costs the ctx budget and is NAMED ("in-flight handlers")
+// instead of being silently overrun.
+func (bc *BridgeCoordinator) goForward(chatID vibekit.ChatID, bridge ACPBridge) {
+	bc.lifecycle.inflight.Go(func() { bc.Forward(chatID, bridge) })
+}
+
 // forwardAt is Forward on an attachment the CALLER already took, for the one
 // caller that has to name it: tryLoadSession orders the load's own read-loop
 // position against this goroutine's, so it cannot let the goroutine take the
@@ -638,23 +665,31 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID vibekit.C
 // model, which two chats could not disagree about.
 
 // NotifyPush sends a push notification about one CHAT if the push service is
-// configured. It keeps its chat-id parameter rather than taking a vibekit.PushSubject
-// because every caller here is chat-scoped, so the conversion belongs at this one
-// boundary; a notification with no chat behind it calls push.Send directly.
+// configured. The chat-id convenience stays because every caller in this file is
+// chat-scoped, so the conversion to a subject belongs at this one boundary;
+// NotifyPushSubject below is what a notification with NO chat behind it uses.
+func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind vibekit.PushKind, chatID vibekit.ChatID) {
+	bc.NotifyPushSubject(ctx, body, kind, vibekit.ChatSubject(chatID))
+}
+
+// NotifyPushSubject sends a push notification about any SUBJECT if the push service
+// is configured — a chat, a pull request, a workflow run.
 //
 // A nil service is silent: composition always builds one, so that branch is a
 // direct package test rather than a state an operator can be in.
-func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind vibekit.PushKind, chatID vibekit.ChatID) {
+func (bc *BridgeCoordinator) NotifyPushSubject(
+	ctx context.Context, body string, kind vibekit.PushKind, subject vibekit.PushSubject,
+) {
 	if bc.push == nil {
 		return
 	}
 	if !bc.push.HasSubscribers() {
-		bc.reportNoSubscribers(kind, chatID)
+		bc.reportNoSubscribers(kind, subject)
 		return
 	}
 	bc.noSubscribers.Store(false)
 	bc.lifecycle.inflight.Go(func() {
-		bc.push.Send(ctx, push.DefaultTitle, body, kind, vibekit.ChatSubject(chatID))
+		bc.push.Send(ctx, push.DefaultTitle, body, kind, subject)
 	})
 }
 
@@ -663,12 +698,16 @@ func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind v
 // per tool call, so a line per drop would bury the rest of the log. A subscriber
 // arriving re-arms it, so a later unsubscribe is reported again. Without the line, a
 // dead push pipeline and a workspace nobody subscribed from log identically.
-func (bc *BridgeCoordinator) reportNoSubscribers(kind vibekit.PushKind, chatID vibekit.ChatID) {
+//
+// Both halves of the subject are logged and either is legitimately empty — a chat
+// notification carries no key and a run's carries no chat — so the line still names
+// what was dropped whichever kind it was.
+func (bc *BridgeCoordinator) reportNoSubscribers(kind vibekit.PushKind, subject vibekit.PushSubject) {
 	if !bc.noSubscribers.CompareAndSwap(false, true) {
 		return
 	}
 	slog.Info("no push subscribers; notifications are being dropped until a browser subscribes",
-		"chat_id", chatID, "kind", string(kind))
+		"chat_id", subject.ChatID, "subject", subject.Key, "kind", string(kind))
 }
 
 // SettleTurnOnResponse closes the turn named by epoch on the response that
@@ -685,19 +724,6 @@ func (bc *BridgeCoordinator) SettleTurnOnResponse(ctx context.Context, chatID vi
 // structural half of the empty-turn gate. See turnRegistry.openedAfter.
 func (bc *BridgeCoordinator) TurnOpenedAfter(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) bool {
 	return bc.turns.openedAfter(chatID, epoch)
-}
-
-// statusDescription reads the chat's self-declared status description (KAS's
-// focus_update channel), for the push notification's body.
-//
-// Must be read BEFORE the turn_ended broadcast: the status cache is cleared at turn
-// end, inside the same emit() that fires it, so a read after that always finds it
-// gone. Empty is legitimate, so the caller's fallback literal is the honest default.
-func (bc *BridgeCoordinator) statusDescription(chatID vibekit.ChatID) string {
-	if bc.chatStatus == nil {
-		return ""
-	}
-	return bc.chatStatus(chatID).Description
 }
 
 // defaultAgentFinishedBody is the body for a turn whose agent never declared what
@@ -742,7 +768,7 @@ func (bc *BridgeCoordinator) persistDisplacedTurn(ctx context.Context, chatID vi
 			return false
 		}
 		at := len(c.Messages)
-		for at > 0 && c.Messages[at-1].Role == vibekit.RoleUser {
+		for at > 0 && isPendingPrompt(&c.Messages[at-1]) {
 			at--
 		}
 		c.Messages = slices.Insert(c.Messages, at, *msg)
@@ -757,6 +783,17 @@ func (bc *BridgeCoordinator) persistDisplacedTurn(ctx context.Context, chatID vi
 	if inserted {
 		bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg))
 	}
+}
+
+// isPendingPrompt reports whether m is a user row persistDisplacedTurn should insert
+// ABOVE: a PROMPT awaiting admission.
+//
+// A steer row is a user row too and is deliberately NOT one. That walk skips rows
+// persisted AHEAD of the turn, while a steer row was persisted INSIDE it
+// (translate.persistSteer), so the reply belongs after it — the order the ordinary
+// path produces anyway, since the reply is flushed at turn end and the steer is not.
+func isPendingPrompt(m *vibekit.Message) bool {
+	return m.Role == vibekit.RoleUser && m.UserKind != vibekit.UserKindSteer
 }
 
 // TryFastModelSwitch attempts an in-session model swap via

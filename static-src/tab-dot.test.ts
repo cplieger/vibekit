@@ -35,7 +35,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import cssContrastScript from "../scripts/css-contrast.py?raw";
 import chatSrc from "./chat.ts?raw";
-import { ruleContaining, loadCSS } from "./__test-helpers__/css-rules.js";
+import { allRules, ruleContaining, loadCSS, mountAppCSS } from "./__test-helpers__/css-rules.js";
 import {
   tabStatusFor,
   setSessions,
@@ -863,10 +863,13 @@ describe("the dot inks are web-terminal-kiro's status vocabulary", () => {
     }
   });
 
-  it("gives the ring to nothing else, so it keeps meaning one thing", () => {
-    // Every rule in the block, at every scope: exactly two carry a ring. The
-    // reduced-motion `working` donut used to be a third, which put the wants-you
-    // marker on the one state that wants nothing from the reader.
+  it("gives the ring to the wants-you states and to nothing else", () => {
+    // Every rule in the block, at every scope: exactly FOUR carry a ring, and all
+    // four mean "blocked on a person". The reduced-motion `working` donut used to be
+    // among them, which put the wants-you marker on the one state that wants nothing
+    // from the reader; the workflow mark's own `waiting`/`input` pair joined instead,
+    // which is agreement with the grammar rather than a loan against it — the marker
+    // still means exactly one thing, now across two marks.
     // The prelude is capture group 1 and the pattern makes it mandatory, so the
     // `= ""` default never applies; it is there so a later edit to the pattern
     // shows up as an empty selector in the assertion below rather than a throw.
@@ -874,6 +877,8 @@ describe("the dot inks are web-terminal-kiro's status vocabulary", () => {
       ([, prelude = ""]) => prelude.trim().split("\n").pop()?.trim(),
     );
     expect(ringed.sort()).toEqual([
+      '.tab-run-dot[data-status="input"]',
+      '.tab-run-dot[data-status="waiting"]',
       '.tab-status-dot[data-status="input"]',
       '.tab-status-dot[data-status="waiting"]',
     ]);
@@ -887,6 +892,361 @@ describe("the dot inks are web-terminal-kiro's status vocabulary", () => {
     // letting a merge come back with the check still reporting PASS, which is the
     // one failure mode a mechanical gate has that a human reviewer does not.
     expect(cssContrastScript).toContain("DOT_ALIASES: list[tuple[str, str]] = []");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4c. The WORKFLOW mark, the second mark in a chat row's leading cluster.
+//
+// It reuses this vocabulary rather than opening a second one — the same four
+// `--c-dot-*` inks and the same `--dot-color` indirection — so everything section
+// 4b pins about the dot's ink applies to it unchanged. What is NOT inherited is
+// the SILHOUETTE: the dot is a circle in every state but `failed`, and this mark
+// is a rounded SQUARE in all of them, which is what separates the two at identical
+// hue without spending a channel per state (WCAG 1.4.1).
+//
+// `css-contrast.py dot` now carries both marks in one pairwise population — its
+// matrix used to enumerate the dot's seven states alone, which is how a mark whose
+// `waiting` resolved to the dot's `waiting` tuple exactly shipped with that script
+// reporting PASS. So this section is the STYLESHEET side of the same claim: the
+// script TRANSCRIBES the channels and cannot see the CSS, so every number it
+// transcribes is read off `12-tabs.css` here and compared. A transcription that
+// drifts from the rule it describes turns a mechanical gate into a green light.
+// ---------------------------------------------------------------------------
+
+describe("the workflow mark is a ring, and never the dot's disc", () => {
+  const tabs = loadCSS("12-tabs.css");
+  const RUN_STATES = ["working", "waiting", "input"] as const;
+  /** The exec view's own ratio, which is what the band channel is measured against
+   *  wherever two states differ on it alone. */
+  const BAND_RATIO_FLOOR = 2;
+
+  /** The band a state's own rule paints, in px. `working` writes it through
+   *  --run-band because the beat's mask has to read the same number; every other
+   *  state writes it inline, so both spellings resolve here. */
+  function bandOf(selector: string, scope = "top"): number {
+    const body = ruleContaining(tabs, selector, scope).body;
+    const hit = /border-width:\s*var\(--run-band\)/.test(body)
+      ? /--run-band:\s*([\d.]+)(px|rem)/.exec(body)
+      : /border-width:\s*([\d.]+)(px|rem)/.exec(body);
+    expect(hit, `${selector} must declare a band width; got: ${body.trim()}`).not.toBeNull();
+    const n = Number(hit?.[1]);
+    return hit?.[2] === "rem" ? n * 16 : n;
+  }
+
+  /** The band the DOT's `radial-gradient` donut paints, derived from its hole stop.
+   *  The gradient's radius is half of --dot-size (8px), so a hole of H% leaves a
+   *  band of `4 * (1 - H/100)` — the arithmetic that rule is written against, and
+   *  the only way to compare it against the mark's own band numerically. */
+  function donutBandOf(selector: string): number {
+    const body = ruleContaining(tabs, selector, "prefers-reduced-motion").body;
+    const stop = /transparent 0 (\d+)%, var\(--dot-color\) \1% 100%/.exec(body);
+    expect(stop, `${selector} must paint one donut hole; got: ${body.trim()}`).not.toBeNull();
+    return 4 * (1 - Number(stop?.[1]) / 100);
+  }
+
+  it("takes the same inks as the dot, through the same custom property", () => {
+    // Tokens, not values, for the dot's reason: the source has one theme and
+    // vibekit has two, so the token is where the per-theme sizing lives.
+    const inks: [string, string][] = [
+      ["working", "--c-dot-working"],
+      ["waiting", "--c-dot-input"],
+      ["input", "--c-dot-input"],
+    ];
+    for (const [state, token] of inks) {
+      const rule = ruleContaining(tabs, `.tab-run-dot[data-status="${state}"]`, "top");
+      expect(
+        rule.body.includes(`--dot-color: var(${token})`),
+        `${state} must take ${token}; got: ${rule.body.trim()}`,
+      ).toBe(true);
+    }
+    // Every state's edge reads the one property, which is what lets
+    // 70-selection.css keep saying nothing about either mark.
+    expect(ruleContaining(tabs, ".tab-run-dot", "top").body).toContain(
+      "border: 0 solid var(--dot-color)",
+    );
+  });
+
+  it("defaults its ink to the quiet one, not to the state that means work", () => {
+    // The base body's `--dot-color` is what a state arm added later paints with if
+    // it forgets its own ink. Defaulting to --c-dot-working makes that omission
+    // claim a run is executing; the dot's own base defaults to idle, which is the
+    // quieter failure and the one to match.
+    expect(ruleContaining(tabs, ".tab-run-dot", "top").body).toContain(
+      "--dot-color: var(--c-dot-idle)",
+    );
+  });
+
+  it("declares every band in one unit, so the relation survives a root font size", () => {
+    // A --run-band in rem beside 1.5px/2px literals reads as the same ladder at
+    // 16px and inverts at 20px, where 0.125rem is 2.5px. px throughout, like the
+    // activity dot's own bands above.
+    // File-wide, which is safe because the mark is the only thing in it that
+    // declares `border-width` at all — the dot writes its band through the `border`
+    // shorthand. Four: the three states plus the reduced-motion arm.
+    const bands = [...tabs.matchAll(/(?:border-width|--run-band):\s*([\d.]+)(px|rem|em)/g)];
+    expect(bands.length).toBeGreaterThanOrEqual(RUN_STATES.length + 1);
+    expect([...new Set(bands.map(([, , unit]) => unit))]).toEqual(["px"]);
+  });
+
+  it("declares exactly four states, so no outcome can reach it", () => {
+    // `done` and `failed` are unreachable from a live inventory row, so a rule for
+    // one would be a treatment for a state the producer cannot supply — and its
+    // presence is what would invite a producer change later.
+    const states = [...tabs.matchAll(/\.tab-run-dot\[data-status="(\w+)"\]/g)].map(([, s]) => s);
+    expect([...new Set(states)].sort()).toEqual(["input", "waiting", "working"]);
+  });
+
+  it("is never a filled disc, in any state or at any scope", () => {
+    // The disc is the activity dot's. Shape is the only thing keeping the two
+    // marks apart at identical hue, so a background of the ink here would collapse
+    // that separation at the one moment both marks are violet.
+    for (const rule of allRules(tabs).filter((r) => r.selector.includes(".tab-run-dot"))) {
+      expect(
+        /background:\s*var\(--dot-color\)/.test(rule.body),
+        `${rule.selector} must not fill the mark; got: ${rule.body.trim()}`,
+      ).toBe(false);
+    }
+  });
+
+  it("separates its own wants-you pair by band at the exec column's ratio", () => {
+    // The pair shares one ink AND one halo AND one silhouette, and it is still,
+    // so BAND WIDTH is the whole separator — which makes the RATIO the assertion
+    // rather than the inequality. The exec column separates its own rings at 2px
+    // against a snapped 1px; a 1.5px hairline here would have given 1.33:1, a third
+    // of a pixel of ink at 8px, which the stylesheet can express and a reader
+    // cannot. `css-contrast.py dot` gates the same number over its transcription.
+    const waiting = bandOf('.tab-run-dot[data-status="waiting"]');
+    const input = bandOf('.tab-run-dot[data-status="input"]');
+    expect(input / waiting).toBeGreaterThanOrEqual(BAND_RATIO_FLOOR);
+    expect(cssContrastScript).toContain(`BAND_RATIO_FLOOR = ${BAND_RATIO_FLOOR}.0`);
+  });
+
+  it("separates working from both by motion, with no halo to lean on", () => {
+    // working needs nothing from the reader, so it may not take the wants-you halo
+    // — the same correction the dot's own reduced-motion donut carries. What is left
+    // is motion, read off the document clock.
+    const working = ruleContaining(tabs, '.tab-run-dot[data-status="working"]', "top").body;
+    expect(/box-shadow/.test(working)).toBe(false);
+    expect(
+      ruleContaining(tabs, '.tab-run-dot[data-status="working"]::before', "top").body,
+    ).toContain("var(--vk-beat)");
+  });
+
+  it("declares no animation of its own, on the ring or on its overlay", () => {
+    // The beat is an inherited value read off the document clock (03-base.css). An
+    // animation created here would hold its own phase, which is exactly what the
+    // per-dot version cost the strip.
+    const ring = ruleContaining(tabs, '.tab-run-dot[data-status="working"]', "top");
+    const glow = ruleContaining(tabs, '.tab-run-dot[data-status="working"]::before', "top");
+    expect(/animation:/.test(ring.body)).toBe(false);
+    expect(/animation:/.test(glow.body)).toBe(false);
+    expect(glow.body).toContain("opacity: calc(var(--vk-beat) * 0.55)");
+  });
+
+  it("keeps the beat off the ring's hole, so a peak is not a disc", () => {
+    // The dot's overlay composites over a solid disc of its own hue and has almost
+    // no headroom; over a ring's transparent hole it has all of it, so at the
+    // beat's peak an unmasked core would fill the hole and paint the dot's shape.
+    const glow = ruleContaining(tabs, '.tab-run-dot[data-status="working"]::before', "top");
+    expect(glow.body).toContain("mask: radial-gradient(");
+    // Derived from the mark's own radius and band rather than a percentage, so
+    // moving either number cannot leave the mask behind.
+    expect(glow.body).toContain("calc(var(--dot-size) / 2 - var(--run-band))");
+  });
+
+  it("removes the beat overlay entirely under reduced motion", () => {
+    // `content: none` rather than a reset of its opacity, for the dot's reason: the
+    // clock rests at its registered 0 today, and that is a property of the initial
+    // VALUE rather than of this rule.
+    const reduced = ruleContaining(
+      tabs,
+      '.tab-run-dot[data-status="working"]::before',
+      "prefers-reduced-motion",
+    );
+    expect(/content:\s*none/.test(reduced.body)).toBe(true);
+  });
+
+  it("replaces the lost motion with the heaviest band in the cluster", () => {
+    const reduced = ruleContaining(
+      tabs,
+      '.tab-run-dot[data-status="working"]',
+      "prefers-reduced-motion",
+    );
+    // The same channel the mark already reads, rather than the dot's gradient donut:
+    // this mark is a ring at rest, so a hole is not a state change it can make.
+    const heavy = bandOf('.tab-run-dot[data-status="working"]', "prefers-reduced-motion");
+    // Heavier than EVERY band the mark paints with motion available, or stillness
+    // would leave it separated from `input` by the halo alone.
+    for (const state of RUN_STATES) {
+      expect(heavy).toBeGreaterThan(bandOf(`.tab-run-dot[data-status="${state}"]`));
+    }
+    // No fill, and no wants-you halo bought to make up for the motion — the
+    // correction the dot's own donut already carries.
+    expect(/background:/.test(reduced.body)).toBe(false);
+    expect(/box-shadow/.test(reduced.body)).toBe(false);
+    // And the hole stays open: closing it is the solid disc this mark may never be.
+    const probe = document.createElement("div");
+    probe.style.inlineSize = "var(--dot-size)";
+    document.body.append(probe);
+    const size = probe.getBoundingClientRect().width;
+    probe.remove();
+    expect(heavy * 2).toBeLessThan(size);
+  });
+
+  it("keeps the two marks separable by SILHOUETTE, in every state", () => {
+    // THE CROSS-MARK QUESTION, and the silhouette is what answers it once rather
+    // than per state. The pair that forces it is the reduced-motion one: the dot's
+    // `working` becomes a 2.2px band around a 3.6px hole in the SAME violet 8px to
+    // the left, and a circular mark would have had to answer it with a band tellable
+    // apart at 2:1 — under 1.1px, which collides with `waiting`, or over 4.4px,
+    // which closes the hole at this diameter. Neither exists, so the shape does the
+    // work and the bands are free to separate the mark's own three states.
+    expect(ruleContaining(tabs, ".tab-run-dot", "top").body).toContain(
+      "border-radius: calc(var(--dot-size) / 4)",
+    );
+    // The dot is the circle, in every state it paints one — which is what the
+    // square is being told apart FROM.
+    expect(ruleContaining(tabs, ".tab-status-dot", "top").body).toContain("border-radius: 50%");
+    // A quarter of the diameter, so the flat sides are half of it: enough silhouette
+    // to read at 8px, and bounded well under the half that would make it a circle
+    // again.
+    const radius = /border-radius: calc\(var\(--dot-size\) \/ (\d+)\)/.exec(
+      ruleContaining(tabs, ".tab-run-dot", "top").body,
+    );
+    expect(Number(radius?.[1])).toBeGreaterThan(2);
+    // The dot's own donut band is still what the mark's is measured against, and the
+    // two remain different numbers as well as different shapes — belt and braces,
+    // since a reader at DPR 1 gets whichever channel survives snapping.
+    const dot = donutBandOf('.tab-status-dot[data-status="working"]');
+    const mark = bandOf('.tab-run-dot[data-status="working"]', "prefers-reduced-motion");
+    expect(mark).toBeGreaterThan(dot);
+    // And apart from the dot's hollow hairline, which is the state the mark is most
+    // likely to sit beside: a chat that has not initiated with a run already going.
+    // No band in this block equals it, so that pair is separated twice rather than
+    // by silhouette alone.
+    const idle = ruleContaining(tabs, '.tab-status-dot[data-status="idle"]', "top").body;
+    const hairline = Number(/border:\s*([\d.]+)px/.exec(idle)?.[1]);
+    expect(mark).toBeGreaterThan(hairline);
+    for (const state of RUN_STATES) {
+      expect(bandOf(`.tab-run-dot[data-status="${state}"]`)).not.toBe(hairline);
+    }
+  });
+
+  it("is carried by the mechanical 1.4.1 gate, not only by this file", () => {
+    // `css-contrast.py dot` is the app's declared WCAG 1.4.1 check, and its matrix
+    // enumerated the activity dot's seven states alone while the strip had ten
+    // marks — which is exactly how a mark whose `waiting` was byte-identical to the
+    // dot's shipped with that script reporting PASS. The three states and the axis
+    // that can express their separation both have to be in it.
+    expect(cssContrastScript).toContain(
+      "RUN_MARK_STATES: list[tuple[str, str, dict[str, str]]] = [",
+    );
+    // Declared is not checked: the pairwise pass has to READ the table, or the
+    // matrix prints three more rows and gates none of them.
+    expect(cssContrastScript).toContain("for s, _ink, ch in RUN_MARK_STATES");
+    for (const state of RUN_STATES) {
+      expect(cssContrastScript).toMatch(new RegExp(`"${state}",\\s*\\n\\s*"--c-dot-`));
+    }
+    // The band axis, without which the mark's `waiting` transcribes to the dot's
+    // `waiting` tuple exactly and the pairwise check cannot see the collision.
+    expect(cssContrastScript).toContain('"band"');
+    // And the mark's own reduced-motion substitution, which is NOT the dot's: it is
+    // hollow already, so it has no fill left to trade for the lost motion.
+    expect(cssContrastScript).toContain("RUN_REDUCED_MOTION_SUBSTITUTION = {");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4d. The mark's painted geometry, against real layout.
+//
+// `box-sizing: border-box` is what makes --dot-size the painted DIAMETER rather
+// than the diameter plus two bands, and it is the whole reason the ring can sit at
+// the size of the disc it shares a cluster with. A 3px band would otherwise paint
+// a 14px mark beside an 8px dot. Nothing about the markup implies it, so it is
+// measured with the shipped stylesheet mounted — the same thing
+// state-column-size.test.ts does for the run bar's own ring.
+// ---------------------------------------------------------------------------
+
+describe("the ring is painted at the size of the disc beside it", () => {
+  let style: HTMLStyleElement;
+
+  beforeAll(() => {
+    style = mountAppCSS();
+  });
+
+  afterAll(() => {
+    style.remove();
+  });
+
+  beforeEach(async () => {
+    await resetProjection();
+  });
+
+  it("paints every state at --dot-size, band width notwithstanding", async () => {
+    const { setTabRunStatus, tabIdFor } = await import("./tabs.js");
+    const id = await openSubject("chat", "c1");
+    await paint();
+    expect(tabIdFor("chat", "c1")).toBe(id);
+    const row = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
+    const mark = row?.querySelector<HTMLElement>(".tab-run-dot");
+    const dot = row?.querySelector<HTMLElement>(".tab-status-dot");
+    expect(mark, "a chat row carries the workflow mark").not.toBeNull();
+
+    // --dot-size RESOLVED, through a probe rather than by parsing the declaration:
+    // the token is authored in rem, so reading it off `:root` answers `0.5rem` and
+    // converting it here would put a second unit rule in the test.
+    const probe = document.createElement("div");
+    probe.style.inlineSize = "var(--dot-size)";
+    document.body.append(probe);
+    const size = probe.getBoundingClientRect().width;
+    probe.remove();
+    expect(size).toBeGreaterThan(0);
+
+    const tally = { total: 1, working: 1, waiting: 0, input: 0 };
+    for (const state of ["working", "waiting", "input"] as const) {
+      setTabRunStatus(id, state, tally);
+      const box = mark?.getBoundingClientRect();
+      expect(box?.width, `${state} must paint at --dot-size`).toBeCloseTo(size, 2);
+      expect(box?.height, `${state} must be square, not a rectangle`).toBeCloseTo(size, 2);
+    }
+
+    // And the same diameter as the dot it sits beside, which is what makes a glance
+    // down the cluster compare states rather than sizes.
+    expect(mark?.getBoundingClientRect().width).toBeCloseTo(
+      dot?.getBoundingClientRect().width ?? 0,
+      2,
+    );
+  });
+
+  it("paints a square where the dot paints a circle, resolved not transcribed", async () => {
+    // The cross-mark separator, measured through the cascade rather than read off
+    // the rule: the mark's radius is a calc over --dot-size, so the number a reader
+    // sees is the resolved one and a token retune moves it. Half the diameter IS a
+    // circle, so the assertion is the gap between the two.
+    const id = await openSubject("chat", "c1");
+    await paint();
+    const row = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
+    const mark = row?.querySelector<HTMLElement>(".tab-run-dot");
+    const dot = row?.querySelector<HTMLElement>(".tab-status-dot");
+    expect(mark, "a chat row carries the workflow mark").not.toBeNull();
+    const size = mark?.getBoundingClientRect().width ?? 0;
+    // Chromium reports a PERCENTAGE radius as the percentage and a calc as a used
+    // length, so the two spellings have to be normalised before they can be
+    // compared: the dot's is 50%, the mark's is px.
+    const cornerPx = (node: HTMLElement): number => {
+      const v = getComputedStyle(node).borderTopLeftRadius;
+      return v.endsWith("%") ? (size * Number.parseFloat(v)) / 100 : Number.parseFloat(v);
+    };
+    const radius = cornerPx(mark as HTMLElement);
+    expect(radius).toBeGreaterThan(0);
+    expect(radius).toBeLessThan(size / 2);
+    // Half the box IS the circle, and that is what the dot resolves to — the state
+    // the square is being told apart from.
+    expect(cornerPx(dot as HTMLElement)).toBeCloseTo(size / 2, 1);
+    // Flat sides at least a third of the mark's width on all four edges, which is
+    // the ink a reader compares against a curve at 8px.
+    expect(size - 2 * radius).toBeGreaterThanOrEqual(size / 3);
   });
 });
 

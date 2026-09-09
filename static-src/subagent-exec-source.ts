@@ -34,12 +34,12 @@
 // delegate you clicked without hiding its siblings.
 // ---------------------------------------------------------------------------
 
-import type { Message, ToolCall } from "./types.js";
+import type { ToolCall } from "./types.js";
 import { humanName, truncate } from "./strings.js";
 import { subagentLabel, subagentName } from "./roles.js";
 import { inFlight, type ExecState } from "./exec-view/status.js";
 import type { ExecFact, ExecNode, ExecRun } from "./exec-view/model.js";
-import { groupOf, type SubagentSlice } from "./subagent-slice.js";
+import type { SubagentProjection } from "./subagent-slice.js";
 
 /** What a delegate with no resident invocation reads as. */
 const FALLBACK = "Subagent";
@@ -80,6 +80,10 @@ function toolState(status: ToolCall["status"] | undefined): ExecState {
       return "ok";
     case "failed":
       return "fail";
+    // `exec-view/status.ts` already words `warn` as "stopped", which is what an
+    // abort is: the work ended without a verdict of its own.
+    case "aborted":
+      return "warn";
   }
 }
 
@@ -232,27 +236,27 @@ function rollUp(own: ExecState, kids: readonly ExecNode[]): ExecState {
 
 /** Fold a delegate, and whatever it belongs to, into the exec view's model.
  *
- *  `slice` is the projection for the delegate being READ (subagent-slice.ts), passed
- *  in rather than computed here because the view already holds it: it is what the
- *  view renders into `page.bodyFor` and what it watches for streaming deltas, so
- *  producing a second copy would walk the conversation twice per repaint. */
-export function subagentToExec(
-  messages: readonly Message[],
-  subtaskID: string,
-  slice: SubagentSlice,
-): ExecRun {
-  const group = groupOf(messages, subtaskID);
+ *  `projection` is `sliceSubagentGroup`'s one walk over the conversation, passed in
+ *  rather than computed here because the view already holds it: it carries the GROUP
+ *  this reads its structure from and a slice per member, which is what the view mounts
+ *  into `page.bodyFor` and what it watches for streaming deltas. Computing either here
+ *  would walk the same window a second time on every repaint. */
+export function subagentToExec(subtaskID: string, projection: SubagentProjection): ExecRun {
+  const group = projection.group;
+  // The delegate the TAB names. Present for every non-empty id the projection was
+  // asked about, so the fallbacks below are for the empty id alone.
+  const own = projection.slices.get(subtaskID);
   const focus = subagentPath(subtaskID);
 
   // --- the single-delegate shape --------------------------------------------
   if (group.pipeline === "") {
-    const leaf = toLeaf(subtaskID, "", slice.invocation);
+    const leaf = toLeaf(subtaskID, "", own?.invocation);
     return {
       id: subtaskID,
       label: leaf.label,
       state: leaf.state,
       nodes: [leaf],
-      live: slice.live,
+      live: own?.live ?? false,
       focus,
     };
   }
@@ -309,7 +313,7 @@ export function subagentToExec(
     // driver's Task input are `ExecRun` fields the page HEADER renders, and the run's
     // window comes from the LEAVES, never from a container's stamps.
     nodes: stages.length === 1 ? stages : [root],
-    live: slice.live || inFlight(driverState),
+    live: (own?.live ?? false) || inFlight(driverState),
     focus,
   };
   const inputs = driverInputs(group.driver);

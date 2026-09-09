@@ -376,6 +376,254 @@
   --dot-color: var(--c-accent);
 }
 
+/* ==========================================================================
+   The workflow mark
+   ==========================================================================
+   A SECOND mark in a chat row's leading cluster, immediately after the activity
+   dot: a run this chat launched is still going. The two facts are genuinely
+   independent, which is why they are two marks and not one compound state —
+   `run_workflow` returns as soon as the run is CREATED, so the launching turn
+   ends, the dot beside this one goes green and the run carries on for another
+   forty minutes. Compounding them either keeps that green (no signal at all,
+   which is the reported defect) or overwrites it (a lie about the turn).
+
+   A RING at --dot-size, never a disc and never a pictogram. The pictogram is
+   ruled out by arithmetic rather than by taste: `ICON_TAB_RUN` is a three-node
+   graph in a 24-unit viewBox whose stroke is a FIXED 1 CSS px (`stroke-width: 1`
+   plus `vector-effect: non-scaling-stroke`, 03-base.css), so at 8px each 6x5-unit
+   node rect is 2.00 x 1.67px with 1px walls and fills solid — six features
+   collapsing into three blobs. The ring is what `run-bar-glyph` (26-dock.css) and
+   the exec view's state column (31-exec-view.css) already converged on for the
+   same reason, `box-sizing: border-box` included so --dot-size IS the painted
+   diameter.
+
+   ITS SILHOUETTE IS A ROUNDED SQUARE, and that is the one channel spend the whole
+   block rests on. A circle was tried and it does not have the room: this mark
+   shares the dot's violet for `working` and its yellow for the wants-you pair, so
+   at identical hue the only separators left are fill, the halo, motion and band
+   width — and every one of them is already spoken for on the element 8px to its
+   left. The arithmetic that settles it is the REDUCED-MOTION pair. With motion
+   gone the dot's `working` is a 2.2px band around a 3.6px hole, and a circular
+   mark would have to answer it with a band that is tellable apart at the exec
+   column's own 2:1 — so 1.1px or less, which collides with `waiting` below, or
+   4.4px or more, which closes the hole at this diameter and paints the disc this
+   mark may never be. There is no third option, because the mark may not take the
+   halo for a state that wants nothing (the correction the dot's own donut carries)
+   and may not fill (the disc is the dot's). A square answers every state at once
+   and needs no band arithmetic to do it: FLAT SIDES against a curve, which is the
+   channel `failed` already spends one element over as a rotated square. Axis
+   aligned, so it cannot be read as that diamond either, and its radius is derived
+   from --dot-size so the silhouette stays proportional if the token moves.
+
+   FOUR STATES, and the two missing ones are a statement about the INPUT rather
+   than a simplification: `run-store.ts`'s live inventory deletes a run's row at
+   its terminal status, so an OUTCOME is not available to paint. The mark
+   WITHDRAWS when a run ends — the same answer `run-bar.ts` gives over the same
+   inventory — and it never turns green or red.
+
+   THE CHANNELS. Every state is a square, so the cross-mark question is answered
+   once and what is left is separating the three from EACH OTHER:
+
+     working  2px band, no halo, BREATHING      a run is executing
+     waiting  1px band, halo                    parked, nothing moving
+     input    2px band, halo                    a decision is open
+
+   BAND WIDTH carries the wants-you pair, at 1px against 2px — the exec column's
+   own 2:1 (2px against a declared 0.0938rem Chromium snaps to 1px), not the
+   1.33:1 that a 1.5px hairline would have given, because a third of a pixel is
+   not a channel. All three are declared in px, like the dot's own 1.5px and 2px
+   above, so the relation survives a root font size other than 16px. The halo is
+   the app's exclusive wants-you marker and both states carrying it here genuinely
+   want you, so it keeps meaning exactly one thing across the two marks rather
+   than being borrowed for a third meaning. Motion separates `working` from both,
+   and under prefers-reduced-motion it is replaced by a heavier band (the block at
+   the end of this file).
+
+   THE LEADING CLUSTER'S ARITHMETIC, re-derived for the pair, and it reaches rows
+   this feature does not otherwise touch. The dot's `:first-child` rule above puts
+   it in a 14px slot in EVERY state (the failed diamond re-derives its own margins
+   to hold that total), so with the row's own 8px gap and this 8px mark the cluster
+   is 14 + 8 + 8 = 30px WHATEVER either mark is showing, and one more gap puts a
+   chat row's title at 38px. Two 8px marks cannot occupy a 14px slot at any margin,
+   so the pair cannot be shrunk back into the slot that rule bought — the other
+   half of the derivation is therefore to give every row WITHOUT a mark the width
+   it is missing, which is what the two `.tab-name` rules at the end of this block
+   do. What that costs the title, derived from the 260px sidebar's 225px flex line:
+   a chat row's name goes from 171px to 155px, a sub-tab's from 137px to 121px, and
+   a settings, files, git, history, docs, editor, run or subagent row's loses the
+   same 14px to hold the shared origin — about 2-3 characters at --fs-sm each. The
+   same row is reused in the mobile drawer at 100vw, which is WIDER, so this is a
+   desktop constraint rather than a phone one. */
+.tab-run-dot {
+  /* The slot is reserved in EVERY state, so `display` is not a channel this mark
+     uses and there is no `display: none` here — the reveal is `visibility` below.
+     That is the one place this differs from `.tab-status-dot`, whose trailing
+     editor-tab position genuinely has nothing to reserve. */
+  display: block;
+
+  /* RESTATED here rather than inherited from the reset's universal rule, because
+     every band width below is arithmetic against it: --dot-size has to be the
+     painted DIAMETER and not the diameter plus two bands, or a 3px band paints a
+     14px mark beside an 8px dot. Same reason run-bar-glyph declares it. */
+  box-sizing: border-box;
+  inline-size: var(--dot-size);
+  block-size: var(--dot-size);
+
+  /* THE SILHOUETTE, and it is load-bearing rather than decorative — see the block
+     header for the reduced-motion arithmetic that forces it. A quarter of the
+     mark's own diameter leaves flat sides half its width on all four edges, which
+     is what a reader tells apart from the circle beside it; derived rather than a
+     literal so a --dot-size retune cannot round it into a disc. */
+  border-radius: calc(var(--dot-size) / 4);
+
+  /* The band's COLOUR and style live here once; its WIDTH is the channel, so
+     every state below sets `border-width` and nothing else about the edge. */
+  border: 0 solid var(--dot-color);
+  flex-shrink: 0;
+
+  /* Every state paints from this one custom property, exactly as the activity dot
+     does, which is what lets 70-selection.css keep saying nothing (a tab's
+     selected fill never rewrites a status ink — user ruling, 2026-08-31) and what
+     keeps a state's whole treatment readable from one rule body.
+     The DEFAULT is the dot's own — the quiet grey — rather than the violet this
+     mark's `working` takes: a state arm added below that forgot its ink then
+     paints as nothing in particular instead of claiming a run is executing. */
+  --dot-color: var(--c-dot-idle);
+}
+
+/* NO LIVE RUN: the slot stays, the mark does not. `visibility` rather than
+   `display`, and this is the single most load-bearing rule in the block — the
+   cluster's inline footprint has to be the same 30px whether or not a run is
+   going, or every chat title in the strip jumps 16px sideways the moment a run
+   starts and back again when it ends. Same mechanism as the sub-tab dot's
+   reservation earlier in this file, and for the same reason. */
+.tab-run-dot:not([data-status]) {
+  visibility: hidden;
+}
+
+/* Working — a run is executing. The breathe is the activity dot's, and it is the
+   same MECHANISM rather than a copy of a look: one pre-painted overlay whose
+   opacity is read straight off the document clock (--vk-beat, 03-base.css). So
+   this adds ZERO keyframes and zero animations, and a mark that starts breathing
+   mid-cycle is already in step with every other beat in the app. */
+.tab-run-dot[data-status="working"] {
+  border-width: var(--run-band);
+
+  /* `position: relative` only, for the overlay's containing block. No
+     `translateZ`/`will-change`: with the beat an inherited value there is no
+     composited child to be out of step with, so a layer per open tab would be
+     bought for nothing. */
+  position: relative;
+
+  /* The band, in one place, because the mask below has to know it: the overlay's
+     hole is the mark's inradius less this. In px like every other band in this
+     file, so the `waiting` < `input` == `working` relation holds at a root font
+     size other than 16px. */
+  --run-band: 2px;
+  --dot-color: var(--c-dot-working);
+}
+
+/* The glow beat, verbatim from the activity dot down to the 0.55 ceiling and the
+   ~1px feather — plus a MASK, which is the one thing a ring needs and a disc does
+   not. Over a solid disc the overlay's bright core has almost no headroom above
+   its own backdrop; over a ring's transparent HOLE it has all of it, so at the
+   beat's peak a 0.55-opacity core would fill the hole and the mark would read as
+   the disc sitting 8px to its left. The mask keeps the glow on the band, the same
+   construction run-bar-glyph uses to keep its conic arc off its own centre. */
+.tab-run-dot[data-status="working"]::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklch, var(--dot-color) 60%, #fff) 0 70%,
+    transparent 92%
+  );
+  opacity: calc(var(--vk-beat) * 0.55);
+
+  /* An absolute length rather than a percentage: the pseudo is 2px larger on each
+     side than the mark, so a percentage would have to be re-derived whenever
+     either number moved. The hole it clears is the square hole's INRADIUS, so the
+     circle is inscribed in it and the hole's four corners keep a sliver of glow —
+     0.83px at the diagonal, inside the feather, and the mask's job is keeping the
+     bright CORE off the centre rather than clipping the band exactly. */
+  mask: radial-gradient(
+    closest-side,
+    transparent 0 calc(var(--dot-size) / 2 - var(--run-band)),
+    #000 calc(var(--dot-size) / 2 - var(--run-band))
+  );
+}
+
+/* WAITING and INPUT — the run wants you, and the halo is what says so. It is the
+   app's exclusive marker for "blocked on a person", so a second mark may only
+   carry it for a state that means exactly that; both of these do, which is why
+   taking it is agreement with the grammar rather than a loan against it.
+
+   THEY SHARE ONE INK with each other and with the activity dot's own pair, for
+   that file-wide reason: --c-dot-input is the one thing the source vocabulary says
+   for "action required" and there is no second hue to lend. BAND WIDTH carries
+   them apart — a hairline for a run parked with nothing moving, a heavy band for a
+   decision open on a step — which is the same axis `working` is separated on and
+   the reason this mark has no fill channel to spend: it is a ring in every state.
+
+   1px against 2px, which is the exec column's own ratio (2px against a declared
+   0.0938rem Chromium snaps to 1px) and NOT the 1.5px hairline the dot uses. That
+   is the one number in this block a reader is most likely to want to "align" with
+   the dot's, and doing it takes the pair to 1.33:1 — a third of a pixel of ink at
+   8px, which is a difference the file can measure and a reader cannot. The
+   silhouette is what keeps the pair apart from the dot's own; the ratio is what
+   keeps it apart from itself.
+
+   The halo declaration is repeated rather than factored into a selector list, so
+   every state in this block stays exactly ONE rule — what lets 70-selection.css
+   re-point a state with one line and what lets a test read a state's whole
+   treatment from a single body. */
+.tab-run-dot[data-status="waiting"] {
+  border-width: 1px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dot-color) 30%, transparent);
+
+  --dot-color: var(--c-dot-input);
+}
+
+.tab-run-dot[data-status="input"] {
+  border-width: 2px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dot-color) 30%, transparent);
+
+  --dot-color: var(--c-dot-input);
+}
+
+/* THE SHARED TEXT ORIGIN, and the pair is what made these two rules necessary.
+   `.tab-status-dot:first-child`'s 14px glyph slot exists so a chat row's title
+   lines up with a settings or files row's, and the mark adds a gap and 8px that no
+   margin can put back inside that slot — so the missing width is given to the rows
+   WITHOUT a mark instead, and the strip keeps one origin rather than two.
+
+   ON THE NAME rather than on the leading glyph, deliberately. Widening the glyph's
+   own slot would centre it in 30px and move it 7px right, which breaks the
+   dot-sits-where-the-glyph-sits alignment the `:first-child` rule was written to
+   buy — the whole point of that 14px. Indenting the title moves only the title, so
+   both alignments hold at once, and the ~14px it costs is charged to `.tab-name`,
+   the row's one `flex: 1` child, which is where the slack lives anyway.
+
+   TWO rules because the two row shapes are missing different amounts. A top-level
+   row is missing the pair's whole cluster less its own glyph, DERIVED from
+   --icon-ui rather than written as 14px, because that token is 1.125rem on a coarse
+   pointer and a literal would misalign every touch device by 2px. A sub-tab's
+   nesting arrow is --icon-ui on both kinds, so it cancels and what is missing there
+   is exactly one gap and one mark. Chat rows are excluded by `data-kind`, which
+   createTabEl writes on every row; a chat row of either shape carries the mark, so
+   the attribute and the mark cannot disagree. */
+.tab:not([data-kind="chat"]) > .tab-name {
+  margin-inline-start: calc(0.875rem + var(--sp-2) + var(--dot-size) - var(--icon-ui));
+}
+
+/* Ties nothing on specificity — one class more than the rule above — but it must
+   stay AFTER it to read as the narrowing it is. */
+.tab.tab-child:not([data-kind="chat"]) > .tab-name {
+  margin-inline-start: calc(var(--sp-2) + var(--dot-size));
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* Motion is what separates `working` from the settled states, so with it gone
      the disc becomes a DONUT: a hole is shape rather than hue, and it separates
@@ -411,6 +659,36 @@
      over the donut below. Removing the pseudo is what makes it independent of the
      clock's resting value. */
   .tab-status-dot[data-status="working"]::before {
+    content: none;
+  }
+
+  /* The workflow mark's `working` loses the same motion, and what it gains back is
+     BAND, in the one channel this mark spends: 3px around a 2px hole, the heaviest
+     ring anywhere in the cluster. That is what separates it from its own `input`
+     (2px, and still carrying the halo this does not) and from its own `waiting`
+     (1px, a 3:1 ratio). It needs nothing for the CROSS-mark pair, which is the
+     difference this silhouette bought: the dot's own reduced-motion donut is a
+     2.2px band around a 3.6px hole in the SAME violet 8px to the left, and a
+     circular mark could not have answered it — see the block header.
+
+     A heavier border rather than a radial-gradient donut, unlike the dot above.
+     The dot is SOLID at rest, so a hole is the only way it can say "still, but in
+     flight"; this mark is a ring in every state, so the same statement is one
+     number in the channel it already reads, and a gradient here would have had to
+     hand the whole border box over (`border-width: 0`, since `background-origin`
+     is the padding box) and then paint a CIRCULAR hole inside a square band. The
+     hole is bounded on the other side too: closing it further would read as the
+     solid disc this mark must never be. */
+  .tab-run-dot[data-status="working"] {
+    border-width: 3px;
+  }
+
+  /* The overlay disappears ENTIRELY, for the reason the dot's does: the clock is
+     stopped so `--vk-beat` rests at its registered 0 and the glow would be
+     invisible anyway, but that is a property of the initial VALUE. Removing the
+     pseudo is what makes it independent of a future non-zero resting amplitude,
+     which would otherwise paint a permanent bright band over the donut. */
+  .tab-run-dot[data-status="working"]::before {
     content: none;
   }
 }

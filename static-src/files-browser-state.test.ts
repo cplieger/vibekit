@@ -1,5 +1,5 @@
 // Unit tests for FileBrowserState navigation logic (pure state machine).
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock the dom module to avoid element lookups.
 vi.mock("./dom.js", () => ({
@@ -84,7 +84,8 @@ vi.mock("./store.js", () => ({
   tabStatusFor: vi.fn(() => ""),
 }));
 
-import { FileBrowserState } from "./files.js";
+import { FileBrowserState, restoreFileBrowser, loadFileBrowser } from "./files.js";
+import { apiGet } from "./api-client.js";
 
 describe("FileBrowserState", () => {
   describe("navigate", () => {
@@ -96,7 +97,7 @@ describe("FileBrowserState", () => {
         },
         check: (s: FileBrowserState) => {
           expect(s.currentPath).toBe("src");
-          expect(s.history).toEqual([".", "src"]);
+          expect(s.history).toEqual(["/", "src"]);
           expect(s.historyIdx).toBe(1);
         },
       },
@@ -121,7 +122,7 @@ describe("FileBrowserState", () => {
           s.navigate("c");
         },
         check: (s: FileBrowserState) => {
-          expect(s.history).toEqual([".", "a", "c"]);
+          expect(s.history).toEqual(["/", "a", "c"]);
           expect(s.historyIdx).toBe(2);
           expect(s.currentPath).toBe("c");
         },
@@ -146,7 +147,7 @@ describe("FileBrowserState", () => {
         },
         check: (s: FileBrowserState) => {
           expect(s.goBack()).toBe(false);
-          expect(s.currentPath).toBe(".");
+          expect(s.currentPath).toBe("/");
           expect(s.historyIdx).toBe(0);
         },
       },
@@ -157,7 +158,7 @@ describe("FileBrowserState", () => {
         },
         check: (s: FileBrowserState) => {
           expect(s.goBack()).toBe(true);
-          expect(s.currentPath).toBe(".");
+          expect(s.currentPath).toBe("/");
           expect(s.historyIdx).toBe(0);
         },
       },
@@ -239,8 +240,8 @@ describe("FileBrowserState", () => {
       s.selected.add("file");
       s.entries = [{ name: "x", isDir: false, size: 0, modTime: 0, mode: "" }];
       s.reset();
-      expect(s.currentPath).toBe(".");
-      expect(s.history).toEqual(["."]);
+      expect(s.currentPath).toBe("/");
+      expect(s.history).toEqual(["/"]);
       expect(s.historyIdx).toBe(0);
       expect(s.selected.size).toBe(0);
       expect(s.lastClickedName).toBe("");
@@ -273,5 +274,35 @@ describe("FileBrowserState", () => {
       s.deselectAll();
       expect(s.selected.size).toBe(0);
     });
+  });
+});
+
+describe("restoreFileBrowser normalises what it is handed", () => {
+  // Its two callers both pass a path from OUTSIDE this module — the persisted
+  // `fb_path` and a `/files/<path>` deep link — so neither can be trusted to be
+  // in the browser's space. The listing request is the observable: whatever the
+  // caller spelled, the fetch is container-absolute.
+  beforeEach(() => {
+    vi.mocked(apiGet).mockClear();
+  });
+
+  const cases: [string, string][] = [
+    ["a rootless path an older build persisted", "workspace/vibekit"],
+    ["the same path spelled absolutely", "/workspace/vibekit"],
+    ["a trailing slash", "/workspace/vibekit/"],
+  ];
+
+  for (const [name, saved] of cases) {
+    it(`fetches the absolute listing for ${name}`, () => {
+      restoreFileBrowser(saved);
+      loadFileBrowser();
+      expect(vi.mocked(apiGet).mock.calls[0]?.[0]).toBe("/api/files?path=%2Fworkspace%2Fvibekit");
+    });
+  }
+
+  it("leaves the browser on its own root when nothing was saved", () => {
+    restoreFileBrowser("");
+    loadFileBrowser();
+    expect(vi.mocked(apiGet).mock.calls[0]?.[0]).toBe("/api/files?path=%2F");
   });
 });

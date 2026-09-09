@@ -287,10 +287,10 @@ func TestCloseOnWireEnd_AnEmptyStepTurnCancelledStillPersistsAndAnnounces(t *tes
 	}
 }
 
-// TestCloseStepTurn_FailsAnUnsettledToolCall is the spinner rule: the run's terminal
+// TestCloseStepTurn_AbortsAnUnsettledToolCall is the spinner rule: the run's terminal
 // transition ends the only thing that could still send a tool_call_update, so a card
 // persisted `in_progress` renders as a permanent spinner on every later reload.
-func TestCloseStepTurn_FailsAnUnsettledToolCall(t *testing.T) {
+func TestCloseStepTurn_AbortsAnUnsettledToolCall(t *testing.T) {
 	h, cs, _ := newTestHub()
 	stagedStepTurn(t, h, cs, "c1", "the step ran a command")
 	buf := h.liveTurnBuffer("c1")
@@ -310,8 +310,8 @@ func TestCloseStepTurn_FailsAnUnsettledToolCall(t *testing.T) {
 	if len(msgs[0].ToolCalls) != 1 {
 		t.Fatalf("the persisted message carries %d tool calls, want 1", len(msgs[0].ToolCalls))
 	}
-	if got := msgs[0].ToolCalls[0].Status; got != vibekit.ToolFailed {
-		t.Errorf("persisted tool status = %q, want failed — nothing is left to settle it", got)
+	if got := msgs[0].ToolCalls[0].Status; got != vibekit.ToolAborted {
+		t.Errorf("persisted tool status = %q, want aborted — nothing is left to settle it", got)
 	}
 }
 

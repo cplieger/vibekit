@@ -1,6 +1,7 @@
 package logctl
 
 import (
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -18,10 +19,19 @@ func snapshotLevel() slog.Level { return levelVar.Level() }
 // restoreDefaultLogger snapshots slog.Default at entry and restores it at
 // cleanup so Install's slog.SetDefault side-effect does not leak across
 // tests or into other packages in the same test binary.
+//
+// The log package's writer and flags are restored too: Install's slog.SetDefault
+// also points log at its handler, and the restore skips pointing it back because
+// the snapshotted handler is the stock one (which reaches log.Output), so every
+// later line in the package would land in Install's handler.
 func restoreDefaultLogger(t *testing.T) {
 	t.Helper()
-	prev := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
+	t.Cleanup(func() {
+		slog.SetDefault(prevLogger)
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	})
 }
 
 func writeSettings(t *testing.T, dir, content string) {

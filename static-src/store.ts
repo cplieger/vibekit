@@ -23,6 +23,9 @@ import type {
 // of the enum, and a type-only import adds no runtime edge.
 import type { TurnOutcome } from "./wire/types.gen.js";
 import type { ClassifiedRunStatus } from "./run-status.js";
+// Type-only, so no runtime edge is added in either direction: turns.ts is a pure
+// leaf that reaches nothing here.
+import type { TurnWindowBase } from "./turns.js";
 import { severityOf } from "./turn-severity.js";
 import { isSubagentInvocation } from "./tool-schema.js";
 import { isStepSubtask, parseStepSubtask } from "./step-subtask.js";
@@ -358,6 +361,16 @@ export function stopEvictionSweep(): void {
   }
 }
 
+/** Whether older messages exist, for a window whose LEFT EDGE the server has not
+ *  spoken about: the record's count against what is resident. The spelling this
+ *  replaced, `message_count > 0`, read as an answer and was not one.
+ *
+ *  Wrong only toward WITHHOLDING a button: a live unpersisted message reads equal,
+ *  and a count ratcheted past a rewind's shrink heals on that rewind's refetch. */
+export function derivedHasMore(messageCount: number, residentCount: number): boolean {
+  return messageCount > residentCount;
+}
+
 /** Drop every per-message streaming signal a chat's resident messages minted. Covers a
  *  chat leaving WHOLE (removal, eviction), where no reconcile ever runs for background
  *  rows; the renderer's disposeMessage covers rows that unmount. */
@@ -381,7 +394,11 @@ export function evictChatMessages(chatID: string): void {
   }
   clearMessageSignals(chatID, s.messages);
   s.messages = [];
-  s.has_more = s.message_count > 0;
+  s.has_more = derivedHasMore(s.message_count, 0);
+  // The window base described the window that just went, so it is forgotten with it:
+  // a base held against no messages would number the NEXT page from the old edge.
+  delete s.turn_offset;
+  delete s.turn_segment_closed;
   s.residency = "evicted";
   msgIndex.delete(chatID);
   clearSnapshotSeq(chatID);
@@ -491,6 +508,17 @@ export function setTurnOpen(id: string, open: boolean): void {
  *  know, and mounts a footer glyph over a turn that is still running. */
 export function turnLive(s: Session): boolean {
   return s.thinking || s.turn_open === true;
+}
+
+/** The segmentation state at this session's resident window's LEFT EDGE, for
+ *  `projectTurns`. THE ONE READER of `turn_offset` / `turn_segment_closed`.
+ *
+ *  Absent fields fall back to `WHOLE_SESSION`, which numbers the window from 1 —
+ *  the behaviour before those fields existed, and reachable only for a chat whose
+ *  window has never been fetched (`types.ts` `Session.turn_offset` states why that
+ *  guess is admissible). */
+export function turnBaseOf(s: Session): TurnWindowBase {
+  return { offset: s.turn_offset ?? 0, closed: s.turn_segment_closed === true };
 }
 
 /** Latch that this chat's last TURN failed — an outcome `outcomeLatch` grades `failed`.
@@ -725,7 +753,10 @@ export function subagentStatusFor(status: ToolStatus | undefined): TabDotState {
     case "pending":
     case "in_progress":
       return "working";
+    // `aborted` joins `completed`: a delegate the reader stopped is over, not broken —
+    // the same fold `runStatusFor` already makes for a cancelled run two arms above.
     case "completed":
+    case "aborted":
       return "done";
     case "failed":
       return "failed";
@@ -1168,7 +1199,8 @@ export function upsertHeader(h: ChatHeader): void {
     usage: h.usage,
     message_count: h.message_count,
     messages: [],
-    has_more: h.message_count > 0,
+    // A header carries no window, so this is the DERIVATION and not an answer.
+    has_more: derivedHasMore(h.message_count, 0),
     thinking: false,
     working_label: "Thinking",
     // A chat this client has never seen live: the header's outcome is the ONLY thing that can

@@ -192,15 +192,26 @@ func TestGroupOf(t *testing.T) {
 // in parentheses and may itself contain spaces and parens. A whitespace split puts state
 // and pgrp at the wrong index, and the symptom is a group that never reports gone.
 func TestStatPgrpState_ReadsPastAnExecutableNameWithSpacesAndParens(t *testing.T) {
-	dir := t.TempDir()
-	// comm is argv[0]'s basename truncated to 15 bytes, so a name with parens puts them there.
-	name := "s (p) x"
-	script := dir + "/" + name
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 60\n"), 0o700); err != nil {
-		t.Fatalf("Setup: write script: %v", err)
+	// comm is the basename of the path handed to execve(2), truncated to 15 bytes, so
+	// executing a LINK whose name carries parens puts them in comm and LEAVES them
+	// there. A #!/bin/sh script that execs another binary cannot serve as the subject:
+	// comm becomes that binary's name the instant the second exec lands, so the read
+	// below would be racing the shell rather than reading a settled process. It lost
+	// that race 11 times in 300 runs under load, reporting the shell's successor
+	// ("(sleep)") as a setup failure.
+	sleepBin, lookErr := exec.LookPath("sleep")
+	if lookErr != nil {
+		t.Fatalf("Setup: find sleep: %v", lookErr)
 	}
-	cmd := exec.Command(script)
+	name := "s (p) x"
+	link := t.TempDir() + "/" + name
+	if err := os.Symlink(sleepBin, link); err != nil {
+		t.Fatalf("Setup: link %q -> %s: %v", name, sleepBin, err)
+	}
+	cmd := exec.Command(link, "60")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Start returns only once execve has succeeded (forkExec blocks on the child's
+	// CLOEXEC error pipe), so comm is already set by the time the read below runs.
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Setup: start %q: %v", name, err)
 	}

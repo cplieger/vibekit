@@ -108,20 +108,41 @@
   }
 }
 
+/* The upload bar is a native <progress>, so the track and the fill are ONE
+   element and the UA reports the value with no authored ARIA. A UA-drawn control
+   needs every engine named: `appearance: none` plus the element's own
+   `background` is the track in Gecko, `::-webkit-progress-bar` is the track in
+   Blink/WebKit, and the fill has to be written twice — `::-webkit-progress-value`
+   AND `::-moz-progress-bar`. Missing any one of the three renders the default
+   control for that engine. */
 .upload-progress-bar {
+  appearance: none;
   flex: 1;
   height: 0.375rem;
   background: var(--c-bg-tertiary);
+  border: 0;
   border-radius: var(--r-sm);
   overflow: hidden;
 }
 
-.upload-progress-fill {
-  height: 100%;
+.upload-progress-bar::-webkit-progress-bar {
+  background: var(--c-bg-tertiary);
+  border-radius: var(--r-sm);
+}
+
+/* The width transition survives in Chromium ONLY. Gecko does not animate
+   `::-moz-progress-bar`, so the fill there steps per xhr progress event instead of
+   sliding. Stated rather than papered over; the composited alternative was a
+   scaleX on a fill element, which distorts the radius into an ellipse. */
+.upload-progress-bar::-webkit-progress-value {
   background: var(--c-accent);
   border-radius: var(--r-sm);
-  width: 0;
-  transition: width var(--dur-standard);
+  transition: width var(--dur-standard) var(--ease-standard);
+}
+
+.upload-progress-bar::-moz-progress-bar {
+  background: var(--c-accent);
+  border-radius: var(--r-sm);
 }
 
 .upload-progress-label {
@@ -194,16 +215,27 @@
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+
+  /* The tallest flex child: `.fb-icon`'s box below. Declared on the row because
+     `contain-intrinsic-size` needs it and `.fb-icon` also renders outside a row
+     (the upload picker, a search hit), so it cannot own the token. */
+  --fb-row-content: 1.25rem;
+
   padding: var(--sp-2) var(--sp-3);
   min-height: var(--btn-h);
   border-block-end: 1px solid var(--c-border);
   font-size: var(--fs-sm);
 
-  /* Long-list paint bound: rows are fixed-height (2.25rem + 1px border), so
-     the intrinsic size estimate is exact; `auto` remembers the real size
-     after first paint (keeps mobile's larger padding correct). */
+  /* Long-list paint bound. `contain-intrinsic-size` states the CONTENT box, so a
+     skipped row resolves to `max(min-height, estimate + padding + border)` — the
+     same expression the box model applies to a rendered one. So the estimate is
+     the row's own content height and nothing else: including the padding, or the
+     2px 70-selection.css reserves on all four sides, would count them twice. One
+     value is therefore exact on all three tiers, wide-coarse included, where
+     `min-height` binds instead. `auto` remembers the real size after first paint.
+     Measured per tier by files-row-metrics.test.ts. */
   content-visibility: auto;
-  contain-intrinsic-size: auto 2.3125rem;
+  contain-intrinsic-size: auto var(--fb-row-content);
   transition:
     background var(--dur-micro),
     opacity var(--dur-enter),
@@ -277,47 +309,13 @@
   color: var(--c-text-primary);
 }
 
-/* Add-to-chat button: inline at the end of each file row, visible on
-   hover. Quick-attach a workspace file path to the active chat. */
-.fb-add-to-chat {
-  background: none;
-  border: none;
-  color: var(--c-text-tertiary);
-  cursor: pointer;
-  padding: 0.25rem;
-  margin-inline-start: var(--sp-2);
-  border-radius: var(--r-sm);
-  line-height: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition:
-    opacity var(--dur-micro),
-    color var(--dur-micro),
-    background var(--dur-micro) var(--ease-standard);
-}
-
-:where(.fb-row:hover) .fb-add-to-chat,
-.fb-add-to-chat:focus-visible {
-  opacity: 1;
-}
-
-/* A COARSE POINTER GETS IT PERMANENTLY, because neither reveal above is reachable
-   by a finger. There is no hover on touch, and the `:focus-visible` half is
-   keyboard-only — and even a `:focus-within` on the row would not help, because
-   focusing this button means tapping a button that is invisible until focused.
-   So on touch this control did not exist. Revealed rather than given a
-   long-press or a swipe: the row is already a tap target for opening the file,
-   and a second hidden gesture on it is not discoverable either. */
-:where([data-pointer="coarse"]) .fb-add-to-chat {
-  opacity: 1;
-}
-
-.fb-add-to-chat:hover {
-  background: var(--c-bg-tertiary);
-  color: var(--c-accent);
-}
+/* No per-row add-to-chat control. `.fb-add-to-chat` styled one as an inline
+   button revealed on `.fb-row:hover`, with a `[data-pointer="coarse"]` reveal
+   beside it, and nothing in `static-src/` ever emitted that CLASS — the only
+   survivor is the TOOLBAR button `#fb-add-to-chat` (dom.ts, files.ts), which is
+   an `.icon-btn` and takes none of it. Deleted 2026-09; adding a per-row control
+   back means restoring the coarse-pointer reveal too, because neither `:hover`
+   nor `:focus-visible` is reachable by a finger. */
 
 .fb-name-edit {
   flex: 1;
@@ -364,6 +362,38 @@
   cursor: pointer;
   border-radius: var(--r-sm);
   transition: background var(--dur-micro) var(--ease-standard);
+
+  /* THE TARGET is --hit-floor; the MARK stays the 1rem square the rule above
+     declares. `role="button"` matches the app-wide floor (61-mcp-tools.css),
+     whose `min-width`/`min-height` grew the LETTER to 24px on a mouse and 44px
+     under a finger — past `.fb-row`'s 1.25rem `.fb-icon` reserve, so every dirty
+     file row overflowed its `contain-intrinsic-size` and #fb-list's scrollHeight
+     climbed as the reader scrolled. Measured per row: 4px fine, 18px coarse-wide,
+     24px coarse-narrow. These two declarations score (0,1,0) against the floor's
+     zero-specificity `:where()`, so this control is invisible to it and the
+     expander carries the target instead — the mechanism the floor's own comment
+     names, with `.status-dot` (10-shell-app.css) and `.shell-resize`
+     (21-shell-panel.css) as its other members.
+
+     ASYMMETRIC, away from `.fb-name`. The letter sits between the name (which
+     opens the file) and the metadata (inert), and the row's gap is --sp-2, so a
+     centred expander would reach --hit-floor/2 - 50% - --sp-2 past that gap into
+     the name's box: 0 on the fine tier and 6px on both coarse tiers, where a tap
+     on the end of a filename would open the diff instead of the file. Growing
+     into the metadata column costs nothing, because nothing there is
+     interactive. The start side takes the gap and the end side takes whatever
+     --hit-floor has left after the mark and that gap, so the target is exactly
+     --hit-floor on both tiers with no per-tier value. */
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+
+  &::after {
+    content: "";
+    position: absolute;
+    inset-block: calc((var(--hit-floor) - 100%) / -2);
+    inset-inline: calc(-1 * var(--sp-2)) calc(var(--sp-2) + 100% - var(--hit-floor));
+  }
 
   &:hover {
     background: var(--c-bg-tertiary);
@@ -648,12 +678,12 @@
   min-height: 1.25rem;
 }
 
+/* No intrinsic-size override: a hit row's extra spans are single-line and share
+   the row's flex line, so its tallest child is the same 1.25rem `.fb-icon` box a
+   listing row has and `.fb-row`'s own value is already exact here. Mechanism at
+   `.fb-row`; measured per tier by files-row-metrics.test.ts. */
 .fb-search-hit {
   cursor: pointer;
-  /* A hit row carries a path, a line number and an excerpt, so it is taller and
-     more variable than a listing row; the fixed intrinsic size that bounds the
-     listing's paint would be wrong here. */
-  contain-intrinsic-size: auto 2.75rem;
 }
 
 .fb-search-lineno {

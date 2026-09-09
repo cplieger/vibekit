@@ -29,6 +29,10 @@ interface PushPageMessage {
  *  copy). Asserted against the Go constant by push-subject.test.ts. */
 const PR_SUBJECT_PREFIX = "pr:";
 
+/** Subject-key prefix for a workflow run (vibekit.RunSubjectPrefix, and sw.ts's own
+ *  copy). The third copy of that literal, pinned by the same test. */
+const RUN_SUBJECT_PREFIX = "run:";
+
 function isPushMessage(d: unknown): d is PushPageMessage {
   if (typeof d !== "object" || d === null) {
     return false;
@@ -41,11 +45,29 @@ function isPushMessage(d: unknown): d is PushPageMessage {
   );
 }
 
-/** Where a clicked notification goes: a PR subject opens the git view, and
- *  everything else routes by chat id. */
+/** Open a run's own tab. Lazily imported the way find-in-chat.ts imports it, so the
+ *  static bundle does not pull exec-view/** in for a rarely-taken branch, and called
+ *  with an empty name so the tab factory derives the label from the run store. */
+async function openRun(workflowID: string): Promise<void> {
+  const { openRunView } = await import("../run-view.js");
+  openRunView(workflowID, "");
+}
+
+/** Where a clicked notification goes: a PR subject opens the git view, a run subject
+ *  opens that run's tab, and everything else routes by chat id. */
 export function routePushMessage(msg: PushPageMessage): void {
-  if ((msg.subject ?? "").startsWith(PR_SUBJECT_PREFIX)) {
+  const subject = msg.subject ?? "";
+  if (subject.startsWith(PR_SUBJECT_PREFIX)) {
     openChangeSet();
+    return;
+  }
+  if (subject.startsWith(RUN_SUBJECT_PREFIX)) {
+    // Without this arm the click falls through the chat-id check below and does
+    // nothing: a run's notification carries no chat.
+    const workflowID = subject.slice(RUN_SUBJECT_PREFIX.length);
+    if (workflowID !== "") {
+      void openRun(workflowID);
+    }
     return;
   }
   if (msg.chatId === "") {
@@ -75,6 +97,14 @@ export function initPushMessages(): void {
     }
     if (msg.reason === "clicked") {
       routePushMessage(msg);
+      return;
+    }
+    // A run completion is already on screen: handlers/run.ts toastCompletion renders
+    // it on a focused page and renders it better, carrying the verdict as the toast
+    // LEVEL where a push body is one info toast. A second toast is one fact twice.
+    // The class does not exist for agent_finished, whose foreground channel is
+    // notifyIfHidden and so is already silent on a focused page.
+    if ((msg.subject ?? "").startsWith(RUN_SUBJECT_PREFIX)) {
       return;
     }
     toast.info(notice(msg));

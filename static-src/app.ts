@@ -15,19 +15,9 @@
 // local mutations.
 // ---------------------------------------------------------------------------
 
-import type { ServerEvent, ModelInfo, SessionModel } from "./types.js";
-import { setCatalogModes } from "./roles.js";
-import { setCatalogEfforts } from "./effort.js";
-import {
-  MODEL_CONTEXT_SIZES,
-  parseContextSize,
-  getActiveId,
-  getActive,
-  get,
-  getSessions,
-  isThinking,
-} from "./store.js";
-import { settleDeepLinkedChat } from "./deep-link.js";
+import type { ServerEvent } from "./types.js";
+import { getActiveId, get, getSessions, isThinking } from "./store.js";
+import { admitLocation, settleDeepLinkedChat } from "./deep-link.js";
 import { effect } from "@cplieger/reactive";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_TRANSPORT_GAP } from "./bus.js";
 import { findGlyph } from "./icons.js";
@@ -41,31 +31,22 @@ import { initRolePicker } from "./role-picker.js";
 import * as transport from "./transport.js";
 import { initUI, renderIdentity } from "./settings.js";
 import { initPostAuth, onTransportStatus, startBoot } from "./boot.js";
+import { snapshotDeclaration } from "./snapshot-declaration.js";
 import { resolveIdentity } from "./identity.js";
-import { apiGetTyped } from "./api-client.js";
-import { decodeConfigTemplateResponse } from "./wire/decoders.gen.js";
-import type { ConfigTemplateResponse } from "./wire/types.gen.js";
+import { fetchCatalog } from "./session-catalog.js";
 import {
   setOnEmpty,
-  getActiveTabRoute,
   openTab,
   setSettingsTab,
   setGitTab,
   setDocsTab,
-  tabIdForRoute,
   activeChatRef,
 } from "./tabs.js";
 import { markBootDone } from "./view-swap.js";
 import { ingestTabsChanged, listTabs } from "./tabs-sync.js";
 import { replaceRoute, onPopState } from "./router.js";
-import type { Route } from "./router.js";
-import {
-  refreshPickerIfVisible,
-  setPickerModels,
-  initModelPicker,
-  setCatalogPhase,
-} from "./picker.js";
-import { refreshCatalog, CATALOG_REQUEST_TIMEOUT_MS } from "./model-catalog.js";
+import type { Route, RouteOrigin } from "./router.js";
+import { initModelPicker } from "./picker.js";
 import { refreshRuntimeLine } from "./status.js";
 import { initShellPanel } from "./shell.js";
 import { hideLoginModal, initLoginModal } from "./modals.js";
@@ -113,7 +94,6 @@ import { initPendingSteers } from "./pending-steers.js";
 import { initRunBar } from "./run-bar.js";
 import { initChatOptions } from "./chat-options.js";
 import { mountDecisionDock } from "./decision-dock.js";
-import { refreshContextUI } from "./context-ui.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
 
 import "./handlers/chat.js";
@@ -125,6 +105,7 @@ import "./handlers/safety.js";
 import "./handlers/run.js";
 import { installRunDotSubscriber } from "./run-dots.js";
 import { installSubagentDotSubscriber } from "./subagent-dots.js";
+import { installChatRunDotSubscriber } from "./chat-run-dots.js";
 import "./handlers/steer.js";
 import { initPushMessages } from "./handlers/push-message.js";
 import { initLaunchQueue } from "./share-target.js";
@@ -190,15 +171,6 @@ function init(): void {
     void listTabs();
   });
 
-  // Re-read the pre-session catalog after a gap: the server may have restarted, so the
-  // utility session is new and the answer can differ. Beside the tab re-list rather than
-  // inside `initPostAuth`, which is `boot.ts`'s and cannot reach this module's fetch — so
-  // a signed-out page session also arms it, where the read simply fails and the policy
-  // treats that as transient.
-  onBus(BUS_TRANSPORT_GAP, () => {
-    void fetchModelsFromREST();
-  });
-
   // Before the transport opens: decoders run in transport.ts ahead of dispatch(), and an
   // event whose payload fails validation is dropped rather than handed on partial. The
   // set is generated from Go structs by cmd/wire-codegen.
@@ -208,7 +180,12 @@ function init(): void {
   // transport holds no store state and importing store.ts from it risks a cycle. It
   // is what the connect replay reads to decide which busy chats need their in-flight
   // transcript, and the server cannot derive it — the active chat is per-DEVICE.
-  transport.setSnapshotChatProvider(() => getActiveId());
+  //
+  // The resolver is a leaf of its own (`snapshot-declaration.ts`), because the answer
+  // has four states and one of them cannot be reached from here: this runs before
+  // `startBoot`, so the active chat is still "" and only the URL names the chat the
+  // reader is on.
+  transport.setSnapshotChatProvider(snapshotDeclaration);
 
   transport.init((evt: ServerEvent) => {
     dispatch(evt);
@@ -224,6 +201,13 @@ function init(): void {
   // The same dot for a SUBAGENT's row. Here for the reason above: an effect running at
   // import would paint against a strip that has not been restored yet.
   installSubagentDotSubscriber();
+
+  // The WORKFLOW mark on a CHAT's row — the second mark in its leading cluster, for
+  // a run that chat launched and that outlives the turn which started it. Here for
+  // the same reason: the tab restore runs inside startBoot() at the end of init(), so
+  // every one of these three first passes sees an empty projection and repaints on the
+  // bump that restore produces.
+  installChatRunDotSubscriber();
 
   // The out-of-page attention surfaces, folded from the chat tabs' dots. Before any tab
   // is opened, because it captures the served <title> as its base.
@@ -402,7 +386,7 @@ function onLoginSuccess(): void {
   });
   // RESETS a live boot loop rather than being refused by it: a login is exactly the new
   // information that may have fixed the read.
-  void fetchModelsFromREST({ reset: true });
+  void fetchCatalog({ reset: true });
   if (getSessions().length === 0) {
     // DETACHED: nothing below reads it, and `markBootDone()` must not wait on a round
     // trip — it only flips the flag that lets view swaps animate.
@@ -411,93 +395,6 @@ function onLoginSuccess(): void {
   // The unauthenticated boot path returns before applyInitialRoute(), so flip the boot
   // flag here too.
   markBootDone();
-}
-
-/** One catalog entry, mapped from the wire `SessionModel` to the picker's `ModelInfo`.
- *  A named function rather than an inline map because a field carried on the wire and
- *  dropped here is invisible until a control silently loses its input: that is how the
- *  model's default effort tier went missing while the server was sending it. Fields are
- *  spread conditionally rather than assigned undefined — the client compiles under
- *  exactOptionalPropertyTypes. */
-function toModelInfo(m: SessionModel): ModelInfo {
-  return {
-    model_id: m.id,
-    model_name: m.name,
-    ...(m.description === undefined || m.description === "" ? {} : { description: m.description }),
-    rate_multiplier: m.rate_multiplier ?? 1,
-    ...(m.has_effort === undefined ? {} : { has_effort: m.has_effort }),
-    ...(m.default_effort_level === undefined || m.default_effort_level === ""
-      ? {}
-      : { default_effort_level: m.default_effort_level }),
-  };
-}
-
-function fetchModelsFromREST(opts: { readonly reset?: boolean } = {}): Promise<void> {
-  // One fetch seeds BOTH pickers: the model list, and the role picker's mode base
-  // (bundled modes plus the user's global ~/.kiro/agents, richer than the static
-  // BUILTIN_MODES fallback). It is the ONLY feed — the catalog is a workspace fact, and
-  // the server prefers a live session's report over the session-less template.
-
-  // model-catalog.ts owns the POLICY; what stays here is the endpoint and the surfaces it
-  // feeds.
-  return refreshCatalog<ConfigTemplateResponse>(
-    {
-      // Through the GENERATED decoder: the inline `apiGet<{modes: …}>` this replaced was a
-      // CLAIM rather than a check, so a server answering `{}` or `modes: null` produced a
-      // TypeError inside the boot path.
-      read: (signal) =>
-        apiGetTyped(
-          "/api/config-template",
-          decodeConfigTemplateResponse,
-          signal,
-          CATALOG_REQUEST_TIMEOUT_MS,
-        ),
-      // Only a USABLE answer reaches here: an `unavailable` template emits an empty effort
-      // list by construction, so a login-triggered fetch that degraded used to replace the
-      // tiers a successful boot fetch had landed.
-      apply: (d) => {
-        // ONE rule over all three: an EMPTY list is the absence of a vocabulary rather
-        // than a value, so it never replaces one an earlier answer landed. Per list because
-        // each arrives empty on its own — the effort tiers ride the model, and KAS resolves
-        // its model list asynchronously, so a merely COLD cache reports as `empty`.
-        if (d.effort_levels.length > 0) {
-          // A chat with no bridge has no session catalog, so without this the effort
-          // control has neither its tier list nor the level the next session would run at.
-          setCatalogEfforts(d.effort_levels, d.effort_active ?? "");
-        }
-        if (d.modes.length > 0) {
-          setCatalogModes(d.modes);
-        }
-        if (d.models.length > 0) {
-          populatePickerModels(d.models.map(toModelInfo), "");
-        }
-        // The model pill names the chat's reasoning tier, and the catalog this fetch just
-        // landed carries both the per-model capability gate (`has_effort`) and the `default`
-        // rung of the live-tier chain. Nothing else repaints the pill on this path.
-        const active = getActive();
-        if (active !== undefined) {
-          refreshContextUI(active);
-        }
-      },
-      setPhase: setCatalogPhase,
-    },
-    opts,
-  );
-}
-
-/** Merge a model list into the picker cache and context-size table. `activeModel` moves
- *  the active highlight; pass "" when no session is active yet. */
-function populatePickerModels(models: ModelInfo[], activeModel: string): void {
-  for (const m of models) {
-    if (m.description !== undefined && MODEL_CONTEXT_SIZES[m.model_id] === undefined) {
-      const size = parseContextSize(m.description);
-      if (size !== undefined) {
-        MODEL_CONTEXT_SIZES[m.model_id] = size;
-      }
-    }
-  }
-  setPickerModels(models);
-  refreshPickerIfVisible(activeModel === "" ? undefined : activeModel);
 }
 
 // Input handling
@@ -553,7 +450,7 @@ function setupInput(): void {
   // picker.ts. pickModel, not applyLocalModel: a hero-picker pick must PERSIST like a pill
   // pick, or the next header echo clobbers it back. The Retry's promise is RETURNED so
   // picker.ts can announce the answer it settles on.
-  initModelPicker(pickModel, () => fetchModelsFromREST());
+  initModelPicker(pickModel, () => fetchCatalog());
   // The role picker owns the prompt-bar role pill (expand, list, selection).
   initRolePicker();
   // Queued-prompt chips (pending sends buffered while a turn is in flight).
@@ -581,26 +478,20 @@ function setupInput(): void {
 
 // URL routing
 
-/** Where a route came from, because the two answer "this names nothing that is open"
- *  differently.
+/** Apply a route. RESOLVES when the view it names is open, which is what lets the
+ *  router hold its claim on the location for the whole application: the `run` and
+ *  `subagent` arms reach their opener through a dynamic `import()`, and while that
+ *  import is in flight the active row is still whatever the boot restored.
  *
- *  A `deeplink` MAY open what it names; a `history` entry may only ACTIVATE something
- *  already open, because it names a location this browser was at rather than one that
- *  still exists. Closing a tab leaves its URL an entry or more back, and applying such an
- *  entry as a deep link re-opened the tab — then broadcast it to every other device. */
-type RouteOrigin = "deeplink" | "history";
-
-function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): void {
-  // The back/forward guard. Ask the projection FIRST, because every branch below is an
-  // opener and from a Route alone they cannot be told apart.
-  //
-  // The redirect target is the ACTIVE TAB's route, so the URL ends up naming what is on
-  // screen. `replaceRoute` rather than `history.go(-1)`: skipping the entry would walk back
-  // through however many dead ones sit behind it and can leave the app, while a replace
-  // consumes exactly the one location that no longer resolves.
-  if (origin === "history" && tabIdForRoute(route) === "") {
-    replaceRoute(getActiveTabRoute() ?? { kind: "chat", id: "" });
-    return;
+ *  The arms whose opener is `openTab` deliberately do NOT return its chain: that is a
+ *  server mutation bounded only by the API timeout, and awaiting it would hold
+ *  `markBootDone` and the identity region for that long on every deep-linked boot.
+ *  They keep a narrower version of the same exposure — see the report. */
+function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Promise<void> {
+  // Asked FIRST, because every branch below is an opener and from a Route alone they
+  // cannot be told apart. `deep-link.ts` owns what a location is allowed to mean.
+  if (admitLocation(route, origin) === "canonicalized") {
+    return Promise.resolve();
   }
   switch (route.kind) {
     case "chat":
@@ -660,7 +551,9 @@ function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): void {
       void openTab({ kind: "history" });
       break;
     case "run":
-      void import("./run-view.js")
+      // RETURNED rather than voided: the router's claim on this location stands until it
+      // resolves, so no unrelated projection emit can write the URL while the chunk loads.
+      return import("./run-view.js")
         .then(({ openRunView }) => {
           // Deep link: the run's name is not in the URL, so the tab is titled by id until
           // the fetch supplies the real name. It still nests under the launching chat when
@@ -674,23 +567,22 @@ function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): void {
         .catch(() => {
           /* noop */
         });
-      break;
     case "subagent":
       // A delegate's page has nothing to fetch — its blocks are already in the chat store,
       // or they are not resident and the page says so — so this is just the tab.
-      void import("./subagent-view.js")
+      return import("./subagent-view.js")
         .then(({ openSubagentView }) => {
           openSubagentView(route.chat, route.id);
         })
         .catch(() => {
           /* noop */
         });
-      break;
   }
+  return Promise.resolve();
 }
 
 onPopState((route: Route) => {
-  applyRoute(route, "history");
+  void applyRoute(route, "history");
 });
 
 /** Redirect a bare keystroke to the composer, so a fresh chat can be typed into without

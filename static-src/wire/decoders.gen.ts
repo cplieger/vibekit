@@ -19,10 +19,11 @@ const RUN_STEP_TRANSCRIPT_STATES = ["ready", "gone", "unavailable"] as const;
 const SAFETY_STATUSS = ["idle", "formalizing", "evaluating", "blocked", "error"] as const;
 const SETTLED_BYS = ["user", "unattended", "moot"] as const;
 const STEER_ORIGINS = ["user", "agent"] as const;
+const STEER_STATES = ["read", "dropped"] as const;
 const STOP_REASONS = ["end_turn", "cancelled", "interrupted", "refusal", "unknown", "error", "content_filtered", "max_tokens", "max_turn_requests"] as const;
 const TAB_KINDS = ["chat", "editor", "run", "subagent", "settings", "git", "files", "history", "docs"] as const;
 const TOOL_KINDS = ["execute", "shell", "read", "search", "fetch", "edit", "think", "hook", "write", "delete", "move", "command", "browser", "switch_mode", "mcp", "other"] as const;
-const TOOL_STATUSS = ["pending", "in_progress", "completed", "failed"] as const;
+const TOOL_STATUSS = ["pending", "in_progress", "completed", "failed", "aborted"] as const;
 const TURN_OUTCOMES = ["running", "completed", "cancelled", "interrupted", "failed", "refused", "unknown"] as const;
 const USER_KINDS = ["prompt", "steer"] as const;
 const WHOAMI_STATES = ["signed_in", "signed_out", "unavailable"] as const;
@@ -313,6 +314,7 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     notifications_enabled: reqBool(o, "notifications_enabled", "$.effective_settings"),
     notify_agent_finished: reqBool(o, "notify_agent_finished", "$.effective_settings"),
     notify_pr_status: reqBool(o, "notify_pr_status", "$.effective_settings"),
+    notify_run_outcome: reqBool(o, "notify_run_outcome", "$.effective_settings"),
     supervised_default: reqBool(o, "supervised_default", "$.effective_settings"),
     scheduled_auto_approve: reqBool(o, "scheduled_auto_approve", "$.effective_settings"),
     debug_logs: reqBool(o, "debug_logs", "$.effective_settings"),
@@ -586,6 +588,8 @@ export const decodeMessage: Decoder<Message> = (v) => {
   if (reasoning !== undefined) out.reasoning = reasoning;
   if (o["event_kind"] !== undefined && o["event_kind"] !== null) out.event_kind = reqOneOf(o, "event_kind", EVENT_KINDS, "$.message");
   if (o["user_kind"] !== undefined && o["user_kind"] !== null) out.user_kind = reqOneOf(o, "user_kind", USER_KINDS, "$.message");
+  if (o["steer_state"] !== undefined && o["steer_state"] !== null) out.steer_state = reqOneOf(o, "steer_state", STEER_STATES, "$.message");
+  if (o["steer_origin"] !== undefined && o["steer_origin"] !== null) out.steer_origin = reqOneOf(o, "steer_origin", STEER_ORIGINS, "$.message");
   if (o["turn_outcome"] !== undefined && o["turn_outcome"] !== null) out.turn_outcome = reqOneOf(o, "turn_outcome", TURN_OUTCOMES, "$.message");
   if (o["turn_stop_reason_raw"] !== undefined && o["turn_stop_reason_raw"] !== null) out.turn_stop_reason_raw = reqOneOf(o, "turn_stop_reason_raw", STOP_REASONS, "$.message");
   const turnFailureReason = o["turn_failure_reason"] === null ? undefined : optStr(o, "turn_failure_reason", "$.message");

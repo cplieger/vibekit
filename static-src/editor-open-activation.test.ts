@@ -14,6 +14,7 @@
 // thing to pin anyway.
 // ---------------------------------------------------------------------------
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { effect } from "@cplieger/reactive";
 
 /** The tab store reduced to the one fact `open` reads and the one rule
  *  activateTab enforces: the tab's activation hook fires only when the ACTIVE tab
@@ -115,7 +116,7 @@ vi.mock("./dom.js", () => {
 });
 
 const { openFile, activateFile } = await import("./editor-openers.js");
-const { fileStates, setActiveFilePath } = await import("./editor-types.js");
+const { fileStates, setActiveFilePath, getActiveFilePath } = await import("./editor-types.js");
 
 // The registration the composition root performs: the editor tab's activation
 // hook IS activateFile, so the mock above drives it through the same seam
@@ -173,5 +174,38 @@ describe("opening a file activates it once", () => {
     openFile("/workspace/b.go");
     await Promise.resolve();
     expect(fileReads()).toBe(2);
+  });
+});
+
+describe("what an activation has in place before it moves the active path", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fileStates.clear();
+    setActiveFilePath("");
+    activeTab = "";
+    minted.clear();
+  });
+
+  it("has the file's own state in the map on the run the path change triggers", () => {
+    // The contract editor-core's single-writer effect depends on: it tracks the
+    // active path and then that file's `error` and `mode` signals, so it can only
+    // subscribe to the second pair if the state exists on the run the path write
+    // triggers. `activateFile` is the editor tab's `onShow`, so it runs for a tab
+    // RESTORED from the server's set with nothing in the map yet — and an effect
+    // that found no state there never re-runs for the load that follows, which
+    // froze the control's answer until an unrelated git-status scan moved the
+    // store. `open()` has always created the state first, which is why only the
+    // restored-tab route was affected.
+    expect.assertions(1);
+    const seen: boolean[] = [];
+    const dispose = effect(() => {
+      const path = getActiveFilePath();
+      if (path !== "") {
+        seen.push(fileStates.has(path));
+      }
+    });
+    activateFile("/workspace/a.go");
+    dispose();
+    expect(seen).toEqual([true]);
   });
 });

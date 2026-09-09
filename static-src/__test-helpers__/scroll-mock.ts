@@ -5,7 +5,7 @@ import { vi } from "vitest";
 // what lets a suite drive the reading state (`readingState.mockReturnValue`) with
 // the other member of the union: inferred from the default alone, the mock's
 // return type would be the literal "following" and "reading" would not typecheck.
-import type { ReadingState, ViewScrollState } from "../scroll.js";
+import type { ReadingState, ShiftKind, ViewScrollState } from "../scroll.js";
 
 export const scrollMock = {
   getScrollEl: vi.fn(() => document.createElement("div")),
@@ -36,7 +36,11 @@ export const scrollMock = {
   setResumeLabel: vi.fn(),
   // The compensation helpers run their mutation, so a mocked scroll module does
   // not silently skip the DOM change the caller was making.
-  preserveReadingPosition: vi.fn((mutate: () => void) => {
+  //
+  // `kind` is declared even though nothing here reads it, because the real export
+  // takes it: without it the spy's call tuple is length 1 and a suite asserting
+  // WHICH shift a caller declared does not typecheck.
+  preserveReadingPosition: vi.fn((mutate: () => void, _kind: ShiftKind) => {
     mutate();
   }),
   deferWhileReading: vi.fn((mutate: () => void) => {

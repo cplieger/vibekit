@@ -1,9 +1,7 @@
 package bridge
 
 import (
-	"bytes"
 	"context"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -288,10 +286,7 @@ func TestStart_ScreensCredentialsOutOfTheSpawnAndNamesThem(t *testing.T) {
 	dumpPath := filepath.Join(dir, "child.env")
 	scriptPath := envDumpFake(t, dir, dumpPath)
 
-	logs := &bytes.Buffer{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logs := captureLogs(t)
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)

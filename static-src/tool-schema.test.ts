@@ -9,8 +9,11 @@ import {
   readSubject,
   formatMCPToolName,
   renderInfoFor,
+  isToolActive,
+  isToolDone,
 } from "./tool-schema.js";
 import type { ToolKind, ToolDepth1 as Depth1 } from "./tool-schema.js";
+import type { ToolStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // mcpToolInfo — table-driven
@@ -357,4 +360,35 @@ describe("renderInfoFor", () => {
     expect(info.filePath).toBe("dest.ts");
     expect(info.fileBasename).toBe("dest.ts");
   });
+});
+
+// ---------------------------------------------------------------------------
+// isToolActive / isToolDone — the two predicates every settled-card rule reads
+// ---------------------------------------------------------------------------
+
+describe("the status predicates partition the wire enum", () => {
+  /** Keyed over the GENERATED union so the table is complete in both directions at
+   *  compile time, the shape `store.test.ts`'s `DOT_BY_TOOL_STATUS` states in full.
+   *
+   *  `active` and `done` must stay complements: `messages-tools.ts` stamps a duration
+   *  and collapses a group on `done`, and a status answering neither is a card that
+   *  never settles. That is why `aborted` is here — a call vibekit settled at turn
+   *  close is terminal, not a third state. */
+  const PREDICATES: Readonly<Record<ToolStatus, { active: boolean; done: boolean }>> = {
+    pending: { active: true, done: false },
+    in_progress: { active: true, done: false },
+    completed: { active: false, done: true },
+    failed: { active: false, done: true },
+    aborted: { active: false, done: true },
+  };
+
+  for (const [status, want] of Object.entries(PREDICATES) as (readonly [
+    ToolStatus,
+    { active: boolean; done: boolean },
+  ])[]) {
+    it(`reads ${status} as active=${String(want.active)} done=${String(want.done)}`, () => {
+      expect(isToolActive(status)).toBe(want.active);
+      expect(isToolDone(status)).toBe(want.done);
+    });
+  }
 });

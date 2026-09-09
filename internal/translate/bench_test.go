@@ -108,18 +108,25 @@ func (d *baseDeps) SteerRead(chatID vibekit.ChatID, steerID string) {
 	d.SteerForgotten(chatID, []string{steerID})
 }
 
-func (d *baseDeps) SteerForgotten(chatID vibekit.ChatID, steerIDs []string) {
+// Returns the entries it HELD, like the real buffer: that subset is the steers
+// nothing read, and the only place their text survives once the cleared frame
+// (which carries ids alone) arrives.
+func (d *baseDeps) SteerForgotten(chatID vibekit.ChatID, steerIDs []string) []vibekit.SteerQueuedPayload {
 	gone := make(map[string]bool, len(steerIDs))
 	for _, id := range steerIDs {
 		gone[id] = true
 	}
+	var held []vibekit.SteerQueuedPayload
 	kept := d.waiting[chatID][:0]
 	for _, e := range d.waiting[chatID] {
-		if !gone[e.SteerID] {
-			kept = append(kept, e)
+		if gone[e.SteerID] {
+			held = append(held, e)
+			continue
 		}
+		kept = append(kept, e)
 	}
 	d.waiting[chatID] = kept
+	return held
 }
 
 func (d *baseDeps) Output(terminalID string) (string, []vibekit.TextSpan, bool) {

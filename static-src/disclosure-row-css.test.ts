@@ -178,11 +178,20 @@ describe("tool card summary affordance", () => {
     expect(css(summary, "cursor")).toBe("auto");
   });
 
-  it("a claim-only header reserves no chevron gutter", async () => {
-    // The other half of the region-keyed split, and the reason it is keyed on the
-    // region rather than declared on `.tool-header` outright: most cards in a
-    // transcript are claim-only, and an unconditional reservation would leave 32px
-    // of dead trailing space on every one of them.
+  // A CLAIM-ONLY CARD HOLDS THE CHEVRON COLUMN OPEN TOO, so a mixed run of cards
+  // reads as a list rather than a ragged one. The chevron leads (chevron.ts: a
+  // disclosure chevron leads and rotates) and about a fifth of a transcript's tool
+  // calls are claim-only `read`s, so a gutter conditional on the region would step
+  // every kind glyph in and out by 32px down a single tool group.
+  //
+  // OVERTURNS its predecessor, which asserted the opposite — that a claim-only
+  // header reserves NO gutter — on the reasoning that an unconditional reservation
+  // leaves dead space. That was true of a TRAILING gutter, where the space is at the
+  // row's far end and nothing lines up against it. A leading one is a column, and a
+  // column that appears and disappears is worse than a column that is sometimes
+  // empty: a leaf with an empty twist is the file-tree reading, which is also the
+  // relationship `.tool-group-header`'s own chevron has with the rows under it.
+  it("keeps the kind-glyph column straight across a mixed group", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const claimOnly = mount(
       buildToolCard({
@@ -203,8 +212,17 @@ describe("tool card summary affordance", () => {
       output: "done\n",
     });
     host.appendChild(withRegion);
-    const reserved = css(withRegion.querySelector(".tool-header")!, "padding-inline-end");
-    expect(css(claimOnly.querySelector(".tool-header")!, "padding-inline-end")).not.toBe(reserved);
+    expect(claimOnly.querySelector(".tool-disclosure")).toBeNull();
+    const iconX = (card: Element): number =>
+      card.querySelector(".tool-icon")!.getBoundingClientRect().x;
+    expect(iconX(claimOnly)).toBeCloseTo(iconX(withRegion), 1);
+    // And the column is the chevron's own width plus a gap, not an arbitrary indent.
+    const header = withRegion.querySelector<HTMLElement>(".tool-header")!;
+    const toggle = withRegion.querySelector<HTMLElement>(".tool-disclosure")!;
+    const t = toggle.getBoundingClientRect();
+    expect(
+      header.getBoundingClientRect().x + Number.parseFloat(css(header, "padding-left")),
+    ).toBeCloseTo(t.right + 8, 1);
     withRegion.remove();
   });
 
@@ -271,7 +289,17 @@ describe("tool card summary affordance", () => {
     expect(backgroundWriters(subtitle)).toEqual([]);
   });
 
-  it("centres the chevron against the whole two-line summary", async () => {
+  // THE CHEVRON IS IN LINE WITH THE TITLE, not centred on the whole summary, and
+  // this is the assertion that makes the box agree with the other eight. It used
+  // to be the inverse: the chevron's containing block was `.tool-summary`, so on a
+  // two-line card the glyph sat BETWEEN the lines — measured 10.2px below the
+  // title's centre against 0 on every other transcript box, which is the reported
+  // "some arrows are vertically centered and some in line with the box title".
+  //
+  // Measured against the TITLE rather than against `.tool-header`, because the
+  // header is what moved and a header-relative assertion would pass under either
+  // rule the moment the subtitle happened to be absent.
+  it("aligns the chevron with the title on a two-line card", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const card = mount(
       buildToolCard({
@@ -285,74 +313,133 @@ describe("tool card summary affordance", () => {
       }),
     );
     const summary = card.querySelector<HTMLElement>(".tool-summary")!;
+    const title = card.querySelector<HTMLElement>(".tool-title")!;
     const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
-    const s = summary.getBoundingClientRect();
-    const t = toggle.getBoundingClientRect();
-    expect(Math.abs(t.y + t.height / 2 - (s.y + s.height / 2))).toBeLessThanOrEqual(1);
+    const centre = (el: Element): number => {
+      const r = el.getBoundingClientRect();
+      return r.y + r.height / 2;
+    };
+    expect(Math.abs(centre(toggle) - centre(title))).toBeLessThanOrEqual(1);
+    // And the summary is genuinely two rows, or the case above proves nothing:
+    // on a one-line card the title's centre and the summary's coincide.
+    expect(Math.abs(centre(toggle) - centre(summary))).toBeGreaterThan(4);
   });
 
-  // THE CHEVRON'S COLUMN IS RESERVED BY EVERY ROW OF THE SUMMARY, not only the
-  // title row. The chevron is absolutely positioned against the whole summary
-  // (the rule above), so a second row reserving only the plain gutter runs its
-  // own content box — and therefore its ellipsis — under the glyph. `.tool-header`
-  // carried the reservation from the start and these two did not, which a reader
-  // sees on a run-command card as the `...` ending underneath the `>`.
-  //
-  // The clip edge is the CONTENT box, because that is where `text-overflow`
-  // renders, and reading it as a box rather than as text keeps the assertion
-  // independent of the font.
-  it("keeps the subtitle's clip edge clear of the chevron", async () => {
+  // OUT OF FLOW, because in flow it drives the row's height. As the last flex
+  // child of the title row a 24px box exceeds the title's ~20px line box, and the
+  // header measured 40px against `.tool-group-header`'s 36 — a member row taller
+  // than the group header above it, the looks-random height defect `.tool-header`
+  // records at its own `min-height`.
+  it("contributes no height to the title row", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const card = mount(
       buildToolCard({
-        id: "css-subtitle-gutter",
-        // A disclosable card, because the chevron this measures against is
-        // detached at build for a card with nothing to reveal.
-        output: "ok\tvibekit\t0.5s\n",
+        id: "css-chevron-height",
+        output: "ok\n",
         title: "Run Command",
         kind: "execute",
         status: "completed",
-        input: { command: "go test ./... && go vet ./... && golangci-lint run ./..." },
+        input: { command: "go vet ./..." },
         live: false,
       }),
     );
-    const subtitle = card.querySelector<HTMLElement>(".tool-subtitle")!;
     const header = card.querySelector<HTMLElement>(".tool-header")!;
     const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
-    const clipRight =
-      subtitle.getBoundingClientRect().right - Number.parseFloat(css(subtitle, "padding-right"));
-    expect(clipRight).toBeLessThanOrEqual(toggle.getBoundingClientRect().left);
-    // One gutter for the whole summary: the second row ends where the title row
-    // ends, so a partial reservation fails here rather than merely reading tight.
-    expect(clipRight).toBeCloseTo(
-      header.getBoundingClientRect().right - Number.parseFloat(css(header, "padding-right")),
+    expect(css(toggle, "position")).toBe("absolute");
+    expect(header.getBoundingClientRect().height).toBeCloseTo(
+      Number.parseFloat(css(header, "min-height")),
       1,
     );
   });
 
-  it("keeps the move row's clip edge clear of the chevron", async () => {
-    const { buildToolCard } = await import("./tool-card.js");
-    const card = mount(
-      buildToolCard({
-        id: "css-move-gutter",
-        // Disclosable, for the same reason as the subtitle case above.
+  // NOTHING RUNS UNDER THE CHEVRON, AT EITHER POINTER TIER. Tier-blindness is how
+  // the defect this replaces shipped: the gutter was a literal `1.5rem` while the
+  // button's width is the hit floor's, 24px on fine and 44px on coarse, so a phone
+  // rendered the title row and the subtitle 12px under the glyph — the very overlap
+  // the gutter exists to prevent, one tier over, with the old assertions green
+  // because they only ever ran on the default tier.
+  //
+  // The measured edge is the CONTENT box, because that is where `text-overflow`
+  // renders, and reading it as a box rather than as text keeps the assertion
+  // independent of the font.
+  for (const tier of ["fine", "coarse"] as const) {
+    it(`keeps every summary row clear of the chevron on the ${tier} tier`, async () => {
+      document.documentElement.setAttribute("data-pointer", tier);
+      try {
+        const { buildToolCard } = await import("./tool-card.js");
+        const card = mount(
+          buildToolCard({
+            id: `css-title-gutter-${tier}`,
+            // A disclosable card, because the chevron this measures against is
+            // detached at build for a card with nothing to reveal.
+            output: "ok\tvibekit\t0.5s\n",
+            title: "Run Command",
+            kind: "execute",
+            status: "completed",
+            input: { command: "go test ./... && go vet ./... && golangci-lint run ./..." },
+            live: false,
+          }),
+        );
+        const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
+        const glyphRight = toggle.getBoundingClientRect().right;
+        // EVERY row of the summary, not just the title: they are one card's rows and
+        // a reader reads down the column, so all three start at the same edge.
+        for (const sel of [".tool-header", ".tool-subtitle"]) {
+          const row = card.querySelector<HTMLElement>(sel)!;
+          const contentLeft =
+            row.getBoundingClientRect().x + Number.parseFloat(css(row, "padding-left"));
+          expect(contentLeft, sel).toBeGreaterThanOrEqual(glyphRight);
+        }
+        // The button's own box is pinned, which is what makes the gutter's arithmetic
+        // true at both tiers. Left to the floor it is 44px on coarse and the gutter
+        // is 20px short.
+        expect(toggle.getBoundingClientRect().width).toBeCloseTo(24, 1);
+      } finally {
+        document.documentElement.removeAttribute("data-pointer");
+      }
+    });
+  }
+
+  // A SECOND ROW ALIGNS WITH THE TITLE, not with the chevron: the subtitle and the
+  // move row are the same card's later lines rather than children of the disclosure,
+  // so they start where the kind glyph starts.
+  for (const [name, opts] of [
+    [
+      "subtitle",
+      {
+        id: "css-subtitle-align",
+        output: "ok\tvibekit\t0.5s\n",
+        title: "Run Command",
+        kind: "execute",
+        input: { command: "go test ./... && go vet ./... && golangci-lint run ./..." },
+      },
+    ],
+    [
+      "move row",
+      {
+        id: "css-move-align",
         output: "moved 1 file\n",
         title: "Move File",
         kind: "move",
-        status: "completed",
         input: {
           sourcePath: "static-src/css/14-tools.css",
           destinationPath: "static-src/css/15-tool-cards.css",
         },
-        live: false,
-      }),
-    );
-    const row = card.querySelector<HTMLElement>(".tool-move-row")!;
-    const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
-    const clipRight =
-      row.getBoundingClientRect().right - Number.parseFloat(css(row, "padding-right"));
-    expect(clipRight).toBeLessThanOrEqual(toggle.getBoundingClientRect().left);
-  });
+      },
+    ],
+  ] as const) {
+    it(`starts the ${name} on the kind glyph's column`, async () => {
+      const { buildToolCard } = await import("./tool-card.js");
+      const card = mount(buildToolCard({ ...opts, status: "completed", live: false }));
+      const row = card.querySelector<HTMLElement>(
+        name === "subtitle" ? ".tool-subtitle" : ".tool-move-row",
+      )!;
+      const icon = card.querySelector<HTMLElement>(".tool-icon")!;
+      const contentLeft =
+        row.getBoundingClientRect().x + Number.parseFloat(css(row, "padding-left"));
+      expect(contentLeft).toBeCloseTo(icon.getBoundingClientRect().x, 1);
+    });
+  }
 
   it("nothing paints a claim-only summary", async () => {
     const { buildToolCard } = await import("./tool-card.js");
@@ -554,10 +641,22 @@ describe("turn card header affordance", () => {
   });
 
   it("the glyph did not grow with its hit target", async () => {
-    // The extra 8px is hit area, not ink: the chevron stays 0.75rem.
+    // The extra hit area is not ink: the button clears the 24px floor while the
+    // glyph stays well inside it.
+    //
+    // Stated as ink-inside-target rather than as a literal `--chev-size`. It was
+    // pinned at 0.75rem, which was one of four sites overriding the token default —
+    // so the same glyph rendered at 12px on this toggle and 14px on the tool card
+    // in the same turn, and the assertion was defending the divergence. The
+    // property the test exists for is that growing the TARGET did not grow the
+    // MARK, and that survives the size being shared.
     const card = await turn("open");
+    const btn = card.querySelector<HTMLElement>(".turn-fold-toggle")!;
+    const svg = card.querySelector<HTMLElement>(".turn-fold-toggle > .disclosure-chevron > svg")!;
+    expect(svg.getBoundingClientRect().width).toBeLessThan(btn.getBoundingClientRect().width);
+    // One size across the transcript: the base rule's token, not a per-site override.
     const glyph = card.querySelector<HTMLElement>(".turn-fold-toggle > .disclosure-chevron")!;
-    expect(css(glyph, "--chev-size").trim()).toBe("0.75rem");
+    expect(css(glyph, "--chev-size").trim()).toBe("0.875rem");
   });
 });
 

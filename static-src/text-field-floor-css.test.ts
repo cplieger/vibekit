@@ -163,6 +163,21 @@ describe("the floor, measured over the shipped markup", () => {
     return out;
   }
 
+  /** Every control that computes ABOVE the threshold, named for the same reason
+   *  the list below it names its members: the day one appears, the failure has to
+   *  say WHICH control wants more than the floor. */
+  function aboveThreshold(): string[] {
+    const out: string[] = [];
+    for (const el of document.querySelectorAll(CONTROLS)) {
+      const px = Number.parseFloat(getComputedStyle(el).fontSize);
+      if (px > THRESHOLD_PX) {
+        const type = el instanceof HTMLInputElement ? `[${el.type}]` : "";
+        out.push(`${el.tagName.toLowerCase()}${type}#${el.id} = ${px}px`);
+      }
+    }
+    return out;
+  }
+
   it("puts every text control at or over 16px on a coarse pointer", async () => {
     await mountPage(390, 844, "coarse");
     // Enumerated, never listed: the count is asserted only as a floor, so a
@@ -170,6 +185,17 @@ describe("the floor, measured over the shipped markup", () => {
     // markup change that emptied the page could not make it pass vacuously.
     expect(document.querySelectorAll(CONTROLS).length).toBeGreaterThan(40);
     expect(belowThreshold()).toEqual([]);
+  });
+
+  it("OWNS the size too, so no coarse-tier control computes above the floor", async () => {
+    // The rule's ownership runs UP as well as down (why: the note at the rule in
+    // `61-mcp-tools.css`), so this case is what fails the day a control wants more
+    // than the floor and needs a carve-out selector. ONE viewport, unlike the
+    // below-floor case: both tier arms carry a byte-identical declaration, so a
+    // second adds no discriminating power for THIS assertion.
+    await mountPage(390, 844, "coarse");
+    expect(document.querySelectorAll(CONTROLS).length).toBeGreaterThan(40);
+    expect(aboveThreshold()).toEqual([]);
   });
 
   it("does the same on a WIDE coarse viewport, which is the arm's own population", async () => {

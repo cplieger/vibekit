@@ -1,5 +1,6 @@
 // ---------------------------------------------------------------------------
-// subagent-slice: what ONE delegate is, projected out of a chat's messages.
+// subagent-slice: what a delegate is — and what the pipeline around it is —
+// projected out of a chat's messages.
 //
 // A subagent execution has no record of its own anywhere. There is no
 // `/api/subagents/{id}`, no `subagent_*` SSE event and no store keyed by
@@ -33,7 +34,9 @@ import { blockKey } from "./store-signals.js";
  *
  *  Duplicated from `messages-blocks.ts` deliberately rather than imported: that
  *  module reaches the whole transcript stack, and this one is a leaf two other leaves
- *  read. The pair is pinned by `subagent-slice.test.ts` against the same literals. */
+ *  read. Both copies are pinned against the same literals, each from its own side:
+ *  `subagent-exec-source.test.ts` reads `pipelineOf`/`stageName` directly, and
+ *  `messages-blocks.test.ts` drives its copy through the transcript's nesting. */
 const STAGE_PREFIX = "invoke_subagent_";
 const STAGE_SEP = "_stage_";
 
@@ -135,54 +138,6 @@ export function findSubagentInvocation(
   return undefined;
 }
 
-/** Project one delegate out of a conversation.
- *
- *  Walks EVERY message rather than stopping at the first match, because a turn
- *  split by a mid-turn model switch puts one delegate's blocks in two assistant
- *  messages, and a slice that stopped early would silently truncate its output.
- *
- *  `chatLive` is the fallback for `live` only — see that field's own note. */
-export function sliceSubagent(
-  messages: readonly Message[],
-  subtaskID: string,
-  chatLive: boolean,
-): SubagentSlice {
-  const blocks: Block[] = [];
-  const toolCalls: ToolCall[] = [];
-  const sourceKeys: string[] = [];
-  const invocation = findSubagentInvocation(messages, subtaskID);
-  const live = invocation === undefined ? chatLive : isToolActive(invocation.status);
-  if (subtaskID === "") {
-    return { invocation: undefined, blocks, toolCalls, sourceKeys, live };
-  }
-  const invocationID = invocation?.id ?? "";
-  for (const m of messages) {
-    const own = m.blocks ?? [];
-    for (let i = 0; i < own.length; i++) {
-      const block = own[i];
-      if (block === undefined || (block.agent_subtask_id ?? "") !== subtaskID) {
-        continue;
-      }
-      // The invocation is the PAGE's header, so its block does not become a row.
-      if (block.type === "tool_use" && (block.tool_call_id ?? "") === invocationID) {
-        continue;
-      }
-      // A fresh object with the attribution removed: mutating the store's block
-      // would delete the id the TRANSCRIPT groups on, so the inline card would
-      // scatter its contents the moment this page was opened.
-      const { agent_subtask_id: _dropped, ...rest } = block;
-      blocks.push(rest);
-      sourceKeys.push(blockKey(m.id, i));
-    }
-    for (const tc of m.tool_calls ?? []) {
-      if ((tc.agent_subtask_id ?? "") === subtaskID && tc.id !== invocationID) {
-        toolCalls.push(tc);
-      }
-    }
-  }
-  return { invocation, blocks, toolCalls, sourceKeys, live };
-}
-
 /** A shape signature over a slice's blocks, for deciding whether a mounted
  *  render can be UPDATED or has to be rebuilt.
  *
@@ -271,4 +226,117 @@ export function groupOf(messages: readonly Message[], subtaskID: string): Subage
     }
   }
   return { pipeline, driver, members };
+}
+
+/** A whole GROUP projected out of one conversation: what the requested delegate
+ *  belongs to, plus a slice for every member of it. */
+export interface SubagentProjection {
+  /** The pipeline the requested delegate belongs to, and its siblings. */
+  readonly group: SubagentGroup;
+  /** One slice per subtask id the group names, the requested delegate included.
+   *
+   *  Every named id HAS an entry, empty or not, because "not projected" and
+   *  "projected and empty" are different answers and the page says different things
+   *  for each: a delegate dispatched a moment ago has a real empty slice, while an id
+   *  this projection does not name is not a delegate of this group at all. */
+  readonly slices: Map<string, SubagentSlice>;
+}
+
+/** What one member accumulates while the walk runs. */
+interface Draft {
+  blocks: Block[];
+  toolCalls: ToolCall[];
+  sourceKeys: string[];
+}
+
+/** Project a delegate AND its siblings out of a conversation.
+ *
+ *  ONE walk answers for every member, mirroring `sliceRunSteps`: a pipeline's stages
+ *  are interleaved with each other and with the chat's own blocks, and the page needs
+ *  all of them — a stage's page shows the WHOLE pipeline — so a per-member walk would
+ *  be N passes over the same window on every repaint.
+ *
+ *  Walks EVERY message rather than stopping at the first match, because a turn split
+ *  by a mid-turn model switch puts one delegate's blocks in two assistant messages,
+ *  and a slice that stopped early would silently truncate its output.
+ *
+ *  `chatLive` is the fallback for `live` only, per member — see that field's own
+ *  note. A stage can finish while its siblings and the conversation carry on.
+ *
+ *  `subtaskID === ""` names no delegate, so the projection is empty and the walk is
+ *  skipped: the page early-returns on that before it ever gets here. */
+export function sliceSubagentGroup(
+  messages: readonly Message[],
+  subtaskID: string,
+  chatLive: boolean,
+): SubagentProjection {
+  const group = groupOf(messages, subtaskID);
+  const invocations = new Map<string, ToolCall>();
+  const drafts = new Map<string, Draft>();
+  for (const m of group.members) {
+    invocations.set(m.subtaskID, m.invocation);
+    drafts.set(m.subtaskID, { blocks: [], toolCalls: [], sourceKeys: [] });
+  }
+  // The requested delegate is already a member whenever it is a STAGE — `groupOf`
+  // resolves the pipeline off its own invocation and then finds itself — so this
+  // branch is the plain `invoke_sub_agent` case, and only it pays for a second
+  // tool-call walk.
+  if (subtaskID !== "" && !drafts.has(subtaskID)) {
+    drafts.set(subtaskID, { blocks: [], toolCalls: [], sourceKeys: [] });
+    const own = findSubagentInvocation(messages, subtaskID);
+    if (own !== undefined) {
+      invocations.set(subtaskID, own);
+    }
+  }
+
+  for (const m of messages) {
+    const own = m.blocks ?? [];
+    for (let i = 0; i < own.length; i++) {
+      const block = own[i];
+      if (block === undefined) {
+        continue;
+      }
+      const id = block.agent_subtask_id ?? "";
+      const draft = drafts.get(id);
+      if (draft === undefined) {
+        continue;
+      }
+      // A delegate's own invocation is its PAGE HEADER, so its block does not become
+      // a row. Its SIBLING's invocation is not skipped here, because a sibling's
+      // block carries the sibling's subtask id and lands in that member's slice.
+      if (block.type === "tool_use" && (block.tool_call_id ?? "") === idOf(invocations, id)) {
+        continue;
+      }
+      // A fresh object with the attribution removed: mutating the store's block
+      // would delete the id the TRANSCRIPT groups on, so the inline card would
+      // scatter its contents the moment this page was opened.
+      const { agent_subtask_id: _dropped, ...rest } = block;
+      draft.blocks.push(rest);
+      draft.sourceKeys.push(blockKey(m.id, i));
+    }
+    for (const tc of m.tool_calls ?? []) {
+      const id = tc.agent_subtask_id ?? "";
+      const draft = drafts.get(id);
+      if (draft === undefined || tc.id === idOf(invocations, id)) {
+        continue;
+      }
+      draft.toolCalls.push(tc);
+    }
+  }
+
+  const slices = new Map<string, SubagentSlice>();
+  for (const [id, draft] of drafts) {
+    const invocation = invocations.get(id);
+    slices.set(id, {
+      invocation,
+      ...draft,
+      live: invocation === undefined ? chatLive : isToolActive(invocation.status),
+    });
+  }
+  return { group, slices };
+}
+
+/** One member's invocation tool-call id, or "" when its invocation is not resident. */
+function idOf(invocations: ReadonlyMap<string, ToolCall>, subtaskID: string): string {
+  return invocations.get(subtaskID)?.id ?? "";
 }

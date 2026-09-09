@@ -39,11 +39,12 @@ func EffectiveDefaults() vibekit.EffectiveSettings {
 		AgentIgnoreFiles:  DefaultAgentIgnoreFiles(),
 		ChatRetentionDays: DefaultChatRetentionDays,
 		KnowledgeEnabled:  DefaultKnowledgeEnabled,
-		// The two per-kind push switches default ON, mirroring push.kindRegistry,
+		// The three per-kind push switches default ON, mirroring push.kindRegistry,
 		// while the master switch below defaults OFF. The polarity genuinely differs
 		// between them, which is why neither is safe for a client to guess.
 		NotifyAgentFinished: true,
 		NotifyPRStatus:      true,
+		NotifyRunOutcome:    true,
 		// Everything else is its zero value, and each one is the right answer rather
 		// than an omission: no theme or browser path chosen, no remembered model or
 		// effort, push off until asked for, tool search off to match kiro-cli, memory
@@ -130,6 +131,7 @@ func effectiveSetters(out *vibekit.EffectiveSettings) map[string]func(json.RawMe
 		KeyNotificationsEnabled: func(r json.RawMessage) error { return decodeInto(&out.NotificationsEnabled, r) },
 		KeyNotifyAgentFinished:  func(r json.RawMessage) error { return decodeInto(&out.NotifyAgentFinished, r) },
 		KeyNotifyPRStatus:       func(r json.RawMessage) error { return decodeInto(&out.NotifyPRStatus, r) },
+		KeyNotifyRunOutcome:     func(r json.RawMessage) error { return decodeInto(&out.NotifyRunOutcome, r) },
 		KeySupervisedDefault:    func(r json.RawMessage) error { return decodeInto(&out.SupervisedDefault, r) },
 		KeyScheduledAutoApprove: func(r json.RawMessage) error { return decodeInto(&out.ScheduledAutoApprove, r) },
 		KeyDebugLogs:            func(r json.RawMessage) error { return decodeInto(&out.DebugLogs, r) },

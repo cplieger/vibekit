@@ -99,14 +99,18 @@ type turnStats struct {
 	ElapsedMs    float64
 }
 
-// StartTurn opens chatID's turn at bridge-ready, immediately before the ACP call, so
-// everything true of the turn is stamped with the bridge live: the answering model, and
-// the credit baseline its spend is measured against. Returns the epoch, on which the
-// caller holds a completion handle until ReleaseTurn; zero means ctx died while the chat
-// was finalizing. WAITS out a finalize in progress, and a prompt-shaped source finding a
-// turn the ENGINE started CLOSES it first — no closer can claim that turn through the
-// BRACKET path, so opening over it would drop content already streamed to clients.
+// StartTurn opens chatID's turn at bridge-ready, immediately before the ACP call, so the
+// answering model and the credit baseline its spend is measured against are both stamped
+// with the bridge live. Returns the epoch, on which the caller holds a completion handle
+// until ReleaseTurn; zero means ctx was ALREADY dead, or died while the chat was
+// finalizing, and every caller's zero-epoch branch broadcasts the terminal frame the turn
+// owes. WAITS out a finalize in progress, and a prompt-shaped source finding a turn the
+// ENGINE started CLOSES it first. A DEAD ctx starts NOTHING, and that check leads here
+// rather than sitting in `turns.open` — `vibekit.md` "A turn opened on a dead ctx" says why.
 func (bc *BridgeCoordinator) StartTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch {
+	if ctx.Err() != nil {
+		return 0
+	}
 	if source.Acknowledgeable() {
 		if displaced, ok := bc.displaceEngineTurn(ctx, chatID); ok {
 			slog.Info("a prompt displaced a live engine-opened turn",
@@ -382,12 +386,10 @@ func (bc *BridgeCoordinator) closeWithOutcome(
 		snap := settleBuffer(t.Buf)
 		return vibekit.TurnResult{Stop: stopReason, EmittedNothing: snap.EmittedNothing, WireEnded: wireEnded}
 	}
-	// Read BEFORE the turn_ended broadcast below: emit() clears the chat's status as
-	// that event goes out, so a read at the push site finds nothing.
-	statusDesc := bc.statusDescription(chatID)
+	statusDesc := bc.turns.statusDescription(t)
 	stats := bc.turnStatsFor(ctx, t)
 
-	snap := bc.settleTurnContent(ctx, t, stopReason, closer)
+	snap := bc.settleTurnContent(ctx, t)
 	p := bc.persistTurnContent(ctx, t, &snap, c, stats)
 	// One fact set, whichever event carries it, so the footer survives a reload.
 	facts := turnOutcomeFacts{
@@ -444,18 +446,16 @@ func (bc *BridgeCoordinator) concludeStop(
 	return c
 }
 
-// settleTurnContent fails the tool calls nothing can still settle and THEN takes the
+// settleTurnContent settles the tool calls nothing can still settle and THEN takes the
 // turn's content. The order is the invariant: a card persisted `in_progress` renders as a
-// permanent spinner on every later reload. closerRunComplete joins the cancel because the
-// run's terminal transition ends the only thing that could still update a step's call.
-func (bc *BridgeCoordinator) settleTurnContent(
-	ctx context.Context,
-	t *Turn,
-	stopReason vibekit.StopReason,
-	closer turnCloser,
-) buffer.TurnContent {
-	if buf := t.Buf; buf != nil && (stopReason == stopReasonCancelled || closer == closerRunComplete) {
-		bc.failInFlightTools(ctx, t.Chat, buf)
+// permanent spinner on every later reload.
+//
+// A CLOSE settles what it makes unsettleable, whatever the stop reason: the buffer is
+// taken here, and HandleToolCallUpdate drops any later frame because the turn buffer is
+// no longer open.
+func (bc *BridgeCoordinator) settleTurnContent(ctx context.Context, t *Turn) buffer.TurnContent {
+	if buf := t.Buf; buf != nil {
+		bc.abortInFlightTools(ctx, t.Chat, buf)
 	}
 	return settleBuffer(t.Buf)
 }
@@ -656,9 +656,9 @@ func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, re
 		bc.announceConclusion(ctx, chatID, c)
 		return result
 	}
-	// Fail the in-flight tool calls and RE-READ the content, or the persisted turn
+	// Settle the in-flight tool calls and RE-READ the content, or the persisted turn
 	// carries running tool cards that a reload renders as permanent spinners.
-	bc.failInFlightTools(ctx, chatID, buf)
+	bc.abortInFlightTools(ctx, chatID, buf)
 	snap = buf.TakeTurn()
 
 	// No stats: an interrupted turn has no credit delta to attribute.
@@ -697,6 +697,12 @@ func (bc *BridgeCoordinator) closeAsDiscarded(ctx context.Context, t *Turn) vibe
 	// `== StopReasonEndTurn` gate, false either way, so moving it would change a
 	// field no consumer reads.
 	result := vibekit.TurnResult{Stop: vibekit.StopReasonInterrupted, EmittedNothing: true}
+	// Nothing is persisted here, so only the BROADCAST matters: the discarded message stays
+	// in every client's store, so its cards need the terminal frame. Before settleBuffer,
+	// which clears the tool calls that broadcast reads.
+	if buf := t.Buf; buf != nil {
+		bc.abortInFlightTools(ctx, t.Chat, buf)
+	}
 	// Flush before measuring; see settleBuffer. The content is TAKEN and dropped,
 	// which is what discarding means — the next turn must not extend these blocks.
 	snap := settleBuffer(t.Buf)
@@ -724,7 +730,9 @@ func (bc *BridgeCoordinator) closeAsDiscarded(ctx context.Context, t *Turn) vibe
 }
 
 // closeOnLocalShell finalizes a `!cmd` turn. The output is already persisted by
-// the interception itself, so the end is all that is left to announce.
+// the interception itself, so the end is all that is left to announce — and it
+// settles nothing, because vibekit runs the command before anything reaches the
+// agent, so the buffer holds no tool calls to abort.
 func (bc *BridgeCoordinator) closeOnLocalShell(ctx context.Context, t *Turn) vibekit.TurnResult {
 	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, t.Chat,
 		vibekit.TurnEndedPayload{
@@ -734,12 +742,12 @@ func (bc *BridgeCoordinator) closeOnLocalShell(ctx context.Context, t *Turn) vib
 	return vibekit.TurnResult{Stop: vibekit.StopReasonEndTurn}
 }
 
-// failInFlightTools marks the buffer's running tool calls failed and tells every
+// abortInFlightTools settles the buffer's running tool calls as aborted and tells every
 // client, so a reload does not render permanent spinners for work that stopped. The
 // message id comes back WITH the changed calls rather than being read off the
 // buffer: this runs on the settling goroutine, not the dispatch loop.
-func (bc *BridgeCoordinator) failInFlightTools(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer) {
-	messageID, changed := buf.MarkCancelledToolsFailed()
+func (bc *BridgeCoordinator) abortInFlightTools(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer) {
+	messageID, changed := buf.MarkInFlightToolsAborted()
 	for i := range changed {
 		// The status is the only thing that moved, so the frame carries the id and
 		// the status and nothing else — the buffer already holds the rest, and a

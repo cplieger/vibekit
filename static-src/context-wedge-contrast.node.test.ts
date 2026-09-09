@@ -47,7 +47,7 @@ const FILL_HUES = ["--c-green", "--c-yellow", "--c-red"];
  *  can take. Anchored to the ramp's own scale: light's green-to-yellow endpoints
  *  sit 0.1029 apart, so a band closer than that reads as a point ON the ramp
  *  rather than a different kind of mark. 0.09 is that figure with enough headroom
- *  that a mix-rounding change cannot trip it. Cleared at 0.2352 dark, 0.1018 light. */
+ *  that a mix-rounding change cannot trip it. Cleared at 0.1603 dark, 0.1217 light. */
 const MIN_RAMP_SEPARATION = 0.09;
 
 /** Every mix `context-ring.ts` can emit, ENUMERATED rather than sampled: it

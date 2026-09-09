@@ -417,6 +417,14 @@ describe("the content resize observer", () => {
     // layout's answer does not get to overrule theirs.
     now.mockReturnValue(1400);
     h.ro.fire();
+
+    // NOT inside the delivery. The transition releases `deferWhileReading`'s queue,
+    // and those payloads mutate the very children this observer carries, so it is
+    // deferred a frame. Asserted BEFORE the wait as well as after, because the
+    // ordering is the point: a release that ran synchronously would satisfy the
+    // second half on its own.
+    expect(h.scroll.readingState()).toBe("reading");
+    await settleFrames();
     expect([
       h.scroll.readingState(),
       document.getElementById("scrollBottom")?.classList.contains("hidden"),
@@ -433,6 +441,9 @@ describe("the content resize observer", () => {
     readerScroll(h.scrollEl);
     g.scrollHeight = 1500;
     h.ro.fire();
+    // Waited out, or the assertion would be satisfied by the deferral rather than by
+    // the gesture window it is about.
+    await settleFrames();
     expect(h.scroll.readingState()).toBe("reading");
   });
 
@@ -447,6 +458,7 @@ describe("the content resize observer", () => {
     g.scrollHeight = 4000;
     vi.spyOn(Date, "now").mockReturnValue(1000);
     h.ro.fire();
+    await settleFrames();
     expect(h.scroll.readingState()).toBe("following");
   });
 
@@ -458,6 +470,50 @@ describe("the content resize observer", () => {
     h.ro.fire();
     await settle();
     expect(g.scrollTop).toBe(1500);
+  });
+
+  it("does not release a parked reader when content grows before the deferred apply", async () => {
+    // The deferral's own hazard, and the one axis a reader-input guard cannot see:
+    // the transcript appends BELOW the reader between the delivery and the frame
+    // after it. No input, no scroll event, and the edge sentinel does not cross its
+    // margin either, so nothing invalidates a measurement carried forward — the
+    // apply has to take its own.
+    const h = await freshModule();
+    const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    // Parked ON the live edge, which `setUserScrolledUp` is the one door to: it marks
+    // no input, so the reader does not own the scroller when the apply runs.
+    h.scroll.setUserScrolledUp(true);
+    // Past READER_CONTROL_MS (300) at the delivery AND at the apply, so the release
+    // this refuses is the one the reader window would have allowed.
+    now.mockReturnValue(1400);
+    h.ro.fire();
+
+    g.scrollHeight = 2500;
+    await settleFrames();
+    expect([h.scroll.readingState(), h.scroll.scrollableBy()]).toEqual(["reading", 2000]);
+  });
+
+  it("does not release a parked reader who has scrolled away, however long the frame took", async () => {
+    // The same refusal on the reader's axis, and it holds for the same reason rather
+    // than for a timing one: a throttled frame is ~1016ms, so the reader's 300ms
+    // window opens and closes inside ONE deferral and only the position it left
+    // behind is still true at the apply.
+    const h = await freshModule();
+    const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    h.scroll.setUserScrolledUp(true);
+    now.mockReturnValue(1400);
+    h.ro.fire();
+
+    now.mockReturnValue(1500);
+    g.scrollTop = 400;
+    readerScroll(h.scrollEl);
+    // Past 1500 + 300, so `readerInControl()` is false again by the time the apply
+    // runs and the geometry is the only thing left refusing.
+    now.mockReturnValue(2600);
+    await settleFrames();
+    expect(h.scroll.readingState()).toBe("reading");
   });
 });
 
@@ -619,6 +675,8 @@ describe("what the mutation callback may read", () => {
     g.scrollHeight = 1500;
     now.mockReturnValue(1400);
     h.ro.fire();
+    // A frame, for the reason the release case above states.
+    await settleFrames();
     expect(h.scroll.readingState()).toBe("following");
   });
 });

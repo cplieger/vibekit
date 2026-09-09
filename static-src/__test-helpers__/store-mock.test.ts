@@ -20,6 +20,7 @@ import { describe, it, expect } from "vitest";
 
 import { storeMock } from "./store-mock.js";
 import * as store from "../store.js";
+import type { Session } from "../types.js";
 
 // Types are erased at runtime, so both sides compare the VALUE surface — exactly
 // what an ESM link needs to resolve, which is what the mock stands in for. So
@@ -37,5 +38,52 @@ describe("the store.js mock helper stays total", () => {
   it("names nothing store.ts does not export, so a rename cannot hide behind it", () => {
     const extra = mocked.filter((k) => !real.includes(k));
     expect(extra, `store-mock.ts has stale entries: ${extra.join(", ")}`).toEqual([]);
+  });
+});
+
+// A helper spread by every mocked consumer cannot reach a factory's `importOriginal`,
+// so its handful of pure entries are hand-written copies of production rules. Presence
+// says nothing about them: a rule that gains a term leaves every copy asserting the
+// old one with both suites green. This is the behaviour half of the guard.
+describe("the mock's re-derived rules agree with the real ones", () => {
+  function session(fields: Partial<Session>): Session {
+    return { id: "c1", messages: [], ...fields } as unknown as Session;
+  }
+
+  it("derivedHasMore", () => {
+    for (const [count, resident] of [
+      [0, 0],
+      [3, 3],
+      [8, 3],
+      [3, 8],
+    ] as const) {
+      expect(storeMock.derivedHasMore(count, resident)).toBe(store.derivedHasMore(count, resident));
+    }
+  });
+
+  it("turnBaseOf", () => {
+    for (const s of [
+      session({}),
+      session({ turn_offset: 0, turn_segment_closed: false }),
+      session({ turn_offset: 12, turn_segment_closed: true }),
+    ]) {
+      expect(storeMock.turnBaseOf(s)).toEqual(store.turnBaseOf(s));
+    }
+  });
+
+  it("turnLive", () => {
+    for (const s of [
+      session({ thinking: false }),
+      session({ thinking: true }),
+      session({ thinking: false, turn_open: true }),
+    ]) {
+      expect(storeMock.turnLive(s)).toBe(store.turnLive(s));
+    }
+  });
+
+  it("steerIDFor", () => {
+    for (const id of ["m-abc", "m-1-2"]) {
+      expect(storeMock.steerIDFor(id)).toBe(store.steerIDFor(id));
+    }
   });
 });

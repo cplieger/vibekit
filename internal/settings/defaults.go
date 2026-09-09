@@ -68,6 +68,7 @@ const (
 
 	KeyNotifyAgentFinished = "notify_agent_finished"
 	KeyNotifyPRStatus      = "notify_pr_status"
+	KeyNotifyRunOutcome    = "notify_run_outcome"
 	KeySupervisedDefault   = "supervised_default"
 
 	// KeySecurityProfile is the named security posture every session vibekit
@@ -298,6 +299,7 @@ var KnownKeys = map[string]struct{}{
 	KeyNotificationsEnabled: {},
 	KeyNotifyAgentFinished:  {},
 	KeyNotifyPRStatus:       {},
+	KeyNotifyRunOutcome:     {},
 	KeySupervisedDefault:    {},
 	KeyScheduledAutoApprove: {},
 	KeySecurityProfile:      {},

@@ -48,6 +48,21 @@ func newTabbedMembership(t *testing.T, chats ChatStore) (*Membership, *tabs.Stor
 	return NewMembership(&MembershipDeps{Chats: chats, Tabs: st, Bus: bus}), st, bus
 }
 
+// newTornDownMembership is newTabbedMembership plus a recording teardown, for the paths
+// that run one. A separate constructor rather than a wider signature on the helper above,
+// which has 27 call sites that want no teardown.
+func newTornDownMembership(t *testing.T, chats ChatStore) (*Membership, *tabs.Store, *tabBus, *recordingTeardown) {
+	t.Helper()
+	st, err := tabs.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("open tab store: %v", err)
+	}
+	bus := &tabBus{}
+	td := &recordingTeardown{}
+	mem := NewMembership(&MembershipDeps{Chats: chats, Tabs: st, Bus: bus, Teardown: td})
+	return mem, st, bus, td
+}
+
 // tabBus records the tabs_changed frames a coordinator emitted, under its own
 // mutex.
 //

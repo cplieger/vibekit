@@ -1,10 +1,8 @@
 package chat
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,17 +116,6 @@ func TestWriteChat_UnlimitedMeansUnlimited(t *testing.T) {
 	}
 }
 
-// captureChatLogs swaps the slog default to a buffer for the test's duration.
-// The handler is global, so no test using it runs in parallel.
-func captureChatLogs(t *testing.T) *bytes.Buffer {
-	t.Helper()
-	buf := &bytes.Buffer{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	return buf
-}
-
 // TestWriteChat_RefusalIsLoud pins the ONLY signal a discarded turn produces.
 // Nothing else reports it: the caller gets an error it may log as a generic
 // failure, and the file on disk looks healthy.
@@ -138,7 +125,7 @@ func captureChatLogs(t *testing.T) *bytes.Buffer {
 // assertion that only looked for its presence.
 func TestWriteChat_RefusalIsLoud(t *testing.T) {
 	const capBytes = 4 << 10
-	logs := captureChatLogs(t)
+	logs := captureStoreSlog(t)
 	s := newCappedTestStore(t, capBytes)
 
 	if err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -177,7 +164,7 @@ func TestWriteChat_RefusalIsLoud(t *testing.T) {
 // unconditional warning would satisfy the assertion.
 func TestWriteChat_NearTheCapWarnsWhileThereIsRoom(t *testing.T) {
 	const capBytes = 8 << 10
-	logs := captureChatLogs(t)
+	logs := captureStoreSlog(t)
 	s := newCappedTestStore(t, capBytes)
 
 	if err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -212,7 +199,7 @@ func TestWriteChat_NearTheCapWarnsWhileThereIsRoom(t *testing.T) {
 // deployment's own default: with no cap there is no refusal to report and no
 // headroom to be near, so a chat of any size must produce neither line.
 func TestWriteChat_UnlimitedLogsNeither(t *testing.T) {
-	logs := captureChatLogs(t)
+	logs := captureStoreSlog(t)
 	s := newCappedTestStore(t, 0)
 	if err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Messages = []vibekit.Message{{

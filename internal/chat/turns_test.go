@@ -3,6 +3,7 @@ package chat
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"unicode"
@@ -141,6 +142,98 @@ func TestTurnSegmentationContract(t *testing.T) {
 				if string(got[i].Outcome) != want.Outcome {
 					t.Errorf("turn %d outcome = %q, want %q", i+1, got[i].Outcome, want.Outcome)
 				}
+			}
+		})
+	}
+}
+
+// windowFixture mirrors testdata/turn_windows.json. See that file's _comment for
+// why the table is shared with the TypeScript side rather than duplicated.
+type windowFixture struct {
+	Cases []struct {
+		Name     string           `json:"name"`
+		Messages []fixtureMessage `json:"messages"`
+		Windows  []struct {
+			Name          string `json:"name"`
+			Start         int    `json:"start"`
+			Offset        int    `json:"turn_offset"`
+			SegmentClosed bool   `json:"turn_segment_closed"`
+			N             []int  `json:"n"`
+		} `json:"windows"`
+	} `json:"cases"`
+}
+
+// turnOpeningIndexes reports the index each turn opens at, derived from the
+// production projection rather than from a second boundary scan — a test that
+// re-implemented the rule could agree with itself while both halves were wrong.
+func turnOpeningIndexes(msgs []vibekit.Message) []int {
+	byID := make(map[string]int, len(msgs))
+	for i := range msgs {
+		byID[msgs[i].ID] = i
+	}
+	out := make([]int, 0, 8)
+	for _, s := range projectTurnSummaries(msgs, false) {
+		out = append(out, byID[string(s.ID)])
+	}
+	return out
+}
+
+// TestTurnWindowBaseContract is one half of a cross-language pin:
+// turns.node.test.ts runs the same table against projectTurns with a base. A rule
+// changed in only one language fails in the other.
+func TestTurnWindowBaseContract(t *testing.T) {
+	raw, err := os.ReadFile("testdata/turn_windows.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var fx windowFixture
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	if len(fx.Cases) == 0 {
+		t.Fatal("fixture carries no cases; a silently-empty table would pass forever")
+	}
+	for _, tc := range fx.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			msgs := make([]vibekit.Message, 0, len(tc.Messages))
+			for _, fm := range tc.Messages {
+				msgs = append(msgs, fm.message())
+			}
+			if len(tc.Windows) == 0 {
+				t.Fatal("case carries no windows")
+			}
+			opens := turnOpeningIndexes(msgs)
+			for _, w := range tc.Windows {
+				t.Run(w.Name, func(t *testing.T) {
+					offset, closed := turnWindowBase(msgs, w.Start)
+					if offset != w.Offset {
+						t.Errorf("turnWindowBase(start=%d) offset = %d, want %d", w.Start, offset, w.Offset)
+					}
+					if closed != w.SegmentClosed {
+						t.Errorf("turnWindowBase(start=%d) segmentClosed = %v, want %v",
+							w.Start, closed, w.SegmentClosed)
+					}
+					// The fixture's `n` column is the TypeScript half's assertion, so
+					// check it here against the WHOLE-ARRAY projection: turn k reaches
+					// into the window when the turn after it opens past `start`.
+					want := make([]int, 0, len(opens))
+					for k, at := range opens {
+						end := len(msgs)
+						if k+1 < len(opens) {
+							end = opens[k+1]
+						}
+						if end > w.Start && at < len(msgs) {
+							want = append(want, k+1)
+						}
+					}
+					if !slices.Equal(w.N, want) {
+						t.Errorf("fixture n = %v, but the session-wide projection puts %v in this window",
+							w.N, want)
+					}
+					if len(w.N) > 0 && w.N[0] != w.Offset+1 {
+						t.Errorf("first turn in window = %d, want offset+1 = %d", w.N[0], w.Offset+1)
+					}
+				})
 			}
 		})
 	}

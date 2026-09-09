@@ -90,7 +90,7 @@ func writeMessageMarkdown(b *strings.Builder, m *vibekit.Message) {
 func messageHeading(m *vibekit.Message) string {
 	switch m.Role {
 	case vibekit.RoleUser:
-		return "## User\n\n"
+		return userHeading(m)
 	case vibekit.RoleAssistant:
 		return "## Assistant\n\n"
 	case vibekit.RoleEvent:
@@ -106,6 +106,24 @@ func messageHeading(m *vibekit.Message) string {
 		}
 		return fmt.Sprintf("## %s\n\n", role)
 	}
+}
+
+// userHeading names which kind of user row this is, and for a steer whether the
+// agent ever read it.
+//
+// A steer used to render as a bare "## User", so a correction the agent never saw
+// was indistinguishable from the prompt above it — the one fact about a mid-turn
+// message a reader most wants back out of an export. An UNKNOWN state (the whole
+// legacy population, plus every row the session/load replay projection writes)
+// claims neither, matching the note the client renders for it.
+func userHeading(m *vibekit.Message) string {
+	if m.UserKind != vibekit.UserKindSteer {
+		return "## User\n\n"
+	}
+	if m.SteerState == vibekit.SteerStateDropped {
+		return "## User (mid-turn, not delivered)\n\n"
+	}
+	return "## User (mid-turn)\n\n"
 }
 
 // writePlanMarkdown renders the plan as a GitHub task-list checklist.

@@ -10,6 +10,7 @@ package agent
 // time spent making no progress rather than wall time. Zero means unbounded.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -767,10 +768,69 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID vibekit.ChatID, msg 
 		// message, and the client repaints the run on the `run_finished` invalidation the
 		// translator emits — so the content has to be on disk before that repaint.
 		rs.closeStepTurn(ctx, chatID)
+		// BEFORE forgetBounds: that releases the lease the label is read from.
+		rs.notifyRunOutcome(ctx, f)
 		rs.forgetBounds(ctx, f.WorkflowID)
 		rs.translate.ForgetRunSteps(f.WorkflowID)
 	}
 	rs.translate.HandleRunComplete(ctx, chatID, msg)
+}
+
+// notifyRunOutcome pushes a terminal run's verdict. A run outlives the turn that
+// launched it and a parentless one never had a chat, so this is the only channel
+// that reaches a reader who is not looking at the page.
+//
+// NOT filtered on origin: the emit covers the chat-parented and parentless
+// populations alike. The scheduled-run overlap with the homelab's own alerting is
+// stated in the settings hint rather than coded as an exclusion here. The nil guard
+// is closeStepTurn's, for the bare &Runs{} a bounds test builds.
+func (rs *Runs) notifyRunOutcome(ctx context.Context, f lifecycleFrame) {
+	if rs.coord == nil {
+		return
+	}
+	rs.coord.NotifyPushSubject(ctx,
+		runOutcomeBody(f.Status, rs.runOutcomeLabel(f)),
+		vibekit.PushKindRunOutcome,
+		vibekit.RunSubject(f.WorkflowID))
+}
+
+// runOutcomeLabel names the run in that notification.
+//
+// THE FRAME'S TOP-LEVEL NAME IS EMPTY ON run_complete: that frame carries it at
+// finalState.workflowName (internal/translate/workflow.go HandleRunComplete reads
+// p.FinalState.WorkflowName) while lifecycleFrame decodes the top level, and its own
+// doc says the name is on run_start. The lease holds the recipe for every run vibekit
+// put on the wire, so it is the answer rather than a nested decode widening a struct
+// that is deliberately the three fields the bounds read.
+func (rs *Runs) runOutcomeLabel(f lifecycleFrame) string {
+	var recipe string
+	if l, held := rs.lease(f.WorkflowID); held {
+		recipe = l.Recipe
+	}
+	return cmp.Or(f.WorkflowName, recipe, "Workflow run")
+}
+
+// runOutcomeBody is the notification's body, mirroring static-src/handlers/run.ts
+// toastCompletion's vocabulary VERBATIM so the two surfaces for one fact cannot
+// disagree.
+//
+// Total over the four terminal statuses; the two live ones return the generic, which
+// is unreachable behind observeComplete's Terminal() gate and shaped like Terminal()'s
+// own switch so a status added upstream still says something true.
+func runOutcomeBody(status vibekit.RunStatus, label string) string {
+	switch status {
+	case vibekit.RunStatusCompleted:
+		return label + " finished"
+	case vibekit.RunStatusFailed:
+		return label + " failed"
+	case vibekit.RunStatusAborted:
+		return label + " was aborted"
+	case vibekit.RunStatusCancelled:
+		return label + " was cancelled"
+	case vibekit.RunStatusRunning, vibekit.RunStatusPaused:
+		return label + " finished"
+	}
+	return label + " finished"
 }
 
 // closeStepTurn closes the launching chat's step-driven turn, if it has one. An empty

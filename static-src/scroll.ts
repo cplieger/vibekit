@@ -146,14 +146,10 @@ class ScrollController {
    *  chat switch cannot cancel it. */
   private pendingLoad: (() => void) | null = null;
 
-  /** The observers rooted on `viewEl`, held as fields so `attach` can re-root
-   *  them on the incoming view. `resizeObserver` watches the view's CHILDREN
-   *  only — the child set is re-pointed per view — and reads; the scroller's own
-   *  box belongs to `gutterObserver`, which is the only one that WRITES. Two
-   *  observers rather than one, because css/13-messages.css reads `--scrollbar-w`
-   *  in this scroller's own `padding-inline`: a write from a callback that also
-   *  carries every card resizes an element already delivered at that depth, and
-   *  the observations that causes cannot be delivered in the same loop. */
+  /** The observers rooted on `viewEl`, held as fields so `attach` can re-root them on the
+   *  incoming view. `resizeObserver` watches the view's CHILDREN and only reads; the
+   *  scroller's own box belongs to `gutterObserver`, the only one that WRITES, because
+   *  that write cannot be delivered in a loop already carrying every card. */
   private contentObserver: MutationObserver | null = null;
   private childObserver: MutationObserver | null = null;
   private resizeObserver: ResizeObserver | null = null;
@@ -163,6 +159,12 @@ class ScrollController {
   /** The frame the gutter write has queued (0 = none), a single slot so a resize
    *  storm costs one write. */
   private gutterFrame = 0;
+
+  /** The frame the resize callback's own state re-derivation has queued (0 = none).
+   *  A single slot for `gutterFrame`'s reason, and it carries NO measurement: a
+   *  resize storm is one transition, decided by the geometry the apply reads for
+   *  itself. */
+  private revalidateFrame = 0;
 
   /** The live edge's own element: a zero-height marker at the end of the
    *  transcript's flow, watched by `edgeObserver`. Moves with the attached view.
@@ -412,24 +414,21 @@ class ScrollController {
     // Not observed here: `observeView` below is the single owner, because the
     // sentinel is in no view yet and `detach` unobserves it.
 
-    // A ResizeObserver callback is delivered AFTER layout, so its reads force
-    // nothing and it keeps measuring directly — the mutation path is what had to
-    // stop. It is also the one observer that sees a box change with no DOM
-    // mutation behind it (browser zoom, a scrollbar swap, a code block
-    // expanding). It touches no document style, so a card growing can never
-    // invalidate style for the whole document mid-frame.
+    // The one observer that sees a box change with no DOM mutation behind it (zoom, a
+    // scrollbar swap, a code block expanding). It WRITES nothing: a state change it
+    // caused would release `deferWhileReading`'s queue, mutating the very children this
+    // loop is delivering, so both writes are deferred a frame.
     this.resizeObserver = new ResizeObserver(() => {
-      this.revalidateReadingState(this.isAtBottom());
+      this.scheduleRevalidate();
+      // Ordered BEFORE the deferred transition, so a delivery whose release lands next
+      // frame pins nothing here; the flush's own resize or the next mutation does it.
       this.autoScrollIfAnchored();
     });
-    // The gutter observer watches the scroller ALONE and owns the one write that
-    // reaches a shared ancestor. Re-measured here rather than on `window.resize`:
-    // this fires AFTER layout and only when the scroller's content box actually
-    // moved, which is exactly when the reserved gutter can have changed (browser
-    // zoom moves its width in CSS pixels; a classic bar swapped for an overlay one
-    // frees all 10px). A window listener read the pre-relayout value and left the
-    // bar reserving a strip that no longer existed. `stable` means overflow alone
-    // never resizes this box, so streaming costs no extra writes.
+    // Watches the scroller ALONE and owns the one write that reaches a shared ancestor.
+    // Here rather than on `window.resize` because this fires AFTER layout and only when
+    // the content box moved, which is exactly when the reserved gutter can have changed;
+    // a window listener read the pre-relayout value. `stable` means overflow alone never
+    // resizes this box, so streaming costs no extra writes.
     this.gutterObserver = new ResizeObserver(() => {
       this.scheduleScrollbarWidth();
     });
@@ -518,21 +517,11 @@ class ScrollController {
     }
   }
 
-  /** Write the scroller's reserved gutter to `--scrollbar-w` — the width its own
-   *  inline-END inset gives back so the scrollbar lands in the gutter rather than
-   *  in the measure the column shares with the composer. Reads the real element
-   *  rather than a probe div, so the number is the gutter actually reserved on the
-   *  box being compensated. */
-  /** Defer the gutter write one animation frame, behind a single slot.
-   *
-   *  THE WRITE MAY NOT LAND INSIDE THE RESIZE DELIVERY. `--scrollbar-w` is read
-   *  by the scroller's own `padding-inline`, so writing it from the callback
-   *  produces a new observation of a box already delivered in this loop, which
-   *  Chromium cannot deliver and reports as "ResizeObserver loop completed with
-   *  undelivered notifications" having invalidated the whole document's style
-   *  mid-frame. A frame later the resize it causes is delivered cleanly by the
-   *  next pass. The change-guard in `publishScrollbarWidth` is a separate saving
-   *  and is not what makes this safe. */
+  /** Defer the gutter write one animation frame, behind a single slot. THE WRITE MAY NOT
+   *  LAND INSIDE THE RESIZE DELIVERY: `--scrollbar-w` is read by the scroller's own
+   *  `padding-inline`, so writing it from the callback observes a box already delivered
+   *  in this loop, which Chromium reports as "ResizeObserver loop completed with
+   *  undelivered notifications". `publishScrollbarWidth`'s guard is a saving, not this. */
   private scheduleScrollbarWidth(): void {
     if (this.gutterFrame !== 0) {
       return;
@@ -550,6 +539,37 @@ class ScrollController {
     }
   }
 
+  /** Defer the resize callback's state re-derivation one frame, behind a single slot, and
+   *  RE-READ the geometry there rather than carry one forward: deferred for
+   *  `scheduleScrollbarWidth`'s reason, re-read because content appended between the two
+   *  moves the live edge with no input, so a carried `atBottom: true` parks the reader. */
+  private scheduleRevalidate(): void {
+    if (this.revalidateFrame !== 0) {
+      return;
+    }
+    this.revalidateFrame = requestAnimationFrame(() => {
+      this.revalidateFrame = 0;
+      // Gated before the read, so `isAtBottom()`'s forced layout is paid only where a
+      // release is possible at all — every other case discards the answer.
+      if (!this.mayReleaseReading()) {
+        return;
+      }
+      this.revalidateReadingState(this.isAtBottom());
+    });
+  }
+
+  private cancelRevalidate(): void {
+    if (this.revalidateFrame !== 0) {
+      cancelAnimationFrame(this.revalidateFrame);
+      this.revalidateFrame = 0;
+    }
+  }
+
+  /** Write the scroller's reserved gutter to `--scrollbar-w` — the width its own
+   *  inline-END inset gives back so the scrollbar lands in the gutter rather than
+   *  in the measure the column shares with the composer. Reads the real element
+   *  rather than a probe div, so the number is the gutter actually reserved on the
+   *  box being compensated. */
   private publishScrollbarWidth(): void {
     const next = `${String(this.scrollEl.offsetWidth - this.scrollEl.clientWidth)}px`;
     if (next === this.scrollbarWidth) {
@@ -911,6 +931,9 @@ class ScrollController {
     this.abandonLoadPass();
     this.cancelPinPass();
     this.cancelScrollbarWidth();
+    // A queued re-derivation belongs to the OUTGOING view: a frame later it would read
+    // the incoming transcript's geometry and release a state that is not its own.
+    this.cancelRevalidate();
     this.forgetReaderGesture();
     this.onLoadMore = null;
     this.hasMoreMessages = false;
@@ -985,6 +1008,7 @@ class ScrollController {
     this.abandonLoadPass();
     this.cancelPinPass();
     this.cancelScrollbarWidth();
+    this.cancelRevalidate();
     this.forgetReaderGesture();
     this.setLoadMore(null, false);
     this.setState("following");
@@ -1066,15 +1090,20 @@ class ScrollController {
    *  `atBottom` is passed in because the MUTATION caller may not measure: it runs
    *  mid-task with the DOM dirty, where the read costs a full synchronous layout. */
   private revalidateReadingState(atBottom: boolean): void {
-    if (this.state !== "reading") {
-      return;
-    }
-    if (this.readerInControl()) {
+    if (!this.mayReleaseReading()) {
       return;
     }
     if (atBottom) {
       this.setState("following");
     }
+  }
+
+  /** Could a size change release Reading right now? The two conditions
+   *  `revalidateReadingState` refuses on, asked BEFORE its argument is computed so the
+   *  resize path can decline to force a layout for an answer that would be discarded.
+   *  One owner, so the gate and the refusal cannot diverge. */
+  private mayReleaseReading(): boolean {
+    return this.state === "reading" && !this.readerInControl();
   }
 
   /**
@@ -1090,25 +1119,34 @@ class ScrollController {
    * non-streaming append.
    */
   private autoScrollIfAnchored(): void {
-    if (this.state === "reading") {
-      return;
-    }
-    // The pin pass owns the scroller while it runs. Yielding costs nothing: it
-    // re-asserts `followTarget`, the same number this frame would have written.
-    if (this.pinFrame !== 0) {
-      return;
-    }
-    if (this.readerInControl()) {
-      return;
-    }
-    if (this.rafPending) {
+    if (!this.mayFollow() || this.rafPending) {
       return;
     }
     this.rafPending = true;
     requestAnimationFrame(() => {
       this.rafPending = false;
+      if (!this.mayFollow()) {
+        return;
+      }
       this.scrollSelfTo(this.followTarget(), "instant");
     });
+  }
+
+  /** May a follow write happen? ONE predicate, read twice — once to decide to
+   *  queue the frame and again inside it, as `queuePinFrame` re-reads its own
+   *  conditions, because the licence can be revoked in between. That gap is one
+   *  frame: 16ms wide with an idle compositor, hundreds of ms wide without, and
+   *  every revocation lands inside it — a wheel (which arms `readerInControl`
+   *  before its scroll event is even delivered), a pin pass taking the scroller, a
+   *  park, a handover to another chat. Trusting the queueing frame's verdict threw
+   *  a reader who scrolled up in that window back to the live edge through
+   *  `scrollSelfTo`, so the event was excused and their gesture was undone with
+   *  nothing on screen saying so.
+   *
+   *  Yielding to the pin pass costs nothing: it re-asserts `followTarget`, the same
+   *  number this write would have made. */
+  private mayFollow(): boolean {
+    return this.state !== "reading" && this.pinFrame === 0 && !this.readerInControl();
   }
 
   /** Move the scroller and record where it will LAND, so the `scroll` event the
@@ -1248,12 +1286,15 @@ class ScrollController {
 
   /** Give up on the pass in flight and take its skeleton down.
    *
-   *  Order is load-bearing: ending the pass first is what stops the removal below
-   *  from being read as the fetch completing and compensating with a stale
-   *  height. */
+   *  Order is load-bearing: ending the pass first stops the removal below from being
+   *  read as the fetch completing and compensating with a stale height.
+   *
+   *  Scoped to the ATTACHED view, matching `maybeLoadMore`, which mounts the skeleton
+   *  through the same scoping. A document-wide lookup reaches a PARKED view's
+   *  skeleton, stripping a load pass this controller does not own. */
   private abandonLoadPass(): void {
     this.endLoadPass();
-    document.getElementById("load-more-skeleton")?.remove();
+    this.viewEl.querySelector(`[id="load-more-skeleton"]`)?.remove();
   }
 
   /** A real BUTTON, not inert text.

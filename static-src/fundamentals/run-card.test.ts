@@ -5,9 +5,19 @@
 // what a step is doing — which means every state a step can be in has to reach it.
 // A `paused` step used to render the running spinner, and an unanswered ask
 // reached the card at all.
-import { describe, it, expect } from "vitest";
+import { vi, describe, it, expect } from "vitest";
+
+// scroll.ts is a self-initialising singleton over a real `#messages`; the canonical
+// mock is what every other suite in this graph uses, and its compensation helpers run
+// their mutation, so a fold still reaches the DOM. It is also what makes the
+// compensation itself observable — see "routes the fold through the scroll
+// compensator".
+vi.mock("../scroll.js", () =>
+  import("../__test-helpers__/scroll-mock.js").then((m) => m.scrollMock),
+);
 
 import { buildRunCard, type RunAsks } from "./run-card.js";
+import { scrollMock } from "../__test-helpers__/scroll-mock.js";
 import { leaves } from "../exec-view/model.js";
 import { runToExec } from "../run-exec-source.js";
 import type { RunNode, RunState } from "../run-store.js";
@@ -569,5 +579,206 @@ describe("a step row is a door into the run tab", () => {
   it("still names the state in the row's accessible label", () => {
     // The ROLE says the row opens something, so the name says what the row IS.
     expect(head(doorCard()).getAttribute("aria-label")).toBe("build, running");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE CARD RENDERS EXPANDED WHILE IT IS THE NEWEST TOP-LEVEL ELEMENT and folds when
+// the next element is posted after it — the positional rule, at card scope, pushed in
+// through `setSuperseded` because only the dispatcher knows where the card sits.
+//
+// Every fixture here supplies a `disclosure`, because that is the only way a caller
+// can state either half (the reader's own recorded state, and this pass's verdict); a
+// card built without one keeps the `?? true` floor, which the cases above rely on.
+// ---------------------------------------------------------------------------
+describe("the newest run card is expanded, and being superseded folds it", () => {
+  const clean = (): RunState => runOf("completed", step("build", "completed"));
+
+  /** A card wired to a disclosure. `reader` is what the registry holds (undefined =
+   *  the reader has not decided), `defaultOpen` the newest-element verdict, and
+   *  `wrote` records every value the card asked the registry to store. */
+  function wired(opts: { reader?: boolean; defaultOpen?: boolean } = {}): {
+    c: ReturnType<typeof buildRunCard>;
+    wrote: boolean[];
+  } {
+    const wrote: boolean[] = [];
+    const c = buildRunCard(
+      "wf_1",
+      "Workflow run",
+      () => {
+        /* the footer link is not under test */
+      },
+      {
+        wasOpen: () => opts.reader,
+        defaultOpen: opts.defaultOpen ?? true,
+        onOpenChange: (open) => wrote.push(open),
+      },
+    );
+    return { c, wrote };
+  }
+
+  const collapsed = (c: ReturnType<typeof buildRunCard>): boolean =>
+    c.root.classList.contains("collapsed");
+  const aria = (c: ReturnType<typeof buildRunCard>): string | null =>
+    c.root.querySelector(".run-head")?.getAttribute("aria-expanded") ?? null;
+
+  it("is born from the policy default, and the reader's own state outranks it", () => {
+    // The verdict decides when the reader has not, and having decided turns the auto
+    // path off for the card's whole life.
+    expect(collapsed(wired({ defaultOpen: false }).c)).toBe(true);
+    expect(collapsed(wired({ defaultOpen: true }).c)).toBe(false);
+
+    const { c } = wired({ reader: true, defaultOpen: false });
+    expect(collapsed(c)).toBe(false);
+    c.render(clean());
+    c.setSuperseded(true);
+    expect(collapsed(c)).toBe(false);
+  });
+
+  it("folds a settled clean run the next block follows, and says so in aria", () => {
+    const { c } = wired();
+    c.render(clean());
+    expect(collapsed(c)).toBe(false);
+    expect(aria(c)).toBe("true");
+
+    c.setSuperseded(true);
+    expect(collapsed(c)).toBe(true);
+    expect(aria(c)).toBe("false");
+  });
+
+  it("does not fold a run that is still live", () => {
+    const { c } = wired();
+    c.render(runOf("running", step("build", "running")));
+    c.setSuperseded(true);
+    expect(collapsed(c)).toBe(false);
+    // The state settling is what releases the refusal for a verdict already given.
+    c.render(clean());
+    expect(collapsed(c)).toBe(true);
+  });
+
+  it("does not fold a card whose state has not been fetched", () => {
+    // Not knowing is not the same as finished: the card is built before its first
+    // `inspect` lands, and a fold there would hide a run that may be working.
+    const { c } = wired();
+    c.setSuperseded(true);
+    expect(collapsed(c)).toBe(false);
+  });
+
+  it("leaves a run card open while it holds an unanswered ask", () => {
+    // The one refusal no status can express: the head reads "needs input" whatever the
+    // run reports, so a fold would hide the steps behind a card that says it is
+    // waiting on a person. Over a SETTLED CLEAN run deliberately — that is the only
+    // shape the other refusals let through, so it is what makes this one falsifiable.
+    const { c } = wired();
+    c.render(clean(), asks(1, ["build"], "which branch?"));
+    c.setSuperseded(true);
+    expect(collapsed(c)).toBe(false);
+
+    c.render(clean(), NO_ASKS);
+    expect(collapsed(c)).toBe(true);
+  });
+
+  it("folds a run the reader stopped, because nobody is waiting on one", () => {
+    // The carve-outs are the reference's three plus the ask, and no wider. `stateOf`
+    // maps both of these to `warn`, so a "settled clean means only `completed`" reading
+    // would exempt a cancelled run from ever folding — an element sitting expanded
+    // above every later one for the rest of the session over a run the reader
+    // themselves stopped.
+    // Over a run whose STEPS all completed, deliberately: an `aborted` STEP counts as
+    // failed in `runCounters`, so a stopped step is the failure carve-out and it is the
+    // run's own stopped status this admits.
+    for (const status of ["cancelled", "aborted"] as const) {
+      const { c } = wired();
+      c.render(runOf(status, step("build", "completed")));
+      expect(collapsed(c)).toBe(false);
+      c.setSuperseded(true);
+      expect(collapsed(c)).toBe(true);
+    }
+  });
+
+  it("does not fold a clean run that holds a failed STEP", () => {
+    // The run's own status says `completed`, so only the per-step count sees the
+    // failure — and a failure is not noise, at either granularity.
+    const { c } = wired();
+    c.render(runOf("completed", step("build", "completed"), step("test", "failed")));
+    c.setSuperseded(true);
+    expect(collapsed(c)).toBe(false);
+  });
+
+  it("does not fold a failed run, and re-opens one that fails after folding", () => {
+    const { c } = wired();
+    c.render(runOf("failed", step("build", "failed")));
+    c.setSuperseded(true);
+    expect(collapsed(c)).toBe(false);
+
+    const later = wired();
+    later.c.render(clean());
+    later.c.setSuperseded(true);
+    expect(collapsed(later.c)).toBe(true);
+    later.c.render(runOf("failed", step("build", "failed")));
+    expect(collapsed(later.c)).toBe(false);
+  });
+
+  it("routes the fold through the scroll compensator", () => {
+    // `scroll.ts` calls `preserveReadingPosition` THE ONE ENTRY POINT for a transcript
+    // height change, and an auto fold removes height ABOVE the reader — this body is one
+    // row per leaf plus a capture preview, taller than the tool-group case the helper
+    // was made mandatory for. `autoCollapseGroup` wraps its own fold for exactly this.
+    //
+    // Withholding the wrapped mutation is what makes the wrapping falsifiable: a
+    // `ctl.close()` sitting OUTSIDE the wrapper folds the card regardless, so the last
+    // two assertions go red the moment the compensation is dropped.
+    const { c } = wired();
+    c.render(clean());
+    scrollMock.preserveReadingPosition.mockImplementation(() => undefined);
+
+    c.setSuperseded(true);
+
+    expect(scrollMock.preserveReadingPosition).toHaveBeenCalledTimes(1);
+    expect(scrollMock.preserveReadingPosition.mock.calls[0]?.[1]).toBe("content-growth");
+    expect(collapsed(c)).toBe(false);
+    expect(aria(c)).toBe("true");
+  });
+
+  it("routes the failure re-open through it as well", () => {
+    // The other direction, which `maybeCollapseGroup` also wraps: this ADDS the step
+    // rows' height back above the reader.
+    const { c } = wired();
+    c.render(clean());
+    c.setSuperseded(true);
+    expect(collapsed(c)).toBe(true);
+    // Cleared, because the fold above went through the compensator too.
+    scrollMock.preserveReadingPosition.mockClear();
+    scrollMock.preserveReadingPosition.mockImplementation(() => undefined);
+
+    c.render(runOf("failed", step("build", "failed")));
+
+    expect(scrollMock.preserveReadingPosition).toHaveBeenCalledTimes(1);
+    expect(scrollMock.preserveReadingPosition.mock.calls[0]?.[1]).toBe("content-growth");
+    expect(collapsed(c)).toBe(true);
+  });
+
+  it("re-opens a folded card when the LAUNCH turns out to have failed", () => {
+    // A failed launch created no run, so `inspect` never reports it and the tool call
+    // is the only witness — which can arrive after the card has already folded.
+    const { c } = wired();
+    c.render(clean());
+    c.setSuperseded(true);
+    expect(collapsed(c)).toBe(true);
+    c.setLaunch("failed", "no such recipe");
+    expect(collapsed(c)).toBe(false);
+  });
+
+  it("writes the reader's choice and never its own", () => {
+    // The registry is the reader's latch, so an auto fold and the failure re-open must
+    // leave no entry — otherwise every fold would come back as "the reader closed it".
+    const { c, wrote } = wired();
+    c.render(clean());
+    c.setSuperseded(true);
+    c.render(runOf("failed", step("build", "failed")));
+    expect(wrote).toEqual([]);
+
+    c.root.querySelector<HTMLElement>(".run-head")?.click();
+    expect(wrote).toEqual([false]);
   });
 });

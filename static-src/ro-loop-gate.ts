@@ -1,23 +1,8 @@
-// Fails the run on a `ResizeObserver loop completed with undelivered
-// notifications` error, for every suite in the browser project.
-//
-// That message is the ENGINE's own verdict that a resize callback wrote something
-// which produced a new observation the same loop could not deliver — so it had to
-// defer them, having invalidated style for whatever the write reached. It is a
-// real defect wherever it appears, and it is exactly the class no assertion looks
-// for: the affected suite still passes, because the deferred observations arrive
-// on the next frame and the DOM ends up correct. `block-virtualization` printed
-// this line on stderr for as long as the transcript's gutter write sat inside the
-// resize delivery, and nothing failed.
-//
-// A `window` `error` listener rather than a wrapped `ResizeObserver`: the engine
-// reports the loop as an uncaught error and never calls a callback for the
-// observations it dropped, so the callback side cannot see it at all.
-//
-// The report is deferred to `afterEach` rather than thrown from the listener,
-// which would surface as an unhandled error attributed to no test. A message that
-// arrives after its own test has finished is still reported, by the next case's
-// hook — late and named as such, rather than lost.
+// Fails the run on a `ResizeObserver loop completed with undelivered notifications`
+// error: the engine defers the observations a resize callback's own write invalidated, so
+// the affected suite still PASSES and no assertion looks for it. A `window` `error`
+// listener because the engine reports the loop as an uncaught error and calls no callback
+// for what it dropped; reported from `afterEach` because a listener throw names no test.
 import { afterEach } from "vitest";
 
 const seen: string[] = [];

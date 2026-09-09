@@ -24,10 +24,36 @@
    ========================================================================== */
 
 .run-card {
-  /* Containment: the reasoning is at `.tool-call` (14-tools.css). The fallback is
-     the header plus one step row, which is the smallest real run card. */
+  /* THE CARD'S FLOOR, AS A CONTENT HEIGHT. Containment reasoning is at `.tool-call`
+     (14-tools.css); what is specific here is which regions a skipped card is made
+     of. Only the BODY is inside the disclosure, so the head, its own
+     `margin-block-end` and the FOOT are present whatever the disclosure says — and
+     the foot is what the old "the header plus one step row" claim omitted, along
+     with that margin. So the smallest real card is a COLLAPSED one: head + margin +
+     foot, and it is what this reserves.
+
+     MEASURED over 200 cards (`run-card-metrics.test.ts`), against `auto 4rem`'s
+     rendered 66px:
+
+       tier     collapsed   open with one step
+       fine     79px        129px
+       coarse   87px        145px
+
+     So 4rem was below the floor in BOTH states rather than for a tail of cards, and
+     the list GREW as the reader scrolled. An expression rather than a literal
+     because `--btn-h` moves on the pointer tier the way `.tool-call`'s does: the
+     head is on that floor, the foot is `.run-open`'s 1.5rem hit target plus its own
+     padding and hairline (tier-invariant at 33px), and the border is the box model's
+     to add. Exact on all three tiers the metrics suite measures; the two coarse ones
+     are identical, since nothing here keys on width.
+
+     ONE ESTIMATE CANNOT BE EXACT FOR BOTH STATES, so this is the smaller: an open
+     card under-states, which makes the container grow, where reserving the open
+     height would make it SHRINK under every reader scrolling past a folded card. */
+  --run-card-content: calc(var(--btn-h) + var(--sp-2) + 1.5rem + var(--sp-1) * 2 + 1px);
+
   content-visibility: auto;
-  contain-intrinsic-size: auto 4rem;
+  contain-intrinsic-size: auto var(--run-card-content);
   background: var(--c-bg-secondary);
 
   /* No leading rail. The box, its tinted border and the header glyph already say

@@ -78,9 +78,11 @@ function user(id: string, content: string): Message {
   return { id, role: "user", ts: 1, content } as Message;
 }
 
-/** The persisted shape the replay projection produces for a `steer-` row. */
-function steer(id: string, content: string): Message {
-  return { id, role: "user", ts: 2, content, user_kind: "steer" } as unknown as Message;
+/** The persisted shape a landed steer takes: `user_kind` plus the delivery state
+ *  the note reads. `over` carries the state, and OMITTING it is the legacy /
+ *  replay-projected shape — see the "state is not known" case below. */
+function steer(id: string, content: string, over: Partial<Message> = {}): Message {
+  return { id, role: "user", ts: 2, content, user_kind: "steer", ...over } as unknown as Message;
 }
 
 function assistant(id: string, content: string, ts = 3): Message {
@@ -129,7 +131,7 @@ describe("a persisted steer renders as a read steer note", () => {
     const c = freshID("c-steer");
     const view = await paint(c, [
       user(`${c}-u`, "go"),
-      steer(`${c}-s`, "use tabs"),
+      steer(`${c}-s`, "use tabs", { steer_state: "read" }),
       assistant(`${c}-a`, "done"),
     ]);
 
@@ -150,18 +152,34 @@ describe("a persisted steer renders as a read steer note", () => {
     const c = freshID("c-steer-not-system");
     const view = await paint(c, [
       user(`${c}-u`, "go"),
-      steer(`${c}-s`, "use tabs"),
+      steer(`${c}-s`, "use tabs", { steer_state: "read" }),
       assistant(`${c}-a`, "done"),
     ]);
 
     expect(view.querySelector(".message.system")).toBeNull();
   });
 
+  it("carries the origin, so a workflow's report is not titled as the reader's words", async () => {
+    const c = freshID("c-steer-origin");
+    const view = await paint(c, [
+      user(`${c}-u`, "go"),
+      steer(`${c}-s`, "A workflow you launched completed.", {
+        steer_state: "read",
+        steer_origin: "agent",
+      }),
+      assistant(`${c}-a`, "done"),
+    ]);
+
+    const note = view.querySelector<HTMLElement>(".steer-note");
+    expect(note?.dataset["origin"]).toBe("agent");
+    expect(note?.querySelector(".steer-note-label")?.textContent).toBe("Workflow result");
+  });
+
   it("keeps the steer inside the prompt's turn rather than opening one", async () => {
     const c = freshID("c-steer-one-turn");
     const view = await paint(c, [
       user(`${c}-u`, "go"),
-      steer(`${c}-s`, "use tabs"),
+      steer(`${c}-s`, "use tabs", { steer_state: "read" }),
       assistant(`${c}-a`, "done"),
     ]);
 
@@ -171,6 +189,84 @@ describe("a persisted steer renders as a read steer note", () => {
       (e) => e.textContent,
     );
     expect(heads).toEqual(["go"]);
+  });
+});
+
+// The half that matters most, and the reason the state is on the row at all: a
+// correction the agent NEVER READ. Before the row carried a state this rendered
+// identically to a delivered one — a false claim about whether the reader's own
+// message landed, which is worse than the note being absent.
+describe("a persisted UNDELIVERED steer says so", () => {
+  it("mounts .steer-note with data-state=dropped, the not-delivered label and a restore control", async () => {
+    const c = freshID("c-steer-dropped");
+    const view = await paint(c, [
+      user(`${c}-u`, "go"),
+      steer(`${c}-s`, "actually target main", { steer_state: "dropped" }),
+      assistant(`${c}-a`, "done"),
+    ]);
+
+    const found = [...view.querySelectorAll<HTMLElement>(".steer-note")];
+    expect(found).toHaveLength(1);
+    const note = found[0];
+    expect(note?.dataset["state"]).toBe("dropped");
+    expect(note?.dataset["origin"]).toBe("user");
+    expect(note?.querySelector(".steer-note-label")?.textContent).toBe("Not delivered");
+    expect(note?.querySelector(".steer-note-text")?.textContent).toBe("actually target main");
+  });
+
+  it("puts the text back in the message box, the one control the wire can honour", async () => {
+    const c = freshID("c-steer-restore");
+    const view = await paint(c, [
+      user(`${c}-u`, "go"),
+      steer(`${c}-s`, "actually target main", { steer_state: "dropped" }),
+      assistant(`${c}-a`, "done"),
+    ]);
+
+    const box = document.getElementById("prompt-input") as HTMLTextAreaElement;
+    box.value = "";
+    const restore = view.querySelector<HTMLButtonElement>(".steer-note-restore");
+    expect(restore).not.toBeNull();
+    restore?.click();
+
+    expect(box.value).toBe("actually target main");
+  });
+
+  it("reads the two states apart from one transcript", async () => {
+    const c = freshID("c-steer-both");
+    const view = await paint(c, [
+      user(`${c}-u`, "go"),
+      steer(`${c}-s1`, "use tabs", { steer_state: "read" }),
+      steer(`${c}-s2`, "actually target main", { steer_state: "dropped" }),
+      assistant(`${c}-a`, "done"),
+    ]);
+
+    const states = [...view.querySelectorAll<HTMLElement>(".steer-note")].map(
+      (n) => n.dataset["state"],
+    );
+    expect(states).toEqual(["read", "dropped"]);
+  });
+});
+
+// INVARIANT 5: no migration, so a chat file written before the state existed must
+// load. Absent means the state is NOT KNOWN — the whole legacy population plus
+// every row the replay projection writes — and the neutral note is what claims no
+// delivery either way. It must NOT read as not-delivered: that would offer a
+// restore control for a correction the agent may well have acted on.
+describe("a persisted steer whose state is not known", () => {
+  it("renders the neutral note with no not-delivered claim and no restore control", async () => {
+    const c = freshID("c-steer-legacy");
+    const view = await paint(c, [
+      user(`${c}-u`, "go"),
+      steer(`${c}-s`, "use tabs"),
+      assistant(`${c}-a`, "done"),
+    ]);
+
+    const note = view.querySelector<HTMLElement>(".steer-note");
+    expect(note).not.toBeNull();
+    expect(note?.dataset["state"]).toBe("read");
+    expect(note?.querySelector(".steer-note-label")?.textContent).toBe("Mid-turn message");
+    expect(note?.querySelector(".steer-note-restore")).toBeNull();
+    expect(note?.querySelector(".steer-note-text")?.textContent).toBe("use tabs");
   });
 });
 
