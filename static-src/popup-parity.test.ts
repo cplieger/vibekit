@@ -129,8 +129,8 @@ const POPUPS: readonly Popup[] = [
       const item = el("button", "pill-role-item");
       item.append(
         span("pill-role-name", "semantic_reviewer"),
-        span("pill-role-scope", "workspace"),
         span("pill-role-shadow", "shadows"),
+        span("pill-role-scope", "workspace"),
       );
       return [hint, item];
     },

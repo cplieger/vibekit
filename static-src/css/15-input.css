@@ -915,15 +915,20 @@
   }
 }
 
+/* The name takes the free space, which is what keeps the two trailing chips
+   together at the row's end. An auto margin on the scope chip lands it on the
+   same x, but spends that space BETWEEN the chips, stranding the badge against
+   the name. */
 .pill-role-name {
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* Which tree a custom agent came from. Quiet and pushed right: it answers a
-   question the reader has only when two rows share a name. */
+/* Which tree a custom agent came from. Quiet and last: it answers a question the
+   reader has only when two rows share a name, and holding the row's final slot
+   is what lets a reader compare it down the column. */
 .pill-role-scope {
-  margin-inline-start: auto;
   flex-shrink: 0;
   font-family: var(--font-mono);
   font-size: var(--fs-popup-meta);
@@ -932,7 +937,8 @@
 
 /* A workspace agent shadowing a same-named global or bundled one. Tinted, not
    quiet: this is the row that tells the reader which of two definitions a run
-   will use, and it is the one thing about the collision that is not obvious. */
+   will use, and it is the one thing about the collision that is not obvious.
+   Sits BEFORE the scope chip, so the scope chip keeps the row's final slot. */
 .pill-role-shadow {
   flex-shrink: 0;
   font-family: var(--font-mono);
@@ -947,12 +953,6 @@
   border-radius: var(--r-pill);
   background: color-mix(in oklch, var(--c-yellow) 18%, transparent);
   color: var(--c-yellow);
-}
-
-/* With a scope chip present the shadow marker follows it, so the auto margin
-   must not push the shadow to the edge as well. */
-.pill-role-scope + .pill-role-shadow {
-  margin-inline-start: 0;
 }
 
 /* Effort section: the bottom section of the model card, outside the scroller,

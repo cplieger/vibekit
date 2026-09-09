@@ -169,6 +169,10 @@ export function mergeCatalogAndWorkspace(
   }
   for (const name of workspaceAgents) {
     const shadows = base.find((m) => m.id === name);
+    // A `workspace` value is the entry shadowing ITSELF: ids are unique within
+    // one .kiro/agents tree, and handleConfigTemplate serves KAS's live
+    // availableModes once any session has run, which already carries these.
+    const shadowedSource = shadows === undefined ? undefined : (shadows.source ?? "bundled");
     out.push({
       mode: {
         id: name,
@@ -176,7 +180,8 @@ export function mergeCatalogAndWorkspace(
         description: WORKSPACE_AGENT_DESC,
         source: "workspace",
       },
-      ...(shadows !== undefined && { shadowed: shadows.source ?? "bundled" }),
+      ...(shadowedSource !== undefined &&
+        shadowedSource !== "workspace" && { shadowed: shadowedSource }),
     });
   }
   return out;
