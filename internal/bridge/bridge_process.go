@@ -141,6 +141,9 @@ func (b *Bridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 	return nil
 }
 
+// bridgeGroupGrace bounds Stop's confirmation that the killed group emptied.
+const bridgeGroupGrace = 2 * time.Second
+
 // Stop kills the subprocess and closes NotifCh. Safe to call multiple
 // times; subsequent calls are no-ops. Multiple call sites (agent.Shutdown,
 // tab close, model switch, session/load recovery) can race to stop the
@@ -170,6 +173,9 @@ func (b *Bridge) Stop() {
 			// so the previous spelling was correct — but it was the fourth copy
 			// of the condition in this repo, and the predicate is where the
 			// question gets answered once.
+
+			// Before the signal empties it; procgroup.GroupOf owns why.
+			pgid, owns := procgroup.GroupOf(b.cmd.Process)
 			if err := procgroup.Kill(b.cmd.Process, syscall.SIGKILL); err != nil && !procgroup.AlreadyGone(err) {
 				slog.Error("kill kiro-cli", "error", err)
 			}
@@ -178,6 +184,13 @@ func (b *Bridge) Stop() {
 			// guarantees a non-zero exit status, so we intentionally
 			// discard the returned error.
 			_ = b.cmd.Wait()
+			// Reaping the head is not proof the tree went, and a surviving
+			// acp-server holds KAS's workflow lease against every later resume.
+			if owns && !procgroup.WaitGone(pgid, bridgeGroupGrace) {
+				slog.Error("kiro-cli process group outlived its bridge; it still holds any workflow lease it owned",
+					"pgid", pgid,
+					"grace_ms", bridgeGroupGrace.Milliseconds())
+			}
 		}
 	})
 }

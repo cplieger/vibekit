@@ -27,7 +27,7 @@ const (
 	closerModelSwitch
 	// closerLocalShell is a `!cmd` turn vibekit ran itself.
 	closerLocalShell
-	// closerBridgeDeath is the agent process exiting with a turn still open.
+	// closerBridgeDeath is the bridge's frame stream ending with a turn still open.
 	closerBridgeDeath
 	// closerWireEnd is the engine's own turn_end bracket, the ONLY closer setting WireEnded.
 	closerWireEnd
@@ -38,8 +38,11 @@ const (
 	closerRunComplete
 )
 
-// deathInterruptCause is the divider's label when the agent process exited mid-turn.
-const deathInterruptCause = "The agent process exited before the turn finished."
+// deathInterruptCause is the divider's label when the bridge's frame stream ended
+// mid-turn. PUBLIC PROSE, and it claims only what vibekit observed: nothing on this
+// path reads the process's exit status, so a closed pipe must not be reported as an
+// exit.
+const deathInterruptCause = "The connection to the agent closed before the turn finished."
 
 // displacedTurnCause is what a turn says when a new one started over it.
 const displacedTurnCause = "The agent started a new turn before this one ended."
