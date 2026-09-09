@@ -144,6 +144,15 @@ func (b *Bridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 // bridgeGroupGrace bounds Stop's confirmation that the killed group emptied.
 const bridgeGroupGrace = 2 * time.Second
 
+// waitStatus renders cmd.Wait's error for a log line. A nil error is a clean exit(0),
+// which for a relay that should outlive the session is itself the finding.
+func waitStatus(err error) string {
+	if err == nil {
+		return "exit status 0"
+	}
+	return err.Error()
+}
+
 // Stop kills the subprocess and closes NotifCh. Safe to call multiple
 // times; subsequent calls are no-ops. Multiple call sites (agent.Shutdown,
 // tab close, model switch, session/load recovery) can race to stop the
@@ -176,14 +185,24 @@ func (b *Bridge) Stop() {
 
 			// Before the signal empties it; procgroup.GroupOf owns why.
 			pgid, owns := procgroup.GroupOf(b.cmd.Process)
-			if err := procgroup.Kill(b.cmd.Process, syscall.SIGKILL); err != nil && !procgroup.AlreadyGone(err) {
-				slog.Error("kill kiro-cli", "error", err)
+			killErr := procgroup.Kill(b.cmd.Process, syscall.SIGKILL)
+			// Already gone means kiro-cli ended on its OWN, so the wait status below
+			// is the only record of why. Our SIGKILL overwrites nothing in that case.
+			endedItself := procgroup.AlreadyGone(killErr)
+			if killErr != nil && !endedItself {
+				slog.Error("kill kiro-cli", "error", killErr)
 			}
 			// Wait releases the OS process entry so repeated chat
-			// switch / cull-idle cycles do not leak zombies. Kill
-			// guarantees a non-zero exit status, so we intentionally
-			// discard the returned error.
-			_ = b.cmd.Wait()
+			// switch / cull-idle cycles do not leak zombies.
+			waitErr := b.cmd.Wait()
+			// The child's wait status is the whole diagnosis when the stream died for
+			// no stated reason, and discarding it is why such a death reads as silent.
+			// Debug when we killed it, because then the status is our own signal.
+			if endedItself {
+				slog.Warn("kiro-cli ended on its own", "wait", waitStatus(waitErr))
+			} else {
+				slog.Debug("kiro-cli reaped", "wait", waitStatus(waitErr))
+			}
 			// Reaping the head is not proof the tree went, and a surviving
 			// acp-server holds KAS's workflow lease against every later resume.
 			if owns && !procgroup.WaitGone(pgid, bridgeGroupGrace) {
