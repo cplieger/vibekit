@@ -1131,9 +1131,15 @@ describe("an installed row measures the same whether or not it carries a badge",
     expect(chip).not.toBeNull();
     const nameBox = name?.getBoundingClientRect();
     const chipBox = chip?.getBoundingClientRect();
-    expect(chipBox?.top, "the chip shares the name's line").toBeGreaterThanOrEqual(
-      (nameBox?.top ?? 0) - 1,
-    );
+    // Vertical OVERLAP, not a shared top: the chip's font is smaller than the name's,
+    // so the two boxes never share an edge and how far apart their tops sit is a
+    // property of the two font stacks rather than of the layout. A top-plus-tolerance
+    // assertion therefore reads a different fontconfig as a regression — measured 1.7px
+    // apart on a CI runner against 0.3px locally, against a 1px tolerance. A chip on
+    // the name's line always STARTS before that line ends, whatever the metrics, and
+    // the coarse-pointer test below asserts the exact inverse: that pair is what pins
+    // the row-versus-column decision from both sides.
+    expect(chipBox?.top, "the chip shares the name's line").toBeLessThan(nameBox?.bottom ?? 0);
     expect(chipBox?.left, "the chip sits after the name").toBeGreaterThan(nameBox?.right ?? 0);
 
     expect(badged.getBoundingClientRect().height).toBeCloseTo(
