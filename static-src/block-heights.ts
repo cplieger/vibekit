@@ -68,7 +68,9 @@ import type { PointerTier } from "./device-view.js";
  *  collapsed height of a sealed trace — its `<summary>` row — measured at 25px on the
  *  fine tier and 44px on the coarse one, tier-dependent because 61-mcp-tools.css's
  *  universal hit floor includes `summary`. The 40 it replaced traced to nothing and was
- *  wrong on both tiers, in opposite directions. */
+ *  wrong on both tiers, in opposite directions. The FINE value is that row's own line
+ *  box rather than the floor, so it moves with the font stack (24px on a CI runner) —
+ *  hence the one pixel of slack its guard allows. */
 export const BLOCK_ESTIMATE_PX: Readonly<Record<PointerTier, BlockEstimates>> = {
   fine: {
     text: 48,

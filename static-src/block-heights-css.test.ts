@@ -90,6 +90,11 @@ const WRAP_H = 400;
  *  a loaded `npm test` prices a turn at hundreds of ms. */
 const LOADED_BUDGET_MS = 30_000;
 
+/** How far a font metric may move the ONE entry that is a measured height rather than
+ *  a declared reserve — see the `thinking` case, which is where this is spent. Every
+ *  other entry is pinned to the byte. */
+const FONT_SLACK_PX = 1;
+
 /** Class that turns the skip off, so the same list reads a second time with every box
  *  genuinely rendered. Only the PIPELINE case needs it — see `readTotals`. */
 const FORCE = "block-heights-force-render";
@@ -499,10 +504,19 @@ function tierCases(name: "fine" | "coarse", enter: () => Promise<void>): void {
         },
         "a sealed trace is never skipped, so its price is a measured height",
       ).toEqual({ contentVisibility: "visible", reserve: "none", bothReal: true });
-      expect({ height: r.box, ...r.terms }, "thinking: the collapsed summary row").toEqual({
-        height: est().thinking,
-        ...r.terms,
-      });
+      // The one entry this file cannot pin to the byte, because it is a MEASUREMENT
+      // rather than a function of the CSS. The row resolves to `max(--hit-floor, its
+      // line box + padding)`, and on the fine tier those two sit under a pixel apart —
+      // 12px italic at 1.4 plus 8px of padding against a 24px floor — so which term
+      // wins depends on the machine's font stack, and the same stylesheet measures
+      // 25px in this container and 24px on a CI runner. FONT_SLACK_PX is that
+      // disagreement and nothing wider: red-checked at a 2px shift of the entry (this
+      // case alone red, both tiers), at a raised summary floor and at the hit floor
+      // dropped from `summary` altogether.
+      expect(
+        Math.abs(r.box - est().thinking),
+        `thinking: the collapsed summary row measured ${String(r.box)}px against an estimate of ${String(est().thinking)}px`,
+      ).toBeLessThanOrEqual(FONT_SLACK_PX);
     },
     LOADED_BUDGET_MS,
   );
