@@ -46,6 +46,19 @@ constant ToolKindOther
 # constants is invisible to a reference search.
 constant RunNodeStatus
 
+# UserKind is that same contract with two members, and it is the shape the reason
+# above generalises to rather than a new one. It is a registered wire enum
+# (internal/wirespec wireEnums), so the const block IS the source of types.gen.ts's
+# `UserKind = "prompt" | "steer"` union AND of decoders.gen.ts's USER_KINDS array,
+# which reqOneOf validates every user row against. Production compares only against
+# UserKindSteer, because absent means prompt — so the value "prompt" reaches the wire
+# from a chat file rather than from a comparison, and no reference search can see it.
+# Deleting the constant narrows the union to "steer" alone, at which point the client
+# REJECTS a legitimate user_kind: "prompt" and decodeArray rethrows, losing the whole
+# message array for that chat until the page is reloaded. One entry for the enum, per
+# the RunNodeStatus reason.
+constant UserKindPrompt
+
 # --- 2. json-tagged fields on wiregen-registered structs. The struct is
 # registered in cmd/wire-codegen, so the field is part of the generated TS
 # interface AND its validating decoder; encoding/json populates it by

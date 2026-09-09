@@ -21,14 +21,14 @@ import (
 func TestBufferSnapshot(t *testing.T) {
 	t.Run("an unstarted turn has no snapshot", func(t *testing.T) {
 		var buf Buffer
-		if _, _, ok := buf.Snapshot(); ok {
+		if _, _, _, ok := buf.SnapshotCapped(SnapshotCaps{}); ok {
 			t.Error("snapshot reported content for a buffer with no message id")
 		}
 	})
 
 	t.Run("a started but silent turn is a bare busy signal", func(t *testing.T) {
 		buf := Buffer{MessageID: "m1"}
-		msg, seq, ok := buf.Snapshot()
+		msg, seq, _, ok := buf.SnapshotCapped(SnapshotCaps{})
 		if ok {
 			t.Errorf("snapshot reported content for an empty turn: %+v", msg)
 		}
@@ -49,7 +49,7 @@ func TestBufferSnapshot(t *testing.T) {
 		buf.AppendToolCall(&vibekit.ToolCall{ID: "tool-1", Title: "Read File"})
 		buf.AppendTextDelta("world", "")
 
-		msg, seq, ok := buf.Snapshot()
+		msg, seq, _, ok := buf.SnapshotCapped(SnapshotCaps{})
 		if !ok {
 			t.Fatal("snapshot reported no content")
 		}
@@ -92,7 +92,7 @@ func TestBufferSnapshot(t *testing.T) {
 		buf.AppendTextDelta("hi", "")
 		buf.AppendToolCall(&vibekit.ToolCall{ID: "tool-1"})
 
-		msg, _, ok := buf.Snapshot()
+		msg, _, _, ok := buf.SnapshotCapped(SnapshotCaps{})
 		if !ok {
 			t.Fatal("snapshot reported no content")
 		}
@@ -189,7 +189,7 @@ func blockTextLen(blocks []vibekit.Block) int {
 func TestSnapshotCapped_UnboundedMatchesSnapshot(t *testing.T) {
 	fx := newCapFixture(t)
 
-	plain, plainSeq, plainOK := fx.buf.Snapshot()
+	plain, plainSeq, _, plainOK := fx.buf.SnapshotCapped(SnapshotCaps{})
 	capped, cappedSeq, truncated, cappedOK := fx.buf.SnapshotCapped(SnapshotCaps{})
 	if !plainOK || !cappedOK {
 		t.Fatalf("ok = %v / %v, want both true", plainOK, cappedOK)

@@ -468,7 +468,7 @@ func TestHandleOne_ServesTheWindowBase(t *testing.T) {
 			}
 			ids := make([]string, len(got.Messages))
 			for i, m := range got.Messages {
-				ids[i] = string(m.ID)
+				ids[i] = m.ID
 			}
 			if !slices.Equal(ids, tc.wantIDs) {
 				t.Fatalf("window = %v, want %v — the budget cut somewhere else, so the "+
