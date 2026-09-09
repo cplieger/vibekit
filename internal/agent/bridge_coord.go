@@ -52,6 +52,9 @@ type BridgeCoordinator struct {
 	// onSessionRehydrated fires after a successful session/load, off the spawn
 	// path: the runtime heals the runs that chat's dying process paused.
 	onSessionRehydrated func(vibekit.ChatID)
+	// dischargeWaiting drops a chat's retained waiting_on_user claim when the agent
+	// that raised it dies. Nil in tests.
+	dischargeWaiting func(context.Context, vibekit.ChatID)
 	// onTurnClosed fires from the WINNING closer once a turn has finalized; the
 	// agent-terminal registry evicts that turn's retired output. A closure rather
 	// than the collaborator, which is built after this literal. Nil in tests.
@@ -144,6 +147,7 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 		onTurnClosed: func(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
 			h.agentTerms.CloseTurn(chatID, epoch)
 		},
+		dischargeWaiting: h.DischargeWaiting,
 	}
 }
 
@@ -570,7 +574,13 @@ func (bc *BridgeCoordinator) forwardAt(chatID vibekit.ChatID, bridge ACPBridge, 
 	// Still registered means nobody removed it, so the process died on its own: the
 	// third actor closes whatever turn is still open, because no other closer will.
 	if bc.bridge.mgr.removeIfBridge(chatID, bridge) {
+		// The only site that observes every death; readLoop reaps its own paths only.
+		bridge.Stop()
 		bc.closeTurnOnBridgeDeath(bc.lifecycle.shutdownCtx, chatID)
+		// waiting_on_user claims a person owes the AGENT an answer; the agent is gone.
+		if bc.dischargeWaiting != nil {
+			bc.dischargeWaiting(bc.lifecycle.shutdownCtx, chatID)
+		}
 	}
 
 	// Flush staged writes for the chat. A bridge exit leaves the supervised

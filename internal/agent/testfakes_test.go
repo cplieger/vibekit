@@ -70,7 +70,10 @@ type fakeBridge struct {
 	// switch-by-restart fallback.
 	setModelFailures int
 	stopped          bool
-	started          bool
+	// streamClosed guards the channel close separately from stopped, so endStream can
+	// end the frame stream WITHOUT claiming the bridge was torn down.
+	streamClosed bool
+	started      bool
 }
 
 func newFakeBridge() *fakeBridge {
@@ -160,8 +163,20 @@ func (b *fakeBridge) isStopped() bool {
 
 func (b *fakeBridge) Stop() {
 	b.mu.Lock()
-	if !b.stopped {
-		b.stopped = true
+	b.stopped = true
+	if !b.streamClosed {
+		b.streamClosed = true
+		close(b.notifCh)
+	}
+	b.mu.Unlock()
+}
+
+// endStream ends the frame stream without marking the bridge stopped, which is what
+// lets a test tell "the consumer reaped it" from "the fixture already had".
+func (b *fakeBridge) endStream() {
+	b.mu.Lock()
+	if !b.streamClosed {
+		b.streamClosed = true
 		close(b.notifCh)
 	}
 	b.mu.Unlock()
