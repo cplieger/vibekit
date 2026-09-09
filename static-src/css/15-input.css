@@ -1400,12 +1400,23 @@
 }
 
 /* THE ROW IS THE TARGET HERE, so the switch drops the hit-target expander every
-   other native box control gets (61-mcp-tools.css). This label is 44px tall and
-   the card's full width, while the checkbox sits against the row's TOP edge — so
-   an expander centred on it overhangs upward, measured 4px into the row above on
-   a coarse pointer, which is that row's whole bottom chrome. */
+   other native box control gets (61-mcp-tools.css). This label is the card's full
+   width and takes the floor itself below, while the checkbox sits against the
+   row's TOP edge — so an expander centred on it overhangs upward, measured 4px
+   into the row above on a coarse pointer, which is that row's whole bottom
+   chrome. */
 .chat-opt-row > input[type="checkbox"]::after {
   content: none;
+}
+
+/* Declared here because the universal floor cannot reach a <label>: it matches the
+   native controls plus `[role]`/`[tabindex]`, so this row's five BUTTON siblings
+   take it and this one was left content-driven — which made the carve-out above
+   rest on the machine's font stack rather than on a rule. Measured at 42px on a
+   coarse pointer under a narrower stack, 2px under its own claim and 2px short of
+   its neighbours, so the list stopped reading as one list too. */
+.chat-opt-row {
+  min-block-size: var(--hit-floor);
 }
 
 /* The goal row's inline input collection: an expanding row section, not a
