@@ -1,5 +1,10 @@
 /* ---- Diff pane (shared: chat preview, editor diff mode, conflict compare) ---- */
 .diff-pane {
+  /* The change map's reserved column, declared ONCE so the label row and the
+     body derive one grid from it and cannot disagree about where a column ends.
+     `0px` and not `0`: `var()` substitutes text, and a track wants a unit. */
+  --diff-map-w: 0px;
+
   display: flex;
   flex-direction: column;
   font-family: ui-monospace, monospace;
@@ -10,8 +15,17 @@
   background: var(--c-bg-secondary);
 }
 
+.diff-pane-mapped {
+  --diff-map-w: 0.75rem;
+}
+
+/* The label row is the BODY'S grid, not a flex line: a caption has to sit over
+   the column it describes, and with the whitespace toggle sharing the line both
+   labels flex-shrank around it, so "working tree" pointed at HEAD's text. The
+   toggle has its own row above (`.diff-pane-toolbar`) for that reason. */
 .diff-pane-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--diff-map-w);
   align-items: center;
 
   /* Was `var(--c-bg-elev-2, …)` — a token this app never declared, so the
@@ -23,9 +37,13 @@
   padding: var(--sp-1) 0;
 }
 
-.diff-pane-header-toolbar {
+.diff-pane-toolbar {
+  display: flex;
   justify-content: flex-end;
-  padding-inline: var(--sp-2);
+  align-items: center;
+  background: var(--c-bg-secondary);
+  border-bottom: 1px solid var(--c-border);
+  padding: var(--sp-1) var(--sp-2);
 }
 
 .diff-pane-ws-toggle {
@@ -44,7 +62,6 @@
 }
 
 .diff-pane-label {
-  flex: 1;
   padding: 0 var(--sp-2);
   min-width: 0;
   overflow: hidden;
@@ -58,7 +75,7 @@
 
 .diff-pane-body {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--diff-map-w);
   min-height: 0;
   flex: 1;
 }
@@ -166,6 +183,56 @@
     color-mix(in oklch, var(--c-text-tertiary) 16%, transparent) 0 1px,
     transparent 1px 7px
   );
+}
+
+/* ---- Change map (the scrollbar-adjacent overview of where the edits are) ----
+   The third column of the body, so it spans exactly the rows it describes. A
+   mark's SIDE is its kind as much as its hue, which keeps the strip off
+   colour-alone (WCAG 1.4.1); positions come from TS as percentages, because
+   every row is the same height. Full contract: `vibekit-ui.md` "Diff viewer". */
+.diff-map {
+  position: relative;
+  overflow: hidden;
+  border-left: 1px solid var(--c-border);
+  background: var(--c-bg-secondary);
+  cursor: pointer;
+  /* A drag on the map scrolls the diff, not the page. */
+  touch-action: none;
+}
+
+.diff-map-mark {
+  position: absolute;
+  /* A one-line change in a thousand-line file is a sub-pixel band, and a mark
+     nobody can see is the defect this map exists to fix. */
+  min-height: 2px;
+}
+
+.diff-map-mark-del {
+  inset-inline-start: 0;
+  width: 50%;
+  background: var(--c-red);
+}
+
+.diff-map-mark-add {
+  inset-inline-end: 0;
+  width: 50%;
+  background: var(--c-green);
+}
+
+.diff-map-mark-mod {
+  inset-inline: 0;
+  background: var(--c-blue);
+}
+
+/* Where the reader is. Ink rather than a hue, because the marks own every
+   status colour in this strip and a fifth one would compete with them. */
+.diff-map-view {
+  position: absolute;
+  inset-inline: 0;
+  min-height: 4px;
+  background: color-mix(in oklch, var(--c-text-primary) 12%, transparent);
+  border-block: 1px solid color-mix(in oklch, var(--c-text-primary) 32%, transparent);
+  pointer-events: none;
 }
 
 /* No changes is a STATE, not an empty layout: two identical file listings read

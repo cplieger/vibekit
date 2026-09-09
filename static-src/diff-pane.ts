@@ -62,7 +62,16 @@ export interface DiffPaneOpts {
    *  with `source`: when `source` is set, the pane handles toggling
    *  internally and this callback is ignored. */
   onToggleWhitespace?: (ignoreWhitespace: boolean) => void;
+  /** Draw the change map beside the columns. Default true for the two-pane
+   *  shape, ignored for `unified` (whose column is not the vertical scroller,
+   *  so there is no scroll position for a map to report). */
+  changeMap?: boolean;
 }
+
+/** The rows `renderDiffPane` keeps across a whitespace re-diff: the toolbar and
+ *  the label row. Everything else — the body, the "+N more" footer, the
+ *  no-changes state — is derived from the diff and is rebuilt. */
+const CHROME_ROWS = ".diff-pane-toolbar, .diff-pane-header";
 
 /** Build a two-pane diff element. The caller appends it to the DOM. */
 export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTMLDivElement {
@@ -70,25 +79,21 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
   const syncScroll = opts.syncScroll !== false;
   const container = el("div", { className: "diff-pane" }) as HTMLDivElement;
 
-  if (opts.oldLabel !== undefined || opts.newLabel !== undefined) {
-    const header = el(
-      "div",
-      { className: "diff-pane-header" },
-      el("span", { className: "diff-pane-label diff-pane-label-old" }, opts.oldLabel ?? ""),
-      el("span", { className: "diff-pane-label diff-pane-label-new" }, opts.newLabel ?? ""),
+  // The toggle is a toolbar control, not a caption: sharing the label row made
+  // both labels flex-shrink around it, so a caption stopped sitting over the
+  // column it names. Measurement in `vibekit-ui.md` "Diff viewer".
+  if (opts.source !== undefined || opts.onToggleWhitespace !== undefined) {
+    container.appendChild(
+      el("div", { className: "diff-pane-toolbar" }, buildWhitespaceToggle(container, opts)),
     );
-    if (opts.source !== undefined || opts.onToggleWhitespace !== undefined) {
-      header.appendChild(buildWhitespaceToggle(container, opts));
-    }
-    container.appendChild(header);
-  } else if (opts.source !== undefined || opts.onToggleWhitespace !== undefined) {
-    // No labels, but callers still want the toggle. Build a minimal
-    // header that only carries it.
+  }
+  if (opts.oldLabel !== undefined || opts.newLabel !== undefined) {
     container.appendChild(
       el(
         "div",
-        { className: "diff-pane-header diff-pane-header-toolbar" },
-        buildWhitespaceToggle(container, opts),
+        { className: "diff-pane-header" },
+        el("span", { className: "diff-pane-label diff-pane-label-old" }, opts.oldLabel ?? ""),
+        el("span", { className: "diff-pane-label diff-pane-label-new" }, opts.newLabel ?? ""),
       ),
     );
   }
@@ -135,7 +140,8 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
 
   const leftCol = el("div", { className: "diff-col diff-col-old" }) as HTMLDivElement;
   const rightCol = el("div", { className: "diff-col diff-col-new" }) as HTMLDivElement;
-  container.appendChild(el("div", { className: "diff-pane-body" }, leftCol, rightCol));
+  const body = el("div", { className: "diff-pane-body" }, leftCol, rightCol) as HTMLDivElement;
+  container.appendChild(body);
 
   for (const line of lines) {
     if (rowCount >= limit) {
@@ -148,6 +154,13 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
 
   if (syncScroll) {
     wireSyncScroll(leftCol, rightCol);
+  }
+
+  if (opts.changeMap !== false && rowCount > 0) {
+    container.classList.add("diff-pane-mapped");
+    const map = buildChangeMap(lines, rowCount);
+    body.appendChild(map);
+    wireChangeMap(map, leftCol, rightCol);
   }
 
   return container;
@@ -318,7 +331,12 @@ function buildWhitespaceToggle(container: HTMLDivElement, opts: DiffPaneOpts): H
   const input = el("input", { type: "checkbox" }) as HTMLInputElement;
   const wrap = el(
     "label",
-    { className: "diff-pane-ws-toggle" },
+    {
+      className: "diff-pane-ws-toggle",
+      // The label names the switch; this says what flipping it does, which
+      // "whitespace" alone cannot — a re-indented block reads as unchanged.
+      "data-tooltip": "Treat a line that differs only in spacing or indentation as unchanged",
+    },
     input,
     el("span", {}, "Ignore whitespace"),
   ) as HTMLLabelElement;
@@ -336,27 +354,152 @@ function buildWhitespaceToggle(container: HTMLDivElement, opts: DiffPaneOpts): H
       const freshDiffOpts: DiffPaneOpts = freshOpts;
       const fresh = lineDiff(source.oldText, source.newText, { ignoreWhitespace: ignore });
       const rerendered = renderDiffPane(fresh, freshDiffOpts);
-      // Replace every sibling after the header: the body, and the
-      // "+N more" footer, which is a sibling of the body rather than
-      // a child of it.
-      const header = container.querySelector(".diff-pane-header");
-      const insertionPoint = header !== null ? header.nextSibling : container.firstChild;
-      while (
-        insertionPoint !== null &&
-        container.lastChild !== null &&
-        container.lastChild !== header
-      ) {
-        container.removeChild(container.lastChild);
+      // Swap the DERIVED rows and keep the chrome, identified by what it is
+      // rather than by position: the toolbar this checkbox lives in is the
+      // pane's FIRST row, so "everything after the header" would delete it.
+      for (const child of [...container.children]) {
+        if (!child.matches(CHROME_ROWS)) {
+          child.remove();
+        }
       }
-      // Append all children from the re-rendered pane after its header.
-      const freshHeader = rerendered.querySelector(".diff-pane-header");
-      let node = freshHeader !== null ? freshHeader.nextSibling : rerendered.firstChild;
-      while (node !== null) {
-        const next = node.nextSibling;
-        container.appendChild(node);
-        node = next;
+      container.classList.toggle(
+        "diff-pane-mapped",
+        rerendered.classList.contains("diff-pane-mapped"),
+      );
+      for (const child of [...rerendered.children]) {
+        if (!child.matches(CHROME_ROWS)) {
+          container.appendChild(child);
+        }
       }
     }
   });
   return wrap;
+}
+
+// --- Change map ---
+
+/** One contiguous run of changed rows, as the map paints it. `mod` is a run
+ *  holding both sides of a rewrite. */
+interface ChangeRun {
+  readonly start: number;
+  readonly len: number;
+  readonly kind: "add" | "del" | "mod";
+}
+
+/** Group the changed rows into runs. Row INDEX is the unit rather than a line
+ *  number: every row is the same height (`white-space: pre`, so nothing wraps)
+ *  and both columns hold one row per `DiffLine`, so an index maps linearly onto
+ *  the scroller and one run set describes both sides. */
+function changeRuns(lines: readonly DiffLine[], rowCount: number): ChangeRun[] {
+  const runs: ChangeRun[] = [];
+  const end = Math.min(lines.length, rowCount);
+  let start = -1;
+  let adds = 0;
+  let dels = 0;
+  const flush = (at: number): void => {
+    if (start < 0) {
+      return;
+    }
+    runs.push({
+      start,
+      len: at - start,
+      kind: adds > 0 && dels > 0 ? "mod" : adds > 0 ? "add" : "del",
+    });
+    start = -1;
+    adds = 0;
+    dels = 0;
+  };
+  for (let i = 0; i < end; i++) {
+    const kind = lines[i]?.kind;
+    if (kind === "add" || kind === "del") {
+      if (start < 0) {
+        start = i;
+      }
+      if (kind === "add") {
+        adds++;
+      } else {
+        dels++;
+      }
+      continue;
+    }
+    flush(i);
+  }
+  flush(end);
+  return runs;
+}
+
+/** Build the map: one mark per run, plus the viewport box `wireChangeMap` drives.
+ *  `aria-hidden` and not focusable, because the rows are the accessible statement
+ *  of what changed and this is a pointer shortcut to a position they carry. The
+ *  side-carries-kind rule is in `vibekit-ui.md` "Diff viewer". */
+function buildChangeMap(lines: readonly DiffLine[], rowCount: number): HTMLDivElement {
+  const map = el("div", {
+    className: "diff-map",
+    "aria-hidden": "true",
+  }) as HTMLDivElement;
+  const pct = (rows: number): string => `${((rows / rowCount) * 100).toFixed(4)}%`;
+  for (const run of changeRuns(lines, rowCount)) {
+    const mark = el("div", {
+      className: `diff-map-mark diff-map-mark-${run.kind}`,
+    }) as HTMLDivElement;
+    mark.style.top = pct(run.start);
+    mark.style.height = pct(run.len);
+    map.appendChild(mark);
+  }
+  map.appendChild(el("div", { className: "diff-map-view" }));
+  return map;
+}
+
+/** Track the columns' scroll position in the viewport box, and let a press on
+ *  the map move it. `left` is the scroller the map reads and writes; sync scroll
+ *  carries the move to `right`, and both are listened to so a pane with sync off
+ *  still reports whichever the reader scrolled. */
+function wireChangeMap(map: HTMLDivElement, left: HTMLDivElement, right: HTMLDivElement): void {
+  const view = map.querySelector<HTMLDivElement>(".diff-map-view");
+  if (view === null) {
+    return;
+  }
+  let queued = false;
+  const paint = (): void => {
+    if (queued) {
+      return;
+    }
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      const total = left.scrollHeight;
+      if (total <= 0) {
+        return;
+      }
+      const visible = Math.min(1, left.clientHeight / total);
+      // Nothing scrolls, so a box spanning the whole track would claim a
+      // position the reader cannot leave.
+      view.style.display = visible >= 1 ? "none" : "";
+      view.style.top = `${((left.scrollTop / total) * 100).toFixed(4)}%`;
+      view.style.height = `${(visible * 100).toFixed(4)}%`;
+    });
+  };
+  left.addEventListener("scroll", paint);
+  right.addEventListener("scroll", paint);
+  paint();
+
+  const jumpTo = (clientY: number): void => {
+    const box = map.getBoundingClientRect();
+    if (box.height <= 0) {
+      return;
+    }
+    const frac = Math.min(1, Math.max(0, (clientY - box.top) / box.height));
+    // Centre the landing on the press: a reader aiming at a mark wants it in
+    // view, not pinned to the top edge where its context above is cut off.
+    left.scrollTop = Math.max(0, frac * left.scrollHeight - left.clientHeight / 2);
+  };
+  map.addEventListener("pointerdown", (e: PointerEvent) => {
+    map.setPointerCapture(e.pointerId);
+    jumpTo(e.clientY);
+  });
+  map.addEventListener("pointermove", (e: PointerEvent) => {
+    if (map.hasPointerCapture(e.pointerId)) {
+      jumpTo(e.clientY);
+    }
+  });
 }

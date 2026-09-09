@@ -1,8 +1,9 @@
 // Tests for diff-pane.ts: row windowing, the no-changes state, word marks and
 // syntax highlighting.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { renderDiffPane } from "./diff-pane.js";
 import { lineDiff, type DiffLine } from "./diff.js";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 function ctx(oldNo: number, newNo: number, text = ""): DiffLine {
   return { kind: "ctx", oldNo, newNo, text };
@@ -69,9 +70,9 @@ describe("renderDiffPane with nothing changed", () => {
     expect(renderDiffPane([], {}).querySelector(".diff-none")?.textContent).toBe("Empty file");
   });
 
-  it("keeps the header, so the whitespace toggle is still reachable", () => {
+  it("keeps the chrome, so the whitespace toggle is still reachable", () => {
     // Ignoring whitespace can be what collapsed the diff to context in the
-    // first place; without the header there is no way to turn it back off.
+    // first place; without the toolbar there is no way to turn it back off.
     const pane = renderDiffPane([ctx(1, 1, "same")], {
       oldLabel: "HEAD",
       newLabel: "working tree",
@@ -80,6 +81,8 @@ describe("renderDiffPane with nothing changed", () => {
     expect(pane.querySelector(".diff-pane-header")).not.toBeNull();
     expect(pane.querySelector(".diff-pane-ws-toggle")).not.toBeNull();
     expect(pane.querySelector(".diff-none")).not.toBeNull();
+    // No rows, so nothing scrolls and there is no position to map.
+    expect(pane.querySelector(".diff-map")).toBeNull();
   });
 
   it("renders rows as soon as one line differs", () => {
@@ -188,5 +191,224 @@ describe("renderDiffPane syntax highlighting", () => {
         expect(row.querySelector(".diff-line-text")).not.toBeNull();
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The header's captions, and the reported symptom: "working tree" sat left of
+// the working-tree column. The toggle used to share the labels' flex line, so
+// both labels shrank around it while the BODY split at 50% regardless — the
+// caption boundary and the column boundary were two different numbers. Measured
+// against the real assembled cascade, because that is the only instrument that
+// can tell an aligned caption from a nearly-aligned one.
+// ---------------------------------------------------------------------------
+
+describe("the diff pane's column captions", () => {
+  let css: HTMLStyleElement;
+  let host: HTMLDivElement;
+
+  beforeAll(() => {
+    css = mountAppCSS();
+    host = document.createElement("div");
+    // A width the pane can split, and a height its columns can scroll in.
+    host.style.cssText = "position:fixed;inset:0;width:800px;height:300px";
+    document.body.appendChild(host);
+  });
+  afterAll(() => {
+    css.remove();
+    host.remove();
+  });
+
+  function paneWithLabels(): HTMLDivElement {
+    host.replaceChildren();
+    const pane = renderDiffPane(MODIFIED, {
+      oldLabel: "HEAD",
+      newLabel: "working tree",
+      source: { oldText: 'a := "one"\n', newText: 'a := "two"\n' },
+    });
+    host.appendChild(pane);
+    return pane;
+  }
+
+  function leftEdge(sel: string, pane: HTMLDivElement): number {
+    const el = pane.querySelector(sel);
+    expect(el, sel).not.toBeNull();
+    return (el as HTMLElement).getBoundingClientRect().left;
+  }
+
+  it("starts each caption's cell at its own column's left edge", () => {
+    const pane = paneWithLabels();
+    // The label carries its own `padding-inline`, so the CELL edge is the number
+    // that has to agree with the column; compare the cell's box, not the text's.
+    const oldCell = leftEdge(".diff-pane-label-old", pane);
+    const newCell = leftEdge(".diff-pane-label-new", pane);
+    expect(oldCell).toBeCloseTo(leftEdge(".diff-col-old", pane), 0);
+    expect(newCell).toBeCloseTo(leftEdge(".diff-col-new", pane), 0);
+  });
+
+  it("keeps the whitespace toggle out of that row entirely", () => {
+    const pane = paneWithLabels();
+    expect(pane.querySelector(".diff-pane-header .diff-pane-ws-toggle")).toBeNull();
+    expect(pane.querySelector(".diff-pane-toolbar .diff-pane-ws-toggle")).not.toBeNull();
+  });
+
+  it("gives each map mark a SIDE, so the strip is not colour alone", () => {
+    // A deletion belongs to the left column and an addition to the right, so a
+    // mark on that half says which side moved without reading its hue — the
+    // channel a reader who cannot separate red from green still has.
+    host.replaceChildren();
+    const pane = renderDiffPane(
+      [
+        ctx(1, 1, "a"),
+        del(2, "gone"),
+        ctx(3, 2, "b"),
+        // A rewrite: both sides in one run, so the mark spans both halves.
+        del(4, "x"),
+        add(3, "y"),
+        ctx(5, 4, "c"),
+        add(5, "z"),
+      ],
+      { oldLabel: "HEAD", newLabel: "working tree" },
+    );
+    host.appendChild(pane);
+    const map = pane.querySelector<HTMLElement>(".diff-map");
+    expect(map).not.toBeNull();
+    // A mark's containing block is the map's PADDING box, so measure that
+    // rather than the border box — the strip carries a left border.
+    const outer = map!.getBoundingClientRect();
+    const trackLeft = outer.left + map!.clientLeft;
+    const trackWidth = map!.clientWidth;
+    expect(trackWidth).toBeGreaterThan(6);
+    const box = (sel: string): DOMRect => {
+      const el = pane.querySelector<HTMLElement>(sel);
+      expect(el, sel).not.toBeNull();
+      return el!.getBoundingClientRect();
+    };
+    const half = trackWidth / 2;
+    expect(box(".diff-map-mark-del").left).toBeCloseTo(trackLeft, 0);
+    expect(box(".diff-map-mark-del").width).toBeCloseTo(half, 0);
+    expect(box(".diff-map-mark-add").right).toBeCloseTo(trackLeft + trackWidth, 0);
+    expect(box(".diff-map-mark-add").width).toBeCloseTo(half, 0);
+    expect(box(".diff-map-mark-mod").width).toBeCloseTo(trackWidth, 0);
+  });
+
+  it("survives a whitespace re-render, control included", () => {
+    // The toolbar is the pane's FIRST row, so the old "remove every sibling
+    // after the header" swap would have deleted the checkbox mid-click.
+    const pane = paneWithLabels();
+    const box = pane.querySelector<HTMLInputElement>(".diff-pane-ws-toggle input");
+    expect(box).not.toBeNull();
+    box!.checked = true;
+    box!.dispatchEvent(new Event("change"));
+    expect(pane.querySelector(".diff-pane-ws-toggle")).not.toBeNull();
+    expect(pane.querySelectorAll(".diff-pane-toolbar")).toHaveLength(1);
+    expect(pane.querySelectorAll(".diff-pane-header")).toHaveLength(1);
+    // Both sides only differ in the string, so ignoring whitespace changes
+    // nothing and the rebuilt body is still a real diff rather than an empty box.
+    expect(pane.querySelector(".diff-pane-body")).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The whitespace toggle's explanation. The label names the switch and cannot
+// say what flipping it does, which is the question a reader has about it.
+// ---------------------------------------------------------------------------
+
+describe("the whitespace toggle's tooltip", () => {
+  it("says what ignoring whitespace does to a line", () => {
+    const pane = renderDiffPane(MODIFIED, {
+      source: { oldText: "a", newText: "b" },
+    });
+    const tip = pane.querySelector(".diff-pane-ws-toggle")?.getAttribute("data-tooltip") ?? "";
+    expect(tip).toContain("unchanged");
+    expect(tip.length).toBeGreaterThan(20);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The change map: where the edits are, without scrolling the file to find out.
+// One mark per contiguous run of changed rows, positioned as a percentage of the
+// row count — every row is the same height, so an index maps linearly onto the
+// scroller and no measurement is involved.
+// ---------------------------------------------------------------------------
+
+describe("the change map", () => {
+  // Percentages come back through the CSSOM, which normalizes the text ("10%"
+  // for "10.0000%"), so read them as numbers.
+  function marks(pane: HTMLDivElement): { cls: string; top: number; height: number }[] {
+    return [...pane.querySelectorAll<HTMLElement>(".diff-map-mark")].map((m) => ({
+      cls: m.className,
+      top: Number.parseFloat(m.style.top),
+      height: Number.parseFloat(m.style.height),
+    }));
+  }
+
+  it("puts one mark on each run of changed rows, in order", () => {
+    // 10 rows: a deletion at 1, a rewrite at 4-5, an addition at 8.
+    const lines: DiffLine[] = [
+      ctx(1, 1, "a"),
+      del(2, "gone"),
+      ctx(3, 2, "b"),
+      ctx(4, 3, "c"),
+      del(5, "old"),
+      add(4, "new"),
+      ctx(6, 5, "d"),
+      ctx(7, 6, "e"),
+      add(7, "extra"),
+      ctx(8, 8, "f"),
+    ];
+    const pane = renderDiffPane(lines, { oldLabel: "HEAD", newLabel: "working tree" });
+    const got = marks(pane);
+    expect(got).toHaveLength(3);
+    expect(got.map((m) => m.cls)).toEqual([
+      "diff-map-mark diff-map-mark-del",
+      "diff-map-mark diff-map-mark-mod",
+      "diff-map-mark diff-map-mark-add",
+    ]);
+    // Row 1 of 10, one row tall.
+    expect(got[0]!.top).toBe(10);
+    expect(got[0]!.height).toBe(10);
+    // The rewrite is one run of two rows, not two runs of one.
+    expect(got[1]!.top).toBe(40);
+    expect(got[1]!.height).toBe(20);
+    expect(got[2]!.top).toBe(80);
+  });
+
+  it("carries a viewport box", () => {
+    const pane = renderDiffPane(MODIFIED, {});
+    expect(pane.querySelector(".diff-map-view")).not.toBeNull();
+    expect(pane.classList.contains("diff-pane-mapped")).toBe(true);
+  });
+
+  it("measures against the RENDERED rows when the diff is truncated", () => {
+    // The map drives the scroller, and the scroller holds the rows that were
+    // rendered — so a percentage over the whole diff would point past its end.
+    const lines = [add(1, "one"), ctx(2, 2, "two"), add(3, "three"), add(4, "four")];
+    const pane = renderDiffPane(lines, { maxRows: 2 });
+    const got = marks(pane);
+    expect(got).toHaveLength(1);
+    expect(got[0]!.top).toBe(0);
+    expect(got[0]!.height).toBe(50);
+  });
+
+  it("draws no map in the unified shape", () => {
+    // That column is not the vertical scroller (the card around it is), so
+    // there is no scroll position for a viewport box to report.
+    const pane = renderDiffPane(MODIFIED, { unified: true });
+    expect(pane.querySelector(".diff-map")).toBeNull();
+    expect(pane.classList.contains("diff-pane-mapped")).toBe(false);
+  });
+
+  it("stays out of the accessibility tree", () => {
+    // The rows themselves state what changed; this is a pointer shortcut to a
+    // position they already carry, so it takes no tab stop and no hit target.
+    const pane = renderDiffPane(MODIFIED, {});
+    expect(pane.querySelector(".diff-map")?.getAttribute("aria-hidden")).toBe("true");
+    expect(pane.querySelectorAll(".diff-map [tabindex], .diff-map button")).toHaveLength(0);
+  });
+
+  it("can be turned off", () => {
+    const pane = renderDiffPane(MODIFIED, { changeMap: false });
+    expect(pane.querySelector(".diff-map")).toBeNull();
   });
 });
