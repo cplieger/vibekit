@@ -3,6 +3,7 @@ package agent
 import (
 	"log/slog"
 
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -27,7 +28,8 @@ func (rt *Runtime) replayPendingSteers(
 		// The counterpart to the client's own gap line: together they say whether an
 		// emptied dock was force-emptied by a gap and refilled here, or emptied
 		// because the turn ended with the steer unread.
-		slog.Debug("SSE connect steer replay", "steers", len(events), "chat_filter", chatFilter)
+		slog.Debug("SSE connect steer replay", "steers", len(events),
+			"chat_filter", logsafe.Field(string(chatFilter)))
 	}
 	return nil
 }
