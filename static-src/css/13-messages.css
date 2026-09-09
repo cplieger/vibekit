@@ -1007,6 +1007,13 @@
   font-style: normal;
 }
 
+/* The row's `gap` supplies the separator's leading space and this supplies its
+ * trailing one, so the dot sits centred between the label and the toggle word.
+ * A text space would be the font's, which is narrower than the gap. */
+.compaction-dot {
+  margin-inline-end: var(--sp-2);
+}
+
 .compaction[open] .compaction-head > .disclosure-chevron {
   --chev-turn: 0deg;
 }

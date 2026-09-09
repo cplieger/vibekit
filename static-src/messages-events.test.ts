@@ -179,8 +179,10 @@ describe("compacted event summary", () => {
     expect(node.querySelector(".boundary")).toBeNull();
     const head = node.querySelector("summary.compaction-head");
     expect(head?.textContent ?? "").toContain("Conversation compacted");
-    // The app's own joiner, as plain text (status.ts's effort pill is the shape).
-    expect(head?.textContent ?? "").toContain("· summary");
+    // The app's own joiner (status.ts's effort pill is the shape), with the dot
+    // in its own element so the row's gap sits on both of its sides.
+    expect(head?.querySelector(".compaction-note > .compaction-dot")?.textContent).toBe("·");
+    expect(head?.textContent ?? "").toContain("summary");
   });
 
   // The row sets `list-style: none`, so this glyph is the only thing on screen
