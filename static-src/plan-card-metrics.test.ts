@@ -15,23 +15,23 @@
 // No source read can produce that number.
 //
 // MEASURED over this suite's own 200-card list, against the unfixed
-// `contain-intrinsic-size: auto 4rem` and then against the fix (Chromium 151).
-// Drift is `listSkipped - listRendered`, so a POSITIVE number means the estimate
-// OVER-states and the list SHRINKS as the reader scrolls:
-//
-//   tier              real card   a skipped card was   drift was   now
-//   fine pointer      70px        90px                 +3,680px    0px
-//   coarse + narrow   70px        90px                 +3,620px    0px
-//   coarse + wide     70px        90px                 +3,620px    0px
+// `contain-intrinsic-size: auto 4rem` and then against the fix (Chromium 151):
+// a real card of 70px on all three tiers, a skipped one of 90px, and a list drift
+// (`listSkipped - listRendered`) of +3,680px fine / +3,620px coarse falling to 0.
+// 90px is `max(0, 64 + 24 + 2)` -- the declared 4rem plus the 24px of block padding
+// it had already claimed, plus the 2px border -- against a real content box of 44px.
 //
 // ONE real height on all three tiers, which is the finding rather than a redundancy:
 // nothing on this card reads a control-height token or a width query, so one value is
-// exact everywhere. 90px is `max(0, 64 + 24 + 2)` -- the declared 4rem plus the 24px
-// of block padding it had already claimed, plus the 2px border -- against a real
-// content box of 44px. The 20px per-card error times the ~181-184 cards Chromium had
-// not rendered is the drift, so the total is a function of the scrollport as well as
-// the estimate, which is why it is recorded rather than derived (the coarse rows
-// differ from the fine one only because those cases measure at a 900px viewport).
+// exact everywhere.
+//
+// WHAT THE CASE ASSERTS IS NOT THAT DRIFT, and the numbers above are why it cannot be:
+// the content box is two line boxes plus a spacing token, so it moves with the machine's
+// font stack — a CI runner measures the same card at 64px, a 38px content box against
+// this container's 44 — while the estimate is a literal, and the drift's own magnitude
+// moves with the count of cards Chromium chose not to render (1080 then 1074 across two
+// retries of one run). The durable term is the BOX MODEL: the estimate must state the
+// content box, so it stays inside half the padding-and-border a double-count added.
 //
 // ONE ENTRY is the floor and the card's own comment is why: a plan always has at
 // least one entry under its header. A plan with more entries under-states, which is
@@ -187,10 +187,26 @@ interface Metrics {
   /** The container's height with every off-screen card on the estimate. */
   readonly listSkipped: number;
   /** The same, with the estimate replaced by `PROBE_PX`. The harness's own
-   *  sensitivity check -- see `expectNoDrift`. */
+   *  sensitivity check -- see `expectContentBoxEstimate`. */
   readonly listProbe: number;
   /** Its height with every card genuinely rendered. */
   readonly listRendered: number;
+  /** The declared fallback in px: the CONTENT height a skipped card resolves to. */
+  readonly estimatePx: number;
+  /** A rendered card's block padding plus its border -- exactly the term the
+   *  estimate must not claim, and the scale the assertion is stated against. */
+  readonly boxModelPx: number;
+  /** `.msg-wrap`'s own `row-gap`. It cancels out of the drift, which is why the
+   *  three readings can ignore it, and it does NOT cancel out of a per-card height:
+   *  199 gaps over 200 cards is ~12px a card, which is most of the box-model term
+   *  the assertion is measured against. */
+  readonly gapPx: number;
+}
+
+/** The px half of `contain-intrinsic-block-size`, whose computed value keeps the
+ *  `auto` keyword beside the length (`auto 44px`), so `parseFloat` reads NaN. */
+function estimatePx(cs: CSSStyleDeclaration): number {
+  return Number.parseFloat(/(-?[\d.]+)px/.exec(cs.containIntrinsicBlockSize)?.[1] ?? "NaN");
 }
 
 /** Read the same 200-card list three times: on the shipped estimate, on a
@@ -220,7 +236,19 @@ async function measure(): Promise<Metrics> {
   finishAnimations(wrap);
   await frame();
 
-  return { listSkipped, listProbe, listRendered: list.scrollHeight };
+  const cs = getComputedStyle(list.firstElementChild as HTMLElement);
+  return {
+    listSkipped,
+    listProbe,
+    listRendered: list.scrollHeight,
+    estimatePx: estimatePx(cs),
+    gapPx: Number.parseFloat(getComputedStyle(list).rowGap),
+    boxModelPx:
+      Number.parseFloat(cs.paddingBlockStart) +
+      Number.parseFloat(cs.paddingBlockEnd) +
+      Number.parseFloat(cs.borderBlockStartWidth) +
+      Number.parseFloat(cs.borderBlockEndWidth),
+  };
 }
 
 /** Set the pointer tier the way `pointer-tier.ts` does. */
@@ -229,7 +257,7 @@ function tier(name: "fine" | "coarse"): void {
 }
 
 /** Assert the property, plus the premise that makes the reading mean anything. */
-function expectNoDrift(m: Metrics): void {
+function expectContentBoxEstimate(m: Metrics): void {
   // THE PREMISE. Without it the whole comparison is vacuous: if Chromium were not
   // skipping any card, the first and third readings would agree for the trivial
   // reason that both measured rendered cards, and the case would pass against any
@@ -240,22 +268,35 @@ function expectNoDrift(m: Metrics): void {
     "cards are being skipped, and the estimate is what their height is made of",
   ).toBeGreaterThan(CARDS * 10);
 
-  // THE PROPERTY, over the whole list -- this is the `scrollHeight` the scrollbar
-  // and the scroll anchor read. Stated as the DRIFT so a failure names the px rather
-  // than two five-figure totals, with the real card height beside it so the message
-  // says which tier it was measuring.
-  expect({
-    drift: m.listSkipped - m.listRendered,
-    realCardHeight: m.listRendered / CARDS,
-  }).toEqual({ drift: 0, realCardHeight: m.listRendered / CARDS });
+  // THE PROPERTY: the estimate states the CONTENT box. It cannot be stated as a
+  // drift of zero, which is what this case asserted until a CI runner measured the
+  // same card at 75.94px against this container's 70 — the height is two line boxes
+  // plus a spacing token, so the real content box moves with the font stack while
+  // the estimate is a literal, and even the drift's own magnitude moved between two
+  // retries of one run (1080 then 1074, the skipped count varying). What does not
+  // move is the box-model term: a value that claimed the padding and the border as
+  // well resolved a skipped card to 90px against a real 70, so HALF that term is the
+  // width of the disagreement a font may produce and the double-count may not hide in.
+  // 200 cards carry 199 gaps, so the gap comes out BEFORE the division — leaving it
+  // in charges each card ~12px of `.msg-wrap` and swallows most of the box-model term.
+  const realCardHeight = (m.listRendered - (CARDS - 1) * m.gapPx) / CARDS;
+  const realContent = realCardHeight - m.boxModelPx;
+  expect(
+    Math.abs(m.estimatePx - realContent),
+    `the estimate (${String(m.estimatePx)}px) states the content box, measured ` +
+      `${realContent.toFixed(2)}px on a ${realCardHeight.toFixed(2)}px card; a value ` +
+      `claiming its ${String(m.boxModelPx)}px of padding and border would read ` +
+      `${(realContent + m.boxModelPx).toFixed(2)}px. Drift over the list: ` +
+      `${String(m.listSkipped - m.listRendered)}px.`,
+  ).toBeLessThan(m.boxModelPx / 2);
 }
 
 describe("the fine-pointer tier", () => {
   it(
-    "reports one list height whether its plan cards are skipped or rendered",
+    "prices a skipped plan card at its CONTENT box, not its border box",
     async () => {
       tier("fine");
-      expectNoDrift(await measure());
+      expectContentBoxEstimate(await measure());
     },
     LOADED_BUDGET_MS,
   );
@@ -291,7 +332,7 @@ describe("the coarse-pointer tiers, measured at real viewport sizes", () => {
         768, 900,
       ]);
       tier("coarse");
-      expectNoDrift(await measure());
+      expectContentBoxEstimate(await measure());
     },
     LOADED_BUDGET_MS,
   );
@@ -304,7 +345,7 @@ describe("the coarse-pointer tiers, measured at real viewport sizes", () => {
         1024, 900,
       ]);
       tier("coarse");
-      expectNoDrift(await measure());
+      expectContentBoxEstimate(await measure());
     },
     LOADED_BUDGET_MS,
   );
