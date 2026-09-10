@@ -98,7 +98,7 @@
     },
     "tea": {
       "source": "manual",
-      "version": "v0.15.1",
+      "version": "v0.16.0",
       "upstream": {
         "datasource": "gitea-releases",
         "depName": "gitea/tea",
