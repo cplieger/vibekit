@@ -526,10 +526,9 @@ type SessionModel struct {
 // model reached the client with no rate and rendered `1x` — the picker's whole
 // credit readout, wrong for every model, silently.
 //
-// It is named at each site (`Meta ModelChoiceMeta \`json:"_meta"\``) rather than
-// embedded: encoding/json PROMOTES an untagged embedded struct's fields to the
-// outer object, so an embed would read `kiro` off the choice's own top level and
-// decode nothing.
+// It is named at each site rather than embedded: encoding/json PROMOTES an
+// untagged embedded struct's fields to the outer object, so an embed would read
+// `kiro` off the choice's own top level and decode nothing.
 type ModelChoiceMeta struct {
 	Kiro struct {
 		// DefaultEffortLevel is the tier this MODEL defaults to.

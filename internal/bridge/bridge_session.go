@@ -45,9 +45,9 @@ type sessionConfigOption struct {
 // same one-field-short divergence that cost the picker its credit readout on the
 // live-update path.
 type sessionConfigChoice struct {
-	Value       string `json:"value"`
-	Name        string `json:"name"`
-	Description string                 `json:"description"`
+	Value       string                  `json:"value"`
+	Name        string                  `json:"name"`
+	Description string                  `json:"description"`
 	Meta        vibekit.ModelChoiceMeta `json:"_meta"`
 }
 

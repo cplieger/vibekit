@@ -22,11 +22,12 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
+const replayGapChat vibekit.ChatID = "c-replay-gap"
+
 const (
-	replayGapChat      vibekit.ChatID = "c-replay-gap"
-	replayGapReasoning                = "weighing the two shapes before answering"
-	replayGapText                     = "here is the first half of the reply"
-	replayGapPrompt                   = "do the thing"
+	replayGapReasoning = "weighing the two shapes before answering"
+	replayGapText      = "here is the first half of the reply"
+	replayGapPrompt    = "do the thing"
 )
 
 // transcriptPage is the single-chat GET's response as this test READS it, spelled by
