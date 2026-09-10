@@ -514,6 +514,34 @@ type SessionModel struct {
 	HasEffort bool `json:"has_effort,omitempty"`
 }
 
+// ModelChoiceMeta is the `_meta` block KAS stamps on one CHOICE of the `model`
+// config option, wherever that option arrives: session/new, session/load,
+// `_kiro/config/template`, or a live `config_option_update`.
+//
+// ONE type for all four doors, because it used to be four hand-written anonymous
+// structs and they had DIVERGED — which is not a tidiness point, it is the defect
+// this type exists to make unrepresentable. `translate`'s copy read
+// `defaultEffortLevel` and `hasEffort` and not `rateMultiplier`, and since
+// `handleConfigTemplate` prefers the LIVE catalog over the template's, every
+// model reached the client with no rate and rendered `1x` — the picker's whole
+// credit readout, wrong for every model, silently.
+//
+// It is named at each site (`Meta ModelChoiceMeta \`json:"_meta"\``) rather than
+// embedded: encoding/json PROMOTES an untagged embedded struct's fields to the
+// outer object, so an embed would read `kiro` off the choice's own top level and
+// decode nothing.
+type ModelChoiceMeta struct {
+	Kiro struct {
+		// DefaultEffortLevel is the tier this MODEL defaults to.
+		DefaultEffortLevel string `json:"defaultEffortLevel"`
+		// RateMultiplier is the model's credit cost relative to the cheapest one.
+		// Read by the picker's `Nx` readout and by cheapestModel's selection.
+		RateMultiplier float64 `json:"rateMultiplier"`
+		// HasEffort reports whether the model offers reasoning-effort tiers.
+		HasEffort bool `json:"hasEffort"`
+	} `json:"kiro"`
+}
+
 // SessionEffortLevel is one reasoning-effort tier the running session offers,
 // from the `effortLevel` config option's own `options[]`.
 //

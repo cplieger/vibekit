@@ -1,7 +1,15 @@
 // Unit tests for strings.ts — pure functions, no DOM dependency.
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import { escText, escAttr, formatElapsed, humanName, isoDuration, truncate } from "./strings.js";
+import {
+  escText,
+  escAttr,
+  formatElapsed,
+  humanName,
+  isoDuration,
+  rateLabel,
+  truncate,
+} from "./strings.js";
 
 describe("escText", () => {
   it("passes through plain text unchanged", () => {
@@ -163,6 +171,36 @@ describe("truncate", () => {
 
   it("handles empty string", () => {
     expect(truncate("")).toBe("");
+  });
+});
+
+describe("rateLabel", () => {
+  it("spells a rate the catalog carried", () => {
+    expect(rateLabel(2)).toBe("2x");
+  });
+
+  it("keeps a fractional rate as written", () => {
+    expect(rateLabel(0.25)).toBe("0.25x");
+  });
+
+  // The defect this function exists for: an absent rate used to be coerced to 1,
+  // so every model in the picker read `1x` — the credit readout wrong for all of
+  // them at once, and indistinguishable from a catalog reporting real parity.
+  it("withholds a readout when the catalog carried no rate", () => {
+    expect(rateLabel(undefined)).toBe("");
+  });
+
+  it("still spells a genuine parity rate", () => {
+    expect(rateLabel(1)).toBe("1x");
+  });
+
+  // `omitempty` means 0 never reaches the client, so anything at or below it is a
+  // payload nobody produces rather than a rate worth rendering.
+  it("withholds a readout for a non-positive or non-finite rate", () => {
+    expect(rateLabel(0)).toBe("");
+    expect(rateLabel(-2)).toBe("");
+    expect(rateLabel(Number.NaN)).toBe("");
+    expect(rateLabel(Number.POSITIVE_INFINITY)).toBe("");
   });
 });
 

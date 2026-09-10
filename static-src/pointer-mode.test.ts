@@ -492,3 +492,74 @@ describe("the phone-shaped gate, measured at real viewport sizes", () => {
     expect(await displayAt(1024, 768)).not.toBe("none");
   });
 });
+
+describe("the coarse glyph", () => {
+  it("keeps folded fingers beside the extended one", () => {
+    // The defect this pins was USER-REPORTED, and no other gate can see it:
+    // prettier never formats `static/index.html`, html-validate does not read path
+    // data, and `menu-icons.test.ts` only asks whether the six header glyphs differ
+    // from each other. The glyph shipped as a two-path reduction of Lucide
+    // `pointer` — one long finger centred between a single knuckle and a thumb —
+    // which reads as an obscene gesture, and the three folded fingers are what make
+    // the same drawing read as a hand pointing.
+    //
+    // A count rather than the exact path data: pinning the bytes would fail a
+    // legitimate redraw as loudly as a regression, and what has to survive is the
+    // property, not this particular hand.
+    const glyph = markupFor('id="pointer-mode-btn"').match(
+      /<svg class="pointer-icon-coarse[\s\S]*?<\/svg>/,
+    )?.[0];
+    expect(glyph, "the coarse glyph is in the button").toBeDefined();
+    const subpaths = [...(glyph ?? "").matchAll(/<path\b/g)].length;
+    expect(
+      subpaths,
+      "an extended finger plus a palm is two paths; a hand needs more",
+    ).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("the ON state's paint", () => {
+  let styleEl: HTMLStyleElement | null = null;
+
+  afterAll(() => {
+    styleEl?.remove();
+  });
+
+  /** The button's background in both `aria-pressed` states. `.icon-btn` transitions
+   *  `background`, so a read taken straight after the flip returns an interpolated
+   *  value — finishing the transitions is what makes the second reading the settled
+   *  one rather than a sample of the ramp. */
+  function fills(btn: HTMLElement): { off: string; on: string } {
+    btn.setAttribute("aria-pressed", "false");
+    btn.getAnimations().forEach((a) => a.finish());
+    const off = getComputedStyle(btn).backgroundColor;
+    btn.setAttribute("aria-pressed", "true");
+    btn.getAnimations().forEach((a) => a.finish());
+    return { off, on: getComputedStyle(btn).backgroundColor };
+  }
+
+  it("does not take the selected fill, while a sibling icon-btn still does", () => {
+    // Reported as "it keeps an active background when it should not". The glyph IS
+    // this toggle's state channel — `paint()` slides the mouse out and the hand in
+    // — so the shared selected fill (70-selection.css) rendered one fact twice and
+    // left a header button looking permanently selected for as long as touch mode
+    // was on.
+    //
+    // The find button is the NEGATIVE CONTROL and is not optional: without it this
+    // case passes just as well when the selected rule stops working for every
+    // control in the app, which is the failure a one-element assertion cannot tell
+    // from the fix.
+    styleEl ??= mountAppCSS();
+    document.body.innerHTML = `${markupFor('id="pointer-mode-btn"')}${markupFor('id="find-btn"')}`;
+    const pointer = document.getElementById("pointer-mode-btn");
+    const find = document.getElementById("find-btn");
+    expect(pointer).not.toBeNull();
+    expect(find).not.toBeNull();
+
+    const p = fills(pointer as HTMLElement);
+    const f = fills(find as HTMLElement);
+
+    expect(p.on, "the toggle's fill is unmoved by aria-pressed").toBe(p.off);
+    expect(f.on, "the shared selected fill still reaches an ordinary icon-btn").not.toBe(f.off);
+  });
+});

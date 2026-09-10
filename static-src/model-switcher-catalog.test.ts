@@ -8,6 +8,7 @@
 // registry and one durable fixture. The notice's COPY is picker.ts's to own.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelInfo } from "./types.js";
+import type * as Strings from "./strings.js";
 
 let cachedModels: ModelInfo[] = [];
 let notice: { text: string; busy: boolean; retry: boolean } | null = null;
@@ -76,7 +77,12 @@ vi.mock("./session-context.js", () => ({
   getLastEffortFor: () => "",
   setLastEffort: vi.fn(),
 }));
-vi.mock("./strings.js", () => ({ humanName: (s: string) => s }));
+// Only `humanName` is stubbed, to identity; `rateLabel` and the rest stay REAL —
+// see the note on the same mock in model-switcher.test.ts.
+vi.mock("./strings.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Strings>()),
+  humanName: (s: string) => s,
+}));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));
 vi.mock("./icons.js", () => ({ ICON_MODEL: "" }));
 vi.mock("@cplieger/ui-primitives/roving-focus", () => ({

@@ -108,10 +108,36 @@ export function makeExpandable(
   });
 }
 
-/** Keep an expanded card inside the visual viewport without changing its width.
- *  The card remains a sibling positioned by `.pill-slot`; only its inline
- *  offset moves. The transform origin follows the trigger, so a clamped card
- *  still grows from the pill that opened it rather than from the screen edge. */
+/** The smallest block size worth clamping to. Below this a card is unusable
+ *  whatever it does, so the floor keeps one row plus its scroll affordance on
+ *  screen and lets the overflow do the rest, rather than resolving to a height
+ *  that renders nothing. Only reachable on a viewport short enough that the
+ *  composer is nearly at the top edge. */
+const MIN_CARD_BLOCK_PX = 96;
+
+/** Keep an expanded card inside the visual viewport, on BOTH axes.
+ *
+ *  Inline: the card remains a sibling positioned by `.pill-slot`; only its
+ *  inline offset moves. The transform origin follows the trigger, so a clamped
+ *  card still grows from the pill that opened it rather than from the screen edge.
+ *
+ *  Block: the card is anchored `bottom: calc(100% + var(--sp-1))` and grows
+ *  UPWARD, so the thing that bounds it is the room between the viewport's top
+ *  edge and the card's own bottom. That room is measured here and published as
+ *  `--pill-max-block` for 15-input.css to cap against, which replaced two
+ *  authored caps that could not know it: 16rem on desktop and min(26rem, 55dvh)
+ *  under `width <= 48rem`. Both were guesses, and the desktop one was the
+ *  stingier of the two despite desktop having the most room — measured on the
+ *  chat-actions menu at a 900px viewport, five 60px rows wanted 332px, the cap
+ *  allowed 254px, and the card scrolled with 595px of free space above it.
+ *
+ *  The viewport bound also subsumes what the caps were FOR. The context card's
+ *  metering section renders one row per unit kiro-cli reports, which is upstream
+ *  data with no bound, so a card does need a ceiling — but the room above the
+ *  pill IS that ceiling, and it is the honest one: the card takes the space that
+ *  exists and scrolls only once it has run out. On a phone it additionally reads
+ *  `visualViewport`, so a raised keyboard shrinks the cap for real where `55dvh`
+ *  could only approximate it. */
 function clampToViewport(pill: HTMLElement, card: HTMLElement): void {
   const slot = pill.parentElement;
   const width = card.offsetWidth;
@@ -132,6 +158,16 @@ function clampToViewport(pill: HTMLElement, card: HTMLElement): void {
   card.style.setProperty(
     "--pill-origin-x",
     `${String(pillRect.left + pillRect.width / 2 - cardLeft)}px`,
+  );
+
+  // The card's own bottom rather than the pill's top, so the `--sp-1` gap between
+  // them needs no second reader here. It is stable under the enter animation:
+  // `transform-origin` is `bottom`, so the scale leaves that edge where it is.
+  const viewportTop = viewport?.offsetTop ?? 0;
+  const room = card.getBoundingClientRect().bottom - viewportTop - margin;
+  card.style.setProperty(
+    "--pill-max-block",
+    `${String(Math.max(Math.round(room), MIN_CARD_BLOCK_PX))}px`,
   );
 }
 

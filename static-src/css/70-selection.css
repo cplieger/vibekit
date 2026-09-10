@@ -73,7 +73,9 @@
 .pill-role-item.active,
 .popup-item.active,
 .picker-btn.active,
-.effort-btn.active,
+/* The effort slider's knob, and it carries no state class: the knob IS the tier
+   in force, so it is unconditionally the selected surface. */
+.effort-knob,
 .fb-row.fb-row-selected,
 .repo-picker-chip-active,
 .repo-picker-row-selected,
@@ -83,7 +85,20 @@
 .pill[aria-pressed="true"],
 .pill-expandable.pill-expanded:not(.status-dot),
 .icon-btn.active,
-.icon-btn[aria-pressed="true"],
+/* The pointer-mode toggle is excluded for the mirror image of `.status-dot`'s
+   reason: not "the fill is its only channel" but "the fill is a SECOND channel it
+   does not need". Its glyph IS its state — `pointer-mode.ts`'s `paint()` slides the
+   mouse out and the hand in — so the selected fill renders one fact twice, and it
+   left a header button looking permanently selected for as long as touch mode was
+   on. The theme toggle sitting beside it in the same header swaps glyphs and takes
+   no fill, so the pair also disagreed about what an ON header toggle looks like.
+   `aria-pressed` STAYS: it is the state channel a screen reader reads and the
+   reason that button's accessible name does not flip (vibekit-ui.md "Toggle
+   state"). Only the paint goes, from all three rules in this file — leaving it on
+   the hover or press rule would make a fill appear under the pointer in one state
+   and not the other. Excluded by id rather than by a new class because there is
+   exactly one member. */
+.icon-btn[aria-pressed="true"]:not([id="pointer-mode-btn"]),
 /* The shell panel's header toggles: full screen, and the key-toolbar trigger.
    Both wrote aria-pressed and neither was in this list, so each announced its
    state to a screen reader and showed the user nothing — the defect the
@@ -122,7 +137,7 @@
   .pill-role-item.active:hover,
   .popup-item.active:hover,
   .picker-btn.active:hover,
-  .effort-btn.active:hover,
+  .effort-knob:hover,
   .fb-row.fb-row-selected:hover,
   .repo-picker-chip-active:hover,
   .repo-picker-row-selected:hover,
@@ -132,7 +147,7 @@
   .pill[aria-pressed="true"]:hover,
   .pill-expandable.pill-expanded:not(.status-dot):hover,
   .icon-btn.active:hover,
-  .icon-btn[aria-pressed="true"]:hover,
+  .icon-btn[aria-pressed="true"]:not([id="pointer-mode-btn"]):hover,
   .shell-header-btn[aria-pressed="true"]:hover,
   .turn-action-btn[aria-pressed="true"]:hover,
   .chat-find-case[aria-pressed="true"]:hover,
@@ -163,7 +178,7 @@
 .pill-role-item.active:active,
 .popup-item.active:active,
 .picker-btn.active:active,
-.effort-btn.active:active,
+.effort-knob:active,
 .repo-picker-chip-active:active,
 .repo-picker-row-selected:active,
 .git-branch-popover-row.current:active,
@@ -172,7 +187,7 @@
 .pill[aria-pressed="true"]:active,
 .pill-expandable.pill-expanded:not(.status-dot):active,
 .icon-btn.active:active,
-.icon-btn[aria-pressed="true"]:active,
+.icon-btn[aria-pressed="true"]:not([id="pointer-mode-btn"]):active,
 .shell-header-btn[aria-pressed="true"]:active,
 .turn-action-btn[aria-pressed="true"]:active,
 .chat-find-case[aria-pressed="true"]:active,
@@ -344,3 +359,24 @@
    The workflow mark beside it (`.tab-run-dot`) is governed by the same ruling and
    likewise has no rule here: it reads the same --dot-color and the same
    --c-dot-* family, so a selected row inherits both marks unchanged. */
+
+/* The effort knob's own boundary, and the ONE surface in this file that overrides
+   the shared selected border. Placed last so it wins the (0,1,0) tie against the
+   resting rule above by source order, which is the same MANIFEST-order tiebreak
+   the rest of this file relies on.
+
+   Forced by a measurement rather than taste. The knob left the full-height track
+   and became a round handle standing proud of a thin rail, so its edge stopped
+   sitting on the track fill and started sitting on the CARD. Against the card
+   `--c-selected-border` reads 2.955:1 dark and 2.427:1 light from painted pixels
+   (3.236 / 2.645 for the pure token) — the move improved that adjacency 2.3x/1.9x
+   over the 1.300 / 1.266 it read on the track, and still misses WCAG 1.4.11's 3:1
+   for a graphical object in light. `--c-accent` reads 6.541:1 dark and 5.456:1
+   light, so one declaration clears both themes.
+
+   Scoped to this one selector deliberately: the shared border is the app-wide
+   selected vocabulary across 20+ surfaces, and every other one of them still
+   paints against a row or a chip rather than a card. */
+.effort-knob {
+  border-color: var(--c-accent);
+}

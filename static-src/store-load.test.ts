@@ -16,6 +16,7 @@ import type * as Store from "./store.js";
 const {
   sessions,
   liveIDs,
+  watermarks,
   mockApiGetTyped,
   mockApiGetTypedOrError,
   mockSetSessions,
@@ -23,10 +24,18 @@ const {
   mockBumpMessages,
   mockRelatch,
   mockLatchFields,
+  mockUpsertMessage,
+  mockSetWatermark,
+  mockNoteLiveTurn,
+  mockNoteTruncated,
   epoch,
 } = vi.hoisted(() => ({
   sessions: new Map<string, Session>(),
   liveIDs: new Map<string, string>(),
+  // The chunk seq this client has already folded into a given message, keyed the way the
+  // store keys it: chat id to (message id, seq). Controllable so a case can put the live
+  // stream AHEAD of the answer being applied, which is the stale-response case.
+  watermarks: new Map<string, { messageID: string; seq: number }>(),
   mockApiGetTyped: vi.fn(),
   // The status-bearing GET. `confirmChatExists` reads the STATUS rather than a
   // collapsed null, so its fixture is the whole `ApiResult` envelope.
@@ -45,6 +54,14 @@ const {
   // Params are declared so the call tuple is typed and the assertions below can
   // read `calls[n][0]` (the existing row) and `calls[n][1]` (the header).
   mockLatchFields: vi.fn((_existing: unknown, _header: unknown) => ({})),
+  // The four calls the in-flight-turn adoption makes, which are the four the
+  // `turn_state` handler makes for the same content arriving on the other channel.
+  // Spies rather than a fake store: what these cases are about is WHETHER the adoption
+  // happens and with what, and a fake that re-implemented the merge would assert itself.
+  mockUpsertMessage: vi.fn(),
+  mockSetWatermark: vi.fn(),
+  mockNoteLiveTurn: vi.fn(),
+  mockNoteTruncated: vi.fn(),
   // The store's transport sync epoch, controllable so a case can land a "gap"
   // at an exact point in the fetch lifecycle.
   epoch: { n: 0 },
@@ -81,6 +98,17 @@ vi.mock("./store.js", async (importOriginal) => {
     // The store's in-flight marker: which message id the chat's current turn is
     // streaming into, and therefore which one the chat file cannot carry yet.
     liveTurnMessage: (id: string) => liveIDs.get(id),
+    // The four writers the fetched in-flight turn lands through, plus the reader that
+    // decides whether it may. `chunkWatermark` answers off the controllable map, so a
+    // case can put the live stream ahead of the answer being applied.
+    chunkWatermark: (id: string, messageID: string) => {
+      const wm = watermarks.get(id);
+      return wm?.messageID === messageID ? wm.seq : undefined;
+    },
+    setChunkWatermark: mockSetWatermark,
+    noteLiveTurnMessage: mockNoteLiveTurn,
+    noteTruncatedSnapshot: mockNoteTruncated,
+    upsertMessage: mockUpsertMessage,
     // Present-but-inert so real-ESM linking succeeds: the tab projection widened
     // this graph and these names are imported somewhere in it. No case here calls
     // them.
@@ -122,6 +150,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   sessions.clear();
   liveIDs.clear();
+  watermarks.clear();
   epoch.n = 0;
 });
 
@@ -1577,5 +1606,211 @@ describe("the no-cursor reload keeps the older pages already resident", () => {
     await loadMessages("c1");
 
     expect(sessions.get("c1")?.messages.map((m) => m.id)).toEqual(["m1", "m2", "live"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The in-flight turn on the transcript GET (`live_turn`). Until the field existed the
+// response stated `turn_open` and carried nothing that described it, so a client whose
+// only other channel is the SSE connect replay — which is gated on a declaration it makes
+// before it knows which chat it will show — rendered the prompt over an empty body until
+// the turn ended. The four calls below are the four the `turn_state` handler makes, so the
+// same content lands in the same places whichever channel delivers it.
+// ---------------------------------------------------------------------------
+
+/** The `live_turn` object as the decoder hands it over. */
+function liveTurn(id: string, seq: number, truncated = false): unknown {
+  return { message: msg(id, 5), chunk_seq: seq, truncated };
+}
+
+describe("loadMessages live turn", () => {
+  it("adopts the in-flight turn a mid-turn page carries", async () => {
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      // What the chat file holds mid-turn: the prompt, and no reply.
+      messages: [userRow("u1", 1)],
+      has_more: false,
+      turn_open: true,
+      live_turn: liveTurn("streaming", 4),
+    });
+
+    await loadMessages("c1");
+
+    expect(mockUpsertMessage).toHaveBeenCalledWith(
+      "c1",
+      expect.objectContaining({ id: "streaming" }),
+    );
+    // The dedup watermark: without it every chunk the server already folded in
+    // double-appends when the live stream resumes.
+    expect(mockSetWatermark).toHaveBeenCalledWith("c1", "streaming", 4);
+    // The unpersisted marker, or the NEXT refetch reads this message as one the server
+    // deliberately omitted and deletes it.
+    expect(mockNoteLiveTurn).toHaveBeenCalledWith("c1", "streaming");
+    expect(mockNoteTruncated).not.toHaveBeenCalled();
+  });
+
+  it("notes a truncated in-flight turn as the tail of a capped payload", async () => {
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [userRow("u1", 1)],
+      has_more: false,
+      turn_open: true,
+      live_turn: liveTurn("streaming", 4, true),
+    });
+
+    await loadMessages("c1");
+
+    // A reader shown the tail with nothing saying so reads a bounded payload as the whole
+    // reply, which is what makes the cap admissible in the first place.
+    expect(mockNoteTruncated).toHaveBeenCalledWith("c1", "streaming");
+  });
+
+  // THE STALE-ANSWER GATE. The response is a point-in-time read, and `mergeMessage`
+  // replaces content and blocks with the incoming's whenever they are non-empty — so
+  // adopting a copy older than what the live stream has already delivered would replace a
+  // fuller local accumulation with a shorter one, which is the reply visibly shrinking.
+  it("refuses an in-flight turn older than what the live stream already folded in", async () => {
+    seedSession("c1", []);
+    watermarks.set("c1", { messageID: "streaming", seq: 9 });
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [userRow("u1", 1)],
+      has_more: false,
+      turn_open: true,
+      live_turn: liveTurn("streaming", 4),
+    });
+
+    await loadMessages("c1");
+
+    expect(mockUpsertMessage).not.toHaveBeenCalled();
+    // And the mark is left where the live stream put it: lowering it would let chunks 5..9
+    // arrive a second time.
+    expect(mockSetWatermark).not.toHaveBeenCalled();
+    expect(mockNoteLiveTurn).not.toHaveBeenCalled();
+  });
+
+  it("adopts an in-flight turn that is level with the local mark", async () => {
+    // The ordinary case for a client that folded nothing since the server rendered its
+    // answer, and the boundary the refusal above must not swallow.
+    seedSession("c1", []);
+    watermarks.set("c1", { messageID: "streaming", seq: 4 });
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [userRow("u1", 1)],
+      has_more: false,
+      turn_open: true,
+      live_turn: liveTurn("streaming", 4),
+    });
+
+    await loadMessages("c1");
+
+    expect(mockUpsertMessage).toHaveBeenCalledWith(
+      "c1",
+      expect.objectContaining({ id: "streaming" }),
+    );
+  });
+
+  it("ignores an in-flight turn whose message has no id", async () => {
+    // An id is what the merge, the dedup and the unpersisted marker are all keyed on, so a
+    // message without one is not adoptable — and adopting it would mark the empty string as
+    // this chat's in-flight message.
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [userRow("u1", 1)],
+      has_more: false,
+      turn_open: true,
+      live_turn: { message: { id: "", role: "assistant", ts: 5 }, chunk_seq: 4, truncated: false },
+    });
+
+    await loadMessages("c1");
+
+    expect(mockUpsertMessage).not.toHaveBeenCalled();
+    expect(mockNoteLiveTurn).not.toHaveBeenCalled();
+  });
+
+  // The server withholds the field on an older page, and the client refuses it too: a
+  // scroll-up asserts nothing about the live edge, so one gate on each side means a server
+  // that starts sending it there cannot re-adopt the turn on every page the reader walks
+  // back through.
+  it("does not adopt an in-flight turn from an older page", async () => {
+    seedSession("c1", [msg("m2", 2)]);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 2 },
+      messages: [msg("m1", 1)],
+      has_more: false,
+      live_turn: liveTurn("streaming", 4),
+    });
+
+    await loadMessages("c1", "m2");
+
+    expect(mockUpsertMessage).not.toHaveBeenCalled();
+    expect(mockSetWatermark).not.toHaveBeenCalled();
+  });
+
+  it("adopts nothing when the page carries no in-flight turn", async () => {
+    // An idle chat, and an older server that has never heard of the field: both are
+    // "nothing to adopt", and neither may leave a marker behind.
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [msg("m1", 1)],
+      has_more: false,
+    });
+
+    await loadMessages("c1");
+
+    expect(mockUpsertMessage).not.toHaveBeenCalled();
+    expect(mockSetWatermark).not.toHaveBeenCalled();
+    expect(mockNoteLiveTurn).not.toHaveBeenCalled();
+  });
+
+  // The WIRE spelling, through the real decoder rather than a hand-built decoded object:
+  // every case above is handed the post-decode shape by the mocked fetch, so none of them
+  // would notice a renamed json tag or a decode that dropped the field.
+  it("decodes the field off the wire under the names the server sends", async () => {
+    seedSession("c1", []);
+    const rawHeader = {
+      id: "c1",
+      name: "c1",
+      usage: {
+        context_pct: 0,
+        context_size: 0,
+        credits: 0,
+        turn_count: 0,
+        last_turn_ms: 0,
+        has_real_data: false,
+      },
+      created_at: 1,
+      updated_at: 1,
+      message_count: 1,
+    };
+    const rawBody = {
+      chat: rawHeader,
+      messages: [{ id: "u1", role: "user", ts: 1 }],
+      has_more: false,
+      turn_open: true,
+      live_turn: {
+        message: { id: "streaming", role: "assistant", ts: 5, content: "half a reply" },
+        chunk_seq: 4,
+        truncated: true,
+      },
+    };
+    // Run the response through the decoder the loader passes in, which the other cases
+    // bypass.
+    mockApiGetTyped.mockImplementation((_url: string, decode: (v: unknown) => unknown) =>
+      Promise.resolve(decode(rawBody)),
+    );
+
+    await loadMessages("c1");
+
+    expect(mockUpsertMessage).toHaveBeenCalledWith(
+      "c1",
+      expect.objectContaining({ id: "streaming", content: "half a reply" }),
+    );
+    expect(mockSetWatermark).toHaveBeenCalledWith("c1", "streaming", 4);
+    expect(mockNoteTruncated).toHaveBeenCalledWith("c1", "streaming");
   });
 });

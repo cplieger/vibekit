@@ -56,8 +56,12 @@ export function renderDiffModeUI(state: FileState): void {
     $.editorDiffBtn.setAttribute("data-tooltip", "Exit diff view");
     $.editorDiffBtn.setAttribute("aria-label", "Exit diff view");
   }
-  $.editorEditBtn.classList.remove("hidden");
-  $.editorEditBtn.disabled = false;
+  // Editing needs the file's own text, which is what `loaded` reports. A card's
+  // diff carries its pair without one, so the control arrives with the buffer and
+  // stays away for a file that cannot be read — where an enabled Edit would open
+  // an empty box over real content and a save would write it.
+  $.editorEditBtn.classList.toggle("hidden", !state.loaded);
+  $.editorEditBtn.disabled = !state.loaded;
   $.editorCancelBtn.classList.add("hidden");
   $.editorSaveBtn.classList.add("hidden");
 }

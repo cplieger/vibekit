@@ -445,6 +445,19 @@
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
+
+  /* The third consumer of the flex-centring fix 15-input.css derives, and the one
+     the row a reader looks at most was missing: a title is a flex item whose box is
+     asymmetric about its letterforms, so `align-items: center` on `.tab` centred
+     the BOX and left the words sitting low against the dot, the workflow mark and
+     the × beside them — reported exactly that way, and measured at 1px on this
+     image's face against the 0.9-1.8px `.sidebar-email` records for a real OS UI
+     font. Trimming to the cap band is what makes the box symmetric about the
+     glyphs; the symmetric padding is the descender room the trim takes away, and a
+     chat title is full of them. The row's height is unchanged either way — the ×'s
+     24px box is what sets it. */
+  text-box: trim-both cap alphabetic;
+  padding-block: 0.35em;
 }
 
 .tab-icon {

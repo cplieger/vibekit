@@ -119,15 +119,15 @@ describe("PRs tab loading state", () => {
     const done = refreshPRs();
 
     // The show delay is 150ms, so nothing is painted before it elapses.
-    expect(mount().querySelector(".git-pr-skeleton")).toBeNull();
+    expect(mount().querySelector(".git-repo-skeleton")).toBeNull();
     await vi.advanceTimersByTimeAsync(150);
 
-    const skel = mount().querySelector(".git-pr-skeleton");
+    const skel = mount().querySelector(".git-repo-skeleton");
     expect(skel).not.toBeNull();
     // aria-hidden: the mount is aria-live, so placeholders must not be announced.
     expect(skel?.getAttribute("aria-hidden")).toBe("true");
     expect(skel?.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
-    expect(mount().querySelector(".git-pr-skel-label")?.textContent).toContain(
+    expect(mount().querySelector(".git-repo-skel-label")?.textContent).toContain(
       "0 of 3 repositories",
     );
 
@@ -135,7 +135,7 @@ describe("PRs tab loading state", () => {
     // from a wedged one.
     prResolvers[0]?.({ prs: [] });
     await vi.advanceTimersByTimeAsync(0);
-    expect(mount().querySelector(".git-pr-skel-label")?.textContent).toContain(
+    expect(mount().querySelector(".git-repo-skel-label")?.textContent).toContain(
       "1 of 3 repositories",
     );
 
@@ -143,7 +143,7 @@ describe("PRs tab loading state", () => {
       resolve({ prs: [] });
     }
     await done;
-    expect(mount().querySelector(".git-pr-skeleton")).toBeNull();
+    expect(mount().querySelector(".git-repo-skeleton")).toBeNull();
   });
 
   it("skips the skeleton when the mount already holds keyed rows", async () => {
@@ -156,7 +156,7 @@ describe("PRs tab loading state", () => {
     void refreshPRs();
     await vi.advanceTimersByTimeAsync(150);
 
-    expect(mount().querySelector(".git-pr-skeleton")).toBeNull();
+    expect(mount().querySelector(".git-repo-skeleton")).toBeNull();
     expect(mount().querySelector("[data-reconcile-key]")).not.toBeNull();
   });
 

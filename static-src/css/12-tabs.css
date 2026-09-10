@@ -111,15 +111,19 @@
   display: block;
 }
 
-/* The LEADING dot (a chat tab, where the role glyph used to be) holds the
-   glyph's 14px slot so a chat row's name lines up with a settings or files
-   row's. Without it a mixed strip has two text origins 2.5px apart, which is
-   exactly the misalignment the active tab's reserved border exists to avoid one
-   rung up. Keyed on position rather than a class: if anything is ever inserted
-   ahead of it the dot is no longer the leading element and the rule correctly
-   stops applying. */
+/* The LEADING dot (a chat tab, where the role glyph used to be) holds the KIND
+   GLYPH'S slot so a chat row's name lines up with a settings or files row's.
+   Without it a mixed strip has two text origins, which is exactly the
+   misalignment the active tab's reserved border exists to avoid one rung up.
+
+   --icon-ui, never a literal: that token is 1rem on a fine pointer and 1.125rem
+   on a coarse one, so the 0.875rem this used to say was 2px short of the glyph on
+   every desktop and 4px on every touch device — an alignment the rule claimed and
+   did not have. Keyed on position rather than a class: if anything is ever
+   inserted ahead of it the dot is no longer the leading element and the rule
+   correctly stops applying. */
 .tab-status-dot:first-child {
-  margin-inline: calc((0.875rem - var(--dot-size)) / 2);
+  margin-inline: calc((var(--icon-ui) - var(--dot-size)) / 2);
 }
 
 /* The TRAILING dot (every other kind: the editor's unsaved mark) sits after the
@@ -349,11 +353,11 @@
    above would reserve less than every other state — and the chat's name would move
    sideways at the exact moment its status flipped to or from failed, which is the
    one moment the reader is looking at that row. Re-derived from its own width so
-   the slot's total inline footprint stays 14px either way. Specificity beats the
-   generic `:first-child` rule (class + attribute + pseudo-class), so the order in
-   this file is not what makes it win. */
+   the slot's total inline footprint stays one glyph either way. Specificity beats
+   the generic `:first-child` rule (class + attribute + pseudo-class), so the order
+   in this file is not what makes it win. */
 .tab-status-dot[data-status="failed"]:first-child {
-  margin-inline: calc((0.875rem - var(--dot-size-sm)) / 2);
+  margin-inline: calc((var(--icon-ui) - var(--dot-size-sm)) / 2);
 }
 
 /* Done — the turn finished: the agent declared it complete, or `turn_ended`
@@ -439,27 +443,60 @@
    and under prefers-reduced-motion it is replaced by a heavier band (the block at
    the end of this file).
 
-   THE LEADING CLUSTER'S ARITHMETIC, re-derived for the pair, and it reaches rows
-   this feature does not otherwise touch. The dot's `:first-child` rule above puts
-   it in a 14px slot in EVERY state (the failed diamond re-derives its own margins
-   to hold that total), so with the row's own 8px gap and this 8px mark the cluster
-   is 14 + 8 + 8 = 30px WHATEVER either mark is showing, and one more gap puts a
-   chat row's title at 38px. Two 8px marks cannot occupy a 14px slot at any margin,
-   so the pair cannot be shrunk back into the slot that rule bought — the other
-   half of the derivation is therefore to give every row WITHOUT a mark the width
-   it is missing, which is what the two `.tab-name` rules at the end of this block
-   do. What that costs the title, derived from the 260px sidebar's 225px flex line:
-   a chat row's name goes from 171px to 155px, a sub-tab's from 137px to 121px, and
-   a settings, files, git, history, docs, editor, run or subagent row's loses the
-   same 14px to hold the shared origin — about 2-3 characters at --fs-sm each. The
-   same row is reused in the mobile drawer at 100vw, which is WIDER, so this is a
-   desktop constraint rather than a phone one. */
+   THE MARK COSTS THE ROW NOTHING UNTIL A RUN EXISTS. It used to hold its box in
+   every state (`visibility: hidden`), which bought a title that never moved and
+   charged the whole strip for it: the leading cluster was one glyph slot plus a gap
+   plus this mark whether or not a run was going, so EVERY chat row carried 16px of
+   empty space between its dot and its title, and every other kind's title carried a
+   matching 16px indent to keep one text origin. Reported as a large permanent gap,
+   which is what it was — a reservation for a mark that is absent almost all of the
+   time.
+
+   WHAT REPLACED IT IS A SPAWN, not a jump. The mark is tucked behind the dot's own
+   gap with a negative margin that cancels its footprint, and a run starting animates
+   that margin away before the mark fades in — so the title slides right to make the
+   room and the mark then arrives in it. The cost, stated rather than hidden: while a
+   run is live that row's title sits one gap plus one mark right of its neighbours'.
+   That divergence is legible, because the thing that caused it is on screen and the
+   reader watched it happen; the permanent gap was not. */
 .tab-run-dot {
-  /* The slot is reserved in EVERY state, so `display` is not a channel this mark
-     uses and there is no `display: none` here — the reveal is `visibility` below.
-     That is the one place this differs from `.tab-status-dot`, whose trailing
-     editor-tab position genuinely has nothing to reserve. */
-  display: block;
+  /* TUCKED, not hidden: the mark keeps its box and cancels its own footprint with a
+     negative leading margin, so a row with no run measures exactly as it would with
+     no mark at all — one gap between the dot and the title, and nothing else. That
+     is what `display: none` would also have bought, and the reason it is not used:
+     an element out of layout cannot animate INTO it, and the space has to open
+     before the mark appears in it (see the transition below). At rest the mark sits
+     under the dot's own gap at opacity 0, where it paints nothing and its state
+     rules do not apply — there is no `[data-status]`, so no band, no halo, no
+     overlay.
+
+     ONE property carries the space rather than an `inline-size` pair, so the mark is
+     its real size at every frame and none of the band arithmetic below is measured
+     against a partial box. The cancellation: the row's `gap` is charged on both
+     sides of the mark, so tucking it by one mark plus one gap leaves one gap total
+     — and `--sp-2` is read here because it IS the row's gap (10-shell-app.css).
+     Both terms move with their tokens; neither is a literal. */
+  margin-inline-start: calc(-1 * (var(--dot-size) + var(--sp-2)));
+  opacity: 0;
+
+  /* THE SPAWN, and the ORDER is the whole of it: the space opens first, then the
+     mark fades into it. `margin-inline-start` is a LAYOUT property, which this app
+     otherwise animates only where nothing else can express the change — the same
+     carve-out `.tab`'s own exit keyframe holds one rung up, and for the same reason:
+     a sibling has to SLIDE rather than jump, and no transform reflows a flex
+     sibling. Bounded to one row, 8px, once per run, so the per-frame relayout is a
+     single flex line.
+
+     Two lists, because the two directions are not symmetric. This one is the EXIT
+     (it governs a change back to the tuck): the mark fades out on --dur-exit, and
+     the space closes behind it after that fade, so nothing is still on screen while
+     the row is reclaiming its width. The ENTRY list lives on the state rule below.
+     Under prefers-reduced-motion 40-a11y.css zeroes both durations, which lands the
+     mark and the space together and instantly — the correct degradation, so no
+     second rule is written for it. */
+  transition:
+    opacity var(--dur-exit) var(--ease-exit),
+    margin-inline-start var(--dur-standard) var(--ease-standard) var(--dur-exit);
 
   /* RESTATED here rather than inherited from the reset's universal rule, because
      every band width below is arithmetic against it: --dot-size has to be the
@@ -491,14 +528,21 @@
   --dot-color: var(--c-dot-idle);
 }
 
-/* NO LIVE RUN: the slot stays, the mark does not. `visibility` rather than
-   `display`, and this is the single most load-bearing rule in the block — the
-   cluster's inline footprint has to be the same 30px whether or not a run is
-   going, or every chat title in the strip jumps 16px sideways the moment a run
-   starts and back again when it ends. Same mechanism as the sub-tab dot's
-   reservation earlier in this file, and for the same reason. */
-.tab-run-dot:not([data-status]) {
-  visibility: hidden;
+/* A LIVE RUN is the whole reveal condition, so the row costs nothing for a mark
+   nothing is painting. Deliberately NOT the sub-tab dot's reservation one rung up:
+   that one covers a state arriving moments after the row is built (a run's first
+   frame, a delegate's invocation), while a chat's runs are absent for hours.
+
+   THE ENTRY, and it is the reverse of the tuck's list above: the space opens on
+   --dur-standard and the mark fades in AFTER it, delayed by that same duration, so
+   a reader sees the title make room and then the mark arrive in the room it made.
+   --dur-enter for the fade, which is this app's duration for something appearing. */
+.tab-run-dot[data-status] {
+  margin-inline-start: 0;
+  opacity: 1;
+  transition:
+    margin-inline-start var(--dur-standard) var(--ease-standard),
+    opacity var(--dur-enter) var(--ease-enter) var(--dur-standard);
 }
 
 /* Working — a run is executing. The breathe is the activity dot's, and it is the
@@ -593,36 +637,14 @@
   --dot-color: var(--c-dot-input);
 }
 
-/* THE SHARED TEXT ORIGIN, and the pair is what made these two rules necessary.
-   `.tab-status-dot:first-child`'s 14px glyph slot exists so a chat row's title
-   lines up with a settings or files row's, and the mark adds a gap and 8px that no
-   margin can put back inside that slot — so the missing width is given to the rows
-   WITHOUT a mark instead, and the strip keeps one origin rather than two.
-
-   ON THE NAME rather than on the leading glyph, deliberately. Widening the glyph's
-   own slot would centre it in 30px and move it 7px right, which breaks the
-   dot-sits-where-the-glyph-sits alignment the `:first-child` rule was written to
-   buy — the whole point of that 14px. Indenting the title moves only the title, so
-   both alignments hold at once, and the ~14px it costs is charged to `.tab-name`,
-   the row's one `flex: 1` child, which is where the slack lives anyway.
-
-   TWO rules because the two row shapes are missing different amounts. A top-level
-   row is missing the pair's whole cluster less its own glyph, DERIVED from
-   --icon-ui rather than written as 14px, because that token is 1.125rem on a coarse
-   pointer and a literal would misalign every touch device by 2px. A sub-tab's
-   nesting arrow is --icon-ui on both kinds, so it cancels and what is missing there
-   is exactly one gap and one mark. Chat rows are excluded by `data-kind`, which
-   createTabEl writes on every row; a chat row of either shape carries the mark, so
-   the attribute and the mark cannot disagree. */
-.tab:not([data-kind="chat"]) > .tab-name {
-  margin-inline-start: calc(0.875rem + var(--sp-2) + var(--dot-size) - var(--icon-ui));
-}
-
-/* Ties nothing on specificity — one class more than the rule above — but it must
-   stay AFTER it to read as the narrowing it is. */
-.tab.tab-child:not([data-kind="chat"]) > .tab-name {
-  margin-inline-start: calc(var(--sp-2) + var(--dot-size));
-}
+/* THE SHARED TEXT ORIGIN needs no rule of its own, and the two that used to sit
+   here are DELETED rather than moved. They indented every non-chat row's title by
+   one gap plus one mark to match the space a chat row reserved for its withdrawn
+   workflow mark, so they were the second half of that reservation and they went
+   with it. What keeps the origin shared now is one fact: the leading state slot is
+   the kind glyph's own width (`.tab-status-dot:first-child`, --icon-ui), so a chat
+   row and a settings row put their titles at the same x by construction. Adding an
+   indent back here would answer a shift the mark now pays for itself. */
 
 @media (prefers-reduced-motion: reduce) {
   /* Motion is what separates `working` from the settled states, so with it gone
@@ -690,6 +712,19 @@
      which would otherwise paint a permanent bright band over the donut. */
   .tab-run-dot[data-status="working"]::before {
     content: none;
+  }
+
+  /* THE SPAWN'S DELAYS, which the global sweep cannot reach: 40-a11y.css zeroes
+     `transition-duration` and says nothing about `transition-delay`, so a reader on
+     this preference would get the space opening instantly and then 200ms of an open
+     gap with nothing in it before the mark appeared — a lag with no motion left to
+     justify it. Zeroed HERE rather than in that sweep because these are the only
+     delayed transitions in the corpus, so widening the sweep would be a fleet-wide
+     rule for a gap one file can reach. Both selectors: each direction carries its
+     delay in its own shorthand, and the state rule outranks the tuck. */
+  .tab-run-dot,
+  .tab-run-dot[data-status] {
+    transition-delay: 0s;
   }
 }
 

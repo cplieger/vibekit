@@ -27,7 +27,7 @@ function toModelInfo(m: SessionModel): ModelInfo {
     model_id: m.id,
     model_name: m.name,
     ...(m.description === undefined || m.description === "" ? {} : { description: m.description }),
-    rate_multiplier: m.rate_multiplier ?? 1,
+    ...(m.rate_multiplier === undefined ? {} : { rate_multiplier: m.rate_multiplier }),
     ...(m.has_effort === undefined ? {} : { has_effort: m.has_effort }),
     ...(m.default_effort_level === undefined || m.default_effort_level === ""
       ? {}

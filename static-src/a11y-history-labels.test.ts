@@ -52,7 +52,7 @@ vi.mock("./editor-openers.js", () => ({
   openFile: undefined,
   openFileGitDiff: undefined,
 }));
-vi.mock("./navigate.js", () => ({ openChange: noop, openAtLine: noop }));
+vi.mock("./navigate.js", () => ({ openChange: noop, openAtLine: noop, openCallDiff: noop }));
 vi.mock("./scroll.js", () => ({
   setUserScrolledUp: noop,
   preserveReadingPosition: (fn: () => void) => {

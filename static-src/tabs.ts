@@ -1282,8 +1282,9 @@ function runDotPhrase(status: TabRunDotStatus, tally: TabRunTally): string {
  *  the title rather than ahead of it.
  *
  *  An empty status REMOVES the attribute, which is the CSS reveal condition — and
- *  the slot stays reserved either way (12-tabs.css), so nothing moves when a run
- *  starts. A no-op on a row that carries no mark, which is every non-chat kind. */
+ *  the mark takes no space without one (12-tabs.css), so this write is what moves
+ *  the title beside it. A no-op on a row that carries no mark, which is every
+ *  non-chat kind. */
 function paintRunDot(node: HTMLElement, status: TabRunDotStatus | "", tally: TabRunTally): void {
   const mark = node.querySelector<HTMLElement>(`.${CLS_RUN_DOT}`);
   const sr = node.querySelector<HTMLElement>(`.${CLS_RUN_DOT_SR}`);

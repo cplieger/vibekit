@@ -32,6 +32,19 @@ export function truncate(s: string, max = 40): string {
   return s.length > max ? s.slice(0, max - 3) + "\u2026" : s;
 }
 
+/** A model's credit multiplier as `Nx`, or "" when the catalog carried none.
+ *
+ *  ABSENT IS A REAL ANSWER, and coercing it to 1 is what made every model read
+ *  `1x`: `rate_multiplier` is `omitempty` on the wire, so a catalog that dropped
+ *  the field is indistinguishable from one reporting parity — and the picker's
+ *  whole credit readout was then wrong for every model at once, silently. No
+ *  readout beats a wrong one. Non-positive is folded in for free: `omitempty`
+ *  means 0 never travels, so any value at or below it is a payload nobody
+ *  produces rather than a rate to render. */
+export function rateLabel(rate: number | undefined): string {
+  return rate === undefined || !Number.isFinite(rate) || rate <= 0 ? "" : `${String(rate)}x`;
+}
+
 /** How many lines each end of a windowed command output keeps. */
 const OUTPUT_WINDOW_LINES = 20;
 

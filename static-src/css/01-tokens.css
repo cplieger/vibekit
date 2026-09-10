@@ -368,8 +368,11 @@
   }
 
   /* A caption stays one step under its row, so it cannot outsize the control it
-   * labels (`.effort-label` beside five `.effort-btn`s is the tight case), and
-   * --fs-sm is the floor every popup keeps on a finger. */
+   * labels (`.pill-model-meta` beside a model row's own name is the tight case,
+   * and the one popup-parity.test.ts measures), and --fs-sm is the floor every
+   * popup keeps on a finger. The effort slider's caption used to be that case
+   * against the knob's own label; the knob carries no text now, so `.effort-label`
+   * has nothing beside it to outsize. */
   :root[data-pointer="coarse"] {
     --fs-popup: var(--fs-md);
     --fs-popup-meta: var(--fs-sm);

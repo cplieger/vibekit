@@ -140,26 +140,34 @@ func TestHandleConfigOptionUpdate_EmptyEffortOptionApplies(t *testing.T) {
 	}
 }
 
-// Two fields only: the tier LIST belongs to the `effortLevel` option, not to a model
-// choice. Absent and malformed meta both decode to the zero value, which the client
-// reads as "not plumbed".
-func TestChoiceEffort(t *testing.T) {
+// Three fields, and the rate multiplier is the one a model choice's meta used to
+// drop. The TIER LIST is deliberately absent from the block — it belongs to the
+// `effortLevel` option. Absent and malformed meta both decode to the zero value,
+// which the client reads as "not plumbed".
+func TestChoiceMeta(t *testing.T) {
 	cases := []struct {
 		name        string
 		meta        string
 		wantHas     bool
 		wantDefault string
+		wantRate    float64
 	}{
 		{name: "nil meta"},
 		{name: "empty object", meta: `{}`},
 		{name: "hasEffort only", meta: `{"kiro":{"hasEffort":true}}`, wantHas: true},
 		{name: "hasEffort false", meta: `{"kiro":{"hasEffort":false}}`},
-		{name: "kiro without hasEffort", meta: `{"kiro":{"rateMultiplier":2}}`},
+		{name: "kiro without hasEffort", meta: `{"kiro":{"rateMultiplier":2}}`, wantRate: 2},
 		{
 			// The 2.18.0 shape: a default tier, no capability flag.
 			name:        "default tier, no hasEffort",
 			meta:        `{"kiro":{"rateMultiplier":1,"effortSchemaPath":"reasoning","defaultEffortLevel":"xhigh"}}`,
 			wantDefault: "xhigh",
+			wantRate:    1,
+		},
+		{
+			name:     "fractional multiplier",
+			meta:     `{"kiro":{"rateMultiplier":0.25}}`,
+			wantRate: 0.25,
 		},
 		{name: "malformed", meta: `{not json`},
 	}
@@ -169,12 +177,15 @@ func TestChoiceEffort(t *testing.T) {
 			if tc.meta != "" {
 				meta = []byte(tc.meta)
 			}
-			got := choiceEffort(meta)
-			if got.HasEffort != tc.wantHas {
-				t.Errorf("HasEffort = %v, want %v", got.HasEffort, tc.wantHas)
+			got := choiceMeta(meta)
+			if got.Kiro.HasEffort != tc.wantHas {
+				t.Errorf("HasEffort = %v, want %v", got.Kiro.HasEffort, tc.wantHas)
 			}
-			if got.Default != tc.wantDefault {
-				t.Errorf("Default = %q, want %q", got.Default, tc.wantDefault)
+			if got.Kiro.DefaultEffortLevel != tc.wantDefault {
+				t.Errorf("DefaultEffortLevel = %q, want %q", got.Kiro.DefaultEffortLevel, tc.wantDefault)
+			}
+			if got.Kiro.RateMultiplier != tc.wantRate {
+				t.Errorf("RateMultiplier = %v, want %v", got.Kiro.RateMultiplier, tc.wantRate)
 			}
 		})
 	}

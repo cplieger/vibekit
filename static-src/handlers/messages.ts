@@ -16,7 +16,7 @@ import {
   setCodeReferences,
   setThinking,
   setAgentStatus,
-  setSnapshotSeq,
+  setChunkWatermark,
   noteLiveTurnMessage,
   noteTruncatedSnapshot,
   get,
@@ -119,7 +119,7 @@ onSSE("turn_state", (chatID, p) => {
   }
   const msg = p.message;
   if (msg !== undefined && msg.id !== "") {
-    setSnapshotSeq(chatID, msg.id, p.chunk_seq ?? 0);
+    setChunkWatermark(chatID, msg.id, p.chunk_seq ?? 0);
     // The snapshot is the server's unflushed buffer, so this id is
     // unpersisted by construction.
     noteLiveTurnMessage(chatID, msg.id);

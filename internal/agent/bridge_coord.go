@@ -488,6 +488,33 @@ func (rt *Runtime) HasOpenTurn(chatID vibekit.ChatID) bool {
 	return rt.coord.turns.hasOpenTurn(chatID)
 }
 
+// LiveTurn returns the in-flight turn's accumulated assistant message for chatID, or
+// false when no turn a reader may see is open. Composition injects it into the chat store
+// (chat.WithLiveTurn), which is what gives `GET /api/chats/{id}` the CONTENT to go with
+// the `turn_open` it already states.
+//
+// The second channel for that content, and the reason there has to be one: the connect
+// replay's turn_state is gated on `?snapshot=`, which the client resolves before it knows
+// which chat it will show, so a boot on a URL naming no chat declares nothing and is
+// refused the transcript it is about to render.
+//
+// The snapshot is taken with the buffer's own mutex and no lifecycle lock held, which is
+// what lets two clients read one turn independently; neither mutates the buffer.
+func (rt *Runtime) LiveTurn(chatID vibekit.ChatID) (vibekit.LiveTurn, bool) {
+	facts, open := rt.coord.turns.openTurnFor(chatID)
+	if !open {
+		return vibekit.LiveTurn{}, false
+	}
+	msg, seq, truncated, ok := facts.Buf.SnapshotCapped(liveTurnGETCaps)
+	if !ok {
+		// A turn that has produced nothing yet. `turn_open` still says it is running;
+		// there is simply no carrier to describe, and an empty message would name an id
+		// the client would then treat as its unpersisted live turn.
+		return vibekit.LiveTurn{}, false
+	}
+	return vibekit.LiveTurn{Message: msg, ChunkSeq: seq, Truncated: truncated}, true
+}
+
 // CloseBridge stops a bridge and removes it from the map.
 func (bc *BridgeCoordinator) CloseBridge(chatID vibekit.ChatID) {
 	bc.bridge.mgr.close(chatID)

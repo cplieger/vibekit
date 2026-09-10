@@ -1,15 +1,15 @@
 // ---------------------------------------------------------------------------
-// `geometrySkipped` names two CSS rules, and this is what keeps it honest.
+// `geometrySkipped` names three CSS rules, and this is what keeps it honest.
 //
 // The predicate answers "would reading this element's box force the browser to
-// render a subtree it chose to skip", and it answers by matching two selectors
-// against the DOM. Those selectors are a claim ABOUT the stylesheets: that
-// `.turn[data-folded] > .turn-body` and `.transcript-view:not(.is-active)` are
-// where `content-visibility: hidden` lives. Nothing links the two halves, so a
-// rule renamed in CSS leaves the predicate matching nothing and every geometry
-// read it guards silently starts forcing a render again — which is invisible to
-// the type checker, to the linter, and to every behavioural test, because the
-// wrong answer is a performance fault rather than a wrong number.
+// render a subtree it chose to skip", and it answers by matching selectors
+// against the DOM. Those selectors are a claim ABOUT the stylesheets: that they
+// are every place `content-visibility: hidden` lives. Nothing links the two
+// halves, so a rule renamed in CSS leaves the predicate matching nothing and
+// every geometry read it guards silently starts forcing a render again — which
+// is invisible to the type checker, to the linter, and to every behavioural
+// test, because the wrong answer is a performance fault rather than a wrong
+// number.
 //
 // A SOURCE guard plus a DOM guard, deliberately, because they fail for different
 // reasons: the first catches the CSS moving out from under the predicate, the
@@ -41,12 +41,13 @@ vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m
 
 const { geometrySkipped } = await import("./messages-blocks.js");
 
-/** The two subtree shapes the transcript skips, each with the sheet that declares
+/** The three subtree shapes the transcript skips, each with the sheet that declares
  *  it. The selector strings are the predicate's own, so a drift on either side of
  *  the correspondence fails here. */
 const SKIPPED = [
   { sheet: "29-turns.css", selector: ".turn[data-folded] > .turn-body" },
   { sheet: "13-messages.css", selector: ".transcript-view:not(.is-active)" },
+  { sheet: "14-tools.css", selector: ".subagent-block.collapsed > .subagent-body" },
 ] as const;
 
 /** Build `selector`'s shape for real and return the descendant to measure, so the
@@ -57,9 +58,17 @@ function mountSkipped(selector: string): HTMLElement {
     host.className = "turn";
     host.setAttribute("data-folded", "");
     host.innerHTML = `<div class="turn-body"><div class="message assistant">prose</div></div>`;
-  } else {
+  } else if (selector.startsWith(".subagent-block")) {
+    host.className = "subagent-block collapsed";
+    host.innerHTML = `<div class="subagent-body"><div class="message assistant">prose</div></div>`;
+  } else if (selector.startsWith(".transcript-view")) {
     host.className = "transcript-view";
     host.innerHTML = `<div class="msg-wrap"><div class="message assistant">prose</div></div>`;
+  } else {
+    // A fall-through built the parked-view shape, so a SKIPPED entry whose shape
+    // nobody wrote still matched the parked-view rule and passed for the wrong
+    // predicate.
+    throw new Error(`no shape mounted for ${selector}`);
   }
   document.body.appendChild(host);
   const leaf = host.querySelector<HTMLElement>(".message");

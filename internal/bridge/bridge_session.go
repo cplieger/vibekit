@@ -39,16 +39,16 @@ type sessionConfigOption struct {
 }
 
 // sessionConfigChoice is one selectable value in a config-option select. For the
-// model option the rate multiplier rides _meta.kiro (moved off ModelInfo on v3).
+// model option the rate multiplier, the effort capability and the model's default
+// tier all ride _meta.kiro (moved off ModelInfo on v3), through the shared
+// vibekit.ModelChoiceMeta — this decoder read the multiplier alone, which is the
+// same one-field-short divergence that cost the picker its credit readout on the
+// live-update path.
 type sessionConfigChoice struct {
 	Value       string `json:"value"`
 	Name        string `json:"name"`
-	Description string `json:"description"`
-	Meta        struct {
-		Kiro struct {
-			RateMultiplier float64 `json:"rateMultiplier"`
-		} `json:"kiro"`
-	} `json:"_meta"`
+	Description string                 `json:"description"`
+	Meta        vibekit.ModelChoiceMeta `json:"_meta"`
 }
 
 // sessionCreated is the session/new and session/load result.
@@ -406,7 +406,9 @@ func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 			}
 			catalog = append(catalog, vibekit.SessionModel{
 				ID: c.Value, Name: c.Name, Description: c.Description,
-				RateMultiplier: c.Meta.Kiro.RateMultiplier,
+				RateMultiplier:     c.Meta.Kiro.RateMultiplier,
+				HasEffort:          c.Meta.Kiro.HasEffort,
+				DefaultEffortLevel: c.Meta.Kiro.DefaultEffortLevel,
 			})
 		}
 		b.catalog.Store(&catalog)

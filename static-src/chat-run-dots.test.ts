@@ -20,10 +20,13 @@
 //     and the reason the producer reads a GLOBAL inventory rather than the active
 //     session.
 //
-//  4. THE RESERVED SLOT. The mark's box is present in every state, so a run
-//     starting must not move the title beside it. Asserted against real layout
-//     with the shipped stylesheet mounted, because it is a geometry claim and
-//     nothing about the markup implies it.
+//  4. NO FOOTPRINT WITHOUT A RUN. The mark takes space only while it is painting
+//     one, so a quiet row is charged nothing and the strip keeps one text origin
+//     with no compensating indent anywhere. It used to reserve its box in every
+//     state, which put 16px of empty space on every chat row for the mark's sake;
+//     the title moving when a run starts is the accepted cost of taking that back.
+//     Asserted against real layout with the shipped stylesheet mounted, because it
+//     is a geometry claim and nothing about the markup implies it.
 //
 //  5. WITHDRAWAL ON SETTLE. The live inventory deletes a run's row at its terminal
 //     status, so an OUTCOME is not available to paint. The mark has to disappear
@@ -259,6 +262,39 @@ function probe(value: string): number {
   const w = p.getBoundingClientRect().width;
   p.remove();
   return w;
+}
+
+/** The row's own flex gap, which is what every element in the leading cluster is
+ *  separated by and therefore the unit the mark's footprint is charged in. */
+function gap(): number {
+  return probe("var(--sp-2)");
+}
+
+/** Wait out everything moving in a row, which is the precondition for comparing two
+ *  geometry reads taken in different frames.
+ *
+ *  TWO animations live here, and missing either one costs 12px or 16px of nonsense.
+ *  The mark's footprint is a TRANSITION (12-tabs.css), so a read in the tick of the
+ *  state write lands mid-flight at the tucked value. And a freshly rendered row runs
+ *  `vk-slide-in-x` (10-shell-app.css `.tab.entering`), a `translateX(-0.75rem)` over
+ *  the whole ROW — so a baseline taken right after `paint()` is 12px left of where
+ *  the row settles, and the shift it is subtracted from reads 28 instead of 16. The
+ *  subtree covers both, which is why this takes the row rather than the mark.
+ *
+ *  Event-driven rather than a timeout, so it is not a load-sensitive assertion: the
+ *  rect read forces the style recalc that CREATES the transitions, and `finished` is
+ *  what says they are over. Infinite animations are excluded or the wait never
+ *  returns; a cancelled one rejects, which is a settle for this purpose (a second
+ *  state landed and the caller waits on its own settle). */
+async function settle(id: string): Promise<void> {
+  const row = rowOf(id);
+  row.getBoundingClientRect();
+  const finite = row.getAnimations({ subtree: true }).filter((a) => {
+    const timing = a.effect?.getComputedTiming();
+    return Number.isFinite(timing?.endTime ?? Number.POSITIVE_INFINITY);
+  });
+  await Promise.all(finite.map((a) => a.finished.catch(() => undefined)));
+  await new Promise((r) => requestAnimationFrame(() => r(undefined)));
 }
 
 /** Where a row's title starts, which is the one number every alignment case here
@@ -556,15 +592,18 @@ describe("the fold's arithmetic survives in the phrase and the tooltip", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. The reserved slot, against real layout.
+// 6. The mark's footprint, against real layout.
 //
-// The mark's box is present in every state, so a run starting must not move the
-// title beside it. Nothing about the markup implies that — it is a `visibility`
-// rather than a `display` rule — so the claim is measured with the shipped
-// stylesheet mounted rather than read off the source.
+// The mark takes space only while a run is live, so a row with no run is charged
+// nothing for it. That replaced a reserved box (`visibility: hidden`) which bought
+// a title that never moved and charged every chat row 16px of empty space to do
+// it — reported as a large permanent gap between the activity dot and the title.
+// The cost of withdrawing it is a title that moves when a run starts, so BOTH the
+// zero footprint and the size of that move are measured here with the shipped
+// stylesheet mounted: nothing about the markup implies either.
 // ---------------------------------------------------------------------------
 
-describe("the reserved slot keeps a title still", () => {
+describe("the mark takes space only while a run is live", () => {
   let style: HTMLStyleElement;
 
   beforeAll(() => {
@@ -575,64 +614,130 @@ describe("the reserved slot keeps a title still", () => {
     style.remove();
   });
 
-  it("does not move the name when a run starts, or when it ends", async () => {
+  it("puts nothing between the activity dot and the title while no run is going", async () => {
+    // THE DEFECT, measured: the whole distance from the dot's ink to the title is the
+    // dot's own trailing half-slot plus the row's gap, and no third term. With the
+    // mark's box reserved it was that plus a gap plus a mark — 27px against 12 on a
+    // fine pointer — on every chat row in the strip, permanently.
+    const chat = await openSubject("chat", "c1");
+    await paint();
+    await settle(chat);
+    const row = rowOf(chat);
+    const dot = row.querySelector<HTMLElement>(".tab-status-dot");
+    expect(dot).not.toBeNull();
+    const dotToName = titleLeft(chat) - (dot?.getBoundingClientRect().right ?? 0);
+    expect(dotToName).toBeCloseTo(
+      (probe("var(--icon-ui)") - probe("var(--dot-size)")) / 2 + gap(),
+      1,
+    );
+  });
+
+  it("cancels its own footprint while it is tucked away", async () => {
+    const chat = await openSubject("chat", "c1");
+    await paint();
+    const mark = markOf(chat);
+    // The mark keeps its BOX so it has something to animate into layout from, and
+    // pays for that box with a negative leading margin: one mark plus one gap, which
+    // is the pair of terms the row's own `gap` charges on either side of it. Not
+    // `visibility: hidden`, whose box is charged in full, and not `display: none`,
+    // which cannot animate.
+    expect(getComputedStyle(mark).opacity).toBe("0");
+    expect(mark.getBoundingClientRect().width).toBeGreaterThan(0);
+    expect(Number.parseFloat(getComputedStyle(mark).marginInlineStart)).toBeCloseTo(
+      -(probe("var(--dot-size)") + gap()),
+      1,
+    );
+
+    liveRun("wf_1", "c1", { status: "running" });
+    await settle(chat);
+    expect(getComputedStyle(mark).opacity).toBe("1");
+    expect(Number.parseFloat(getComputedStyle(mark).marginInlineStart)).toBeCloseTo(0, 1);
+  });
+
+  it("opens the space BEFORE the mark fades into it, and closes it after", async () => {
+    // The spawn's ORDER, which is the whole of what a reader sees: the title makes
+    // room, then the mark arrives in the room it made. Read off the resolved cascade
+    // rather than the source, because the two directions are two separate lists and
+    // what matters is which property carries the delay in each.
+    const chat = await openSubject("chat", "c1");
+    await paint();
+    const mark = markOf(chat);
+    const list = (el: HTMLElement): Map<string, string> => {
+      const cs = getComputedStyle(el);
+      const props = cs.transitionProperty.split(", ");
+      const delays = cs.transitionDelay.split(", ");
+      return new Map(props.map((p, i) => [p, delays[i] ?? "0s"]));
+    };
+    // EXIT (the tuck's own list): the fade leads, the space closes behind it.
+    const exit = list(mark);
+    expect(exit.get("opacity")).toBe("0s");
+    expect(Number.parseFloat(exit.get("margin-inline-start") ?? "0")).toBeGreaterThan(0);
+
+    liveRun("wf_1", "c1", { status: "running" });
+    // ENTRY (the state rule's list): the space leads, the fade follows it.
+    const entry = list(mark);
+    expect(entry.get("margin-inline-start")).toBe("0s");
+    expect(Number.parseFloat(entry.get("opacity") ?? "0")).toBeGreaterThan(0);
+  });
+
+  it("moves the title by exactly one gap and one mark when a run starts, and back", async () => {
+    // The accepted cost of withdrawing the reservation, pinned so it cannot grow: the
+    // shift is the mark plus the one gap it is charged, and it is fully reversed on
+    // settle. A reader can see what moved it, which the permanent gap never showed.
     const chat = await openSubject("chat", "c1");
     const { renameTab } = await import("./tabs.js");
     renameTab(chat, "Fix the parser");
     await paint();
-    const name = rowOf(chat).querySelector<HTMLElement>(".tab-name");
-    expect(name).not.toBeNull();
-    const before = name?.getBoundingClientRect().left;
+    await settle(chat);
+    const idle = titleLeft(chat);
 
     liveRun("wf_1", "c1", { status: "running" });
     expect(markState(chat)).toBe("working");
-    expect(name?.getBoundingClientRect().left).toBe(before);
+    await settle(chat);
+    expect(titleLeft(chat) - idle).toBeCloseTo(gap() + probe("var(--dot-size)"), 1);
 
     settleRun("wf_1");
     expect(markState(chat)).toBe("");
-    expect(name?.getBoundingClientRect().left).toBe(before);
+    await settle(chat);
+    expect(titleLeft(chat)).toBeCloseTo(idle, 1);
   });
 
-  it("keeps the box and drops only the ink while no run is going", async () => {
+  it("charges the cluster exactly one glyph slot, one gap and one mark while live", async () => {
     const chat = await openSubject("chat", "c1");
     await paint();
-    const mark = markOf(chat);
-    // `visibility`, never `display`: the slot has to be charged for in every state
-    // or the whole strip's titles shift the moment a run starts.
-    expect(getComputedStyle(mark).display).not.toBe("none");
-    expect(getComputedStyle(mark).visibility).toBe("hidden");
-    expect(mark.getBoundingClientRect().width).toBeGreaterThan(0);
-
     liveRun("wf_1", "c1", { status: "running" });
-    expect(getComputedStyle(mark).visibility).toBe("visible");
-  });
-
-  it("charges the cluster exactly one glyph slot, one gap and one mark", async () => {
-    const chat = await openSubject("chat", "c1");
-    await paint();
+    await settle(chat);
     const row = rowOf(chat);
     const dot = row.querySelector<HTMLElement>(".tab-status-dot");
     const mark = markOf(chat);
-    const name = row.querySelector<HTMLElement>(".tab-name");
     // The arithmetic 12-tabs.css states, DERIVED rather than restated as numbers, so
     // a token retune moves the expectation instead of failing it. Probes resolve the
-    // tokens; nothing here is a literal but the glyph slot the dot's own rule names.
-    const slot = probe("0.875rem");
+    // tokens; nothing here is a literal.
+    const slot = probe("var(--icon-ui)");
     const size = probe("var(--dot-size)");
-    const gap = probe("var(--sp-2)");
     // The mark is charged the row's own gap and nothing else, and the dot keeps the
-    // trailing half of its 14px glyph slot: that is the whole of the pair's extra
+    // trailing half of the glyph slot it holds: that is the whole of the pair's extra
     // chrome, so the cluster is one glyph slot plus one gap plus one mark.
     const dotToMark = mark.getBoundingClientRect().left - (dot?.getBoundingClientRect().right ?? 0);
-    expect(dotToMark).toBeCloseTo((slot - size) / 2 + gap, 1);
-    // And the name follows the mark on that same gap, so the cluster ends where a
-    // single-dot cluster used to.
-    const markToName =
-      (name?.getBoundingClientRect().left ?? 0) - mark.getBoundingClientRect().right;
-    expect(markToName).toBeCloseTo(gap, 1);
+    expect(dotToMark).toBeCloseTo((slot - size) / 2 + gap(), 1);
+    // And the name follows the mark on that same gap.
+    const markToName = titleLeft(chat) - mark.getBoundingClientRect().right;
+    expect(markToName).toBeCloseTo(gap(), 1);
   });
 
-  it("keeps every chat row's title on ONE origin whatever its runs are doing", async () => {
+  it("keeps two chat rows with no live run on ONE origin", async () => {
+    const a = await openSubject("chat", "cA");
+    const b = await openSubject("chat", "cB");
+    await paint();
+    // The common case is every row: a chat with no run in flight is what the strip
+    // mostly holds, and those rows share an origin with each other and with every
+    // other kind (section 7 below).
+    await settle(a);
+    await settle(b);
+    expect(titleLeft(a)).toBe(titleLeft(b));
+  });
+
+  it("bounds the divergence a live run creates to that one shift", async () => {
     const a = await openSubject("chat", "cA");
     const b = await openSubject("chat", "cB");
     await paint();
@@ -641,17 +746,19 @@ describe("the reserved slot keeps a title still", () => {
       pauseReason: "Step requested user input via send_message.",
     });
     // `input` is the state that also carries a halo, which is a box-shadow and so
-    // takes no layout — the row it sits on has to line up with a row showing
-    // nothing at all.
+    // takes no layout — the widest state must still cost exactly the mark and its
+    // gap, or the divergence between a running row and a quiet one grows with state.
     expect(markState(a)).toBe("input");
-    expect(titleLeft(a)).toBe(titleLeft(b));
+    await settle(a);
+    await settle(b);
+    expect(titleLeft(a) - titleLeft(b)).toBeCloseTo(gap() + probe("var(--dot-size)"), 1);
   });
 
-  it("does not move a chat SUB-TAB's name when a run starts, either", async () => {
+  it("moves a chat SUB-TAB's name by that same shift, and no other", async () => {
     // A sub-tab's cluster is a different rule from a top-level row's — the nesting
     // arrow holds the glyph slot and `.tab-nest + .tab-status-dot` zeroes the dot's
-    // own margin — so the no-shift claim has to be measured on that shape too. The
-    // dot's reservation for the two kinds that NEST is also a separate rule from the
+    // own margin — so the shift has to be measured on that shape too. The dot's
+    // reservation for the two kinds that NEST is also a separate rule from the
     // mark's, and this is the row where the two meet.
     const { openTab, tabIdFor, renameTab } = await import("./tabs.js");
     const parent = await openSubject("chat", "c1");
@@ -659,27 +766,30 @@ describe("the reserved slot keeps a title still", () => {
     const child = tabIdFor("chat", "c2");
     renameTab(child, "A tangent");
     await paint();
-    const before = titleLeft(child);
+    await settle(child);
+    const idle = titleLeft(child);
 
     liveRun("wf_1", "c2", { status: "running" });
     expect(markState(child)).toBe("working");
-    expect(titleLeft(child)).toBe(before);
+    await settle(child);
+    expect(titleLeft(child) - idle).toBeCloseTo(gap() + probe("var(--dot-size)"), 1);
 
     settleRun("wf_1");
     expect(markState(child)).toBe("");
-    expect(titleLeft(child)).toBe(before);
+    await settle(child);
+    expect(titleLeft(child)).toBeCloseTo(idle, 1);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 6. The cluster's arithmetic reaches rows this feature does not paint.
+// 7. The strip's shared text origin, which this feature must not disturb.
 //
-// `.tab-status-dot:first-child` puts a chat row's leading dot in the glyph's 14px
+// `.tab-status-dot:first-child` puts a chat row's leading dot in the KIND GLYPH'S
 // slot for one reason: so a chat row's title lines up with a settings or files
-// row's. The pair cannot fit in that slot at any margin, so keeping the strip on
-// ONE text origin means giving the rows WITHOUT a mark the width they are missing
-// — which is a claim about eight kinds this producer never writes to, and the
-// reason it is measured here rather than reasoned about.
+// row's. That is now the whole mechanism — the mark costs a quiet row nothing, so
+// the two compensating `.tab-name` indents that used to pay for its reserved box
+// are gone. It is a claim about eight kinds this producer never writes to, which is
+// why it is measured here rather than reasoned about.
 // ---------------------------------------------------------------------------
 
 describe("a mixed strip keeps one text origin", () => {
@@ -707,20 +817,22 @@ describe("a mixed strip keeps one text origin", () => {
         origin,
       );
     }
-    // And the shared origin is the PAIR's, not the single dot's: one glyph slot, one
-    // gap, one mark, one gap. Derived from the tokens, so a retune moves it.
+    // And the shared origin is ONE glyph slot plus one gap, with no term for the
+    // mark: the dot's slot IS the glyph's width, so the two shapes agree by
+    // construction rather than through a corrective indent. Derived from the tokens,
+    // so a retune moves it — and on a coarse pointer --icon-ui changes while a
+    // literal would not, which is how the old 0.875rem hid a 4px misalignment.
     const row = rowOf(chat).getBoundingClientRect();
     const border = probe("1px");
     const pad = probe("var(--sp-3)");
-    const cluster = probe("0.875rem") + probe("var(--sp-2)") + probe("var(--dot-size)");
-    expect(origin - row.left).toBeCloseTo(border + pad + cluster + probe("var(--sp-2)"), 1);
+    expect(origin - row.left).toBeCloseTo(border + pad + probe("var(--icon-ui)") + gap(), 1);
   });
 
   it("lines a chat SUB-TAB's title up with the other kinds that nest", async () => {
-    // A run sub-tab and a subagent sub-tab are the two kinds that sit here and
-    // cannot carry a mark, and their arrow is --icon-ui exactly like a chat
-    // sub-tab's — so what they are missing is one gap and one mark, not the whole
-    // cluster the top-level rule replaces.
+    // A run sub-tab and a subagent sub-tab are the two kinds that sit here and cannot
+    // carry a mark, and their arrow is --icon-ui exactly like a chat sub-tab's — so
+    // with the mark costing a quiet row nothing, all three shapes are arrow, gap,
+    // reserved dot slot, gap, title, and they agree with no indent anywhere.
     const { openTab, tabIdFor } = await import("./tabs.js");
     const parent = await openSubject("chat", "c1");
     await openTab({ kind: "chat", ref: "c2", parent });

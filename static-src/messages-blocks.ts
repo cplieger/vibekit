@@ -967,13 +967,15 @@ function resolveRunCardFate(st: MsgRender, runID: string, card: RunCardView): vo
   }
 }
 
-/** Whether `el` sits in a subtree the page is not rendering: a folded card's body or a
- *  parked view. A `closest()` test, never a geometry read — reading a descendant's box
- *  there forces the browser to render what it skipped, which is the cost being avoided. */
+/** Whether `el` sits in a subtree the page is not rendering: a folded card's body, a
+ *  parked view, or a collapsed pipeline container. A `closest()` test, never a geometry
+ *  read — reading a descendant's box there forces the browser to render what it
+ *  skipped, which is the cost being avoided. */
 export function geometrySkipped(el: Element): boolean {
   return (
     el.closest(".turn[data-folded] > .turn-body") !== null ||
-    el.closest(".transcript-view:not(.is-active)") !== null
+    el.closest(".transcript-view:not(.is-active)") !== null ||
+    el.closest(".subagent-block.collapsed > .subagent-body") !== null
   );
 }
 

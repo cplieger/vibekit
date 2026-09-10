@@ -233,6 +233,11 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// that surface's silence about a buffered turn reads as "nothing closed this turn".
 	// Injected post-construction for WithLive's reason — the store cannot import the agent.
 	chat.WithTurnOpen(h.HasOpenTurn)(chatStore)
+	// The CONTENT half of the line above, and the second channel for an in-flight turn:
+	// the SSE connect replay is gated on a declaration the client makes before it knows
+	// which chat it will show, so without this a boot on a URL naming no chat renders the
+	// prompt over an empty body until the turn ends.
+	chat.WithLiveTurn(h.LiveTurn)(chatStore)
 	chat.WithOnPurge(func(id vibekit.ChatID, sessionChain []string) {
 		// After the per-chat record lock is released: it keeps the lock order acyclic.
 		// RetentionClose reaps the chain itself, through the same reaper wired above, so

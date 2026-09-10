@@ -249,6 +249,14 @@ export async function fetchGitDiffSources(
   }
 }
 
+/** Whether the pane paints from content the state already holds, leaving the
+ *  buffer read to serve only the Edit button. True for a card's own before/after
+ *  pair, false for a git diff, which has nothing until its fetch answers. */
+function paintsWithoutBuffer(state: FileState): boolean {
+  const m = state.mode.value;
+  return m.kind === "diff" && !m.diffSource.fromGit;
+}
+
 export function activateFile(path: string): void {
   saveCurrentState();
   abortSuggestion(); // cancel any in-flight suggestion for the old file
@@ -291,6 +299,12 @@ export function activateFile(path: string): void {
     return;
   }
   if (!state.loaded) {
+    // A diff holding both sides is painted BEFORE the read, not behind it: the
+    // read fills the buffer Edit needs, and until it lands the pane would
+    // otherwise sit on the file the reader came from.
+    if (paintsWithoutBuffer(state)) {
+      restoreUI(state);
+    }
     void loadFile(state, activeLoadController.signal);
     return;
   }
@@ -314,10 +328,28 @@ function saveCurrentState(): void {
   }
 }
 
+/** A failed buffer read, which is not always a failed PANE.
+ *
+ *  Where the pane paints itself the diff stays and `loaded` stays false, which is
+ *  what withholds Edit from a file there is nothing to edit. Deliberately silent:
+ *  the reader asked for a diff and got one, and the absent control is the signal. */
+function failBufferLoad(state: FileState, message: string): void {
+  if (paintsWithoutBuffer(state)) {
+    return;
+  }
+  state.error.value = message;
+  state.loaded = true;
+  restoreUI(state);
+}
+
 async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
-  $.editorCode.textContent = "Loading...";
-  showReadMode();
-  $.editorEditBtn.disabled = true;
+  // The placeholder is for a pane with nothing of its own to show. Writing it over
+  // a self-contained diff is the read taking the pane down with it.
+  if (!paintsWithoutBuffer(state)) {
+    $.editorCode.textContent = "Loading...";
+    showReadMode();
+    $.editorEditBtn.disabled = true;
+  }
 
   const d = await apiGet<{ content?: string; content_hash?: string; error?: string }>(
     routeForPath(state.path).readURL,
@@ -327,15 +359,11 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
     return;
   }
   if (d === null) {
-    state.error.value = "Failed to load file";
-    state.loaded = true;
-    restoreUI(state);
+    failBufferLoad(state, "Failed to load file");
     return;
   }
   if (d.error !== undefined) {
-    state.error.value = d.error;
-    state.loaded = true;
-    restoreUI(state);
+    failBufferLoad(state, d.error);
     return;
   }
   state.original.value = d.content ?? "";

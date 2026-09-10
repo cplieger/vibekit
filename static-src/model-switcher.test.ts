@@ -13,8 +13,18 @@
 //
 // These tests drive the real controller through the expand callback, because the
 // rebuild happens on open — that is the moment a late catalog is picked up.
+//
+// The section is a stepped SLIDER now, so the readings changed and the behaviours
+// did not: the rendered vocabulary is the tick list, the live tier is the knob, and
+// a pick is a gesture on the knob rather than a click on one of five buttons. Every
+// gesture here is a KEY, because this file mounts no stylesheet: with no layout the
+// track and the knob measure the same width, so the pointer path's own
+// snap-to-nearest has nothing to resolve against. `effort-slider.test.ts` mounts
+// the real cascade and drives the pointer.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { userEvent } from "vitest/browser";
 import type { ModelInfo } from "./types.js";
+import type * as Strings from "./strings.js";
 
 /** Catalog the module reads through picker.getCachedModels. */
 let cachedModels: ModelInfo[] = [];
@@ -105,7 +115,14 @@ vi.mock("./session-context.js", () => ({
     setLastEffortSpy(level, model);
   },
 }));
-vi.mock("./strings.js", () => ({ humanName: (s: string) => s }));
+// Only `humanName` is stubbed, to identity, so an assertion reads the model id it
+// was given. Everything else stays REAL: `rateLabel` is pure and its whole job is
+// deciding whether a credit readout exists at all, so a constant here would hide
+// exactly the coercion this suite renders.
+vi.mock("./strings.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Strings>()),
+  humanName: (s: string) => s,
+}));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));
 vi.mock("./icons.js", () => ({ ICON_MODEL: "" }));
 vi.mock("@cplieger/ui-primitives/roving-focus", () => ({
@@ -126,22 +143,47 @@ function model(id: string, dflt?: string): ModelInfo {
   };
 }
 
-/** Open the card and return the tier buttons it rendered. */
-function openCard(): HTMLButtonElement[] {
+/** Open the card and return the tier ids it rendered, in order. The ticks ARE the
+ *  rendered vocabulary — one per tier the session offers. */
+function openCard(): string[] {
   onExpand.fn?.();
-  return [...document.querySelectorAll<HTMLButtonElement>(".effort-btn")];
+  return [...document.querySelectorAll<HTMLElement>(".effort-tick")].map(
+    (t) => t.dataset["level"] ?? "",
+  );
 }
 
-/** The tier marked live, by both channels. Empty when nothing is marked. */
+/** The slider, after opening the card. One tab stop, so one `role="slider"`. */
+function knob(): HTMLElement {
+  const found = [...document.querySelectorAll<HTMLElement>('[role="slider"]')];
+  expect(found, "the card renders exactly one slider").toHaveLength(1);
+  return found[0] as HTMLElement;
+}
+
+/** The tier the knob is showing, cross-checked against the two channels it
+ *  announces on: one function writes the position, `aria-valuenow` and
+ *  `aria-valuetext` together, so a disagreement here is that rule breaking. */
 function markedTier(): string {
-  const on = openCard().filter((b) => b.classList.contains("active"));
-  expect(on.length, "exactly one tier may be marked live").toBeLessThanOrEqual(1);
-  const btn = on[0];
-  if (btn === undefined) {
-    return "";
+  const tiers = openCard();
+  const k = knob();
+  const id = k.dataset["level"] ?? "";
+  expect(k.getAttribute("aria-valuenow")).toBe(String(tiers.indexOf(id)));
+  expect(k.getAttribute("aria-valuemin")).toBe("0");
+  expect(k.getAttribute("aria-valuemax")).toBe(String(Math.max(0, tiers.length - 1)));
+  expect(k.getAttribute("aria-valuetext"), "the announced tier is the word the caption names").toBe(
+    document.querySelector(".effort-value")?.textContent ?? "",
+  );
+  return id;
+}
+
+/** Open the card, focus the knob, then send `keys` in order. A sequence has to run
+ *  inside ONE open: every render re-applies the tier the store reports, and the
+ *  store is mocked here, so re-opening between two keys would rewind the knob. */
+async function press(...keys: readonly string[]): Promise<void> {
+  openCard();
+  knob().focus();
+  for (const key of keys) {
+    await userEvent.keyboard(key);
   }
-  expect(btn.getAttribute("aria-pressed")).toBe("true");
-  return btn.dataset["level"] ?? "";
 }
 
 function setSession(s: TestSession): void {
@@ -212,7 +254,7 @@ describe("the effort section", () => {
       effort_levels: [{ id: "low" }, { id: "medium" }, { id: "high" }, { id: "max" }],
     });
 
-    expect(openCard().map((b) => b.dataset["level"])).toEqual(["low", "medium", "high", "max"]);
+    expect(openCard()).toEqual(["low", "medium", "high", "max"]);
     expect(markedTier()).toBe("medium");
   });
 
@@ -235,7 +277,7 @@ describe("the effort section", () => {
       effort_levels: [{ id: "low" }, { id: "medium" }, { id: "high" }, { id: "max" }],
     });
 
-    expect(openCard().map((b) => b.dataset["level"])).toEqual(["low", "medium", "high", "max"]);
+    expect(openCard()).toEqual(["low", "medium", "high", "max"]);
     expect(markedTier()).toBe("medium");
   });
 
@@ -247,7 +289,7 @@ describe("the effort section", () => {
     cachedModels = [model("opus-4.7", "high")];
     setSession({ id: "c1", model: "opus-4.7", effort: "" });
 
-    expect(openCard().map((b) => b.dataset["level"])).toEqual(["low", "high"]);
+    expect(openCard()).toEqual(["low", "high"]);
     // The MODEL's default beats the template's currentValue: the template's is
     // the default model's level, and this chat is on another model.
     expect(markedTier()).toBe("high");
@@ -257,18 +299,17 @@ describe("the effort section", () => {
     cachedModels = [model("older")];
     setSession({ id: "c1", model: "older", effort: "" });
 
-    expect(openCard().map((b) => b.dataset["level"])).toEqual([
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-    ]);
-    // Nothing marked is honest here: no level was advertised by any source.
-    expect(markedTier()).toBe("");
+    expect(openCard()).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    // The RESOLUTION still answers "" here — no level was advertised by any
+    // source, and `effort.test.ts` is where that is pinned. A slider is always
+    // somewhere, so the DOM cannot express it: the knob sits on the lowest tier,
+    // and the settled design carries no UI for the unchosen state. The visible
+    // consequence is recorded rather than hidden — in this one state
+    // `#ctx-effort-pill` withholds itself while the knob names tier 0.
+    expect(markedTier()).toBe("low");
   });
 
-  it("labels a tier by the catalog's name, else the house table", () => {
+  it("labels a tier by the catalog's name, else the house table", async () => {
     cachedModels = [model("opus-4.7")];
     setSession({
       id: "c1",
@@ -278,10 +319,15 @@ describe("the effort section", () => {
       effort_levels: [{ id: "low", name: "Low effort" }, { id: "xhigh" }],
     });
 
-    expect(openCard().map((b) => b.textContent)).toEqual(["Low effort", "x-high"]);
+    expect(openCard()).toEqual(["low", "xhigh"]);
+    // The house table's rung, on the tier in force.
+    expect(knob().getAttribute("aria-valuetext")).toBe("x-high");
+    // The catalog's own name, on the other one.
+    await press("{Home}");
+    expect(knob().getAttribute("aria-valuetext")).toBe("Low effort");
   });
 
-  it("dispatches the tier a click names", () => {
+  it("dispatches the tier a keyboard step names", async () => {
     cachedModels = [model("opus-4.7")];
     setSession({
       id: "c1",
@@ -292,9 +338,31 @@ describe("the effort section", () => {
     });
     effortDispatch.mockClear();
 
-    openCard()[0]?.click();
+    await press("{Home}");
 
     expect(effortDispatch).toHaveBeenCalledWith({ chatID: "c1", level: "low" });
+  });
+
+  it("steps one tier at a time and clamps at both ends", async () => {
+    cachedModels = [model("opus-4.7")];
+    setSession({
+      id: "c1",
+      model: "opus-4.7",
+      effort: "",
+      effort_active: "low",
+      effort_levels: fiveTiers(),
+    });
+    effortDispatch.mockClear();
+
+    // Down from the lowest tier stays there; up walks the vocabulary.
+    await press("{ArrowLeft}", "{ArrowRight}", "{ArrowUp}", "{End}");
+
+    expect(effortDispatch.mock.calls.map((c) => (c[0] as { level: string }).level)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
   });
 
   it("does not mark a chosen level the current model does not offer", () => {
@@ -392,18 +460,16 @@ describe("the effort section", () => {
     expect(markedTier()).toBe("xhigh");
   });
 
-  it("remembers a pick as the level the next new chat opens on", () => {
+  it("remembers a pick as the level the next new chat opens on", async () => {
     cachedModels = [model("opus-5", "high")];
     setSession({ id: "c1", model: "opus-5", effort: "", effort_levels: fiveTiers() });
 
-    openCard()
-      .find((b) => b.dataset["level"] === "max")
-      ?.click();
+    await press("{End}");
 
     expect(setLastEffortSpy).toHaveBeenCalledWith("max", "opus-5");
   });
 
-  it("sends nothing when the pick is the level this chat already chose", () => {
+  it("sends nothing when the pick is the level this chat already chose", async () => {
     cachedModels = [model("opus-5")];
     setSession({
       id: "c1",
@@ -414,10 +480,8 @@ describe("the effort section", () => {
     });
     effortDispatch.mockClear();
 
-    const low = openCard().find((b) => b.dataset["level"] === "low");
-    low?.click();
-    low?.click();
-    low?.click();
+    // Three gestures that each land where the knob already is.
+    await press("{Home}", "{Home}", "{Home}");
 
     // A fast double or triple click sent one command each: measured on the live
     // instance, one pick of max produced three identical set_effort commands 80ms
@@ -425,19 +489,19 @@ describe("the effort section", () => {
     expect(effortDispatch).not.toHaveBeenCalled();
   });
 
-  it("still sends when the pick is the marked tier but not this chat's choice", () => {
-    cachedModels = [model("opus-5", "high")];
+  it("still sends when the pick is the marked tier but not this chat's choice", async () => {
+    cachedModels = [model("opus-5", "max")];
     // Marked at the model's default, which means this chat has chosen NOTHING.
     setSession({ id: "c1", model: "opus-5", effort: "", effort_levels: fiveTiers() });
     effortDispatch.mockClear();
-    expect(markedTier()).toBe("high");
+    expect(markedTier()).toBe("max");
 
-    openCard()
-      .find((b) => b.dataset["level"] === "high")
-      ?.click();
+    // End with the knob already on the last tier: the gesture completes where it
+    // started, which is the slider's own version of clicking the marked button.
+    await press("{End}");
 
-    // Clicking the marked tier to PIN it explicitly has to reach the server, or
-    // the chat keeps following the model default and a later model switch moves it.
-    expect(effortDispatch).toHaveBeenCalledWith({ chatID: "c1", level: "high" });
+    // Pinning the marked tier explicitly has to reach the server, or the chat keeps
+    // following the model default and a later model switch moves it.
+    expect(effortDispatch).toHaveBeenCalledWith({ chatID: "c1", level: "max" });
   });
 });

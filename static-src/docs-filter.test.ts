@@ -15,7 +15,7 @@ import type { PageFind } from "./find-registry.js";
 
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
-vi.mock("./editor-openers.js", () => ({ openFile: vi.fn() }));
+vi.mock("./editor-openers.js", () => ({ openFile: vi.fn(), openFileDiff: undefined }));
 vi.mock("./tabs.js", () => ({
   setDocsTab: vi.fn(),
   // No onShow argument any more — the tab factory reaches `loadDocsView` through

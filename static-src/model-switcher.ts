@@ -16,7 +16,7 @@ import {
   setModel,
 } from "./store.js";
 import { $, setBusy } from "./dom.js";
-import { humanName } from "./strings.js";
+import { humanName, rateLabel } from "./strings.js";
 import { switchModel } from "./actions/chat.js";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
 import {
@@ -43,7 +43,8 @@ import { reconcile } from "./reconcile.js";
 import { el, effect } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { ICON_MODEL } from "./icons.js";
-import { effortLabel, effortVocabulary, modelHasEffort, sameLevels } from "./effort.js";
+import { effortVocabulary, modelHasEffort, sameLevels } from "./effort.js";
+import { buildEffortSlider, type EffortSliderHandle } from "./effort-slider.js";
 import type { ModelInfo, SessionEffortLevel } from "./types.js";
 
 // The effort vocabulary — which tiers exist, which one is live, and which one is
@@ -236,9 +237,11 @@ class ModelSwitchController {
    *  carries a row and no button. */
   private noticeRetry: HTMLButtonElement | null = null;
 
-  private effortRow: HTMLDivElement | null = null;
+  /** The slider, built once and kept: the row and this controller are both
+   *  app-lifetime singletons, so there is nothing to dispose. */
+  private effortSlider: EffortSliderHandle | null = null;
 
-  /** The tiers currently rendered as buttons, so a rebuild happens only when the
+  /** The tiers currently rendered as ticks, so a rebuild happens only when the
    *  vocabulary actually changed. */
   private effortLevelsShown: readonly SessionEffortLevel[] = [];
 
@@ -267,13 +270,13 @@ class ModelSwitchController {
    *  effort). Idempotent — re-added by ensureEffortRow when a model that does
    *  advertise it becomes current. */
   private removeEffortRow(): void {
-    this.effortRow?.remove();
+    this.effortSlider?.el.remove();
   }
 
   /** Build or refresh the effort section for `modelID`.
    *
-   *  The tier buttons are REBUILT when the model's level vocabulary changes,
-   *  because the set is per model rather than a fixed five: a row built once for
+   *  The tier ticks are REBUILT when the model's level vocabulary changes,
+   *  because the set is per model rather than a fixed five: a track built once for
    *  the first model would keep offering `xhigh` on a model that has no such
    *  level. `renderCondensedList` runs on every open of the card, so a catalog
    *  arriving late is picked up the next time the user looks.
@@ -290,17 +293,19 @@ class ModelSwitchController {
       getLastEffortFor(active0?.model ?? ""),
     );
     this.effortActive = active;
-    if (this.effortRow === null) {
-      this.effortRow = el("div", {
-        className: "effort-row",
-        role: "group",
-        "aria-label": "Reasoning effort",
-      }) as HTMLDivElement;
-      // One effect keeps every .effort-btn's active class + aria-pressed in
-      // sync with the ACTIVE CHAT's level. Reading activeSession is what makes
-      // the row per-chat: a tab switch re-runs this rather than carrying the
-      // previous chat's tier over. The row + controller are app-lifetime
-      // singletons, so this never needs disposal.
+    if (this.effortSlider === null) {
+      // No `role`/`aria-label` on the row: the knob carries the control's name
+      // now, and a group wrapping one slider announces a nesting that is not there.
+      this.effortSlider = buildEffortSlider({
+        onPick: (level) => {
+          this.setEffort(level);
+        },
+      });
+      // One effect keeps the knob's position and both ARIA channels in sync with
+      // the ACTIVE CHAT's level. Reading activeSession is what makes the row
+      // per-chat: a tab switch re-runs this rather than carrying the previous
+      // chat's tier over. The row + controller are app-lifetime singletons, so
+      // this never needs disposal.
       effect(() => {
         // Reading activeSession is what makes this per-chat: a tab switch or an
         // optimistic set_effort write re-resolves instead of carrying the previous
@@ -314,57 +319,33 @@ class ModelSwitchController {
       });
     }
     if (!sameLevels(this.effortLevelsShown, levels)) {
-      this.buildEffortButtons(levels);
+      this.effortSlider.setLevels(levels);
+      this.effortLevelsShown = [...levels];
     }
+    // Ensure it's the LAST child. It sits below the scroller rather than
+    // inside it, so reconcile — which owns the scroller's keyed children —
+    // never sees this row at all.
+    if (list.lastElementChild !== this.effortSlider.el) {
+      list.appendChild(this.effortSlider.el);
+    }
+    // NO measure step here any more, and its absence is load-bearing rather than an
+    // omission: the knob used to be sized from the widest tier label, so a width had
+    // to be re-derived after every append and on every open (a pointer-tier or font
+    // change moved it). The knob carries no label now, so its size is
+    // `var(--hit-floor)` in CSS and there is nothing for JS to publish.
     // The effect above only re-runs when the ACTIVE CHAT's own level changes, and
     // neither a rebuild nor a newly-resolved live tier is a signal read, so
     // re-apply the mark here.
     this.syncEffortActive();
-    // Ensure it's the LAST child. It sits below the scroller rather than
-    // inside it, so reconcile — which owns the scroller's keyed children —
-    // never sees this row at all.
-    if (list.lastElementChild !== this.effortRow) {
-      list.appendChild(this.effortRow);
-    }
   }
 
-  /** Replace the row's contents with one button per tier in `levels`. */
-  private buildEffortButtons(levels: readonly SessionEffortLevel[]): void {
-    const row = this.effortRow;
-    if (row === null) {
-      return;
-    }
-    row.replaceChildren(el("span", { className: "effort-label" }, "Effort"));
-    for (const level of levels) {
-      const btn = el(
-        "button",
-        {
-          type: "button",
-          className: "effort-btn",
-          "data-level": level.id,
-          "aria-pressed": "false",
-        },
-        effortLabel(level),
-      );
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.setEffort(level.id);
-      });
-      row.appendChild(btn);
-    }
-    this.effortLevelsShown = [...levels];
-  }
-
-  /** Mark the live tier, resolved by effortVocabulary. A chat that has chosen
-   *  nothing still RUNS at a level, so marking nothing claimed the session had no
-   *  effort level at all. `aria-pressed` follows the same value, so the visual and
-   *  announced states cannot disagree. */
+  /** Put the knob on the live tier, resolved by effortVocabulary. A chat that has
+   *  chosen nothing still RUNS at a level, so showing nothing claimed the session
+   *  had no effort level at all. One function in `effort-slider.ts` writes the
+   *  position and both ARIA channels, so the visual and announced states cannot
+   *  disagree. */
   private syncEffortActive(): void {
-    for (const btn of this.effortRow?.querySelectorAll<HTMLButtonElement>(".effort-btn") ?? []) {
-      const on = btn.dataset["level"] === this.effortActive;
-      btn.classList.toggle("active", on);
-      btn.setAttribute("aria-pressed", on ? "true" : "false");
-    }
+    this.effortSlider?.setActive(this.effortActive);
   }
 
   /** Apply a reasoning-effort level to the active chat.
@@ -404,16 +385,19 @@ class ModelSwitchController {
 
   private buildModelOption(m: ModelInfo): HTMLElement {
     const label = humanName(m.model_name || m.model_id);
+    const rate = rateLabel(m.rate_multiplier);
     const opt = el(
       "div",
       {
         "data-model": m.model_id,
         role: "option",
-        "aria-label": `${label}, ${String(m.rate_multiplier)}x credits`,
+        "aria-label": rate === "" ? label : `${label}, ${rate} credits`,
       },
       el("span", null, label),
-      el("span", { className: "pill-model-meta" }, `${String(m.rate_multiplier)}x`),
     );
+    if (rate !== "") {
+      opt.append(el("span", { className: "pill-model-meta" }, rate));
+    }
     // Click handler reads the live "current" each time so a switch from
     // another path (hotkey, REST sync) doesn't leave a stale handler.
     opt.addEventListener("click", (e: MouseEvent) => {

@@ -43,6 +43,7 @@ import type { SearchPopup } from "./search-popup.js";
 import { createDialog, type DialogController } from "@cplieger/ui-primitives/dialog";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
+import { gitRepoSkeleton } from "./skeleton.js";
 import { iconEl } from "./icon-el.js";
 
 // --- Types ---
@@ -308,24 +309,16 @@ function showPRSkeleton(root: HTMLElement | null, progress: FanoutProgress): () 
       /* already populated */
     };
   }
-  // aria-hidden because the mount is aria-live="polite": announcing placeholder
-  // bars, then a count that ticks once per repository, would be pure noise.
-  const wrap = el("div", { className: "git-pr-skeleton", "aria-hidden": "true" });
-  // The count is what separates a slow refresh from a wedged one. It renders
+  // The painter is shared with the Changes tab (skeleton.ts): both tabs stand in
+  // for the same `.git-repo-section` shape, so its geometry has one definition.
+  // The count is what separates a slow refresh from a wedged one, and it renders
   // whatever the fan-out has already reported, because the 150ms show delay means
   // this can be built mid-flight.
-  const label = el("div", { className: "git-pr-skel-label" }, progressText(progress));
+  const { wrap, label } = gitRepoSkeleton({
+    label: progressText(progress),
+    widths: ["45%", "32%", "58%"],
+  });
   progress.label = label;
-  wrap.appendChild(label);
-  for (const width of ["45%", "32%", "58%"]) {
-    const section = el("div", { className: "git-repo-section git-pr-skel-section" });
-    section.append(
-      el("div", { className: "skeleton git-pr-skel-icon" }),
-      skelBar("git-pr-skel-name", width),
-      skelBar("git-pr-skel-meta", "4rem"),
-    );
-    wrap.appendChild(section);
-  }
   root.replaceChildren(wrap);
   return () => {
     if (progress.label === label) {
@@ -333,12 +326,6 @@ function showPRSkeleton(root: HTMLElement | null, progress: FanoutProgress): () 
     }
     wrap.remove();
   };
-}
-
-function skelBar(className: string, width: string): HTMLElement {
-  const bar = el("div", { className: `skeleton ${className}` });
-  bar.style.width = width;
-  return bar;
 }
 
 function paintLoadError(root: HTMLElement, err: unknown): void {
