@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp/v2"
 )
@@ -145,7 +146,8 @@ func (rt *Router) liveTurnField(chatID vibekit.ChatID, newestPage bool) json.Raw
 	if err != nil {
 		// Unreachable — a LiveTurn holds no type encoding/json can refuse — but serve the
 		// window rather than failing the whole page over the field beside it.
-		slog.Warn("chat window: live turn marshal failed", "chat_id", chatID, "error", err)
+		slog.Warn("chat window: live turn marshal failed",
+			"chat_id", logsafe.Field(string(chatID)), "error", err)
 		return nil
 	}
 	return raw
@@ -410,7 +412,8 @@ func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID vi
 		dispositionAttachment(exportFilename(c.Name, string(chatID), ".md")))
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	if _, err := io.WriteString(w, renderChatMarkdown(c)); err != nil {
-		slog.Debug("chat export: markdown write failed", "chat_id", chatID, "error", err)
+		slog.Debug("chat export: markdown write failed",
+			"chat_id", logsafe.Field(string(chatID)), "error", err)
 	}
 }
 
