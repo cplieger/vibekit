@@ -7,6 +7,8 @@
 // ---------------------------------------------------------------------------
 
 import { effect } from "@cplieger/reactive";
+
+import { RESIDENT_TOOL_CALLS } from "./block-window.js";
 import {
   derivedHasMore,
   get,
@@ -20,7 +22,7 @@ import {
 } from "./store.js";
 import { openTabSubjects, paintProvisionalTabs, tabSetVersion } from "./tabs.js";
 import { projectTurns, type Turn, type TurnWindowBase } from "./turns.js";
-import type { Message, Session, TabSubject, Usage } from "./types.js";
+import type { Message, Session, TabSubject, ToolCall, Usage } from "./types.js";
 import { asObject, decodeArray, reqBool, reqNum, reqStr } from "./validators.js";
 import { decodeMessage, decodeTabSubject, decodeUsage } from "./wire/decoders.gen.js";
 
@@ -29,9 +31,50 @@ import { decodeMessage, decodeTabSubject, decodeUsage } from "./wire/decoders.ge
 const SNAPSHOT_TURNS = 3;
 
 /** Hard cap on the messages those turns may contribute: one turn can hold hundreds
- *  of tool rows, so the turn bound alone is not a bound. Bytes need no third rule —
- *  this is a subset of the server's byte-bounded window (store-load.ts). */
+ *  of tool rows, so the turn bound alone is not a bound. */
 const SNAPSHOT_MAX_MESSAGES = 40;
+
+/** THE BOUND THAT ACTUALLY BINDS, and this comment used to read "Bytes need no third
+ *  rule — this is a subset of the server's byte-bounded window". That was false, and
+ *  MEASURED false on the live instance (2026-09-10): the record was **1,778,339 bytes
+ *  over SEVEN messages**, one message alone 1,006,210 — 207 tool calls, of which
+ *  `output` was 463,839 bytes and `output_spans` most of the remainder. A count bound
+ *  cannot see that, because the thing that grows is inside a message rather than the
+ *  number of them.
+ *
+ *  What it cost, and why it is a reload rather than a slow write: this record is
+ *  structured-cloned into IndexedDB on every quiet gap in the transcript and read plus
+ *  JSON-parsed before the FIRST FRAME of every boot. Measured on desktop Chromium at
+ *  1.78 MB: 5.5ms clone, 10.4ms write, 6ms parse. On WebKit, IndexedDB is owned by the
+ *  NETWORK process (`NetworkStorageManager`), which also owns the page's sockets — so
+ *  the cost lands in the one process whose death takes the event stream with it and
+ *  reloads the document, which is the ordering the server measured (the SSE dies
+ *  14-110ms BEFORE each document load). The owner reported the phone running hot and
+ *  eating battery, and the reload interval SHORTENING as the conversation grew
+ *  (~90s -> ~60s -> ~43s), which is this record's size curve.
+ *
+ *  96 KiB because the job is one plausible frame while the network answers, and the
+ *  server's answer replaces the whole window within a few hundred ms. */
+const SNAPSHOT_MAX_BYTES = 96 * 1024;
+
+/** A first frame paints NEITHER of these, so neither is carried at size.
+ *
+ *  A tool card's `.tool-details` is born CLOSED, so its output is not on the frame this
+ *  record exists to draw. Truncated rather than dropped: `tool-card.ts` decides whether
+ *  a card has anything to reveal from the output being non-blank, so dropping it would
+ *  withdraw the disclosure for the ~300ms before the real payload lands and pop the
+ *  chevron in. `output_spans` styles only those bytes, so it goes entirely. `input` is
+ *  trimmed rather than dropped because `.tool-subtitle` renders `input.command` on the
+ *  visible claim line. */
+const SNAPSHOT_MAX_TOOL_OUTPUT = 256;
+const SNAPSHOT_MAX_TOOL_INPUT = 256;
+
+/** No more tool calls than a PAINT can mount, newest-first, because carrying more than
+ *  that is carrying rows no first frame can show — `block-window.ts` owns the number and
+ *  this reads it rather than restating it. It is what keeps a long agent turn PAINTING
+ *  its answer: without it a turn of 200 trimmed calls still overruns the byte budget, and
+ *  the record falls back to the user's prompt with nothing under it. */
+const SNAPSHOT_MAX_TOOL_CALLS = RESIDENT_TOOL_CALLS;
 
 /** How long the projection must sit still before it is written. Every write is a
  *  whole-record replace, so a streaming turn would otherwise write per frame. */
@@ -252,6 +295,7 @@ function newestWindow(chatID: string): SnapshotWindow | null {
   // card's number, and its `turnAnchorID`, moves when the activation refetch lands.
   const turns = projectTurns(s.messages, false, turnBaseOf(s)).slice(-SNAPSHOT_TURNS);
   const out: Message[] = [];
+  let bytes = 0;
   let first: Turn | undefined;
   for (let i = turns.length - 1; i >= 0; i--) {
     const t = turns[i];
@@ -259,22 +303,24 @@ function newestWindow(chatID: string): SnapshotWindow | null {
       continue;
     }
     const trigger = t.trigger;
-    const flat = trigger === undefined ? t.body : [trigger, ...t.body];
-    if (out.length + flat.length <= SNAPSHOT_MAX_MESSAGES) {
+    const flat = (trigger === undefined ? t.body : [trigger, ...t.body]).map(lighten);
+    const cost = flat.reduce((n, m) => n + sizeOf(m), 0);
+    if (out.length + flat.length <= SNAPSHOT_MAX_MESSAGES && bytes + cost <= SNAPSHOT_MAX_BYTES) {
       out.unshift(...flat);
+      bytes += cost;
       first = t;
       continue;
     }
     if (out.length === 0) {
-      // The newest turn alone over budget is the case the cap exists for, and dropping
-      // it would resume with no transcript. Trimmed from its OLD end, trigger first.
-      const head = trigger === undefined ? [] : [trigger];
-      out.push(...head, ...t.body.slice(-(SNAPSHOT_MAX_MESSAGES - head.length)));
+      // The newest turn alone over budget is the case both caps exist for, and dropping
+      // it would resume with no transcript. Trimmed from its OLD end, trigger first, so
+      // what survives is a card that still has its own header.
+      out.push(...admitTail(trigger === undefined ? undefined : lighten(trigger), t.body));
       first = t;
     }
     break;
   }
-  if (first === undefined) {
+  if (first === undefined || out.length === 0) {
     return null;
   }
   return {
@@ -287,6 +333,87 @@ function newestWindow(chatID: string): SnapshotWindow | null {
     // the parent never opened, since `opensHeaderlessTurn` is monotone in `prevClosed`.
     base: { offset: first.n - 1, closed: false },
   };
+}
+
+/** What one message costs the record, in the currency the budget is stated in. The
+ *  store holds a structured clone rather than JSON, so this is a proxy — and it is the
+ *  same proxy the 1,778,339-byte measurement above was taken with, which is what makes
+ *  the number and the bound comparable. */
+function sizeOf(m: Message): number {
+  return JSON.stringify(m).length;
+}
+
+/** The newest turn's trigger plus as much of its body as both bounds allow, taken from
+ *  the NEWEST end so the reader resumes where they were. Its own function because the
+ *  two-bound walk is the part a `slice` cannot express. */
+function admitTail(trigger: Message | undefined, body: readonly Message[]): Message[] {
+  const head = trigger === undefined ? [] : [trigger];
+  let bytes = head.reduce((n, m) => n + sizeOf(m), 0);
+  const tail: Message[] = [];
+  for (let i = body.length - 1; i >= 0; i--) {
+    const m = body[i];
+    if (m === undefined) {
+      continue;
+    }
+    const light = lighten(m);
+    const cost = sizeOf(light);
+    if (
+      head.length + tail.length + 1 > SNAPSHOT_MAX_MESSAGES ||
+      bytes + cost > SNAPSHOT_MAX_BYTES
+    ) {
+      break;
+    }
+    tail.unshift(light);
+    bytes += cost;
+  }
+  return [...head, ...tail];
+}
+
+/** One message with the fields a first frame does not paint cut down to size.
+ *
+ *  Returns the message ITSELF when it carries no tool calls, so the ordinary prose row
+ *  allocates nothing — and the tool calls are where the bytes measurably are (686,630
+ *  of one message's 1,006,210). */
+function lighten(m: Message): Message {
+  const calls = m.tool_calls;
+  if (calls === undefined || calls.length === 0) {
+    return m;
+  }
+  return { ...m, tool_calls: calls.slice(-SNAPSHOT_MAX_TOOL_CALLS).map(lightenCall) };
+}
+
+function lightenCall(c: ToolCall): ToolCall {
+  const out: ToolCall = { ...c };
+  // Styles the output bytes this drops, so it has nothing left to style. Measured as
+  // most of the 137,710 bytes the per-call remainder came to over 207 calls.
+  delete out.output_spans;
+  if (out.output !== undefined && out.output.length > SNAPSHOT_MAX_TOOL_OUTPUT) {
+    out.output = out.output.slice(0, SNAPSHOT_MAX_TOOL_OUTPUT);
+  }
+  if (out.input !== undefined) {
+    out.input = lightenInput(out.input);
+  }
+  return out;
+}
+
+/** Truncate a tool input's own string values. TOP LEVEL only: that is where the keys a
+ *  card paints live (`command`, `path`), a tool input is a flat record of scalars in
+ *  every shape measured, and a nested value that stays large is caught by the record's
+ *  byte budget rather than by a deeper walk here. */
+function lightenInput(v: unknown): unknown {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) {
+    return v;
+  }
+  const src = v as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(src)) {
+    const val = src[k];
+    out[k] =
+      typeof val === "string" && val.length > SNAPSHOT_MAX_TOOL_INPUT
+        ? val.slice(0, SNAPSHOT_MAX_TOOL_INPUT)
+        : val;
+  }
+  return out;
 }
 
 /** Narrow a persisted record: `unknown` in, every ELEMENT validated through the

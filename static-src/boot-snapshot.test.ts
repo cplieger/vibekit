@@ -41,6 +41,7 @@ import {
   upsertMessage,
 } from "./store.js";
 import { projectTurns, type Turn, type TurnWindowBase } from "./turns.js";
+import { RESIDENT_TOOL_CALLS } from "./block-window.js";
 
 const DB_NAME = "vibekit-boot";
 const STORE_NAME = "snapshot";
@@ -489,6 +490,117 @@ describe("the capture", () => {
     expect(row("c1").messages).toEqual([]);
     expect(row("c1").turn_offset).toBeUndefined();
     expect(row("c1").turn_segment_closed).toBeUndefined();
+  });
+});
+
+// The BYTE bound, which is the one the count bound cannot stand in for: this record
+// was measured at 1,778,339 bytes over SEVEN messages on the live instance, one
+// message alone 1,006,210 of them (207 tool calls, `output` 463,839). It is written
+// on every quiet gap in the transcript and read plus parsed before the first frame of
+// every boot, and on WebKit that storage is owned by the process that also owns the
+// page's sockets — so the size is a reload, not a slow write.
+//
+// The fixture has to CONTAIN the shape or none of this can fail: one turn, one
+// assistant message, tool calls whose output is megabytes.
+describe("the record's byte budget", () => {
+  const MAX_BYTES = 96 * 1024;
+
+  /** One turn whose assistant message carries `calls` tool calls, each with `bytes` of
+   *  output plus the style spans that describe it. */
+  function heavyTurn(n: number, calls: number, bytes: number): Message[] {
+    const tool_calls = Array.from({ length: calls }, (_unused, i) => ({
+      id: `tc${String(i)}`,
+      title: "Run Command",
+      kind: "execute" as const,
+      status: "completed" as const,
+      ts: 100 + i,
+      output: "x".repeat(bytes),
+      output_spans: Array.from({ length: 200 }, (_u, j) => ({
+        start: j,
+        end: j + 1,
+        fg: "red",
+      })),
+      input: { command: "go test ".repeat(200) },
+    }));
+    return [
+      { id: `u${String(n)}`, role: "user", ts: n * 100, content: "ask" },
+      {
+        id: `a${String(n)}`,
+        role: "assistant",
+        ts: n * 100 + 1,
+        content: "answer",
+        turn_outcome: "completed",
+        tool_calls,
+      } as unknown as Message,
+    ];
+  }
+
+  it("keeps a megabyte turn's record inside the budget", () => {
+    m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
+    setSessions([session("c1", "One", heavyTurn(1, 200, 40_000))]);
+    setActive("c1");
+
+    const snap = captureBootSnapshot();
+    const bytes = JSON.stringify(snap).length;
+    // The unbounded projection of this fixture is over a megabyte, so a passing
+    // assertion here cannot be an accident of a small fixture.
+    expect(bytes).toBeLessThanOrEqual(MAX_BYTES);
+    expect(snap.window?.messages.length).toBeGreaterThan(0);
+  });
+
+  // The bound the COUNT bound cannot stand in for, and the fixture is what makes it
+  // expressible: TWO turns, each of which fits on its own once trimmed and capped, so
+  // only a budget carried ACROSS turns can refuse the older one. One heavy turn cannot
+  // fail this — the trim alone gets it under — which is what a red check proved.
+  it("refuses an older turn the running total cannot afford", () => {
+    m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
+    setSessions([session("c1", "One", [...heavyTurn(1, 96, 40_000), ...heavyTurn(2, 96, 40_000)])]);
+    setActive("c1");
+
+    const snap = captureBootSnapshot();
+    expect(JSON.stringify(snap).length).toBeLessThanOrEqual(MAX_BYTES);
+    // The NEWEST turn survives, which is the half a plain "it is small" assertion
+    // would let a record of nothing satisfy.
+    expect(capturedWindow().messages.map((msg) => msg.id)).toContain("a2");
+  });
+
+  it("carries no more tool calls than a paint can mount", () => {
+    m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
+    setSessions([session("c1", "One", heavyTurn(1, 300, 10))]);
+    setActive("c1");
+
+    const calls = capturedWindow().messages.at(-1)?.tool_calls ?? [];
+    expect(calls).toHaveLength(RESIDENT_TOOL_CALLS);
+    // Newest-first, so what survives is the tail the reader is looking at.
+    expect(calls.at(-1)?.id).toBe("tc299");
+  });
+
+  it("truncates a tool call's output and drops the spans that style it", () => {
+    m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
+    setSessions([session("c1", "One", heavyTurn(1, 1, 40_000))]);
+    setActive("c1");
+
+    const call = capturedWindow().messages.at(-1)?.tool_calls?.[0];
+    expect(call).toBeDefined();
+    // Truncated rather than DROPPED: `tool-card.ts` reads a non-blank output as
+    // "there is something to reveal", so an empty one withdraws the disclosure and
+    // pops the chevron in when the server's answer lands.
+    expect(call?.output).not.toBe("");
+    expect((call?.output ?? "").length).toBeLessThanOrEqual(256);
+    expect(call?.output_spans).toBeUndefined();
+  });
+
+  it("keeps the input key the visible claim line renders", () => {
+    m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
+    setSessions([session("c1", "One", heavyTurn(1, 1, 1_000))]);
+    setActive("c1");
+
+    const input = capturedWindow().messages.at(-1)?.tool_calls?.[0]?.input as
+      { command?: string } | undefined;
+    // `.tool-subtitle` renders `input.command`, so the KEY survives the trim and only
+    // its value is cut.
+    expect(typeof input?.command).toBe("string");
+    expect((input?.command ?? "").length).toBeLessThanOrEqual(256);
   });
 });
 
