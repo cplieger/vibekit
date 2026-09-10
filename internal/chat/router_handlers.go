@@ -86,20 +86,28 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 
 	msgs := c.Messages
 	end := len(msgs)
-	if beforeID := r.URL.Query().Get("before_id"); beforeID != "" {
+	beforeID := r.URL.Query().Get("before_id")
+	if beforeID != "" {
 		end = indexOfMessage(msgs, beforeID)
 	}
-	window, start := messageWindow(msgs[:end], parseWindowBudget(r))
+	// Rendered BEFORE the window and CHARGED against its byte budget: the live turn rides
+	// the same response, so the caller's ?max_bytes= has to bound both or a page can
+	// overrun it by the whole snapshot cap.
+	liveTurn := rt.liveTurnField(vibekit.ChatID(id), beforeID == "")
+	budget := parseWindowBudget(r)
+	budget.Bytes = max(1, budget.Bytes-len(liveTurn))
+	window, start := messageWindow(msgs[:end], budget)
 	// `start` indexes `msgs` directly: `msgs[:end]` is a PREFIX, so an index into it
 	// is the same index into the whole array and no re-basing is needed.
 	turnOffset, segmentClosed := turnWindowBase(msgs, start)
 
 	// `turn_open` ships with the transcript because the in-flight reply has no
-	// carrier in `messages` until turn end, so a client deriving an outcome from
-	// that silence would answer `unknown` mid-turn. `has_more`, `turn_offset` and
+	// carrier in `messages` until turn end, and `live_turn` beside it is that carrier:
+	// without it a client deriving an outcome from the silence answers `unknown` mid-turn
+	// and renders the prompt over an empty body. `has_more`, `turn_offset` and
 	// `turn_segment_closed` all describe the window's LEFT EDGE, which the client's
 	// projection cannot know: its own scan starts at the window.
-	webhttp.WriteJSON(w, map[string]any{
+	page := map[string]any{
 		"chat":                c.Header(),
 		"messages":            window,
 		"has_more":            start > 0,
@@ -107,7 +115,40 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		"turn_open":           rt.store.TurnOpen(vibekit.ChatID(id)),
 		"turn_offset":         turnOffset,
 		"turn_segment_closed": segmentClosed,
-	})
+	}
+	// ABSENT rather than null when there is no turn to describe: an older client ignores
+	// an unknown field, and a present-but-empty one would name a message id the client
+	// would adopt as its unpersisted live turn.
+	if liveTurn != nil {
+		page["live_turn"] = liveTurn
+	}
+	webhttp.WriteJSON(w, page)
+}
+
+// liveTurnField renders the chat's in-flight turn for the NEWEST page, or nil.
+//
+// Newest page only, which is the rule `turn_open` and `draft` already follow: a
+// before_id fetch is a scroll-up and asserts nothing about the live edge, so re-delivering
+// the in-flight turn on every page a reader scrolls back through would be pure cost.
+//
+// Returns the marshalled bytes rather than the value, so the caller can charge the page
+// budget for exactly what goes on the wire instead of estimating it.
+func (rt *Router) liveTurnField(chatID vibekit.ChatID, newestPage bool) json.RawMessage {
+	if !newestPage {
+		return nil
+	}
+	live, ok := rt.store.LiveTurn(chatID)
+	if !ok {
+		return nil
+	}
+	raw, err := json.Marshal(live)
+	if err != nil {
+		// Unreachable — a LiveTurn holds no type encoding/json can refuse — but serve the
+		// window rather than failing the whole page over the field beside it.
+		slog.Warn("chat window: live turn marshal failed", "chat_id", chatID, "error", err)
+		return nil
+	}
+	return raw
 }
 
 // windowBudget is what one transcript page may carry. A struct rather than four

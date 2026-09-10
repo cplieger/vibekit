@@ -15,7 +15,7 @@
 // edited again. That file made a destructive confirm offer to discard "2
 // uncommitted changes".
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import type * as ModChanges from "./git-changes-tab.js";
 import type { GitFileEntry, GitRepoStatus } from "./git-types.js";
@@ -935,5 +935,90 @@ describe("Pull all", () => {
     await pressPullAll(btn, [repo([], { repo: "demo", behind: 1, has_dirty: false })]);
 
     expect(mountEl().querySelector(".git-repo-pull-flag")?.textContent).toContain("not pulled");
+  });
+});
+
+// The loading placeholder. The tab used to paint NOTHING for the whole of
+// `status-all` — and with `?fetch=1` that is one server-side `git fetch` per
+// repository, the slowest path it has — while the PRs tab beside it had a
+// skeleton, which is how it was reported.
+//
+// The half with a real trap behind it is the SECOND case: `status-all` is polled
+// (SSE debounce, post-action refreshes, tab activation), so a skeleton armed on
+// "a request is in flight" rather than on "the mount is empty" would paint over
+// real content several times a minute. `vibekit-ui.md` states that rule and this
+// pins it.
+//
+// Fake timers are scoped to this block rather than the file: the suite above runs
+// on real ones and the 150ms show delay is the only thing here that needs them.
+describe("the loading placeholder", () => {
+  /** Resolve the pending `status-all`. */
+  let settle: ((value: unknown) => void) | null = null;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    settle = null;
+    apiGet.mockImplementation(
+      async () =>
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+    );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function mountEl(): HTMLElement {
+    const m = document.getElementById("git-changes-mount");
+    if (m === null) {
+      throw new Error("mount missing");
+    }
+    return m;
+  }
+
+  it("paints per-repo placeholders while status-all is in flight", async () => {
+    const { refreshChanges } = await load();
+    const done = refreshChanges();
+
+    // The show delay is 150ms, so a fast answer paints no placeholder at all.
+    expect(mountEl().querySelector(".git-repo-skeleton")).toBeNull();
+    await vi.advanceTimersByTimeAsync(150);
+
+    const skel = mountEl().querySelector(".git-repo-skeleton");
+    expect(
+      skel,
+      "an empty mount must stand in for the sections the paint will build",
+    ).not.toBeNull();
+    // aria-hidden: the mount is aria-live="polite", so placeholder bars must not
+    // be announced.
+    expect(skel?.getAttribute("aria-hidden")).toBe("true");
+    expect(skel?.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
+    // No fan-out here, so no count line — the PRs tab owns that.
+    expect(mountEl().querySelector(".git-repo-skel-label")).toBeNull();
+
+    settle?.({ repos: [] });
+    await done;
+    expect(
+      mountEl().querySelector(".git-repo-skeleton"),
+      "the placeholder must not outlive the answer it stood in for",
+    ).toBeNull();
+  });
+
+  it("skips the placeholder when the mount already holds keyed rows", async () => {
+    const row = document.createElement("section");
+    row.setAttribute("data-reconcile-key", "demo");
+    mountEl().appendChild(row);
+
+    const { refreshChanges } = await load();
+    void refreshChanges();
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(
+      mountEl().querySelector(".git-repo-skeleton"),
+      "status-all is polled, so a skeleton over populated rows would flash several times a minute",
+    ).toBeNull();
+    expect(mountEl().querySelector("[data-reconcile-key]")).not.toBeNull();
   });
 });

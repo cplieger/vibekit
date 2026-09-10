@@ -29,7 +29,7 @@
 
 import {
   setThinking,
-  clearSnapshotSeq,
+  clearChunkWatermark,
   clearLiveTurnMessage,
   clearTruncatedSnapshots,
   get,
@@ -46,11 +46,12 @@ import { drainModelSwitchQueue } from "./model-switcher.js";
  *  those latches plus the dock's queue. */
 export function clearTurnState(chatID: string): void {
   setThinking(chatID, false);
-  // The connect-time turn_state watermark and the in-flight-message marker are
-  // both finished business. Left standing, the first drops the NEXT turn's early
-  // chunks as already-folded and the second makes a later refetch keep a message
-  // the chat file now holds under a different shape.
-  clearSnapshotSeq(chatID);
+  // The chunk watermark and the in-flight-message marker are both finished business.
+  // Left standing, the first drops the NEXT turn's early chunks as already-folded and
+  // the second makes a later refetch keep a message the chat file now holds under a
+  // different shape. The mark covers what the live stream folded in as well as what a
+  // server copy of the turn declared, so it is per-turn state either way.
+  clearChunkWatermark(chatID);
   clearLiveTurnMessage(chatID);
   // The third fact from the same connect: a capped turn_state's withheld-output
   // note. The turn is over, so `message_appended` has delivered the whole message

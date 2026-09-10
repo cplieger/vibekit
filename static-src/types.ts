@@ -164,7 +164,11 @@ export interface ServerEvent {
 export interface ModelInfo {
   model_name: string;
   model_id: string;
-  rate_multiplier: number;
+  /** Credit cost relative to the cheapest model (`_meta.kiro.rateMultiplier`).
+   *  OPTIONAL because the wire field is `omitempty`: absent means the catalog
+   *  carried no rate, which renders as no readout rather than as `1x`. Every
+   *  consumer goes through `rateLabel` — see its own note for the defect. */
+  rate_multiplier?: number;
   description?: string;
   /** Whether this model has reasoning-effort levels at all (KAS
    *  `_meta.kiro.hasEffort`). Absent on every model = the catalog does not carry

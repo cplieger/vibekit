@@ -588,18 +588,26 @@ function modelCard(): { clipper: HTMLElement; item: HTMLElement; tier: HTMLEleme
   item.append(span("", "a-model"), span("pill-model-meta", "1x"));
   const scroll = node("div", "pill-model-scroll");
   scroll.appendChild(item);
-  const row = node("div", "effort-row", { role: "group", "aria-label": "Reasoning effort" });
-  row.appendChild(span("effort-label", "Effort"));
-  const tiers = ["low", "medium", "high"].map((level) => {
-    const btn = node("button", "effort-btn", { type: "button", "data-level": level });
-    btn.textContent = level;
-    row.appendChild(btn);
-    return btn;
-  });
-  const tier = tiers.at(-1);
-  if (tier === undefined) {
-    throw new Error("the fixture built no effort tier");
+  const row = node("div", "effort-row");
+  // The caption names the dimension AND the live tier, which is what lets the knob
+  // below carry no text at all.
+  const caption = span("effort-label", "Effort: ");
+  caption.appendChild(span("effort-value", "high"));
+  row.appendChild(caption);
+  const track = node("div", "effort-track", { "data-tiers": "3" });
+  for (const level of ["low", "medium", "high"]) {
+    track.appendChild(node("span", "effort-tick", { "data-level": level }));
   }
+  // The knob is the section's only tab stop, so it is the control this card's
+  // clipper has to clear.
+  const tier = node("div", "effort-knob", {
+    role: "slider",
+    tabindex: "0",
+    "aria-label": "Reasoning effort",
+    "data-level": "high",
+  });
+  track.appendChild(tier);
+  row.appendChild(track);
   const clipper = node("span", "pill-expand-content pill-model-list is-open");
   clipper.append(scroll, row);
   const slot = node("span", "pill-slot");
@@ -956,6 +964,10 @@ describe("the exclusions: a focusable whose clipper clears the reach", () => {
     expect(inset(item, clipper).top).toBe(8);
     expectClears("model row", item, clipper);
     await focusByTab(tier);
+    // 8, the row's own --sp-2, with nothing between: the knob is centred in a rail
+    // LINE reserved at exactly its own height, and that line carries no border — the
+    // hairline that used to sit between them moved onto the thin rail inside it, and
+    // read 9 here while it was the track's.
     expect(inset(tier, clipper).bottom).toBe(8);
     expectClears("effort tier", tier, clipper);
   });

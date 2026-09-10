@@ -64,6 +64,7 @@ type Store struct {
 	isLive      func(chatID vibekit.ChatID) bool
 	hasOpenTab  func(chatID vibekit.ChatID) bool
 	turnOpen    func(chatID vibekit.ChatID) bool
+	liveTurn    func(chatID vibekit.ChatID) (vibekit.LiveTurn, bool)
 	tombstone   map[vibekit.ChatID]time.Time
 	archive     *archive.Service
 	locks       sync.Map
@@ -156,6 +157,30 @@ func (s *Store) TurnOpen(chatID vibekit.ChatID) bool {
 		return false
 	}
 	return s.turnOpen(chatID)
+}
+
+// WithLiveTurn registers the runtime's in-flight-turn READER, the content half of what
+// WithTurnOpen states. Without it this package's HTTP surface can say a turn is running
+// and carry nothing that describes it, so a client whose only other channel is the SSE
+// connect replay — which is gated on a declaration it makes before it knows which chat it
+// will show — renders the prompt over an empty body.
+//
+// Injected post-construction for WithTurnOpen's reason: the agent runtime needs the store,
+// so the store cannot import it. The signature carries only internal/vibekit types
+// deliberately — internal/chat imports no internal/buffer and must not start.
+func WithLiveTurn(fn func(chatID vibekit.ChatID) (vibekit.LiveTurn, bool)) StoreOption {
+	return func(s *Store) { s.liveTurn = fn }
+}
+
+// LiveTurn returns the chat's in-flight turn as accumulated so far, or false when no turn
+// is open — or when no reader was injected, which is the same NIL-TOLERANCE TurnOpen
+// carries: an unwired Store serves exactly what it served before this field existed, so a
+// wiring mistake costs a missing carrier rather than a nil dereference.
+func (s *Store) LiveTurn(chatID vibekit.ChatID) (vibekit.LiveTurn, bool) {
+	if s.liveTurn == nil {
+		return vibekit.LiveTurn{}, false
+	}
+	return s.liveTurn(chatID)
 }
 
 // WithOnPurge registers a callback fired after a retention purge removes a chat.

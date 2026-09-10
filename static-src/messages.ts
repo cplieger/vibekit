@@ -1952,10 +1952,13 @@ function collectWindowMove(
     if (m === undefined || have === undefined || row === null || row === undefined) {
       continue; // absent, or about to be mounted whole by the rows reconcile
     }
-    const rowSide = sideOf(row);
+    // A folded body is `block-size: 0`, so a row inside one reports offsetTop 0 and
+    // `sideOf` answers "head" whatever the card's real position. The card's own side
+    // is measured on a `.turn` in the view this pass paints, which is the active one.
+    const rowSide = (): "head" | "tail" => (geometrySkipped(row) ? side : sideOf(row));
     if (want.from < have.from) {
       changes.push({
-        side: rowSide,
+        side: rowSide(),
         fn: () => {
           if (!stale()) {
             mountHeadRange(m, want, liveStateOf(m), marks);
@@ -1964,7 +1967,7 @@ function collectWindowMove(
       });
     } else if (want.from > have.from) {
       changes.push({
-        side: rowSide,
+        side: rowSide(),
         fn: () => {
           if (!stale()) {
             dropHead(m, want, marks);

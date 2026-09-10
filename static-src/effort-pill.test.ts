@@ -20,6 +20,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { userEvent } from "vitest/browser";
 import type { ModelInfo, Session, SessionEffortLevel } from "./types.js";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 
@@ -343,26 +344,32 @@ describe("the model pill's model half", () => {
 // one thing between a user's click and that write is `setEffortAction`'s optimistic
 // callback — module-private, so nothing above can reach it and a change there would
 // leave every assertion in this file green while the pill stopped moving.
-describe("a click on a tier", () => {
-  /** Open the card and return the tier buttons it rendered. */
-  function tierButtons(): HTMLButtonElement[] {
+describe("a gesture on the slider", () => {
+  /** Open the card and return the slider's knob — the section's one tab stop. */
+  function knob(): HTMLElement {
     expand.fn?.();
-    return [...document.querySelectorAll<HTMLButtonElement>(".effort-btn")];
+    const found = document.querySelector<HTMLElement>('[role="slider"]');
+    expect(found, "the card rendered no slider, so the gesture has no subject").not.toBeNull();
+    return found as HTMLElement;
   }
 
   it("paints the pill, through the real action", async () => {
     staged.models = [model("claude-opus-5", "high")];
     mount(session("k", { model: "claude-opus-5" }));
     // The chat opens on the model's own default, which the pill names like any
-    // other level in force — so what the click proves is that the readout MOVES.
+    // other level in force — so what the gesture proves is that the readout MOVES.
     expect(await tier()).toEqual({ text: "· high", hidden: false });
 
     arm();
-    const max = tierButtons().find((b) => b.dataset["level"] === "max");
-    expect(max, "the card rendered no max tier, so the click has no subject").toBeDefined();
-    max?.click();
+    const k = knob();
+    k.focus();
+    await userEvent.keyboard("{End}");
+    expect(k.getAttribute("aria-valuetext"), "End lands on the highest tier").toBe("max");
 
     expect(await tier()).toEqual({ text: "· max", hidden: false });
+    // The knob and the pill resolve through the same `effort.ts` chain, so they may
+    // not disagree about what the session runs at.
+    expect(k.dataset["level"]).toBe("max");
     // The store is what the pill reads, so the write has to have landed there
     // rather than only in the pill's own paint.
     expect(store.get("k")?.effort).toBe("max");

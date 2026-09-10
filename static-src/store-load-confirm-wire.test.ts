@@ -31,9 +31,25 @@ const { mockUpsertHeader } = vi.hoisted(() => ({ mockUpsertHeader: vi.fn() }));
 // The store is mocked because this file's subject is the WIRE, not adoption — and
 // `upsertHeader` is spied rather than stubbed away, because the value it receives is
 // the decoder's OUTPUT and is therefore the assertion that proves the decoder ran.
+// SPREAD FIRST, then override exactly what this suite controls. Browser Mode links
+// ESM for real, so an ENUMERATED factory has to name every export anything in this
+// file's import graph reaches — including ones the file never calls — and a missing
+// one fails the whole file at COLLECTION rather than failing a case. That is not a
+// hypothetical: `store.ts` gained `chunkWatermark` and `noteLiveTurnMessage`, the
+// sibling suite's mock was updated and this one was not, and the file stopped
+// collecting with a `SyntaxError` naming one export at a time. Enumerating the other
+// 36 would buy the same break again on the next one.
+//
+// The isolation the comment above describes is unchanged: every name the wire path
+// touches is still overridden below, `upsertHeader` is still the spy, and what the
+// spread adds is the store's own real implementations for names this suite does not
+// exercise — which is the honest default, since nothing here asserts on them.
 vi.mock("./store.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Store>()),
   // The REAL rule rather than a copy of it: a hand-written one goes stale silently
-  // the first time the rule gains a term, and both suites stay green.
+  // the first time the rule gains a term, and both suites stay green. Redundant
+  // under the spread and kept deliberately, because it is the one name whose
+  // realness is load-bearing and a future override must not shadow it by accident.
   derivedHasMore: (await importOriginal<typeof Store>()).derivedHasMore,
   get: () => undefined,
   getSessions: () => [],

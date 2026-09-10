@@ -134,8 +134,12 @@ export const storeMock = {
   applyToolCallDelta: vi.fn(),
   foldToolCallDelta: vi.fn(),
   setCodeReferences: vi.fn(),
-  setSnapshotSeq: vi.fn(),
-  clearSnapshotSeq: vi.fn(),
+  setChunkWatermark: vi.fn(),
+  clearChunkWatermark: vi.fn(),
+  // The READER answers "this client holds no mark", which is what a mock owes: one
+  // claiming a seq would make a fetched live turn read as stale for a reason production
+  // did not supply.
+  chunkWatermark: vi.fn(() => undefined),
   // The capped-snapshot marker. The READER answers the empty case, which is what a
   // mock owes: one claiming a message is truncated would make a renderer test pass
   // for a reason production did not supply.

@@ -15,6 +15,11 @@ import {
   bumpMessages,
   normalizeMessage,
   liveTurnMessage,
+  chunkWatermark,
+  setChunkWatermark,
+  noteLiveTurnMessage,
+  noteTruncatedSnapshot,
+  upsertMessage,
   relatchTurnVerdict,
   latchFieldsFor,
   syncEpoch,
@@ -31,6 +36,32 @@ const decodeChatListResponseLocal: Decoder<{ chats?: ChatHeader[] }> = (v) => {
   return out;
 };
 
+/** The chat's in-flight turn as the transcript GET carries it: the reply already accumulated
+ *  server-side, which reaches the chat file only at turn end so `messages` cannot hold it. */
+interface LiveTurnPage {
+  readonly message: Message;
+  readonly chunk_seq: number;
+  readonly truncated: boolean;
+}
+
+/** Decode the optional `live_turn` sibling, optional-tolerant per this decoder's stated
+ *  convention. Absent means either no turn is running or an older server, and both mean
+ *  "nothing to adopt"; a MALFORMED one is refused by `decodeMessage` rather than half-read,
+ *  because a message with no id is one the store cannot merge or dedup against. */
+function decodeLiveTurn(raw: unknown): LiveTurnPage | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  const o = asObject(raw, "$.chat_get.live_turn");
+  return {
+    message: decodeMessage(o["message"]),
+    chunk_seq: optNum(o, "chunk_seq", "$.chat_get.live_turn") ?? 0,
+    // The server sends this unconditionally, so an absent marker means an older server,
+    // which capped nothing. It may never be read as "complete" when present.
+    truncated: o["truncated"] === true,
+  };
+}
+
 const decodeChatGetResponseLocal: Decoder<{
   chat: ChatHeader;
   messages: Message[];
@@ -39,12 +70,16 @@ const decodeChatGetResponseLocal: Decoder<{
   turn_open: boolean;
   turn_offset: number | undefined;
   turn_segment_closed: boolean | undefined;
+  live_turn: LiveTurnPage | undefined;
 }> = (v) => {
   const o = asObject(v, "$.chat_get");
   return {
     chat: decodeChatHeader(o["chat"]),
     messages: decodeArray(o["messages"], decodeMessage, "$.chat_get.messages"),
     has_more: reqBool(o, "has_more", "$.chat_get"),
+    // The in-flight turn, which the window structurally cannot carry: it is the one thing
+    // in this response that is not in the chat file yet.
+    live_turn: decodeLiveTurn(o["live_turn"]),
     // Every field below is optional-tolerant: an older server, or a proxy that strips
     // one, must not fail the whole chat load. `store.ts` turnLive is turn_open's one
     // reader; `turnBaseOf` is the window base's.
@@ -74,6 +109,36 @@ function adoptTurnBase(
   }
   session.turn_offset = offset;
   session.turn_segment_closed = closed;
+}
+
+/** Adopt the fetched in-flight turn, or refuse it as stale.
+ *
+ *  The four calls are the ones the `turn_state` handler makes (`handlers/messages.ts`), for
+ *  the same reason: this is the same content arriving through a second channel, so it has to
+ *  land in the same four places or the two channels leave the store in different shapes.
+ *
+ *  THE GATE is the whole guard against a stale answer. The response is a point-in-time read,
+ *  so live chunks can have landed after the server rendered it — and `mergeMessage` replaces
+ *  content and blocks with the incoming's whenever they are non-empty, so adopting an older
+ *  copy would REPLACE a fuller local accumulation with a shorter one. When it refuses, drop
+ *  the field and change nothing: the live stream is already ahead, so there is nothing to
+ *  recover. An absent local mark passes — this client has folded nothing to lose. */
+function adoptLiveTurn(chatID: string, live: LiveTurnPage): void {
+  if (live.message.id === "") {
+    return;
+  }
+  const held = chunkWatermark(chatID, live.message.id);
+  if (held !== undefined && live.chunk_seq < held) {
+    return;
+  }
+  setChunkWatermark(chatID, live.message.id, live.chunk_seq);
+  // The server holds this message in memory and nowhere else, so it is unpersisted by
+  // construction — which is what a later refetch has to know before it may drop it.
+  noteLiveTurnMessage(chatID, live.message.id);
+  if (live.truncated) {
+    noteTruncatedSnapshot(chatID, live.message.id);
+  }
+  upsertMessage(chatID, live.message);
 }
 
 /** Re-order re-adopted rows the way the live path puts them; `store.ts` insertIndexFor owns
@@ -562,6 +627,12 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
     // `setTurnOpen`, because this whole block is mutating the session in place and
     // `bumpMessages` below is the one repaint.
     session.turn_open = d.turn_open;
+    // The CONTENT behind that liveness statement. Newest page only, like the two above,
+    // and AFTER the splice so the upsert sees the merged window. No duplicate is possible
+    // either way: the merge is keyed by message id and the live turn is not in `messages`.
+    if (d.live_turn !== undefined) {
+      adoptLiveTurn(chatID, d.live_turn);
+    }
     // A successful newest-page load is the ONE writer of `loaded`: the window
     // is now the server's answer, so an activation may trust it. An older-page
     // prepend extends an already-trusted window and asserts nothing new. The

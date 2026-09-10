@@ -485,6 +485,28 @@ func (lc *chatLifecycle) openFactsLocked() (openTurnFacts, bool) {
 	return openTurnFacts{Buf: lc.cur.Buf, Epoch: lc.cur.Epoch, Source: lc.cur.Source}, true
 }
 
+// openTurnFor returns ONE chat's open turn, for the HTTP read path that serves a single
+// chat. Narrower than openTurns rather than a filter over it: that one walks every chat
+// and takes every lifecycle's mutex, which a per-request read must not do.
+//
+// A PRIME turn answers false, for hasOpenTurn's reason and replayTurnState's: its frames
+// are vibekit's own transcript replay, so serving them renders the preamble as
+// conversation. Through `lookup`, so a read cannot mint a lifecycle for a chat that has
+// never had a turn.
+func (r *turnRegistry) openTurnFor(chatID vibekit.ChatID) (openTurnFacts, bool) {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return openTurnFacts{}, false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	facts, open := lc.openFactsLocked()
+	if !open || facts.Source == vibekit.TurnSourcePrime {
+		return openTurnFacts{}, false
+	}
+	return facts, true
+}
+
 // openTurns returns the open turn of every chat that has one, so a connect replay
 // reads the turn rather than the prompt slot, which is empty for every turn vibekit
 // did not prompt.

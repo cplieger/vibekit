@@ -443,6 +443,28 @@
   flex-shrink: 0;
 }
 
+/* WITHDRAWN WHEN THERE IS NOTHING TO SAY, or the readout to its left stops
+ * ending on the header's own gutter. `tool-card.ts` builds this span
+ * unconditionally and fills it only once a duration lands, and an empty flex item
+ * still has a box: the header's `gap` is charged between it and the element
+ * before it, AND its own `margin-inline-start` applies. Measured on a `Read File`
+ * card at 1440: the file badge ended at 1208 against a content edge of 1224, so
+ * 16px of dead space held it off the edge — reported as the badge looking
+ * un-right-aligned, "as if it reserves space for a chevron that is not there".
+ * There is no chevron there; this slot is what the reader was seeing.
+ *
+ * The `margin-inline-start` on this span is the OTHER half of the same rule and
+ * was already right: the inline gap is carried by the separated element rather
+ * than by the row's `gap`, so it exists exactly when the element does — which is
+ * only true once the element itself stops existing when it is empty. Both halves
+ * are stated in `vibekit-ui.md` ("A right-aligned readout ends on its container's
+ * own gutter"), where the turn footer's ledger caret and the tool header's own
+ * status dot already take this half; this span was the site still paying a gutter
+ * for a value it does not have. */
+.tool-duration:empty {
+  display: none;
+}
+
 .tool-duration:not(:empty)::before {
   content: "• ";
 }
@@ -681,29 +703,52 @@
   line-height: 1.4;
   cursor: pointer;
   text-decoration: none;
-  overflow: hidden;
   white-space: nowrap;
   max-width: 12.5rem;
 
-  /* THE CHIP DECLARES ITS OWN BOX, so `61-mcp-tools.css`'s hit-target floor lifts
-     it rather than becoming it. Declaring nothing made the FLOOR the box: 44px
-     square on a coarse pointer around a 15.4px line box, which reads as a badge
-     with a filename lost inside it and took the member row to 52px against its own
-     header's 44px — the one height a group is supposed to have. `--ctl-h-sm` is
-     24px on a fine pointer, which is what the floor already gave it, so nothing
-     moves on a mouse; on a coarse one it is 36px, clearing WCAG 2.5.8's 24px
-     minimum and landing the row back on its header's height. The reach the AAA
-     44px would have bought is the ROW's: the whole summary is the card's target.
+  /* THE BADGE MEASURES THE GLYPH BESIDE IT, so no row can be driven past its own
+     height floor by carrying one. `--icon-ui` is what `.ic-ui` sizes the kind glyph
+     at (03-base.css), so the two are equal by construction at both tiers rather
+     than by two numbers kept in step.
+     `--ctl-h-sm` was the previous answer and it was one tier short of a fix: 24px on
+     a fine pointer against the 20px `.tool-header` has left inside its 36px floor at
+     `padding-block: var(--sp-2)`, so a LONE tool call carrying a badge rendered a
+     40px row beside every 36px one — reported as the box with a file badge being
+     taller than all the others, and 52px/44px before that when the hit-target floor
+     was the box. A group MEMBER hid it, because the row idiom's `padding-block:
+     var(--sp-1)` leaves 28px and a 24px chip fits: the height came from the
+     CONTAINER, which is exactly what the header's one-floor rule says it must not.
 
-     PHYSICAL properties, or this does not override at all — the floor sets
-     `min-width`/`min-height`, and a logical property is a DIFFERENT one resolved
-     against it by cascade order rather than by specificity. */
-  min-width: var(--ctl-h-sm);
-  min-height: var(--ctl-h-sm);
+     The TARGET keeps the floor — `61-mcp-tools.css`'s expander idiom, `inset` off
+     `--hit-floor` so it follows the tier with no second declaration. Vertical only
+     (`inset-inline: 0`): the badge's own width already clears the floor, and
+     widening it would reach into the title beside it. `overflow: hidden` had to go
+     with it, because it clipped the expander to the box the expander exists to
+     escape; the TEXT owns the clip and always did (`.tool-file-name` below), which
+     `tool-file-chip-truncation.test.ts` asserts on that span.
+
+     Unlike `.tool-disclosure` above, this control cannot drop the expander: that
+     one's action is the summary's own, so the row IS its target, while opening the
+     diff is this badge's alone.
+
+     PHYSICAL `min-height`, or this does not override at all — the floor sets
+     `min-height`, and a logical property is a DIFFERENT one resolved against it by
+     cascade order rather than by specificity. */
+  position: relative;
+  block-size: var(--icon-ui);
+  min-width: var(--hit-floor);
+  min-height: 0;
   transition:
     background var(--dur-micro),
     border-color var(--dur-micro),
     color var(--dur-micro) var(--ease-standard);
+
+  &::after {
+    content: "";
+    position: absolute;
+    inset-block: calc((var(--hit-floor) - 100%) / -2);
+    inset-inline: 0;
+  }
 
   &:hover {
     background: var(--c-hover);
@@ -724,7 +769,8 @@
 
 /* The clip is on the TEXT, not the chip: `.tool-file-link` is inline-flex, so it
    holds no inline content of its own for `text-overflow` to act on. Same shape as
-   `.tool-title` above. */
+   `.tool-title` above, and it is the WHOLE clip now — the chip carries no
+   `overflow` of its own, because that clipped its hit-target expander away. */
 .tool-file-name {
   min-width: 0;
   overflow: hidden;

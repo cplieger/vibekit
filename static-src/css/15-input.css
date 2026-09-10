@@ -391,16 +391,60 @@
  * `text-box` is: trimming to `cap alphabetic` makes the box edges the cap band,
  * so centring the box centres the letterforms and the offset is zero by
  * construction, at every font size and in every font, with no value authored
- * here. Chrome 133+ / Safari 18.2+; Firefox has not shipped it and degrades to
- * exactly today's rendering, which is why it is safe to state plainly rather
- * than guard.
+ * here. Chrome 133+ / Safari 18.2+ / Firefox 154+, so it is Baseline newly
+ * available rather than the Chromium-and-Safari-only feature this used to record;
+ * an engine without it degrades to exactly the untrimmed rendering, which is why
+ * it is safe to state plainly rather than guard.
  *
  * The trim moves the block-END edge up to the baseline, so descenders leave the
  * content box — which the clipping labels below have to answer for.
  *
  * The same defect and the same fix apply to `.sidebar-email`; its half lives
- * with the sidebar in 10-shell-app.css. */
-:where([id="context-label"], [id="ctx-model-pill"], .pill-role-label) {
+ * with the sidebar in 10-shell-app.css.
+ *
+ * THE MODEL PILL'S TIER READOUT AND THE MODEL LIST'S ROWS ARE THE SAME DEFECT,
+ * and each was reported against a different reference edge. `.pill-model-effort`
+ * sits in the same `align-items: center` line as `#ctx-model-pill`, which IS
+ * trimmed, so the two labels disagreed with each other by exactly the offset
+ * above — 0.58px measured in the sidecar's DejaVu Sans, and 1.81px at the Segoe
+ * UI the report came from, which is why "the effort is a bit too low" is a
+ * report about the label beside it rather than about the row. `.pill-model-item`
+ * centres its own spans in a row whose height comes from `--ctl-h-sm` rather
+ * than from the font, and the ACTIVE row carries an accent fill
+ * (70-selection.css), so there the offset has a box edge to be measured
+ * against — every row was low, and only the filled one showed it.
+ *
+ * THE EFFORT SLIDER'S KNOB LABEL WAS A THIRD MEMBER and is gone with the label:
+ * the knob carries no text now, so there is no line to centre in it — its tier is
+ * named by `.effort-label` on the row above, which sits in no centred flex line
+ * and therefore has no offset to correct.
+ *
+ * Neither survivor joins the padding list below, because neither clips: the pill
+ * declares no `overflow`, so a 'g' in "high" hangs outside the trimmed box and
+ * paints, and `.pill-model-item`'s own `white-space: nowrap` clips nothing either.
+ * `#context-label` is in the same position for a different reason (no descender
+ * is spellable in digits and a percent sign), so absence from that list means
+ * "the descender is safe here", never "the descender was forgotten".
+ *
+ * THE LIST IS THE DEFECT, and it is a bounded fix rather than the whole one.
+ * Measured on one live chat page: 19 distinct label shapes / 350 labels sit in
+ * the class this prose describes — a single-line text label centred in a flex
+ * row — against the six selectors enrolled here, and entries have been appended
+ * on four separate occasions after somebody noticed one label. That is the shape
+ * `61-mcp-tools.css`'s hit floor already retired once by replacing a 25-name
+ * allow-list with one zero-specificity rule. The same move is not available
+ * here: CSS cannot select "my parent is a centred flex row", and a universal
+ * trim reaches prose, where it moves the block edges of every paragraph in the
+ * transcript. So a rule over the class needs either a design-system label
+ * primitive or a measured sweep of the other 17 shapes, and both are their own
+ * change. */
+:where(
+  [id="context-label"],
+  [id="ctx-model-pill"],
+  .pill-role-label,
+  .pill-model-effort,
+  .pill-model-item > span
+) {
   text-box: trim-both cap alphabetic;
 }
 
@@ -635,9 +679,9 @@
      corner shares the outer corner's centre only at
          inner = outer − border − inset,
      so 12 − 1 − 8 = 3px. The rows that read it (.chat-opt-btn, .chat-opt-row,
-     .chat-opt-form, .pill-model-item, .pill-role-item, .effort-btn) each sat at
-     6px or 8px, which put 8.00..10.07px of background around the card's corner
-     where the straight edges hold 8.00px.
+     .chat-opt-form, .pill-model-item, .pill-role-item) each sat at 6px or 8px,
+     which put 8.00..10.07px of background around the card's corner where the
+     straight edges hold 8.00px.
 
      --card-inset is the padding on ALL FOUR sides, and it has to be: equal
      centres need an equal inset on both edges of a corner, so an anisotropic
@@ -658,7 +702,21 @@
      reports, which is upstream data with no bound. Both axes are stated because
      an `overflow-y` beside a `visible` inline axis computes that axis to `auto`
      anyway, and then nothing says which was meant. */
-  max-block-size: 16rem;
+  /* TWO bounds, and they answer different questions. `--pill-max-block` is the
+     ROOM between the viewport's top edge and this card's own bottom, measured and
+     published by `pill-expand.ts` on open (26rem is only the pre-JS fallback);
+     it is the hard bound, because a card may never overflow the viewport it is
+     anchored inside. `60dvh` is the SHAPE bound: a menu that fills the screen
+     reads as a modal, which is the thing the expandable-pill pattern exists to
+     avoid (vibekit.md mandates it over floating popups for pill-row controls).
+     Measured at a 900px viewport with the room alone as the cap: the mode list
+     rendered 839px tall from y=12 and still scrolled.
+
+     This replaced a single authored 16rem, which could know neither. It was also
+     the stingier of the two caps it replaced despite desktop having the most
+     room — the chat-actions menu wanted 332px for five rows, was allowed 254px,
+     and scrolled with 595px free above it. Derivation at `clampToViewport`. */
+  max-block-size: min(var(--pill-max-block, 26rem), 60dvh);
   overflow: auto;
   box-shadow:
     var(--shadow-ambient),
@@ -956,48 +1014,214 @@
 }
 
 /* Effort section: the bottom section of the model card, outside the scroller,
- * so the five tier buttons stay put while the models scroll. Full-bleed — the
- * card's padding moved to the scroller — so the rule above it reads as a
- * section edge rather than an inset line, and the block padding is symmetric
- * so the tier buttons sit on the section's centre line. */
+ * so the slider stays put while the models scroll. Full-bleed — the card's
+ * padding moved to the scroller — so the rule above it reads as a section edge
+ * rather than an inset line, and the block padding is symmetric.
+ *
+ * TWO LINES, caption then rail, and the caption is what makes the rest of this
+ * work: it names the dimension AND the live tier ("Effort: High"), so the knob
+ * carries no text, so the rail can be thin. A knob sized to its widest foreign
+ * label measured 61px on the fine tier and 65px on the coarse one against a
+ * 26.53px tick spacing, which is why it covered the ticks either side of it. */
 .effort-row {
+  /* The knob's size on both axes, and the ONE number the geometry below is
+     arithmetic over. Not measured any more: with no label there is nothing to fit,
+     and 61-mcp-tools.css's universal floor already declares
+     `min-width`/`min-height: var(--hit-floor)` on every `[tabindex]` element, so a
+     knob asking for less would be overridden. Declared rather than left implicit
+     because the tick offsets and the track's own floor read it. */
+  --effort-knob-w: var(--hit-floor);
+
+  /* The rail's thickness. The knob stands proud of it — 24px over 8px on the fine
+     tier, 44px over 8px on the coarse one — which is what makes the handle read as
+     a handle rather than as a filled segment of the track. */
+  --effort-rail-h: 0.5rem;
+
+  /* The intensity ramp's two ends, mixed over the track's own base so the faint
+     end is one step off the colour the full-height track carried.
+
+     THE TOP END IS BOUNDED BY THE TICK INK rather than picked: `--c-text-primary`
+     on this fill measures 4.130:1 dark / 5.158:1 light at 60% accent and
+     3.278:1 / 4.066:1 at 75%, so 60% clears WCAG 1.4.11's 3:1 floor for a
+     graphical object with margin at every step in both themes. FULL accent is
+     2.272:1 / 2.616:1 even against the primary ink, so it is not available at any
+     ink in this palette: the fill closes on the ink's own lightness as the accent
+     rises, in dark and in light alike.
+
+     Colours rather than percentages, so the gradient below interpolates between
+     two resolved ends and the per-step figures above are the fill each tick
+     actually sits on. */
+  --effort-fill-low: color-mix(in oklch, var(--c-accent) 22%, var(--c-bg-tertiary));
+  --effort-fill-high: color-mix(in oklch, var(--c-accent) 60%, var(--c-bg-tertiary));
+
   display: flex;
   flex-shrink: 0;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: var(--sp-1);
   padding: var(--sp-2);
   border-top: 1px solid var(--c-border);
 }
 
+/* The control's VISIBLE label, one rung under the card's rows (01-tokens.css). It
+   is the whole reason the old left-hand `Effort` label could go: a value alone
+   names no dimension, and an input with no visible label is a WCAG 3.3.2 (Level A)
+   exposure.
+
+   IT WRAPS, and that is where the foreign-text budget went. `.pill-expand-content`
+   declares `white-space: nowrap` for its rows, and inheriting it here would put a
+   tier name nothing in this app chose on ONE line: on desktop the card has no
+   inline cap, so it would grow to the name's width, and on a phone the cap plus
+   `.pill-model-list`'s `overflow: hidden` would clip it with no ellipsis and no
+   scroll. `anywhere` rather than `break-word`, because a single unbroken token is
+   exactly the shape a wrap opportunity would otherwise not exist in. So an
+   over-long name costs card HEIGHT, which the card can absorb and then scroll,
+   rather than card width or hidden characters. */
 .effort-label {
   font-size: var(--fs-popup-meta);
   color: var(--c-text-tertiary);
-  margin-inline-end: var(--sp-1);
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-.effort-btn {
-  /* The caption rung rather than the row rung: five tier labels share one row's
-     width, and the label beside them reads the same size. */
-  font-size: var(--fs-popup-meta);
-  padding: 0.125rem var(--sp-1);
-  border: 1px solid var(--c-border);
-  border-radius: var(--card-radius);
-  background: transparent;
+/* The live tier is the caption's payload, so it reads one ink rung above the word
+   naming it: 8.062:1 dark / 7.290:1 light on the card, against the hint ink's
+   4.771:1 / 4.719:1. */
+.effort-value {
   color: var(--c-text-secondary);
-  cursor: pointer;
-  white-space: nowrap;
+}
+
+/* The rail LINE. `container-type: inline-size` is what makes the geometry below
+   pure CSS: `100cqi` is this element's CONTENT inline size, so a card that grows
+   after the row was appended needs no JS at all and this control carries no
+   ResizeObserver.
+
+   IT RESERVES THE KNOB'S FULL HEIGHT while the rail inside it is thin, because
+   `.pill-model-list` declares `overflow: hidden`: a line sized to the rail would
+   clip the knob standing proud of it, top and bottom.
+
+   NO border and NO padding, so `100cqi`, `clientWidth` and the border box that
+   `effort-slider.ts` `indexAt` reads all agree — the two-hairline correction this
+   floor used to carry went with the border, which moved to the rail below. */
+.effort-track {
+  position: relative;
+  container-type: inline-size;
+  block-size: var(--effort-knob-w);
+
+  /* The knob has to fit: below this `100cqi - 100%` is negative and the travel
+     inverts. */
+  min-inline-size: var(--effort-knob-w);
+
+  /* The gesture is a drag, so neither a scroll nor a selection may claim it. This
+     is also why `effort-slider.ts` cancels no pointerdown default: Firefox ties
+     `:active` to the mousedown default action, so cancelling it would silently
+     kill the knob's press rule (70-selection.css) there. */
+  touch-action: none;
+  user-select: none;
+}
+
+/* The rail itself, centred in the line's reserved band.
+
+   The gradient's two stops sit half a knob in from each end, which is exactly the
+   band the ticks are placed in — so the fill under tick `i` of `n` is the ramp at
+   `i / (n - 1)` and the ratios stated above are per-step figures rather than
+   endpoint ones. Position, not a layout property: `web.md` bans moving something
+   by layout, and `translateY(-50%)` against `inset-block-start: 50%` is the pair
+   that centres a box of unknown height.
+
+   NO border. `--c-border` measures 1.154:1 dark / 1.155:1 light against the card,
+   so it drew no edge worth 2 of the rail's 8px; the fill reads 1.905:1 / 1.593:1
+   there, better than the 1.325:1 / 1.210:1 the full-height track measured and
+   bounded by the surface ramp rather than by the accent. */
+.effort-track::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 50%;
+  block-size: var(--effort-rail-h);
+  border-radius: var(--r-pill);
+  background: linear-gradient(
+    to right,
+    var(--effort-fill-low) calc(var(--effort-knob-w) / 2),
+    var(--effort-fill-high) calc(100% - var(--effort-knob-w) / 2)
+  );
+  transform: translateY(-50%);
+}
+
+/* Ticks are hit-testable through the track's one pointerdown handler and are not
+   focusable: the knob is the single tab stop, and per-tick clicking needs no
+   second one. Centred on the tier's own knob position — which is why the offset
+   arithmetic is the knob's travel inset by half a knob — and on the rail, so each
+   one sits entirely on the fill it is measured against.
+
+   `--c-text-primary`, not the hint ink: the fill's lightness sweeps toward the
+   accent, so an ink lying BETWEEN the ramp's two ends crosses it. Measured on this
+   ramp, `--c-text-tertiary` is already at 2.778:1 (dark) by 16% accent and
+   `--c-text-secondary` at 3.134:1 by 40%, while the primary ink is the only one
+   that stays on the same side of the fill in both themes — so its worst step is
+   the ramp's top end and one bound covers every tier count. */
+.effort-tick {
+  position: absolute;
+  inset-block-start: 50%;
+  inline-size: 2px;
+  block-size: var(--effort-rail-h);
+  inset-inline-start: calc(
+    var(--effort-knob-w) / 2 + var(--tick-frac, 0) * (100cqi - var(--effort-knob-w))
+  );
+  border-radius: 1px;
+  background: var(--c-text-primary);
+  transform: translate(-50%, -50%);
+}
+
+/* The knob. Square at `--effort-knob-w` and round, so it is a handle rather than a
+   labelled box: the tier's word lives in the caption above the rail.
+
+   `inset-inline-start` is DECLARED rather than left to `auto`, because an absolute
+   box with both inline offsets auto falls back to its STATIC position, which an
+   ancestor `text-align` moves (web.md).
+
+   Movement is ONE transform on both axes. `100%` inside `translate()` resolves
+   against the knob's OWN border box (web.md) while `100cqi` is the track's content
+   box, so `100cqi - 100%` IS the usable travel and the knob sits fully inside the
+   rail's span at both extremes by construction; the block half is the static
+   centring pair described at the rail.
+
+   NO background, colour or border-colour here: the knob is unconditionally the
+   selected surface, so those come from 70-selection.css. */
+.effort-knob {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 0;
+  inline-size: var(--effort-knob-w);
+  block-size: var(--effort-knob-w);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  cursor: grab;
+  transform: translate(calc(var(--effort-frac, 0) * (100cqi - 100%)), -50%);
   transition:
+    transform var(--dur-standard) var(--ease-standard),
     background var(--dur-micro),
     border-color var(--dur-micro);
 }
 
-.effort-btn:hover {
-  background: var(--c-bg-tertiary);
-  border-color: var(--c-text-tertiary);
+/* ONE TIER IS NOT A CHOICE, so there is no travel to draw: the line shrinks to the
+   knob and the section renders as a single handle under the caption that names it.
+   The knob keeps its own size — filling the track was right while it was a labelled
+   box and reads as a progress bar on a thin rail, which claims a range the
+   vocabulary does not offer. Travel is `100cqi - 100%` = 0 by construction here, so
+   the knob cannot drift off the one tick. */
+.effort-track[data-tiers="1"] {
+  align-self: start;
+  inline-size: var(--effort-knob-w);
 }
 
-/* .effort-btn.active: 70-selection.css. */
+/* A transition makes the knob lag the finger. Nothing is said about
+   `prefers-reduced-motion`: 40-a11y.css's global sweep zeroes every
+   transition-duration, and a zeroed transition still runs. */
+.effort-track[data-dragging] .effort-knob {
+  transition: none;
+  cursor: grabbing;
+}
 
 /* Status dot expand: the dot lives in the sidebar footer at the very
  * bottom of the viewport, so growing downward pushes off-screen. Pop
@@ -1421,7 +1645,14 @@
      and a rule here would have to name each caption to lift it. */
   .pill-expand-content {
     max-inline-size: calc(100dvw - 2 * var(--sp-3));
-    max-block-size: min(26rem, 55dvh);
+
+    /* Only the phone FALLBACK differs from the rule above: 55dvh rather than
+       60dvh for the frame before `clampToViewport` runs, because a phone's
+       composer sits under a raised keyboard often enough that the pre-JS guess
+       should be the conservative one. The measured room then supersedes it and is
+       strictly better here, since `visualViewport` sees a keyboard that no `dvh`
+       value can. */
+    max-block-size: min(var(--pill-max-block, 26rem), 55dvh);
   }
 
   /* Rows a finger picks take the pill row's own floor. */
@@ -1435,16 +1666,33 @@
     padding-block: var(--sp-1);
   }
 
+  /* NO tier rule beside this one, and no block-size: the rail line reads
+     `--hit-floor`, which is the same 44px the hit floor already gave every tier
+     button on a finger, so the KNOB's height does not move on either tier.
+
+     HISTORY, because the width budget it records is the one this shape inherited
+     and then left. The row used to be one button per tier sharing the leftover
+     width, and `flex: 1 1 0` was the defect behind "medium is larger than its box":
+     the hit floor's `min-width` replaces a flex item's automatic minimum size,
+     which licenses the shrink a 0 basis asks for, and a 0 basis contributes NOTHING
+     to the row's intrinsic width, so the card — whose `min-inline-size` is a floor
+     rather than a width — never learned the row needed more room. Measured at
+     390px: a 224px card holding five 38.1px buttons, "Medium" 42.9px of text in a
+     28.1px content box, 14.7px of it painted outside the border. With `flex: auto`
+     the row reported its real width and the card grew to 264px of the 366px
+     available, leaving 102px of headroom at 390px and 32px at the 320px floor.
+
+     A tier's label is KAS's text and not ours: `effortLabel` (effort.ts) returns
+     the catalog's own name first and only falls back to the house table, so a row
+     that renders one has to fit words nothing here chose — measured live, KAS
+     2.21.2 sends "Low Medium High xHigh Max" where the house table spells the
+     fourth "x-high". Hence NOT abbreviating: a vibekit-side "Med" is a rewrite of
+     foreign text that goes stale on the next tier upstream renames or adds. The
+     slider now spends that budget on ONE label on its own LINE, so the widest
+     foreign tier name no longer contests the rail's width at all and the card's own
+     14rem floor is what binds. The gap is the caption-to-rail one on this tier. */
   .effort-row {
     gap: var(--sp-2);
-  }
-
-  /* The five tiers share the row's width instead of shrink-wrapping; 2.25rem
-     clears comfortable-tap territory inside a card whose neighbouring rows are
-     2.75rem, without the row reading as five buttons stacked two lines tall. */
-  .effort-btn {
-    flex: 1 1 0;
-    min-block-size: 2.25rem;
   }
 }
 

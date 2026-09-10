@@ -1,6 +1,13 @@
 // Unit tests for tool-card.ts pure functions (extractSubtitle, mcpHue).
-import { describe, it, expect, vi, beforeAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
 import fc from "fast-check";
+import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
+
+// The root is module state, and every case but one asserts the pass-through form.
+// Here rather than at the end of that case, which a failed assertion would skip.
+afterEach(() => {
+  resetWorkspace();
+});
 
 // Provide minimal DOM elements that transitive imports require at module level.
 beforeAll(() => {
@@ -479,6 +486,24 @@ describe("the depth ladder", () => {
     });
     read.querySelector<HTMLElement>(".tool-file-link")?.click();
     expect(opened).toEqual(["file:src/a.ts"]);
+  });
+
+  it("the `+N -M` stats open the call's own diff, at an ABSOLUTE path", async () => {
+    // Absolute because /api/file resolves against the granted roots and denies a
+    // relative path, so the tab this opens would render its 403 instead.
+    const { buildToolCard } = await import("./tool-card.js");
+    setWorkspaceRoot("/workspace");
+    opened.length = 0;
+    const edit = buildToolCard({
+      id: "t8b",
+      title: "strReplace",
+      kind: "edit",
+      status: "completed",
+      input: { path: "src/a.ts", oldStr: "one", newStr: "two" },
+      live: false,
+    });
+    edit.querySelector<HTMLElement>(".tool-diff-stats")?.click();
+    expect(opened).toEqual(["diff:/workspace/src/a.ts"]);
   });
 
   it("a move states from and to, which its claim line cannot carry", async () => {

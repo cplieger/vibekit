@@ -845,32 +845,36 @@
   min-width: 0;
 }
 
-/* PRs tab — loading placeholder.
+/* The git view's loading placeholder, SHARED by both tabs — hence `git-repo-`
+ * rather than the `git-pr-` these rules were first named, which had become
+ * misleading the moment the Changes tab took the same shape.
  *
- * The mount is empty until every request in the fan-out has landed, so this
- * stands in for the per-repo sections the paint will build. Geometry mirrors a
- * real section header (forge icon, repo name, count) because the placeholder's
- * job is to reserve the shape the content takes, not to draw attention. */
-.git-pr-skeleton {
+ * A mount is empty until its load lands (the PRs tab fans out one request per
+ * repository, each a `gh pr list` subprocess server-side; the Changes tab issues
+ * one `status-all`), so this stands in for the per-repo sections the paint will
+ * build. Geometry mirrors a real section header — forge icon, repo name, a
+ * trailing count — because the placeholder's job is to reserve the shape the
+ * content takes, not to draw attention. Painter: skeleton.ts `gitRepoSkeleton`. */
+.git-repo-skeleton {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
   pointer-events: none;
 }
 
-.git-pr-skel-label {
+.git-repo-skel-label {
   font-size: var(--fs-sm);
   color: var(--c-text-tertiary);
 }
 
-.git-pr-skel-section {
+.git-repo-skel-section {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-4);
 }
 
-.git-pr-skel-icon {
+.git-repo-skel-icon {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
@@ -878,11 +882,11 @@
 
 /* `.skeleton` (30-utilities.css) supplies the fill, the radius and the shimmer;
  * these are heights only, matching the text they stand in for. */
-.git-pr-skel-name {
+.git-repo-skel-name {
   height: 0.85rem;
 }
 
-.git-pr-skel-meta {
+.git-repo-skel-meta {
   height: 0.7rem;
 }
 

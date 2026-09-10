@@ -18,6 +18,9 @@ vi.mock("./editor-openers.js", () => ({
   openFileGitDiff: (p: string, ref: string) => {
     calls.push(`gitdiff:${p}:${ref}`);
   },
+  openFileDiff: (p: string, oldText: string, newText: string) => {
+    calls.push(`diff:${p}:${oldText}>${newText}`);
+  },
 }));
 vi.mock("./tabs.js", () => ({
   toggleGitView: (tab: string) => {
@@ -31,7 +34,7 @@ vi.mock("./git-tabs.js", () => ({
   },
 }));
 
-import { openChange, openChangeSet, openAtLine, openExternal } from "./navigate.js";
+import { openChange, openCallDiff, openChangeSet, openAtLine, openExternal } from "./navigate.js";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 
 beforeEach(() => {
@@ -54,6 +57,20 @@ describe("openChange", () => {
 
   it("does nothing for an empty path", () => {
     openChange("");
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("openCallDiff", () => {
+  it("opens the call's own before/after pair rather than a git diff", () => {
+    // A card's two affordances answer two questions: the filename opens the file
+    // against git, `+N -M` opens what this one call did.
+    openCallDiff("src/a.ts", "one", "two");
+    expect(calls).toEqual(["diff:src/a.ts:one>two"]);
+  });
+
+  it("does nothing for an empty path", () => {
+    openCallDiff("", "one", "two");
     expect(calls).toEqual([]);
   });
 });
@@ -121,6 +138,13 @@ describe("path-space normalisation", () => {
     expect.assertions(1);
     openChange("/config/mcp.json");
     expect(calls).toEqual(["gitdiff:/config/mcp.json:HEAD"]);
+  });
+
+  it("makes a relative stats path absolute", () => {
+    // The `+N -M` link reaches the editor, so it is denied the same way.
+    expect.assertions(1);
+    openCallDiff("main.go", "one", "two");
+    expect(calls).toEqual(["diff:/workspace/main.go:one>two"]);
   });
 
   it("makes a relative line reference absolute", () => {

@@ -1227,16 +1227,19 @@ describe("per-tool signal", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Connect-time turn_state snapshot: chunk-seq watermark gating
+// The chunk watermark: what this client has already folded into the chat's in-flight
+// assistant message. TWO writers — a server-sent whole copy of the turn (the connect
+// replay's `turn_state`, or the transcript GET's `live_turn`), and `appendChunk` as live
+// chunks land — and the second is what lets a copy fetched LATER be told from a stale one.
 // ---------------------------------------------------------------------------
 
-import { setSnapshotSeq, clearSnapshotSeq } from "./store.js";
+import { setChunkWatermark, clearChunkWatermark, chunkWatermark } from "./store.js";
 
-describe("appendChunk snapshot-seq gating", () => {
+describe("appendChunk chunk-watermark gating", () => {
   it("drops chunks at or below the watermark, applies those above", () => {
     resetStore("chat-ws");
-    // Snapshot said: message m-snap already contains deltas 1..3.
-    setSnapshotSeq("chat-ws", "m-snap", 3);
+    // A server copy said: message m-snap already contains deltas 1..3.
+    setChunkWatermark("chat-ws", "m-snap", 3);
 
     appendChunk("chat-ws", "m-snap", "dup-1 ", false, 0, "", 2); // folded in → drop
     appendChunk("chat-ws", "m-snap", "dup-2 ", false, 0, "", 3); // boundary → drop
@@ -1244,34 +1247,88 @@ describe("appendChunk snapshot-seq gating", () => {
 
     const msg = get("chat-ws")!.messages.find((m) => m.id === "m-snap");
     expect(msg?.content).toBe("fresh");
-    clearSnapshotSeq("chat-ws");
+    clearChunkWatermark("chat-ws");
   });
 
   it("seq 0 (pre-seq server or unrelated turn) always applies", () => {
     resetStore("chat-ws0");
-    setSnapshotSeq("chat-ws0", "m-snap", 5);
+    setChunkWatermark("chat-ws0", "m-snap", 5);
     appendChunk("chat-ws0", "m-snap", "legacy", false, 0, "", 0);
     const msg = get("chat-ws0")!.messages.find((m) => m.id === "m-snap");
     expect(msg?.content).toBe("legacy");
-    clearSnapshotSeq("chat-ws0");
+    clearChunkWatermark("chat-ws0");
   });
 
   it("a different message id ignores the watermark (fresh turn)", () => {
     resetStore("chat-wsx");
-    setSnapshotSeq("chat-wsx", "m-old", 99);
+    setChunkWatermark("chat-wsx", "m-old", 99);
     appendChunk("chat-wsx", "m-new", "next turn", false, 0, "", 1);
     const msg = get("chat-wsx")!.messages.find((m) => m.id === "m-new");
     expect(msg?.content).toBe("next turn");
-    clearSnapshotSeq("chat-wsx");
+    clearChunkWatermark("chat-wsx");
   });
 
-  it("clearSnapshotSeq lifts the gate", () => {
+  it("clearChunkWatermark lifts the gate", () => {
     resetStore("chat-wsc");
-    setSnapshotSeq("chat-wsc", "m-snap", 10);
-    clearSnapshotSeq("chat-wsc");
+    setChunkWatermark("chat-wsc", "m-snap", 10);
+    clearChunkWatermark("chat-wsc");
     appendChunk("chat-wsc", "m-snap", "after clear", false, 0, "", 1);
     const msg = get("chat-wsc")!.messages.find((m) => m.id === "m-snap");
     expect(msg?.content).toBe("after clear");
+  });
+
+  // The SECOND writer. Without it the mark only ever describes the last whole copy the
+  // server sent, so a chunk re-delivered above that seq — a reconnect replaying from the
+  // ring, a frame the transport delivered twice — is appended a second time.
+  it("raises the mark as live chunks land, so a re-delivered chunk is dropped", () => {
+    resetStore("chat-wsr");
+    appendChunk("chat-wsr", "m-live", "once ", false, 0, "", 5);
+    appendChunk("chat-wsr", "m-live", "once ", false, 0, "", 5); // re-delivered → drop
+
+    const msg = get("chat-wsr")!.messages.find((m) => m.id === "m-live");
+    expect(msg?.content).toBe("once ");
+    clearChunkWatermark("chat-wsr");
+  });
+
+  it("reports the mark the live stream reached", () => {
+    // `store-load.ts` reads this to refuse a fetched in-flight turn that is OLDER than
+    // what the live stream has already delivered, so the number has to be readable.
+    resetStore("chat-wsq");
+    expect(chunkWatermark("chat-wsq", "m-live")).toBeUndefined();
+
+    appendChunk("chat-wsq", "m-live", "a", false, 0, "", 4);
+
+    expect(chunkWatermark("chat-wsq", "m-live")).toBe(4);
+    // Keyed on the MESSAGE as well as the chat: a mark for the previous turn says nothing
+    // about this one, and reading it as one would refuse the new turn's whole copy.
+    expect(chunkWatermark("chat-wsq", "m-other")).toBeUndefined();
+    clearChunkWatermark("chat-wsq");
+  });
+
+  it("a seq-0 chunk applies without lowering the mark", () => {
+    // Seq 0 means "an older server, or a frame with no sequence", so it is applied — but
+    // recording it as the mark would let every chunk the server already folded in arrive
+    // again, which is the gate above defeated by its own writer.
+    resetStore("chat-wsz");
+    setChunkWatermark("chat-wsz", "m-snap", 5);
+
+    appendChunk("chat-wsz", "m-snap", "legacy", false, 0, "", 0);
+
+    expect(chunkWatermark("chat-wsz", "m-snap")).toBe(5);
+    clearChunkWatermark("chat-wsz");
+  });
+
+  it("a new message id replaces the mark rather than keeping the old turn's", () => {
+    // A different id is a fresh turn, whose own seq starts from 1 again — maxing against
+    // the previous turn's mark would drop the whole of the new one.
+    resetStore("chat-wsn");
+    setChunkWatermark("chat-wsn", "m-old", 99);
+
+    appendChunk("chat-wsn", "m-new", "next turn", false, 0, "", 1);
+
+    expect(chunkWatermark("chat-wsn", "m-new")).toBe(1);
+    expect(chunkWatermark("chat-wsn", "m-old")).toBeUndefined();
+    clearChunkWatermark("chat-wsn");
   });
 });
 

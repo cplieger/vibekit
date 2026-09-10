@@ -8,6 +8,7 @@
 // clicked rather than WHICH surface to open:
 //
 //   a changed filename, a ledger row  -> openChange
+//   a card's `+N -M` stats            -> openCallDiff
 //   `Review changes` on a turn        -> openChangeSet
 //   a search hit, a path:line link    -> openAtLine
 //   a fetched URL                     -> openExternal
@@ -32,7 +33,7 @@
 // can interleave with or erase anything written into it.
 // ---------------------------------------------------------------------------
 
-import { openFile, openFileGitDiff } from "./editor-openers.js";
+import { openFile, openFileDiff, openFileGitDiff } from "./editor-openers.js";
 import { toggleGitView } from "./tabs.js";
 import { isSafeURL } from "./url-safety.js";
 import { absPath } from "./workspace.js";
@@ -59,6 +60,16 @@ export function openChange(path: string, ref = "HEAD"): void {
     return;
   }
   openFileGitDiff(absPath(path), ref);
+}
+
+/** Open a tool call's OWN before/after pair — the narrower question a card's
+ *  `+N -M` link asks, against openChange's "how does this file stand vs git".
+ *  A ToolDiff path is relative, so it crosses the seam openChange documents. */
+export function openCallDiff(path: string, oldText: string, newText: string): void {
+  if (path === "") {
+    return;
+  }
+  openFileDiff(absPath(path), oldText, newText);
 }
 
 /** Open a MULTI-FILE review — the git view's changes tab.

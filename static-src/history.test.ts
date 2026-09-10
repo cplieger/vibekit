@@ -86,7 +86,7 @@ const noop = (): void => {
   /* noop */
 };
 vi.mock("./editor-openers.js", () => ({ openFileDiff: noop }));
-vi.mock("./navigate.js", () => ({ openChange: noop, openAtLine: noop }));
+vi.mock("./navigate.js", () => ({ openChange: noop, openAtLine: noop, openCallDiff: noop }));
 vi.mock("./scroll.js", () => ({
   setUserScrolledUp: noop,
   preserveReadingPosition: (fn: () => void) => {

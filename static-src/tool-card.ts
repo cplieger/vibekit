@@ -18,8 +18,7 @@ import { fileIcon, toolIcon, outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
-import { openFileDiff } from "./editor-openers.js";
-import { openChange, openAtLine } from "./navigate.js";
+import { openChange, openAtLine, openCallDiff } from "./navigate.js";
 import { lineDiff, windowHunks, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
 import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
@@ -806,7 +805,7 @@ export function insertDiffPreview(
   );
   statBtn.addEventListener("click", (e: Event) => {
     e.stopPropagation();
-    openFileDiff(filePath, src.oldText, src.newText, { oldLabel: "before", newLabel: "after" });
+    openCallDiff(filePath, src.oldText, src.newText);
   });
   wrap.appendChild(statBtn);
 

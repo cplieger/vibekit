@@ -23,7 +23,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ModelInfo, Session } from "./types.js";
-import { humanName } from "./strings.js";
+import { humanName, rateLabel } from "./strings.js";
 import { $, setBusy } from "./dom.js";
 import { getActive, activeSession, isEmptyChat } from "./store.js";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
@@ -197,12 +197,15 @@ class ModelPickerController {
   }
 
   private buildPickerBtn(m: ModelInfo, currentModelId: string): HTMLElement {
+    const rate = rateLabel(m.rate_multiplier);
     const btn = el(
       "button",
       { "data-model": m.model_id, role: "option" },
       el("span", { className: "picker-name" }, humanName(m.model_name || m.model_id)),
-      el("span", { className: "picker-meta" }, `${String(m.rate_multiplier)}x credits`),
     );
+    if (rate !== "") {
+      btn.append(el("span", { className: "picker-meta" }, `${rate} credits`));
+    }
     btn.addEventListener("click", () => {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const grid = $.modelPicker.querySelector<HTMLElement>(".picker-grid")!;

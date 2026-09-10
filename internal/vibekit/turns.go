@@ -173,3 +173,32 @@ type TurnSummary struct {
 	// the user asked for it.
 	AgentInitiated bool `json:"agent_initiated,omitempty"`
 }
+
+// LiveTurn is the in-flight turn's accumulated assistant message, as the single-chat
+// GET carries it beside `messages`.
+//
+// It exists because the in-flight reply reaches the chat file only at turn end, so the
+// window that response serves has no carrier for it: `turn_open` states that a turn is
+// running and the transcript that describes it was, until this field, reachable through
+// the SSE connect replay alone — a channel gated on a declaration the client makes
+// before it knows which chat it will show. A SIBLING field rather than an extra element
+// in `messages`, so `has_more`, `turn_offset`, `turn_segment_closed` and `message_count`
+// all keep meaning "what the file holds".
+//
+// A STRUCT rather than the four values SnapshotCapped answers with: two of those are
+// adjacent bools, and a transposed pair at the one call site compiles and is silent in
+// both directions.
+type LiveTurn struct {
+	// Message is the turn as accumulated so far, field-for-field the shape assembled at
+	// turn end so it renders byte-equivalently to the turn that replaces it.
+	Message Message `json:"message"`
+	// ChunkSeq is the last delta folded into Message (see MessageChunkPayload.Seq). The
+	// client's dedup watermark: a chunk at or below it is already in here.
+	ChunkSeq int64 `json:"chunk_seq"`
+	// Truncated reports that the cap withheld part of Message, so the payload carries
+	// the TAIL of the turn and the rest arrives with message_appended.
+	//
+	// NEVER `omitempty`, for TurnStatePayload.Truncated's reason: an absent marker must
+	// not be readable as "complete", which is what makes a capped payload admissible.
+	Truncated bool `json:"truncated"`
+}

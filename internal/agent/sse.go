@@ -237,6 +237,16 @@ var connectSnapshotCaps = buffer.SnapshotCaps{
 	Blocks:          64,
 }
 
+// liveTurnGETCaps bounds the in-flight turn the transcript GET carries. The SAME
+// dimensions as connectSnapshotCaps because the reader's need is the same one — the tail
+// of the reply being written now — and stating them separately is what lets the two
+// diverge later without one channel silently inheriting the other's policy.
+//
+// Deliberately NOT narrowed by a remaining budget: that GET serves ONE chat, so there is
+// no fanout to divide. Its cost is charged against the caller's own ?max_bytes= instead
+// (internal/chat's serveChatMessages), so the response stays inside the page budget.
+var liveTurnGETCaps = connectSnapshotCaps
+
 // streamInitialState writes the connected handshake, then replays this client's
 // outstanding state so a reconnecting browser rebuilds its UI as it was.
 // ConnectedPayload carries the ring floor/head so the client can detect a replay

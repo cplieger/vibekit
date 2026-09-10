@@ -209,6 +209,7 @@ vi.mock("./editor-openers.js", () => ({
   // properties off a namespace object. `undefined` is what the node runner gave
   // these, so no path under test changes behavior.
   openFile: undefined,
+  openFileDiff: undefined,
   openFileGitDiff: vi.fn(),
 }));
 vi.mock("./actions/permissions.js", () => ({ editNativeRule: { dispatch: vi.fn() } }));
@@ -1224,8 +1225,13 @@ describe("the ring is painted at the size of the disc beside it", () => {
     // the rule: the mark's radius is a calc over --dot-size, so the number a reader
     // sees is the resolved one and a token retune moves it. Half the diameter IS a
     // circle, so the assertion is the gap between the two.
+    const { setTabRunStatus } = await import("./tabs.js");
     const id = await openSubject("chat", "c1");
     await paint();
+    // A STATE first, because the mark takes no box without one (12-tabs.css): it is
+    // revealed by `[data-status]`, so an unpainted mark measures 0 and every ratio
+    // below would divide by it.
+    setTabRunStatus(id, "working", { total: 1, working: 1, waiting: 0, input: 0 });
     const row = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
     const mark = row?.querySelector<HTMLElement>(".tab-run-dot");
     const dot = row?.querySelector<HTMLElement>(".tab-status-dot");
@@ -2198,21 +2204,24 @@ describe("the dot is local and costs the projection nothing", () => {
 describe("the leading dot slot is one width for every state", () => {
   const tabs = loadCSS("12-tabs.css");
 
-  it("derives both slot margins from the dot tokens, never a literal", () => {
-    // The generic slot rule is computed for the DISC, so the smaller diamond
-    // would reserve less than every other state — and the chat's name would move
-    // sideways at the exact moment its status flipped to or from failed, which is
-    // the one moment the reader is watching that row. Each is derived from the
-    // token it actually renders at, so changing --dot-size cannot desync them.
+  it("derives both slot margins from the tokens they measure, never a literal", () => {
+    // Two derivations per rule and neither may be a number. The SLOT is the kind
+    // glyph's, so it reads --icon-ui: that token is 1rem on a fine pointer and
+    // 1.125rem on a coarse one, and the 0.875rem this used to spell was 2px short of
+    // the glyph on every desktop and 4px on every touch device — a shared text
+    // origin the rule claimed and did not have. The MARK is whichever dot token that
+    // state paints, so the smaller diamond does not reserve less than every other
+    // state, which would move a chat's name at the exact moment its status flipped
+    // to or from failed.
     const generic = ruleContaining(tabs, ".tab-status-dot:first-child", "top");
-    expect(generic.body).toContain("calc((0.875rem - var(--dot-size)) / 2)");
+    expect(generic.body).toContain("calc((var(--icon-ui) - var(--dot-size)) / 2)");
 
     const diamond = ruleContaining(
       tabs,
       '.tab-status-dot[data-status="failed"]:first-child',
       "top",
     );
-    expect(diamond.body).toContain("calc((0.875rem - var(--dot-size-sm)) / 2)");
+    expect(diamond.body).toContain("calc((var(--icon-ui) - var(--dot-size-sm)) / 2)");
   });
 
   it("keeps the diamond on the small token, so the override stays paired", () => {

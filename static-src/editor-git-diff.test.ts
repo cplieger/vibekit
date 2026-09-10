@@ -377,3 +377,31 @@ describe("which button exits which diff", () => {
     expect(shown()).toBe(false);
   });
 });
+
+// Editing needs the file's own text, so `loaded` decides. Both diffs staged above
+// arrive with a buffer; a card's `+N -M` pair arrives without one, and the read
+// that fetches it can fail for a file the agent has since deleted. An enabled Edit
+// there opens an empty box over real content, and `loadedHash` is empty too, so a
+// save would write the emptiness rather than being refused.
+describe("the Edit button in a diff", () => {
+  it("offers Edit when the buffer is loaded", () => {
+    expect.assertions(2);
+    _setReposForTest(repos({}));
+    const state = stage(PATH);
+    state.mode.value = { kind: "diff", diffSource: unsavedDiffSource("before", "after") };
+    renderDiffModeUI(state);
+    expect($.editorEditBtn.classList.contains("hidden")).toBe(false);
+    expect($.editorEditBtn.disabled).toBe(false);
+  });
+
+  it("withholds Edit for the same diff with no buffer behind it", () => {
+    expect.assertions(2);
+    _setReposForTest(repos({}));
+    const state = stage(PATH);
+    state.loaded = false;
+    state.mode.value = { kind: "diff", diffSource: unsavedDiffSource("before", "after") };
+    renderDiffModeUI(state);
+    expect($.editorEditBtn.classList.contains("hidden")).toBe(true);
+    expect($.editorEditBtn.disabled).toBe(true);
+  });
+});

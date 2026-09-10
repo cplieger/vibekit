@@ -18,6 +18,7 @@ vi.mock("./editor-openers.js", () => ({
   // properties off a namespace object. `undefined` is what the node runner gave
   // these, so no path under test changes behavior.
   openFileGitDiff: undefined,
+  openFileDiff: undefined,
   openFile: vi.fn(),
 }));
 

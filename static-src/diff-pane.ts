@@ -1,20 +1,8 @@
-// ---------------------------------------------------------------------------
-// Diff pane: renders a DiffLine[] in one of two shapes, from the same data.
+// Diff pane: one `DiffLine[]` rendered as two columns (comparing two VERSIONS of
+// a file) or as one (reading a CHANGE). Unified is the cheaper path rather than an
+// extra one, because `DiffLine[]` is already a flat unified array.
 //
-//   two-pane (default) — old on the left, new on the right, scroll-synced.
-//     For comparing two VERSIONS of a whole file: the git panel's changed-file
-//     click and the editor's diff-vs-saved.
-//   unified (`unified: true`) — one column. For reading a CHANGE, which is what
-//     a chat transcript does.
-//
-// Unified is the cheaper path, not an extra one: DiffLine[] is already a flat
-// unified array, and the two-pane form is derived from it by pushing every line
-// into both columns and wiring scroll sync. So this is the same loop into one
-// column with the sync dropped.
-//
-// Shared by chat inline previews, the editor's diff mode, and the conflict
-// compare popup.
-// ---------------------------------------------------------------------------
+// Consumers: chat inline previews, the editor's diff mode, the conflict popup.
 
 import { lineDiff, wordMarks, type CharRange, type DiffLine } from "./diff.js";
 import { highlightMarked, resolveLangHint } from "./highlight.js";
@@ -31,8 +19,8 @@ export interface DiffPaneOpts {
   newLabel?: string;
   /** Whether to show gutter line numbers. Default true. */
   lineNumbers?: boolean;
-  /** Whether to synchronize scroll between the two panes. Default true.
-   *  Turn off for the inline preview (no scrolling). Ignored when `unified`. */
+  /** Lock the two columns' HORIZONTAL scroll together. Default true, ignored when
+   *  `unified`. Vertical is not on this switch: the body is the one scroller. */
   syncScroll?: boolean;
   /** Render ONE column instead of two. Default false.
    *
@@ -43,14 +31,8 @@ export interface DiffPaneOpts {
   unified?: boolean;
   /** Language hint for syntax highlighting: a file PATH, a bare extension, or a
    *  highlighter language id (`resolveLangHint` accepts all three). Applies to
-   *  BOTH shapes.
-   *
-   *  It used to be unified-only, on the reasoning that highlighting one side of
-   *  a deletion is misleading. That contradicted its own sibling: the unified
-   *  shape highlights deletions deliberately, because "what did it replace my
-   *  function with" is frequently the actual question, and a reader who clicked
-   *  through from an inline preview landed on a flatter rendering than the peek
-   *  that sent them. Both shapes highlight both sides now. */
+   *  BOTH shapes, deletions included: "what did it replace my function with" is
+   *  frequently the question, so neither side is flattened. */
   lang?: string;
   /** Source texts. When supplied, the pane grows a "Ignore whitespace"
    *  toggle in the header that re-diffs and re-renders in place. If
@@ -62,16 +44,14 @@ export interface DiffPaneOpts {
    *  with `source`: when `source` is set, the pane handles toggling
    *  internally and this callback is ignored. */
   onToggleWhitespace?: (ignoreWhitespace: boolean) => void;
-  /** Draw the change map beside the columns. Default true for the two-pane
-   *  shape, ignored for `unified` (whose column is not the vertical scroller,
-   *  so there is no scroll position for a map to report). */
+  /** Draw the change map beside the columns. Default true for two-pane, ignored
+   *  for `unified`: a mark's SIDE carries its kind and needs two columns. */
   changeMap?: boolean;
 }
 
-/** The rows `renderDiffPane` keeps across a whitespace re-diff: the toolbar and
- *  the label row. Everything else — the body, the "+N more" footer, the
- *  no-changes state — is derived from the diff and is rebuilt. */
-const CHROME_ROWS = ".diff-pane-toolbar, .diff-pane-header";
+/** What survives a whitespace re-diff. The label row does not: in the two-pane
+ *  shape it is a row of the body's own grid. */
+const CHROME_ROWS = ".diff-pane-toolbar";
 
 /** Build a two-pane diff element. The caller appends it to the DOM. */
 export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTMLDivElement {
@@ -87,16 +67,17 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
       el("div", { className: "diff-pane-toolbar" }, buildWhitespaceToggle(container, opts)),
     );
   }
-  if (opts.oldLabel !== undefined || opts.newLabel !== undefined) {
-    container.appendChild(
-      el(
-        "div",
-        { className: "diff-pane-header" },
-        el("span", { className: "diff-pane-label diff-pane-label-old" }, opts.oldLabel ?? ""),
-        el("span", { className: "diff-pane-label diff-pane-label-new" }, opts.newLabel ?? ""),
-      ),
-    );
-  }
+  // Appended late: the two-pane shape puts it inside the body, so a caption's
+  // cell and its column are one grid track and cannot drift.
+  const header =
+    opts.oldLabel !== undefined || opts.newLabel !== undefined
+      ? (el(
+          "div",
+          { className: "diff-pane-header" },
+          el("span", { className: "diff-pane-label diff-pane-label-old" }, opts.oldLabel ?? ""),
+          el("span", { className: "diff-pane-label diff-pane-label-new" }, opts.newLabel ?? ""),
+        ) as HTMLDivElement)
+      : null;
 
   const unified = opts.unified === true;
   const limit = opts.maxRows ?? Number.POSITIVE_INFINITY;
@@ -109,6 +90,9 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
   // changed-file link diffs HEAD against the working tree, so once the write is
   // committed the two agree.
   if (!lines.some((l) => l.kind !== "ctx")) {
+    if (header !== null) {
+      container.appendChild(header);
+    }
     container.appendChild(
       el(
         "div",
@@ -126,6 +110,9 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
 
   if (unified) {
     container.classList.add("diff-pane-unified");
+    if (header !== null) {
+      container.appendChild(header);
+    }
     const col = el("div", { className: "diff-col diff-col-unified" }) as HTMLDivElement;
     container.appendChild(el("div", { className: "diff-pane-body" }, col));
     for (const line of lines) {
@@ -138,10 +125,29 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
     return finishPane(container, lines, rowCount, opts);
   }
 
-  const leftCol = el("div", { className: "diff-col diff-col-old" }) as HTMLDivElement;
-  const rightCol = el("div", { className: "diff-col diff-col-new" }) as HTMLDivElement;
-  const body = el("div", { className: "diff-pane-body" }, leftCol, rightCol) as HTMLDivElement;
-  container.appendChild(body);
+  // The body is the one vertical scroller and the columns are cells of its grid,
+  // so the two sides cannot shear. Reasoning: `vibekit-ui.md` "Diff viewer".
+  //
+  // A column is a tab stop because it is a scroll container: arrows take its own
+  // axis and bubble to the body for the other, so one stop reaches both and
+  // neither region is keyboard-unreachable (WCAG 2.1.1).
+  const colAttrs = (side: string): Record<string, string> => ({
+    className: `diff-col diff-col-${side}`,
+    tabindex: "0",
+  });
+  const leftCol = el("div", colAttrs("old")) as HTMLDivElement;
+  const rightCol = el("div", colAttrs("new")) as HTMLDivElement;
+  const body = el("div", { className: "diff-pane-body diff-pane-split" }) as HTMLDivElement;
+  if (header !== null) {
+    body.appendChild(header);
+  }
+  body.appendChild(leftCol);
+  body.appendChild(rightCol);
+
+  // The map and the horizontal bar are the scroller's SIBLINGS: a cell of its grid
+  // is as tall as the file, and both have to sit at the scrollport's edge.
+  const viewport = el("div", { className: "diff-pane-viewport" }, body) as HTMLDivElement;
+  container.appendChild(viewport);
 
   for (const line of lines) {
     if (rowCount >= limit) {
@@ -153,14 +159,14 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
   finishPane(container, lines, rowCount, opts);
 
   if (syncScroll) {
-    wireSyncScroll(leftCol, rightCol);
+    wireHorizontalScroll(viewport, leftCol, rightCol);
   }
 
   if (opts.changeMap !== false && rowCount > 0) {
     container.classList.add("diff-pane-mapped");
     const map = buildChangeMap(lines, rowCount);
-    body.appendChild(map);
-    wireChangeMap(map, leftCol, rightCol);
+    viewport.appendChild(map);
+    wireChangeMap(map, body);
   }
 
   return container;
@@ -304,21 +310,52 @@ function populateRow(
   );
 }
 
-function wireSyncScroll(left: HTMLDivElement, right: HTMLDivElement): void {
-  let locked = false;
-  const sync = (src: HTMLDivElement, dst: HTMLDivElement) => (): void => {
-    if (locked) {
-      return;
-    }
-    locked = true;
-    dst.scrollTop = src.scrollTop;
-    dst.scrollLeft = src.scrollLeft;
-    requestAnimationFrame(() => {
-      locked = false;
-    });
+/** Give the columns one shared horizontal scrollbar at the bottom of the
+ *  SCROLLPORT: a column is as tall as the file, so its own bar would sit below
+ *  every scroll position but the last. Contract, and the two widths that make it
+ *  correct: `vibekit-ui.md` "Diff viewer". */
+function wireHorizontalScroll(
+  viewport: HTMLDivElement,
+  left: HTMLDivElement,
+  right: HTMLDivElement,
+): void {
+  const spacer = el("div", { className: "diff-pane-hbar-spacer" }) as HTMLDivElement;
+  // A pointer duplicate of scrolling the focusable columns already provide.
+  const bar = el(
+    "div",
+    { className: "diff-pane-hbar", "aria-hidden": "true" },
+    spacer,
+  ) as HTMLDivElement;
+  viewport.appendChild(bar);
+
+  // Guarded on the values differing, so a write's own scroll event writes nothing
+  // and no lock has to be held across a frame.
+  const drive =
+    (from: HTMLElement, ...targets: HTMLElement[]) =>
+    (): void => {
+      for (const to of targets) {
+        if (to.scrollLeft !== from.scrollLeft) {
+          to.scrollLeft = from.scrollLeft;
+        }
+      }
+    };
+  bar.addEventListener("scroll", drive(bar, left, right));
+  left.addEventListener("scroll", drive(left, right, bar));
+  right.addEventListener("scroll", drive(right, left, bar));
+
+  const measure = (): void => {
+    const span = Math.max(left.scrollWidth, right.scrollWidth);
+    const range = span - left.clientWidth;
+    // A track with no thumb is a control that does nothing.
+    bar.classList.toggle("is-idle", range <= 1);
+    // The bar spans BOTH columns while the range is one column's, so the spacer
+    // buys it that RANGE rather than that width.
+    spacer.style.inlineSize = `${String(bar.clientWidth + Math.max(0, range))}px`;
+    viewport.style.setProperty("--diff-hspan", `${String(span)}px`);
   };
-  left.addEventListener("scroll", sync(left, right));
-  right.addEventListener("scroll", sync(right, left));
+  // Fires once on observe, which is the first real measurement: the pane is
+  // detached while it is built, so every width reads 0 until the caller appends it.
+  new ResizeObserver(measure).observe(left);
 }
 
 // --- Whitespace toggle ---
@@ -378,47 +415,35 @@ function buildWhitespaceToggle(container: HTMLDivElement, opts: DiffPaneOpts): H
 
 // --- Change map ---
 
-/** One contiguous run of changed rows, as the map paints it. `mod` is a run
- *  holding both sides of a rewrite. */
+/** One contiguous run of changed rows of a single kind. */
 interface ChangeRun {
   readonly start: number;
   readonly len: number;
-  readonly kind: "add" | "del" | "mod";
+  readonly kind: "add" | "del";
 }
 
-/** Group the changed rows into runs. Row INDEX is the unit rather than a line
- *  number: every row is the same height (`white-space: pre`, so nothing wraps)
- *  and both columns hold one row per `DiffLine`, so an index maps linearly onto
- *  the scroller and one run set describes both sides. */
+/** Group the changed rows into runs, breaking on a KIND change as well as on a
+ *  context row: the map may name only kinds the rows show. Row INDEX is the unit
+ *  because every row is the same height. */
 function changeRuns(lines: readonly DiffLine[], rowCount: number): ChangeRun[] {
   const runs: ChangeRun[] = [];
   const end = Math.min(lines.length, rowCount);
   let start = -1;
-  let adds = 0;
-  let dels = 0;
+  let open: "add" | "del" | null = null;
   const flush = (at: number): void => {
-    if (start < 0) {
-      return;
+    if (start >= 0 && open !== null) {
+      runs.push({ start, len: at - start, kind: open });
     }
-    runs.push({
-      start,
-      len: at - start,
-      kind: adds > 0 && dels > 0 ? "mod" : adds > 0 ? "add" : "del",
-    });
     start = -1;
-    adds = 0;
-    dels = 0;
+    open = null;
   };
   for (let i = 0; i < end; i++) {
     const kind = lines[i]?.kind;
     if (kind === "add" || kind === "del") {
-      if (start < 0) {
+      if (kind !== open) {
+        flush(i);
         start = i;
-      }
-      if (kind === "add") {
-        adds++;
-      } else {
-        dels++;
+        open = kind;
       }
       continue;
     }
@@ -428,10 +453,9 @@ function changeRuns(lines: readonly DiffLine[], rowCount: number): ChangeRun[] {
   return runs;
 }
 
-/** Build the map: one mark per run, plus the viewport box `wireChangeMap` drives.
- *  `aria-hidden` and not focusable, because the rows are the accessible statement
- *  of what changed and this is a pointer shortcut to a position they carry. The
- *  side-carries-kind rule is in `vibekit-ui.md` "Diff viewer". */
+/** Build the map: one mark per run. `aria-hidden` and not focusable, because the
+ *  rows are the accessible statement of what changed and this is a pointer
+ *  shortcut to a position they carry. Contract: `vibekit-ui.md` "Diff viewer". */
 function buildChangeMap(lines: readonly DiffLine[], rowCount: number): HTMLDivElement {
   const map = el("div", {
     className: "diff-map",
@@ -446,43 +470,12 @@ function buildChangeMap(lines: readonly DiffLine[], rowCount: number): HTMLDivEl
     mark.style.height = pct(run.len);
     map.appendChild(mark);
   }
-  map.appendChild(el("div", { className: "diff-map-view" }));
   return map;
 }
 
-/** Track the columns' scroll position in the viewport box, and let a press on
- *  the map move it. `left` is the scroller the map reads and writes; sync scroll
- *  carries the move to `right`, and both are listened to so a pane with sync off
- *  still reports whichever the reader scrolled. */
-function wireChangeMap(map: HTMLDivElement, left: HTMLDivElement, right: HTMLDivElement): void {
-  const view = map.querySelector<HTMLDivElement>(".diff-map-view");
-  if (view === null) {
-    return;
-  }
-  let queued = false;
-  const paint = (): void => {
-    if (queued) {
-      return;
-    }
-    queued = true;
-    requestAnimationFrame(() => {
-      queued = false;
-      const total = left.scrollHeight;
-      if (total <= 0) {
-        return;
-      }
-      const visible = Math.min(1, left.clientHeight / total);
-      // Nothing scrolls, so a box spanning the whole track would claim a
-      // position the reader cannot leave.
-      view.style.display = visible >= 1 ? "none" : "";
-      view.style.top = `${((left.scrollTop / total) * 100).toFixed(4)}%`;
-      view.style.height = `${(visible * 100).toFixed(4)}%`;
-    });
-  };
-  left.addEventListener("scroll", paint);
-  right.addEventListener("scroll", paint);
-  paint();
-
+/** Let a press or drag on the map scroll the body. The map REPORTS nothing:
+ *  `body`'s own scrollbar thumb is where the reader is. */
+function wireChangeMap(map: HTMLDivElement, body: HTMLDivElement): void {
   const jumpTo = (clientY: number): void => {
     const box = map.getBoundingClientRect();
     if (box.height <= 0) {
@@ -491,7 +484,7 @@ function wireChangeMap(map: HTMLDivElement, left: HTMLDivElement, right: HTMLDiv
     const frac = Math.min(1, Math.max(0, (clientY - box.top) / box.height));
     // Centre the landing on the press: a reader aiming at a mark wants it in
     // view, not pinned to the top edge where its context above is cut off.
-    left.scrollTop = Math.max(0, frac * left.scrollHeight - left.clientHeight / 2);
+    body.scrollTop = Math.max(0, frac * body.scrollHeight - body.clientHeight / 2);
   };
   map.addEventListener("pointerdown", (e: PointerEvent) => {
     map.setPointerCapture(e.pointerId);

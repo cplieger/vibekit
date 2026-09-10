@@ -32,6 +32,21 @@ const TRIMMED: { name: string; sheet: string; clips: boolean }[] = [
   { name: "ctx-model-pill", sheet: "15-input.css", clips: true },
   { name: "pill-role-label", sheet: "15-input.css", clips: true },
   { name: "sidebar-email", sheet: "10-shell-app.css", clips: true },
+  // The tab strip's title, enrolled last and the row a reader looks at most: it sits
+  // in an `align-items: center` row beside an 8px dot, a workflow mark and the ×, so
+  // the untrimmed box left the words low against all three.
+  { name: "tab-name", sheet: "10-shell-app.css", clips: true },
+  // The model pill's reasoning-tier readout, which shares its flex line with the
+  // trimmed `#ctx-model-pill` — so the two labels of one control disagreed with each
+  // other by the offset above rather than merely sitting low together.
+  { name: "pill-model-effort", sheet: "15-input.css", clips: false },
+  // The model list's rows. Every row was low; only the ACTIVE one showed it, because
+  // that is the one carrying an accent fill for the offset to be measured against.
+  { name: "pill-model-item", sheet: "15-input.css", clips: false },
+  // The effort slider's knob label was a seventh member and left with the label: the
+  // knob carries no text now, and the caption that names its tier (`.effort-label`)
+  // sits on its own line rather than in a centred flex row, so it has no offset to
+  // correct.
 ];
 
 const SHEETS = ["15-input.css", "10-shell-app.css"];

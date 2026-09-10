@@ -402,6 +402,10 @@ type configOption struct {
 
 // configChoice is one selectable value in a select-type config option, or a group
 // of nested choices when Options is non-empty.
+//
+// Meta stays `json.RawMessage` so choiceMeta can early-return on an absent block
+// rather than decoding an empty object into a zero value it cannot tell apart from
+// a decode failure.
 type configChoice struct {
 	Name        string          `json:"name"`
 	Value       string          `json:"value"`
@@ -538,40 +542,31 @@ func flattenModelChoices(choices []configChoice) []vibekit.SessionModel {
 		if c.Value == "" {
 			continue
 		}
-		effort := choiceEffort(c.Meta)
+		meta := choiceMeta(c.Meta)
 		out = append(out, vibekit.SessionModel{
 			ID: c.Value, Name: c.Name, Description: c.Description,
-			HasEffort:          effort.HasEffort,
-			DefaultEffortLevel: effort.Default,
+			HasEffort:          meta.Kiro.HasEffort,
+			DefaultEffortLevel: meta.Kiro.DefaultEffortLevel,
+			// The field this catalog used to drop. handleConfigTemplate prefers this
+			// live catalog over the template's, so an unset multiplier here is the
+			// number the picker renders — `1x` for every model.
+			RateMultiplier: meta.Kiro.RateMultiplier,
 		})
 	}
 	return out
 }
 
-// choiceEffortMeta is the reasoning-effort half of a model choice's `_meta.kiro`.
-// Only `defaultEffortLevel` is stamped against kiro-cli 2.18.0; `hasEffort` is not.
-// The TIER LIST is deliberately absent — it belongs to the `effortLevel` option.
-type choiceEffortMeta struct {
-	Default   string
-	HasEffort bool
-}
-
-// choiceEffort reads _meta.kiro's effort fields off a config-option model choice.
-// Absent meta yields the zero value, which the client reads as "not plumbed" and
-// answers with its own canonical level list rather than an empty control.
-func choiceEffort(meta json.RawMessage) choiceEffortMeta {
-	if len(meta) == 0 {
-		return choiceEffortMeta{}
+// choiceMeta decodes a model choice's `_meta` block. Absent meta yields the zero
+// value, which the client reads as "not plumbed": no effort tiers, and — since
+// `rate_multiplier` is `omitempty` — no credit readout rather than a wrong one.
+//
+// The TIER LIST is deliberately absent from the block — it belongs to the
+// `effortLevel` option, not to a model choice.
+func choiceMeta(raw json.RawMessage) vibekit.ModelChoiceMeta {
+	var m vibekit.ModelChoiceMeta
+	if len(raw) == 0 {
+		return m
 	}
-	var m struct {
-		Kiro struct {
-			DefaultEffortLevel string `json:"defaultEffortLevel"`
-			HasEffort          bool   `json:"hasEffort"`
-		} `json:"kiro"`
-	}
-	_ = json.Unmarshal(meta, &m)
-	return choiceEffortMeta{
-		HasEffort: m.Kiro.HasEffort,
-		Default:   m.Kiro.DefaultEffortLevel,
-	}
+	_ = json.Unmarshal(raw, &m)
+	return m
 }

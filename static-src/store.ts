@@ -401,7 +401,7 @@ export function evictChatMessages(chatID: string): void {
   delete s.turn_segment_closed;
   s.residency = "evicted";
   msgIndex.delete(chatID);
-  clearSnapshotSeq(chatID);
+  clearChunkWatermark(chatID);
   messagesScheduled.delete(chatID);
   pendingCause.delete(chatID);
   flushedCause.delete(chatID);
@@ -1234,7 +1234,7 @@ export function removeChat(id: string): void {
   batch(() => {
     sessions.remove(id);
     msgIndex.delete(id);
-    clearSnapshotSeq(id);
+    clearChunkWatermark(id);
     clearLiveTurnMessage(id);
     clearTruncatedSnapshots(id);
     // Every per-message streaming signal the chat's window minted: the renderer's
@@ -1533,19 +1533,52 @@ export function indexOfSession(id: string): number {
   return sessions.ids.peek().indexOf(id);
 }
 
-/** Per-chat chunk-sequence watermark from a connect-time turn_state snapshot: chunks with
- *  seq <= the watermark are already folded into the snapshot message and must be dropped,
- *  not re-appended. One in-flight turn per chat, so the map is keyed by chat id. */
-const snapshotSeqs = new Map<string, { messageID: string; seq: number }>();
+/** Per-chat HIGH-WATER MARK of the chunk sequence folded into that chat's in-flight
+ *  assistant message: a chunk at or below it is already in the message and must be dropped
+ *  rather than re-appended. One in-flight turn per chat, so the map is keyed by chat id.
+ *
+ *  TWO writers, and the second is what makes it a WATERMARK rather than one snapshot's seq.
+ *  A server-sent point-in-time copy of the turn records the seq IT folded in — the connect
+ *  replay's `turn_state`, or the transcript GET's `live_turn` — and `appendChunk` raises the
+ *  mark as live chunks land. Without that second writer the mark only ever describes the
+ *  last copy the server sent, so a copy fetched LATER cannot be compared against what this
+ *  client already holds: `mergeMessage` replaces content and blocks with the incoming's
+ *  whenever they are non-empty, so a stale copy would shrink a fuller local accumulation. */
+const chunkWatermarks = new Map<string, { messageID: string; seq: number }>();
 
-/** Record a turn_state snapshot's chunk watermark for a chat. */
-export function setSnapshotSeq(chatID: string, messageID: string, seq: number): void {
-  snapshotSeqs.set(chatID, { messageID, seq });
+/** Record the chunk seq a server-sent copy of the in-flight turn folded in. Unconditional:
+ *  the copy is a statement about what the SERVER sent, and a caller holding a fuller local
+ *  message refuses the copy before it gets here (`store-load.ts` adoptLiveTurn). */
+export function setChunkWatermark(chatID: string, messageID: string, seq: number): void {
+  chunkWatermarks.set(chatID, { messageID, seq });
 }
 
-/** Drop the chunk watermark (turn finished or chat removed). */
-export function clearSnapshotSeq(chatID: string): void {
-  snapshotSeqs.delete(chatID);
+/** Raise the mark for a chunk this client just folded in; never lower it. `seq` is the
+ *  server's `buf.chunkSeq++`, monotonic per turn, and SSE delivery is ordered per stream, so
+ *  `max` is the right operator. A DIFFERENT message id is a new turn, whose own seq replaces
+ *  the stale mark rather than being maxed against it. */
+function raiseChunkWatermark(chatID: string, messageID: string, seq: number): void {
+  const wm = chunkWatermarks.get(chatID);
+  if (wm?.messageID === messageID) {
+    if (seq > wm.seq) {
+      chunkWatermarks.set(chatID, { messageID, seq });
+    }
+    return;
+  }
+  chunkWatermarks.set(chatID, { messageID, seq });
+}
+
+/** The chunk seq already folded into this chat's copy of `messageID`, or undefined when this
+ *  client holds no mark for that message. `store-load.ts` reads it to refuse a fetched
+ *  `live_turn` that is OLDER than what the live stream has already delivered. */
+export function chunkWatermark(chatID: string, messageID: string): number | undefined {
+  const wm = chunkWatermarks.get(chatID);
+  return wm?.messageID === messageID ? wm.seq : undefined;
+}
+
+/** Drop the mark (turn finished or chat removed). */
+export function clearChunkWatermark(chatID: string): void {
+  chunkWatermarks.delete(chatID);
 }
 
 /** Message ids whose connect-time snapshot was TRUNCATED — the server capped the
@@ -1660,12 +1693,16 @@ export function appendChunk(
   if (s === undefined) {
     return;
   }
-  // Snapshot dedup: a chunk the connect-time turn_state already folded in must not
-  // double-append.
-  const wm = snapshotSeqs.get(chatID);
+  // Dedup against whatever the server has already handed this client as a whole copy of
+  // the turn — the connect replay's `turn_state`, or the transcript GET's `live_turn`.
+  const wm = chunkWatermarks.get(chatID);
   if (wm?.messageID === messageID && seq > 0 && seq <= wm.seq) {
     return;
   }
+  // Past the guard, so this chunk IS being folded in. Raising the mark here is what lets a
+  // copy fetched LATER be told from a stale one: without it the mark describes only the last
+  // copy the server sent, so an intervening live chunk is invisible to that comparison.
+  raiseChunkWatermark(chatID, messageID, seq);
   stampActivity(chatID);
   const mi = getMsgIndex(chatID, s.messages);
   const idx = mi.get(messageID) ?? -1;

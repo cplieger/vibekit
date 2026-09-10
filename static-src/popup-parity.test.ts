@@ -44,12 +44,20 @@ interface Popup {
 type Prop = "paddingTop" | "paddingLeft" | "minInlineSize" | "maxBlockSize" | "bodyFontSize";
 
 /** The shared answer per property, in resolved pixels at the fine tier.
- *  --sp-2 is 8px, 14rem is 224px, 16rem is 256px, --fs-base is 13px. */
+ *  --sp-2 is 8px, 14rem is 224px, --fs-base is 13px.
+ *
+ *  `maxBlockSize` is `min(var(--pill-max-block, 26rem), 60dvh)`, and 416px is the
+ *  26rem FALLBACK rung: these cases mount a card directly, so `clampToViewport`
+ *  never runs and the measured room is unset. 26rem wins over 60dvh because the
+ *  browser project's viewport is a fixed 1280x720, where 60dvh is 432px. The two
+ *  bounds are pinned behaviourally further down ("caps against the MEASURED
+ *  room"), which is what keeps this literal from being the only thing standing
+ *  between the cap and a hard-coded height. */
 const EXPECTED: Record<Prop, string> = {
   paddingTop: "8px",
   paddingLeft: "8px",
   minInlineSize: "224px",
-  maxBlockSize: "256px",
+  maxBlockSize: "416px",
   bodyFontSize: "13px",
 };
 
@@ -116,7 +124,12 @@ const POPUPS: readonly Popup[] = [
       item.append(span("", "claude-opus-5"), span("pill-model-meta", "5x"));
       scroll.append(item);
       const effort = el("div", "effort-row");
-      effort.append(span("effort-label", "Effort"), el("button", "effort-btn", "max"));
+      const track = el("div", "effort-track");
+      // The knob carries no text: the caption above the rail names the live tier.
+      track.append(el("div", "effort-knob"));
+      const caption = span("effort-label", "Effort: ");
+      caption.append(span("effort-value", "max"));
+      effort.append(caption, track);
       return [scroll, effort];
     },
   },
@@ -260,6 +273,36 @@ describe("every popup answers one geometry", () => {
     });
   });
 
+  it("caps against the MEASURED room, not an authored height", () => {
+    // The cap is two bounds and each answers a different question, so each is
+    // asserted from the side where it governs. `--pill-max-block` is the ROOM
+    // between the viewport's top edge and the card's own bottom, published by
+    // `pill-expand.ts` on open; `60dvh` is the SHAPE bound that stops a menu
+    // filling the screen. A literal height would satisfy neither, and a literal is
+    // exactly what this replaced: 16rem allowed 254px where the chat-actions menu
+    // wanted 332px, so it scrolled with 595px free above it.
+    document.documentElement.dataset["pointer"] = "fine";
+    const card = mount({ cls: "", name: "a bare card", bodyRow: "", rows: () => [] });
+
+    // Under the shape bound, so the room governs and the cap must follow it.
+    card.style.setProperty("--pill-max-block", "120px");
+    expect(
+      getComputedStyle(card).maxBlockSize,
+      "the cap must follow the measured room, so a card in a short window cannot " +
+        "overflow the viewport it is anchored inside",
+    ).toBe("120px");
+
+    // Room past the shape bound, so 60dvh governs: 60% of the browser project's
+    // fixed 720px viewport.
+    card.style.setProperty("--pill-max-block", "99999px");
+    expect(
+      getComputedStyle(card).maxBlockSize,
+      "a menu that fills the viewport reads as a modal, which is what the " +
+        "expandable-pill pattern exists to avoid; measured, the mode list rendered " +
+        "839px tall from y=12 with the room as the only bound",
+    ).toBe("432px");
+  });
+
   it("caps every card's height WITH a way to reach what the cap hides", () => {
     // A cap without a scroll is a clip, and the content it clips is the reason
     // the card was opened. The model card is the documented exception: the CARD
@@ -356,9 +399,10 @@ describe("no popup text is below the mobile floor on a coarse pointer", () => {
   });
 
   it("keeps a caption UNDER its row, so it cannot outsize what it labels", () => {
-    // The two rungs collapsing onto one value would make `.effort-label` the same
-    // size as the five tier buttons it labels, and a card's captions the same size
-    // as its rows — which is the hierarchy the size split carries.
+    // The two rungs collapsing onto one value would make a card's captions the same
+    // size as its rows — which is the hierarchy the size split carries. Measured on
+    // the model card, where a row's own name and its `--fs-popup-meta` credit
+    // multiplier share one flex line.
     for (const tier of ["fine", "coarse"] as const) {
       document.documentElement.dataset["pointer"] = tier;
       const card = mount(POPUPS[2] as Popup);
