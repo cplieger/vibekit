@@ -30,9 +30,23 @@
 // gesture is already recorded by the time the mount is observable.
 // ---------------------------------------------------------------------------
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
+import {
+  FRAME_BUDGET_MS,
+  framesBudgetMs,
+  testTimeoutFor,
+} from "./__test-helpers__/frame-budget.js";
 import type { Message, Session } from "./types.js";
 import type { TurnSummary } from "./turn-rail.js";
+
+// This file needs MORE than the suite's shared frame budget, so it states its own.
+// Its waits do not poll a single settled value: `quiet` waits for the scroller to
+// stop moving and `park` contests the controller's own re-assert window, so each
+// one spans several rounds of pin, settle and re-measure rather than one delivery.
+// 16 frames is the measured span of that contest at the 1Hz throttle. Both describes
+// below take `testTimeoutFor` of THIS budget rather than the default, or the
+// per-test deadline preempts the wait and the failure reads as a bare timeout
+// naming no assertion — the exact defect `frame-budget.ts` warns about.
+const PIN_CONTEST_BUDGET_MS = framesBudgetMs(16);
 
 // The DOM the renderer's import graph resolves at load, nested the way the page
 // nests it: the rail mounts in the positioned OUTER wrapper, the scroller is the
@@ -214,15 +228,19 @@ function atLiveEdge(): boolean {
 async function quiet(): Promise<void> {
   let last = -1;
   let stable = 0;
-  await until(() => {
-    if (wrap.scrollTop === last) {
-      stable += 1;
-    } else {
-      stable = 0;
-      last = wrap.scrollTop;
-    }
-    return stable >= 3;
-  }, "the scroller to stop moving");
+  await until(
+    () => {
+      if (wrap.scrollTop === last) {
+        stable += 1;
+      } else {
+        stable = 0;
+        last = wrap.scrollTop;
+      }
+      return stable >= 3;
+    },
+    "the scroller to stop moving",
+    PIN_CONTEST_BUDGET_MS,
+  );
 }
 
 /** Move the scroller AS THE READER: the input event that says whose scroll it is,
@@ -256,6 +274,7 @@ async function park(top: number): Promise<void> {
       return scroll.readingState() === "reading";
     },
     `the reader parked at ${String(top)}`,
+    PIN_CONTEST_BUDGET_MS,
   );
 }
 
@@ -322,7 +341,7 @@ beforeEach(() => {
 
 describe(
   "the live-edge pin a turn mount asks for",
-  { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
+  { timeout: testTimeoutFor(PIN_CONTEST_BUDGET_MS) },
   () => {
     it("publishes a reader gesture for a turn the reader just sent", async () => {
       // The genuine case, and the one the gate must not cost: the reader asked for
@@ -435,7 +454,7 @@ describe(
 
 describe(
   "a rail jump onto a non-resident turn",
-  { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
+  { timeout: testTimeoutFor(PIN_CONTEST_BUDGET_MS) },
   () => {
     it("keeps the pick the click set, and marks the clicked turn rather than its neighbour", async () => {
       // The end-to-end path: the click sets the pick, the jump pages history in, and

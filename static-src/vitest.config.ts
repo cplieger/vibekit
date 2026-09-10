@@ -33,6 +33,8 @@ import { type PlaywrightBrowserProvider, playwright } from "@vitest/browser-play
 import { configDefaults, defineConfig } from "vitest/config";
 import { resolve } from "node:path";
 
+import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
+
 // Hold Chromium's request interception permanently ON, so a hoisted `vi.mock`
 // cannot silently fail to apply.
 //
@@ -258,11 +260,27 @@ export default defineConfig({
     // files in 28 minutes.
     retry: process.env["CI"] ? 1 : 0,
 
-    // Pure functions should complete in milliseconds. Property-based
-    // tests (fast-check 1000-iteration) need more headroom under
-    // container load — bumped from 2s to 5s. Aligns with the 10s
-    // interruptAfterTimeLimit in fc-strict-setup.ts.
-    testTimeout: 5000,
+    // The per-test default may not sit BELOW a bound this suite has already
+    // widened, or it preempts that bound and the failure reads as a bare
+    // deadline naming no assertion. Two are at 10s and this was at 5s, so it
+    // preempted both: fast-check's `interruptAfterTimeLimit` (fc-strict-setup.ts)
+    // and `vi.waitFor`'s patched default (waitfor-budget-setup.ts) — the comment
+    // this replaces claimed alignment with the first while undercutting it.
+    //
+    // `frame-budget.ts` explains why 10s is the floor for anything frame-driven:
+    // past ~49 files this browser delivers animation frames at 1Hz, so a poll on a
+    // ResizeObserver delivery, a focus move or a transitioned opacity cannot settle
+    // inside 5s however correct the code is. Measured: `rail-mark-css.test.ts` runs
+    // in 394ms alone and blew the 5s cap at file 96 of 381.
+    //
+    // Setting the default from the same helper is what makes every consumer of
+    // that budget correct by construction, rather than leaving ~30 browser files
+    // one throttle away from a false red and the next author to rediscover it. A
+    // FAILURE bound only: every consumer polls on the product's own output, so a
+    // working test returns on its first satisfied check and pays nothing. A file
+    // needing MORE still states its own (`messages-send-pin.test.ts` contests the
+    // pin for the scroller and sizes its waits at 16 frames).
+    testTimeout: testTimeoutFor(FRAME_BUDGET_MS),
     hookTimeout: 5000,
 
     // Flag tests slower than 100ms. Root-only: `slowTestThreshold` is a
