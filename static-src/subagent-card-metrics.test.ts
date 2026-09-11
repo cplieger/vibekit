@@ -50,7 +50,7 @@
 // DISCLOSURE states, both of which persist throughout history in unknowable
 // proportions, so that reserve takes the floor and never over-states. A delegate's
 // two states are LIFECYCLE states and only one of them persists: census over the 107
-// chat files on one live volume, applying `hasTurnSummary`'s own conditions to each
+// chat files on one live volume, applying `earnsTurnFooter`'s own conditions to each
 // invocation's persisted `duration_ms` and member tool calls, found 372 settled cards
 // with a footer (96.6%), 8 settled without one (2.1%) and 5 running (1.3%), plus 195
 // pipeline drivers, all settled. The fallback is consulted only before a box has
@@ -158,9 +158,15 @@ afterEach(() => {
 });
 
 /** The ledger the settled shapes rest with. `commands` and `elapsedMs` are what
- *  `hasTurnSummary` admits, and the row's tallest child is the
+ *  `earnsTurnFooter` admits, and the row's tallest child is the
  *  `.turn-ledger-summary` BUTTON -- which is the term `--hit-floor` is in the
- *  expression for. */
+ *  expression for.
+ *
+ *  THE RESERVE DID NOT MOVE when the trigger gained the info `i` and its `.sr-only`
+ *  name, and that is measured rather than inferred from a green run: the button is
+ *  24px with those two children and 24px with both removed, and the footer 33px
+ *  either way, because an `--icon-ui` glyph is shorter than the `--hit-floor` the
+ *  button is already floored at and a visually-hidden span has no box. */
 const LEDGER = { commands: 2, elapsedMs: 3_000 } as const;
 
 /** What the transcript builds for a LEAF delegate: an identity row that is itself

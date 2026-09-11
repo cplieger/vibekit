@@ -124,15 +124,22 @@ export const ICON_CANCEL = svg(
   "ui",
   '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
 );
-// The turn footer's Rewind: transport again, because the control's own name is a
-// transport verb, so it joins `ICON_CANCEL` and `ICON_PLAY` rather than starting a
-// second vocabulary. Filled for `ICON_CANCEL`'s reason — each triangle is ~6px
-// wide at --icon-ui, where a 1px outline around one is a sliver.
-export const ICON_REWIND = svg(
-  "ui",
-  '<polygon points="11 19 2 12 11 5 11 19" fill="currentColor" stroke="none"/>' +
-    '<polygon points="22 19 13 12 22 5 22 19" fill="currentColor" stroke="none"/>',
-);
+// The turn footer's Rewind: transport, because the control's own name is a transport
+// verb, so it stays alongside `ICON_CANCEL` and `ICON_PLAY` rather than starting a
+// second vocabulary.
+//
+// LINE ART, and the same silhouette it had filled. It used to be two solid
+// triangles, on the argument that each is ~6px wide at --icon-ui where a 1px outline
+// around one is a sliver. That argument is about a CLOSED shape: an open chevron has
+// no interior to become a sliver, so it takes the double-arrow-left silhouette to
+// strokes at no cost, and this stops being the one action glyph in the footer's row
+// that is a solid mass while the five beside it are outlines. `ICON_CANCEL` stays
+// filled on its own reasoning — a stop square IS its interior, and the outline
+// family reads as a checkbox at 16px.
+//
+// Left-pointing and DOUBLED, which is what keeps it clear of `.disclosure-chevron`:
+// that one is single and points right when closed, down when open.
+export const ICON_REWIND = svg("ui", '<path d="M11 18l-6-6 6-6M19 18l-6-6 6-6"/>');
 
 /* THE MODEL GLYPH — one `d`, two sizes: 20px in the empty-chat picker's heading and
  * 12px in the composer's model pill.
@@ -150,6 +157,13 @@ const MODEL_ROBOT_D =
 export const ICON_MODEL = svg("inline", MODEL_ROBOT_D);
 export const ICON_MODEL_UI = svg("ui", MODEL_ROBOT_D);
 
+// The turn footer's info-panel trigger. A stem and a dot rather than a single
+// path: the dot is drawn as a zero-length segment, which `stroke-linecap: round`
+// on the wrapper paints as a circle, so the glyph needs no `fill` of its own.
+export const ICON_INFO = svg(
+  "ui",
+  '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+);
 export const ICON_ALERT = svg(
   "ui",
   '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',

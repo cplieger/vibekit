@@ -5,6 +5,7 @@ import type {
   Message,
   Block,
   ToolCall,
+  ToolKind,
   ToolStatus,
   PlanStatus,
   FileChange,
@@ -2073,11 +2074,24 @@ function delegateOutcome(status: ToolStatus): TurnOutcome {
 function pipelineSummary(st: MsgRender, invocation: ToolCall): TurnSummaryData {
   let commands = 0;
   let reads = 0;
+  let toolMs = 0;
+  let delegateCount = 0;
+  let delegateMs = 0;
+  const kindCounts: Partial<Record<ToolKind, number>> = {};
   const changed: Record<string, FileChange> = {};
   for (const subtask of st.pipelineStages.get(invocation.id) ?? []) {
     const stage = subagentSummary(st, subtask, invocation);
     commands += stage.commands ?? 0;
     reads += stage.reads ?? 0;
+    toolMs += stage.toolMs ?? 0;
+    for (const [kind, n] of Object.entries(stage.kindCounts ?? {}) as [ToolKind, number][]) {
+      kindCounts[kind] = (kindCounts[kind] ?? 0) + n;
+    }
+    // The STAGES are this pipeline's delegates. Their own nested counts are
+    // deliberately not folded in: a grandchild is the stage's delegate, and adding it
+    // here would make "3 delegates" mean something different per pipeline.
+    delegateCount++;
+    delegateMs += stage.elapsedMs ?? 0;
     for (const [path, ch] of Object.entries(stage.changedFiles ?? {})) {
       const cur = changed[path] ?? { lines_added: 0, lines_removed: 0 };
       changed[path] = {
@@ -2086,12 +2100,22 @@ function pipelineSummary(st: MsgRender, invocation: ToolCall): TurnSummaryData {
       };
     }
   }
-  const out: TurnSummaryData = { commands, reads, changedFiles: changed };
+  const out: TurnSummaryData = {
+    commands,
+    reads,
+    changedFiles: changed,
+    toolMs,
+    kindCounts,
+    delegateCount,
+    delegateMs,
+    startedAt: invocation.ts,
+  };
   if (!isToolActive(invocation.status)) {
     out.outcome = delegateOutcome(invocation.status);
     const elapsed = invocation.duration_ms ?? 0;
     if (elapsed > 0) {
       out.elapsedMs = elapsed;
+      out.endedAt = invocation.ts + elapsed;
     }
   }
   return out;
@@ -2178,6 +2202,10 @@ function bindSubagent(
 function subagentSummary(st: MsgRender, subtask: string, invocation: ToolCall): TurnSummaryData {
   let commands = 0;
   let reads = 0;
+  let toolMs = 0;
+  let delegateCount = 0;
+  let delegateMs = 0;
+  const kindCounts: Partial<Record<ToolKind, number>> = {};
   const changed: Record<string, FileChange> = {};
   const viaBlock = new Set<string>();
   for (const b of st.blocks) {
@@ -2197,6 +2225,16 @@ function subagentSummary(st: MsgRender, subtask: string, invocation: ToolCall): 
     } else if (tc.kind === "read") {
       reads++;
     }
+    kindCounts[tc.kind] = (kindCounts[tc.kind] ?? 0) + 1;
+    const ms = tc.duration_ms ?? 0;
+    toolMs += ms;
+    // A delegate this delegate dispatched. Counted by the same predicate the turn
+    // ledger uses, so nesting is one rule rather than two — the member loop already
+    // skips `invocation` itself, so a card cannot count as its own delegate.
+    if (isSubagentInvocation(tc)) {
+      delegateCount++;
+      delegateMs += ms;
+    }
     for (const d of tc.diffs ?? []) {
       // lineDelta, not stats(lineDiff(...)): it strips the trailing newline first, so
       // these match the server's numbers (internal/buffer/linediff.go).
@@ -2209,12 +2247,28 @@ function subagentSummary(st: MsgRender, subtask: string, invocation: ToolCall): 
     }
   }
   const settled = !isToolActive(invocation.status);
-  const out: TurnSummaryData = { commands, reads, changedFiles: changed };
+  const out: TurnSummaryData = {
+    commands,
+    reads,
+    changedFiles: changed,
+    toolMs,
+    kindCounts,
+    delegateCount,
+    delegateMs,
+    // The invocation's own stamp, which is when the delegate was dispatched.
+    startedAt: invocation.ts,
+  };
   if (settled) {
     out.outcome = delegateOutcome(invocation.status);
     const elapsed = invocation.duration_ms ?? 0;
     if (elapsed > 0) {
       out.elapsedMs = elapsed;
+      // DERIVED here, unlike a turn's, and the difference is the source: a turn has
+      // wall-clock stamps at both ends and an agent-measured `turn_elapsed_ms` that
+      // is not the span between them, while a delegate has one stamp and this call's
+      // own measured duration. Withheld while the delegate runs and withheld when
+      // nothing measured it, rather than reported as equal to the start.
+      out.endedAt = invocation.ts + elapsed;
     }
   }
   return out;

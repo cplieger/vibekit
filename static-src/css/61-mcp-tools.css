@@ -179,6 +179,25 @@
   color: var(--c-green);
 }
 
+/* THE COLLAPSED ACTIONS, in TWO arms with identical declarations: 40rem on every
+ * tier, and 56rem for a pointer that is not fine. They are one rule
+ * conceptually — edit both together, the same shape as the hit-target floor's
+ * three-way split further down this file.
+ *
+ * The QUERY is what gets duplicated rather than the number named once, because a
+ * media query cannot read a custom property (`turn-rewind-css.test.ts` states
+ * this) and no style container query exists anywhere in this stylesheet set. So
+ * `56rem` cannot be a token the way `--hit-floor` is, and a source assertion in
+ * `turn-actions-overflow.test.ts` pins the two bodies equal instead.
+ *
+ * TWO arms, not three: `coarse` is a subset of `not(fine)`, so the second arm IS
+ * the no-JS fallback that 01-tokens.css writes as a separate block, and a third
+ * one would state the same rule again for a document the second already covers.
+ *
+ * ACCEPTED COST: a pre-JS document between 48rem (the app's own no-JS width
+ * proxy) and 56rem renders the collapsed `…` menu until `pointer-tier.ts` writes
+ * `fine`. Transient, self-correcting, and no information is lost — every action
+ * stays reachable through the menu meanwhile. */
 @media (width <= 40rem) {
   .turn-actions-more {
     position: relative;
@@ -231,6 +250,67 @@
   .turn-actions-group .turn-action-label {
     display: inline;
     white-space: nowrap;
+  }
+}
+
+/* The second arm. Declarations identical to the block above; the reasoning, the
+ * duplication and its cost are stated there. `:where()` so the tier gate adds no
+ * specificity, which is what keeps the two arms interchangeable rather than one
+ * outranking the other. */
+@media (width <= 56rem) {
+  :where(:root:not([data-pointer="fine"])) {
+    .turn-actions-more {
+      position: relative;
+      display: block;
+    }
+
+    .turn-actions-more > .turn-action-more {
+      display: inline-flex;
+      list-style: none;
+      font-size: 1.1rem;
+      line-height: 1;
+    }
+
+    .turn-action-more::-webkit-details-marker {
+      display: none;
+    }
+
+    .turn-actions-more:not([open]) > .turn-actions-group {
+      display: none;
+    }
+
+    .turn-actions-more[open] > .turn-actions-group {
+      position: absolute;
+      z-index: 20;
+      inset-inline-end: 0;
+      inset-block-end: calc(100% + var(--sp-2));
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--sp-1);
+      min-inline-size: 12rem;
+      padding: var(--sp-2);
+      border: 1px solid var(--c-border);
+      border-radius: var(--r);
+      background: var(--c-bg-secondary);
+      box-shadow:
+        var(--shadow-ambient),
+        0 0.5rem 1.5rem oklch(0% 0 none / 40%);
+      color: var(--c-text-secondary);
+    }
+
+    .turn-actions-group > .turn-action-btn {
+      justify-content: flex-start;
+      gap: var(--sp-2);
+      width: 100%;
+      height: auto;
+      padding-inline: var(--sp-2);
+    }
+
+    .turn-actions-group .turn-action-label {
+      display: inline;
+      white-space: nowrap;
+    }
   }
 }
 

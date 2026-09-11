@@ -617,7 +617,8 @@
 
    The time took a column of its own because it used to be the sixth of up to seven
    `·`-separated parts inside the ledger string, buried in a line that otherwise
-   reports cost. */
+   reports cost. The rest of that string went the other way, into the info panel
+   that now spans all columns beneath (`.turn-info-panel`). */
 .turn-footer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto;
@@ -677,6 +678,25 @@
   margin-inline-start: var(--sp-2);
 }
 
+/* THE NEWEST TURN HAS NO REWIND TARGET, so this track collapses and the duration
+   plus the five actions slide right by the button's width — measured 80px at 1440px
+   and ~52 CSS px on a phone, so one row in the transcript has its icons aligned with
+   nothing above it. RESERVING THE TRACK WAS TRIED AND DECLINED, both ways:
+   
+   A hidden element carrying the button's own children (the shape `.turn-elapsed`
+   and 26-dock.css's actions column both use) is a DOM mutation inside the card, and
+   it left the row above PERMANENTLY skipped by `content-visibility: auto` — every
+   node under `.msg-row` reporting `checkVisibility() === false` while the row itself
+   reported true, which prunes it from the find walker's scope
+   (`messages-parked-views.test.ts` "keeps parked text out of the transcript find's
+   walk" went red 3/3, and two extra frame settles did not clear it, so it is a
+   layout consequence rather than a race).
+   
+   The CSS-only form, a `minmax()` floor on this track, needs the button's width as a
+   constant at THREE tiers — glyph plus word on a wide fine pointer, glyph alone
+   below 40rem, and the coarse hit floor — each of which has to be re-measured
+   whenever the padding or the word moves. Neither is worth a one-row offset on the
+   newest turn, which is the row a reader is already looking at. */
 .turn-footer > .turn-rewind {
   grid-column: 4;
   grid-row: 1;
@@ -684,19 +704,34 @@
   margin-inline-start: var(--sp-2);
 }
 
-/* HOW LONG THE TURN TOOK, right-aligned in its own column, in a box that is
-   RESERVED at rest.
-   
-   Reserved is the load-bearing word: the reveal below is `opacity` alone, never a
-   geometric expansion, so the card's height cannot move. A growing footer would
-   change `#messages`' `scrollHeight`, which feeds `scrollableBy()` — the timeline
-   rail's own navigability gate at MIN_SCROLL_PX — so on a short chat sitting near
-   that threshold, hovering a turn could flip the rail on and off. It would also
-   push every card below the hovered one, which is the layout shift this reveal was
-   required not to cause.
+/* HOW LONG THE TURN TOOK, right-aligned in its own column, painted
+   unconditionally, in a box that RESERVES its space.
 
-   So never `display: none` and never `visibility: hidden`: both take the box with
-   them and the row's right edge would move the moment a pointer arrived.
+   THE HOVER REVEAL THAT USED TO SIT BELOW THIS RULE IS DELETED. A hover cannot
+   carry a VALUE: it does not exist on a touch device, and on a pointer device a
+   reader who never crosses this card never learns the number at all.
+
+   THE RAIL KEEPS ITS OWN COPY (`.rail-marker-time` below, `turn-rail.ts`,
+   `rail-labels.ts`), and that is a decision rather than a duplicate left standing
+   (user ruling, 2026-09-10): the rail states EVERY turn's duration in one column,
+   which is a question no footer can answer, because a reader cannot see every
+   footer at once. So the two copies are the same number answering two different
+   reads — this one is "how long did THIS turn take", the rail's is "where did the
+   session's time go" — and the footer's is the one that had to stop depending on a
+   gesture, because a card the reader is already looking at has no excuse to hide
+   it. RESIDUAL, stated rather than hidden: the rail's copy is still revealed on
+   hover and still absent below 70rem of chat area, so the at-a-glance read the
+   ruling rests on is not what that rule currently delivers — see the note on
+   `.rail-marker-time`.
+
+   The reserved box outlives the reveal on its own terms, so the two prohibitions
+   below still hold: never `display: none` and never `visibility: hidden` on a slot
+   that HAS a duration. Both take the box with them, and a geometric change here
+   moves `#messages`' `scrollHeight`, which feeds `scrollableBy()` — the timeline
+   rail's own navigability gate at MIN_SCROLL_PX — so on a short chat sitting near
+   that threshold this element decides whether the rail exists. (A slot with NO
+   duration is hidden, by `syncElapsed`: an empty `<time>` makes no claim and has
+   no value whose box needs holding.)
 
    The inline gap is this element's OWN margin, not a grid `column-gap`, for the
    reason recorded on `.turn-actions-buttons` above and measured on this exact row:
@@ -707,40 +742,12 @@
   grid-row: 1;
   justify-self: end;
   margin-inline-start: var(--sp-2);
-  /* The rest state sits HERE, outside every media query and unscoped, so no
-     device and no footer inherits a duration painted at rest. The reveals below
-     are the only thing that lifts it, and the transition rides this rule so it is
-     declared once. */
-  opacity: 0;
   color: var(--c-text-tertiary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  transition: opacity var(--dur-standard) var(--ease-standard);
 }
 
-/* The FOCUS reveal is UNGATED, because a keyboard exists on a device with no
-   hover: inside the hover query below it would withdraw the keyboard path on
-   exactly the devices where the ledger disclosure is the only other one. Both
-   footers are named, `turn-footer.ts` being reused inside `.subagent-foot`
-   (14-tools.css) — a delegate is reached by DESCENDANT rather than by that slot's
-   own child chain to stay inside this sheet's specificity ceiling, and
-   `.turn-elapsed` exists nowhere but a `.turn-footer`. */
-.turn:focus-within > .turn-footer > .turn-elapsed,
-.subagent-block:focus-within .turn-footer > .turn-elapsed {
-  opacity: 1;
-}
-
-/* The HOVER reveal is gated, because only a hover-capable device has the gesture.
-   `any-hover`, NEVER `hover`: those report the PRIMARY input alone, and iPadOS
-   answers `hover: none` with a trackpad attached. */
-@media (any-hover: hover) {
-  .turn:hover > .turn-footer > .turn-elapsed,
-  .subagent-block:hover .turn-footer > .turn-elapsed {
-    opacity: 1;
-  }
-}
-
-.turn-footer > .turn-ledger-files {
+.turn-footer > .turn-info-panel {
   grid-column: 1 / -1;
 }
 
@@ -903,10 +910,13 @@
   background: var(--c-bg-tertiary);
 }
 
-/* The ledger's depth ladder: aggregate row, per-file rows, click into a diff.
+/* The ledger's depth ladder: the outcome row, the info panel it discloses, and a
+ * click into a diff from any file row inside it.
  *
- * The aggregate is a disclosure BUTTON when the turn changed files and a plain
- * readout when it did not, so nothing offers a control that would do nothing. */
+ * ALWAYS a disclosure button. It used to be one only when the turn changed files
+ * and a plain `disabled` readout otherwise, on the rule that nothing should offer
+ * a control that would do nothing — true then, moot now: every footer has a panel,
+ * so the readout state and its `:disabled` opt-out below are both deleted. */
 .turn-ledger-summary {
   display: flex;
   align-items: center;
@@ -922,31 +932,31 @@
   transition: color var(--dur-micro) var(--ease-standard);
 }
 
+/* `min-width: 0` so the track can shrink; NO truncation rule any more. There used
+   to be an ellipsis clamp at 40rem, because the line composed up to six clauses and
+   ran off a phone. The longest value it can hold now is `Outcome unknown` — fifteen
+   characters, well under the `minmax(0, 1fr)` track at any width this app renders
+   at — so there is nothing to truncate, and the footer test asserting the text is
+   EXACTLY the lead word is what keeps it that way. */
 .turn-ledger-text {
   min-width: 0;
 }
 
-@media (width <= 40rem) {
-  .turn-ledger-text {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
+/* The `i` that says the row is a door. Tertiary at rest and following the row's own
+   hover, so it reads as part of the trigger rather than as a second control. */
+.turn-ledger-info {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  color: var(--c-text-tertiary);
 }
 
-/* DISABLED HERE MEANS "READOUT", NOT "REFUSED", so it opts out of the
- * unavailable face (40-a11y.css). This aggregate is a disclosure button only
- * when the turn changed files; with none to list it is a plain readout, and the
- * `disabled` attribute is how it stops being a control. Taking the floor's dim
- * and its `not-allowed` would fade the outcome a reader is meant to read and
- * claim they were refused something they never asked for. */
-.turn-ledger-summary:disabled {
-  cursor: default;
-  opacity: 1;
-}
-
-.turn-ledger-summary:not(:disabled):hover {
+.turn-ledger-summary:hover {
   color: var(--c-text-primary);
+}
+
+.turn-ledger-summary:hover > .turn-ledger-info {
+  color: inherit;
 }
 
 .turn-ledger-summary:focus-visible {
@@ -1019,36 +1029,35 @@
  * `.disclosure-chevron` (chevron.ts), at the shared SIZE too: this rule used to
  * override `--chev-size` to 0.75rem, so one glyph rendered at 12px here and 14px
  * on every box header in the same turn, with nothing recording the reason. */
-/* `display: none`, not `visibility: hidden`. The readout is RIGHT-aligned, so a
-   reserved 0.75rem box plus the summary's own gap in front of it held the line
-   20px off the card's gutter on every turn that changed no files — which is most
-   of them, and together with the empty Rewind column's gap it was the 28px of
-   dead space to the right of `2 cmds`. Reserving the box bought a stable right
-   edge across the disabled-to-enabled transition, and there was nothing to
-   stabilise: the text itself is rewritten in the same repaint that enables the
-   caret (`2 cmds` becomes `2 files +297 · 2 cmds`), so the line moves anyway.
-   This is also the treatment the ledger glyph and the header dot already take
-   for a mark that is not worth showing. */
-.turn-ledger-summary:disabled .turn-ledger-caret {
-  display: none;
+/* OPEN reads off the ink, because the trigger is an `i` rather than a chevron and an
+   `i` must not rotate — a rotating information glyph names no direction. The panel
+   unfolding underneath is the state's own signal; this only keeps the trigger from
+   dimming back out once the reader has opened it. The `:disabled` rule that used to
+   hide a caret on a readout went with the readout state itself: every footer
+   discloses a panel now, so there is no state to hide a trigger in. */
+.turn-footer[data-info="open"] .turn-ledger-info {
+  color: var(--c-text-primary);
 }
 
-.turn-footer[data-files="open"] .turn-ledger-caret {
-  --chev-turn: 0deg;
-}
-
-/* Slides open under the summary row (block-size 0↔auto + the top margin, with
- * the display flip riding allow-discrete): the footer GROWS rather than
- * popping. `display: none` at rest is load-bearing beyond the animation — a
- * zero-height grid item would still occupy a row and charge the footer's
- * row-gap on every turn. */
-.turn-ledger-files {
+/* THE INFO PANEL: everything the ledger line used to compose into one dense
+ * `·`-separated string, as labelled rows under six withheld-on-absence sections.
+ * It was `.turn-ledger-files`, a bare `<ul>` of file rows, and the file list is now
+ * one part of the Work section inside it.
+ *
+ * Slides open under the summary row (block-size 0↔auto + the top margin, with the
+ * display flip riding allow-discrete): the footer GROWS rather than popping.
+ * `display: none` at rest is load-bearing beyond the animation — a zero-height grid
+ * item would still occupy a row and charge the footer's row-gap on every turn.
+ *
+ * NO INLINE PADDING, deliberately: `overflow: clip` here makes this element a
+ * clipper, and `.turn-file-row` inside it takes `--focus-offset-inset` so its focus
+ * ring has zero reach to lose (40-a11y.css's floor plus the exclusion in
+ * focus-ring-clip.test.ts). Each section owns its own inset instead, so a row stays
+ * flush against the clip box on the inline edges. */
+.turn-info-panel {
   display: none;
   block-size: 0;
   overflow: clip;
-  list-style: none;
-  margin: 0;
-  padding: 0;
   text-align: left;
   transition:
     display var(--dur-standard) allow-discrete,
@@ -1056,46 +1065,88 @@
     margin-block-start var(--dur-standard) var(--ease-standard);
 }
 
-.turn-footer[data-files="open"] .turn-ledger-files {
-  display: block;
+.turn-footer[data-info="open"] .turn-info-panel {
+  display: grid;
+  gap: var(--sp-2);
   block-size: auto;
   margin-block-start: var(--sp-1);
 }
 
 @starting-style {
-  .turn-footer[data-files="open"] .turn-ledger-files {
+  .turn-footer[data-info="open"] .turn-info-panel {
     block-size: 0;
     margin-block-start: 0;
   }
+}
+
+.turn-info-section {
+  display: grid;
+  gap: 2px;
+}
+
+/* Same shape as every other small section heading in the app
+   (`.forge-add-pane-heading`, 17-settings.css): a quiet uppercase label, so the
+   values under it are what the eye lands on. */
+.turn-info-title {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--c-text-tertiary);
+}
+
+.turn-info-rows,
+.turn-info-panel .turn-ledger-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* LABEL AND VALUE SIT TOGETHER, in a column pair the section sizes itself.
+   `space-between` put them at opposite edges of the card, which on a 1440px
+   transcript is about 1100px of nothing between "Wall clock" and "1m 32s" — a pair
+   the eye has to travel to reconnect, and the panel is a list of pairs.
+
+   SUBGRID rather than a min-width on the label, so the number is the widest label
+   in THAT SECTION rather than a constant somebody has to maintain: Timings sizes to
+   "Model time", Diagnostics to "Stop reason", and a section added later sizes to
+   whatever it holds. The two tracks are declared on the list and each row borrows
+   them, which is what keeps the values in one column while the pair stays left. */
+.turn-info-rows {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  column-gap: var(--sp-3);
+}
+
+.turn-info-row {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: span 2;
+  align-items: baseline;
+  font-size: var(--fs-xs);
+}
+
+.turn-info-label {
+  color: var(--c-text-tertiary);
+}
+
+.turn-info-value {
+  color: var(--c-text-secondary);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 .turn-ledger-file {
   margin: 0;
 }
 
-/* The TIMINGS row: the durable channel for the turn's duration and for the gap
-   before it, so it is a readout and takes none of the file rows' affordance — no
-   hit-target floor, no hover, no cursor. Both inks stay at `--c-text-secondary`
-   because this sits on the footer's tinted band, where hint ink falls under WCAG
-   1.4.3's 4.5:1; the label separates by WEIGHT instead of by a quieter colour. */
-.turn-ledger-timings {
-  display: flex;
-  flex-direction: column;
-  padding: var(--sp-1);
-  color: var(--c-text-secondary);
-  font-size: var(--fs-xs);
-}
-
-.turn-timings-label {
-  font-weight: var(--fw-medium);
-}
-
-.turn-timings-value {
-  display: flex;
-  flex-direction: column;
-  padding-inline-start: var(--sp-2);
-  font-variant-numeric: tabular-nums;
-}
+/* THE TIMINGS ROW THAT USED TO SIT HERE IS DELETED with its builder. It was a
+   `label + value` pair appended into the file list to carry the turn's duration and
+   the gap before it durably, and the info panel's own `Timings` section states both
+   (`.turn-info-section`, above): `Wall clock`, `Tool time`, `Model time`, `Started`,
+   `Ended` and `Gap before`, each a `.turn-info-row`. Two renderings of one fact, one
+   of them inside a list of FILES, and the panel's is the one with a heading. */
 
 /* Every row is a click target into that file's diff. Full-width so the hit
  * area is the row rather than the text — a path is a small target and WCAG
@@ -1133,8 +1184,12 @@
   outline-offset: var(--focus-offset-inset);
 }
 
+/* DOES NOT GROW, so the delta reads as part of the path rather than as a column at
+   the far edge — `+18 −2` a thousand pixels from the file it counts is the same
+   defect the info rows above had, and `git status` puts the two together for the
+   same reason. The ROW is still full-width: the hit area is the row, not the text. */
 .turn-file-path {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -1652,7 +1707,22 @@
  * OUTSIDE `any-hover: hover` the slot is not rendered, and that is a decision rather
  * than a fallback, unlike the footer's copy: there is no gesture to reveal it with,
  * thirty permanently expanded rows turn a navigator into a two-column table, and the
- * turn card's own footer shows this value unconditionally there. */
+ * turn card's own footer shows this value unconditionally there.
+ *
+ * THIS COPY SURVIVED THE FOOTER'S UNCONDITIONAL PAINT, deliberately (user ruling,
+ * 2026-09-10): the rail answers "where did the session's time go" for every turn in
+ * one column, which no footer can, because a reader cannot see every footer at once.
+ * `.turn-elapsed`'s own note carries the other half of that ruling.
+ *
+ * OPEN, and it is the reason the ruling and this rule do not yet agree: the read the
+ * ruling rests on is AT A GLANCE, and the two gates above mean the reader sees one
+ * marker's duration at a time, on hover, and none at all below 70rem — so nothing
+ * here states every turn's time simultaneously. The paragraph above prices the
+ * always-on form (thirty expanded rows, and a HOVER background painted at rest) and
+ * both objections are now overruled in principle rather than in code, so the shape a
+ * follow-up wants is this slot painted at rest in quiet ink with the container floor
+ * KEPT, since that floor is gutter geometry rather than taste. Not done here: it is a
+ * visual change to the navigator, and this change is a merge. */
 .rail-marker-time {
   display: none;
 }
@@ -1704,8 +1774,15 @@
   margin-block-start: var(--sp-1);
 }
 
+/* SHRINKS TO ITS WORDS. It was `width: 100%`, which was consistent while the panel
+   spread every row edge to edge and became the one full-width element the moment the
+   rows paired up — a 1100px bordered bar reads as a section divider rather than as
+   the button it is. The rows above are click targets whose HIT AREA is deliberately
+   the whole row; this one is a button with a visible border, so its edge is a
+   statement about its size and has to match it. */
 .turn-review-all {
-  width: 100%;
+  inline-size: max-content;
+  max-inline-size: 100%;
   text-align: start;
   padding: 0.15rem var(--sp-2);
   border: 1px solid var(--c-border);

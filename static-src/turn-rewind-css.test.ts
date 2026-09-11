@@ -4,12 +4,17 @@
 // Two claims, and they need two kinds of test. That the label really disappears
 // is a COMPUTED fact against the assembled cascade — a source read cannot answer
 // it, since `.turn-rewind-label` has to win inside the query. That its
-// breakpoint MATCHES the one the footer's actions collapse at is a SOURCE fact,
-// and computed style cannot answer it: nothing couples the two numbers except
-// their being equal. There is no device attribute to key on (`device-view.ts`
-// holds no viewport width), and the two rules live in different files, so if one
-// moves the row gets a word back at a width that cannot hold it, or loses it at
-// one that can.
+// breakpoint MATCHES the width the footer's actions collapse at ON A FINE POINTER
+// is a SOURCE fact, and computed style cannot answer it: nothing couples the two
+// numbers except their being equal. There is no device attribute to key on
+// (`device-view.ts` holds no viewport width), and the two rules live in different
+// files, so if one moves the row gets a word back at a width that cannot hold it,
+// or loses it at one that can.
+//
+// The actions carry a SECOND threshold that Rewind does not follow (56rem, for a
+// coarse pointer), so "the width the actions collapse at" is now two widths and
+// the pair pinned here is the fine one. The last case in this file states that
+// divergence, because an unstated one reads as drift.
 //
 // The viewport is pinned at 1280x720 (vitest.config.ts) and nothing resizes it,
 // so the narrow side is measured in an IFRAME, which carries a viewport of its
@@ -124,6 +129,21 @@ describe("the label's breakpoint", () => {
       BREAKPOINT,
     );
     expect(actions.body).toMatch(/display:\s*inline-flex/u);
+  });
+
+  it("does NOT follow the actions' second, coarse-tier arm", () => {
+    // The actions carry a SECOND threshold — 56rem for a pointer that is not fine
+    // (61-mcp-tools.css) — and Rewind deliberately does not. The word drops at
+    // 40rem on every tier, because it is one target whose glyph already carries it
+    // and what it sheds is a word the row ran out of width for; the actions
+    // collapse because five targets cannot share that row with a finger, which is a
+    // question about the POINTER. Asserted so the next reader reads the divergence
+    // as the decision it is rather than as drift.
+    const actions = loadCSS("61-mcp-tools.css");
+    expect(actions.match(/width <= 56rem/gu), "the coarse arm is stated once").toHaveLength(1);
+    expect(loadCSS("29-turns.css"), "and 29-turns.css states no 56rem at all").not.toContain(
+      "56rem",
+    );
   });
 
   it("states the label's hide only inside that query", () => {

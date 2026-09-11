@@ -18,13 +18,23 @@
 // desktop action row with it, silently, because the buttons would still be in the
 // DOM and every existing test would still find them. So the group is pinned
 // together with the thing it could break.
+//
+// WHY DISMISSAL IS HERE TOO. The group makes the menus exclusive of each other and
+// nothing more: a native disclosure does not close because the reader looked away,
+// so `messages-turn-actions.ts` adds one document-level `pointerdown` and one
+// `keydown`. The case that matters is the one that looks like a defensive check and
+// is not — `pointerdown` fires BEFORE `click`, so the listener has to exempt the
+// details' own subtree or an action clicked from the collapsed menu loses the
+// `open` the handler reads, and with it the "Copied" toast that is the only
+// confirmation a menu click has. That is asserted through the `silent` argument
+// the action was dispatched with, with the closed-menu case as its control.
 
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { page } from "vitest/browser";
 
 import type { Message } from "./types.js";
 import type { Turn } from "./turns.js";
-import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { loadCSS, mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 vi.mock("./store.js", () => ({
   getActive: () => ({ id: "c1", name: "chat", messages: [] }),
@@ -40,6 +50,7 @@ vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 
 const { mountTurnFooterActions, initTurnActionCallbacks } =
   await import("./messages-turn-actions.js");
+const { copyClipboard } = await import("./actions/messages.js");
 
 initTurnActionCallbacks({
   svgTemplate: () => () => document.createElement("span"),
@@ -209,5 +220,228 @@ describe("the desktop path the group must not disturb", () => {
       const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
       expect(hit === null ? null : btn.contains(hit) || hit === btn).toBe(true);
     }
+  });
+});
+
+/** The menu's first action button, which is Copy as text. */
+function firstAction(menu: HTMLDetailsElement): HTMLButtonElement {
+  const btn = menu.querySelector<HTMLButtonElement>(".turn-actions-group .turn-action-btn");
+  expect(btn, "the group holds action buttons").not.toBeNull();
+  if (btn === null) {
+    throw new Error("no action button");
+  }
+  return btn;
+}
+
+/** A real pointer press on `node`, which is what puts the dismissal listener ahead
+ *  of the button's own click the way a finger or a mouse does. */
+function press(node: EventTarget): void {
+  node.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+}
+
+/** The `silent` flag the click's `copyClipboard.dispatch` carried.
+ *
+ *  This is the observable the open-before-handler read moves, and the only one it
+ *  moves: `silent: false` asks the action for its "Copied" toast, which a click
+ *  made from an OPEN menu needs and a click on a visible button does not. */
+function dispatchedSilent(): boolean | undefined {
+  const { calls } = vi.mocked(copyClipboard.dispatch).mock;
+  expect(calls, "the copy action was dispatched exactly once").toHaveLength(1);
+  return calls[0]?.[1]?.silent;
+}
+
+describe("dismissal, which the native disclosure does not supply", () => {
+  it("closes an open menu on a pointerdown outside it", () => {
+    const menu = mountCard("m1");
+    menu.open = true;
+    press(document.body);
+    expect(menu.open).toBe(false);
+  });
+
+  it("leaves it open on a pointerdown INSIDE it", () => {
+    const menu = mountCard("m1");
+    menu.open = true;
+    press(firstAction(menu));
+    expect(menu.open).toBe(true);
+  });
+
+  it("closes an open menu on Escape", () => {
+    const menu = mountCard("m1");
+    menu.open = true;
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(menu.open).toBe(false);
+  });
+
+  it("lets Escape keep propagating, so the app's own handling still sees it", () => {
+    mountCard("m1");
+    let reached = false;
+    const spy = (): void => {
+      reached = true;
+    };
+    // On `window`, which is past `document` in the bubble order, so it is reached
+    // only if the dismissal did not stop propagation.
+    window.addEventListener("keydown", spy);
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    window.removeEventListener("keydown", spy);
+    expect(reached).toBe(true);
+  });
+
+  it("keeps an action's handler reading open===true when the click came from the menu", () => {
+    const menu = mountCard("m1");
+    menu.open = true;
+    const btn = firstAction(menu);
+    press(btn);
+    btn.click();
+    expect(dispatchedSilent(), "the menu click asked for the toast").toBe(false);
+  });
+
+  it("still closes the menu after that action's handler has run", () => {
+    const menu = mountCard("m1");
+    menu.open = true;
+    const btn = firstAction(menu);
+    press(btn);
+    btn.click();
+    expect(menu.open).toBe(false);
+  });
+
+  it("keeps the toast suppressed for a click made with the menu closed", () => {
+    // The control that makes the case above mean something: `silent` is a
+    // function of the menu's state, not a constant.
+    const menu = mountCard("m1");
+    const btn = firstAction(menu);
+    press(btn);
+    btn.click();
+    expect(dispatchedSilent()).toBe(true);
+  });
+});
+
+/** The block that follows `marker`, brace-matched. */
+function blockAfter(css: string, marker: string): string {
+  const at = css.indexOf(marker);
+  expect(at, `not found in the stylesheet: ${marker}`).toBeGreaterThan(-1);
+  const open = css.indexOf("{", at + marker.length);
+  let depth = 0;
+  for (let i = open; i < css.length; i++) {
+    if (css[i] === "{") {
+      depth++;
+    } else if (css[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        return css.slice(open + 1, i);
+      }
+    }
+  }
+  throw new Error(`unbalanced braces after ${marker}`);
+}
+
+/** A block's declarations, with comments dropped and whitespace flattened — so the
+ *  comparison below is about the rules and not about how deep one arm is nested. */
+function declarations(block: string): string {
+  return block
+    .replace(/\/\*[\s\S]*?\*\//gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+describe("the two collapse arms are one rule", () => {
+  it("states each threshold exactly once", () => {
+    // Or "the two arms" is a claim about whichever pair a reader's grep found
+    // first, and a third arm could sit anywhere in the file unnoticed.
+    const css = loadCSS("61-mcp-tools.css");
+    expect(css.match(/@media \(width <= 40rem\)/gu), "the every-tier arm").toHaveLength(1);
+    expect(css.match(/@media \(width <= 56rem\)/gu), "the coarse arm").toHaveLength(1);
+  });
+
+  it("carries identical declarations in both", () => {
+    // The remedy for a duplication no token can remove: a media query cannot read
+    // a custom property, so the QUERY is stated twice and this is what stops the
+    // two bodies drifting. Same shape turn-rewind-css.test.ts uses to pin two
+    // numbers that must stay equal.
+    const css = loadCSS("61-mcp-tools.css");
+    const fine = declarations(blockAfter(css, "@media (width <= 40rem)"));
+    const coarse = declarations(
+      blockAfter(
+        blockAfter(css, "@media (width <= 56rem)"),
+        ':where(:root:not([data-pointer="fine"]))',
+      ),
+    );
+    expect(fine, "the arm being compared is the collapsed-actions one").toContain(
+      ".turn-actions-more",
+    );
+    expect(coarse).toBe(fine);
+  });
+});
+
+describe("the coarse tier collapses at a width a fine pointer does not", () => {
+  // 896px IS 56rem, and `<=` includes it, so this is the widest row a coarse
+  // pointer collapses. It is also above the 40rem arm and above 01-tokens.css's
+  // 48rem no-JS fallback, so the tier attribute is the only thing that can collapse
+  // it — which is what makes the fine case a control rather than a second reading of
+  // one rule.
+  //
+  // MEASURED, and it corrects the width this suite was asked for: at 1024px NEITHER
+  // tier collapses, because 1024 is past 56rem. A pair of cases at that width would
+  // have passed for the wrong reason on the fine side and been unsatisfiable on the
+  // coarse one, so the third case below pins 1024 as INLINE on a coarse pointer
+  // instead — the coarse arm is a threshold, not "a finger always gets the menu".
+  //
+  // The tier IS an attribute, so this is a faithful test of the RULE and cannot
+  // prove a real tablet takes that path. Same limit run-card-metrics.ts accepts and
+  // states.
+  //
+  // Last in the file, and it restores the size it found: `page.viewport` has no
+  // getter, so a hand-copied pair would silently leave every later file measuring
+  // at the wrong size.
+  let entry: { readonly width: number; readonly height: number } | null = null;
+
+  beforeAll(() => {
+    entry = { width: window.innerWidth, height: window.innerHeight };
+  });
+
+  afterAll(async () => {
+    document.documentElement.removeAttribute("data-pointer");
+    if (entry !== null) {
+      await page.viewport(entry.width, entry.height);
+    }
+  });
+
+  async function at(width: number, tier: "fine" | "coarse"): Promise<void> {
+    await page.viewport(width, 900);
+    expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
+      width,
+      900,
+    ]);
+    document.documentElement.dataset["pointer"] = tier;
+  }
+
+  it("hides the closed group and paints the … trigger on a coarse pointer", async () => {
+    await at(896, "coarse");
+    const menu = mountCard("m1");
+    const summary = menu.querySelector<HTMLElement>("summary.turn-action-more");
+    const group = menu.querySelector<HTMLElement>(".turn-actions-group");
+    expect(summary).not.toBeNull();
+    expect(group).not.toBeNull();
+    expect(getComputedStyle(group as HTMLElement).display, "closed hides the group").toBe("none");
+    expect(getComputedStyle(summary as HTMLElement).display, "the trigger is painted").not.toBe(
+      "none",
+    );
+  });
+
+  it("keeps the actions inline at the same width on a fine pointer", async () => {
+    await at(896, "fine");
+    const menu = mountCard("m1");
+    const summary = menu.querySelector<HTMLElement>("summary.turn-action-more");
+    const group = menu.querySelector<HTMLElement>(".turn-actions-group");
+    expect(getComputedStyle(group as HTMLElement).display, "the row is inline").toBe("inline-flex");
+    expect(getComputedStyle(summary as HTMLElement).display, "no trigger to press").toBe("none");
+  });
+
+  it("leaves a coarse pointer inline once the row is wider than the arm", async () => {
+    await at(1024, "coarse");
+    const menu = mountCard("m1");
+    const group = menu.querySelector<HTMLElement>(".turn-actions-group");
+    expect(getComputedStyle(group as HTMLElement).display, "56rem is a bound, not a tier").toBe(
+      "inline-flex",
+    );
   });
 });

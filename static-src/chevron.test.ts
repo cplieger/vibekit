@@ -116,9 +116,15 @@ describe("every disclosure builder emits the shared chevron", () => {
     expect(h.querySelectorAll(".turn-fold-toggle > .disclosure-chevron")).toHaveLength(1);
   });
 
-  it("turn footer ledger caret", () => {
+  // THE TURN FOOTER IS DELIBERATELY NOT IN THIS POPULATION. Its trigger is an `i`
+  // (`turn-footer.ts`), because the panel it opens is turn INFORMATION rather than
+  // the rest of the row, so it never enters the chevron vocabulary this file
+  // governs. Asserted as an ABSENCE, or nothing stops a chevron reappearing beside
+  // the `i` — which is exactly what shipped for one commit.
+  it("the turn footer carries no chevron at all", () => {
     const f = buildTurnFooter({ commands: 1, reads: 2, changedFiles: {} });
-    expect(f.querySelectorAll(".disclosure-chevron.turn-ledger-caret")).toHaveLength(1);
+    expect(f.querySelectorAll(".disclosure-chevron")).toHaveLength(0);
+    expect(f.querySelectorAll(".turn-ledger-info")).toHaveLength(1);
   });
 });
 
@@ -186,7 +192,10 @@ describe("position carries the interaction type", () => {
     expect(chevronEnd(r.root.querySelector(".reasoning-summary")!)).toBe("leading");
   });
 
-  it("the turn fold and the turn ledger both lead", () => {
+  // The turn FOLD leads. The turn FOOTER used to be asserted here beside it and is
+  // not in this population any more: its trigger is an `i`, so it has no chevron to
+  // place. The absence is pinned in the builders block above instead.
+  it("the turn fold leads", () => {
     const h = buildTurnHeader({
       n: 4,
       outcome: "completed",
@@ -195,8 +204,6 @@ describe("position carries the interaction type", () => {
       attachments: [],
     });
     expect(chevronEnd(h)).toBe("leading");
-    const f = buildTurnFooter({ commands: 1, reads: 2, changedFiles: {} });
-    expect(chevronEnd(f.querySelector(".turn-ledger-summary")!)).toBe("leading");
   });
 
   it("the turn fold is placed leading by CSS as well as by DOM order", () => {

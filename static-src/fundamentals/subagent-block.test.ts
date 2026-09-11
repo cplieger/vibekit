@@ -723,6 +723,102 @@ describe("the footer", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The footer's INFO PANEL on a delegate card. This is the second consumer of
+// `fundamentals/turn-footer.ts`, and the sections it can never fill are the point:
+// nothing on the ACP wire carries credits, a model id or a stop reason PER
+// delegate, so Cost, Model and Diagnostics withhold on every delegate card there
+// will ever be. `messages-blocks.ts`'s `subagentSummary` is what shapes the data
+// below — the fields it fills, and the three it deliberately leaves absent.
+// ---------------------------------------------------------------------------
+
+describe("the delegate footer's info panel", () => {
+  /** A settled delegate as `subagentSummary` produces one: the member calls' counts
+   *  and kinds, the tool time, a nested delegate, the invocation's own stamp, and the
+   *  end DERIVED from that stamp plus this call's measured duration. No credits, no
+   *  model, no stop reason. */
+  const DELEGATE = {
+    outcome: "completed",
+    commands: 2,
+    reads: 3,
+    changedFiles: { "a.go": { lines_added: 4, lines_removed: 1 } },
+    elapsedMs: 92000,
+    toolMs: 30000,
+    kindCounts: { read: 3, execute: 2, edit: 1 },
+    delegateCount: 1,
+    delegateMs: 9000,
+    startedAt: Date.UTC(2026, 0, 2, 9, 5, 0),
+    endedAt: Date.UTC(2026, 0, 2, 9, 5, 0) + 92000,
+  } as const;
+
+  function panelSections(root: HTMLElement): string[] {
+    return [...root.querySelectorAll(".subagent-footer .turn-info-title")].map(
+      (h) => h.textContent ?? "",
+    );
+  }
+
+  function settled(): HTMLElement {
+    const sa = buildSubagentCard("context-gatherer", "completed");
+    sa.setSummary(DELEGATE);
+    return sa.root;
+  }
+
+  it("renders the three sections a delegate can fill", () => {
+    const root = settled();
+    expect(panelSections(root)).toEqual(["Timings", "Work", "Delegates"]);
+  });
+
+  it("carries the delegate's own timings, its work and the delegates it dispatched", () => {
+    const root = settled();
+    const rows = [...root.querySelectorAll(".subagent-footer .turn-info-row")].map((r) => [
+      r.querySelector(".turn-info-label")?.textContent ?? "",
+      r.querySelector(".turn-info-value")?.textContent ?? "",
+    ]);
+    expect(rows).toEqual([
+      ["Wall clock", "1m 32s"],
+      ["Tool time", "30.0s"],
+      ["Model time", "1m 2s"],
+      // The stamp text is the reader's own locale, so the LABELS are what is pinned
+      // here; `fundamentals/turn-footer.test.ts` owns the `datetime` pair.
+      ["Started", rows[3]?.[1] ?? ""],
+      ["Ended", rows[4]?.[1] ?? ""],
+      ["reads", "3"],
+      ["commands", "2"],
+      // Singular at one, from the shared noun table rather than an `s` appended here.
+      ["edit", "1"],
+      ["Dispatched", "1"],
+      ["Time", "9.0s"],
+    ]);
+    // The delegate's changed file still gets its row, inside Work.
+    expect(root.querySelectorAll(".subagent-footer .turn-file-row")).toHaveLength(1);
+  });
+
+  it("withholds Cost, Model and Diagnostics, which the wire cannot carry per delegate", () => {
+    // Asserted on an UNCLEAN delegate, which is the sharp case: `aborted` opens the
+    // Diagnostics gate (the section is withheld only on a clean or running turn) and
+    // the section is STILL absent, because no stop reason or truncation flag exists
+    // for a delegate to put in it. So the withholding rests on the absent fields
+    // rather than on the outcome, which is what makes it permanent.
+    const sa = buildSubagentCard("context-gatherer", "aborted");
+    sa.setSummary({ ...DELEGATE, outcome: "cancelled" });
+    expect(panelSections(sa.root)).toEqual(["Timings", "Work", "Delegates"]);
+    expect(sa.root.querySelector(".subagent-footer .turn-info-panel")).not.toBeNull();
+  });
+
+  it("opens the panel from the delegate card's own trigger", () => {
+    // The trigger is never disabled now, so a delegate whose footer exists at all can
+    // always be opened — including one whose only content is its tool time.
+    const root = settled();
+    const footer = root.querySelector<HTMLElement>(".subagent-footer");
+    const trigger = root.querySelector<HTMLButtonElement>(".turn-ledger-summary");
+    expect(trigger?.disabled).toBe(false);
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+    trigger?.click();
+    expect(footer?.dataset["info"]).toBe("open");
+    expect(trigger?.getAttribute("aria-expanded")).toBe("true");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The lazy rendering of a closed CONTAINER, measured rather than read off the
 // source.
 //

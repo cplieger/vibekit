@@ -22,7 +22,7 @@ import { CHROME_ATTR } from "../chrome-attr.js";
 import {
   buildTurnFooter,
   updateTurnFooter,
-  hasTurnSummary,
+  earnsTurnFooter,
   type TurnSummaryData,
 } from "./turn-footer.js";
 
@@ -231,7 +231,9 @@ function buildShell(
       },
       setSummary(d: TurnSummaryData): void {
         lastSummary = d;
-        if (!hasTurnSummary(d)) {
+        // No extras: Rewind and the turn actions are turn-card affordances, and a
+        // delegate card has neither, so its footer is earned by the ledger alone.
+        if (!earnsTurnFooter(d)) {
           return;
         }
         if (footer === null) {

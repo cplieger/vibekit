@@ -29,6 +29,69 @@ const copyTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
  *  handlers read current data rather than a mount-time snapshot. */
 const footerTurns = new WeakMap<HTMLElement, Turn>();
 
+/** Whether the two document-level dismissal listeners are installed. */
+let dismissalWired = false;
+
+// ---------------------------------------------------------------------------
+// Dismissal
+// ---------------------------------------------------------------------------
+
+/** Close every open overflow menu the event did not happen inside. `inside` is
+ *  the event target; `null` closes all of them.
+ *
+ *  THE EXEMPTION IS LOAD-BEARING, not defensive. `pointerdown` fires before
+ *  `click`, so a listener closing on any pointerdown would take the `open`
+ *  attribute off before an action button's handler runs, `fromMenu` would read
+ *  false, and the "Copied" toast would be dropped — the only confirmation
+ *  channel a menu click has, since the button carrying the `.copied` flash goes
+ *  off screen with the menu. It is also what lets the trigger of an already-open
+ *  menu still close it: that pointerdown is exempt, and the UA's own toggle
+ *  follows. */
+function closeOverflowMenus(inside: Node | null): void {
+  for (const menu of document.querySelectorAll<HTMLDetailsElement>(".turn-actions-more[open]")) {
+    if (inside !== null && menu.contains(inside)) {
+      continue;
+    }
+    menu.removeAttribute("open");
+  }
+}
+
+/** Install the outside-pointerdown and Escape dismissal, once per document.
+ *
+ *  Two document-level listeners rather than a controller per footer: a turn
+ *  footer has no teardown seam at all (this module keeps its state in WeakMaps
+ *  precisely to avoid one), so anything holding a per-turn object would leak
+ *  every turn ever painted. Native `<details name>` already supplies the
+ *  activation, the `aria-expanded` semantics and the document-wide exclusivity,
+ *  and this is the one thing it does not: a disclosure does not close when the
+ *  reader looks away from it.
+ *
+ *  Escape does NOT `stopPropagation`, matching `pill-expand.ts`'s
+ *  `isolateEscape: false` contract, so the app's own Escape handling still sees
+ *  the key. */
+function wireOverflowDismissal(): void {
+  if (dismissalWired) {
+    return;
+  }
+  dismissalWired = true;
+  document.addEventListener(
+    "pointerdown",
+    (ev) => {
+      const target = ev.target;
+      closeOverflowMenus(target instanceof Node ? target : null);
+    },
+    // Capture, so a handler that stops propagation on its way up cannot leave a
+    // menu open over a transcript the reader has moved on from. Passive: nothing
+    // here calls preventDefault, and a pointerdown listener is on the scroll path.
+    { capture: true, passive: true },
+  );
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") {
+      closeOverflowMenus(null);
+    }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Callbacks injected by messages.ts
 // ---------------------------------------------------------------------------
@@ -107,6 +170,9 @@ function copyAndAnimate(btn: HTMLButtonElement, text: string, announce = false):
  *  the one direct control, which left the phone row carrying two targets where
  *  the point of the overflow is one. */
 export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t: Turn): void {
+  // Ahead of every early return, and idempotent: the first mount of the document's
+  // life is what needs the listeners, and repeat mounts must not stack them.
+  wireOverflowDismissal();
   footerTurns.set(footer, t);
   if (footer.querySelector(":scope > .turn-actions-buttons") !== null) {
     return;

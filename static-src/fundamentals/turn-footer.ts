@@ -20,12 +20,32 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { chevronEl } from "../chevron.js";
+import { iconEl } from "../icon-el.js";
+import { ICON_INFO } from "../icons.js";
 import { openChange, openChangeSet } from "../navigate.js";
 import { formatElapsed, isoDuration } from "../strings.js";
+import { kindNoun } from "../tool-kind-noun.js";
 import { severityOf } from "../turn-severity.js";
-import type { FileChange } from "../types.js";
+import type { FileChange, ToolKind } from "../types.js";
 import type { TurnOutcome } from "../turns.js";
+
+// ---------------------------------------------------------------------------
+// THE EXPORT BOUNDARY, and it has TWO consumers.
+//
+// `messages.ts` mounts this on a turn card; `fundamentals/subagent-block.ts`
+// mounts the same three exports on a DELEGATE card through its `setSummary`,
+// which is why `TurnSummaryData`'s panel fields are optional rather than
+// required. A change here reaches both surfaces, and the delegate one has no
+// test of its own inside this file — `fundamentals/subagent-block.test.ts` is
+// where that half is pinned.
+//
+// THREE PANEL SECTIONS A DELEGATE CAN NEVER FILL: Cost, Model and Diagnostics.
+// Nothing on the ACP wire carries credits, a model id or a stop reason PER
+// delegate — `messages-blocks.ts`'s two producers say so at their own literals —
+// so those three withhold on every delegate card, permanently, and that is the
+// designed outcome rather than a gap to fill later. Timings, Work and Delegates
+// are the three a delegate does fill.
+// ---------------------------------------------------------------------------
 
 /** The word the ledger line LEADS with, per outcome. TOTAL over `TurnOutcome`, so
  *  every value the wire can send has a treatment and none can fall through to a
@@ -77,22 +97,64 @@ export interface TurnSummaryData {
   /** The turn's result, carried as the footer's tint so outcome is scannable
    *  down the transcript without reading a word. */
   outcome?: TurnOutcome;
+  /** The info panel's facts, mirroring `TurnLedger`, which owns each field's
+   *  ABSENCE RULE — read it there before rendering any of them. In short: a
+   *  duration nobody stamped is not a duration of zero, `kindCounts` omits a kind
+   *  rather than reporting zero of it, `toolMs` is not bounded by `elapsedMs`, and
+   *  `endedAt` is a stamp rather than `startedAt + elapsedMs`.
+   *
+   *  OPTIONAL, and that is load-bearing rather than incidental: a DELEGATE can fill
+   *  some of them and none of the rest, so `messages-blocks.ts`'s two producers
+   *  construct this type with whatever the wire actually carries per delegate. A
+   *  panel section withholds on absence; it never invents a zero. */
+  toolMs?: number;
+  kindCounts?: Partial<Record<ToolKind, number>>;
+  delegateCount?: number;
+  delegateMs?: number;
+  startedAt?: number;
+  endedAt?: number;
+  stopReasonRaw?: string;
+  truncated?: boolean;
 }
 
-/** Whether there is anything worth showing (avoid an empty footer). A
- *  non-clean outcome always qualifies even with no numbers, since an
- *  interrupted or failed turn is exactly when a reader needs to know what
- *  landed.
+/** Reasons a footer is earned that are NOT in the summary data, passed by the
+ *  consumer that can see them. Both are turn-card facts, so the delegate card
+ *  passes neither. */
+export interface FooterExtras {
+  /** This turn is a rewind target, so the footer carries a Rewind control. */
+  rewindable?: boolean;
+  /** This turn has settled prose, so the footer carries the turn ACTIONS
+   *  (copy / source / export) that act on it. */
+  settledProse?: boolean;
+}
+
+/** Whether the footer is earned — ONE predicate, and it used to be two.
+ *  `hasTurnSummary` answered only "is there a ledger", and `messages.ts` kept a
+ *  second inline expression beside it for the two reasons a footer survives an
+ *  unstamped ledger. Two statements of one question is how the turn card and the
+ *  delegate card come to disagree about when a footer exists.
  *
- *  `models` is deliberately not admitted: every completed turn has one, so
- *  counting it would put a footer on every turn — including the ones this
- *  rule exists to suppress.
+ *  The LEDGER half: a non-clean outcome always qualifies even with no numbers,
+ *  since an interrupted or failed turn is exactly when a reader needs to know
+ *  what landed. `models` is deliberately NOT admitted — every completed turn has
+ *  one, so counting it would put a footer on every turn in the transcript,
+ *  including the ones this rule exists to suppress. Nor are the info panel's own
+ *  fields (tool time, kind counts, timestamps): a turn whose only content is a
+ *  measured duration of tool work still earns no footer, because the panel is
+ *  reached THROUGH the ledger row and a row with nothing to lead with is not a
+ *  door worth painting.
  *
- *  `sinceMs` IS admitted, and this gate rather than `expandable` alone is what
- *  makes the gap reachable without a pointer: this decides whether the footer is
- *  built at all, so a clean turn with no credits, no duration, no commands, no
- *  reads and no changed files would otherwise carry no ledger to disclose it in. */
-export function hasTurnSummary(d: TurnSummaryData): boolean {
+ *  `sinceMs` IS admitted, and it is the one panel-only field that is, because it
+ *  is the only one no other surface states: the turn's own duration is painted in
+ *  the row beside this gate, while the GAP before it is drawn as the rail's seam
+ *  and nowhere else — so a clean turn with no credits, no commands, no reads and
+ *  no changed files would otherwise carry no door to reach it through.
+ *
+ *  The EXTRAS half: the footer also carries the turn ACTIONS and Rewind, so
+ *  settled prose to act on or a rewind target keeps it — an unstamped ledger must
+ *  not cost the reader the buttons. A delegate card has neither, which is why
+ *  they are parameters rather than fields on the summary. */
+export function earnsTurnFooter(d: TurnSummaryData, extra: FooterExtras = {}): boolean {
   return (
     (d.outcome !== undefined && d.outcome !== "completed" && d.outcome !== "running") ||
     (d.credits ?? 0) > 0 ||
@@ -100,7 +162,9 @@ export function hasTurnSummary(d: TurnSummaryData): boolean {
     (d.sinceMs ?? 0) > 0 ||
     (d.commands ?? 0) > 0 ||
     (d.reads ?? 0) > 0 ||
-    Object.keys(d.changedFiles ?? {}).length > 0
+    Object.keys(d.changedFiles ?? {}).length > 0 ||
+    extra.rewindable === true ||
+    extra.settledProse === true
   );
 }
 
@@ -116,28 +180,44 @@ export function buildTurnFooter(d: TurnSummaryData): HTMLDivElement {
     className: "turn-ledger-summary",
     type: "button",
   }) as HTMLButtonElement;
-  // LEADS the row, because it DISCLOSES the per-file list under it. One rule
-  // across the transcript (chevron.ts): a disclosure chevron comes first and
-  // rotates, a navigation chevron sits at the trailing edge and does not. It used
-  // to follow the ledger text, which is a third position — neither edge — so this
-  // row agreed with nothing.
-  const caret = chevronEl();
-  caret.classList.add("turn-ledger-caret");
-  summary.appendChild(caret);
+  // AN `i`, NOT A CHEVRON, and it LEADS. The row is a door onto turn INFORMATION on
+  // every turn rather than onto the rest of its own line, so the glyph names the
+  // content instead of the mechanism; a chevron would be the app's disclosure
+  // vocabulary (chevron.ts) claiming a panel that is not more of this row.
+  //
+  // IT LEADS BECAUSE ITS POSITION MUST NOT DEPEND ON CONTENT. Built after the
+  // outcome text it sat at x=319 on a clean turn and x=366 on a failed one, so the
+  // one affordance in the row moved by 47px depending on whether the turn ended
+  // badly, and beside the word it read as belonging to `Failed` rather than to the
+  // row. Measured at 900px; leading holds it at 289px in both.
+  //
+  // Both glyphs shipped here for one commit and that was the defect: two adjacent
+  // signs for one door, with nothing between them on the ~48% of turns that end
+  // clean and carry no outcome word.
+  summary.appendChild(el("span", { className: "turn-ledger-info" }, iconEl(ICON_INFO)));
   summary.appendChild(el("span", { className: "turn-ledger-glyph" }));
   summary.appendChild(el("span", { className: "turn-ledger-text" }));
+  // THE BUTTON'S NAME COMES FROM ITS CONTENT, and this span is the whole of it on
+  // a clean turn. There is deliberately no `aria-label`: a label WINS over the
+  // element's own text, so one here would hide the outcome word — which is the
+  // exact defect `OUTCOME_LEAD` exists to fix, reintroduced one attribute later.
+  // The computed name is `Cancelled Turn details`, or `Turn details` alone when the
+  // turn ended clean and the text is empty. Without this span that clean case is a
+  // button with NO accessible name at all, since the caret and the `i` are
+  // decorative and the glyph is empty.
+  summary.appendChild(el("span", { className: "sr-only" }, "Turn details"));
   summary.addEventListener("click", () => {
-    setFilesOpen(footer, !filesOpen(footer));
+    setInfoOpen(footer, !infoOpen(footer));
   });
   footer.appendChild(summary);
 
   // The turn's own time, out of the ledger string and into a slot of its own —
-  // right-aligned, revealed on hover of the card (29-turns.css), and a real
-  // `<time>` so the value is machine-readable as well as legible. Built
-  // unconditionally; `syncElapsed` decides whether it says anything.
+  // right-aligned, always painted (29-turns.css), and a real `<time>` so the value
+  // is machine-readable as well as legible. Built unconditionally; `syncElapsed`
+  // decides whether it says anything.
   footer.appendChild(el("time", { className: "turn-elapsed" }));
 
-  footer.appendChild(el("ul", { className: "turn-ledger-files" }));
+  footer.appendChild(el("div", { className: "turn-info-panel" }));
 
   updateTurnFooter(footer, d);
   return footer;
@@ -159,116 +239,237 @@ export function updateTurnFooter(footer: HTMLElement, d: TurnSummaryData): void 
   const text = footer.querySelector<HTMLElement>(
     ":scope > .turn-ledger-summary > .turn-ledger-text",
   );
-  const line = summaryLine(d, files);
   if (text !== null) {
-    text.textContent = line;
+    text.textContent = summaryLine(d);
   }
 
   syncElapsed(footer, d.elapsedMs ?? 0);
 
-  // NO native `title`. It carried this same `line` verbatim, so the one hover
-  // affordance on the footer restated the text the reader was already looking at
-  // — and as a UA tooltip it also missed the styled `data-tooltip` treatment every
-  // other hover in the app uses. The accessible name keeps the full statement,
-  // which is what a truncated line on a narrow row needs; the tooltip below says
-  // the things the row does NOT.
-  //
-  // THE DURATION IS APPENDED BACK ON, because it left `line` when it moved into its
-  // own slot and this label was the one channel it reached a screen reader by. The
-  // slot itself is not that channel: it is revealed on hover, and an `aria-label`
-  // on the button beside it wins over the button's own text but says nothing about
-  // a sibling.
+  // ALWAYS a disclosure, so `aria-expanded` is written unconditionally. It used to
+  // be one only when the turn changed files, on the rule that an inert button is
+  // worse than a plain readout — true then, and moot now: every turn has a panel
+  // to open, because the facts the panel states (how long, what ran, what it cost)
+  // exist on every turn that earned a footer at all. `summary.disabled` and the
+  // `removeAttribute("aria-expanded")` arm are gone with it, and so is the reset
+  // that closed the panel underneath a reader whose turn lost its last file.
   if (summary !== null) {
-    summary.removeAttribute("title");
-    const spoken = [line, elapsedText(d.elapsedMs ?? 0)].filter((p) => p !== "").join(" \u00b7 ");
-    summary.setAttribute("aria-label", spoken === "" ? "Turn summary" : `Turn summary: ${spoken}`);
-  }
-
-  // Disclosure only when there is something to disclose — an inert button
-  // is worse than a plain readout. A duration or a gap counts: both are painted
-  // for a pointer only, so the disclosure is the one channel a keyboard or touch
-  // reader has for either.
-  if (summary !== null) {
-    const expandable = files.length > 0 || (d.elapsedMs ?? 0) > 0 || d.sinceMs !== undefined;
-    summary.disabled = !expandable;
-    if (expandable) {
-      summary.setAttribute("aria-expanded", filesOpen(footer) ? "true" : "false");
-    } else {
-      summary.removeAttribute("aria-expanded");
-      setFilesOpen(footer, false);
-    }
+    summary.setAttribute("aria-expanded", infoOpen(footer) ? "true" : "false");
     syncLedgerTooltip(footer);
   }
 
-  const list = footer.querySelector<HTMLElement>(":scope > .turn-ledger-files");
-  if (list !== null) {
-    renderLedgerRows(list, files, d);
+  const panel = footer.querySelector<HTMLElement>(":scope > .turn-info-panel");
+  if (panel !== null) {
+    renderInfoPanel(panel, d, files);
   }
 }
 
-/** The aggregate: files first (what a reader came for), then work with no
- *  file to show, then cost. */
-function summaryLine(d: TurnSummaryData, files: [string, FileChange][]): string {
-  const parts: string[] = [];
-  // One table lookup rather than a two-arm if/else over two of the seven outcomes:
-  // the three it did not name were left to a hover, which is not a channel every
-  // reader has.
-  //
-  // No `?? ""` on the lookup, and the linter is what insists: OUTCOME_LEAD is a
-  // total `Record<TurnOutcome, string>`, so indexing it with a `TurnOutcome` yields
-  // a string and the fallback would be dead code. An absent outcome defaults its
-  // KEY instead, and a value the wire adds later cannot arrive here at all — the
-  // generated decoder rejects it at the boundary, which is the same guarantee every
-  // other consumer of this union relies on.
-  const lead = OUTCOME_LEAD[d.outcome ?? "completed"];
-  if (lead !== "") {
-    parts.push(lead);
+/** The ledger LINE: the outcome's lead word, and nothing else.
+ *
+ *  It used to compose up to six `·`-separated clauses — files, commands, reads,
+ *  credits, the model — in a fixed order this comment used to argue for. Every one
+ *  of them moved into the info panel below, where each is a labelled row instead of
+ *  a token in a dense string a reader has to parse. What is left is the ONE thing
+ *  the row has to say before it is opened: how the turn ended.
+ *
+ *  No `?? ""` on the lookup, and the linter is what insists: OUTCOME_LEAD is a
+ *  total `Record<TurnOutcome, string>`, so indexing it with a `TurnOutcome` yields
+ *  a string and the fallback would be dead code. An absent outcome defaults its
+ *  KEY instead, and a value the wire adds later cannot arrive here at all — the
+ *  generated decoder rejects it at the boundary, which is the same guarantee every
+ *  other consumer of this union relies on. */
+function summaryLine(d: TurnSummaryData): string {
+  return OUTCOME_LEAD[d.outcome ?? "completed"];
+}
+
+/** One `label · value` row. `<li>` because every section's rows are a list. */
+function infoRow(label: string, value: string | Node): HTMLElement {
+  return el(
+    "li",
+    { className: "turn-info-row" },
+    el("span", { className: "turn-info-label" }, label),
+    el("span", { className: "turn-info-value" }, value),
+  );
+}
+
+/** One section, or null when it has nothing to state. Withholding rather than
+ *  rendering an empty heading is the panel's whole discipline: a delegate can fill
+ *  three of the six and a mid-flight turn fewer, so a section that painted itself
+ *  on absence would grow empty rows on most cards. */
+function infoSection(title: string, rows: HTMLElement[], extra: Node[] = []): HTMLElement | null {
+  if (rows.length === 0 && extra.length === 0) {
+    return null;
   }
-  if (files.length > 0) {
-    let added = 0;
-    let removed = 0;
-    for (const [, f] of files) {
-      added += f.lines_added;
-      removed += f.lines_removed;
-    }
-    let fp = `${String(files.length)} file${files.length > 1 ? "s" : ""}`;
-    if (added > 0) {
-      fp += ` +${String(added)}`;
-    }
-    if (removed > 0) {
-      fp += ` \u2212${String(removed)}`;
-    }
-    parts.push(fp);
+  const section = el("section", { className: "turn-info-section" });
+  section.appendChild(el("h4", { className: "turn-info-title" }, title));
+  section.append(...extra);
+  if (rows.length > 0) {
+    section.appendChild(el("ul", { className: "turn-info-rows" }, ...rows));
   }
-  const cmds = d.commands ?? 0;
-  if (cmds > 0) {
-    parts.push(`${String(cmds)} cmd${cmds > 1 ? "s" : ""}`);
+  return section;
+}
+
+/** A wall-clock STAMP as a `<time>`: the machine-readable instant in `datetime`,
+ *  the reader's own locale and 24h-or-not preference in the text. Same pair, from
+ *  the same value, as `fundamentals/turn-header.ts` writes for the turn's start —
+ *  so the panel's "Started" and the header's timestamp cannot disagree. */
+function stampEl(ms: number): HTMLElement {
+  const when = new Date(ms);
+  const t = el(
+    "time",
+    {},
+    when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+  );
+  t.setAttribute("datetime", when.toISOString());
+  return t;
+}
+
+/** The timings section. Three durations and two stamps, each withheld on absence.
+ *
+ *  MODEL TIME IS WITHHELD RATHER THAN CLAMPED. It is wall minus tool, and tool
+ *  calls can overlap, so Σ`duration_ms` legitimately exceeds the turn's wall clock
+ *  and the difference goes negative — reporting a clamped zero would assert a
+ *  measurement nobody made. It is also withheld when there is NO measured tool
+ *  time, because then the subtraction adds nothing: the row would restate the wall
+ *  clock verbatim under a second name.
+ *
+ *  `endedAt` is a STAMP, not `startedAt + elapsedMs`. A turn's `turn_elapsed_ms` is
+ *  the agent's own measured duration and excludes admission wait, so the two are
+ *  read independently and neither is derived from the other. */
+function timingRows(d: TurnSummaryData): HTMLElement[] {
+  const rows: HTMLElement[] = [];
+  const wall = d.elapsedMs ?? 0;
+  const tool = d.toolMs ?? 0;
+  if (wall > 0) {
+    rows.push(infoRow("Wall clock", formatElapsed(wall)));
   }
-  const reads = d.reads ?? 0;
-  if (reads > 0) {
-    parts.push(`${String(reads)} read${reads > 1 ? "s" : ""}`);
+  if (tool > 0) {
+    rows.push(infoRow("Tool time", formatElapsed(tool)));
   }
-  if ((d.credits ?? 0) > 0) {
-    parts.push(`${(d.credits ?? 0).toFixed(2)} cr`);
+  if (tool > 0 && wall > tool) {
+    rows.push(infoRow("Model time", formatElapsed(wall - tool)));
   }
-  // The DURATION IS NOT HERE any more. It was the sixth of up to seven
-  // `·`-separated parts, buried mid-string in a line that otherwise reports cost —
-  // and "how long did that take" is the one thing a reader asks of a turn often
-  // enough to earn its own place. It now sits right-aligned in `.turn-elapsed`,
-  // revealed on hover of the card; `syncElapsed` is the writer.
-  //
-  // Model last: attribution rather than cost. Arrow when a switch split
-  // the turn.
+  if ((d.startedAt ?? 0) > 0) {
+    rows.push(infoRow("Started", stampEl(d.startedAt ?? 0)));
+  }
+  if ((d.endedAt ?? 0) > 0) {
+    rows.push(infoRow("Ended", stampEl(d.endedAt ?? 0)));
+  }
+  // THE GAP BEFORE THIS TURN, and this panel is the only place it is stated in
+  // words. The rail draws it as a seam between two sittings and its marker names it
+  // in a tooltip, so a reader without a pointer had no path to it at all — which is
+  // why `earnsTurnFooter` admits `sinceMs` even though every other panel-only field
+  // is refused. ABSENT is not zero: no predecessor in the window is a different fact
+  // from two turns starting together, so the test is `undefined` rather than a
+  // truthiness check that would fold the two together.
+  if (d.sinceMs !== undefined) {
+    rows.push(infoRow("Gap before", formatElapsed(d.sinceMs)));
+  }
+  return rows;
+}
+
+/** One row per non-zero tool kind, named through the shared noun vocabulary
+ *  (`tool-kind-noun.ts`) so the panel and a tool group's mixed summary call the
+ *  same kind the same thing.
+ *
+ *  Sorted by count and then by kind, so two repaints of one turn cannot reshuffle
+ *  the rows: `kindCounts` is built in the ledger's own walk order, which is arrival
+ *  order, and arrival order is not a fact about the turn worth showing. A kind with
+ *  no calls is ABSENT from the map rather than zero, which is the ledger's stated
+ *  absence rule and is why nothing here has to filter zeroes it invented. */
+function kindRows(counts: Partial<Record<ToolKind, number>>): HTMLElement[] {
+  const entries = Object.entries(counts) as [ToolKind, number][];
+  return entries
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([kind, n]) => infoRow(kindNoun(kind, n), String(n)));
+}
+
+/** The six sections, in order, each withheld when it has nothing to state.
+ *
+ *  Rebuilt wholesale on every repaint rather than patched row by row: the sections
+ *  ARE a function of the data, and the reader's own state — whether the panel is
+ *  open — lives on the footer's `data-info` attribute rather than in here, so
+ *  replacing the contents cannot close a panel under them. */
+function renderInfoPanel(
+  panel: HTMLElement,
+  d: TurnSummaryData,
+  files: [string, FileChange][],
+): void {
+  const sections: HTMLElement[] = [];
+
+  const timings = infoSection("Timings", timingRows(d));
+  if (timings !== null) {
+    sections.push(timings);
+  }
+
+  // The file rows keep their own `<ul class="turn-ledger-files">`, nested here
+  // inside Work: `renderFileRows`, `fileRow` and `reviewRow` all still address it,
+  // and the list is what the disclosure used to BE before the panel grew around it.
+  const kinds = kindRows(d.kindCounts ?? {});
+  const list = el("ul", { className: "turn-ledger-files" });
+  renderFileRows(list, files);
+  const work = infoSection("Work", kinds, files.length > 0 ? [list] : []);
+  if (work !== null) {
+    sections.push(work);
+  }
+
+  const delegateRows: HTMLElement[] = [];
+  if ((d.delegateCount ?? 0) > 0) {
+    delegateRows.push(infoRow("Dispatched", String(d.delegateCount ?? 0)));
+  }
+  if ((d.delegateMs ?? 0) > 0) {
+    delegateRows.push(infoRow("Time", formatElapsed(d.delegateMs ?? 0)));
+  }
+  const delegates = infoSection("Delegates", delegateRows);
+  if (delegates !== null) {
+    sections.push(delegates);
+  }
+
+  const cost = infoSection(
+    "Cost",
+    (d.credits ?? 0) > 0 ? [infoRow("Credits", (d.credits ?? 0).toFixed(2))] : [],
+  );
+  if (cost !== null) {
+    sections.push(cost);
+  }
+
+  // Arrow when a mid-turn switch split the turn, which is the one case where the
+  // plural matters: two names in order say the turn changed hands.
   const models = d.models ?? [];
-  if (models.length > 0) {
-    parts.push(models.join(" \u2192 "));
+  const model = infoSection(
+    "Model",
+    models.length > 0 ? [infoRow("Answered by", models.join(" \u2192 "))] : [],
+  );
+  if (model !== null) {
+    sections.push(model);
   }
-  return parts.join(" \u00b7 ");
+
+  // ONLY on a turn that did not end clean. On a clean turn the stop reason is the
+  // ordinary one and `truncated` is false, so the section would be a heading over
+  // the absence of news — and `running` has not ended at all, so it has no verdict
+  // to diagnose. The raw reason is rendered VERBATIM and nothing branches on it:
+  // the wire declares that enum OPEN, so `outcome` is what any decision reads.
+  const outcomeNow = d.outcome ?? "completed";
+  const unclean = outcomeNow !== "completed" && outcomeNow !== "running";
+  const diagRows: HTMLElement[] = [];
+  if (unclean && (d.stopReasonRaw ?? "") !== "") {
+    diagRows.push(infoRow("Stop reason", d.stopReasonRaw ?? ""));
+  }
+  if (unclean && d.truncated === true) {
+    diagRows.push(infoRow("Truncated", "yes"));
+  }
+  const diagnostics = infoSection("Diagnostics", diagRows);
+  if (diagnostics !== null) {
+    sections.push(diagnostics);
+  }
+
+  panel.replaceChildren(...sections);
 }
 
-/** The turn's elapsed time, or "" when there is none to show. One reader for the
- *  zero test, so the slot and the accessible name cannot disagree about whether a
- *  turn HAS a duration. */
+/** The turn's elapsed time, or "" when there is none to show. The ZERO TEST kept
+ *  apart from the formatting, because `syncElapsed` makes three writes off one
+ *  answer — the text, the `hidden` flag and the `datetime` attribute — and a turn
+ *  that HAS a duration must not be able to get two of them and not the third. */
 function elapsedText(ms: number): string {
   return ms > 0 ? formatElapsed(ms) : "";
 }
@@ -283,9 +484,9 @@ function elapsedText(ms: number): string {
  *  a duration of zero — and a `<time>` with neither an attribute nor valid content
  *  is not a conforming `<time>` either, so it is hidden too. `hidden`, not a class,
  *  for the reason the header's copy button uses it: `display: none` alone leaves the
- *  element in the accessibility tree. Nothing is lost by not reserving that box —
- *  the reveal exists to avoid shifting the row, and an empty slot has nothing to
- *  reveal and nothing to shift. */
+ *  element in the accessibility tree. The reserved box the stylesheet protects is
+ *  the box of a slot that HAS a value; an empty one holds nothing worth reserving,
+ *  so hiding it moves nothing a reader was reading. */
 function syncElapsed(footer: HTMLElement, ms: number): void {
   const slot = footer.querySelector<HTMLTimeElement>(":scope > .turn-elapsed");
   if (slot === null) {
@@ -301,60 +502,18 @@ function syncElapsed(footer: HTMLElement, ms: number): void {
   slot.dateTime = isoDuration(ms);
 }
 
-/** The disclosed region: timings first, then one row per changed file
- *  (`path +N −M`, with a new-file badge), then the multi-file seam. Every file row
+/** One row per changed file: `path +N −M`, with a new-file badge. Every row
  *  opens that file's diff — the aggregate answers whether it worked, rows
  *  answer what changed, the click answers let me look. */
-function renderLedgerRows(
-  list: HTMLElement,
-  files: [string, FileChange][],
-  d: TurnSummaryData,
-): void {
-  const rows: HTMLElement[] = [];
-  const timings = timingsRow(d);
-  if (timings !== null) {
-    rows.push(timings);
-  }
+function renderFileRows(list: HTMLElement, files: [string, FileChange][]): void {
   // Sorted by path so a repaint cannot reshuffle rows under the cursor.
   const sorted = [...files].sort((a, b) => a[0].localeCompare(b[0]));
-  rows.push(...sorted.map(([path, fc]) => fileRow(path, fc)));
+  const rows: HTMLElement[] = sorted.map(([path, fc]) => fileRow(path, fc));
   const review = reviewRow(sorted.length);
   if (review !== null) {
     rows.push(review);
   }
   list.replaceChildren(...rows);
-}
-
-/** `Timings`: the durable channel for the turn's own duration and for the gap
- *  before it. Both are painted for a pointer alone — the duration in the
- *  hover-revealed `.turn-elapsed` slot, the gap as the rail's seam and its
- *  following marker's tooltip — so this row is the only path a keyboard or touch
- *  reader has to either. Null when the turn has neither to state. */
-function timingsRow(d: TurnSummaryData): HTMLElement | null {
-  const took = elapsedText(d.elapsedMs ?? 0);
-  const since = d.sinceMs;
-  if (took === "" && since === undefined) {
-    return null;
-  }
-  const value = el("span", { className: "turn-timings-value" });
-  if (took !== "") {
-    value.appendChild(el("span", { className: "turn-timings-line" }, `Took ${took}`));
-  }
-  if (since !== undefined) {
-    value.appendChild(
-      el(
-        "span",
-        { className: "turn-timings-line" },
-        `Started ${formatElapsed(since)} after the previous turn`,
-      ),
-    );
-  }
-  return el(
-    "li",
-    { className: "turn-ledger-file turn-ledger-timings" },
-    el("span", { className: "turn-timings-label" }, "Timings"),
-    value,
-  );
 }
 
 function fileRow(path: string, fc: FileChange): HTMLElement {
@@ -411,32 +570,36 @@ function reviewRow(count: number): HTMLElement | null {
   return el("li", { className: "turn-ledger-file turn-ledger-review" }, btn);
 }
 
-function filesOpen(footer: HTMLElement): boolean {
-  return footer.dataset["files"] === "open";
+/** `data-info`, and it was `data-files` until the disclosure stopped being a file
+ *  list. The attribute NAME is a three-surface fact — this writer, three selectors
+ *  in `29-turns.css`, and two hand-built test fixtures — and a half-finished rename
+ *  fails SILENTLY in the worst direction: CSS keyed on an attribute nothing writes
+ *  paints nothing, so the panel is permanently closed with no error anywhere. */
+function infoOpen(footer: HTMLElement): boolean {
+  return footer.dataset["info"] === "open";
 }
 
-function setFilesOpen(footer: HTMLElement, on: boolean): void {
+function setInfoOpen(footer: HTMLElement, on: boolean): void {
   if (on) {
-    footer.dataset["files"] = "open";
+    footer.dataset["info"] = "open";
   } else {
-    delete footer.dataset["files"];
+    delete footer.dataset["info"];
   }
   const summary = footer.querySelector<HTMLButtonElement>(":scope > .turn-ledger-summary");
-  if (summary !== null && !summary.disabled) {
+  if (summary !== null) {
     summary.setAttribute("aria-expanded", on ? "true" : "false");
   }
   syncLedgerTooltip(footer);
 }
 
-/** The ledger's hover text: what the row does NOT already say.
+/** The trigger's hover text: what the row does NOT already say.
  *
- *  ONE clause now — what the click does, and only when there is something to
- *  disclose, so a plain readout never advertises a disclosure it does not have. The
- *  attribute is removed outright rather than left empty, because an empty
- *  `data-tooltip` still opens a tip.
+ *  ONE clause — what the click does. It is written unconditionally now, because the
+ *  panel exists on every footer; the clause that withheld it on a readout with
+ *  nothing to disclose is unreachable, since there is no readout state left.
  *
- *  It used to carry a second clause naming the outcome for the three states
- *  `summaryLine` left unexplained. That clause is gone because those states are
+ *  It used to carry a second clause naming the outcome for the three states the
+ *  ledger line left unexplained. That clause is gone because those states are
  *  explained IN THE ROW now (OUTCOME_LEAD is total): a status whose only channel is
  *  a hover has no channel at all on a phone, and repeating a word the line already
  *  leads with was the defect the split existed to avoid. */
@@ -445,12 +608,8 @@ function syncLedgerTooltip(footer: HTMLElement): void {
   if (summary === null) {
     return;
   }
-  if (summary.disabled) {
-    summary.removeAttribute("data-tooltip");
-    return;
-  }
   summary.setAttribute(
     "data-tooltip",
-    filesOpen(footer) ? "Hide the changed files" : "Show the changed files",
+    infoOpen(footer) ? "Hide turn details" : "Show turn details",
   );
 }

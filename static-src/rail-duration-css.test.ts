@@ -1,15 +1,26 @@
 // The site audit as an assertion, and the guard that keeps its list CLOSED.
 //
-// The rule, once: duration text on the turn axis is NEVER painted at rest, and every
-// reader — pointer, keyboard, touch, assistive technology — reaches the same value
-// through the turn footer's ledger disclosure. What keeps a new slot from being
-// hover-gated instead is an enumeration plus a sweep that fails on a slot nobody
-// added to it.
+// THE RULE CHANGED, and this file is what re-states it. It used to read "duration text
+// on the turn axis is NEVER painted at rest, and every reader reaches the same value
+// through the turn footer's ledger disclosure" — a rule the footer redesign overturned
+// (`.turn-elapsed`, 29-turns.css; user ruling, 2026-09-10). The rule now:
 //
-// Every rest-state claim is measured TWICE: against the bundle as shipped, and
+//   The TURN CARD's duration is painted unconditionally. The RAIL's copy is the one
+//   gesture-gated duration left, deliberately, because it answers a different read —
+//   every turn's time in one column, which no footer can, since a reader cannot see
+//   every footer at once — and because the card carries the value for every reader.
+//
+// So the sweep at the bottom is the durable half of this file: what keeps a NEW
+// duration-shaped slot from being hover-gated without a ruling is an enumeration plus
+// a scan that fails on a class nobody added to it. The rest-state cases the old rule
+// needed for sites 2 and 3 are GONE rather than inverted — `turn-elapsed-css.test.ts`
+// owns the footer's unconditional paint and its reserved box, and asserting the same
+// thing from both files is one fact with two owners.
+//
+// The rail's own cases are still measured TWICE: against the bundle as shipped, and
 // against one with the hover query stripped, which is what a device answering
-// `any-hover: none` computes. A test page cannot answer a query it does not match
-// and this provider exports no CDP seam, so dropping the blocks is the emulation.
+// `any-hover: none` computes. A test page cannot answer a query it does not match and
+// this provider exports no CDP seam, so dropping the blocks is the emulation.
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
 import { manifestSheets, mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -23,7 +34,7 @@ vi.mock("./editor-openers.js", () => ({
   openFileGitDiff: undefined,
 }));
 
-const { buildTurnFooter, hasTurnSummary } = await import("./fundamentals/turn-footer.js");
+const { buildTurnFooter, earnsTurnFooter } = await import("./fundamentals/turn-footer.js");
 
 const REVEAL_QUERY = "any-hover: hover";
 /** Four hours, the gap the clean-turn case discloses. */
@@ -86,14 +97,6 @@ async function withNoHoverCSS(fn: () => Promise<void> | void): Promise<void> {
   }
 }
 
-/** The reveal is a 0.2s opacity transition, so the value one tick after focus is
- *  still the resting one. Poll for the settled end rather than the first frame. */
-async function expectRevealed(slot: HTMLElement): Promise<void> {
-  await vi.waitFor(() => {
-    expect(getComputedStyle(slot).opacity).toBe("1");
-  });
-}
-
 /** A chat-area container at a stated inline size, which is what gates site 4. */
 function mountChatArea(px: number): HTMLElement {
   const area = document.createElement("div");
@@ -124,52 +127,6 @@ function mountMarkerTime(areaPx: number): HTMLElement {
   marker.appendChild(time);
   area.appendChild(marker);
   return time;
-}
-
-/** A turn card with the two footer parts the reveal reads: a focusable ledger
- *  button, and the time slot beside it. */
-function mountTurn(): { footer: HTMLElement; slot: HTMLElement } {
-  const card = document.createElement("div");
-  card.className = "turn";
-  const footer = document.createElement("div");
-  footer.className = "turn-footer";
-  const summary = document.createElement("button");
-  summary.className = "turn-ledger-summary";
-  summary.type = "button";
-  summary.textContent = "2 files";
-  footer.appendChild(summary);
-  const slot = document.createElement("time");
-  slot.className = "turn-elapsed";
-  slot.textContent = "1m 32s";
-  footer.appendChild(slot);
-  card.appendChild(footer);
-  host.replaceChildren(card);
-  return { footer, slot };
-}
-
-/** The same builder's footer, under `.subagent-foot` where there is no `.turn`
- *  ancestor — which is what made site 2 permanent before the rest state was
- *  unscoped. */
-function mountDelegate(): { footer: HTMLElement; slot: HTMLElement } {
-  const card = document.createElement("div");
-  card.className = "subagent-block";
-  const foot = document.createElement("div");
-  foot.className = "subagent-foot";
-  const footer = document.createElement("div");
-  footer.className = "turn-footer";
-  const summary = document.createElement("button");
-  summary.className = "turn-ledger-summary";
-  summary.type = "button";
-  summary.textContent = "1 file";
-  footer.appendChild(summary);
-  const slot = document.createElement("time");
-  slot.className = "turn-elapsed";
-  slot.textContent = "12.0s";
-  footer.appendChild(slot);
-  foot.appendChild(footer);
-  card.appendChild(foot);
-  host.replaceChildren(card);
-  return { footer, slot };
 }
 
 function pseudoContent(el: HTMLElement): string[] {
@@ -211,30 +168,6 @@ describe("site 1 — the rail's seam", () => {
   });
 });
 
-describe("site 2 — the delegate footer's copy", () => {
-  it("is invisible at rest", () => {
-    expect(getComputedStyle(mountDelegate().slot).opacity).toBe("0");
-  });
-
-  it("is invisible at rest on a device with no hover", async () => {
-    await withNoHoverCSS(() => {
-      expect(getComputedStyle(mountDelegate().slot).opacity).toBe("0");
-    });
-  });
-});
-
-describe("site 3 — the turn footer's copy", () => {
-  it("is invisible at rest", () => {
-    expect(getComputedStyle(mountTurn().slot).opacity).toBe("0");
-  });
-
-  it("is invisible at rest on a device with no hover", async () => {
-    await withNoHoverCSS(() => {
-      expect(getComputedStyle(mountTurn().slot).opacity).toBe("0");
-    });
-  });
-});
-
 describe("site 4 — the marker's duration pill", () => {
   it("is invisible at rest where the gutter can hold it", () => {
     const time = mountMarkerTime(1200);
@@ -248,74 +181,52 @@ describe("site 4 — the marker's duration pill", () => {
   });
 
   it("is not rendered at all on a device with no hover", async () => {
-    // Unlike the footer's copy this one is WITHHELD rather than shown: there is no
-    // gesture to reveal it with, and the turn card's own footer carries the value.
+    // WITHHELD rather than shown, unlike the footer's copy: there is no gesture to
+    // reveal it with, and the turn card's own footer carries the value
+    // unconditionally on every device.
     await withNoHoverCSS(() => {
       expect(getComputedStyle(mountMarkerTime(1200)).display).toBe("none");
     });
   });
 });
 
-describe("the focus reveal reaches both hover contexts", () => {
-  it("lifts the turn footer's copy", async () => {
-    const { footer, slot } = mountTurn();
-    footer.querySelector<HTMLButtonElement>(".turn-ledger-summary")?.focus();
-    await expectRevealed(slot);
-  });
-
-  it("lifts the turn footer's copy with no hover", async () => {
-    await withNoHoverCSS(async () => {
-      const { footer, slot } = mountTurn();
-      footer.querySelector<HTMLButtonElement>(".turn-ledger-summary")?.focus();
-      await expectRevealed(slot);
-    });
-  });
-
-  it("lifts the delegate footer's copy", async () => {
-    const { footer, slot } = mountDelegate();
-    footer.querySelector<HTMLButtonElement>(".turn-ledger-summary")?.focus();
-    await expectRevealed(slot);
-  });
-
-  it("lifts the delegate footer's copy with no hover", async () => {
-    await withNoHoverCSS(async () => {
-      const { footer, slot } = mountDelegate();
-      footer.querySelector<HTMLButtonElement>(".turn-ledger-summary")?.focus();
-      await expectRevealed(slot);
-    });
-  });
-});
-
 describe("the durable channel", () => {
+  // What makes site 4's withholding acceptable: the value it hides is reachable by
+  // pointer, keyboard, touch and assistive technology on the turn card. Two halves —
+  // the ROW paints the duration with no gesture at all (`turn-elapsed-css.test.ts`
+  // measures that), and the info panel states the timings in words, which is the only
+  // path to the GAP.
   it("gives a CLEAN turn with a gap a footer at all", () => {
-    // `hasTurnSummary` is what decides the footer is BUILT, so widening `expandable`
-    // alone leaves this turn with no ledger — hence no keyboard or touch path to the
-    // gap, and `.rail-seam`'s aria-label as the only channel, which is AT-only.
-    expect(hasTurnSummary({ sinceMs: GAP_MS })).toBe(true);
+    // `earnsTurnFooter` is what decides the footer is BUILT, so dropping `sinceMs`
+    // from its disjunction leaves this turn with no panel — hence no keyboard or
+    // touch path to the gap, and `.rail-seam`'s aria-label as the only channel,
+    // which is AT-only.
+    expect(earnsTurnFooter({ sinceMs: GAP_MS })).toBe(true);
   });
 
-  it("and that footer's disclosure names the gap", () => {
+  it("and that footer's info panel names the gap", () => {
     const footer = buildTurnFooter({ sinceMs: GAP_MS });
     const summary = footer.querySelector<HTMLButtonElement>(".turn-ledger-summary");
     expect(summary?.disabled).toBe(false);
-    const row = footer.querySelector(".turn-ledger-files > .turn-ledger-timings");
-    expect(row?.textContent).toContain("Started 4h 0m after the previous turn");
+    const labels = [...footer.querySelectorAll(".turn-info-row")].map((r) => r.textContent);
+    expect(labels).toContain("Gap before4h 0m");
   });
 
-  it("omits the gap sentence when there is no predecessor in the window", () => {
-    // Absent is a different fact from a gap of zero, so the row states nothing
+  it("omits the gap row when there is no predecessor in the window", () => {
+    // Absent is a different fact from a gap of zero, so the panel states nothing
     // rather than claiming the turn followed its predecessor immediately.
     const footer = buildTurnFooter({ elapsedMs: 12_000 });
-    const row = footer.querySelector(".turn-ledger-timings");
-    expect(row?.textContent).toBe("TimingsTook 12.0s");
+    const labels = [...footer.querySelectorAll(".turn-info-label")].map((r) => r.textContent);
+    expect(labels).not.toContain("Gap before");
   });
 
-  it("carries a delegate's own duration in the delegate footer's disclosure", () => {
-    // One shared builder, so the delegate footer gains the row with no second
-    // mechanism — which matters because a leaf delegate's head is a link, so
-    // `:focus-within` there navigates away instead of revealing.
+  it("carries a delegate's own duration in the delegate footer's panel", () => {
+    // One shared builder, so the delegate footer gains the rows with no second
+    // mechanism — which matters because a leaf delegate's head is a link, so a
+    // hover-gated readout there would have no non-navigating way in.
     const footer = buildTurnFooter({ elapsedMs: 12_000 });
-    expect(footer.querySelector(".turn-timings-value")?.textContent).toContain("Took 12.0s");
+    const rows = [...footer.querySelectorAll(".turn-info-row")].map((r) => r.textContent);
+    expect(rows).toContain("Wall clock12.0s");
   });
 });
 
@@ -327,15 +238,11 @@ const DURATION_SHAPED = /elapsed|duration|timings|dur|time|gap/iu;
 /** The audited list, CLOSED. Every member carries the row that rules on it, so adding a
  *  class here without a ruling is visibly the wrong move. */
 const RULED = new Map<string, string>([
-  // Rows 2 and 3 are one class in two footers: the rest state is unscoped and only
-  // the hover reveal is gated.
-  ["turn-elapsed", "sites 2 and 3 — hover or focus only"],
-  // Row 4, already correct and unchanged.
+  // Sites 2 and 3 are one class in two footers, and both paint it UNCONDITIONALLY
+  // now. `turn-elapsed-css.test.ts` owns the rest-state and reserved-box assertions.
+  ["turn-elapsed", "sites 2 and 3 — painted at rest, no gesture"],
+  // Site 4, the one gesture-gated duration left, and the reason is at the rule.
   ["rail-marker-time", "site 4 — hover or focus only, and only above 70rem"],
-  // Row 6, the durable channel every other site depends on.
-  ["turn-ledger-timings", "site 6 — the ledger's timings row"],
-  ["turn-timings-label", "site 6 — the ledger's timings row"],
-  ["turn-timings-value", "site 6 — the ledger's timings row"],
   // Named OUT of scope: each is a property of a tool call, a run or a workflow step,
   // and the reader opened that card to read exactly it.
   ["tool-duration", "out of scope — a tool call's own duration"],
@@ -356,7 +263,7 @@ describe("the closed list stays closed", () => {
     expect(sheets.filter((s) => s.css !== "")).toHaveLength(sheets.length);
   });
 
-  it("finds no duration-bearing selector outside §4.2's list", () => {
+  it("finds no duration-bearing selector outside the list", () => {
     const unruled: string[] = [];
     for (const { name, css } of manifestSheets()) {
       const text = css.replace(/\/\*[\s\S]*?\*\//gu, " ");
