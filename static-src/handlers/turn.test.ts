@@ -15,6 +15,7 @@ import {
   setActive,
   get,
   recordSteerQueued,
+  recordSteerSent,
   steerCount,
   steerMarks,
   appendMessage,
@@ -27,6 +28,8 @@ import {
   noteLiveTurnMessage,
   liveTurnMessage,
   setTurnFailed,
+  dropSteers,
+  pendingSteerCarry,
 } from "../store.js";
 import { noteRunLive, noteRunSettled } from "../run-store.js";
 import type { ChatHeader, Session } from "../types.js";
@@ -34,6 +37,7 @@ import type { TurnOutcome } from "../wire/types.gen.js";
 import { severityOf } from "../turn-severity.js";
 import type * as TurnRail from "../turn-rail.js";
 import type * as ApiClient from "../api-client.js";
+import type * as ChatActions from "../actions/chat.js";
 
 type TurnRailModule = typeof TurnRail;
 
@@ -88,6 +92,27 @@ vi.mock("../send-state.js", () => ({
   setAgentDown: mockSetAgentDown,
   clearAgentDown: mockClearAgentDown,
   setSSEStatus: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds: steer-resend.js is in this graph
+  // (the settled arm fires the boundary resend) and imports the name for its
+  // give-up path, which no case here reaches.
+  reportSendRefused: vi.fn(),
+}));
+
+// The boundary resend is driven for REAL in this file — the settled arm is its one
+// firing point, so mocking it would leave the feature's whole trigger unpinned — and
+// only its two outward calls are replaced. `sendPromptTo` is what a resent turn IS,
+// and `clearSteers` would otherwise POST for every boundary in the file.
+const mockSendPromptTo = vi.fn((_chatID: string, _text: string, _opts?: { messageID?: string }) =>
+  Promise.resolve<"sent" | "failed">("sent"),
+);
+vi.mock("../chat-commands.js", () => ({
+  sendPromptTo: mockSendPromptTo,
+  switchModel: vi.fn(),
+}));
+const mockClearSteers = vi.fn(() => Promise.resolve(true));
+vi.mock("../actions/chat.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ChatActions>()),
+  clearSteers: { dispatch: mockClearSteers },
 }));
 
 const mockReportFailure = vi.fn();
@@ -161,6 +186,11 @@ const { loadMessages } = await import("../store-load.js");
 // so a STATIC import here links it against the real module before the mocker is ready
 // and the whole file dies in module linking.
 const { forgetDeferredCue, hasDeferredCue } = await import("../agent-finished-cue.js");
+// After the mocks for the same reason: it reaches chat-commands and actions/chat, both
+// replaced above. The REAL module, because the settled arm is the resend's one firing
+// point and a mock would leave the trigger unpinned; `forgetSteerResend` is how each
+// case resets the per-chat slot it holds.
+const { forgetSteerResend, noteBoundaryDrop } = await import("../steer-resend.js");
 
 function makeSession(id: string, over: Partial<Session> = {}): Session {
   return {
@@ -188,6 +218,12 @@ function makeSession(id: string, over: Partial<Session> = {}): Session {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The armed slot is per chat and the module is cached, so the reset is its own
+  // forget rather than a re-import.
+  for (const id of ["chat-1", "chat-2"]) {
+    forgetSteerResend(id);
+  }
+  mockSendPromptTo.mockResolvedValue("sent");
   // `mockReset` is on, so an implementation set at construction is gone by now. A null
   // answer is what a 404 gives, which is what every case that does not stub a window wants.
   mockApiGetTyped.mockResolvedValue(null);
@@ -409,9 +445,10 @@ describe("turn_ended side effects", () => {
 
   // A boundary drop is not a deletion: "I sent this and the agent never read it"
   // is the one fact about a steer the reader could not learn any other way, so
-  // each waiting row leaves the dock as a `dropped: true` mark carrying its text,
-  // which the note offers to put back in the composer. Characterized on a
-  // BACKGROUND chat because that is the trigger the reader described.
+  // each waiting row leaves the dock as a `dropped: true` mark carrying its text.
+  // The mark is the RECORD; the resend below is what carries the text forward.
+  // Characterized on a BACKGROUND chat because that is the trigger the reader
+  // described.
   it("promotes each waiting steer of a background chat as undelivered", () => {
     setSessions([makeSession("chat-1"), makeSession("chat-2")]);
     setActive("chat-2");
@@ -445,6 +482,110 @@ describe("turn_ended side effects", () => {
         anchor: { msgID: "a-1", blockIndex: 1 },
       },
     ]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // THE UNREAD MESSAGE IS SENT AS THE NEXT TURN, and this arm is its one firing
+  // point: both boundary origins converge on the settled `turn_ended` frame. The
+  // join, precedence and retry ladder are steer-resend.test.ts's; these cases own
+  // that the trigger fires with the right payload, and not for another turn's end.
+  // ---------------------------------------------------------------------------
+
+  // ORIGIN 1: the turn ended on its own with the message still unread. No
+  // `steer_cleared` came, so this arm is both the capture and the fire.
+  it("sends an unread steer as a new turn when the turn ends on its own", async () => {
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main", origin: "user" });
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+
+    await vi.waitFor(() => {
+      expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
+    });
+    expect(mockSendPromptTo.mock.calls[0]?.[0]).toBe("chat-1");
+    expect(mockSendPromptTo.mock.calls[0]?.[1]).toBe("actually target main");
+  });
+
+  // ORIGIN 2: the reader pressed stop. KAS's `cancel()` drains its buffer and emits
+  // `steering_cleared` from inside the handler, and vibekit's `turn_ended` follows —
+  // so the clear frame CAPTURES and this arm fires the same slot. ONE mechanism, and
+  // this case is what proves the two do not double-send.
+  it("sends it once when a manual stop cleared the buffer first", async () => {
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "stop and do this", origin: "user" });
+    // The clear frame's own capture, spelled the way handlers/steer.ts spells it.
+    noteBoundaryDrop("chat-1", pendingSteerCarry("chat-1", ["steer-1"]));
+    dropSteers("chat-1", ["steer-1"]);
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "cancelled", outcome: "cancelled" });
+
+    await vi.waitFor(() => {
+      expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
+    });
+    expect(mockSendPromptTo.mock.calls[0]?.[1]).toBe("stop and do this");
+  });
+
+  // Several unread messages are ONE new turn, joined by a blank line in the order
+  // they were typed — not N turns, which would make the agent answer each in
+  // isolation, and not a re-sort.
+  it("concatenates several unread steers into one new turn", async () => {
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "first", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "second", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-3", text: "third", origin: "user" });
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+
+    await vi.waitFor(() => {
+      expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
+    });
+    expect(mockSendPromptTo.mock.calls[0]?.[1]).toBe("first\n\nsecond\n\nthird");
+  });
+
+  // THE LOOP GUARD, and it is structural rather than a counter: a turn opened by a
+  // resend ends with an empty dock, so the capture arms nothing and nothing fires.
+  it("opens nothing further when the resent turn ends with nothing pending", async () => {
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    await vi.waitFor(() => {
+      expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
+    });
+
+    // The resent turn's own end.
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
+  });
+
+  // A turn that ended with everything read has nothing to carry, and this is the
+  // common case, so it must cost no POST at all.
+  it("sends nothing when the agent read everything", async () => {
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+    expect(mockClearSteers).not.toHaveBeenCalled();
+  });
+
+  // A row still SENDING is excluded: its own POST is still resolving, and submit.ts
+  // already converts a `no_turn` refusal of it into a prompt — so resending it here
+  // would send one message twice.
+  it("leaves a still-sending steer to its own POST", async () => {
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+    recordSteerSent("chat-1", "m-1", "still in flight");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
   });
 
   // turn_ended is the only moment the set of turns changes, so it is the only
@@ -647,6 +788,21 @@ describe("turn_ended reporting another turn's end", () => {
     expect(steerMarks("chat-1")).toEqual([]);
   });
 
+  // And it sends nothing: the replacement turn is running right now, so the agent can
+  // still read that steer. Resending it here would open a turn against a live one and
+  // duplicate a message that is about to be delivered.
+  it("sends no resend for a displaced turn's end", async () => {
+    seedLive();
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    fireSSE("turn_ended", "chat-1", {
+      stop_reason: "end_turn",
+      outcome: "completed",
+      superseded: true,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+  });
+
   it("retires no pending ask", () => {
     // The sweep keeps only RUN-scoped asks, so ungated it retires the asks of a turn
     // that is still running — a step turn closing on a launching chat that holds its
@@ -726,6 +882,20 @@ describe("turn_ended reporting another turn's end", () => {
     });
     expect(steerCount("chat-1")).toBe(1);
     expect(steerMarks("chat-1")).toEqual([]);
+  });
+
+  // The fifth: a run's step ending says nothing about the chat's own turn, which may
+  // be live right now, so resending would post a prompt into a running turn.
+  it("sends no resend for a run's turn end", async () => {
+    seedLive();
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    fireSSE("turn_ended", "chat-1", {
+      stop_reason: "end_turn",
+      outcome: "completed",
+      workflow_step: true,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
   });
 
   it("reads BOTH markers as displaced, so the run arm's retraction does not run", () => {

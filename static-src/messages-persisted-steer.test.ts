@@ -127,7 +127,7 @@ beforeEach(() => {
 });
 
 describe("a persisted steer renders as a read steer note", () => {
-  it("mounts .steer-note with data-origin=user, data-state=read and no restore button", async () => {
+  it("mounts .steer-note with data-origin=user, data-state=read and no control", async () => {
     const c = freshID("c-steer");
     const view = await paint(c, [
       user(`${c}-u`, "go"),
@@ -140,9 +140,8 @@ describe("a persisted steer renders as a read steer note", () => {
     const note = found[0];
     expect(note?.dataset["origin"]).toBe("user");
     expect(note?.dataset["state"]).toBe("read");
-    // `dropped` is false for a read steer, so the restore button is DEAD code on
-    // this path — hence `onRestore` and `ack` are omitted entirely rather than
-    // passed as undefined (exactOptionalPropertyTypes is on).
+    // The note carries no control in either state now, and `ack` is omitted
+    // entirely rather than passed as undefined (exactOptionalPropertyTypes is on).
     expect(note?.querySelector(".steer-note-restore")).toBeNull();
     expect(note?.querySelector(".steer-note-ack")).toBeNull();
     expect(note?.querySelector(".steer-note-text")?.textContent).toBe("use tabs");
@@ -197,7 +196,7 @@ describe("a persisted steer renders as a read steer note", () => {
 // identically to a delivered one — a false claim about whether the reader's own
 // message landed, which is worse than the note being absent.
 describe("a persisted UNDELIVERED steer says so", () => {
-  it("mounts .steer-note with data-state=dropped, the not-delivered label and a restore control", async () => {
+  it("mounts .steer-note with data-state=dropped and the not-delivered label", async () => {
     const c = freshID("c-steer-dropped");
     const view = await paint(c, [
       user(`${c}-u`, "go"),
@@ -210,11 +209,18 @@ describe("a persisted UNDELIVERED steer says so", () => {
     const note = found[0];
     expect(note?.dataset["state"]).toBe("dropped");
     expect(note?.dataset["origin"]).toBe("user");
-    expect(note?.querySelector(".steer-note-label")?.textContent).toBe("Not delivered");
+    expect(note?.querySelector(".steer-note-label")?.textContent).toBe(
+      "Not read — sent as a new turn",
+    );
     expect(note?.querySelector(".steer-note-text")?.textContent).toBe("actually target main");
   });
 
-  it("puts the text back in the message box, the one control the wire can honour", async () => {
+  // THE MARK OFFERS NOTHING AND TOUCHES NOTHING. It used to carry "Put it back in
+  // the message box" and fill the composer on the click; the boundary resend sends
+  // an unread message as its own turn now, so the button would ask the reader to do
+  // a job already done — and filling the composer would overwrite whatever they are
+  // typing next.
+  it("offers no control and leaves the message box alone", async () => {
     const c = freshID("c-steer-restore");
     const view = await paint(c, [
       user(`${c}-u`, "go"),
@@ -224,11 +230,10 @@ describe("a persisted UNDELIVERED steer says so", () => {
 
     const box = document.getElementById("prompt-input") as HTMLTextAreaElement;
     box.value = "";
-    const restore = view.querySelector<HTMLButtonElement>(".steer-note-restore");
-    expect(restore).not.toBeNull();
-    restore?.click();
-
-    expect(box.value).toBe("actually target main");
+    const note = view.querySelector<HTMLElement>(".steer-note");
+    expect(note?.querySelector(".steer-note-restore")).toBeNull();
+    expect(note?.querySelectorAll("button")).toHaveLength(1); // the clamp's opener
+    expect(box.value).toBe("");
   });
 
   it("reads the two states apart from one transcript", async () => {
@@ -250,10 +255,10 @@ describe("a persisted UNDELIVERED steer says so", () => {
 // INVARIANT 5: no migration, so a chat file written before the state existed must
 // load. Absent means the state is NOT KNOWN — the whole legacy population plus
 // every row the replay projection writes — and the neutral note is what claims no
-// delivery either way. It must NOT read as not-delivered: that would offer a
-// restore control for a correction the agent may well have acted on.
+// delivery either way. It must NOT read as not-delivered: that would label a
+// correction the agent may well have acted on as missed.
 describe("a persisted steer whose state is not known", () => {
-  it("renders the neutral note with no not-delivered claim and no restore control", async () => {
+  it("renders the neutral note with no not-delivered claim", async () => {
     const c = freshID("c-steer-legacy");
     const view = await paint(c, [
       user(`${c}-u`, "go"),

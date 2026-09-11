@@ -350,8 +350,9 @@ describe("the not-delivered record survives the turn boundary and the refetch", 
     expect(rendered).toHaveLength(1);
     expect(rendered[0]?.dataset["state"]).toBe("dropped");
     expect(rendered[0]?.textContent).toContain("never read this");
-    // The one control the wire can honour on an undelivered steer.
-    expect(rendered[0]?.querySelector(".steer-note-restore")).not.toBeNull();
+    // A RECORD, not an offer: the mark carries no control, because the boundary
+    // resend already sent the text as a new turn (steer-resend.ts).
+    expect(rendered[0]?.querySelector(".steer-note-restore")).toBeNull();
   });
 
   // THE RESIDUAL, pinned so it is a known state rather than a surprise: only an

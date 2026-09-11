@@ -1709,30 +1709,3 @@
 .steer-note[data-state="dropped"] .steer-note-text {
   color: var(--c-text-aside);
 }
-
-/* The one control the wire can honour on a dropped steer: the text back in the
- * message box, from which it is one Send from being a prompt. */
-.steer-note-restore {
-  align-self: flex-start;
-  margin-block-start: var(--sp-1);
-  padding: var(--sp-1) var(--sp-2);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: var(--c-bg-primary);
-  color: var(--c-text-secondary);
-  font-size: var(--fs-xs);
-  cursor: pointer;
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    border-color var(--dur-micro) var(--ease-standard);
-}
-
-.steer-note-restore:hover {
-  color: var(--c-text-primary);
-  border-color: color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
-}
-
-.steer-note-restore:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-offset);
-}

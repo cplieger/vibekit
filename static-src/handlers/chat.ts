@@ -8,6 +8,7 @@ import { upsertHeader, removeChat, getActiveId, setAgentStatus } from "../store.
 import { dropDecisions } from "../decision-dock.js";
 import { forgetDeferredCue } from "../agent-finished-cue.js";
 import { dropComposerState, adoptRemoteComposerState } from "../composer-state.js";
+import { forgetSteerResend } from "../steer-resend.js";
 import { parseRoute, replaceRoute } from "../router.js";
 
 // Defensive `=== undefined` guards: the wire decoder marks payloads
@@ -70,11 +71,13 @@ onSSE("chat_deleted", (_chatID, p) => {
   // the membership coordinator under the same lock that removed the
   // record, so a close from here would race the deleting device's own.
   //
-  // The two per-chat cleanups below still run — each is keyed by chat id
+  // The per-chat cleanups below still run — each is keyed by chat id
   // and outlives the tab, and each is idempotent.
   dropDecisions(p.id);
   forgetDeferredCue(p.id);
   dropComposerState(p.id);
+  // A resend armed for a chat that no longer exists has nowhere to land.
+  forgetSteerResend(p.id);
   removeChat(p.id);
   // Drop the chat's in-memory banner entries; persisted dismissals are not
   // pruned here since only the BannerEntry DOM objects need dropping.
