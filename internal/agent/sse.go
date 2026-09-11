@@ -250,15 +250,36 @@ var connectSnapshotCaps = buffer.SnapshotCaps{
 	Blocks:          64,
 }
 
-// liveTurnGETCaps bounds the in-flight turn the transcript GET carries. The SAME
-// dimensions as connectSnapshotCaps because the reader's need is the same one — the tail
-// of the reply being written now — and stating them separately is what lets the two
-// diverge later without one channel silently inheriting the other's policy.
+// liveTurnGETCaps bounds the in-flight turn the transcript GET carries, and every
+// dimension is sized ABOVE the measured maximum so the ordinary turn is not cut at all.
+//
+// The reader's need on THIS channel is the WHOLE turn, not its tail. This is the one
+// channel that carries the newest turn while it is in flight, and the newest turn is
+// served whole unconditionally — so a cap that keeps a tail is a cap that withholds the
+// reply a reader came for. connectSnapshotCaps answers the other question (a mid-turn
+// reconnect wants the reply being written NOW, across up to eight chats inside one
+// budget), which is why the two literals are stated separately rather than aliased.
+//
+// Measured maxima over the live chat volume, one per dimension, so the sizing is
+// checkable rather than asserted. What survives is a RUNAWAY ceiling of
+// MaxTextBytes() = 10,616,832 bytes: past it the turn is cut and `truncated` says so.
+// ToolOutputTotalBytes is what makes that number statable — the per-call cap stays at the
+// terminal ring buffer's own 64 KiB bound, so a single call is never cut, and the
+// aggregate bounds the product the per-call cap cannot.
 //
 // Deliberately NOT narrowed by a remaining budget: that GET serves ONE chat, so there is
-// no fanout to divide. Its cost is charged against the caller's own ?max_bytes= instead
-// (internal/chat's serveChatMessages), so the response stays inside the page budget.
-var liveTurnGETCaps = connectSnapshotCaps
+// no fanout to divide. Its cost is no longer charged against the caller's own ?max_bytes=
+// either (internal/chat's serveChatMessages): that budget bounds the WINDOW, and this cap
+// bounds the live turn, as two independent bounds on one response.
+var liveTurnGETCaps = buffer.SnapshotCaps{
+	ReasoningBytes:       1 << 20,   // > max 774,867
+	ContentBytes:         128 << 10, // > max 71,191
+	BlockTextBytes:       1 << 20,   // > max 804,520
+	Blocks:               8192,      // > max 3,548
+	ToolCalls:            4096,      // > max 2,804
+	ToolOutputBytes:      64 << 10,  // == the terminal ring buffer's own bound
+	ToolOutputTotalBytes: 8 << 20,   // > max sum 3,467,593
+}
 
 // streamInitialState writes the connected handshake, then replays this client's
 // outstanding state so a reconnecting browser rebuilds its UI as it was.
@@ -388,6 +409,12 @@ type turnCandidate struct {
 //
 // The floor is 1 byte and never 0: a zero dimension means UNBOUNDED, so clamping a
 // field to "spend nothing" would spend everything.
+//
+// ToolOutputTotalBytes is deliberately NOT in the scale list, and that omission is
+// load-bearing rather than an oversight: connectSnapshotCaps leaves it zero (unbounded,
+// with the per-call product doing the bounding), and `scale` floors at 1 — so scaling it
+// would turn an unbounded dimension into a 1-BYTE aggregate on the connect path and drop
+// every tool output from every snapshot.
 func narrowedConnectCaps(remaining int) buffer.SnapshotCaps {
 	caps := connectSnapshotCaps
 	full := caps.MaxTextBytes()
