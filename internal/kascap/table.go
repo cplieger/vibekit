@@ -416,71 +416,66 @@ agent chooses otherwise.`,
 		key:      "session_title_llm",
 		door:     doorConnection,
 		resolver: resolverSetting,
-		value:    enabled(),
-		send:     true,
-		because: `session_title_llm turns on KAS's LLM session title: one
-fire-and-forget call to its fast model (qdev::simple-task) on a session's
-FIRST prompt, asking for a 3-to-6-word Title Case name for the
-conversation, with a 15s abort budget. It ships dark upstream
-(FEATURES.session_title_llm default false, in-source comment "Ships dark
-… until the experiment ramps"), so without this row nothing generates one.
+		send:     false,
+		because: `WITHHELD because it is INERT, and it was sent for a year on a
+premise measurement refuted. session_title_llm names KAS's LLM session
+title: one fire-and-forget call to its fast model (qdev::simple-task) on a
+session's FIRST prompt, asking for a 3-to-6-word Title Case name, with a
+15s abort budget.
 
-What it buys is the History page. GET /api/sessions reads each row's title
-straight off _kiro/session/list, which is KAS's OWN stored title and never
-vibekit's chat name, so a closed chat whose agent never called
-update_session_information shows deriveSessionTitle's 80-char truncation of
-the first prompt. This replaces that with a real name.
+The refutation, off the pinned bundle. The key has exactly TWO sites: a
+feature-key-to-env-var map, and the kickoff's gate
+"process.env.KIRO_DISABLE_SESSION_TITLE_LLM === 'true' ||
+!t.featureConfig.get(SESSION_TITLE_LLM)". So it is read through
+featureConfig, NOT through isFeatureEnabled, and buildFeatureConfigRegistry
+constructs that registry with exactly two providers — the KAS process
+environment and upstream's experiment service. There is no client provider,
+so a key in clientCapabilities._meta.kiro.settings can never reach this
+gate. This row turned nothing on and could turn nothing off; every reader
+of the old because was reading a claim about isFeatureEnabled that does not
+apply to this key. Same class as memoryEnable's eligibility term, which
+decl.go's Memory field already records as unreachable from the settings
+bridge.
 
-It also renames the TAB, and that is not separable. The title arrives on the
-shared focus_update channel, and translate/focus.go's applyFocusTitle adopts
-any title titleIsPromptDerived does not recognise — an LLM title is not
-prompt-shaped, so it lands on Chat.Name about a second after the first
-prompt. That is a rung-2 upgrade rather than a precedence change: it
-replaces the local 80-char label and an agent focus title arriving later
-still wins. There is no discriminator that would let History have it alone;
-KAS emits a title-only focus_update here while the
-update_session_information tool usually carries a description or status
-too, but the tool's fields are all optional, so filtering on title-only
-would drop a genuine agent rename to protect a truncation.
+So the feature is on because upstream RAMPED the experiment (FEATURES
+default false, in-source "Ships dark … until the experiment ramps"), not
+because vibekit asked, and the only lever vibekit holds over the producer
+is KIRO_DISABLE_SESSION_TITLE_LLM=true in the child environment — tested
+first, so it beats both providers. The two levers over the RESULT are
+translate.TitleRefusal at the adoption door and that variable; nothing on
+the wire is one.
 
-THAT PARAGRAPH USED TO STOP AT "not prompt-shaped, so it lands on
-Chat.Name", as though passing titleIsPromptDerived were the wanted outcome.
-It is not sufficient: an unfiltered pass also admits a model reply that is
-not a title at all. Measured on the live volume — first prompt "test", so
-KAS asked its fast model to title a one-word conversation and the model
-correctly answered by asking for the message; the reply arrived here 1.4s
-after the derivation and vibekit stored it as the chat's name, where it
-stayed, because the name only moves UP the precedence. So this row now
-depends on translate.TitleRefusal, the rule at the adoption door, and
-turning it on without that door reopens the same hole. Its
-residual is the same one recorded on the predicate: a refusal short enough
-and single-clause enough to look like a sentence-case title still passes,
-and the escalation for one is withholding THIS ROW rather than guessing at
-the text.
+Kept as a row rather than deleted because a map literal has no line for a
+key it omits, and this key is worth a line: it looks like a client setting,
+it is spelled like one, and the next reader to find it in the schema will
+reach for exactly the row this replaces.
 
-MUST be the connection door, and MUST NOT carry the schema's leading
-underscore. KAS installs the bridge that makes this key readable inside
-initialize, from clientCapabilities._meta.kiro.settings, so a session-door
-row would never be consulted. And the authoritative schema
-(@kiro/acp-type-covenant BaseAgentSettingsSchema) declares _sessionRecap
-and friends with an underscore while the agent reads
-isFeatureEnabled("session_title_llm") without one: rawKeys is the client's
-object keys verbatim, so only the string in the call is read. The
-underscore spelling validates and is silently ignored.
+What the feature buys, unchanged and now credited to upstream: GET
+/api/sessions reads each row's title straight off _kiro/session/list, which
+is KAS's OWN stored title and never vibekit's chat name, so a closed chat
+whose agent never called update_session_information used to show
+deriveSessionTitle's 80-char truncation of the first prompt. It also renames
+the TAB, and that is not separable — the title arrives on the shared
+focus_update channel, so applyFocusTitle adopts it about a second after the
+first prompt. There is no discriminator that would let History have it
+alone: KAS emits a title-only focus_update here while the
+update_session_information tool usually carries a description or status too,
+but the tool's fields are all optional, so filtering on title-only would
+drop a genuine agent rename to protect a truncation.
 
-Residual cost, accepted rather than gated: the utility bridge shares this
-handshake, so its own first prompt (a commit message, a PR description, an
-error explanation) also generates one title per utility-session lifetime —
-about one extra cheap call per 20 utility operations, since the session
-recycles at maxUtilityPrompts. Suppressing it would need a third Spawn
-boolean, which doubles the exhaustive golden matrix from four rows to
-eight, and the title it produces reaches nothing: the utility session is
-filtered out of History by toResumable, and a focus_update for a chat
-record that does not exist is a no-op inside applyFocusTitle's Mutate.
+And the cost, which is why the adoption door exists: a reply that passes
+titleIsPromptDerived is not thereby a title. Measured on the live volume —
+first prompt "test", so KAS asked its fast model to title a one-word
+conversation and the model correctly answered by asking for the message; the
+reply arrived 1.4s after the derivation and vibekit stored it as the chat's
+name, where it stayed, because a name only moves UP the precedence.
 
-Turn it off by withholding the row, not by sending false — absent reads as
-false at the isFeatureEnabled site. KIRO_DISABLE_SESSION_TITLE_LLM=true in
-the bridge environment is upstream's own kill switch and overrides this.`,
+If upstream ever wires a client provider into featureConfig, this row
+becomes live and both spelling constraints apply: the CONNECTION door (the
+settings bridge is installed inside initialize, so a session-door row is
+never consulted) and NO leading underscore, because rawKeys is the client's
+object keys verbatim while the authoritative schema declares the
+experimental family with one.`,
 	},
 	{
 		key:      "sessionEviction",
