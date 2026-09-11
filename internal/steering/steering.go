@@ -372,6 +372,16 @@ func writeMCP(b *strings.Builder, snap MCPSnapshot) {
 // authenticated only when its forge kind is logged in, so advertising
 // the full three-CLI catalog would point the agent at binaries that
 // don't exist on this install.
+//
+// The GitHub paragraph names the live scope ORACLE rather than the scope
+// list, because this doc regenerates on a connection change and the 30s
+// manager TTL while `gh auth refresh` inside the container is neither —
+// so a printed list would go stale and read as authoritative. The
+// sentence it replaced ("no auth login or token setup needed") was
+// unqualified and false: it told the agent not to worry about a boundary
+// that is real, and the obvious probe for it — running the operation's
+// read half — succeeds unscoped, because a public-resource read needs no
+// scope.
 func writeForges(w io.Writer, snap ForgeSnapshot) {
 	if len(snap.Providers) == 0 {
 		return
@@ -389,7 +399,11 @@ func writeForges(w io.Writer, snap ForgeSnapshot) {
 	if kinds[kindGitea] || kinds[kindCodeberg] {
 		fmt.Fprintf(w, "- Gitea / Codeberg: `tea pulls|issues|releases`\n")
 	}
-	fmt.Fprintf(w, "\nThese CLIs are pre-authenticated; no auth login or token setup needed.\n\n")
+	fmt.Fprintf(w, "\nThese CLIs are pre-authenticated for git and for the API surface above.\n")
+	if kinds[kindGitHub] {
+		fmt.Fprintf(w, "\nThat covers the scopes vibekit requests at login plus any added out of band, which a reconnect preserves. An operation needing a scope outside that set fails with a 404 naming the scope and the `gh auth refresh` command that adds it; a scope-free read succeeding proves nothing, so read the live set with `gh api -i user | grep -i '^x-oauth-scopes'`.\n")
+	}
+	fmt.Fprintf(w, "\n")
 	for i := range snap.Providers {
 		writeForgeProvider(w, &snap.Providers[i])
 	}

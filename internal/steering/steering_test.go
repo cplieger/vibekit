@@ -535,3 +535,44 @@ func TestWriteForges_RepoListTruncatesAtTwenty(t *testing.T) {
 		}
 	})
 }
+
+// TestWriteForges_ScopeBoundaryIsGitHubOnly pins the three claims the
+// scope paragraph exists to make: the boundary is stated at all, the
+// advice is withheld from a forge whose CLI it does not apply to, and
+// the unqualified sentence it replaced does not come back. That last one
+// is the defect being guarded: "no auth login or token setup needed"
+// told the agent not to worry about a real boundary.
+func TestWriteForges_ScopeBoundaryIsGitHubOnly(t *testing.T) {
+	const retired = "no auth login or token setup needed"
+
+	t.Run("github connected states the boundary and the live check", func(t *testing.T) {
+		var b strings.Builder
+		writeForges(&b, ForgeSnapshot{Providers: []ForgeProvider{{
+			Kind: "github", Host: "github.com", User: "alice",
+		}}})
+		out := b.String()
+		if !strings.Contains(out, "x-oauth-scopes") {
+			t.Errorf("missing the live scope check:\n%s", out)
+		}
+		if !strings.Contains(out, "gh auth refresh") {
+			t.Errorf("missing the remedy the 404 names:\n%s", out)
+		}
+		if strings.Contains(out, retired) {
+			t.Errorf("the unqualified pre-authenticated claim came back:\n%s", out)
+		}
+	})
+
+	t.Run("non-github forge gets no gh-specific scope advice", func(t *testing.T) {
+		var b strings.Builder
+		writeForges(&b, ForgeSnapshot{Providers: []ForgeProvider{{
+			Kind: "gitlab", Host: "gitlab.com", User: "alice",
+		}}})
+		out := b.String()
+		if strings.Contains(out, "x-oauth-scopes") || strings.Contains(out, "gh auth refresh") {
+			t.Errorf("gitlab-only install was given gh scope advice:\n%s", out)
+		}
+		if !strings.Contains(out, "pre-authenticated for git") {
+			t.Errorf("lost the generic pre-authenticated claim:\n%s", out)
+		}
+	})
+}

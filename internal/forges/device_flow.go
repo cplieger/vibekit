@@ -10,8 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -39,18 +41,147 @@ type deviceTokenResult struct {
 // githubOAuthClientID is the OAuth app ID for GitHub device flow.
 const githubOAuthClientID = "178c6fc778ccc68e1d6a"
 
-// githubOAuthScopes: repo ops + org listing (gh's own login minimum)
-// plus workflow so pushes touching .github/workflows aren't rejected.
-// No gist — vibekit has no gist feature.
-const githubOAuthScopes = "repo,read:org,workflow"
+// githubOAuthBaselineScopes is the FLOOR vibekit needs, not the whole
+// request: repo ops + org listing (gh's own login minimum) plus
+// workflow so pushes touching .github/workflows aren't rejected.
+//
+// Do NOT add a capability scope here to serve a one-off need. Widening
+// the baseline widens EVERY user's token for a feature vibekit does not
+// have, which is inherited consent rather than a decision anyone made.
+// The answer for a one-off is `gh auth refresh -s <scope>` inside the
+// container, which the union below then preserves for good.
+//
+// StartGitHubDeviceFlow asks for this PLUS every scope the token gh
+// already holds, because loginGH hands the result to `gh auth login
+// --with-token`, which REPLACES gh's stored credential. A reconnect
+// requesting this list alone would drop any scope granted out of band
+// — a `gh auth refresh -s gist` to publish a gist, say — and nothing
+// would report the loss, so the capability would come back missing
+// weeks later as a 404 on unrelated work. GitHub issues tokens per
+// user/application/scope combination, so a narrower request is a
+// narrower token; asking for the union cannot narrow.
+const githubOAuthBaselineScopes = "repo,read:org,workflow"
+
+// maxScopeLen bounds one scope token. GitHub's longest today is
+// security_events at 15; 64 leaves room for a scope invented later
+// without letting a garbage value reach the request.
+const maxScopeLen = 64
 
 var oauthHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
-// StartGitHubDeviceFlow initiates the OAuth device flow with GitHub.
+// validScope reports whether s has the shape of a GitHub OAuth scope:
+// lowercase letters, digits, ':', '_' and '-'.
+//
+// Not a trust boundary — the scopes come from GitHub via gh, not from
+// a user — but a fail-safe: ONE unrecognized token makes GitHub reject
+// the whole device-code request, and a working login is worth more
+// than preserving a scope nothing can name.
+func validScope(s string) bool {
+	if s == "" || len(s) > maxScopeLen {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == ':', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// parseScopeList splits a comma-separated scope list, dropping blanks
+// and anything not scope-shaped. gh reports `auth status` scopes
+// comma-and-space separated ("gist, read:org, repo"); GitHub's device
+// endpoint accepts the comma form vibekit sends.
+func parseScopeList(s string) []string {
+	var out []string
+	for part := range strings.SplitSeq(s, ",") {
+		if part = strings.TrimSpace(part); validScope(part) {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// scopeRequest builds the device-flow scope parameter: the baseline
+// first in its declared order, then every already-granted scope the
+// baseline does not name, sorted so one granted set always yields one
+// request string.
+func scopeRequest(granted []string) string {
+	baseline := parseScopeList(githubOAuthBaselineScopes)
+	seen := make(map[string]struct{}, len(baseline)+len(granted))
+	for _, s := range baseline {
+		seen[s] = struct{}{}
+	}
+	var extra []string
+	for _, s := range granted {
+		if !validScope(s) {
+			continue
+		}
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		extra = append(extra, s)
+	}
+	slices.Sort(extra)
+	return strings.Join(slices.Concat(baseline, extra), ",")
+}
+
+// StartGitHubDeviceFlow initiates the OAuth device flow with GitHub,
+// preserving the scopes the stored token already carries (see
+// githubOAuthBaselineScopes).
 func StartGitHubDeviceFlow(ctx context.Context) (*DeviceFlowResponse, error) {
+	baseline := scopeRequest(nil)
+	scopes := scopeRequest(ghGrantedScopes(ctx, KindGitHub.DefaultHost()))
+	resp, err := requestDeviceCode(ctx, scopes)
+	if err == nil {
+		return resp, nil
+	}
+	if scopes == baseline {
+		return nil, err
+	}
+	// A scope GitHub has since retired would otherwise cost the user
+	// the login outright, so fall back to the floor: the set vibekit
+	// knows GitHub still accepts.
+	//
+	// This is the ONE moment a capability loss is both happening and
+	// detectable — every other way a scope goes missing (a container
+	// reset, a token minted elsewhere) leaves nothing to compare
+	// against — so the line names the dropped scopes and the command
+	// that restores them rather than only the two lists. Scope names
+	// are not secrets; the token is never logged.
+	slog.Warn("forges: device flow rejected the preserved scopes, retrying with the baseline; these are dropped until re-added",
+		"dropped", strings.Join(droppedScopes(scopes, baseline), ","),
+		"remedy", "gh auth refresh -h "+KindGitHub.DefaultHost()+" -s <scope>",
+		"requested", scopes, "baseline", baseline, "error", err)
+	return requestDeviceCode(ctx, baseline)
+}
+
+// droppedScopes reports the scopes in requested that baseline does not
+// carry — what the fallback costs, which is the actionable half of a
+// two-list diff a reader would otherwise have to do by eye.
+func droppedScopes(requested, baseline string) []string {
+	keep := make(map[string]struct{})
+	for _, s := range parseScopeList(baseline) {
+		keep[s] = struct{}{}
+	}
+	var out []string
+	for _, s := range parseScopeList(requested) {
+		if _, ok := keep[s]; !ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// requestDeviceCode asks GitHub for a device code carrying one scope
+// list.
+func requestDeviceCode(ctx context.Context, scopes string) (*DeviceFlowResponse, error) {
 	form := url.Values{
 		"client_id": {githubOAuthClientID},
-		"scope":     {githubOAuthScopes},
+		"scope":     {scopes},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		"https://github.com/login/device/code",

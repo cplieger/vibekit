@@ -3,6 +3,7 @@ package forges
 import (
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -194,5 +195,113 @@ exit 2`)
 
 	if err == nil {
 		t.Errorf("ghAuthHosts = %v, nil; want the failure reported rather than an empty list", hosts)
+	}
+}
+
+// TestActiveAccount pins the one selection rule the login and the
+// scopes readers share: without it a host with several accounts could
+// report one account's login beside another's scopes.
+func TestActiveAccount(t *testing.T) {
+	tests := []struct {
+		name     string
+		accounts []ghStatusAccount
+		wantOK   bool
+		want     string
+	}{
+		{name: "none", accounts: nil, wantOK: false},
+		{name: "single", accounts: []ghStatusAccount{{Login: "alice"}}, wantOK: true, want: "alice"},
+		{
+			name:     "active_wins_over_first",
+			accounts: []ghStatusAccount{{Login: "old"}, {Login: "current", Active: true}},
+			wantOK:   true,
+			want:     "current",
+		},
+		{
+			name:     "no_active_falls_back_to_first",
+			accounts: []ghStatusAccount{{Login: "first"}, {Login: "second"}},
+			wantOK:   true,
+			want:     "first",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := activeAccount(tt.accounts)
+			if ok != tt.wantOK {
+				t.Fatalf("activeAccount(%+v) ok = %v, want %v", tt.accounts, ok, tt.wantOK)
+			}
+			if ok && got.Login != tt.want {
+				t.Errorf("activeAccount(%+v).Login = %q, want %q", tt.accounts, got.Login, tt.want)
+			}
+		})
+	}
+}
+
+// TestGHGrantedScopes_DecodesTheCapturedShape reads the scopes off the
+// same captured status JSON the login discovery uses. Without this
+// field decoded, a reconnect cannot know what it is about to replace.
+func TestGHGrantedScopes_DecodesTheCapturedShape(t *testing.T) {
+	dir := stubPath(t)
+	stubCLI(t, dir, "gh", "echo '"+ghStatusFixture+"'")
+
+	got := ghGrantedScopes(t.Context(), "github.com")
+	want := []string{"repo", "workflow"}
+	if !slices.Equal(got, want) {
+		t.Errorf("ghGrantedScopes(github.com) = %v, want %v", got, want)
+	}
+}
+
+// TestGHGrantedScopes_ReadsTheActiveAccount: the scopes must come from
+// the account whose token gh actually stores.
+func TestGHGrantedScopes_ReadsTheActiveAccount(t *testing.T) {
+	dir := stubPath(t)
+	multi := `{"hosts":{"github.com":[` +
+		`{"active":false,"login":"old","scopes":"repo"},` +
+		`{"active":true,"login":"current","scopes":"repo, gist"}]}}`
+	stubCLI(t, dir, "gh", "echo '"+multi+"'")
+
+	got := ghGrantedScopes(t.Context(), "github.com")
+	want := []string{"repo", "gist"}
+	if !slices.Equal(got, want) {
+		t.Errorf("ghGrantedScopes(github.com) = %v, want the active account's %v", got, want)
+	}
+}
+
+// TestGHGrantedScopes_UnreadableAnswersNil covers every way the read can
+// come back empty. All of them must answer nil rather than an error, so
+// a caller falls back to its own floor instead of failing the login.
+func TestGHGrantedScopes_UnreadableAnswersNil(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+		host   string
+	}{
+		{name: "gh_not_installed", script: "", host: "github.com"},
+		{
+			name:   "not_logged_in",
+			script: `echo "You are not logged into any GitHub hosts." >&2; exit 1`,
+			host:   "github.com",
+		},
+		{name: "undecodable_output", script: `echo 'not json'; exit 2`, host: "github.com"},
+		{
+			name:   "host_absent",
+			script: "echo '" + ghStatusFixture + "'",
+			host:   "gitlab.example.com",
+		},
+		{
+			name:   "offline_check_reports_no_scopes",
+			script: `echo '{"hosts":{"github.com":[{"state":"error","active":true,"login":"alice"}]}}'; exit 1`,
+			host:   "github.com",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := stubPath(t)
+			if tt.script != "" {
+				stubCLI(t, dir, "gh", tt.script)
+			}
+			if got := ghGrantedScopes(t.Context(), tt.host); got != nil {
+				t.Errorf("ghGrantedScopes(%q) = %v, want nil", tt.host, got)
+			}
+		})
 	}
 }
