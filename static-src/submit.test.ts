@@ -372,7 +372,8 @@ describe("a steer refused with no_turn", () => {
 });
 
 // The third 409 class: reason "starting". The admission slot is held by a cold
-// spawn, a shell or a prime — none of which can receive a steer — so this is
+// spawn, a shell command or a workflow step — none of which can receive a steer
+// — so this is
 // neither the steer conversion nor a pre-persist failure. The user row is
 // already persisted and rendered (persist precedes reservation server-side),
 // which is what the echo-first fake below reproduces.

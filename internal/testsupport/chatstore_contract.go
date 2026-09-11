@@ -7,7 +7,7 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// ChatStoreContract is the subject of ChatStoreContractTest: the 8 methods of a
+// ChatStoreContract is the subject of ChatStoreContractTest: the 7 methods of a
 // chat store this suite exercises. There is no shared ChatStore interface any
 // more — each consumer declares 1 to 6 methods of the 11 — and a contract suite
 // has no business naming a method it does not assert on.
@@ -25,7 +25,6 @@ import (
 type ChatStoreContract interface {
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
 	List(ctx context.Context) []vibekit.ChatHeader
-	BuildHistory(ctx context.Context, id vibekit.ChatID) string
 	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error
 	Delete(ctx context.Context, id vibekit.ChatID) error
 	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
@@ -51,7 +50,6 @@ func ChatStoreContractTest(t *testing.T, newStore func(t *testing.T) ChatStoreCo
 	t.Run("Mutate_noop_when_false_returned", func(t *testing.T) { testMutateNoopWhenFalseReturned(t, newStore(t)) })
 	t.Run("Delete_removes_chat", func(t *testing.T) { testDeleteRemovesChat(t, newStore(t)) })
 	t.Run("List_returns_created_chats", func(t *testing.T) { testListReturnsCreatedChats(t, newStore(t)) })
-	t.Run("BuildHistory_empty_for_missing", func(t *testing.T) { testBuildHistoryEmptyForMissing(t, newStore(t)) })
 	t.Run("AppendMessage_adds_to_chat", func(t *testing.T) { testAppendMessageAddsToChat(t, newStore(t)) })
 	t.Run("UpdateMessage_mutates_in_place", func(t *testing.T) { testUpdateMessageMutatesInPlace(t, newStore(t)) })
 	t.Run("UpsertTurnPlan_appends_when_turn_has_none", func(t *testing.T) {
@@ -207,13 +205,6 @@ func testListReturnsCreatedChats(t *testing.T, s ChatStoreContract) {
 	headers := s.List(context.Background())
 	if len(headers) != 2 {
 		t.Fatalf("List len = %d, want 2", len(headers))
-	}
-}
-
-func testBuildHistoryEmptyForMissing(t *testing.T, s ChatStoreContract) {
-	t.Helper()
-	if h := s.BuildHistory(context.Background(), "nope"); h != "" {
-		t.Errorf("BuildHistory = %q, want empty", h)
 	}
 }
 

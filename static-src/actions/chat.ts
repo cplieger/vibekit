@@ -447,10 +447,10 @@ export const resumeSession = defineAction<
 
 // --- chat.fork ---
 // Opens a tangent: a new chat starting with the parent's conversation, then
-// diverging. Server calls `session/fork` on the parent's live session and
-// binds the returned id, so nothing is copied client-side. Reply's `outcome`
-// (`forked` or `primed`) is informational; the tangent opens either way.
-// `opID` stops a retry forking twice.
+// diverging. The server resumes the parent's bridge on demand, calls
+// `session/fork` on it and binds the returned id, so nothing is copied
+// client-side. Reply's `outcome` (`forked` or `fresh`) is informational; the
+// tangent opens either way. `opID` stops a retry forking twice.
 
 export const forkChat = defineAction<
   { opID: string; parentChatID: string; title?: string },
@@ -563,8 +563,8 @@ export const switchModel = defineAction<
 // server acks at admission ({accepted, message_id}), so dispatch runs at the
 // standard API timeout; turn completion is SSE-anchored. Returns "sent" on
 // ack, "queued" on plain 409 (steerable turn in flight), "starting" on 409
-// reason:"starting" (admission holder is a spawn/shell/prime, cannot
-// receive a steer), or null on any other error.
+// reason:"starting" (admission holder is a spawn, a shell command or a workflow
+// step, none of which can receive a steer), or null on any other error.
 //
 // `error: false`: failure-notice.ts already raises the toast via
 // transport.send's reportSendState.
@@ -642,17 +642,15 @@ export const sendPrompt = defineAction<
     }
     if (r.status === 409) {
       if (r.reason === "starting") {
-        // The admission holder is a cold spawn, a shell or a prime — none of
-        // which can receive a steer — so this is a POST-PERSIST failure class:
-        // the user row is already persisted and rendered (persist precedes
-        // reservation server-side). Returned as a VALUE so the caller can
-        // branch on it, which means the framework's rollback never runs; the
+        // The admission holder is a cold spawn, a shell command or a workflow
+        // step — none of which can receive a steer — so this is a POST-PERSIST
+        // failure class: the user row is already persisted and rendered (persist
+        // precedes reservation server-side). Returned as a VALUE so the caller
+        // can branch on it, which means the framework's rollback never runs; the
         // full optimistic write is undone here instead. Thinking retracted,
-        // because thinking left true would turn the user's retry into a steer
-        // The holder is a cold spawn, shell or prime — none can receive a
-        // steer, so this is a post-persist failure class. Thinking retracted
-        // and the latches restored so the previous turn's verdict stands
-        // until the holder's own turn opens.
+        // because thinking left true would turn the user's retry into a steer,
+        // and the latches restored so the previous turn's verdict stands until
+        // the holder's own turn opens.
         setThinking(chatID, false);
         const snap = latchSnapshots.get(messageID);
         if (snap?.turnFailed === true) {

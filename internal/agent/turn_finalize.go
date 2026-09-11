@@ -403,13 +403,6 @@ func (bc *BridgeCoordinator) closeWithOutcome(
 	workflowStep := t.Source == vibekit.TurnSourceWorkflowStep
 	chatID := t.Chat
 	c := bc.concludeStop(chatID, stopReason, reason)
-	if t.Source == vibekit.TurnSourcePrime {
-		// A PRIME persists and broadcasts NOTHING: its frames are vibekit's own transcript
-		// replay, so a row would put the priming preamble in the conversation. The content
-		// is still TAKEN, or the next turn extends these blocks.
-		snap := settleBuffer(t.Buf)
-		return vibekit.TurnResult{Stop: stopReason, EmittedNothing: snap.EmittedNothing, WireEnded: wireEnded}
-	}
 	statusDesc := bc.turns.statusDescription(t)
 	stats := bc.turnStatsFor(ctx, t)
 
@@ -702,9 +695,6 @@ func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, st
 	// Flush before measuring, and before the message below is built from it; see settleBuffer.
 	snap := settleBuffer(buf)
 	result.EmittedNothing = snap.EmittedNothing
-	if t.Source == vibekit.TurnSourcePrime {
-		return result
-	}
 	if !snap.Started {
 		if !persistsEmptyCarrier(t, snap.Segmented) {
 			// This close persists nothing and the buffer left nothing, so the footer argument
@@ -791,9 +781,6 @@ func (bc *BridgeCoordinator) closeAsDiscarded(ctx context.Context, t *Turn) vibe
 	// which is what discarding means — the next turn must not extend these blocks.
 	snap := settleBuffer(t.Buf)
 	result.EmittedNothing = snap.EmittedNothing
-	if t.Source == vibekit.TurnSourcePrime {
-		return result
-	}
 	if !snap.Started {
 		// A switch with nothing in flight persists and announces nothing: the chat was
 		// idle and the restart is invisible.

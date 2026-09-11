@@ -362,8 +362,8 @@ func hasMessageID(c *vibekit.Chat, id string) bool {
 var AdmissionWait = 20 * time.Second
 
 // reasonStarting is the 409 refusal class whose holder cannot receive a
-// steer: a cold spawn, a shell, or a prime. The client renders the busy
-// face and retries instead of converting the 409 to a steer.
+// steer: a cold spawn or a shell. The client renders the busy face and retries
+// instead of converting the 409 to a steer.
 const reasonStarting = "starting"
 
 // promptAck is the prompt's early acknowledgement: admission is decided
@@ -460,9 +460,9 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 	promptAdmittedTurn(ctx, roles, sb, chatID, p)
 }
 
-// promptAdmittedTurn runs the turn with both holds owned: prime, MCP wait,
-// StartTurn at bridge-ready, the ACP call, the settle, and the ordered
-// handoff into the empty-turn recovery.
+// promptAdmittedTurn runs the turn with both holds owned: MCP wait, StartTurn
+// at bridge-ready, the ACP call, the settle, and the ordered handoff into the
+// empty-turn recovery.
 //
 // The release ORDER is the contract: capture the finalized result through
 // the still-held epoch handle, then the bridge slot, then the reservation,
@@ -476,10 +476,6 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 	sb.BeginPromptCall(cancelPrompt)
 	defer sb.EndPromptCall()
 
-	// Prime with history if this session has not had it yet — the
-	// callee's own flag.
-	roles.bridges.PrimeIfNeeded(ctx, chatID)
-
 	if !roles.mcp.WaitForReady(ctx, 30*time.Second) {
 		pending := roles.mcp.PendingSummary(ctx)
 		slog.Warn("MCP readiness timeout, proceeding anyway",
@@ -490,10 +486,10 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 	}
 	// Open the turn at bridge-ready, immediately before dispatch, so
 	// everything true of it for its whole life is captured with the
-	// bridge live — the spawn, the prime and the MCP wait are excluded.
+	// bridge live — the spawn and the MCP wait are excluded.
 	epoch := roles.turnOutcome.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	if epoch == 0 {
-		// Dead ctx: shutdown, or a cancel during the spawn/prime/MCP
+		// Dead ctx: shutdown, or a cancel during the spawn/MCP
 		// window. With no epoch nothing would finalize, so no ACP call.
 		sb.ReleaseAfterPrompt()
 		roles.turnOutcome.ReleaseTurnReservation(chatID)
@@ -591,7 +587,7 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit
 func BuildPromptParams(ctx context.Context, ws Workspace, sb sessionScoped, p *vibekit.PromptCommand, historyImages int) (map[string]any, bool) {
 	blocks := BuildPromptBlocks(ctx, p.Text, p.Attachments, historyImages, ws.ResolveInside)
 	params := SessionParams(sb, map[string]any{
-		"prompt": blocks,
+		vibekit.KeyPrompt: blocks,
 	})
 	// Forward the client-generated user message id so KAS stores this
 	// turn under vibekit's own id — what makes rewind addressable:
@@ -604,7 +600,7 @@ func BuildPromptParams(ctx context.Context, ws Workspace, sb sessionScoped, p *v
 }
 
 func promptParamsInlineImage(params map[string]any) bool {
-	blocks, _ := params["prompt"].([]map[string]any)
+	blocks, _ := params[vibekit.KeyPrompt].([]map[string]any)
 	return inlineImageBlockCount(blocks) > 0
 }
 

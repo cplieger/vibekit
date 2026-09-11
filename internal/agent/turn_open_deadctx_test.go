@@ -23,7 +23,6 @@ func TestStartTurn_RefusesAnAlreadyDeadContext(t *testing.T) {
 		source vibekit.TurnOpenSource
 	}{
 		{name: "prompt", source: vibekit.TurnSourcePrompt},
-		{name: "prime", source: vibekit.TurnSourcePrime},
 		{name: "empty_retry", source: vibekit.TurnSourceEmptyRetry},
 		{name: "local_shell", source: vibekit.TurnSourceLocalShell},
 	}

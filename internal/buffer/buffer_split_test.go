@@ -68,7 +68,6 @@ func TestSplitSegment_KeepsThePerTurnFields(t *testing.T) {
 	buf := New()
 	buf.StartTurn("m-1")
 	buf.SetModel("opus-5")
-	buf.SetMuted(true)
 	buf.TrackFileChanges([]vibekit.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}, false)
 	_, seqBefore := buf.AppendTextDelta("before", "")
 
@@ -80,9 +79,6 @@ func TestSplitSegment_KeepsThePerTurnFields(t *testing.T) {
 	}
 	if len(after.ChangedFiles) != 1 || after.ChangedFiles["a.go"] == nil {
 		t.Errorf("after the split ChangedFiles = %v, want the turn's cumulative map", after.ChangedFiles)
-	}
-	if !buf.Muted() {
-		t.Error("after the split the buffer is unmuted, so a prime's frames would reach clients")
 	}
 	if _, seqAfter := buf.AppendTextDelta("after", ""); seqAfter != seqBefore+1 {
 		t.Errorf("after the split the next seq = %d, want %d (the watermark needs it monotonic)",

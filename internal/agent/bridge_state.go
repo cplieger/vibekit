@@ -44,21 +44,9 @@ type sharedBridge struct {
 	promptCancel context.CancelCauseFunc
 	cancelTimer  *time.Timer
 
-	// primeReason is a string, so its pointer word must sit inside the
-	// pointer-bearing prefix above for govet fieldalignment.
-	primeReason primeReason
-
-	// primeFrom names the chat whose transcript primes this session, when that
-	// is NOT the chat the bridge belongs to. Set only on primeReasonFork: a
-	// tangent whose fork was refused needs its PARENT's history, which is the one
-	// case where BuildHistory must be asked about a different chat. Empty
-	// everywhere else, and PrimeIfNeeded reads the bridge's own chat then.
-	primeFrom vibekit.ChatID
-
 	turnGen uint64
 	mu      sync.Mutex
 	state   bridgeState
-	primed  bool
 	// effortHealed latches the one reactive reasoning-effort repair this bridge
 	// allows (BridgeCoordinator.healEffort). The repair asserts a level and KAS
 	// answers with another config_option_update, so an unbounded reactive repair
@@ -244,24 +232,8 @@ func (sb *sharedBridge) cancelPromptCall() bool {
 	return true
 }
 
-// claimPriming reports whether the caller won the right to prime this session,
-// setting the flag if so. Test-and-set under one lock: the two separate
-// IsPrimed/SetPrimed methods this replaced were called back to back by the one
-// consumer, so the gap between them was a window with no purpose.
-func (sb *sharedBridge) claimPriming() bool {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	if sb.primed {
-		return false
-	}
-	sb.primed = true
-	return true
-}
-
 // claimEffortHeal reports whether the caller won the one reactive reasoning-effort
-// repair this bridge allows, setting the latch if so. Test-and-set under one lock,
-// like claimPriming: the two callers of a split IsHealed/SetHealed pair would sit
-// back to back, so the gap between them would be a window with no purpose.
+// repair this bridge allows, setting the latch if so.
 func (sb *sharedBridge) claimEffortHeal() bool {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()

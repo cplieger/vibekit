@@ -121,7 +121,7 @@ export interface SendResult {
    *  `reason` field (internal/command writeErr), so a caller branches on a
    *  VALUE rather than on error prose. One reason exists today: "starting",
    *  on the 409 prompt refusal whose admission holder cannot receive a steer
-   *  (a cold spawn, a shell, a prime). */
+   *  (a cold spawn, a shell command, a workflow step). */
   reason?: string;
   /** Structured error code for non-HTTP failures. */
   code?: string;

@@ -284,9 +284,8 @@ type ACPToolCallWire struct {
 }
 
 // ACPToolCallUpdateWire is the wire shape for tool_call_update session updates.
-// title/kind are decoded so a card can be relabelled mid-flight; rawOutput yields ONE
-// narrow field (see ACPRawOutput) and is otherwise left undecoded, because the tool's
-// textual output already arrives through the `content` blocks.
+// title/kind are decoded so a card can be relabelled mid-flight. rawOutput stays
+// opaque except for the workflow link and the narrow text fallbacks below.
 type ACPToolCallUpdateWire struct {
 	ToolCallID string                    `json:"toolCallId"`
 	Title      string                    `json:"title"`
@@ -300,13 +299,13 @@ type ACPToolCallUpdateWire struct {
 	Meta ACPKiroMeta `json:"_meta"`
 }
 
-// ACPRawOutput is the whole of what this client reads out of a tool call's `rawOutput`,
-// which KAS types as `unknown` and fills with whatever the tool returned.
+// ACPRawOutput is the object shape this client reads out of a tool call's
+// `rawOutput`, which KAS types as `unknown` and fills with whatever the tool returned.
 //
-// `run_workflow` is the reason: the workflow id on its terminal update is the only
-// structural link from the invocation to the run it started. Decoding stays narrow and
-// tolerant — do not widen it into a general structured-output channel, which is what
-// the content blocks are.
+// `run_workflow` is the reason for WorkflowID: the field on its terminal update is
+// the only structural link from the invocation to the run it started. Error and
+// Message are failure fallbacks only. Object decoding stays narrow so a structured
+// success payload cannot become a general output channel.
 type ACPRawOutput struct {
 	WorkflowID string `json:"workflowId"`
 	Error      string `json:"error"`
@@ -327,17 +326,25 @@ func rawOutputWorkflowID(raw json.RawMessage) string {
 	return out.WorkflowID
 }
 
-// rawOutputFailureText extracts the reason a failed tool call reports, or "" when
-// rawOutput is absent, malformed, neither a string nor an object, or carries no text.
-// Callers must gate on the terminal status being `failed` and on nothing else having
-// produced output.
-func rawOutputFailureText(raw json.RawMessage) string {
+// rawOutputString extracts rawOutput only when it is a bare JSON string. KAS uses
+// that shape when an edit's diff content block is suppressed, so it is the one
+// non-content output channel that is safe on any status.
+func rawOutputString(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
 	var text string
-	if json.Unmarshal(raw, &text) == nil {
-		return strings.TrimSpace(text)
+	if json.Unmarshal(raw, &text) != nil {
+		return ""
+	}
+	return strings.TrimSpace(text)
+}
+
+// rawOutputFailureText extracts the reason a failed tool call reports, or "" when
+// rawOutput is absent, malformed, neither a string nor an object, or carries no text.
+func rawOutputFailureText(raw json.RawMessage) string {
+	if text := rawOutputString(raw); text != "" {
+		return text
 	}
 	var out ACPRawOutput
 	if json.Unmarshal(raw, &out) != nil {

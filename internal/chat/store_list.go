@@ -3,14 +3,12 @@ package chat
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
-	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"golang.org/x/sync/singleflight"
 )
@@ -117,124 +115,4 @@ func (s *Store) listOnce(ctx context.Context) ([]vibekit.ChatHeader, bool) {
 		"returned", len(headers),
 		"complete", complete)
 	return headers, complete
-}
-
-// primeHistoryCap bounds the transcript BuildHistory returns. Bytes rather than
-// tokens because no token count exists at prime time: usage arrives later, from
-// KAS's usage_update.
-const primeHistoryCap = 64 << 10
-
-// primeOmissionNotice tells the model its own input was clipped; without it a
-// truncated prime reads as a short conversation.
-const primeOmissionNotice = "[%d earlier message(s) omitted to fit the priming budget]\n"
-
-// BuildHistory returns a plain-text transcript for priming, bounded to
-// primeHistoryCap, or "" if the chat is missing or empty. Trimming drops WHOLE
-// messages, oldest first, so the model is never handed half a sentence. The last
-// message always survives; if it alone busts the budget its content is truncated
-// with a marker charged INSIDE the cap.
-func (s *Store) BuildHistory(ctx context.Context, chatID vibekit.ChatID) string {
-	c, ok := s.Get(ctx, chatID)
-	if !ok || len(c.Messages) == 0 {
-		return ""
-	}
-
-	// Render before measuring: role prefixes and tool-call lines cost budget too.
-	rendered := make([]string, len(c.Messages))
-	for i := range c.Messages {
-		rendered[i] = renderPrimeMessage(&c.Messages[i], chatID)
-	}
-
-	// Reserved before selecting, so the notice can never push an admitted
-	// message over the cap.
-	budget := primeHistoryCap - len(fmt.Sprintf(primeOmissionNotice, len(rendered)))
-	first, total := selectPrimeWindow(rendered, budget)
-	if first == len(rendered) {
-		return "" // every message was an unknown role
-	}
-
-	var b strings.Builder
-	b.Grow(min(total, primeHistoryCap))
-	if omitted := countRenderable(rendered[:first]); omitted > 0 {
-		slog.Info("chat build_history: transcript trimmed to the priming budget",
-			"chat_id", chatID, "omitted", omitted, "kept", len(rendered)-first, "cap", primeHistoryCap)
-		fmt.Fprintf(&b, primeOmissionNotice, omitted)
-	}
-	for _, line := range rendered[first:] {
-		if line == "" {
-			continue
-		}
-		// Reachable only for the last message: every earlier one was admitted
-		// under budget, which already excluded the notice.
-		if b.Len()+len(line) > primeHistoryCap {
-			capped, _ := runesafe.SanitizeCapped(line, max(primeHistoryCap-b.Len(), 0), "...")
-			b.WriteString(capped)
-			continue
-		}
-		b.WriteString(line)
-	}
-	return b.String()
-}
-
-// selectPrimeWindow picks the newest run of rendered messages that fits budget,
-// returning the index of the oldest one kept and their total size;
-// first == len(rendered) means nothing was renderable. The last message is
-// admitted unconditionally, so the caller truncates it if it alone busts the cap.
-func selectPrimeWindow(rendered []string, budget int) (first, total int) {
-	first = len(rendered)
-	last := len(rendered) - 1
-	for i, line := range slices.Backward(rendered) {
-		if line == "" {
-			continue // unknown role, already warned
-		}
-		if total+len(line) > budget && i != last {
-			break
-		}
-		total += len(line)
-		first = i
-	}
-	return first, total
-}
-
-// countRenderable counts messages that produced output, so the omission notice
-// reports what the model lost rather than array slots.
-func countRenderable(rendered []string) int {
-	n := 0
-	for _, r := range rendered {
-		if r != "" {
-			n++
-		}
-	}
-	return n
-}
-
-// renderPrimeMessage renders one message for the priming transcript, or "" for a
-// role this projection does not know how to narrate.
-func renderPrimeMessage(m *vibekit.Message, chatID vibekit.ChatID) string {
-	var b strings.Builder
-	switch m.Role {
-	case vibekit.RoleUser:
-		b.WriteString("User: ")
-		b.WriteString(m.Content)
-		b.WriteByte('\n')
-	case vibekit.RoleAssistant:
-		b.WriteString("Assistant: ")
-		b.WriteString(m.Content)
-		for j := range m.ToolCalls {
-			tc := &m.ToolCalls[j]
-			fmt.Fprintf(&b, "\n  [tool: %s status=%s]", tc.Title, tc.Status)
-		}
-		b.WriteByte('\n')
-	case vibekit.RoleEvent:
-		b.WriteString("[")
-		b.WriteString(string(m.EventKind))
-		b.WriteString("] ")
-		b.WriteString(m.Content)
-		b.WriteByte('\n')
-	default:
-		slog.Warn("chat build_history: unknown message role, skipped",
-			"chat_id", chatID, "msg_id", m.ID, "role", string(m.Role))
-		return ""
-	}
-	return b.String()
 }

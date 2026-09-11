@@ -34,8 +34,6 @@ type RouteRegistrar interface {
 // the path that tears bridges down on exit and restart must not be able to.
 type bridgeChatRecords interface {
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
-	// BuildHistory returns a plain-text transcript for priming, "" if empty.
-	BuildHistory(ctx context.Context, id vibekit.ChatID) string
 	// Mutate is the single write primitive: load, apply, save, broadcast.
 	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error
 	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error

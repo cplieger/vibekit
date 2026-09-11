@@ -445,9 +445,6 @@ func (rt *Runtime) turnStateCandidates(
 		if chatFilter != "" && id != chatFilter {
 			continue
 		}
-		if facts.Source == vibekit.TurnSourcePrime {
-			continue
-		}
 		// Skipped ENTIRELY rather than downgraded to a bare signal: a chat with no
 		// tab has no surface the signal could reach. Fails OPEN on an unwired store
 		// (see hasOpenTab).

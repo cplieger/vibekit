@@ -26,9 +26,9 @@ func (lc *chatLifecycle) reserveLocked(source vibekit.TurnOpenSource) bool {
 }
 
 // holderSourceLocked names the admission holder. The OPEN turn wins over the
-// reservation: during the prime window the reservation is a prompt's while the
-// open turn is the prime, and the prime is what a refusal must describe — a
-// steer delivered into it is consumed by a throwaway turn. Caller holds mu.
+// reservation: an engine-opened turn (a wire turn_start, a workflow step's
+// frames) holds no reservation of its own, so it is invisible to a refusal that
+// reads the reservation alone. Caller holds mu.
 func (lc *chatLifecycle) holderSourceLocked() (vibekit.TurnOpenSource, bool) {
 	if facts, open := lc.openFactsLocked(); open {
 		return facts.Source, true
@@ -109,10 +109,9 @@ func (bc *BridgeCoordinator) ReleaseTurnReservation(chatID vibekit.ChatID) {
 }
 
 // AdmissionHolderSource reports who holds the chat's admission: the open
-// turn's source when one is open (a prime overrides the prompt reservation it
-// runs under; a wire-started turn holds no reservation), else the
-// reservation's. Satisfies command.TurnOutcomeAccess; the steer refusal and
-// the prompt-refusal arm both key on it.
+// turn's source when one is open (an engine-opened turn holds no reservation),
+// else the reservation's. Satisfies command.TurnOutcomeAccess; the steer refusal
+// and the prompt-refusal arm both key on it.
 func (bc *BridgeCoordinator) AdmissionHolderSource(chatID vibekit.ChatID) (vibekit.TurnOpenSource, bool) {
 	return bc.turns.admissionHolder(chatID)
 }

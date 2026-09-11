@@ -3,7 +3,6 @@ package testsupport
 import (
 	"context"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -49,25 +48,6 @@ func (s *InMemoryChatStore) List(_ context.Context) []vibekit.ChatHeader {
 		hs = append(hs, c.Header())
 	}
 	return hs
-}
-
-// BuildHistory returns the plain-text transcript for the chat with the given id.
-func (s *InMemoryChatStore) BuildHistory(_ context.Context, id vibekit.ChatID) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c, ok := s.chats[id]
-	if !ok {
-		return ""
-	}
-	var b strings.Builder
-	for i := range c.Messages {
-		m := &c.Messages[i]
-		b.WriteString(string(m.Role))
-		b.WriteString(": ")
-		b.WriteString(m.Content)
-		b.WriteByte('\n')
-	}
-	return b.String()
 }
 
 // Mutate applies the mutate function to the chat with the given id, creating it if needed.

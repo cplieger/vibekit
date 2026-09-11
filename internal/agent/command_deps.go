@@ -41,17 +41,6 @@ func (b bridgeRole) AwaitReplayAdopted(ctx context.Context, chatID vibekit.ChatI
 // CloseBridge tears down the bridge for a chat.
 func (b bridgeRole) CloseBridge(chatID vibekit.ChatID) { b.coord.CloseBridge(chatID) }
 
-// PrimeIfNeeded primes the chat's session with history if it needs it.
-func (b bridgeRole) PrimeIfNeeded(ctx context.Context, chatID vibekit.ChatID) {
-	b.coord.PrimeIfNeeded(ctx, chatID)
-}
-
-// PrimeFromChat notes that a chat's first session should be primed with another
-// chat's transcript — the tangent's fork-refused fallback.
-func (b bridgeRole) PrimeFromChat(chatID, sourceChatID vibekit.ChatID) {
-	b.coord.PrimeFromChat(chatID, sourceChatID)
-}
-
 // DeleteChatState tears down all in-memory state for a chat being permanently deleted,
 // cancelling its runs and reaping its durable KAS session.
 func (rt *Runtime) DeleteChatState(ctx context.Context, chatID vibekit.ChatID) {

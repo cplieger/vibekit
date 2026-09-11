@@ -118,11 +118,6 @@ type Projection struct {
 
 	userPending bool
 	turnOpen    bool
-	// dropNextTurn is set when flushUser drops a prime preamble: the bracket that opens
-	// next is the prime's own turn, and its reply is as invisible as its prompt.
-	dropNextTurn bool
-	// turnPrimed is whether the OPEN turn is a prime's, so closeTurn discards it.
-	turnPrimed bool
 }
 
 // NewProjection returns an empty Projection. newID must produce unique message ids;
@@ -181,8 +176,6 @@ func (p *Projection) ingestUserText(raw json.RawMessage) {
 	// carrying the FIRST row's identity, so an empty steering-boundary row hijacks
 	// the prompt that follows it and stamps `steer` onto the reader's own words.
 	if id := c.Meta.Kiro.MessageID; p.userPending && id != "" && id != p.userID {
-		// flushUser also owns the prime-preamble drop and arms dropNextTurn, neither
-		// of which the observed frame order reaches from here.
 		p.flushUser()
 	}
 	if !p.userPending {
@@ -242,7 +235,7 @@ func (p *Projection) ingestToolCall(raw json.RawMessage) {
 	p.adoptTurnIdentity(tc.Meta.Kiro.MessageID, tc.Meta.Kiro.Timestamp)
 	call := vibekit.ToolCall{
 		ID:             tc.ToolCallID,
-		Title:          tc.Title,
+		Title:          displayText(tc.Title),
 		Kind:           tc.Kind,
 		Status:         tc.Status,
 		Input:          tc.RawInput,
@@ -267,7 +260,7 @@ func (p *Projection) ingestToolUpdate(raw json.RawMessage) {
 		return
 	}
 	if tu.Title != "" {
-		tc.Title = tu.Title
+		tc.Title = displayText(tu.Title)
 	}
 	if tu.Kind != "" {
 		tc.Kind = tu.Kind
@@ -355,9 +348,6 @@ func (p *Projection) openTurn() {
 	p.turnOpen = true
 	p.turnID = ""
 	p.turnStart = 0
-	// A prime's user message was just dropped, so this bracket is the prime's own turn.
-	p.turnPrimed = p.dropNextTurn
-	p.dropNextTurn = false
 }
 
 // adoptTurnIdentity gives the open turn the id and timestamp of the first content
@@ -381,12 +371,7 @@ func (p *Projection) closeTurn() {
 	p.turnOpen = false
 	b := p.buf
 	p.buf = nil
-	primed := p.turnPrimed
-	p.turnPrimed = false
-	if b == nil || primed {
-		// A prime's ANSWER goes with its preamble. The prime asks the model for one line
-		// confirming it is caught up, and that reply replays as an ordinary bracketed
-		// turn — so filtering only the user half left it in the transcript.
+	if b == nil {
 		return
 	}
 	// Settle anything the marker filter withheld before the emptiness check reads
@@ -394,6 +379,19 @@ func (p *Projection) closeTurn() {
 	FlushSteerCarry(b)
 	if b.Content.Len() == 0 && b.Reasoning.Len() == 0 && len(b.ToolCalls) == 0 {
 		return
+	}
+	// A replayed non-terminal tool call is stale BY CONSTRUCTION, so settling it here
+	// is a statement of fact rather than a guess: KAS refuses session/load on a busy
+	// session, so everything this projection sees is history, and the process that
+	// owned the call is gone. Without it a turn whose process died mid-call replays a
+	// delegate card that spins for the chat's whole life — nothing at turn close can
+	// reach it, because there was no close. `aborted`, matching the live path's own
+	// word for a call its turn ended under (buffer.MarkInFlightToolsAborted).
+	for i := range b.ToolCalls {
+		switch b.ToolCalls[i].Status {
+		case vibekit.ToolInProgress, vibekit.ToolPending:
+			b.ToolCalls[i].Status = vibekit.ToolAborted
+		}
 	}
 	p.messages = append(p.messages, vibekit.Message{
 		ID:        p.idOr(p.turnID),
@@ -449,14 +447,6 @@ func (p *Projection) flushUser() {
 	p.userText, p.userID, p.userTs, p.userKind = "", "", 0, ""
 	p.userPending = false
 	if text == "" {
-		return
-	}
-	// A PRIME is vibekit's own transcript replay, sent as a real session/prompt, so KAS
-	// persists and replays it here. Dropped: the live path publishes none of a prime's
-	// frames, so keeping it would make a resume the one place the preamble shows up.
-	if IsPrimePreamble(text) {
-		// The prime's own TURN goes too (see closeTurn): the next bracket is the prime's.
-		p.dropNextTurn = true
 		return
 	}
 	p.messages = append(p.messages, vibekit.Message{

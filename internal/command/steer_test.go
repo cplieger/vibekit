@@ -288,42 +288,6 @@ func TestCmdSteerClear_WithNoBridgeIsSuccess(t *testing.T) {
 	}
 }
 
-// TestCmdSteer_RefusedWhileAPrimeIsOpen pins the prime's fold-time policy at the
-// steer door.
-//
-// A prime is vibekit's own transcript replay sent as a real session/prompt, and
-// its turn publishes and persists nothing. So a steer delivered into that window
-// was consumed by a turn nobody ever sees and discarded silently — user data loss
-// with nothing on screen to say so. The refusal is a 409, which is what the
-// client's refused-send rollback keys on: the row comes back out of the dock and
-// the text returns to the composer.
-func TestCmdSteer_RefusedWhileAPrimeIsOpen(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	b := &recordingBridge{result: queuedResult("steer-1"), sessionID: "sess-1"}
-	deps := &bridgeDeps{
-		storeDeps: &storeDeps{
-			benchDeps: &benchDeps{holder: vibekit.TurnSourcePrime, holderOpen: true},
-			store:     store,
-		},
-		bridge: b,
-	}
-	host := hostDouble(deps)
-
-	_, err := CmdSteer(t.Context(), host, host, NewSteerLedger(), steerReq(t, "c1", "use tabs", "m-1"))
-
-	if statusOf(err) != http.StatusConflict {
-		t.Errorf("status = %d, want 409 (body %s)", statusOf(err), errText(err))
-	}
-	if b.callCount != 0 {
-		t.Error("a steer reached the wire during the prime window, so its text was swallowed by a throwaway turn")
-	}
-	// NOT the no_turn class: retrying as a prompt lands in the busy face, and
-	// the honest advice here is "wait a moment", which only the prose carries.
-	if reasonOf(err) == reasonNoTurn {
-		t.Error("the prime refusal carries no_turn; the client would convert a wait into a prompt")
-	}
-}
-
 // reasonOf reads the machine-readable refusal class off a handler error, the
 // same field writeErr lifts into the envelope.
 func reasonOf(err error) string {

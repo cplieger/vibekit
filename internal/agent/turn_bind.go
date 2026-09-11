@@ -104,10 +104,7 @@ func (r *turnRegistry) reclassify(ctx context.Context, chatID vibekit.ChatID) bo
 	// Opened moves with the buffer: the agent's turn began when those frames did.
 	agentTurn.Buf = pre.Buf
 	agentTurn.Opened = pre.Opened
-	// A mis-bound PRIME withheld frames that are the AGENT's, so the taker may publish them.
-	agentTurn.Buf.SetMuted(false)
 	pre.Buf = buffer.New()
-	pre.Buf.SetMuted(pre.Source == vibekit.TurnSourcePrime)
 	pre.acked = false
 	lc.pending = pre
 	slog.Info("a frame revised a provisional turn binding to agent-initiated",

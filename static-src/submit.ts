@@ -44,8 +44,8 @@ import { restoreFailedSend } from "./composer-state.js";
 export type SubmitResult = "sent" | "steered" | "failed";
 
 /** The send-error face for a 409 reason:"starting" refusal. Holder-neutral on
- *  purpose: the admission slot may be held by a cold spawn, a shell or a prime,
- *  and for a shell holder nothing is "starting" — the honest common claim is
+ *  purpose: the admission slot may be held by a cold spawn, a shell command or a
+ *  workflow step, and for a shell holder nothing is "starting" — the honest claim is
  *  busy-now-retry. Rendered through send-state's error surface; the next Send
  *  is the retry and is also what clears it. */
 const STARTING_FACE = "The chat is busy right now — send again to retry";
@@ -159,7 +159,8 @@ async function prompt(
   }
   if (result === "starting") {
     // 409 reason:"starting": the admission slot is held by a cold spawn, a
-    // shell or a prime, so neither a turn nor a steer can land right now. A
+    // shell command or a workflow step, so neither a turn nor a steer can land
+    // right now. A
     // POST-PERSIST failure class: the user row is already persisted and
     // rendered (persist precedes reservation server-side), so recordFailure's
     // hasMessage gate keeps the text out of the composer while still

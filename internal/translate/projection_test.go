@@ -1021,99 +1021,6 @@ func TestProjection_SecondTurnStartClosesTheFirstTurn(t *testing.T) {
 	}
 }
 
-// TestProjection_DropsThePrimePreamble pins the reload half of the prime's
-// suppression.
-//
-// The prime is a real session/prompt, so KAS persists it and replays it exactly
-// like something the user typed. The live path publishes and persists none of a
-// prime's frames, so without this filter a resumed session would be the ONE place
-// the preamble — and the whole transcript it carries — renders as conversation.
-func TestProjection_DropsThePrimePreamble(t *testing.T) {
-	p := NewProjection(seqIDs())
-	frames := []struct {
-		kind vibekit.ACPUpdateKind
-		raw  json.RawMessage
-	}{}
-	add := func(kind vibekit.ACPUpdateKind, raw json.RawMessage) {
-		frames = append(frames, struct {
-			kind vibekit.ACPUpdateKind
-			raw  json.RawMessage
-		}{kind, raw})
-	}
-	add(replayFrame(t, replayUserChunkKind, PrimePreambleSwitch+"\n\nUSER: hello", "", nil))
-	add(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil))
-	add(replayFrame(t, vibekit.ACPUpdateAgentChunk, "Understood.", "", nil))
-	add(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_end", nil))
-	add(replayFrame(t, replayUserChunkKind, "what did I ask?", "", nil))
-	add(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil))
-	add(replayFrame(t, vibekit.ACPUpdateAgentChunk, "You asked hello.", "", nil))
-	add(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_end", nil))
-	for _, f := range frames {
-		p.Ingest(f.kind, f.raw)
-	}
-
-	got := p.Messages()
-	for i := range got {
-		if strings.Contains(got[i].Content, PrimePreambleSwitch) {
-			t.Fatalf("the priming preamble was projected as message %d (%s): %q",
-				i, got[i].Role, got[i].Content)
-		}
-	}
-	// The real conversation is untouched: the user's own question and the reply to
-	// it both survive, so the filter is not eating the transcript with the preamble.
-	var users []string
-	for i := range got {
-		if got[i].Role == vibekit.RoleUser {
-			users = append(users, got[i].Content)
-		}
-	}
-	if len(users) != 1 || users[0] != "what did I ask?" {
-		t.Errorf("projected user messages = %q, want exactly the real prompt", users)
-	}
-}
-
-// TestProjection_DropsThePrimesOwnReply is the half of the prime's reload suppression the
-// preamble filter leaves behind. The prime tells the model to absorb the transcript silently
-// and confirm in one line; that reply is a real turn on the wire, so it replays as an
-// ordinary bracketed assistant turn with no user message in front of it and opens a headerless
-// agent-initiated SEGMENT. The live path persists nothing of a prime, so a resumed session is
-// the one place any of it shows up.
-func TestProjection_DropsThePrimesOwnReply(t *testing.T) {
-	p := NewProjection(seqIDs())
-	frames := [][2]any{
-		pair(replayFrame(t, replayUserChunkKind, PrimePreambleReload+"\n\nUSER: hello", "", nil)),
-		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)),
-		pair(replayFrame(t, vibekit.ACPUpdateAgentChunk, "Got it, I'm caught up.", "", nil)),
-		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_end", nil)),
-		// The real conversation resumes, and must be untouched — the drop is scoped
-		// to the ONE turn the dropped preamble opened, not to everything after it.
-		pair(replayFrame(t, replayUserChunkKind, "what did I ask?", "", nil)),
-		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)),
-		pair(replayFrame(t, vibekit.ACPUpdateAgentChunk, "You asked hello.", "", nil)),
-		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_end", nil)),
-	}
-	ingestAll(p, frames)
-
-	got := p.Messages()
-	want := []struct {
-		role    vibekit.Role
-		content string
-	}{
-		{role: vibekit.RoleUser, content: "what did I ask?"},
-		{role: vibekit.RoleAssistant, content: "You asked hello."},
-	}
-	if len(got) != len(want) {
-		t.Fatalf("projected %d messages, want %d (the prime's turn is invisible):\n%s",
-			len(got), len(want), dumpMessages(got))
-	}
-	for i := range want {
-		if got[i].Role != want[i].role || got[i].Content != want[i].content {
-			t.Errorf("message %d = %s %q, want %s %q",
-				i, got[i].Role, got[i].Content, want[i].role, want[i].content)
-		}
-	}
-}
-
 // TestProjection_InternalToolIsDropped pins the replay half of the
 // internal-tool suppression: KAS's log stores the session-boot cloud-config
 // fetch it announced, so without the gate a resumed chat regains the card the
@@ -1256,5 +1163,43 @@ func TestProjection_TwoSteersWithDifferentIDsAreTwoMessages(t *testing.T) {
 		if got[i].UserKind != vibekit.UserKindSteer {
 			t.Errorf("message %d user_kind = %q, want %q", i, got[i].UserKind, vibekit.UserKindSteer)
 		}
+	}
+}
+
+// TestProjection_UnsettledToolCallIsAborted pins the case a turn close cannot reach:
+// the process holding the buffer died mid-call, so no tool_call_update was ever
+// persisted and nothing settles the call. Measured on the live volume, 2 of 22
+// non-terminal persisted tool calls sat in turns whose outcome was never stamped,
+// and each rendered a delegate card spinning for that chat's whole life.
+//
+// Settling it here is a statement of fact rather than a guess: KAS refuses
+// session/load on a busy session, so everything a projection sees is history and
+// the process that owned the call is gone.
+func TestProjection_UnsettledToolCallIsAborted(t *testing.T) {
+	for _, status := range []string{"in_progress", "pending"} {
+		t.Run(status, func(t *testing.T) {
+			p := NewProjection(seqIDs())
+			_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
+			p.Ingest(vibekit.ACPUpdateSessionInfo, start)
+
+			p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
+				"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+				"toolCallId":    "tc-dead",
+				"title":         "Invoke Sub-agent",
+				"kind":          "other",
+				"status":        status,
+				"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
+			}))
+
+			got := p.Messages()
+			if len(got) != 1 || len(got[0].ToolCalls) != 1 {
+				t.Fatalf("projected %d messages, want 1 turn carrying 1 tool call:\n%s",
+					len(got), dumpMessages(got))
+			}
+			if tc := got[0].ToolCalls[0]; tc.Status != vibekit.ToolAborted {
+				t.Errorf("tool status = %q, want %q: nothing can still settle a replayed call",
+					tc.Status, vibekit.ToolAborted)
+			}
+		})
 	}
 }

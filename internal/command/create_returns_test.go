@@ -12,8 +12,7 @@ package command
 // The op ledger reaches both for a reason each has separately: a retried resume
 // would bind a SECOND chat to one KAS session (two chats claiming one transcript,
 // two entries in the reaper's keep-list for one chain), and a retried fork would
-// ask KAS to fork again, creating a session nothing binds and, on the primed
-// fallback, spending the priming budget twice.
+// ask KAS to fork again, creating a session nothing binds.
 
 import (
 	"encoding/json"
@@ -165,14 +164,12 @@ func TestCmdForkChat_RepeatOpDoesNotForkTwice(t *testing.T) {
 	}
 }
 
-// A retried fork whose FIRST attempt primed rather than forked must report
-// `primed`, derived from the record. Restating this attempt's outcome would make
-// the field a guess in precisely the case a reader is consulting it.
+// A retried fork whose first attempt started fresh must report `fresh`, derived
+// from the record. Restating this attempt's outcome would make the field a guess.
 func TestCmdForkChat_RepeatOpReportsThePathTheFirstAttemptTook(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
-	// No live session on the parent, so the fork degrades to priming and the
-	// tangent is created unbound.
+	// No bridge can be opened, so the tangent is created unbound.
 	host := newForkHost(store, nil)
 	ops := newTestMembership(t, host)
 
@@ -187,12 +184,12 @@ func TestCmdForkChat_RepeatOpReportsThePathTheFirstAttemptTook(t *testing.T) {
 	}
 
 	m, _ := body.(map[string]any)
-	if m["outcome"] != vibekit.ForkOutcomePrimed {
+	if m["outcome"] != vibekit.ForkOutcomeFresh {
 		t.Errorf("outcome = %v, want %q: the first attempt had no session to fork",
-			m["outcome"], vibekit.ForkOutcomePrimed)
+			m["outcome"], vibekit.ForkOutcomeFresh)
 	}
 	if m["session_id"] != "" {
-		t.Errorf("session_id = %v, want empty: a primed tangent has no forked session to name",
+		t.Errorf("session_id = %v, want empty: a fresh tangent has no forked session to name",
 			m["session_id"])
 	}
 }

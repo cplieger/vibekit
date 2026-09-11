@@ -1049,11 +1049,30 @@ func TestHandleToolCallUpdate_FailedKeepsExistingOutput(t *testing.T) {
 	}
 }
 
-// TestHandleToolCallUpdate_CompletedIgnoresRawOutput pins the status half of the
-// gate, which is what keeps this a failure-reason reader rather than the general
-// structured-output channel the content blocks own. `run_workflow` succeeds with
-// an OBJECT in rawOutput, so a dropped gate puts its JSON on the card.
-func TestHandleToolCallUpdate_CompletedIgnoresRawOutput(t *testing.T) {
+// TestHandleToolCallUpdate_CompletedTakesStringRawOutput drives the reachable
+// edit-tool shape: KAS suppresses a large diff content block but still sends the
+// tool's text as a bare rawOutput string.
+func TestHandleToolCallUpdate_CompletedTakesStringRawOutput(t *testing.T) {
+	tr, _, deps, events, chatID := primeToolCall(t)
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"status":     "completed",
+		"rawOutput":  "wrote 3 lines",
+	}), FrameAttribution{})
+
+	got, ok := lastToolCallUpdate(t, deps, events)
+	if !ok {
+		t.Fatal("no tool_call_update event emitted")
+	}
+	if got.Output != "wrote 3 lines" {
+		t.Errorf("ToolCall.Output on a completed edit with no content block = %q, want %q", got.Output, "wrote 3 lines")
+	}
+}
+
+// TestHandleToolCallUpdate_CompletedStillIgnoresObjectRawOutput keeps
+// run_workflow's structured success payload out of the card. Its message is run
+// narration, not tool output; the workflow id has its own narrow reader.
+func TestHandleToolCallUpdate_CompletedStillIgnoresObjectRawOutput(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
@@ -1070,10 +1089,32 @@ func TestHandleToolCallUpdate_CompletedIgnoresRawOutput(t *testing.T) {
 		t.Fatal("no tool_call_update event emitted")
 	}
 	if got.Output != "" {
-		t.Errorf("ToolCall.Output on a completed tool = %q, want empty (nothing is read from a success)", got.Output)
+		t.Errorf("ToolCall.Output from run_workflow's completed object = %q, want empty", got.Output)
 	}
 	if strings.Contains(got.Output, "workflowId") {
 		t.Errorf("ToolCall.Output = %q, want no run_workflow payload in it", got.Output)
+	}
+}
+
+// TestHandleToolCallUpdate_ContentWinsOverRawOutput pins KAS's normal doubled
+// shape: content and rawOutput carry the same text, and the card renders it once.
+func TestHandleToolCallUpdate_ContentWinsOverRawOutput(t *testing.T) {
+	tr, _, deps, events, chatID := primeToolCall(t)
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"status":     "completed",
+		"rawOutput":  "wrote 3 lines",
+		"content": []map[string]any{
+			{"type": "content", "content": map[string]any{"type": "text", "text": "wrote 3 lines"}},
+		},
+	}), FrameAttribution{})
+
+	got, ok := lastToolCallUpdate(t, deps, events)
+	if !ok {
+		t.Fatal("no tool_call_update event emitted")
+	}
+	if got.Output != "wrote 3 lines\n" {
+		t.Errorf("ToolCall.Output with content and rawOutput = %q, want one content copy", got.Output)
 	}
 }
 
@@ -1309,5 +1350,81 @@ func TestKnownToolContentType(t *testing.T) {
 		if knownToolContentType(unknown) {
 			t.Errorf("knownToolContentType(%q) = true, want false", unknown)
 		}
+	}
+}
+
+// TestToolCallTitle_IsTreatedAtTheDecodeDoor pins the treatment where the title
+// ENTERS, so all four of its sinks are covered by one call: the persisted chat
+// file, the client's tool card, WorkingLabelForKind's prompt-bar working pill,
+// and the connect snapshot (which caps blocks and tool outputs and has no Title
+// cap of its own).
+//
+// At the door rather than at each emit site, for the reason the focus DESCRIPTION
+// already establishes: nothing parses or compares this value for anything but
+// display, so there is no raw-for-compute need, and four emit sites are four
+// places to forget. It also makes the tool card agree with the permission card,
+// which has treated its own copy of the same string all along — that asymmetry
+// inside one package is what marked this as a gap rather than a policy.
+//
+// The two ASCII titles the CLIENT classifies on ("Orchestrate Sub-agent", the
+// "Sub-agent:" prefix) are byte-identical under this treatment, which is what
+// makes it safe: the preset only rewrites the rune classes those titles cannot
+// contain.
+func TestToolCallTitle_IsTreatedAtTheDecodeDoor(t *testing.T) {
+	cases := map[string]struct {
+		in   string
+		want string
+	}{
+		"bidi override is defused rather than deleted": {
+			in:   "Run \u202ednuof-emaN- ecapskrow/ fr- mr\u202c",
+			want: "Run  dnuof-emaN- ecapskrow/ fr- mr ",
+		},
+		"a newline cannot split a single-line surface": {
+			in:   "Write file\nrm -rf /",
+			want: "Write file rm -rf /",
+		},
+		"an ANSI introducer's ESC becomes a space": {
+			in:   "Read \u001b]0;pwn\u0007file",
+			want: "Read  ]0;pwn file",
+		},
+		"the pipeline driver's title is byte-identical": {
+			in:   "Orchestrate Sub-agent",
+			want: "Orchestrate Sub-agent",
+		},
+		"a delegate invocation's title is byte-identical": {
+			in:   "Sub-agent: context-gatherer",
+			want: "Sub-agent: context-gatherer",
+		},
+		"a CJK title is byte-identical": {
+			in:   "ファイルを読む",
+			want: "ファイルを読む",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := toolCallFromWire(
+				&ACPToolCallWire{ToolCallID: "tc", Title: tc.in},
+				"", "", toolUpdateContent{},
+			)
+			if got.Title != tc.want {
+				t.Errorf("toolCallFromWire(title %q).Title = %q, want %q", tc.in, got.Title, tc.want)
+			}
+		})
+	}
+}
+
+// TestToolCallTitle_IsBounded pins the other half. An unbounded title pushes the
+// working pill and the tool card off their layout, and rides the connect snapshot
+// where nothing else caps it.
+func TestToolCallTitle_IsBounded(t *testing.T) {
+	long := strings.Repeat("x", 4096)
+	got := toolCallFromWire(&ACPToolCallWire{ToolCallID: "tc", Title: long}, "", "", toolUpdateContent{})
+	// The preset carries its "..." marker OUTSIDE the cap, so a truncated value is
+	// maxDisplayTextBytes+3 bytes.
+	if maxLen := maxDisplayTextBytes + len("..."); len(got.Title) > maxLen {
+		t.Errorf("title length = %d, want at most %d bytes", len(got.Title), maxLen)
+	}
+	if !strings.HasSuffix(got.Title, "...") {
+		t.Errorf("a truncated title must say so; got %q", got.Title[max(0, len(got.Title)-16):])
 	}
 }

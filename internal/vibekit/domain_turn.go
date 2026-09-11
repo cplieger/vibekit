@@ -45,10 +45,6 @@ const (
 	// TurnSourceWireTurnStart is a turn vibekit did not open: a turn_start with
 	// nothing pending to bind, or a fold with no open turn, is the first it hears.
 	TurnSourceWireTurnStart
-	// TurnSourcePrime is the transcript-priming session/prompt sent on a switch, a
-	// reload or a refused fork. It awaits its own epoch before returning, which
-	// keeps the unacknowledged set from ever holding two.
-	TurnSourcePrime
 	// TurnSourceEmptyRetry is the empty-turn recovery's second session/prompt: its
 	// own turn, so the retry's reply does not extend a closed turn's.
 	TurnSourceEmptyRetry
@@ -65,9 +61,9 @@ const (
 
 // PromptClass reports whether a turn opened by this source is a user prompt
 // vibekit dispatched — the holders a second prompt can reach with a steer, which
-// is what the admission refusal arm keys on and its ONLY reader. A prime is
-// deliberately not one: a steer aimed into the prime window is consumed by a
-// throwaway turn.
+// is what the admission refusal arm keys on and its ONLY reader. A workflow
+// step's turn is deliberately not one: a steer aimed into it is read as that
+// step's own input rather than as the reader's correction.
 func (s TurnOpenSource) PromptClass() bool {
 	switch s {
 	case TurnSourcePrompt, TurnSourceEmptyRetry:
@@ -100,9 +96,8 @@ func (s TurnOpenSource) UserAnswered() bool {
 //
 // A shell turn IS one: command/shell.go reserves through TryReserveTurn and holds that
 // reservation across the chat-file write that persists and broadcasts the `!cmd` user
-// row, all before StartTurn mints the record. A prime's reservation is vibekit's own
-// transcript replay, so no client latched anything for it; a wire-started turn holds no
-// reservation at all.
+// row, all before StartTurn mints the record. A wire-started turn holds no reservation
+// at all.
 func (s TurnOpenSource) ClientVisibleTurn() bool {
 	switch s {
 	case TurnSourcePrompt, TurnSourceEmptyRetry, TurnSourceLocalShell:
@@ -118,7 +113,7 @@ func (s TurnOpenSource) ClientVisibleTurn() bool {
 // nothing irreversible may rest on it.
 func (s TurnOpenSource) Acknowledgeable() bool {
 	switch s {
-	case TurnSourcePrompt, TurnSourcePrime, TurnSourceEmptyRetry:
+	case TurnSourcePrompt, TurnSourceEmptyRetry:
 		return true
 	default:
 		return false

@@ -2,6 +2,7 @@ package buffer
 
 import (
 	"testing"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -547,25 +548,36 @@ func TestAppendToolCall_IndexAddressesTheAppendedCall(t *testing.T) {
 	}
 }
 
-func TestBuffer_HasToolInFlight(t *testing.T) {
+func TestBuffer_HasToolInFlightSince(t *testing.T) {
+	cutoff := time.UnixMilli(1_000_000)
 	cases := map[string]struct {
-		status vibekit.ToolStatus
-		want   bool
+		status  vibekit.ToolStatus
+		started time.Time
+		record  bool
+		want    bool
 	}{
-		"pending":     {status: vibekit.ToolPending, want: true},
-		"in_progress": {status: vibekit.ToolInProgress, want: true},
-		"completed":   {status: vibekit.ToolCompleted, want: false},
-		"failed":      {status: vibekit.ToolFailed, want: false},
+		"pending started inside the window":     {status: vibekit.ToolPending, started: cutoff.Add(time.Millisecond), record: true, want: true},
+		"in_progress started inside the window": {status: vibekit.ToolInProgress, started: cutoff.Add(time.Millisecond), record: true, want: true},
+		"in_progress started on the cutoff":     {status: vibekit.ToolInProgress, started: cutoff, record: true, want: true},
+		"in_progress started before the window": {status: vibekit.ToolInProgress, started: cutoff.Add(-time.Millisecond), record: true, want: false},
+		"in_progress with no recorded start":    {status: vibekit.ToolInProgress, record: false, want: false},
+		"completed inside the window":           {status: vibekit.ToolCompleted, started: cutoff.Add(time.Millisecond), record: true, want: false},
+		"failed inside the window":              {status: vibekit.ToolFailed, started: cutoff.Add(time.Millisecond), record: true, want: false},
+		"aborted inside the window":             {status: vibekit.ToolAborted, started: cutoff.Add(time.Millisecond), record: true, want: false},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			buf := &Buffer{ToolCalls: []vibekit.ToolCall{{ID: "tc", Status: tc.status}}}
-			if got := buf.HasToolInFlight(); got != tc.want {
-				t.Errorf("HasToolInFlight(%q) = %t, want %t", tc.status, got, tc.want)
+			if tc.record {
+				buf.ToolStartTimes = map[string]int64{"tc": tc.started.UnixMilli()}
+			}
+			if got := buf.HasToolInFlightSince(cutoff); got != tc.want {
+				t.Errorf("HasToolInFlightSince(status %q, started %v) = %t, want %t",
+					tc.status, tc.started.Sub(cutoff), got, tc.want)
 			}
 		})
 	}
-	if (&Buffer{}).HasToolInFlight() {
-		t.Error("HasToolInFlight(empty) = true, want false")
+	if (&Buffer{}).HasToolInFlightSince(cutoff) {
+		t.Error("HasToolInFlightSince(empty buffer) = true, want false")
 	}
 }

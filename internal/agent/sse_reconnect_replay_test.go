@@ -195,20 +195,6 @@ func openTurnFrom(t *testing.T, rt *Runtime, id vibekit.ChatID, src vibekit.Turn
 	return buf
 }
 
-// TestLiveTurn_WithholdsAPrimeTurn: a prime turn's frames are vibekit's own transcript
-// replay, so serving them would render the preamble as conversation — the reason
-// turnStateCandidates skips one, applied to the second channel so the two agree.
-func TestLiveTurn_WithholdsAPrimeTurn(t *testing.T) {
-	rt, _, _ := newReplayGapRuntime(t)
-	const primed vibekit.ChatID = "c-primed"
-	openTurnFrom(t, rt, primed, vibekit.TurnSourcePrime).AppendTextDelta("the priming preamble", "")
-
-	if _, ok := rt.LiveTurn(primed); ok {
-		t.Errorf("LiveTurn served a PRIME turn, want it withheld: its frames are vibekit's own " +
-			"transcript replay and would render as conversation")
-	}
-}
-
 // TestLiveTurn_WithholdsATurnThatHasProducedNothing is the boundary between "a turn is
 // running" and "there is a reply to hand back". `turn_open` already carries the first, and
 // a carrier naming an EMPTY message is worse than none: the client adopts that id as its
