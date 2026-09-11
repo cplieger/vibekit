@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -411,10 +412,7 @@ func TestBusyChatIDs_NamesAnAdmittedShellCommand(t *testing.T) {
 	}
 	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
 
-	for _, id := range h.coord.turns.busyChatIDs() {
-		if id == "c1" {
-			return
-		}
+	if !slices.Contains(h.coord.turns.busyChatIDs(), "c1") {
+		t.Error("a chat holding a shell reservation is absent from busy_chats")
 	}
-	t.Error("a chat holding a shell reservation is absent from busy_chats")
 }
