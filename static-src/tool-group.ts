@@ -58,6 +58,7 @@ import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
 import { outcomeIcon } from "./icons.js";
 import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
+import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolKind } from "./tool-schema.js";
 import { registerCleanup } from "./actions/index.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
@@ -412,40 +413,15 @@ export function labelWithSamples(n: number, noun: string, verb: string, samples:
 
 export function summarizeMixed(infos: CallInfo[]): string {
   const n = infos.length;
-  const counts = new Map<string, number>();
+  // Keyed by ToolKind rather than string: `kindNoun`'s table is total over the
+  // union, so a key outside it has no noun rather than a fallback one.
+  const counts = new Map<ToolKind, number>();
   for (const i of infos) {
     counts.set(i.kind, (counts.get(i.kind) ?? 0) + 1);
   }
   const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
   const parts = sorted.map(([k, c]) => `${String(c)} ${kindNoun(k, c)}`);
   return `${String(n)} operation${n === 1 ? "" : "s"}: ${parts.join(", ")}`;
-}
-
-export function kindNoun(kind: string, count: number): string {
-  const single: Record<string, string> = {
-    read: "read",
-    edit: "edit",
-    write: "write",
-    delete: "delete",
-    move: "move",
-    search: "search",
-    execute: "command",
-    fetch: "fetch",
-    think: "thinking step",
-    switch_mode: "mode switch",
-    mcp: "integration call",
-  };
-  const noun = single[kind] ?? "call";
-  if (count === 1) {
-    return noun;
-  }
-  if (noun.endsWith("s")) {
-    return noun;
-  }
-  if (noun.endsWith("x") || noun.endsWith("h")) {
-    return noun + "es";
-  }
-  return noun + "s";
 }
 
 function dedup(arr: string[]): string[] {

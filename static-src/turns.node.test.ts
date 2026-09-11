@@ -325,17 +325,23 @@ describe("turnLedger", () => {
       [
         user("u1", "a"),
         assistant("a1", {
+          // `title` is REQUIRED on the wire, and these carry it because the ledger
+          // now reads it (`isSubagentInvocation` matches an invocation by title).
+          // Omitting it was a fixture that lied about the shape and got away with it
+          // only while nothing looked.
           tool_calls: [
-            { id: "1", kind: "execute" },
-            { id: "2", kind: "shell" },
-            { id: "3", kind: "command" },
-            { id: "4", kind: "read" },
-            { id: "5", kind: "read" },
-            { id: "6", kind: "edit" },
-            { id: "7", kind: "search" },
+            { id: "1", kind: "execute", title: "npm test" },
+            { id: "2", kind: "shell", title: "ls" },
+            { id: "3", kind: "command", title: "git status" },
+            { id: "4", kind: "read", title: "a.ts" },
+            { id: "5", kind: "read", title: "b.ts" },
+            { id: "6", kind: "edit", title: "c.ts" },
+            { id: "7", kind: "search", title: "needle" },
           ],
         } as Partial<Message>),
-        assistant("a2", { tool_calls: [{ id: "8", kind: "read" }] } as Partial<Message>),
+        assistant("a2", {
+          tool_calls: [{ id: "8", kind: "read", title: "d.ts" }],
+        } as Partial<Message>),
       ],
       false,
     );
@@ -343,6 +349,72 @@ describe("turnLedger", () => {
     expect(led.commands).toBe(3);
     // Counted across every message in the turn; `edit` and `search` are neither.
     expect(led.reads).toBe(3);
+  });
+
+  // The info panel's inputs. These three cases pin the ABSENCE RULES rather than the
+  // arithmetic: a duration nobody stamped must not read as zero, a kind with no calls
+  // must have no entry, and a fragment's provisional stop reason must not outrank the
+  // reply's. Each one is a way a renderer can state something nobody measured.
+  it("counts each tool kind, sums tool time, and separates delegates from their nesting", () => {
+    const [t] = projectTurns(
+      [
+        user("u1", "a"),
+        assistant("a1", {
+          tool_calls: [
+            { id: "1", kind: "execute", title: "npm test", duration_ms: 500 },
+            // No `duration_ms`: it is absent on every call a settle never reached, so
+            // the sum below is 525 rather than a third measurement of zero.
+            { id: "2", kind: "read", title: "a.ts" },
+            { id: "3", kind: "read", title: "b.ts", duration_ms: 25 },
+            { id: "4", kind: "other", title: "Sub-agent: reviewer", duration_ms: 9000 },
+          ],
+        } as Partial<Message>),
+      ],
+      false,
+    );
+    const led = turnLedger(t!);
+    expect(led.toolMs).toBe(9525);
+    // No entry for the thirteen kinds this turn did not use.
+    expect(led.kindCounts).toEqual({ execute: 1, read: 2, other: 1 });
+    expect(led.delegateCount).toBe(1);
+    expect(led.delegateMs).toBe(9000);
+  });
+
+  it("takes the diagnostics off the SETTLED carrier, not a fragment's non-verdict", () => {
+    const [t] = projectTurns(
+      [
+        user("u1", "a", 1000),
+        assistant(
+          "a1",
+          { turn_outcome: "unknown", turn_stop_reason_raw: "unknown", turn_truncated: false },
+          7500,
+        ),
+        assistant(
+          "a2",
+          { turn_outcome: "completed", turn_stop_reason_raw: "max_tokens", turn_truncated: true },
+          9000,
+        ),
+      ],
+      false,
+    );
+    const led = turnLedger(t!);
+    expect(led.stopReasonRaw).toBe("max_tokens");
+    expect(led.truncated).toBe(true);
+    // The trigger's stamp and the LAST body message's, never `startedAt + elapsedMs`.
+    expect(led.startedAt).toBe(1000);
+    expect(led.endedAt).toBe(9000);
+  });
+
+  it("reports nothing rather than zero when a turn stamped nothing", () => {
+    const [t] = projectTurns([user("u1", "a", 42)], false);
+    const led = turnLedger(t!);
+    expect(led.toolMs).toBe(0);
+    expect(led.kindCounts).toEqual({});
+    expect(led.startedAt).toBe(42);
+    // An empty body has no last message, so there is no end stamp to report.
+    expect(led.endedAt).toBe(0);
+    expect(led.stopReasonRaw).toBe("");
+    expect(led.truncated).toBe(false);
   });
 });
 

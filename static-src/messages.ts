@@ -52,7 +52,7 @@ import {
 import {
   buildTurnFooter,
   updateTurnFooter,
-  hasTurnSummary,
+  earnsTurnFooter,
   type TurnSummaryData,
 } from "./fundamentals/turn-footer.js";
 import {
@@ -2886,18 +2886,28 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
     reads: led.reads,
     models: led.models,
     outcome: t.outcome,
+    toolMs: led.toolMs,
+    kindCounts: led.kindCounts,
+    delegateCount: led.delegateCount,
+    delegateMs: led.delegateMs,
+    startedAt: led.startedAt,
+    endedAt: led.endedAt,
+    stopReasonRaw: led.stopReasonRaw,
+    truncated: led.truncated,
     // Spread rather than assigned, because `exactOptionalPropertyTypes` separates an
     // absent field from one holding `undefined` — which is the distinction above.
+    // LAST, so the conditional spread cannot be overwritten by a later key.
     ...(since === undefined ? {} : { sinceMs: since }),
   };
   const existing = card.querySelector<HTMLDivElement>(":scope > .turn-footer");
-  // The footer also carries the turn ACTIONS and Rewind, so it stays whenever there is
-  // settled prose to act on or a rewind target: an unstamped ledger must not cost the
-  // reader the buttons. Ordered so the markdown join runs only for a ledger-less turn.
-  const keep =
-    hasTurnSummary(data) ||
-    t.rewindTo !== undefined ||
-    (t.outcome !== "running" && turnMarkdown(t).trim() !== "");
+  // ONE predicate, in the footer's own module: the two extra reasons a turn card's
+  // footer survives an unstamped ledger used to sit here as a second expression
+  // beside `hasTurnSummary`, so the same question had two answers. The markdown join
+  // is still ordered last, so it runs only for a ledger-less turn.
+  const keep = earnsTurnFooter(data, {
+    rewindable: t.rewindTo !== undefined,
+    settledProse: t.outcome !== "running" && turnMarkdown(t).trim() !== "",
+  });
   if (!keep) {
     existing?.remove();
     return;

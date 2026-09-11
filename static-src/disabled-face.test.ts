@@ -16,9 +16,17 @@ import { allRules, mountAppCSS } from "./__test-helpers__/css-rules.js";
 // `wait` would claim the whole app is blocked.
 //
 // READOUT is the state that looks like the first and is not: a disabled
-// `.turn-ledger-summary` is a turn's outcome with no files to disclose, and a
-// disabled `.send-btn` is a state the app never enters. Dimming either fades
-// information nobody is being refused, so both opt out explicitly.
+// `.send-btn` is a state the app never enters, so dimming it would fade a control
+// nobody is being refused. It opts out explicitly.
+//
+// It used to have a second member, and losing one is what this paragraph now
+// records: `.turn-ledger-summary` was `disabled` on a turn with no files to
+// disclose, which made it a readout wearing a control's markup. That state is gone
+// — the summary is always a disclosure now, because it opens the turn's info panel
+// rather than a file list — so its opt-out rule left `29-turns.css` and its entry
+// left the allow-list below. Leaving the entry would have made the sweep pass
+// VACUOUSLY: an allow-list naming a selector no stylesheet declares excuses
+// nothing and reads as though it does.
 //
 // The sweep is what keeps it one owner: any rule re-declaring the face fails
 // here, and a control that must differ has to say so in the allow-list below,
@@ -34,7 +42,6 @@ const sheets = import.meta.glob<string>("./css/*.css", {
 
 /** Selectors allowed to declare a disabled face of their own, and why. */
 const OPT_OUTS = new Map([
-  [".turn-ledger-summary:disabled", "readout, not a refusal: keeps opacity 1"],
   ["&:disabled", "the send button's readout opt-out, nested in .send-btn"],
 ]);
 
@@ -96,15 +103,11 @@ describe("the disabled face", () => {
   });
 
   it("leaves a disabled READOUT undimmed", () => {
-    const ledger = mount("turn-ledger-summary");
-    ledger.disabled = true;
     const send = mount("send-btn");
     send.disabled = true;
 
-    expect(getComputedStyle(ledger).opacity).toBe("1");
     expect(getComputedStyle(send).opacity).toBe("1");
-    // Neither is refusing anything.
-    expect(getComputedStyle(ledger).cursor).toBe("default");
+    // It is not refusing anything.
     expect(getComputedStyle(send).cursor).toBe("default");
   });
 

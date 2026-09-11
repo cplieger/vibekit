@@ -730,10 +730,16 @@
    on a phone. The bar grows UPWARD, so that landed as the transcript jumping by
    the same amount, in the same frame the row was still fading in.
 
-   So the box is reserved and only its CONTENTS change — the rule `.turn-elapsed`
-   (29-turns.css) already follows, for the reason stated there: a row that changes
-   the transcript's height also moves `#messages`' `scrollHeight`, which is what
-   the timeline rail reads to decide whether it has anywhere to navigate.
+   So the box is reserved and only its CONTENTS change, for a reason this rule owns
+   rather than borrows: a row that changes the transcript's height also moves
+   `#messages`' `scrollHeight`, which is what the timeline rail reads to decide
+   whether it has anywhere to navigate.
+
+   THE CROSS-REFERENCE THAT USED TO SIT HERE IS GONE. It cited `.turn-elapsed`
+   (29-turns.css) as a rule already following this, and that stopped being true: the
+   box it reserved was the one under an `opacity` hover reveal, and the reveal is
+   deleted — the duration is painted unconditionally now, so the slot is simply
+   present or absent. This rule is the reference for the technique.
 
    Reserving the WIDTH is deliberately not attempted: the column holds one control
    or two depending on how many messages are unread, so there is no single width to

@@ -32,8 +32,8 @@
 // EXCLUSIONS, so the rule cannot have widened and cannot need to. There are two ways
 // a focusable inside a clipper stays out, and both are pinned as a number: its measured
 // inset CLEARS the reach, or it declares the inset offset itself so the reach is 0
-// (`.turn-file-row`, whose clipper it is flush against). Plus a control outside every
-// card keeping the floor's outside ring.
+// (`.turn-file-row`, flush against its clipper on the inline edges). Plus a control
+// outside every card keeping the floor's outside ring.
 //
 // One trap for anyone extending this: `.subagent-block`, `.run-card` and
 // `.tool-group` mount with `animation: vk-slide-up`, a 6px translate. It cancels
@@ -254,8 +254,20 @@ function subagentCard(opts: { foot: boolean }): { clipper: HTMLElement; head: HT
   if (opts.foot) {
     const footer = node("div", "turn-footer subagent-footer", { role: "note" });
     const summary = node("button", "turn-ledger-summary", { type: "button" });
-    summary.append(node("span", "turn-ledger-glyph"), node("span", "turn-ledger-text"));
-    summary.textContent = "2 files +12 \u22124";
+    // The trigger as `buildTurnFooter` assembles it since the info panel landed:
+    // caret, glyph, the outcome LEAD WORD (not a composed ledger string), the `i`,
+    // and the `.sr-only` span that is the button's whole accessible name on a clean
+    // turn. The icon is the child that could have cost this button its clearance,
+    // which is why the fixture carries a real `--icon-ui` box rather than an empty
+    // span.
+    const info = node("span", "turn-ledger-info");
+    info.appendChild(glyph());
+    summary.append(
+      node("span", "turn-ledger-glyph"),
+      span("turn-ledger-text", "Cancelled"),
+      info,
+      span("sr-only", "Turn details"),
+    );
     footer.appendChild(summary);
     foot.appendChild(footer);
   }
@@ -558,25 +570,38 @@ function mcpRow(): { clipper: HTMLElement; del: HTMLElement } {
   return { clipper: mount(clipper), del };
 }
 
-/** A turn footer with its file list OPEN, which is the only state that list has a box
- *  in: closed it is `display: none`. The list is a clipper of its own — `overflow:
- *  clip` rather than the `hidden` every card above uses — over a row that spans it.
- *  The transition is off because `@starting-style` animates the list's block-size up
- *  from 0 on the frame it first renders open, so a box measured during it is partial. */
-function turnLedgerFiles(): { clipper: HTMLElement; row: HTMLElement } {
+/** A turn footer with its INFO PANEL open, which is the only state that panel has a
+ *  box in: closed it is `display: none`. The panel is a clipper of its own —
+ *  `overflow: clip` rather than the `hidden` every card above uses — over a file row
+ *  nested two levels down, inside the Work section's `<ul class="turn-ledger-files">`.
+ *  The transition is off because `@starting-style` animates the panel's block-size up
+ *  from 0 on the frame it first renders open, so a box measured during it is partial.
+ *
+ *  THE NESTING IS THE PREMISE THAT MOVED. Before the panel the `<ul>` WAS the
+ *  clipper and the row was its only child, so the row was flush on all four edges.
+ *  Now the clipper is the panel, and above the list sits the section's own `<h4>`
+ *  heading — so the block-start edge has real clearance while the inline edges are
+ *  still flush, because neither the panel nor the section declares inline padding. */
+function turnInfoPanel(): { clipper: HTMLElement; row: HTMLElement } {
   const row = node("button", "turn-file-row", { type: "button" });
   row.append(span("turn-file-path", "static-src/app.ts"), node("span", "turn-file-delta"));
   const item = node("li", "turn-ledger-file");
   item.appendChild(row);
   const list = node("ul", "turn-ledger-files");
-  list.style.transition = "none";
   list.appendChild(item);
+  const section = node("section", "turn-info-section");
+  section.append(node("h4", "turn-info-title"), list);
+  section.querySelector("h4")!.textContent = "Work";
+  const panel = node("div", "turn-info-panel");
+  panel.style.transition = "none";
+  panel.appendChild(section);
   const summary = node("button", "turn-ledger-summary", { type: "button" });
-  summary.append(node("span", "turn-ledger-glyph"), span("turn-ledger-text", "1 file +3 \u22121"));
-  const footer = node("div", "turn-footer", { role: "note", "data-files": "open" });
-  footer.append(summary, node("time", "turn-elapsed"), list);
+  summary.append(node("span", "turn-ledger-glyph"), span("turn-ledger-text", ""));
+  summary.appendChild(span("sr-only", "Turn details"));
+  const footer = node("div", "turn-footer", { role: "note", "data-info": "open" });
+  footer.append(summary, node("time", "turn-elapsed"), panel);
   mount(footer);
-  return { clipper: list, row };
+  return { clipper: panel, row };
 }
 
 /** The model pill's card, which gives its own padding to the scroller so the effort
@@ -990,22 +1015,44 @@ describe("the exclusions: a focusable whose clipper clears the reach", () => {
 });
 
 describe("the exclusion that is not a clearance: a row already on the inset token", () => {
-  it("keeps `.turn-file-row`'s band inside a list it is flush against", async () => {
-    // `.turn-ledger-files` clips over a row that spans it, so on the floor's reach that
-    // row would lose its whole band — the four-edge case the members are here for. It
-    // stays out of the one rule because `29-turns.css` declares the same inset offset
-    // for it, taking its reach to 0, and that is what this pins: there is no clearance
-    // to measure, so the number is the reach itself.
-    const { clipper, row } = turnLedgerFiles();
+  it("keeps `.turn-file-row`'s band inside the panel that clips it", async () => {
+    // `.turn-info-panel` clips over a row that spans it, so on the floor's reach that
+    // row would lose its band on the inline edges. It stays out of the one rule
+    // because `29-turns.css` declares the same inset offset for it, taking its reach
+    // to 0 — and THAT is the invariant, asserted last: the ring is inside the clip
+    // box whatever the clearance turns out to be.
+    //
+    // THE PREMISE WAS RE-DERIVED rather than the assertion loosened. This case used
+    // to assert the row flush on all FOUR edges, which was true while the file `<ul>`
+    // was itself the clipper and the row its only child. The list is now nested in
+    // the Work section of a panel that clips, under that section's `<h4>` heading, so
+    // the block-start edge has real clearance while the inline edges are still flush
+    // — neither the panel nor the section declares inline padding, deliberately, so
+    // that a zero-reach row keeps its band. MEASURED in this container's Chromium:
+    // `{ top: 17, bottom: 0, left: 0, right: 0 }` — 17px being the `<h4>`'s own box
+    // (15px at `--fs-xs`) plus the section's 2px gap, and the block-END edge still
+    // flush because the list is the section's last child and the section the panel's.
+    // The inline pair is what the exclusion rests on, so it is asserted exactly; the
+    // block pair is asserted as clearance, which is the honest shape of a gap.
+    const { clipper, row } = turnInfoPanel();
     await focusByTab(row);
-    expect(getComputedStyle(clipper).overflow, "the file list clips").toBe("clip");
-    const flush = inset(row, clipper);
-    for (const edge of EDGES) {
-      expect(
-        flush[edge],
-        `turn file row: ${edge} edge is not flush (${flush[edge]}px)`,
-      ).toBeLessThan(0.5);
+    expect(getComputedStyle(clipper).overflow, "the info panel clips").toBe("clip");
+    const gap = inset(row, clipper);
+    for (const edge of ["left", "right"] as const) {
+      expect(gap[edge], `turn file row: ${edge} edge is not flush (${gap[edge]}px)`).toBeLessThan(
+        0.5,
+      );
     }
+    for (const edge of ["top", "bottom"] as const) {
+      expect(
+        gap[edge],
+        `turn file row: ${edge} edge is outside the clip box`,
+      ).toBeGreaterThanOrEqual(0);
+    }
+    expect(
+      gap.top,
+      "the section heading is above the list, so there IS block clearance",
+    ).toBeGreaterThan(0);
     expect(reachOf(row), "the row's own offset cancels the ring's reach").toBe(0);
     expectRingInside("turn file row", row, clipper);
   });

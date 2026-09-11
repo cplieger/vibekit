@@ -13,8 +13,9 @@
 // ---------------------------------------------------------------------------
 
 import { parseStepSubtask } from "./step-subtask.js";
+import { isSubagentInvocation } from "./tool-schema.js";
 import { severityOf, defaultFailureReason } from "./turn-severity.js";
-import type { Message, FileChange } from "./types.js";
+import type { Message, FileChange, ToolKind } from "./types.js";
 import type { TurnOutcome } from "./wire/types.gen.js";
 
 /** A turn's result, as scannable colour down the transcript.
@@ -106,6 +107,56 @@ export interface TurnLedger {
    *  field existed, which is why the footer renders nothing rather than
    *  "unknown". */
   models: string[];
+  /** Time the turn spent INSIDE tool calls: Σ `ToolCall.duration_ms`.
+   *
+   *  ZERO MEANS NOBODY STAMPED ONE, not that the tools were instant — the same
+   *  absence rule `elapsedMs` follows, and the reason a reader must never be shown
+   *  "0.0s of tool time". `duration_ms` is optional on the wire and absent on every
+   *  call a settle never reached, so a turn can hold ten calls and report nothing.
+   *
+   *  It is also NOT bounded by `elapsedMs`: tool calls overlap, so the sum can
+   *  exceed the turn's wall clock, and a consumer deriving model time from the
+   *  difference must withhold rather than render a negative. */
+  toolMs: number;
+  /** How many calls of each kind the turn made.
+   *
+   *  PARTIAL rather than total over `ToolKind`: a kind with no calls has NO ENTRY,
+   *  which is a different statement from an entry reading zero. A total record would
+   *  put fifteen zeros in front of a reader for every turn that ran one command. */
+  kindCounts: Partial<Record<ToolKind, number>>;
+  /** Delegates the turn dispatched, and Σ their `duration_ms`.
+   *
+   *  Counted by `isSubagentInvocation`, so it counts the calls that OPEN a delegate
+   *  and not the nested calls the delegate then made. `delegateMs` follows `toolMs`'
+   *  absence rule for the same reason, and independently: a turn can dispatch three
+   *  delegates and report zero milliseconds. */
+  delegateCount: number;
+  delegateMs: number;
+  /** When the turn began and when its last message landed.
+   *
+   *  `startedAt` is `Turn.ts` — the trigger's timestamp, else the first body
+   *  message's. `endedAt` is the LAST body message's `ts`, and 0 when the body is
+   *  empty, which is a turn that opened and persisted nothing.
+   *
+   *  `endedAt` IS NOT `startedAt + elapsedMs` and must not be presented as derived
+   *  from it: `turn_elapsed_ms` is the agent's own measured duration and excludes
+   *  admission wait, while these two are wall-clock stamps. Nothing on the wire
+   *  carries a turn end time, so this is the closest honest answer. */
+  startedAt: number;
+  endedAt: number;
+  /** The wire's stop reason verbatim, and whether the model stopped at a bound.
+   *
+   *  Both read off the ONE message per turn the server stamps `turn_outcome` on, so
+   *  they agree with the outcome rather than being scavenged separately. "" and
+   *  `false` mean NOTHING STAMPED THEM — every turn persisted before the carrier
+   *  existed, and every turn whose close never ran — never "the turn stopped for no
+   *  reason" and never "the answer is known to be complete".
+   *
+   *  A `string`, not `StopReason`, because the enum is OPEN upstream: the field's own
+   *  wire comment says no consumer may branch on it, so a reader renders it and
+   *  `outcome` is what it decides on. */
+  stopReasonRaw: string;
+  truncated: boolean;
 }
 
 /** Tool kinds that mean "a command ran". `execute` and `shell` are the two KAS
@@ -325,7 +376,20 @@ export function turnLedger(t: Turn): TurnLedger {
     commands: 0,
     reads: 0,
     models: [],
+    toolMs: 0,
+    kindCounts: {},
+    delegateCount: 0,
+    delegateMs: 0,
+    startedAt: t.ts,
+    endedAt: t.body[t.body.length - 1]?.ts ?? 0,
+    stopReasonRaw: "",
+    truncated: false,
   };
+  // A carrier whose outcome is `unknown` is a FRAGMENT's non-verdict (see
+  // closesTurn), so its diagnostics are provisional exactly as its outcome is: the
+  // first settled carrier supersedes it. Same precedence as deriveOutcome, or the
+  // panel would report a fragment's stop reason beside the reply's outcome.
+  let settledCarrier = false;
   for (const m of t.body) {
     for (const tc of m.tool_calls ?? []) {
       if (COMMAND_KINDS.has(tc.kind)) {
@@ -333,6 +397,18 @@ export function turnLedger(t: Turn): TurnLedger {
       } else if (tc.kind === "read") {
         led.reads++;
       }
+      led.kindCounts[tc.kind] = (led.kindCounts[tc.kind] ?? 0) + 1;
+      const ms = tc.duration_ms ?? 0;
+      led.toolMs += ms;
+      if (isSubagentInvocation(tc)) {
+        led.delegateCount++;
+        led.delegateMs += ms;
+      }
+    }
+    if (m.turn_outcome !== undefined && !settledCarrier) {
+      led.stopReasonRaw = m.turn_stop_reason_raw ?? "";
+      led.truncated = m.turn_truncated ?? false;
+      settledCarrier = m.turn_outcome !== "unknown";
     }
     if (m.turn_credits !== undefined && m.turn_credits > 0) {
       led.credits += m.turn_credits;

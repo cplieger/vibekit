@@ -14,11 +14,11 @@ import {
   summarizeSameKind,
   summarizeMCP,
   labelWithSamples,
-  kindNoun,
   summarizeMixed,
   summarize,
   type CallInfo,
 } from "./tool-group.js";
+import { kindNoun } from "./tool-kind-noun.js";
 import { outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import type { ToolKind } from "./types.js";
@@ -63,9 +63,15 @@ describe("labelWithSamples", () => {
 });
 
 // --- kindNoun ---
+//
+// It moved to `tool-kind-noun.ts`, whose table is TOTAL over `ToolKind`. So the
+// two `unknown_kind` cases that used to sit here are gone with the `?? "call"`
+// fallback they pinned: the parameter is the union now, and a value outside it
+// cannot be spelled. The five kinds the old table lacked are pinned instead —
+// they all answered "call" before, which is what a real noun replaces.
 
 describe("kindNoun", () => {
-  const cases: [string, number, string][] = [
+  const cases: [ToolKind, number, string][] = [
     ["read", 1, "read"],
     ["read", 2, "reads"],
     ["edit", 1, "edit"],
@@ -80,8 +86,16 @@ describe("kindNoun", () => {
     ["switch_mode", 2, "mode switches"],
     ["mcp", 1, "integration call"],
     ["mcp", 2, "integration calls"],
-    ["unknown_kind", 1, "call"],
-    ["unknown_kind", 5, "calls"],
+    ["shell", 1, "shell command"],
+    ["shell", 2, "shell commands"],
+    ["hook", 1, "hook"],
+    ["hook", 2, "hooks"],
+    ["browser", 1, "page"],
+    ["browser", 2, "pages"],
+    ["command", 1, "command"],
+    ["command", 2, "commands"],
+    ["other", 1, "call"],
+    ["other", 5, "calls"],
   ];
   it.each(cases)("kindNoun(%s, %i) => %s", (kind, count, expected) => {
     expect(kindNoun(kind, count)).toBe(expected);
