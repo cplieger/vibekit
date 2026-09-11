@@ -151,7 +151,6 @@ func capToolCalls(calls []vibekit.ToolCall, countCap, outputCap, totalCap int) (
 		if remaining > 0 {
 			c := out[i]
 			c.Output, _ = tailBytes(c.Output, remaining)
-			remaining -= len(c.Output)
 			out[i] = c
 			keepFrom = i
 		}
