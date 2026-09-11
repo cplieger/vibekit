@@ -73,7 +73,7 @@ func (o *recoveryOutcome) ReleaseTurnReservation(vibekit.ChatID) {
 func (o *recoveryOutcome) FinalizeLocalShellTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) {
 }
 
-func (o *recoveryOutcome) AbandonInFlightTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch, string) {
+func (o *recoveryOutcome) AbandonInFlightTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch, vibekit.StopReason, string) {
 }
 
 // recoveryBridges records whether the recovery tore the session down, which is the
@@ -108,7 +108,7 @@ func (*recoveryBridge) Respond(context.Context, int64, any, error) error { retur
 func (*recoveryBridge) SessionID() vibekit.SessionID                     { return "s1" }
 func (*recoveryBridge) TryAcquireForPrompt() bool                        { return true }
 func (*recoveryBridge) ReleaseAfterPrompt()                              {}
-func (*recoveryBridge) BeginPromptCall(context.CancelFunc) uint64        { return 1 }
+func (*recoveryBridge) BeginPromptCall(context.CancelCauseFunc) uint64   { return 1 }
 func (*recoveryBridge) EndPromptCall()                                   {}
 func (*recoveryBridge) ArmCancelGrace(uint64, time.Duration) bool        { return true }
 func (*recoveryBridge) PromptGeneration() uint64                         { return 1 }

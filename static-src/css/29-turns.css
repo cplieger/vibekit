@@ -849,6 +849,12 @@
   border-block-start: 0;
 }
 
+/* The SEVERITY's fallback rather than dead code. Neither current `stopped` outcome
+   reaches it: `cancelled` mounts no notice at all (the reader caused the stop and the
+   footer's own word carries it), and `unknown` is re-inked by its own later override.
+   It stays because the base ink above is `--c-red`, so deleting this arm would make a
+   `stopped` outcome added later print a stop as a failure — the defect the whole
+   severity partition exists to prevent. */
 .turn-notice[data-severity="stopped"] {
   color: var(--c-yellow);
 }

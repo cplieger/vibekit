@@ -16,8 +16,8 @@ func newCompactionReapFixture(t *testing.T) (*Runtime, vibekit.TurnEpoch, contex
 	epoch, _ := h.stagePromptTurn(t, "c1")
 	t.Cleanup(func() { h.ReleaseTurn("c1", epoch) })
 
-	pctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
+	pctx, cancel := context.WithCancelCause(t.Context())
+	t.Cleanup(func() { cancel(nil) })
 	sb, _ := h.bridge.mgr.orInsert("c1")
 	sb.mu.Lock()
 	sb.state = bridgePrompting

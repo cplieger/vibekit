@@ -129,23 +129,41 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 	retryEmptyTurnPrompt(ctx, bridges, chats, bus, outcome, chatID, p, params)
 }
 
-// appendInterruptedCarrier records a turn's stop on the chat, for the prompt exits
-// that finalize no turn and so persist no carrier of their own.
+// appendTurnStopCarrier records a turn's stop on the chat, for the prompt exits that
+// finalize no turn and so persist no carrier of their own.
 //
 // `appendUserMessage` runs before admission deliberately, so the user row is already
 // on disk when these exits are reached — and a turn holding a trigger and nothing
 // else is read by both transcript projections as "nothing closed this turn", which
-// renders as an end vibekit could not read. This divider makes the turn `interrupted`
-// with the real reason instead. `durable.Context` because every one of these paths
-// runs on a context that may already be cancelled.
-func appendInterruptedCarrier(ctx context.Context, chats ChatStore, chatID vibekit.ChatID, reason string) {
+// renders as an end vibekit could not read. This row makes the turn say what happened
+// instead. It STAMPS the outcome rather than leaving both projections to infer one from
+// the event kind: without the stamp `closesTurn` reads the segment as still open, so a
+// later agent-initiated message folds into the failed turn. `durable.Context` because
+// every one of these paths runs on a context that may already be cancelled.
+func appendTurnStopCarrier(ctx context.Context, chats ChatStore, chatID vibekit.ChatID, stop vibekit.StopReason, reason string) {
+	c := vibekit.ConcludeStopReason(stop)
 	evt := vibekit.Message{
 		ID: ids.NewMessageID(), Role: vibekit.RoleEvent, Ts: time.Now().UnixMilli(),
-		EventKind: vibekit.EventInterrupted, Content: reason,
+		EventKind: vibekit.StopMarkerKind(c.Outcome), Content: reason,
+		TurnOutcome: c.Outcome, TurnStopReasonRaw: c.RawStop, TurnFailureReason: reason,
 	}
 	if err := chats.AppendMessage(durable.Context(ctx), chatID, &evt); err != nil {
-		slog.Error("prompt: append interrupted carrier", "chat_id", chatID, keyError, err)
+		slog.Error("prompt: append turn stop carrier", "chat_id", chatID, keyError, err)
 	}
+}
+
+// turnStopBeforeEpoch decides what a prompt exit that never minted an epoch concludes.
+// Same rule as promptFailureAccount's cancelled arm, read off the context rather than off
+// an error: no ACP call was made here, so there is no failure to classify.
+//
+// One rule, two prose sources: the cancelled arm supplies NONE by rule, so `interrupted`
+// is the CALLER's to word — the exits that reach here describe different work, and this
+// row is the whole of what a reader ever learns about either.
+func turnStopBeforeEpoch(ctx context.Context, interrupted string) (stop vibekit.StopReason, reason string) {
+	if errors.Is(context.Cause(ctx), ErrCancelGraceExpired) {
+		return vibekit.StopReasonCancelled, ""
+	}
+	return vibekit.StopReasonInterrupted, interrupted
 }
 
 // refreshRetrySession abandons the session that answered nothing: close
@@ -216,8 +234,8 @@ func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, chats ChatS
 	// The retry needs its own cancellable context registered as the
 	// in-flight prompt: session/cancel is a notification nothing acks, so
 	// the grace budget is what unblocks a turn KAS never answers.
-	ctx, cancelRetry := context.WithCancel(ctx)
-	defer cancelRetry()
+	ctx, cancelRetry := context.WithCancelCause(ctx)
+	defer cancelRetry(nil)
 	sb2.BeginPromptCall(cancelRetry)
 	defer sb2.EndPromptCall()
 
@@ -232,23 +250,31 @@ func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, chats ChatS
 		// This exit broadcasts nothing, so the divider is the whole of what a reader
 		// ever learns about it — and it also corrects the "Session refreshed, retrying"
 		// row `refreshRetrySession` has already written onto this turn.
-		appendInterruptedCarrier(ctx, chats, chatID,
-			"The retry was cancelled before the agent answered.")
+		stop, reason := turnStopBeforeEpoch(ctx, "The retry was cancelled before the agent answered.")
+		appendTurnStopCarrier(ctx, chats, chatID, stop, reason)
 		return
 	}
 	defer outcome.ReleaseTurn(chatID, retryEpoch)
 	reply, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
 	if retryErr != nil {
 		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
-		reason := promptFailureReason(retryErr, promptParamsInlineImage(params))
-		outcome.AbandonInFlightTurn(ctx, chatID, retryEpoch, reason)
-		// Turn-scoped: the retry ran as a turn of its own and the abandon above
-		// stamped this reason on it, so that card carries the cause.
-		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
-			Code:       vibekit.ErrCodeRecoveryFailed,
-			Message:    "Retry prompt failed: " + reason,
-			TurnScoped: true,
-		}))
+		stop, reason := promptFailureAccount(ctx, retryErr, promptParamsInlineImage(params))
+		outcome.AbandonInFlightTurn(ctx, chatID, retryEpoch, stop, reason)
+		if stop != vibekit.StopReasonCancelled {
+			// Suppressed on a cancel for reportPromptFailure's reason, and the reader's
+			// own Stop reaches this branch: the retry holds the prompt slot and registers
+			// its own cancel, so the grace expiry trips it here like anywhere else. A
+			// cancel also supplies no prose, so the frame would read "Retry prompt
+			// failed: " with nothing after it.
+			//
+			// Turn-scoped: the retry ran as a turn of its own and the abandon above
+			// stamped this reason on it, so that card carries the cause.
+			bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+				Code:       vibekit.ErrCodeRecoveryFailed,
+				Message:    "Retry prompt failed: " + reason,
+				TurnScoped: true,
+			}))
+		}
 		return
 	}
 	outcome.SettleTurnOnResponse(ctx, chatID, retryEpoch, reply.seq, reply.resp)
@@ -417,7 +443,7 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 	if err != nil {
 		roles.turnOutcome.ReleaseTurnReservation(chatID)
 		reason := rpcerr.Text(err)
-		appendInterruptedCarrier(ctx, roles.chats, chatID, reason)
+		appendTurnStopCarrier(ctx, roles.chats, chatID, vibekit.StopReasonInterrupted, reason)
 		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeBridgeStartFailed, Message: reason}))
 		return
 	}
@@ -427,7 +453,7 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 		roles.turnOutcome.ReleaseTurnReservation(chatID)
 		slog.Error("prompt: bridge slot held despite an owned admission reservation", "chat_id", chatID)
 		const reason = "The prompt could not start. Send it again."
-		appendInterruptedCarrier(ctx, roles.chats, chatID, reason)
+		appendTurnStopCarrier(ctx, roles.chats, chatID, vibekit.StopReasonInterrupted, reason)
 		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{Code: vibekit.ErrCodePromptFailed, Message: reason}))
 		return
 	}
@@ -445,8 +471,8 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 	// The prompt Call gets its own cancellable context so CmdCancel's
 	// grace budget has something to trip when KAS never acks a
 	// session/cancel.
-	ctx, cancelPrompt := context.WithCancel(ctx)
-	defer cancelPrompt()
+	ctx, cancelPrompt := context.WithCancelCause(ctx)
+	defer cancelPrompt(nil)
 	sb.BeginPromptCall(cancelPrompt)
 	defer sb.EndPromptCall()
 
@@ -471,11 +497,15 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 		// window. With no epoch nothing would finalize, so no ACP call.
 		sb.ReleaseAfterPrompt()
 		roles.turnOutcome.ReleaseTurnReservation(chatID)
-		const reason = "The turn was cancelled before the agent answered."
-		appendInterruptedCarrier(ctx, roles.chats, chatID, reason)
-		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
-			Code: vibekit.ErrCodePromptFailed, Message: reason,
-		}))
+		stop, reason := turnStopBeforeEpoch(ctx, "The turn was cancelled before the agent answered.")
+		appendTurnStopCarrier(ctx, roles.chats, chatID, stop, reason)
+		if stop != vibekit.StopReasonCancelled {
+			// Suppressed on a cancel for reportPromptFailure's reason: prompt_failed
+			// routes to a toast, and the reader asked for this stop.
+			roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+				Code: vibekit.ErrCodePromptFailed, Message: reason,
+			}))
+		}
 		return
 	}
 	slog.Info("prompt", "chat_id", chatID, "len", len(p.Text))
@@ -523,8 +553,19 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 // raw error to the broadcast would let RPCErrorText's machine-triplet
 // fallback overwrite the prose promptFailureReason produces.
 func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, err error, elapsed time.Duration, inlinedImage bool) {
+	stop, reason := promptFailureAccount(ctx, err, inlinedImage)
+	if stop == vibekit.StopReasonCancelled {
+		// Info rather than Error at THIS site: nothing here is actionable. The Warn
+		// callPromptWithRetry logs one frame earlier is pre-existing and still fires, so
+		// the cancelled path is not uniformly quiet. And NO error frame at all,
+		// because prompt_failed routes to a toast and a red toast for a stop the reader
+		// asked for is the same wrong signal as a red card.
+		slog.Info("prompt cancelled: the cancel was never acked, so the grace budget unblocked the turn",
+			"chat_id", chatID, "elapsed", elapsed)
+		roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, epoch, stop, reason)
+		return
+	}
 	slog.Error("prompt failed", "chat_id", chatID, keyError, err, "elapsed", elapsed)
-	reason := promptFailureReason(err, inlinedImage)
 	// An auth failure is the one prompt failure whose remedy is not "send
 	// again", so it routes through a different code.
 	code := vibekit.ErrCodePromptFailed
@@ -537,7 +578,7 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit
 	// Finalize the turn: without this the assistant buffer survives with
 	// Started == true, so the next prompt's ensureTurnStarted no-ops and
 	// extends this dead turn's blocks under this dead turn's message id.
-	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, epoch, reason)
+	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, epoch, stop, reason)
 	// Turn-scoped: the abandon above stamps this same reason on the turn's
 	// carrier, so the card says it durably and a toast for the chat on screen
 	// would be a second copy of it.
@@ -785,16 +826,32 @@ func isImageValidationShaped(re *vibekit.RPCError) bool {
 	return false
 }
 
+// promptFailureAccount decides what a failed prompt CONCLUDES and what it says,
+// as one pair: the stop grades the turn and the prose explains it, and a cancel
+// the reader asked for has a grade but no account to give.
+//
+// Three cancellers reach the prompt context, and only one of them is the reader:
+// the cancel-grace timer (which stamps ErrCancelGraceExpired on the cause),
+// BridgeCoordinator.InterruptTurn, and shutdown. The HTTP request is NOT one —
+// lifetime.TurnContext wraps context.WithoutCancel, so it is detached — so an
+// absent sentinel means a fault, which keeps grading `interrupted`.
+func promptFailureAccount(ctx context.Context, err error, inlinedImage bool) (stop vibekit.StopReason, reason string) {
+	if errors.Is(err, context.Canceled) {
+		if errors.Is(context.Cause(ctx), ErrCancelGraceExpired) {
+			// No prose: closeAsDiscarded says nothing for the same outcome, and
+			// DefaultFailureReason(TurnOutcomeCancelled) is empty because the footer's own
+			// word already reads "Cancelled" a row away.
+			return vibekit.StopReasonCancelled, ""
+		}
+		return vibekit.StopReasonInterrupted, "The turn was cancelled before the agent answered."
+	}
+	return vibekit.StopReasonInterrupted, promptFailureReason(err, inlinedImage)
+}
+
 // promptFailureReason renders a failure into something worth showing the
 // user. KAS's own message on a mapped error is already user-facing, so
 // this adds to it rather than replacing it.
 func promptFailureReason(err error, inlinedImage bool) string {
-	// A cancelled prompt context is not a backend failure and must not
-	// read like one — either the user pressed Cancel and cancelGrace
-	// killed the context, or the HTTP request went away.
-	if errors.Is(err, context.Canceled) {
-		return "The turn was cancelled before the agent answered."
-	}
 	re, ok := errors.AsType[*vibekit.RPCError](err)
 	if !ok {
 		return rpcerr.Text(err)

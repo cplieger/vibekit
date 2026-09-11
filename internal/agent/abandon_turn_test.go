@@ -44,7 +44,7 @@ func TestAbandonInFlightTurn_ReleasesTheBuffer(t *testing.T) {
 	buf.MessageID = newMessageID()
 	buf.Content.WriteString("half an answer")
 
-	h.AbandonInFlightTurn(ctx, "c1", epoch, "the pipe died")
+	h.AbandonInFlightTurn(ctx, "c1", epoch, vibekit.StopReasonInterrupted, "the pipe died")
 
 	if h.liveTurnBuffer("c1") != nil {
 		t.Error("the assistant buffer survived AbandonInFlightTurn; the next turn " +
@@ -74,7 +74,7 @@ func TestAbandonInFlightTurn_PersistsThePartial(t *testing.T) {
 	buf.Content.WriteString(partial)
 
 	logs := captureLogs(t)
-	h.AbandonInFlightTurn(ctx, "c1", epoch, "the pipe died")
+	h.AbandonInFlightTurn(ctx, "c1", epoch, vibekit.StopReasonInterrupted, "the pipe died")
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
@@ -127,7 +127,7 @@ func TestAbandonInFlightTurn_MarksATurnThatNeverStarted(t *testing.T) {
 	// own, so a terminal step never finds an idle chat with content to account for.
 	const reason = "Too many requests, please wait before trying again."
 	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
-	h.AbandonInFlightTurn(ctx, "c1", epoch, reason)
+	h.AbandonInFlightTurn(ctx, "c1", epoch, vibekit.StopReasonInterrupted, reason)
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
@@ -169,7 +169,7 @@ func TestAbandonInFlightTurn_CarriesTheCallersReason(t *testing.T) {
 	buf.MessageID = newMessageID()
 	buf.Content.WriteString("half an answer")
 
-	h.AbandonInFlightTurn(ctx, "c1", epoch, reason)
+	h.AbandonInFlightTurn(ctx, "c1", epoch, vibekit.StopReasonInterrupted, reason)
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
@@ -213,8 +213,8 @@ func TestAbandonInFlightTurn_StashedReasonBeatsTheCallers(t *testing.T) {
 	if !sb.tryAcquireForPrompt() {
 		t.Fatal("fresh bridge must be acquirable")
 	}
-	pctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	pctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
 	sb.BeginPromptCall(cancel)
 
 	h.coord.InterruptTurn("c1", stashed)
@@ -227,7 +227,7 @@ func TestAbandonInFlightTurn_StashedReasonBeatsTheCallers(t *testing.T) {
 		t.Error("InterruptTurn left the prompt context live")
 	}
 
-	h.AbandonInFlightTurn(ctx, "c1", epoch, callers)
+	h.AbandonInFlightTurn(ctx, "c1", epoch, vibekit.StopReasonInterrupted, callers)
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
@@ -263,7 +263,7 @@ func TestAbandonInFlightTurn_EndsTheTurnThatNeverStarted(t *testing.T) {
 
 	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
 	_, before := h.bus.fanout.Bounds()
-	h.AbandonInFlightTurn(ctx, "c1", epoch, "Too many requests, please wait before trying again.")
+	h.AbandonInFlightTurn(ctx, "c1", epoch, vibekit.StopReasonInterrupted, "Too many requests, please wait before trying again.")
 
 	ends := payloadsOfType[vibekit.TurnEndedPayload](t, bufferedSince(h, before), vibekit.EventTurnEnded)
 	if len(ends) != 1 {

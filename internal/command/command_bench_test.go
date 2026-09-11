@@ -112,7 +112,7 @@ func (d *benchDeps) AdmissionHolderSource(vibekit.ChatID) (vibekit.TurnOpenSourc
 func (d *benchDeps) FinalizeLocalShellTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) {
 }
 
-func (d *benchDeps) AbandonInFlightTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch, string) {
+func (d *benchDeps) AbandonInFlightTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch, vibekit.StopReason, string) {
 }
 
 // TestBenchDeps_NoPanic verifies that every benchDeps method can be called

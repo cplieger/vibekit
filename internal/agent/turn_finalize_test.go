@@ -369,8 +369,13 @@ func TestFlushInFlightTurnOnSwitch_ConcludesCancelledOnBothChannels(t *testing.T
 		t.Errorf("carrier event kind = %q, want %q — any other kind renders a visible row "+
 			"for a switch that produced nothing to show", marker.EventKind, vibekit.EventCancelled)
 	}
-	if marker.TurnFailureReason == "" {
-		t.Error("the carrier records no reason, so the turn's notice has nothing to say")
+	// A cancelled turn records NO reason, deliberately: the reader caused the stop and
+	// the footer's own outcome word already reads "Cancelled", so a sentence here would
+	// render one fact twice. A losing closer holding a real transport error can still
+	// amend this carrier — TestLostClaim_ADiscardedTurnsMarkerCanStillBeAmended.
+	if marker.TurnFailureReason != "" {
+		t.Errorf("the carrier records reason %q; a cancel has no account to give",
+			marker.TurnFailureReason)
 	}
 	for i := range c.Messages {
 		if c.Messages[i].Role == vibekit.RoleAssistant {
@@ -696,7 +701,7 @@ func TestAbandonInFlightTurn_WithNoEpochClosesNothing(t *testing.T) {
 	h.translateACPEvent(chatID, newChunkMsg("the agent's own reply"))
 	agentTurn, _ := h.coord.turns.openEpoch(chatID)
 
-	h.AbandonInFlightTurn(ctx, chatID, 0, "The turn was cancelled before the agent answered.")
+	h.AbandonInFlightTurn(ctx, chatID, 0, vibekit.StopReasonInterrupted, "The turn was cancelled before the agent answered.")
 
 	if open, isOpen := h.coord.turns.openEpoch(chatID); !isOpen || open != agentTurn {
 		t.Errorf("open epoch = (%d, %v), want the agent's turn %d still open: a prompt failure "+
@@ -1037,5 +1042,29 @@ func TestTurnEnded_AnEmptyWorkflowStepTurnBroadcastsNothing(t *testing.T) {
 		t.Errorf("an EMPTY workflow-step turn broadcast %d turn_ended frames, want 0: "+
 			"announcesEmptyEnd withholds it deliberately, and a pre-upgrade bundle reads "+
 			"one as this chat's own turn ending", len(frames))
+	}
+}
+
+// TestAbandonInFlightTurn_AnUnsetStopNormalizesToInterrupted guards the zero value, which
+// is the one out-of-range stop a caller can reach by omission: ConcludeStopReason maps ""
+// onto TurnOutcomeUnknown, which SeverityOf grades `stopped` — so an unset stop would
+// silently report a failed prompt as a turn that merely stopped, with no red mark and no
+// account. Only `interrupted` and `cancelled` are legal here, and anything else is
+// normalized rather than trusted.
+func TestAbandonInFlightTurn_AnUnsetStopNormalizesToInterrupted(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	seedChat(t, cs, "c1")
+
+	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	h.AbandonInFlightTurn(ctx, "c1", epoch, "", "a reason")
+
+	carrier := carrierOf(t, cs, "c1")
+	if carrier.TurnOutcome != vibekit.TurnOutcomeInterrupted {
+		t.Errorf("carrier outcome = %q, want %q: an unset stop must never grade a prompt "+
+			"failure `unknown`", carrier.TurnOutcome, vibekit.TurnOutcomeInterrupted)
+	}
+	if carrier.EventKind != vibekit.EventInterrupted {
+		t.Errorf("carrier event_kind = %q, want %q", carrier.EventKind, vibekit.EventInterrupted)
 	}
 }

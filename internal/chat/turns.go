@@ -179,6 +179,7 @@ func opensHeaderlessTurn(m *vibekit.Message, prevClosed bool) bool {
 // body", which is what keeps a legacy transcript reading `completed`.
 func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome {
 	interrupted := false
+	cancelled := false
 	sawUnknown := false
 	sawAssistant := false
 	for i := range body {
@@ -201,12 +202,19 @@ func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome 
 		switch m.EventKind {
 		case vibekit.EventCompactFailed, vibekit.EventInfraSafetyBlocked:
 			return vibekit.TurnOutcomeFailed
-		case vibekit.EventCancelled, vibekit.EventInterrupted:
+		case vibekit.EventInterrupted:
 			interrupted = true
+		case vibekit.EventCancelled:
+			cancelled = true
 		}
 	}
+	// A fault outranks a gesture: a turn carrying both markers is one something
+	// broke, so `interrupted` is returned first.
 	if interrupted {
 		return vibekit.TurnOutcomeInterrupted
+	}
+	if cancelled {
+		return vibekit.TurnOutcomeCancelled
 	}
 	if isLive {
 		return vibekit.TurnOutcomeRunning

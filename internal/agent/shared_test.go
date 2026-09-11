@@ -31,17 +31,35 @@ func newTestHub() (*Runtime, *fakeChatStore, *fakeBridge) {
 	return newTestHubIn("/tmp/work")
 }
 
+// newTestHubUnready is newTestHub with MCP readiness WITHHELD, so a prompt parks in
+// WaitForReady's 30s wait. That is the widest part of the window between BeginPromptCall
+// and StartTurn, which is the one a cancel has to be driven into.
+func newTestHubUnready() (*Runtime, *fakeChatStore, *fakeBridge) {
+	return buildTestHub("/tmp/work", false)
+}
+
 // newTestHubIn builds a runtime rooted at workDir. Use it rather than reassigning
 // h.lifecycle.workDir afterwards: the workspace paths are read once at wiring time, so a
 // post-construction mutation configures something the wiring has already read.
 func newTestHubIn(workDir string) (*Runtime, *fakeChatStore, *fakeBridge) {
+	return buildTestHub(workDir, true)
+}
+
+// buildTestHub is the ONE wiring sequence every test runtime is built by, and it exists
+// because that sequence is ORDER-SENSITIVE and was written out twice: cs.Bus can only be
+// set once New has returned the runtime that serves as the bus, and readiness can only be
+// signalled once the registry exists. Two copies meant a step added to one silently
+// skipped the other, and the readiness-withholding copy was the one no reader thinks to
+// check. Readiness is the only axis they differed on, so it is the only parameter.
+func buildTestHub(workDir string, mcpReady bool) (*Runtime, *fakeChatStore, *fakeBridge) {
 	cs := newFakeChatStore()
 	br := newFakeBridge()
-	factory := func() ACPBridge { return br }
-	h := New(context.Background(), workDir, factory, cs)
+	h := New(context.Background(), workDir, func() ACPBridge { return br }, cs)
 	cs.Bus = h
-	// Signal MCP readiness immediately so tests don't wait 30 seconds.
-	h.mcpRegistry.SignalReady()
+	if mcpReady {
+		// Signal MCP readiness immediately so tests don't wait 30 seconds.
+		h.mcpRegistry.SignalReady()
+	}
 	return h, cs, br
 }
 

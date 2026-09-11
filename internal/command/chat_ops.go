@@ -5,6 +5,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -13,10 +14,24 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// cancelGrace is how long a cooperative session/cancel gets to be reflected
+// CancelGrace is how long a cooperative session/cancel gets to be reflected
 // in a turn end before vibekit unblocks the turn itself. Adopted from
 // KiroCrew's `_CANCEL_GRACE_SECS`.
-const cancelGrace = 10 * time.Second
+//
+// A var only so a test can shrink it; production never writes it.
+var CancelGrace = 10 * time.Second
+
+// ErrCancelGraceExpired is the cause the grace timer attaches to the prompt context it
+// cancels, so the failure site can tell a user's unacked cancel from every other
+// cancellation of that context and conclude `cancelled` rather than `interrupted`.
+//
+// The asymmetry is deliberate: shutdown cancels the PARENT turn context with a plain
+// WithCancel cancel, and cancelPromptCall passes a nil cause, so both leave the cause at
+// context.Canceled — an ABSENT sentinel keeps meaning exactly what an absent cause means
+// today. A cause is set by the FIRST cancellation, so a shutdown that beats the grace
+// wins and the turn concludes `interrupted`, while a grace that fires first wins and the
+// turn concludes `cancelled`.
+var ErrCancelGraceExpired = errors.New("cancel grace expired")
 
 // CmdCreateChat creates a new chat, opens its tab, and returns both.
 //
@@ -111,7 +126,7 @@ func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAcces
 	// does, the grace budget cancels the prompt's context so Call returns and
 	// the ordinary prompt-failure path finalizes the turn. 10s is KiroCrew's
 	// `_CANCEL_GRACE_SECS`.
-	if !sb.ArmCancelGrace(sb.PromptGeneration(), cancelGrace) {
+	if !sb.ArmCancelGrace(sb.PromptGeneration(), CancelGrace) {
 		slog.Debug("cancel: no in-flight prompt to arm a grace budget against", "chat_id", cmd.ChatID)
 	}
 	return responseOK, nil

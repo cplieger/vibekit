@@ -88,14 +88,28 @@ func DefaultFailureReason(o TurnOutcome) string {
 		return "The turn was interrupted before the agent finished."
 	case TurnOutcomeRefused:
 		return "The model declined to continue."
-	case TurnOutcomeCancelled:
-		return "The turn was cancelled."
 	case TurnOutcomeUnknown:
 		return "The turn ended for a reason vibekit could not read."
-	case TurnOutcomeCompleted, TurnOutcomeRunning:
+	// `cancelled` says nothing: the footer's own outcome word already reads
+	// "Cancelled" a row away, so a sentence here is one fact rendered twice.
+	case TurnOutcomeCancelled, TurnOutcomeCompleted, TurnOutcomeRunning:
 		return ""
 	}
 	return ""
+}
+
+// StopMarkerKind is the transcript marker recording a turn that stopped without the
+// engine answering it. Two consumers in two packages — agent's closeAsInterrupted and
+// command's no-turn carrier — so the two buckets live here rather than twice.
+//
+// EventTurnOutcome is deliberately out of range: that is the CLEAN-close marker
+// recordTurnCarrier mints for a turn which emitted nothing, and it answers a different
+// question.
+func StopMarkerKind(o TurnOutcome) EventKind {
+	if o == TurnOutcomeCancelled {
+		return EventCancelled
+	}
+	return EventInterrupted
 }
 
 // TurnConclusion is one wire stop reason, read. A struct rather than four returns
@@ -197,6 +211,19 @@ type LiveTurn struct {
 	ChunkSeq int64 `json:"chunk_seq"`
 	// Truncated reports that the cap withheld part of Message, so the payload carries
 	// the TAIL of the turn and the rest arrives with message_appended.
+	//
+	// A `true` is the EXCEPTIONAL case on this channel, unlike on TurnStatePayload. The
+	// caps this field reports on (internal/agent's liveTurnGETCaps) are sized above the
+	// measured per-dimension maxima precisely so an ordinary turn is not cut, so what a
+	// `true` names is a turn past a ~10.1 MiB runaway ceiling rather than a routine tail.
+	//
+	// A `false` is therefore load-bearing rather than merely an absence of withholding: it
+	// is a positive statement that this MESSAGE is whole, and it RETRACTS a truncation
+	// marker the connect channel set for the same message id. The two channels disagree by
+	// design — a connect frame's turn_state runs on connectSnapshotCaps at 52 KiB and
+	// truncates routinely — and this one is the fresher and wider answer, so a reader
+	// holding a marker for this message id must drop it (static-src/store-load.ts
+	// adoptLiveTurn).
 	//
 	// NEVER `omitempty`, for TurnStatePayload.Truncated's reason: an absent marker must
 	// not be readable as "complete", which is what makes a capped payload admissible.

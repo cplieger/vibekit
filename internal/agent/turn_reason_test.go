@@ -197,7 +197,7 @@ func TestCloseAsInterrupted_StampsTheReasonOnTheCarrierAsWellAsTheDivider(t *tes
 	epoch := startedTurnReturningEpoch(t, h, cs, "c1", "half an answer")
 
 	const reason = "A network error occurred. Please check your connection and try again."
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, reason)
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, reason)
 
 	if got := carrierOf(t, cs, "c1").TurnFailureReason; got != reason {
 		t.Errorf("carrier reason = %q, want the prompt failure's own prose %q", got, reason)
@@ -234,7 +234,7 @@ func TestLostClaim_UpgradesTheCarriersReasonToTheLosersProse(t *testing.T) {
 
 	// The prompt failure arrives second and loses the claim.
 	const prose = "A network error occurred. Please check your connection and try again."
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, prose)
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, prose)
 
 	carrier := carrierOf(t, cs, "c1")
 	if carrier.TurnFailureReason != prose {
@@ -258,7 +258,7 @@ func TestLostClaim_DoesNotDowngradeASuppliedReason(t *testing.T) {
 	epoch := startedTurnReturningEpoch(t, h, cs, "c1", "half an answer")
 
 	const prose = "A network error occurred. Please check your connection and try again."
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, prose)
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, prose)
 
 	// The wire's turn_end arrives second, carrying no stopDetails.
 	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, "")
@@ -282,7 +282,7 @@ func TestLostClaim_TwoSuppliedReasonsKeepTheFirst(t *testing.T) {
 
 	const first = "The upstream model dropped the stream."
 	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, first)
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, "A network error occurred.")
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, "A network error occurred.")
 
 	if got := carrierOf(t, cs, "c1").TurnFailureReason; got != first {
 		t.Errorf("carrier reason = %q, want the winner's own %q", got, first)
@@ -311,7 +311,7 @@ func TestLostClaim_ADeletedCarrierIsNotResurrected(t *testing.T) {
 	}
 	before := rec.count(vibekit.EventMessageUpdated)
 
-	h.AbandonInFlightTurn(t.Context(), chatID, epoch, "A network error occurred.")
+	h.AbandonInFlightTurn(t.Context(), chatID, epoch, vibekit.StopReasonInterrupted, "A network error occurred.")
 
 	c, ok := cs.Get(t.Context(), chatID)
 	if !ok {
@@ -351,7 +351,7 @@ func TestLostClaim_AnAbsentCarrierRowIsNotReportedAsTheGateDeclining(t *testing.
 	}
 
 	logs := captureLogs(t)
-	h.AbandonInFlightTurn(t.Context(), chatID, epoch, "A network error occurred.")
+	h.AbandonInFlightTurn(t.Context(), chatID, epoch, vibekit.StopReasonInterrupted, "A network error occurred.")
 	line := logs.String()
 
 	if !strings.Contains(line, `"loser_had_reason":true`) {
@@ -374,7 +374,7 @@ func TestLostClaim_ACleanCarriersDeclineDoesReportTheOutcome(t *testing.T) {
 	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn, "")
 
 	logs := captureLogs(t)
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, "A network error occurred.")
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, "A network error occurred.")
 	line := logs.String()
 
 	if !strings.Contains(line, `"outcome":"completed"`) {
@@ -398,7 +398,7 @@ func TestLostClaim_AmendsThroughTheRealStoreAndSaysSo(t *testing.T) {
 	before := rec.count(vibekit.EventMessageUpdated)
 
 	const prose = "A network error occurred. Please check your connection and try again."
-	h.AbandonInFlightTurn(t.Context(), chatID, epoch, prose)
+	h.AbandonInFlightTurn(t.Context(), chatID, epoch, vibekit.StopReasonInterrupted, prose)
 
 	c, _ := cs.Get(t.Context(), chatID)
 	var carrier *vibekit.Message
@@ -423,6 +423,11 @@ func TestLostClaim_AmendsThroughTheRealStoreAndSaysSo(t *testing.T) {
 // above, over the closers rather than over the outcome table: whatever path ends a
 // turn, a reader must not be left with a mark and no words. `internal/vibekit`'s own
 // tests pin the table; this pins that the FINALIZER actually reaches it.
+//
+// `cancelled` is the one close that must record NOTHING, and the expectation is keyed
+// on the OUTCOME rather than on the severity because `SeverityOf` grades `cancelled`
+// and `unknown` alike while only `unknown` still speaks. A cancel is the reader's own
+// gesture and the footer's outcome word already reads "Cancelled".
 func TestSeverityOfEveryClose_RecordsSomethingToShow(t *testing.T) {
 	stops := []vibekit.StopReason{
 		vibekit.StopReasonError,
@@ -439,12 +444,19 @@ func TestSeverityOfEveryClose_RecordsSomethingToShow(t *testing.T) {
 			h.coord.WireTurnEnd(t.Context(), "c1", stop, "")
 
 			carrier := carrierOf(t, cs, "c1")
-			if vibekit.SeverityOf(carrier.TurnOutcome) == vibekit.TurnSeverityClean {
+			switch carrier.TurnOutcome {
+			case vibekit.TurnOutcomeCancelled:
+				if carrier.TurnFailureReason != "" {
+					t.Errorf("a %q close recorded reason %q; a cancel has no account to give",
+						stop, carrier.TurnFailureReason)
+				}
+			case vibekit.TurnOutcomeCompleted, vibekit.TurnOutcomeRunning:
 				t.Skipf("%q grades clean, so there is nothing to report", stop)
-			}
-			if carrier.TurnFailureReason == "" {
-				t.Errorf("a %q close (outcome %q) recorded no reason",
-					stop, carrier.TurnOutcome)
+			default:
+				if carrier.TurnFailureReason == "" {
+					t.Errorf("a %q close (outcome %q) recorded no reason",
+						stop, carrier.TurnOutcome)
+				}
 			}
 		})
 	}
@@ -478,7 +490,7 @@ func TestLostClaim_ADiscardedTurnsMarkerCanStillBeAmended(t *testing.T) {
 
 	// The prompt failure arrives second and loses the claim.
 	const prose = "A network error occurred. Please check your connection and try again."
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, prose)
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, prose)
 
 	got := carrierOf(t, cs, "c1")
 	if got.TurnFailureReason != prose {
@@ -512,7 +524,7 @@ func TestLostClaim_NeverStampsAReasonOnACleanCarrier(t *testing.T) {
 	}
 
 	// The prompt failure arrives second, loses the claim, and has prose to offer.
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, "A network error occurred.")
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, "A network error occurred.")
 
 	if got := carrierOf(t, cs, "c1").TurnFailureReason; got != "" {
 		t.Errorf("carrier reason = %q, want empty: a turn that SUCCEEDED must not record why it failed", got)

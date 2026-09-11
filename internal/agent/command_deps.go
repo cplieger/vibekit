@@ -144,6 +144,6 @@ func (rt *Runtime) FinalizeLocalShellTurn(ctx context.Context, chatID vibekit.Ch
 }
 
 // AbandonInFlightTurn finalizes a turn that failed before it could end.
-func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, reason string) {
-	rt.coord.AbandonInFlightTurn(ctx, chatID, epoch, reason)
+func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, stop vibekit.StopReason, reason string) {
+	rt.coord.AbandonInFlightTurn(ctx, chatID, epoch, stop, reason)
 }

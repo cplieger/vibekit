@@ -62,7 +62,7 @@ type promptSlot interface {
 	// BeginPromptCall registers the cancel func of the in-flight prompt's
 	// context and returns the turn generation it belongs to. Paired with
 	// EndPromptCall in the prompt handler's defer.
-	BeginPromptCall(cancel context.CancelFunc) uint64
+	BeginPromptCall(cancel context.CancelCauseFunc) uint64
 	// EndPromptCall forgets the in-flight prompt's cancel func.
 	EndPromptCall()
 	// ArmCancelGrace starts the unresponsive-cancel budget: if the turn
@@ -299,11 +299,13 @@ type TurnOutcomeAccess interface {
 	TurnOpenedAfter(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) bool
 	// FinalizeLocalShellTurn closes a `!cmd` turn vibekit ran itself.
 	FinalizeLocalShellTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch)
-	// AbandonInFlightTurn finalizes a turn the prompt call could not finish. reason is
-	// the user-facing account of the failure and becomes the transcript's interrupted
-	// divider. It waits for no read loop position: the two failures that reach it — an
-	// oversize frame and a cancel-grace expiry — settle with the bridge still alive.
-	AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, reason string)
+	// AbandonInFlightTurn finalizes a turn the prompt call could not finish. stop is what
+	// the failure CONCLUDES — `interrupted` for a fault, `cancelled` for a user cancel
+	// KAS never acked — and reason is the user-facing account of it, which becomes the
+	// transcript's divider. It waits for no read loop position: the two failures that
+	// reach it — an oversize frame and a cancel-grace expiry — settle with the bridge
+	// still alive.
+	AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, stop vibekit.StopReason, reason string)
 }
 
 // SteerRecorder is the one method CmdSteer needs of the steer ledger: record that

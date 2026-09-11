@@ -328,6 +328,7 @@ function opensHeaderlessTurn(m: Message, prevClosed: boolean): boolean {
  *  and the rail, not the evidence. */
 function deriveOutcome(t: Turn, isLive: boolean): TurnOutcome {
   let interrupted = false;
+  let cancelled = false;
   let sawUnknown = false;
   let sawAssistant = false;
   for (const m of t.body) {
@@ -354,12 +355,21 @@ function deriveOutcome(t: Turn, isLive: boolean): TurnOutcome {
     if (m.event_kind === "compaction_failed" || m.event_kind === "infra_safety_blocked") {
       return "failed";
     }
-    if (m.event_kind === "cancelled" || m.event_kind === "interrupted") {
+    if (m.event_kind === "interrupted") {
       interrupted = true;
     }
+    if (m.event_kind === "cancelled") {
+      cancelled = true;
+    }
   }
+  // A fault outranks a gesture: a turn carrying both markers is one something
+  // broke, and grading it `cancelled` would paint a fault as a stop the reader
+  // asked for.
   if (interrupted) {
     return "interrupted";
+  }
+  if (cancelled) {
+    return "cancelled";
   }
   if (isLive) {
     return "running";
@@ -510,6 +520,12 @@ export function turnFaceProse(t: Turn): string {
  *  names its kind. The notice wins because it is present in BOTH fold states,
  *  which is the same argument that moved it out of the collapsed face.
  *
+ *  A CANCELLED TURN HAS NO ACCOUNT TO GIVE, so it is refused ahead of all three
+ *  sources: the reader caused the stop, and the footer's own outcome word reads
+ *  "Cancelled" a row away, so a notice would render one fact twice. That refusal
+ *  also silences the sentence already persisted on every cancelled turn written
+ *  before `DefaultFailureReason` stopped supplying one.
+ *
  *  Three sources, in falling order of specificity, and each one exists because the
  *  one above it is legitimately absent for some path:
  *
@@ -547,6 +563,13 @@ export function turnFaceProse(t: Turn): string {
 export function turnFailureText(t: Turn): string {
   const severity = severityOf(t.outcome);
   if (severity === "clean" || severity === "running") {
+    return "";
+  }
+  // A CANCEL SAYS NOTHING, and the test is the OUTCOME rather than the severity:
+  // `severityOf` grades `cancelled` and `unknown` alike, and `unknown` must keep
+  // speaking. Ahead of the three sources on purpose — this also silences the
+  // sentence already persisted on every cancelled turn written before this.
+  if (t.outcome === "cancelled") {
     return "";
   }
   for (let i = t.body.length - 1; i >= 0; i--) {

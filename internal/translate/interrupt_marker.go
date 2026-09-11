@@ -10,7 +10,7 @@ package translate
 // For vibekit that is worse than a slow turn. Bridge.Call carries no client-side
 // deadline by design, so the prompt slot stays held until the bridge dies —
 // until the tab is closed. Every later Send on that chat answers 409 busy, and
-// the two adjacent safety nets do not reach it: command.cancelGrace arms only
+// the two adjacent safety nets do not reach it: command.CancelGrace arms only
 // after an explicit user cancel, and the empty-turn retry needs the prompt
 // response to have arrived first.
 //

@@ -63,7 +63,7 @@ func (b *recordingBridge) Respond(context.Context, int64, any, error) error { re
 func (b *recordingBridge) SessionID() vibekit.SessionID                     { return b.sessionID }
 func (b *recordingBridge) TryAcquireForPrompt() bool                        { return true }
 func (b *recordingBridge) ReleaseAfterPrompt()                              {}
-func (b *recordingBridge) BeginPromptCall(context.CancelFunc) uint64        { return 0 }
+func (b *recordingBridge) BeginPromptCall(context.CancelCauseFunc) uint64   { return 0 }
 func (b *recordingBridge) EndPromptCall()                                   {}
 func (b *recordingBridge) PromptGeneration() uint64                         { return 0 }
 func (b *recordingBridge) ArmCancelGrace(uint64, time.Duration) bool        { return false }

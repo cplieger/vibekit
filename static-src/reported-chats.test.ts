@@ -220,10 +220,13 @@ describe("the four surfaces agree, per turn, across both records", () => {
   it("does not overstate the turns that merely stopped, and does not erase them either", () => {
     // The other direction, and it is what keeps the property above from being
     // satisfiable by painting everything red: a `cancelled` or `unknown` turn is
-    // never latched as a FAILURE, folds like any other, and still has something to
-    // say. What it may not do is latch nothing — the hollow ring means the chat has
-    // not initiated (user ruling, 2026-09-04), so a turn that ended has to register
-    // as one whatever became of it.
+    // never latched as a FAILURE and folds like any other. What it may not do is
+    // latch nothing — the hollow ring means the chat has not initiated (user ruling,
+    // 2026-09-04), so a turn that ended has to register as one whatever became of it.
+    //
+    // Whether it SAYS anything splits by OUTCOME, not by severity: `severityOf`
+    // grades the two alike, `unknown` still speaks, and `cancelled` is silent because
+    // the reader caused the stop and the footer's own word already reads "Cancelled".
     for (const name of Object.keys(fixture)) {
       const turns = turnsOf(name);
       for (const [i, t] of turns.entries()) {
@@ -233,7 +236,11 @@ describe("the four surfaces agree, per turn, across both records", () => {
         const where = `${name} turn ${String(i + 1)} (${t.outcome})`;
         expect(outcomeLatch(t.outcome), `${where}: not a failure`).not.toBe("failed");
         expect(outcomeLatch(t.outcome), `${where}: not the hollow ring either`).toBe("done");
-        expect(turnFailureText(t), `${where}: still says something`).not.toBe("");
+        if (t.outcome === "cancelled") {
+          expect(turnFailureText(t), `${where}: the footer carries it`).toBe("");
+        } else {
+          expect(turnFailureText(t), `${where}: still says something`).not.toBe("");
+        }
       }
     }
   });
@@ -325,12 +332,16 @@ describe("the push gate has words for every turn it speaks for", () => {
   it("never has to push an empty sentence", () => {
     // Item 4's property, and the reason it belongs here rather than in the handler's
     // own suite: both push gates build their body from `defaultFailureReason`, so a
-    // `broken` or `stopped` outcome with no sentence behind it would notify a reader
-    // with nothing at all — a worse failure than the "Agent finished" lie it replaced.
+    // `broken` outcome with no sentence behind it would notify a reader with nothing
+    // at all — a worse failure than the "Agent finished" lie it replaced.
+    //
+    // Narrowed to `broken` alone, which is a CORRECTION rather than a concession:
+    // neither push gate speaks for a `stopped` turn at all (`notifyBodyFor`'s
+    // `stopped` arm and `turn_finalize.go`'s `TurnSeverityStopped` arm both push
+    // NOTHING), so the `stopped` half of this property was never about a real push.
     for (const name of Object.keys(fixture)) {
       for (const [i, t] of turnsOf(name).entries()) {
-        const severity = severityOf(t.outcome);
-        if (severity !== "broken" && severity !== "stopped") {
+        if (severityOf(t.outcome) !== "broken") {
           continue;
         }
         expect(

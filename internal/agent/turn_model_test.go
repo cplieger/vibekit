@@ -257,7 +257,7 @@ func TestTurnModel_AbandonedTurnCarriesItToo(t *testing.T) {
 
 	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("the model got this far"))
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, "the pipe died")
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, "the pipe died")
 
 	c, _ := cs.Get(t.Context(), "c1")
 	var found bool

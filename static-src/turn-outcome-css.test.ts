@@ -355,9 +355,14 @@ describe("the failure notice", () => {
   });
 
   it("tints by severity, so it never calls a cancel a failure", () => {
-    // Red is the default because `broken` is the population it exists for; the
-    // `stopped` pair takes the same yellow their footer glyph takes — minus
-    // `unknown`, whose own override is asserted with the other four above.
+    // Red is the default because `broken` is the population it exists for; a
+    // `stopped` turn takes the same yellow its footer glyph takes.
+    //
+    // Neither current `stopped` outcome reaches that arm — `cancelled` mounts no
+    // notice at all and `unknown` has its own later override — so this pins the
+    // severity's FALLBACK. It is worth pinning for the direction rather than the
+    // hue: with the arm gone, the base `--c-red` would paint a `stopped` outcome
+    // added later as a failure.
     expect(ruleContaining(turns, ".turn-notice").body).toMatch(/color:\s*var\(--c-red\)/u);
     expect(ruleContaining(turns, '.turn-notice[data-severity="stopped"]').body).toMatch(
       /color:\s*var\(--c-yellow\)/u,

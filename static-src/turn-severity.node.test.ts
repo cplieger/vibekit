@@ -115,16 +115,25 @@ describe("isBroken", () => {
 });
 
 describe("defaultFailureReason", () => {
+  // Keyed on the OUTCOME rather than the severity, because `severityOf` grades
+  // `cancelled` and `unknown` alike and only one of them still speaks.
+  const SPEAKS = new Set<TurnOutcome>(["interrupted", "failed", "refused", "unknown"]);
+
   it("gives every turn that ended badly something to say", () => {
     // This is the property symptom 1 turned on: a card with a red mark and an
     // empty body is what a reader of the reported chat actually got.
     for (const outcome of EVERY_OUTCOME) {
-      const severity = severityOf(outcome);
-      if (severity === "broken" || severity === "stopped") {
+      if (SPEAKS.has(outcome)) {
         expect(defaultFailureReason(outcome), `${outcome} says something`).not.toBe("");
       } else {
         expect(defaultFailureReason(outcome), `${outcome} says nothing`).toBe("");
       }
     }
+  });
+
+  // A cancel is the reader's own gesture and the footer's outcome word already
+  // reads "Cancelled" a row away, so a sentence here is one fact rendered twice.
+  it("says nothing for a cancelled turn", () => {
+    expect(defaultFailureReason("cancelled")).toBe("");
   });
 });

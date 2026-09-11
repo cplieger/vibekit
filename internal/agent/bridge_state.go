@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -36,7 +37,11 @@ type sharedBridge struct {
 	// path finalize the turn. turnGen guards against tripping a LATER
 	// turn: an unacked cancel whose grace expires after the turn ended and
 	// a new one started must not touch the new one.
-	promptCancel context.CancelFunc
+	//
+	// A CancelCauseFunc because the failure site cannot otherwise tell an
+	// expired grace from any other cancellation of that context: ctx.Err()
+	// reads context.Canceled for all of them.
+	promptCancel context.CancelCauseFunc
 	cancelTimer  *time.Timer
 
 	// primeReason is a string, so its pointer word must sit inside the
@@ -149,7 +154,7 @@ func (sb *sharedBridge) ReleaseAfterPrompt() {
 
 // BeginPromptCall records the in-flight prompt's cancel func and returns the
 // generation of the turn it belongs to.
-func (sb *sharedBridge) BeginPromptCall(cancel context.CancelFunc) uint64 {
+func (sb *sharedBridge) BeginPromptCall(cancel context.CancelCauseFunc) uint64 {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 	sb.promptCancel = cancel
@@ -193,7 +198,7 @@ func (sb *sharedBridge) ArmCancelGrace(gen uint64, d time.Duration) bool {
 		}
 		slog.Warn("cancel unacked within grace; unblocking the turn",
 			"grace", d, "turn_gen", gen)
-		cancel()
+		cancel(command.ErrCancelGraceExpired)
 	})
 	return true
 }
@@ -205,7 +210,7 @@ func (sb *sharedBridge) ArmCancelGrace(gen uint64, d time.Duration) bool {
 // no longer prompting (the turn ended), the generation moved on (this turn
 // ended and ANOTHER began, so cancelling would kill work the user just
 // started), or no prompt context is registered.
-func (sb *sharedBridge) shouldTripCancelGrace(gen uint64) (context.CancelFunc, bool) {
+func (sb *sharedBridge) shouldTripCancelGrace(gen uint64) (context.CancelCauseFunc, bool) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 	if sb.state != bridgePrompting || sb.turnGen != gen || sb.promptCancel == nil {
@@ -232,7 +237,10 @@ func (sb *sharedBridge) cancelPromptCall() bool {
 	// Outside the lock: cancel runs arbitrary registered funcs, and holding a
 	// bridge's mutex across them would put this goroutine's ordering inside
 	// someone else's callback.
-	cancel()
+	//
+	// No cause: an interrupt deliberately leaves the cause at context.Canceled,
+	// which is what makes the turn conclude `interrupted`.
+	cancel(nil)
 	return true
 }
 

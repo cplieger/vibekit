@@ -48,8 +48,8 @@
     {
       "outcome": "cancelled",
       "severity": "stopped",
-      "default_reason": "The turn was cancelled.",
-      "_why": "The user asked for it, so it must not read alarming — and it produced no answer, so it must not read clean either."
+      "default_reason": "",
+      "_why": "The user asked for it, so it must not read alarming — and it produced no answer, so it must not read clean either. It SAYS nothing: the reader caused this stop, and the footer's own outcome word already reads \"Cancelled\" a row away, so a notice would render one fact twice."
     },
     {
       "outcome": "interrupted",

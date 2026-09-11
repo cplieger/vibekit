@@ -171,10 +171,11 @@ export function defaultFailureReason(outcome: TurnOutcome | undefined): string {
       return "The turn was interrupted before the agent finished.";
     case "refused":
       return "The model declined to continue.";
-    case "cancelled":
-      return "The turn was cancelled.";
     case "unknown":
       return "The turn ended for a reason vibekit could not read.";
+    // `cancelled` says nothing: the footer's own outcome word already reads
+    // "Cancelled" a row away, so a sentence here is one fact rendered twice.
+    case "cancelled":
     case "completed":
     case "running":
     case undefined:

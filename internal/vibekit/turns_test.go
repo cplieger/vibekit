@@ -106,21 +106,52 @@ func TestSeverityOf_GradesEveryOutcomeAndNeverClean(t *testing.T) {
 	}
 }
 
-// TestDefaultFailureReason_SpeaksForEveryOutcomeThatEndedBadly pins that a turn graded
-// `broken` or `stopped` always has something to say: those severities render a footer, and
-// a mark with no account beside it tells the reader nothing about what happened.
-func TestDefaultFailureReason_SpeaksForEveryOutcomeThatEndedBadly(t *testing.T) {
+// TestDefaultFailureReason_SpeaksWhereverThereIsSomethingToSay is keyed on the OUTCOME
+// rather than the severity, because `SeverityOf` grades `cancelled` and `unknown` alike and
+// only one of them still speaks. A `broken` outcome and `unknown` must have an account: the
+// footer renders a mark, and a mark with nothing beside it tells the reader nothing. A
+// `cancelled` turn is silent because the reader caused the stop and the footer's own outcome
+// word already reads "Cancelled" a row away.
+func TestDefaultFailureReason_SpeaksWhereverThereIsSomethingToSay(t *testing.T) {
 	for _, o := range everyTurnOutcome {
 		reason := DefaultFailureReason(o)
-		switch SeverityOf(o) {
-		case TurnSeverityBroken, TurnSeverityStopped:
+		switch o {
+		case TurnOutcomeInterrupted, TurnOutcomeFailed, TurnOutcomeRefused, TurnOutcomeUnknown:
 			if reason == "" {
 				t.Errorf("DefaultFailureReason(%q) is empty; a turn that ended badly must say something", o)
 			}
-		case TurnSeverityClean, TurnSeverityRunning:
+		case TurnOutcomeCancelled, TurnOutcomeCompleted, TurnOutcomeRunning:
 			if reason != "" {
-				t.Errorf("DefaultFailureReason(%q) = %q, want empty: nothing went wrong", o, reason)
+				t.Errorf("DefaultFailureReason(%q) = %q, want empty: there is nothing to add", o, reason)
 			}
+		}
+	}
+}
+
+// TestStopMarkerKind_CancelledIsTheOnlySkippedMarker pins both buckets plus the reason
+// the split exists: deriveTurnOutcome answers `interrupted` BEFORE `cancelled` when a
+// turn's body carries both markers, so a cancelled close must leave no EventInterrupted
+// row of its own. EventTurnOutcome is out of range on purpose — it is the clean-close
+// marker and says nothing about a turn that stopped.
+func TestStopMarkerKind_CancelledIsTheOnlySkippedMarker(t *testing.T) {
+	cases := []struct {
+		outcome TurnOutcome
+		want    EventKind
+	}{
+		{outcome: TurnOutcomeCancelled, want: EventCancelled},
+		{outcome: TurnOutcomeInterrupted, want: EventInterrupted},
+		{outcome: TurnOutcomeFailed, want: EventInterrupted},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.outcome), func(t *testing.T) {
+			if got := StopMarkerKind(tc.outcome); got != tc.want {
+				t.Errorf("StopMarkerKind(%q) = %q, want %q", tc.outcome, got, tc.want)
+			}
+		})
+	}
+	for _, o := range everyTurnOutcome {
+		if got := StopMarkerKind(o); got == EventTurnOutcome {
+			t.Errorf("StopMarkerKind(%q) = %q, which is the clean-close marker", o, got)
 		}
 	}
 }
