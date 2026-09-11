@@ -14,6 +14,12 @@ vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
   apiGetTypedOrError: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds; nothing here calls it. A
+  // partial factory links for real, so a name this file's graph reaches and this
+  // object lacks is a `SyntaxError` at import that costs the WHOLE file's
+  // collection rather than one assertion. `actions/notify.test.ts` carries the
+  // fuller record of the class.
+  apiGetOrError: vi.fn(),
 }));
 vi.mock("./editor-openers.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this

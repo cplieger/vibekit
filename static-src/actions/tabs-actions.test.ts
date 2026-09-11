@@ -31,6 +31,7 @@ vi.mock("../transport.js", () => ({
 }));
 
 vi.mock("../api-client.js", () => ({
+  apiGetOrError: vi.fn(),
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
   // Present-but-inert so real-ESM linking succeeds: the tab projection widened
