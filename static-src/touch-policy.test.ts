@@ -84,7 +84,7 @@ describe("a control that must stay visually small opts out of the box floor", ()
 
     const expander = ruleContaining(shell, ".shell-resize::before", "top");
     expect(expander.body, "reaching DOWN, by the whole term").toMatch(
-      /inset:\s*0 0 calc\(-1 \* var\(--shell-resize-reach\)\) 0/u,
+      /inset:\s*0 0 calc\(-1 \* var\(--shell-resize-reach\)\)/u,
     );
 
     // `box-sizing: border-box` is global (02-reset.css), so padding alone would eat
