@@ -143,7 +143,7 @@ func (t *Translator) broadcastRunTool(
 // the status so a frame carrying both does not look up an id the call lacks.
 func applyRunToolUpdate(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
 	if tu.Title != "" {
-		tc.Title = tu.Title
+		tc.Title = displayText(tu.Title)
 	}
 	if tu.Kind != "" {
 		tc.Kind = tu.Kind

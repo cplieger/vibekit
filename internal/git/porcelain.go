@@ -55,7 +55,7 @@ func readStatus(ctx context.Context, dir string) (porcelainStatus, error) {
 			return porcelainStatus{Branch: headBranch(dir)}, err
 		}
 		slog.Warn("git status failed", "repo", logsafe.Field(dir),
-			"error", logsafe.Field(err.Error()), "out", scrubAuth(string(raw)))
+			"error", logsafe.Field(err.Error()), "out", logField(string(raw)))
 		return porcelainStatus{Branch: headBranch(dir)}, err
 	}
 	return parsePorcelainV2(raw), nil

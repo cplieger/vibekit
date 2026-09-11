@@ -254,8 +254,8 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 			webhttp.WriteJSON(w, map[string]any{"content": "", "absent": true})
 			return
 		}
-		slog.Warn("git show failed", "repo", logsafe.Field(dir), "ref", ref, "path", logsafe.Field(file), "error", logsafe.Field(err.Error()), "out", scrubAuth(out))
-		writeGitError(w, KindShowFailed, scrubAuth(out))
+		slog.Warn("git show failed", "repo", logsafe.Field(dir), "ref", ref, "path", logsafe.Field(file), "error", logsafe.Field(err.Error()), "out", logField(out))
+		writeGitError(w, KindShowFailed, clientBlock(out))
 		return
 	}
 	webhttp.WriteJSON(w, map[string]string{"content": out})
@@ -272,7 +272,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := gitCmd(ctx, dir, "log", ref, "--oneline", "-20", "--no-decorate")
 	if err != nil {
-		slog.Debug("git log failed", "repo", logsafe.Field(dir), "ref", ref, "error", logsafe.Field(err.Error()), "out", scrubAuth(out))
+		slog.Debug("git log failed", "repo", logsafe.Field(dir), "ref", ref, "error", logsafe.Field(err.Error()), "out", logField(out))
 		webhttp.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0, "commit_url_prefix": ""})
 		return
 	}
@@ -288,8 +288,12 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	if rErr != nil {
 		slog.Debug("git remote get-url failed during log", "repo", logsafe.Field(dir), "error", logsafe.Field(rErr.Error()))
 	}
-	// Scrubbed once, so the commit prefix comes off the same credential-free string.
-	remote = scrubAuth(remote)
+	// TWO values from one string, because the two sinks want different things. The
+	// commit prefix is PARSED, so it takes the redaction alone — flattening or
+	// capping it would corrupt commitURLPrefix's parse. The "remote" field is read
+	// by a human in the Sources row, so it takes the single-line bound as well.
+	parsedRemote := redactCredentials(remote)
+	remote = clientLine(remote)
 	behind := 0
 	if ab, err := gitCmd(ctx, dir, "rev-list", "--left-right", "--count", "HEAD...@{upstream}"); err == nil {
 		parts := strings.Fields(ab)
@@ -303,7 +307,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 		"entries":           lines,
 		"remote":            remote,
 		"behind":            behind,
-		"commit_url_prefix": commitURLPrefix(remote),
+		"commit_url_prefix": commitURLPrefix(parsedRemote),
 	})
 }
 
@@ -325,7 +329,15 @@ func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		parts := strings.SplitN(line, "\t", 2)
-		name := parts[0]
+		// A refname comes back FROM git, so it is upstream text on this surface
+		// even though isValidGitRef screens what vibekit passes TO git: a remote
+		// publishes whatever it likes, and git's own check-ref-format forbids
+		// ASCII control characters and not Unicode format characters, so a
+		// remote-tracking name may legally carry bidi controls or zero-width
+		// joiners. This is the client's branch switcher and the value a human
+		// picks from, so it takes the same single-line treatment every other
+		// human-read git value here does.
+		name := clientLine(parts[0])
 		isCurrent := len(parts) > 1 && strings.TrimSpace(parts[1]) == "*"
 		branches = append(branches, branchEntry{Name: name, Current: isCurrent})
 		if isCurrent {

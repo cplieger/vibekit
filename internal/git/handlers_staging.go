@@ -35,7 +35,7 @@ func collectStatus(ctx context.Context, dir string, timeouts gitTimeouts, fetchF
 	}
 	st := gitStatusResp{IsRepo: true}
 	if rem, err := gitCmd(ctx, dir, subRemote, "get-url", remoteOrigin); err == nil {
-		st.Remote = scrubAuth(rem)
+		st.Remote = clientLine(rem)
 	}
 	if doFetch {
 		fetchStatus(ctx, dir, timeouts.Fetch, fetchFlight)
@@ -64,7 +64,7 @@ func fetchStatus(ctx context.Context, dir string, timeout time.Duration, fetchFl
 	defer cancel()
 	_, _, _ = fetchFlight.Do(dir, func() (any, error) {
 		if out, err := gitCmd(fetchCtx, dir, "fetch", "--quiet"); err != nil {
-			slog.Debug("git fetch during status failed", "repo", logsafe.Field(dir), "error", logsafe.Field(err.Error()), "out", scrubAuth(out))
+			slog.Debug("git fetch during status failed", "repo", logsafe.Field(dir), "error", logsafe.Field(err.Error()), "out", logField(out))
 		}
 		return nil, nil
 	})
@@ -91,7 +91,7 @@ func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {
 	slog.Info("git stage", "repo", body.Repo, "files", len(files))
 	args := append([]string{subAdd, "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
-		webhttp.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(out)))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON(clientBlock(out)))
 		return
 	}
 	webhttp.Ok(w)
@@ -118,7 +118,7 @@ func (h *Handler) handleUnstage(w http.ResponseWriter, r *http.Request) {
 	slog.Info("git unstage", "repo", body.Repo, "files", len(files))
 	args := append([]string{subReset, refHEAD, "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
-		webhttp.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(out)))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON(clientBlock(out)))
 		return
 	}
 	webhttp.Ok(w)
@@ -151,7 +151,7 @@ func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
 	// modification survives the discard and a staged NEW file makes checkout error.
 	if out, err := gitCmd(ctx, dir, append([]string{subReset, "-q", refHEAD, "--"}, files...)...); err != nil {
 		slog.Debug("git discard: reset before discard failed (continuing)",
-			"repo", body.Repo, "error", err, "out", scrubAuth(out))
+			"repo", body.Repo, "error", err, "out", logField(out))
 	}
 	tracked, untracked := splitTrackedUntracked(ctx, dir, files)
 	slog.Info("git discard", "repo", body.Repo, "tracked_count", len(tracked), "untracked_count", len(untracked))
@@ -159,19 +159,19 @@ func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
 	if len(tracked) > 0 {
 		args := append([]string{subCheckout, "--"}, tracked...)
 		if out, err := gitCmd(ctx, dir, args...); err != nil {
-			slog.Warn("git discard checkout failed", "repo", body.Repo, "count", len(tracked), "error", err, "out", scrubAuth(out))
+			slog.Warn("git discard checkout failed", "repo", body.Repo, "count", len(tracked), "error", err, "out", logField(out))
 			errs = append(errs, subCheckout+": "+cmdFailure(out, err))
 		}
 	}
 	if len(untracked) > 0 {
 		args := append([]string{subClean, "-fd", "--"}, untracked...)
 		if out, err := gitCmd(ctx, dir, args...); err != nil {
-			slog.Warn("git discard clean failed", "repo", body.Repo, "count", len(untracked), "error", err, "out", scrubAuth(out))
+			slog.Warn("git discard clean failed", "repo", body.Repo, "count", len(untracked), "error", err, "out", logField(out))
 			errs = append(errs, subClean+": "+cmdFailure(out, err))
 		}
 	}
 	if len(errs) > 0 {
-		webhttp.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(strings.Join(errs, "\n"))))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON(clientBlock(strings.Join(errs, "\n"))))
 		return
 	}
 	webhttp.Ok(w)
