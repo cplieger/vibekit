@@ -93,9 +93,15 @@ describe("the title bar's measured fit", () => {
     expect(heading.classList.contains("sr-only"), "clipped although the title is short").toBe(true);
 
     // The title genuinely fits, which is what makes this case about the ACTIONS.
+    // Measured at its CONTENT width: the heading is `flex: 1 1 0`, so in the row it
+    // takes what the actions leave (20px here), and comparing scrollWidth against
+    // clientWidth there asks about the face rather than the title.
     const title = heading.querySelector<HTMLElement>(".titlebar-title");
     heading.classList.remove("sr-only");
+    const basis = heading.style.flex;
+    heading.style.flex = "0 0 auto";
     expect(title?.scrollWidth, "the short title is not truncated").toBe(title?.clientWidth);
+    heading.style.flex = basis;
     heading.classList.add("sr-only");
 
     // Two rows here is geometry rather than a fallback — the targets do not fit one

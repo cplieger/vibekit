@@ -90,7 +90,11 @@
      count only while a search runs. */
   --turn-chev-box: 1.5rem;
   --turn-req-line: calc(var(--fs-md) * 1.5);
-  --turn-badge-w: 4.5rem; /* #9999 (mono, 11px) + --sp-2 + 10:42 (tabular) */
+  /* #9999 (mono, 11px) + --sp-2 + the stamp (tabular): 33.13 + 8 + 51.33 = 92.46px
+     measured under DejaVu Sans. `turn-header.ts` builds the stamp with
+     `toLocaleTimeString`, so a 12-hour locale renders `11:13 PM`, eight characters.
+     A 24-hour locale over-reserves here, which costs indent and never a collision. */
+  --turn-badge-w: 6rem;
   --turn-dot-reserve: 0rem; /* 0.5rem + --sp-2, below 48rem only */
   --turn-hits-reserve: 0rem; /* the badge's min box + its padding, plus --sp-2 */
   --turn-indent: calc(
