@@ -21,7 +21,7 @@
 // with `repo=<name>` in the body.
 // ---------------------------------------------------------------------------
 
-import { initGitTabs, onGitTabChange, getGitTab, readGitTab } from "./git-tabs.js";
+import { initGitTabs, onGitTabChange, getGitTab, readGitTab, type GitTab } from "./git-tabs.js";
 import { initChangesTab, refreshChanges, changesFind } from "./git-changes-tab.js";
 import { initPRsTab, prsFind } from "./git-prs-tab.js";
 import { refreshPRs } from "./actions/git-prs.js";
@@ -69,9 +69,8 @@ function activeFind(): SearchPopup | null {
 
 let initialized = false;
 
-/** Initialise the git view. Idempotent — only the first call wires
- *  listeners; subsequent calls trigger a refresh of the active tab
- *  (matches the existing loadGitRepos contract). */
+/** Wire and paint the git view. Idempotent and FETCHLESS: the data half is
+ *  `refreshGitView`, which `tabs.ts` calls right after this. */
 export function initGitPanel(): void {
   if (!initialized) {
     initialized = true;
@@ -109,55 +108,58 @@ export function initGitPanel(): void {
       },
     });
 
-    // When the user switches into a tab, run a fresh fetch so they
-    // see up-to-date state. Keeps each module's data ownership tight.
-    // The subscription fires immediately with the current tab, which
-    // doubles as the Changes tab's initial load (initChangesTab itself
-    // no longer fires one — EX-1). Activation is explicit user
-    // navigation, so it opts into the server-side per-repo git fetch
-    // (?fetch=1) for fresh ahead/behind data (18-F3).
+    // The reader switched sub-tabs. The WHOLE callback is gated on `painted`,
+    // including the two closes: `subscribe` fires immediately on attach, and that
+    // fire is a DOM sync rather than a switch, so neither half of the callback's
+    // stated job is true of it.
     onGitTabChange((tab) => {
-      // A filter belongs to ONE panel, so the box does not survive a sub-tab
-      // switch: it would otherwise sit open over the Pull-requests list still
-      // narrowing the Changes list behind it. Closing is what lifts the filter —
-      // search-popup's close clears the query and repaints — so switching back
-      // finds the panel whole rather than narrowed by an empty box.
-      changesFind.close();
-      prsFind.close();
-      switch (tab) {
-        case "changes":
-          void refreshChanges(true);
-          break;
-        case "prs":
-          // NOT the force the Changes tab passes above, and the asymmetry is the
-          // point. `?fetch=1` there runs a local `git fetch`, the only way to
-          // learn remote state at all. Here every row is already remote and the
-          // server caches the listings, so arriving at the tab should cost no
-          // subprocess when the answer is known. The refresh button forces.
-          void refreshPRs.dispatch({ force: false });
-          break;
-        case "sources":
-          void refreshSources();
-          break;
+      if (painted) {
+        // A filter belongs to ONE panel, so the box does not survive a sub-tab
+        // switch: it would otherwise sit open over the Pull-requests list still
+        // narrowing the Changes list behind it. Closing is what lifts the filter —
+        // search-popup's close clears the query and repaints — so switching back
+        // finds the panel whole rather than narrowed by an empty box.
+        changesFind.close();
+        prsFind.close();
+        refreshGitTab(tab);
       }
+      painted = true;
     });
-  } else {
-    // Subsequent invocations refresh the currently active tab so the
-    // entry from another part of the app (Files → click commit, agent
-    // ended a turn, etc.) sees fresh state. Re-entering the git view
-    // is user navigation → fetch=1, same as tab activation.
-    switch (getGitTab()) {
-      case "changes":
-        void refreshChanges(true);
-        break;
-      case "prs":
-        void refreshPRs.dispatch({ force: false });
-        break;
-      case "sources":
-        void refreshSources();
-        break;
-    }
   }
+}
+
+/** Whether the subscribe-time paint has run. Same gate, same reason, as
+ *  `settings-tabs.ts`'s. */
+let painted = false;
+
+/** Refetch ONE sub-tab. */
+function refreshGitTab(tab: GitTab): void {
+  switch (tab) {
+    case "changes":
+      // A sub-tab arrival is explicit navigation, so it opts into the server-side
+      // per-repo `git fetch` for fresh ahead/behind data.
+      void refreshChanges(true);
+      break;
+    case "prs":
+      // NOT the force the Changes tab passes above, and the asymmetry is the point.
+      // `?fetch=1` there runs a local `git fetch`, the only way to learn remote state
+      // at all. Here every row is already remote and the server caches the listings,
+      // so arriving at the tab should cost no subprocess when the answer is known.
+      // The refresh button forces.
+      void refreshPRs.dispatch({ force: false });
+      break;
+    case "sources":
+      void refreshSources();
+      break;
+  }
+}
+
+/** Refetch the ACTIVE sub-tab. A git tab's `refresh`, and the two invalidation
+ *  triggers' way in. `initGitPanel` first because it is one-shot and this dispatches
+ *  into the panels it wires. */
+export function refreshGitView(): void {
+  initGitPanel();
+  refreshGitTab(getGitTab());
 }
 
 /** Compatibility export used by app.ts boot path. The legacy name

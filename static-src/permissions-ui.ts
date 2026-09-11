@@ -26,6 +26,8 @@ import { reconcile } from "./reconcile.js";
 import { onSSE } from "./bus.js";
 import { confirm } from "./confirm.js";
 import type { PolicyView, PolicyRule, SecurityProfile } from "./types.js";
+import { ICON_CLOSE } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { el } from "@cplieger/reactive";
 
 // ---------------------------------------------------------------------------
@@ -635,7 +637,11 @@ class NativePolicyController {
     }
     row.append(src);
     if (this.writable.has(r.scope)) {
-      const rm = el("button", { type: "button", className: "native-rule-remove" }, "\u00d7");
+      const rm = el(
+        "button",
+        { type: "button", className: "icon-btn native-rule-remove" },
+        iconEl(ICON_CLOSE),
+      );
       rm.setAttribute("aria-label", "Remove rule");
       rm.setAttribute("title", "Remove rule");
       rm.addEventListener("click", () => {

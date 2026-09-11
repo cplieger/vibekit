@@ -12,7 +12,7 @@
    binding added. */
 .shortcuts-card {
   width: min(34rem, 90vw);
-  max-height: 80vh;
+  max-height: 80dvh;
   gap: var(--sp-2);
 }
 

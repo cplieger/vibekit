@@ -150,6 +150,7 @@ beforeAll(() => {
 afterEach(() => {
   area?.remove();
   area = undefined;
+  delete document.documentElement.dataset["pointer"];
 });
 
 afterAll(() => {
@@ -179,6 +180,21 @@ function styles(el: Element): Record<string, string> {
   return Object.fromEntries(ALIGNED.map((p) => [p, cs.getPropertyValue(p)]));
 }
 
+/** The RESTING values, which is what the parity claim is about. The docked
+ *  background arrives through a CONTAINER QUERY, so Gecko re-resolves after layout
+ *  and `transition: background` makes that a real transition, serializing the
+ *  interpolated colour in another space — mid-flight it reads
+ *  `color(srgb 0.147751 0.14797 0.211909)` against the marker's
+ *  `oklch(0.15 0.022 283.9)`. Chromium and WebKit start no transition at all. */
+async function settled(...els: Element[]): Promise<void> {
+  await Promise.allSettled(els.flatMap((el) => el.getAnimations()).map((a) => a.finished));
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      resolve();
+    });
+  });
+}
+
 describe("the reveal gate is live in this browser", () => {
   it("matches any-hover, so every hover case below measures the gated rule", () => {
     // The premise. Under `(any-hover: none)` the label is always visible by design,
@@ -189,10 +205,17 @@ describe("the reveal gate is live in this browser", () => {
 });
 
 describe("the docked control reads as a rail row", () => {
-  it("resolves the rail marker's own values for every property that was aligned", () => {
-    const { marker, resume } = build(LABEL_PX);
-    expect(styles(resume)).toEqual(styles(marker));
-  });
+  // Both POINTER TIERS, because `min-height` is one of the aligned properties and
+  // it is the one that resolves to a different number on each: 24px on a fine
+  // pointer and 44px on a coarse one, from `--hit-floor` on both sides.
+  for (const tier of ["fine", "coarse"] as const) {
+    it(`resolves the rail marker's own values for every property that was aligned, on a ${tier} pointer`, async () => {
+      document.documentElement.dataset["pointer"] = tier;
+      const { marker, resume } = build(LABEL_PX);
+      await settled(resume, marker);
+      expect(styles(resume)).toEqual(styles(marker));
+    });
+  }
 
   it("and those values are the marker's rather than two elements agreeing on nothing", () => {
     // The control. Equality above is satisfied by two unstyled boxes, which is
@@ -207,16 +230,19 @@ describe("the docked control reads as a rail row", () => {
     expect(styles(resume)).not.toEqual(styles(plain));
   });
 
-  it("keeps the app's hit floor rather than the marker's literal 24px", () => {
-    // `--hit-floor` and the marker's `1.5rem` are the same 24px on a fine pointer,
-    // which is why the parity case above passes. They diverge on a coarse one, where
-    // this control keeps a 44px target instead of inheriting a trade the rail's own
-    // rows made for themselves.
-    const { resume } = build(LABEL_PX);
+  it("sizes itself from the app's hit floor, which is the marker's box too", () => {
+    // Read against the TOKEN rather than against the marker, which the parity case
+    // above already covers: this is what makes that parity a statement about the
+    // app's floor instead of two rail rules agreeing with each other. On the COARSE
+    // tier, where the floor is 44px and a literal 1.5rem would not be.
+    document.documentElement.dataset["pointer"] = "coarse";
+    const { resume, marker } = build(LABEL_PX);
     const probe = document.createElement("span");
     probe.style.setProperty("min-height", "var(--hit-floor)");
     area?.appendChild(probe);
-    expect(getComputedStyle(resume).minHeight).toBe(getComputedStyle(probe).minHeight);
+    const floor = getComputedStyle(probe).minHeight;
+    expect(getComputedStyle(resume).minHeight).toBe(floor);
+    expect(getComputedStyle(marker).minHeight).toBe(floor);
   });
 });
 

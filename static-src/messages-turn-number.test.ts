@@ -60,6 +60,7 @@ vi.mock("./api-client.js", { spy: true });
 vi.mock("./store-load.js", () => ({ loadMessages: vi.fn(), loadList: vi.fn() }));
 
 const store = await import("./store.js");
+const { noteLoaded, syncEpoch } = await import("./tab-freshness.js");
 const messages = await import("./messages.js");
 const search = await import("./chat-search.js");
 const { apiGet } = await import("./api-client.js");
@@ -99,6 +100,7 @@ function pairs(from: number, to: number): Message[] {
  *  `residency` is `loaded`, or an activation refetches and the mocked loader
  *  answers nothing. */
 function windowed(id: string, msgs: Message[], offset: number, total: number): Session {
+  noteLoaded("chat", id, syncEpoch());
   return {
     id,
     name: id,
@@ -108,7 +110,6 @@ function windowed(id: string, msgs: Message[], offset: number, total: number): S
     turn_offset: offset,
     turn_segment_closed: false,
     residency: "loaded",
-    loadedEpoch: store.syncEpoch(),
     thinking: false,
     working_label: "",
   } as unknown as Session;
@@ -155,7 +156,7 @@ function hitBadges(): Record<string, string> {
     const key = c.getAttribute("data-reconcile-key");
     if (key !== null) {
       out[key] =
-        c.querySelector<HTMLElement>(":scope > .turn-header > .turn-head-row > .turn-hit-count")
+        c.querySelector<HTMLElement>(":scope > .turn-header > .turn-badge > .turn-hit-count")
           ?.textContent ?? "MISSING";
     }
   }

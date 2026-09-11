@@ -13,22 +13,32 @@ import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rul
 // the reason is on the assertion.
 // ---------------------------------------------------------------------------
 
-describe("pinch-zoom stays disabled", () => {
-  it("keeps `touch-action: pan-x pan-y` on the body", () => {
-    // USER RULING, stated twice: pinch to zoom is off on purpose. This is an app
-    // shell with its own scroll containers, a docked composer and a terminal, and
-    // a pinch that scales the whole layout leaves every one of them mispositioned
-    // with no way back except a reload.
+describe("pinch-zoom is enabled", () => {
+  it("keeps `pinch-zoom` in the body's touch-action list", () => {
+    // THE PRIOR RULING IS OVERTURNED, deliberately, and this case is its record.
+    // It used to assert `pan-x pan-y` and read: "USER RULING, stated twice: pinch
+    // to zoom is off on purpose. This is an app shell with its own scroll
+    // containers, a docked composer and a terminal, and a pinch that scales the
+    // whole layout leaves every one of them mispositioned with no way back except
+    // a reload." It also said the rule was pinned because it is what a
+    // well-meaning accessibility sweep deletes.
     //
-    // It is pinned because it is exactly what a well-meaning accessibility sweep
-    // deletes: WCAG 1.4.4 wants text resizable to 200%, and this LOOKS like the
-    // rule that prevents it. It is not — the app honours the OS text size and its
-    // own font tokens are rem-based, so text scales without the layout gesture.
+    // What changed is that the sweep happened and was RATIFIED (2026-09-10): the
+    // viewport meta lost `maximum-scale=1.0, user-scalable=no` for WCAG 1.4.4, and
+    // that clause is inert while this list excludes the gesture — one suppressed
+    // the pinch, the other forbade it. So the two travel together: without
+    // `pinch-zoom` here the meta change buys nothing at all.
+    //
+    // The mispositioning cost the old ruling named is real and is accepted rather
+    // than answered. `pinch-zoom` does NOT reintroduce the 300ms double-tap delay
+    // that `touch-action: manipulation` on `:where(button)` exists to remove; the
+    // two are independent values.
+    //
     // Scoped to the `reset` layer, which is where 02-reset.css puts its element
     // defaults — a top-level lookup finds nothing.
     const reset = loadCSS("02-reset.css");
     const body = ruleContaining(reset, "body", "reset");
-    expect(body.body).toMatch(/touch-action:\s*pan-x pan-y/u);
+    expect(body.body).toMatch(/touch-action:\s*pan-x pan-y pinch-zoom/u);
   });
 });
 
@@ -51,15 +61,41 @@ describe("a control that must stay visually small opts out of the box floor", ()
     expect(bar.body, "the visual bar must stay thin").toMatch(/height:\s*0\.1875rem/u);
   });
 
-  it("expands the target asymmetrically, away from the header's buttons", () => {
-    // Downward is the header's own 44px buttons, and every pixel the handle takes
-    // there resizes the panel when the reader meant to press a button. Upward is
-    // the transcript's dead space. Derived from --hit-floor so the target follows
-    // the pointer tier with no second declaration.
+  it("expands the target DOWNWARD, and the header pays the same term", () => {
+    // THE PREMISE OF THIS CASE REVERSED (item 18). It used to assert
+    // `/0\s+-0\.25rem/` — an expander reaching UP into the transcript's dead space
+    // and only 4px down, on the reasoning that downward is the header's own
+    // buttons. The direction is wrong because `.shell-panel` declares
+    // `overflow: hidden`, so every pixel the old expander reached upward was
+    // CLIPPED: hit-tested on the real target, 6px against the 24/44 the
+    // declaration claimed. Down is the only direction available, so the header
+    // moves its buttons out of the way instead — which is why this case reads
+    // BOTH rules: the reach, and the header paying for it.
+    //
+    // The source-level companion to the elementFromPoint case at the end of this
+    // file. That one measures the target and cannot say which selectors carry it;
+    // this one cannot say the arithmetic works.
     const shell = loadCSS("21-shell-panel.css");
+
+    const panel = ruleContaining(shell, ".shell-panel", "top");
+    expect(panel.body, "the reach is declared once, on the shared ancestor").toMatch(
+      /--shell-resize-reach:\s*calc\(var\(--hit-floor\) - 0\.1875rem\)/u,
+    );
+
     const expander = ruleContaining(shell, ".shell-resize::before", "top");
-    expect(expander.body).toContain("var(--hit-floor)");
-    expect(expander.body, "only a hair may reach into the header").toMatch(/0\s+-0\.25rem/u);
+    expect(expander.body, "reaching DOWN, by the whole term").toMatch(
+      /inset:\s*0 0 calc\(-1 \* var\(--shell-resize-reach\)\) 0/u,
+    );
+
+    // `box-sizing: border-box` is global (02-reset.css), so padding alone would eat
+    // the header's declared height and crush its buttons. Both halves or neither.
+    const header = ruleContaining(shell, ".shell-header", "top");
+    expect(header.body, "the header's top padding is what moves its buttons").toContain(
+      "var(--shell-resize-reach)",
+    );
+    expect(header.body, "and its height grows by the same term").toMatch(
+      /height:\s*calc\(2rem \+ var\(--shell-resize-reach\) \+ 0\.1875rem\)/u,
+    );
   });
 });
 
@@ -169,6 +205,49 @@ function mount(html: string): void {
 function tier(name: "fine" | "coarse"): void {
   document.documentElement.dataset["pointer"] = name;
 }
+
+/** One token's value in px at the tier currently set, read the way `hitFloorPx`
+ *  reads the floor: through a real box, so the whole cascade decides it. */
+function tokenPx(name: string): number {
+  const probe = document.createElement("div");
+  probe.style.inlineSize = `var(${name})`;
+  boxHost.appendChild(probe);
+  const px = probe.getBoundingClientRect().width;
+  probe.remove();
+  return px;
+}
+
+describe("the third tier state moves the hit floor and nothing else", () => {
+  // The other half of item 10: `pointer-tier.test.ts` pins WHEN `data-touched` is
+  // written, and this pins what it BUYS. A hybrid device driven by its mouse keeps
+  // the dense layout — so every control height is the fine tier's — while a finger
+  // still lands a 44px target, grown through the floor's zero-specificity `min-*`
+  // rules rather than by any box growing.
+  afterEach(() => {
+    document.documentElement.removeAttribute("data-touched");
+  });
+
+  it("takes the coarse floor on a fine pointer that has been touched", () => {
+    tier("fine");
+    expect(hitFloorPx(), "the control, without the flag").toBe(24);
+
+    document.documentElement.setAttribute("data-touched", "");
+    expect(hitFloorPx()).toBe(44);
+  });
+
+  it("leaves every control-height token at the fine tier's value", () => {
+    // "That token only" is the whole ruling, and it is what keeps a painted box or
+    // a glyph from moving: --ctl-h and its two siblings decide heights, --icon-ui
+    // decides glyph size, and none of them may follow a touch that has already
+    // happened. Their coarse values are 2.75/2.5/2.25rem and 1.25rem.
+    tier("fine");
+    document.documentElement.setAttribute("data-touched", "");
+    expect(tokenPx("--ctl-h")).toBe(36);
+    expect(tokenPx("--ctl-h-dense")).toBe(32);
+    expect(tokenPx("--ctl-h-sm")).toBe(24);
+    expect(tokenPx("--icon-ui")).toBe(16);
+  });
+});
 
 describe("a native box control paints its own size and grows only its target", () => {
   it.each(Object.entries(PERM_ROWS))("%s", (_name, html) => {
@@ -417,6 +496,113 @@ describe("every + menu row's label starts on one x", () => {
           1,
         );
       }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE SHELL PANEL'S RESIZE BAR, HIT-TESTED. This is the case item 18 exists for,
+// and its absence is how the defect survived: everything above about
+// `.shell-resize` reads DECLARATIONS, and a declaration claiming a 24/44px target
+// says nothing about whether the target is REACHABLE. The old expander reached
+// UPWARD out of a panel that declares `overflow: hidden`, so the whole reach was
+// clipped away and the real target was 3px of bar plus the 4px it also reached
+// down — measured 6px against the 24/44 the source claimed, on a control whose
+// entire job is to be grabbable.
+//
+// The bar is `position: absolute; top: 0` inside the panel, so the panel needs to
+// be ON SCREEN for `elementFromPoint` to answer at all: this host sits at the top
+// of the viewport rather than reusing `boxHost` (600px down, where a 16rem panel
+// would run off the bottom).
+// ---------------------------------------------------------------------------
+
+/** The shell panel as `static/index.html` authors it, down to one header button.
+ *  The `shell-closed` class it SHIPS with is deliberately absent — that state is
+ *  `height: 0`, so the fixture would have no geometry to measure. */
+const SHELL_PANEL = `<div class="shell-panel">
+  <div class="shell-resize" role="separator" tabindex="0"></div>
+  <div class="shell-header">
+    <span class="shell-title"><svg class="ic-ui" viewBox="0 0 24 24"></svg><span>Shell</span></span>
+    <button type="button" class="shell-header-btn" aria-label="Close shell">
+      <svg class="ic-inline" viewBox="0 0 24 24"></svg>
+    </button>
+  </div>
+  <div class="shell-terminal"></div>
+</div>`;
+
+const shellHost = document.createElement("div");
+shellHost.style.cssText = "position:fixed;top:0;left:40px;inline-size:420px;";
+
+describe("the shell resize bar's real target", () => {
+  beforeAll(() => {
+    document.body.appendChild(shellHost);
+  });
+
+  afterAll(() => {
+    shellHost.remove();
+  });
+
+  function mountPanel(): { bar: Element; button: Element } {
+    shellHost.innerHTML = SHELL_PANEL;
+    const bar = shellHost.querySelector(".shell-resize");
+    const button = shellHost.querySelector(".shell-header-btn");
+    if (bar === null || button === null) {
+      throw new Error("fixture is missing an element");
+    }
+    return { bar, button };
+  }
+
+  /** What owns the point, as a click would find it. */
+  function ownerAt(x: number, y: number): Element | null {
+    return document.elementFromPoint(x, y);
+  }
+
+  it.each([
+    ["fine", 24],
+    ["coarse", 44],
+  ] as const)("is exactly --hit-floor tall on %s (%ipx)", (t, expected) => {
+    tier(t);
+    const { bar } = mountPanel();
+    const floor = hitFloorPx();
+    expect(floor, `--hit-floor on ${t}`).toBe(expected);
+
+    const box = bar.getBoundingClientRect();
+    expect(box.height, "the painted bar stays a 3px hairline").toBeCloseTo(3, 1);
+
+    const x = box.left + box.width / 2;
+    // (i) the bar owns every row from its own top edge down to the floor.
+    for (let dy = 0.5; dy < floor; dy += 1) {
+      expect(ownerAt(x, box.top + dy), `the bar owns y+${dy} on ${t}`).toBe(bar);
+    }
+    // (iii) and not one row further — which is what makes this a MEASUREMENT of
+    // the reach rather than a lower bound. 3px of painted bar plus
+    // --shell-resize-reach below it.
+    expect(ownerAt(x, box.top + floor + 0.5), `the target ends at the floor on ${t}`).not.toBe(bar);
+  });
+
+  it.each(["fine", "coarse"] as const)("leaves the header button its own whole box on %s", (t) => {
+    // (ii) The half the reach costs, and the reason `.shell-header` pays for it in
+    // BOTH its padding and its height: the bar lies over the header at
+    // `z-index: 1`, so every pixel of the button that sits inside the reach is a
+    // pixel that resizes the panel when the reader meant to press Close. Before
+    // item 18 the expander could not reach the header at all (it was clipped
+    // upward), so this is the property the reversal has to buy back rather than
+    // one it inherits.
+    tier(t);
+    const { bar, button } = mountPanel();
+    const box = button.getBoundingClientRect();
+    expect(box.height, `the button has a box on ${t}`).toBeGreaterThan(0);
+
+    for (const [name, y] of [
+      ["top edge", box.top + 0.5],
+      ["centre", box.top + box.height / 2],
+      ["bottom edge", box.bottom - 0.5],
+    ] as const) {
+      const hit = ownerAt(box.left + box.width / 2, y);
+      expect(hit, `the resize bar must not own the button's ${name} on ${t}`).not.toBe(bar);
+      expect(hit !== null && button.contains(hit), `the button owns its ${name} on ${t}`).toBe(
+        true,
+      );
     }
   });
 });

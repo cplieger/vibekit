@@ -34,16 +34,18 @@ for (const id of [
 }
 
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
-// The network edge: run-store's fetch path. A live run answers with one
-// running node so `runIsLive` is true and the card's clock arms.
-const apiGetMock = vi.hoisted(() => vi.fn());
+// The network edge: run-store's fetch path, which is the OrError variant because the
+// store spends a failed read's STATUS. A live run answers with one running node so
+// `runIsLive` is true and the card's clock arms.
+const apiGetOrErrorMock = vi.hoisted(() => vi.fn());
 vi.mock("./api-client.js", () => ({
-  apiGet: apiGetMock,
   apiPost: vi.fn(),
   apiGetTyped: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds: `store-load.ts` reaches it for
-  // the deep-link confirmation, and this graph includes that module.
+  // Present-but-inert so real-ESM linking succeeds: `store-load.ts` reaches these for
+  // the deep-link confirmation and the message window, and this graph includes it.
+  apiGet: vi.fn(),
   apiGetTypedOrError: vi.fn(),
+  apiGetOrError: apiGetOrErrorMock,
 }));
 
 const store = await import("./store.js");
@@ -124,8 +126,10 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
-  apiGetMock.mockReset();
-  apiGetMock.mockResolvedValue(null);
+  apiGetOrErrorMock.mockReset();
+  // Status 0: no request reached the engine, which keeps the store's retry ladder where
+  // a settled 404 would skip it.
+  apiGetOrErrorMock.mockResolvedValue({ ok: false, status: 0, data: null, error: "" });
 });
 
 afterEach(() => {
@@ -297,7 +301,9 @@ describe("the run clock", () => {
     const a = freshID("c-clock");
     const b = freshID("c-clock");
     const wf = freshID("wf");
-    apiGetMock.mockImplementation(() => Promise.resolve(liveRunPayload(wf)));
+    apiGetOrErrorMock.mockImplementation(() =>
+      Promise.resolve({ ok: true, status: 200, data: liveRunPayload(wf), error: "" }),
+    );
     const msgID = freshID("m");
     const launch = call("t-launch", { workflow_id: wf, title: "Run Workflow" });
     seed(

@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 
@@ -222,6 +223,37 @@ func (r *pendingRunAsks) ClearChat(chatID vibekit.ChatID) {
 		}
 	}
 	r.mu.Unlock()
+}
+
+// SnapshotRun reports one run's unanswered asks, for the read endpoint to expose so an
+// agent handed a deferral can find the question. VALUE COPIES rather than the stored
+// pointers, which is what keeps this type's standing invariant literally true: every
+// other method handing an ask back has already DELETED it, so the registry and its
+// caller never hold the same entry. Sorted by ask id because map iteration is random
+// and both an agent and a test want one answer.
+func (r *pendingRunAsks) SnapshotRun(workflowID string) []vibekit.RunOpenAsk {
+	if workflowID == "" {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []vibekit.RunOpenAsk
+	for k, a := range r.asks {
+		if k.workflowID != workflowID {
+			continue
+		}
+		out = append(out, vibekit.RunOpenAsk{
+			AskID:     a.payload.AskID,
+			Question:  a.payload.Question,
+			NodeID:    a.payload.NodeID,
+			AgentName: a.payload.AgentName,
+			AskedAt:   a.payload.AskedAt,
+		})
+	}
+	slices.SortFunc(out, func(x, y vibekit.RunOpenAsk) int {
+		return strings.Compare(x.AskID, y.AskID)
+	})
+	return out
 }
 
 // List snapshots every unanswered ask, optionally filtered to one surface. EVERY entry is

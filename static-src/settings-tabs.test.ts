@@ -19,14 +19,22 @@ let bootSeq = 0;
 
 // swapViews spy: runs its callback synchronously (so the panel swap still
 // happens) while recording every invocation. One invocation == one swap.
-const { swapViewsSpy } = vi.hoisted(() => ({
+const { swapViewsSpy, route } = vi.hoisted(() => ({
   swapViewsSpy: vi.fn((fn: () => HTMLElement | null) => {
     fn();
   }),
+  /** What the strip says is on screen. The subscriber's second gate reads it, and this
+   *  suite runs the REAL tabs.ts otherwise — where no row exists, so it would answer
+   *  `null` and refuse every load. */
+  route: { current: { kind: "settings" } as { readonly kind: string } | null },
 }));
 
 vi.mock("./view-swap.js", () => ({
   swapViews: swapViewsSpy,
+}));
+vi.mock("./tabs.js", async () => ({
+  ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
+  getActiveTabRoute: () => route.current,
 }));
 
 // Mock ./dom.js so `$` resolves against the test-built DOM. The registry
@@ -113,6 +121,7 @@ describe("settings-tabs forceSettingsTab dedup", () => {
   beforeEach(() => {
     // Fresh module per test → activeTab defaults to "general" and exactly one
     // onTabChange subscriber exists (one initSettingsTabs() per test).
+    route.current = { kind: "settings" };
     vi.resetModules();
     bootSeq++;
     buildSettingsDom();
@@ -150,15 +159,47 @@ describe("settings-tabs forceSettingsTab dedup", () => {
     expect(general).not.toHaveBeenCalled();
     expect(tools).not.toHaveBeenCalled();
 
-    // A real activation loads, once.
+    // A sub-tab SWITCH is a subject change, so it refetches every time. The sequence
+    // has to ALTERNATE: `activeTab` is deduped, so two consecutive writes of one value
+    // notify once and would make a repeated switch look like a latch.
     forceSettingsTab("tools");
     expect(tools).toHaveBeenCalledTimes(1);
     forceSettingsTab("general");
     expect(general).toHaveBeenCalledTimes(1);
     forceSettingsTab("tools");
-    forceSettingsTab("general");
+    expect(tools).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses a switch while the panel is OFF screen — that load is the activation's", async () => {
+    const { initSettingsTabs, forceSettingsTab } = (await import(
+      /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
+    )) as typeof ModSettingsTabs;
+    const tools = vi.fn();
+    initSettingsTabs({ tools });
+    route.current = { kind: "chat" };
+
+    // `applyRoute`'s settings case is `forceSettingsTab(route.tab)` then `openTab`, so
+    // without this term the router's own order loads the panel twice — and for General
+    // that loader is a server-side `kiro-cli settings` spawn.
+    forceSettingsTab("tools");
+
+    expect(tools).not.toHaveBeenCalled();
+  });
+
+  it("refreshSettingsPanel loads the ACTIVE panel, not the canonical one", async () => {
+    const { initSettingsTabs, forceSettingsTab, refreshSettingsPanel } = (await import(
+      /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
+    )) as typeof ModSettingsTabs;
+    const general = vi.fn();
+    const tools = vi.fn();
+    initSettingsTabs({ general, tools });
+    forceSettingsTab("tools");
+    tools.mockClear();
+
+    refreshSettingsPanel();
+
     expect(tools).toHaveBeenCalledTimes(1);
-    expect(general).toHaveBeenCalledTimes(1);
+    expect(general).not.toHaveBeenCalled();
   });
 
   it("loads the General panel through the door the tab factory uses", async () => {

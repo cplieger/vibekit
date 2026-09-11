@@ -19,7 +19,7 @@ import { el } from "@cplieger/reactive";
 import type { Message, CodeReference } from "./types.js";
 import { isSafeURL } from "./url-safety.js";
 import { iconEl } from "./icon-el.js";
-import { ICON_SCALE_12, ICON_EXTERNAL } from "./icons.js";
+import { ICON_SCALE, ICON_EXTERNAL } from "./icons.js";
 import { featureDisabled } from "./governance.js";
 
 const CLS = "code-refs";
@@ -70,7 +70,7 @@ function buildCodeRefs(refs: readonly CodeReference[], open: boolean): HTMLDetai
   const summary = el(
     "summary",
     { className: "code-refs-summary" },
-    iconEl(ICON_SCALE_12),
+    iconEl(ICON_SCALE),
     el("span", { className: "code-refs-count" }, summaryText),
   );
   details.appendChild(summary);

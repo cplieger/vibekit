@@ -18,9 +18,9 @@ vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
 vi.mock("./editor-openers.js", () => ({ openFile: vi.fn(), openFileDiff: undefined }));
 vi.mock("./tabs.js", () => ({
   setDocsTab: vi.fn(),
-  // No onShow argument any more — the tab factory reaches `loadDocsView` through
-  // its own lazy import. This suite drives the page directly, so the toggle only
-  // has to resolve.
+  // No onShow argument any more — the tab factory reaches `showDocsTab` through its
+  // own lazy import. This suite drives the page directly, so the toggle only has to
+  // resolve.
   toggleDocsView: vi.fn(() => Promise.resolve()),
 }));
 // `onBus` as well as `onSSE`: the Workflows tab hands its panel to recipes.ts,
@@ -85,9 +85,11 @@ beforeAll(async () => {
   vi.mocked(apiGetTyped).mockResolvedValue({ hooks: [] });
 
   const mod = await import("./docs.js");
-  // The page's own loader, not `showDocsView`: that one toggles the TAB, which is a
+  // The page's own doors, not `showDocsView`: that one toggles the TAB, which is a
   // round trip and registers no find.
-  mod.loadDocsView("steering");
+  mod.showDocsTab();
+  mod.forceDocsTab("steering");
+  mod.refreshDocsView();
   setDocs = mod._setDocsForTest as unknown as (d: DocRecord[]) => void;
   render = mod._renderActiveForTest;
   forceTab = mod.forceDocsTab as unknown as (t: string) => void;

@@ -23,21 +23,39 @@ import {
   setTurnDone,
   setTurnFailed,
   tabStatusFor,
-  syncEpoch,
   transcriptStale,
 } from "../store.js";
+import { noteLoaded, syncEpoch } from "../tab-freshness.js";
 import { workspaceRoot, _resetForTest as resetWorkspace, setWorkspaceRoot } from "../workspace.js";
+import {
+  liveRunsForChat,
+  registerLiveRunObserver,
+  runChatID,
+  hasExecutingRunForChat,
+} from "../run-store.js";
 import type { Session } from "../types.js";
+// The two modules the factories below spread rather than replace. Type-only, so neither
+// adds a runtime edge the `vi.mock` would have to reach around.
+import type * as RunStore from "../run-store.js";
+import type * as ApiClient from "../api-client.js";
 
 vi.mock("../store-load.js", () => ({
   loadList: () => mockLoadList(),
   loadMessages: mockLoadMessages,
+  scheduleListRetry: () => mockScheduleListRetry(),
 }));
 const mockLoadList = vi.fn(() => Promise.resolve(true));
 const mockLoadMessages = vi.fn(() => Promise.resolve(true));
+// The gap door's answer to a failed list load. A spy, because the LADDER is
+// store-load.test.ts's subject (it owns the reach gate, the delays and the bound);
+// what this file owns is that the door consults it and only on a failure.
+const mockScheduleListRetry = vi.fn();
 
 const mockCloseTab = vi.fn();
 const mockHasTab = vi.fn(() => true);
+// The dispatcher door. The gate itself is tabs.test.ts's subject; what this file
+// owns is that the gap and the resume reach it, once, and after the epoch bump.
+const mockRefreshActiveView = vi.fn();
 vi.mock("../tabs.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading
@@ -54,6 +72,7 @@ vi.mock("../tabs.js", () => ({
   toggleSettingsView: undefined,
   closeTab: mockCloseTab,
   hasTab: mockHasTab,
+  refreshActiveView: mockRefreshActiveView,
   // Reached through turn-teardown.ts, which the gap handler now shares with the
   // turn_ended door. No-ops rather than present-but-undefined: the gap handler
   // CALLS both once per session, so undefined would throw rather than link.
@@ -104,11 +123,42 @@ vi.mock("../session-catalog.js", () => ({ fetchCatalog: mockFetchCatalog }));
 
 // The live-runs inventory rebuild: the gap handler re-reads the server's
 // presence projection because the events feeding the inventory were lost.
-const mockInvalidateCachedRuns = vi.fn();
-const mockRebuildLiveRuns = vi.fn(() => Promise.resolve());
-vi.mock("../run-store.js", () => ({
+//
+// A PARTIAL mock, because the two doors want opposite things. The gap door's two run
+// readers stay spies: what this file owns there is the token they share, and both are
+// network reads. `adoptConnectRuns` is the REAL function, because what the connect door
+// owns IS the state it seeds — a spy for it could only assert that the handler called
+// something, which is the shape that let this door ship with no test at all.
+//
+// Both spies go through `vi.hoisted` for the same reason the api-client pair below does:
+// this file now imports run-store STATICALLY, so the mocker resolves this factory during
+// linking rather than lazily at the first `import("./system.js")`.
+const { mockInvalidateCachedRuns, mockRebuildLiveRuns } = vi.hoisted(() => ({
+  mockInvalidateCachedRuns: vi.fn(),
+  mockRebuildLiveRuns: vi.fn(),
+}));
+vi.mock("../run-store.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof RunStore>()),
   rebuildLiveRuns: mockRebuildLiveRuns,
   invalidateCachedRuns: mockInvalidateCachedRuns,
+}));
+
+// The two fetchers run-store reaches, replaced so a per-run read is OBSERVABLE: the
+// connect adoption's promise is that it issues none, and the withheld-inventory fallback's
+// is that it issues exactly one. Spread the real surface, so every other consumer keeps
+// the module it had.
+//
+// Through `vi.hoisted` because `../run-store.js` is statically imported below and imports
+// api-client, so the mocker resolves this factory during linking — above this file's own
+// top-level initializers, where a plain `const` is still in its temporal dead zone.
+const { mockApiGet, mockApiGetTyped } = vi.hoisted(() => ({
+  mockApiGet: vi.fn(),
+  mockApiGetTyped: vi.fn(),
+}));
+vi.mock("../api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiClient>()),
+  apiGet: mockApiGet,
+  apiGetTyped: mockApiGetTyped,
 }));
 
 // The shared turn teardown (turn-teardown.ts) reaches these three, and each is a
@@ -121,8 +171,6 @@ vi.mock("../turn-rail.js", () => ({
   pointTurnRail: vi.fn(),
   mountTurnRail: undefined,
   resetTurnRail: undefined,
-  observeTurns: undefined,
-  ROW_PITCH_PX: 28,
 }));
 const mockDrainModelSwitchQueue = vi.fn();
 vi.mock("../model-switcher.js", () => ({
@@ -148,6 +196,7 @@ vi.mock("../bus.js", () =>
       busHandlers.set(event, handler);
     }),
     BUS_TRANSPORT_GAP: "transport:gap",
+    BUS_PAGE_RESUMED: "page:resumed",
   }),
 );
 
@@ -182,10 +231,18 @@ function fireGap(): void {
   busHandlers.get("transport:gap")?.({ lastSeen: 0, floor: 0, head: 0 });
 }
 
+function fireResume(): void {
+  busHandlers.get("page:resumed")?.(undefined);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockLoadList.mockReturnValue(Promise.resolve(true));
   mockLoadMessages.mockReturnValue(Promise.resolve(true));
+  // `mockReset` is on, so an implementation set at construction is gone by now. A null
+  // answer is what a 404 gives, and what the real decoders' callers already handle.
+  mockApiGet.mockResolvedValue(null);
+  mockApiGetTyped.mockResolvedValue(null);
   setSessions([]);
   resetWorkspace();
 });
@@ -223,6 +280,107 @@ describe("connected handshake", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The handshake's two NEGATIVE statements, neither of which any other frame carries.
+//
+// `busy_chats` is the only thing that ever says a chat this client believes is working is
+// not: a turn that died with the previous process gets no turn_state, so before this the
+// stale `thinking` stood until the reader prompted that chat again. `live_runs` is the
+// inventory the client used to fetch three serialized round trips behind whoami.
+//
+// Both are guarded by their own STATED flag rather than by the list being non-empty,
+// because a scoped, capped or withheld list is indistinguishable from a complete one —
+// and read as complete, the first clears a live turn and the second drops live runs.
+// ---------------------------------------------------------------------------
+
+/** A handshake stating both halves. The two flags default TRUE here, which is the
+ *  opposite of the wire default, so each case names the withholding it is about. */
+function fireConnected(over: Record<string, unknown> = {}): void {
+  fireSSE("connected", "", {
+    floor: 1,
+    head: 9,
+    busy_stated: true,
+    live_runs_stated: true,
+    live_runs: [],
+    ...over,
+  });
+}
+
+describe("the connect handshake retracts a thinking the server does not confirm", () => {
+  it("retracts a thinking chat the busy set does not name", () => {
+    setSessions([makeSession("a", { thinking: true }), makeSession("b", { thinking: true })]);
+    fireConnected({ busy_chats: ["b"] });
+    expect(get("a")?.thinking, "unconfirmed").toBe(false);
+    expect(get("b")?.thinking, "the server says this one is busy").toBe(true);
+  });
+
+  it("retracts nothing when the set is not STATED, and still adopts the runs", () => {
+    // A topic-filtered or over-cap connect states nothing about the chats it omits, so the
+    // flag bounds the blast radius rather than making a clear over a live turn merely
+    // unlikely. The runs are OUTSIDE that gate on purpose: the inventory is
+    // workspace-global, carries its own flag, and an early return must not swallow it.
+    setSessions([makeSession("a", { thinking: true })]);
+    fireConnected({
+      busy_stated: false,
+      busy_chats: [],
+      live_runs: [{ workflow_id: "wf-1", chat_id: "a", executing: true }],
+    });
+    expect(get("a")?.thinking, "no statement, no retraction").toBe(true);
+    expect(hasExecutingRunForChat("a"), "the inventory landed anyway").toBe(true);
+  });
+
+  it("keeps the retracted chat's live-turn marker", () => {
+    // The NARROW retraction, and this is what makes it narrow: `busy_chats` deliberately
+    // omits a chat whose only open turn is a workflow STEP, so a chat reached here may
+    // still be streaming — and the live-turn marker is the only thing stopping the next
+    // window load from deleting that reply. A full teardown here would drop it.
+    setSessions([makeSession("a", { thinking: true })]);
+    noteLiveTurnMessage("a", "m-live");
+    fireConnected({ busy_chats: [] });
+    expect(get("a")?.thinking).toBe(false);
+    expect(liveTurnMessage("a"), "still the only copy of the reply").toBe("m-live");
+  });
+});
+
+describe("the connect handshake adopts the live-run inventory off the frame", () => {
+  it("seeds the inventory, the chat pairing and the observer", () => {
+    // Three seeds per row, and a reload loses each one differently: without the inventory
+    // a chat with a live run is evicted mid-run, without the pairing that run's tab opens
+    // at the end of the strip instead of under its conversation, and without the observer
+    // the row is seeded and nothing repaints — so the tab keeps the factory's placeholder
+    // label for as long as the run takes.
+    const seen: string[] = [];
+    registerLiveRunObserver((id) => seen.push(id));
+    setSessions([makeSession("a")]);
+
+    fireConnected({ live_runs: [{ workflow_id: "wf-1", chat_id: "a", executing: true }] });
+
+    expect(liveRunsForChat("a")).toEqual([{ id: "wf-1", chat: "a", executing: true }]);
+    expect(runChatID("wf-1")).toBe("a");
+    expect(seen).toEqual(["wf-1"]);
+  });
+
+  it("issues no per-run read of its own", () => {
+    // The one thing the connect adoption deliberately does NOT do, and the reason it can
+    // be free: C2's floor paints a live run's square from THIS frame, so the per-run
+    // `inspect` is a refinement rather than a precondition. Passing a cause here would put
+    // one GET per live run on every reconnect.
+    setSessions([makeSession("a")]);
+    fireConnected({ live_runs: [{ workflow_id: "wf-1", chat_id: "a", executing: true }] });
+    expect(mockApiGet).not.toHaveBeenCalled();
+    expect(mockApiGetTyped).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the endpoint when the inventory was WITHHELD", () => {
+    // `live_runs_stated: false` means the lease store held more rows than the frame will
+    // carry, so the list is withheld rather than truncated — and the adoption CLEARS before
+    // it repopulates, so reading a withheld list as empty would drop every live run.
+    setSessions([makeSession("a")]);
+    fireConnected({ live_runs_stated: false });
+    expect(mockApiGetTyped).toHaveBeenCalledWith("/api/runs/live", expect.any(Function));
+  });
+});
+
 describe("BUS_TRANSPORT_GAP handler", () => {
   it("clears the thinking flag on every session", () => {
     setSessions([
@@ -240,6 +398,24 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     setSessions([makeSession("a")]);
     fireGap();
     expect(mockLoadList).toHaveBeenCalled();
+  });
+
+  it("arms the bounded retry when that reload failed", async () => {
+    // The gap has already dropped every claim this client held, so a failed reload
+    // leaves the sidebar on rows it was licensed to drop — and on a stream that stayed
+    // up there is no later `connected` to re-read it.
+    setSessions([makeSession("a")]);
+    mockLoadList.mockReturnValue(Promise.resolve(false));
+    fireGap();
+    await mockLoadList();
+    expect(mockScheduleListRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("arms nothing when the reload landed", async () => {
+    setSessions([makeSession("a")]);
+    fireGap();
+    await mockLoadList();
+    expect(mockScheduleListRetry).not.toHaveBeenCalled();
   });
 
   it("rebuilds the live-runs inventory from the endpoint", () => {
@@ -336,32 +512,82 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     expect(mockCloseTab).not.toHaveBeenCalled();
   });
 
-  it("refetches messages for the active chat", () => {
+  // ONE refresh, whatever kind of tab is on screen: the handler asks the projection
+  // for the active VIEW instead of the store for the active CHAT, so the git, docs,
+  // files, run and editor kinds are healed by the same line the chat kind is.
+  it("refreshes the active view exactly once", () => {
     setSessions([makeSession("active-chat")]);
     setActive("active-chat");
     fireGap();
-    expect(mockLoadMessages).toHaveBeenCalledWith("active-chat");
+    expect(mockRefreshActiveView).toHaveBeenCalledTimes(1);
   });
 
-  it("refetches the rail for the active chat, and for no other", () => {
-    // The rail's half of the same heal. Background chats are deliberately NOT
-    // fetched: their records are stale by epoch now, so each heals on its own
-    // next activation instead of fanning N GETs out on every reconnect.
-    setSessions([makeSession("bg-1"), makeSession("active-chat"), makeSession("bg-2")]);
-    setActive("active-chat");
+  // THE RULED BEHAVIOUR CHANGE (design rev 5). `getActiveId()` is the active CHAT and
+  // the projection's active row is the active TAB, and the two diverge because no
+  // production `setActive` runs on a non-chat activation — so with a git tab on screen
+  // the store still names the last-viewed chat. That chat is a BACKGROUND view now and
+  // heals at its next activation, like every other background view.
+  it("refetches no chat window of its own, even one the store still calls active", () => {
+    setSessions([makeSession("bg-1"), makeSession("last-viewed"), makeSession("bg-2")]);
+    setActive("last-viewed");
     fireGap();
-    expect(mockRefreshTurnRail).toHaveBeenCalledWith("active-chat");
-    expect(mockRefreshTurnRail).not.toHaveBeenCalledWith("bg-1");
-    expect(mockRefreshTurnRail).not.toHaveBeenCalledWith("bg-2");
-    expect(mockLoadMessages).not.toHaveBeenCalledWith("bg-1");
-    expect(mockLoadMessages).not.toHaveBeenCalledWith("bg-2");
+    expect(mockLoadMessages).not.toHaveBeenCalled();
+    expect(mockRefreshTurnRail).not.toHaveBeenCalledWith("last-viewed");
+    expect(mockRefreshActiveView).toHaveBeenCalledTimes(1);
+  });
+
+  // Nothing else in this handler reaches the dispatcher, so a resume's whole effect on it
+  // is this one call. It bumps NO epoch: a resume dropped no frames, so an answer that
+  // spanned the suspension still describes the server's state — what it drops is the
+  // freshness RECORDS, in the case below.
+  it("refreshes the active view on a page resume, and bumps no epoch", () => {
+    setSessions([makeSession("a")]);
+    const before = syncEpoch();
+    fireResume();
+    expect(mockRefreshActiveView).toHaveBeenCalledTimes(1);
+    expect(syncEpoch()).toBe(before);
+  });
+
+  // The in-app switch gap: the resume nudge reaches the ACTIVE view only, so a background
+  // chat marked `loaded` at the current epoch read fresh for the life of the document and
+  // switching back to it cost zero fetches — showing the window as it was before the page
+  // was suspended.
+  it("makes a background chat refetch at its next activation after a resume", () => {
+    const fresh = makeSession("bg", { residency: "loaded" });
+    setSessions([fresh]);
+    noteLoaded("chat", "bg", syncEpoch());
+    setActive("");
+    expect(transcriptStale(get("bg")!)).toBe(false);
+
+    fireResume();
+
+    expect(transcriptStale(get("bg")!)).toBe(true);
+  });
+
+  it("drops the records before the refresh goes out", () => {
+    // Order is the contract, for the gap handler's reason read the other way round: the
+    // active view's own gate is `viewStale`, so a refresh dispatched while its record
+    // still stood would be gated out and the resume would nudge nothing at all.
+    const fresh = makeSession("active-chat", { residency: "loaded" });
+    setSessions([fresh]);
+    noteLoaded("chat", "active-chat", syncEpoch());
+    setActive("active-chat");
+    let staleAtRefresh = false;
+    mockRefreshActiveView.mockImplementationOnce(() => {
+      staleAtRefresh = transcriptStale(get("active-chat")!);
+    });
+
+    fireResume();
+
+    expect(staleAtRefresh).toBe(true);
   });
 
   it("marks every loaded window stale by bumping the sync epoch", () => {
     // The lazy half of the reconcile: nothing refetches a background chat here,
     // so the bump is what guarantees its next activation does.
-    const fresh = makeSession("bg", { residency: "loaded", loadedEpoch: syncEpoch() });
+    const fresh = makeSession("bg", { residency: "loaded" });
     setSessions([fresh]);
+    noteLoaded("chat", "bg", syncEpoch());
     setActive("");
     expect(transcriptStale(get("bg")!)).toBe(false);
 
@@ -369,7 +595,7 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     expect(transcriptStale(get("bg")!)).toBe(true);
   });
 
-  it("bumps the epoch before the active chat's heals go out", () => {
+  it("bumps the epoch before the refresh goes out", () => {
     // Order is the contract: a heal that started before the bump would stamp
     // the OLD epoch and read stale forever; one started after stamps the new
     // one and counts as fresh. The loader's own capture discipline is
@@ -377,20 +603,13 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     setSessions([makeSession("active-chat")]);
     setActive("active-chat");
     const before = syncEpoch();
-    let epochAtMessagesFetch = -1;
-    let epochAtRailFetch = -1;
-    mockLoadMessages.mockImplementationOnce(() => {
-      epochAtMessagesFetch = syncEpoch();
-      return Promise.resolve(true);
-    });
-    mockRefreshTurnRail.mockImplementationOnce(() => {
-      epochAtRailFetch = syncEpoch();
-      return Promise.resolve();
+    let epochAtRefresh = -1;
+    mockRefreshActiveView.mockImplementationOnce(() => {
+      epochAtRefresh = syncEpoch();
     });
 
     fireGap();
-    expect(epochAtMessagesFetch).toBe(before + 1);
-    expect(epochAtRailFetch).toBe(before + 1);
+    expect(epochAtRefresh).toBe(before + 1);
   });
 
   it("clears the finished-turn latch, for the same reason it clears thinking", async () => {

@@ -80,14 +80,26 @@
      which is `position: absolute`, so it leaves the flex line entirely. */
   justify-content: flex-end;
 
-  /* The LAST resort, and it is the actions that wrap rather than the title. Eight
-     44px targets plus 14px of gaps and 24px of padding need 390px exactly, so a
-     360px or 320px phone cannot hold the row however the title is treated — and
-     with no wrap those items overflow past `flex-end` off the START edge, which
-     puts a control off-screen with no scroll to reach it (they cannot shrink into
-     it either: `min-width: var(--btn-h)` below is the touch floor). The heading's
-     `flex-basis: 0` is what keeps this from firing early — it contributes nothing
-     to line breaking, so the buttons alone decide when a row breaks. */
+  /* The LAST resort, and it is the actions that wrap rather than the title.
+     THE ARITHMETIC, and both figures matter. Eight 44px targets plus SEVEN 2px
+     gaps is 366px of buttons, against a content box of `width - 24px` (`--sp-3`
+     each side) — so the buttons alone fit at exactly 390px and cannot fit below
+     it. While the heading is in flow it is a NINTH flex item contributing an
+     EIGHTH gap, so the line then needs 368px against the 366px a 390px viewport
+     gives: one gap short. That is why the threshold READ as 392px, and why
+     `page-title.ts` measures the ACTIONS' own rows as well as the title's
+     overflow — a heading whose only cost is its gap has to leave the line before
+     the bar breaks for it. `.sr-only` is `position: absolute`, so a clipped
+     heading takes its gap with it and 390 and 391 hold ONE row with the title
+     announced but not painted.
+     BELOW 390 THE TWO ROWS ARE DELIBERATE, not a fallback: 320px gives 296px of
+     content box against 366px of buttons, and the alternatives are shrinking a
+     touch target (`min-width: var(--btn-h)` below is that floor) or dropping a
+     button from the phone row, which is a product decision this rule does not get
+     to make. With no wrap those items would overflow past `flex-end` off the START
+     edge, which puts a control off-screen with no scroll to reach it. The heading's
+     `flex-basis: 0` is what keeps the wrap from firing early — it contributes no
+     basis to line breaking, so the buttons alone decide when a row breaks. */
   flex-wrap: wrap;
   gap: var(--toolbar-gap);
   flex-shrink: 0;
@@ -98,7 +110,15 @@
      the sidebar header's. Both bars derive from that one token, which is what
      makes the two rules meet by construction rather than by agreement. */
   min-block-size: calc(var(--titlebar-h) + env(safe-area-inset-top, 0));
-  padding: env(safe-area-inset-top, 0) var(--sp-3) 0;
+
+  /* The INLINE insets are folded into the same shorthand as `max(house, inset)` —
+     the shape `.bottom-bar` already uses on the block axis (19-files.css) — because
+     this bar reaches both screen edges and holds the row of icon buttons a notch
+     would otherwise sit on. Inline is the axis that MATTERS in landscape, where the
+     notch inset lands on a side rather than on top. Inert wherever the device
+     reports no inset, so the house `--sp-3` is unchanged on a desktop. */
+  padding: env(safe-area-inset-top, 0) max(var(--sp-3), env(safe-area-inset-right, 0)) 0
+    max(var(--sp-3), env(safe-area-inset-left, 0));
   background: var(--c-bg-primary);
   border-block-end: 1px solid var(--c-border);
 
@@ -231,6 +251,15 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+
+  /* The SECOND flex layer's automatic minimum size, and it is what makes the clip
+     decision reachable at all: this element is a flex item of `.titlebar-heading`,
+     so without it the box is pinned at its own min-content width (measured 41px),
+     `fitHeading`'s `scrollWidth > clientWidth` test (page-title.ts) can never
+     become true, and the pressure is absorbed by the bar's `flex-wrap` instead —
+     the actions break to a second row while the title claims to fit. Same
+     declaration and same reason as `.titlebar-heading`'s one rung up. */
+  min-inline-size: 0;
 }
 
 .titlebar-sep {

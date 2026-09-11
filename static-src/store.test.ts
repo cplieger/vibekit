@@ -1,5 +1,5 @@
 // Unit tests for store.ts — property-based idempotency invariants.
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fc from "fast-check";
 import {
   parseContextSize,
@@ -29,8 +29,6 @@ import {
   activeSession,
   getActiveId,
   setModel,
-  syncEpoch,
-  bumpSyncEpoch,
   transcriptStale,
   setTurnOpen,
   turnLive,
@@ -39,6 +37,12 @@ import {
   clearTruncatedSnapshot,
   clearTruncatedSnapshots,
 } from "./store.js";
+import {
+  _resetForTest as resetFreshness,
+  bumpSyncEpoch,
+  noteLoaded,
+  syncEpoch,
+} from "./tab-freshness.js";
 import type { Block, ChatHeader, Message, Session } from "./types.js";
 import type { TurnOutcome } from "./wire/types.gen.js";
 import { effect } from "@cplieger/reactive";
@@ -1130,8 +1134,8 @@ describe("Store setName", () => {
 // Per-message + per-tool signal architecture
 // ---------------------------------------------------------------------------
 
-import { appendChunk, upsertToolCall } from "./store.js";
-import { ensureToolCallSig, clearToolCallSig } from "./store-signals.js";
+import { appendChunk, republishWindowToolCalls, upsertToolCall } from "./store.js";
+import { ensureToolCallSig, clearToolCallSig, peekToolCallSig } from "./store-signals.js";
 import type { ToolCall } from "./types.js";
 
 describe("streaming accumulation", () => {
@@ -1223,6 +1227,107 @@ describe("per-tool signal", () => {
 
     expect(a.value.status).toBe("pending");
     clearToolCallSig("chat-A", "dup");
+  });
+});
+
+// A FETCHED WINDOW REACHES A MOUNTED CARD, which until this existed nothing did: a card's
+// DOM has one refresh channel, the per-call signal, and the SSE path was its only writer.
+// So a window replacement left every mounted card showing whatever it was built from —
+// which is what made the boot snapshot's deliberately-truncated output permanent, the
+// record being a paint-time hint the server's answer is meant to supersede.
+describe("republishWindowToolCalls", () => {
+  const call = (id: string, output: string): ToolCall => ({
+    id,
+    title: "Run Command",
+    kind: "execute",
+    status: "completed",
+    ts: 0,
+    output,
+  });
+
+  // UNCONDITIONAL, so a failing assertion above cannot leak the signal into a later case:
+  // the map is module state and `resetStore` does not reach it.
+  afterEach(() => {
+    clearToolCallSig("chat-1", "t1");
+  });
+
+  it("replaces a mounted card's value with the fetched call", () => {
+    resetStore("chat-1");
+    // The mount, with the copy a snapshot paint hands a card: the output cut to what a
+    // first frame does not show.
+    const sig = ensureToolCallSig("chat-1", "t1", call("t1", "clipped"));
+
+    republishWindowToolCalls("chat-1", [
+      {
+        id: "m1",
+        role: "assistant",
+        ts: 0,
+        content: "",
+        tool_calls: [call("t1", "the whole answer")],
+      },
+    ]);
+
+    expect(sig.value.output).toBe("the whole answer");
+  });
+
+  it("publishes nothing at a card already showing the fetched call", () => {
+    resetStore("chat-1");
+    const mounted = call("t1", "the whole answer");
+    const sig = ensureToolCallSig("chat-1", "t1", mounted);
+
+    // A freshly decoded copy: equal in every field `applyToolCallUpdate` reads, and never
+    // the object the card mounted with — which is the only comparison the card's own effect
+    // makes (`messages-tools.ts` guards on `next === lastApplied`). So publishing it
+    // repaints every mounted card on every load, and `applyOutputUpdate` re-creates
+    // `.tool-output-reveal`, taking a reader's expansion of a long output with it.
+    republishWindowToolCalls("chat-1", [
+      {
+        id: "m1",
+        role: "assistant",
+        ts: 0,
+        content: "",
+        tool_calls: [call("t1", "the whole answer")],
+      },
+    ]);
+
+    // IDENTITY: the signal still holds the object the card was mounted with, so its effect
+    // never ran.
+    expect(sig.peek()).toBe(mounted);
+  });
+
+  it("republishes a call whose style spans the record dropped", () => {
+    resetStore("chat-1");
+    // The record deletes `output_spans` outright and truncates nothing under 256 bytes, so
+    // a SHORT styled output mounts with every scalar the card reads already equal. Compared
+    // on those alone the publish would be skipped and the card would keep unstyled text for
+    // the life of the document — which is why the spans are in the comparison.
+    const sig = ensureToolCallSig("chat-1", "t1", call("t1", "ok"));
+
+    republishWindowToolCalls("chat-1", [
+      {
+        id: "m1",
+        role: "assistant",
+        ts: 0,
+        content: "",
+        tool_calls: [
+          { ...call("t1", "ok"), output_spans: [{ start: 0, end: 2, fg: 2, bg: -1, attrs: 0 }] },
+        ],
+      },
+    ]);
+
+    expect(sig.peek().output_spans).toHaveLength(1);
+  });
+
+  it("mints no signal for a call nothing has mounted", () => {
+    resetStore("chat-1");
+
+    republishWindowToolCalls("chat-1", [
+      { id: "m1", role: "assistant", ts: 0, content: "", tool_calls: [call("t-unmounted", "out")] },
+    ]);
+
+    // `get`-not-`ensure` is what keeps a window of hundreds of calls from leaving a
+    // signal behind for every card nobody is looking at.
+    expect(peekToolCallSig("chat-1", "t-unmounted")).toBeUndefined();
   });
 });
 
@@ -1414,6 +1519,7 @@ import {
   clearTurnDone,
   relatchTurnVerdict,
   outcomeLatch,
+  applyLatch,
   latchFieldsFor,
   tabStatusFor,
   setAgentStatus,
@@ -1636,6 +1742,22 @@ describe("Store turnLive", () => {
     expect(stated !== undefined && turnLive(stated)).toBe(false);
   });
 
+  it("is true for a provisional row, which states neither input", () => {
+    // The reload shape, built the way `boot-snapshot.ts` toProvisionalSession builds
+    // one: `thinking: false` hard-coded, no `turn_open`, `provisional: true`. Both
+    // inputs default to the terminal direction, so `false` here is a guess, and the
+    // guess derives `unknown` for the newest turn — which paints "The turn ended for
+    // a reason vibekit could not read." over a turn the server is still streaming.
+    //
+    // `resetStore`'s own row is NOT provisional, which is what keeps the case above
+    // green and pins this term on the mark rather than on `turn_open === undefined`.
+    setSessions([{ ...makeSession("tl-6"), provisional: true }]);
+    const hinted = get("tl-6");
+    expect(hinted?.thinking).toBe(false);
+    expect(hinted?.turn_open).toBeUndefined();
+    expect(hinted !== undefined && turnLive(hinted)).toBe(true);
+  });
+
   it("drops the server's statement when a NEW turn starts", () => {
     // It described the PREVIOUS turn, so it joins the two outcome latches in
     // `setThinking(id, true)`'s invalidation block. Left standing, a stale `false`
@@ -1744,6 +1866,71 @@ describe("Store relatchTurnVerdict", () => {
     const before = get("rl-7");
     relatchTurnVerdict("rl-7");
     expect(get("rl-7")).toBe(before);
+  });
+
+  it("falls back to the header's own outcome when no resident message carries one", () => {
+    // The ordinary state of a chat whose window was never fetched, which is
+    // exactly the population the connect retraction reaches: no resident outcome
+    // to read, and `last_turn_outcome` is the durable statement standing in for
+    // it. Without the fallback that chat re-latches nothing and paints the hollow
+    // ring that means it has never initiated.
+    setSessions([{ ...makeSession("rl-8"), last_turn_outcome: "failed" } as Session]);
+    relatchTurnVerdict("rl-8");
+    expect(get("rl-8")?.turn_failed).toBe(true);
+  });
+
+  it("prefers a resident outcome over the header's, which is older", () => {
+    // The other half: the fallback is a fallback. A resident message states how
+    // the newest turn ended, and the header can only report what the server knew
+    // when it was built.
+    setSessions([
+      {
+        ...makeSession("rl-9"),
+        messages: [row("m1", "completed")],
+        last_turn_outcome: "failed",
+      } as Session,
+    ]);
+    relatchTurnVerdict("rl-9");
+    expect(get("rl-9")?.turn_done).toBe(true);
+    expect(get("rl-9")?.turn_failed).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyLatch: the ONE writer of the pair.
+//
+// It exists so a fourth producer of the verdict cannot spell the mapping a
+// fourth way — `handlers/turn.ts` is the other one — which makes the empty
+// answer's arm as load-bearing as the two that write: a `running` outcome and
+// an absent one both reach it, and either latching something would report a
+// turn in flight as settled.
+// ---------------------------------------------------------------------------
+
+describe("Store applyLatch", () => {
+  beforeEach(() => {
+    setSessions([makeSession("al-1")]);
+  });
+
+  it("writes the finished latch for done", () => {
+    applyLatch("al-1", "done");
+    expect(get("al-1")?.turn_done).toBe(true);
+    expect(get("al-1")?.turn_failed).toBeUndefined();
+  });
+
+  it("writes the failure latch for failed", () => {
+    applyLatch("al-1", "failed");
+    expect(get("al-1")?.turn_failed).toBe(true);
+    expect(get("al-1")?.turn_done).toBeUndefined();
+  });
+
+  it("writes nothing at all for the empty answer", () => {
+    const before = get("al-1");
+    applyLatch("al-1", "");
+    expect(get("al-1")?.turn_done).toBeUndefined();
+    expect(get("al-1")?.turn_failed).toBeUndefined();
+    // Not even a session churn: the row is the same object, so no subscriber
+    // re-derives for a call that decided nothing.
+    expect(get("al-1")).toBe(before);
   });
 });
 
@@ -3182,8 +3369,14 @@ describe("the in-flight turn marker", () => {
 });
 
 describe("transcriptStale (the activation refetch gate)", () => {
+  beforeEach(() => {
+    resetFreshness();
+  });
+
   function loadedNow(chatID: string): Session {
-    return { ...makeSession(chatID), residency: "loaded", loadedEpoch: syncEpoch() };
+    const s: Session = { ...makeSession(chatID), residency: "loaded" };
+    noteLoaded("chat", chatID, syncEpoch());
+    return s;
   }
 
   it("a loaded window from the current epoch is fresh", () => {
@@ -3197,22 +3390,16 @@ describe("transcriptStale (the activation refetch gate)", () => {
   });
 
   it("an evicted window is stale whatever its stamp says", () => {
-    const s: Session = {
-      ...makeSession("c-evicted"),
-      residency: "evicted",
-      loadedEpoch: syncEpoch(),
-    };
+    const s: Session = { ...makeSession("c-evicted"), residency: "evicted" };
+    noteLoaded("chat", "c-evicted", syncEpoch());
     expect(transcriptStale(s)).toBe(true);
   });
 
   it("a partial window is stale whatever its stamp says", () => {
     // Background ingest into an evicted chat: some rows resident, the window
     // around them not — only a newest-page load may claim otherwise.
-    const s: Session = {
-      ...makeSession("c-partial"),
-      residency: "partial",
-      loadedEpoch: syncEpoch(),
-    };
+    const s: Session = { ...makeSession("c-partial"), residency: "partial" };
+    noteLoaded("chat", "c-partial", syncEpoch());
     expect(transcriptStale(s)).toBe(true);
   });
 
@@ -3223,9 +3410,9 @@ describe("transcriptStale (the activation refetch gate)", () => {
     expect(transcriptStale(s)).toBe(true);
   });
 
-  it("a loaded window with no stamp is stale", () => {
-    // The pre-upgrade shape (residency landed one task before the stamp): a row
-    // claiming loaded with no epoch record must refetch, not trust the hole.
+  it("a loaded window with no ledger record is stale", () => {
+    // A row claiming loaded that no loader ever stamped must refetch, not trust the
+    // hole: only a load that ANSWERED writes a record.
     const s: Session = { ...makeSession("c-unstamped"), residency: "loaded" };
     expect(transcriptStale(s)).toBe(true);
   });
@@ -3560,10 +3747,77 @@ describe("latchFieldsFor seeds a rebuilt session from the header", () => {
   });
 
   it("carries an existing latch over even when the header disagrees", () => {
-    // Rule 1. A latch set by a live `turn_ended` on this page is newer than
-    // anything a header read can carry, so the local verdict wins.
+    // RULE 2. A latch set by a live `turn_ended` on this page is newer than a
+    // header that has NOT MOVED, so the local verdict wins. The header here
+    // reports the same outcome the row already stores, which is what keeps rule 1
+    // out of it.
+    const existing = {
+      ...makeSession("c1"),
+      turn_failed: true,
+      last_turn_outcome: "completed",
+    } as Session;
+    expect(latchFieldsFor(existing, withOutcome("c1", "completed"))).toEqual({ turn_failed: true });
+  });
+
+  it("takes a MOVED header's verdict over the latch this page holds", () => {
+    // RULE 1, and the case it exists for: another device ran a turn, so the
+    // header's outcome is newer than anything this page remembers. Ahead of the
+    // carry, because rule 2 returns for a chat that already holds a latch and a
+    // moved header could never be seen behind it.
+    const existing = {
+      ...makeSession("c1"),
+      turn_done: true,
+      last_turn_outcome: "completed",
+    } as Session;
+    expect(latchFieldsFor(existing, withOutcome("c1", "failed"))).toEqual({ turn_failed: true });
+  });
+
+  it("may not CLEAR a latch: a header moving to running keeps the stored verdict", () => {
+    // The VERDICT term of rule 1. `latchFromOutcome` answers {} for a
+    // `running`-severity outcome, and that means "a turn is in flight" rather
+    // than "the last one un-finished" — so an empty answer falls through to the
+    // carry instead of replacing the latch with nothing.
+    const existing = {
+      ...makeSession("c1"),
+      turn_done: true,
+      last_turn_outcome: "completed",
+    } as Session;
+    expect(latchFieldsFor(existing, withOutcome("c1", "running"))).toEqual({ turn_done: true });
+  });
+
+  it("may not CLEAR a latch: a header moving to an ABSENT outcome keeps it too", () => {
+    // The same term over the other empty answer, and the shape a real header
+    // produces: `last_turn_outcome` is omitempty on the wire, and `upsertHeader`
+    // treats an absent one as a CLEAR — so a stored outcome going away is a
+    // movement, and it still may not blank the latch.
+    const existing = {
+      ...makeSession("c1"),
+      turn_done: true,
+      last_turn_outcome: "completed",
+    } as Session;
+    expect(latchFieldsFor(existing, withOutcome("c1", undefined))).toEqual({ turn_done: true });
+  });
+
+  it("reads an ABSENT stored outcome as no movement rather than as a change", () => {
+    // The BASELINE term of rule 1. With nothing stored, `incoming !==
+    // existing.last_turn_outcome` is true for EVERY header, so a first read could
+    // replace a latch a `turn_ended` on this page just took. The intended case
+    // always has a stored baseline to have moved from, so the term costs nothing.
     const existing = { ...makeSession("c1"), turn_failed: true } as Session;
     expect(latchFieldsFor(existing, withOutcome("c1", "completed"))).toEqual({ turn_failed: true });
+  });
+
+  it("does not take a moved header while a turn is in flight", () => {
+    // The `thinking` term of rule 1, which the in-flight case below cannot reach:
+    // that one has no stored outcome, so the baseline term already blocks it.
+    // Seeding here would paint a `failed` latch over a streaming reply, because
+    // `tabStatusFor` ranks `turn_failed` ABOVE `thinking`.
+    const existing = {
+      ...makeSession("c1"),
+      thinking: true,
+      last_turn_outcome: "completed",
+    } as Session;
+    expect(latchFieldsFor(existing, withOutcome("c1", "failed"))).toEqual({});
   });
 
   it("carries BOTH latches when both are somehow set, so it can never clear one", () => {
@@ -3577,7 +3831,7 @@ describe("latchFieldsFor seeds a rebuilt session from the header", () => {
   });
 
   it("seeds nothing while a turn is in flight", () => {
-    // Rule 2. The header's outcome describes the turn BEFORE the one now
+    // RULE 3. The header's outcome describes the turn BEFORE the one now
     // running, so seeding it would paint a settled dot over a working chat on a
     // mid-turn reload.
     const existing = { ...makeSession("c1"), thinking: true } as Session;
@@ -3636,6 +3890,54 @@ describe("upsertHeader applies the header's outcome to the dot", () => {
     setSessions([]);
     upsertHeader(headerFor("uh-quiet"));
     expect(tabStatusFor(get("uh-quiet"))).toBe("idle");
+  });
+
+  // -------------------------------------------------------------------------
+  // The PRE-UPDATE contract, which is what makes rule 1 reachable at all.
+  //
+  // `latchFieldsFor` compares the incoming outcome against the PREVIOUSLY stored
+  // one, and `upsertHeader` hands it `s` (the stored row) rather than `next` — so
+  // writing the new outcome onto `s` instead of onto `next` would make every
+  // header read as "not moved" and the moved-header rule would be dead code with
+  // its unit tests still green.
+  // -------------------------------------------------------------------------
+
+  it("writes the moved outcome onto the row AND still latches from the movement", () => {
+    setSessions([
+      {
+        ...makeSession("uh-moved"),
+        turn_done: true,
+        last_turn_outcome: "completed",
+      } as Session,
+    ]);
+
+    upsertHeader({ ...headerFor("uh-moved"), last_turn_outcome: "failed" } as ChatHeader);
+
+    // Both halves of one call, because either alone passes for the wrong reason:
+    // the stored field proves the row took the server's news, and the latch proves
+    // the comparison ran against what was there BEFORE it did.
+    expect(get("uh-moved")?.last_turn_outcome, "the row took the new outcome").toBe("failed");
+    expect(get("uh-moved")?.turn_failed, "the movement was latched").toBe(true);
+  });
+
+  it("REPLACES the outcome and the timestamp rather than preserving them", () => {
+    // A header read is the AUTHORITY for both fields, which is the OPPOSITE of
+    // `model` and `effort_levels` in the same literal — those fall back to `s`
+    // because absent means no news there. Here an absent value is a CLEAR, and a
+    // conditional spread would carry the stale outcome forward, which is what
+    // would stop rule 1 ever observing an outcome that went away.
+    setSessions([
+      {
+        ...makeSession("uh-clear"),
+        last_turn_outcome: "completed",
+        updated_at: 111,
+      } as Session,
+    ]);
+
+    upsertHeader({ ...headerFor("uh-clear"), updated_at: 0 } as ChatHeader);
+
+    expect(get("uh-clear")?.last_turn_outcome, "outcome").toBeUndefined();
+    expect(get("uh-clear")?.updated_at, "timestamp").toBe(0);
   });
 });
 

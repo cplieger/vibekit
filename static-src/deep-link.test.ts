@@ -347,6 +347,17 @@ describe("admitLocation", () => {
     expect(admitLocation({ kind: "history" }, "history")).toBe("canonicalized");
   });
 
+  // The docs kind is the one whose router arm now FORCES a sub-tab before opening, so
+  // it is the one where admitting a back press onto a closed tab would move the
+  // reader's panel as well as re-opening the tab for every other device. No per-kind
+  // carve-out: the sub-position being "only a correction" is not a licence to apply it.
+  it("refuses a back press onto a closed docs tab, sub-tab and all", () => {
+    expect.assertions(1);
+    mockTabIdForRoute.mockReturnValue("");
+
+    expect(admitLocation({ kind: "docs", tab: "hooks" }, "history")).toBe("canonicalized");
+  });
+
   it("leaves the URL alone for every location it admits", () => {
     // A guard that canonicalized on the way through would rewrite the address bar
     // under a reader who navigated deliberately.

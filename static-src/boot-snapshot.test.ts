@@ -36,12 +36,12 @@ import {
   get,
   setActive,
   setSessions,
+  tabStatusFor,
   transcriptStale,
   turnBaseOf,
   upsertMessage,
 } from "./store.js";
 import { projectTurns, type Turn, type TurnWindowBase } from "./turns.js";
-import { RESIDENT_TOOL_CALLS } from "./block-window.js";
 
 const DB_NAME = "vibekit-boot";
 const STORE_NAME = "snapshot";
@@ -257,6 +257,65 @@ describe("readBootSnapshot", () => {
     });
 
     expect(await readBootSnapshot()).toBeNull();
+  });
+
+  it("reads an outcome the vocabulary does not name as ABSENT, not as a rejection", async () => {
+    // A member the generated union gains later must cost this record nothing: every
+    // other field is intact, so refusing the whole thing would leave a build older
+    // than the server's painting no first frame at all.
+    await plantRecord({
+      tabs: [chatTab("t1", "c1")],
+      chats: [
+        {
+          id: "c1",
+          name: "One",
+          model: "",
+          current_mode_id: "",
+          message_count: 0,
+          usage: EMPTY_USAGE,
+          last_turn_outcome: "reticulated",
+          updated_at: 5,
+        },
+      ],
+      window: null,
+    });
+
+    const snap = await readBootSnapshot();
+
+    expect(snap?.chats).toHaveLength(1);
+    expect(snap?.chats[0]?.last_turn_outcome).toBeUndefined();
+    expect(snap?.chats[0]?.updated_at).toBe(5);
+  });
+
+  it("reads a non-numeric updated_at as ABSENT rather than carrying it", async () => {
+    // The tolerant reader's ONE rule covers a wrong TYPE as well as a value the
+    // vocabulary does not name, and the field it feeds is spent as epoch millis by
+    // `relativeTime` — so a string reaching the row would render an age of NaN on
+    // the dot's tooltip rather than no age at all.
+    await plantRecord({
+      tabs: [chatTab("t1", "c1")],
+      chats: [
+        {
+          id: "c1",
+          name: "One",
+          model: "",
+          current_mode_id: "",
+          message_count: 0,
+          usage: EMPTY_USAGE,
+          last_turn_outcome: "completed",
+          updated_at: "yesterday",
+        },
+      ],
+      window: null,
+    });
+
+    const snap = await readBootSnapshot();
+
+    expect(snap?.chats).toHaveLength(1);
+    expect(snap?.chats[0]?.updated_at, "the wrong type reads as absent").toBeUndefined();
+    // The sibling field survives, which is what makes this a per-field tolerance
+    // rather than a rejection of the record.
+    expect(snap?.chats[0]?.last_turn_outcome, "the sibling field").toBe("completed");
   });
 
   it("rejects a window whose BASE is half-present", async () => {
@@ -475,6 +534,21 @@ describe("the capture", () => {
     expectSameTurnNumbers(win, row("c1"));
   });
 
+  it("carries the chat's last outcome and the age of it", async () => {
+    m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
+    setSessions([
+      { ...session("c1", "One", turn(1)), last_turn_outcome: "failed", updated_at: 1_700_000 },
+    ]);
+    setActive("c1");
+
+    startBootSnapshot();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    const snap = await readBootSnapshot();
+    expect(snap?.chats[0]?.last_turn_outcome).toBe("failed");
+    expect(snap?.chats[0]?.updated_at).toBe(1_700_000);
+  });
+
   it("round-trips a snapshot with no active chat, and paints rows with no transcript", async () => {
     m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
     setSessions([session("c1", "One", turn(1))]);
@@ -506,7 +580,13 @@ describe("the record's byte budget", () => {
   const MAX_BYTES = 96 * 1024;
 
   /** One turn whose assistant message carries `calls` tool calls, each with `bytes` of
-   *  output plus the style spans that describe it. */
+   *  output plus the style spans that describe it.
+   *
+   *  Measured, so a fixture below can be sized to fall on a known side of the budget: one
+   *  LIGHTENED call of this shape serialises to 628 bytes with a full 256-byte output, and
+   *  382 when `bytes` is small (the 256-byte `input.command` still dominates). So 400 calls
+   *  is ~154,000 bytes — provably over the 98,304-byte budget — and 120 is ~46,000, provably
+   *  under it. */
   function heavyTurn(n: number, calls: number, bytes: number): Message[] {
     const tool_calls = Array.from({ length: calls }, (_unused, i) => ({
       id: `tc${String(i)}`,
@@ -564,15 +644,37 @@ describe("the record's byte budget", () => {
     expect(capturedWindow().messages.map((msg) => msg.id)).toContain("a2");
   });
 
-  it("carries no more tool calls than a paint can mount", () => {
+  // REWRITTEN, in place of `carries no more tool calls than a paint can mount`: the record
+  // no longer slices a message's call array, so the rule that case pinned (96 carried calls
+  // ending at `tc299`) no longer exists. What replaced it is the opposite answer — a message
+  // whose calls do not fit is REFUSED, and the record falls back to what does fit.
+  it("refuses a message it cannot carry whole rather than slicing it", () => {
     m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
-    setSessions([session("c1", "One", heavyTurn(1, 300, 10))]);
+    setSessions([session("c1", "One", heavyTurn(1, 400, 10))]);
+    setActive("c1");
+
+    const snap = captureBootSnapshot();
+
+    // The prompt-only record: the heavy assistant row is ABSENT, where the slicer used to
+    // carry it with its oldest 304 calls cut and every block naming one of them still on it.
+    expect(snap.window?.messages.map((msg) => msg.id)).toEqual(["u1"]);
+    // And the refusal is what keeps the record inside the budget, over a fixture whose
+    // unbounded projection is ~154,000 bytes.
+    expect(JSON.stringify(snap).length).toBeLessThanOrEqual(MAX_BYTES);
+  });
+
+  it("carries every call of a message the budget can afford, however many", () => {
+    m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
+    // 120 calls: over the retired tool-call cap of 96, well under the byte budget.
+    setSessions([session("c1", "One", heavyTurn(1, 120, 10))]);
     setActive("c1");
 
     const calls = capturedWindow().messages.at(-1)?.tool_calls ?? [];
-    expect(calls).toHaveLength(RESIDENT_TOOL_CALLS);
-    // Newest-first, so what survives is the tail the reader is looking at.
-    expect(calls.at(-1)?.id).toBe("tc299");
+
+    expect(calls).toHaveLength(120);
+    // The OLDEST call by id, which is precisely what a newest-first slice dropped first — so
+    // this fails under the slicer rather than merely counting differently.
+    expect(calls.map((c) => c.id)).toContain("tc0");
   });
 
   it("truncates a tool call's output and drops the spans that style it", () => {
@@ -601,6 +703,161 @@ describe("the record's byte budget", () => {
     // its value is cut.
     expect(typeof input?.command).toBe("string");
     expect((input?.command ?? "").length).toBeLessThanOrEqual(256);
+  });
+});
+
+// A message is carried WHOLE or it is not carried, and the reason is a contract with the
+// render layer. A copy holding a message's blocks without the calls they name is a copy of
+// something that did not happen: `messages-blocks.ts` mounts nothing for such a block while
+// `renderRange` widens its rendered window over the whole range it walked regardless, so
+// those cards are absent for the life of the paint. Dropping the blocks instead is what the
+// render layer refuses — a block INDEX is what a message's mounted state is keyed on
+// (`MsgRender`'s `window`, `blockEls`, `blockText`, and the stamped `data-block-index`) and
+// that state survives the activation's own window replacement, so a record one block short
+// of the server's has the next paint reinterpret it against the wrong blocks. Omitting the
+// message keeps both agreements, and the fetch then builds it whole as a fresh reconcile key.
+//
+// The fixtures have to carry BLOCKS or none of this can fail: `heavyTurn` above has none,
+// which is why these cases build their own messages.
+describe("a message the record carries whole or not at all", () => {
+  function toolCalls(count: number, bytes: number): { id: string }[] {
+    return Array.from({ length: count }, (_unused, i) => ({
+      id: `tc${String(i)}`,
+      title: "Run Command",
+      kind: "execute" as const,
+      status: "completed" as const,
+      ts: 100 + i,
+      output: "x".repeat(bytes),
+    }));
+  }
+
+  /** One assistant row carrying `calls` tool calls AND the block array a real transcript
+   *  carries beside them: one leading prose block, then one `tool_use` block per call, in
+   *  the order the calls arrived.
+   *
+   *  `bytes` sizes each call's output, so a row can be made provably over BUDGET: lightened,
+   *  a call of this shape serialises to ~97 bytes at the default and ~351 at an output of 256
+   *  or more (the cap truncates it), plus ~48 for the `tool_use` block naming it. So 400
+   *  calls at 512 is ~160,000 bytes against the 98,304-byte budget. */
+  function callRow(id: string, ts: number, calls: number, bytes = 2): Message {
+    const tool_calls = toolCalls(calls, bytes);
+    return {
+      id,
+      role: "assistant",
+      ts,
+      content: "answer",
+      tool_calls,
+      blocks: [
+        { type: "text", text: "working on it" },
+        ...tool_calls.map((c) => ({ type: "tool_use", tool_call_id: c.id })),
+      ],
+    } as unknown as Message;
+  }
+
+  function proseRow(id: string, ts: number): Message {
+    return {
+      id,
+      role: "assistant",
+      ts,
+      content: "step",
+      blocks: [{ type: "text", text: "step" }],
+    } as unknown as Message;
+  }
+
+  /** One turn: a trigger and one assistant message carrying `calls` calls. Small enough
+   *  that both bounds admit the turn WHOLE, which is the path that does no trimming. */
+  function blockedTurn(calls: number): Message[] {
+    return [
+      { id: "u1", role: "user", ts: 100, content: "ask" } as Message,
+      callRow("a1", 101, calls),
+    ];
+  }
+
+  /** One turn too LONG for the message cap, so the walk has to fall to the trimming path:
+   *  a trigger plus `rows` assistant messages, the one at `overBudgetAt` carrying more tool
+   *  calls than the record's byte budget can afford and every other one a single prose
+   *  block. */
+  function longTurn(rows: number, overBudgetAt: number): Message[] {
+    return [
+      { id: "u1", role: "user", ts: 100, content: "ask" } as Message,
+      ...Array.from({ length: rows }, (_unused, i) =>
+        i === overBudgetAt
+          ? callRow(`r${String(i)}`, 200 + i, 400, 512)
+          : proseRow(`r${String(i)}`, 200 + i),
+      ),
+    ];
+  }
+
+  function capture(fixture: Message[]): NonNullable<BootSnapshot["window"]> {
+    m.openTabSubjects.mockReturnValue([chatTab("t1", "c1")]);
+    setSessions([session("c1", "One", fixture)]);
+    setActive("c1");
+    return capturedWindow();
+  }
+
+  /** The captured assistant message the whole-turn cases read. */
+  function capturedRow(fixture: Message[]): Message {
+    const msg = capture(fixture).messages.at(-1);
+    if (msg === undefined) {
+      throw new Error("the capture carried no assistant message");
+    }
+    return msg;
+  }
+
+  it("omits a message the byte budget cannot afford", () => {
+    // 45 messages against a cap of 40, so the whole-turn branch cannot take this turn and
+    // the trim runs — which is what makes the omission below expressible at all.
+    const fixture = longTurn(44, 41);
+    const win = capture(fixture);
+
+    expect(win.messages.map((msg) => msg.id)).not.toContain("r41");
+    // The rule rather than the one row: every carried message holds every call its source
+    // held, so nothing the record carried was sliced to fit.
+    const source = new Map(fixture.map((msg) => [msg.id, (msg.tool_calls ?? []).length]));
+    for (const msg of win.messages) {
+      expect((msg.tool_calls ?? []).length).toBe(source.get(msg.id));
+    }
+  });
+
+  it("keeps the newest contiguous run under the message it omitted", () => {
+    const win = capture(longTurn(44, 41));
+
+    // Newest-first, so what the break gives up is the older end — trigger first, so the
+    // fragment is still a card with its own header. Without the byte bound the trim would
+    // have filled its 40 slots from `r41` down instead.
+    expect(win.messages.map((msg) => msg.id)).toEqual(["u1", "r42", "r43"]);
+  });
+
+  // THE INVARIANT THE RENDER LAYER DEPENDS ON, and the one a block-filtering record broke:
+  // a carried message's block COUNT is the server's, so every index the paint holds still
+  // names the block it was mounted against after the activation's fetch replaces the
+  // window. Trivially true now that nothing rewrites either array — which is the point, so
+  // the case asserts the whole agreement rather than the count alone.
+  it("carries a message with the block count AND the calls the server has", () => {
+    // 120 calls: over the retired tool-call cap of 96, ~22,000 bytes so comfortably carried.
+    const fixture = blockedTurn(120);
+    const source = fixture.at(-1);
+    const msg = capturedRow(fixture);
+
+    expect(msg.blocks).toHaveLength(source?.blocks?.length ?? 0);
+    expect(msg.tool_calls).toHaveLength(source?.tool_calls?.length ?? 0);
+    // And no block names a call the record does not hold: an orphan is what the paint has
+    // nothing to mount for, so zero of them is the property the two counts exist to serve.
+    const carried = new Set((msg.tool_calls ?? []).map((c) => c.id));
+    const orphans = (msg.blocks ?? [])
+      .filter((b) => b.type === "tool_use")
+      .filter((b) => !carried.has(b.tool_call_id ?? ""));
+    expect(orphans).toEqual([]);
+  });
+
+  it("leaves a carried message's blocks exactly as they arrived", () => {
+    const fixture = blockedTurn(3);
+    const msg = capturedRow(fixture);
+
+    // Nothing about a message's contents is rewritten, so `blocks` rides through by
+    // identity of value: the record is smaller than the transcript only in the fields
+    // `lightenCall` trims.
+    expect(msg.blocks).toEqual(fixture.at(-1)?.blocks);
   });
 });
 
@@ -745,6 +1002,90 @@ describe("paintBootSnapshot", () => {
     expect(row("c2").messages).toEqual([]);
     expect(row("c2").turn_offset).toBeUndefined();
     expect(row("c2").turn_segment_closed).toBeUndefined();
+  });
+
+  it("paints the tab dot the last finished turn earned", () => {
+    paintBootSnapshot({
+      tabs: [chatTab("t1", "c1")],
+      chats: [
+        {
+          id: "c1",
+          name: "One",
+          model: "",
+          current_mode_id: "",
+          message_count: 2,
+          usage: EMPTY_USAGE,
+          last_turn_outcome: "failed",
+          updated_at: 1_700_000,
+        },
+      ],
+      window: snapWindow("c1", turn(1)),
+    });
+
+    const painted = row("c1");
+    // The latch is what the strip reads, so a resumed row has to carry it rather than
+    // waiting for the header fetch to re-derive it.
+    expect(painted.turn_failed).toBe(true);
+    expect(painted.turn_done).toBeUndefined();
+    expect(painted.last_turn_outcome).toBe("failed");
+    expect(painted.updated_at).toBe(1_700_000);
+  });
+
+  it("paints a record carrying neither field, on the hollow-ring floor", () => {
+    // Every record written before those fields existed, which is the population a
+    // first boot after the shape changed reaches. The row still has to PAINT: the
+    // snapshot's whole job is the pre-network frame, and a chat with nothing to
+    // report is exactly what the hollow ring means.
+    paintBootSnapshot({
+      tabs: [chatTab("t1", "c1")],
+      chats: [
+        {
+          id: "c1",
+          name: "One",
+          model: "",
+          current_mode_id: "",
+          message_count: 2,
+          usage: EMPTY_USAGE,
+        },
+      ],
+      window: snapWindow("c1", turn(1)),
+    });
+
+    const painted = row("c1");
+    expect(painted.name, "the row was painted").toBe("One");
+    expect(tabStatusFor(painted), "the dot").toBe("idle");
+  });
+
+  it("paints the hollow ring for an outcome the vocabulary does not name", async () => {
+    // The other half of the tolerance, at the SURFACE the reader sees, and it goes
+    // through the READ because that is the only producer a paint can have: the
+    // decoder is where the value is graded, and `outcomeLatch` would latch `done`
+    // for an unrecognised string handed straight to the paint. So the direction that
+    // costs is green — a member the wire gains later must not report a settled turn
+    // nobody graded — and this asserts the two halves compose.
+    await plantRecord({
+      tabs: [chatTab("t1", "c1")],
+      chats: [
+        {
+          id: "c1",
+          name: "One",
+          model: "",
+          current_mode_id: "",
+          message_count: 2,
+          usage: EMPTY_USAGE,
+          last_turn_outcome: "reticulated",
+        },
+      ],
+      window: null,
+    });
+
+    const snap = await readBootSnapshot();
+    if (snap === null) {
+      throw new Error("the record was rejected");
+    }
+    paintBootSnapshot(snap);
+
+    expect(tabStatusFor(row("c1"))).toBe("idle");
   });
 
   it("is replaced whole by the server's own chat list", () => {

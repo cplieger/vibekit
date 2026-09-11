@@ -112,7 +112,7 @@
   /* Modals: full-width on small screens */
   .uip-modal-dialog {
     width: calc(100vw - 2 * var(--sp-4));
-    max-height: 85vh;
+    max-height: 85dvh;
     overflow-y: auto;
   }
 
@@ -125,33 +125,47 @@
      inset is already generous clearance on its own, and adding --sp-3 on top
      (46px total) is what read as "way too large" on iPhone (Apple's own
      pattern is max(), keeping the padding for inset-less devices only). */
+  /* The INLINE insets are folded in here INDEPENDENTLY of the base rule, because
+     this rule replaces the whole `padding` shorthand rather than adding to it — a
+     side inset restored only in 19-files.css would be discarded on exactly the
+     viewport this block matches. Same `max()`, so the house `--sp-4` decides
+     wherever the device reports no inset. */
   .bottom-bar {
-    padding: var(--sp-3) var(--sp-4) max(var(--sp-3), env(safe-area-inset-bottom, 0));
+    padding: var(--sp-3) max(var(--sp-4), env(safe-area-inset-right, 0))
+      max(var(--sp-3), env(safe-area-inset-bottom, 0))
+      max(var(--sp-4), env(safe-area-inset-left, 0));
   }
 
-  /* THE INSET IS A CLEARANCE FOR THE NEAREST CONTROL, NOT PADDING FOR THE BAR,
-     so a bar whose last control is not its own last row must not pay it twice
-     over. Apple reserves 34pt at the bottom for the home indicator (portrait;
-     21pt landscape) and asks that no control enter it — its own bottom bars are
-     content plus that inset, tab bar 49+34=83pt, so the inset IS the gap between
-     the last control and the screen edge.
-     The composer is the one `.bottom-bar` with chrome of its own INSIDE the
-     inset: `.prompt-box`'s 1px border plus `.prompt-pills`' `--pill-inset`
-     (15-input.css) sit between the last pill and this padding box. Measured on
-     the 390x844 preset with the inset substituted at 34px: the box's border edge
-     landed at exactly 34px, and the pill inside it at 39px — 5px past the
-     standard, on the axis where the reader's thumb already has the least room.
-     Charging that chrome against the inset puts the pill on the boundary.
-     Floored at the house padding, so an inset-less device is unaffected, and
-     never negative because the floor is the larger term.
+  /* THE INSET IS A CLEARANCE FOR THE NEAREST CONTROL, NOT PADDING FOR THE BAR —
+     and on the ONE bar whose last control is not its own last row, the honest
+     reading is that the inset belongs INSIDE the bar rather than under it.
+     Apple reserves 34pt at the bottom for the home indicator (portrait; 21pt
+     landscape) and asks that no control enter it; its own bottom bars are content
+     plus that inset (tab bar 49+34=83pt) with the BAR'S MATERIAL filling the band,
+     so the inset is both the gap from the last control to the screen edge and part
+     of the bar.
+
+     This rule used to charge the composer's own chrome against the inset here
+     (`max(--sp-3, calc(inset - --pill-inset - 1px))`), which put the last pill on
+     the 34pt boundary correctly and spent the whole band as EMPTY PAGE below a
+     floating card: measured on the 390x844 preset with the inset substituted at
+     34px, 29px of `--c-bg-primary` between `.prompt-box`'s border edge and the
+     screen edge. That is the band the reader reported as a safety area below the
+     app looking way too large, and it is the one part of Apple's pattern the
+     arithmetic was missing.
+
+     So the BAR keeps the house gap — the same 12px an inset-less device already
+     gets, so a phone's card now sits the same distance off the edge as every other
+     device's — and the inset is carried by `.prompt-pills`' own block-end padding
+     (15-input.css), which is the card's material. Measured after, same preset:
+     empty page 29px -> 12px, last pill still exactly 34px above the edge, composer
+     height unchanged (the box grows by what the padding gives up).
+
      The other three bars (editor, file browser, run) put their controls directly
-     in the bar, so their last control IS the bar's last row and the rule above
-     is already right for them. */
+     in the bar, so their last control IS the bar's last row and the shared rule
+     above is already right for them. */
   [id="prompt-form"].bottom-bar {
-    padding-block-end: max(
-      var(--sp-3),
-      calc(env(safe-area-inset-bottom, 0) - var(--pill-inset) - 1px)
-    );
+    padding-block-end: var(--sp-3);
   }
 
   /* There is no `.pill` or `#send-btn` sizing here. Both live in the unlayered
@@ -175,10 +189,40 @@
     padding: var(--sp-3);
   }
 
-  /* Sidebar tabs: larger touch targets on mobile */
+  /* THE × 'S TARGET GROWS, ITS PAINTED BOX DOES NOT — and the box growing is what
+     made a chat tab taller than the New chat button. `.tab-close` is a 24px span
+     (10-shell-app.css); this block used to set `width`/`height: var(--btn-h)` on
+     it, and `.tab` is `min-height: var(--btn-h)` with `padding-block: var(--sp-2)`
+     plus a 1px border reserved on every row, so a 44px child STACKS on that
+     chrome: measured at 390x844 on the coarse tier, every `.tab` rendered 62px
+     tall against `#new-chat`'s 44px. That is the row outgrowing the floor
+     (`vibekit-ui.md` "Hit targets"), and the row is already a 44px target itself,
+     so the × needs no 44px box of its own — it takes the documented expander
+     instead, an absolutely positioned `::after` sized off `--hit-floor`, the same
+     escape `.status-dot`, `.shell-resize` and `.tool-file-link` use.
+
+     Neither this rule nor `.tab` may declare `overflow`: an expander is clipped
+     away by an overflow on its own control or its ancestor, which reads
+     identically in the cascade and hits nothing. (`.tab.exiting` does declare one,
+     and that is correct — a departing row is `pointer-events: none`.)
+
+     The expander is CENTRED on the × rather than anchored to the row's trailing
+     edge, so the glyph sits in the middle of its own target. It reaches 10px past
+     the 24px box on each side, which is 8px into the row's trailing padding plus
+     2px beyond its border — strictly less intrusive than the 44px painted box it
+     replaces, which started 20px further into the name. */
   .tab-close {
-    width: var(--btn-h);
-    height: var(--btn-h);
+    position: relative;
+  }
+
+  .tab-close::after {
+    content: "";
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-start: 50%;
+    inline-size: var(--hit-floor);
+    block-size: var(--hit-floor);
+    translate: -50% -50%;
   }
 }
 

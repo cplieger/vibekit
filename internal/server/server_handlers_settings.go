@@ -353,7 +353,60 @@ func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
 			prefs[k.Kind] = on
 		}
 	}
+	// The MASTER switch, resolved through the same patch -> persisted ladder the kinds
+	// use and applied LAST so nothing above can re-widen it.
+	//
+	// It had no server reader at all: grep `KeyNotificationsEnabled` and the three hits
+	// are its declaration, its KnownKeys entry and its EffectiveSettings decoder.
+	// `notifications_enabled` reached the server only INDIRECTLY, through the browser's
+	// own `unregisterPush` deleting the subscription, so the claim in
+	// internal/settings/defaults.go that it "turns everything off together" held only
+	// while a client was connected to act on it. Three ways that indirection fails:
+	// another device stays subscribed while this workspace's setting says off,
+	// `unregisterPush` is best-effort with no retry, and nothing prunes a subscription
+	// whose browser never comes back. `unregisterPush` remains right regardless — a
+	// browser should not hold a subscription it does not want — and this is the other
+	// half, enforced where the per-kind switches already are.
+	//
+	// ONLY AN EXPLICIT FALSE ZEROES, and the polarity is the whole reason this is a
+	// separate resolution rather than another row in the loop above. This key's default
+	// is OFF (it means "the reader has not opted in"), while every keyed kind's is ON
+	// ("if the master is on, which kinds"), so treating an ABSENT master as a decision
+	// would silence every kind for every workspace that has never touched Settings —
+	// turning an absence into a refusal. The population with an absent key also has no
+	// subscribers by construction: `enableEverything` is the only path that starts a
+	// subscription and it PATCHes `notifications_enabled: true` in the same body.
+	//
+	// `permission` is zeroed with the rest: that is what "everything off together"
+	// means, and the browser already has no permission-notice path with the master
+	// switch off, since notifyIfHidden's first gate is that value.
+	if notificationsRefused(patch, &persisted) {
+		for kind := range prefs {
+			prefs[kind] = false
+		}
+	}
 	s.push.SetPreferences(prefs)
+}
+
+// notificationsRefused reports whether the master notifications switch is explicitly
+// OFF: the PATCH first (so a body touching only that key takes effect immediately),
+// then the persisted document. An absent key is NOT a refusal — see the polarity note
+// at the call site.
+//
+// A malformed value is not a refusal either, matching `settings.decodeInto`'s rule at
+// the read path: a value the server cannot parse is not the reader asking for silence.
+func notificationsRefused(patch map[string]json.RawMessage, persisted *lazySettings) bool {
+	raw, ok := patch[settings.KeyNotificationsEnabled]
+	if !ok {
+		if raw, ok = persisted.lookup(settings.KeyNotificationsEnabled); !ok {
+			return false
+		}
+	}
+	var enabled bool
+	if json.Unmarshal(raw, &enabled) != nil {
+		return false
+	}
+	return !enabled
 }
 
 // lazySettings reads a settings document at most once, and only when a key is

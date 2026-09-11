@@ -35,12 +35,18 @@ vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m
 // Spied so the paint effect's re-runs are COUNTABLE. Every export stays real, which
 // `blockShape` and `shapeExtends` need — they run on every body render.
 vi.mock("./subagent-slice.js", { spy: true });
+// The delegation target. Spied rather than replaced, so the module's other exports
+// stay real for the graph behind subagent-view; the one case that drives it stubs
+// the implementation, because the real refresh reaches the loader.
+vi.mock("./chat.js", { spy: true });
 
 const store = await import("./store.js");
 const { hasTab, openSubagentRefs } = await import("./tabs.js");
 const { subagentRef } = await import("./tab-materialize.js");
 const { sliceSubagentGroup } = await import("./subagent-slice.js");
-const { subagentTabProjectsChat, showSubagent } = await import("./subagent-view.js");
+const { subagentTabProjectsChat, showSubagent, refreshSubagent } =
+  await import("./subagent-view.js");
+const { refreshChatView } = await import("./chat.js");
 const { blockKey, blockTextSigs } = await import("./store-signals.js");
 const { mountedWindow } = await import("./messages-blocks.js");
 const mockHasTab = vi.mocked(hasTab);
@@ -723,5 +729,22 @@ describe("demand for the mounted page", () => {
 
     expect(vi.mocked(sliceSubagentGroup).mock.calls.length).toBe(projections);
     expect(body().querySelector(".ev-page")).toBe(page);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The subagent kind's refresh. The page is a projection of the launching chat's
+// blocks, so the chat's window is the only thing that can make it current.
+// ---------------------------------------------------------------------------
+
+describe("refreshSubagent delegates to the launching chat", () => {
+  it("refreshes the launching chat and nothing else", () => {
+    vi.mocked(refreshChatView).mockImplementation(() => undefined);
+
+    refreshSubagent("c-launcher", "task-9");
+
+    expect(refreshChatView).toHaveBeenCalledTimes(1);
+    expect(refreshChatView).toHaveBeenCalledWith("c-launcher");
+    expect(vi.mocked(sliceSubagentGroup)).not.toHaveBeenCalled();
   });
 });

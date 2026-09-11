@@ -64,6 +64,66 @@
   gap: 0.125rem;
 }
 
+/* The editor's document placeholder, mounted inside `#editor-code` and therefore
+   measuring in the code pane's OWN inherited mono metrics: measured on the live
+   app, 12px at line-height 1.6, so one line box is 1.6em. A bar of 0.75em plus
+   symmetric 0.425em margins is exactly that box (margins do not collapse in a
+   flex column), which is what puts N bars on the first N real lines and keeps the
+   file landing shift-free. Left in `em` so a change to the pane's font-size
+   carries the placeholder with it. */
+.editor-skeleton {
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-skel-line,
+.editor-skel-title {
+  height: 0.75em;
+  margin-block: calc((1.6em - 0.75em) / 2);
+  border-radius: var(--r-sm);
+}
+
+/* The declaration line reads heavier than the body it introduces. Its box is the
+   same 1.6em, so the extra height comes out of the margins. */
+.editor-skel-title {
+  height: 1em;
+  margin-block: calc((1.6em - 1em) / 2);
+}
+
+/* The file browser's pending rows. The ROW reuses `.fb-row`, so its box — the
+   min-height, padding, gap and bottom rule — is the real row's by construction
+   rather than by a restated number, the same mechanism .git-repo-skel-section
+   uses. Only the COLUMNS are restated, each at its measured width. */
+.fb-skeleton {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A placeholder row is not a target: no hover tint, no text cursor. */
+.fb-row-skel {
+  pointer-events: none;
+}
+
+.fb-skel-check {
+  width: 1rem;
+  flex-shrink: 0;
+}
+
+.fb-skel-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+}
+
+.fb-skel-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.fb-skel-meta {
+  flex-shrink: 0;
+}
+
 /* The sidebar identity row's pending state, sized to roughly an email's width so
    the footer does not reflow when the address lands. Same shape as the forge
    account row's placeholder in 17-settings.css. */

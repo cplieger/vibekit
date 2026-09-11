@@ -275,12 +275,28 @@ describe("the per-file breakdown", () => {
     expect(r[1]?.querySelector(".turn-file-badge")).toBeNull();
   });
 
-  // A control that does nothing teaches the reader to distrust every other one.
-  it("is not a disclosure when the turn changed no files", () => {
-    const el = buildTurnFooter({ credits: 1, elapsedMs: 1000 });
+  // A control that does nothing teaches the reader to distrust every other one. A
+  // turn with no files, no duration and no predecessor is the case that qualifies:
+  // credits alone are already on the row in full.
+  it("is not a disclosure when there is nothing to disclose", () => {
+    const el = buildTurnFooter({ credits: 1 });
     expect(summary(el).disabled).toBe(true);
     expect(summary(el).hasAttribute("aria-expanded")).toBe(false);
     expect(rows(el)).toHaveLength(0);
+  });
+
+  // The duration and the gap are painted for a POINTER alone, so the disclosure is
+  // the only path a keyboard or touch reader has to either — which makes each of
+  // them worth disclosing on its own, with no changed file behind it.
+  it("is a disclosure for a turn whose only fact is its duration", () => {
+    const el = buildTurnFooter({ credits: 1, elapsedMs: 1000 });
+    expect(summary(el).disabled).toBe(false);
+    expect(summary(el).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("is a disclosure for a turn whose only fact is the gap before it", () => {
+    const el = buildTurnFooter({ sinceMs: 14_400_000 });
+    expect(summary(el).disabled).toBe(false);
   });
 
   it("becomes a disclosure once files arrive, and collapses if they go", () => {
@@ -325,11 +341,16 @@ describe("hasTurnSummary", () => {
     expect(hasTurnSummary({ credits: 0, elapsedMs: 0 })).toBe(false);
     expect(hasTurnSummary({ changedFiles: {} })).toBe(false);
     expect(hasTurnSummary({ commands: 0, reads: 0 })).toBe(false);
+    expect(hasTurnSummary({ sinceMs: 0 })).toBe(false);
   });
 
   it("is true when any dimension is present", () => {
     expect(hasTurnSummary({ credits: 0.1 })).toBe(true);
     expect(hasTurnSummary({ elapsedMs: 1 })).toBe(true);
+    // The gap before the turn, on the same footing as its duration: this gate is
+    // what decides the footer EXISTS, and with no footer there is no ledger to
+    // reach the gap through without a pointer.
+    expect(hasTurnSummary({ sinceMs: 14_400_000 })).toBe(true);
     expect(hasTurnSummary({ commands: 1 })).toBe(true);
     expect(hasTurnSummary({ reads: 1 })).toBe(true);
     expect(hasTurnSummary({ changedFiles: { "a.ts": { lines_added: 1, lines_removed: 0 } } })).toBe(

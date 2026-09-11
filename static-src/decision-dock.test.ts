@@ -20,7 +20,7 @@
 // are faked rather than awaited.
 // ---------------------------------------------------------------------------
 
-import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 
 // The store is NOT mocked: the dock's chat-switch trigger is an effect over the
 // real `activeSession` computed, and a stubbed signal would test the stub's
@@ -64,7 +64,8 @@ import {
   runPendingAsks,
   _resetForTest,
 } from "./decision-dock.js";
-import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
+import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
+import { clampObservationCount } from "./clamp-text.js";
 // Not reachable through `loadCSS`: its glob is `../css/*.css`, and the MANIFEST
 // carries no extension. Read directly, because the file ORDER it declares is a
 // load-bearing cascade fact for the reduced-motion disarm below.
@@ -559,6 +560,7 @@ describe("a workflow step's question", () => {
     chatID: string,
     over: Partial<RunInputNeededPayload> = {},
     submit: (text: string | null) => void = vi.fn(),
+    defer?: () => void | Promise<void>,
   ): typeof submit {
     const payload = runInput(over);
     pushDecision({
@@ -568,6 +570,7 @@ describe("a workflow step's question", () => {
       askID: payload.ask_id,
       payload,
       submit,
+      ...(defer === undefined ? {} : { defer }),
     });
     return submit;
   }
@@ -730,6 +733,40 @@ describe("a workflow step's question", () => {
 
       pushAsk("c1", { ask_id: "notify:1" });
       expect(textarea()?.value).toBe("the release branch");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Deferring to the launching agent. The dock's part is a PASS-THROUGH, and the
+  // one thing it must not do is settle: every other action in `buildCard` splices
+  // its entry, and doing that here would take the card off every surface while the
+  // run is still parked with the question open.
+  // -------------------------------------------------------------------------
+  describe("deferring to the launching agent", () => {
+    it("hands the deferral through and leaves the ask OPEN", () => {
+      const defer = vi.fn();
+      const submit = pushAsk("c1", {}, vi.fn(), defer);
+      clickButton("Defer to parent agent");
+
+      expect(defer).toHaveBeenCalledTimes(1);
+      // A deferral is not an answer, so the step's session is told nothing.
+      expect(submit).not.toHaveBeenCalled();
+      settleMotion();
+      // Both halves, because either alone would pass with the card spliced: the DOM
+      // could be a phase's leftover, and the count could be a card nobody can see.
+      expect(liveCard()?.classList.contains("dock-run-input")).toBe(true);
+      expect(runPendingAsks("wf_1").count).toBe(1);
+    });
+
+    it("offers no deferral for an ask the decision carries none for", () => {
+      // A parentless run has no launching agent to ask, and the dock invents nothing:
+      // it passes the callback through verbatim, so the card is today's card.
+      const runHost = mountRunHost(() => "wf_1");
+      pushAsk("run:wf_1");
+      const labels = [
+        ...(liveCard(runHost)?.querySelectorAll(".run-input-actions button") ?? []),
+      ].map((b) => b.textContent);
+      expect(labels).toEqual(["Send answer", "Continue without answering"]);
     });
   });
 
@@ -1301,6 +1338,277 @@ describe("motion off: reduced motion and a background tab", () => {
     expect(host().dataset["dockPhase"]).toBeUndefined();
     expect(outgoings().length).toBe(0);
     expect(submit).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A LONG QUESTION, which is what put a reader in a card they could not answer:
+// the ask rendered verbatim, the bar grew past the bottom of the view, and the
+// message box, Send and Skip were all clipped there with nothing to scroll.
+//
+// Two halves, and the split matters. The clamp is the refinement — it stops the
+// common case needing a scroll at all — and the CARD'S CEILING is the guarantee,
+// so the geometry block below asserts the ceiling with the question OPEN, which
+// is the state the clamp is not covering.
+// ---------------------------------------------------------------------------
+
+/** One paragraph of the reported ask, repeated to its reported length. Built
+ *  rather than pasted so a reader can see what makes it long. */
+const PARAGRAPH =
+  "The review found three call sites that disagree about whether a bridgeless chat is an " +
+  "error or an ordinary idle state, and each one reports it to the reader differently. " +
+  "Answering this decides which of the three becomes the one the other two adopt, and " +
+  "which of the two error surfaces the losing pair stop writing to. ";
+const LONG_QUESTION = `${PARAGRAPH}\n\n`.repeat(7);
+
+/** Enough choices that the options list cannot fit beside a long question, which
+ *  is what makes both regions have to give up height rather than one. */
+const OPTIONS = Array.from({ length: 10 }, (_, i) => ({
+  title: `Adopt the ${String(i + 1)}th call site's reading`,
+  description: "Keeps that surface's wording and rewrites the other two to match it.",
+}));
+
+function longAsk(chatID: string, submit: (text: string | null) => void = vi.fn()): void {
+  pushDecision({
+    kind: "run_input",
+    chatID,
+    runID: "wf_long",
+    askID: "notify:long",
+    payload: {
+      workflow_id: "wf_long",
+      ask_id: "notify:long",
+      node_id: "review",
+      step_session_id: "sess-long",
+      agent_name: "reviewer",
+      question: LONG_QUESTION,
+      asked_at: "2026-09-03T10:00:00Z",
+    },
+    submit,
+  });
+}
+
+function question(h: HTMLElement = host()): HTMLElement | null {
+  return liveCard(h)?.querySelector<HTMLElement>(".run-input-question") ?? null;
+}
+
+function opener(h: HTMLElement = host()): HTMLButtonElement | null {
+  return liveCard(h)?.querySelector<HTMLButtonElement>(".run-input-more") ?? null;
+}
+
+describe("a question longer than the card", () => {
+  it("clamps it and offers the opener", () => {
+    longAsk("c1");
+    expect(question()?.hasAttribute("data-clamped")).toBe(true);
+    expect(opener()?.hidden).toBe(false);
+    expect(opener()?.textContent).toBe("Show more");
+  });
+
+  it("keeps the whole question in the DOM, so opening it reveals rather than refetches", () => {
+    longAsk("c1");
+    expect(question()?.textContent).toBe(LONG_QUESTION);
+
+    opener()?.click();
+    expect(question()?.hasAttribute("data-clamped")).toBe(false);
+    expect(opener()?.textContent).toBe("Show less");
+  });
+
+  it("leaves a SHORT question unclamped, so the opener is not permanent furniture", () => {
+    pushDecision({
+      kind: "run_input",
+      chatID: "c1",
+      runID: "wf_1",
+      askID: "notify:1",
+      payload: {
+        workflow_id: "wf_1",
+        ask_id: "notify:1",
+        node_id: "review",
+        step_session_id: "sess-1",
+        agent_name: "reviewer",
+        question: "Ship it?",
+        asked_at: "2026-09-03T10:00:00Z",
+      },
+      submit: vi.fn(),
+    });
+    expect(opener()?.hidden).toBe(true);
+  });
+
+  // The observer holds every target strongly and its own zero-size callback may
+  // never arrive, so a card that leaves without a release keeps measuring a
+  // detached element for the life of the page. Nothing here waits: a
+  // ResizeObserver callback cannot run inside a synchronous test body, so the drop
+  // can only come from the explicit release, which is the point of it.
+  //
+  // A DELTA rather than a count, because the count is not this file's alone: every
+  // `mountDecisionDock` leaves its effect live (`_resetForTest` clears the host
+  // list, not the effects), so a bump renders one card per host this file has ever
+  // mounted and each of them clamps.
+  it("releases the clamp when the card leaves", () => {
+    const before = clampObservationCount();
+    longAsk("c1");
+    expect(clampObservationCount()).toBeGreaterThan(before);
+
+    // Answered rather than merely clicked: an empty box focuses itself and sends
+    // nothing, so a bare click would settle no decision and release nothing.
+    const box = liveCard()?.querySelector<HTMLTextAreaElement>(".run-input-text");
+    if (box === null || box === undefined) {
+      throw new Error("no answer box");
+    }
+    box.value = "the release branch";
+    clickButton("Send answer");
+    settleMotion();
+    expect(clampObservationCount()).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The bound, measured against the real assembled cascade. A source read cannot
+// answer this: the ceiling is one declaration, the regions that give up their
+// height are another, and whether the answer row survives both is a layout fact.
+// ---------------------------------------------------------------------------
+
+describe("the card's ceiling keeps the answer row on screen", () => {
+  let style: HTMLStyleElement;
+  let disarm: HTMLStyleElement;
+
+  beforeAll(() => {
+    style = mountAppCSS();
+    // The tray's height TRANSITION and the card's entry animation are the phase
+    // machine's, asserted by the phase tests above; here they are noise, because a
+    // rect read on the frame the card mounts reads the transition's first frame
+    // (measured: a 26px card inside a 0px tray) rather than the settled box these
+    // cases are about. Later than `mountAppCSS`, so it wins the equal-specificity
+    // tie the way the bundle's own order decides one.
+    disarm = document.createElement("style");
+    disarm.textContent =
+      ".decision-dock { transition: none } .decision-dock > .dock-card { animation: none }";
+    document.head.appendChild(disarm);
+  });
+
+  afterAll(() => {
+    style.remove();
+    disarm.remove();
+  });
+
+  /** A host carrying the real classes at the reported PHONE width, because that
+   *  is what makes the fixture wrap the way it wrapped for the reader — at the
+   *  runner's own 1280px the same question is four lines and overflows nothing. */
+  function boundedHost(): HTMLElement {
+    const frame = document.createElement("div");
+    frame.style.width = "390px";
+    const el = document.createElement("div");
+    el.className = "decision-dock hidden";
+    frame.appendChild(el);
+    document.body.appendChild(frame);
+    mountDecisionDock(el);
+    return el;
+  }
+
+  interface Parts {
+    readonly card: HTMLElement;
+    readonly body: HTMLElement;
+    readonly actions: HTMLElement;
+  }
+
+  /** The card with its question OPEN, which is the state the clamp is not
+   *  covering and therefore the one the ceiling has to hold on its own. */
+  function openCard(): Parts {
+    const h = boundedHost();
+    longAsk("c1");
+    opener(h)?.click();
+    const card = liveCard(h);
+    const body = card?.querySelector<HTMLElement>(".run-input-body");
+    const actions = card?.querySelector<HTMLElement>(".run-input-actions");
+    if (
+      card === null ||
+      card === undefined ||
+      body === null ||
+      body === undefined ||
+      actions === null ||
+      actions === undefined
+    ) {
+      throw new Error("no card");
+    }
+    return { card, body, actions };
+  }
+
+  // The premise, twice over: a fixture shorter than the reported ask, or one the
+  // region's own bound could contain, would let every case below pass with the
+  // bound deleted.
+  it("the fixture is the reported length and overflows the region", () => {
+    expect(LONG_QUESTION.length).toBeGreaterThan(2000);
+    const { body } = openCard();
+    expect(body.scrollHeight).toBeGreaterThan(400);
+  });
+
+  it("does not grow the card to fit the question", () => {
+    const { card, body } = openCard();
+    const max = Number.parseFloat(getComputedStyle(card).maxBlockSize);
+    expect(Number.isFinite(max)).toBe(true);
+    expect(card.getBoundingClientRect().height).toBeLessThanOrEqual(max + 1);
+    // The load-bearing half: the box is SHORTER than the prose it holds, so the
+    // bar cannot grow past the bottom of the view the way it did.
+    expect(card.getBoundingClientRect().height).toBeLessThan(body.scrollHeight);
+  });
+
+  it("never pushes the answer row out of the card", () => {
+    const { card, actions } = openCard();
+    expect(actions.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      card.getBoundingClientRect().bottom + 1,
+    );
+  });
+
+  // The AGENT's question card, which is the shape that makes the regions give up
+  // height rather than merely cap it: a long question and a list of options are two
+  // capped regions whose caps together exceed the card's ceiling, so both have to
+  // shrink for the Skip row to stay in the box.
+  it("shrinks both regions rather than pushing Skip out", () => {
+    const h = boundedHost();
+    pushDecision({
+      kind: "user_input",
+      chatID: "c1",
+      requestID: 9,
+      payload: {
+        request_id: 9,
+        question: LONG_QUESTION,
+        options: OPTIONS,
+      },
+      submit: vi.fn(),
+    });
+    const card = liveCard(h);
+    const actions = card?.querySelector<HTMLElement>(".user-input-actions");
+    const options = card?.querySelector<HTMLElement>(".user-input-options");
+    if (
+      card === null ||
+      card === undefined ||
+      actions === null ||
+      actions === undefined ||
+      options === null ||
+      options === undefined
+    ) {
+      throw new Error("no card");
+    }
+
+    expect(options.scrollHeight).toBeGreaterThan(options.clientHeight);
+    expect(actions.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      card.getBoundingClientRect().bottom + 1,
+    );
+
+    // The typed answer survives the squeeze. A textarea is a scroll container, so
+    // its own automatic minimum size is 0 and shrinking it to nothing is exactly
+    // what the pressure would do; a hit test is the honest reading of "the reader
+    // can still type here".
+    const box = card.querySelector<HTMLTextAreaElement>(".user-input-text");
+    if (box === null) {
+      throw new Error("no answer box");
+    }
+    const r = box.getBoundingClientRect();
+    expect(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)).toBe(box);
+  });
+
+  it("gives the question a real scroller rather than clipping it", () => {
+    const { body } = openCard();
+    expect(getComputedStyle(body).overflowY).toBe("auto");
+    expect(body.scrollHeight).toBeGreaterThan(body.clientHeight);
   });
 });
 

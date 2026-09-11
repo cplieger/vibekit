@@ -140,7 +140,13 @@ export type {
 // the generated naming. The generated type is PermissionNeededPayload.
 export type { PermissionNeededPayload as PermissionNeeded } from "./wire/types.gen.js";
 
-import type { Message, SessionEffortLevel, SteerOrigin, Usage } from "./wire/types.gen.js";
+import type {
+  Message,
+  SessionEffortLevel,
+  SteerOrigin,
+  TurnOutcome,
+  Usage,
+} from "./wire/types.gen.js";
 
 // --- Client-only types ---
 
@@ -393,6 +399,19 @@ export interface Session {
    *  `turn_failed`; NOT by opening the chat, because seeing a finished turn does
    *  not un-finish it. Never set for a cancelled turn: nothing was finished. */
   turn_done?: boolean;
+  /** How this chat's newest FINISHED turn ended, verbatim from
+   *  `ChatHeader.last_turn_outcome`. NOT a latch and not client memory: it is the
+   *  server's own statement, so a header read REPLACES it — an absent outcome is a
+   *  CLEAR, which is the opposite of how `model` and `effort_levels` carry forward.
+   *
+   *  Three readers: `relatchTurnVerdict`'s fallback for a chat with no resident
+   *  transcript, `latchFieldsFor`'s freshness rule, and the boot snapshot. */
+  last_turn_outcome?: TurnOutcome;
+  /** `ChatHeader.updated_at`, epoch millis, bumped by every `Mutate`. So it is LAST
+   *  ACTIVITY rather than "finished at" — good enough for "finished ~2h ago", which
+   *  is what the tab dot's tooltip renders, and not for a clock. Replaced wholesale
+   *  by every header read, like `last_turn_outcome`. */
+  updated_at?: number;
   /** Mid-turn steers the agent has NOT read yet: the bottom dock's rows.
    *  Written on submit (intent) and by the three steer SSE events (fact);
    *  emptied at every turn boundary because that is when KAS clears its own
@@ -428,11 +447,6 @@ export interface Session {
   /** Client-only transcript residency; see MessagesResidency. Carried across
    *  the header-list rebuild like every other client-only projection. */
   residency?: MessagesResidency;
-  /** Client-only: the sync epoch captured before the page fetch that produced
-   *  this window, written on newest-page success. Fresh only while it equals
-   *  `syncEpoch()`; a fetch that raced a transport gap therefore stores a
-   *  number that already reads stale. See store.ts transcriptStale. */
-  loadedEpoch?: number;
   /** This row is the boot snapshot's paint-time hint, not the server's answer:
    *  `boot-snapshot.ts` sets it and nothing else ever does.
    *

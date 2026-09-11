@@ -31,12 +31,11 @@ vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 // link. No case here asserts on a glyph.
 vi.mock("./icons.js", () => ({
   ICON_EDIT: "",
-  ICON_EDIT_14: "",
+  ICON_EDIT_UI: "",
   ICON_CLOSE: "",
   ICON_TRASH: "",
-  ICON_TRASH_14: "",
-  ICON_PLUS: "",
-  ICON_PLUS_16: "",
+  ICON_TRASH_UI: "",
+  ICON_PLUS_UI: "",
   ICON_PIN: "",
   ICON_PIN_FILLED: "",
   ICON_COPY: "",
@@ -48,7 +47,7 @@ vi.mock("./icons.js", () => ({
   ICON_REPO: "",
   ICON_EXPORT: "",
   ICON_DIFF: "",
-  ICON_X: "",
+  ICON_CLOSE_UI: "",
   ICON_PLAY: "",
   ICON_CHEVRON_DOWN: "",
   ICON_CHEVRON_UP: "",
@@ -66,8 +65,8 @@ vi.mock("./icons.js", () => ({
   ICON_REPO_EMPTY: "",
   ICON_PR_EMPTY: "",
   ICON_GLOBE: "",
-  ICON_WARN_12: "",
-  ICON_SCALE_12: "",
+  ICON_WARN: "",
+  ICON_SCALE: "",
   ICON_SAVE_OK: "",
   ICON_SAVE_FAIL: "",
   ICON_TAB_CHAT: "",
@@ -118,7 +117,13 @@ vi.mock("./run-store.js", () => ({
 }));
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
-vi.mock("./tabs-drag.js", () => ({
+// Type-only, for the `importOriginal` below.
+import type * as TabsDrag from "./tabs-drag.js";
+// The three FUNCTIONS are stubbed and nothing else is: `DRAG_THRESHOLD_PX` is the
+// strip's drag slop and `tabs.ts` reads it, so a partial factory would fail this
+// whole file at link time.
+vi.mock("./tabs-drag.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof TabsDrag>()),
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
@@ -163,6 +168,7 @@ vi.mock("./dom.js", () => ({
   },
 }));
 
+import { signal, touch } from "@cplieger/reactive";
 import {
   browserAttentionEnv,
   createAttention,
@@ -179,6 +185,7 @@ import {
   activateTab,
   setTabStatus,
   setTabDirty,
+  setChatSettledProbe,
   tabIdFor,
   _resetForTest,
 } from "./tabs.js";
@@ -255,12 +262,13 @@ function registerOpeners(): void {
   registerTabOpeners({
     chat: {
       show: vi.fn(),
+      refresh: vi.fn(),
       close: vi.fn(),
       dot: (chatID: string) => seededDots.get(chatID) ?? "",
     },
-    editor: { show: vi.fn(), close: vi.fn() },
-    run: { show: vi.fn() },
-    subagent: { show: vi.fn() },
+    editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
+    run: { show: vi.fn(), refresh: vi.fn() },
+    subagent: { show: vi.fn(), refresh: vi.fn() },
   });
 }
 
@@ -895,6 +903,152 @@ describe("initAttention", () => {
     await closeTab(b);
     expect(count()).toBe(0);
     expect(iconVariant()).toBe("/favicon.svg");
+  });
+
+  // -------------------------------------------------------------------------
+  // The badge count follows the same rule the notification does: a chat whose
+  // turn ended while a run it launched is still going contributes NOTHING, and
+  // starts contributing when the work is over.
+  //
+  // The probe is INJECTED here rather than imported, exactly as production does
+  // it: the real answer lives in `chat-settled.ts`, which reads the chat store,
+  // the live-run inventory and the decision dock, and this file mocks
+  // `./run-store.js` down to one export. What is under test is the FOLD's rule,
+  // so a probe backed by a signal is the honest fixture — a plain boolean would
+  // pass a version of `cueCandidates` that had stopped subscribing to it.
+  // -------------------------------------------------------------------------
+  describe("a chat with outstanding work contributes 0", () => {
+    const unsettled = new Set<string>();
+    const settleVersion = signal(0);
+
+    function setUnsettled(chatRef: string, on: boolean): void {
+      if (on) {
+        unsettled.add(chatRef);
+      } else {
+        unsettled.delete(chatRef);
+      }
+      settleVersion.value = settleVersion.peek() + 1;
+    }
+
+    beforeEach(() => {
+      unsettled.clear();
+      // Registered after the outer beforeEach's `_resetForTest`, which clears it.
+      setChatSettledProbe((chatRef: string) => {
+        touch(settleVersion);
+        return !unsettled.has(chatRef);
+      });
+    });
+
+    it("blanks a background chat's done cue while its run is live", async () => {
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      setUnsettled("b", true);
+      setTabStatus(b, "done");
+
+      expect(count()).toBe(0);
+      expect(iconVariant()).toBe("/favicon.svg");
+    });
+
+    // The other half, and the one that makes the case above more than "the cue was
+    // dropped": the reader IS told, once the work is over.
+    it("raises the cue when the run terminates", async () => {
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      setUnsettled("b", true);
+      setTabStatus(b, "done");
+      expect(count()).toBe(0);
+
+      setUnsettled("b", false);
+
+      expect(count()).toBe(1);
+      expect(iconVariant()).toBe("/favicon-done.svg");
+    });
+
+    it("blanks a FAILED cue too, because a failed turn's run is still going", async () => {
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      setUnsettled("b", true);
+      setTabStatus(b, "failed");
+      expect(count()).toBe(0);
+
+      setUnsettled("b", false);
+      expect(count()).toBe(1);
+      expect(iconVariant()).toBe("/favicon-alert.svg");
+    });
+
+    // The suppression is narrow on purpose. An unanswered decision IS the reader's
+    // business and is what they are being pointed at, so it counts whatever the
+    // chat's runs are doing.
+    it("never blanks an unanswered decision", async () => {
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      setUnsettled("b", true);
+      setTabStatus(b, "input");
+
+      expect(count()).toBe(1);
+    });
+
+    it("never blanks a chat whose agent is standing by", async () => {
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      setUnsettled("b", true);
+      setTabStatus(b, "waiting");
+
+      expect(count()).toBe(1);
+    });
+
+    // The RUN's own tab is the surface that reports the run, so blanking it would
+    // remove the one cue that is telling the truth.
+    it("leaves a RUN tab's own cue alone", async () => {
+      await openChat("a");
+      await openTab({ kind: "run", ref: "wf-1", owns: false, activate: false });
+      const runTab = tabIdFor("run", "wf-1");
+      setUnsettled("wf-1", true);
+      setTabStatus(runTab, "done");
+
+      expect(count()).toBe(1);
+    });
+
+    // THE `""`-NOT-`idle` RULE. `attention.ts` reads `""` as "no information" and
+    // leaves the acknowledgement map alone, where `idle` is a real non-cue state
+    // that FORGETS the entry — so blanking with `idle` would re-raise the cue from
+    // scratch the moment the run ended, for a chat the reader had already visited.
+    it("keeps the reader's acknowledgement across the blank", async () => {
+      const a = await openChat("a");
+      const b = await openChat("b", { activate: false });
+      setTabStatus(b, "done");
+      rows([
+        { id: a, top: 110, height: 40 },
+        { id: b, top: 160, height: 40 },
+      ]);
+      // Visiting b is what acknowledges its cue.
+      await activateTab(b);
+      expect(seen()).toEqual({ [b]: "done" });
+      await activateTab(a);
+      expect(count()).toBe(0);
+
+      setUnsettled("b", true);
+      expect(seen()).toEqual({ [b]: "done" });
+
+      // And the run ending must not re-raise a cue that was already dismissed.
+      setUnsettled("b", false);
+      expect(seen()).toEqual({ [b]: "done" });
+      expect(count()).toBe(0);
+    });
+
+    // Unregistered, nothing is suppressed — the behaviour before the probe existed,
+    // which is what makes a composition root that forgot to wire it degrade rather
+    // than silently blank every cue.
+    it("suppresses nothing when no probe is registered", async () => {
+      _resetForTest();
+      registerOpeners();
+      await openChat("a");
+      const b = await openChat("b", { activate: false });
+      setUnsettled("b", true);
+      setTabStatus(b, "done");
+
+      expect(count()).toBe(1);
+    });
   });
 
   it("drops a closed chat's acknowledgement from storage", async () => {

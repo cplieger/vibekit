@@ -8,7 +8,7 @@
 import type { TabKind, TabSubject } from "./types.js";
 import type { Route } from "./router.js";
 import { TAB_ICONS, TAB_VIEWS, type TabDotStatus, type TabViewSpec } from "./tab-view.js";
-import { get } from "./store.js";
+import { get, subagentStatusFor } from "./store.js";
 import { runLabelOf } from "./run-store.js";
 import { FALLBACK_SUBAGENT_NAME, subagentLabel } from "./roles.js";
 import { findSubagentInvocation } from "./subagent-slice.js";
@@ -20,6 +20,7 @@ import { findSubagentInvocation } from "./subagent-slice.js";
  *  CLIENT-LOCAL teardown, whoever closed the tab. */
 export interface ChatTabOpener {
   show: (chatID: string) => void;
+  refresh: (chatID: string) => void;
   close: (chatID: string) => void;
   dot: (chatID: string) => TabDotStatus | "";
 }
@@ -28,6 +29,7 @@ export interface ChatTabOpener {
  *  else; content, dirty state, mode and line selection live in `fileStates`. */
 export interface EditorTabOpener {
   show: (path: string) => void;
+  refresh: (path: string) => void;
   close: (path: string) => void;
 }
 
@@ -35,6 +37,7 @@ export interface EditorTabOpener {
  *  VIEW, and nothing that closes a tab cancels a run. */
 export interface RunTabOpener {
   show: (workflowID: string) => void;
+  refresh: (workflowID: string) => void;
 }
 
 /** Subagent behaviour, from subagent-view.ts. No `close` half: the tab is a reading
@@ -42,6 +45,7 @@ export interface RunTabOpener {
  *  nothing, and every door opens it with `owns: false`. */
 export interface SubagentTabOpener {
   show: (chatID: string, subtaskID: string) => void;
+  refresh: (chatID: string, subtaskID: string) => void;
 }
 
 export interface TabOpeners {
@@ -146,20 +150,31 @@ export function parseSubagentRef(ref: string): { chatID: string; subtaskID: stri
   return { chatID: ref.slice(0, cut), subtaskID: ref.slice(cut + 1) };
 }
 
-/** A delegate's label, from the chat store's own record of its invocation.
+/** A delegate's label AND its dot, from the chat store's own record of its
+ *  invocation.
  *
  *  Derived rather than carried, so a tab RESTORED on boot reads the same as one
  *  the transcript's link opened. The scan is over one chat's resident messages
  *  and runs once per materialization, not per render; a chat whose page has not
  *  been fetched yet has no invocation to find and falls back, and the next
- *  materialization (or the opener's own name) corrects it. */
-function subagentTabName(ref: string): string {
-  const { chatID, subtaskID } = parseSubagentRef(ref);
-  if (chatID === "") {
-    return FALLBACK_SUBAGENT_NAME;
+ *  materialization (or `subagent-dots.ts`'s effect) corrects it.
+ *
+ *  BOTH facts come off ONE scan because they come off one tool call: the row
+ *  cannot say `wf-workflow-creator` while its dot says nothing, and it used to —
+ *  the name was seeded here and the dot only by the effect, so on the door that
+ *  matters (a transcript link, where the invocation is already resident) the row
+ *  painted its real name beside an empty slot for a frame. Seeding the dot is
+ *  also what lets `12-tabs.css` stop reserving that slot for this kind. */
+function subagentTabFacts(
+  chatID: string,
+  subtaskID: string,
+): { name: string; dot: TabDotStatus | "" } {
+  const tc =
+    chatID === "" ? undefined : findSubagentInvocation(get(chatID)?.messages ?? [], subtaskID);
+  if (tc === undefined) {
+    return { name: FALLBACK_SUBAGENT_NAME, dot: "" };
   }
-  const tc = findSubagentInvocation(get(chatID)?.messages ?? [], subtaskID);
-  return tc === undefined ? FALLBACK_SUBAGENT_NAME : subagentLabel(tc);
+  return { name: subagentLabel(tc), dot: subagentStatusFor(tc.status) };
 }
 
 // --- Pass-through subject facts ---
@@ -232,6 +247,9 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         onShow: () => {
           reg.chat.show(chatID);
         },
+        refresh: () => {
+          reg.chat.refresh(chatID);
+        },
         onClose: () => {
           reg.chat.close(chatID);
         },
@@ -253,6 +271,9 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         ...parentOf(subject),
         onShow: () => {
           reg.editor.show(path);
+        },
+        refresh: () => {
+          reg.editor.refresh(path);
         },
         onClose: () => {
           reg.editor.close(path);
@@ -287,19 +308,27 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         onShow: () => {
           reg.run.show(workflowID);
         },
+        refresh: () => {
+          reg.run.refresh(workflowID);
+        },
       };
     }
     case "subagent": {
       const { chatID, subtaskID } = parseSubagentRef(subject.ref);
+      const facts = subagentTabFacts(chatID, subtaskID);
       return {
-        name: subagentTabName(subject.ref),
+        name: facts.name,
         icon: TAB_ICONS.subagent,
         view: TAB_VIEWS.subagent,
         route: { kind: "subagent", chat: chatID, id: subtaskID },
         owns: subject.owns,
         ...parentOf(subject),
+        ...dotOf(facts.dot),
         onShow: () => {
           reg.subagent.show(chatID, subtaskID);
+        },
+        refresh: () => {
+          reg.subagent.refresh(chatID, subtaskID);
         },
         // No onClose: the page is a projection of blocks the chat store owns, so
         // a close destroys nothing. Every door opens it with `owns: false`, which
@@ -321,14 +350,13 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         route: { kind: "settings", tab: "general" },
         owns: subject.owns,
         ...parentOf(subject),
-        // DIVERGENCE the union resolves: three of this tab's doors
-        // (recipes.ts, settings-highlight.ts, settings.ts) pass no onShow at all,
-        // so activating a Settings tab they opened loads nothing. The restore
-        // door loads. One tab, one behaviour.
-        onShow: () => {
+        // No onShow: this tab's whole activation was the data half, which is now
+        // `refresh`. The panel it loads is the ACTIVE one, so a deep link's own
+        // forceSettingsTab has already landed by the time the dispatcher calls it.
+        refresh: () => {
           lazily(
-            import("./settings-tabs.js").then(({ loadSettingsTabData }) => {
-              loadSettingsTabData("general");
+            import("./settings-tabs.js").then(({ refreshSettingsPanel }) => {
+              refreshSettingsPanel();
             }),
           );
         },
@@ -342,12 +370,19 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         owns: subject.owns,
         ...parentOf(subject),
         // Same divergence as settings: navigate.ts's path-link door passes no
-        // onShow, so /git reached from a chat's file link did not refresh its
-        // repos while the sidebar's door did.
+        // onShow, so /git reached from a chat's file link did not wire its panel
+        // while the sidebar's door did.
         onShow: () => {
           lazily(
             import("./git.js").then(({ loadGitRepos }) => {
               loadGitRepos();
+            }),
+          );
+        },
+        refresh: () => {
+          lazily(
+            import("./git.js").then(({ refreshGitView }) => {
+              refreshGitView();
             }),
           );
         },
@@ -360,7 +395,9 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         route: { kind: "files", path: "." },
         owns: subject.owns,
         ...parentOf(subject),
-        onShow: () => {
+        // No onShow, for the settings case's reason: the browser's whole
+        // activation was its directory read.
+        refresh: () => {
           lazily(
             import("./files.js").then(({ loadFileBrowser }) => {
               loadFileBrowser();
@@ -395,6 +432,13 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
             }),
           );
         },
+        refresh: () => {
+          lazily(
+            import("./history.js").then(({ refreshHistoryView }) => {
+              refreshHistoryView();
+            }),
+          );
+        },
         // Unlike docs, this page needs a close hook: it holds a dispatch, an
         // AbortController and a debounce timer.
         onClose: () => {
@@ -415,8 +459,15 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         ...parentOf(subject),
         onShow: () => {
           lazily(
-            import("./docs.js").then(({ loadDocsView }) => {
-              loadDocsView("steering");
+            import("./docs.js").then(({ showDocsTab }) => {
+              showDocsTab();
+            }),
+          );
+        },
+        refresh: () => {
+          lazily(
+            import("./docs.js").then(({ refreshDocsView }) => {
+              refreshDocsView();
             }),
           );
         },

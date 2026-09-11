@@ -19,13 +19,27 @@
     "the caller's 'this is the last turn and the session is thinking' flag.",
     "",
     "THE WRITER AND THE READER ARE ONE MECHANISM, so the tail clause below only",
-    "holds because persistOutcomeMarker skips nothing. It used to omit the carrier",
-    "for a clean prompted empty turn — the reader's default already said",
-    "`completed`, so the row looked redundant — which made a legitimately clean",
-    "empty turn byte-identical on disk to one a restart killed. Now every close",
-    "persists a carrier, so a body carrying no assistant message and no settled",
-    "outcome means NOTHING closed the turn, and `unknown` is a fact rather than a",
-    "guess. Restore the skip and the two `unknown` rows below become unreachable.",
+    "holds because persistOutcomeMarker skips a carrier for one shape alone: a turn",
+    "NO row on disk represents. It used to omit the carrier for a clean prompted",
+    "empty turn — the reader's default already said `completed`, so the row looked",
+    "redundant — which made a legitimately clean empty turn byte-identical on disk",
+    "to one a restart killed. Now a close whose turn a persisted TRIGGER represents",
+    "always leaves the outcome on a ROW — the marker, or the cancel row that is",
+    "already one — so a body carrying no assistant message and no settled outcome",
+    "means NOTHING closed the turn, and `unknown` is a fact rather than a guess.",
+    "Restore that skip and the two `unknown` rows below become unreachable.",
+    "",
+    "That one skip does not reach them. An ENGINE-OPENED turn (a KAS auto-wake, a",
+    "workflow step) that carried nothing persists NO carrier: nothing else stands",
+    "for it, so the marker would BE the whole turn and it opens a headerless card",
+    "holding nothing (persistsEmptyCarrier). A turn SPLIT at a compaction point is",
+    "exempt — it has a sealed assistant row already, and segmentMessage stamps no",
+    "outcome, so there the marker is the only carrier the turn's verdict and footer",
+    "have. Both `unknown` rows describe a turn WITH a user row, which a prompted",
+    "close still carries a marker for. For a turn that persists NOTHING the END is",
+    "a separate axis: a KAS auto-wake still announces its end (announcesEmptyEnd)",
+    "where a step's belongs to its run, and an announcement persists nothing, so",
+    "it reaches neither projection.",
     "",
     "The predicate is 'no assistant message', not 'an empty body', and that is what",
     "protects every turn already on disk: this chat file only ever gained an",
@@ -247,8 +261,11 @@
     "of it: `messages-blocks.ts` placeBlock DROPS a block whose subtask id parses as",
     "`wf:<workflowId>:<nodePath>`, so a card opened for such a message renders an",
     "empty body. One block of the agent's own prose, one malformed `wf:` id (which",
-    "still renders, as a delegate box) or no blocks at all is drawn, so such a",
-    "message keeps its card.",
+    "still renders, as a delegate box) is drawn, so such a message keeps its card,",
+    "and so does a blockless message for as long as it carries content. A message",
+    "carrying NOTHING — no content, no reasoning, no blocks, no tool calls, no plan,",
+    "no refusal, no outcome — opens nothing, because there is nothing yet to draw:",
+    "it is what the live wire's first frame for a turn looks like.",
     "",
     "A FRAGMENT IS A CORRELATION, NOT THE CAUSE. Keying either rule on a",
     "`turn_outcome` of `unknown` reaches some of the same messages and does so for",
@@ -264,7 +281,8 @@
     "`messages` is the flat persisted list. `want` is one entry per expected turn:",
     "its opening message id, whether it has a user trigger, and its outcome.",
     "`blocks` lists one subtask id per block; absent means the message carries no",
-    "blocks at all."
+    "blocks at all. `empty` suppresses the content every other row carries, which is",
+    "the only way to stage a message that carries nothing."
   ],
   "segmentation": [
     {
@@ -328,11 +346,19 @@
       "name": "an EMPTY agent-initiated COMPLETED turn is its own turn and appears in the index",
       "_comment": [
         "`completed` is the derivation's default, which is why the marker is skipped",
-        "for a PROMPTED empty turn: its user message already represents it. A turn with",
-        "no trigger has nothing else at all, so skipping the marker there deleted the",
-        "turn — absent from the transcript and from the rail, while the live client had",
-        "been told it ended. The skip is therefore semantic (a persisted trigger",
-        "already represents this turn), never `outcome == completed`."
+        "for a PROMPTED empty turn: its user message already represents it. The skip is",
+        "therefore semantic (a persisted trigger already represents this turn), never",
+        "`outcome == completed`.",
+        "",
+        "This row is a READER rule and it is NOT the writer's mirror. The writer no",
+        "longer mints this exact shape for a fresh turn: an ENGINE-OPENED turn that",
+        "left no row of its own persists no marker either, deliberately, because a",
+        "marker with nothing beside it IS the whole turn and opens a headerless card",
+        "holding nothing. What still reaches the reader here is a turn already on disk",
+        "from before that ruling, and a CANCELLED empty engine turn, whose EventCancelled",
+        "row is appended ahead of the skip and carries the outcome. So do not narrow the",
+        "reader on the strength of the writer's narrowing — the rows it must keep",
+        "projecting outlive it."
       ],
       "messages": [
         { "role": "user", "id": "u1" },
@@ -396,6 +422,21 @@
         { "id": "u1", "agent_initiated": false, "outcome": "completed" },
         { "id": "a2", "agent_initiated": true, "outcome": "completed" }
       ]
+    },
+    {
+      "name": "an assistant message carrying nothing opens no turn",
+      "_comment": [
+        "The row above with its content taken away, which is the only difference between",
+        "the two. It is the shape the live wire produces first: `ensureTurnStarted`",
+        "announces a message id and a role before any content frame, so a turn opened",
+        "here renders a card with nothing in it until the reader reloads."
+      ],
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "assistant", "id": "a2", "empty": true }
+      ],
+      "want": [{ "id": "u1", "agent_initiated": false, "outcome": "completed" }]
     },
     {
       "name": "a malformed step subtask id still opens a turn",

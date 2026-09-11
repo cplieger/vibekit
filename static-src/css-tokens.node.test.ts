@@ -495,8 +495,8 @@ describe("an ink is only paired with a fill it clears", () => {
   // GRAPH, where no element and no opacity exists. This file reads the STYLESHEET,
   // so it can see the declaration — which is what makes this check possible where
   // the ancestor-supplied-fill case is not. Every offender found so far declared
-  // the ink and the opacity in the SAME block (`.reasoning-block`, `.rail-gap`),
-  // so one block is enough to decide it.
+  // the ink and the opacity in the SAME block (`.reasoning-block`), so one block is
+  // enough to decide it.
   //
   // Chrome and an inactive control are exempt, and the reasons differ: WCAG 1.4.3
   // exempts an inactive component outright, while a decorative graphic is not text

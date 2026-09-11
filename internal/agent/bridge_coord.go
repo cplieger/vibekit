@@ -63,6 +63,16 @@ type BridgeCoordinator struct {
 	// SPAWN time: a bool captured here runs before NewHub opens the store, so it
 	// would be false for every bridge this process ever starts.
 	secretStorage func() bool `wiring:"optional"`
+	// chatHasLiveRun reports whether a run this chat launched is still on the wire,
+	// which is what stops pushTurnOutcome claiming the work is over while a run the
+	// finished turn started carries on. A CLOSURE rather than a *Runs field: this
+	// type holds no run surface, and reaching one through a closure installed by
+	// newBridgeCoordinator is the pattern onSessionRehydrated already uses, so it
+	// adds no edge for the construction-order guard to police.
+	//
+	// Nil means "nothing outstanding" — the pre-fix behaviour — so a test
+	// constructing this type directly does not start withholding.
+	chatHasLiveRun func(vibekit.ChatID) bool `wiring:"optional"`
 	// unknownStops records the stop reasons already warned about, so an unmapped
 	// wire value produces one line rather than one per turn.
 	unknownStops sync.Map
@@ -139,6 +149,9 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 		agentEngine:      resolveAgentEngine(),
 		acpArgs:          h.acpArgs,
 		secretStorage:    func() bool { return h.secrets != nil },
+		chatHasLiveRun: func(chatID vibekit.ChatID) bool {
+			return chatHoldsLiveRun(h.runs.leaseStore().List(), chatID)
+		},
 		onSessionRehydrated: func(chatID vibekit.ChatID) {
 			ctx, cancel := h.lifecycle.derivedContext()
 			defer cancel()
@@ -376,17 +389,22 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	return true
 }
 
-// kasDefaultSessionTitle is KAS's placeholder title (DEFAULT_SESSION_TITLE),
-// returned by every session/new. Adopting it would swap vibekit's placeholder for a
-// worse one and make the chat non-default-named, which then rejects the real title.
-const kasDefaultSessionTitle = "New Session"
-
 // adoptKASTitle names a chat from KAS's own session title, only while the chat has
-// no name of its own and the title is real. Naming precedence is focus_update title
-// > local first-prompt label > this; `titleIsPromptDerived` (translate/focus.go)
-// implements the top of that ordering.
-func adoptKASTitle(c *vibekit.Chat, title string) {
-	if title == "" || title == kasDefaultSessionTitle || c.Name != vibekit.DefaultChatName {
+// no name of its own and the title passes the same door treatment the focus channel
+// applies. Naming precedence is focus_update title > local first-prompt label > this.
+//
+// The whole treatment runs here, not just the shape rules: a stored title is a string
+// KAS persisted, so it is bounded and sanitized by nothing, and a session titled by a
+// pre-gate build or renamed from the IDE re-offers it on every resume. Every refusal
+// is Warn, where the focus door drops the routine one to Debug — this rung is reached
+// only while a chat is still default-named, so it carries no volume to bury a signal.
+func adoptKASTitle(c *vibekit.Chat, stored string) {
+	title := translate.SanitizeTitle(stored)
+	if title == "" || c.Name != vibekit.DefaultChatName {
+		return
+	}
+	if reason := translate.TitleRefusal(title); reason != "" {
+		slog.Warn("stored session title refused", "title", title, "reason", reason)
 		return
 	}
 	c.Name = title

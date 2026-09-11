@@ -380,6 +380,11 @@ func (bc *BridgeCoordinator) closeWithOutcome(
 	// than the turn's own bracket, and WireEnded's only reader is the empty-turn
 	// recovery's arming gate, which is about a prompt this closer never touches.
 	wireEnded := closer == closerWireEnd || closer == closerWireDisplaced
+	// Both DERIVED from values already in hand, so no call site threads an argument:
+	// a parameter here would recreate the bare flag this function's doc comment
+	// records as having been replaced by taking the closer.
+	superseded := closer == closerWireDisplaced
+	workflowStep := t.Source == vibekit.TurnSourceWorkflowStep
 	chatID := t.Chat
 	c := bc.concludeStop(chatID, stopReason, reason)
 	if t.Source == vibekit.TurnSourcePrime {
@@ -403,10 +408,10 @@ func (bc *BridgeCoordinator) closeWithOutcome(
 	}
 	persisted := bc.recordTurnCarrier(ctx, t, p, &facts, stopReason, reason != "")
 
-	// GATED on a carrier: a close that deliberately persists nothing announces nothing,
-	// because every effect of turn_ended lands on the launching chat's OWN last turn,
-	// which did not end.
-	if persisted {
+	// TWO questions, not one: whether a row carries the outcome, and whether the END
+	// belongs to this chat. They part for a KAS auto-wake that carried nothing: no
+	// carrier, and the end is still this chat's — see announcesEmptyEnd.
+	if persisted || announcesEmptyEnd(t) {
 		if _, stillExists := bc.chatStore.Get(ctx, chatID); stillExists {
 			bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, chatID, vibekit.TurnEndedPayload{
 				Outcome:      c.Outcome,
@@ -417,6 +422,8 @@ func (bc *BridgeCoordinator) closeWithOutcome(
 				CreditsDelta: stats.CreditsDelta,
 				ElapsedMs:    stats.ElapsedMs,
 				ChangedFiles: p.ChangedFiles,
+				Superseded:   superseded,
+				WorkflowStep: workflowStep,
 			}))
 		}
 	}
@@ -477,6 +484,9 @@ type persistedTurn struct {
 	// Carried is whether an assistant message holds the outcome. Not `!EmittedNothing`:
 	// a fully-withheld turn still persists an empty message, and that is the carrier.
 	Carried bool
+	// Segmented is whether a compaction seal already left a row for this turn. Carried is
+	// false then and the turn is still not empty on disk, which is why both are needed.
+	Segmented bool
 }
 
 // persistTurnContent commits whatever the turn produced and reports the facts the payload
@@ -503,6 +513,7 @@ func (bc *BridgeCoordinator) persistTurnContent(
 	case snap.Segmented:
 		p.ChangedFiles = snap.ChangedFiles
 		p.Model = cmp.Or(snap.Model, t.Model)
+		p.Segmented = true
 	}
 	return p
 }
@@ -529,7 +540,7 @@ func (bc *BridgeCoordinator) recordTurnCarrier(
 		if !p.Carried {
 			carrier.MessageID = cancelID
 		}
-	case !p.Carried && persistsEmptyCarrier(t):
+	case !p.Carried && persistsEmptyCarrier(t, p.Segmented):
 		// No assistant message to stamp, so a marker carries the outcome. Skipped for a
 		// cancel, whose own event message is already this turn's marker.
 		carrier.MessageID = bc.persistOutcomeMarker(ctx, t, facts)
@@ -550,6 +561,26 @@ func (bc *BridgeCoordinator) pushTurnOutcome(
 	c vibekit.TurnConclusion,
 	statusDesc string,
 ) {
+	// The chat's TURN ended; its WORK has not, if a run this chat launched is still on
+	// the wire. `run_workflow` returns as soon as the run is created, so the launching
+	// turn concludes cleanly while the run carries on — and a push saying the agent
+	// finished is then the one channel an off-screen reader has, telling them the
+	// opposite of the truth.
+	//
+	// Ahead of the severity switch, so a BROKEN turn is withheld too: a failed turn
+	// that launched a still-running run is the same class of claim.
+	//
+	// The run's own terminal transition already pushes `run_outcome`
+	// (`notifyRunOutcome`), keyed on the RUN and gated by its own settings key, so this
+	// side DEFERS and deliberately does not re-fire — synthesising a second
+	// `agent_finished` when the last lease released would announce one completion twice
+	// on the same device. The browser's own deferred cue
+	// (`static-src/agent-finished-cue.ts`) is what covers a reader with the tab open.
+	if bc.chatHasLiveRun != nil && bc.chatHasLiveRun(chatID) {
+		slog.Debug("withholding agent_finished: a run this chat launched is still live",
+			"chat_id", chatID, "outcome", c.Outcome)
+		return
+	}
 	switch vibekit.SeverityOf(c.Outcome) {
 	case vibekit.TurnSeverityClean:
 		bc.NotifyPush(ctx, agentFinishedBodyFrom(statusDesc), vibekit.PushKindAgentFinished, chatID)
@@ -578,18 +609,30 @@ type turnOutcomeFacts struct {
 	Stats turnStats
 }
 
-// persistsEmptyCarrier reports whether a turn that carried NOTHING may leave a row saying
-// how it ended. Both empty-turn sites read it, because the ruling is a property of the
-// TURN rather than of the closer: for a WORKFLOW STEP nothing carried means no
-// message_created went out, so no divergence exists for a row to close, and a row would
-// open a headless card in the wrong conversation.
-func persistsEmptyCarrier(t *Turn) bool {
+// persistsEmptyCarrier reports whether a turn that carried NOTHING may leave a row saying how
+// it ended. An engine-opened turn leaves none: with no trigger row the marker IS the turn, and
+// its card renders nothing. `segmented` is the exception, because segmentMessage's sealed row
+// stamps no outcome, credits, changed files or model, so there the marker holds them. Cost:
+// the skip is outcome-blind, so an engine turn that ends `error` or `refusal` leaves no
+// durable record of its verdict. Not the announcement axis: announcesEmptyEnd owns that, and
+// merging them strands the client's latches.
+func persistsEmptyCarrier(t *Turn, segmented bool) bool {
+	return segmented || !t.Source.EngineOpened()
+}
+
+// announcesEmptyEnd reports whether a turn that persisted NO carrier must still announce its
+// end. A STEP's end belongs to its run rather than to the launching chat, whose own last turn
+// did not end; every other source's end is this chat's own. Withholding the frame latches the
+// client instead: replayTurnState sets thinking at connect and GET /api/chats/{id} reports
+// turn_open, and only a settled turn_ended or a transport gap retracts either.
+func announcesEmptyEnd(t *Turn) bool {
 	return t.Source != vibekit.TurnSourceWorkflowStep
 }
 
 // persistOutcomeMarker records how a turn that emitted NOTHING ended: with no assistant
-// message this is the outcome's only carrier. It skips NOTHING, and that is the
-// load-bearing half — an absent carrier MEANS nothing closed the turn, which is what lets
+// message this is the outcome's only carrier. Its caller skips it for ONE shape alone, a
+// turn no persisted row represents (persistsEmptyCarrier) — so where a trigger row DOES
+// stand for the turn, an absent carrier MEANS nothing closed it, which is what lets
 // deriveTurnOutcome answer `unknown` instead of reading a turn a restart killed as
 // `completed`. Cost: one invisible EventTurnOutcome row per clean empty prompted turn.
 func (bc *BridgeCoordinator) persistOutcomeMarker(ctx context.Context, t *Turn, f *turnOutcomeFacts) string {
@@ -638,10 +681,12 @@ func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, re
 		return result
 	}
 	if !snap.Started {
-		if !persistsEmptyCarrier(t) {
-			// A STEP turn that carried nothing persists and announces nothing. The footer
-			// argument below does not transfer: it persists no row, so projectTurns opens
-			// no card whose outcome deriveOutcome could read.
+		if !persistsEmptyCarrier(t, snap.Segmented) {
+			// This close persists nothing and the buffer left nothing, so the footer argument
+			// below has no carrier to ride. The END is a separate question, asked below.
+			if announcesEmptyEnd(t) {
+				bc.announceConclusion(ctx, chatID, c, t.Source)
+			}
 			return result
 		}
 		// Nothing streamed, so there is no partial to persist -- but the divider still lands
@@ -656,7 +701,7 @@ func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, re
 			Model:        cmp.Or(snap.Model, t.Model),
 		})
 		bc.turns.recordCarrier(t, turnCarrier{MessageID: dividerID, ReasonSupplied: reason != ""})
-		bc.announceConclusion(ctx, chatID, c)
+		bc.announceConclusion(ctx, chatID, c, t.Source)
 		return result
 	}
 	// Settle the in-flight tool calls and RE-READ the content, or the persisted turn
@@ -672,7 +717,7 @@ func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, re
 	// The divider does NOT re-carry the outcome: the message above already did, and
 	// two carriers in one turn open a spurious segment.
 	bc.appendEventMessage(ctx, chatID, vibekit.EventInterrupted, reason, nil)
-	bc.announceConclusion(ctx, chatID, c)
+	bc.announceConclusion(ctx, chatID, c, t.Source)
 	return result
 }
 
@@ -680,10 +725,21 @@ func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, re
 // place the interrupted and discarded ends are broadcast: an `error` frame touches no turn
 // state, so a path that skips this leaves `thinking`, Cancel, the banners and the rail live
 // indefinitely. The stop reason comes off the CONCLUSION rather than being a literal here,
-// which is what lets one site serve both closers.
-func (bc *BridgeCoordinator) announceConclusion(ctx context.Context, chatID vibekit.ChatID, c vibekit.TurnConclusion) {
+// which is what lets one site serve both closers. It takes the turn's SOURCE because
+// closeAsInterrupted is reachable for a STEP turn, and a bridge death over a live step
+// turn must not arrive as this chat's own turn ending.
+func (bc *BridgeCoordinator) announceConclusion(
+	ctx context.Context,
+	chatID vibekit.ChatID,
+	c vibekit.TurnConclusion,
+	source vibekit.TurnOpenSource,
+) {
 	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, chatID,
-		vibekit.TurnEndedPayload{Outcome: c.Outcome, StopReason: c.RawStop}))
+		vibekit.TurnEndedPayload{
+			Outcome:      c.Outcome,
+			StopReason:   c.RawStop,
+			WorkflowStep: source == vibekit.TurnSourceWorkflowStep,
+		}))
 }
 
 // closeAsDiscarded finalizes a turn a MODEL SWITCH threw away: the reader asked for a
@@ -728,7 +784,7 @@ func (bc *BridgeCoordinator) closeAsDiscarded(ctx context.Context, t *Turn) vibe
 	// ReasonSupplied is false because `c.Reason` above is DEFAULTED from the outcome,
 	// which is the shape amendLostReason upgrades.
 	bc.turns.recordCarrier(t, turnCarrier{MessageID: markerID, ReasonSupplied: false})
-	bc.announceConclusion(ctx, t.Chat, c)
+	bc.announceConclusion(ctx, t.Chat, c, t.Source)
 	return result
 }
 
@@ -739,8 +795,9 @@ func (bc *BridgeCoordinator) closeAsDiscarded(ctx context.Context, t *Turn) vibe
 func (bc *BridgeCoordinator) closeOnLocalShell(ctx context.Context, t *Turn) vibekit.TurnResult {
 	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, t.Chat,
 		vibekit.TurnEndedPayload{
-			Outcome:    vibekit.TurnOutcomeCompleted,
-			StopReason: vibekit.StopReasonEndTurn,
+			Outcome:      vibekit.TurnOutcomeCompleted,
+			StopReason:   vibekit.StopReasonEndTurn,
+			WorkflowStep: t.Source == vibekit.TurnSourceWorkflowStep,
 		}))
 	return vibekit.TurnResult{Stop: vibekit.StopReasonEndTurn}
 }

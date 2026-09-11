@@ -38,7 +38,10 @@ vi.mock("./tabs.js", () => ({
   getActiveTabId: () => "",
   setTabDirty: vi.fn(),
 }));
-vi.mock("./api-client.js", () => ({ apiGet: vi.fn(() => Promise.resolve(null)) }));
+vi.mock("./api-client.js", () => ({
+  apiGet: vi.fn(() => Promise.resolve(null)),
+  apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
+}));
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./editor-conflict.js", () => ({
   abortSuggestion: vi.fn(),
@@ -55,6 +58,7 @@ vi.mock("./editor-ui.js", () => ({
   fetchAgentLines: vi.fn(),
   pendingLines: new Map<string, number>(),
   clearAgentLineCache: vi.fn(),
+  renderEditModeUI: vi.fn(),
 }));
 vi.mock("./actions/editor.js", () => ({
   loadDiff: {

@@ -101,12 +101,17 @@
   border-color: var(--c-accent);
 }
 
-/* Mobile: scale number inputs up for 44px touch targets. */
+/* Mobile: scale number inputs up for 44px touch targets. One step up to the
+   field rung the composer reads, not to 1rem — that literal was the last of the
+   app's 16px iOS-zoom floors (61-mcp-tools.css records why they all went) and
+   after their removal it left the settings pages' number inputs as the only
+   16px text in the app. The target itself comes from the padding plus
+   --hit-floor, not from the type size. */
 @media (width <= 40rem) {
   .page-input-sm {
     width: 7rem;
     padding: var(--sp-3);
-    font-size: 1rem;
+    font-size: var(--fs-md);
   }
 
   /* List rows: one step up per tier. 12px names and 11px metadata sit under
@@ -119,6 +124,33 @@
   .list-row-meta,
   .tool-source-chip {
     font-size: var(--fs-sm);
+  }
+
+  /* THE HISTORY ROW'S DATE TAKES ITS OWN LINE, because beside the title it takes
+     the title's width. `.list-row-meta` is `Date.toLocaleString()` — a date AND a
+     time, in a monospace face — and it is a flex sibling of `.list-row-title`,
+     which is the only item on the line that shrinks (`flex: 1`, so basis 0). So
+     the meta keeps its full intrinsic width and the thread's name is the thing
+     that gets ellipsised, which is the opposite of the priority the row has: the
+     title is what a reader is scanning for.
+
+     `order` puts it after every other child and `flex-basis: 100%` is what forces
+     the second line rather than merely allowing it; `align-items: center` on
+     `.list-row` is per LINE, so line one is unchanged. It lands at the row's own
+     leading padding rather than indented under the title, which reads as the row's
+     metadata line — the same place `.history-facts` sits inside the title column.
+
+     `:not(:empty)` is load-bearing: `history.ts` renders this span unconditionally
+     and leaves it empty for a row with no timestamp, and an empty item with a 100%
+     basis would still open a second flex line and charge the row's 8px `gap` for
+     it. */
+  .history-table-row {
+    flex-wrap: wrap;
+  }
+
+  .history-table-row > .list-row-meta:not(:empty) {
+    order: 1;
+    flex-basis: 100%;
   }
 }
 
@@ -281,6 +313,16 @@
   line-height: 0;
   display: inline-flex;
   align-items: center;
+
+  /* THE CROSS AXIS WAS CENTRED AND THE MAIN AXIS WAS NOT, which is the obligation
+   * 61-mcp-tools.css states at the hit-target floor: that floor widens a box past its
+   * content, so a floor-widened icon button must centre its glyph or it renders
+   * visibly off-centre. Measured in Chromium 153 with a 12px `ICON_CLOSE`: the box is
+   * 24px (the floor, since `padding: 0` leaves nothing else to size it) and the glyph
+   * sat at flex-start, 12px left of centre — half the box. `.icon-btn`, `.tab-close`
+   * and `.list-row-btn` all carry this declaration for the same reason; this rule
+   * predates the floor becoming universal, so it never gained one. */
+  justify-content: center;
 
   &:hover {
     color: var(--c-red);
@@ -769,7 +811,9 @@
      1.2s. `tool-dot-pulse` was a seventh bespoke keyframe outside the vk-*
      family and it is deleted; reduced motion needs no rule here either, because
      stopping the one clock stops this. */
-  opacity: calc(1 - var(--vk-beat) * 0.65);
+  --beat-peak: 0.35;
+
+  animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
 }
 
 .tool-installing {
@@ -1163,24 +1207,38 @@ button.list-row-name:focus-visible {
    `min-height: 0` is what pinned it to the scrollport and made a scrollbar
    unreachable.
 
-   It also carries THE MEASURE, wider than the shared 50rem and bounded rather
-   than removed. `--content-max-w` is a READING measure for a conversation, and
-   this page is not prose: it is a node tree, tool cards, diffs and captured
-   reports, so 50rem left 240px of dead gutter on each side of a 1440 desktop
-   while the content it was protecting was machine output. The same argument
-   deleted the 40.75rem cap inside the transcript's turn card (29-turns.css).
-   Bounded because a step row puts its duration at `margin-inline-start: auto`, so
-   an uncapped page floats that number arbitrarily far from the name it belongs to.
+   It also carries THE MEASURE, and that measure is `--content-max-w` — the SAME
+   column the transcript and the composer end on, so every full-page surface in
+   this app shares one pair of edges (user ruling, 2026-09-10).
+
+   It used to be `--run-page-max-w`, 68rem, on the argument that this page is not
+   prose: a node tree, tool cards, diffs and captured reports, so a reading measure
+   left 240px of dead gutter on each side of a 1440 desktop. That argument is
+   withdrawn rather than refined. It priced the gutter and never priced the cost of
+   a second column width: a run opened from a chat rendered 288px wider than the
+   chat, its own step rows did not line up with the turn cards that launched them,
+   and a reader crossing between the two surfaces re-learned the edges every time.
+   Machine output does not need protecting from a measure, and every box on this
+   page is already bounded by its own row.
 
    `width: 100%` is load-bearing beside the auto margins rather than a belt: an
    `auto` cross-axis margin suppresses a flex item's `stretch`, so the cap alone
    would shrink-wrap this column to its content and the measure would never bind.
-   `.transcript-view` carries the same trio for the same reason. */
+   `.transcript-view` carries the same trio for the same reason.
+
+   ONE CONSEQUENCE, which the exec view's own threshold already prescribes: 50rem
+   is under `@container exec-view (width < 52rem)` (31-exec-view.css), so `.ev-panes`
+   STACKS its tree above its detail at every width instead of placing them side by
+   side. That query is the judgement that two panes stop being usable below 52rem,
+   and the stacked layout is a designed one rather than a fallback — the page is the
+   single scroller either way. So the two-column grid above that query is now
+   unreachable for both consumers of `.ev-page`; collapsing it is a separate
+   decision, because it would delete the side-by-side layout rather than shelve it. */
 [id="run-body"] {
   display: flex;
   flex-direction: column;
   flex: 1 0 auto;
-  max-width: var(--run-page-max-w);
+  max-width: var(--content-max-w);
   width: 100%;
   margin-inline: auto;
 }
@@ -1188,10 +1246,10 @@ button.list-row-name:focus-visible {
 /* --- The subagent page ---------------------------------------------------- */
 
 /* The same rules the run page needs, and for the same reasons: a column so the
-   content grows, a full-width scroller with a machine-output measure inside it
-   rather than the prose one, and a growing body that passes the height through to
-   the exec page's own panes. The page itself is the shared `.ev-page`
-   (31-exec-view.css), so nothing about its internals is repeated here.
+   content grows, a full-width scroller with the shared measure inside it, and a
+   growing body that passes the height through to the exec page's own panes. The
+   page itself is the shared `.ev-page` (31-exec-view.css), so nothing about its
+   internals is repeated here.
 
    No bottom bar, unlike the run page: a delegate's permission asks are queued
    under its launching chat, so there is nothing for a dock here to answer. */
@@ -1218,13 +1276,14 @@ button.list-row-name:focus-visible {
   overflow: hidden auto;
 }
 
-/* THE MEASURE, and the `width: 100%` that makes it bind against the auto margins.
-   `[id="run-body"]` above carries the reasoning for all three. */
+/* THE MEASURE, character-for-character `[id="run-body"]`'s, which carries the
+   reasoning for all four declarations. One column for every full-page surface, so
+   a delegate's card and its page end on the same edges the transcript does. */
 [id="subagent-body"] {
   display: flex;
   flex-direction: column;
   flex: 1 0 auto;
-  max-width: var(--run-page-max-w);
+  max-width: var(--content-max-w);
   width: 100%;
   margin-inline: auto;
 }

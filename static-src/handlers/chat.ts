@@ -6,6 +6,7 @@
 import { onSSE } from "../bus.js";
 import { upsertHeader, removeChat, getActiveId, setAgentStatus } from "../store.js";
 import { dropDecisions } from "../decision-dock.js";
+import { forgetDeferredCue } from "../agent-finished-cue.js";
 import { dropComposerState, adoptRemoteComposerState } from "../composer-state.js";
 import { parseRoute, replaceRoute } from "../router.js";
 
@@ -72,6 +73,7 @@ onSSE("chat_deleted", (_chatID, p) => {
   // The two per-chat cleanups below still run — each is keyed by chat id
   // and outlives the tab, and each is idempotent.
   dropDecisions(p.id);
+  forgetDeferredCue(p.id);
   dropComposerState(p.id);
   removeChat(p.id);
   // Drop the chat's in-memory banner entries; persisted dismissals are not

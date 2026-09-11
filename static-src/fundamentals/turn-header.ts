@@ -5,15 +5,22 @@
 // (the request text) or the system did (a typed trigger line) — everything
 // else (number, outcome, timestamp, permalink) is identical across both.
 //
-// The request text clamps to three lines with a show-more: once old turns
-// fold to their header, the folded rows become the session's navigation
-// surface, and a pasted stack trace would push every neighbouring row
-// off-screen. The clamp is on the TEXT only — actions and attachment chips
-// sit outside it, since they are how a reader identifies the request.
+// The band's height is the request TEXT's alone: every control and readout in
+// it is out of flow, inside the first line's indent. So the fold toggle, the
+// badge (number, outcome, time, hit count) and the copy button are siblings of
+// `.turn-req` rather than members of a row, and none of them contributes a
+// line box.
+//
+// An OPEN turn's request is not clamped: full text, however long. A FOLDED
+// turn's clamps to four lines, in CSS, for the reason a clamp was ever here —
+// folded rows are the session's navigation surface, and one pasted stack trace
+// would render hundreds of lines as a "collapsed" turn and push every
+// neighbouring row off screen. The clamp is on the TEXT only, so the
+// attachment chips stay outside it: they are how a reader identifies the
+// request.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { attachClamp, type ClampHandle } from "../clamp-text.js";
 import { chevronEl } from "../chevron.js";
 import { linkifyPaths } from "../linkify.js";
 import { iconEl } from "../icon-el.js";
@@ -37,11 +44,6 @@ export interface TurnHeaderData {
   attachments: readonly AttachmentRef[];
 }
 
-/** The clamp's shape: three lines, and a 220-character guess for the frame
- *  before the card is laid out. The machinery is `clamp-text.ts`'s, shared with
- *  the steer note and the dock row; only these two numbers are the header's. */
-const CLAMP = { lines: 3, fallbackChars: 220 } as const;
-
 /** Copy handler, injected — the assistant side's Copy already routes through
  *  the actions framework, and this reaches it from a pure `fundamentals/`
  *  view that must not import `actions/`. */
@@ -58,10 +60,9 @@ export function initTurnHeaderCallbacks(cbs: {
 export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   const header = el("div", { className: "turn-header" });
 
-  const row = el("div", { className: "turn-head-row" });
-  // The fold toggle leads the row, so the affordance sits where the eye starts
+  // The fold toggle leads the band, so the affordance sits where the eye starts
   // and is in the same place whether the turn is open or folded.
-  row.appendChild(
+  header.appendChild(
     el(
       "button",
       {
@@ -75,45 +76,32 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
       chevronEl(),
     ),
   );
-  row.appendChild(el("span", { className: "turn-n" }, `#${String(d.n)}`));
-  row.appendChild(el("span", { className: "turn-dot", role: "img" }));
-  row.appendChild(el("time", { className: "turn-ts" }));
-  // Filled while a search is active.
-  row.appendChild(el("span", { className: "turn-hit-count" }));
+  // One span for every readout, so the first line's indent reserves ONE box
+  // rather than four, and none of them can contaminate the request's text node
+  // (`textContent` is exactly what the copy button reads).
+  header.appendChild(
+    el(
+      "span",
+      { className: "turn-badge" },
+      el("span", { className: "turn-n" }, `#${String(d.n)}`),
+      el("span", { className: "turn-dot", role: "img" }),
+      el("time", { className: "turn-ts" }),
+      // Filled while a search is active.
+      el("span", { className: "turn-hit-count" }),
+    ),
+  );
   // Rewind lives in the footer instead. Reads text from the DOM at click
   // time, not closure-captured, so a repaint mid-flight can't copy stale text.
-  row.appendChild(buildCopyButton(header));
-  header.appendChild(row);
+  header.appendChild(buildCopyButton(header));
 
   const req = el("div", { className: "turn-req" });
-  const reqText = el("div", { className: "turn-req-text" });
-  req.appendChild(reqText);
-  const more = el("button", {
-    className: "turn-req-more",
-    type: "button",
-  }) as HTMLButtonElement;
-  req.append(more);
+  req.appendChild(el("div", { className: "turn-req-text" }));
   // Sibling of `.turn-req-text`, so the clamp cannot hide the attachments.
   req.appendChild(el("ul", { className: "turn-req-attachments attachment-row hidden" }));
   header.appendChild(req);
 
-  clampOf(header, reqText, more);
   updateTurnHeader(header, d);
   return header;
-}
-
-/** The request text's clamp. Idempotent, so a repaint reaches the one the build
- *  wired rather than a second. The expanded flag lives on the HEADER, which is
- *  what lets `updateTurnHeader` preserve a user expansion across a same-content
- *  repaint. */
-function clampOf(header: HTMLElement, text: HTMLElement, more: HTMLButtonElement): ClampHandle {
-  return attachClamp(text, more, {
-    ...CLAMP,
-    isExpanded: () => isExpanded(header),
-    setExpanded: (on) => {
-      setExpanded(header, on);
-    },
-  });
 }
 
 function buildCopyButton(header: HTMLElement): HTMLButtonElement {
@@ -136,27 +124,25 @@ function buildCopyButton(header: HTMLElement): HTMLButtonElement {
   return btn;
 }
 
-/** Recompute the header from turn data. Idempotent, and preserves a
- *  user-expanded clamp (a reader who opened a long prompt does not want the
- *  next repaint to fold it back). */
+/** Recompute the header from turn data. Idempotent. */
 export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   header.dataset["outcome"] = d.outcome;
   // Hue comes off the shared severity table; `data-outcome` keeps the words and
   // the one stated exception. See turn-footer.ts's own write for the split.
   header.dataset["severity"] = severityOf(d.outcome);
 
-  const num = header.querySelector<HTMLElement>(":scope > .turn-head-row > .turn-n");
+  const num = header.querySelector<HTMLElement>(":scope > .turn-badge > .turn-n");
   if (num !== null) {
     num.textContent = `#${String(d.n)}`;
   }
 
-  const dot = header.querySelector<HTMLElement>(":scope > .turn-head-row > .turn-dot");
+  const dot = header.querySelector<HTMLElement>(":scope > .turn-badge > .turn-dot");
   if (dot !== null) {
     dot.setAttribute("aria-label", OUTCOME_LABEL[d.outcome]);
     dot.setAttribute("data-tooltip", OUTCOME_TOOLTIP[d.outcome]);
   }
 
-  const time = header.querySelector<HTMLTimeElement>(":scope > .turn-head-row > .turn-ts");
+  const time = header.querySelector<HTMLTimeElement>(":scope > .turn-badge > .turn-ts");
   if (time !== null && d.ts > 0) {
     const when = new Date(d.ts);
     time.dateTime = when.toISOString();
@@ -166,7 +152,7 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
     });
   }
 
-  const copy = header.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-copy-req");
+  const copy = header.querySelector<HTMLButtonElement>(":scope > .turn-copy-req");
   if (copy !== null) {
     copy.hidden = d.request === undefined;
   }
@@ -176,19 +162,14 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   syncAttachments(header, d.attachments);
 
   const text = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-text");
-  const more = header.querySelector<HTMLButtonElement>(":scope > .turn-req > .turn-req-more");
-  if (text === null || more === null) {
+  if (text === null) {
     return;
   }
 
-  const clamp = clampOf(header, text, more);
   if (d.request === undefined) {
     // No user message: naming the trigger is honest, fabricating one is not.
     header.dataset["trigger"] = "system";
     text.textContent = "Agent-initiated turn";
-    // A typed trigger line is not a request, so it carries no clamp at all —
-    // and a later resize must not put one back.
-    clamp.disable();
     return;
   }
 
@@ -197,10 +178,6 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   if (text.textContent !== body) {
     text.textContent = body;
     linkifyPaths(text);
-    // New content is a new request, and the expansion belonged to the old one.
-    clamp.collapse();
-  } else {
-    clamp.sync();
   }
 }
 
@@ -227,19 +204,4 @@ function syncAttachments(header: HTMLElement, atts: readonly AttachmentRef[]): v
     }
   }
   row.replaceChildren(...atts.map((att) => buildAttachmentPill(att)));
-}
-
-function isExpanded(header: HTMLElement): boolean {
-  return header.dataset["expanded"] === "";
-}
-
-/** Where the expanded flag is STORED. The clamp itself owns the attribute, the
- *  label and `aria-expanded` (clamp-text.ts); this is only the bit `updateTurnHeader`
- *  reads to keep a reader's expansion across a repaint. */
-function setExpanded(header: HTMLElement, on: boolean): void {
-  if (on) {
-    header.dataset["expanded"] = "";
-  } else {
-    delete header.dataset["expanded"];
-  }
 }

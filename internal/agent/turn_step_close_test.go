@@ -157,6 +157,35 @@ func TestCloseStepTurn_AnEmptyStepTurnPersistsAndAnnouncesNothing(t *testing.T) 
 	}
 }
 
+// TestCloseStepTurn_ASplitStepTurnPersistsAMarkerAndAnnounces is the sibling ruling's one
+// exemption reaching the STEP population, and it is a WIDENING: a step turn split at a
+// compaction point already has a sealed row in the launching chat, so the marker annotates a
+// card that exists rather than opening a headless one — and segmentMessage stamps no outcome,
+// so the marker is the only carrier the step's verdict and footer have. The announcement
+// follows the carrier, which is what takes this shape out of the ruling above.
+func TestCloseStepTurn_ASplitStepTurnPersistsAMarkerAndAnnounces(t *testing.T) {
+	h, cs, _ := newTestHub()
+	stagedStepTurn(t, h, cs, "c1", "everything the step said before the compaction")
+	if !h.coord.SealTurnSegment(t.Context(), "c1") {
+		t.Fatal("the fixture could not seal a segment")
+	}
+
+	h.coord.CloseStepTurn(t.Context(), "c1")
+
+	marker := outcomeMarker(t, cs, "c1")
+	if marker == nil {
+		t.Fatal("a split step turn persisted no marker, so its sealed row derives `completed` for a verdict nothing recorded")
+	}
+	if marker.TurnOutcome != vibekit.TurnOutcomeUnknown {
+		t.Errorf("marker TurnOutcome = %q, want unknown — the run ended and the step's own turn end never arrived",
+			marker.TurnOutcome)
+	}
+	if got := turnEndedStops(t, h); len(got) != 1 || got[0] != string(vibekit.StopReasonUnknown) {
+		t.Errorf("turn_ended stops = %v, want exactly one unknown: this close persisted a carrier, and "+
+			"the run ending says nothing about how the step's own turn ended", got)
+	}
+}
+
 // TestCloseStepTurn_InsertsAheadOfATrailingUserRow pins where the message LANDS: a
 // prompt sent mid-fold persists its user row first and the client places it AFTER the
 // reply, so a plain append makes the file and every client's array disagree on order.
@@ -241,6 +270,39 @@ func TestCloseAsInterrupted_AnEmptyStepTurnPersistsAndAnnouncesNothing(t *testin
 	}
 	if h.liveTurnBuffer("c1") != nil {
 		t.Error("the step turn is still open, so the next frame extends a turn whose process is gone")
+	}
+}
+
+// TestCloseAsInterrupted_ASplitStepTurnPersistsADividerAndAnnounces is the same widening at
+// the bridge-death site: the sealed row is already in the launching chat, so the divider is
+// what says the step turn BROKE rather than ended, and it is the only carrier of its
+// cumulative changed files.
+func TestCloseAsInterrupted_ASplitStepTurnPersistsADividerAndAnnounces(t *testing.T) {
+	h, cs, _ := newTestHub()
+	stagedStepTurn(t, h, cs, "c1", "everything the step said before the compaction")
+	buf := h.liveTurnBuffer("c1")
+	if buf == nil {
+		t.Fatal("the fixture opened no step turn")
+	}
+	buf.TrackFileChanges([]vibekit.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}, false)
+	if !h.coord.SealTurnSegment(t.Context(), "c1") {
+		t.Fatal("the fixture could not seal a segment")
+	}
+
+	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1")
+
+	divider := eventMessageOf(t, cs, "c1", vibekit.EventInterrupted)
+	if divider == nil {
+		t.Fatal("a split step turn persisted no divider, so its sealed row derives `completed` for a turn its bridge killed")
+	}
+	if divider.TurnOutcome != vibekit.TurnOutcomeInterrupted {
+		t.Errorf("divider TurnOutcome = %q, want interrupted", divider.TurnOutcome)
+	}
+	if divider.ChangedFiles["a.go"] == nil {
+		t.Errorf("divider ChangedFiles = %v, want the step's cumulative map", divider.ChangedFiles)
+	}
+	if got := turnEndedStops(t, h); len(got) != 1 || got[0] != string(vibekit.StopReasonInterrupted) {
+		t.Errorf("turn_ended stops = %v, want exactly one interrupted", got)
 	}
 }
 

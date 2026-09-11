@@ -37,7 +37,15 @@ vi.mock("./api-client.js", () => ({
   // settled step's transcript off KAS. No case here shows a step, so this answers
   // the no-request result: `run-step-transcript.ts` grades status 0 transient.
   apiGetTypedOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
+  // The run READ, because the store spends a failed read's STATUS: a 404 is the
+  // server's settled answer about the run, a 0 is no request at all. Driven per case
+  // from `m.reply` below.
+  apiGetOrError: vi.fn(),
 }));
+
+// `refreshRun` reaches the launching chat's window through a lazy import, so the
+// graph resolves at runtime and stops here.
+vi.mock("./chat.js", () => ({ refreshChatView: vi.fn() }));
 
 vi.mock("./tabs.js", () => ({
   openRunTab: vi.fn((id: string) => {
@@ -98,8 +106,8 @@ vi.mock("./actions/runs.js", async () => {
   };
 });
 
-import { openRunView, showRun } from "./run-view.js";
-import { apiGet, apiGetTyped } from "./api-client.js";
+import { openRunView, refreshRun, showRun } from "./run-view.js";
+import { apiGetOrError, apiGetTyped } from "./api-client.js";
 import { invalidateRun, invalidateRunControls } from "./run-store.js";
 
 /** Drain enough microtasks for the store's two fetches and the render they wake. */
@@ -145,6 +153,7 @@ async function paintRetryRow(): Promise<HTMLElement> {
 
   openRunView(RUN, "nightly");
   showRun(RUN);
+  refreshRun(RUN);
   await drain();
   return body;
 }
@@ -178,7 +187,13 @@ function retryButton(body: HTMLElement): HTMLButtonElement {
 beforeEach(() => {
   m.opened.length = 0;
   m.settle.length = 0;
-  vi.mocked(apiGet).mockImplementation(() => Promise.resolve(m.reply.current));
+  vi.mocked(apiGetOrError).mockImplementation(() =>
+    Promise.resolve(
+      m.reply.current === undefined
+        ? { ok: false, status: 0, data: null, error: "" }
+        : { ok: true, status: 200, data: m.reply.current, error: "" },
+    ),
+  );
   vi.mocked(apiGetTyped).mockImplementation((_path, decode) =>
     Promise.resolve(m.controls.current === undefined ? null : decode(m.controls.current)),
   );

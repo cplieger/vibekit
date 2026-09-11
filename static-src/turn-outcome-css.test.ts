@@ -174,7 +174,8 @@ describe("hue comes off the severity table, on every surface", () => {
     // (13-messages.css). Motion is also what separates `running` from a still
     // outcome without relying on hue.
     const dot = ruleContaining(turns, '.turn-header[data-severity="running"] .turn-dot');
-    expect(dot.body).toMatch(/opacity:\s*calc\(1 - var\(--vk-beat\)/u);
+    expect(dot.body).toContain("vk-dot-beat");
+    expect(dot.body).toContain("--beat-peak: 0.4");
   });
 });
 
@@ -235,6 +236,8 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
     // FIVE rules, one per surface, which is the cost of keeping it. Uniform for the
     // first time: `unknown` was neutral on three surfaces, ABSENT on the footer wash
     // (so its footer was byte-identical to a clean turn's) and yellow on the notice.
+    // The rail's surfaces are ONE — its markers — since a marker is now the only kind
+    // of node the rail draws that carries an outcome.
     const rules = outcomeColourRules();
     expect(
       [...new Set(rules.map((r) => r.outcome))].sort(),
@@ -246,7 +249,6 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
       [...bySelector.keys()].sort(),
       "one unknown override per surface, all five named",
     ).toEqual([
-      '.rail-cluster[data-outcome="unknown"]',
       '.rail-marker[data-outcome="unknown"]',
       '.turn-footer[data-outcome="unknown"]',
       '.turn-footer[data-outcome="unknown"] .turn-ledger-glyph',
@@ -312,7 +314,7 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
       /color:\s*var\(--c-text-tertiary\)/u,
     );
     const rule = ruleContaining(turns, '.rail-marker[data-outcome="unknown"]');
-    expect(rule.selector).toContain('.rail-cluster[data-outcome="unknown"]');
+    expect(rule.body).toMatch(/color:\s*var\(--c-text-tertiary\)/u);
   });
 
   it("grades every outcome, so the sweep above is a partition rather than a sample", () => {

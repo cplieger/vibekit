@@ -1,9 +1,7 @@
 // ---------------------------------------------------------------------------
-// SSE handlers for assistant messages + tool calls: appended, created,
-// chunk, updated, tool_call, tool_call_update.
-//
-// Forwards into the store; the store emits change events that renderer.ts
-// subscribes to. Typed through onSSE — no `unknown` unwrap boilerplate.
+// SSE handlers for assistant messages and tool calls: appended, created,
+// chunk, updated, tool_call, tool_call_update. Each forwards into the store,
+// whose change events drive the transcript. Typed through onSSE.
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
@@ -24,14 +22,11 @@ import {
 import { markGitDirty } from "../git.js";
 import { isRepoMutatingKind } from "../tool-schema.js";
 import { isStepSubtask } from "../step-subtask.js";
-import type { ToolCall } from "../types.js";
+import type { Message, ToolCall } from "../types.js";
 
-// Defensive `=== undefined` guards in this file look unnecessary to
-// the type checker — the wire decoder marks payloads non-nullable —
-// but the SSE bus can hand us a malformed frame at runtime, and the
-// test suite exercises that path explicitly via `fireSSE(..., undefined)`.
-// Suppressing no-unnecessary-condition file-wide keeps the guards
-// intentional rather than slowly eroding under "fix" passes.
+// The `=== undefined` guards below look unnecessary to the type checker — the wire
+// decoder marks payloads non-nullable — but the SSE bus can hand us a malformed frame
+// at runtime, and the suite exercises that path via `fireSSE(..., undefined)`.
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 
 onSSE("message_appended", (chatID, m) => {
@@ -39,25 +34,29 @@ onSSE("message_appended", (chatID, m) => {
     return;
   }
   appendMessage(chatID, m);
+  // A persisted PROMPT row is the server saying it accepted a prompt, which is the ONLY
+  // liveness signal a client that did not send it gets before the first chunk: `thinking`
+  // is the sender's own dispatch and `turn_state` is connect-time synthesis. Without it a
+  // stale `turn_open: false` from that client's last load derives a terminal outcome for a
+  // turn that is starting. `markTurnLive` rather than `setThinking`, which would re-clear
+  // the previous turn's verdicts on a replayed row. Released by the next settled
+  // `turn_ended` on this chat or by the `transport:gap` reconcile, never by a page load.
+  if (opensTurn(m)) {
+    markTurnLive(chatID);
+  }
 });
 
 onSSE("message_created", (chatID, m) => {
   if (m === undefined) {
     return;
   }
-  // message_created starts a new assistant bubble; upsert so future chunks
-  // target the right ID, and mark which message is unpersisted so a refetch's
-  // array replacement doesn't drop it.
+  // Upsert so future chunks target the right id, and mark which message is unpersisted so
+  // a refetch's array replacement does not drop it.
   //
-  // It does NOT latch `thinking`, and that is the fix for the tab dot reading
-  // "working" for the length of a workflow run. This frame carries no
-  // attribution at all, and a chat-parented run's step frames arrive on the
-  // LAUNCHING chat's connection: the step opens a turn here (the run executes on
-  // this chat's session), so this was the frame that turned the dot purple for
-  // work the chat's own agent is not doing — and nothing clears it, because a
-  // step's own turn_end is dropped by the workflow attribution gate. The chunk
-  // latch below covers every case this one was written for (a KAS auto-wake,
-  // another device's send) one frame later, and it can tell a step apart.
+  // It does NOT latch `thinking`: this frame carries no attribution, and a chat-parented
+  // run's step frames arrive on the LAUNCHING chat's connection, so a latch here reads a
+  // run as this chat working with nothing to clear it — a step's own turn_end is dropped by
+  // the workflow attribution gate. The chunk latch below is one frame later and attributed.
   noteLiveTurnMessage(chatID, m.id);
   upsertMessage(chatID, m);
 });
@@ -86,24 +85,25 @@ onSSE("message_chunk", (chatID, p) => {
   );
 });
 
-/** Latch `thinking` from streaming evidence, idempotently: `setThinking(true)`
- *  clears the previous turn's verdicts, so it must only run on the transition
- *  or every chunk would re-clear latches (and churn the session signal).
- *
- *  Its ONE caller is the `message_chunk` handler, which gates it on attribution.
- *  A run step's frames arrive on the launching chat's connection, so "a frame
- *  arrived" is not the same claim as "this chat's agent is working". */
+/** Does this appended row OPEN a turn, rather than join the one already running? A steer
+ *  joins, so it asserts no liveness this handler has not already seen; `turns.ts` isPrompt
+ *  is the twin that decides the same thing for the projection. */
+function opensTurn(m: Pick<Message, "role" | "user_kind">): boolean {
+  return m.role === "user" && m.user_kind !== "steer";
+}
+
+/** Latch `thinking` from streaming evidence, idempotently: `setThinking(true)` clears the
+ *  previous turn's verdicts, so it must only run on the transition or every chunk would
+ *  re-clear latches and churn the session signal. Each caller owns its own gate. */
 function markTurnLive(chatID: string): void {
   if (chatID !== "" && get(chatID)?.thinking === false) {
     setThinking(chatID, true);
   }
 }
 
-// turn_state: connect-time synthesis of an in-flight turn (never broadcast
-// live). Emitted once per busy chat in the SSE connect replay: an
-// authoritative busy signal, the accumulated assistant message so the
-// transcript isn't blank until the next chunk, and the agent's last
-// self-declared status.
+// turn_state is connect-time synthesis and is never broadcast live, so a dropped frame
+// is gone for good: one per busy chat, carrying the authoritative busy signal and the
+// accumulated message the transcript would otherwise be blank without.
 onSSE("turn_state", (chatID, p) => {
   if (p === undefined || chatID === "") {
     return;
@@ -184,16 +184,12 @@ onSSE("tool_call_update", (chatID, p) => {
 
 /** The workspace-relative paths a completed tool call says it touched.
  *
- *  Two sources because neither is complete on its own: `locations` is what KAS
- *  reports for a read or a command and `diffs[].path` is what a write carries, and
- *  a call can have either, both, or neither. Both are already
- *  workspace-relative — `translate.relPath` is the funnel every ACP path crosses —
- *  which is the form `?paths=` resolution expects.
- *
- *  An empty result means "something changed and this call cannot say where", which
- *  `markGitDirty` reads as a full rescan. That is the honest answer: a scope
- *  derived from nothing would rescan the wrong repository and leave the right one
- *  stale. */
+ *  Two sources because neither is complete alone: `locations` is what KAS reports for a
+ *  read or a command, `diffs[].path` what a write carries, and a call can have either,
+ *  both or neither. Both are already workspace-relative (`translate.relPath` is the funnel),
+ *  which is the form `?paths=` resolution expects. EMPTY means "something changed and this
+ *  call cannot say where", which `markGitDirty` reads as a full rescan — a scope derived
+ *  from nothing rescans the wrong repository. */
 function mutatedPaths(call: ToolCall): string[] {
   const paths: string[] = [];
   for (const l of call.locations ?? []) {

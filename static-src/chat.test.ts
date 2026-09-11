@@ -6,6 +6,9 @@
 // chat (mirrors role-picker's selectMode).
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// Type-only, for the `importOriginal` below.
+import type * as Skeleton from "./skeleton.js";
+
 // The creating actions answer with the SERVER's chat header now, so their mocks
 // have to as well: a stub returning undefined would make every createSession below
 // take the refused branch and open no tab, which is the opposite of what these
@@ -71,6 +74,12 @@ vi.mock("./store.js", () => ({
   getSessions: vi.fn(() => []),
   // The per-row strip effect's tracked read; inert until a case aims it.
   watchSession: vi.fn(() => undefined),
+  // Present so real-ESM linking succeeds: `chat-settled.js` is in this graph and
+  // imports it. The real derivation rather than a flat answer, matching
+  // `__test-helpers__/store-mock.ts` — a constant would answer for a session that
+  // says otherwise.
+  turnLive: (s: { thinking: boolean; turn_open?: boolean; provisional?: boolean }) =>
+    s.thinking || s.turn_open === true || s.provisional === true,
   setActive: vi.fn((id: string) => {
     activeId = id;
   }),
@@ -138,7 +147,12 @@ vi.mock("./decision-dock.js", () => ({
   hasPendingDecision: vi.fn(() => false),
   dropDecisions: vi.fn(),
 }));
-vi.mock("./skeleton.js", () => ({ chatSkeleton: vi.fn(() => document.createElement("div")) }));
+// `paintPlaceholder` comes through REAL: it is the empty-container enforcement, and
+// the case pinning its refusal asserts against the container it guards.
+vi.mock("./skeleton.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Skeleton>()),
+  chatSkeleton: vi.fn(() => document.createElement("div")),
+}));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({
   skeletonTiming: vi.fn(() => ({ commit: vi.fn(), cancel: vi.fn() })),
 }));
@@ -204,6 +218,7 @@ vi.mock("./actions/chat.js", () => ({
 import * as chatModule from "./chat.js";
 import {
   activateChatView,
+  refreshChatView,
   closeChatTab,
   createPlannerSession,
   openTangentChat,
@@ -622,8 +637,11 @@ describe("the transcript's loading skeleton", () => {
     } as never;
   }
 
+  // The pair the dispatcher runs: the activation points the views (and is what sets
+  // the store's active chat, which the arm's own gate reads), the refresh fetches.
   async function activate(): Promise<void> {
-    openPreviousSession({ chat_id: "c-1", session_id: "s1", title: "t", updated_at: 1 });
+    activateChatView("c-1");
+    refreshChatView("c-1");
     await vi.waitFor(() => {
       expect(loadMessages).toHaveBeenCalledWith("c-1");
     });
@@ -1242,6 +1260,7 @@ describe("activateChatView routes on the staleness verdict", () => {
     vi.mocked(transcriptStale).mockReturnValue(true);
 
     activateChatView("c-stale");
+    refreshChatView("c-stale");
 
     expect(loadMessages).toHaveBeenCalledWith("c-stale");
     // The rail fetch is sequenced behind the messages fetch resolving.
@@ -1266,9 +1285,211 @@ describe("activateChatView routes on the staleness verdict", () => {
     vi.mocked(get).mockReturnValue(emptyChat("c-empty-stale"));
     vi.mocked(transcriptStale).mockReturnValue(true);
 
-    activateChatView("c-empty-stale");
+    refreshChatView("c-empty-stale");
 
     expect(loadMessages).toHaveBeenCalledWith("c-empty-stale");
+  });
+
+  it("refreshChatView on a fresh session calls neither setLoadMore nor loadMessages", () => {
+    // The furniture is the ACTIVATION's half and the fetch is gated, so a refresh of a
+    // view nothing has undermined is a no-op end to end.
+    vi.mocked(get).mockReturnValue(loadedChat("c-fresh-refresh"));
+    vi.mocked(transcriptStale).mockReturnValue(false);
+
+    refreshChatView("c-fresh-refresh");
+
+    expect(loadMessages).not.toHaveBeenCalled();
+    expect(setLoadMore).not.toHaveBeenCalled();
+  });
+
+  it("a gap makes the next activation refetch", () => {
+    // A gap bumps the sync epoch, which is the input `transcriptStale` reads, so the
+    // second pass over the same chat answers the other way. Driven through the
+    // predicate because the counter is store.ts's and this suite mocks that module.
+    vi.mocked(get).mockReturnValue(loadedChat("c-gap"));
+    vi.mocked(transcriptStale).mockReturnValue(false);
+
+    activateChatView("c-gap");
+    refreshChatView("c-gap");
+    expect(loadMessages).not.toHaveBeenCalled();
+
+    vi.mocked(transcriptStale).mockReturnValue(true);
+    activateChatView("c-gap");
+    refreshChatView("c-gap");
+
+    expect(loadMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it("one activation of a stale chat issues exactly ONE loadTurnRail", async () => {
+    // The forced rail belongs to the refresh alone. Hoisting the activation's
+    // furniture pair above its condition puts an UNFORCED rail fetch beside it, and
+    // turn-rail.ts has no abort, no in-flight set and no dedupe to absorb the pair.
+    vi.mocked(get).mockReturnValue(loadedChat("c-one-rail"));
+    vi.mocked(transcriptStale).mockReturnValue(true);
+
+    activateChatView("c-one-rail");
+    refreshChatView("c-one-rail");
+    await vi.mocked(loadMessages).mock.results[0]?.value;
+
+    expect(loadTurnRail).toHaveBeenCalledTimes(1);
+    expect(loadTurnRail).toHaveBeenCalledWith("c-one-rail", { force: true });
+  });
+
+  it("refreshChatView for a NON-active chat fetches and paints no skeleton", () => {
+    // The subagent delegation's arm gate: `showSubagent` does not setActive, so a
+    // delegated refresh's host is another chat's view or the multiplexer fallback.
+    messagesEl.replaceChildren();
+    vi.mocked(get).mockReturnValue({
+      id: "c-bg",
+      name: "seeded",
+      model: "",
+      messages: [],
+      message_count: 4,
+      has_more: false,
+      usage: { context_size: 1 },
+      draft: "",
+    } as never);
+    vi.mocked(transcriptStale).mockReturnValue(true);
+
+    activateChatView("c-other");
+    refreshChatView("c-bg");
+
+    expect(loadMessages).toHaveBeenCalledWith("c-bg");
+    expect(skeletonTiming).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The painter is the ENFORCEMENT and the arm is the optimisation, so the two are
+// pinned separately: these drive `skeletonTiming`'s show callback so
+// `paintPlaceholder` actually runs against the real container.
+// ---------------------------------------------------------------------------
+
+describe("the placeholder's own refusal, against the real container", () => {
+  function pendingChat(id: string): never {
+    return {
+      id,
+      name: "seeded",
+      model: "",
+      messages: [],
+      message_count: 6,
+      has_more: false,
+      usage: { context_size: 1 },
+      draft: "",
+    } as never;
+  }
+
+  /** Drive the show callback the way the 150ms timer would. */
+  function paintNow(): void {
+    vi.mocked(skeletonTiming).mockImplementationOnce((show) => {
+      show();
+      return { commit: vi.fn(), cancel: vi.fn() };
+    });
+  }
+
+  it("a stale window WITH content in the container paints no skeleton", () => {
+    messagesEl.replaceChildren();
+    const turn = document.createElement("div");
+    turn.setAttribute("data-reconcile-key", "turn-1");
+    messagesEl.appendChild(turn);
+    vi.mocked(get).mockReturnValue(pendingChat("c-has-turns"));
+    vi.mocked(transcriptStale).mockReturnValue(true);
+    paintNow();
+
+    activateChatView("c-has-turns");
+    refreshChatView("c-has-turns");
+
+    expect(messagesEl.children).toHaveLength(1);
+    expect(messagesEl.firstElementChild).toBe(turn);
+  });
+
+  it("replaces a previous load's failure box rather than shimmering under it", async () => {
+    // The one surface that cannot use `mount: "replace"`, so the box has to be GONE
+    // before the placeholder mounts. Driven with NO activation behind the second
+    // refresh, which is the shape a gap and a resume reach it in — and the only shape
+    // in which the refresh's own clear is the one doing the work.
+    messagesEl.replaceChildren();
+    vi.mocked(get).mockReturnValue(pendingChat("c-failed"));
+    vi.mocked(transcriptStale).mockReturnValue(true);
+    vi.mocked(loadMessages).mockResolvedValue(false);
+
+    activateChatView("c-failed");
+    refreshChatView("c-failed");
+    await vi.waitFor(() => {
+      expect(messagesEl.querySelector(".load-error")).not.toBeNull();
+    });
+
+    vi.mocked(loadMessages).mockResolvedValue(true);
+    paintNow();
+    refreshChatView("c-failed");
+
+    expect(messagesEl.querySelector(".load-error")).toBeNull();
+    expect(messagesEl.children).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The three LIVE direct callers of activateChatView. None passes through
+// `activateTabQuietly`, so none reaches `refreshRow`: each carries the fetch
+// itself, and each was a silent regression rather than a compile error.
+// ---------------------------------------------------------------------------
+
+describe("every direct caller of activateChatView still fetches", () => {
+  function staleChat(id: string): never {
+    return {
+      id,
+      name: "seeded",
+      model: "",
+      messages: [{ id: "m1", role: "user", ts: 1 }],
+      message_count: 1,
+      has_more: false,
+      usage: { context_size: 1 },
+      draft: "",
+    } as never;
+  }
+
+  it("Retry on the failure box refetches", () => {
+    messagesEl.replaceChildren();
+    vi.mocked(get).mockReturnValue(undefined);
+    vi.mocked(loadList).mockResolvedValue(false);
+
+    activateChatView("c-retry");
+    vi.mocked(get).mockReturnValue(staleChat("c-retry"));
+    vi.mocked(loadMessages).mockClear();
+    messagesEl.querySelector<HTMLButtonElement>(".load-error button")?.click();
+
+    expect(loadMessages).toHaveBeenCalledTimes(1);
+    expect(loadMessages).toHaveBeenCalledWith("c-retry");
+  });
+
+  it("healMissingChat's tail refetches once the re-read produces the chat", async () => {
+    messagesEl.replaceChildren();
+    vi.mocked(get).mockReturnValue(undefined);
+    vi.mocked(loadList).mockImplementation(async () => {
+      vi.mocked(get).mockReturnValue(staleChat("c-healed"));
+      return true;
+    });
+
+    activateChatView("c-healed");
+
+    await vi.waitFor(() => {
+      expect(loadMessages).toHaveBeenCalledWith("c-healed");
+    });
+    expect(loadMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it("openPreviousSession's belt refetches an already-open-and-active chat", async () => {
+    vi.mocked(get).mockReturnValue(staleChat("c-resume"));
+
+    await openPreviousSession({
+      chat_id: "c-resume",
+      session_id: "s1",
+      title: "t",
+      updated_at: 1,
+    });
+
+    expect(loadMessages).toHaveBeenCalledTimes(1);
+    expect(loadMessages).toHaveBeenCalledWith("c-resume");
   });
 });
 

@@ -71,7 +71,21 @@ function driverPath(pipelineID: string): string {
  *  node status, so each adapter maps its own closed vocabulary. */
 function toolState(status: ToolCall["status"] | undefined): ExecState {
   switch (status) {
+    // No invocation resident, so there is no status to report — which is a
+    // DIFFERENT fact from `pending`, whose word is "not started". That word is a
+    // positive claim about a delegate this adapter knows nothing about, and it is
+    // wrong in the case that produces it most often: a delegate that ran to
+    // completion in a turn the process died holding, so nothing persisted its
+    // invocation and the record the page reads simply has no status in it. The
+    // reader is then told the work never began.
+    //
+    // `unknown` is the member `exec-view/status.ts` already carries for exactly
+    // this, with its own word, its own ring and `inFlight` true — not knowing is
+    // not the same as finished, and the run adapter folds an unrecognised wire
+    // status the same way rather than absorbing it into a state that reads as an
+    // answer.
     case undefined:
+      return "unknown";
     case "pending":
       return "pending";
     case "in_progress":
@@ -164,7 +178,10 @@ function toLeaf(subtaskID: string, stage: string, invocation: ToolCall | undefin
         ? FALLBACK
         : humanName(stage)
       : subagentLabel(invocation);
-  const state: ExecState = invocation === undefined ? "pending" : toolState(invocation.status);
+  // ONE owner for "what does an absent invocation mean": `toolState`'s own
+  // `undefined` arm. The ternary this replaces answered `pending` here while the
+  // driver's answered `running` two folds down, so one absence had two readings.
+  const state: ExecState = toolState(invocation?.status);
   const out: ExecNode = {
     path: subagentPath(subtaskID),
     label,
@@ -228,6 +245,11 @@ function rollUp(own: ExecState, kids: readonly ExecNode[]): ExecState {
       return s;
     }
   }
+  // No `unknown` clause here, and it is unreachable rather than forgotten: a KID is
+  // only ever a pipeline stage, `SubagentMember.invocation` is non-optional, and
+  // `groupOf` admits a member only when `isSubagentInvocation` holds — so every stage
+  // has a status and `toolState`'s `undefined` arm cannot fire for one. `unknown`
+  // reaches this function as `own` alone, from a driver that is not resident.
   if (states.has("ok")) {
     return states.has("pending") ? "running" : "ok";
   }
@@ -278,10 +300,7 @@ export function subagentToExec(subtaskID: string, projection: SubagentProjection
       });
     }
   }
-  const driverState = rollUp(
-    group.driver === undefined ? "running" : toolState(group.driver.status),
-    stages,
-  );
+  const driverState = rollUp(toolState(group.driver?.status), stages);
   const root: ExecNode = {
     // No stage COUNT here: the page header's `step N of M` states it, and this row's
     // own children are the list. The transcript's pipeline box carries the count

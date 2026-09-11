@@ -23,7 +23,7 @@ interface Box {
   closeGlyph: SVGElement;
   /** An `ic-ui` glyph this factory never touched, so a size claim resolves from the
    *  tier rather than from a number pinned here — `--icon-ui` is 1rem on a fine
-   *  pointer and 1.125rem on a coarse one. */
+   *  pointer and 1.25rem on a coarse one. */
   reference: SVGElement;
   input: HTMLInputElement;
   row: HTMLElement;

@@ -39,6 +39,9 @@
   font-size: var(--fs-sm);
 }
 
+/* The pane's ONE scroller, both axes. A surface inside it declares no overflow of
+   its own: a cell of this grid is as tall as the file, so its bars would sit off
+   screen at every scroll position but the last. */
 .editor-body {
   flex: 1;
   display: grid;
@@ -51,6 +54,12 @@
 .editor-gutter {
   grid-column: 1;
   grid-row: 1;
+
+  /* Held while `.editor-body` pans a long line sideways; the z-index puts this
+     background over the code sliding under it. */
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
   padding: var(--sp-4) var(--sp-2) var(--sp-4) var(--sp-3);
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
@@ -77,7 +86,10 @@
   background: var(--c-bg-primary);
   margin: 0;
   white-space: pre;
-  overflow-x: auto;
+
+  /* No overflow: `.editor-body` scrolls, and this `1fr` track grows to the longest
+     line so it can pan. Declaring one axis is not available — CSS Overflow 3
+     computes a `visible` companion to `auto`, scrolling this box on both. */
 }
 
 /* Rendered-markdown read surface. Occupies the same grid cell as the highlight
@@ -206,7 +218,11 @@
   line-height: 1.6;
   tab-size: 4;
   outline: none;
-  overflow: auto;
+
+  /* Block axis `hidden`: the grid row is already this many lines tall, so its own
+     bar clips only trailing padding. The inline axis stays a scroller because a
+     textarea's intrinsic width is `cols`, so the `1fr` track cannot pan for it. */
+  overflow: auto hidden;
   margin: 0;
   white-space: pre;
 }
@@ -386,17 +402,4 @@
 
 .editor-find-no-results .editor-find-count {
   color: var(--c-red);
-}
-
-/* Mobile: 44px targets and 16px to defeat iOS focus-zoom. In the feature file,
-   not 50-mobile.css (see css/MANIFEST's layer note). */
-@media (width <= 40rem) {
-  .editor-find-input {
-    font-size: 16px;
-  }
-
-  .editor-find-btn {
-    inline-size: 2.75rem;
-    block-size: 2.75rem;
-  }
 }

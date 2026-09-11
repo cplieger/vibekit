@@ -23,9 +23,12 @@ import {
   computeBackoff,
   send,
   init,
+  markHydrated,
   setSnapshotChatProvider,
   BACKOFF_CAP_MS,
 } from "./transport.js";
+import { registerSSEDecoder, type SSEPayloads } from "./bus.js";
+import { noteLoaded, syncEpoch, viewStale } from "./tab-freshness.js";
 
 const VALID_CHARS = /^[a-z0-9-]+$/;
 
@@ -787,5 +790,107 @@ describe("the declared snapshot chat", () => {
       },
       { timeout: 3000 },
     );
+  });
+});
+
+// A DECODER REJECTION IS A DROPPED FRAME WITH NO OTHER RECOVERY. The cursor advances
+// before the decoder runs, so no reconnect replays the frame, and no consumer can notice
+// a state change it never saw — an older bundle against a newer server drops every
+// `tool_call_update` carrying a status it does not know, which leaves each of those cards
+// mid-flight for the life of the document. So the frame's loss has to cost the freshness
+// claim every loaded view is holding.
+describe("a frame its decoder refuses", () => {
+  class FakeDecodeSource {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSED = 2;
+    onopen: ((e: Event) => void) | null = null;
+    onmessage: ((e: MessageEvent) => void) | null = null;
+    onerror: ((e: Event) => void) | null = null;
+    readyState = 0;
+    url: string;
+    constructor(url: string) {
+      this.url = url;
+    }
+    close(): void {
+      this.readyState = FakeDecodeSource.CLOSED;
+    }
+    readonly named: ((e: MessageEvent) => void)[] = [];
+    addEventListener(_type: string, fn: (e: MessageEvent) => void): void {
+      this.named.push(fn);
+    }
+  }
+
+  /** The stream this test delivers into, plus the frames that reached the handler, so
+   *  the drop itself is observable rather than inferred from the epoch alone. */
+  function connected(): { source: FakeDecodeSource; seen: string[] } {
+    const sources: FakeDecodeSource[] = [];
+    class Recording extends FakeDecodeSource {
+      constructor(url: string) {
+        super(url);
+        sources.push(this);
+      }
+    }
+    vi.stubGlobal("EventSource", Recording);
+    const seen: string[] = [];
+    init(
+      (evt) => {
+        seen.push(evt.type);
+      },
+      () => {
+        /* status unobserved */
+      },
+    );
+    markHydrated();
+    const source = sources[0];
+    if (source === undefined) {
+      throw new Error("init opened no stream");
+    }
+    return { source, seen };
+  }
+
+  function frame(id: number, data: unknown): MessageEvent {
+    return new MessageEvent("message", { data: JSON.stringify(data), lastEventId: String(id) });
+  }
+
+  // The registry is module state shared with every other suite in this file, and there
+  // is no unregister — so the refusal is put back as a passthrough rather than left
+  // standing, which would drop this type's frames for the rest of the run.
+  afterEach(() => {
+    registerSSEDecoder("chat_updated", (v) => v as SSEPayloads["chat_updated"]);
+    vi.restoreAllMocks();
+  });
+
+  it("marks every loaded view stale, so the hole costs one refetch instead of standing", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {
+      /* the rejection logs; the test is about what it does besides logging */
+    });
+    registerSSEDecoder("chat_updated", () => {
+      throw new Error("unknown enum member");
+    });
+    const { source, seen } = connected();
+    noteLoaded("chat", "c-loaded", syncEpoch());
+    expect(viewStale("chat", "c-loaded")).toBe(false);
+
+    source.onmessage?.(frame(9001, { type: "chat_updated", chat_id: "c-loaded" }));
+
+    // The frame really was dropped — without this the case could pass on a decoder
+    // that never threw.
+    expect(seen).toEqual([]);
+    expect(viewStale("chat", "c-loaded")).toBe(true);
+  });
+
+  it("leaves a view fresh when the frame decodes, so an ordinary frame costs no refetch", () => {
+    // The negative control: `chat_updated`'s decoder accepts here, so nothing was lost
+    // and the claim stands. Without it the case above passes for a transport that
+    // invalidated on every frame.
+    registerSSEDecoder("chat_updated", (v) => v as SSEPayloads["chat_updated"]);
+    const { source, seen } = connected();
+    noteLoaded("chat", "c-loaded", syncEpoch());
+
+    source.onmessage?.(frame(9002, { type: "chat_updated", chat_id: "c-loaded" }));
+
+    expect(seen).toEqual(["chat_updated"]);
+    expect(viewStale("chat", "c-loaded")).toBe(false);
   });
 });

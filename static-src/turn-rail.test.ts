@@ -1,95 +1,143 @@
-// The rail's layout arithmetic: when per-turn markers fit, when they must
-// compress, and how time becomes space. Driven through railRows rather than the
-// DOM because the interesting part is the capacity rule, and asserting it
-// through rendered pixels would test the browser instead. (The harness only
-// because the module's scroll.ts import self-initialises against `document`.)
-//
-// The rest of the file does need the DOM. The LIFECYCLE block covers which chat
-// the rail currently belongs to — module state, and both directions of getting it
-// wrong were live defects; the block after it covers whether the rail is worth
-// showing at all; and the last covers which turn it calls current, over a faked
-// IntersectionObserver.
+// The rail's DOM and its click flow. The three arithmetics it consumes are pure and
+// tested where they live (`rail-select`, `rail-merge`, `rail-activation`); what this
+// file covers is what the renderer publishes, which chat the module belongs to,
+// whether the rail is worth showing, and the whole jump pipeline.
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 
-// scroll.ts self-initialises a singleton against #messages at import time, and
-// the rail imports it to park the reader on jump and to ask how far the
-// transcript can scroll. Neither is under test here, so stub it rather than
-// staging the whole chat DOM.
+// scroll.ts self-initialises a singleton against #messages at import time, so it is
+// stubbed rather than staged. The scroller fake is deliberately more than a value
+// bag: it records the epoch and the absolute landings the jump produces, and it
+// fires `scrollend` for a programmatic scroll the way Chromium does, so a
+// correction loop settles without waiting out its own timeout.
 //
-// `scrollable.by` is the transcript's scroll room. It has to come through
-// vi.hoisted: the factory below is hoisted above these declarations, so a plain
-// const would be a ReferenceError inside it. The default is comfortably
-// navigable, because every case outside the visibility block is about the index
-// rather than about whether the rail is worth showing.
-const { scrollable } = vi.hoisted(() => ({
-  scrollable: {
-    by: 500,
-    viewportBottom: 600,
-    onScroll: undefined as (() => void) | undefined,
-    /** The rail's `onReaderGesture` registration, so a case can fire the READER
-     *  gesture without a real scroller. Distinct from `onScroll` above on purpose:
-     *  that one is the raw listener the rail attaches for its own re-measure, and
-     *  the whole point of the seam is that the controller's own scrolls do not
-     *  reach this one. Which gestures publish it — a reader scroll AND a request for
-     *  the live edge — is `scroll.test.ts`'s subject, over a real scroller. */
-    onReaderGesture: undefined as (() => void) | undefined,
-  },
-}));
+// `top: scrollTop` on the scroller's own rect is what makes a card's measured top
+// INVARIANT under the fake scroll, which is the property a real scroller has (the
+// card's viewport rect moves, and here the cards' rects are fixed instead).
+const { scrollable } = vi.hoisted(() => {
+  const handlers = new Map<string, Set<() => void>>();
+  const el = {
+    scrollTop: 0,
+    clientHeight: 600,
+    clientTop: 0,
+    getBoundingClientRect: () => ({ top: el.scrollTop, bottom: el.scrollTop + 600, height: 600 }),
+    addEventListener(type: string, fn: () => void) {
+      const set = handlers.get(type) ?? new Set<() => void>();
+      set.add(fn);
+      handlers.set(type, set);
+    },
+    removeEventListener(type: string, fn: () => void) {
+      handlers.get(type)?.delete(fn);
+    },
+  };
+  return {
+    scrollable: {
+      /** The transcript's scroll room, which is the rail's own visibility gate. */
+      by: 500,
+      /** Where the reading line sits inside the scrollport. */
+      line: 0,
+      /** The scroller's published edge verdict. */
+      atLiveEdge: false,
+      el,
+      /** Absolute landings the jump asked for, in order. */
+      landings: [] as { px: number; behavior: string }[],
+      /** `begin` / `end`, so a case can see the epoch bracket the whole operation. */
+      epochs: [] as string[],
+      readerGesture: undefined as (() => void) | undefined,
+      transcriptMutate: undefined as (() => void) | undefined,
+      contentResize: undefined as (() => void) | undefined,
+      attach: undefined as (() => void) | undefined,
+      fire(type: string) {
+        for (const fn of [...(handlers.get(type) ?? [])]) {
+          fn();
+        }
+      },
+      reset() {
+        this.by = 500;
+        this.line = 0;
+        this.atLiveEdge = false;
+        this.landings.length = 0;
+        this.epochs.length = 0;
+        el.scrollTop = 0;
+      },
+    },
+  };
+});
 vi.mock("./scroll.js", () => ({
-  jumpTo: vi.fn(),
   scrollableBy: () => scrollable.by,
+  readingLineOffset: () => scrollable.line,
+  atLiveEdgeNow: () => scrollable.atLiveEdge,
+  getScrollEl: () => scrollable.el,
+  beginSelfScroll: () => {
+    scrollable.epochs.push("begin");
+  },
+  endSelfScroll: () => {
+    scrollable.epochs.push("end");
+  },
+  scrollToOffset: (px: number, behavior: string) => {
+    scrollable.landings.push({ px, behavior });
+    scrollable.el.scrollTop = px;
+    setTimeout(() => {
+      scrollable.fire("scrollend");
+    }, 0);
+  },
   onReaderGesture: (cb: () => void) => {
-    scrollable.onReaderGesture = cb;
+    scrollable.readerGesture = cb;
     return () => {
-      scrollable.onReaderGesture = undefined;
+      scrollable.readerGesture = undefined;
     };
   },
-  getScrollEl: () => ({
-    addEventListener: (type: string, fn: EventListener) => {
-      if (type === "scroll") {
-        scrollable.onScroll = () => {
-          fn(new Event("scroll"));
-        };
-      }
-    },
-    getBoundingClientRect: () => ({
-      top: 0,
-      bottom: scrollable.viewportBottom,
-      height: scrollable.viewportBottom,
-    }),
-  }),
+  onTranscriptMutate: (cb: () => void) => {
+    scrollable.transcriptMutate = cb;
+    return () => {
+      scrollable.transcriptMutate = undefined;
+    };
+  },
+  onContentResize: (cb: () => void) => {
+    scrollable.contentResize = cb;
+    return () => {
+      scrollable.contentResize = undefined;
+    };
+  },
+  onAttach: (cb: () => void) => {
+    scrollable.attach = cb;
+    return () => {
+      scrollable.attach = undefined;
+    };
+  },
 }));
-// The session-wide index is the rail's own fetch; the lifecycle cases below
-// decide what it does with the answer, not how it asks.
+// The session-wide index is the rail's own fetch; the lifecycle cases below decide
+// what it does with the answer, not how it asks.
 vi.mock("./api-client.js", () => ({ apiGet: vi.fn() }));
 
-// The pagination door `jumpToTurn` walks when its target is off the resident
+// The pagination door `navigateToTurn` walks when its target is off the resident
 // window. Mocked because the real one is a network fetch, and what these cases
-// assert is the rail's own sequencing around it: pending marker, page, re-resolve,
-// scroll.
+// assert is the rail's own sequencing around it.
 vi.mock("./store-load.js", () => ({ loadMessages: vi.fn(), loadList: vi.fn() }));
 
 import {
-  railRows,
-  ROW_PITCH_PX,
+  railSeams,
   mountTurnRail,
   loadTurnRail,
-  observeTurns,
+  setResidentTurns,
   pointTurnRail,
   refreshTurnRail,
   resetTurnRail,
   initTurnRailCallbacks,
   type TurnSummary,
 } from "./turn-rail.js";
+import { railMetrics } from "./rail-select.js";
 import { apiGet } from "./api-client.js";
-import { jumpTo } from "./scroll.js";
 import { loadMessages } from "./store-load.js";
-import { setSessions, setActive, get, bumpSyncEpoch } from "./store.js";
+import { setSessions, setActive, get } from "./store.js";
+import { bumpSyncEpoch } from "./tab-freshness.js";
 import type { Message, Session } from "./types.js";
 import { KEY_ATTR } from "@cplieger/reactive";
 import type { TurnOutcome } from "./turns.js";
 
 const MINUTE = 60_000;
+/** The pause a seam needs, in minutes (`turn-rail.ts` GAP_THRESHOLD_MS). Hardcoded:
+ *  read off the module, these cases would agree with whatever it believes. */
+const GAP_MINUTES = 20;
 
 function turn(n: number, over: Partial<TurnSummary> = {}): TurnSummary {
   return {
@@ -107,193 +155,93 @@ function turns(count: number, outcome: TurnOutcome = "completed"): TurnSummary[]
   return Array.from({ length: count }, (_, i) => turn(i + 1, { outcome }));
 }
 
-/** A rail tall enough for `n` rows at the pitch production lays them out in. */
-function railFor(n: number): number {
-  return n * ROW_PITCH_PX;
+/** Mount the rail and give it the box the stylesheet would.
+ *
+ *  Idempotent and a module SINGLETON, so on a whole-file run only the first block's
+ *  host holds it — hence the document-wide resolve. Browser Mode serves no CSS and
+ *  `.turn-rail` takes its height from `position: absolute; inset-block`, so without
+ *  an explicit box the track measures whatever its markers occupy and holds one
+ *  marker. The box is the harness standing in for the stylesheet. */
+function mountRail(host: HTMLElement): HTMLElement {
+  document.body.appendChild(host);
+  mountTurnRail(host);
+  const el = document.querySelector<HTMLElement>(".turn-rail");
+  if (el === null) {
+    throw new Error("rail not mounted");
+  }
+  el.style.height = "600px";
+  el.style.display = "block";
+  return el;
 }
 
-describe("railRows capacity", () => {
-  it("renders one marker per turn while they fit", () => {
-    const rows = railRows(turns(10), railFor(20));
-    expect(rows).toHaveLength(10);
-    expect(rows.every((r) => r.kind === "turn")).toBe(true);
-  });
+/** A rail tall enough for `n` markers at `pitchPx`. The pitch is a PARAMETER,
+ *  obtained the way `railMetrics` does, so a case can drive either pointer tier. */
+function railFor(n: number, pitchPx: number): number {
+  return n * pitchPx;
+}
 
-  it("renders nothing for a session with no turns", () => {
-    expect(railRows([], railFor(20))).toEqual([]);
-  });
+function fakeRect(top: number, height: number): DOMRect {
+  return {
+    x: 0,
+    y: top,
+    top,
+    bottom: top + height,
+    left: 0,
+    right: 100,
+    width: 100,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
 
-  it("fills the rail exactly at capacity without compressing", () => {
-    const rows = railRows(turns(20), railFor(20));
-    expect(rows).toHaveLength(20);
-    expect(rows.every((r) => r.kind === "turn")).toBe(true);
+/** Two animation frames: one for the rail's own coalesced pick, one for whatever it
+ *  renders from it. */
+function frames(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
   });
+}
 
-  // The threshold is computed from the measured height, never a constant: the
-  // rail is responsive, so any hardcoded turn count is wrong at some viewport.
-  it("compresses one turn past capacity", () => {
-    const rows = railRows(turns(21), railFor(20));
-    expect(rows.some((r) => r.kind === "cluster")).toBe(true);
-    expect(rows.length).toBeLessThanOrEqual(20);
-  });
-
-  it("moves the threshold with the rail's height", () => {
-    // The same 30 turns: clustered in a short rail, direct in a tall one.
-    expect(railRows(turns(30), railFor(10)).some((r) => r.kind === "cluster")).toBe(true);
-    expect(railRows(turns(30), railFor(40)).every((r) => r.kind === "turn")).toBe(true);
-  });
-
-  // The arithmetic that killed the "every marker is still clickable" promise:
-  // 300 turns in a 900px rail is 3px each, so a per-turn hit area is a false
-  // promise however many dots get painted.
-  it("never emits more rows than the rail can give a conforming target", () => {
-    const height = 900;
-    const rows = railRows(turns(300), height);
-    expect(rows.length).toBeLessThanOrEqual(Math.floor(height / 24));
-  });
-
-  it("keeps every turn reachable through some row", () => {
-    const rows = railRows(turns(300), 900);
-    const covered = new Set<number>();
-    for (const r of rows) {
-      if (r.kind === "turn") {
-        covered.add(r.s.n);
-      } else if (r.kind === "cluster") {
-        for (let n = r.from; n <= r.to; n++) {
-          covered.add(n);
-        }
-      }
-    }
-    for (let n = 1; n <= 300; n++) {
-      expect(covered.has(n), `turn ${String(n)} unreachable`).toBe(true);
-    }
-  });
-
-  it("degrades to a single row rather than zero on an unmeasurably short rail", () => {
-    const rows = railRows(turns(50), 0);
-    expect(rows.length).toBeGreaterThan(0);
-  });
-});
-
-describe("railRows clustering", () => {
-  it("labels a cluster with its range and its size", () => {
-    const rows = railRows(turns(100), railFor(10));
-    const first = rows.find((r) => r.kind === "cluster");
-    expect(first).toBeDefined();
-    if (first?.kind !== "cluster") {
-      throw new Error("expected a cluster");
-    }
-    expect(first.from).toBe(1);
-    expect(first.to).toBeGreaterThan(first.from);
-    expect(first.count).toBe(first.to - first.from + 1);
-  });
-
-  // A range holding one failure is a range you want to look at, so the cluster
-  // reports its worst member rather than an average or its first.
-  it("reports a cluster's worst outcome", () => {
-    const all = turns(40);
-    const twenty = all[19];
-    if (twenty === undefined) {
-      throw new Error("fixture");
-    }
-    twenty.outcome = "failed";
-    const rows = railRows(all, railFor(4));
-    const owning = rows.find((r) => r.kind === "cluster" && r.from <= 20 && r.to >= 20);
-    if (owning?.kind !== "cluster") {
-      throw new Error("expected a cluster covering turn 20");
-    }
-    expect(owning.outcome).toBe("failed");
-  });
-
-  it("prefers failed over interrupted in the same cluster", () => {
-    const all = turns(40);
-    const a = all[0];
-    const b = all[1];
-    if (a === undefined || b === undefined) {
-      throw new Error("fixture");
-    }
-    a.outcome = "interrupted";
-    b.outcome = "failed";
-    const rows = railRows(all, railFor(4));
-    const first = rows[0];
-    if (first?.kind !== "cluster") {
-      throw new Error("expected a cluster");
-    }
-    expect(first.outcome).toBe("failed");
-  });
-
-  it("prefers interrupted over unknown, so a cluster never reads calmer than its worst member", () => {
-    // The rank table is a total ORDER and cannot be derived from `severityOf` —
-    // that table's four buckets carry no order — but it MAY NOT CONTRADICT the hue
-    // partition, and it did: `interrupted` ranked BELOW `unknown`, so this cluster
-    // painted the neutral ink of an unreadable end (29-turns.css's stated `unknown`
-    // exception) while the interrupted turn's own marker painted red.
-    const all = turns(40);
-    const a = all[0];
-    const b = all[1];
-    if (a === undefined || b === undefined) {
-      throw new Error("fixture");
-    }
-    a.outcome = "unknown";
-    b.outcome = "interrupted";
-    const rows = railRows(all, railFor(4));
-    const first = rows[0];
-    if (first?.kind !== "cluster") {
-      throw new Error("expected a cluster");
-    }
-    expect(first.outcome).toBe("interrupted");
-  });
-
-  it("restricts the rows to the zoomed range", () => {
-    const rows = railRows(turns(300), 900, { from: 50, to: 60 });
-    expect(rows).toHaveLength(11);
-    expect(rows.every((r) => r.kind === "turn")).toBe(true);
-    const first = rows[0];
-    if (first?.kind !== "turn") {
-      throw new Error("expected a turn row");
-    }
-    expect(first.s.n).toBe(50);
-  });
-
-  it("returns nothing for a zoom range that matches no turn", () => {
-    expect(railRows(turns(10), 900, { from: 500, to: 600 })).toEqual([]);
-  });
-});
-
-describe("railRows gap markers", () => {
-  it("inserts a gap when turns are far apart in real time", () => {
-    const rows = railRows(
-      [turn(1, { ts: 0 }), turn(2, { ts: 60 * MINUTE }), turn(3, { ts: 61 * MINUTE })],
-      railFor(20),
-    );
-    expect(rows.map((r) => r.kind)).toEqual(["turn", "gap", "turn", "turn"]);
+describe("railSeams", () => {
+  it("emits a seam between two turns further apart than the threshold", () => {
+    const all = [turn(1, { ts: 0 }), turn(2, { ts: 60 * MINUTE }), turn(3, { ts: 61 * MINUTE })];
+    const seams = railSeams(all, all);
+    expect(seams).toHaveLength(1);
+    expect(seams[0]?.fromN).toBe(1);
+    expect(seams[0]?.toN).toBe(2);
   });
 
   it("leaves an ordinary pause alone", () => {
-    const rows = railRows([turn(1, { ts: 0 }), turn(2, { ts: 19 * MINUTE })], railFor(20));
-    expect(rows.every((r) => r.kind === "turn")).toBe(true);
+    const all = [turn(1, { ts: 0 }), turn(2, { ts: 19 * MINUTE })];
+    expect(railSeams(all, all)).toEqual([]);
   });
 
-  it("carries the elapsed time so the row can name it", () => {
-    const rows = railRows([turn(1, { ts: 0 }), turn(2, { ts: 120 * MINUTE })], railFor(20));
-    const gap = rows.find((r) => r.kind === "gap");
-    if (gap?.kind !== "gap") {
-      throw new Error("expected a gap");
-    }
-    expect(gap.ms).toBe(120 * MINUTE);
+  it("carries the elapsed time for the seam's label", () => {
+    const all = [turn(1, { ts: 0 }), turn(2, { ts: 120 * MINUTE })];
+    expect(railSeams(all, all)[0]?.ms).toBe(120 * MINUTE);
   });
 
-  // Gap rows take space a marker would otherwise have, so capacity has to
-  // subtract them or the rail overflows exactly when the session has seams.
-  it("charges gap rows against the marker capacity", () => {
-    const height = railFor(10);
-    const noGaps = railRows(turns(10), height);
-    expect(noGaps.every((r) => r.kind === "turn")).toBe(true);
+  it("withholds a pause whose own two turns are not both shown", () => {
+    // The turn that OPENS the new sitting has no marker, so there is no pair of
+    // positions the band belongs between. Drawing it against the nearest survivor
+    // would put the break at a turn that did not take one.
+    const all = [turn(1, { ts: 0 }), turn(2, { ts: 120 * MINUTE }), turn(3, { ts: 121 * MINUTE })];
+    const shown = [all[0], all[2]].filter((t) => t !== undefined);
+    expect(railSeams(all, shown)).toEqual([]);
+  });
 
-    const withGaps = Array.from({ length: 10 }, (_, i) => turn(i + 1, { ts: i * 60 * MINUTE }));
-    const rows = railRows(withGaps, height);
-    expect(rows.length).toBeLessThanOrEqual(10);
-    expect(rows.some((r) => r.kind === "cluster")).toBe(true);
+  it("reads the time between two non-adjacent markers as work, not as a pause", () => {
+    // Six turns five minutes apart: nobody stopped, and the first and last are
+    // neighbours on a downsampled axis half an hour apart. That elapsed time is five
+    // turns of continuous work, which is what the walk over SHOWN used to report.
+    const all = Array.from({ length: 6 }, (_, i) => turn(i + 1, { ts: i * 5 * MINUTE }));
+    const shown = [all[0], all[5]].filter((t) => t !== undefined);
+    expect(shown[1]?.ts).toBeGreaterThan(GAP_MINUTES * MINUTE);
+    expect(railSeams(all, shown)).toEqual([]);
   });
 });
 
@@ -313,17 +261,16 @@ describe("which chat the rail belongs to", () => {
   const host = document.createElement("div");
 
   beforeAll(() => {
-    document.body.appendChild(host);
-    mountTurnRail(host);
+    mountRail(host);
   });
 
   beforeEach(() => {
-    scrollable.by = 500;
+    scrollable.reset();
     resetTurnRail();
   });
 
   function rail(): HTMLElement {
-    const el = host.querySelector<HTMLElement>(".turn-rail");
+    const el = document.querySelector<HTMLElement>(".turn-rail");
     if (el === null) {
       throw new Error("rail not mounted");
     }
@@ -332,7 +279,7 @@ describe("which chat the rail belongs to", () => {
 
   /** The marker labels currently painted, in order. */
   function markers(): string[] {
-    return [...rail().querySelectorAll(".rail-marker")].map((b) => b.textContent ?? "");
+    return [...rail().querySelectorAll(".rail-marker")].map((b) => b.firstChild?.textContent ?? "");
   }
 
   it("paints one marker per turn once the index arrives", async () => {
@@ -415,21 +362,16 @@ describe("which chat the rail belongs to", () => {
 // The rail is a NAVIGATOR, so it has nothing to offer a transcript the reader can
 // already see whole — on a one-turn chat it was a column of one digit beside a
 // conversation with nowhere to go. These cases pin the gate in both directions,
-// including the one the IntersectionObserver structurally cannot cover.
+// including the one activation structurally cannot cover.
 describe("the rail only appears once the transcript can be scrolled", () => {
   const host = document.createElement("div");
 
   beforeAll(() => {
-    document.body.appendChild(host);
-    // Idempotent, and the rail is a module singleton: if a block above already
-    // mounted it, this is a no-op and the element is in THAT host. So resolve it
-    // from the document rather than from `host`, which keeps this block correct
-    // both in file order and on its own under a `-t` filter.
-    mountTurnRail(host);
+    mountRail(host);
   });
 
   beforeEach(() => {
-    scrollable.by = 500;
+    scrollable.reset();
     resetTurnRail();
   });
 
@@ -442,7 +384,7 @@ describe("the rail only appears once the transcript can be scrolled", () => {
   }
 
   function markers(): string[] {
-    return [...rail().querySelectorAll(".rail-marker")].map((b) => b.textContent ?? "");
+    return [...rail().querySelectorAll(".rail-marker")].map((b) => b.firstChild?.textContent ?? "");
   }
 
   it("stays empty for a transcript that fits, however many turns it holds", async () => {
@@ -463,11 +405,11 @@ describe("the rail only appears once the transcript can be scrolled", () => {
     await loadTurnRail("c-grows");
     expect(markers()).toEqual([]);
 
-    // The transcript grew — a streaming turn, or a page of history landing. This
-    // is the case the IntersectionObserver cannot see: the turn IN VIEW has not
-    // changed, so only observeTurns' own check re-renders here.
+    // The transcript grew — a streaming turn, or a page of history landing. This is
+    // the case activation cannot see: the turn holding the reading line has not
+    // changed, so only the paint's own re-render reaches it.
     scrollable.by = 500;
-    observeTurns([]);
+    setResidentTurns([]);
 
     expect(markers()).toEqual(["1", "2"]);
   });
@@ -479,7 +421,7 @@ describe("the rail only appears once the transcript can be scrolled", () => {
 
     // A window the reader just made taller, or turns folding away.
     scrollable.by = 0;
-    observeTurns([]);
+    setResidentTurns([]);
 
     expect(markers()).toEqual([]);
   });
@@ -495,203 +437,72 @@ describe("the rail only appears once the transcript can be scrolled", () => {
     expect(markers()).toEqual([]);
 
     scrollable.by = 101;
-    observeTurns([]);
+    setResidentTurns([]);
     expect(markers()).toEqual(["1"]);
-  });
-
-  it("re-renders only when the answer actually changed", async () => {
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
-    await loadTurnRail("c-stable");
-    const first = rail().querySelector(".rail-marker");
-
-    // Same navigability, so the paint must not rebuild the rows: a rebuild per
-    // streamed chunk would discard the node under the reader's pointer.
-    observeTurns([]);
-
-    expect(rail().querySelector(".rail-marker")).toBe(first);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Which turn the rail calls current.
+// Which turn the reading line is in.
 //
-// The rule: the turn occupying the most VERTICAL pixels of the transcript
-// viewport is active. A 20px sliver never beats a 500px turn, whichever one is
-// newer. If two turns occupy the same height, a fully visible footer wins; if
-// that is also equal, the later turn wins so several short turns settle on the
-// last one the reader can see.
-//
-// Two properties are pinned here rather than one, because they fail
-// independently. The geometry pick is the reported defect. The KEPT visible
-// map is the other half: an IntersectionObserver callback carries only the
-// cards whose state CHANGED, so a scroll that changes one card cannot erase the
-// geometry of every incumbent.
+// The rule: the active turn is the one whose box contains the reading line, read
+// from the scroll offset against a cached table. The arithmetic is
+// `rail-activation.ts`'s subject; what these cases pin is the wiring — the table is
+// built from the cards the paint hands over, a scroll frame re-reads it without
+// measuring anything, and both end clamps survive.
 // ---------------------------------------------------------------------------
 
-/** One notification's geometry for a single card. */
-interface FakeEntry {
-  target: Element;
-  isIntersecting: boolean;
-  top?: number;
-  height?: number;
-  footerTop?: number;
-  footerHeight?: number;
-}
-
-function fakeRect(top: number, height: number): DOMRect {
-  return {
-    x: 0,
-    y: top,
-    top,
-    bottom: top + height,
-    left: 0,
-    right: 100,
-    width: 100,
-    height,
-    toJSON: () => ({}),
-  };
-}
-
-/** The layout engine's half of the observer contract: a recorder plus a trigger.
- *  Nothing in a harness-built DOM scrolls, so with the real observer this
- *  module's selection is unobservable — no notification would ever fire. Same
- *  discipline as scroll.observers.test.ts's FakeResizeObserver. */
-class FakeIntersectionObserver {
-  static instances: FakeIntersectionObserver[] = [];
-  readonly targets = new Set<Element>();
-  private readonly cb: (entries: IntersectionObserverEntry[]) => void;
-
-  constructor(cb: (entries: IntersectionObserverEntry[]) => void) {
-    this.cb = cb;
-    FakeIntersectionObserver.instances.push(this);
-  }
-
-  observe(el: Element): void {
-    this.targets.add(el);
-  }
-
-  /** Stop watching one target. The real API fires NO callback for it, and that
-   *  silence is the whole reason the module has a departure path — so this must
-   *  not helpfully deliver a not-intersecting entry. */
-  unobserve(el: Element): void {
-    this.targets.delete(el);
-  }
-
-  disconnect(): void {
-    this.targets.clear();
-  }
-
-  /** Deliver one notification after applying the card and footer geometry the
-   *  real layout engine would expose at that scroll position. */
-  fire(states: FakeEntry[]): void {
-    for (const s of states) {
-      const top = s.top ?? 0;
-      const height = s.height ?? 300;
-      Object.defineProperty(s.target, "getBoundingClientRect", {
-        configurable: true,
-        value: () => fakeRect(top, height),
-      });
-      const footer = s.target.querySelector<HTMLElement>(":scope > .turn-footer");
-      if (footer !== null && s.footerTop !== undefined) {
-        const footerHeight = s.footerHeight ?? 40;
-        Object.defineProperty(footer, "getBoundingClientRect", {
-          configurable: true,
-          value: () => fakeRect(s.footerTop ?? 0, footerHeight),
-        });
-      }
-    }
-    this.cb(
-      states.map((s) => {
-        const top = s.top ?? 0;
-        const height = s.height ?? 300;
-        const visibleTop = Math.max(0, top);
-        const visibleBottom = Math.min(scrollable.viewportBottom, top + height);
-        const visibleHeight = s.isIntersecting ? Math.max(0, visibleBottom - visibleTop) : 0;
-        return {
-          target: s.target,
-          isIntersecting: s.isIntersecting,
-          boundingClientRect: fakeRect(top, height),
-          intersectionRect: fakeRect(visibleTop, visibleHeight),
-        } as unknown as IntersectionObserverEntry;
-      }),
-    );
-  }
-}
-
-describe("which turn the rail calls current", () => {
+describe("which turn the reading line is in", () => {
   const host = document.createElement("div");
   let rail: HTMLElement;
+  /** How many times a card has been measured, so a scroll frame's layout cost is
+   *  observable rather than argued about. */
+  let measures = 0;
 
   beforeAll(() => {
-    document.body.appendChild(host);
-    // Idempotent and a module SINGLETON, so on a whole-file run this no-ops and
-    // the rail is still inside the block above's host. Resolve it from the
-    // document rather than from `host`, which holds it only when this block runs
-    // first.
-    mountTurnRail(host);
-    const mounted = document.querySelector<HTMLElement>(".turn-rail");
-    if (mounted === null) {
-      throw new Error("rail not mounted");
-    }
-    rail = mounted;
-    // Browser Mode serves no stylesheet, and `.turn-rail` takes its height from
-    // `position: absolute; inset-block: …` (29-turns.css), so the mounted nav
-    // measures whatever its markers happen to occupy — ~21px. That makes
-    // `capacity` 1, the whole session renders as ONE cluster, and there is no
-    // `.rail-marker` to carry `data-current`, so every assertion below would read
-    // "". An explicit box is the harness standing in for the stylesheet, not a
-    // workaround for the module.
-    rail.style.height = "600px";
-    rail.style.display = "block";
+    rail = mountRail(host);
   });
 
   beforeEach(() => {
-    // These cases predate the navigability gate, so none of them sets scroll
-    // room. Every assertion below reads `.rail-marker[data-current]`, which only
-    // exists while `navigable()` is true — so restore the comfortable default
-    // rather than inheriting whatever the visibility block above left behind.
-    scrollable.by = 500;
-    scrollable.viewportBottom = 600;
+    scrollable.reset();
     resetTurnRail();
-    FakeIntersectionObserver.instances.length = 0;
-    // Inside the test, never at module scope: `unstubGlobals` restores the
-    // global between tests, and turn-rail.ts checks `typeof
-    // IntersectionObserver` at CALL time rather than at import.
-    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
+    measures = 0;
   });
 
-  /** A mounted turn card, carrying the reconcile key `numberOf` resolves. */
-  function card(n: number): HTMLElement {
+  /** A turn card at a known top in the scroller's own frame. Detached and rect-faked:
+   *  what the module needs from a card is its key and its box. */
+  function card(n: number, top: number): HTMLElement {
     const e = document.createElement("div");
     e.className = "turn";
     e.setAttribute(KEY_ATTR, `m${String(n)}`);
-    const footer = document.createElement("div");
-    footer.className = "turn-footer";
-    e.appendChild(footer);
+    const rect = (): DOMRect => {
+      measures++;
+      return fakeRect(top, 400);
+    };
+    Object.defineProperty(e, "getBoundingClientRect", { configurable: true, value: rect });
+    Object.defineProperty(e, "getClientRects", {
+      configurable: true,
+      value: () => [fakeRect(top, 400)],
+    });
     return e;
   }
 
   /** The label of the marker the rail marks current, or "" when none is. */
   function current(): string {
     const el = rail.querySelector<HTMLElement>(".rail-marker[data-current]");
-    return el?.textContent ?? "";
+    return el?.firstChild?.textContent ?? "";
   }
 
-  /** Seat the session-wide index, then observe one card per turn. Returns the
-   *  cards by turn number and the observer the rail just built. */
-  async function seat(
-    id: string,
-    ns: number[],
-  ): Promise<{ cards: Map<number, HTMLElement>; io: FakeIntersectionObserver }> {
+  async function seat(id: string, ns: number[]): Promise<Map<number, HTMLElement>> {
     vi.mocked(apiGet).mockResolvedValue({ turns: ns.map((n) => turn(n)) });
     await loadTurnRail(id);
-    const cards = new Map(ns.map((n) => [n, card(n)]));
-    observeTurns([...cards.values()]);
-    const io = FakeIntersectionObserver.instances.at(-1);
-    if (io === undefined) {
-      throw new Error("no observer built");
-    }
-    return { cards, io };
+    const cards = new Map(ns.map((n, i) => [n, card(n, i * 400)]));
+    // A view attaches at its own restored offset, so seating a chat starts at the top
+    // rather than inheriting whatever the previous case scrolled to.
+    scrollable.el.scrollTop = 0;
+    setResidentTurns([...cards.values()]);
+    await frames();
+    return cards;
   }
 
   function at(cards: Map<number, HTMLElement>, n: number): HTMLElement {
@@ -702,229 +513,121 @@ describe("which turn the rail calls current", () => {
     return c;
   }
 
-  // The reported scenario: only the bottom edge of turn 1 remains while turn 2
-  // fills the viewport. The older sliver cannot win.
-  it("ignores an older sliver beside a fully visible lower turn", async () => {
-    const { cards, io } = await seat("c-a", [1, 2]);
+  async function scrollTo(px: number): Promise<void> {
+    scrollable.el.scrollTop = px;
+    scrollable.fire("scroll");
+    await frames();
+  }
 
-    io.fire([
-      { target: at(cards, 1), isIntersecting: true, top: -280, height: 300 },
-      {
-        target: at(cards, 2),
-        isIntersecting: true,
-        top: 100,
-        height: 400,
-        footerTop: 460,
-      },
-    ]);
+  it("names the turn the reading line has entered", async () => {
+    await seat("c-a", [1, 2, 3]);
+
+    await scrollTo(450);
 
     expect(current()).toBe("2");
   });
 
-  it("does not let a newer sliver beat the dominant turn above it", async () => {
-    const { cards, io } = await seat("c-a", [1, 2]);
-
-    io.fire([
-      { target: at(cards, 1), isIntersecting: true, top: 20, height: 500 },
-      { target: at(cards, 2), isIntersecting: true, top: 580, height: 300 },
-    ]);
-
-    expect(current()).toBe("1");
-  });
-
-  it("uses a fully visible footer to break an equal-height tie", async () => {
-    const { cards, io } = await seat("c-a", [1, 2]);
-
-    io.fire([
-      {
-        target: at(cards, 1),
-        isIntersecting: true,
-        top: 0,
-        height: 300,
-        footerTop: 260,
-      },
-      { target: at(cards, 2), isIntersecting: true, top: 300, height: 300, footerTop: 590 },
-    ]);
-
-    expect(current()).toBe("1");
-  });
-
-  it("uses the later turn when equal-height cards have the same footer state", async () => {
-    const { cards, io } = await seat("c-a", [1, 2]);
-
-    io.fire([
-      { target: at(cards, 1), isIntersecting: true, top: 0, height: 300 },
-      { target: at(cards, 2), isIntersecting: true, top: 300, height: 300 },
-    ]);
-
-    expect(current()).toBe("2");
-  });
-
-  it("re-measures the visible cards while the transcript scrolls", async () => {
-    const { cards, io } = await seat("c-a", [1, 2]);
-    const one = at(cards, 1);
-    const two = at(cards, 2);
-
-    io.fire([
-      { target: one, isIntersecting: true, top: 0, height: 400 },
-      { target: two, isIntersecting: true, top: 400, height: 200 },
-    ]);
-    expect(current()).toBe("1");
-
-    // Both cards remain intersecting, so a threshold-0 observer sends no new
-    // membership callback. The scroll listener must still move the current
-    // marker when their visible heights cross.
-    Object.defineProperty(one, "getBoundingClientRect", {
-      configurable: true,
-      value: () => fakeRect(-300, 400),
-    });
-    Object.defineProperty(two, "getBoundingClientRect", {
-      configurable: true,
-      value: () => fakeRect(100, 500),
-    });
-    scrollable.onScroll?.();
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          resolve();
-        });
-      });
-    });
-
-    expect(current()).toBe("2");
-  });
-
-  // Written as "turn 1 is the only turn in the viewport", NOT "all three are
-  // visible, expect 1" — the latter would contradict the rule. At the top of a
-  // transcript the first turn is active because it is the lowest one on screen,
-  // not because it is first.
+  // Written as the top CLAMP, not as "all three are visible, expect 1": at the top
+  // of a transcript the reading line can sit above the first card entirely.
   it("names the first turn at the very top of the transcript", async () => {
-    const { cards, io } = await seat("c-a", [1, 2, 3]);
-
-    io.fire([
-      { target: at(cards, 1), isIntersecting: true, top: 0 },
-      { target: at(cards, 2), isIntersecting: false, top: 700 },
-      { target: at(cards, 3), isIntersecting: false, top: 1400 },
-    ]);
+    await seat("c-a", [1, 2, 3]);
 
     expect(current()).toBe("1");
   });
 
   it("names the last turn at the very bottom of the transcript", async () => {
-    const { cards, io } = await seat("c-a", [1, 2, 3, 4, 5]);
+    await seat("c-a", [1, 2, 3]);
+    scrollable.atLiveEdge = true;
 
-    io.fire([
-      { target: at(cards, 1), isIntersecting: false, top: -1400 },
-      { target: at(cards, 2), isIntersecting: false, top: -1000 },
-      { target: at(cards, 3), isIntersecting: false, top: -600 },
-      { target: at(cards, 4), isIntersecting: true, top: -100 },
-      { target: at(cards, 5), isIntersecting: true, top: 300 },
-    ]);
-    expect(current()).toBe("5");
+    await scrollTo(500);
 
-    // A departure must not move the mark, in either direction.
-    io.fire([{ target: at(cards, 4), isIntersecting: false, top: -500 }]);
-    expect(current()).toBe("5");
-  });
-
-  it("keeps the lower turn when a partial callback reports only an arrival", async () => {
-    const { cards, io } = await seat("c-a", [4, 5]);
-
-    io.fire([{ target: at(cards, 5), isIntersecting: true, top: 100 }]);
-    expect(current()).toBe("5");
-
-    // Nothing about turn 5 changed, so it is absent from this callback. Deriving
-    // the pick from these entries alone would name 4.
-    io.fire([{ target: at(cards, 4), isIntersecting: true, top: -300 }]);
-    expect(current()).toBe("5");
-  });
-
-  it("drops the previous chat's visible turns when re-pointed", async () => {
-    const a = await seat("c-a", [1, 2, 3]);
-    a.io.fire([{ target: at(a.cards, 3), isIntersecting: true, top: 0 }]);
     expect(current()).toBe("3");
+  });
+
+  it("answers from the cached table with no layout read per scroll frame", async () => {
+    await seat("c-a", [1, 2, 3]);
+    const afterBuild = measures;
+    expect(afterBuild).toBeGreaterThan(0);
+
+    for (const px of [100, 420, 460, 830, 900]) {
+      await scrollTo(px);
+    }
+
+    // The table is a cache invalidated by mutation and reflow, never by a scroll: a
+    // position stored in the scroller's own frame does not move when it scrolls.
+    expect(measures).toBe(afterBuild);
+    expect(current()).toBe("3");
+  });
+
+  it("drops the previous chat's cards when re-pointed", async () => {
+    const a = await seat("c-a", [1, 2, 3]);
+    await scrollTo(830);
+    expect(current()).toBe("3");
+    expect(a.size).toBe(3);
 
     pointTurnRail("c-b");
-    const b = await seat("c-b", [1, 2]);
-    b.io.fire([{ target: at(b.cards, 1), isIntersecting: true, top: 0 }]);
+    await seat("c-b", [1, 2]);
 
-    // Never "3": chat B has no turn 3, and a leftover member would outrank
-    // every turn it does have.
+    // Never "3": chat B has no turn 3, and a leftover card would name a turn it
+    // does not have.
     expect(current()).toBe("1");
   });
 
-  // -------------------------------------------------------------------------
-  // The observer is built ONCE and its target set is diffed.
-  //
-  // `paint()` calls observeTurns on every repaint, and a repaint fires at SSE
-  // frame rate, so this used to disconnect and construct a fresh
-  // IntersectionObserver over every turn card many times a second. Dropping the
-  // rebuild is what forces the departure handling: a fresh observer re-reported
-  // every target it was given, and a persistent one reports nothing for a target
-  // it already watches.
-  // -------------------------------------------------------------------------
+  it("drops a departed turn from the table and re-answers without it", async () => {
+    const cards = await seat("c-a", [1, 2, 3]);
+    await scrollTo(830);
+    expect(current()).toBe("3");
 
-  it("builds ONE observer however many paints re-observe", async () => {
-    const { cards } = await seat("c-a", [1, 2, 3]);
-    observeTurns([...cards.values()]);
-    observeTurns([...cards.values()]);
+    // Turn 3's card leaves the transcript. Nothing else re-derives the mark, so the
+    // paint's own invalidation has to re-answer or the marker stays on a turn that
+    // is no longer mounted.
+    setResidentTurns([at(cards, 1), at(cards, 2)]);
+    await frames();
 
-    expect(FakeIntersectionObserver.instances).toHaveLength(1);
+    expect(current()).toBe("2");
   });
 
-  it("keeps the visible-card map across a paint", async () => {
-    const { cards, io } = await seat("c-a", [2, 3]);
-    io.fire([{ target: at(cards, 3), isIntersecting: true, top: 0 }]);
+  it("re-answers after a reflow that moved a top with no scroll behind it", async () => {
+    const cards = await seat("c-a", [1, 2, 3]);
+    await scrollTo(830);
     expect(current()).toBe("3");
 
-    // A repaint with the same cards. Nothing re-reports an already-watched
-    // target, so a `visible.clear()` here is never refilled.
-    observeTurns([...cards.values()]);
-    expect(current()).toBe("3");
+    // `content-visibility: auto` on `.msg-row` makes a card swapping its estimated
+    // height for its real one move every top below it, with no DOM change and no
+    // scroll. The reading line then sits in a different turn.
+    Object.defineProperty(at(cards, 3), "getClientRects", {
+      configurable: true,
+      value: () => [fakeRect(2000, 400)],
+    });
+    Object.defineProperty(at(cards, 3), "getBoundingClientRect", {
+      configurable: true,
+      value: () => fakeRect(2000, 400),
+    });
+    scrollable.contentResize?.();
+    await frames();
 
-    // The assertion above is NOT what pins the map, and the difference matters:
-    // pickDominant deliberately leaves the marker alone on an empty map, so an
-    // accidental clear still reads "3" until something fires. What it loses is
-    // the incumbent geometry; the next PARTIAL callback then becomes the whole
-    // map and can name the arrival incorrectly. Turn 2 entering above turn 3
-    // must not become current.
-    io.fire([{ target: at(cards, 2), isIntersecting: true, top: -100 }]);
-
-    expect(current()).toBe("3");
+    expect(current()).toBe("2");
   });
 
-  it("observes an arrival and leaves the incumbents alone", async () => {
-    const { cards, io } = await seat("c-a", [1, 2]);
-    const arrival = card(3);
-
-    observeTurns([...cards.values(), arrival]);
-
-    expect(io.targets.has(arrival)).toBe(true);
-    expect(io.targets.size).toBe(3);
-    expect(FakeIntersectionObserver.instances).toHaveLength(1);
-  });
-
-  it("unobserves a departure and stops calling its turn current", async () => {
-    const { cards, io } = await seat("c-a", [1, 2, 3]);
-    io.fire([
-      { target: at(cards, 2), isIntersecting: true, top: -100 },
-      { target: at(cards, 3), isIntersecting: true, top: 200 },
-    ]);
+  it("re-answers when a parked view takes the scroller back", async () => {
+    const cards = await seat("c-a", [1, 2, 3]);
+    await scrollTo(830);
     expect(current()).toBe("3");
 
-    // Turn 3's card leaves the transcript. `unobserve` fires no callback, so
-    // without an explicit delete AND a re-pick its number stays in the set and
-    // keeps naming a turn that is no longer mounted.
-    //
-    // This is the scenario a rebuild-per-paint observer also covered, and the
-    // assertion is deliberately stronger than that version's: a rebuild emptied
-    // the set and could only refill it from the fresh observer's first callback,
-    // so the marker stayed on the departed turn until the browser delivered one.
-    // Resolving the departure here corrects it AT the paint, with no callback in
-    // between and no second observer to fire through.
-    observeTurns([at(cards, 1), at(cards, 2)]);
+    // The reader switches away and back. An unpark restores a saved scrollTop
+    // against cards the residency pass re-measured while the view was parked, and it
+    // is neither a DOM mutation nor a card resize, so nothing else re-asks.
+    Object.defineProperty(at(cards, 3), "getClientRects", {
+      configurable: true,
+      value: () => [fakeRect(2000, 400)],
+    });
+    Object.defineProperty(at(cards, 3), "getBoundingClientRect", {
+      configurable: true,
+      value: () => fakeRect(2000, 400),
+    });
+    scrollable.attach?.();
+    await frames();
 
-    expect(io.targets.has(at(cards, 3))).toBe(false);
     expect(current()).toBe("2");
   });
 });
@@ -943,15 +646,14 @@ describe("the rail record gates the activation fetch", () => {
   const host = document.createElement("div");
 
   beforeAll(() => {
-    document.body.appendChild(host);
-    // Idempotent: if a block above already mounted the rail, the element lives
-    // in that host; resolve markers from the document.
-    mountTurnRail(host);
+    mountRail(host);
   });
 
   function markers(): string[] {
     const rail = document.querySelector<HTMLElement>(".turn-rail");
-    return [...(rail?.querySelectorAll(".rail-marker") ?? [])].map((b) => b.textContent ?? "");
+    return [...(rail?.querySelectorAll(".rail-marker") ?? [])].map(
+      (b) => b.firstChild?.textContent ?? "",
+    );
   }
 
   function session(id: string, messageCount: number): Session {
@@ -978,7 +680,7 @@ describe("the rail record gates the activation fetch", () => {
   }
 
   beforeEach(() => {
-    scrollable.by = 500;
+    scrollable.reset();
     resetTurnRail();
     setSessions([session("c-a", 2), session("c-b", 0)]);
     // Per-chat answers: c-a is the two-turn session under test, c-b an empty
@@ -1098,155 +800,72 @@ describe("the rail record gates the activation fetch", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A card whose number the index does not know YET.
+// The set comes from what the transcript HOLDS, extended backwards by the index.
 //
-// The rail's index is refetched at three moments — turn end, chat activation, a
-// transport gap — and none of them is turn START. So for the whole duration of a
-// running turn the newest card's reconcile key is absent from the index and its
-// absolute number is unknowable, which used to mean every intersection entry for
-// it was DISCARDED. Nothing recovered it: an IntersectionObserver reports
-// membership CHANGES, `observeTurns` keeps the card in its observed set so it is
-// never re-observed, and the pick re-measures only what is already in the visible
-// map. The card entered the map only by leaving the viewport and coming back — so
-// on the common shape, the newest turn fully on screen and staying there, the rail
-// marked the PREVIOUS turn for the rest of the session.
+// The index is refetched at three moments — turn end, chat activation, a transport
+// gap — and none of them is turn START, so a rail assembled from the index alone
+// cannot show the turn running now. The merge is `rail-merge.ts`'s subject; this is
+// the DOM-level property it buys.
 // ---------------------------------------------------------------------------
 
-describe("a card the index cannot place yet", () => {
+describe("the newest turn needs no fetch", () => {
   const host = document.createElement("div");
   let rail: HTMLElement;
 
   beforeAll(() => {
-    document.body.appendChild(host);
-    mountTurnRail(host);
-    const mounted = document.querySelector<HTMLElement>(".turn-rail");
-    if (mounted === null) {
-      throw new Error("rail not mounted");
-    }
-    rail = mounted;
-    rail.style.height = "600px";
-    rail.style.display = "block";
+    rail = mountRail(host);
   });
 
   beforeEach(() => {
-    scrollable.by = 500;
-    scrollable.viewportBottom = 600;
+    scrollable.reset();
     resetTurnRail();
-    FakeIntersectionObserver.instances.length = 0;
-    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
   });
 
-  function card(n: number): HTMLElement {
-    const e = document.createElement("div");
-    e.className = "turn";
-    e.setAttribute(KEY_ATTR, `m${String(n)}`);
-    return e;
+  function markers(): string[] {
+    return [...rail.querySelectorAll(".rail-marker")].map((b) => b.firstChild?.textContent ?? "");
   }
 
-  function current(): string {
-    return rail.querySelector<HTMLElement>(".rail-marker[data-current]")?.textContent ?? "";
+  function msg(id: string, role: Message["role"]): Message {
+    return { id, role, content: "x", ts: 1 };
   }
 
-  function io(): FakeIntersectionObserver {
-    const built = FakeIntersectionObserver.instances.at(-1);
-    if (built === undefined) {
-      throw new Error("no observer built");
-    }
-    return built;
-  }
-
-  it("adopts it the moment the index arrives, with no scroll and no second callback", async () => {
-    // THE REGRESSION CASE. Turn 3 is streaming, so the index the rail holds names
-    // only turns 1 and 2.
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
-    await loadTurnRail("c-live");
-    const settled = card(2);
-    const streaming = card(3);
-    observeTurns([settled, streaming]);
-
-    // The streaming card is dominant — it fills the viewport — and unplaceable.
-    io().fire([
-      { target: settled, isIntersecting: true, top: -280, height: 300 },
-      { target: streaming, isIntersecting: true, top: 20, height: 500 },
+  it("paints a resident turn the index has never seen", async () => {
+    // Turn 3 is streaming, so the index the rail holds names only turns 1 and 2.
+    setSessions([
+      {
+        id: "c-live",
+        name: "c-live",
+        model: "",
+        acp_session_id: "",
+        current_mode_id: "",
+        usage: {
+          context_pct: 0,
+          context_size: 0,
+          credits: 0,
+          turn_count: 0,
+          last_turn_ms: 0,
+          has_real_data: false,
+        },
+        message_count: 6,
+        messages: [
+          msg("m1", "user"),
+          msg("a1", "assistant"),
+          msg("m2", "user"),
+          msg("a2", "assistant"),
+          msg("m3", "user"),
+          msg("a3", "assistant"),
+        ],
+        has_more: false,
+        thinking: false,
+        working_label: "Thinking",
+      },
     ]);
-    expect(current()).toBe("2");
-
-    // `turn_ended` lands. NOTHING else happens: no scroll, no intersection change,
-    // no repaint of the cards. Pre-fix the card had been thrown away and only a
-    // trip out of the viewport and back could put it in the map.
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2), turn(3)] });
-    await refreshTurnRail("c-live");
-
-    expect(current()).toBe("3");
-  });
-
-  it("drops it on departure by KEY, not by the number it does not have", async () => {
-    // The mirror half. `visible.delete(numberOf(c))` resolved an unplaceable card
-    // to 0 and deleted key 0, leaving the real entry to keep winning from a node
-    // that had left the DOM.
+    setActive("c-live");
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
+
     await loadTurnRail("c-live");
-    const settled = card(2);
-    const streaming = card(3);
-    observeTurns([settled, streaming]);
-    io().fire([
-      { target: settled, isIntersecting: true, top: 200, height: 200 },
-      { target: streaming, isIntersecting: true, top: 400, height: 300 },
-    ]);
 
-    // The streaming card unmounts (a chat switch's dispose, an eviction) while it
-    // is still unplaceable, then the index catches up. A leftover entry would name
-    // turn 3 from a detached element.
-    observeTurns([settled]);
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2), turn(3)] });
-    await refreshTurnRail("c-live");
-
-    expect(current()).toBe("2");
-  });
-
-  it("re-picks when the index itself moves, with no scroll", async () => {
-    // The rail's numbering is the SERVER's, so a rewind or a compaction can change
-    // which absolute number a resident card carries. `refreshTurnRail` ended in
-    // `render()` alone, so the marker stayed on the old number until a scroll frame.
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
-    await loadTurnRail("c-live");
-    const one = card(1);
-    const two = card(2);
-    observeTurns([one, two]);
-    io().fire([
-      { target: one, isIntersecting: true, top: -280, height: 300 },
-      { target: two, isIntersecting: true, top: 20, height: 500 },
-    ]);
-    expect(current()).toBe("2");
-
-    // The same two cards, renumbered: m2 is now absolute turn 7.
-    vi.mocked(apiGet).mockResolvedValue({
-      turns: [turn(6, { id: "m1" }), turn(7, { id: "m2" })],
-    });
-    await refreshTurnRail("c-live");
-
-    expect(current()).toBe("7");
-  });
-
-  it("marks the CLUSTER holding the current turn, and no sibling", async () => {
-    // Past capacity every turn is inside a cluster, so `data-current` on markers
-    // alone left a long session's rail with no statement of position at all.
-    vi.mocked(apiGet).mockResolvedValue({ turns: turns(60) });
-    await loadTurnRail("c-long");
-    // 4 rows at the pitch production uses, so 60 turns cluster into 4 ranges of 15.
-    rail.style.height = `${String(railFor(4))}px`;
-    const at30 = card(30);
-    observeTurns([at30]);
-    io().fire([{ target: at30, isIntersecting: true, top: 0, height: 400 }]);
-
-    const clusters = [...rail.querySelectorAll<HTMLElement>(".rail-cluster")];
-    expect(clusters.length).toBeGreaterThan(1);
-    const marked = clusters.filter((c) => c.dataset["current"] !== undefined);
-    expect(marked).toHaveLength(1);
-    expect(marked[0]?.textContent).toBe("16\u201330");
-    expect(marked[0]?.getAttribute("aria-label")).toContain("contains the current turn");
-    // No marker to carry it at this height, so the cluster is the only channel.
-    expect(rail.querySelector(".rail-marker[data-current]")).toBeNull();
+    expect(markers()).toEqual(["1", "2", "3"]);
   });
 });
 
@@ -1269,19 +888,11 @@ describe("which card a marker jumps to", () => {
   const mountedBodies: string[] = [];
 
   beforeAll(() => {
-    document.body.appendChild(host);
-    mountTurnRail(host);
-    const mounted = document.querySelector<HTMLElement>(".turn-rail");
-    if (mounted === null) {
-      throw new Error("rail not mounted");
-    }
-    rail = mounted;
-    rail.style.height = "600px";
-    rail.style.display = "block";
+    rail = mountRail(host);
   });
 
   beforeEach(() => {
-    scrollable.by = 500;
+    scrollable.reset();
     resetTurnRail();
     mountedBodies.length = 0;
     view = document.createElement("div");
@@ -1314,7 +925,7 @@ describe("which card a marker jumps to", () => {
 
   function marker(n: number): HTMLButtonElement {
     const btn = [...rail.querySelectorAll<HTMLButtonElement>(".rail-marker")].find(
-      (b) => b.textContent === String(n),
+      (b) => b.firstChild?.textContent === String(n),
     );
     if (btn === undefined) {
       throw new Error(`no marker for turn ${String(n)}`);
@@ -1349,6 +960,15 @@ describe("which card a marker jumps to", () => {
     };
   }
 
+  /** Wait out the whole operation: the body build, one frame, the scroll and its
+   *  settle. The epoch's close is the one observable every exit reaches, including
+   *  the exits that scroll nowhere. */
+  async function settleJump(): Promise<void> {
+    await vi.waitFor(() => {
+      expect(scrollable.epochs).toContain("end");
+    });
+  }
+
   it("lands on the clicked turn's own card, not the one holding that window ordinal", async () => {
     // THE REGRESSION CASE. The session has 10 turns; the store holds absolute 5..10
     // as window ordinals 1..6. So `#turn-6` exists and is absolute turn TEN.
@@ -1362,30 +982,28 @@ describe("which card a marker jumps to", () => {
     }
 
     marker(6).click();
-    await Promise.resolve();
+    await settleJump();
 
-    expect(vi.mocked(jumpTo)).toHaveBeenCalledTimes(1);
-    const target = vi.mocked(jumpTo).mock.calls[0]?.[0];
-    expect(target).toBe(wanted);
-    expect(target?.getAttribute(KEY_ATTR)).toBe("m6");
+    expect(mountedBodies).toEqual(["m6"]);
+    expect(wanted.dataset["railTarget"]).toBe("");
     // And the id it does NOT use, spelled out so a reader sees the two spaces:
     // pre-fix this element was the target.
     expect(view.querySelector("#turn-6")?.getAttribute(KEY_ATTR)).toBe("m10");
   });
 
-  it("scrolls instantly", async () => {
-    // A smooth scroll freezes its target at flight start and emits ~50 unmarked
-    // scroll events, which scroll.ts reads as reader gestures — that is what
-    // revokes the selection the same click just made.
+  it("scrolls with the platform's own animation, and instantly under reduced motion", async () => {
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await loadTurnRail("c-paged");
     residentCard(1, "m1");
     residentCard(2, "m2");
 
     marker(2).click();
-    await Promise.resolve();
+    await settleJump();
 
-    expect(vi.mocked(jumpTo).mock.calls[0]?.[1]).toEqual({ block: "start", behavior: "instant" });
+    // ONE animation, and a correction never starts a second: `auto` is the only
+    // behavior a correction may use.
+    expect(scrollable.landings[0]?.behavior).toBe("smooth");
+    expect(scrollable.landings.slice(1).every((l) => l.behavior === "auto")).toBe(true);
   });
 
   it("resolves inside the ACTIVE view, not a parked one", async () => {
@@ -1405,9 +1023,10 @@ describe("which card a marker jumps to", () => {
     const wanted = residentCard(2, "m2");
 
     marker(2).click();
-    await Promise.resolve();
+    await settleJump();
 
-    expect(vi.mocked(jumpTo).mock.calls[0]?.[0]).toBe(wanted);
+    expect(wanted.dataset["railTarget"]).toBe("");
+    expect(decoy.dataset["railTarget"]).toBeUndefined();
     parked.remove();
   });
 
@@ -1437,22 +1056,17 @@ describe("which card a marker jumps to", () => {
     });
 
     marker(6).click();
-    // POLLED, not slept. The jump awaits two dynamic imports, the page, and a frame,
-    // and a fixed wait that is long enough on an idle box is not long enough on a
-    // loaded one — which is exactly the flake shape `testing.md` names. Waiting on
-    // the observable the jump produces is deterministic at any load.
-    await vi.waitFor(() => {
-      expect(vi.mocked(jumpTo)).toHaveBeenCalled();
-    });
+    await settleJump();
 
     expect(pendingWhileWaiting).toBe(true);
     expect(vi.mocked(loadMessages)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(jumpTo).mock.calls[0]?.[0]?.getAttribute(KEY_ATTR)).toBe("m6");
+    // The landing turn's body is built on demand, because a paginated landing is a
+    // tier-3 stub — and it is built BEFORE anything scrolls, so the build's own
+    // scroller write cannot land mid-animation.
+    expect(mountedBodies).toEqual(["m6"]);
+    expect(scrollable.landings.length).toBeGreaterThan(0);
     // The pending state is a fetch in flight, so it has to be gone afterwards.
     expect(marker(6).dataset["pending"]).toBeUndefined();
-    // And the landing turn's body is built on demand, because a paginated landing
-    // is a tier-3 stub.
-    expect(mountedBodies).toEqual(["m6"]);
   });
 
   it("scrolls nowhere when the turn is neither resident nor reachable", async () => {
@@ -1469,19 +1083,176 @@ describe("which card a marker jumps to", () => {
     // `waitFor` on a state that was never entered passes on its first poll and
     // asserts nothing.
     expect(marker(1).dataset["pending"]).toBe("");
-    // The assertions after this are NEGATIVE, so the wait cannot poll for them. It
-    // polls for the state the jump passes THROUGH instead: pending is set on the
-    // click and cleared in the `finally`, so its disappearance is the jump having
-    // run to completion at any load.
-    await vi.waitFor(() => {
-      expect(marker(1).dataset["pending"]).toBeUndefined();
-    });
+    await settleJump();
 
-    expect(vi.mocked(jumpTo)).not.toHaveBeenCalled();
+    expect(scrollable.landings).toEqual([]);
     expect(vi.mocked(loadMessages)).not.toHaveBeenCalled();
     // The pending state means a fetch is in flight, so a dead end has to clear it —
     // a marker left pulsing forever is the same silence the state exists to break.
     expect(marker(1).dataset["pending"]).toBeUndefined();
+  });
+
+  it("does not let a superseded jump close the epoch the second one opened", async () => {
+    // TWO CLICKS INSIDE ONE PAGING BUDGET. The first jump is still waiting on its
+    // paging door when the second starts, and its own exit then runs while the second
+    // is mid-flight. Unguarded, that exit's `endSelfScroll` closed the SECOND's
+    // epoch — after which `autoScrollIfAnchored` re-pins to the live edge and the
+    // reader is taken off the turn they clicked.
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
+    await loadTurnRail("c-overlap");
+    setSessions([paged("c-overlap", [msg("m2")], true)]);
+    setActive("c-overlap");
+    const target = residentCard(2, "m2");
+
+    // The FIRST jump's turn is off the resident window, so it holds inside the paging
+    // door until the test releases it — and its page then reports no progress, which
+    // is the early return that takes it straight to its own `finally`.
+    let releaseFirst: (() => void) | undefined;
+    const paging = new Promise<void>((resolve) => {
+      releaseFirst = () => {
+        resolve();
+      };
+    });
+    vi.mocked(loadMessages).mockImplementation(async () => {
+      await paging;
+      return false;
+    });
+
+    // The SECOND jump's card is measured as MOVING, so its correction loop is still
+    // running when the first one comes back. Releasing the first at the second
+    // measurement is what puts its exit INSIDE the second's flight, and the third
+    // measurement is a point where that exit has provably happened: everything left
+    // of the first jump is microtasks, and a correction waits out a whole task.
+    const epochsWhenFirstExited: string[] = [];
+    let measured = 0;
+    Object.defineProperty(target, "getBoundingClientRect", {
+      configurable: true,
+      value: () => {
+        measured += 1;
+        if (measured === 2) {
+          releaseFirst?.();
+        }
+        if (measured === 3) {
+          epochsWhenFirstExited.push(...scrollable.epochs);
+        }
+        // Settles from the fourth measurement, so the loop converges rather than
+        // spending its whole budget.
+        return fakeRect(Math.min(measured, 3) * 1000, 400);
+      },
+    });
+    Object.defineProperty(target, "getClientRects", {
+      configurable: true,
+      value: () => [fakeRect(0, 400)],
+    });
+
+    marker(1).click();
+    marker(2).click();
+    await vi.waitFor(() => {
+      expect(epochsWhenFirstExited.length).toBeGreaterThan(0);
+    });
+
+    // The second jump's epoch is still the only one, and still open.
+    expect(epochsWhenFirstExited).toEqual(["begin"]);
+
+    await settleJump();
+    // One bracket for the two clicks, and the landing the second click asked for.
+    expect(scrollable.epochs).toEqual(["begin", "end"]);
+    expect(target.dataset["railTarget"]).toBe("");
+    expect(marker(2).dataset["selected"]).toBe("");
+  });
+
+  it("lets a second click on a paging marker be the jump already in flight", async () => {
+    // The generation counter's own hazard: an impatient second click on a marker that
+    // is still fetching would otherwise CLAIM the generation, be refused by the
+    // pending gate, and leave the jump it was waiting on superseded — so the page
+    // lands and nothing ever scrolls to it.
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
+    await loadTurnRail("c-double-click");
+    setSessions([paged("c-double-click", [msg("m2")], true)]);
+    setActive("c-double-click");
+    residentCard(2, "m2");
+    vi.mocked(loadMessages).mockImplementation(async () => {
+      const s = get("c-double-click");
+      if (s !== undefined) {
+        s.messages = [msg("m1"), ...s.messages];
+      }
+      const landed = residentCard(1, "m1");
+      await Promise.resolve();
+      return landed !== null;
+    });
+
+    marker(1).click();
+    marker(1).click();
+    await settleJump();
+
+    expect(vi.mocked(loadMessages)).toHaveBeenCalledTimes(1);
+    expect(mountedBodies).toEqual(["m1"]);
+    expect(scrollable.landings.length).toBeGreaterThan(0);
+    expect(
+      view.querySelector<HTMLElement>('[data-reconcile-key="m1"]')?.dataset["railTarget"],
+    ).toBe("");
+    expect(marker(1).dataset["pending"]).toBeUndefined();
+  });
+
+  it("stops a superseded jump's corrections from writing the scroller", async () => {
+    // The other half of the same guard. A correction loop that keeps running after a
+    // second click re-measures ITS card and writes a landing the reader has already
+    // left, so the two jumps fight over the scroller for the rest of the budget.
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
+    await loadTurnRail("c-overlap-corrections");
+    const first = residentCard(1, "m1");
+    const second = residentCard(2, "m2");
+    let measured = 0;
+    Object.defineProperty(first, "getBoundingClientRect", {
+      configurable: true,
+      value: () => {
+        measured += 1;
+        // The second click lands INSIDE the first jump's correction loop, which is
+        // the only place a stale correction can be observed at all.
+        if (measured === 2) {
+          marker(2).click();
+        }
+        return fakeRect(measured * 1000, 400);
+      },
+    });
+    Object.defineProperty(first, "getClientRects", {
+      configurable: true,
+      value: () => [fakeRect(0, 400)],
+    });
+    // A landing of its own that nothing else can produce, so the sequence below says
+    // which jump wrote what.
+    Object.defineProperty(second, "getBoundingClientRect", {
+      configurable: true,
+      value: () => fakeRect(7000, 400),
+    });
+    Object.defineProperty(second, "getClientRects", {
+      configurable: true,
+      value: () => [fakeRect(7000, 400)],
+    });
+
+    marker(1).click();
+    await vi.waitFor(() => {
+      expect(scrollable.landings.some((l) => l.px === 7000)).toBe(true);
+    });
+    await settleJump();
+
+    // The first jump's aim and the correction it was already inside both stand; its
+    // third measurement never happens.
+    expect(scrollable.landings.map((l) => l.px)).toEqual([1000, 2000, 7000]);
+  });
+
+  it("closes the epoch on every exit, including the one that scrolls nowhere", async () => {
+    // An epoch left open suspends pagination and silences every reader gesture, so
+    // the close sits in a `finally` rather than after the scroll.
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
+    await loadTurnRail("c-epoch");
+    setSessions([paged("c-epoch", [msg("m2")], false)]);
+    setActive("c-epoch");
+
+    marker(1).click();
+    await settleJump();
+
+    expect(scrollable.epochs).toEqual(["end"]);
   });
 });
 
@@ -1492,7 +1263,7 @@ describe("which card a marker jumps to", () => {
 // `jumpToTurn` and nothing else. With the target already at the reader's scroll
 // position `scrollIntoView` is a no-op: no scroll event, no intersection change, no
 // pick, no render. So clicking turn 3 while turns 2 and 3 were both fully visible
-// produced NOTHING observable, and because dominance is by visible pixels the
+// produced NOTHING observable, and because dominance was by visible pixels the
 // taller turn 2 kept the mark — the rail contradicting the reader's own choice.
 // ---------------------------------------------------------------------------
 
@@ -1502,23 +1273,12 @@ describe("a click always produces a reaction", () => {
   let view: HTMLElement;
 
   beforeAll(() => {
-    document.body.appendChild(host);
-    mountTurnRail(host);
-    const mounted = document.querySelector<HTMLElement>(".turn-rail");
-    if (mounted === null) {
-      throw new Error("rail not mounted");
-    }
-    rail = mounted;
-    rail.style.height = "600px";
-    rail.style.display = "block";
+    rail = mountRail(host);
   });
 
   beforeEach(() => {
-    scrollable.by = 500;
-    scrollable.viewportBottom = 600;
+    scrollable.reset();
     resetTurnRail();
-    FakeIntersectionObserver.instances.length = 0;
-    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
     view = document.createElement("div");
     view.className = "transcript-view";
     document.body.appendChild(view);
@@ -1532,21 +1292,26 @@ describe("a click always produces a reaction", () => {
     view.remove();
   });
 
-  function residentCard(n: number): HTMLElement {
+  function residentCard(n: number, top: number): HTMLElement {
     const e = document.createElement("div");
     e.className = "turn";
     e.id = `turn-${String(n)}`;
     e.setAttribute(KEY_ATTR, `m${String(n)}`);
-    const footer = document.createElement("div");
-    footer.className = "turn-footer";
-    e.appendChild(footer);
+    Object.defineProperty(e, "getBoundingClientRect", {
+      configurable: true,
+      value: () => fakeRect(top, 400),
+    });
+    Object.defineProperty(e, "getClientRects", {
+      configurable: true,
+      value: () => [fakeRect(top, 400)],
+    });
     view.appendChild(e);
     return e;
   }
 
   function marker(n: number): HTMLButtonElement {
     const btn = [...rail.querySelectorAll<HTMLButtonElement>(".rail-marker")].find(
-      (b) => b.textContent === String(n),
+      (b) => b.firstChild?.textContent === String(n),
     );
     if (btn === undefined) {
       throw new Error(`no marker for turn ${String(n)}`);
@@ -1554,33 +1319,30 @@ describe("a click always produces a reaction", () => {
     return btn;
   }
 
-  /** Two turns both fully on screen, turn 2 taller — so the geometry pick names
-   *  turn 2 and a click on turn 3 has nothing to scroll to. The reported scene. */
+  async function settleJump(): Promise<void> {
+    await vi.waitFor(() => {
+      expect(scrollable.epochs).toContain("end");
+    });
+  }
+
+  /** Turns 2 and 3 resident, the reading line at the top — so activation names turn
+   *  2 and a click on turn 3 has almost nothing to scroll to. The reported scene. */
   async function bothVisible(): Promise<{ two: HTMLElement; three: HTMLElement }> {
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2), turn(3)] });
     await loadTurnRail("c-both");
-    const two = residentCard(2);
-    const three = residentCard(3);
-    observeTurns([two, three]);
-    const io = FakeIntersectionObserver.instances.at(-1);
-    if (io === undefined) {
-      throw new Error("no observer built");
-    }
-    io.fire([
-      { target: two, isIntersecting: true, top: 0, height: 400, footerTop: 360 },
-      { target: three, isIntersecting: true, top: 400, height: 200, footerTop: 560 },
-    ]);
+    const two = residentCard(2, 0);
+    const three = residentCard(3, 400);
+    setResidentTurns([two, three]);
+    await frames();
     return { two, three };
   }
 
   it("marks the clicked marker even when the scroll cannot move", async () => {
-    // THE REGRESSION CASE. `jumpTo` is a mock that scrolls nowhere, which is exactly
-    // what the real one does for a target already at the reader's position.
     await bothVisible();
-    expect(rail.querySelector(".rail-marker[data-current]")?.textContent).toBe("2");
+    expect(rail.querySelector(".rail-marker[data-current]")?.firstChild?.textContent).toBe("2");
 
     marker(3).click();
-    await Promise.resolve();
+    await settleJump();
 
     const three = marker(3);
     const two = marker(2);
@@ -1601,30 +1363,29 @@ describe("a click always produces a reaction", () => {
     expect(rail.querySelectorAll("[data-current], [data-selected]")).toHaveLength(1);
 
     marker(3).click();
-    await Promise.resolve();
+    await settleJump();
     expect(rail.querySelectorAll("[data-current], [data-selected]")).toHaveLength(1);
-    expect(rail.querySelector("[data-selected]")?.textContent).toBe("3");
+    expect(rail.querySelector("[data-selected]")?.firstChild?.textContent).toBe("3");
 
-    scrollable.onReaderGesture?.();
+    scrollable.readerGesture?.();
     expect(rail.querySelectorAll("[data-current], [data-selected]")).toHaveLength(1);
-    expect(rail.querySelector("[data-current]")?.textContent).toBe("2");
   });
 
   it("keeps exactly one marker claiming to be current", async () => {
     await bothVisible();
     marker(3).click();
-    await Promise.resolve();
+    await settleJump();
 
     expect(rail.querySelectorAll("[aria-current='true']")).toHaveLength(1);
   });
 
-  it("marks the pick even when it IS the dominant turn", async () => {
+  it("marks the pick even when it IS the turn activation already names", async () => {
     // The coincident case, and the reason the two marks are exclusive rather than
-    // additive: clicking the marker the scroll already named has to read as a pick,
-    // or the rail stops tracking and shows nothing to say why.
+    // additive: clicking the marker the reading line already named has to read as a
+    // pick, or the rail stops tracking and shows nothing to say why.
     await bothVisible();
     marker(2).click();
-    await Promise.resolve();
+    await settleJump();
 
     expect(marker(2).dataset["selected"]).toBe("");
     expect(marker(2).dataset["current"]).toBeUndefined();
@@ -1633,50 +1394,40 @@ describe("a click always produces a reaction", () => {
   });
 
   it("flashes the landing card, then takes the ring away", async () => {
-    vi.useFakeTimers();
-    try {
-      await bothVisible();
-      const three = view.querySelector<HTMLElement>('[data-reconcile-key="m3"]');
+    await bothVisible();
+    const three = view.querySelector<HTMLElement>('[data-reconcile-key="m3"]');
 
-      marker(3).click();
-      await Promise.resolve();
-      expect(three?.dataset["railTarget"]).toBe("");
+    marker(3).click();
+    await settleJump();
+    expect(three?.dataset["railTarget"]).toBe("");
 
-      vi.advanceTimersByTime(1001);
+    await vi.waitFor(() => {
       expect(three?.dataset["railTarget"]).toBeUndefined();
-    } finally {
-      vi.useRealTimers();
-    }
+    });
   });
 
   it("moves the ring to the newest landing rather than letting the first timer strip it", async () => {
-    vi.useFakeTimers();
-    try {
-      await bothVisible();
-      marker(3).click();
-      await Promise.resolve();
-      vi.advanceTimersByTime(600);
-      marker(2).click();
-      await Promise.resolve();
-      // Past the FIRST click's deadline. A shared timer would have fired here and
-      // cleared the card the reader just landed on.
-      vi.advanceTimersByTime(600);
-
+    await bothVisible();
+    marker(3).click();
+    await settleJump();
+    marker(2).click();
+    await vi.waitFor(() => {
       expect(
-        view.querySelector('[data-reconcile-key="m2"]')?.getAttribute("data-rail-target"),
+        view.querySelector<HTMLElement>('[data-reconcile-key="m2"]')?.dataset["railTarget"],
       ).toBe("");
-      expect(
-        view.querySelector('[data-reconcile-key="m3"]')?.getAttribute("data-rail-target"),
-      ).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
+    });
+
+    // A shared timer would have fired on the FIRST click's deadline and cleared the
+    // card the reader just landed on.
+    expect(
+      view.querySelector<HTMLElement>('[data-reconcile-key="m3"]')?.dataset["railTarget"],
+    ).toBeUndefined();
   });
 
   it("hands tracking back on a reader gesture", async () => {
     await bothVisible();
     marker(3).click();
-    await Promise.resolve();
+    await settleJump();
     expect(marker(3).dataset["selected"]).toBe("");
 
     // Through the real seam: the rail subscribed at mount, and this is the callback
@@ -1684,30 +1435,33 @@ describe("a click always produces a reaction", () => {
     // it was and must not care — a scroll and a request for the live edge are both
     // the reader stating a position — so which writes publish it is pinned in
     // `scroll.test.ts`, over a real scroller, rather than restated here.
-    scrollable.onReaderGesture?.();
+    scrollable.readerGesture?.();
 
     expect(marker(3).dataset["selected"]).toBeUndefined();
-    expect(rail.querySelector(".rail-marker[data-current]")?.textContent).toBe("2");
-    expect(marker(2).getAttribute("aria-current")).toBe("true");
+    expect(rail.querySelector(".rail-marker[data-current]")).not.toBeNull();
   });
 
   it("drops a pick the arriving index no longer names", async () => {
     // THE REWIND. Rewind lives in the turn footer, so picking a marker and then
     // reverting the session is two clicks apart — and the pick is held by the
     // turn's opening-message id, which that index no longer carries. Without the
-    // drop the rail marks NO position on any row: `rowNode` withholds `data-current`
-    // while a pick stands, and matches `data-selected` on a turn that is gone.
-    await bothVisible();
+    // drop the rail marks NO position on any row: `markerNode` withholds
+    // `data-current` while a pick stands, and matches `data-selected` on a turn that
+    // is gone.
+    const { two } = await bothVisible();
     marker(3).click();
-    await Promise.resolve();
-    expect(rail.querySelector("[data-selected]")?.textContent).toBe("3");
+    await settleJump();
+    expect(rail.querySelector("[data-selected]")?.firstChild?.textContent).toBe("3");
 
+    // A rewind truncates the session, so the turn's card leaves the transcript and
+    // the next index no longer names it.
+    setResidentTurns([two]);
+    await frames();
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await refreshTurnRail("c-both");
 
     expect(rail.querySelector("[data-selected]")).toBeNull();
     expect(rail.querySelectorAll("[data-current], [data-selected]")).toHaveLength(1);
-    expect(rail.querySelector("[data-current]")?.textContent).toBe("2");
     expect(rail.querySelectorAll("[aria-current='true']")).toHaveLength(1);
   });
 
@@ -1718,13 +1472,13 @@ describe("a click always produces a reaction", () => {
     // lose it on the next turn of the very conversation being read.
     await bothVisible();
     marker(3).click();
-    await Promise.resolve();
+    await settleJump();
 
     // A fourth turn arrives — a later index that still carries `m3`.
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2), turn(3), turn(4)] });
     await refreshTurnRail("c-both");
 
-    expect(rail.querySelector("[data-selected]")?.textContent).toBe("3");
+    expect(rail.querySelector("[data-selected]")?.firstChild?.textContent).toBe("3");
     expect(rail.querySelector("[data-current]")).toBeNull();
   });
 
@@ -1734,81 +1488,47 @@ describe("a click always produces a reaction", () => {
     // Held by number, `data-selected` would have stayed on whatever now wears 3.
     await bothVisible();
     marker(3).click();
-    await Promise.resolve();
-    expect(rail.querySelector("[data-selected]")?.textContent).toBe("3");
+    await settleJump();
+    expect(rail.querySelector("[data-selected]")?.firstChild?.textContent).toBe("3");
 
+    setSessions([]);
     vi.mocked(apiGet).mockResolvedValue({
       turns: [turn(1, { id: "m2" }), turn(2, { id: "m3" })],
     });
     await refreshTurnRail("c-both");
 
-    expect(rail.querySelector("[data-selected]")?.textContent).toBe("2");
+    expect(rail.querySelector("[data-selected]")?.firstChild?.textContent).toBe("2");
     expect(rail.querySelectorAll("[aria-current='true']")).toHaveLength(1);
-    expect(rail.querySelector("[aria-current='true']")?.textContent).toBe("2");
+    expect(rail.querySelector("[aria-current='true']")?.firstChild?.textContent).toBe("2");
   });
 
-  it("survives a re-measure that finds a different dominant turn", async () => {
-    // Deliberately NOT cleared by the pick: a streaming turn's own growth moves
-    // dominance with no reader gesture behind it, and dropping the selection there
-    // would revoke the reader's choice while they sit perfectly still.
+  it("survives a table rebuild that moves activation to a different turn", async () => {
+    // Deliberately NOT cleared by activation moving: a streaming turn's own growth
+    // moves the reading line's answer with no reader gesture behind it, and dropping
+    // the pick there would revoke the reader's choice while they sit perfectly still.
     const { two, three } = await bothVisible();
-    marker(3).click();
-    await Promise.resolve();
+    marker(2).click();
+    await settleJump();
+    expect(marker(2).dataset["selected"]).toBe("");
 
-    Object.defineProperty(two, "getBoundingClientRect", {
-      configurable: true,
-      value: () => fakeRect(-300, 400),
-    });
-    Object.defineProperty(three, "getBoundingClientRect", {
-      configurable: true,
-      value: () => fakeRect(100, 500),
-    });
-    scrollable.onScroll?.();
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          resolve();
-        });
-      });
-    });
+    scrollable.el.scrollTop = 500;
+    setResidentTurns([two, three]);
+    await frames();
 
-    expect(marker(3).dataset["selected"]).toBe("");
+    expect(marker(2).dataset["selected"]).toBe("");
+    expect(rail.querySelector("[data-current]")).toBeNull();
   });
 
   it("drops the selection on a chat switch", async () => {
     await bothVisible();
     marker(3).click();
-    await Promise.resolve();
+    await settleJump();
 
     pointTurnRail("c-other");
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2), turn(3)] });
     await refreshTurnRail("c-other");
 
     expect(rail.querySelector(".rail-marker[data-selected]")).toBeNull();
-  });
-
-  it("drops the selection when a cluster is zoomed, since a range is not a turn", async () => {
-    // Tall enough for 60 direct markers at the pitch production uses, so a marker
-    // exists to pick before the rail is shrunk into ranges.
-    rail.style.height = `${String(railFor(60))}px`;
-    vi.mocked(apiGet).mockResolvedValue({ turns: turns(60) });
-    await loadTurnRail("c-cluster");
-    residentCard(3);
-    marker(3).click();
-    await Promise.resolve();
-    expect(rail.querySelector(".rail-marker[data-selected]")).not.toBeNull();
-
-    // The reader narrows the window; the same 60 turns now compress into ranges.
-    rail.style.height = `${String(railFor(4))}px`;
-    await refreshTurnRail("c-cluster");
-    const clustered = rail.querySelector<HTMLButtonElement>(".rail-cluster");
-    expect(clustered).not.toBeNull();
-    clustered?.click();
-
-    expect(rail.querySelector("[data-selected]")).toBeNull();
-    expect(rail.querySelector(".rail-zoom-out")).not.toBeNull();
-    // Restore the block's default box for the cases after this one.
-    rail.style.height = "600px";
   });
 });
 
@@ -1825,35 +1545,26 @@ describe("what a rail row says", () => {
   let rail: HTMLElement;
 
   beforeAll(() => {
-    document.body.appendChild(host);
-    mountTurnRail(host);
-    const mounted = document.querySelector<HTMLElement>(".turn-rail");
-    if (mounted === null) {
-      throw new Error("rail not mounted");
-    }
-    rail = mounted;
-    rail.style.height = "600px";
-    rail.style.display = "block";
+    rail = mountRail(host);
   });
 
   beforeEach(() => {
-    scrollable.by = 500;
+    scrollable.reset();
     resetTurnRail();
+    // The track is the module's own element, so a case that shortens it to force a
+    // downsample hands the next one a four-row rail if it fails before restoring it.
+    rail.style.height = "600px";
   });
 
   function rows(sel: string): HTMLElement[] {
     return [...rail.querySelectorAll<HTMLElement>(sel)];
   }
 
-  it("carries data-tooltip and no native title, on every row kind", async () => {
-    vi.mocked(apiGet).mockResolvedValue({ turns: turns(60) });
+  it("carries data-tooltip and no native title on every marker", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ turns: turns(12) });
     await loadTurnRail("c-say");
-    rail.style.height = `${String(railFor(4))}px`;
-    // Re-render at the clustered height, then zoom so the zoom-out row exists too.
-    observeTurns([]);
-    rail.querySelector<HTMLButtonElement>(".rail-cluster")?.click();
 
-    const all = rows(".rail-marker, .rail-cluster, .rail-zoom-out");
+    const all = rows(".rail-marker");
     expect(all.length).toBeGreaterThan(1);
     for (const row of all) {
       expect(row.getAttribute("title"), row.className).toBeNull();
@@ -1893,26 +1604,174 @@ describe("what a rail row says", () => {
     expect(unknown?.getAttribute("data-tooltip")).toContain("could not be read");
   });
 
-  it("gives the zoom-out row a description that is not a second copy of its name", async () => {
-    // The tooltip controller publishes its text as the anchor's `aria-describedby`
-    // on show, so two identical sentences reach a keyboard user as one name read
-    // twice. The NAME carries the action `all` cannot state; the tooltip carries the
-    // range, which is what the name deliberately leaves out.
-    vi.mocked(apiGet).mockResolvedValue({ turns: turns(60) });
-    await loadTurnRail("c-zoom");
-    rail.style.height = `${String(railFor(4))}px`;
-    observeTurns([]);
-    const cluster = rail.querySelector<HTMLButtonElement>(".rail-cluster");
-    const range = cluster?.textContent ?? "";
-    cluster?.click();
+  it("names the seam's pause and the two turns it separates, and paints no text", async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      turns: [turn(1, { ts: 0 }), turn(2, { ts: 120 * MINUTE })],
+    });
+    await loadTurnRail("c-seam");
 
-    const [out] = rows(".rail-zoom-out");
-    expect(out).not.toBeUndefined();
-    expect(out?.getAttribute("aria-label")).toBe("Show the whole session");
-    expect(out?.getAttribute("data-tooltip")).not.toBe(out?.getAttribute("aria-label"));
-    // The range the row will leave, read off the cluster that was clicked, so the
-    // tooltip is asserted to carry live state rather than any second sentence.
-    expect(out?.getAttribute("data-tooltip")).toBe(`Showing turns ${range}`);
+    const [seam] = rows(".rail-seam");
+    expect(seam).not.toBeUndefined();
+    expect(seam?.textContent).toBe("");
+    expect(seam?.getAttribute("role")).toBe("separator");
+    expect(seam?.getAttribute("aria-label")).toBe("2h pause between turn 1 and turn 2");
+    // A band on the axis rather than a row, so it charges nothing against the
+    // markers the track can hold.
+    expect(rows(".rail-marker")).toHaveLength(2);
+  });
+
+  it("puts the pause on the marker BELOW the seam, and on no other", async () => {
+    // The band paints no text, so a reader hovering the turn that opens the new
+    // sitting is the only one the pause reaches. Keyed by the turn below it: on the
+    // turn above, the sentence would describe a pause that has not happened yet.
+    vi.mocked(apiGet).mockResolvedValue({
+      turns: [turn(1, { ts: 0 }), turn(2, { ts: 120 * MINUTE }), turn(3, { ts: 121 * MINUTE })],
+    });
+    await loadTurnRail("c-seam-tip");
+
+    const tips = rows(".rail-marker").map((m) => m.getAttribute("data-tooltip"));
+    expect(tips).toEqual(["Turn 1", "Turn 2 \u00b7 2h pause before this turn", "Turn 3"]);
+  });
+
+  it("bands no pause between two markers a downsample left non-adjacent", async () => {
+    // THE REGRESSION CASE, and it needs a rail past its own capacity to bite: 60
+    // turns five minutes apart on a four-row track, so every SURVIVING pair is more
+    // than the threshold apart in time while nobody ever stopped. The one real pause
+    // is between 30 and 31, which the downsample drops — so it is drawn nowhere
+    // rather than claimed between whichever markers happen to bracket it.
+    const pitchPx = railMetrics(rail).pitchPx;
+    rail.style.height = `${String(railFor(4, pitchPx))}px`;
+    vi.mocked(apiGet).mockResolvedValue({
+      turns: Array.from({ length: 60 }, (_, i) =>
+        turn(i + 1, { ts: i * 5 * MINUTE + (i >= 30 ? 120 * MINUTE : 0) }),
+      ),
+    });
+    await loadTurnRail("c-seam-downsampled");
+
+    const shown = rows(".rail-marker").map((m) => Number(m.firstChild?.textContent));
+    expect(shown.length).toBeLessThan(60);
+    // The premise, or the case could pass for a reason that has nothing to do with
+    // adjacency: the two markers really are far enough apart in TIME to have earned a
+    // band under the old rule.
+    const [first = 0, second = 0] = shown;
+    expect((second - first) * 5).toBeGreaterThan(GAP_MINUTES);
+    expect(rows(".rail-seam")).toHaveLength(0);
+    // And the marker channel says nothing either: the sentence is keyed by the seam's
+    // own `toN`, so a withheld band withholds it too.
+    expect(
+      rows(".rail-marker")
+        .map((m) => m.getAttribute("data-tooltip") ?? "")
+        .join(" "),
+    ).not.toContain("pause");
+    rail.style.height = "600px";
+  });
+
+  it("still bands a real pause on a rail that shows every turn", async () => {
+    // The control the case above cannot pass without: a fix that emits nothing would
+    // satisfy it. Here the pause's own two turns both have markers and are neighbours
+    // on the axis, which is the whole condition.
+    vi.mocked(apiGet).mockResolvedValue({
+      turns: Array.from({ length: 12 }, (_, i) =>
+        turn(i + 1, { ts: i * MINUTE + (i >= 6 ? 120 * MINUTE : 0) }),
+      ),
+    });
+    await loadTurnRail("c-seam-whole");
+
+    expect(rows(".rail-marker")).toHaveLength(12);
+    const seams = rows(".rail-seam");
+    expect(seams).toHaveLength(1);
+    expect(seams[0]?.getAttribute("aria-label")).toBe("2h pause between turn 6 and turn 7");
+  });
+
+  it("states the set it shows once the rail is downsampled", async () => {
+    const pitchPx = railMetrics(rail).pitchPx;
+    rail.style.height = `${String(railFor(4, pitchPx))}px`;
+    vi.mocked(apiGet).mockResolvedValue({ turns: turns(60) });
+    await loadTurnRail("c-many");
+
+    const shown = rows(".rail-marker").length;
+    expect(shown).toBeLessThan(60);
+    expect(rail.getAttribute("aria-label")).toBe(
+      `Turn timeline, showing ${String(shown)} of 60 turns`,
+    );
+    rail.style.height = "600px";
+  });
+
+  it("says nothing about a set it shows whole", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ turns: turns(3) });
+    await loadTurnRail("c-few");
+
+    expect(rail.getAttribute("aria-label")).toBe("Turn timeline");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The reader's own POSITION is a different kind of thing from a turn marker, so on a
+// downsampled rail it gets its own element: past the track's capacity the turn the
+// reader is in may carry no marker at all, and without the caret their position
+// would be marked nowhere. It is drawn from the SET rather than from the scroll
+// offset, so nothing appears or disappears as they scroll.
+// ---------------------------------------------------------------------------
+
+describe("the reader's position on a downsampled rail", () => {
+  const host = document.createElement("div");
+  let rail: HTMLElement;
+
+  beforeAll(() => {
+    rail = mountRail(host);
+  });
+
+  beforeEach(() => {
+    scrollable.reset();
+    resetTurnRail();
+  });
+
+  /** Seat one resident card, so the reading line names a turn. */
+  async function seatAt(id: string, index: TurnSummary[], n: number): Promise<void> {
+    vi.mocked(apiGet).mockResolvedValue({ turns: index });
+    await loadTurnRail(id);
+    const e = document.createElement("div");
+    e.className = "turn";
+    e.setAttribute(KEY_ATTR, `m${String(n)}`);
+    Object.defineProperty(e, "getBoundingClientRect", {
+      configurable: true,
+      value: () => fakeRect(0, 400),
+    });
+    Object.defineProperty(e, "getClientRects", {
+      configurable: true,
+      value: () => [fakeRect(0, 400)],
+    });
+    setResidentTurns([e]);
+    await frames();
+  }
+
+  it("draws the caret at the marked turn's own fraction", async () => {
+    rail.style.height = `${String(railFor(4, railMetrics(rail).pitchPx))}px`;
+    await seatAt("c-here", turns(60), 30);
+
+    const here = rail.querySelector<HTMLElement>(".rail-here");
+    expect(here).not.toBeNull();
+    // The same `at()` the markers read, so the caret and a marker for that turn
+    // cannot claim two positions.
+    expect(here?.style.getPropertyValue("--rail-at")).toBe(String(29 / 59));
+    rail.style.height = "600px";
+  });
+
+  it("is not a hit target, so it competes for no slot", async () => {
+    rail.style.height = `${String(railFor(4, railMetrics(rail).pitchPx))}px`;
+    await seatAt("c-here-a11y", turns(60), 30);
+
+    const here = rail.querySelector<HTMLElement>(".rail-here");
+    expect(here?.tagName).toBe("DIV");
+    expect(here?.getAttribute("aria-hidden")).toBe("true");
+    rail.style.height = "600px";
+  });
+
+  it("is absent while every turn has a marker of its own", async () => {
+    await seatAt("c-here-none", turns(3), 2);
+
+    expect(rail.querySelectorAll(".rail-marker")).toHaveLength(3);
+    expect(rail.querySelector(".rail-here")).toBeNull();
   });
 });
 
@@ -1936,32 +1795,35 @@ describe("the duration a rail marker can show", () => {
   let rail: HTMLElement;
 
   beforeAll(() => {
-    document.body.appendChild(host);
-    mountTurnRail(host);
-    const mounted = document.querySelector<HTMLElement>(".turn-rail");
-    if (mounted === null) {
-      throw new Error("rail not mounted");
-    }
-    rail = mounted;
-    rail.style.height = "600px";
-    rail.style.display = "block";
+    rail = mountRail(host);
   });
 
   beforeEach(() => {
-    scrollable.by = 500;
+    scrollable.reset();
     resetTurnRail();
   });
 
   /** A turn as the STORE holds it: the user message that opens it (whose id is what
-   *  the rail's index joins on) plus one assistant message carrying the stamp. */
-  function storedTurn(n: number, elapsedMs?: number): Message[] {
-    const opener: Message = { id: `m${String(n)}`, role: "user", content: "ask", ts: n * 1000 };
+   *  the rail's index joins on) plus one assistant message carrying the stamp. The
+   *  prompt text is a parameter because the merge takes the RESIDENT turn's label
+   *  over the index's, which is the whole point of the merge. */
+  function storedTurn(
+    n: number,
+    opts: { elapsedMs?: number; prompt?: string; outcome?: TurnOutcome } = {},
+  ): Message[] {
+    const opener: Message = {
+      id: `m${String(n)}`,
+      role: "user",
+      content: opts.prompt ?? "ask",
+      ts: n * 1000,
+    };
     const reply: Message = {
       id: `a${String(n)}`,
       role: "assistant",
       content: "answer",
       ts: n * 1000 + 1,
-      ...(elapsedMs === undefined ? {} : { turn_elapsed_ms: elapsedMs }),
+      ...(opts.elapsedMs === undefined ? {} : { turn_elapsed_ms: opts.elapsedMs }),
+      ...(opts.outcome === undefined ? {} : { turn_outcome: opts.outcome }),
     };
     return [opener, reply];
   }
@@ -2007,7 +1869,7 @@ describe("the duration a rail marker can show", () => {
   }
 
   it("renders the turn's own duration, in both spellings", async () => {
-    seed("c-dur", storedTurn(1, 92_000));
+    seed("c-dur", storedTurn(1, { elapsedMs: 92_000 }));
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
     await loadTurnRail("c-dur");
 
@@ -2026,7 +1888,7 @@ describe("the duration a rail marker can show", () => {
     // A turn splits across two assistant messages when the model is switched mid-turn,
     // and each carries its own stamp. `turnLedger` owns the sum; this is the case that
     // proves the rail goes through it rather than taking the last value it sees.
-    const messages = storedTurn(1, 60_000);
+    const messages = storedTurn(1, { elapsedMs: 60_000 });
     messages.push({
       id: "a1b",
       role: "assistant",
@@ -2045,7 +1907,7 @@ describe("the duration a rail marker can show", () => {
     // THE HONEST GAP. The rail spans the session; the store holds a window. Turn 1 is
     // resident, turn 2 is not, and the rail cannot know turn 2's duration without a
     // wire field it has not got — so that marker carries no slot at all.
-    seed("c-window", storedTurn(1, 92_000));
+    seed("c-window", storedTurn(1, { elapsedMs: 92_000 }));
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await loadTurnRail("c-window");
 
@@ -2060,7 +1922,7 @@ describe("the duration a rail marker can show", () => {
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
     await loadTurnRail("c-unstamped");
 
-    expect(marker(1).textContent).toBe("1");
+    expect(marker(1).firstChild?.textContent).toBe("1");
     expect(slot(1)).toBeNull();
   });
 
@@ -2077,7 +1939,7 @@ describe("the duration a rail marker can show", () => {
     if (session === undefined) {
       throw new Error("session gone");
     }
-    session.messages = storedTurn(1, 92_000);
+    session.messages = storedTurn(1, { elapsedMs: 92_000 });
     await refreshTurnRail("c-late");
 
     expect(slot(1)?.textContent).toBe("1m 32s");
@@ -2088,11 +1950,12 @@ describe("the duration a rail marker can show", () => {
     // screen reader; the tooltip is republished as `aria-describedby`, which is the
     // channel the footer's own hover-revealed slot uses for the same reason. The NAME
     // is read on every focus and stays what it was, and the two channels stay
-    // different, which is the rule the zoom-out row exists to state.
-    seed("c-channels", storedTurn(1, 92_000));
-    vi.mocked(apiGet).mockResolvedValue({
-      turns: [turn(1, { first_line: "do the thing", outcome: "failed" })],
-    });
+    // different, which is the rule the seam's own labels also state.
+    seed(
+      "c-channels",
+      storedTurn(1, { elapsedMs: 92_000, prompt: "do the thing", outcome: "failed" }),
+    );
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
     await loadTurnRail("c-channels");
 
     const btn = marker(1);
@@ -2104,8 +1967,8 @@ describe("the duration a rail marker can show", () => {
   });
 
   it("says nothing about a duration it does not have", async () => {
-    seed("c-quiet", storedTurn(1));
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1, { first_line: "do the thing" })] });
+    seed("c-quiet", storedTurn(1, { prompt: "do the thing" }));
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
     await loadTurnRail("c-quiet");
 
     expect(marker(1).getAttribute("data-tooltip")).toBe("do the thing");

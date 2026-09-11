@@ -193,6 +193,46 @@ describe("a hook-driven turn and a scheduled run", () => {
   });
 });
 
+describe("the first frame of an agent-initiated turn, before any content", () => {
+  /** A `message_created` frame: an id, a role and a timestamp, which is all of what
+   *  `ensureTurnStarted` broadcasts when a turn opens. */
+  function created(): Message {
+    seq += 1;
+    return { id: `a${String(seq)}`, role: "assistant", ts: seq * 1000 };
+  }
+
+  it("is not a turn, so no empty card can reach the transcript", () => {
+    // The obligation: an agent-initiated turn is not shown until it has output.
+    // Nothing else stands in for this — the persisted projection never sees the
+    // shape, so a reload hides the box the live stream had already drawn.
+    const turns = projectTurns(
+      [user("run the release workflow"), assistant({ outcome: "completed" }), created()],
+      false,
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.trigger?.content).toBe("run the release workflow");
+    expect(turns.some((t) => t.trigger === undefined)).toBe(false);
+  });
+
+  it("becomes a turn on the first content frame, with nothing deferred past it", () => {
+    // The other half, so the case above cannot be satisfied by suppressing the
+    // feature: a delegated run reporting back still gets its own card.
+    const turns = projectTurns(
+      [
+        user("run the release workflow"),
+        assistant({ outcome: "completed" }),
+        assistant({ text: "the run reported back" }),
+      ],
+      false,
+    );
+
+    expect(turns).toHaveLength(2);
+    expect(turns[1]?.trigger).toBeUndefined();
+    expect(turns[1]?.body.map((m) => m.content)).toEqual(["the run reported back"]);
+  });
+});
+
 describe("what the rail says about an agent-initiated turn", () => {
   it("names the trigger in words, not only in a border style", () => {
     // Defect 3a, closed. `data-trigger="system"` rendered as a dashed italic border

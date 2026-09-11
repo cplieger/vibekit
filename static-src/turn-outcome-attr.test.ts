@@ -34,15 +34,26 @@ const { scrollable } = vi.hoisted(() => ({
   scrollable: { by: 500 },
 }));
 vi.mock("./scroll.js", () => ({
-  jumpTo: vi.fn(),
   scrollableBy: () => scrollable.by,
+  readingLineOffset: () => 0,
+  atLiveEdgeNow: () => false,
+  beginSelfScroll: vi.fn(),
+  endSelfScroll: vi.fn(),
+  scrollToOffset: vi.fn(),
   onReaderGesture: () => () => {
     /* no reader in this suite */
   },
+  onTranscriptMutate: () => () => undefined,
+  onContentResize: () => () => undefined,
+  onAttach: () => () => undefined,
   getScrollEl: () => ({
+    scrollTop: 0,
+    clientHeight: 600,
+    clientTop: 0,
     addEventListener: () => {
       /* the rail's own re-measure is not under test */
     },
+    removeEventListener: () => undefined,
     getBoundingClientRect: () => ({ top: 0, bottom: 600, height: 600 }),
   }),
 }));
@@ -123,6 +134,11 @@ describe("the rail stamps its severity", () => {
   beforeAll(() => {
     document.body.appendChild(host);
     mountTurnRail(host);
+    // No app stylesheet is mounted here and `.turn-rail` takes its height from
+    // `position: absolute; inset-block`, so the track needs an explicit box: how
+    // many markers fit is a function of it.
+    rail().style.height = "600px";
+    rail().style.display = "block";
   });
 
   beforeEach(() => {
@@ -158,33 +174,27 @@ describe("the rail stamps its severity", () => {
     }
   });
 
-  it("writes data-severity on a CLUSTER too", async () => {
-    // The rail's fourth writer, and the one a marker-only assertion would miss:
-    // past capacity EVERY turn is inside a cluster, so on a long session the
-    // cluster is the only outcome mark the rail paints.
-    //
-    // The `.turn-rail` element carries no layout here (no app stylesheet is
-    // mounted), so capacity comes from the module's own 600px fallback — 25 rows
-    // at the production pitch. 200 turns is comfortably past it either way.
+  it("keeps the stamp on a rail too long to give every turn a marker", async () => {
+    // On a session past the track's capacity most turns carry no marker at all, so
+    // the assertion that matters is that the non-clean one is never among the
+    // dropped: a stamp nothing renders reports nothing.
     const index: TurnSummary[] = Array.from({ length: 200 }, (_, i) => ({
       id: `m${String(i + 1)}`,
       n: i + 1,
-      outcome: (i === 0 ? "failed" : "completed") satisfies TurnOutcome as TurnOutcome,
+      outcome: (i === 42 ? "failed" : "completed") satisfies TurnOutcome as TurnOutcome,
       ts: (i + 1) * 60_000,
     }));
     vi.mocked(apiGet).mockResolvedValue({ turns: index });
-    await loadTurnRail("c-cluster");
+    await loadTurnRail("c-long");
 
-    const clusters = [...rail().querySelectorAll<HTMLElement>(".rail-cluster")];
-    expect(clusters.length, "200 turns cluster").toBeGreaterThan(0);
-    for (const cluster of clusters) {
-      const outcome = cluster.dataset["outcome"];
-      expect(outcome, "a cluster names its worst member's outcome").toBeDefined();
-      expect(cluster.dataset["severity"]).toBe(severityOf(outcome as TurnOutcome));
+    const markers = [...rail().querySelectorAll<HTMLElement>(".rail-marker")];
+    expect(markers.length, "200 turns downsample").toBeLessThan(200);
+    for (const marker of markers) {
+      const outcome = marker.dataset["outcome"];
+      expect(outcome, "every rendered marker names its turn's outcome").toBeDefined();
+      expect(marker.dataset["severity"]).toBe(severityOf(outcome as TurnOutcome));
     }
-    // The first cluster holds the `failed` turn, so it is the one that proves the
-    // stamp is not uniformly `clean`.
-    expect(clusters[0]?.dataset["outcome"]).toBe("failed");
-    expect(clusters[0]?.dataset["severity"]).toBe("broken");
+    const broken = markers.filter((m) => m.dataset["severity"] === "broken");
+    expect(broken.map((m) => m.firstChild?.textContent)).toEqual(["43"]);
   });
 });

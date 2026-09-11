@@ -25,6 +25,7 @@ export function createBusMock(extras: Record<string, unknown> = {}): Record<stri
     emitBus: undefined,
     BUS_TURN_IDLE: undefined,
     BUS_TRANSPORT_GAP: undefined,
+    BUS_PAGE_RESUMED: undefined,
     BUS_KEYS_ESCAPE: undefined,
     BUS_ACTIVATE_CHAT: undefined,
     BUS_RUNS_CHANGED: undefined,

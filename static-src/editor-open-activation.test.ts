@@ -77,6 +77,7 @@ vi.mock("./api-client.js", () => ({
   // this graph and these names are imported somewhere in it. No case here calls
   // them.
   apiGetTyped: vi.fn(),
+  apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
 }));
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./editor-conflict.js", () => ({
@@ -91,6 +92,7 @@ vi.mock("./editor-ui.js", () => ({
   pendingLines: new Map<string, number>(),
   clearAgentLineCache: vi.fn(),
   updateGutter: vi.fn(),
+  renderEditModeUI: vi.fn(),
 }));
 vi.mock("./actions/editor.js", () => ({
   loadDiff: { dispatch: () => ({ outcome: Promise.resolve({ status: "cancelled" }) }) },

@@ -43,7 +43,7 @@ import type { SearchPopup } from "./search-popup.js";
 import { createDialog, type DialogController } from "@cplieger/ui-primitives/dialog";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
-import { gitRepoSkeleton } from "./skeleton.js";
+import { gitRepoSkeleton, paintPlaceholder } from "./skeleton.js";
 import { iconEl } from "./icon-el.js";
 
 // --- Types ---
@@ -60,6 +60,9 @@ interface PRListResponse {
 // --- State ---
 
 let filterText = "";
+/** Whether the fan-out has ANSWERED. A repo set with no open PRs is an answer, and
+ *  the container cannot tell it from a set this client has never read. */
+let prsAnswered = false;
 let refreshGen = 0;
 let refreshController: AbortController | null = null;
 registerCleanup(() => refreshController?.abort());
@@ -148,7 +151,9 @@ export async function refreshPRs(externalSignal?: AbortSignal, force = false): P
   // the signal suppresses the skeleton outright for a superseded refresh.
   const root = document.getElementById("git-prs-mount");
   const progress: FanoutProgress = { done: 0, total: 0, label: null };
-  const skeleton = skeletonTiming(() => showPRSkeleton(root, progress), { signal });
+  const skeleton = prsAnswered
+    ? null
+    : skeletonTiming(() => showPRSkeleton(root, progress), { signal });
 
   try {
     const groups = await loadPRGroups(signal, progress, force);
@@ -156,7 +161,8 @@ export async function refreshPRs(externalSignal?: AbortSignal, force = false): P
     if (groups === null || myGen !== refreshGen) {
       return;
     }
-    skeleton.cancel();
+    skeleton?.cancel();
+    prsAnswered = true;
     setPRGroups(groups);
     paint();
   } catch (err) {
@@ -169,7 +175,7 @@ export async function refreshPRs(externalSignal?: AbortSignal, force = false): P
     }
     throw err;
   } finally {
-    skeleton.cancel();
+    skeleton?.cancel();
   }
 }
 
@@ -295,36 +301,32 @@ function repaintProgress(p: FanoutProgress): void {
   }
 }
 
-/** Placeholder sections while the fan-out is in flight. Skipped when the mount
- *  already holds keyed rows, so a manual refresh never flashes placeholders over
- *  real data. */
+/** Placeholder sections while the fan-out is in flight.
+ *
+ *  The build CLOSURE is what hands the caller the label element it needs without
+ *  widening `paintPlaceholder`'s signature: it is reached only when the mount was
+ *  admitted, so `progress.label` is set exactly when a placeholder is on screen. */
 function showPRSkeleton(root: HTMLElement | null, progress: FanoutProgress): () => void {
-  if (root === null) {
-    return () => {
-      /* no mount — nothing to tear down */
-    };
-  }
-  if (root.querySelector("[data-reconcile-key]") !== null) {
-    return () => {
-      /* already populated */
-    };
-  }
-  // The painter is shared with the Changes tab (skeleton.ts): both tabs stand in
-  // for the same `.git-repo-section` shape, so its geometry has one definition.
-  // The count is what separates a slow refresh from a wedged one, and it renders
-  // whatever the fan-out has already reported, because the 150ms show delay means
-  // this can be built mid-flight.
-  const { wrap, label } = gitRepoSkeleton({
-    label: progressText(progress),
-    widths: ["45%", "32%", "58%"],
+  let mine: HTMLElement | null = null;
+  const teardown = paintPlaceholder(root, () => {
+    // The painter is shared with the Changes tab (skeleton.ts): both tabs stand in
+    // for the same `.git-repo-section` shape, so its geometry has one definition.
+    // The count is what separates a slow refresh from a wedged one, and it renders
+    // whatever the fan-out has already reported, because the 150ms show delay means
+    // this can be built mid-flight.
+    const { wrap, label } = gitRepoSkeleton({
+      label: progressText(progress),
+      widths: ["45%", "32%", "58%"],
+    });
+    mine = label;
+    progress.label = label;
+    return wrap;
   });
-  progress.label = label;
-  root.replaceChildren(wrap);
   return () => {
-    if (progress.label === label) {
+    if (mine !== null && progress.label === mine) {
       progress.label = null;
     }
-    wrap.remove();
+    teardown();
   };
 }
 
@@ -602,9 +604,13 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   // second control.
   const hasURL = pr.url !== undefined && pr.url !== "";
   const num = el("span", { className: "git-pr-row-number" }, `#${pr.number}`);
+  // The text needs its own span because the ellipsis clip cannot sit on the link:
+  // it would cut away the expander carrying the link's hit region
+  // (22-git-multirepo.css states the trade).
+  const text = el("span", { className: "git-pr-row-text" }, pr.title);
   const title = hasURL
-    ? el("a", { className: "git-pr-row-title", target: "_blank", rel: "noreferrer" }, num, pr.title)
-    : el("span", { className: "git-pr-row-title" }, num, pr.title);
+    ? el("a", { className: "git-pr-row-title", target: "_blank", rel: "noreferrer" }, num, text)
+    : el("span", { className: "git-pr-row-title" }, num, text);
   if (hasURL) {
     title.setAttribute("href", pr.url!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
   }
@@ -659,9 +665,16 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
 
   const prRef = { forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number };
 
+  // NO ACCENT ON A PER-ROW ACTION. `btn-primary` marks the one thing to do on a
+  // surface, and a per-row count scales with the number of open PRs — twenty rows
+  // gave twenty accented Merge buttons, which says nothing about which to press
+  // and makes the section's own `+ New PR` no longer the loudest control on the
+  // page. The three accents that stay are all SECTION level, where the count does
+  // not scale: `+ New PR` above, Push (git-changes-tab.ts) and Commit
+  // (git-changes-commit.ts).
   const merge = el(
     "button",
-    { type: "button", className: "btn-small btn-primary" },
+    { type: "button", className: "btn-small" },
     "Merge",
   ) as HTMLButtonElement;
   const mergeReason = mergeBlockReason(pr);

@@ -16,33 +16,46 @@ function svg(tier: IconTier, d: string, extra = ""): string {
   return `<svg class="ic-${tier}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"${extra}>${d}</svg>`;
 }
 
-export const ICON_EDIT = svg(
-  "inline",
-  '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>',
-);
-export const ICON_EDIT_14 = svg("ui", '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
-export const ICON_CLOSE = svg("inline", '<path d="M18 6L6 18M6 6l12 12"/>');
-export const ICON_TRASH = svg(
-  "inline",
-  '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
-);
-export const ICON_TRASH_14 = svg(
-  "ui",
-  '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
-);
-export const ICON_PLUS = svg("inline", '<path d="M12 5v14M5 12h14"/>');
-export const ICON_PLUS_16 = svg("ui", '<path d="M12 5v14M5 12h14"/>');
+// ---------------------------------------------------------------------------
+// SHARED DRAWINGS. Six paths were each written out two to four times across the
+// constants below, so one drawing had several definitions and nothing held them
+// equal — the drift `vibekit-ui.md` "ONE CONCEPT, ONE DRAWING" exists to prevent,
+// reached from the other side. A tier variant is a different SIZE of one mark, not
+// a second mark, so the path is named once here and the tier is chosen at the call.
+// Every exported string below is byte-identical to what it was before the split.
+// ---------------------------------------------------------------------------
+const PATH_PENCIL = '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>';
+const PATH_X = '<path d="M18 6L6 18M6 6l12 12"/>';
+const PATH_PLUS = '<path d="M12 5v14M5 12h14"/>';
+const PATH_TRASH =
+  '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>';
+const PATH_SEND = '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>';
+/** The pin's outline and its filled twin share this path: `fill` is the only
+ *  difference, which is what makes the state read as the same mark, filled. */
+const PATH_PIN = '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/>';
+
+// A TIER PAIR IS SUFFIXED `_UI`, NEVER A PIXEL COUNT. These four pairs were spelled
+// `_14`, `_16` and — for the X — with a second CONCEPT NAME, so one mark had two names
+// that said nothing about which was which and a module importing the `ui` tier of the
+// close mark did not read as reaching for the close mark at all. The numbers were
+// false as well as inconsistent: both suffixes named the `ui` tier, and `--icon-ui` is
+// 1rem on a fine pointer and 1.25rem on a coarse one (01-tokens.css), so neither 14
+// nor 16 is ever what renders. `svg()` above already states the rule the names broke —
+// its argument is a SIZE TIER, never a pixel count.
+export const ICON_EDIT = svg("inline", PATH_PENCIL);
+export const ICON_EDIT_UI = svg("ui", PATH_PENCIL);
+export const ICON_CLOSE = svg("inline", PATH_X);
+export const ICON_CLOSE_UI = svg("ui", PATH_X);
+export const ICON_TRASH = svg("inline", PATH_TRASH);
+export const ICON_TRASH_UI = svg("ui", PATH_TRASH);
+export const ICON_PLUS_UI = svg("ui", PATH_PLUS);
 // Pin icons for the per-tool auto_update toggle. Filled = pinned
 // (auto_update off), outline = tracking upstream (auto_update on).
-export const ICON_PIN = svg(
-  "inline",
-  '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/>',
-);
+export const ICON_PIN = svg("inline", PATH_PIN);
 // Stroke 2 like its outline twin `ICON_PIN`, so the pin does not change WEIGHT
 // when it changes state. `fill` is the only difference between the two, which is
 // what the state is meant to say.
-export const ICON_PIN_FILLED =
-  '<svg class="ic-inline" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/></svg>';
+export const ICON_PIN_FILLED = `<svg class="ic-inline" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">${PATH_PIN}</svg>`;
 export const ICON_COPY = svg(
   "ui",
   '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>',
@@ -70,12 +83,10 @@ export const ICON_EXPORT =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 export const ICON_DIFF =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M12 4v16"/></svg>';
-export const ICON_X = svg("ui", '<path d="M18 6L6 18M6 6l12 12"/>');
 export const ICON_PLAY = svg("ui", '<polygon points="5 3 19 12 5 21 5 3"/>');
 export const ICON_CHEVRON_DOWN = svg("ui", '<path d="M6 9l6 6 6-6"/>');
 export const ICON_CHEVRON_UP = svg("ui", '<path d="M18 15l-6-6-6 6"/>');
-export const ICON_SEND = svg("ui", '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>');
-export const ICON_SEND_14 = svg("ui", '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>');
+export const ICON_SEND = svg("ui", PATH_SEND);
 // The AI-generate glyph (Lucide "sparkles"), for every button that asks a model
 // to fill a field: the commit box's message button and the branch popover's
 // name suggestion. It replaced a literal ✨ in both, because the branch
@@ -193,11 +204,11 @@ export const ICON_PR_EMPTY =
 // "remote, not cloned" entries.
 export const ICON_GLOBE =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
-export const ICON_WARN_12 =
+export const ICON_WARN =
   '<svg class="ic-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M4.93 19l14.14 0a2 2 0 0 0 1.73-3L13.73 4a2 2 0 0 0-3.46 0L3.2 16a2 2 0 0 0 1.73 3Z"/></svg>';
 // Balance-scale icon (Lucide "scale"). Marks the licensed-code attribution
 // chip/footnote (v3 _kiro/code_references) — the universal "license" glyph.
-export const ICON_SCALE_12 = svg(
+export const ICON_SCALE = svg(
   "inline",
   '<path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/>',
 );
@@ -222,11 +233,8 @@ const ICON_TOOL_READ = svg(
   "ui",
   '<path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>',
 );
-const ICON_TOOL_EDIT = svg("ui", '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
-const ICON_TOOL_DELETE = svg(
-  "ui",
-  '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
-);
+const ICON_TOOL_EDIT = svg("ui", PATH_PENCIL);
+const ICON_TOOL_DELETE = svg("ui", PATH_TRASH);
 const ICON_TOOL_MOVE = svg(
   "ui",
   '<path d="M5 9l-3 3 3 3"/><path d="M19 15l3-3-3-3"/><path d="M2 12h20"/>',
@@ -455,7 +463,23 @@ export const ICON_TAB_AUTONOMOUS = svg(
  * `--icon-ui` against a flat 1 CSS px stroke, and a 30-degree tooth on a
  * 30-degree gap is what holds adjacent strokes 2.76 CSS px apart. A finer gear
  * merges into a grey disc at that size. */
-export const ICON_TAB_SETTINGS = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.5"/><path d="M14.07 19.73L14.85 22.63A11 11 0 0 1 9.15 22.63L9.93 19.73A8 8 0 0 1 6.34 17.66L4.22 19.78A11 11 0 0 1 1.37 14.85L4.27 14.07A8 8 0 0 1 4.27 9.93L1.37 9.15A11 11 0 0 1 4.22 4.22L6.34 6.34A8 8 0 0 1 9.93 4.27L9.15 1.37A11 11 0 0 1 14.85 1.37L14.07 4.27A8 8 0 0 1 17.66 6.34L19.78 4.22A11 11 0 0 1 22.63 9.15L19.73 9.93A8 8 0 0 1 19.73 14.07L22.63 14.85A11 11 0 0 1 19.78 19.78L17.66 17.66A8 8 0 0 1 14.07 19.73Z"/></svg>`;
+/** The settings gear. Its teeth are authored out to radius 11 of the 24 grid, which
+ *  is 2 units further than any other glyph in this tier reaches, so at `--icon-ui`
+ *  it rendered 22.3x23.0 units of ink against a toolbar median of 19 and read as a
+ *  bigger, slightly taller mark than the six buttons beside it (measured 2026-09-10:
+ *  fill 0.959, the maximum over all 133 visible `ic-ui` icons, against a 0.792
+ *  median). The SCALE is the correction and it is deliberately a `<g transform>`
+ *  rather than re-authored coordinates: one reviewable number, the drawing itself
+ *  untouched, and the same shape `favicon.svg` uses to carry its own optical
+ *  centring (`vibekit-ui.md` "The mark is translated by (2, 0.75)").
+ *
+ *  0.818 is 9/11, so the tooth tips land at radius 9 — ink 19.0 units, the median
+ *  exactly — and the extremes fall on 3 and 21, which are multiples of 3 and so on
+ *  this row's crisp pixel grid (see the shell button in static/index.html for why
+ *  that grid and not the 0.75 one). `stroke-width` is unaffected: the tier declares
+ *  `vector-effect: non-scaling-stroke` on the child shapes, so the stroke stays 1
+ *  CSS px through any transform and only the geometry shrinks. */
+export const ICON_TAB_SETTINGS = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><g transform="translate(12 12) scale(0.818) translate(-12 -12)"><circle cx="12" cy="12" r="3.5"/><path d="M14.07 19.73L14.85 22.63A11 11 0 0 1 9.15 22.63L9.93 19.73A8 8 0 0 1 6.34 17.66L4.22 19.78A11 11 0 0 1 1.37 14.85L4.27 14.07A8 8 0 0 1 4.27 9.93L1.37 9.15A11 11 0 0 1 4.22 4.22L6.34 6.34A8 8 0 0 1 9.93 4.27L9.15 1.37A11 11 0 0 1 14.85 1.37L14.07 4.27A8 8 0 0 1 17.66 6.34L19.78 4.22A11 11 0 0 1 22.63 9.15L19.73 9.93A8 8 0 0 1 19.73 14.07L22.63 14.85A11 11 0 0 1 19.78 19.78L17.66 17.66A8 8 0 0 1 14.07 19.73Z"/></g></svg>`;
 // The git-branch glyph (Lucide "git-branch"), under two names for its two jobs: the
 // git TAB's icon and the leading glyph of the branch popover's create field. One path,
 // so they cannot drift. Centred on (12,12) like Lucide's own, because an ink box of
@@ -477,25 +501,49 @@ export const ICON_GIT_COMMIT = svg(
   "ui",
   '<circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/>',
 );
-export const ICON_TAB_EDITOR = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>`;
+export const ICON_TAB_EDITOR = svg("ui", PATH_PENCIL);
 /* HALF-UNIT coordinates on purpose: one unit is 0.667 CSS px at `--icon-ui`, so a
  * coordinate on a multiple of 3 puts the 1 CSS px stroke exactly astride two pixel
  * columns. 3.5 / 8.5 / 20.5 sit a third of a pixel off a boundary at 16px and at
  * the coarse-pointer 18px; rounding them to integers undoes that. */
+/** The folder. Its FLAP is proportioned against Lucide's own folder, which the rest
+ *  of this set is drawn from: the tab rises 3 units above the body over an 18-unit
+ *  height, 17%. It used to rise 5 units over 17, 29% — 67% taller than the reference
+ *  — which reads as a lid rather than a tab and was reported as "the top flap is too
+ *  large". Redrawn rather than scaled, because the flap is the only wrong part.
+ *
+ *  Every coordinate is a multiple of 3, this row's crisp pixel grid (the reasoning
+ *  is on the shell button in static/index.html). The previous half-unit coordinates
+ *  landed on thirds of a CSS pixel, which is the one phase no box offset can align.
+ *  That also took the ink from 18.5 to 19 units, the toolbar's median extent.
+ *  Duplicated as static markup on `#files-btn`; menu-icons.test.ts pins the pair. */
 export const ICON_TAB_FILES = svg(
   "ui",
-  '<path d="M6.5 3.5h4l3 5h4a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H6.5a3 3 0 0 1-3-3v-11a3 3 0 0 1 3-3z"/>',
+  '<path d="M6 3h3l3 3h6a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z"/>',
 );
 export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
 /** The Kiro configuration browser: an open book, ONE closed outline plus ONE spine
  *  line. Also the sidebar button that opens the page, pinned to this constant by
  *  `menu-icons.test.ts`. Two cover paths sharing a spine on x=12 is not one stroke:
  *  measured on a 16px raster that column pair painted 55% alpha each against every
- *  other stroke's 33%, so the centre read as a double spine. */
-export const ICON_TAB_DOCS = svg(
-  "ui",
-  '<path d="M12 7.5 8.25 4.5H4.5A2.5 2.5 0 0 0 2 7v10a2.5 2.5 0 0 0 2.5 2.5h15a2.5 2.5 0 0 0 2.5-2.5V7a2.5 2.5 0 0 0-2.5-2.5h-3.75z"/><path d="M12 7.5v12"/>',
-);
+ *  other stroke's 33%, so the centre read as a double spine.
+ *
+ *  The pages SAG at the gutter at both ends. It was a rounded box with a 3-unit
+ *  notch in its top and no bottom sag at all, which reads as two panels rather than
+ *  a book and was reported as such. Every vertex is a multiple of 3 — this row's
+ *  crisp pixel grid, whose reasoning is on the shell button in static/index.html —
+ *  and the ink is 18x18 on 3..21, the toolbar's own median extent, against the 20
+ *  the old glyph ran. That grid is also why it is the crispest book in the set:
+ *  measured at 16px under the production translate, 63% of its ink lands on whole
+ *  pixels against 44% for the glyph it replaces, 45% for `ICON_TOOL_READ` and 39%
+ *  for `ICON_SUBAGENT_INTROSPECT`, which sit on 2, 7 and 22.
+ *
+ *  A THIRD book drawing, deliberately: those two are Lucide's two book-opens and
+ *  `ICON_REPO` is its closed book, so reusing one here would give a drawing two
+ *  meanings — the defect `vibekit-ui.md` records at the two wrenches. Their
+ *  silhouette is a flat top over a spine dipping below the page bottoms; this one
+ *  is diagonal page edges over a shallow V at each end. */
+export const ICON_TAB_DOCS = svg("ui", '<path d="M12 6 3 3v15l9 3 9-3V3z"/><path d="M12 6v15"/>');
 /** Workflow run: three nodes joined top-to-bottom, the shape of a run's node
  *  plan. Distinct from the chat and subagent glyphs so a run tab is never
  *  mistaken for a conversation. */

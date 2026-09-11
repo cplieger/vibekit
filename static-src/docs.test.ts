@@ -828,12 +828,13 @@ describe("the Hooks tab: staying current", () => {
     vi.mocked(apiGet).mockResolvedValue({ docs: [] });
     vi.mocked(apiGetTyped).mockResolvedValue({ hooks: [] });
     const { onSSE } = await import("./bus.js");
-    // `loadDocsView` rather than `showDocsView`: the latter only TOGGLES the tab,
-    // which is a round trip that loads nothing, while the page's own loader is what
-    // every door reaches through the tab factory's lazy import. It takes no
-    // callback — a tab's behaviour cannot depend on who opened it.
-    const { loadDocsView } = await import("./docs.js");
-    loadDocsView("hooks");
+    // The three jobs the retired `loadDocsView` conflated, spelled apart: the
+    // activation's one-shot init, the router's sub-tab correction, and the fetch.
+    // Not `showDocsView`, which only TOGGLES the tab.
+    const { showDocsTab, forceDocsTab, refreshDocsView } = await import("./docs.js");
+    showDocsTab();
+    forceDocsTab("hooks");
+    refreshDocsView();
     sseHandlers = new Map(vi.mocked(onSSE).mock.calls.map((c) => [c[0], c[1] as () => void]));
   });
 
@@ -892,5 +893,78 @@ describe("the Hooks tab: staying current", () => {
     other.dispatchEvent(new Event("change", { bubbles: true }));
     // No throw, and nothing dispatched beyond the previous case's one call.
     expect(true).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The activation half and the fetch half.
+//
+// `loadDocsView` did three jobs — force the canonical sub-tab, run the one-shot
+// init, and fetch — and the forcing is what discarded the reader's sub-tab on every
+// switch back to the page.
+// ---------------------------------------------------------------------------
+
+describe("showDocsTab and refreshDocsView", () => {
+  function panel(tab: string): HTMLElement | null {
+    return document.querySelector<HTMLElement>(`[data-docs-panel="${tab}"]`);
+  }
+
+  beforeEach(async () => {
+    const { apiGet, apiGetTyped } = await import("./api-client.js");
+    vi.mocked(apiGet).mockClear().mockResolvedValue({ docs: [] });
+    vi.mocked(apiGetTyped).mockClear().mockResolvedValue({ hooks: [] });
+  });
+
+  it("a re-activation leaves the reader's sub-tab where it was", async () => {
+    const { showDocsTab, forceDocsTab } = await import("./docs.js");
+    forceDocsTab("hooks");
+    expect(panel("hooks")?.classList.contains("hidden")).toBe(false);
+
+    showDocsTab();
+
+    expect(panel("hooks")?.classList.contains("hidden")).toBe(false);
+    expect(panel("steering")?.classList.contains("hidden")).toBe(true);
+  });
+
+  it("the activation fetches nothing and the refresh fetches", async () => {
+    const { showDocsTab, refreshDocsView } = await import("./docs.js");
+    const { apiGet } = await import("./api-client.js");
+
+    showDocsTab();
+    expect(apiGet).not.toHaveBeenCalled();
+
+    refreshDocsView();
+    expect(apiGet).toHaveBeenCalledWith("/api/workspace/kiro-docs", expect.anything());
+  });
+
+  it("arms no placeholder for a category with no documents once the inventory answered", async () => {
+    // `docs` initialises to `[]`, so an empty category and an unread one look
+    // identical in the container — and a gap reaches this refresh with no tab switch
+    // behind it, so without the answered flag it shimmers over a settled panel.
+    const { apiGet } = await import("./api-client.js");
+    let settle = (_v: unknown): void => {
+      /* replaced below */
+    };
+    // PENDING across the show delay, or the answer lands first and cancels the timer
+    // whatever the arm decided — which is the shape that made this pass either way.
+    vi.mocked(apiGet).mockReturnValueOnce(
+      new Promise((resolve) => {
+        settle = resolve as (v: unknown) => void;
+      }),
+    );
+    vi.useFakeTimers();
+    try {
+      const { refreshDocsView, forceDocsTab } = await import("./docs.js");
+      forceDocsTab("steering");
+      refreshDocsView();
+      await vi.advanceTimersByTimeAsync(150);
+
+      const steering = panel("steering");
+      expect(steering).not.toBeNull();
+      expect(steering?.querySelector(".docs-skeleton")).toBeNull();
+    } finally {
+      settle({ docs: [] });
+      vi.useRealTimers();
+    }
   });
 });

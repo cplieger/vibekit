@@ -265,3 +265,101 @@ func TestRetryEmptyTurnPrompt_RespawnFailureCorrectsTheRetryingDivider(t *testin
 			frame.Message, got.Content)
 	}
 }
+
+// EVERY prompt exit that finalizes no turn still owes that turn a carrier.
+// `appendUserMessage` runs before admission deliberately, so the user row is already
+// on disk by the time any of these exits is reached — and an exit that appends
+// nothing leaves a turn with a trigger and no body at all. The transcript projection
+// reads an absent carrier as "nothing closed this turn" and renders it as an end
+// vibekit could not read, seconds after the prompt was refused. An `interrupted`
+// divider grades the turn interrupted and carries the real reason instead, which is
+// what these three exits should have read as all along.
+func TestPromptExits_AppendAnInterruptedCarrier(t *testing.T) {
+	cases := []struct {
+		name string
+		// arrange puts the double on the path that produces this exit.
+		arrange func(*surfaceDeps)
+		// run drives the production path.
+		run func(context.Context, *promptRoles, *vibekit.PromptCommand)
+		// want is a substring of the divider's content: the cause a reader can act on.
+		want string
+		// frame is whether this exit also broadcasts an error, in which case the two
+		// surfaces must read one sentence.
+		frame bool
+	}{
+		{
+			name:    "the bridge could not be opened",
+			arrange: func(d *surfaceDeps) { d.spawnErr = errors.New("no such binary") },
+			run: func(ctx context.Context, roles *promptRoles, p *vibekit.PromptCommand) {
+				runPromptTurn(ctx, func() {}, roles, "c1", p)
+			},
+			want:  "no such binary",
+			frame: true,
+		},
+		{
+			name:    "the bridge slot was held despite the reservation",
+			arrange: func(d *surfaceDeps) { d.slotHeld = true },
+			run: func(ctx context.Context, roles *promptRoles, p *vibekit.PromptCommand) {
+				runPromptTurn(ctx, func() {}, roles, "c1", p)
+			},
+			want:  "The prompt could not start",
+			frame: true,
+		},
+		{
+			name:    "the turn was cancelled before an epoch was minted",
+			arrange: func(d *surfaceDeps) { d.deadEpoch = true },
+			run: func(ctx context.Context, roles *promptRoles, p *vibekit.PromptCommand) {
+				runPromptTurn(ctx, func() {}, roles, "c1", p)
+			},
+			want:  "cancelled before the agent answered",
+			frame: true,
+		},
+		{
+			// The one exit with no frame at all: it logged a Warn and returned, so the
+			// divider is the whole of what a reader ever learns about it.
+			name:    "the empty-turn retry's own epoch never opened",
+			arrange: func(d *surfaceDeps) { d.deadEpoch = true },
+			run: func(ctx context.Context, roles *promptRoles, p *vibekit.PromptCommand) {
+				retryEmptyTurnPrompt(ctx, roles.bridges, roles.chats, roles.bus,
+					roles.turnOutcome, "c1", p, map[string]any{})
+			},
+			want: "cancelled before the agent answered",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			deps := newSurfaceDeps()
+			tc.arrange(deps)
+			tc.run(t.Context(), promptRolesOf(deps), &vibekit.PromptCommand{Text: "hi", MessageID: "m1"})
+
+			deps.mu.Lock()
+			appended := deps.appended
+			deps.mu.Unlock()
+
+			if len(appended) != 1 {
+				t.Fatalf("appended %d messages, want exactly 1: %+v", len(appended), appended)
+			}
+			got := appended[0]
+			if got.Role != vibekit.RoleEvent {
+				t.Errorf("role = %q, want %q: a divider, not a bubble", got.Role, vibekit.RoleEvent)
+			}
+			if got.EventKind != vibekit.EventInterrupted {
+				t.Errorf("event_kind = %q, want %q: `interrupted` is what grades the turn "+
+					"and what turnFailureText reads its prose from",
+					got.EventKind, vibekit.EventInterrupted)
+			}
+			if !strings.Contains(got.Content, tc.want) {
+				t.Errorf("content = %q, want it to contain %q", got.Content, tc.want)
+			}
+			if got.ID == "" {
+				t.Error("id is empty: the store dedupes and orders by id")
+			}
+			if tc.frame {
+				if frame := deps.onlyError(t); frame.Message != got.Content {
+					t.Errorf("frame message %q != divider content %q: one failure, one rendering",
+						frame.Message, got.Content)
+				}
+			}
+		})
+	}
+}

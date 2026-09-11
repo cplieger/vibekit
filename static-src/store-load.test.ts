@@ -2,7 +2,7 @@
 // when prepending an older page (a timestamp cursor can re-return a boundary
 // message whose ms ts is shared, which must not render/insert twice).
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Message, Session } from "./types.js";
 // The module's own shape, for the fresh-instance loader at the foot of this file:
 // `chatListLoaded` is module state, so its cases re-evaluate the module and need a
@@ -23,12 +23,15 @@ const {
   mockUpsertHeader,
   mockBumpMessages,
   mockRelatch,
+  mockHealSettled,
+  mockRepublishToolCalls,
   mockLatchFields,
   mockUpsertMessage,
   mockSetWatermark,
   mockNoteLiveTurn,
   mockNoteTruncated,
   epoch,
+  ledger,
 } = vi.hoisted(() => ({
   sessions: new Map<string, Session>(),
   liveIDs: new Map<string, string>(),
@@ -46,6 +49,15 @@ const {
   mockUpsertHeader: vi.fn(),
   mockBumpMessages: vi.fn(),
   mockRelatch: vi.fn(),
+  // The newest-page door's OTHER arm: the full teardown plus a relatch, run only when the
+  // page states `turn_open === false`. A spy for `mockRelatch`'s reason — this file owns
+  // WHICH arm a window takes, while what each arm does to the store is asserted against
+  // the real functions in turn-teardown.test.ts.
+  mockHealSettled: vi.fn(),
+  // The channel a MOUNTED tool card refreshes through. A spy, because what this file
+  // owns is that a fetched window is put on it at all and with which rows; what the
+  // channel then does to a card's signal is store.test.ts's, against the real one.
+  mockRepublishToolCalls: vi.fn(),
   // The header-derived latch seed. An INERT stub here on purpose: this file
   // asserts the WIRING (that loadList consults it, with the existing row and the
   // header), while what it returns and how that reaches the dot is asserted
@@ -65,12 +77,38 @@ const {
   // The store's transport sync epoch, controllable so a case can land a "gap"
   // at an exact point in the fetch lifecycle.
   epoch: { n: 0 },
+  /** The freshness ledger, as `noteLoaded` writes it: subject to the epoch its
+   *  request went out under. */
+  ledger: new Map<string, number>(),
 }));
 
 vi.mock("./actions/index.js", () => ({ registerCleanup: vi.fn() }));
+// The freshness leaf, driven rather than observed: `epoch` is what a case moves to land
+// a "gap" at an exact point in the fetch lifecycle, and `ledger` is what `loadMessages`
+// writes. Spread the real surface so a new export cannot break the link.
+vi.mock("./tab-freshness.js", async () => ({
+  ...(await import("./__test-helpers__/tab-freshness-mock.js")).tabFreshnessMock,
+  syncEpoch: () => epoch.n,
+  noteLoaded: (kind: string, ref: string, e: number) => {
+    ledger.set(`${kind}:${ref}`, e);
+  },
+  forgetView: (kind: string, ref: string) => {
+    ledger.delete(`${kind}:${ref}`);
+  },
+}));
 vi.mock("./api-client.js", () => ({
   apiGetTyped: mockApiGetTyped,
   apiGetTypedOrError: mockApiGetTypedOrError,
+}));
+// The shared turn teardown, mocked at the boundary rather than run for real: the real
+// `healSettledChat` reaches the tab strip, the decision dock and the model-switch queue, and
+// none of that is what a fetch-lifecycle file owns. `turn-teardown.test.ts` drives the real
+// pair against the real store. The other two names are present-but-inert so real-ESM linking
+// succeeds; nothing here reaches them.
+vi.mock("./turn-teardown.js", () => ({
+  healSettledChat: mockHealSettled,
+  retractStaleThinking: vi.fn(),
+  clearTurnState: vi.fn(),
 }));
 vi.mock("./store.js", async (importOriginal) => {
   // `derivedHasMore` is the REAL one, and that is deliberate: it is the rule the
@@ -90,8 +128,8 @@ vi.mock("./store.js", async (importOriginal) => {
     // The outcome relatch loadMessages owes a newest-page load. A fn so the
     // wiring cases below can assert the call and its ordering against bump.
     relatchTurnVerdict: mockRelatch,
+    republishWindowToolCalls: mockRepublishToolCalls,
     latchFieldsFor: mockLatchFields,
-    syncEpoch: () => epoch.n,
     // Identity here — the block-synthesis path is covered by store.test.ts; these
     // tests assert pagination/dedupe by id.
     normalizeMessage: (m: Message) => m,
@@ -152,6 +190,7 @@ beforeEach(() => {
   liveIDs.clear();
   watermarks.clear();
   epoch.n = 0;
+  ledger.clear();
 });
 
 describe("loadList pruning", () => {
@@ -227,33 +266,6 @@ describe("loadList pruning", () => {
     await loadList();
     const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
     expect(passed.map((s) => s.id)).toEqual(["kept"]);
-  });
-});
-
-describe("the page budgets ride the request", () => {
-  // The item: the page the server cuts and the window this client can hold are the
-  // same ORDER, in two units. `block-window.ts` windows every turn past
-  // RESIDENT_BLOCKS *or* RESIDENT_TOOL_CALLS, whichever runs out first, so a page
-  // bounded only in bytes holds a chat-dependent number of both and the surplus is
-  // fetched, decoded and then thrown away. Sending one and not the other leaves the
-  // unsent one free to overshoot.
-  it("asks for both residency budgets, equal to what one paint can hold", async () => {
-    const { RESIDENT_BLOCKS, RESIDENT_TOOL_CALLS } = await import("./block-window.js");
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 0 },
-      messages: [],
-      has_more: false,
-    });
-
-    await loadMessages("c1");
-
-    const url = new URL(String(mockApiGetTyped.mock.calls[0]?.[0]), "http://localhost");
-    expect(url.searchParams.get("blocks")).toBe(String(RESIDENT_BLOCKS));
-    expect(url.searchParams.get("tool_calls")).toBe(String(RESIDENT_TOOL_CALLS));
-    // The byte budget stays: it is the bound on what the wire carries however the
-    // content is shaped, which neither residency count can express.
-    expect(url.searchParams.get("max_bytes")).toBe(String(1 << 18));
   });
 });
 
@@ -769,28 +781,12 @@ describe("residency", () => {
   });
 });
 
-describe("loadedEpoch", () => {
-  // The freshness stamp is the epoch captured BEFORE the request went out, so a
-  // window assembled from an answer that never raced a gap claims the current
-  // epoch and reads fresh.
-  it("stamps the pre-request epoch on a successful newest-page load", async () => {
-    seedSession("c1", []);
-    epoch.n = 3;
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [msg("a", 1)],
-      has_more: false,
-    });
-
-    const ok = await loadMessages("c1");
-    expect(ok).toBe(true);
-    expect(sessions.get("c1")?.loadedEpoch).toBe(3);
-  });
-
-  // Race order one: the gap lands while the fetch is IN FLIGHT. The answer may
-  // predate events the gap dropped, so the stamp must be the pre-gap number —
-  // never equal to the bumped epoch — and the window stays stale.
-  it("a fetch that raced a gap stores a stamp that already reads stale", async () => {
+describe("the freshness ledger loadMessages writes", () => {
+  // The record is stamped with the epoch captured BEFORE the request went out, so an
+  // answer that raced a gap records a claim that already reads stale. The ledger's own
+  // truth table is tab-freshness.node.test.ts's; what THIS suite owns is which loads
+  // write a record and under which number.
+  it("records the PRE-REQUEST epoch on a successful newest-page load", async () => {
     seedSession("c1", []);
     epoch.n = 3;
     mockApiGetTyped.mockImplementation(() => {
@@ -803,33 +799,19 @@ describe("loadedEpoch", () => {
       });
     });
 
-    await loadMessages("c1");
-    expect(sessions.get("c1")?.loadedEpoch).toBe(3);
-    expect(sessions.get("c1")?.loadedEpoch).not.toBe(epoch.n);
+    const ok = await loadMessages("c1");
+
+    expect(ok).toBe(true);
+    expect(ledger.get("chat:c1")).toBe(3);
+    expect(ledger.get("chat:c1")).not.toBe(epoch.n);
   });
 
-  // Race order two: the gap lands AFTER the load completed. The stamp is a
-  // capture, not a live read, so it keeps naming the epoch the window was
-  // fetched under and the comparison flips stale on its own.
-  it("a gap after completion leaves the stored stamp behind the epoch", async () => {
-    seedSession("c1", []);
-    epoch.n = 3;
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [msg("a", 1)],
-      has_more: false,
-    });
-
-    await loadMessages("c1");
-    expect(sessions.get("c1")?.loadedEpoch).toBe(3);
-
-    epoch.n = 4;
-    expect(sessions.get("c1")?.loadedEpoch).toBe(3);
-  });
-
-  it("an older-page prepend stamps nothing", async () => {
+  it("leaves the record where it was on a beforeID prepend", async () => {
+    // An older page extends an already-trusted window and asserts nothing about
+    // currency, so stamping it fresh at its own epoch would absorb a gap that landed
+    // mid-paging.
     seedSession("c1", [msg("m2", 2)]);
-    sessions.get("c1")!.loadedEpoch = 1;
+    ledger.set("chat:c1", 1);
     epoch.n = 2;
     mockApiGetTyped.mockResolvedValue({
       chat: { message_count: 2 },
@@ -838,33 +820,19 @@ describe("loadedEpoch", () => {
     });
 
     await loadMessages("c1", "m2");
-    expect(sessions.get("c1")?.loadedEpoch).toBe(1);
+
+    expect(ledger.get("chat:c1")).toBe(1);
   });
 
-  it("a failed newest-page load stamps nothing", async () => {
+  it("writes nothing when the newest-page load fails", async () => {
     seedSession("c1", []);
     epoch.n = 2;
     mockApiGetTyped.mockResolvedValue(null);
 
     const ok = await loadMessages("c1");
+
     expect(ok).toBe(false);
-    expect(sessions.get("c1")?.loadedEpoch).toBeUndefined();
-  });
-
-  it("loadList carries loadedEpoch across the header rebuild", async () => {
-    // Same reason residency travels: the stamp describes the carried-over
-    // window, and dropping it would read every loaded chat as stale after any
-    // reconnect's header refresh.
-    seedSession("c1", [msg("a", 1)]);
-    sessions.get("c1")!.residency = "loaded";
-    sessions.get("c1")!.loadedEpoch = 2;
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "c1", name: "One", message_count: 1, usage: {} }],
-    });
-
-    await loadList();
-    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
-    expect(passed[0]?.loadedEpoch).toBe(2);
+    expect(ledger.has("chat:c1")).toBe(false);
   });
 });
 
@@ -913,6 +881,153 @@ describe("loadMessages outcome relatch", () => {
 
     await loadMessages("c1");
     expect(mockRelatch).not.toHaveBeenCalled();
+  });
+
+  // The door's TWO arms, and which one runs is the whole licence question. A stated
+  // `turn_open === false` means no turn record AND no admitted prompt, which is the
+  // whole-liveness statement the full teardown requires; anything else has asserted
+  // nothing that would let this page drop a live turn's markers.
+  it("runs the FULL teardown when the page states the chat has no turn open", async () => {
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [msg("m1", 1)],
+      has_more: false,
+      turn_open: false,
+    });
+
+    await loadMessages("c1");
+
+    expect(mockHealSettled, "the full teardown").toHaveBeenCalledExactlyOnceWith("c1");
+    // Exclusive: the heal re-derives the verdict itself, so a second relatch here
+    // would be the same derivation twice on one settled window.
+    expect(mockRelatch, "the narrow re-derivation").not.toHaveBeenCalled();
+  });
+
+  it("only re-derives when the page states a turn IS open", async () => {
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [msg("m1", 1)],
+      has_more: false,
+      turn_open: true,
+    });
+
+    await loadMessages("c1");
+
+    expect(mockHealSettled, "the full teardown").not.toHaveBeenCalled();
+    expect(mockRelatch, "the narrow re-derivation").toHaveBeenCalledExactlyOnceWith("c1");
+  });
+
+  // The full teardown DROPS the in-flight marker, and that marker is the only thing
+  // stopping the window replacement above from deleting an unpersisted reply — which
+  // is why the retraction a run-scoped turn end runs leaves it standing. So the
+  // ORDER is load-bearing on this door too: the merge first, the teardown after, and
+  // the next fetch is what drops a reply the server has since persisted.
+  it("merges the window before the teardown that drops the in-flight marker", async () => {
+    // The stub does the one thing the real teardown does that this file models, so
+    // an ordering that ran it first would delete the reply rather than pass silently.
+    mockHealSettled.mockImplementation((chatID: string) => {
+      liveIDs.delete(chatID);
+    });
+    seedSession("c1", [msg("user", 1), msg("streaming", 2)]);
+    liveIDs.set("c1", "streaming");
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [msg("user", 1)],
+      has_more: false,
+      turn_open: false,
+    });
+
+    await loadMessages("c1");
+
+    const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
+    expect(ids, "the reply this client is holding").toEqual(["user", "streaming"]);
+    expect(liveIDs.get("c1"), "the marker the teardown drops").toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The fetched calls reach the cards already on screen.
+//
+// A mounted tool card reads the array this module replaces exactly once, at mount:
+// afterwards its DOM has one refresh channel, the per-call signal, and the repaint this
+// module schedules writes none. So the window replacement below has to put the page's own
+// calls on that channel, or a card built from the boot snapshot's truncated copy keeps it
+// for the life of the document.
+// ---------------------------------------------------------------------------
+
+describe("loadMessages publishes a fetched window's tool calls", () => {
+  /** An assistant row carrying one tool call, which is the shape a card is mounted from. */
+  function toolRow(id: string, ts: number, callID: string): Message {
+    return {
+      id,
+      role: "assistant",
+      ts,
+      tool_calls: [{ id: callID, title: "Run Command", kind: "execute", status: "completed", ts }],
+    } as unknown as Message;
+  }
+
+  it("hands the newest page's own rows to the card channel", async () => {
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [toolRow("m1", 1, "tc1")],
+      has_more: false,
+    });
+
+    await loadMessages("c1");
+
+    expect(mockRepublishToolCalls).toHaveBeenCalledExactlyOnceWith("c1", [
+      expect.objectContaining({ id: "m1" }),
+    ]);
+    // Before the repaint, so a paint that reads a card's state reads the published value
+    // rather than the one the mount was built from.
+    const publishOrder = mockRepublishToolCalls.mock.invocationCallOrder[0] ?? Infinity;
+    const bumpOrder = mockBumpMessages.mock.invocationCallOrder[0] ?? 0;
+    expect(publishOrder).toBeLessThan(bumpOrder);
+  });
+
+  it("publishes the fetched rows only, never the local tail it kept", async () => {
+    // The in-flight turn's calls arrive on their own signal as they stream, so
+    // republishing the local copy would push a card BACKWARDS to whatever the store held
+    // before this answer.
+    seedSession("c1", [toolRow("streaming", 9, "tc-live")]);
+    liveIDs.set("c1", "streaming");
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 2 },
+      messages: [toolRow("m1", 1, "tc1")],
+      has_more: false,
+    });
+
+    await loadMessages("c1");
+
+    const published = (mockRepublishToolCalls.mock.calls[0]?.[1] ?? []) as Message[];
+    expect(published.map((m) => m.id)).toEqual(["m1"]);
+  });
+
+  it("publishes nothing on an older-page prepend", async () => {
+    // A prepend mounts its rows fresh, so every card it produces is built from the
+    // fetched call already.
+    seedSession("c1", [toolRow("m2", 2, "tc2")]);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 2 },
+      messages: [toolRow("m1", 1, "tc1")],
+      has_more: false,
+    });
+
+    await loadMessages("c1", "m2");
+
+    expect(mockRepublishToolCalls).not.toHaveBeenCalled();
+  });
+
+  it("publishes nothing on a failed load", async () => {
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue(null);
+
+    await loadMessages("c1");
+
+    expect(mockRepublishToolCalls).not.toHaveBeenCalled();
   });
 });
 
@@ -983,6 +1098,63 @@ describe("loadList seeds the outcome latches from the header", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The two SERVER facts the rebuilt row takes from the header, and the direction is
+// the OPPOSITE of `model` and `effort_levels` in the same literal: those fall back
+// to the existing row, because an absent value there means no news. Here an absent
+// value is a CLEAR, and preserving either one is a defect with a named consequence.
+// A carried-forward outcome makes a real movement invisible to the latch seed's
+// first rule, which compares the incoming outcome against the STORED one; a
+// carried-forward timestamp reports the wrong age beside the dot.
+// ---------------------------------------------------------------------------
+
+describe("loadList takes the header's word for the two server facts", () => {
+  /** The rebuilt row `loadList` handed to the store, which is what these assert on:
+   *  the row is built from the header rather than spread from the existing session. */
+  function rebuilt(): Session | undefined {
+    return ((mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[])[0];
+  }
+
+  it("writes the outcome and the timestamp the header carries", async () => {
+    mockApiGetTyped.mockResolvedValue({
+      chats: [
+        {
+          id: "c1",
+          name: "One",
+          message_count: 0,
+          usage: {},
+          last_turn_outcome: "failed",
+          updated_at: 222,
+        },
+      ],
+    });
+
+    expect(await loadList()).toBe(true);
+    expect(rebuilt()?.last_turn_outcome, "outcome").toBe("failed");
+    expect(rebuilt()?.updated_at, "timestamp").toBe(222);
+  });
+
+  it("CLEARS a stale outcome the header no longer reports, and replaces the timestamp", async () => {
+    // `last_turn_outcome` is omitempty on the wire, so an absent one is the shape a
+    // real header produces for a chat whose outcome went away. `updated_at` is 0
+    // here because that is the value a truthiness-based carry-over swallows while a
+    // nullish one lets through, so the assertion separates a replace from both.
+    seedSession("c1", []);
+    sessions.set("c1", {
+      ...(sessions.get("c1") as Session),
+      last_turn_outcome: "completed",
+      updated_at: 111,
+    });
+    mockApiGetTyped.mockResolvedValue({
+      chats: [{ id: "c1", name: "One", message_count: 0, usage: {}, updated_at: 0 }],
+    });
+
+    expect(await loadList()).toBe(true);
+    expect(rebuilt()?.last_turn_outcome, "outcome").toBeUndefined();
+    expect(rebuilt()?.updated_at, "timestamp").toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // `turn_open`: the server's liveness statement, riding the transcript response.
 //
 // The in-flight reply is in the server's in-memory buffer, so a turn in flight has
@@ -1012,13 +1184,11 @@ describe("loadMessages turn_open", () => {
     // field, or a proxy that strips it, must not fail the whole chat load. Client
     // and server ship in one image, so this is a guard rather than a path.
     //
-    // The assertion is `not true` rather than `false` because this suite mocks
-    // `apiGetTyped`, so the raw object is handed straight to the loader and
-    // `decodeChatGetResponseLocal` — which is where `o["turn_open"] === true`
-    // coerces absent to false — never runs. What the loader owes either way is the
-    // property `turnLive` reads (`turn_open === true`), and an absent field must not
-    // satisfy it: reading a missing statement as live would claim a turn is running
-    // on every chat an older server serves.
+    // The assertion is `not true` rather than `false` because what the loader owes is
+    // the property `turnLive` reads (`turn_open === true`), and an absent field must not
+    // satisfy it: reading a missing statement as live would claim a turn is running on
+    // every chat an older server serves. What the DECODER makes of an absent field is
+    // the wire case below, which this suite's mocked `apiGetTyped` otherwise bypasses.
     seedSession("c1", []);
     mockApiGetTyped.mockResolvedValue({
       chat: { message_count: 1 },
@@ -1045,6 +1215,63 @@ describe("loadMessages turn_open", () => {
 
     await loadMessages("c1", "m2");
     expect(sessions.get("c1")?.turn_open).toBe(true);
+  });
+
+  it("leaves a live thinking alone when the newest page says no turn is open", async () => {
+    // `turn_open` answers FALSE for the whole admission-to-bridge-ready window, so a
+    // refetch landing inside it would clear the one input protecting a prompt the
+    // server has already accepted, and the next repaint would derive a terminal
+    // outcome for the turn the reader is waiting on.
+    seedSession("c1", []);
+    sessions.set("c1", { ...(sessions.get("c1") as Session), thinking: true });
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [userRow("u1", 1)],
+      has_more: false,
+      turn_open: false,
+    });
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.thinking).toBe(true);
+  });
+
+  // Through the REAL decoder, which every other case here bypasses, because what an
+  // absent field decodes TO is the whole licence question at the door below: a collapse
+  // to false hands the full teardown a statement the answer never made, and the chats
+  // that reach it are exactly the ones served by something that does not send the field.
+  it("decodes an ABSENT field as no statement, and only re-derives on it", async () => {
+    seedSession("c1", []);
+    // A statement already held, so the forget is observable: an answer that says nothing
+    // must not leave the previous one standing either.
+    sessions.set("c1", { ...(sessions.get("c1") as Session), turn_open: true });
+    const rawBody = {
+      chat: {
+        id: "c1",
+        name: "c1",
+        usage: {
+          context_pct: 0,
+          context_size: 0,
+          credits: 0,
+          turn_count: 0,
+          last_turn_ms: 0,
+          has_real_data: false,
+        },
+        created_at: 1,
+        updated_at: 1,
+        message_count: 1,
+      },
+      messages: [{ id: "u1", role: "user", ts: 1 }],
+      has_more: false,
+    };
+    mockApiGetTyped.mockImplementation((_url: string, decode: (v: unknown) => unknown) =>
+      Promise.resolve(decode(rawBody)),
+    );
+
+    await loadMessages("c1");
+
+    expect(sessions.get("c1")?.turn_open, "a statement nothing made").toBeUndefined();
+    expect(mockHealSettled, "the full teardown").not.toHaveBeenCalled();
+    expect(mockRelatch, "the narrow re-derivation").toHaveBeenCalledExactlyOnceWith("c1");
   });
 });
 
@@ -1297,6 +1524,150 @@ describe("serverMayAnswer", () => {
     await loader.loadList();
     expect(loader.serverMayAnswer()).toBe(false);
     expect(loader.chatListLoaded()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `scheduleListRetry`: the bounded ladder the gap door arms for a list load that
+// reached the network and failed.
+//
+// The window it covers is the one no other trigger revisits: `loadList` runs on every
+// SSE `connected`, so a stream that DROPS heals itself, and a stream that stayed up
+// while the list request died has nothing else scheduled — the gap has already cleared
+// every claim this client held, so the sidebar sits on rows it was licensed to drop.
+//
+// Fresh module per case, for `chatListLoaded`'s reason: the reach, the timer and the
+// attempt count are all module state. Fake timers are installed AFTER the loader is
+// imported, because the import is a real fetch off the dev server.
+// ---------------------------------------------------------------------------
+
+describe("the retry ladder behind a failed list load", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("climbs three rungs at a doubling delay, then stops and says so", async () => {
+    const loader = await freshLoader();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mockApiGetTyped.mockResolvedValue(null);
+    expect(await loader.loadList()).toBe(false);
+
+    vi.useFakeTimers();
+    loader.scheduleListRetry();
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(4);
+    // Bounded: a page left sitting on a dead server stops asking rather than polling it
+    // for the life of the document.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(4);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("arms nothing for a load an ABORT answered, which said nothing about the server", async () => {
+    // The reach gate, and the reason it cannot be `!ok` at the call site: `loadList`
+    // aborts whatever is in flight before it starts, so a superseded load returns false
+    // having learned nothing — and laddering on it would chase a request a newer one has
+    // already replaced. The second load deliberately never resolves, so the abort is the
+    // last thing that completed.
+    const loader = await freshLoader();
+    let releaseFirst: (v: unknown) => void = () => undefined;
+    mockApiGetTyped.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseFirst = resolve;
+        }),
+    );
+    mockApiGetTyped.mockImplementationOnce(() => new Promise(() => undefined));
+
+    const first = loader.loadList();
+    void loader.loadList();
+    releaseFirst({ chats: [] });
+    expect(await first).toBe(false);
+
+    vi.useFakeTimers();
+    loader.scheduleListRetry();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
+  });
+
+  it("is answered by a list that lands anywhere, not only by its own rung", async () => {
+    // The `connected` refetch normally beats the ladder to it, and once the list has
+    // landed there is nothing left to retry.
+    const loader = await freshLoader();
+    mockApiGetTyped.mockResolvedValueOnce(null);
+    expect(await loader.loadList()).toBe(false);
+
+    vi.useFakeTimers();
+    loader.scheduleListRetry();
+    mockApiGetTyped.mockResolvedValue({ chats: [] });
+    expect(await loader.loadList()).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets a second gap REPLACE the ladder rather than stacking one beside it", async () => {
+    const loader = await freshLoader();
+    mockApiGetTyped.mockResolvedValue(null);
+    expect(await loader.loadList()).toBe(false);
+
+    vi.useFakeTimers();
+    loader.scheduleListRetry();
+    await vi.advanceTimersByTimeAsync(500);
+    loader.scheduleListRetry();
+
+    // The first ladder's rung was due here and is gone with it.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
+    // The replacement's own first rung, one second after the second gap.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears the rung it replaces, so a superseded rung cannot widen the ladder", async () => {
+    // The interleaving the door's own `cancelListRetry` does not cover, because it is the
+    // CONTINUATION that arms the second time: a fresh gap's load supersedes a rung's, so the
+    // aborted rung settles false with no reach verdict AFTER the door has already armed a
+    // replacement, and its continuation reads the newer failure's `unreachable` and arms
+    // again. Without the clear both timers are pending and each fetches.
+    const loader = await freshLoader();
+    mockApiGetTyped.mockResolvedValue(null);
+    expect(await loader.loadList()).toBe(false);
+
+    vi.useFakeTimers();
+    loader.scheduleListRetry();
+
+    // The rung's own load, held open so a newer one can supersede it.
+    let releaseRung: (v: unknown) => void = () => undefined;
+    mockApiGetTyped.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseRung = resolve;
+        }),
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
+
+    // The fresh gap: its own load aborts the rung's and then fails on its own account, so
+    // the door arms a replacement while the aborted rung has not settled.
+    expect(await loader.loadList()).toBe(false);
+    loader.scheduleListRetry();
+
+    releaseRung({ chats: [] });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // ONE rung is armed, not two: the replacement's 1s timer is gone with it, and the
+    // continuation's own 2s rung is the only fetch inside this window.
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(4);
   });
 });
 

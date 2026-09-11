@@ -591,11 +591,14 @@ describe("focus and reachability", { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
     );
     await flushed();
 
-    // A real focusable inside the view: the header's copy button (the fold
-    // toggle is hidden on the newest turn — data-no-fold — and a display:none
-    // element refuses focus).
+    // A real focusable inside the view: a FOOTER action, which is rendered and
+    // focusable unconditionally. The fold toggle is hidden on the newest turn
+    // (data-no-fold) and a `display: none` element refuses focus; the header's
+    // copy button is excluded for a second reason — it is hover-revealed and
+    // `display: none` outside `any-hover`, so it is the wrong anchor whatever a
+    // given CI browser answers for that query.
     const toggle = viewOf(a).querySelector<HTMLElement>(
-      ".turn-copy-req, [tabindex], button:not(.turn-fold-toggle)",
+      ".turn-footer .turn-action-btn, [tabindex], button:not(.turn-fold-toggle, .turn-copy-req)",
     );
     expect(toggle).not.toBeNull();
     toggle?.focus();

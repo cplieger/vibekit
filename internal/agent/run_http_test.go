@@ -43,6 +43,206 @@ func TestHandleRun_RejectsAMissingID(t *testing.T) {
 	}
 }
 
+// runReq builds GET /api/runs/{id} with the path value the handler reads instead of
+// parsing the URL.
+func runReq(id string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+id, nil)
+	req.SetPathValue("id", id)
+	return req
+}
+
+// runReply is what this test reads out of the run endpoint. `state` stays RAW so an
+// assertion about the spliced key cannot pass against a reply that lost KAS's own tree.
+type runReply struct {
+	State    json.RawMessage      `json:"state"`
+	OpenAsks []vibekit.RunOpenAsk `json:"open_asks"`
+}
+
+// getRun serves one read and hands back both the decoded reply and the BYTES, because
+// `[]` against `null` and a present-but-empty field are only visible in the bytes.
+func getRun(t *testing.T, h *Runtime, id string) (runReply, string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.runRoutes.handleRun(rec, runReq(id))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/runs/%s = %d, want %d: %s", id, rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var out runReply
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decoding the run reply: %s", err)
+	}
+	return out, rec.Body.String()
+}
+
+// TestHandleRun_CarriesTheRunsOpenAsks pins the one thing vibekit adds to an otherwise
+// verbatim passthrough. It exists so an agent handed a deferral can find the question and
+// the ask id to answer with; before it, both were reachable only off the live SSE frame.
+func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
+	t.Run("an ask carries its id, question and node, and the passthrough survives", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true)
+		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
+		h.runs.asks.Add(&runAsk{
+			chatID: runChatID("wf_1"),
+			payload: vibekit.RunInputNeededPayload{
+				WorkflowID: "wf_1", AskID: "ask_a", NodeID: "review",
+				Question: "Which branch should I target?", AgentName: "reviewer",
+			},
+		})
+
+		got, body := getRun(t, h, "wf_1")
+
+		if len(got.OpenAsks) != 1 {
+			t.Fatalf("open_asks = %+v, want the run's one ask: %s", got.OpenAsks, body)
+		}
+		if got.OpenAsks[0].AskID != "ask_a" {
+			t.Errorf("ask_id = %q, want ask_a; it is the value the answer endpoint takes",
+				got.OpenAsks[0].AskID)
+		}
+		if got.OpenAsks[0].Question != "Which branch should I target?" {
+			t.Errorf("question = %q, want the step's own text", got.OpenAsks[0].Question)
+		}
+		if got.OpenAsks[0].NodeID != "review" {
+			t.Errorf("node_id = %q, want review", got.OpenAsks[0].NodeID)
+		}
+		var state struct {
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(got.State, &state); err != nil {
+			t.Fatalf("KAS's own `state` did not survive the splice: %s: %s", err, body)
+		}
+		if state.Status != "running" {
+			t.Errorf("state.status = %q, want running; the passthrough must stay byte-faithful",
+				state.Status)
+		}
+	})
+
+	t.Run("another run's ask does not leak into this reply", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true)
+		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
+		h.runs.asks.Add(&runAsk{
+			chatID: runChatID("wf_1"),
+			payload: vibekit.RunInputNeededPayload{
+				WorkflowID: "wf_1", AskID: "ask_mine", Question: "mine",
+			},
+		})
+		h.runs.asks.Add(&runAsk{
+			chatID: runChatID("wf_2"),
+			payload: vibekit.RunInputNeededPayload{
+				WorkflowID: "wf_2", AskID: "ask_theirs", Question: "theirs",
+			},
+		})
+
+		got, body := getRun(t, h, "wf_1")
+
+		if len(got.OpenAsks) != 1 || got.OpenAsks[0].AskID != "ask_mine" {
+			t.Fatalf("open_asks = %+v, want only wf_1's ask; an agent answering a leaked ask "+
+				"would steer a step nobody asked it to: %s", got.OpenAsks, body)
+		}
+	})
+
+	t.Run("a run with no ask carries an empty list rather than null", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true)
+		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
+
+		got, body := getRun(t, h, "wf_1")
+
+		if len(got.OpenAsks) != 0 {
+			t.Fatalf("open_asks = %+v, want none", got.OpenAsks)
+		}
+		if !strings.Contains(body, `"open_asks":[]`) {
+			t.Errorf("the body = %s, want `\"open_asks\":[]`; null cannot be told apart from "+
+				"a build that does not report asks at all", body)
+		}
+	})
+
+	t.Run("a reconciled ask serialises an empty question rather than omitting it", func(t *testing.T) {
+		h, br := seedChatParentedRun(t, true)
+		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
+		// The shape reconcileNeedInput mints after a restart: the registry is in memory,
+		// so the text is gone while the run stays parked.
+		h.runs.asks.Add(&runAsk{
+			chatID: runChatID("wf_1"),
+			payload: vibekit.RunInputNeededPayload{
+				WorkflowID: "wf_1", AskID: "reconciled:wf_1/review", NodeID: "review",
+			},
+		})
+
+		_, body := getRun(t, h, "wf_1")
+
+		var reply struct {
+			OpenAsks []map[string]json.RawMessage `json:"open_asks"`
+		}
+		if err := json.Unmarshal([]byte(body), &reply); err != nil {
+			t.Fatalf("decoding the run reply: %s", err)
+		}
+		if len(reply.OpenAsks) != 1 {
+			t.Fatalf("open_asks = %+v, want the reconciled ask: %s", reply.OpenAsks, body)
+		}
+		if _, ok := reply.OpenAsks[0]["question"]; !ok {
+			t.Errorf("the ask = %v, want a present `question`; an ABSENT field reads as "+
+				"\"complete\" where an empty one reads as \"the text is gone\"", reply.OpenAsks[0])
+		}
+	})
+}
+
+// TestHandleRun_GradesAFailedReadThreeWays pins the split the CLIENT spends: the run store
+// stops re-reading on a 404 and keeps its bounded retry ladder on anything else, so a
+// transient dressed as a 404 costs a card that never refreshes and a settled 404 dressed as
+// a 5xx costs four reads per event for an answer that cannot change.
+func TestHandleRun_GradesAFailedReadThreeWays(t *testing.T) {
+	tests := []struct {
+		name string
+		arm  func(br *fakeBridge)
+		want int
+	}{
+		{
+			// KAS resolved the workflow id and refused, so the answer is the same however
+			// often it is asked.
+			name: "the engine answered ABOUT the run",
+			arm: func(br *fakeBridge) {
+				br.setCallRPCErr(methodKiroWorkflowInspect, &vibekit.RPCError{
+					Code: -32603, Message: "Internal error",
+					Data: json.RawMessage(`{"details":"workflow not found"}`),
+				})
+			},
+			want: http.StatusNotFound,
+		},
+		{
+			// A capability answer: no number of attempts talks an engine with no workflow
+			// verbs into describing a run, which is why the ladder is bounded.
+			name: "the engine has no workflow verb",
+			arm: func(br *fakeBridge) {
+				br.setCallErr(methodKiroWorkflowInspect, workflow.ErrUnknownMethod)
+			},
+			want: http.StatusServiceUnavailable,
+		},
+		{
+			// Nothing was answered at all, so nothing was learned about the run. A 404 here
+			// would tell the client to stop asking about a run that may well exist.
+			name: "the read never reached the engine",
+			arm: func(br *fakeBridge) {
+				br.setCallErr(methodKiroWorkflowInspect, errors.New("bridge exited"))
+			},
+			want: http.StatusBadGateway,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h, br := seedChatParentedRun(t, true)
+			tc.arm(br)
+			rec := httptest.NewRecorder()
+
+			h.runRoutes.handleRun(rec, runReq("wf_1"))
+
+			if rec.Code != tc.want {
+				t.Errorf("GET /api/runs/wf_1 with %s = %d, want %d: %s",
+					tc.name, rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}
+
 func getLiveRuns(t *testing.T, rr *runRoutes) vibekit.LiveRunsResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()

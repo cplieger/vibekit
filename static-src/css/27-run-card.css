@@ -37,20 +37,29 @@
 
        tier     collapsed   open with one step
        fine     79px        129px
-       coarse   87px        145px
+       coarse   107px       165px
 
      So 4rem was below the floor in BOTH states rather than for a tail of cards, and
      the list GREW as the reader scrolled. An expression rather than a literal
-     because `--btn-h` moves on the pointer tier the way `.tool-call`'s does: the
-     head is on that floor, the foot is `.run-open`'s 1.5rem hit target plus its own
-     padding and hairline (tier-invariant at 33px), and the border is the box model's
-     to add. Exact on all three tiers the metrics suite measures; the two coarse ones
-     are identical, since nothing here keys on width.
+     because BOTH the head and the foot move on the pointer tier: the head is on
+     `--btn-h`, the foot is `.run-open`'s target — the app-wide floor's, so
+     `var(--hit-floor)` — plus its own padding and hairline, and the border is the box
+     model's to add. Exact on all three tiers the metrics suite measures; the two
+     coarse ones are identical, since nothing here keys on width.
+
+     THE FOOT TERM IS NOT TIER-INVARIANT, and it read `1.5rem` here until the
+     `.run-open` repair below: 33px on a fine pointer, 53px on a coarse one. While
+     that link declared its own `1.5rem` the foot was 33px at every tier and the
+     literal was exact; the moment the link joined the floor the reserve under-stated
+     a coarse card by 20px (measured -3,620px over this suite's list, the error times
+     the 181 cards Chromium had not rendered), and the coarse rows above moved with
+     it. A term restating another rule's height is what made a hit-target fix a
+     virtualization defect, so read the token both of them read.
 
      ONE ESTIMATE CANNOT BE EXACT FOR BOTH STATES, so this is the smaller: an open
      card under-states, which makes the container grow, where reserving the open
      height would make it SHRINK under every reader scrolling past a folded card. */
-  --run-card-content: calc(var(--btn-h) + var(--sp-2) + 1.5rem + var(--sp-1) * 2 + 1px);
+  --run-card-content: calc(var(--btn-h) + var(--sp-2) + var(--hit-floor) + var(--sp-1) * 2 + 1px);
 
   content-visibility: auto;
   contain-intrinsic-size: auto var(--run-card-content);
@@ -65,7 +74,6 @@
   font-size: var(--fs-base);
   overflow: hidden;
   flex-shrink: 0;
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 }
 
 /* The outcome tint travels on the whole BORDER, so a scan down the transcript
@@ -127,8 +135,12 @@
   margin-block-end: var(--sp-2);
 }
 
-.run-head:hover {
-  background: color-mix(in srgb, var(--c-accent) 8%, transparent);
+/* The shared box-header recipe, not an accent tint of its own; 14-tools.css
+   `.tool-group-header` carries the rule and the gate's reason. */
+@media (any-hover: hover) {
+  .run-head:hover {
+    background: var(--c-hover);
+  }
 }
 
 .run-icon {
@@ -322,7 +334,7 @@
    and copy-link work, and a plain click is intercepted by the app's own routing.
    It therefore has to opt OUT of link ink: the reset layer's `a { color:
    var(--c-link) }` would reach it, and this app spends link ink on TEXT controls
-   (`.turn-req-more`, `.ev-in-more`, a PR row's title) while a NAVIGATOR row keeps
+   (`.steer-note-more`, `.ev-in-more`, a PR row's title) while a NAVIGATOR row keeps
    its own — `.tab` and `.ev-row-main` are the precedent. */
 .run-step-head {
   display: flex;
@@ -338,8 +350,10 @@
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
-.run-step-head:hover {
-  background: var(--c-hover);
+@media (any-hover: hover) {
+  .run-step-head:hover {
+    background: var(--c-hover);
+  }
 }
 
 /* THE MARK SLOT RENDERS BOTH AN SVG AND A BARE CHARACTER, because this vocabulary
@@ -575,9 +589,11 @@
   color: var(--c-text-secondary);
   text-decoration: none;
 
-  /* 24px minimum hit target on a row whose text is 11px (web.md hit targets);
-     the padding is what supplies it rather than a taller row. */
-  min-height: 1.5rem;
+  /* The hit target on this 11px row is the APP-WIDE FLOOR's (61-mcp-tools.css):
+     24px on a fine pointer, 44px on a coarse one, so it follows the tier with no
+     value here to keep in step. The `1.5rem` this used to declare was (0,1,0) and
+     beat that zero-specificity floor, which left the link at 24px under a finger.
+     The `padding-inline` is the hover wash's inset, not the target. */
   padding-inline: var(--sp-1);
   border-radius: var(--r-sm);
   transition:

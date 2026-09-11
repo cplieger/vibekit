@@ -138,6 +138,13 @@ export interface TabViewSpec {
   readonly route: Route;
   /** Called when the tab becomes active. */
   readonly onShow?: (() => void) | undefined;
+  /** Bring this view's DATA up to date. REQUIRED unlike `onShow`/`onClose`, so a
+   *  kind cannot opt out of being refreshable.
+   *
+   *  Called by tabs.ts `refreshRow` gated on `viewStale`, never by this kind's own
+   *  `onShow` — the gate is asked in one place for all nine kinds. It writes no
+   *  projection state and pushes no route. */
+  readonly refresh: () => void;
   /** Called when the tab is closed.
    *
    *  CLIENT-LOCAL teardown only, identical on every device: the arrangement is

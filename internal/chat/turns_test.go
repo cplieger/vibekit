@@ -39,7 +39,8 @@ type outcomeFixture struct {
 
 // fixtureMessage is one persisted message in a segmentation case. `blocks` lists
 // one subtask id per block; absent means the message carries no blocks at all,
-// which is what every row predating the step rule needs.
+// which is what every row predating the step rule needs. `empty` suppresses the
+// content every other row carries, which is what stages a message carrying nothing.
 type fixtureMessage struct {
 	Role     string   `json:"role"`
 	ID       string   `json:"id"`
@@ -48,11 +49,15 @@ type fixtureMessage struct {
 	UserKind string   `json:"user_kind"`
 	Blocks   []string `json:"blocks"`
 	Refusal  bool     `json:"refusal"`
+	Empty    bool     `json:"empty"`
 }
 
 // message builds the persisted message this fixture row describes.
 func (f fixtureMessage) message() vibekit.Message {
 	m := vibekit.Message{ID: f.ID, Role: vibekit.Role(f.Role), Content: "ok"}
+	if f.Empty {
+		m.Content = ""
+	}
 	if f.Event != "" {
 		m.EventKind = vibekit.EventKind(f.Event)
 		m.Content = ""

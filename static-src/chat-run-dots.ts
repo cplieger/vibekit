@@ -15,7 +15,7 @@
 // live-run inventory is keyed by the LAUNCHING chat and rebuilt from
 // `GET /api/runs/live` at boot and after a transport gap, so it answers for every
 // run in flight on the server whether or not that chat's tab was open when the run
-// started. `liveRunIDsForChat` is the whole join a chat row needs — a chat tab's
+// started. `liveRunsForChat` is the whole join a chat row needs — a chat tab's
 // `ref` IS its chat id. No wire change, no endpoint, no Go change.
 //
 // N RUNS FOLD ONTO ONE MARK, by the dot vocabulary's own precedence minus the
@@ -28,10 +28,12 @@
 //
 // A SETTLED RUN WITHDRAWS THE MARK rather than turning it green or red, and that
 // is forced by the input: `noteRunSettled` deletes the inventory row at a terminal
-// `run_finished`, so an outcome is simply not available here. `run-bar.ts` filters
-// the same inventory the same way. `done` and `failed` are therefore refused AT
-// THE FOLD rather than left latent, which makes the ceiling explicit instead of
-// something a reader has to infer from a map that never fires.
+// `run_finished`, so an outcome is simply not available here. `run-bar.ts` reads the
+// same inventory and withdraws a settled run too — and it is NOT the precedent for
+// the unfetched case, where it does the opposite: it KEEPS such a run and renders it
+// in an unknown state, which this mark has no member for. `done` and `failed` are
+// therefore refused AT THE FOLD rather than left latent, which makes the ceiling
+// explicit instead of something a reader has to infer from a map that never fires.
 //
 // IT KEEPS NO STATE OF ITS OWN, modelled on `subagent-dots.ts` rather than on
 // `run-dots.ts`: the tab set IS the membership, enumerated per pass, so a closed
@@ -43,11 +45,11 @@
 // ---------------------------------------------------------------------------
 
 import { effect } from "@cplieger/reactive";
-import { openChatRefs, setTabRunStatus, tabIdFor } from "./tabs.js";
+import { hasTab, openChatRefs, setTabRunStatus, tabIdFor } from "./tabs.js";
 import type { TabRunDotStatus, TabRunTally } from "./tabs.js";
 import { runStatusFor, type RunPauseClass } from "./store.js";
 import { runPendingAsks } from "./decision-dock.js";
-import { isNeedInputPark, liveRunIDsForChat, runState } from "./run-store.js";
+import { isNeedInputPark, liveRunsForChat, peekLiveRun, runState } from "./run-store.js";
 
 /** The fold's two halves: what the mark paints, and what its phrase says. */
 interface RunFold {
@@ -64,20 +66,26 @@ interface RunFold {
  *  a TRACKED read, and the park classified by the store rather than re-derived
  *  here.
  *
- *  A run whose state has not been fetched yet contributes NOTHING — not `working`
- *  on the grounds that a live row implies motion. That is `run-bar.ts`'s recorded
- *  precedent for "we do not know yet", and the inventory itself cannot answer: a
- *  row's `executing` flag reports whether THIS PROCESS holds a deadline, which
- *  reads false for a lease read back from disk. */
+ *  A run whose cell has not resolved yet is answered by the INVENTORY's own
+ *  `executing` flag, which is the first answer available: the row lands with the
+ *  lifecycle frame or the boot rebuild, a round trip before the `inspect` that
+ *  refines it. `executing === false` still contributes nothing — that flag reports
+ *  whether THIS PROCESS holds a deadline for the run, so a parked lease and one read
+ *  back from disk are indistinguishable there, and claiming a state would be
+ *  guessing rather than reporting. */
 function foldRuns(chatID: string): RunFold {
   let working = 0;
   let waiting = 0;
   let input = 0;
-  for (const runID of liveRunIDsForChat(chatID)) {
-    const asking = runPendingAsks(runID).count > 0;
-    const state = runState(runID);
+  for (const row of liveRunsForChat(chatID)) {
+    const asking = runPendingAsks(row.id).count > 0;
+    const state = runState(row.id);
     const pause: RunPauseClass = isNeedInputPark(state) ? "need_input" : "";
-    switch (runStatusFor(state?.status, asking, pause)) {
+    const rowStatus =
+      state === undefined
+        ? runStatusFor(row.executing ? "running" : undefined, asking, pause)
+        : runStatusFor(state.status, asking, pause);
+    switch (rowStatus) {
       case "input":
         input++;
         break;
@@ -121,7 +129,7 @@ function repaint(): void {
  *  restored yet, and the tab-set dependency is what picks a row up once it exists.
  *
  *  ONE effect, because all three inputs are signal reads inside the pass it makes:
- *  `openChatRefs` subscribes to the tab SET, `liveRunIDsForChat` touches the
+ *  `openChatRefs` subscribes to the tab SET, `liveRunsForChat` touches the
  *  inventory's version, and inside the fold `runState` subscribes to each run's own
  *  cell while `runPendingAsks` subscribes to the dock's queue. No second effect is
  *  needed here — unlike `run-dots.ts`, this module writes no signal, so there is no
@@ -130,4 +138,17 @@ export function installChatRunDotSubscriber(): void {
   effect(() => {
     repaint();
   });
+}
+
+/** Whether a chat row's fold still needs this run's state cell: the run is live and
+ *  the chat that launched it has an open tab, so the effect above reads that cell on
+ *  every pass. Registered as a run-state demand from the composition root, because the
+ *  store is a leaf and `forgetRun` cannot know who is reading.
+ *
+ *  The row's OWN `chat` rather than `runChatID`, which deliberately outlives a settle so
+ *  a finished run can be re-opened under its parent: reading that instead would demand a
+ *  settled run's cell for the life of the page. */
+export function chatTabFoldsRun(workflowID: string): boolean {
+  const chat = peekLiveRun(workflowID)?.chat ?? "";
+  return chat !== "" && hasTab("chat", chat);
 }

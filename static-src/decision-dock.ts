@@ -33,6 +33,7 @@
 import { el, signal, effect, touch } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
 import { activeSession } from "./store.js";
+import { releaseClampsIn } from "./clamp-text.js";
 import { forceReflow } from "./dom.js";
 import { buildPermissionCard } from "./permission.js";
 import { buildElicitationCard } from "./elicitation.js";
@@ -103,6 +104,9 @@ interface RunInputDecision {
   askID: string;
   payload: RunInputNeededPayload;
   submit: (text: string | null) => void;
+  /** Ask the agent that launched this run to answer, on a CHAT-PARENTED ask only:
+   *  its presence is what puts the Defer button on the card. */
+  defer?: () => void | Promise<void>;
 }
 
 /** The dock's input. Only the union is exported — a caller enqueues a
@@ -777,6 +781,13 @@ function swap(h: DockHost, head: Decision | undefined, depth: number): void {
   // outgoing element per host, ever.
   endPhase(h);
 
+  // Every card on screen here is about to be replaced or moved into the inert
+  // outgoing wrapper, so this is the one point a card LEAVES — and a clamp's
+  // release has to be explicit, because the observer's own zero-size callback may
+  // never arrive (`clamp-text.ts` `releaseClamp`). Before `show`, or the incoming
+  // card's own clamp would be swept the moment it was attached.
+  releaseClampsIn(h.el);
+
   // Reduced motion and a background tab take NO phase at all: same final DOM,
   // same response behaviour, no outgoing element and no timer, so there is
   // nothing left to clean up. `document.hidden` is in the gate for a real
@@ -988,12 +999,20 @@ function buildCard(d: Decision): HTMLElement {
     case "run_input":
       // The hold goes INSIDE settle's callback, so an ask another surface already
       // answered leaves nothing behind: settle refuses and the callback never runs.
-      return buildRunInputCard(d.payload, heldAnswer(d), (text) => {
-        settle(d, () => {
-          holdAnswer(d, text);
-          d.submit(text);
-        });
-      });
+      return buildRunInputCard(
+        d.payload,
+        heldAnswer(d),
+        (text) => {
+          settle(d, () => {
+            holdAnswer(d, text);
+            d.submit(text);
+          });
+        },
+        // UNWRAPPED, unlike every other action in this function: a deferral answers
+        // nothing, so splicing the entry would take the card off every surface while
+        // the run is still parked and the question still open.
+        d.defer,
+      );
     default:
       d satisfies never;
       return el("div");

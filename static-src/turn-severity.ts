@@ -113,6 +113,16 @@ export const OUTCOME_LABEL: Record<TurnOutcome, string> = {
   failed: "Failed",
 };
 
+/** Every member of `TurnOutcome` as a runtime array, for a decoder that has to
+ *  check a persisted string against the vocabulary.
+ *
+ *  DERIVED from the total record above rather than written out, so it cannot drift
+ *  from the union: a member ADDED to the generated union is a compile error on that
+ *  record, and one REMOVED is a compile error on its keys. The generated
+ *  `TURN_OUTCOMES` array is module-private to `decoders.gen.ts` with no export knob,
+ *  so this is the only exported spelling of the set. */
+export const TURN_OUTCOME_VALUES = Object.keys(OUTCOME_LABEL) as readonly TurnOutcome[];
+
 /** The outcome as a SENTENCE, for hover and description text — what the state
  *  MEANS rather than its one-word name. Total over `TurnOutcome`, and read by the
  *  same two surfaces as `OUTCOME_LABEL` for the same reason.

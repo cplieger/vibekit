@@ -641,12 +641,18 @@
 
   &.oauth {
     background: var(--c-yellow);
-    opacity: calc(1 - var(--vk-beat) * 0.6);
+
+    --beat-peak: 0.4;
+
+    animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
   }
 
   &.failed {
     background: var(--c-red);
-    opacity: calc(1 - var(--vk-beat) * 0.6);
+
+    --beat-peak: 0.4;
+
+    animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
   }
 
   &.disabled {
@@ -764,7 +770,7 @@
 
 .mcp-modal-card {
   width: min(36rem, 92vw);
-  max-height: 85vh;
+  max-height: 85dvh;
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
@@ -1336,10 +1342,15 @@
   white-space: nowrap;
 }
 
+/* No `min-height` here: the app-wide floor (61-mcp-tools.css) sizes this button on
+   the pointer tier, 24px on a mouse and 44px under a finger. It used to declare a
+   (0,1,0) `1.5rem` that beat that floor, plus a `@media (width <= 30rem)` arm
+   restating 44px — a width-keyed third threshold of exactly the kind items 7 and 9
+   removed elsewhere, and one that also grew the button to 44px on a MOUSE in a
+   narrow window. Both are gone. */
 .mcp-disc-insert {
   flex-shrink: 0;
   padding: 2px var(--sp-2);
-  min-height: 1.5rem;
   border: 1px solid var(--c-border);
   border-radius: var(--r-sm);
   background: var(--c-bg-secondary);
@@ -1421,9 +1432,5 @@
 
   .mcp-disc-arg-name {
     flex: none;
-  }
-
-  .mcp-disc-insert {
-    min-height: 2.75rem;
   }
 }

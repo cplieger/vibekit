@@ -80,8 +80,6 @@ function mount(f: Fixture): HTMLElement {
 /** Entry animations: the last keyframe is the element's own value, so nothing
  *  may still be attached once the animation has run. */
 const ENTRY: readonly Fixture[] = [
-  { what: "an appended chat element", el: "div[data-chat-entry]" },
-  { what: "a turn card", el: "div.turn[data-chat-entry]" },
   {
     what: "a streamed text chunk",
     el: "span[data-vk-chunk-enter]",
@@ -101,17 +99,29 @@ const ENTRY: readonly Fixture[] = [
   { what: "a tooltip", el: "div.uip-tooltip" },
   { what: "a model picker card", el: "button.picker-btn" },
   { what: "a transcript boundary", el: "div.boundary" },
+  { what: "a file browser row", el: "div.fb-row" },
+  { what: "the shell entering fullscreen", el: "div.shell-panel.shell-fullscreen" },
+  // A no-fill entry, as the control that says these assertions are not vacuous:
+  // it detaches for a reason that has nothing to do with the sweep.
+  { what: "a tab entering the strip", el: "div.tab.entering" },
+];
+
+/** A container whose height the CONTENT decides may carry no entry animation at
+ *  all. Animating `opacity` or `transform` composites the element, and a layer
+ *  costs its own area x DPR^2 x 4 bytes — so a 3,203 CSS px turn card is a 47 MB
+ *  layer on a DPR-3 phone, per mount, which is what crashed WebKit and heated the
+ *  device. These carried one until 2026-09-10; `vibekit-ui.md` "Entry motion is a
+ *  GPU budget". The reader of the removed rows in ENTRY, so a re-added animation
+ *  fails here rather than silently costing a layer again. */
+const UNBOUNDED: readonly Fixture[] = [
+  { what: "an appended chat element", el: "div[data-chat-entry]" },
+  { what: "a turn card", el: "div.turn[data-chat-entry]" },
   { what: "a tool card", el: "div.tool-call" },
   { what: "a tool group", el: "div.tool-group" },
   { what: "a delegated-work card", el: "div.subagent-block" },
   { what: "a todo checklist", el: "div.todo-list" },
   { what: "a plan card", el: "div.plan-message" },
-  { what: "a file browser row", el: "div.fb-row" },
   { what: "a run card", el: "div.run-card" },
-  { what: "the shell entering fullscreen", el: "div.shell-panel.shell-fullscreen" },
-  // A no-fill entry, as the control that says these assertions are not vacuous:
-  // it detaches for a reason that has nothing to do with the sweep.
-  { what: "a tab entering the strip", el: "div.tab.entering" },
 ];
 
 /** Exit animations: the last keyframe is a state the element does not otherwise
@@ -145,6 +155,25 @@ describe("an entry animation detaches when it finishes", () => {
       expect(node.getAnimations(), `nothing left attached to ${f.what}`).toEqual([]);
     });
   }
+});
+
+describe("a content-sized container costs no compositing layer", () => {
+  for (const f of UNBOUNDED) {
+    it(`animates nothing on ${f.what}`, () => {
+      expect(mount(f).getAnimations(), `${f.what} is animating again`).toEqual([]);
+    });
+  }
+
+  it("keeps the streamed text's own fades, which are small elements", () => {
+    // The negative control: this suite would also pass with every animation in the
+    // app deleted, and the transcript still has to materialise as text arrives.
+    const chunk = mount({
+      what: "chunk",
+      el: "span[data-vk-chunk-enter]",
+      under: ["div.message.assistant"],
+    });
+    expect(chunk.getAnimations()).toHaveLength(1);
+  });
 });
 
 describe("an exit animation holds its end state", () => {

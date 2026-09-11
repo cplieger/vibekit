@@ -1,17 +1,14 @@
 // THE RAIL'S POSITION MARKS, measured rather than asserted about.
 //
-// Two marks say "the reader is here": a marker takes the accent fill, and a CLUSTER
-// containing the current turn takes a subdued derived wash, because a range of nine
-// turns may not claim a single turn's emphasis. The wash arrived with no contrast
-// measurement at all while every sibling rule in `29-turns.css` records its own
-// ratios — so a reader could not tell whether the 9px label on it was readable, and
-// neither could the next person to retune the mix.
+// ONE mark says "the reader is here": the marker takes the accent fill, addressed
+// through either `data-current` or `data-selected`, and its 11px digit sits on that
+// fill. Two floors apply and they answer different questions — WCAG 1.4.3 for the
+// digit, 1.4.11 for the filled box as an object against the page it hangs over.
 //
 // Shelling out to `scripts/css-contrast.py pair` rather than reimplementing the
 // colour maths, for the reason the send button's floors already record: a second
 // implementation is a second thing to be wrong, and the numbers in the stylesheet's
-// comments were measured with the first one. `color-mix(in oklch, …)` is exactly
-// what that script resolves, which is why the derived wash is measurable at all.
+// comments were measured with the first one.
 //
 // EVERY EXPRESSION IS READ OUT OF THE STYLESHEET. A floor asserted against colours
 // this file names itself keeps passing after someone changes the CSS to a mix that
@@ -68,16 +65,6 @@ function decl(body: string, prop: string): string {
   return (m?.[1] ?? "").trim();
 }
 
-/** The three colours of the cluster's current mark, as the stylesheet spells them. */
-function clusterMark(): { fill: string; ink: string; edge: string } {
-  const body = ruleContaining(turns, ".rail-cluster[data-current]").body;
-  return {
-    fill: decl(body, "background"),
-    ink: decl(body, "color"),
-    edge: decl(body, "border-color"),
-  };
-}
-
 /** The marker's mark. One rule serves both `data-current` and `data-selected`, so
  *  measuring it once measures both — which is the same fact `rail-mark-css.test.ts`
  *  pins from the other side. */
@@ -103,49 +90,13 @@ describe.skipIf(!existsSync(script))("the rail's position marks, measured", () =
     }
   });
 
-  it("holds the cluster's label to 4.5:1 on its derived wash, in both themes", () => {
-    // THE MEASUREMENT THE REVIEW ASKED FOR. The cluster's label is 9px — the
-    // smallest text in the app — on a `color-mix` nothing had measured, so this is
-    // the floor that was being taken on trust.
-    const { fill, ink } = clusterMark();
-    for (const m of pair(ink, fill)) {
-      expect(m.ratio, `${m.theme}: ${ink} on ${fill}`).toBeGreaterThanOrEqual(4.5);
-    }
-  });
-
-  it("holds the cluster's edge to 3:1 against the page it hangs over", () => {
-    // WCAG 1.4.11: the boundary carries 3:1, not the fill. That division of labour
-    // is deliberate here — the wash is subdued ON PURPOSE, so the border is what
-    // makes the marked cluster a distinguishable object.
-    const { edge } = clusterMark();
-    for (const m of pair(edge, PAGE)) {
-      expect(m.ratio, `${m.theme}: edge ${edge} vs page`).toBeGreaterThanOrEqual(3.0);
-    }
-  });
-
-  it("keeps the wash's own faintness on the record, so a widening is visible", () => {
-    // NOT a floor: a mark for a RANGE is supposed to be quieter than a mark for a
-    // turn, so this number is deliberately under 3:1 and the edge above is what
-    // carries the boundary. Recorded so that anyone deepening the mix sees the
-    // number move rather than discovering by eye that a cluster now shouts as loudly
-    // as a marker. The figures are the ones written at the rule.
-    const { fill } = clusterMark();
-    const byTheme = new Map(pair(fill, PAGE).map((m) => [m.theme, m.ratio]));
-    expect(byTheme.get("dark")).toBeCloseTo(1.354, 2);
-    expect(byTheme.get("light")).toBeCloseTo(1.397, 2);
-  });
-
-  it("keeps the cluster's mark quieter than the marker's", () => {
-    // The relation the design decision rests on, stated as a comparison rather than
-    // as two absolute numbers: whatever either mark is retuned to, a range must not
-    // claim a single turn's emphasis. Measured against the page, so "louder" means
-    // "further from the surface it sits on".
-    const marker = new Map(pair(markerMark().fill, PAGE).map((m) => [m.theme, m.ratio]));
-    const cluster = new Map(pair(clusterMark().fill, PAGE).map((m) => [m.theme, m.ratio]));
-    for (const theme of ["dark", "light"]) {
-      expect(cluster.get(theme), `${theme}: cluster wash vs marker fill`).toBeLessThan(
-        marker.get(theme) ?? 0,
-      );
+  it("holds the marker's fill to 3:1 against the page it hangs over", () => {
+    // WCAG 1.4.11: the filled marker is a graphical object a reader has to be able to
+    // pick out of the column, and the page is what it sits on — the rail hangs in the
+    // gutter beside the cards, over nothing else.
+    const { fill } = markerMark();
+    for (const m of pair(fill, PAGE)) {
+      expect(m.ratio, `${m.theme}: fill ${fill} vs page`).toBeGreaterThanOrEqual(3.0);
     }
   });
 });

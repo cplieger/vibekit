@@ -62,6 +62,7 @@ import type { TabKind, TabSubject, TabsChangedPayload } from "./types.js";
 // that paints from them.
 import { TAB_ICONS, TAB_VIEWS, type TabDotStatus, type TabViewSpec } from "./tab-view.js";
 import { materializeTab, subagentRef, subjectForRoute } from "./tab-materialize.js";
+import { viewStale } from "./tab-freshness.js";
 import {
   registerTabsTarget,
   permute,
@@ -92,11 +93,12 @@ import { activeView, setActiveView } from "./device-view.js";
 import { $ } from "./dom.js";
 import { swapViews } from "./view-swap.js";
 import { signal, effect, el } from "@cplieger/reactive";
-import { attachDrag, isDragHandled, setReorderCallback } from "./tabs-drag.js";
+import { attachDrag, DRAG_THRESHOLD_PX, isDragHandled, setReorderCallback } from "./tabs-drag.js";
 import { showContextMenu } from "./context-menu.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
 import { getActiveId, getSessions, setActive } from "./store.js";
+import { relativeTime } from "./utils-format.js";
 import { restoreFailedSend, retargetComposer } from "./composer-state.js";
 import { info, error as toastError } from "./toast.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
@@ -134,6 +136,12 @@ interface TabRow {
   spec: TabViewSpec;
   name: string;
   dotStatus?: TabDotStatus | undefined;
+  /** When the dot's OUTCOME became true, epoch millis (`ChatHeader.updated_at`).
+   *  A SIBLING field rather than a widening of `dotStatus` into an object:
+   *  `recordDotStatus` decides whether the attention surfaces move by comparing
+   *  the state before against the state after, and an object comparison would
+   *  differ on every write. */
+  dotSince?: number | undefined;
   tooltip?: string | undefined;
   /** The WORKFLOW mark's state and the breakdown its phrase needs, parked as ONE
    *  field so a rebuilt row cannot repaint the state without the count that
@@ -683,6 +691,26 @@ function revealActiveView(): void {
   $.sidebar.classList.remove("open");
 }
 
+/** Ask the freshness question for one row and spend the answer. THE one caller of
+ *  `viewStale`, so all nine kinds are gated in one place and none can answer it by
+ *  accident from its own `onShow`. */
+function refreshRow(row: TabRow): void {
+  if (viewStale(row.subject.kind, row.subject.ref)) {
+    row.spec.refresh();
+  }
+}
+
+/** The active row's refresh, for the two invalidation triggers. A no-op on an
+ *  empty strip and mid-swap, where there is no view on screen to refresh and the
+ *  successor activation runs its own gate a moment later. Emits nothing, pushes no
+ *  route and touches no state. */
+export function refreshActiveView(): void {
+  const row = rowOfID(state.active);
+  if (row !== undefined) {
+    refreshRow(row);
+  }
+}
+
 /** Activate an existing tab, and reveal it: this is the reader picking a
  *  destination. Every gesture door lands here — a row tap, Enter on a focused
  *  row, and `openTab`, which is what the five singleton buttons dispatch. */
@@ -709,6 +737,7 @@ function activateTabQuietly(id: string): void {
   noteActivation(id);
   emit();
   row.spec.onShow?.();
+  refreshRow(row);
   callbacks.onActivate?.(id);
 }
 
@@ -1180,15 +1209,27 @@ const NEUTRAL_PHRASE: Readonly<Record<Exclude<TabDotStatus, "done" | "failed">, 
  *
  *  A phrase claims exactly what its producer supports (`store.ts` `outcomeLatch`
  *  records what each latch's producers are): `failed` must not widen back toward
- *  "last operation failed", and neither outcome may drop its subject. */
-function dotPhrase(kind: TabKind, status: TabDotStatus): string {
+ *  "last operation failed", and neither outcome may drop its subject.
+ *
+ *  `since` reaches only the two OUTCOMES. The other five states describe NOW, so
+ *  an age there would date a state that is still true. */
+function dotPhrase(kind: TabKind, status: TabDotStatus, since?: number): string {
   if (status === "done") {
-    return `${DOT_SUBJECT[kind]} finished`;
+    return withAge(`${DOT_SUBJECT[kind]} finished`, since);
   }
   if (status === "failed") {
-    return `${DOT_SUBJECT[kind]} failed`;
+    return withAge(`${DOT_SUBJECT[kind]} failed`, since);
   }
   return NEUTRAL_PHRASE[status];
+}
+
+/** How long ago a finished thing finished, appended to its own phrase.
+ *
+ *  It does NOT tick: a 1s interval over a sidebar of finished chats is the wakeup
+ *  cost `vibekit-ui.md` forbids, and both surfaces this feeds are read on demand —
+ *  the tooltip on hover, the word when a screen reader reaches the row. */
+function withAge(phrase: string, since?: number): string {
+  return since === undefined ? phrase : `${phrase} · ${relativeTime(since)}`;
 }
 
 const CLS_DOT = "tab-status-dot";
@@ -1212,7 +1253,12 @@ function elementOf(id: string): HTMLElement | null {
  *  An empty status removes the attribute rather than setting it empty, so
  *  `[data-status]` alone is the CSS reveal condition and there is no second flag
  *  to keep in sync. */
-function paintDot(node: HTMLElement, kind: TabKind, status: TabDotStatus | ""): void {
+function paintDot(
+  node: HTMLElement,
+  kind: TabKind,
+  status: TabDotStatus | "",
+  since?: number,
+): void {
   const dot = node.querySelector<HTMLElement>(`.${CLS_DOT}`);
   const sr = node.querySelector<HTMLElement>(`.${CLS_DOT_SR}`);
   if (dot === null || sr === null) {
@@ -1224,20 +1270,21 @@ function paintDot(node: HTMLElement, kind: TabKind, status: TabDotStatus | ""): 
     sr.textContent = "";
     return;
   }
-  const phrase = dotPhrase(kind, status);
+  const phrase = dotPhrase(kind, status, since);
   dot.dataset["status"] = status;
   dot.dataset["tooltip"] = phrase;
   sr.textContent = `, ${phrase}`;
 }
 
-/** Set a chat tab's activity dot. The state is derived by `tabStatusFor`
- *  (store.ts), which owns the precedence; this is the writer.
+/** Set a chat tab's activity dot, and optionally when its state became true. The
+ *  state is derived by `tabStatusFor` (store.ts), which owns the precedence; this
+ *  is the writer.
  *
  *  Records the value on the ROW before painting, so a row rebuilt later starts
  *  from the real state instead of the factory's seed. Deliberately does NOT
  *  `emit()`: a dot is not a structural change, so it must not queue a re-render,
  *  and the paint below is the whole visible effect. */
-export function setTabStatus(id: string, status: TabDotStatus | ""): void {
+export function setTabStatus(id: string, status: TabDotStatus | "", since?: number): void {
   // The ROW is what knows the kind, and the phrase is per kind, so the row is
   // resolved once here rather than by each of the two writes below. A row that has
   // left the projection returns early even when its element is still in the DOM
@@ -1247,12 +1294,14 @@ export function setTabStatus(id: string, status: TabDotStatus | ""): void {
   if (row === undefined) {
     return;
   }
-  recordDotStatus(row, status);
+  recordDotStatus(row, status, since);
   const node = elementOf(id);
   if (node === null) {
     return;
   }
-  paintDot(node, row.subject.kind, status);
+  // From the ROW rather than the argument, so a since-less repaint of an unchanged
+  // state keeps the age the row still holds instead of blanking the tooltip.
+  paintDot(node, row.subject.kind, status, row.dotSince);
 }
 
 /** The workflow mark's announced phrase and tooltip, ONE string for both exactly
@@ -1353,12 +1402,21 @@ export function setTabDirty(id: string, dirty: boolean): void {
 /** Park a dot state on its row. "" means no state, which is an ABSENT field
  *  rather than an empty string, so `createTabEl` can tell "nothing was ever
  *  painted" from "painted, then cleared" with one `?? default`. */
-function recordDotStatus(row: TabRow, status: TabDotStatus | ""): void {
+function recordDotStatus(row: TabRow, status: TabDotStatus | "", since?: number): void {
   const before = row.dotStatus;
   if (status === "") {
     delete row.dotStatus;
   } else {
     row.dotStatus = status;
+  }
+  // The age belongs to the STATE, so a new state drops the previous one's. A
+  // since-less repaint of the SAME state keeps it: `turn-teardown.ts` repaints `done`
+  // with no `since` and the chat row effect resupplies it a microtask later.
+  if (status !== before) {
+    delete row.dotSince;
+  }
+  if (since !== undefined) {
+    row.dotSince = since;
   }
   // Only a CHANGED dot moves the attention surfaces, and the guard is what keeps
   // the store effect's sweep over every open chat (chat.ts) from waking the fold
@@ -1589,7 +1647,9 @@ export function paintProvisionalTabs(subjects: readonly TabSubject[]): void {
  *  The dot this reads is `setTabStatus`'s single `TabDotState` slot, NOT
  *  `setTabRunStatus`'s workflow mark on a chat row — that writer deliberately does
  *  not bump `dotVersion`, and folding it in is still an open product decision (see
- *  its own comment).
+ *  its own comment). A chat whose runs are still going is handled instead by the
+ *  settle probe below, which BLANKS that chat's settled cue rather than promoting a
+ *  second mark into the fold.
  *
  *  The id is the TAB id, which is what every other key in that module is (the
  *  rows-in-view scan reads `data-tab-id`, the switch acknowledgement reads the
@@ -1598,7 +1658,49 @@ export function paintProvisionalTabs(subjects: readonly TabSubject[]): void {
 export function cueCandidates(): { id: string; status: string }[] {
   return state.tabs
     .filter((t) => (t.subject.kind === "chat" && t.spec.owns) || t.subject.kind === "run")
-    .map((t) => ({ id: t.subject.id, status: t.dotStatus ?? "" }));
+    .map((t) => ({ id: t.subject.id, status: foldedDotStatus(t) }));
+}
+
+/** The dot states that mean a chat's own work is OVER, and therefore the only ones
+ *  the settle probe may blank.
+ *
+ *  Narrow on purpose. A chat reading `input` (an unanswered decision) or `waiting`
+ *  (the agent asked and is standing by) must keep its cue whatever its runs are
+ *  doing — those states ARE the reader's business, and they are what the reader is
+ *  being pointed at. `working` and `idle` raise no cue in the first place. */
+const SETTLED_CUES: ReadonlySet<string> = new Set<TabDotStatus>(["done", "failed"]);
+
+/** Answers whether a CHAT still holds outstanding work, or null when nothing has
+ *  registered one. INJECTED rather than imported: the answer lives in
+ *  `chat-settled.ts`, which reads the chat store, the live-run inventory and the
+ *  decision dock — and every one of those graphs reaches back here. */
+let chatSettledProbe: ((chatRef: string) => boolean) | null = null;
+
+/** Register the settle probe. Unregistered, nothing is ever suppressed, which is
+ *  exactly the behaviour before the probe existed. */
+export function setChatSettledProbe(fn: (chatRef: string) => boolean): void {
+  chatSettledProbe = fn;
+}
+
+/** What the out-of-page fold sees for one row: its own dot, unless this is a CHAT
+ *  whose turn has settled while the work it launched is still going.
+ *
+ *  `""` and NOT `idle`, and the difference is load-bearing: `attention.ts`'s refresh
+ *  reads `""` as "no information" and leaves the acknowledgement map alone, where
+ *  `idle` is a real non-cue state that FORGETS the entry. Blanking with `idle` would
+ *  drop the reader's acknowledgement and re-raise the cue from scratch the moment the
+ *  run ended, even for a chat they had already visited.
+ *
+ *  The row's own `dotStatus` is untouched, so the strip renders exactly as it does
+ *  today — only the fold's view of it changes. The probe is consulted LAST, so a row
+ *  that could never be suppressed never reaches it and never subscribes a calling
+ *  effect to that chat's state. */
+function foldedDotStatus(row: TabRow): string {
+  const status = row.dotStatus ?? "";
+  if (row.subject.kind !== "chat" || !SETTLED_CUES.has(status)) {
+    return status;
+  }
+  return chatSettledProbe !== null && !chatSettledProbe(row.subject.ref) ? "" : status;
 }
 
 /** Subscribe to everything that can change the attention fold's input, and
@@ -1610,6 +1712,13 @@ export function cueCandidates(): { id: string; status: string }[] {
  *  (`recordDotStatus`, which deliberately does not emit). A funnel on `emit()`
  *  alone would leave the count stale on every status change; one on the dot alone
  *  would leave it stale after a chat closed.
+ *
+ *  A THIRD input arrives for free and is not named here: `fn` calls
+ *  `cueCandidates`, which calls the settle probe, whose own reads are tracked. An
+ *  effect subscribes to whatever it reads during its run, nested calls included, so
+ *  a run starting or ending under a settled chat re-runs this effect without a
+ *  signal of its own. Only a row that CAN be suppressed reaches the probe, so an
+ *  ordinary strip subscribes to nothing extra.
  *
  *  Deliberately NOT registered in `moduleEffects`: the caller owns this
  *  subscription's lifetime, so `_resetForTest` must not silently unsubscribe it
@@ -1972,6 +2081,12 @@ function createTabEl(row: TabRow): HTMLElement {
   const close = el("span", { className: "tab-close", "aria-hidden": "true" }, iconEl(ICON_CLOSE));
   close.addEventListener("pointerup", (e) => {
     e.stopPropagation();
+    // The row's own tap guard, read here for the same reason: a drag that happened
+    // to start on the × is a scroll, and the × is the strip's one destructive
+    // control, so releasing it after a pan closed a tab nobody aimed at.
+    if (gestureDragged()) {
+      return;
+    }
     void closeTab(id);
   });
 
@@ -2046,7 +2161,7 @@ function createTabEl(row: TabRow): HTMLElement {
     // 12-tabs.css reserves the slot for them, which is what keeps the name from
     // moving when the real state lands — a run's from `run-dots.ts`, a subagent's
     // from `subagent-dots.ts`.
-    paintDot(node, kind, row.dotStatus ?? (kind === "chat" ? "idle" : ""));
+    paintDot(node, kind, row.dotStatus ?? (kind === "chat" ? "idle" : ""), row.dotSince);
   } else if (kind === "chat") {
     // A chat tab LEADS with its activity dot, in the slot the per-mode role glyph
     // used to hold. That is the replacement, not a supplement: the strip exists
@@ -2057,7 +2172,7 @@ function createTabEl(row: TabRow): HTMLElement {
     // is seeded at all rather than left blank for the store effect to fill: the
     // effect paints on a later tick, so an unseeded dot would leave the row one
     // frame narrower and shift its name.
-    paintDot(node, kind, row.dotStatus ?? "idle");
+    paintDot(node, kind, row.dotStatus ?? "idle", row.dotSince);
   } else {
     // Every other kind keeps its glyph — none of them has an activity concept —
     // and uses the same element in the trailing slot for the editor's unsaved
@@ -2065,7 +2180,9 @@ function createTabEl(row: TabRow): HTMLElement {
     // to show.
     const icon = el("span", { className: "tab-icon" }, iconEl(TAB_ICONS[kind]));
     node.append(icon, name, statusSR, pin, statusDot, close);
-    paintDot(node, kind, row.dotStatus ?? "");
+    // No producer supplies an age here, and the argument is passed anyway so this is
+    // not the one paint site a reader has to reason about.
+    paintDot(node, kind, row.dotStatus ?? "", row.dotSince);
   }
   // The workflow mark, repainted from the row for the dot's reason: the producer
   // effect rewrites only when its own inputs churn, and a DOM rebuild is not one of
@@ -2131,12 +2248,71 @@ function createTabEl(row: TabRow): HTMLElement {
   return node;
 }
 
+// --- Tap vs drag ---
+//
+// `#tab-list` is a scroll container (`overflow-y: auto` computes the inline axis to
+// `auto` too), so a finger on a row is as often a scroll as a tap — and this
+// strip's activation is a `pointerup` handler, so a gesture that panned the list
+// and lifted still activated whatever sat under its FIRST contact point.
+//
+// A native pan cancels the pointer, which suppresses the release for free. What it
+// does not cover, and what the report describes, is a drag along an axis with
+// nothing left to scroll: no pan starts, so no cancel arrives, `pointermove` keeps
+// being delivered under touch's implicit capture, and the release lands on the row.
+// So the discrimination is the travelled DISTANCE rather than any cancel.
+//
+// ONE module-scope gesture rather than per-row state: `isPrimary` bounds the strip
+// to a single gesture at a time, and the two `pointerup` readers on a row —
+// activation and the × — have to answer for the same one. There is no reset on
+// `pointercancel` deliberately: a cancelled gesture delivers no release to
+// suppress, and the next `pointerdown` is what clears the verdict.
+let gestureOriginX = 0;
+let gestureOriginY = 0;
+let gestureIsDrag = false;
+
+/** Whether the primary gesture in flight has travelled far enough to be a drag —
+ *  and therefore may not activate or close the row it started on. */
+function gestureDragged(): boolean {
+  return gestureIsDrag;
+}
+
+/** Track the strip's tap-vs-drag gesture on one row. Every row gets this, unlike
+ *  `attachDrag`: a sub-tab cannot be reordered and can still be scrolled past. */
+function attachTapGuard(node: HTMLElement): void {
+  node.addEventListener("pointerdown", (e) => {
+    if (!e.isPrimary) {
+      return;
+    }
+    gestureOriginX = e.clientX;
+    gestureOriginY = e.clientY;
+    gestureIsDrag = false;
+  });
+  node.addEventListener("pointermove", (e) => {
+    if (!e.isPrimary || gestureIsDrag) {
+      return;
+    }
+    if (
+      Math.abs(e.clientX - gestureOriginX) > DRAG_THRESHOLD_PX ||
+      Math.abs(e.clientY - gestureOriginY) > DRAG_THRESHOLD_PX
+    ) {
+      gestureIsDrag = true;
+    }
+  });
+}
+
 // --- Interaction (click, middle-click, drag, keyboard) ---
 
 function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean): void {
+  attachTapGuard(node);
+
   // Click to activate (any target outside .tab-close).
   node.addEventListener("pointerup", (e) => {
     if (isDragHandled()) {
+      return;
+    }
+    // A drag SCROLLS and never activates. Above the guard's own targets so a
+    // gesture that started on the × and released on the row is refused too.
+    if (gestureDragged()) {
       return;
     }
     if ((e.target as HTMLElement).closest(".tab-close") !== null) {
@@ -2394,6 +2570,7 @@ export function _resetForTest(): void {
   callbacks.onActivate = null;
   callbacks.onEmpty = null;
   callbacks.onClosed = null;
+  chatSettledProbe = null;
   if (internal.emptyTimer !== null) {
     clearTimeout(internal.emptyTimer);
   }

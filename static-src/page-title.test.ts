@@ -76,6 +76,81 @@ describe("the title bar's measured fit", () => {
     expect(title?.scrollWidth, "the title renders untruncated").toBe(title?.clientWidth);
   });
 
+  it("clips a SHORT title once the ACTIONS have wrapped", () => {
+    // AMENDMENT §E, and this is the bistable band it rules must go. The title's own
+    // overflow is not the whole test: the heading is `flex: 1 1 0`, so it contributes
+    // no basis to the line, but it is still a flex item and the bar is still charged
+    // its 2px GAP — which the row's 44px targets and their gaps cannot spare. So the
+    // bar wrapped, the wrap handed the heading a row of its own, a short title then
+    // measured as fitting, and it rendered BECAUSE the actions had spilled onto a
+    // second row: a title visible only in the state where the bar had broken for it.
+    // Measured on the SERVED page (where the phone row is eight buttons rather than
+    // this environment's seven, the hamburger being desktop-hidden at the test
+    // viewport's own width): before, 387-391 showed the title over a 91px two-row
+    // bar; after, 390 and 391 are a single 52px row and the band is gone.
+    const heading = mountBar("320px");
+    setPageTitle("Git", "chat");
+    expect(heading.classList.contains("sr-only"), "clipped although the title is short").toBe(true);
+
+    // The title genuinely fits, which is what makes this case about the ACTIONS.
+    const title = heading.querySelector<HTMLElement>(".titlebar-title");
+    heading.classList.remove("sr-only");
+    expect(title?.scrollWidth, "the short title is not truncated").toBe(title?.clientWidth);
+    heading.classList.add("sr-only");
+
+    // Two rows here is geometry rather than a fallback — the targets do not fit one
+    // row at this width and shrinking one is not on the table — and §E's point is
+    // that the state is now STABLE rather than emergent.
+    const bar = heading.parentElement;
+    expect(bar).not.toBeNull();
+    const rows = new Set(
+      [...(bar?.querySelectorAll<HTMLElement>(":scope > .icon-btn") ?? [])]
+        .filter((b) => b.getBoundingClientRect().width > 0)
+        .map((b) => Math.round(b.getBoundingClientRect().top)),
+    );
+    expect(rows.size, "the actions wrapped, which is what clipped the title").toBe(2);
+  });
+
+  it("re-decides when the BAR resizes, not only when the heading does", async () => {
+    // The clip is `.sr-only`, a 1x1 absolutely positioned box at every width — so an
+    // observer watching only the heading goes silent exactly while the clip is in
+    // force, and the clip becomes a latch that only a title change breaks. Measured
+    // on the served page: a monotonic 320 -> 768 resize sweep kept the title hidden
+    // at every width, where a fresh load at 768 showed it. On a phone that is a
+    // rotation: portrait clips, landscape has room and never re-asks.
+    const heading = mountBar("320px");
+    setPageTitle("Git", "chat");
+    expect(heading.classList.contains("sr-only"), "clipped while narrow").toBe(true);
+    initPageTitleFit();
+
+    /** Two frames plus a tick: the observer delivers after layout and this module
+     *  defers its own write by one more frame. */
+    const settle = async (): Promise<void> => {
+      await new Promise<void>((r) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            setTimeout(r, 50);
+          });
+        });
+      });
+    };
+
+    // The observation's OWN first delivery is drained here, before the width moves.
+    // Without this the case cannot tell the two observers apart: that first callback
+    // lands after a synchronous resize and unclips for a reason that has nothing to
+    // do with which element is watched.
+    await settle();
+    expect(heading.classList.contains("sr-only"), "still clipped after the first delivery").toBe(
+      true,
+    );
+
+    const area = document.getElementById("chat-area");
+    expect(area).not.toBeNull();
+    area?.style.setProperty("inline-size", "900px");
+    await settle();
+    expect(heading.classList.contains("sr-only"), "shown once the bar has room").toBe(false);
+  });
+
   it("keeps the h1 and its text in the accessibility tree while clipped", () => {
     // The whole reason the clip is `.sr-only`. A phone is where this bar is the only
     // thing naming the view, so `display: none` there would leave the document with

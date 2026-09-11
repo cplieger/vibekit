@@ -24,6 +24,8 @@
 // re-render.
 // ---------------------------------------------------------------------------
 
+import { ICON_CLOSE } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import {
   el,
   signal,
@@ -165,11 +167,14 @@ class StatusBanner {
       "button",
       {
         type: "button",
-        className: "icon-btn git-status-banner-dismiss",
+        // `icon-btn` and nothing else: the registry's close mark leaves no local
+        // rule to write, so 17-settings.css carries no `.git-status-banner-dismiss`.
+        // The `data-` attribute is the hook this file's tests address.
+        className: "icon-btn",
         "data-banner-dismiss": key,
         "aria-label": "Dismiss",
       },
-      "✕",
+      iconEl(ICON_CLOSE),
     );
     dismiss.addEventListener("click", () => {
       this.dismissed.value = key;

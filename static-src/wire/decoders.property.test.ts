@@ -147,6 +147,11 @@ const configuredForgeArb = fc.record({
 const connectedPayloadArb = fc.record({
   floor: posInt,
   head: posInt,
+  // Both `*_stated` flags are declared WITHOUT `omitempty`, so wiregen emits them as
+  // required and the decoder reads them with `reqBool` — an arbitrary that omits one
+  // generates a payload the server cannot send and the decoder must reject.
+  busy_stated: fc.boolean(),
+  live_runs_stated: fc.boolean(),
 });
 
 const deviceFlowResponseArb = fc.record({

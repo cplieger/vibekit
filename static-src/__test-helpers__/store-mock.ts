@@ -78,7 +78,7 @@ export const storeMock = {
   // flat `false` would answer for a session that says otherwise. It also keeps a
   // spreading suite on the behaviour it was written against — the transcript's
   // liveness input used to be `session.thinking` read at the call site.
-  turnLive: vi.fn((s: Session) => s.thinking || s.turn_open === true),
+  turnLive: vi.fn((s: Session) => s.thinking || s.turn_open === true || s.provisional === true),
   // The real derivations too, for `turnLive`'s reason: both are pure functions of
   // what they are handed, so there is nothing to fake and a flat answer would
   // contradict the session a suite planted. `turnBaseOf`'s fallback is what makes a
@@ -102,6 +102,8 @@ export const storeMock = {
   // not supply. A suite that drives the seed overrides it.
   outcomeLatch: vi.fn((): "done" | "failed" | "" => ""),
   latchFieldsFor: vi.fn((): { turn_done?: true; turn_failed?: true } => ({})),
+  latchFromOutcome: vi.fn((): { turn_done?: true; turn_failed?: true } => ({})),
+  applyLatch: vi.fn(),
   setTurnSummary: vi.fn(),
 
   tabStatusFor: vi.fn(() => ""),
@@ -133,6 +135,7 @@ export const storeMock = {
   upsertToolCall: vi.fn(),
   applyToolCallDelta: vi.fn(),
   foldToolCallDelta: vi.fn(),
+  republishWindowToolCalls: vi.fn(),
   setCodeReferences: vi.fn(),
   setChunkWatermark: vi.fn(),
   clearChunkWatermark: vi.fn(),
@@ -168,7 +171,5 @@ export const storeMock = {
   // The staleness gate. `transcriptStale` defaults TRUE — the always-refetch
   // behavior every spreading suite was written against; a suite exercising the
   // zero-fetch activation overrides it.
-  syncEpoch: vi.fn(() => 0),
-  bumpSyncEpoch: vi.fn(),
   transcriptStale: vi.fn(() => true),
 };

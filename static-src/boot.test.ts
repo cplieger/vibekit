@@ -127,11 +127,18 @@ const m = vi.hoisted(() => {
     fetchCatalog: vi.fn(),
     rebuildLiveRuns: vi.fn(),
     registerEvictionExemption: vi.fn(),
+    // Typed, because the case below reads a registered predicate back OFF the mock and
+    // calls it: one of the two is an arrow with no identity to compare against.
+    registerRunStateDemand: vi.fn<(fn: (id: string) => boolean) => () => void>(
+      () => () => undefined,
+    ),
     // Both live-run predicates, so a case can say WHICH one the exemption takes.
     hasExecutingRunForChat: vi.fn(),
     hasLiveRunForChat: vi.fn(),
     runTabProjectsChat: vi.fn(),
     subagentTabProjectsChat: vi.fn(),
+    chatTabFoldsRun: vi.fn(),
+    hasTab: vi.fn(() => false),
     showBanner: vi.fn(),
     bootMode: vi.fn(() => "full"),
     reloadCount: vi.fn(() => 1),
@@ -177,6 +184,7 @@ vi.mock("./modals.js", () => ({ showLoginModal: m.showLoginModal }));
 vi.mock("./tabs.js", () => ({
   activateRestoredTab: m.activateRestoredTab,
   getActiveTabRoute: m.getActiveTabRoute,
+  hasTab: m.hasTab,
 }));
 vi.mock("./tabs-sync.js", () => ({ listTabs: m.listTabs }));
 vi.mock("./router.js", () => ({
@@ -200,7 +208,9 @@ vi.mock("./run-store.js", () => ({
   hasExecutingRunForChat: m.hasExecutingRunForChat,
   hasLiveRunForChat: m.hasLiveRunForChat,
   rebuildLiveRuns: m.rebuildLiveRuns,
+  registerRunStateDemand: m.registerRunStateDemand,
 }));
+vi.mock("./chat-run-dots.js", () => ({ chatTabFoldsRun: m.chatTabFoldsRun }));
 vi.mock("./run-view.js", () => ({ runTabProjectsChat: m.runTabProjectsChat }));
 vi.mock("./subagent-view.js", () => ({ subagentTabProjectsChat: m.subagentTabProjectsChat }));
 vi.mock("./view-swap.js", () => ({ markBootDone: m.markBootDone }));
@@ -1093,10 +1103,10 @@ describe("a boot inside a reload loop", () => {
     // Capability, and a degraded runtime: what a reader in this state needs most.
     expect(m.initGovernance).toHaveBeenCalledTimes(1);
     expect(m.initRuntimeHealth).toHaveBeenCalledTimes(1);
-    // The live-runs rebuild is NOT in the withheld set: it seeds a run tab's own label
-    // and its `launchedBy` nesting plus the eviction exemption, so withholding it is
-    // wrong UI for the whole pause rather than an empty state the app reads around.
-    expect(m.rebuildLiveRuns).toHaveBeenCalledTimes(1);
+    // The live-runs inventory is not withheld and is not FETCHED either: the `connected`
+    // handshake states it, so a run tab's label, its `launchedBy` nesting and the eviction
+    // exemption are all seeded from that frame in every boot mode.
+    expect(m.rebuildLiveRuns).not.toHaveBeenCalled();
   });
 
   it("withholds nothing on an ordinary boot, and arms the stability clear", async () => {
@@ -1110,7 +1120,9 @@ describe("a boot inside a reload loop", () => {
     expect(m.showBanner).not.toHaveBeenCalled();
     expect(m.fetchCatalog).toHaveBeenCalledTimes(1);
     expect(m.loadVersions).toHaveBeenCalledTimes(1);
-    expect(m.rebuildLiveRuns).toHaveBeenCalledTimes(1);
+    // The boot fetch is GONE from every mode: `adoptConnectRuns` reads the handshake, and
+    // the gap door is the one place a per-run refetch is still wanted.
+    expect(m.rebuildLiveRuns).not.toHaveBeenCalled();
     // A page that stays up costs the next boot nothing, and only this call arms it.
     expect(m.noteBootAlive).toHaveBeenCalledTimes(1);
   });
@@ -1141,5 +1153,24 @@ describe("the eviction exemptions", () => {
 
     expect(m.registerEvictionExemption).toHaveBeenCalledWith(m.hasExecutingRunForChat);
     expect(m.registerEvictionExemption).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("the run-state demands", () => {
+  it("registers the run tab AND the chat-row fold, so forgetRun enumerates nobody", async () => {
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    const demands = m.registerRunStateDemand.mock.calls.flat();
+    expect(demands).toHaveLength(2);
+    // The fold's predicate travels by IDENTITY: `chat-run-dots.ts` owns the reader
+    // whose demand it states, the way each eviction exemption above does.
+    expect(demands).toContain(m.chatTabFoldsRun);
+    // The other is the run TAB's, which asks the tab SET rather than the store — the
+    // one demand the retired call-site guard did carry.
+    const tabDemand = demands.find((fn) => fn !== m.chatTabFoldsRun);
+    m.hasTab.mockReturnValue(true);
+    expect(tabDemand?.("wf_1")).toBe(true);
+    expect(m.hasTab).toHaveBeenCalledWith("run", "wf_1");
   });
 });

@@ -103,7 +103,13 @@ vi.mock("./dom.js", () => ({
     return el;
   },
 }));
-vi.mock("./tabs-drag.js", () => ({
+// Type-only, for the `importOriginal` below.
+import type * as TabsDrag from "./tabs-drag.js";
+// The three FUNCTIONS are stubbed and nothing else is: `DRAG_THRESHOLD_PX` is the
+// strip's drag slop and `tabs.ts` reads it, so a partial factory would fail this
+// whole file at link time.
+vi.mock("./tabs-drag.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof TabsDrag>()),
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
@@ -138,6 +144,7 @@ vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 // store. So a singleton's activation is observed HERE rather than in `shown`.
 vi.mock("./settings-tabs.js", () => ({
   loadSettingsTabData: vi.fn(),
+  refreshSettingsPanel: vi.fn(),
   forceSettingsTab: vi.fn(),
   // Present-but-inert so real-ESM linking succeeds: the tab projection widened
   // this graph and these names are imported somewhere in it. No case here calls
@@ -173,7 +180,7 @@ import {
   settleTabs,
   tabServer,
 } from "./__test-helpers__/tabs-server.js";
-import { loadSettingsTabData } from "./settings-tabs.js";
+import { refreshSettingsPanel } from "./settings-tabs.js";
 import type { OpenTabArgs } from "./tabs.js";
 import type { TabKind } from "./types.js";
 
@@ -204,6 +211,7 @@ function registerOpeners(): void {
       show: (ref) => {
         record("chat", ref);
       },
+      refresh: vi.fn(),
       close: vi.fn(),
       dot: () => "",
     },
@@ -211,17 +219,20 @@ function registerOpeners(): void {
       show: (ref) => {
         record("editor", ref);
       },
+      refresh: vi.fn(),
       close: vi.fn(),
     },
     run: {
       show: (ref) => {
         record("run", ref);
       },
+      refresh: vi.fn(),
     },
     subagent: {
       show: (chatID, subtaskID) => {
         record("subagent", `${chatID}/${subtaskID}`);
       },
+      refresh: vi.fn(),
     },
   });
 }
@@ -231,7 +242,10 @@ function registerOpeners(): void {
  *  and the one a response-continuation could not give.
  *
  *  Two channels because the factory has two: three kinds take an injected opener,
- *  and the five singletons reach their loader through a lazy import. */
+ *  and the five singletons reach their loader through a lazy import. For the
+ *  settings kind that loader is its REFRESH — the tab carries no `onShow` at all,
+ *  its whole activation having been the data half — so the dispatcher's gate is
+ *  what runs it. */
 async function expectActivated(kind: TabKind, ref: string): Promise<void> {
   if (kind === "chat" || kind === "editor" || kind === "run") {
     expect(shown.at(-1)).toEqual({ kind, ref, rowPresent: true });
@@ -239,7 +253,7 @@ async function expectActivated(kind: TabKind, ref: string): Promise<void> {
   }
   // The lazy import resolves on a microtask, so the loader lands one turn later.
   await settleTabs();
-  expect(vi.mocked(loadSettingsTabData)).toHaveBeenCalledWith("general");
+  expect(vi.mocked(refreshSettingsPanel)).toHaveBeenCalled();
 }
 
 function paint(): Promise<void> {

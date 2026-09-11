@@ -41,6 +41,7 @@ import {
   setGitTab,
   setDocsTab,
   activeChatRef,
+  setChatSettledProbe,
 } from "./tabs.js";
 import { markBootDone } from "./view-swap.js";
 import { ingestTabsChanged, listTabs } from "./tabs-sync.js";
@@ -51,10 +52,10 @@ import { refreshRuntimeLine } from "./status.js";
 import { initShellPanel } from "./shell.js";
 import { hideLoginModal, initLoginModal } from "./modals.js";
 import { initEditor } from "./editor-core.js";
-import { openFile, activateFile, closeEditorFile } from "./editor-openers.js";
+import { openFile, activateFile, closeEditorFile, refreshFile } from "./editor-openers.js";
 import { registerTabOpeners } from "./tab-materialize.js";
-import { showRun } from "./run-view.js";
-import { showSubagent } from "./subagent-view.js";
+import { showRun, refreshRun } from "./run-view.js";
+import { showSubagent, refreshSubagent } from "./subagent-view.js";
 import { openAtLine } from "./navigate.js";
 import { initAttachmentPillCallbacks } from "./attachment-pill.js";
 import { initFileBrowser, restoreFileBrowser } from "./files.js";
@@ -82,6 +83,7 @@ import {
   sendPrompt,
   installStoreSubscribers,
   activateChatView,
+  refreshChatView,
   closeChatTab,
   chatTabDot,
 } from "./chat.js";
@@ -106,14 +108,19 @@ import "./handlers/run.js";
 import { installRunDotSubscriber } from "./run-dots.js";
 import { installSubagentDotSubscriber } from "./subagent-dots.js";
 import { installChatRunDotSubscriber } from "./chat-run-dots.js";
+import { installDeferredCueSubscriber } from "./agent-finished-cue.js";
+import { installNotifyAskGesture } from "./notify.js";
+import { chatSettled } from "./chat-settled.js";
 import "./handlers/steer.js";
 import { initPushMessages } from "./handlers/push-message.js";
 import { initLaunchQueue } from "./share-target.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
-import { subscribeToActions } from "./actions/index.js";
+import { registerCleanup, subscribeToActions } from "./actions/index.js";
 import { initActions } from "./actions/boot.js";
+import { initBeatPhase } from "./beat-phase.js";
+import { initIconCrisp } from "./icon-crisp.js";
 // Init
 
 function init(): void {
@@ -134,12 +141,28 @@ function init(): void {
 
   initActions();
 
+  // Pixel-snap the icon boxes so a 1px stroke paints one whole pixel. On EVERY boot,
+  // login screen included, so it is here rather than on a post-auth path; the first
+  // pass is deferred to a frame so the chrome it measures is laid out, and it re-arms
+  // on layout changes itself. `icon-crisp.ts` carries the pixel measurement that shows
+  // why the box phase is the whole fix and a tier resize is not.
+  initIconCrisp();
+
+  // Before anything can paint a dot: the listener has to be up when the first
+  // `vk-dot-beat` starts, or that dot keeps the 0ms fallback and beats out of step.
+  initBeatPhase();
+
   // The tab factory's injected half: these three behaviours live in modules that
   // themselves call `materializeTab`, so registering here is what keeps the factory
   // out of a cycle. The five singleton kinds reach their loaders lazily.
   registerTabOpeners({
-    chat: { show: activateChatView, close: closeChatTab, dot: chatTabDot },
-    editor: { show: activateFile, close: closeEditorFile },
+    chat: {
+      show: activateChatView,
+      refresh: refreshChatView,
+      close: closeChatTab,
+      dot: chatTabDot,
+    },
+    editor: { show: activateFile, refresh: refreshFile, close: closeEditorFile },
     run: {
       // `parentless` is the run's own fact, not the tab strip's, so it comes from the
       // run store's record of which chat launched this run. No `cancel` half: a run
@@ -147,10 +170,11 @@ function init(): void {
       show: (workflowID) => {
         showRun(workflowID);
       },
+      refresh: refreshRun,
     },
     // No close half for the same reason: a subagent page is a projection of blocks the
     // chat store owns, so it starts nothing and can stop nothing.
-    subagent: { show: showSubagent },
+    subagent: { show: showSubagent, refresh: refreshSubagent },
   });
 
   setOnEmpty(() => {
@@ -208,6 +232,20 @@ function init(): void {
   // every one of these three first passes sees an empty projection and repaints on the
   // bump that restore produces.
   installChatRunDotSubscriber();
+
+  // "Is everything this chat started actually over?" — the one predicate both
+  // out-of-page cue paths ask, injected because `chat-settled.ts` reads three stores
+  // whose graphs all reach back into the tab projection. Registered BEFORE
+  // initAttention, so the fold's first pass already has it.
+  setChatSettledProbe(chatSettled);
+  // The other half: an agent-finished cue withheld while a run the turn launched is
+  // still going is released here, when the last outstanding thing for that chat ends.
+  installDeferredCueSubscriber();
+
+  // The permission ask's spending half. A cue that wanted to notify and could not
+  // arms it (inside `notifyIfHidden`); this is what lets the reader's next click
+  // raise the browser prompt, which no code path may do without a gesture.
+  registerCleanup(installNotifyAskGesture());
 
   // The out-of-page attention surfaces, folded from the chat tabs' dots. Before any tab
   // is opened, because it captures the served <title> as its base.
@@ -543,10 +581,20 @@ function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Promise<voi
       openFile(route.path, route.line);
       break;
     case "docs":
-      void openTab({ kind: "docs" }).then(() => {
-        setDocsTab(route.tab);
-      });
-      break;
+      // The sub-tab is forced BEFORE the open, matching its settings and git siblings:
+      // this tab's refresh loads the ACTIVE panel, so forcing afterwards fetched
+      // Steering and then painted Hooks. Reached through the lazy import the factory
+      // already uses, which is what keeps the page out of the boot bundle.
+      return import("./docs.js")
+        .then(({ forceDocsTab }) => {
+          forceDocsTab(route.tab);
+          void openTab({ kind: "docs" }).then(() => {
+            setDocsTab(route.tab);
+          });
+        })
+        .catch(() => {
+          /* noop */
+        });
     case "history":
       void openTab({ kind: "history" });
       break;

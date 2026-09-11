@@ -14,10 +14,17 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { attachClamp } from "./clamp-text.js";
 import type { UserInputNeededPayload, UserInputOption } from "./types.js";
 
 type UserInputAction = "answered" | "dismissed";
 type SubmitFn = (action: UserInputAction, answer?: string) => void;
+
+/** Lines the question shows before its opener. FOUR, matching the run-input card
+ *  and the steer row: the dock is a region of the bar, and the bar grows UPWARD
+ *  into the transcript the question is about. The stylesheet clamps to this same
+ *  count (`clamp-line-count.test.ts` holds the two together). */
+const CLAMP_LINES = 4;
 
 /** Build the dock card for one agent question.
  *
@@ -32,11 +39,19 @@ export function buildUserInputCard(
   payload: UserInputNeededPayload,
   onSubmit: SubmitFn,
 ): HTMLElement {
-  const body = el(
-    "div",
-    { className: "user-input-body" },
-    el("strong", null, payload.question !== "" ? payload.question : "The agent has a question"),
+  const text = el(
+    "strong",
+    { className: "user-input-question" },
+    payload.question !== "" ? payload.question : "The agent has a question",
   );
+  // A SIBLING of the clamped element, or the clamp would hide its own opener.
+  const more = el("button", {
+    className: "user-input-more",
+    type: "button",
+  }) as HTMLButtonElement;
+  const body = el("div", { className: "user-input-body" }, text, more);
+  attachClamp(text, more, { lines: CLAMP_LINES });
+
   const optionsEl = el("div", { className: "user-input-options" });
   const freeformEl = el("div", { className: "user-input-freeform" });
   const actions = el("div", { className: "user-input-actions" });

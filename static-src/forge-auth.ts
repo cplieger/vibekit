@@ -31,7 +31,7 @@ import type { Decoder } from "./validators.js";
 import { asObject, decodeArray } from "./validators.js";
 import { decodeRepo } from "./wire/decoders.gen.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { FORGE_ICONS, ICON_EXTERNAL, ICON_PLUS_16 } from "./icons.js";
+import { FORGE_ICONS, ICON_EXTERNAL, ICON_PLUS_UI } from "./icons.js";
 import type { ConfiguredForge, ForgeKind, Repo } from "./wire/types.gen.js";
 import { DEFAULT_HOST, FORGE_META, FORGE_URLS, kindTitle } from "./forge-types.js";
 import { signOut } from "./actions/forge.js";
@@ -439,7 +439,7 @@ function buildKindSection(kind: ForgeKind): HTMLElement {
       "aria-label": "Add an account",
       "data-tooltip": "Add an account",
     },
-    iconEl(ICON_PLUS_16),
+    iconEl(ICON_PLUS_UI),
   );
   addBtn.addEventListener("click", () => {
     onAddAccount(kind, section);

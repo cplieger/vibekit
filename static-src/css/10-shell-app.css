@@ -4,6 +4,15 @@
   display: flex;
   flex-direction: column;
   padding-bottom: env(safe-area-inset-bottom, 0);
+
+  /* BOTH INLINE EDGES, and the bare `env()` rather than the `max()` shape the bar
+     above uses: this element declares no inline padding of its own, so there is no
+     house value to take the larger of. On a phone it becomes a full-width
+     off-canvas drawer, so it reaches BOTH screen edges — a notch inset lands on
+     the leading edge in one landscape orientation and the trailing edge in the
+     other, and neither is knowable from CSS. Inert on every device that reports no
+     inset, which is what lets it land without one to measure on. */
+  padding-inline: env(safe-area-inset-left, 0) env(safe-area-inset-right, 0);
   position: fixed;
   top: 0;
   bottom: 0;
@@ -75,11 +84,12 @@
   display: flex;
   gap: var(--sp-1);
 
-  /* The horizontal margin MUST equal #tab-list's padding below, or this
-   row is narrower than every tab under it and the sidebar has two left
-   edges. The two values are only coupled by this comment; change one and
-   change the other. The vertical margin is free — it is the gap to the
-   header above and to the first tab below. */
+  /* This row's OUTER edges line up with #tab-list's own box; what has to line up
+   with a TAB is the BUTTON inside it, and #tab-list's inline padding carries the
+   difference (this row's border plus its inset). The two values are only coupled
+   by this comment and the one below; change one and change the other. The
+   vertical margin is free — it is the gap to the header above and to the first
+   tab below. */
   margin: var(--sp-2) var(--sp-1);
   padding: 0.125rem;
   background: var(--c-bg-secondary);
@@ -126,7 +136,7 @@
      keeps its ink or moves it TOWARD --c-text-primary on hover: .git-action-btn
      and .list-row-btn say so outright, .pill / .chat-opt-btn / .picker-btn
      change background alone, and .tab-close mixes toward the text colour. In
-     this app accent-on-hover is the TEXT-CONTROL idiom instead — .turn-req-more,
+     this app accent-on-hover is the TEXT-CONTROL idiom instead — .steer-note-more,
      .ev-in-more, .steer-more, .steer-note-more, a.git-pr-row-title — so
      spending it here made a primary action read as a link. `color` left the
      transition list with the declaration: nothing else writes this element's
@@ -157,9 +167,16 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 
-  /* .sidebar-actions above matches this value as its horizontal margin so
-   the New chat row and the tabs share one left and right edge. */
-  padding: var(--sp-1);
+  /* THE INLINE VALUE IS .sidebar-actions' MARGIN PLUS ITS OWN CHROME, so the New
+   chat BUTTON and a tab share one left and right edge. It used to be a flat
+   `var(--sp-1)`, matching that row's margin and forgetting that the row is a
+   bordered group with a `0.125rem` inset — so the button measured 375px at 390px
+   of viewport against every tab's 381px, 3px in on each side, which is the
+   "two left edges" the comment up there was already worried about. Same class of
+   arithmetic slip as .sidebar-action-btn's radius records below (it subtracted the
+   inset and forgot the border). Measured at 390x844 after: both 375px, both
+   starting at x=7. */
+  padding: var(--sp-1) calc(var(--sp-1) + 1px + 0.125rem);
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -553,18 +570,42 @@
 
   /* The footer's other half of the flex-centring fix in 15-input.css: this
      address is a flex item whose box is asymmetric about its letterforms, so
-     `align-items: center` on .sidebar-footer centred the box and left the text
-     ~0.9-1.8px low depending on the OS font. `line-height: normal` used to sit
-     here, restating the default and fixing nothing — the offset carries no
-     line-height term. Trimming to the cap band is what makes the box symmetric
-     about the glyphs; the symmetric padding is the descender room the trim
-     takes away, and an email address is full of them. */
+     centring the box left the text ~0.9-1.8px low depending on the OS font.
+     `line-height: normal` used to sit here, restating the default and fixing
+     nothing — the offset carries no line-height term. Trimming to the cap band is
+     what makes the box symmetric about the glyphs; the symmetric padding is the
+     descender room the trim takes away, and an email address is full of them. */
   text-box: trim-both cap alphabetic;
   padding-block: 0.35em;
+
+  /* THE TARGET IS THE FOOTER'S WHOLE BAND, not the address's own line box. At
+     `align-self: center` (inherited from .sidebar-footer's `align-items`) this box
+     was its trimmed text plus 0.35em — measured 16.61px tall in a 55px footer — so
+     iOS painted its touch-and-hold highlight as a thin 237x17 strip floating in the
+     middle of the row, which is the "weird rectangle" this fixes. Stretching costs
+     the centring nothing: `align-content: center` centres the in-flow line inside
+     the taller box, and because the box is still a BLOCK container the trim above
+     and `text-overflow: ellipsis` both keep working (a flex or grid container would
+     make the text an anonymous item and drop the ellipsis, since `text-overflow` is
+     not inherited).
+
+     The native highlight is then suppressed for the app's own press wash, so a
+     touch-and-hold reads as a deliberate press of a row rather than as a system
+     rectangle — the `.tab-close` pairing. The rest at the footer's leading and
+     trailing padding stays inert, and the two 16px gaps to the status dot and the
+     logout button stay theirs. */
+  align-self: stretch;
+  align-content: center;
+  border-radius: var(--r);
+  -webkit-tap-highlight-color: transparent;
 }
 
 .sidebar-email:hover {
   color: var(--c-text-secondary);
+}
+
+.sidebar-email:active {
+  background: var(--c-press);
 }
 
 .sidebar-footer-actions {
@@ -611,7 +652,15 @@
      animation, so the footer breathes in step with the tab strip instead of
      against it. There is exactly one of these on screen, so nothing here was a
      noise problem; the point is that the app has ONE period. */
-  opacity: calc(1 - var(--vk-beat) * 0.55);
+  /* Nested and scoped rather than declared on the base: an animation outranks a
+     normal declaration, so an `opacity: 1` in a settled state cannot stop a beat
+     the base rule started. The beat MEANS unsettled, so the selector says so and
+     a settled state needs to cancel nothing. */
+  &:not(.connected, .error) {
+    --beat-peak: 0.45;
+
+    animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
+  }
 
   /* Connected (green): a STILL disc. It used to carry a `vk-ping` ripple on an
      ::after overlay every four seconds, which said "activity" on a light that
@@ -626,10 +675,10 @@
   &.connected {
     background: var(--c-green);
 
-    /* `opacity: 1`, not `animation: none`. The breathe is now an inherited value
-       rather than an animation on this element, so cancelling an animation
-       cancels nothing and a CONNECTED dot would breathe — which is exactly the
-       claim this state exists to deny. */
+    /* This state carries no beat at all — the animation is scoped to
+       `:not(.connected, .error)` above — so `opacity: 1` is the resting value and
+       there is no animation to cancel. It is declared because the unsettled rule
+       and the mobile pseudo both move opacity. */
     opacity: 1;
   }
 
@@ -670,13 +719,20 @@
     opacity: 1;
   }
 
-  .status-dot::before {
+  /* `:not()` rather than an `animation: none` in each settled state: an animation
+     outranks a normal declaration, so `.connected::before { opacity: 1 }` cannot
+     stop a beat inherited from a base rule — it would breathe a still disc. The
+     beat MEANS unsettled, so the selector says so. */
+  .status-dot:not(.connected, .error)::before {
     content: "";
     width: 0.5rem;
     height: 0.5rem;
     border-radius: 50%;
     background: var(--c-yellow);
-    opacity: calc(1 - var(--vk-beat) * 0.55);
+
+    --beat-peak: 0.45;
+
+    animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
   }
 
   .status-dot.connected::before {
@@ -840,7 +896,10 @@
    in, so a focus ring stays axis-aligned and a hit target stays square. */
 .disclosure-chevron {
   --chev-turn: -90deg;
-  --chev-size: 0.875rem;
+  /* 16px, matching `--icon-ui`. The chevron's own coordinates are multiples of 3, and
+     at 16/24 those map to whole css pixels — ONE phase class, so the snap aligns all
+     of them (`vibekit-ui.md` "Icon crispness"). 14px gives 4 classes and 12px gives 2. */
+  --chev-size: 1rem;
 
   display: grid;
   place-items: center;

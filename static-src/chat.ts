@@ -34,8 +34,9 @@ import {
 } from "./tabs.js";
 import { beginAdopt, adoptCommitted, opFailed } from "./tabs-sync.js";
 import { hasPendingDecision, dropDecisions } from "./decision-dock.js";
+import { forgetDeferredCue } from "./agent-finished-cue.js";
 import { submitPrompt } from "./submit.js";
-import { chatSkeleton } from "./skeleton.js";
+import { chatSkeleton, paintPlaceholder } from "./skeleton.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import {
   mountChatView,
@@ -69,6 +70,7 @@ import { newOpID } from "./transport.js";
 
 onBus(BUS_ACTIVATE_CHAT, (p) => {
   activateChatView(p.chatID);
+  refreshChatView(p.chatID);
   if (p.then !== undefined) {
     p.then();
   }
@@ -118,6 +120,10 @@ export function closeChatTab(id: string): void {
   // The dock queue is keyed by chat id, so a queue left behind was resurrected by
   // reopening the SAME id — a dot claiming a decision that no longer existed.
   dropDecisions(id);
+  // Same shape one surface over: a withheld agent-finished cue is keyed by chat id and
+  // would be released, for a conversation that is no longer on screen, by whatever
+  // ended the run it was waiting on.
+  forgetDeferredCue(id);
   // Before removeChat: the store reassigning the active chat repaints synchronously,
   // and a dead view still in the registry would be parked by that paint.
   disposeChatView(id);
@@ -154,12 +160,13 @@ function clearChatLoadError(): void {
 /** The transcript's failure affordance: what went wrong, and one button that tries
  *  again. Shared by the two ways a chat can fail to open — its messages did not load,
  *  or its record is not in this device's store at all — because the reader's move is
- *  the same either way. Retry re-activates. */
+ *  the same either way. Retry re-activates AND refetches. */
 function paintChatLoadError(message: string, id: string): void {
   const box = el("div", { className: "load-error" }, el("span", {}, message));
   const btn = el("button", { type: "button", className: "btn-small" }, "Retry");
   btn.addEventListener("click", () => {
     activateChatView(id);
+    refreshChatView(id); // the fetch the dispatcher would have supplied
   });
   box.appendChild(btn);
   (activeTranscriptView() ?? $.messages).appendChild(box);
@@ -176,10 +183,12 @@ async function healMissingChat(id: string, gen: number): Promise<void> {
     return;
   }
   activateChatView(id);
+  refreshChatView(id);
 }
 
-/** Point every per-chat view at `id` and load its transcript. A chat tab's `onShow`,
- *  exported so the tab factory can name it. */
+/** Point every per-chat view at `id`. A chat tab's `onShow`, exported so the tab
+ *  factory can name it. It fetches NOTHING: `tabs.ts` `refreshRow` calls
+ *  `refreshChatView` immediately after this returns. */
 export function activateChatView(id: string): void {
   // The save MUST precede setActive: it reads the outgoing chat's id, which nothing
   // can recover afterwards.
@@ -189,7 +198,7 @@ export function activateChatView(id: string): void {
   // early return can skip it: as a side effect of a successful message load, every
   // path that never reaches that callback inherited the previous chat's markers.
   // Pointing the rail is the whole update here — the rail spans the SESSION, and the
-  // loaded branch fetches for itself below.
+  // refresh fetches for itself.
   pointTurnRail(id);
   setActive(id);
   restoreComposerState(id);
@@ -211,68 +220,95 @@ export function activateChatView(id: string): void {
     setModel(id, session.model);
   }
 
+  // The view furniture, under the same condition it has always sat under. It stays
+  // ABOVE the arms rather than being hoisted: hoisting adds a second, uncoalesced
+  // `/api/chats/{id}/turns` to every stale activation, since the forced rail below
+  // belongs to the refresh.
+  if (!isEmptyChat(session) && !transcriptStale(session)) {
+    setupLoadMore(id);
+    void loadTurnRail(id); // UNFORCED; refreshChatView owns the forced one
+  }
+}
+
+/** Bring the chat's DATA up to date. `tabs.ts` `refreshRow` calls this immediately
+ *  after `activateChatView`, and the four direct callers of that hook call it
+ *  themselves — `refreshRow` supplies the fetch on every other path. */
+export function refreshChatView(id: string): void {
+  const session = get(id);
+  if (session === undefined) {
+    return; // healMissingChat is activation's, not refresh's
+  }
+  // A refresh is not an activation and must not invalidate the one in flight, so it
+  // reads the current generation rather than minting one.
+  const gen = activationGen;
   if (isEmptyChat(session)) {
-    // The picker shows itself — its visibility is an effect over this same predicate
-    // (picker.ts bindVisibility). Only the draft is this branch's, and the record GET
-    // exists only to adopt the server-held draft, so it is gated like the loaded branch.
+    // The record GET that adopts the server-held draft. Gated, because it IS a fetch:
+    // an empty chat's draft is the only thing this arm is after.
     if (transcriptStale(session)) {
       seedEmptyChatDraft(id);
     }
-  } else if (!transcriptStale(session)) {
-    // The window is the server's answer and nothing has undermined it since, so
-    // switching back costs ZERO fetches. The rail decides its own fetch off its record
-    // — the message count moves under background SSE ingest.
-    setupLoadMore(id);
-    void loadTurnRail(id);
-  } else {
-    // A SKELETON MAY ONLY PAINT OVER AN EMPTY TRANSCRIPT: the repaint above runs
-    // synchronously off setActive, so on a loaded chat it would stack a placeholder
-    // under the whole conversation for the length of the refresh round trip.
-    //
-    // On a cold transcript the paint is deferred by 150ms, so a cached open never
-    // flashes it. min-visible stays 0 — the skeleton shares the messages container.
-    let skeletonPainted = false;
-    const skeleton =
-      session.messages.length > 0
-        ? null
-        : skeletonTiming(() => {
-            skeletonPainted = true;
-            const skel = chatSkeleton();
-            // Into the ACTIVE VIEW: the view's own column geometry positions the
-            // placeholder. The multiplexer fallback covers a fixture with no view.
-            (activeTranscriptView() ?? $.messages).appendChild(skel);
-            return () => {
-              skel.remove();
-            };
-          });
-    void loadMessages(id).then((ok) => {
-      skeleton?.cancel();
-      if (getActiveId() !== id || activationGen !== gen) {
-        return;
-      }
-      if (!ok) {
-        paintChatLoadError("Failed to load messages.", id);
-        return;
-      }
-      // loadMessages' own bumpMessages paints synchronously, so the turns are already
-      // in the DOM and no frame has reached the screen between the two — one
-      // transition rather than a flash of both. Only when a skeleton was painted.
-      if (skeletonPainted) {
-        fadeInTranscript();
-      }
-      // The chat's record is in now, so its stored draft can be adopted. Deliberately
-      // loses to a draft the user has started typing since the activation.
-      seedComposerState(id);
-      const fresh = get(id);
-      if (fresh !== undefined) {
-        setupLoadMore(id);
-      }
-      // The rail's index is session-wide and independent of the message window, so it
-      // is its own fetch. FORCED: the load that just landed re-stamped the session
-      // fresh, so the rail's gate can no longer see this activation's stale verdict.
-      void loadTurnRail(id, { force: true });
-    });
+    return;
   }
+  if (!transcriptStale(session)) {
+    // The window is the server's answer and nothing has undermined it since, so
+    // switching back costs ZERO fetches.
+    return;
+  }
+  // A previous load's failure box is NOT content, so the placeholder below would mount
+  // UNDER it and render both at once. Idempotent, so activation clearing it too costs
+  // nothing.
+  clearChatLoadError();
+  // `getActiveId() !== id` is what makes the subagent delegation safe: `showSubagent`
+  // does not `setActive`, so a delegated refresh would otherwise arm a shimmer into a
+  // different chat's view.
+  //
+  // On a cold transcript the paint is deferred by 150ms, so a cached open never
+  // flashes it. min-visible stays 0 — the skeleton shares the messages container.
+  let skeletonPainted = false;
+  const skeleton =
+    session.messages.length > 0 || getActiveId() !== id
+      ? null
+      : skeletonTiming(() =>
+          // Into the ACTIVE VIEW: the view's own column geometry positions the
+          // placeholder. The multiplexer fallback covers a fixture with no view.
+          paintPlaceholder(
+            activeTranscriptView() ?? $.messages,
+            () => {
+              skeletonPainted = true;
+              return chatSkeleton();
+            },
+            // The transcript container is shared with the load-more furniture and with
+            // messages.ts's drop-by-id half, so a placeholder here must not take it over.
+            { mount: "append" },
+          ),
+        );
+  void loadMessages(id).then((ok) => {
+    skeleton?.cancel();
+    if (getActiveId() !== id || activationGen !== gen) {
+      return;
+    }
+    if (!ok) {
+      paintChatLoadError("Failed to load messages.", id);
+      return;
+    }
+    // loadMessages' own bumpMessages paints synchronously, so the turns are already
+    // in the DOM and no frame has reached the screen between the two — one
+    // transition rather than a flash of both. Only when a skeleton was painted.
+    if (skeletonPainted) {
+      fadeInTranscript();
+    }
+    // The chat's record is in now, so its stored draft can be adopted. Deliberately
+    // loses to a draft the user has started typing since the activation.
+    seedComposerState(id);
+    const fresh = get(id);
+    if (fresh !== undefined) {
+      setupLoadMore(id);
+    }
+    // The rail's index is session-wide and independent of the message window, so it
+    // is its own fetch. FORCED: the load that just landed re-stamped the session
+    // fresh, so the rail's gate can no longer see this refresh's stale verdict.
+    void loadTurnRail(id, { force: true });
+  });
 }
 
 /** Fetch a message-less chat's record so its stored draft can be adopted.
@@ -536,6 +572,7 @@ export async function openPreviousSession(
     return "failed";
   }
   activateChatView(chatID);
+  refreshChatView(chatID);
   return "opened";
 }
 
@@ -582,7 +619,9 @@ function chatRowEffect(chatID: string): () => void {
     // Reconcile tab name with server auto-rename / agent focus title.
     renameTab(tabID, s.name);
     // tabStatusFor owns the precedence; the pending-ask half comes from the dock.
-    setTabStatus(tabID, tabStatusFor(s, pendingAsk));
+    // `updated_at` is LAST ACTIVITY rather than "finished at", which is what the dot's
+    // outcome phrase renders an age from. The only caller that supplies one.
+    setTabStatus(tabID, tabStatusFor(s, pendingAsk), s.updated_at);
     // The mode half is here because the dot took the slot the per-mode role glyph held,
     // and for a BACKGROUND chat that was the only place a role read out at all — the
     // mode pill and its picker are active-chat only. Pointer-only.

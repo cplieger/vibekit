@@ -148,9 +148,23 @@ export function showRun(workflowID: string): void {
   // the previous run's cell simply stops being read. Installing one per show would
   // leak a subscription per tab opened.
   installViewEffect();
+}
+
+/** Refetch this run's state and its controls. A run tab's `refresh`. */
+export function refreshRun(workflowID: string): void {
   invalidateRun(workflowID);
-  // The affordance, once per tab open. `invalidateRunControls` owns the trigger list.
+  // The affordance. `invalidateRunControls` owns the trigger list.
   invalidateRunControls(workflowID);
+  // A chat-parented run's step transcript is a projection of the LAUNCHING chat's
+  // resident window, so `inspect` alone leaves the pane stale. Lazy, like the step
+  // transcript below: a static edge to chat.js puts the whole chat graph in this
+  // module's importers. A no-op for a parentless run.
+  const launching = launchingChatOf(workflowID);
+  if (launching !== "") {
+    void import("./chat.js").then((m) => {
+      m.refreshChatView(launching);
+    });
+  }
 }
 
 /** The view's single subscription to the store. Idempotent. */

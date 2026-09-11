@@ -8,6 +8,10 @@ import { vi } from "vitest";
 import type { ReadingState, ShiftKind, ViewScrollState } from "../scroll.js";
 
 export const scrollMock = {
+  // The real VALUE, not a placeholder: `readingLineOffset` is mocked to 0, so any
+  // suite reading this fraction is doing its own arithmetic and wants the number
+  // the scroller actually publishes.
+  READING_LINE_FRACTION: 1 / 3,
   getScrollEl: vi.fn(() => document.createElement("div")),
   // The multiplexer's park/unpark pair: detach snapshots the outgoing view's
   // scroll state, attach re-roots the observers on the incoming view. The
@@ -18,6 +22,16 @@ export const scrollMock = {
   scrollToBottom: vi.fn(),
   setUserScrolledUp: vi.fn(),
   jumpTo: vi.fn(),
+  // The self-scroll epoch. `scrollToOffset` moves nothing here, so a suite
+  // asserting a LANDING drives the scroller itself.
+  beginSelfScroll: vi.fn(),
+  endSelfScroll: vi.fn(),
+  scrollToOffset: vi.fn(),
+  atLiveEdgeNow: vi.fn(() => true),
+  // 0 is a REAL answer, not a placeholder: a suite asserting a landing against the
+  // reading line has to prime it, or the two coincide and the assertion holds for
+  // any arithmetic.
+  readingLineOffset: vi.fn(() => 0),
   resetScrollState: vi.fn(),
   setLoadMore: vi.fn(),
   readingState: vi.fn((): ReadingState => "following"),
@@ -32,6 +46,11 @@ export const scrollMock = {
   // fires. Returns the unregister the real hook contract promises, like
   // `onTranscriptMutate` — so no mock-using suite can exercise a window pass.
   onViewportChange: vi.fn(() => () => undefined),
+  // Same shape and the same reason: a mocked scroller resizes nothing, so the
+  // callback never fires, and the return is the unregister the hook promises.
+  onContentResize: vi.fn(() => () => undefined),
+  // Same shape: no view parks or unparks against a mocked scroller.
+  onAttach: vi.fn(() => () => undefined),
   setAnchorProvider: vi.fn(),
   setResumeLabel: vi.fn(),
   // The compensation helpers run their mutation, so a mocked scroll module does

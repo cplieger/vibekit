@@ -41,6 +41,23 @@
   padding-block: var(--sp-2);
 }
 
+/* A ROW WITH ONE BLOCK WEARS NO THREE-BLOCK PADDING. The value above is sized for
+   stacked content, and on a single line it leaves the title floating in a tall box
+   — reported on the Specs tab as a title that is not vertically centred, and it is
+   the padding rather than the alignment: `align-items: center` above does centre
+   it. A spec is the population, because it is the one category with no front-matter
+   (docs.ts), so `metaFor` yields no badge line and `subtitleFor` no description,
+   and both are already withheld when empty — leaving `.docs-row-top` alone.
+
+   `:has` on the SURFACE's second child rather than a category class: the condition
+   is how many blocks the row actually has, so a category that later gains a badge
+   keeps the roomy padding without this rule learning about it. At `--sp-1` the row
+   falls under the `--ctl-h-sm` floor above, so the tier decides its height and the
+   line is centred in it — the same density every other list on the page has. */
+.docs-row:not(:has(> .docs-row-surface > :nth-child(2))) {
+  padding-block: var(--sp-1);
+}
+
 /* The surface carries the stacked blocks (title, then the badge line, then the
    description) that .list-row's single centred line does not assume, so its own
    axis is the column one the row used to have.

@@ -182,7 +182,7 @@
 /* File picker popup */
 .filepicker-card {
   width: min(31.25rem, 90vw);
-  max-height: 60vh;
+  max-height: 60dvh;
   display: flex;
   flex-direction: column;
 }
@@ -407,8 +407,25 @@
   opacity: 0.4;
 }
 
+/* THE BOTTOM CLEARANCE PAYS THE LARGER OF THE HOUSE PADDING OR THE DEVICE INSET,
+   NEVER THE SUM. Apple's 34pt (portrait; 21pt landscape) IS the gap it asks for
+   between the last control and the screen edge, so adding the house padding on top
+   of it is the double charge 50-mobile.css already removed for the narrow
+   viewport — and this base rule kept it for every viewport that block does not
+   match, which is a phone in LANDSCAPE (844px wide on an iPhone 15, so the
+   `width <= 48rem` arm stops matching) and an iPad in Safari, where the insets are
+   live. Measured with the landscape value substituted at 21px: 29px of clearance
+   against the standard's 21. `max()` is Apple's own pattern and keeps the house
+   padding for the devices that report no inset at all. */
+/* AND THE SAME RULE ON THE INLINE AXIS, which is the one that carries the notch:
+   in LANDSCAPE the inset lands on a side edge rather than on the bottom, and
+   landscape is exactly where this base rule governs alone — `50-mobile.css`'s
+   `(width <= 48rem)` arm stops matching at 844px, so the phone block does not
+   apply. Same `max()`, so the house `--sp-4` still decides on every device that
+   reports no inset. */
 .bottom-bar {
-  padding: var(--sp-2) var(--sp-4) calc(var(--sp-2) + env(safe-area-inset-bottom, 0));
+  padding: var(--sp-2) max(var(--sp-4), env(safe-area-inset-right, 0))
+    max(var(--sp-2), env(safe-area-inset-bottom, 0)) max(var(--sp-4), env(safe-area-inset-left, 0));
   border-block-start: 1px solid var(--c-border);
   flex-shrink: 0;
   background: var(--c-bg-primary);
@@ -684,6 +701,20 @@
    `.fb-row`; measured per tier by files-row-metrics.test.ts. */
 .fb-search-hit {
   cursor: pointer;
+
+  /* The app-wide press, spelled here because 03-base.css cannot reach it: that rule
+     is `:where(button, summary, [role="button"])` and a hit row is a plain div with
+     a click handler. Copied from `.ev-row-main` (31-exec-view.css), which spells it
+     for the same reason.
+
+     NO `transition` SHORTHAND HERE, deliberately: this rule is (0,1,0) at this
+     position and `.fb-row` is (0,1,0) earlier in the same file, so a transition
+     declared here would win the tie by source order and clobber the row's own
+     `background`/`opacity`/`transform` list. An instant press wash is what
+     03-base.css:61 gives every button anyway. */
+  &:active {
+    box-shadow: inset 0 0 0 100vmax var(--c-press);
+  }
 }
 
 .fb-search-lineno {

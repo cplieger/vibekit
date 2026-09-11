@@ -353,9 +353,27 @@ function wireHorizontalScroll(
     spacer.style.inlineSize = `${String(bar.clientWidth + Math.max(0, range))}px`;
     viewport.style.setProperty("--diff-hspan", `${String(span)}px`);
   };
-  // Fires once on observe, which is the first real measurement: the pane is
-  // detached while it is built, so every width reads 0 until the caller appends it.
-  new ResizeObserver(measure).observe(left);
+  // Deferred one animation frame, behind a single slot: `--diff-hspan` is written on
+  // the VIEWPORT, an ANCESTOR of the observed column, and a custom property there
+  // invalidates the whole subtree's style — so writing it from inside the delivery
+  // re-activates an observation already delivered in this loop, which the engine
+  // reports as "ResizeObserver loop completed with undelivered notifications". Required
+  // rather than optional for that reason; the spacer and `is-idle` writes ride along.
+  // Same shape as `scroll.ts`'s `scheduleScrollbarWidth`.
+  let measureFrame = 0;
+  const scheduleMeasure = (): void => {
+    if (measureFrame !== 0) {
+      return;
+    }
+    measureFrame = requestAnimationFrame(() => {
+      measureFrame = 0;
+      measure();
+    });
+  };
+  // Fires once on observe, which is the first real measurement: the pane is detached
+  // while it is built, so every width reads 0 until the caller appends it. The deferral
+  // only moves that read one frame later, which is invisible for a pane being opened.
+  new ResizeObserver(scheduleMeasure).observe(left);
 }
 
 // --- Whitespace toggle ---

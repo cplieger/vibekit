@@ -163,10 +163,34 @@
 
    BOTH consumers write through this slot now (run-dots.ts and subagent-dots.ts),
    so it is a hidden gap only until the first state lands rather than forever —
-   which is what the subagent kind lacked when it had no writer at all. */
+   which is what the subagent kind lacked when it had no writer at all.
+
+   WITHDRAWING it for the subagent kind was tried and reverted (2026-09). The
+   argument for withdrawing was a delegate whose invocation is gone for good — a
+   turn the agent process died holding persists none of it — where the promise this
+   rule makes can never be kept and 16px of the row sits empty forever. What
+   defeats it is the TITLE ORIGIN: a chat sub-tab, a run sub-tab and a subagent
+   sub-tab are arrow, gap, slot, gap, title, and they line up because all three
+   reserve. Scoping this rule to `run` puts a stateless delegate's title 16px left
+   of its siblings', so the strip trades invisible whitespace for a ragged column
+   the reader sees on every row. `chat-run-dots.test.ts` pins that alignment
+   across all three kinds. The delegate whose record is gone is answered where the
+   claim was actually wrong instead: its page said "not started", and
+   `subagent-exec-source.ts` now reads an absent invocation as `unknown`. */
 .tab.tab-child .tab-status-dot:not([data-status]) {
   display: block;
   visibility: hidden;
+}
+
+/* A RUN SUB-TAB's dot takes the workflow mark's rounded square. Keyed on the KIND
+   because the silhouette names the SUBJECT — a workflow run — rather than one
+   element, and a run's own row carries its activity on this dot instead (the
+   arithmetic that forces the square is at the workflow mark's block header below).
+   `failed` is excluded because it is ALREADY a square: a rotated one at
+   --dot-size-sm with its own measured corner, which this rule outranks and would
+   otherwise re-round. */
+.tab-child[data-kind="run"] .tab-status-dot:not([data-status="failed"]) {
+  border-radius: var(--dot-radius-square);
 }
 
 /* Idle — a chat that exists with nothing happening in it. HOLLOW, and the fill
@@ -246,7 +270,11 @@
     color-mix(in oklch, var(--dot-color) 60%, #fff) 0 70%,
     transparent 92%
   );
-  opacity: calc(var(--vk-beat) * 0.55);
+  opacity: 0;
+
+  --beat-peak: 0.55;
+
+  animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
 }
 
 /* THE TRAVELLING WAVE IS GONE, and its absence is the other half of the answer
@@ -416,8 +444,44 @@
    and may not fill (the disc is the dot's). A square answers every state at once
    and needs no band arithmetic to do it: FLAT SIDES against a curve, which is the
    channel `failed` already spends one element over as a rotated square. Axis
-   aligned, so it cannot be read as that diamond either, and its radius is derived
-   from --dot-size so the silhouette stays proportional if the token moves.
+   aligned, so it cannot be read as that diamond either, and its radius is
+   --dot-radius-square (01-tokens.css) so the silhouette stays proportional if the
+   token moves.
+
+   THE SILHOUETTE NAMES THE SUBJECT RATHER THAN THIS ELEMENT, so a run's own tab
+   row takes it too, on its activity dot (`.tab-child[data-kind="run"]
+   .tab-status-dot`, one rung up in this file). What stays a circle is a CHAT's
+   activity: the round dot means a conversation's state and the square means a
+   workflow run's, whichever element is carrying it.
+
+   THE CLUSTER ARITHMETIC ABOVE IS UNCHANGED BY THAT, because a run row carries no
+   `.tab-run-dot` at all (tabs.ts's sub-tab branch appends one for the chat kind
+   only, pinned by chat-run-dots.test.ts) — one mark per row, so no square is ever
+   8px from another square and none of the cross-mark reasoning above acquires a
+   second population. The two squares that CAN be adjacent are vertical: a chat
+   row's fold mark and, one row below it, that chat's own run sub-tab's dot. They
+   are co-referential — the child's run is one of the runs the parent's mark folds
+   — and FILL separates HALF of that pair's yellow combinations rather than all
+   four. This mark is a ring in every state, so against the dot's `input` (a solid
+   disc) fill carries it whichever state the mark is in. Against the dot's
+   `waiting` it carries nothing, because that state is hollow too, in the same ink
+   at the same 8px with the same 2px halo — so mark:waiting x dot:waiting is 1.5px
+   of band against 1px (1.5:1) and mark:input x dot:waiting is 2px against 1.5px
+   (1.33:1), both under the 2:1 floor scripts/css-contrast.py gates a band-only
+   separation at, and that script names a 1.5px/2px pair as the shape that shipped
+   once.
+
+   THAT BAND-ONLY PAIR IS AN OPEN QUESTION rather than something this block
+   answers, and it is in NO pairwise population: the 1.4.1 gate's population is a
+   chat ROW's cluster, and a run row has no mark to pair with. Closing it is a
+   product decision — withdrawing a chat row's fold mark for a run that already
+   has an open sub-tab is the candidate — and NOT a per-state silhouette, so do
+   not spell one here.
+
+   `failed` KEEPS ITS OWN ROTATED SQUARE at --dot-size-sm, which is why the run
+   sub-tab's rule excludes it: that mark is already a square with a measured
+   corner, and re-rounding it would cost `done` and `failed` their shape channel on
+   a run row (WCAG 1.4.1).
 
    FOUR STATES, and the two missing ones are a statement about the INPUT rather
    than a simplification: `run-store.ts`'s live inventory deletes a run's row at
@@ -509,9 +573,12 @@
   /* THE SILHOUETTE, and it is load-bearing rather than decorative — see the block
      header for the reduced-motion arithmetic that forces it. A quarter of the
      mark's own diameter leaves flat sides half its width on all four edges, which
-     is what a reader tells apart from the circle beside it; derived rather than a
-     literal so a --dot-size retune cannot round it into a disc. */
-  border-radius: calc(var(--dot-size) / 4);
+     is what a reader tells apart from the circle beside it. The proportion is
+     --dot-radius-square (01-tokens.css) rather than arithmetic here, for the
+     reason it is derived at all: a run sub-tab's own activity dot reads the same
+     token, so a --dot-size retune cannot round either silhouette into a disc and
+     the two marks that report one run cannot drift apart. */
+  border-radius: var(--dot-radius-square);
 
   /* The band's COLOUR and style live here once; its WIDTH is the channel, so
      every state below sets `border-width` and nothing else about the edge. */
@@ -546,10 +613,10 @@
 }
 
 /* Working — a run is executing. The breathe is the activity dot's, and it is the
-   same MECHANISM rather than a copy of a look: one pre-painted overlay whose
-   opacity is read straight off the document clock (--vk-beat, 03-base.css). So
-   this adds ZERO keyframes and zero animations, and a mark that starts breathing
-   mid-cycle is already in step with every other beat in the app. */
+   same MECHANISM rather than a copy of a look: one pre-painted overlay carrying
+   the shared `vk-dot-beat` (03-base.css) at its own peak. It adds no keyframes of
+   its own, and a mark that starts breathing mid-cycle is in step with every other
+   beat because the delay comes off one global origin. */
 .tab-run-dot[data-status="working"] {
   border-width: var(--run-band);
 
@@ -584,7 +651,11 @@
     color-mix(in oklch, var(--dot-color) 60%, #fff) 0 70%,
     transparent 92%
   );
-  opacity: calc(var(--vk-beat) * 0.55);
+  opacity: 0;
+
+  --beat-peak: 0.55;
+
+  animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
 
   /* An absolute length rather than a percentage: the pseudo is 2px larger on each
      side than the mark, so a percentage would have to be re-derived whenever
@@ -674,12 +745,11 @@
   }
 
   /* The overlay disappears ENTIRELY rather than resting at its floor, and this is
-     load-bearing rather than tidy. 03-base.css stops the clock under reduced
-     motion, so `--vk-beat` sits at its initial 0 and the overlay would be
-     invisible anyway — but `initial-value: 0` is the only thing making that true,
-     and a future non-zero resting amplitude would paint a permanent bright ring
-     over the donut below. Removing the pseudo is what makes it independent of the
-     clock's resting value. */
+     load-bearing rather than tidy. Under reduced motion the beat runs once and
+     rests at the element's own `opacity: 0`, so the overlay would be invisible
+     anyway — but that depends on this rule declaring 0, and a future non-zero
+     resting amplitude would paint a permanent bright ring over the donut below.
+     Removing the pseudo is what makes it independent of the resting value. */
   .tab-status-dot[data-status="working"]::before {
     content: none;
   }
@@ -705,9 +775,9 @@
     border-width: 3px;
   }
 
-  /* The overlay disappears ENTIRELY, for the reason the dot's does: the clock is
-     stopped so `--vk-beat` rests at its registered 0 and the glow would be
-     invisible anyway, but that is a property of the initial VALUE. Removing the
+  /* The overlay disappears ENTIRELY, for the reason the dot's does: reduced motion
+     leaves the beat resting at this rule's own `opacity: 0` and the glow would be
+     invisible anyway, but that is a property of the declared REST. Removing the
      pseudo is what makes it independent of a future non-zero resting amplitude,
      which would otherwise paint a permanent bright band over the donut. */
   .tab-run-dot[data-status="working"]::before {

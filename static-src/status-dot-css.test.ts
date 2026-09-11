@@ -71,40 +71,35 @@ describe("the sidebar connection dot", () => {
     expect(parseFloat(inset)).toBeLessThan(0);
   });
 
-  it("still breathes while connecting, by tracking the document clock", () => {
-    // The dot owns no animation any more: it reads `--vk-beat` (03-base.css), so
-    // the footer breathes in step with the tab strip instead of against it. The
-    // clock is DRIVEN to two known phases here rather than sampled over time —
-    // deterministic, and it proves the dot follows the clock rather than merely
-    // naming it.
+  it("still breathes while connecting, on its own animation", () => {
+    // The beat is the dot's OWN animation now, created only while it is unsettled,
+    // so an idle app runs none at all. Driven to two known phases rather than
+    // sampled over time — deterministic, and it proves the dot follows the beat
+    // rather than merely naming it. The numbers are unchanged from the shared-clock
+    // era because `vk-dot-beat` leaves `from`/`to` implicit, so they are the
+    // element's own opacity and 50% is its declared peak.
     const dot = mountDot("status-dot");
-    const clock = document.documentElement.getAnimations()[0];
-    expect(clock, "the document beat must be running on :root").toBeDefined();
-    clock!.pause();
+    const beat = dot.getAnimations()[0];
+    expect(beat, "an unsettled dot must carry its own beat").toBeDefined();
+    beat!.pause();
 
-    clock!.currentTime = 0; // --vk-beat 0 -> resting, fully opaque
+    beat!.currentTime = 0; // rest -> the element's own opacity
     expect(Number(getComputedStyle(dot).opacity)).toBeCloseTo(1, 2);
 
-    clock!.currentTime = 1200; // half of --dot-beat-dur -> --vk-beat 1 -> trough
+    beat!.currentTime = 1200; // half of --dot-beat-dur -> the declared peak
     expect(Number(getComputedStyle(dot).opacity)).toBeCloseTo(0.45, 2);
-
-    clock!.play();
   });
 
-  it.each(["connected", "error"])("is static when %s, at every phase of the clock", (state) => {
-    // BOTH settled states, because the two are separate rules and only one of
-    // them being wrong is the live shape of this bug. The settled states reset
-    // OPACITY, not an animation: with the beat inherited there is no animation on
-    // this element to cancel, so `animation: none` here cancels nothing and the
-    // dot keeps breathing — which is the claim these states exist to deny.
+  it.each(["connected", "error"])("carries no beat at all when %s", (state) => {
+    // BOTH settled states, because the two are separate rules and only one of them
+    // being wrong is the live shape of this bug. An animation OUTRANKS a normal
+    // declaration, so a settled state cannot answer a beat with `opacity: 1` — it
+    // would breathe a still disc, which is what shipped for one build. The beat is
+    // scoped to `:not(.connected, .error)` instead, so the settled states carry no
+    // animation to outrank them. Asserting absence AND the resting value: either
+    // alone passes while the other is broken.
     const dot = mountDot(`status-dot ${state}`);
-    const clock = document.documentElement.getAnimations()[0];
-    expect(clock, "the document beat must be running on :root").toBeDefined();
-    clock!.pause();
-    for (const t of [0, 600, 1200, 1800]) {
-      clock!.currentTime = t;
-      expect(Number(getComputedStyle(dot).opacity), `phase ${String(t)}ms`).toBeCloseTo(1, 3);
-    }
-    clock!.play();
+    expect(dot.getAnimations(), `a ${state} dot must not beat`).toEqual([]);
+    expect(Number(getComputedStyle(dot).opacity)).toBeCloseTo(1, 3);
   });
 });

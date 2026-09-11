@@ -10,6 +10,7 @@ const activateBrowser = vi.fn();
 
 vi.mock("./api-client.js", () => ({
   apiGet: (url: string, signal?: AbortSignal) => apiGet(url, signal),
+  apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
   CancellableSlot: class {
     private ctrl: AbortController | null = null;
     start(): AbortSignal {
@@ -30,8 +31,8 @@ vi.mock("./api-client.js", () => ({
 vi.mock("./navigate.js", () => ({
   openAtLine: (path: string, line?: number) => openAtLine(path, line),
 }));
-// ICON_X is inert: search-shell.ts imports it, so ESM linking needs the name.
-vi.mock("./icons.js", () => ({ fileIcon: () => "<svg></svg>", ICON_X: "<svg></svg>" }));
+// ICON_CLOSE_UI is inert: search-shell.ts imports it, so ESM linking needs the name.
+vi.mock("./icons.js", () => ({ fileIcon: () => "<svg></svg>", ICON_CLOSE_UI: "<svg></svg>" }));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));
 
 const mod = await import("./files-search.js");

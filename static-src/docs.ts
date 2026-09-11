@@ -42,6 +42,7 @@ import { join as joinKey } from "@cplieger/keyenc";
 import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
 import { signal, subscribe } from "@cplieger/reactive";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
+import { paintPlaceholder } from "./skeleton.js";
 import { pushRoute } from "./router.js";
 import type { DocsTab } from "./router.js";
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
@@ -290,6 +291,9 @@ let docs: KiroDoc[] = [];
  *  state on `hooks_changed`. */
 let hooks = new Map<string, HookState>();
 let inited = false;
+/** Whether the inventory has ANSWERED. `docs` initialises to `[]`, so a category with
+ *  no documents is indistinguishable from one this client has never read. */
+let inventoryAnswered = false;
 /** The folded query the metadata filter is applying.
  *
  *  A FILTER, not a search: everything it matches on is already in memory, so
@@ -325,25 +329,24 @@ const loadDocsAction = defineAction<undefined, { docs: KiroDoc[] }>({
 /** Open (or toggle) the docs page, landing on `tab`. The toolbar's book button
  *  and the router both come through here.
  *
- *  No onShow callback: the tab factory reaches this module's own `loadDocsView`
+ *  No onShow callback: the tab factory reaches this module's own `showDocsTab`
  *  through a lazy import, so every door into the page gets the same behaviour and
  *  the sub-tab is applied by `toggleDocsView`'s own `setDocsTab` afterwards. */
 export function showDocsView(tab: DocsTab = "steering"): void {
   void toggleDocsView(tab);
 }
 
-/** Load (or reload) the page without touching the tab, the way
- *  `loadHistoryView` does and for the same reason: the tab-restore path cannot
- *  call `showDocsView`, which TOGGLES, so firing it from the `onShow` of an
- *  already-open tab would close the tab it was meant to fill.
+/** The docs tab's ACTIVATION: the one-shot init alone. Forces no sub-tab and fetches nothing. */
+export function showDocsTab(): void {
+  initDocsView();
+}
+
+/** Refetch the inventory at the ACTIVE sub-tab. Forces nothing.
  *
- *  It must run `initDocsView` too. The restore path used to call
- *  `forceDocsTab` + `loadDocs` only, so a docs tab restored at boot loaded its
- *  rows and never registered its find — leaving the toolbar's magnifier absent
- *  for the whole session on the one path where the user had the page open last
- *  time. `initDocsView` is one-shot, so calling it from both doors is free. */
-export function loadDocsView(tab: DocsTab = "steering"): void {
-  forceDocsTab(tab);
+ *  Runs the one-shot init first so this does not depend on which of two dynamic
+ *  imports of this module the host resolves first: `loadDocs`' success path calls
+ *  `renderActive`, which needs the panels wired. */
+export function refreshDocsView(): void {
   initDocsView();
   loadDocs();
 }
@@ -358,15 +361,16 @@ export function forceDocsTab(tab: DocsTab): void {
 /** Fetch (or refetch) the inventory and repaint. */
 export function loadDocs(): void {
   loadDocsAction.cancel();
-  const skeleton = skeletonTiming(() => showSkeleton());
+  const skeleton = inventoryAnswered ? null : skeletonTiming(() => showSkeleton());
   void loadDocsAction.dispatch(undefined, {
     onSuccess: (d) => {
-      skeleton.cancel();
+      skeleton?.cancel();
       docs = d.docs;
+      inventoryAnswered = true;
       renderActive();
     },
     onError: () => {
-      skeleton.cancel();
+      skeleton?.cancel();
       panelFor(activeTab.peek())?.replaceChildren(
         el("div", { className: "list-empty" }, "Failed to load .kiro documents"),
       );
@@ -1196,28 +1200,19 @@ const MATCHER_WARNINGS: Record<string, { label: string; detail: string }> = {
   },
 };
 
-/** A skeleton matching the real row shape. Skipped when the panel already holds
- *  rows, so a live refetch never flashes placeholders. */
+/** A skeleton matching the real row shape. */
 function showSkeleton(): () => void {
-  const container = panelFor(activeTab.peek());
-  if (container?.querySelector("[data-reconcile-key]") !== null) {
-    // Either no panel, or one that already holds real rows (a live refetch).
-    return () => {
-      /* nothing shown, nothing to tear down */
-    };
-  }
-  const wrap = el("div", { className: "docs-skeleton", "aria-hidden": "true" });
-  for (const w of ["62%", "48%", "70%", "55%"]) {
-    const row = el("div", { className: "list-row docs-skel-row" });
-    const bar = el("div", { className: "skeleton docs-skel-name" });
-    bar.style.width = w;
-    row.appendChild(bar);
-    wrap.appendChild(row);
-  }
-  container.replaceChildren(wrap);
-  return () => {
-    wrap.remove();
-  };
+  return paintPlaceholder(panelFor(activeTab.peek()), () => {
+    const wrap = el("div", { className: "docs-skeleton", "aria-hidden": "true" });
+    for (const w of ["62%", "48%", "70%", "55%"]) {
+      const row = el("div", { className: "list-row docs-skel-row" });
+      const bar = el("div", { className: "skeleton docs-skel-name" });
+      bar.style.width = w;
+      row.appendChild(bar);
+      wrap.appendChild(row);
+    }
+    return wrap;
+  });
 }
 
 /** @internal Test seam: inject rows without a fetch. */

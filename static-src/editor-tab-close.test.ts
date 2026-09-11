@@ -53,7 +53,13 @@ vi.mock("./icons.js", () => ({
   ICON_SPINNER: "",
   ICON_HOURGLASS: "",
 }));
-vi.mock("./tabs-drag.js", () => ({
+// Type-only, for the `importOriginal` below.
+import type * as TabsDrag from "./tabs-drag.js";
+// The three FUNCTIONS are stubbed and nothing else is: `DRAG_THRESHOLD_PX` is the
+// strip's drag slop and `tabs.ts` reads it, so a partial factory would fail this
+// whole file at link time.
+vi.mock("./tabs-drag.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof TabsDrag>()),
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
@@ -64,6 +70,7 @@ vi.mock("./api-client.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => ({
     apiGet: vi.fn(() => Promise.resolve({ content: "hello", content_hash: "h" })),
     apiGetTyped: m.tabListRead(),
+    apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
   })),
 );
 vi.mock("./transport.js", () =>
@@ -124,6 +131,7 @@ vi.mock("./editor-ui.js", () => ({
   pendingLines: new Map<string, number>(),
   clearAgentLineCache: vi.fn(),
   updateGutter: vi.fn(),
+  renderEditModeUI: vi.fn(),
 }));
 vi.mock("./actions/editor.js", () => ({
   loadDiff: { dispatch: () => ({ outcome: Promise.resolve({ status: "cancelled" }) }) },
@@ -208,10 +216,10 @@ beforeEach(() => {
   // channel: a spec's onClose is the factory's, so the editor's half arrives here
   // rather than as an argument at the door.
   registerTabOpeners({
-    chat: { show: vi.fn(), close: vi.fn(), dot: () => "" },
-    editor: { show: activateFile, close: closeEditorFile },
-    run: { show: vi.fn() },
-    subagent: { show: vi.fn() },
+    chat: { show: vi.fn(), refresh: vi.fn(), close: vi.fn(), dot: () => "" },
+    editor: { show: activateFile, refresh: vi.fn(), close: closeEditorFile },
+    run: { show: vi.fn(), refresh: vi.fn() },
+    subagent: { show: vi.fn(), refresh: vi.fn() },
   });
   resetActionFramework();
   _resetForTest();

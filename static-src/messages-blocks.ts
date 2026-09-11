@@ -61,7 +61,6 @@ import { parseStepSubtask } from "./step-subtask.js";
 import { buildRunCard, type RunCardView, type RunDisclosure } from "./fundamentals/run-card.js";
 import { invalidateRun, runState, forgetRun } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
-import { hasTab } from "./tabs.js";
 import { buildPath } from "./router.js";
 
 // Callbacks injected by messages.ts, which owns avatar markup and the
@@ -1570,11 +1569,9 @@ function releaseRunCard(st: MsgRender, workflowID: string, card: RunCardView): v
   if (hosts.size === 0) {
     runCardHosts.delete(st.chatID);
   }
-  // The claim-holding card unmounting with no run tab open is the store cache's one
-  // safe bound, and `forgetRun` states why it has to be exactly that.
-  if (!hasTab("run", workflowID)) {
-    forgetRun(workflowID);
-  }
+  // The store's cache bound, and UNCONDITIONAL: which surfaces still need this run's
+  // cell is a registered demand's answer rather than a call site's (`run-store.ts`).
+  forgetRun(workflowID);
 }
 
 /** Move `workflowID`'s card out of `host` and into `st`, claim and all; `seat` is the node to

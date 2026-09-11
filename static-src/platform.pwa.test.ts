@@ -290,10 +290,18 @@ describe("fixIOSViewport", () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
-  it("does nothing in a browser tab, where the keyboard does not resize the viewport", async () => {
+  it("works in a browser tab too, where the same keyboard shrinks the same viewport", async () => {
+    // DELIBERATELY INVERTED (item 15). This case used to assert `dispose` was
+    // undefined and no listener was attached, on the premise named in its own
+    // title: that a tab's keyboard does not resize the visual viewport. It does —
+    // the keyboard is the OS's and the shrink is identical in a tab and in an
+    // installed PWA — so the old gate withheld the fix from the MAJORITY case,
+    // because a shared URL opens a tab. `initSidebarSwipe` keeps its standalone
+    // gate below for a reason this one never had: a named gesture conflict with
+    // Safari's own back-swipe.
     const { viewport, dispose } = await install({ standalone: false, displayMode: false });
-    expect(dispose).toBeUndefined();
-    expect(viewport.types).toStrictEqual([]);
+    expect(dispose).toBeTypeOf("function");
+    expect(viewport.types).toStrictEqual(["resize"]);
   });
 
   it("does nothing on a browser with no visual viewport at all", async () => {

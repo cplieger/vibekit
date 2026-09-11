@@ -91,6 +91,27 @@ func (s TurnOpenSource) UserAnswered() bool {
 	}
 }
 
+// ClientVisibleTurn reports whether a RESERVATION held by this source is a turn in
+// flight from a CLIENT's point of view: the user row is already persisted and
+// broadcast, the client has already latched `thinking`, and the Turn record is one
+// StartTurn away. Its own predicate for UserAnswered's reason — this one answers a
+// liveness READ, and widening PromptClass for it would move the admission refusal arm
+// with it.
+//
+// A shell turn IS one: command/shell.go reserves through TryReserveTurn and holds that
+// reservation across the chat-file write that persists and broadcasts the `!cmd` user
+// row, all before StartTurn mints the record. A prime's reservation is vibekit's own
+// transcript replay, so no client latched anything for it; a wire-started turn holds no
+// reservation at all.
+func (s TurnOpenSource) ClientVisibleTurn() bool {
+	switch s {
+	case TurnSourcePrompt, TurnSourceEmptyRetry, TurnSourceLocalShell:
+		return true
+	default:
+		return false
+	}
+}
+
 // Acknowledgeable reports whether a wire turn_start may bind to this source. Only
 // a source that sent a session/prompt qualifies: a localShell turn has no bracket
 // coming and a wireTurnStart turn was created BY one. A binding is revisable, so

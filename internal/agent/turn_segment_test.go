@@ -224,6 +224,43 @@ func TestCloseOnWireEnd_ASplitTurnWithNothingAfterItKeepsItsFooter(t *testing.T)
 	}
 }
 
+// TestCloseOnWireEnd_ASplitEngineTurnKeepsItsFooterToo is the same rule for the population
+// the engine-opened carrier suppression widened, and `error` is the point: with the marker
+// gone the projection reads the sealed row and derives its `completed` default, so a turn
+// that FAILED renders as a clean short answer.
+func TestCloseOnWireEnd_ASplitEngineTurnKeepsItsFooterToo(t *testing.T) {
+	h, cs, _ := newTestHub()
+	startedEngineTurnOn(t, h, cs, "c1", "everything before the compaction")
+	diffs := []vibekit.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}
+	h.liveTurnBuffer("c1").TrackFileChanges(diffs, false)
+	if !h.coord.SealTurnSegment(t.Context(), "c1") {
+		t.Fatal("the fixture could not seal a segment")
+	}
+	// Spend after the baseline was latched, so the turn has a credit delta.
+	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		c.Usage.Credits = 0.5
+		return true
+	}); err != nil {
+		t.Fatalf("record spend: %v", err)
+	}
+
+	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, "")
+
+	marker := outcomeMarker(t, cs, "c1")
+	if marker == nil {
+		t.Fatal("a split engine turn persisted no marker, so its failure and its footer reach no carrier")
+	}
+	if marker.TurnOutcome != vibekit.TurnOutcomeFailed {
+		t.Errorf("marker TurnOutcome = %q, want failed", marker.TurnOutcome)
+	}
+	if marker.TurnCredits != 0.5 {
+		t.Errorf("marker TurnCredits = %v, want the turn's 0.5", marker.TurnCredits)
+	}
+	if marker.ChangedFiles["a.go"] == nil {
+		t.Errorf("marker ChangedFiles = %v, want the turn's cumulative map", marker.ChangedFiles)
+	}
+}
+
 // The cancel event is a cancelled turn's carrier — its presence is what stops a
 // marker being written beside it — so the facts have to ride it or they reach
 // nothing, and the footer shows live then vanishes on reload.

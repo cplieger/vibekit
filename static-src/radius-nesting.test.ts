@@ -77,15 +77,21 @@ describe("a 24px icon button takes the ladder's small rung", () => {
   // The ladder reserves --r-sm for a 16-24px box. Each of these shipped --r
   // (6px), and for `.tab-close` that was its own container's radius, so the
   // button's arc was identical to the tab holding it.
-  it.each(["tab-close", "shell-header-btn", "turn-action-btn", "native-rule-remove"])(
-    "%s is 4px, not 6px",
-    (cls) => {
-      const b = document.createElement("button");
-      b.className = cls;
-      host.appendChild(b);
-      expect(radiusOf(b)).toBeCloseTo(4, 1);
-    },
-  );
+  it.each([
+    "tab-close",
+    "shell-header-btn",
+    "turn-action-btn",
+    "native-rule-remove",
+    // Joined the population when it moved onto `icon-btn`: the shared class declares
+    // `--r` for its own 28px box and this one repads to the floor's 24px, so the rung
+    // has to be stated locally. It shipped one build wearing 6px.
+    "attachment-close",
+  ])("%s is 4px, not 6px", (cls) => {
+    const b = document.createElement("button");
+    b.className = cls;
+    host.appendChild(b);
+    expect(radiusOf(b)).toBeCloseTo(4, 1);
+  });
 });
 
 describe("an inner box is never rounder than the box holding it", () => {

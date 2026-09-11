@@ -1,9 +1,10 @@
 // The clamp: a text element capped to N lines, with a show-more that opens it.
 //
-// Extracted from `fundamentals/turn-header.ts`, which learned this shape the hard
-// way, and now serves three consumers (the turn header's request text, the
-// in-turn steer note, the dock's steer row). The two measured facts that decide
-// the shape are on `watchClamp` below.
+// Serves the in-turn steer note, the dock's steer row, the run page's
+// instructions and results, and both of the dock's question cards. The turn
+// header is NOT among them: its clamp is CSS-only and fold-conditional, so it
+// carries no constant and attaches no observation. The two measured facts that
+// decide the shape are on `watchClamp` below.
 
 /** Above this many characters, assume the text overflows when layout cannot be
  *  measured — a first guess only, corrected by the observer. Deliberately
@@ -11,7 +12,9 @@
  *  negative makes a long text unreadable for one. */
 const CLAMP_FALLBACK_CHARS = 220;
 
-/** Lines a clamp shows when the caller states none. The turn header's own. */
+/** Lines a clamp shows when the caller states none. No consumer relies on it —
+ *  every one of them states its own count — so this is a floor rather than any
+ *  surface's number. */
 const CLAMP_LINES = 3;
 
 const LABEL_MORE = "Show more";
@@ -164,11 +167,18 @@ export function releaseClamp(text: HTMLElement): void {
   clampWatcher?.unobserve(text);
   observed.delete(text);
   clamps.delete(text);
+  // A discarded element leaves no scheduled write behind either, which is the same
+  // precondition the observation itself has.
+  pendingReview.delete(text);
+  if (pendingReview.size === 0 && reviewFrame !== 0) {
+    cancelAnimationFrame(reviewFrame);
+    reviewFrame = 0;
+  }
 }
 
 /** Release every clamp inside `root`, `root` itself included. Same precondition as
  *  {@link releaseClamp}. A sweep rather than a per-element call keeps the owner count at
- *  one per teardown, and lets `disposeChatView` cover any number of turn headers. */
+ *  one per teardown, and lets `disposeChatView` cover every steer note in a chat. */
 export function releaseClampsIn(root: HTMLElement): void {
   for (const text of [...observed]) {
     if (root === text || root.contains(text)) {
@@ -202,14 +212,53 @@ function watchClamp(text: HTMLElement): void {
         releaseClamp(entry.target as HTMLElement);
         continue;
       }
-      const found = clamps.get(entry.target as HTMLElement);
-      if (found !== undefined) {
-        reviewClamp(entry.target as HTMLElement, found.state);
-      }
+      scheduleReview(entry.target as HTMLElement);
     }
   });
   clampWatcher.observe(text);
   observed.add(text);
+}
+
+/** Elements whose resize-driven review is waiting on `reviewFrame`. A set, because one
+ *  callback carries every element whose box moved. */
+const pendingReview = new Set<HTMLElement>();
+
+/** The single slot the deferred review is held in. */
+let reviewFrame = 0;
+
+/** Defer the resize-driven review one animation frame, behind a single slot.
+ *
+ *  THE VERDICT MAY NOT BE WRITTEN INSIDE THE RESIZE DELIVERY. `more.hidden` is
+ *  `display: none`, so a flip changes the height of the card the opener sits in, and
+ *  that card is observed at a SHALLOWER depth by `scroll.ts`'s per-child set: both are
+ *  gathered into ONE broadcast, so re-activating the card's observation fails the
+ *  `depth > shallowest` test and the engine reports "ResizeObserver loop completed with
+ *  undelivered notifications". An unchanged-value guard cannot stand in for the
+ *  deferral — `hidden = false` on an unhidden element already dirties nothing, so the
+ *  write that reaches layout is a real state change. Same shape as `scroll.ts`'s
+ *  `scheduleScrollbarWidth`; the synchronous `reviewClamp` calls in `attachClamp` and
+ *  on the handle are outside any delivery and are what paint the first guess. */
+function scheduleReview(text: HTMLElement): void {
+  pendingReview.add(text);
+  if (reviewFrame !== 0) {
+    return;
+  }
+  reviewFrame = requestAnimationFrame(() => {
+    reviewFrame = 0;
+    const due = [...pendingReview];
+    pendingReview.clear();
+    for (const target of due) {
+      // A detached element measures 0 on both sides, so the character guess would
+      // answer for one discarded between the delivery and this frame.
+      if (!target.isConnected) {
+        continue;
+      }
+      const found = clamps.get(target);
+      if (found !== undefined) {
+        reviewClamp(target, found.state);
+      }
+    }
+  });
 }
 
 function countLines(s: string): number {

@@ -66,6 +66,10 @@ export interface TurnSummaryData {
   /** Commands run and files read — work a file list cannot show. */
   commands?: number;
   reads?: number;
+  /** The gap before this turn: how long after the previous turn's start this one
+   *  began. ABSENT means no predecessor in the window, which is a different fact
+   *  from a gap of zero, so callers must not fold one into the other. */
+  sinceMs?: number;
   /** The model(s) that answered, distinct and in order. Rendered as one name
    *  normally and `a -> b` when a switch split the turn. Absent on every turn
    *  persisted before the field existed. */
@@ -82,12 +86,18 @@ export interface TurnSummaryData {
  *
  *  `models` is deliberately not admitted: every completed turn has one, so
  *  counting it would put a footer on every turn — including the ones this
- *  rule exists to suppress. */
+ *  rule exists to suppress.
+ *
+ *  `sinceMs` IS admitted, and this gate rather than `expandable` alone is what
+ *  makes the gap reachable without a pointer: this decides whether the footer is
+ *  built at all, so a clean turn with no credits, no duration, no commands, no
+ *  reads and no changed files would otherwise carry no ledger to disclose it in. */
 export function hasTurnSummary(d: TurnSummaryData): boolean {
   return (
     (d.outcome !== undefined && d.outcome !== "completed" && d.outcome !== "running") ||
     (d.credits ?? 0) > 0 ||
     (d.elapsedMs ?? 0) > 0 ||
+    (d.sinceMs ?? 0) > 0 ||
     (d.commands ?? 0) > 0 ||
     (d.reads ?? 0) > 0 ||
     Object.keys(d.changedFiles ?? {}).length > 0
@@ -175,9 +185,11 @@ export function updateTurnFooter(footer: HTMLElement, d: TurnSummaryData): void 
   }
 
   // Disclosure only when there is something to disclose — an inert button
-  // is worse than a plain readout.
+  // is worse than a plain readout. A duration or a gap counts: both are painted
+  // for a pointer only, so the disclosure is the one channel a keyboard or touch
+  // reader has for either.
   if (summary !== null) {
-    const expandable = files.length > 0;
+    const expandable = files.length > 0 || (d.elapsedMs ?? 0) > 0 || d.sinceMs !== undefined;
     summary.disabled = !expandable;
     if (expandable) {
       summary.setAttribute("aria-expanded", filesOpen(footer) ? "true" : "false");
@@ -190,7 +202,7 @@ export function updateTurnFooter(footer: HTMLElement, d: TurnSummaryData): void 
 
   const list = footer.querySelector<HTMLElement>(":scope > .turn-ledger-files");
   if (list !== null) {
-    renderFileRows(list, files);
+    renderLedgerRows(list, files, d);
   }
 }
 
@@ -289,18 +301,60 @@ function syncElapsed(footer: HTMLElement, ms: number): void {
   slot.dateTime = isoDuration(ms);
 }
 
-/** One row per changed file: `path +N −M`, with a new-file badge. Every row
+/** The disclosed region: timings first, then one row per changed file
+ *  (`path +N −M`, with a new-file badge), then the multi-file seam. Every file row
  *  opens that file's diff — the aggregate answers whether it worked, rows
  *  answer what changed, the click answers let me look. */
-function renderFileRows(list: HTMLElement, files: [string, FileChange][]): void {
+function renderLedgerRows(
+  list: HTMLElement,
+  files: [string, FileChange][],
+  d: TurnSummaryData,
+): void {
+  const rows: HTMLElement[] = [];
+  const timings = timingsRow(d);
+  if (timings !== null) {
+    rows.push(timings);
+  }
   // Sorted by path so a repaint cannot reshuffle rows under the cursor.
   const sorted = [...files].sort((a, b) => a[0].localeCompare(b[0]));
-  const rows: HTMLElement[] = sorted.map(([path, fc]) => fileRow(path, fc));
+  rows.push(...sorted.map(([path, fc]) => fileRow(path, fc)));
   const review = reviewRow(sorted.length);
   if (review !== null) {
     rows.push(review);
   }
   list.replaceChildren(...rows);
+}
+
+/** `Timings`: the durable channel for the turn's own duration and for the gap
+ *  before it. Both are painted for a pointer alone — the duration in the
+ *  hover-revealed `.turn-elapsed` slot, the gap as the rail's seam and its
+ *  following marker's tooltip — so this row is the only path a keyboard or touch
+ *  reader has to either. Null when the turn has neither to state. */
+function timingsRow(d: TurnSummaryData): HTMLElement | null {
+  const took = elapsedText(d.elapsedMs ?? 0);
+  const since = d.sinceMs;
+  if (took === "" && since === undefined) {
+    return null;
+  }
+  const value = el("span", { className: "turn-timings-value" });
+  if (took !== "") {
+    value.appendChild(el("span", { className: "turn-timings-line" }, `Took ${took}`));
+  }
+  if (since !== undefined) {
+    value.appendChild(
+      el(
+        "span",
+        { className: "turn-timings-line" },
+        `Started ${formatElapsed(since)} after the previous turn`,
+      ),
+    );
+  }
+  return el(
+    "li",
+    { className: "turn-ledger-file turn-ledger-timings" },
+    el("span", { className: "turn-timings-label" }, "Timings"),
+    value,
+  );
 }
 
 function fileRow(path: string, fc: FileChange): HTMLElement {

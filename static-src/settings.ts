@@ -706,13 +706,23 @@ const experimentalFlags: readonly {
   { key: "chat.disableInheritingDefaultResources", inputID: "flag-disable-inherit-resources" },
 ];
 
+/** Which read of the experimental flags is the newest. The panel's loader is reached
+ *  on every settings activation, and the read behind it is a `kiro-cli settings` SPAWN
+ *  with no signal, no dedupe and no coalescing of its own, so a superseded answer must
+ *  be discarded rather than painted over a newer one. */
+let togglesGen = 0;
+
 export function initExperimentalToggles(): void {
   const inputs = experimentalFlags.map(
     (flag) => document.getElementById(flag.inputID) as HTMLInputElement | null,
   );
   const wanted = experimentalFlags.map((flag) => flag.key).join(",");
+  const gen = ++togglesGen;
   void apiGet<KiroSettingsPayload>(`/api/kiro-settings?keys=${encodeURIComponent(wanted)}`).then(
     (payload) => {
+      if (gen !== togglesGen) {
+        return;
+      }
       const values = payload?.settings ?? {};
       for (let i = 0; i < experimentalFlags.length; i++) {
         const input = inputs[i] ?? null;

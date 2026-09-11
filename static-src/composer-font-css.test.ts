@@ -1,19 +1,23 @@
 // ---------------------------------------------------------------------------
-// The composer's font size on a COARSE pointer.
+// THE COMPOSER READS THE TRANSCRIPT'S OWN RUNG, at every pointer tier.
 //
-// iOS zooms the page when a text control under 16px takes focus, and
-// `static/index.html` carries `autofocus` on `#prompt-input`, so a fresh load on
-// a finger zoomed the PWA before anything was typed. The fix is a token on the
-// pointer tier (`--fs-field`, 01-tokens.css) that the control reads once, which
-// is how every other platform floor in this app is delivered.
+// It used to read `--fs-field`, a token raised to 1rem on the coarse tier as an
+// iOS floor: iOS Safari zooms the page when a text control under 16px takes
+// focus, and `static/index.html` carries `autofocus` on `#prompt-input`. That
+// premise was false for this document — the page ships `maximum-scale=1.0` in its
+// viewport meta, which is what suppresses the auto-zoom — so the floor bought
+// nothing and cost 16px of composer text against 11-12px pill labels one row
+// below it, which is how it was reported. The token, the app-wide floor it fed
+// (61-mcp-tools.css) and three hardcoded 16px find-input overrides all went with
+// it; `text-field-scale-css.test.ts` is the sweep over every OTHER control.
 //
-// Two halves, following effort-pill-css.test.ts, because neither answers the
-// other's question. The SOURCE read says the token is declared in the base block
-// and in BOTH tier arms carrying the same value, so one arm cannot be quietly
-// weakened. The MEASUREMENT says each arm applies at the size it claims and —
-// the part the whole change turns on — that raising the font moved the composer's
-// resting box by nothing, because the padding is derived from
-// `--composer-rest-h` minus `1lh` and absorbs the line-height change.
+// Two halves, because neither answers the other's question. The SOURCE read says
+// the control reads the scale rather than a literal, and that no `--fs-field`
+// token has come back to carry a floor silently. The MEASUREMENT says the
+// composer and the transcript compute the SAME size — the contract in the
+// direction a reader sees it — and that the font change moves the resting box by
+// nothing, because the padding is derived from `--composer-rest-h` minus `1lh`
+// and absorbs the line-height difference.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
@@ -25,8 +29,8 @@ import indexHtml from "../static/index.html?raw";
 
 import { allRules, loadCSS, mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-/** The token the composer reads. */
-const TOKEN = "--fs-field";
+/** The rung the composer and the transcript share. */
+const RUNG = "--fs-md";
 
 /** The composer subtree as the page ships it — the form, its box, the textarea
  *  and the real pill row. Sliced rather than hand-written: the pill row's height
@@ -41,51 +45,28 @@ function composerMarkup(): string {
   return indexHtml.slice(open, close + "</form>".length);
 }
 
-describe("the token's declarations, read from source", () => {
-  // A computed style answers for ONE viewport, so it cannot see an arm it is not
-  // sized for. This half is what fails when an arm is dropped or its value drifts
-  // away from its twin.
-  const declaring = allRules(loadCSS("01-tokens.css")).filter((r) =>
-    new RegExp(`${TOKEN}:`).test(r.body),
+describe("the declarations, read from source", () => {
+  const inputRule = allRules(loadCSS("15-input.css")).find(
+    (r) => r.selector === '[id="prompt-input"]',
   );
 
-  it("declares the token in the base block and in both tier arms, and nowhere else", () => {
-    expect(declaring.map((r) => r.selector)).toEqual([
-      ":root",
-      ':root[data-pointer="coarse"]',
-      ':root:not([data-pointer="fine"])',
-    ]);
+  it("reads the type scale's own rung, never a literal", () => {
+    expect(inputRule, '15-input.css has no [id="prompt-input"] rule').toBeDefined();
+    expect(inputRule?.body).toMatch(new RegExp(`font-size:\\s*var\\(${RUNG}\\)`));
+    // A literal would put a platform fact in a component file, which is what the
+    // three find inputs carried until this change; --fs-lg would pin the composer
+    // to a type-scale rung that has nothing to do with the transcript's.
+    expect(inputRule?.body).not.toMatch(/font-size:\s*1rem/);
+    expect(inputRule?.body).not.toMatch(/font-size:\s*\d+px/);
+    expect(inputRule?.body).not.toMatch(/font-size:\s*var\(--fs-lg\)/);
   });
 
-  it("defaults to the type scale's own rung and raises it to 1rem on both arms", () => {
-    // NOT --fs-lg, which is 1rem today: that is a type-scale rung, and a retune
-    // of it would silently move a platform threshold.
-    const [base, coarse, noJS] = declaring;
-    expect(base?.body).toMatch(/--fs-field:\s*var\(--fs-md\)/);
-    expect(coarse?.body).toMatch(/--fs-field:\s*1rem/);
-    expect(noJS?.body, "both arms raise it the same way").toMatch(/--fs-field:\s*1rem/);
-  });
-
-  it("sits beside the hit floor, so one tier decides both", () => {
-    // The co-location IS the contract: --fs-field follows the pointer tier that
-    // --ctl-h and --hit-floor already move on, rather than growing a breakpoint
-    // of its own. A second breakpoint is what once gave the 640-768px band 44px
-    // controls beside a 24px hit floor.
-    const [, coarse, noJS] = declaring;
-    expect(coarse?.body).toMatch(/--hit-floor:\s*2\.75rem/);
-    expect(noJS?.body).toMatch(/--hit-floor:\s*2\.75rem/);
-  });
-
-  it("is read by the composer as a token, never as a literal", () => {
-    const input = allRules(loadCSS("15-input.css")).find(
-      (r) => r.selector === '[id="prompt-input"]',
-    );
-    expect(input, '15-input.css has no [id="prompt-input"] rule').toBeDefined();
-    expect(input?.body).toMatch(/font-size:\s*var\(--fs-field\)/);
-    // A literal in the component file would put a platform fact in the wrong
-    // file, and --fs-lg would pin the threshold to a type-scale rung.
-    expect(input?.body).not.toMatch(/font-size:\s*1rem/);
-    expect(input?.body).not.toMatch(/font-size:\s*var\(--fs-lg\)/);
+  it("declares no --fs-field token, so a tier floor cannot come back silently", () => {
+    // The token existed only to carry a per-tier platform floor, and its own
+    // comment said so. A re-added token would deliver 16px to this control through
+    // a file this test does not read, so the absence is asserted where the token
+    // lived rather than at the consumer.
+    expect(loadCSS("01-tokens.css")).not.toContain("--fs-field");
   });
 });
 
@@ -105,7 +86,7 @@ describe("the composer, measured at real viewport sizes", () => {
   afterEach(() => {
     document.body.innerHTML = "";
     document.documentElement.removeAttribute("data-pointer");
-    document.documentElement.style.removeProperty(TOKEN);
+    document.documentElement.style.removeProperty("font-size");
   });
 
   afterAll(async () => {
@@ -115,10 +96,11 @@ describe("the composer, measured at real viewport sizes", () => {
     }
   });
 
-  /** The composer mounted at one viewport size under one pointer tier.
+  /** The composer mounted at one viewport size under one pointer tier, with a
+   *  transcript bubble beside it so the two can be compared as rendered.
    *
    *  `pointer` is the value of the tier attribute the app's own `pointer-tier.ts`
-   *  writes, or null for the no-JS case the fallback arm exists to serve. The
+   *  writes, or null for the no-JS case the width fallback exists to serve. The
    *  resize is asserted, or a `page.viewport` that stopped moving the frame would
    *  make every case below report about the project's own size while still naming
    *  a phone. */
@@ -126,7 +108,7 @@ describe("the composer, measured at real viewport sizes", () => {
     width: number,
     height: number,
     pointer: "coarse" | "fine" | null,
-  ): Promise<{ input: HTMLTextAreaElement; pills: HTMLElement }> {
+  ): Promise<{ input: HTMLTextAreaElement; pills: HTMLElement; prose: HTMLElement }> {
     await page.viewport(width, height);
     expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
       width,
@@ -137,13 +119,15 @@ describe("the composer, measured at real viewport sizes", () => {
     } else {
       document.documentElement.setAttribute("data-pointer", pointer);
     }
-    document.body.innerHTML = composerMarkup();
+    document.body.innerHTML =
+      `<div class="message assistant"><p id="probe-prose">prose</p></div>` + composerMarkup();
     const input = document.getElementById("prompt-input");
     const pills = document.querySelector<HTMLElement>(".prompt-pills");
-    if (!(input instanceof HTMLTextAreaElement) || pills === null) {
+    const prose = document.getElementById("probe-prose");
+    if (!(input instanceof HTMLTextAreaElement) || pills === null || prose === null) {
       throw new Error("the composer subtree did not mount");
     }
-    return { input, pills };
+    return { input, pills, prose };
   }
 
   /** The control's computed font size in px. */
@@ -151,69 +135,83 @@ describe("the composer, measured at real viewport sizes", () => {
     return Number.parseFloat(getComputedStyle(el).fontSize);
   }
 
-  it("computes 16px on a phone with a coarse pointer, clearing the iOS threshold", async () => {
+  it.each([
+    ["a phone with a coarse pointer", 390, 844, "coarse" as const],
+    // An iPad in landscape: a finger past 48rem, where the no-JS width fallback
+    // does not reach. THE TIER IS THE POINTER, NOT THE WIDTH, and this is the case
+    // that says so for this control.
+    ["a WIDE coarse viewport", 1024, 768, "coarse" as const],
+    // `pointer-tier.ts` seeds the tier from a capability query and corrects it on
+    // the first real PointerEvent, so there is a window with no attribute at all.
+    ["a phone with no pointer tier resolved yet", 390, 844, null],
+    ["a desktop with a fine pointer", 1280, 800, "fine" as const],
+    ["a desktop with no pointer tier resolved yet", 1280, 800, null],
+  ])("computes the transcript's own size on %s", async (_label, w, h, pointer) => {
+    const { input, prose } = await mountAt(w, h, pointer);
+    // Compared against the RENDERED transcript rather than against 14, so a retune
+    // of --fs-md moves both and this case keeps meaning "the two agree". The
+    // absolute value is pinned once, below.
+    //
+    // THE COARSE ARMS ARE EXCLUDED FROM THE AGREEMENT, deliberately (amendment §D,
+    // 2026-09-10): the 16px iOS text-entry floor is restored in 61-mcp-tools.css
+    // and beats this control's (0,1,0) declaration on that tier, so the composer
+    // reads 16px there against the transcript's 14. This file's own header states
+    // the premise that changed — `static/index.html` no longer ships
+    // `maximum-scale=1.0`, so the auto-zoom it suppressed is live and
+    // `#prompt-input` carries `autofocus`. The next case pins that side.
+    if (pointer === "coarse" || (pointer === null && w <= 768)) {
+      expect(fontPx(input), "the coarse floor is in force").toBe(16);
+      return;
+    }
+    expect(fontPx(input)).toBe(fontPx(prose));
+  });
+
+  it("is 14px on a mouse today, so a retune of the rung is a visible change rather than a silent one", async () => {
+    // Moved from 390 coarse to a mouse desktop with the floor's restoration: on a
+    // coarse pointer this control is 16 by platform requirement rather than by this
+    // app's type scale, so the rung is only observable on the fine tier.
+    const { input } = await mountAt(1280, 800, "fine");
+    expect(fontPx(input)).toBe(14);
+  });
+
+  it("is 16px on a finger, which is iOS's auto-zoom threshold rather than a rung", async () => {
     const { input } = await mountAt(390, 844, "coarse");
     expect(fontPx(input)).toBe(16);
   });
 
-  it("computes 16px on a WIDE coarse viewport, which is the tier arm's own population", async () => {
-    // An iPad in landscape: a finger past 48rem, where the no-JS width fallback
-    // does not reach and only the pointer-tier arm can carry the token. THE TIER
-    // IS THE POINTER, NOT THE WIDTH, and this is the case that says so — at 390px
-    // the fallback arm alone would answer 16px.
-    const { input } = await mountAt(1024, 768, "coarse");
-    expect(fontPx(input)).toBe(16);
-  });
+  // The coarse pair moved 52/53 -> 44/45 with amendment §B, which took the painted
+  // control box off the 44px target floor; composer-row-height-css.test.ts owns that
+  // relationship and its own pins carry the reasoning. What this case is about is
+  // unchanged: the FONT does not move the box.
+  it.each([
+    [390, 844, "coarse" as const, 44, 45],
+    [1280, 800, "fine" as const, 40, 41],
+  ])(
+    "leaves the resting box and the pill row alone at %ix%i on a %s pointer",
+    async (w, h, pointer, boxH, rowH) => {
+      // The consequence worth measuring rather than reasoning about. The padding is
+      // `calc((var(--composer-rest-h) - 1lh) / 2)`, so a line-height change eats
+      // exactly the padding it adds and the resting height is unchanged BY
+      // CONSTRUCTION — which is what made the font change safe to ship on its own.
+      // A two-line composer does grow by the line-height delta, which is the honest
+      // consequence of the text size.
+      const { input, pills } = await mountAt(w, h, pointer);
+      expect(input.getBoundingClientRect().height).toBe(boxH);
+      // The pill row's BOX is one hairline taller than its band: the
+      // `border-block-start` is the boundary between the two rows rather than part
+      // of either. composer-row-height-css.test.ts owns that relationship.
+      expect(pills.getBoundingClientRect().height, "the two rows are one band").toBe(rowH);
 
-  it("computes 16px on a phone with no pointer tier resolved yet", async () => {
-    // The no-JS fallback arm. `pointer-tier.ts` seeds the attribute from a
-    // capability query and corrects it on the first real PointerEvent, so there
-    // is a window with no attribute at all — and the zoom fires on the autofocus
-    // inside it.
-    const { input } = await mountAt(390, 844, null);
-    expect(fontPx(input)).toBe(16);
-  });
-
-  it("keeps 14px on a desktop with a fine pointer", async () => {
-    const { input } = await mountAt(1280, 800, "fine");
-    expect(fontPx(input)).toBe(14);
-  });
-
-  it("keeps 14px on a desktop with no pointer tier resolved yet", async () => {
-    // The other side of the fallback arm: it is width-gated, so it must not leak
-    // onto a mouse-driven window that has not been classified yet.
-    const { input } = await mountAt(1280, 800, null);
-    expect(fontPx(input)).toBe(14);
-  });
-
-  it("leaves the resting box and the pill row exactly as they were at 390px coarse", async () => {
-    // The consequence worth measuring rather than reasoning about. The padding is
-    // `calc((var(--composer-rest-h) - 1lh) / 2)`, so a larger line-height eats
-    // exactly the padding it adds and the resting height is unchanged BY
-    // CONSTRUCTION — which is what makes the font change safe to ship on its own.
-    // A two-line composer does grow by the line-height delta, which is the honest
-    // consequence of larger text.
-    const { input, pills } = await mountAt(390, 844, "coarse");
-    const raised = input.getBoundingClientRect().height;
-    const row = pills.getBoundingClientRect().height;
-    expect(fontPx(input)).toBe(16);
-    expect(raised).toBe(53);
-    expect(row, "the textarea's band still matches the pill row's").toBe(53);
-
-    // The same box with the token forced back to what the control read before
-    // this change. An inline declaration on :root outranks both tier arms, so
-    // this is the pre-change composer measured in the post-change tree.
-    document.documentElement.style.setProperty(TOKEN, "var(--fs-md)");
-    expect(fontPx(input)).toBe(14);
-    expect(input.getBoundingClientRect().height, "raising the font moved the box").toBe(raised);
-    expect(pills.getBoundingClientRect().height).toBe(row);
-  });
-
-  it("leaves the resting box alone at desktop width too", async () => {
-    const { input } = await mountAt(1280, 800, "fine");
-    const before = input.getBoundingClientRect().height;
-    expect(before).toBe(40);
-    document.documentElement.style.setProperty(TOKEN, "var(--fs-md)");
-    expect(input.getBoundingClientRect().height).toBe(before);
-  });
+      // The same box at the size the control read BEFORE this change, set ON the
+      // element. Not through the root font size and not through --fs-md: both
+      // --composer-rest-h and the box controls beside it are `rem`-derived, so
+      // moving the root moves the very height being compared, and --fs-md is now
+      // shared with the transcript. An inline size on the control alone is the
+      // pre-change condition exactly, and it leaves --composer-rest-h fixed while
+      // `1lh` — the term the padding subtracts — follows the font.
+      input.style.setProperty("font-size", "16px");
+      expect(fontPx(input), "the pre-change size is what is being compared").toBe(16);
+      expect(input.getBoundingClientRect().height, "raising the font moved the box").toBe(boxH);
+    },
+  );
 });

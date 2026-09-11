@@ -227,6 +227,10 @@ export function dispatch(evt: ServerEvent): void {
 
 export const BUS_TURN_IDLE = "turn:idle" as const;
 export const BUS_TRANSPORT_GAP = "transport:gap" as const;
+/** The page came back from a suspension real time passed under. Distinct from a GAP,
+ *  which says frames were DROPPED: a resume undermines data with no invalidation
+ *  channel, so it nudges the active view without bumping the sync epoch. */
+export const BUS_PAGE_RESUMED = "transport:resumed" as const;
 export const BUS_KEYS_ESCAPE = "keys:escape" as const;
 export const BUS_ACTIVATE_CHAT = "chat:activate" as const;
 /** A workflow run appeared or reached a terminal state, so any list of runs is
@@ -250,6 +254,7 @@ export const BUS_TAB_CHANGED = "tabs:changed" as const;
 interface BusPayloads {
   readonly [BUS_TURN_IDLE]: string; // chatID
   readonly [BUS_TRANSPORT_GAP]: { lastSeen: number; floor: number; head: number };
+  readonly [BUS_PAGE_RESUMED]: undefined;
   readonly [BUS_KEYS_ESCAPE]: undefined;
   readonly [BUS_ACTIVATE_CHAT]: { chatID: string; then?: () => void };
   readonly [BUS_RUNS_CHANGED]: undefined;

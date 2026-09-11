@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/kirosession"
+	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -521,7 +522,7 @@ func TestAdoptKASTitle(t *testing.T) {
 		{
 			name:  "refuses KAS's own placeholder",
 			start: vibekit.DefaultChatName,
-			title: kasDefaultSessionTitle,
+			title: translate.KASDefaultSessionTitle,
 			want:  vibekit.DefaultChatName,
 		},
 		{
@@ -539,7 +540,7 @@ func TestAdoptKASTitle(t *testing.T) {
 		{
 			name:  "never overwrites an agent-authored focus title",
 			start: "Reaper live-session exemption",
-			title: kasDefaultSessionTitle,
+			title: translate.KASDefaultSessionTitle,
 			want:  "Reaper live-session exemption",
 		},
 	}
@@ -552,6 +553,97 @@ func TestAdoptKASTitle(t *testing.T) {
 					tc.start, tc.title, c.Name, tc.want)
 			}
 		})
+	}
+}
+
+// This rung reads what KAS STORED, so it gets the SAME door treatment the live focus
+// channel gets — sanitizer, bound, rune cap and shape rules — and the cases below are
+// one per part of it. A stored title is not the safer input: KAS keeps its own session
+// title independently of vibekit's chat name, nothing bounded or sanitized it on the
+// way in, a session titled by a pre-gate build re-offers that string on every resume,
+// and a rename from the IDE or the TUI can put one there at any time. It is also the
+// worse door, because a resume names a chat whose record was recreated and is
+// therefore default-named, which is exactly the state this rung adopts into.
+func TestAdoptKASTitle_AppliesTheWholeDoorTreatment(t *testing.T) {
+	tests := []struct {
+		name  string
+		title string
+		want  string
+	}{
+		{
+			// Verbatim from the live volume's poisoned chat record.
+			name:  "a_stored_model_refusal",
+			title: "I need more context to generate a title. Could you share the user's first mes...",
+			want:  vibekit.DefaultChatName,
+		},
+		{
+			name:  "a_stored_truncation_of_the_first_prompt",
+			title: "Safari on Mac throws this console error for vibekit: [Error] ResizeObserver l...",
+			want:  vibekit.DefaultChatName,
+		},
+		{
+			// Nothing on the wire bounds this field and a stored title is not
+			// Ete-capped, so the OUTCOME is what this pins: an arbitrarily long
+			// string never reaches Chat.Name. Two rules refuse it independently —
+			// the sanitizer's bound leaves a "..." marker the truncation rule
+			// catches, and 515 runes is over the cap either way — so retuning one
+			// of them cannot open it. The log test below is what pins the bound.
+			name:  "an_unbounded_stored_title",
+			title: strings.Repeat("x", 700),
+			want:  vibekit.DefaultChatName,
+		},
+		{
+			// The sanitizer, and the reason it runs before the rules rather than
+			// after them: the stored form is what gets compared and kept.
+			name:  "a_stored_title_carrying_ansi_and_a_newline",
+			title: "\x1b[31mRelease\x1b[0m\ncheck",
+			want:  "Release check",
+		},
+		{
+			name:  "a_real_stored_title_is_still_adopted",
+			title: "Fix ResizeObserver Error In Safari",
+			want:  "Fix ResizeObserver Error In Safari",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &vibekit.Chat{Name: vibekit.DefaultChatName}
+			adoptKASTitle(c, tc.title)
+			if c.Name != tc.want {
+				t.Errorf("adoptKASTitle(%q) left name %q, want %q", tc.title, c.Name, tc.want)
+			}
+		})
+	}
+}
+
+// The refusal line is the one place a title vibekit did NOT adopt still reaches an
+// operator, and it is the same untrusted string: nothing on the wire bounds the field
+// and a stored title is not Ete-capped. So the line carries the SANITIZED form plus the
+// rule that fired. Logging the raw argument instead is a one-word edit that puts
+// unbounded control-bearing text into the log store, and nothing else would notice.
+func TestAdoptKASTitle_LogsTheSanitizedTitleWithItsReason(t *testing.T) {
+	logs := captureLogs(t)
+	stored := "\x1b[31m" + strings.Repeat("x", 700) + "\nmore"
+
+	adoptKASTitle(&vibekit.Chat{Name: vibekit.DefaultChatName}, stored)
+
+	var rec struct {
+		Title  string `json:"title"`
+		Reason string `json:"reason"`
+	}
+	line := strings.TrimSpace(logs.String())
+	if err := json.Unmarshal([]byte(line), &rec); err != nil {
+		t.Fatalf("adoptKASTitle logged %q, want one JSON record: %v", line, err)
+	}
+	if rec.Reason == "" {
+		t.Errorf("adoptKASTitle logged reason %q, want the rule that fired", rec.Reason)
+	}
+	if strings.ContainsAny(rec.Title, "\x1b\n") {
+		t.Errorf("adoptKASTitle logged title %q, want it sanitized of ANSI and newlines", rec.Title)
+	}
+	if len(rec.Title) >= len(stored) {
+		t.Errorf("adoptKASTitle logged %d title bytes for a %d-byte stored title, want it bounded",
+			len(rec.Title), len(stored))
 	}
 }
 

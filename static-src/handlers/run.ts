@@ -12,7 +12,9 @@ import {
   noteRunLive,
   noteRunSettled,
   hasLiveRunForChat,
+  runChatID,
 } from "../run-store.js";
+import { submitPrompt } from "../submit.js";
 import { isThinking } from "../store.js";
 import { trackRun } from "../run-dots.js";
 import { applyRunStep } from "../run-view.js";
@@ -149,6 +151,29 @@ onSSE("run_step", (_chatID, p) => {
   applyRunStep(p);
 });
 
+/** Ask the agent that launched this run to answer its open question.
+ *
+ *  Through `submit.ts`, which is the single owner of what Send means and already
+ *  decides prompt-vs-steer from whether a turn is running, so there is no second
+ *  send path and no `transport.send` here. It THROWS on a refusal, which is what
+ *  re-enables the card's button; no toast, because submit.ts already surfaces a
+ *  refusal through send-state.
+ *
+ *  The text names the RUN and embeds neither the question (the thing the reader did
+ *  not want to read) nor the ask id (opaque, and measured at 2,053 bytes). It DOES
+ *  name the answer body's two fields, because they are unguessable: `text` rather
+ *  than the `answer` an agent reaches for first, and a wrong guess spends a 400 on
+ *  a hand-off the reader is waiting on. */
+async function deferToParentAgent(chatID: string, workflowID: string): Promise<void> {
+  const text =
+    `Please answer the open question on workflow run ${workflowID}.\n` +
+    `Read it with GET /api/runs/${workflowID} (its open_asks), then ` +
+    `POST /api/runs/${workflowID}/answer with {"ask_id": "<that ask's id>", "text": "<your answer>"}.`;
+  if ((await submitPrompt(chatID, text)) === "failed") {
+    throw new Error(`the deferral prompt for run ${workflowID} was refused`);
+  }
+}
+
 // A workflow STEP asked a person a question and its run is parked until somebody
 // answers. The one run event that reaches the interaction dock, and the reason it
 // carries a payload rather than an invalidation: KAS parks the run with a fixed
@@ -172,6 +197,15 @@ onSSE("run_input_needed", (chatID, p) => {
   // run's ask arrives keyed to the synthetic `run:<workflowId>`, which noteRunChat
   // refuses — that is not a chat id.
   noteRunChat(p.workflow_id, chatID);
+  // The chat-parented discriminator, and it needs no wire field: noteRunChat refuses
+  // both "" and the synthetic `run:` prefix, so a non-empty answer here means this
+  // run was launched from a conversation AND names it.
+  const parentChat = runChatID(p.workflow_id);
+  // Live but PARKED: a run waiting on a person writes nothing, so the eviction
+  // exemption `hasExecutingRunForChat` keeps answering no rather than pinning that
+  // chat's window until somebody answers. `parentChat` because that getter has
+  // already refused both spellings of "no launching chat".
+  noteRunLive(p.workflow_id, parentChat, false);
   notifyIfHidden(NOTIFY_TITLE, "A workflow step is waiting for your answer");
   pushDecision({
     kind: "run_input",
@@ -179,6 +213,9 @@ onSSE("run_input_needed", (chatID, p) => {
     runID: p.workflow_id,
     askID: p.ask_id,
     payload: p,
+    // A conditional spread because `exactOptionalPropertyTypes` refuses an explicit
+    // `defer: undefined`, and the card reads PRESENCE rather than a flag.
+    ...(parentChat === "" ? {} : { defer: () => deferToParentAgent(parentChat, p.workflow_id) }),
     submit: (text) => {
       if (text === null) {
         // Continue without answering. Addressed by NODE rather than by ask, because

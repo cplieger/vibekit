@@ -213,24 +213,57 @@ describe("the run page claims its height", () => {
     expect(host).not.toMatch(/min-height:\s*0/);
   });
 
-  // The page is not prose, so it gets its own measure — and a BOUNDED one, because
-  // a step row puts its duration at `margin-inline-start: auto`.
+  // WHICH BOX carries the measure is the half worth pinning, and it moved: a capped
+  // scroller puts its scrollbar against the right edge of the cards rather than the
+  // view's, which reads as a panel's inner scroller instead of the page's.
+  // `#messages-wrap` / `.transcript-view` has always been the other shape —
+  // full-width scroller, capped child — and both exec pages now match it. Both
+  // halves are asserted because either alone is a defect: an uncapped scroller over
+  // an uncapped body is a page with no measure at all, and a capped scroller over a
+  // capped body puts the scrollbar back on the content.
   //
-  // WHICH BOX carries it is the half worth pinning, and it moved: a capped scroller
-  // puts its scrollbar against the right edge of the cards rather than the view's,
-  // which reads as a panel's inner scroller instead of the page's. `#messages-wrap`
-  // / `.transcript-view` has always been the other shape — full-width scroller,
-  // capped child — and both exec pages now match it. Both halves are asserted
-  // because either alone is a defect: an uncapped scroller over an uncapped body is
-  // a page with no measure at all, and a capped scroller over a capped body puts the
-  // scrollbar back on the content.
+  // WHICH TOKEN is `--content-max-w` for both, and the assertion is the TOKEN rather
+  // than a length because "the same width as the chat" is only true while every
+  // surface reads one declaration. Two pages carrying 50rem literally would pass a
+  // width assertion and drift on the next retune.
   it.each([
     ['[id="run-view"] .page-content', '[id="run-body"]'],
     ['[id="subagent-view"] .page-content', '[id="subagent-body"]'],
   ])("measures %s at its body rather than at its scroller", (scroller, body) => {
     const css = loadCSS("18-pages.css");
     expect(decls(css, scroller)).toMatch(/max-width:\s*none/);
-    expect(decls(css, body)).toMatch(/max-width:\s*var\(--run-page-max-w\)/);
+    expect(decls(css, body)).toMatch(/max-width:\s*var\(--content-max-w\)/);
+  });
+
+  // The transcript is the OTHER side of that contract, and it is what makes the
+  // token assertion above mean "the chat's column" rather than "some token both
+  // pages happen to share". `.transcript-view` is the chat's own capped child
+  // (13-messages.css), the shape both exec bodies were aligned onto.
+  it("measures the exec pages at the transcript's own token", () => {
+    expect(decls(loadCSS("13-messages.css"), ".transcript-view")).toMatch(
+      /max-width:\s*var\(--content-max-w\)/,
+    );
+  });
+
+  // The exec pages carried `--run-page-max-w: 68rem` until 2026-09-10, on the
+  // argument that machine output wants more room than prose. That argument was
+  // withdrawn and the token deleted with it, so this is a NEGATIVE pin: a
+  // re-introduction is a second full-page measure, which is the state the run page
+  // rendering 288px wider than its own chat came from. Swept over every stylesheet
+  // rather than the two that used it, because a re-introduction would land at the
+  // consumer as readily as at the token.
+  //
+  // COMMENTS ARE STRIPPED, and that is the point rather than a convenience: both
+  // files still NAME the deleted token in prose, because a record of what was
+  // withdrawn and why is what stops the next audit re-proposing it. Only a
+  // declaration or a `var()` is the defect.
+  it("keeps the wide exec measure deleted", () => {
+    const stripped = (name: string): string => loadCSS(name).replace(/\/\*[\s\S]*?\*\//g, " ");
+    for (const name of ["01-tokens.css", "18-pages.css", "31-exec-view.css"]) {
+      expect(stripped(name), `${name} must not reintroduce --run-page-max-w`).not.toMatch(
+        /--run-page-max-w/,
+      );
+    }
   });
 
   // An `auto` cross-axis margin suppresses a flex item's `stretch`, so the cap
@@ -248,6 +281,6 @@ describe("the run page claims its height", () => {
   );
 
   it("keeps the page measure a real token", () => {
-    expect(loadCSS("01-tokens.css")).toMatch(/--run-page-max-w:\s*\d/);
+    expect(loadCSS("01-tokens.css")).toMatch(/--content-max-w:\s*\d/);
   });
 });

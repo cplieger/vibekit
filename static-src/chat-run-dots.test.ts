@@ -48,8 +48,9 @@ import type { RunNode, RunState } from "./run-store.js";
 import type { TabKind } from "./types.js";
 
 const m = {
-  /** workflow id -> the chat that launched it, as the live inventory holds it. */
-  live: new Map<string, string>(),
+  /** workflow id -> its row, as the live inventory holds it: the chat that launched
+   *  it, and whether this process holds a deadline for it. */
+  live: new Map<string, { chat: string; executing: boolean }>(),
   states: new Map<string, RunState>(),
   /** One entry per unanswered ask, by the RUN it names. */
   asks: [] as string[],
@@ -71,13 +72,25 @@ function dockChanged(): void {
 
 vi.mock("./run-store.js", () => ({
   // TRACKED like production's: the inventory's version is what repaints a row when
-  // a run starts or settles with no tab mutation behind it.
-  liveRunIDsForChat: vi.fn((chatID: string) => {
+  // a run starts or settles with no tab mutation behind it. Whole ROWS, because the
+  // fold reads `executing` as its floor while a run's cell is still absent.
+  liveRunsForChat: vi.fn((chatID: string) => {
     void runsVersion.value;
     if (chatID === "") {
       return [];
     }
-    return [...m.live.entries()].filter(([, chat]) => chat === chatID).map(([id]) => id);
+    return [...m.live.entries()]
+      .filter(([, row]) => row.chat === chatID)
+      .map(([id, row]) => ({ id, ...row }));
+  }),
+  // UNTRACKED, like production's: the demand predicate below is called from
+  // `forgetRun`, which runs outside this module's effect.
+  peekLiveRun: vi.fn((id: string) => m.live.get(id)),
+  // The ids-only wrapper the store keeps for `run-bar.ts` and `chat-settled.ts`.
+  // Inert here, and present because a browser-mode mock is linked as real ESM.
+  liveRunIDsForChat: vi.fn((chatID: string) => {
+    void runsVersion.value;
+    return [...m.live.entries()].filter(([, row]) => row.chat === chatID).map(([id]) => id);
   }),
   // TRACKED too: the cell resolving is the moment the mark can paint at all.
   runState: vi.fn((id: string) => {
@@ -135,7 +148,13 @@ vi.mock("./router.js", () => ({
   buildPath: vi.fn(() => "/"),
   parseRoute: vi.fn(),
 }));
-vi.mock("./tabs-drag.js", () => ({
+// Type-only, for the `importOriginal` below.
+import type * as TabsDrag from "./tabs-drag.js";
+// The three FUNCTIONS are stubbed and nothing else is: `DRAG_THRESHOLD_PX` is the
+// strip's drag slop and `tabs.ts` reads it, so a partial factory would fail this
+// whole file at link time.
+vi.mock("./tabs-drag.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof TabsDrag>()),
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
@@ -196,7 +215,7 @@ vi.mock("./dom.js", () => {
   };
 });
 
-const { installChatRunDotSubscriber } = await import("./chat-run-dots.js");
+const { chatTabFoldsRun, installChatRunDotSubscriber } = await import("./chat-run-dots.js");
 
 async function paint(): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -213,10 +232,10 @@ async function resetProjection(): Promise<void> {
   _resetTabsSyncForTest();
   _resetTabOpenersForTest();
   registerTabOpeners({
-    chat: { show: vi.fn(), close: vi.fn(), dot: () => "" },
-    editor: { show: vi.fn(), close: vi.fn() },
-    run: { show: vi.fn() },
-    subagent: { show: vi.fn() },
+    chat: { show: vi.fn(), refresh: vi.fn(), close: vi.fn(), dot: () => "" },
+    editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
+    run: { show: vi.fn(), refresh: vi.fn() },
+    subagent: { show: vi.fn(), refresh: vi.fn() },
   });
   resetActionFramework();
   _resetForTest();
@@ -309,8 +328,16 @@ function titleLeft(id: string): number {
 
 /** Record a run as live for a chat, with the status its own cell reports. */
 function liveRun(runID: string, chatID: string, state: Partial<RunState> = {}): void {
-  m.live.set(runID, chatID);
+  m.live.set(runID, { chat: chatID, executing: true });
   m.states.set(runID, { workflowId: runID, ...state } as RunState);
+  runsChanged();
+}
+
+/** A run the inventory holds and nothing has been fetched for: the state a
+ *  lifecycle frame or the boot rebuild leaves for the round trip before `inspect`
+ *  answers. `executing` is the only thing the client has been told about it. */
+function unfetchedRun(runID: string, chatID: string, executing: boolean): void {
+  m.live.set(runID, { chat: chatID, executing });
   runsChanged();
 }
 
@@ -448,19 +475,50 @@ describe("N live runs fold onto one mark", () => {
     expect(markState(chat)).toBe("input");
   });
 
-  it("says nothing for a live run whose state has not been fetched yet", () => {
-    // "We do not know" is not "it is working": the inventory row proves a run was
-    // put on the wire and says nothing about what it is doing, and `run-bar.ts`
-    // paints nothing in the same case rather than claiming a state.
-    m.live.set("wf_unknown", "c1");
-    runsChanged();
+  it("works from the inventory's own flag before the run's cell resolves", () => {
+    // The row lands with the lifecycle frame; the `inspect` that fills the cell is a
+    // round trip behind it. `executing` is what the client has been told in that
+    // window, so the mark paints from it rather than waiting — which is what makes
+    // the square appear from the first answer instead of the second.
+    unfetchedRun("wf_unknown", "c1", true);
+    expect(markState(chat)).toBe("working");
+  });
+
+  it("says nothing for an unfetched run this process holds no deadline for", () => {
+    // `executing === false` is where the flag stops being an answer: a parked lease
+    // and one read back from disk report it identically, so claiming a state would
+    // be guessing. `run-bar.ts` withholds in the same case.
+    unfetchedRun("wf_unknown", "c1", false);
     expect(markState(chat)).toBe("");
   });
 
   it("still reports a sibling whose state HAS arrived", () => {
-    m.live.set("wf_unknown", "c1");
+    unfetchedRun("wf_unknown", "c1", false);
     liveRun("wf_known", "c1", { status: "running" });
     expect(markState(chat)).toBe("working");
+  });
+
+  it("takes the cell over the flag once the cell arrives", () => {
+    // `executing` reports whether THIS PROCESS holds a deadline for the run, so it is
+    // a FLOOR for the window before the cell lands and nothing afterwards: a run read
+    // back from disk answers `false` while genuinely running, which is the state a
+    // boot rebuild lands in. Gating the fold on the flag rather than only the floor
+    // would withhold for exactly that run.
+    m.live.set("wf_disk", { chat: "c1", executing: false });
+    m.states.set("wf_disk", { workflowId: "wf_disk", status: "running" } as RunState);
+    runsChanged();
+    expect(markState(chat)).toBe("working");
+  });
+
+  it("lets an unanswered ask outrank the floor's withholding", () => {
+    // The ask is joined by RUN id and short-circuits ahead of any status, so it
+    // reaches the run whose cell has not arrived AND whose flag withholds — which is
+    // the run a reader most needs marked, because nothing else on screen says it is
+    // blocked on them.
+    unfetchedRun("wf_unknown", "c1", false);
+    m.asks.push("wf_unknown");
+    dockChanged();
+    expect(markState(chat)).toBe("input");
   });
 });
 
@@ -526,9 +584,9 @@ describe("the mark withdraws when a run ends", () => {
   it("refuses a settled outcome even if one reaches the fold", () => {
     // The status arm exists in `runStatusFor`, so the refusal has to be at the
     // FOLD rather than left to an inventory that happens never to hold the row.
-    m.live.set("wf_done", "c1");
+    m.live.set("wf_done", { chat: "c1", executing: true });
     m.states.set("wf_done", { workflowId: "wf_done", status: "completed" } as RunState);
-    m.live.set("wf_failed", "c1");
+    m.live.set("wf_failed", { chat: "c1", executing: true });
     m.states.set("wf_failed", { workflowId: "wf_failed", status: "failed" } as RunState);
     runsChanged();
     expect(markState(chat)).toBe("");
@@ -851,5 +909,46 @@ describe("a mixed strip keeps one text origin", () => {
       rowOf(tabIdFor("chat", "c2")).getBoundingClientRect().left -
         rowOf(parent).getBoundingClientRect().left,
     ).toBeCloseTo(probe("1rem"), 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. The fold's DEMAND on a run's state cell.
+//
+// The store's cache has one bound, `forgetRun`, reached when the transcript's run
+// card unmounts — and this module is a reader that card knows nothing about, which
+// is the seam that played the mark's 350ms withdraw over a run that was still
+// going. The predicate is what the store asks instead of enumerating its readers.
+//
+// The PARKED case is the half a floor cannot carry: an `executing === false` row
+// contributes nothing without its cell, and a parked run emits no frame that would
+// refill one, so the mark stays withdrawn until that chat is next activated.
+// ---------------------------------------------------------------------------
+
+describe("the fold's demand on a run's state cell", () => {
+  it("claims a PARKED run whose launching chat has an open tab", async () => {
+    await openSubject("chat", "c1");
+    unfetchedRun("wf_parked", "c1", false);
+
+    expect(chatTabFoldsRun("wf_parked")).toBe(true);
+  });
+
+  it("claims nothing for a chat with no open tab, so the bound still holds", async () => {
+    await openSubject("chat", "c2");
+    liveRun("wf_elsewhere", "c1", { status: "running" });
+
+    expect(chatTabFoldsRun("wf_elsewhere")).toBe(false);
+  });
+
+  it("claims nothing once the inventory has settled the run", async () => {
+    await openSubject("chat", "c1");
+    liveRun("wf_done", "c1", { status: "running" });
+    expect(chatTabFoldsRun("wf_done")).toBe(true);
+
+    // The row goes at the terminal status, and the fold stops reading that cell in
+    // the same pass — so the cell is releasable while the chat tab is still open.
+    settleRun("wf_done");
+
+    expect(chatTabFoldsRun("wf_done")).toBe(false);
   });
 });

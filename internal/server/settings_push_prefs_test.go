@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -240,5 +241,132 @@ func TestExistingSettingsForMerge_SizeCapIsInclusive(t *testing.T) {
 				t.Errorf("theme = %s, want %s", got["theme"], tt.wantTheme)
 			}
 		})
+	}
+}
+
+// TestSyncPushPreferences_MasterSwitch is the master switch's SERVER-side enforcement,
+// and the polarity is the whole design. `notifications_enabled` defaults OFF (it means
+// "the reader has not opted in") while every keyed kind defaults ON ("if the master is
+// on, which kinds"), so only an EXPLICIT false may zero the set — reading an ABSENT
+// master as a decision would silence every kind for every workspace that has never
+// touched Settings.
+//
+// The zeroing includes `permission`, which is the one kind with no settings key: that
+// is what "everything off together" means, and the browser already has no
+// permission-notice path with the master switch off.
+func TestSyncPushPreferences_MasterSwitch(t *testing.T) {
+	tests := map[string]struct {
+		persisted      string // config.json contents; "" writes no file at all
+		patch          string
+		wantFinished   bool
+		wantPermission bool
+		why            string
+	}{
+		"an explicit false in the PATCH zeroes every kind": {
+			persisted:      `{"notify_agent_finished":true}`,
+			patch:          `{"notifications_enabled":false}`,
+			wantFinished:   false,
+			wantPermission: false,
+			why:            "the switch is applied last, so no per-kind value can re-widen it",
+		},
+		"an explicit false in the PERSISTED doc zeroes every kind": {
+			persisted:      `{"notifications_enabled":false,"notify_agent_finished":true}`,
+			patch:          `{"debug_logs":true}`,
+			wantFinished:   false,
+			wantPermission: false,
+			why: "a patch touching something else must still honour the stored refusal, " +
+				"or every unrelated save would re-enable notifications",
+		},
+		"the patch outranks a persisted true": {
+			persisted:      `{"notifications_enabled":true,"notify_agent_finished":true}`,
+			patch:          `{"notifications_enabled":false}`,
+			wantFinished:   false,
+			wantPermission: false,
+			why:            "the patch is the freshest layer, so switching off takes effect immediately",
+		},
+		"the patch outranks a persisted false": {
+			persisted:      `{"notifications_enabled":false,"notify_agent_finished":true}`,
+			patch:          `{"notifications_enabled":true}`,
+			wantFinished:   true,
+			wantPermission: true,
+			why:            "the other direction: switching back on must not read the stale disk value",
+		},
+		"an explicit true leaves the per-kind switches deciding": {
+			persisted:      `{"notify_agent_finished":false}`,
+			patch:          `{"notifications_enabled":true}`,
+			wantFinished:   false,
+			wantPermission: true,
+			why:            "the master is a gate, not an override: it never turns a kind back on",
+		},
+		"an ABSENT master leaves the registry defaults standing": {
+			persisted:      "",
+			patch:          `{}`,
+			wantFinished:   true,
+			wantPermission: true,
+			why: "the polarity decision: absent means not-yet-opted-in, and treating it as a " +
+				"refusal would silence every never-configured workspace",
+		},
+		"a malformed value is not a refusal": {
+			persisted:      `{"notifications_enabled":"nonsense"}`,
+			patch:          `{}`,
+			wantFinished:   true,
+			wantPermission: true,
+			why: "matching settings.decodeInto at the read path: a value the server cannot " +
+				"parse is not the reader asking for silence",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.persisted != "" {
+				path := filepath.Join(dir, settings.Filename)
+				if err := os.WriteFile(path, []byte(tc.persisted), 0o600); err != nil {
+					t.Fatalf("write %s: %v", path, err)
+				}
+			}
+			var patch map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(tc.patch), &patch); err != nil {
+				t.Fatalf("unmarshal patch %s: %v", tc.patch, err)
+			}
+			mp := &testPush{}
+			s := &Server{push: mp, configDir: dir}
+
+			s.syncPushPreferences(patch)
+
+			if got := mp.prefs[vibekit.PushKindAgentFinished]; got != tc.wantFinished {
+				t.Errorf("prefs[%s] = %v, want %v (%s)",
+					settings.KeyNotifyAgentFinished, got, tc.wantFinished, tc.why)
+			}
+			// The permission floor is unsilenceable by its OWN key and silenceable by
+			// the master, which is the one place those two rules meet.
+			if got := mp.prefs[vibekit.PushKindPermission]; got != tc.wantPermission {
+				t.Errorf("prefs[Permission] = %v, want %v (%s)", got, tc.wantPermission, tc.why)
+			}
+		})
+	}
+}
+
+// The zeroing reaches EVERY registered kind rather than the two the cases above name,
+// because syncPushPreferences derives its kind set from push.Kinds(). A future kind is
+// therefore covered by the registry row alone, which is what this asserts.
+func TestSyncPushPreferences_MasterSwitchZeroesEveryRegisteredKind(t *testing.T) {
+	mp := &testPush{}
+	s := &Server{push: mp, configDir: t.TempDir()}
+
+	s.syncPushPreferences(map[string]json.RawMessage{
+		settings.KeyNotificationsEnabled: json.RawMessage(`false`),
+	})
+
+	if len(mp.prefs) == 0 {
+		t.Fatal("no preferences reached SetPreferences at all")
+	}
+	for kind, on := range mp.prefs {
+		if on {
+			t.Errorf("prefs[%s] = true with the master switch off; every kind goes off together", kind)
+		}
+	}
+	if len(mp.prefs) != len(push.Kinds()) {
+		t.Errorf("prefs carries %d kinds, want %d: the set comes from the registry",
+			len(mp.prefs), len(push.Kinds()))
 	}
 }

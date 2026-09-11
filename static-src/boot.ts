@@ -45,7 +45,7 @@ import type { IdentityVerdict } from "./identity.js";
 import { fetchCatalog } from "./session-catalog.js";
 import * as transport from "./transport.js";
 import { showLoginModal } from "./modals.js";
-import { activateRestoredTab, getActiveTabRoute } from "./tabs.js";
+import { activateRestoredTab, getActiveTabRoute, hasTab } from "./tabs.js";
 import { listTabs } from "./tabs-sync.js";
 import {
   claimLocation,
@@ -63,7 +63,8 @@ import { initStatusVersions, setStatus } from "./status.js";
 import type { ConnectionStatus } from "./types.js";
 import { loadVersions } from "./versions.js";
 import { refreshRetention } from "./retention.js";
-import { hasExecutingRunForChat, rebuildLiveRuns } from "./run-store.js";
+import { hasExecutingRunForChat, registerRunStateDemand } from "./run-store.js";
+import { chatTabFoldsRun } from "./chat-run-dots.js";
 import { runTabProjectsChat } from "./run-view.js";
 import { subagentTabProjectsChat } from "./subagent-view.js";
 import { markBootDone } from "./view-swap.js";
@@ -369,14 +370,16 @@ export function initPostAuth(): void {
     // So the pickers have content before the first chat's session/new lands.
     void fetchCatalog();
   }
-  // NOT withheld: it seeds a run tab's own label, its `launchedBy` nesting and the
-  // eviction exemption below, so its absence is wrong UI rather than an empty state.
-  void rebuildLiveRuns();
   // Registered here because store.ts is a leaf and may not import run-store.ts or
   // tabs.ts. Registrations rather than reads, so a reduced boot keeps them.
   registerEvictionExemption(hasExecutingRunForChat);
   registerEvictionExemption(runTabProjectsChat);
   registerEvictionExemption(subagentTabProjectsChat);
+  // The same shape over the RUN store's cache: who still needs a run's state cell,
+  // so `forgetRun` needs no enumeration of its readers at the call site. The run TAB
+  // renders that state; the chat-row fold reads it for every live run of an open chat.
+  registerRunStateDemand((id) => hasTab("run", id));
+  registerRunStateDemand(chatTabFoldsRun);
   startEvictionSweep();
   // The logout button leaves the page running, so without this the debounce keeps
   // writing a signed-out user's workspace to disk. Watches the ACTION so every

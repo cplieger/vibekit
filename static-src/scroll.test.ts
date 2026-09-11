@@ -386,6 +386,62 @@ function readerArrivedAt(el: HTMLElement): void {
   el.dispatchEvent(new Event("scroll"));
 }
 
+/** The legacy touch factories, absent from the DOM lib because they are not
+ *  standard. `createTouchList` is typed as the array `TouchEventInit` declares,
+ *  which is the init that consumes it — an engine answering these refuses a real
+ *  array in its place. */
+interface LegacyTouchDoc {
+  createTouch: (
+    view: Window,
+    target: EventTarget,
+    identifier: number,
+    pageX: number,
+    pageY: number,
+    screenX: number,
+    screenY: number,
+  ) => Touch;
+  createTouchList: (...touches: Touch[]) => Touch[];
+}
+
+/** A touch event built through whichever construction this engine allows: the
+ *  standard constructors, the legacy factories, or — where no touch API is compiled
+ *  in at all — an ordinary event carrying `touches`, the one field these listeners
+ *  read. Delivering touch events and letting a script BUILD one are separate
+ *  capabilities, so the tier is read off the platform rather than assumed. */
+function touchEvent(
+  type: "touchstart" | "touchmove" | "touchend",
+  target: HTMLElement,
+  clientY?: number,
+): Event {
+  const engine = globalThis as {
+    readonly TouchEvent?: typeof TouchEvent;
+    readonly Touch?: typeof Touch;
+  };
+  const doc = document as Document & Partial<LegacyTouchDoc>;
+  const init = { bubbles: true, cancelable: true };
+  const ys = clientY === undefined ? [] : [clientY];
+
+  if (
+    engine.TouchEvent !== undefined &&
+    doc.createTouch !== undefined &&
+    doc.createTouchList !== undefined
+  ) {
+    const make = doc.createTouch.bind(doc);
+    const touches = doc.createTouchList(...ys.map((y) => make(window, target, 1, 10, y, 10, y)));
+    return new engine.TouchEvent(type, { ...init, touches });
+  }
+  if (engine.TouchEvent !== undefined && engine.Touch !== undefined) {
+    const Point = engine.Touch;
+    const touches = ys.map((y) => new Point({ identifier: 1, target, clientX: 10, clientY: y }));
+    return new engine.TouchEvent(type, { ...init, touches });
+  }
+  const ev = new Event(type, init);
+  Object.defineProperty(ev, "touches", {
+    value: ys.map((y) => ({ identifier: 1, target, clientX: 10, clientY: y })),
+  });
+  return ev;
+}
+
 /** Drain the MutationObserver callback and the queued animation frame. Every pin
  *  writes synchronously now, so this covers the observer-driven state revalidation
  *  and the bottom pin's re-assert frames, not a deferred scroll write. */
@@ -476,8 +532,7 @@ describe("the reader's input surfaces", () => {
   /** A touch at one vertical position. `touchmove` carries a position rather than a
    *  delta, so a drag is two of these and the controller keeps the previous one. */
   function touchAt(el: HTMLElement, type: "touchstart" | "touchmove", clientY: number): void {
-    const touch = new Touch({ identifier: 1, target: el, clientY, clientX: 10 });
-    el.dispatchEvent(new TouchEvent(type, { touches: [touch], bubbles: true, cancelable: true }));
+    el.dispatchEvent(touchEvent(type, el, clientY));
   }
 
   /** Grow the transcript by a chunk and report where the scroller ended up. 1500 is
@@ -604,8 +659,26 @@ describe("the reader's input surfaces", () => {
     // `touchend` marks but cannot aim. It is in the set for the SUPPRESSION only:
     // iOS momentum outlives the finger, and a chunk arriving under it must not yank.
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
-    scroll.getScrollEl().dispatchEvent(new TouchEvent("touchend", { touches: [] }));
+    const el = scroll.getScrollEl();
+    el.dispatchEvent(touchEvent("touchend", el));
     expect(await chunkLands(s)).toBe(1500);
+  });
+
+  // The premise the touch cases rest on, in the two halves they cannot check for
+  // themselves: the event carries the position, and where the engine can build a
+  // real one the builder did not quietly fall through to the shaped tier.
+  it("builds a touch event carrying the position the listeners read", () => {
+    const el = scroll.getScrollEl();
+    const { TouchEvent: Ctor } = globalThis as { readonly TouchEvent?: typeof TouchEvent };
+    const ev = touchEvent("touchmove", el, 42) as Event & {
+      readonly touches: { readonly clientY: number }[];
+    };
+    expect({
+      type: ev.type,
+      count: ev.touches.length,
+      y: ev.touches[0]?.clientY,
+      real: Ctor === undefined || ev instanceof Ctor,
+    }).toEqual({ type: "touchmove", count: 1, y: 42, real: true });
   });
 });
 
@@ -1269,6 +1342,119 @@ describe("a large tool card below the streaming block", () => {
   });
 });
 
+// A gesture landing inside BOTTOM_TOLERANCE_PX parks the reader, and content
+// arriving afterwards leaves them where they asked to be.
+//
+// Real layout, and this section cannot be written any other way: `fakeScroller`
+// shadows `scrollTo` with an assignment to its own number and fires no scroll
+// event, so the derivation under test never runs at all.
+describe("a deliberate upward gesture inside the bottom tolerance", () => {
+  beforeEach(realLayoutReset);
+
+  /** Following at the live edge of a real overflowing box, put there by the
+   *  auto-scroll rather than by any input — so the wheel below is the only
+   *  gesture in the scene. 3000px of content in a 400px viewport, so the maximum
+   *  is 2600 and a 100px gesture lands exactly ON the tolerance. */
+  async function atTheLiveEdge(): Promise<HTMLElement> {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    expect({ at: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      at: 2600,
+      state: "following",
+    });
+    return wrap;
+  }
+
+  /** Wheel up `px` in `notches`, as a device delivers it: the input event that
+   *  carries the aim, then the position it reaches. `scrollTo` with an explicit
+   *  `instant` rather than an assignment, because the shipped scroller declares
+   *  `scroll-behavior: smooth` and an assignment there only starts an animation. */
+  async function wheelUp(wrap: HTMLElement, px: number, notches: number): Promise<void> {
+    const step = px / notches;
+    for (let n = 0; n < notches; n++) {
+      wrap.dispatchEvent(new WheelEvent("wheel", { deltaY: -step }));
+      wrap.scrollTo({ top: wrap.scrollTop - step, behavior: "instant" });
+      await land();
+    }
+  }
+
+  it("parks the reader on a 100px gesture and shows the resume control", async () => {
+    const wrap = await atTheLiveEdge();
+
+    await wheelUp(wrap, 100, 2);
+
+    // 2500 against a 2600 maximum: `isAtBottom` still answers true here, which is
+    // correct for auto-follow and must not decide this.
+    expect(landing(wrap)).toEqual({ scrollTop: 2500, state: "reading", hidden: false });
+  });
+
+  it("holds that position across content mutations", async () => {
+    const wrap = await atTheLiveEdge();
+    await wheelUp(wrap, 100, 2);
+    // Past READER_CONTROL_MS, so the debounce is not what holds the reader here —
+    // the state is. Inside it every mutation is suppressed anyway and the case
+    // would pass with the fix absent.
+    await land(400);
+
+    const positions: number[] = [];
+    for (let m = 0; m < 6; m++) {
+      block(200);
+      await land();
+      positions.push(wrap.scrollTop);
+    }
+
+    // Every mutation grows the document BELOW the reader, so a reader who owns the
+    // scroller does not move at all. Parked in Following instead, the pin walks
+    // them down to each new maximum and ends pinned at the bottom.
+    expect({ positions, ...landing(wrap) }).toEqual({
+      positions: [2500, 2500, 2500, 2500, 2500, 2500],
+      scrollTop: 2500,
+      state: "reading",
+      hidden: false,
+    });
+  });
+
+  it("keeps Following when a positional write with no input lands inside the band", async () => {
+    // The other side of the same branch, and the defect this fix must not
+    // reintroduce: a `content-visibility` re-measure clamps `scrollTop` with
+    // nothing behind it, and reading THAT as a park latched the auto-scroll off
+    // for a whole session. The park is gated on the reader's own input, never on
+    // the position — so the same landing with no wheel in front of it stays
+    // Following. `land(400)` first, or the licence would be missing for the
+    // uninteresting reason.
+    const wrap = await atTheLiveEdge();
+    await land(400);
+
+    wrap.scrollTo({ top: 2500, behavior: "instant" });
+    await land();
+
+    expect({ at: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      at: 2500,
+      state: "following",
+    });
+  });
+
+  it("releases a parked reader once their gesture window has expired", async () => {
+    // The park needs a LIVE gesture, not a remembered one: past READER_CONTROL_MS
+    // the reader is no longer working the scroller, so a bare positional write
+    // inside the band promotes them and spends the aim. Without that conjunct the
+    // aim would park every later in-band event for the rest of the session.
+    const wrap = await atTheLiveEdge();
+    await wheelUp(wrap, 100, 2);
+    expect(scroll.readingState()).toBe("reading");
+    await land(400);
+
+    wrap.scrollTo({ top: 2540, behavior: "instant" });
+    await land();
+
+    expect({ at: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      at: 2540,
+      state: "following",
+    });
+  });
+});
+
 // The reported failure: while the reader sat at the bottom of a streaming reply,
 // the transcript snapped to the very top of turn 1 for one or more frames and
 // then snapped back, over and over.
@@ -1710,9 +1896,36 @@ describe("the bottom pin's settle window", () => {
     expect({ grown, grownAgain }).toEqual({ grown: 1550, grownAgain: 1750 });
   });
 
-  it("yields to a reader scroll that lands inside the bottom tolerance", async () => {
-    // A gesture landing within BOTTOM_TOLERANCE_PX keeps the state Following, so
-    // the state alone cannot see it: the scroll debounce is what can.
+  it("yields to an aimless reader move that lands inside the bottom tolerance", async () => {
+    // The one input that marks the reader's window without aiming it: `touchend`
+    // does not end a touch scroll, and the iOS momentum that outlives the finger
+    // carries a position with no direction attached. That keeps the state Following
+    // inside BOTTOM_TOLERANCE_PX, so the debounce is the only thing that can hand
+    // the pass back — with an AIMED gesture the state guard stops the pass instead
+    // and the debounce could be deleted with this still green.
+    const wrap = realScroller();
+    block(3000);
+    await land();
+
+    await park(wrap);
+    scrollBtn.click();
+    await land(60);
+
+    wrap.dispatchEvent(touchEvent("touchend", wrap));
+    wrap.scrollTo({ top: 2560, behavior: "instant" });
+    await land(400);
+
+    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      scrollTop: 2560,
+      state: "following",
+    });
+  });
+
+  it("parks the reader on an upward gesture that lands inside the tolerance", async () => {
+    // 40px up off the resume's own landing: a deliberate gesture of any size is a
+    // gesture, so the reader is parked here rather than promoted back to Following
+    // for being inside the band — and the pass has to leave them where they asked
+    // either way.
     const wrap = realScroller();
     block(3000);
     await land();
@@ -1726,7 +1939,7 @@ describe("the bottom pin's settle window", () => {
 
     expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
       scrollTop: 2560,
-      state: "following",
+      state: "reading",
     });
   });
 
@@ -1750,6 +1963,34 @@ describe("the bottom pin's settle window", () => {
     expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
       scrollTop: target.offsetTop,
       state: "following",
+    });
+  });
+
+  it("keeps a jump's in-band landing Following when the reader's aim still stands", async () => {
+    // The jump is the reader's NEW stated position, so it spends the aim that took
+    // them up: no resume click intervenes here, and a jump arms the gesture window
+    // itself, so an aim left standing would make the jump's own scroll event park
+    // the reader and raise the control over a landing 50px from the maximum.
+    //
+    // `instant` is the rail's own spelling (turn-rail.ts) and the reason this case
+    // is deterministic: a smooth flight is still travelling when the assertion
+    // reads it, so waiting one out would pin the animation rather than the state.
+    const wrap = realScroller();
+    block(3000);
+    const target = block(200);
+    block(250);
+    await land();
+
+    await park(wrap);
+    expect(scroll.readingState()).toBe("reading");
+
+    scroll.jumpTo(target, { block: "start", behavior: "instant" });
+    await land();
+
+    expect(landing(wrap)).toEqual({
+      scrollTop: target.offsetTop,
+      state: "following",
+      hidden: true,
     });
   });
 });
@@ -2016,9 +2257,30 @@ describe("onReaderGesture", () => {
 // THE SCROLLBAR, which is the one input surface with no event of its own: a
 // thumb drag produces no wheel and no touch, so the PRESS is the input and its
 // position is the only thing separating it from a click in the transcript. Real
-// layout, because the whole discrimination is a measured gutter width.
+// layout, because the whole discrimination is a measured gutter width. The
+// surface exists only where the platform RESERVES that width, so this block is
+// skipped where nothing is and the one after it takes the other class.
 // ---------------------------------------------------------------------------
-describe("the scrollbar as an input surface", () => {
+
+/** Does this platform reserve a strip for the scrollbar? `scrollbar-gutter: stable`
+ *  is the shipped declaration (css/13-messages.css) and it reserves nothing where
+ *  the bar is an overlay, so the answer is measured on a throwaway box carrying
+ *  that declaration rather than assumed from the engine. */
+function reservesScrollbarGutter(): boolean {
+  const probe = document.createElement("div");
+  probe.style.cssText =
+    "position:absolute;visibility:hidden;height:100px;width:100px;" +
+    "overflow-y:auto;scrollbar-gutter:stable;";
+  const tall = document.createElement("div");
+  tall.style.cssText = "height:1000px;";
+  probe.appendChild(tall);
+  document.body.appendChild(probe);
+  const gutter = probe.offsetWidth - probe.clientWidth;
+  probe.remove();
+  return gutter > 0;
+}
+
+describe.skipIf(!reservesScrollbarGutter())("the scrollbar as an input surface", () => {
   beforeEach(realLayoutReset);
 
   /** A press on the thumb: the reserved gutter's width, and the press that lands in
@@ -2128,6 +2390,40 @@ describe("the scrollbar as an input surface", () => {
 });
 
 // ---------------------------------------------------------------------------
+// THE OTHER PLATFORM CLASS. A scroller reserving no strip has no thumb to aim at,
+// so a press at its right edge must take no aim — `inScrollbarGutter`'s width test,
+// the one clause the block above cannot reach. Portable rather than platform-gated:
+// `scrollbar-width: none` reserves nothing in any engine, so the class is a property
+// of the FIXTURE.
+// ---------------------------------------------------------------------------
+describe("the scrollbar surface a platform does not reserve", () => {
+  beforeEach(realLayoutReset);
+
+  it("takes no aim from a press at the scroller's right edge", async () => {
+    const wrap = realScroller();
+    wrap.style.setProperty("scrollbar-width", "none");
+    block(1500);
+    await land();
+    wrap.scrollTop = 0;
+    await land();
+    expect({ gutter: wrap.offsetWidth - wrap.clientWidth, state: scroll.readingState() }).toEqual({
+      gutter: 0,
+      state: "following",
+    });
+
+    // The tightest witness the guard has: with the width test dropped, a press AT
+    // the right edge satisfies the remaining comparison and the drag parks them.
+    const { right } = wrap.getBoundingClientRect();
+    wrap.dispatchEvent(
+      new PointerEvent("pointerdown", { clientX: right, clientY: 200, bubbles: true }),
+    );
+    document.dispatchEvent(new PointerEvent("pointermove", { clientX: right, clientY: 160 }));
+    wrap.dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("following");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // EVERY PAGINATION LOOKUP IS SCOPED TO THE ATTACHED VIEW.
 //
 // The multiplexer keeps one `.transcript-view` per resident chat and hands the
@@ -2142,6 +2438,388 @@ describe("the scrollbar as an input surface", () => {
 // element a lookup reaches: two views under `#messages`, exactly as the
 // multiplexer nests them.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// THE SELF-SCROLL EPOCH: an interval in which every scroll event is the
+// controller's own animation. Real layout throughout, and this section cannot be
+// written any other way — `fakeScroller` shadows `scrollTo` with an assignment to
+// its own number, so it produces neither an animation nor a scroll event, which
+// is the whole subject.
+// ---------------------------------------------------------------------------
+describe("the self-scroll epoch", () => {
+  /** The section's reset plus an explicit re-root, so these cases do not depend on
+   *  which view an earlier block left the scroller attached to. */
+  async function epochReset(): Promise<void> {
+    scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+    await realLayoutReset();
+  }
+
+  /** 3000px of content in the 400px scrollport and an epoch open over a landing at
+   *  400. Nothing is awaited after the landing, because Chromium answers even an
+   *  instant `scrollTo` with `scrollend` — which is a close, so a wait here would
+   *  measure the closer rather than the epoch. */
+  async function openEpochAt400(): Promise<HTMLElement> {
+    const wrap = realScroller();
+    block(1500);
+    block(200);
+    block(1300);
+    await land();
+    scroll.beginSelfScroll();
+    scroll.scrollToOffset(400, "instant");
+    return wrap;
+  }
+
+  /** Does an ordinary scroll publish a reader gesture? False while an epoch is
+   *  open, so it is the observable a closer has to move. */
+  async function gesturePublishes(wrap: HTMLElement): Promise<boolean> {
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+    wrap.scrollTop = 1200;
+    await land();
+    off();
+    return seen.mock.calls.length > 0;
+  }
+
+  /** A page of content prepended above the reader — the shift every
+   *  `preserveReadingPosition` caller declares as `content-growth`. */
+  function foldIn(px: number): void {
+    scroll.preserveReadingPosition(() => {
+      const page = document.createElement("div");
+      page.style.cssText = `height:${String(px)}px;`;
+      messagesEl.prepend(page);
+    }, "content-growth");
+  }
+
+  beforeEach(epochReset);
+
+  it("publishes no gesture across the animation's own events", async () => {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+
+    scroll.beginSelfScroll();
+    scroll.scrollToOffset(400, "smooth");
+    await land(1000);
+    off();
+
+    expect(wrap.scrollTop).toBe(400);
+    expect(seen).not.toHaveBeenCalled();
+  });
+
+  it("hands the events back the moment the reader touches the scroller", async () => {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+
+    scroll.beginSelfScroll();
+    scroll.scrollToOffset(400, "smooth");
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+    await land(60);
+    readerScrollTo(wrap, 1800);
+    await land();
+    off();
+
+    expect(seen).toHaveBeenCalled();
+  });
+
+  it("keeps the streaming follow write out of the animation", async () => {
+    const wrap = realScroller();
+    block(1500);
+    const streaming = block(200, "message assistant streaming");
+    block(900);
+    scroll.setAnchorProvider(() => streaming);
+    await land();
+    expect(scroll.readingState()).toBe("following");
+
+    await park(wrap);
+    // Out of the park's own READER_CONTROL_MS window, or that is what holds the
+    // follow write back and the epoch's guard is never the thing under test.
+    await land(350);
+
+    // Back to the live edge, so the state stays Following and the epoch is the only
+    // thing left that can stop a follow write. SMOOTH, because the flight is what
+    // keeps the epoch open: Chromium answers an instant `scrollTo` with `scrollend`.
+    scroll.beginSelfScroll();
+    scroll.scrollToOffset(wrap.scrollHeight, "smooth");
+    expect(scroll.readingState()).toBe("following");
+    const writes = recordWrites(wrap);
+    streaming.appendChild(document.createTextNode("a streamed chunk"));
+    await land(60);
+    expect(writes).toEqual([]);
+
+    scroll.endSelfScroll();
+    streaming.appendChild(document.createTextNode("the chunk after it closed"));
+    await land();
+    expect(writes.length).toBeGreaterThan(0);
+  });
+
+  it("stays open with nothing to close it", async () => {
+    const wrap = await openEpochAt400();
+    expect(await gesturePublishes(wrap)).toBe(false);
+  });
+
+  it("closes on attach", async () => {
+    const wrap = await openEpochAt400();
+    scroll.attach({ el: messagesEl, scrollTop: 400, readingState: "reading" });
+    expect(await gesturePublishes(wrap)).toBe(true);
+  });
+
+  it("closes on detach", async () => {
+    const wrap = await openEpochAt400();
+    scroll.detach();
+    expect(await gesturePublishes(wrap)).toBe(true);
+  });
+
+  it("closes on resetScrollState", async () => {
+    const wrap = await openEpochAt400();
+    scroll.resetScrollState();
+    expect(await gesturePublishes(wrap)).toBe(true);
+  });
+
+  it("closes on jumpTo", async () => {
+    const wrap = realScroller();
+    block(1500);
+    const target = block(200);
+    block(1300);
+    await land();
+    scroll.beginSelfScroll();
+    scroll.scrollToOffset(400, "instant");
+
+    scroll.jumpTo(target, { behavior: "instant" });
+
+    expect(await gesturePublishes(wrap)).toBe(true);
+  });
+
+  it("parks the reader, and a mutation after the epoch cannot re-pin them", async () => {
+    const wrap = realScroller();
+    block(1500);
+    const streaming = block(200, "message assistant streaming");
+    block(900);
+    scroll.setAnchorProvider(() => streaming);
+    await land();
+    expect(scroll.readingState()).toBe("following");
+
+    scroll.beginSelfScroll();
+    scroll.scrollToOffset(500, "smooth");
+    expect(scroll.readingState()).toBe("reading");
+
+    // Past `scrollend` AND past SELF_SCROLL_MAX_MS, so the chunk below is delivered
+    // with the epoch provably closed and the park is the only thing still holding
+    // the reader.
+    await land(1700);
+    streaming.appendChild(document.createTextNode("a streamed chunk"));
+    await land();
+
+    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      scrollTop: 500,
+      state: "reading",
+    });
+  });
+
+  it("holds the park when a card resizes the reader onto the live edge", async () => {
+    const wrap = realScroller();
+    block(500);
+    const tail = block(2500);
+    await land();
+    readerScrollTo(wrap, 2600);
+    await land();
+    readerScrollTo(wrap, 500);
+    await land();
+    expect(scroll.readingState()).toBe("reading");
+    // Out of the gesture's own READER_CONTROL_MS window, or that is what refuses the
+    // release and the epoch's clause is never the thing under test.
+    await land(350);
+
+    scroll.beginSelfScroll();
+    // The tail collapsing to exactly the scrollport leaves the reader at the live
+    // edge by arithmetic and does NOT move `scrollTop`, so the resize seam is the
+    // only path that can re-derive the state.
+    tail.style.height = "400px";
+    await land();
+    expect(scroll.readingState()).toBe("reading");
+
+    // The control: with the epoch closed, the same seam releases them — so the
+    // assertion above is about the epoch rather than about a resize that reaches
+    // nothing.
+    scroll.endSelfScroll();
+    tail.style.height = "401px";
+    await land();
+    expect(scroll.readingState()).toBe("following");
+  });
+
+  it("sets Following when the landing is the live edge", async () => {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    await park(wrap);
+    expect(scroll.readingState()).toBe("reading");
+
+    scroll.beginSelfScroll();
+    scroll.scrollToOffset(2600, "instant");
+
+    expect(landing(wrap)).toEqual({ scrollTop: 2600, state: "following", hidden: true });
+  });
+
+  it("suspends the pagination pass while it is open", async () => {
+    realScroller();
+    block(3000);
+    const load = vi.fn();
+    scroll.setLoadMore(load, true);
+    await land();
+
+    scroll.beginSelfScroll();
+    scroll.scrollToOffset(0, "instant");
+    await land();
+
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("runs the pagination pass again once it closes", async () => {
+    const wrap = realScroller();
+    block(3000);
+    const load = vi.fn();
+    scroll.setLoadMore(load, true);
+    await land();
+    scroll.beginSelfScroll();
+    scroll.scrollToOffset(0, "instant");
+    await land();
+
+    scroll.endSelfScroll();
+    wrap.dispatchEvent(new Event("scroll"));
+    await land();
+
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("still runs the forced pagination call inside it", async () => {
+    realScroller();
+    block(3000);
+    const load = vi.fn();
+    scroll.setLoadMore(load, true);
+    await land();
+    scroll.beginSelfScroll();
+    scroll.scrollToOffset(0, "instant");
+    await land();
+
+    document.getElementById("load-more-indicator")!.click();
+
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("compensates its TARGET when a fold lands mid-animation", async () => {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+
+    scroll.beginSelfScroll();
+    scroll.scrollToOffset(500, "smooth");
+    // Mid-flight, so the live position and the target are hundreds of pixels apart
+    // and the two candidate compensations cannot agree by accident.
+    await land(60);
+    expect(wrap.scrollTop).toBeGreaterThan(900);
+
+    // The WRITE rather than the settled position: an interrupted smooth animation
+    // gets one more frame in before it aborts, so the position lands a few px short
+    // of the value the compensation asked for (measured: 668 against 700).
+    const writes = recordWrites(wrap);
+    foldIn(200);
+
+    expect(writes).toEqual([700]);
+  });
+
+  it("compensates the live position when no epoch is open", async () => {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    await park(wrap);
+    readerScrollTo(wrap, 500);
+    await land();
+    expect(scroll.readingState()).toBe("reading");
+
+    foldIn(200);
+
+    expect(wrap.scrollTop).toBe(700);
+  });
+
+  it("compensates the landing when a fold arrives after the animation settled", async () => {
+    // The fold that lands between `scrollend` and the correction loop's first pass:
+    // the epoch has closed, so the live position IS the target, and the
+    // compensation has to still run rather than have been suspended for the jump.
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    scroll.beginSelfScroll();
+    scroll.scrollToOffset(500, "smooth");
+    await land(1000);
+    expect(wrap.scrollTop).toBe(500);
+
+    foldIn(200);
+
+    expect(wrap.scrollTop).toBe(700);
+  });
+});
+
+describe("onContentResize", () => {
+  beforeEach(realLayoutReset);
+
+  it("fires from the per-child ResizeObserver and returns a working unregister", async () => {
+    realScroller();
+    const card = block(200);
+    await land();
+    const seen = vi.fn();
+    const off = scroll.onContentResize(seen);
+
+    card.style.height = "600px";
+    await land();
+    const fired = seen.mock.calls.length;
+    expect(fired).toBeGreaterThan(0);
+
+    off();
+    card.style.height = "300px";
+    await land();
+
+    expect(seen.mock.calls.length).toBe(fired);
+  });
+});
+
+describe("onAttach", () => {
+  beforeEach(realLayoutReset);
+
+  it("fires when a view takes the scroller, after the position is restored", () => {
+    const wrap = realScroller();
+    wrap.style.cssText = "height:400px;overflow-y:auto;position:relative;";
+    const view = document.createElement("div");
+    view.className = "transcript-view";
+    view.style.cssText = "height:3000px;";
+    messagesEl.replaceChildren(view);
+    // Read INSIDE the callback: a listener re-measuring the incoming view has to see
+    // the restored offset, so firing before the write would hand it the outgoing
+    // view's position.
+    const seen = vi.fn(() => wrap.scrollTop);
+    const off = scroll.onAttach(seen);
+
+    scroll.attach({ el: view, scrollTop: 250, readingState: "reading" });
+    expect(seen).toHaveBeenCalledTimes(1);
+    expect(seen.mock.results[0]?.value).toBe(250);
+
+    off();
+    scroll.attach({ el: view, scrollTop: 100, readingState: "reading" });
+
+    expect(seen).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("readingLineOffset", () => {
+  it("is a third of the scrollport, from its top", () => {
+    const s = fakeScroller({ scrollHeight: 3000, clientHeight: 900, scrollTop: 0 });
+    expect(scroll.readingLineOffset()).toBe(300);
+    s.clientHeight = 600;
+    expect(scroll.readingLineOffset()).toBe(200);
+  });
+});
+
 describe("pagination furniture belongs to its own view", () => {
   /** Two sibling transcript views under the scroller, and the scroller attached to
    *  the first — the shape after one chat switch. */

@@ -476,10 +476,12 @@ mark.find-hit-current {
   }
 }
 
-/* Mobile: 44px touch targets and 16px input to defeat iOS focus-zoom.
-   In THIS file rather than 50-mobile.css: a surface's mobile overrides live
-   beside the surface (the house pattern; 50-mobile.css carries only the
-   cross-surface shell rules). */
+/* Mobile LAYOUT for the two find bars. The SIZES are gone: both button bases
+   already declare `inline-size`/`block-size: var(--btn-h)`, which is
+   pointer-tiered (01-tokens.css), so a 2.75rem literal here was answering a
+   POINTER question with a WIDTH. In THIS file rather than 50-mobile.css: a
+   surface's mobile overrides live beside the surface (the house pattern;
+   50-mobile.css carries only the cross-surface shell rules). */
 @media (width <= 40rem) {
   .chat-find {
     inset-inline: var(--sp-2);
@@ -494,17 +496,5 @@ mark.find-hit-current {
     flex: 1;
     inline-size: auto;
     max-inline-size: none;
-    font-size: 16px;
-  }
-
-  /* 16px defeats iOS focus-zoom. */
-  .page-find-input {
-    font-size: 16px;
-  }
-
-  .chat-find-btn,
-  .page-find-btn {
-    inline-size: 2.75rem;
-    block-size: 2.75rem;
   }
 }
