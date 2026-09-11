@@ -19,26 +19,25 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// primeRecorder is bridgeDeps plus the prime-note channel, which is the only way
-// the fallback is observable from here: the note is what makes the tangent's
-// FIRST session carry the parent's transcript, and nothing else in the reply
-// distinguishes the two paths for the next spawn.
-type primeRecorder struct {
+type forkHost struct {
 	*bridgeDeps
-	primed map[vibekit.ChatID]vibekit.ChatID
+	openChatID vibekit.ChatID
+	openModel  string
+	openCalls  int
 }
 
-func (d *primeRecorder) PrimeFromChat(chatID, sourceChatID vibekit.ChatID) {
-	if d.primed == nil {
-		d.primed = make(map[vibekit.ChatID]vibekit.ChatID, 1)
-	}
-	d.primed[chatID] = sourceChatID
+func (d *forkHost) OpenBridge(ctx context.Context, chatID vibekit.ChatID, model string) (Bridge, error) {
+	d.openCalls++
+	d.openChatID = chatID
+	d.openModel = model
+	return d.bridgeDeps.OpenBridge(ctx, chatID, model)
 }
 
-func newForkHost(store ChatStore, bridge Bridge) *primeRecorder {
-	return &primeRecorder{bridgeDeps: &bridgeDeps{
+func newForkHost(store ChatStore, bridge Bridge) *forkHost {
+	return &forkHost{bridgeDeps: &bridgeDeps{
 		storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store},
 		bridge:    bridge,
+		opened:    bridge,
 	}}
 }
 
@@ -134,10 +133,6 @@ func TestCmdForkChat_BindsTheForkedSession(t *testing.T) {
 	if chain := c.SessionChain(); len(chain) != 1 || chain[0] != "sess_tangent" {
 		t.Errorf("session chain = %v, want [sess_tangent]", chain)
 	}
-	// A forked tangent needs no prime: it HAS the context.
-	if len(host.primed) != 0 {
-		t.Errorf("a forked tangent was also marked for priming: %v", host.primed)
-	}
 }
 
 // TestCmdForkChat_SendsTangentMeta pins the _meta.kiro block, which is entirely
@@ -226,12 +221,9 @@ func TestCmdForkChat_InheritsTheParentsAgent(t *testing.T) {
 	}
 }
 
-// TestCmdForkChat_FallsBackToPrimingOnRefusal is the fallback, driven by a real
-// refusal in each of the three shapes a refusal actually takes. The tangent opens
-// in all of them — unbound, and marked so its first session gets the parent's
-// transcript — because a feature that vanishes on a refusal is one the user
-// cannot rely on.
-func TestCmdForkChat_FallsBackToPrimingOnRefusal(t *testing.T) {
+// TestCmdForkChat_StartsFreshOnForkRefusal drives the three refusal shapes.
+// The tangent still opens, but without a bound session or inherited context.
+func TestCmdForkChat_StartsFreshOnForkRefusal(t *testing.T) {
 	cases := map[string]*recordingBridge{
 		// A transport or JSON-RPC failure: KAS threw.
 		"call error": {sessionID: "sess_parent", callErr: errors.New("-32601 method not found")},
@@ -262,28 +254,22 @@ func TestCmdForkChat_FallsBackToPrimingOnRefusal(t *testing.T) {
 			if !ok {
 				t.Fatalf("body = %T, want map[string]any", body)
 			}
-			if reply["outcome"] != vibekit.ForkOutcomePrimed {
-				t.Errorf("outcome = %v, want %q", reply["outcome"], vibekit.ForkOutcomePrimed)
+			if reply["outcome"] != vibekit.ForkOutcomeFresh {
+				t.Errorf("outcome = %v, want %q", reply["outcome"], vibekit.ForkOutcomeFresh)
 			}
 			if reply["session_id"] != "" {
-				t.Errorf("session_id = %v, want empty on the primed path", reply["session_id"])
+				t.Errorf("session_id = %v, want empty on the fresh path", reply["session_id"])
 			}
 			c, ok := store.Get(t.Context(), "c-tangent")
 			if !ok {
-				t.Fatal("the tangent chat was not created on the primed path")
+				t.Fatal("the tangent chat was not created on the fresh path")
 			}
 			if c.ACPSessionID != "" {
 				t.Errorf("acp_session_id = %q, want empty: no session was forked", c.ACPSessionID)
 			}
-			// The prime note is what carries the parent's history into the
-			// tangent's first session. Without it that session starts blind on the
-			// conversation the user opened it FROM.
-			if got := host.primed["c-tangent"]; got != "c-parent" {
-				t.Errorf("prime note = %q, want c-parent", got)
-			}
-			// The inheritance that does not depend on the fork still happens.
+			// Record-level settings do not depend on a successful session fork.
 			if c.Model != "parent-model" || c.CurrentModeID != "plan" {
-				t.Errorf("primed tangent lost the parent's agent: model=%q mode=%q",
+				t.Errorf("fresh tangent lost the parent's settings: model=%q mode=%q",
 					c.Model, c.CurrentModeID)
 			}
 		})
@@ -292,8 +278,8 @@ func TestCmdForkChat_FallsBackToPrimingOnRefusal(t *testing.T) {
 
 func TestCmdForkChat_RefusesWhenTheParentWasDeletedDuringTheFork(t *testing.T) {
 	cases := map[string]error{
-		"forked session":  nil,
-		"primed fallback": errors.New("bridge closed during fork"),
+		"forked session": nil,
+		"fresh fallback": errors.New("bridge closed during fork"),
 	}
 	for name, callErr := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -319,9 +305,6 @@ func TestCmdForkChat_RefusesWhenTheParentWasDeletedDuringTheFork(t *testing.T) {
 			}
 			if got := tabIDsFor(st, "c-tangent"); len(got) != 0 {
 				t.Errorf("CmdForkChat opened tangent tabs %v after its parent was deleted", got)
-			}
-			if len(host.primed) != 0 {
-				t.Errorf("CmdForkChat recorded a prime after refusing the tangent: %v", host.primed)
 			}
 		})
 	}
@@ -374,35 +357,48 @@ func TestCmdForkChat_ReplayStillResolvesWithoutTheParent(t *testing.T) {
 	}
 }
 
-// TestCmdForkChat_PrimesWhenTheParentHasNoLiveSession: the other fallback
-// trigger, and it is the common one — a chat whose bridge was never started, or
-// whose process is gone.
-//
-// The parent's bridge is deliberately NOT started here as a side effect of
-// opening a tangent: that would resume a conversation the user did not ask to
-// resume. So no call is made at all.
-func TestCmdForkChat_PrimesWhenTheParentHasNoLiveSession(t *testing.T) {
+// A tangent needs the parent's context even when no live bridge is present. The
+// parent bridge is opened with no model override, then the ordinary session/fork
+// path carries KAS's own context into the tangent.
+func TestCmdForkChat_OpensTheParentBridgeBeforeForking(t *testing.T) {
 	cases := map[string]Bridge{
 		"no bridge":  nil,
-		"no session": &recordingBridge{sessionID: ""},
+		"no session": &recordingBridge{},
 	}
-	for name, br := range cases {
+	for name, live := range cases {
 		t.Run(name, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			seedParent(t, store, "c-parent")
-			host := newForkHost(store, br)
+			resumed := &recordingBridge{
+				sessionID: "sess_parent",
+				result:    map[string]any{"sessionId": "sess_tangent"},
+			}
+			host := newForkHost(store, live)
+			host.opened = resumed
 
 			_, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
 
 			if statusOf(err) != http.StatusOK {
 				t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 			}
-			if rb, ok := br.(*recordingBridge); ok && rb.callCount != 0 {
-				t.Errorf("made %d calls, want 0: a bridgeless parent is not started to be forked",
-					rb.callCount)
+			if host.openCalls != 1 {
+				t.Errorf("OpenBridge calls = %d, want 1", host.openCalls)
 			}
-			if got := host.primed["c-tangent"]; got != "c-parent" {
-				t.Errorf("prime note = %q, want c-parent", got)
+			if host.openChatID != "c-parent" {
+				t.Errorf("OpenBridge chat = %q, want c-parent", host.openChatID)
+			}
+			if host.openModel != "" {
+				t.Errorf("OpenBridge model = %q, want empty so the parent keeps its own", host.openModel)
+			}
+			if resumed.gotMethod != vibekit.MethodSessionFork {
+				t.Errorf("opened bridge called %q, want %q", resumed.gotMethod, vibekit.MethodSessionFork)
+			}
+			c, ok := store.Get(t.Context(), "c-tangent")
+			if !ok {
+				t.Fatal("the tangent chat was not created")
+			}
+			if c.ACPSessionID != "sess_tangent" {
+				t.Errorf("acp_session_id = %q, want sess_tangent", c.ACPSessionID)
 			}
 		})
 	}

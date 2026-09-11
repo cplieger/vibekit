@@ -63,9 +63,9 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 		buf.TrackFileChanges(diffs, isNew)
 		t.lines.RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
 	}
-	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventToolCall, chatID,
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCall, chatID,
 		vibekit.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call, BlockIndex: blockIndex}))
-	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
 		vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelForKind(tc.Kind, tc.Title)}))
 }
 
@@ -79,7 +79,7 @@ func toolCallFromWire(
 ) vibekit.ToolCall {
 	return vibekit.ToolCall{
 		ID:             tc.ToolCallID,
-		Title:          tc.Title,
+		Title:          displayText(tc.Title),
 		Kind:           tc.Kind,
 		Status:         tc.Status,
 		Input:          tc.RawInput,
@@ -124,7 +124,7 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 	before := tc
 	t.applyToolCallUpdate(ctx, chatID, buf, &tc, &tu, content, attr.SubSessionID)
 	buf.SetToolCall(idx, &tc)
-	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID,
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID,
 		toolCallDelta(buf.MessageID, &before, &tc)))
 }
 
@@ -292,7 +292,7 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID vibekit.Cha
 	// KAS sends title and kind nullish on an update, so apply only when present or
 	// an update that omits them wipes the initial tool_call's values.
 	if tu.Title != "" {
-		tc.Title = tu.Title
+		tc.Title = displayText(tu.Title)
 	}
 	if tu.Kind != "" {
 		tc.Kind = tu.Kind
@@ -331,18 +331,21 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID vibekit.Cha
 
 // applyToolCallOutput folds an update's output text onto the card.
 //
-// A failed tool's reason rides `rawOutput` and nothing else. Gated on an empty
-// Output so a command's own output wins — the status fold ran first, so
-// adoptTerminalOutput may already have filled it.
+// Content wins whenever present. A bare rawOutput string is the fallback when KAS
+// suppresses an edit's diff block; object error/message fields remain failure-only.
 func applyToolCallOutput(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
 	if content.output != "" {
 		tc.Output += content.output
 	}
-	if tc.Status != vibekit.ToolFailed || tc.Output != "" {
+	if tc.Output != "" {
 		return
 	}
-	if reason := rawOutputFailureText(tu.RawOutput); reason != "" {
-		tc.Output = sanitize.Output(reason)
+	text := rawOutputString(tu.RawOutput)
+	if text == "" && tc.Status == vibekit.ToolFailed {
+		text = rawOutputFailureText(tu.RawOutput)
+	}
+	if text != "" {
+		tc.Output = sanitize.Output(text)
 	}
 }
 
@@ -367,7 +370,7 @@ func (t *Translator) applyToolCallStatus(
 		tc.DurationMs = buf.ComputeDuration(tu.ToolCallID)
 	}
 	t.adoptTerminalOutput(chatID, tc)
-	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
 		vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelThinking}))
 }
 
@@ -547,6 +550,6 @@ func (t *Translator) ensureTurnStarted(ctx context.Context, chatID vibekit.ChatI
 			buf.SetModel(c.Model)
 		}
 	}
-	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventMessageCreated, chatID,
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageCreated, chatID,
 		vibekit.Message{ID: buf.MessageID, Role: vibekit.RoleAssistant, Ts: time.Now().UnixMilli()}))
 }

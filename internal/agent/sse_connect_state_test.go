@@ -85,17 +85,12 @@ func TestConnect_WithhoutTheBusySetForAFilteredConnect(t *testing.T) {
 	}
 }
 
-// A PRIME turn's frames are vibekit's own transcript replay and latch nothing, and a
-// workflow STEP's turn belongs to its run — so neither names its chat busy, and the step
-// case is the stuck-purple population the retraction exists to reach.
-func TestConnect_TheBusySetExcludesPrimeAndStepTurns(t *testing.T) {
+// A workflow STEP's turn belongs to its run, so it does not name its launching
+// chat busy. This is the stuck-purple population the retraction exists to reach.
+func TestConnect_TheBusySetExcludesStepTurns(t *testing.T) {
 	rt := newBudgetRuntime(t)
-	rt.bridge.mgr.orInsert("c-prime")
 	rt.bridge.mgr.orInsert("c-step")
 	rt.bridge.mgr.orInsert("c-own")
-	if e := rt.coord.StartTurn(t.Context(), "c-prime", vibekit.TurnSourcePrime); e == 0 {
-		t.Fatal("StartTurn refused the prime")
-	}
 	if e := rt.coord.StartTurn(t.Context(), "c-step", vibekit.TurnSourceWorkflowStep); e == 0 {
 		t.Fatal("StartTurn refused the step")
 	}
@@ -105,10 +100,6 @@ func TestConnect_TheBusySetExcludesPrimeAndStepTurns(t *testing.T) {
 
 	busy := busySetOf(connectPayload(t, rt, "?snapshot="+snapshotNone))
 
-	if busy["c-prime"] {
-		t.Error("a prime turn names its chat busy, withholding the retraction for a turn " +
-			"whose frames no client ever latched")
-	}
 	if busy["c-step"] {
 		t.Error("a workflow-step turn names its LAUNCHING chat busy, so the retraction is " +
 			"withheld from exactly the population it was designed for")

@@ -65,26 +65,51 @@ func TestCompactionReap_ReArmsWhenTheBackendSpoke(t *testing.T) {
 	}
 }
 
-func TestCompactionReap_SuspendsWhileAToolIsInFlight(t *testing.T) {
-	h, epoch, _ := newCompactionReapFixture(t)
+func TestCompactionReap_DoesNotRearmForAToolThatPredatesTheBudget(t *testing.T) {
+	h, _, pctx := newCompactionReapFixture(t)
 	buf, _ := h.coord.OpenTurnBuffer("c1")
-	buf.ToolCalls = append(buf.ToolCalls, vibekit.ToolCall{ID: "tool", Status: vibekit.ToolInProgress})
 
 	synctest.Test(t, func(t *testing.T) {
+		// Inside the bubble, and before the arm: synctest's clock starts at
+		// 2000-01-01, so a start recorded outside it lands in the real present
+		// and would read as newer than the arm rather than older.
+		buf.ToolCalls = append(buf.ToolCalls, vibekit.ToolCall{ID: "tool", Status: vibekit.ToolInProgress})
+		buf.RecordToolStart("tool")
+		time.Sleep(time.Millisecond)
+
 		h.coord.CompactionFailed("c1", "compaction failed")
 		time.Sleep(compactionFailedTurnBudget)
 		synctest.Wait()
-		lc := h.coord.turns.lifecycleFor("c1")
-		lc.mu.Lock()
-		turn := lc.cur
-		lc.mu.Unlock()
-		if cause := h.coord.turns.interruptCause(turn); cause != "" {
-			t.Errorf("tool-running turn interrupt cause = %q, want empty", cause)
+	})
+	if pctx.Err() == nil {
+		t.Error("an in-flight status left behind before the budget kept the turn alive")
+	}
+}
+
+func TestCompactionReap_KeepsAToolThatStartedInsideTheBudgetAlive(t *testing.T) {
+	h, epoch, pctx := newCompactionReapFixture(t)
+	buf, _ := h.coord.OpenTurnBuffer("c1")
+
+	synctest.Test(t, func(t *testing.T) {
+		h.coord.CompactionFailed("c1", "compaction failed")
+		time.Sleep(time.Millisecond)
+		buf.ToolCalls = append(buf.ToolCalls, vibekit.ToolCall{ID: "tool", Status: vibekit.ToolInProgress})
+		buf.RecordToolStart("tool")
+
+		time.Sleep(compactionFailedTurnBudget - time.Millisecond)
+		synctest.Wait()
+		if pctx.Err() != nil {
+			t.Error("a tool that started inside the budget did not keep the turn alive")
+		}
+		time.Sleep(compactionFailedTurnBudget)
+		synctest.Wait()
+		if pctx.Err() != nil {
+			t.Error("a long-running tool was treated as a flat timeout")
 		}
 
 		turn, ok := h.coord.turns.claimEpoch(t.Context(), "c1", epoch)
 		if !ok {
-			t.Fatal("normal closer could not claim the suspended turn")
+			t.Fatal("normal closer could not claim the tool-running turn")
 		}
 		h.coord.turns.finish(turn, vibekit.TurnResult{})
 	})

@@ -75,9 +75,8 @@ type promptSlot interface {
 }
 
 // Bridge is the per-chat ACP bridge as a whole. Only a handler that owns a chat for
-// the length of a turn needs it — helpers take a narrower parameter. Priming is
-// deliberately not here: that is a bridge-lifecycle question PrimeIfNeeded answers.
-// Exported because BridgeAccess returns it and the runtime's wiring names it.
+// the length of a turn needs it; helpers take a narrower parameter. Exported because
+// BridgeAccess returns it and the runtime's wiring names it.
 type Bridge interface {
 	bridgeRPC
 	promptSlot
@@ -89,14 +88,6 @@ type BridgeAccess interface {
 	Bridge(chatID vibekit.ChatID) Bridge
 	OpenBridge(ctx context.Context, chatID vibekit.ChatID, model string) (Bridge, error)
 	CloseBridge(chatID vibekit.ChatID)
-	// PrimeIfNeeded gives the chat's current session its transcript, if that
-	// session has not had it yet.
-	PrimeIfNeeded(ctx context.Context, chatID vibekit.ChatID)
-	// PrimeFromChat notes that chatID's first session should be primed with another
-	// chat's transcript — the tangent's fallback when a refused session/fork leaves
-	// the new chat with no inherited session. A note rather than a chat-record field:
-	// it describes one session's launch and does not survive a restart.
-	PrimeFromChat(chatID, sourceChatID vibekit.ChatID)
 	// AwaitReplayAdopted blocks until a session/load replay this chat may have in
 	// flight has been adopted into the record (or discarded), so a caller about to
 	// REWRITE the transcript cannot be undone by it; nil error on a chat with no
@@ -247,9 +238,9 @@ const (
 	// with a live bridge. Answered as the plain 409, on which the client's
 	// 409→steer conversion works.
 	AdmissionBusy
-	// AdmissionStarting is every other holder — a cold spawn, a shell on a
-	// bridged or bridgeless chat, a prime. Answered as 409 with the
-	// additive `reason: "starting"`.
+	// AdmissionStarting is every other holder: a cold spawn, or a shell on a
+	// bridged or bridgeless chat. Answered as 409 with the additive
+	// `reason: "starting"`.
 	AdmissionStarting
 )
 
@@ -271,10 +262,10 @@ type TurnOutcomeAccess interface {
 	// waiter.
 	ReleaseTurnReservation(chatID vibekit.ChatID)
 	// AdmissionHolderSource reports who holds the chat's admission: the open turn's
-	// source when one is open, else the reservation's. A prime holder matters because
-	// a prime is vibekit's own transcript replay sent as a real session/prompt, whose
-	// frames are neither broadcast nor persisted — a steer aimed into that window
-	// would be silently discarded, so CmdSteer refuses instead.
+	// source when one is open, else the reservation's. A non-prompt holder matters
+	// because a steer aimed into it lands somewhere the reader did not mean — a
+	// workflow step's turn reads it as the step's own input — so CmdSteer refuses
+	// instead.
 	AdmissionHolderSource(chatID vibekit.ChatID) (vibekit.TurnOpenSource, bool)
 	// StartTurn opens the chat's turn at bridge-ready, immediately before the call
 	// that drives it, so everything true of the turn is recorded once with the bridge

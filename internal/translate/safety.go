@@ -75,8 +75,6 @@ func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID vibek
 
 // persistSafetyBlock records an enforce-mode block as a permanent inline event message on the
 // chat, which is the right scope because statusChanged names a tool by NAME rather than by call.
-// Deliberately not gated on the turn's mute, unlike HandlePlan: a refused change is a fact about
-// the SESSION rather than turn content, so it survives a prime.
 func (t *Translator) persistSafetyBlock(ctx context.Context, chatID vibekit.ChatID, p v3SafetyStatusChanged) {
 	evt := t.newEventMessage(vibekit.EventInfraSafetyBlocked, safetyBlockContent(p))
 	err := t.chats.AppendMessage(durable.Context(ctx), chatID, &evt)

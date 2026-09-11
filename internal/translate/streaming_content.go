@@ -15,16 +15,6 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// emit publishes an event describing frames that folded into buf, unless that
-// turn is muted (buffer.Buffer.muted owns why). One funnel rather than a check
-// per broadcast site: an event not describing folded content goes to the bus.
-func (t *Translator) emit(ctx context.Context, buf *buffer.Buffer, evt vibekit.ServerEvent) {
-	if buf != nil && buf.Muted() {
-		return
-	}
-	t.bus.Broadcast(ctx, evt)
-}
-
 // maxBufferBytes caps the per-turn content buffer, so a pathological turn (a cat
 // of a large binary) cannot OOM the process. kiro-cli has its own limits too.
 const maxBufferBytes = 32 << 20
@@ -74,7 +64,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 		buf.SetSteerCarry(carry, subtask)
 		// BEFORE the empty-text return below: a marker closing a response usually
 		// arrives as its own delta, which is exactly the case that returns early.
-		t.broadcastSteerAcks(ctx, chatID, buf, acks)
+		t.broadcastSteerAcks(ctx, chatID, acks)
 		if text == "" {
 			// The delta was withheld as a marker candidate or was a marker in full.
 			// Returning keeps the sequence counter honest and adds no empty block.
@@ -106,7 +96,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 	} else {
 		refusal = nil
 	}
-	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
 		vibekit.MessageChunkPayload{
 			MessageID:      buf.MessageID,
 			Delta:          text,
@@ -135,12 +125,12 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 // decoder reads the field with reqOneOf against user|agent, so a zero value
 // fails the whole frame and the client loses the ack. steerOrigin is total, so
 // this cannot reintroduce one.
-func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer, acks []steerAck) {
+func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID vibekit.ChatID, acks []steerAck) {
 	for _, ack := range acks {
 		if ack.SteerID == "" || ack.Text == "" {
 			continue
 		}
-		t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
+		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
 			SteerID: ack.SteerID,
 			Text:    "",
 			Origin:  t.steerOrigin(chatID, ack.SteerID),
@@ -163,7 +153,7 @@ func (t *Translator) announceTruncation(
 	blockIndex, seq := buf.AppendTextDelta(notice, subtask)
 	slog.Warn("turn exceeded the assistant buffer cap; dropping the remainder",
 		"chat_id", chatID, "message_id", buf.MessageID, "buffered_bytes", buffered)
-	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
 		vibekit.MessageChunkPayload{
 			MessageID:  buf.MessageID,
 			Delta:      notice,
@@ -192,11 +182,6 @@ func refusalInfo(chunk *ACPChunkWire) *vibekit.RefusalInfo {
 func (t *Translator) HandlePlan(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 	var p ACPPlanWire
 	if json.Unmarshal(raw, &p) != nil {
-		return
-	}
-	// A plan is turn content, so it obeys the same mute: a prime that emitted one
-	// would otherwise write a row while every other frame was suppressed.
-	if buf := t.buffers.TurnFoldTarget(ctx, chatID, vibekit.TurnSourceWireTurnStart); buf != nil && buf.Muted() {
 		return
 	}
 	msg := vibekit.Message{

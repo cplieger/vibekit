@@ -4,19 +4,9 @@ package command
 // and then diverges. A rewind edits the conversation you are in (rewind.go);
 // a tangent keeps it and opens another beside it.
 //
-// Two creation paths differ only in fidelity. Both require the parent
-// record to survive until the tangent is minted.
-//
-//   - Fork (primary): one `session/fork` on the parent's live session; KAS
-//     returns a new session id carrying the parent's actual context, and the
-//     new chat is created already bound to it. No re-narration, no token
-//     spend.
-//   - Prime (fallback): the fork was refused, so the chat is created unbound
-//     and marked so its first session gets the parent's transcript as an
-//     invisible priming prompt (bounded by the priming budget).
-//
-// The log line names which path ran, since the two are otherwise
-// indistinguishable from the outside.
+// The parent bridge is resumed on demand and `session/fork` carries KAS's own
+// context into the new session. The parent record must survive until the
+// tangent is minted.
 
 import (
 	"context"
@@ -76,7 +66,7 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 		if c, exists := chats.Get(ctx, chatID); exists {
 			// Derive the outcome from the record rather than restating this
 			// attempt's: a chat bound to a session was forked, one with no
-			// session was primed.
+			// session started fresh.
 			outcome := forkOutcomeOf(c.ACPSessionID)
 			slog.Info("tangent: repeat op resolved to the chat it already opened",
 				"chat", chatID, "parent", p.ParentChatID, "outcome", outcome)
@@ -117,12 +107,6 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 			"chat", opened.Chat.ID, "parent", p.ParentChatID, "orphaned_session", sessionID)
 	}
 
-	if outcome == vibekit.ForkOutcomePrimed {
-		// Marked AFTER the record exists, so nothing can observe a prime
-		// note for a chat that failed to create.
-		bridges.PrimeFromChat(vibekit.ChatID(opened.Chat.ID), p.ParentChatID)
-	}
-
 	slog.Info("tangent opened",
 		"chat", opened.Chat.ID, "parent", p.ParentChatID,
 		"outcome", outcome, "acp_session", opened.Chat.ACPSessionID, "tab", opened.Subject.ID)
@@ -133,10 +117,10 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 }
 
 // forkOutcomeOf reads a tangent's path off the record it produced: a chat
-// bound to a session was forked, one with no session was primed.
+// bound to a session was forked, one with no session started fresh.
 func forkOutcomeOf(sessionID string) string {
 	if sessionID == "" {
-		return vibekit.ForkOutcomePrimed
+		return vibekit.ForkOutcomeFresh
 	}
 	return vibekit.ForkOutcomeForked
 }
@@ -173,18 +157,24 @@ func forkCreate(p vibekit.ForkChatCommand, chatID vibekit.ChatID, parent *vibeki
 }
 
 // forkSession asks KAS to branch the parent's session and returns the new
-// session id, or "" when the tangent has to fall back to priming. Every
-// refusal is a WARN and an empty string, since the caller's answer to all
-// of them is identical: open the tangent primed.
+// session id, or "" when the tangent has to start fresh. Every refusal is a
+// warning and an empty string, since the caller's answer is always to open the
+// tangent without a bound session.
 func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p vibekit.ForkChatCommand) string {
 	bridge := bridges.Bridge(p.ParentChatID)
 	if bridge == nil || bridge.SessionID() == "" {
-		// No live session to branch. Deliberately not started here:
-		// spawning a bridge as a side effect of a tangent would resume a
-		// conversation the user did not ask to resume.
-		slog.Info("tangent: parent has no live session, priming instead",
-			"parent", p.ParentChatID)
-		return ""
+		// Branching a conversation requires its context, so resume its bridge on
+		// demand. CmdRewindChat accepts the same trade for a context-dependent
+		// operation on a bridgeless chat.
+		//
+		// Empty model on purpose: the parent keeps the model recorded on its chat.
+		var err error
+		bridge, err = bridges.OpenBridge(ctx, p.ParentChatID, "")
+		if err != nil || bridge == nil || bridge.SessionID() == "" {
+			slog.Warn("tangent: parent bridge unavailable, starting fresh",
+				"parent", p.ParentChatID, keyError, err)
+			return ""
+		}
 	}
 
 	meta := map[string]any{"createdReason": vibekit.CreatedReasonTangent}
@@ -196,7 +186,7 @@ func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p vibe
 		"_meta": map[string]any{"kiro": meta},
 	}))
 	if err != nil {
-		slog.Warn("tangent: session/fork failed, priming instead",
+		slog.Warn("tangent: session/fork failed, starting fresh",
 			"parent", p.ParentChatID, keyError, err)
 		return ""
 	}
@@ -210,7 +200,7 @@ func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p vibe
 		// A reply with no usable session id is a refusal however it is
 		// spelled. Validated because the value reaches a filesystem path
 		// inside KAS and vibekit's own reaper keep-list.
-		slog.Warn("tangent: session/fork returned no usable session id, priming instead",
+		slog.Warn("tangent: session/fork returned no usable session id, starting fresh",
 			"parent", p.ParentChatID)
 		return ""
 	}

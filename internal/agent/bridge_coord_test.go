@@ -441,28 +441,6 @@ func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 
 // --- success paths must not emit an error log ---
 
-// PrimeIfNeeded logs nothing when the prime Call succeeds.
-func TestPrimeIfNeeded_NoErrorLogOnSuccess(t *testing.T) {
-	h, cs, _ := newTestHub()
-	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
-		c.Name = "A"
-		c.Messages = []vibekit.Message{{Role: vibekit.RoleUser, Content: "hi"}}
-		return true
-	})
-	sb, err := h.coord.OpenBridge(ctx, "c1", "")
-	if err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-	sb.primeReason = primeReasonSwitch
-
-	logs := captureLogs(t)
-	h.coord.PrimeIfNeeded(ctx, "c1")
-	if got := logs.String(); strings.Contains(got, "prime failed") {
-		t.Errorf("unexpected error log on prime success: %s", got)
-	}
-}
-
 // EmitTurnEndedWithStats logs no persist error when the assistant-turn
 // and cancel-event appends both succeed.
 func TestEmitTurnEnded_NoPersistErrorLogOnSuccess(t *testing.T) {

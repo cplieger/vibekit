@@ -19,9 +19,6 @@ func (rt *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, 
 	// waiting_on_user survives ClearAtTurnEnd past turn end; the chat going away
 	// must clear it too, or a reconnect replays a status for a chat that's gone.
 	rt.bus.chatStatus.Clear(chatID)
-	// Order-FREE: the note has one writer, one reader and no interaction with any other
-	// collaborator here, unlike the run-cancel-before-bridge-teardown sequence below.
-	rt.coord.forgetPrimeFrom(chatID)
 	rt.coord.CloseBridge(chatID)
 	rt.agentTerms.KillForChat(chatID)
 	rt.coord.turns.forget(chatID)

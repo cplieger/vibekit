@@ -66,10 +66,6 @@ type Buffer struct {
 	// earlier segment already carries part of this turn's content. Reported on every
 	// TurnContent, because the closer reads the snapshot rather than the fields.
 	segmented bool
-	// muted is a turn whose frames must reach no client: a PRIME's. They still FOLD here (a
-	// revised binding can hand this buffer to the agent's own turn, which unmutes it), but
-	// publishing one renders the priming preamble as conversation that vanishes on reload.
-	muted bool
 	// overCap latches once the turn has exceeded maxBufferBytes, so the truncation notice is
 	// emitted exactly once: frames keep arriving after the cap, and one notice per frame
 	// would be a second defect on top of the silent drop it replaced.
@@ -101,22 +97,6 @@ func (buf *Buffer) StartTurn(messageID string) bool {
 	buf.Started = true
 	buf.MessageID = messageID
 	return true
-}
-
-// SetMuted records whether this turn's frames may be published. Set at open from the turn's
-// SOURCE, and cleared when a revised binding hands the buffer to a turn that may publish.
-func (buf *Buffer) SetMuted(muted bool) {
-	buf.mu.Lock()
-	defer buf.mu.Unlock()
-	buf.muted = muted
-}
-
-// Muted reports whether this turn's frames may be published. Read by the one
-// broadcast funnel in translate, so a fold site cannot forget it.
-func (buf *Buffer) Muted() bool {
-	buf.mu.Lock()
-	defer buf.mu.Unlock()
-	return buf.muted
 }
 
 // BufferedBytes is the turn's accumulated content plus reasoning length, for a
@@ -498,12 +478,29 @@ func (buf *Buffer) ComputeDuration(toolCallID string) int {
 	return int(time.Now().UnixMilli() - start)
 }
 
-// HasToolInFlight reports whether this turn is waiting on a tool result.
-func (buf *Buffer) HasToolInFlight() bool {
+// HasToolInFlightSince reports whether a tool call is in flight whose recorded
+// start is at or after since.
+//
+// The cutoff is what makes this safe to extend a silence budget with. An
+// unbounded "is anything in flight" answers true forever for a status the turn
+// left behind — a tool whose result frame never arrived because the bridge
+// wedged — so a budget consulting it never expires and the turn it bounds is
+// never reaped. Asking whether the work BEGAN inside the window separates a
+// tool that is genuinely running from one that is merely still marked running.
+//
+// A tool with no recorded start cannot be shown to have begun inside the window
+// and so answers false. On the live path RecordToolStart runs on every create
+// frame, so the only buffer that reaches this with a gap is the session/load
+// replay projection's, which no budget watches.
+func (buf *Buffer) HasToolInFlightSince(since time.Time) bool {
+	cutoff := since.UnixMilli()
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
 	for i := range buf.ToolCalls {
-		if buf.ToolCalls[i].Status == vibekit.ToolInProgress || buf.ToolCalls[i].Status == vibekit.ToolPending {
+		if buf.ToolCalls[i].Status != vibekit.ToolInProgress && buf.ToolCalls[i].Status != vibekit.ToolPending {
+			continue
+		}
+		if start, ok := buf.ToolStartTimes[buf.ToolCalls[i].ID]; ok && start >= cutoff {
 			return true
 		}
 	}

@@ -42,11 +42,6 @@ var notificationPrefix = regexp.MustCompile(`^\s*\[notification/(info|success|wa
 var (
 	// errSteerNoTurn is the refusal for a steer with no turn to join.
 	errSteerNoTurn = errors.New("nothing is running to steer — send this as a prompt instead")
-	// errSteerPriming refuses a steer aimed into the prime window. A prime
-	// is vibekit's own transcript replay sent as a real session/prompt;
-	// its frames are neither broadcast nor persisted, so a steer
-	// delivered into it would be silently discarded.
-	errSteerPriming = errors.New("the session is still loading its history — send this again in a moment")
 	// errSteerDropped maps KAS's `{queued: false}`.
 	errSteerDropped = errors.New("the turn ended before this could be delivered — send it as a prompt instead")
 	// errSteerLooksLikeNotification refuses the sniffing collision above,
@@ -101,11 +96,8 @@ func CmdSteer(
 		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerNoTurn)
 	}
 	source, held := outcome.AdmissionHolderSource(cmd.ChatID)
-	switch {
-	case !held, source == vibekit.TurnSourceLocalShell:
+	if !held || source == vibekit.TurnSourceLocalShell {
 		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerNoTurn)
-	case source == vibekit.TurnSourcePrime:
-		return nil, StatusError(http.StatusConflict, errSteerPriming)
 	}
 
 	resp, err := bridge.Call(ctx, vibekit.MethodSessionSteer, SessionParams(bridge, map[string]any{

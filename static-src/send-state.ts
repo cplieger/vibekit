@@ -31,7 +31,7 @@
 //     there is no ACP connection behind it to send to
 //   - a prompt was refused with 409 reason:"starting" — the chat's admission
 //     slot is held by something that cannot take a steer (a cold spawn, a
-//     shell, a prime), so a send right now cannot land. submit.ts owns that
+//     shell command, a workflow step), so a send right now cannot land. submit.ts owns that
 //     copy and pushes it through `reportSendRefused`.
 //
 // Neither rung is a LOCK. The composer stays live through both: nothing here sets

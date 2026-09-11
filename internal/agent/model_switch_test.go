@@ -48,20 +48,12 @@ func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 	}
 
 	c, _ := cs.Get(t.Context(), "c1")
-	// session/load succeeded: acp_session_id is preserved (same session
-	// reloaded with new model), bridge is primed (no transcript replay).
+	// session/load succeeded, so acp_session_id is preserved.
 	if c.ACPSessionID == "" {
 		t.Errorf("acp_session_id was cleared, want preserved for fast path")
 	}
 	if len(c.Messages) != 1 || c.Messages[0].EventKind != vibekit.EventModelSwitched {
 		t.Errorf("expected model_switched event, got %+v", c.Messages)
-	}
-	sb := h.coord.Bridge("c1")
-	if sb == nil {
-		t.Fatal("no bridge after switch")
-	}
-	if !sb.primed {
-		t.Errorf("bridge.primed = false, want true (session/load restores context)")
 	}
 }
 

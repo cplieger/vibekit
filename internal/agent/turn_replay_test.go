@@ -84,34 +84,3 @@ func TestReplayTurnState_AFinalizingTurnDoesNotReadIdle(t *testing.T) {
 		t.Error("a finalizing turn was replayed as nothing, so the client draws it idle mid-finalize")
 	}
 }
-
-// TestReplayTurnState_APrimeIsNeverServed pins the fold-time source policy at the
-// replay door.
-//
-// A prime is vibekit's own transcript replay, sent as a real session/prompt. Its
-// frames are neither broadcast nor persisted, so serving them here would render
-// the priming preamble as conversation and then lose it on the next reload — the
-// vanishing-message class, arriving through the one door that synthesizes state
-// rather than replaying it.
-func TestReplayTurnState_APrimeIsNeverServed(t *testing.T) {
-	rt, _, _ := newTestHub()
-	if rt.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrime) == 0 {
-		t.Fatal("the fixture could not open a prime turn")
-	}
-	buf := rt.stageTurnBuffer(t, "c1")
-	buf.StartTurn("m-prime")
-	buf.AppendTextDelta("The context was just switched", "")
-	// A retained waiting status, so the second assertion below can fail: without
-	// one there is nothing for replayWaitingStatus to emit and the check is vacuous.
-	rt.bus.chatStatus.Merge("c1", vibekit.ChatStatusPayload{Status: vibekit.ChatStatusWaitingOnUser})
-
-	states, statuses := replayedTurnStates(t, rt)
-	if got, ok := states["c1"]; ok {
-		t.Errorf("a prime's buffer was served as turn_state (%+v), so the preamble renders as conversation", got.Message)
-	}
-	// And the chat is still BUSY, so a status the agent declared before the prime
-	// is not re-asserted over a turn that is running.
-	if _, ok := statuses["c1"]; ok {
-		t.Error("a chat with an open prime turn was replayed a chat_status, so a stale status describes the wrong turn")
-	}
-}

@@ -142,7 +142,6 @@ func TestHandleSessionInfoUpdate_FocusFiltersDerivedTitle(t *testing.T) {
 		{"normalization: trailing punctuation", "fix the retry test.", "Fix the retry test", false},
 		{"normalization: first non-blank line", "fix the retry test\n\nit fails on CI", "Fix the retry test", false},
 		{"long prompt truncation", longPrompt, strings.TrimSpace(longPrompt)[:77] + "...", false},
-		{"prime-derived (switch)", "", PrimePreambleSwitch[:77] + "...", false},
 		{"agent-authored", "Fix the retry test", "Scheduler retry flake", true},
 	}
 	for _, tc := range cases {

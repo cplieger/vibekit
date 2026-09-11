@@ -107,21 +107,18 @@ type ForkChatCommand struct {
 	OpID string `json:"op_id,omitempty"`
 }
 
-// ForkOutcomePrimed and ForkOutcomeForked are the two paths fork_chat can take.
+// ForkOutcomeFresh and ForkOutcomeForked are the two paths fork_chat can take.
 // `forked` means KAS returned a session id carrying the parent's context;
-// `primed` is the degraded path where the fork was refused and the parent's
-// transcript is injected as a bounded priming prompt instead. The tangent opens
-// either way; only its fidelity differs.
+// `fresh` means no usable forked session was returned. The tangent opens either
+// way, but only a forked session inherits context.
 const (
 	ForkOutcomeForked = "forked"
-	ForkOutcomePrimed = "primed"
+	ForkOutcomeFresh  = "fresh"
 )
 
-// SwitchModelCommand is the payload for type="switch_model". Ends the current
-// ACP session and starts a fresh one with the new model, priming it with the
-// transcript: kiro-cli cannot swap models mid-session. A non-empty Model must
-// match validIdent. Agent changes are deliberately NOT part of this command —
-// the agent owns its own mode switches.
+// SwitchModelCommand is the payload for type="switch_model". A live session is
+// switched in place. The fallback restarts the bridge and first attempts to load
+// the existing session before creating a fresh one.
 type SwitchModelCommand struct {
 	// Empty or "auto" keeps the current model: a bare restart of the bridge,
 	// useful when the session is wedged.

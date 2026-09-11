@@ -20,6 +20,15 @@ func (bc *BridgeCoordinator) CompactionFailed(chatID vibekit.ChatID, detail stri
 		slog.Debug("compaction reap: no turn open", "chat_id", chatID)
 		return
 	}
+	// The chain's origin, set here rather than in armCompactionReapLocked so it
+	// survives every re-arm: it is what a live tool is judged against, and a
+	// per-arm cutoff would retire a tool that has been running since the failure
+	// the moment the first budget elapsed. Set once, so a second failure report
+	// restarts the 60s window without narrowing that judgement — the tighter
+	// direction is the one that interrupts a turn that is genuinely working.
+	if lc.cur.reapChainAt.IsZero() {
+		lc.cur.reapChainAt = time.Now()
+	}
 	bc.armCompactionReapLocked(lc, lc.cur, detail)
 }
 
@@ -60,7 +69,7 @@ func (bc *BridgeCoordinator) expireCompactionReap(chatID vibekit.ChatID, epoch v
 		lc.mu.Unlock()
 		return
 	}
-	if lc.observedSeq != seq || lc.fwdGen != gen || turn.Buf.HasToolInFlight() {
+	if lc.observedSeq != seq || lc.fwdGen != gen || turn.Buf.HasToolInFlightSince(turn.reapChainAt) {
 		bc.armCompactionReapLocked(lc, turn, detail)
 		lc.mu.Unlock()
 		return

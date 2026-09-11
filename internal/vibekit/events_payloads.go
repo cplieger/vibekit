@@ -54,9 +54,9 @@ type ConnectedPayload struct {
 	// client cannot derive it: ACP-supplied paths arrive workspace-RELATIVE while the
 	// /api/file* surface is container-ABSOLUTE, and opening a changed file rejoins them.
 	Workspace string `json:"workspace,omitempty"`
-	// BusyChats is every chat with a turn in flight of its OWN at connect — an open
-	// turn that is neither a prime nor a workflow step, or an admitted prompt whose
-	// Turn is not minted yet — and it is a NEGATIVE statement about every chat it does
+	// BusyChats is every chat with a turn in flight of its OWN at connect: an open
+	// turn that is not a workflow step, or an admitted prompt whose Turn is not
+	// minted yet — and it is a NEGATIVE statement about every chat it does
 	// not name, the half no other frame carries: a chat whose turn died with the
 	// previous process gets no turn_state, and nothing else ever tells this client to
 	// stop believing its own `thinking`.

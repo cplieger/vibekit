@@ -107,27 +107,21 @@ func (rt *Runtime) switchByRestart(
 		rt.coord.PersistModelSwitch(ctx, cmd.ChatID, model, chat.Usage.ContextSize)
 	}
 
-	sb.mu.Lock()
-	needsPrime := !sb.primed
-	if needsPrime {
-		sb.primeReason = primeReasonSwitch
-	}
-	sb.mu.Unlock()
-
-	if needsPrime {
-		slog.Info("model switch: fallback, priming fresh session",
-			"chat_id", cmd.ChatID, "model", model)
-	} else {
+	resumed := chat.ACPSessionID != "" && string(sb.SessionID()) == chat.ACPSessionID
+	if resumed {
 		slog.Info("model switch: fallback, session/load succeeded",
 			"chat_id", cmd.ChatID, "model", model)
-		// A resumed session restores KAS's own persisted model and skips
-		// session/new's priming door, so without this the switch silently does not
-		// happen. Through the bridge this function HOLDS: a fresh lookup by chat id
-		// can hit the old bridge's cleanup evicting the new entry.
+		// A resumed session restores KAS's own persisted model, so without this
+		// the switch silently does not happen. Through the bridge this function
+		// HOLDS: a fresh lookup by chat id can hit the old bridge's cleanup evicting
+		// the new entry.
 		if isSwitch && !rt.coord.applyModelSwitch(ctx, cmd.ChatID, sb, model, rt.coord.EffortForSwitch(ctx, model)) {
 			slog.Warn("model switch: the resumed session kept its own model",
 				"chat_id", cmd.ChatID, "model", model)
 		}
+	} else {
+		slog.Info("model switch: fallback, fresh session started",
+			"chat_id", cmd.ChatID, "model", model)
 	}
 
 	return responseOK2, nil

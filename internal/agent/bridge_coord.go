@@ -13,7 +13,6 @@ import (
 
 	"github.com/cplieger/keyenc"
 	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/durable"
 	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/settings"
@@ -21,8 +20,8 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// BridgeCoordinator owns bridge lifecycle: spawn, session load, priming,
-// notification forwarding, model switching and turn finalization.
+// BridgeCoordinator owns bridge lifecycle, notification forwarding, model
+// switching, and turn finalization.
 type BridgeCoordinator struct {
 	bridge    *bridges
 	chatStore bridgeChatRecords
@@ -76,58 +75,17 @@ type BridgeCoordinator struct {
 	// unknownStops records the stop reasons already warned about, so an unmapped
 	// wire value produces one line rather than one per turn.
 	unknownStops sync.Map
-	// primeFrom notes which chat's transcript primes a chat's FIRST session, for a
-	// tangent whose session/fork was refused (command/fork.go). Claimed and deleted
-	// by the next spawn, so it is a handoff rather than state anything reads twice.
-	primeFrom map[vibekit.ChatID]vibekit.ChatID
 	// agentEngine is the kiro-cli agent engine, hard-pinned to v3 by
 	// resolveAgentEngine.
 	agentEngine string
 	// acpArgs are the filtered operator launch flags (VIBEKIT_KIRO_ACP_ARGS), set on
 	// CHAT spawns only: an `--effort max` on the utility bridge would spend real
 	// credits on a two-word title.
-	acpArgs     []string `wiring:"optional"`
-	primeFromMu sync.Mutex
+	acpArgs []string `wiring:"optional"`
 	// noSubscribers latches that the no-subscriber drop has been reported, so the
 	// line is one per episode rather than one per notification. See
 	// reportNoSubscribers.
 	noSubscribers atomic.Bool
-}
-
-// PrimeFromChat records that chatID's first session should be primed with
-// sourceChatID's transcript. See BridgeCoordinator.primeFrom.
-func (bc *BridgeCoordinator) PrimeFromChat(chatID, sourceChatID vibekit.ChatID) {
-	if chatID == "" || sourceChatID == "" || chatID == sourceChatID {
-		return
-	}
-	bc.primeFromMu.Lock()
-	defer bc.primeFromMu.Unlock()
-	if bc.primeFrom == nil {
-		bc.primeFrom = make(map[vibekit.ChatID]vibekit.ChatID, 1)
-	}
-	bc.primeFrom[chatID] = sourceChatID
-}
-
-// takePrimeFrom claims and clears a chat's prime note: the note is spent by the
-// session it primes, so a later bridge must not re-inject that history.
-func (bc *BridgeCoordinator) takePrimeFrom(chatID vibekit.ChatID) vibekit.ChatID {
-	bc.primeFromMu.Lock()
-	defer bc.primeFromMu.Unlock()
-	src, ok := bc.primeFrom[chatID]
-	if !ok {
-		return ""
-	}
-	delete(bc.primeFrom, chatID)
-	return src
-}
-
-// forgetPrimeFrom drops a chat's unspent prime note. takePrimeFrom is the ordinary
-// discharge (the read IS the claim); this is the teardown twin, for a forked chat
-// closed or deleted before it was ever prompted.
-func (bc *BridgeCoordinator) forgetPrimeFrom(chatID vibekit.ChatID) {
-	bc.primeFromMu.Lock()
-	defer bc.primeFromMu.Unlock()
-	delete(bc.primeFrom, chatID)
 }
 
 // newBridgeCoordinator constructs a BridgeCoordinator from the Runtime's fields,
@@ -302,15 +260,6 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
-
-	sb.primed = false
-	// A tangent's refused fork needs the injection: this session has never seen the
-	// conversation it was opened from, and that lives in another chat. Claimed here
-	// rather than read at prime time, so exactly one session spends it.
-	if src := bc.takePrimeFrom(chatID); src != "" {
-		sb.primeReason = primeReasonFork
-		sb.primeFrom = src
-	}
 	sb.setState(bridgeIdle)
 
 	return sb, nil
@@ -343,9 +292,6 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		old := sb.bridge
 		sb.bridge = bc.bridge.mgr.factory()
 		old.Stop()
-		// The replacement session has never seen this chat, so record why it needs
-		// priming or the agent answers the next prompt with no history.
-		sb.primeReason = primeReasonReload
 		if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 			if !ex {
 				return false
@@ -378,7 +324,6 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	}); mErr != nil {
 		slog.Error("refresh session metadata", "chat_id", chatID, "error", mErr)
 	}
-	sb.primed = true
 	sb.setState(bridgeIdle)
 	// Heal the chat's restart-paused runs off the spawn path, so the user's prompt
 	// never waits behind a run-list round trip, and AFTER the state flip, so the
@@ -650,69 +595,6 @@ func (bc *BridgeCoordinator) forwardAt(chatID vibekit.ChatID, bridge ACPBridge, 
 func (bc *BridgeCoordinator) consumeFrame(chatID vibekit.ChatID, gen uint64, n vibekit.Notification) {
 	defer bc.turns.observe(chatID, gen, n.Seq)
 	bc.translateEvent(chatID, n.Msg)
-}
-
-// PrimeIfNeeded sends the chat history as an ephemeral priming prompt on the current
-// bridge, unless this session already has it.
-//
-// The primed flag is claimed HERE rather than by the caller, so it has one owner and
-// needs no interface assertion: a chat with no bridge is simply nothing to prime.
-func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID vibekit.ChatID) {
-	sb := bc.bridge.mgr.get(chatID)
-	if sb == nil {
-		return
-	}
-	if !sb.claimPriming() {
-		return
-	}
-	// Preambles live in translate (PrimePreamble*) because the focus-title derivation
-	// filter must recognise a title KAS derives from this text. The reason decides the
-	// preamble AND whose history is read: a tangent whose fork was refused has no
-	// transcript of its own, so the source is read off the bridge rather than assumed.
-	var prime string
-	source := chatID
-	switch sb.primeReason {
-	case primeReasonSwitch:
-		prime = translate.PrimePreambleSwitch
-	case primeReasonReload:
-		prime = translate.PrimePreambleReload
-	case primeReasonFork:
-		prime = translate.PrimePreambleTangent
-		if sb.primeFrom != "" {
-			source = sb.primeFrom
-		}
-	default:
-		return
-	}
-
-	history := bc.chatStore.BuildHistory(ctx, source)
-	if history == "" {
-		if sb.primeReason == primeReasonFork {
-			slog.Warn("tangent starts without inherited context",
-				"chat_id", chatID, "history_from", source)
-		}
-		return
-	}
-	prime += history
-
-	slog.Info("priming bridge", "chat_id", chatID, "reason", sb.primeReason, "history_from", source)
-	// The prime is a real session/prompt, so it opens and closes a real turn. It then
-	// AWAITS its own epoch, which is what keeps the unacknowledged set from holding
-	// two: a wire turn_start can only ever bind to one candidate.
-	epoch := bc.StartTurn(ctx, chatID, vibekit.TurnSourcePrime)
-	defer bc.ReleaseTurn(chatID, epoch)
-	resp, seq, err := sb.bridge.CallAt(ctx, vibekit.MethodPrompt, command.SessionParams(sb, map[string]any{
-		vibekit.KeyPrompt: []map[string]any{vibekit.TextBlock(prime)},
-	}))
-	if err != nil {
-		slog.Error("prime failed", "chat_id", chatID, "error", err)
-		bc.AbandonInFlightTurn(ctx, chatID, epoch, vibekit.StopReasonInterrupted, "The priming prompt failed.")
-		return
-	}
-	bc.SettleTurnOnResponse(ctx, chatID, epoch, seq, resp)
-	if _, aErr := bc.AwaitTurn(ctx, chatID, epoch); aErr != nil {
-		slog.Warn("prime: no turn outcome", "chat_id", chatID, "error", aErr)
-	}
 }
 
 // Effort is a field on the chat record (vibekit.Chat.Effort), read at spawn and

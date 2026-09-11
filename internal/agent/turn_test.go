@@ -329,16 +329,6 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 		}
 	})
 
-	t.Run("a prime turn is NOT busy", func(t *testing.T) {
-		h, _, _ := newTestHub()
-		epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrime)
-		t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
-		if busySet(t, h.coord.turns)["c1"] {
-			t.Error("a prime turn names its chat busy; its frames are vibekit's own " +
-				"transcript replay and latch nothing on any client")
-		}
-	})
-
 	t.Run("a workflow STEP turn is NOT busy", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceWorkflowStep)
@@ -358,32 +348,6 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 		if !busySet(t, h.coord.turns)["c1"] {
 			t.Error("a chat whose prompt is admitted but whose Turn is not minted is absent " +
 				"from busy_chats: the negative statement is incomplete for the admission window")
-		}
-	})
-
-	t.Run("a PRIME reservation is NOT busy", func(t *testing.T) {
-		h, _, _ := newTestHub()
-		if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrime) {
-			t.Fatal("a fresh chat refused a prime reservation")
-		}
-		t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
-		if busySet(t, h.coord.turns)["c1"] {
-			t.Error("a prime reservation names its chat busy")
-		}
-	})
-
-	// THE COLD-SPAWN SHAPE, asserted from this door as well as from hasOpenTurn's: the
-	// open turn is the prime and the reservation beside it is the prompt's.
-	t.Run("an open prime with a prompt reservation beside it is busy", func(t *testing.T) {
-		h, _, _ := newTestHub()
-		if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrompt) {
-			t.Fatal("a fresh chat refused a prompt reservation")
-		}
-		t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
-		epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrime)
-		t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
-		if !busySet(t, h.coord.turns)["c1"] {
-			t.Error("a prime running over an admitted prompt is absent from busy_chats")
 		}
 	})
 

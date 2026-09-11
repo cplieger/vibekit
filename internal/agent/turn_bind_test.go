@@ -268,36 +268,6 @@ func TestStartTurn_LocalShellRefusesWhileATurnIsOpen(t *testing.T) {
 	h.ReleaseTurn(chatID, epoch)
 }
 
-// PrimeIfNeeded awaits its own epoch before returning, which is what keeps the
-// unacknowledged set from ever holding two.
-//
-// A prime that returned with its turn still open would leave the caller's own
-// pre-open as a SECOND pending candidate, and a wire turn_start would then bind to
-// whichever the registry happened to be holding.
-func TestPrimeIfNeeded_ReturnsWithItsOwnTurnFinalized(t *testing.T) {
-	h, cs, br := newTestHub()
-	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool {
-		c.Name = "A"
-		c.Messages = append(c.Messages, vibekit.Message{ID: "m1", Role: vibekit.RoleUser, Content: "earlier"})
-		return true
-	})
-	sb, _ := h.bridge.mgr.orInsert(chatID)
-	sb.bridge = br
-	sb.primeReason = primeReasonReload
-
-	h.coord.PrimeIfNeeded(ctx, chatID)
-
-	if _, open := h.coord.turns.openEpoch(chatID); open {
-		t.Error("PrimeIfNeeded returned with its turn still open, so the next prompt's pre-open " +
-			"would be a second unacknowledged candidate")
-	}
-	if _, ok := pendingEpoch(h, chatID); ok {
-		t.Error("the prime's turn is still in the pending set after it finalized")
-	}
-}
-
 // After a revised binding the pre-open receives its OWN bracket through the wire,
 // becomes the folding turn again, and its reply is attributed to it.
 //

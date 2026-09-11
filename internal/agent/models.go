@@ -7,6 +7,8 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
+const modelAuto = vibekit.ModelAuto
+
 // cheapestModel returns the cheapest reliable model id from the current
 // catalog, or "" if nothing is live. Filters out:
 //   - "auto" (task-based selection, not a real model)

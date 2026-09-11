@@ -18,51 +18,6 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// PrimePreambleSwitch is the fixed prefix of the invisible priming prompt
-// the bridge coordinator sends on a fresh session after a model-switch
-// fallback. Exported so the coordinator and the replay projection share one
-// definition.
-const PrimePreambleSwitch = "The context was just switched (new agent, new model, " +
-	"or both). Below is the full conversation history. Read it " +
-	"silently and reply with a single short line confirming " +
-	"you're caught up.\n\n"
-
-// PrimePreambleReload is the counterpart for a fresh session created
-// because session/load failed. Same instruction, different first
-// sentence — telling the model its context was "just switched" when
-// nothing was switched would be a small lie in the one message it reads
-// before everything else.
-const PrimePreambleReload = "The previous session could not be reloaded, so this " +
-	"is a fresh one. Below is the full conversation history. Read it " +
-	"silently and reply with a single short line confirming " +
-	"you're caught up.\n\n"
-
-// PrimePreambleTangent is the tangent's fallback preamble: a tangent
-// whose session/fork was refused, so the parent's context is injected
-// instead. Its transcript belongs to another chat, which is what it says.
-const PrimePreambleTangent = "This conversation is a tangent branched off another " +
-	"one. Below is the full history of the conversation it came from. Read it " +
-	"silently and reply with a single short line confirming " +
-	"you're caught up.\n\n"
-
-// primePreambles is every preamble the coordinator can send. Its one reader is
-// IsPrimePreamble, for the replay projection.
-var primePreambles = []string{PrimePreambleSwitch, PrimePreambleReload, PrimePreambleTangent}
-
-// IsPrimePreamble reports whether text opens with a priming preamble.
-//
-// A prime is a real session/prompt, so KAS persists and replays it like
-// any other user message; without this the replay projection renders
-// vibekit's own transcript replay as something the user said.
-func IsPrimePreamble(text string) bool {
-	for _, preamble := range primePreambles {
-		if strings.HasPrefix(text, preamble) {
-			return true
-		}
-	}
-	return false
-}
-
 // focusUpdate is the _meta.kiro.focus block of a focus_update
 // session_info_update. All fields are optional partial updates.
 type focusUpdate struct {

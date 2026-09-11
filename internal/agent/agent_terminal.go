@@ -21,6 +21,7 @@ import (
 	"github.com/cplieger/vibekit/internal/ansitext"
 	"github.com/cplieger/vibekit/internal/procgroup"
 	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/vibekit/internal/systembin"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -452,8 +453,18 @@ func (rt *Runtime) handleTerminalRequest(ctx context.Context, chatID vibekit.Cha
 // agentShell resolves the shell that runs an agent command LINE, once per process.
 // bash first (KAS names the tool `execute_bash`, and agents write bash-isms: `[[ ]]`,
 // process substitution), POSIX sh as the fallback for an image without bash.
+//
+// Resolved through internal/systembin rather than exec.LookPath, so argv[0] is an
+// absolute path from a fixed system-directory set instead of whatever PATH[0]
+// holds — and PATH[0] here is the toolbelt engine's link directory on the
+// persistent volume, which an agent with an approved shell command can write.
+// The fallback is already absolute, so a miss confines rather than falls through.
+//
+// The answer is cached for the process lifetime, which is only acceptable BECAUSE
+// the candidate set is fixed and reads no environment: a PATH-derived cached
+// answer would freeze whatever PATH happened to say at the first call.
 var agentShell = sync.OnceValue(func() string {
-	if p, err := exec.LookPath("bash"); err == nil {
+	if p, ok := systembin.Resolve("bash"); ok {
 		return p
 	}
 	return "/bin/sh"

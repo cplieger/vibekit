@@ -89,7 +89,7 @@ func (t *Translator) HandleCodeReferences(ctx context.Context, chatID vibekit.Ch
 		return
 	}
 	all := buf.AppendCodeReferences(refs)
-	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventCodeReferences, chatID, vibekit.CodeReferencesPayload{
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventCodeReferences, chatID, vibekit.CodeReferencesPayload{
 		MessageID:  buf.MessageID,
 		References: all,
 	}))
