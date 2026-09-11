@@ -73,12 +73,9 @@ function registryDrawings(src: string): Map<string, string[]> {
     const arg = m[2] ?? "";
     add(arg.startsWith("PATH_") ? (paths.get(arg) ?? "") : arg.slice(1, -1), m[1] ?? "");
   }
-  // `\s*(?:\+\s*)?` rather than `\s*\+?\s*`: the second spelling lets a whitespace run
-  // split arbitrarily between its two `\s*` whenever no `+` is present, and the outer
-  // `+` compounds that into exponential backtracking (CodeQL js/redos). Anchoring the
-  // optional whitespace behind the literal `+` makes each split point determined.
-  // `\s*` alone replaces `\s*\n?\s*` for the same reason — `\n` is already whitespace,
-  // so the `\n?` only added a second way to match the same run.
+  // `\s*(?:\+\s*)?` not `\s*\+?\s*`: the second lets a whitespace run split between its
+  // two `\s*`, which the enclosing `+` makes exponential (CodeQL js/redos). `\s*` alone
+  // replaces `\s*\n?\s*` for the same reason.
   for (const m of src.matchAll(/export const (ICON_\w+) =\s*((?:'[^']*'\s*(?:\+\s*)?)+);/g)) {
     const lit = [...(m[2] ?? "").matchAll(/'([^']*)'/g)].map((q) => q[1] ?? "").join("");
     if (lit.startsWith("<svg")) {
