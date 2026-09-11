@@ -2,6 +2,8 @@ package command
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -80,4 +82,83 @@ func TestCmdSetMode_NoOpAndAutoCreate(t *testing.T) {
 			t.Errorf("CurrentModeID = %q, want %q", c.CurrentModeID, "spec")
 		}
 	})
+}
+
+// TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot pins the one
+// distinction applySessionConfig exists to make, from both sides and for both config
+// commands.
+//
+// A bridge that exists but has not STARTED is a chat with no session, because the
+// manager registers the record before Start so concurrent opens coalesce — so a click
+// during a cold spawn must persist for the session door exactly like a bridgeless
+// chat, not answer 502. A refusal by the SESSION is the opposite: reporting it is the
+// whole reason the live call leads, and persisting it would leave the record claiming
+// a setting the session never took.
+func TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot(t *testing.T) {
+	tests := map[string]struct {
+		callErr     error
+		wantStatus  int
+		wantApplied bool
+	}{
+		"a cold-spawning bridge persists": {
+			callErr:     fmt.Errorf("write frame: %w", vibekit.ErrBridgeNotStarted),
+			wantApplied: true,
+		},
+		"a session refusal is reported and persists nothing": {
+			callErr:    errors.New("-32602 effortLevel is not available for this model"),
+			wantStatus: http.StatusBadGateway,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Run("set_mode", func(t *testing.T) {
+				store := testsupport.NewInMemoryChatStore()
+				host := newBridgeHost(store, &recordingBridge{callErr: test.callErr})
+
+				_, err := CmdSetMode(t.Context(), host, host, host, setModeReq(t, "c1", "spec"))
+
+				assertConfigOutcome(t, err, test.wantStatus)
+				c, ok := store.Get(t.Context(), "c1")
+				if got := ok && c.CurrentModeID == "spec"; got != test.wantApplied {
+					t.Errorf("mode persisted = %v, want %v", got, test.wantApplied)
+				}
+			})
+
+			t.Run("set_effort", func(t *testing.T) {
+				store := testsupport.NewInMemoryChatStore()
+				host := newBridgeHost(store, &recordingBridge{callErr: test.callErr})
+				payload, err := json.Marshal(vibekit.SetEffortCommand{Level: vibekit.EffortMax})
+				if err != nil {
+					t.Fatalf("marshal set_effort payload: %v", err)
+				}
+				cmd := &vibekit.ClientCommand{Type: vibekit.CmdSetEffort, ChatID: "c1", Payload: payload}
+
+				_, err = CmdSetEffort(t.Context(), host, host, cmd)
+
+				assertConfigOutcome(t, err, test.wantStatus)
+				c, ok := store.Get(t.Context(), "c1")
+				if got := ok && c.Effort == string(vibekit.EffortMax); got != test.wantApplied {
+					t.Errorf("effort persisted = %v, want %v", got, test.wantApplied)
+				}
+			})
+		})
+	}
+}
+
+// assertConfigOutcome grades a config command's error against the status it owes:
+// wantStatus 0 means the command must have succeeded.
+func assertConfigOutcome(t *testing.T, err error, wantStatus int) {
+	t.Helper()
+	if wantStatus == 0 {
+		if err != nil {
+			t.Fatalf("a cold-spawning bridge answered %v; the pick is lost and the pill rolls back", err)
+		}
+		return
+	}
+	if err == nil {
+		t.Fatalf("a session refusal answered no error, so the record now claims a setting the session refused")
+	}
+	if got := statusOf(err); got != wantStatus {
+		t.Errorf("status = %d, want %d", got, wantStatus)
+	}
 }

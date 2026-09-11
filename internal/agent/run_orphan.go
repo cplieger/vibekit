@@ -32,6 +32,11 @@ const leaseAbsenceBudget = 6 * time.Hour
 // absent and never produced a terminal signal.
 const leaseAbsenceOutcome = "unknown: no terminal signal was seen and the run stayed absent for 6 hours"
 
+// orphanOutcome is what that row reports for a run the sweep cancelled because the
+// process running it died. It names the remedy, because there is no automatic
+// relaunch: the run is gone and the next slot is the recovery.
+const orphanOutcome = "stopped: the server restarted while it was running — run it again, or wait for the next slot"
+
 // SweepOrphaned clears every lease whose run a dead process left paused, so nothing reads
 // as live after boot unless it genuinely is. Best-effort: skipping an orphan costs one
 // stale row, cancelling a live run destroys work. Reports whether it REACHED KAS.
@@ -157,12 +162,7 @@ func (rs *Runs) observeAbsentLease(ctx context.Context, l *runlease.Lease, now t
 
 	slog.Warn("run stayed absent past the lease budget; no terminal signal was ever seen",
 		"workflow_id", l.WorkflowID, "recipe", l.Recipe, "first_absent_at", l.FirstAbsentAt)
-	if rs.schedules != nil && l.ScheduleID != "" {
-		if err := rs.schedules.RecordOutcome(ctx, l.ScheduleID, leaseAbsenceOutcome); err != nil {
-			slog.Warn("could not record the schedule's outcome",
-				"schedule_id", l.ScheduleID, "error", err)
-		}
-	}
+	rs.recordScheduleOutcome(ctx, l.ScheduleID, leaseAbsenceOutcome)
 	rs.releaseLease(ctx, l.WorkflowID)
 }
 
@@ -222,6 +222,10 @@ func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 	// ERROR because a homelab Loki rule keys on logMsgRunOrphaned.
 	slog.Error(logMsgRunOrphaned, "workflow_id", l.WorkflowID, "recipe", l.Recipe,
 		"origin", string(l.Origin), "schedule_id", l.ScheduleID)
+	// The RUN's row is not the SCHEDULE's: without this the schedule reads
+	// "started" for a run that was swept, and every later slot is refused as an
+	// overlap with nothing saying why.
+	rs.recordScheduleOutcome(ctx, l.ScheduleID, orphanOutcome)
 	rs.releaseLease(ctx, l.WorkflowID)
 	return true
 }

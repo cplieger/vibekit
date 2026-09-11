@@ -7,22 +7,74 @@ import (
 	"strings"
 
 	"github.com/cplieger/pathinside/v2"
+	"github.com/cplieger/runesafe/v2"
 )
 
 // --- path validation ---
 
 // isValidGitRef reports whether s is safe to pass as a git ref to a
-// subprocess. The rule mirrors git-check-ref-format's forbidden-char
-// set plus a leading-dash guard to neutralise flag smuggling.
+// subprocess. It IMPLEMENTS git-check-ref-format(1)'s refname rules over the
+// bare name, plus the leading-dash guard git's own branch path adds, plus one
+// screen that is vibekit's and not git's.
+//
+// The rule set, and each rule's authority:
+//
+// From git-check-ref-format(1), applied per '/'-separated component: no empty
+// component (so no leading '/', no trailing '/', no '//'), no component
+// beginning with '.', no component ending with '.', no component ending with
+// '.lock'. Applied to the whole string: no "..", no "@{", and none of the
+// forbidden characters — ASCII space, '~', '^', ':', '?', '*', '[', '\'.
+//
+// From git's strbuf_check_branch_ref, which is what `git checkout -b` calls:
+// reject a leading '-'. That is flag smuggling rather than a ref rule, and it
+// matters because several call sites forward the value as a bare argv token.
+//
+// From vibekit, beyond git: reject any rune runesafe.IsUnsafeSingleLine
+// refuses. git ACCEPTS C1 controls, bidi controls and U+2028/U+2029 in a
+// refname (measured, git 2.47.3); vibekit must not, because a branch name is
+// rendered in the git panel and travels into slog attributes, which is the
+// surface internal/logsafe exists for. Using the app's own predicate rather
+// than a fresh local set keeps that one policy in one edit, and it subsumes
+// git's own C0-and-DEL rule for free — which is why neither appears above.
+//
+// This is deliberately a DENYLIST and must stay one. A full-match allowlist
+// cannot express what git permits without being narrower than git: git accepts
+// an accented or CJK branch name, and a character-class grammar refuses it. The
+// defect this replaced was not the shape but the completeness — the old rule
+// claimed in its own comment to mirror git's forbidden-char set while
+// implementing a strict subset of it, missing all seven positional rules.
+//
+// ONE function serves every call site, the read paths included. There is no
+// legitimate READ value check-ref-format rejects: "HEAD", "origin/main",
+// "refs/heads/main" and a bare SHA all pass, and the values newly refused
+// ("..", "foo.lock", ".foo", "//x", "foo@{1}") resolve to nothing at a read
+// site either. Splitting it into a ref rule and a branch rule would be two
+// tables and a per-site choice to get wrong, for one rule set.
+//
+// Two of the checks a sibling app applies are deliberately absent, on git's
+// authority: "HEAD" and a Windows device stem ("CON") are both accepted, because
+// git accepts them and this container is not a Windows filesystem.
 func isValidGitRef(s string) bool {
-	if s == "" {
+	if s == "" || strings.HasPrefix(s, "-") {
 		return false
 	}
-	if strings.HasPrefix(s, "-") {
+	if strings.Contains(s, "..") || strings.Contains(s, "@{") {
 		return false
 	}
-	// git-check-ref-format(1) forbidden chars + whitespace + NUL.
-	return !strings.ContainsAny(s, " \t\n\r\x00:?*[\\~^")
+	if strings.ContainsFunc(s, func(r rune) bool {
+		return runesafe.IsUnsafeSingleLine(r) || strings.ContainsRune(" ~^:?*[\\", r)
+	}) {
+		return false
+	}
+	for component := range strings.SplitSeq(s, "/") {
+		if component == "" ||
+			strings.HasPrefix(component, ".") ||
+			strings.HasSuffix(component, ".") ||
+			strings.HasSuffix(component, ".lock") {
+			return false
+		}
+	}
+	return true
 }
 
 // maxRepoPaths caps how many paths a single stage/unstage/discard

@@ -53,7 +53,18 @@ func runCmd(ctx context.Context, timeout time.Duration, stdin []byte, cli string
 
 // runCmdEnv is runCmd with extra environment variables merged in.
 func runCmdEnv(ctx context.Context, timeout time.Duration, stdin []byte, extraEnv []string, cli string, args ...string) (stdout []byte, err error) {
-	if _, lookErr := exec.LookPath(cli); lookErr != nil {
+	// The probe's ANSWER becomes argv[0], rather than being discarded and the bare
+	// name re-resolved at spawn. That divergence is the defect: two lookups can
+	// disagree, so the file that was checked need not be the file that runs.
+	//
+	// It does NOT confine. These four CLIs (gh, glab, tea, and npm at the sibling
+	// site) are installed by the toolbelt engine into /config/tools/bin, which IS
+	// PATH[0] — so an absolute pin here names the same agent-writable file a PATH
+	// lookup finds. Confining them is custody on the toolbelt bin tree, which is
+	// toolbelt's question, not a string substitution here. What this buys is one
+	// lookup and a classified refusal.
+	bin, lookErr := exec.LookPath(cli)
+	if lookErr != nil {
 		return nil, fmt.Errorf("%w: %s not on PATH", ErrNotInstalled, cli)
 	}
 	if timeout > 0 {
@@ -61,8 +72,8 @@ func runCmdEnv(ctx context.Context, timeout time.Duration, stdin []byte, extraEn
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	//nolint:gosec,nolintlint // G702: cli is one of the three literal CLI names Kind.CLI() returns, resolved through LookPath above; args are built by this package's providers and reach execve as separate tokens with no shell, so a request-supplied repo or branch cannot become a command
-	cmd := exec.CommandContext(ctx, cli, args...)
+	//nolint:gosec,nolintlint // G702: cli is one of the three literal CLI names Kind.CLI() returns and argv[0] IS the probe's own answer rather than a re-resolution of the name; args are built by this package's providers and reach execve as separate tokens with no shell, so a request-supplied repo or branch cannot become a command
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = sanitizeEnv(os.Environ())
 	if len(extraEnv) > 0 {
 		cmd.Env = append(cmd.Env, extraEnv...)

@@ -195,3 +195,23 @@ func TestRunCmd_ACommandThatNeverRanReportsNoExitCode(t *testing.T) {
 		t.Errorf("ExitCode = %d, want -1: the process never exited", ce.ExitCode)
 	}
 }
+
+// TestRunCmdEnv_RefusesAnAbsentCLI pins that a failed probe is a classified
+// refusal rather than a spawn attempt of the bare name.
+//
+// There is deliberately NO companion test asserting argv[0] is the probe's own
+// answer, and the reason is worth recording: it cannot fail. exec.Command
+// resolves a bare name through PATH at CONSTRUCTION and puts the answer in
+// cmd.Path, so binding the probe's answer changes when and how often the lookup
+// happens, not which file the kernel execs. A shell-script fake cannot see the
+// difference either — measured: for a `#!` script both $0 and /proc/$$/cmdline
+// report the resolved script path, because the kernel replaces the caller's
+// argv[0] with it. What the binding actually removes is a TOCTOU between the two
+// lookups, and nothing can intervene between them through this package's
+// surface, so it is a shape fix with no observable behaviour to pin.
+func TestRunCmdEnv_RefusesAnAbsentCLI(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if _, err := runCmd(t.Context(), 5*time.Second, nil, "gh"); !errors.Is(err, ErrNotInstalled) {
+		t.Errorf("runCmd with no gh on PATH = %v, want ErrNotInstalled", err)
+	}
+}

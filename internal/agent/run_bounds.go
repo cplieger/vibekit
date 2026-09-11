@@ -666,17 +666,14 @@ func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 			"idle_window", runIdleWindow.String(), "recipe", l.Recipe)
 	}
 	rs.cancelBounded(workflowID, runEndOverran)
-	if !slotRanOut || rs.schedules == nil || l.ScheduleID == "" {
+	if !slotRanOut {
 		return
 	}
 	// Surface it on the row. Without this the schedule still reads "started"
 	// while it silently stops producing.
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
-	if err := rs.schedules.RecordOutcome(ctx, l.ScheduleID, outcomeOverran); err != nil {
-		slog.Warn("could not record the schedule's outcome",
-			"schedule_id", l.ScheduleID, "error", err)
-	}
+	rs.recordScheduleOutcome(ctx, l.ScheduleID, outcomeOverran)
 }
 
 // backstopSpent reports whether the run's absolute executing-time budget is gone at

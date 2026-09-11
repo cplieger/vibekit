@@ -61,7 +61,6 @@ func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, c
 			return false
 		}
 		c.Messages = c.Messages[:idx]
-		c.MessageCount = len(c.Messages)
 		return true
 	}); mErr != nil {
 		slog.Error("rewind: truncate record", "chat", cmd.ChatID, keyError, mErr)
@@ -173,15 +172,14 @@ func CmdSetEffort(ctx context.Context, bridges BridgeAccess, chats ChatStore, cm
 	}
 
 	// Switch live first (fail fast) when a bridge is running, so a refusal is
-	// reported rather than persisted as a level the session never took.
-	if bridge := bridges.Bridge(cmd.ChatID); bridge != nil {
-		if _, err := bridge.Call(ctx, vibekit.MethodSetConfigOption, SessionParams(bridge, map[string]any{
+	// reported rather than persisted as a level the session never took. A cold-spawning
+	// bridge is not a refusal — see applySessionConfig.
+	if err := applySessionConfig(ctx, bridges, cmd.ChatID, "set_effort",
+		vibekit.MethodSetConfigOption, map[string]any{
 			"configId": vibekit.ConfigOptionEffort,
 			"value":    string(p.Level),
-		})); err != nil {
-			slog.Warn("set_effort: bridge call failed", "chat", cmd.ChatID, keyError, err)
-			return nil, StatusError(http.StatusBadGateway, err)
-		}
+		}); err != nil {
+		return nil, err
 	}
 
 	if err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {

@@ -141,6 +141,29 @@ var ErrBridgeExited = errors.New("ACP bridge exited")
 // failure. A user who wants it again presses Send.
 var ErrFrameTooLarge = errors.New("a message from kiro-cli was too large to read and was dropped, so this turn was stopped")
 
+// ErrBridgeNotStarted is the sentinel every write on a bridge returns when the
+// subprocess is not there to write to: Start has not run yet, or it ran and
+// failed. Exported for the same reason as its siblings — a caller must be able
+// to tell it from a bridge that exited mid-request without substring matching.
+//
+// It exists because the alternative was a PANIC. The stdin handle is an
+// interface field assigned by Start, so writing before that assignment called a
+// method on a nil interface, which webhttp.Recoverer turned into a 500 with no
+// body and no attributable log line. Both halves reach a real caller: the bridge
+// record is registered BEFORE Start so concurrent opens coalesce, so any command
+// resolving a bridge by chat id can hold one mid-spawn (a mode or effort click
+// during a cold spawn, which unpacks a ~240 MB runtime); and a failed Start rolls
+// the record out of the map AFTER releasing the starting state, so a holder that
+// raced the removal keeps a bridge that will never have a handle.
+//
+// The write path cannot tell those two apart — it sees an absent handle either
+// way — so it does not try. It reports the absence and lets the CALLER's retry
+// policy decide, which is why Call wraps it retryable like any other write
+// failure: a retry after the spawn finishes succeeds, and a retry against a
+// failed Start costs the same dead wall-clock time ErrBridgeExited's own doc
+// names, with the same error surfacing at the end of it.
+var ErrBridgeNotStarted = errors.New("ACP bridge has not started")
+
 // There is no vibekit.ErrChatNotFound sentinel. It existed for errors.Is
 // classification against a store TRANSITION, and PromoteRewind was the only
 // transition that returned it. (command.ErrChatNotFound is a different, live

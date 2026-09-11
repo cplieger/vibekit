@@ -424,7 +424,14 @@ func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *vibekit.RP
 		result, err := secretDeleteResult(ctx, us.secrets, msg.Params)
 		_ = bridge.Respond(ctx, *msg.ID, result, err)
 	case msg.Method == vibekit.MethodRequestPermission:
-		// Deny: cancelled outcome, the ACP shape for "the user said no".
+		// `cancelled` rather than a selected reject, because nobody is here to
+		// select: this session is text-only with no human attached, so "the ask
+		// reached nobody" is the truthful outcome. KAS discards the distinction
+		// anyway — its ordinary tool-approval arm maps any non-`selected`
+		// outcome to the SAME {decision:"reject"} object a selected reject
+		// produces, and its turn-approval, hook and user-input arms each fold
+		// cancelled onto their own reject, so no consumer downstream of the ACP
+		// boundary can tell the two apart. Measured on KAS 0.58.7.
 		slog.Warn("utility bridge: denying tool permission request (text-only session)")
 		_ = bridge.Respond(ctx, *msg.ID, vibekit.PermissionOutcomeCancelled(), nil)
 	case msg.Method == vibekit.MethodFSRead || msg.Method == vibekit.MethodFSWrite ||

@@ -35,11 +35,9 @@ func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus 
 
 	// Switch live first (fail fast) when a bridge is running. When there
 	// is no bridge yet the persisted mode below is applied at session/new.
-	if bridge := bridges.Bridge(cmd.ChatID); bridge != nil {
-		if _, err := bridge.Call(ctx, vibekit.MethodSetMode, SessionParams(bridge, map[string]any{"modeId": p.ModeID})); err != nil {
-			slog.Warn("set_mode: bridge call failed", "chat", cmd.ChatID, keyError, err)
-			return nil, StatusError(http.StatusBadGateway, err)
-		}
+	if err := applySessionConfig(ctx, bridges, cmd.ChatID, "set_mode",
+		vibekit.MethodSetMode, map[string]any{"modeId": p.ModeID}); err != nil {
+		return nil, err
 	}
 
 	// Whether anything changed, and nothing more: a refused write is reported by
@@ -76,4 +74,55 @@ func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus 
 	}
 	slog.Info("mode set", "chat", cmd.ChatID, "mode", p.ModeID)
 	return responseWith(map[string]any{"mode_id": p.ModeID}), nil
+}
+
+// applySessionConfig sends one live session-config change for chat and grades the
+// outcome, so both config commands answer a cold spawn the same way. A nil error means
+// the caller may persist: either the change landed on a session, or there is no
+// session yet to land it on.
+//
+// A bridge that EXISTS but has not STARTED is that second case, not a failure. The
+// manager registers the record before Start so concurrent opens coalesce, so a mode or
+// effort click during a cold spawn — which unpacks a ~240 MB KAS runtime — holds a
+// bridge whose write refuses with vibekit.ErrBridgeNotStarted, and so does one whose
+// Start FAILED (spawnBridge's setup error removes the record and then releases the
+// starting state, so a holder that raced the removal keeps an idle bridge with no
+// session behind it). Both are chats with no session, which is exactly the state the
+// bridgeless path already handles by persisting for the session door.
+//
+// The lie the fail-fast rule protects against cannot happen there, and that is why
+// this is safe rather than merely convenient: persistNewSessionMetadata re-reads the
+// record AFTER Start, resets it to the mode the session actually took, and
+// reportModeNotApplied names the divergence to the user with a retry instruction;
+// BridgeCoordinator.repairEffort re-asserts the level on the next prompt. What the
+// rule still catches is a refusal by the SESSION — KAS declining a level this model
+// does not offer — which stays a 502 and is never persisted.
+//
+// WAITING for the spawn was priced and refused. The window is bounded by a 120s
+// handshake budget, so the prompt path's own 20s AdmissionWait would still refuse on a
+// first boot while holding an HTTP request for the whole wait, and a second bound plus
+// a wake channel would be two more things to keep in step with that budget.
+func applySessionConfig(
+	ctx context.Context,
+	bridges BridgeAccess,
+	chatID vibekit.ChatID,
+	verb, method string,
+	params map[string]any,
+) error {
+	bridge := bridges.Bridge(chatID)
+	if bridge == nil {
+		return nil
+	}
+	_, err := bridge.Call(ctx, method, SessionParams(bridge, params))
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, vibekit.ErrBridgeNotStarted):
+		slog.Debug(verb+": no session yet; persisting for the session door",
+			"chat", chatID, keyError, err)
+		return nil
+	default:
+		slog.Warn(verb+": bridge call failed", "chat", chatID, keyError, err)
+		return StatusError(http.StatusBadGateway, err)
+	}
 }

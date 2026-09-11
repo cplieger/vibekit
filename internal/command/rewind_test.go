@@ -144,7 +144,6 @@ func seedChat(t *testing.T, store ChatStore, id vibekit.ChatID) {
 			{ID: "u2", Role: vibekit.RoleUser, Content: "second", Ts: 300},
 			{ID: "a2", Role: vibekit.RoleAssistant, Content: "reply two", Ts: 400},
 		}
-		c.MessageCount = len(c.Messages)
 		return true
 	})
 	if err != nil {
@@ -179,9 +178,6 @@ func TestCmdRewindChat_DropsTheTargetAndEverythingAfter(t *testing.T) {
 	}
 	if len(got) != 2 || got[0] != "u1" || got[1] != "a1" {
 		t.Errorf("messages = %v, want [u1 a1]", got)
-	}
-	if c.MessageCount != 2 {
-		t.Errorf("message_count = %d, want 2", c.MessageCount)
 	}
 }
 
