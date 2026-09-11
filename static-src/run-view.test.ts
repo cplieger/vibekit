@@ -911,18 +911,9 @@ describe("run view step result clamp", () => {
   // observer has to overrule it. A character-count implementation leaves an opener
   // here that opens nothing.
   it("withdraws the opener when layout says the long capture fits", async () => {
-    // NARROW GLYPHS, deliberately, and this is the one case whose fixture is chosen by
-    // measurement rather than by looking realistic. It has to clear
-    // `RESULT_CLAMP.fallbackChars` (900) in CHARACTERS while staying inside twelve
-    // LINES, and those two pull against each other: at this width ordinary prose runs
-    // about 109 chars per line, so 900 characters of it already occupies eight or nine
-    // of the twelve and the margin is one font apart from gone. `shipped ` x150 sat
-    // there and the case failed on a CI runner at 13 lines while measuring 11 here —
-    // same 750px box, wider default face, two lines of difference.
-    //
-    // `i ` packs about 200 chars per line, so 999 characters render in six lines and
-    // the premise survives a face half again as wide. Do not "tidy" this back into a
-    // word: the length is the point and the glyph is what buys the headroom.
+    // `i ` packs ~200 chars per line, so 999 chars clears `RESULT_CLAMP.fallbackChars`
+    // (900) while filling six of the twelve. Prose runs ~109/line at this width, which
+    // leaves the premise one font-width from failing; the glyph is what buys the margin.
     const long = "i ".repeat(500).trim();
     expect(long.length).toBeGreaterThan(900);
     const body = await capture(long);
