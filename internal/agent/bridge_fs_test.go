@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -617,4 +618,35 @@ func TestRespondHelpersReportADroppedWrite(t *testing.T) {
 			t.Errorf("respondErr(accepted write) logged %q, want no respond-failed line", got)
 		}
 	})
+}
+
+func TestRespondFSError_BoundsAndNormalizesTheLogAttribute(t *testing.T) {
+	h, br := hubForFSTest(t, t.TempDir())
+	id := int64(905)
+	msg := &vibekit.RPCResponse{ID: &id, Method: vibekit.MethodFSRead}
+	raw := "path\n\t\u202e" + strings.Repeat("x", 400)
+
+	logs := captureLogs(t)
+	h.inbound.respondFSError(t.Context(), "c1", msg, errors.New(raw))
+	<-br.done
+
+	var record map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace([]byte(logs.String())), &record); err != nil {
+		t.Fatalf("decode fs failure log: %v; raw log: %s", err, logs.String())
+	}
+	got, ok := record["error"].(string)
+	if !ok {
+		t.Fatalf("fs failure log error attribute type = %T, want string", record["error"])
+	}
+	if strings.ContainsAny(got, "\n\t\r") {
+		t.Errorf("fs failure log error attribute contains a line-breaking control: %q", got)
+	}
+	if strings.ContainsRune(got, '\u202e') {
+		t.Errorf("fs failure log error attribute contains a bidi override: %q", got)
+	}
+	// logsafe.Field carries runesafe's "..." marker OUTSIDE the cap (settled
+	// library contract), so a truncated attribute is MaxFieldBytes+3 bytes.
+	if maxLen := logsafe.MaxFieldBytes + len("..."); len(got) > maxLen {
+		t.Errorf("fs failure log error attribute length = %d, want at most %d bytes", len(got), maxLen)
+	}
 }

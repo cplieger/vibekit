@@ -177,16 +177,11 @@ func (rs *Runs) answerUnattended(chatID vibekit.ChatID, requestID int64, schedul
 	// Surface it. Without this the schedule row still reads "started" while the
 	// run fails the same way every night, which is exactly the silent-repeat
 	// failure this floor exists to make visible.
-	if rs.schedules == nil || scheduleID == "" {
-		return
-	}
 	reason := "failed: needed approval for " + tool + " with nobody watching — add a permission rule to allow it"
 	if tool == "" {
 		reason = "failed: needed an approval with nobody watching — add a permission rule to allow it"
 	}
-	if err := rs.schedules.RecordOutcome(ctx, scheduleID, reason); err != nil {
-		slog.Warn("could not record the schedule's outcome", "schedule_id", scheduleID, "error", err)
-	}
+	rs.recordScheduleOutcome(ctx, scheduleID, reason)
 }
 
 // permissionToolName names what a request is asking about, for the log line and

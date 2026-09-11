@@ -39,6 +39,11 @@ const stderrLineCap = 64 * 1024
 // with the same text would make errors.Is fail and the retry loop spin on a corpse.
 var errBridgeExited = vibekit.ErrBridgeExited
 
+// errBridgeNotStarted aliases the exported sentinel every write returns when the
+// bridge has no stdin handle. An ALIAS for errBridgeExited's reason: two values
+// with one text defeat errors.Is at the call sites that classify them.
+var errBridgeNotStarted = vibekit.ErrBridgeNotStarted
+
 // ACP RPC method names, re-exported for package-local use. The canonical definitions
 // live in vibekit/methods.go so the protocol vocabulary is discoverable in one place.
 const (
@@ -74,18 +79,37 @@ type AgentKiroCapabilities struct {
 	ReplayMarking    bool
 }
 
+// stdinPipe wraps the subprocess's write end so Bridge.stdin can be one
+// atomically-published word. See that field for why publication is atomic.
+type stdinPipe struct{ w io.WriteCloser }
+
 // Bridge is one kiro-cli ACP subprocess tied to one chat.
 type Bridge struct {
 	// lifecycleCtx bounds the subprocess: the receiving half of StartOpts.Lifetime,
 	// assigned by Start, which refuses a nil one. A lifetime HANDLE rather than a
 	// stashed caller context — never a request or turn context.
 	lifecycleCtx context.Context
-	stdin        io.WriteCloser
-	modes        atomic.Pointer[[]vibekit.SessionMode]
-	stdout       *frameReader
-	pending      map[int64]chan pendingReply
-	notifCh      chan vibekit.Notification
-	done         chan struct{}
+	// stdin is the subprocess's write end, published ATOMICALLY because its one
+	// writer and its three readers are on different goroutines: startProcess
+	// assigns it, writeFrame writes through it, Stop closes it, and cmd.Cancel
+	// closes it from os/exec's own goroutine.
+	//
+	// Atomic rather than a mutex, and the reason is a NUMBER: the only lock in
+	// reach is writeMu, and writeFrame holds it for up to writeDeadline (30 s),
+	// so making Stop take it would block a shutdown path — which stops every
+	// bridge BEFORE inflight.Wait() — for half a minute per wedged bridge. A
+	// dedicated second mutex would buy the same publication for an extra lock
+	// order to keep acyclic against writeMu.
+	//
+	// The wrapper type is what makes the load a single word: atomic.Pointer over
+	// the interface directly would give a *io.WriteCloser nobody reading the call
+	// site could love.
+	stdin   atomic.Pointer[stdinPipe]
+	modes   atomic.Pointer[[]vibekit.SessionMode]
+	stdout  *frameReader
+	pending map[int64]chan pendingReply
+	notifCh chan vibekit.Notification
+	done    chan struct{}
 	// catalog is the UNFILTERED advertised set. Models derives the picker's list
 	// from it and ApplyServedModels derives the entitlement ids, so a deprecated
 	// model the account still holds cannot be filtered out of the check.

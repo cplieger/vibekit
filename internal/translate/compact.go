@@ -1,9 +1,6 @@
 package translate
 
 // Compaction domain helpers, called from v3_updates.go's handleV3Summarization.
-//
-// Nothing here checks the turn's mute, unlike HandlePlan: a watermark is a fact
-// about the SESSION, so it must survive a priming turn.
 
 import (
 	"cmp"

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"sync"
 
 	"github.com/cplieger/vibekit/internal/runlease"
@@ -43,6 +44,23 @@ type Runs struct {
 type runChatReader interface {
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
 	List(ctx context.Context) []vibekit.ChatHeader
+}
+
+// recordScheduleOutcome puts a run's ending on the launching SCHEDULE's row. It is
+// the one writer for that fact, because the four paths that end a run unattended
+// each owe the same statement and a path that forgets it leaves the row reading
+// "started" while the schedule silently stops producing — which is invisible from
+// outside, since a wedge and a long run look alike from the log. A run with no
+// schedule behind it, or a store that is not wired, is a no-op rather than an
+// error: the outcome has nowhere to go and the run's own row already carries it.
+func (rs *Runs) recordScheduleOutcome(ctx context.Context, scheduleID, outcome string) {
+	if rs.schedules == nil || scheduleID == "" {
+		return
+	}
+	if err := rs.schedules.RecordOutcome(ctx, scheduleID, outcome); err != nil {
+		slog.Warn("could not record the schedule's outcome",
+			"schedule_id", scheduleID, "error", err)
+	}
 }
 
 // runTranslator is the translator as the run surface uses it: the two run-shaped

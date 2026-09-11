@@ -307,6 +307,50 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 	}
 }
 
+// TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow pins the half the run's own
+// row cannot carry: a schedule whose run was swept must stop reading "started". Without
+// it the recipe reads as busy, every later slot is refused as an overlap, and the log
+// line is the only trace — which is invisible from the Workflows tab, where a wedge and
+// a long run look identical.
+func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList: kasRuns(t, map[string]any{
+			"workflowId": "wf_1", "name": "nightly", "status": vibekit.RunStatusPaused,
+		}),
+		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
+		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
+	}
+	st, err := schedule.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("schedule.NewStore: %v", err)
+	}
+	entry := schedule.Entry{
+		ID: "sched-1", Source: "bundled://nightly", Enabled: true,
+		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
+	}
+	if err := st.Put(t.Context(), &entry); err != nil {
+		t.Fatalf("Put schedule: %v", err)
+	}
+	h.runs.schedules = st
+	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
+		WorkflowID: "wf_1", Recipe: "nightly", Origin: runlease.OriginScheduled,
+		ScheduleID: "sched-1", Unattended: true,
+	}); err != nil {
+		t.Fatalf("Put lease: %v", err)
+	}
+
+	h.runs.SweepOrphaned(t.Context())
+
+	rows := st.List()
+	if len(rows) != 1 {
+		t.Fatalf("schedule rows = %d, want 1", len(rows))
+	}
+	if rows[0].LastResult != orphanOutcome {
+		t.Errorf("schedule outcome = %q, want %q", rows[0].LastResult, orphanOutcome)
+	}
+}
+
 // TestSweepOrphanedRuns_ReleasesTerminalLeasesImmediately is bookkeeping rather than the
 // orphan path: a terminal status in the list is evidence enough, so nothing is cancelled
 // and nothing is recorded. BOTH origins, because the agent exclusion guards the CANCEL

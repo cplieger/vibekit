@@ -305,7 +305,7 @@ func TestCall_ReturnsBridgeExitedAfterStop(t *testing.T) {
 	t.Cleanup(func() {
 		_ = pr.Close()
 	})
-	b.stdin = pw
+	b.stdin.Store(&stdinPipe{w: pw})
 
 	type result struct {
 		resp *vibekit.RPCResponse
@@ -351,7 +351,7 @@ func respondBridge(t *testing.T) (*Bridge, *os.File) {
 	}
 	t.Cleanup(func() { _ = pr.Close() })
 	b := New("/nonexistent", "/work")
-	b.stdin = pw
+	b.stdin.Store(&stdinPipe{w: pw})
 	return b, pr
 }
 
@@ -361,7 +361,7 @@ func TestRespond_SuccessResult(t *testing.T) {
 	if err := b.Respond(t.Context(), 42, result, nil); err != nil {
 		t.Fatal(err)
 	}
-	_ = b.stdin.Close() // signal EOF so the read below terminates
+	_ = b.stdin.Load().w.Close() // signal EOF so the read below terminates
 
 	buf := make([]byte, 4096)
 	n, _ := pr.Read(buf)
@@ -392,7 +392,7 @@ func TestRespond_GenericError(t *testing.T) {
 	if err := b.Respond(t.Context(), 7, nil, errors.New("something broke")); err != nil {
 		t.Fatal(err)
 	}
-	_ = b.stdin.Close()
+	_ = b.stdin.Load().w.Close()
 
 	buf := make([]byte, 4096)
 	n, _ := pr.Read(buf)
@@ -417,13 +417,91 @@ func TestRespond_GenericError(t *testing.T) {
 	}
 }
 
+func TestRespond_BoundsAndFlattensGenericErrorMessage(t *testing.T) {
+	b, pr := respondBridge(t)
+	raw := "path\n\t\u202e" + strings.Repeat("x", 400)
+	if err := b.Respond(t.Context(), 8, nil, errors.New(raw)); err != nil {
+		t.Fatal(err)
+	}
+	_ = b.stdin.Load().w.Close()
+
+	buf := make([]byte, 4096)
+	n, _ := pr.Read(buf)
+	var got struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(buf[:n], &got); err != nil {
+		t.Fatalf("unmarshal: %v (raw: %s)", err, buf[:n])
+	}
+	if strings.ContainsAny(got.Error.Message, "\n\t\r") {
+		t.Errorf("generic error message contains a line-breaking control: %q", got.Error.Message)
+	}
+	if strings.ContainsRune(got.Error.Message, '\u202e') {
+		t.Errorf("generic error message contains a bidi override: %q", got.Error.Message)
+	}
+	// SanitizeSingleLineBounded carries its "..." marker OUTSIDE the cap
+	// (settled runesafe contract), so a truncated message is cap+3 bytes.
+	if maxLen := maxRespondErrorBytes + len("..."); len(got.Error.Message) > maxLen {
+		t.Errorf("generic error message length = %d, want at most %d bytes", len(got.Error.Message), maxLen)
+	}
+}
+
+// TestWrites_OnAnUnstartedBridgeRefuseRatherThanPanic pins the three write verbs
+// against a bridge with no stdin handle. Before the guard each one called a method
+// on a nil interface, which webhttp.Recoverer turned into an opaque 500.
+func TestWrites_OnAnUnstartedBridgeRefuseRatherThanPanic(t *testing.T) {
+	cases := map[string]func(*Bridge) error{
+		"Call": func(b *Bridge) error {
+			_, err := b.Call(t.Context(), vibekit.MethodSetMode, nil)
+			return err
+		},
+		"CallAt": func(b *Bridge) error {
+			_, _, err := b.CallAt(t.Context(), vibekit.MethodSetMode, nil)
+			return err
+		},
+		"Notify": func(b *Bridge) error {
+			return b.Notify(t.Context(), vibekit.MethodCancel, nil)
+		},
+		"Respond": func(b *Bridge) error {
+			return b.Respond(t.Context(), 1, map[string]string{}, nil)
+		},
+	}
+	for name, write := range cases {
+		t.Run(name, func(t *testing.T) {
+			// New, never Start: the state a chat bridge is registered in, and the
+			// state a failed Start leaves behind.
+			err := write(New("/nonexistent", "/work"))
+			if !errors.Is(err, vibekit.ErrBridgeNotStarted) {
+				t.Errorf("%s on an unstarted bridge = %v, want ErrBridgeNotStarted", name, err)
+			}
+		})
+	}
+}
+
+// TestCall_OnAnUnstartedBridgeLeavesNoPendingWaiter guards the other half: a
+// refused write must deregister the request it registered, or the id accumulates
+// and a later response could be delivered to a caller that is gone.
+func TestCall_OnAnUnstartedBridgeLeavesNoPendingWaiter(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	if _, err := b.Call(t.Context(), vibekit.MethodSetMode, nil); err == nil {
+		t.Fatal("Call on an unstarted bridge returned no error")
+	}
+	b.pendingMu.Lock()
+	defer b.pendingMu.Unlock()
+	if len(b.pending) != 0 {
+		t.Errorf("pending requests after a refused write = %d, want 0", len(b.pending))
+	}
+}
+
 func TestRespond_TypedRPCError(t *testing.T) {
 	b, pr := respondBridge(t)
 	rpcErr := &vibekit.RPCError{Code: -32001, Message: "custom error"}
 	if err := b.Respond(t.Context(), 99, nil, rpcErr); err != nil {
 		t.Fatal(err)
 	}
-	_ = b.stdin.Close()
+	_ = b.stdin.Load().w.Close()
 
 	buf := make([]byte, 4096)
 	n, _ := pr.Read(buf)
@@ -457,7 +535,7 @@ func TestCall_HappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = pr.Close() })
-	b.stdin = pw
+	b.stdin.Store(&stdinPipe{w: pw})
 
 	type result struct {
 		resp *vibekit.RPCResponse
@@ -508,7 +586,7 @@ func TestCall_ErrorResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = pr.Close() })
-	b.stdin = pw
+	b.stdin.Store(&stdinPipe{w: pw})
 
 	type result struct {
 		resp *vibekit.RPCResponse
@@ -561,7 +639,7 @@ func TestCall_BridgeExitedSentinel(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = pr.Close() })
-	b.stdin = pw
+	b.stdin.Store(&stdinPipe{w: pw})
 
 	type result struct {
 		resp *vibekit.RPCResponse
@@ -1122,7 +1200,7 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = pr.Close() })
-			b.stdin = pw
+			b.stdin.Store(&stdinPipe{w: pw})
 
 			type result struct {
 				resp *vibekit.RPCResponse
@@ -1202,11 +1280,11 @@ func BenchmarkBridgeRespond(b *testing.B) {
 	})
 
 	br := &Bridge{
-		stdin:   pw,
 		done:    make(chan struct{}),
 		pending: make(map[int64]chan pendingReply),
 		notifCh: make(chan vibekit.Notification, 16),
 	}
+	br.stdin.Store(&stdinPipe{w: pw})
 
 	ctx := b.Context()
 	// Typical tool result payload (~500 bytes).
@@ -1359,7 +1437,7 @@ func driveSessionCall(
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = pr.Close() })
-	b.stdin = pw
+	b.stdin.Store(&stdinPipe{w: pw})
 
 	done := make(chan error, 1)
 	go func() {
@@ -1651,7 +1729,7 @@ func TestReadLoop_NoACPReadOnCleanEOF(t *testing.T) {
 func TestNotify_CanceledCtxReturnsErrNoWrite(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	w := &captureWriter{}
-	b.stdin = w
+	b.stdin.Store(&stdinPipe{w: w})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -1669,7 +1747,7 @@ func TestNotify_CanceledCtxReturnsErrNoWrite(t *testing.T) {
 func TestNotify_GoodCtxValidParamsWritesFrame(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	w := &captureWriter{}
-	b.stdin = w
+	b.stdin.Store(&stdinPipe{w: w})
 
 	if err := b.Notify(t.Context(), "session/update", map[string]any{"k": "v"}); err != nil {
 		t.Fatalf("Notify(good ctx, valid params) err = %v, want nil", err)
@@ -1684,7 +1762,7 @@ func TestNotify_GoodCtxValidParamsWritesFrame(t *testing.T) {
 func TestNotify_MarshalErrorReturnsErrNoWrite(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	w := &captureWriter{}
-	b.stdin = w
+	b.stdin.Store(&stdinPipe{w: w})
 
 	err := b.Notify(t.Context(), "session/update", map[string]any{"bad": make(chan int)})
 	if err == nil {
@@ -1701,7 +1779,7 @@ func TestNotify_MarshalErrorReturnsErrNoWrite(t *testing.T) {
 func TestWriteFrame_ReturnsUnderlyingWriteError(t *testing.T) {
 	sentinel := errors.New("write boom")
 	b := New("/nonexistent", "/work")
-	b.stdin = &captureWriter{failErr: sentinel}
+	b.stdin.Store(&stdinPipe{w: &captureWriter{failErr: sentinel}})
 
 	err := b.writeFrame([]byte("hello\n"))
 	if err == nil {
@@ -1770,7 +1848,7 @@ func TestWriteFrame_ReapsTheBridgeWhenStdinStopsDraining(t *testing.T) {
 	shortenWriteDeadline(t, 50*time.Millisecond)
 
 	b := New("/nonexistent", "/work")
-	b.stdin = pw
+	b.stdin.Store(&stdinPipe{w: pw})
 	// Larger than the pipe buffer, so the write cannot complete however long it
 	// waits.
 	err = b.writeFrame(make([]byte, 256*1024))
@@ -1794,7 +1872,7 @@ func (shortWriter) Close() error                { return nil }
 // same unrecoverable state a deadline expiry produces by a different route.
 func TestWriteFrame_ReapsTheBridgeOnAShortWrite(t *testing.T) {
 	b := New("/nonexistent", "/work")
-	b.stdin = shortWriter{}
+	b.stdin.Store(&stdinPipe{w: shortWriter{}})
 
 	if err := b.writeFrame([]byte("hello\n")); err == nil {
 		t.Fatalf("writeFrame swallowed a short write; a truncated frame desyncs kiro-cli's scanner")
@@ -1814,7 +1892,7 @@ func TestWriteFrame_WritesThroughAWriterWithNoDeadline(t *testing.T) {
 	shortenWriteDeadline(t, time.Nanosecond)
 	w := &captureWriter{}
 	b := New("/nonexistent", "/work")
-	b.stdin = w
+	b.stdin.Store(&stdinPipe{w: w})
 
 	if err := b.writeFrame([]byte("hello\n")); err != nil {
 		t.Fatalf("writeFrame through a deadline-less writer: %v", err)
@@ -3204,4 +3282,41 @@ func TestForwardStderr_TruncatesOneLineAndContinues(t *testing.T) {
 	if lines[1] != "second line" {
 		t.Errorf("second forwarded line = %q, want %q", lines[1], "second line")
 	}
+}
+
+// TestStdinPublication_IsRaceFree drives the one genuine concurrency the stdin
+// handle has: Start assigns it while another goroutine writes through it.
+//
+// This is what ErrBridgeNotStarted's population looks like from the other side —
+// the bridge record is registered BEFORE Start so concurrent opens coalesce, so a
+// command resolving a bridge by chat id can be calling into it mid-spawn. Under
+// -race the unsynchronized field this replaced reports
+// "WARNING: DATA RACE ... Previous write at ... startProcess".
+//
+// The subprocess is deliberately one that exits immediately: what is under test is
+// the handle's PUBLICATION, not the ACP handshake, and Start failing at the
+// handshake still runs startProcess and still assigns the pipe.
+func TestStdinPublication_IsRaceFree(t *testing.T) {
+	b := New("/bin/true", t.TempDir())
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(func() { cancel(); b.Stop() })
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	// The writer races the assignment. Every outcome is legal — the refusal, a
+	// write to a live pipe, a write to a dead one — so nothing is asserted about
+	// the ERROR; the race detector is the assertion.
+	go func() {
+		defer wg.Done()
+		for range 200 {
+			_ = b.Notify(ctx, vibekit.MethodCancel, nil)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		// Start assigns stdin inside startProcess. It will fail (the handshake
+		// gets no reply from /bin/true), which is irrelevant to the publication.
+		_ = b.Start(ctx, &vibekit.StartOpts{Lifetime: ctx})
+	}()
+	wg.Wait()
 }

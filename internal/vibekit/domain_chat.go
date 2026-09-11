@@ -670,10 +670,7 @@ type Chat struct {
 	Usage              Usage    `json:"usage"`
 	CreatedAt          int64    `json:"created_at"`
 	UpdatedAt          int64    `json:"updated_at"`
-	// A rewind reverts the chat it is in, so a chat has no parent and records no
-	// starting turn. WorkflowRun.ParentChatID is unrelated: it names a launcher.
-	MessageCount   int  `json:"message_count"`
-	SupervisedMode bool `json:"supervised_mode,omitempty"`
+	SupervisedMode     bool     `json:"supervised_mode,omitempty"`
 }
 
 // SessionChain returns every KAS session id this chat has run on, current one

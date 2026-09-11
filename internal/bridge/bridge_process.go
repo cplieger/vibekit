@@ -199,8 +199,8 @@ func (b *Bridge) reapProcess() {
 func (b *Bridge) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.done)
-		if b.stdin != nil {
-			b.stdin.Close()
+		if p := b.stdin.Load(); p != nil {
+			p.w.Close()
 		}
 		if b.cmd != nil && b.cmd.Process != nil {
 			b.reapProcess()
@@ -379,8 +379,8 @@ func (b *Bridge) startProcess(engine string) error {
 	// 218 MB, reparented to init. Signal errors are returned; a Close error is
 	// not, because a second Close is the expected case when Stop() already ran.
 	b.cmd.Cancel = func() error {
-		if b.stdin != nil {
-			_ = b.stdin.Close()
+		if p := b.stdin.Load(); p != nil {
+			_ = p.w.Close()
 		}
 		return procgroup.Kill(b.cmd.Process, syscall.SIGTERM)
 	}
@@ -400,7 +400,7 @@ func (b *Bridge) startProcess(engine string) error {
 		_ = stdoutPipe.Close()
 		return fmt.Errorf("stderr pipe: %w", err)
 	}
-	b.stdin = stdin
+	b.stdin.Store(&stdinPipe{w: stdin})
 	// A frameReader rather than a bufio.Scanner: an oversize frame has to be
 	// survivable, and ErrTooLong is terminal for the Scanner that raised it.
 	// See bridge_frame.go.

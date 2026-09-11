@@ -81,7 +81,7 @@ func TestReadLoop_ResumesDispatchAfterAnOversizeFrame(t *testing.T) {
 // is what promptFailureReason puts in front of the user.
 func TestCall_FrameTooLargeIsNonRetryableAndNamed(t *testing.T) {
 	b := New("/nonexistent", "/work")
-	b.stdin = &captureWriter{}
+	b.stdin.Store(&stdinPipe{w: &captureWriter{}})
 
 	done := make(chan error, 1)
 	go func() {

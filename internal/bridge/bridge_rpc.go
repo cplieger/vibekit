@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -314,6 +315,14 @@ func (b *Bridge) Notify(ctx context.Context, method string, params any) error {
 	return b.writeFrame(data)
 }
 
+// maxRespondErrorBytes bounds the message of a GENERIC error on the wire. Such
+// a message can interpolate a value the model chose (an fs path is the live
+// case), KAS rethrows it into that model's own tool result, and nothing else on
+// this path bounds it. Long enough for an os error sentence carrying a
+// workspace path; short enough that a hostile one cannot flood the context it
+// re-enters. A *vibekit.RPCError's message is app-authored prose and is exempt.
+const maxRespondErrorBytes = 256
+
 // Respond writes a JSON-RPC response to a request we received from
 // kiro-cli (e.g. fs/read_text_file, fs/write_text_file). Pass a non-nil
 // result for success, a non-nil err for failure; exactly one must be
@@ -326,7 +335,7 @@ func (b *Bridge) Respond(ctx context.Context, id int64, result any, err error) e
 	resp := vibekit.RPCResponseOut{JSONRPC: jsonRPCVersion, ID: id}
 	if err != nil {
 		code := vibekit.RPCCodeInternal
-		msg := err.Error()
+		msg := runesafe.SanitizeSingleLineBounded(err.Error(), maxRespondErrorBytes)
 		if re, ok := errors.AsType[*vibekit.RPCError](err); ok {
 			code = re.Code
 			msg = re.Message
@@ -361,16 +370,23 @@ func (b *Bridge) Respond(ctx context.Context, id int64, result any, err error) e
 func (b *Bridge) writeFrame(data []byte) error {
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
+	// Before anything touches the handle: it is an interface field Start assigns,
+	// so a write that reaches here without one used to call a method on a nil
+	// interface and panic. See vibekit.ErrBridgeNotStarted for who gets here.
+	pipe := b.stdin.Load()
+	if pipe == nil {
+		return errBridgeNotStarted
+	}
 	// Inside the mutex, which is what makes a per-handle deadline safe: writeMu is
 	// what serialises the writers, so no other frame is in flight on this handle.
-	if dw, ok := b.stdin.(deadlineWriter); ok {
+	if dw, ok := pipe.w.(deadlineWriter); ok {
 		if err := dw.SetWriteDeadline(time.Now().Add(writeDeadline)); err == nil {
 			// Cleared on the way out. The next writer arms its own, and an absolute
 			// deadline left behind would expire a healthy write later.
 			defer func() { _ = dw.SetWriteDeadline(time.Time{}) }()
 		}
 	}
-	n, err := b.stdin.Write(data)
+	n, err := pipe.w.Write(data)
 	switch {
 	case errors.Is(err, os.ErrDeadlineExceeded):
 		// The bytes already accepted are a truncated frame in kiro-cli's stdin

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
@@ -85,10 +86,11 @@ func (lt *lifetime) confineInWorkDir(p string) (*os.Root, string, error) {
 // don't trip operator alert dashboards that key off Warn+. Real OS /
 // parse failures remain at Warn for triage.
 func (in *inbound) respondFSError(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, err error) {
+	safe := logsafe.Field(err.Error())
 	if fsErrorIsRoutine(err) {
-		slog.Debug("fs request denied", "chat_id", chatID, "method", msg.Method, "error", err)
+		slog.Debug("fs request denied", "chat_id", chatID, "method", msg.Method, "error", safe)
 	} else {
-		slog.Warn("fs request failed", "chat_id", chatID, "method", msg.Method, "error", err)
+		slog.Warn("fs request failed", "chat_id", chatID, "method", msg.Method, "error", safe)
 	}
 	in.respondBridge(ctx, chatID, msg, nil, err)
 }
