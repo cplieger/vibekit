@@ -1,9 +1,10 @@
 package prewarm
 
-// Coverage for Runner.Run orchestration + the NewRunner constructor.
-// `installOne` is not exercised — it execs real `npm` which is out of
-// scope for unit tests (testing.md: skip hard I/O, configurable-I/O
-// path uses the in-flight dedup seam instead).
+// Coverage for Runner.Run orchestration + the NewRunner constructor, plus the two
+// installOne arms that matter. installOne takes npmBin as a PARAMETER, so those two
+// pass a fake script rather than the real npm: the properties worth pinning there
+// are its argv (no lifecycle scripts, no global tree) and its staging tree's
+// lifecycle, all of which a stand-in observes. Nothing here spawns real npm.
 //
 // These live in-package so the in-flight set (p.mu / p.running) is
 // reachable directly; the Store side of the seam — that
@@ -13,7 +14,13 @@ package prewarm
 
 import (
 	"context"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -202,7 +209,7 @@ func TestQueue_DeadContextNeverTakesASlot(t *testing.T) {
 		if !p.reserve(pkg) {
 			t.Fatalf("reserve(%q) = false on a fresh runner", pkg)
 		}
-		p.queue(dead, pkg)
+		p.queue(dead, unspawnableNpm, pkg)
 	}
 
 	if got := installs.Load(); got != 0 {
@@ -217,20 +224,26 @@ func TestQueue_DeadContextNeverTakesASlot(t *testing.T) {
 	}
 }
 
+// unspawnableNpm is an absolute path no exec can resolve, so an install fails
+// before a process starts. Tests that only exercise queue's slot accounting pass
+// it as argv[0] rather than clearing PATH: Run threads its own probe's answer to
+// installOne, so PATH no longer decides what gets spawned.
+const unspawnableNpm = "/nonexistent/npm"
+
 // Every slot is given back after an install, so capacity does not leak across
 // passes: a runner that has put twice its cap through queue must still be able
 // to take the cap at once. This guards the conversion rather than the defect —
 // the slot channel released too — and it is the assertion a dropped
 // `defer p.sem.Release(1)` fails.
 //
-// An empty PATH is what keeps installOne out of scope: exec resolves "npm" at
-// construction, so the install fails before any process is spawned, and the
-// acquire/release pair is all that runs. Each wait carries its own budget so a
+// An unspawnable npm path is what keeps installOne out of scope: the install
+// fails before any process runs, and the acquire/release pair is all that
+// executes. Stated as a PATH-independent absolute path rather than an empty PATH
+// because Run now threads its probe's answer through as argv[0], so PATH no
+// longer decides what installOne spawns. Each wait carries its own budget so a
 // leaked slot reports the leak instead of parking the package's test binary on
 // an acquire that can never succeed.
 func TestQueue_ReleasesEverySlot(t *testing.T) {
-	t.Setenv("PATH", "")
-
 	p := NewRunner(t.Context(), fakeLister{})
 	for i := range maxConcurrentInstalls * 2 {
 		pkg := "@scope/pkg" + strconv.Itoa(i)
@@ -238,7 +251,7 @@ func TestQueue_ReleasesEverySlot(t *testing.T) {
 			t.Fatalf("reserve(%q) = false on a fresh runner", pkg)
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-		p.queue(ctx, pkg)
+		p.queue(ctx, unspawnableNpm, pkg)
 		cancel()
 	}
 
@@ -246,4 +259,112 @@ func TestQueue_ReleasesEverySlot(t *testing.T) {
 		t.Errorf("the runner cannot take its %d-slot cap after %d installs, so a slot leaked",
 			maxConcurrentInstalls, maxConcurrentInstalls*2)
 	}
+}
+
+// TestInstallOne_WarmsTheCacheWithoutRunningLifecycleScripts is the whole point of
+// the shape the package comment measures, and it is the one property here worth a
+// spawn: prewarm must not execute a package's code. `--ignore-scripts` is what
+// stops it (verified against npm 11.16: a postinstall marker is written without the
+// flag and not with it), and the ABSENCE of `-g` is what makes that safe rather
+// than merely quiet — a half-built global tree would be a thing the spawn could
+// still find and run.
+//
+// installOne takes npmBin as a parameter, so the fake is passed in rather than
+// staged on PATH; nothing here depends on the ambient environment.
+func TestInstallOne_WarmsTheCacheWithoutRunningLifecycleScripts(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "argv")
+	// Records argv and, separately, what the working directory looked like — the
+	// tree's identity and its manifest are both properties installOne owes npm.
+	npm := writeFakeNpm(t, `printf '%s\n' "$@" > `+shellQuote(log)+`
+printf 'CWD=%s\n' "$PWD" >> `+shellQuote(log)+`
+printf 'MANIFEST=%s\n' "$(cat package.json 2>/dev/null)" >> `+shellQuote(log)+`
+`)
+
+	var states []State
+	p := NewRunner(t.Context(), fakeLister{})
+	p.OnStatus = func(_ string, s State) { states = append(states, s) }
+	p.reserve("@scope/pkg")
+	p.installOne(t.Context(), npm, "@scope/pkg")
+
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("fake npm wrote no log, so installOne never spawned it: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	var args []string
+	var cwd, manifest string
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "CWD="):
+			cwd = strings.TrimPrefix(line, "CWD=")
+		case strings.HasPrefix(line, "MANIFEST="):
+			manifest = strings.TrimPrefix(line, "MANIFEST=")
+		default:
+			args = append(args, line)
+		}
+	}
+
+	if !slices.Contains(args, "--ignore-scripts") {
+		t.Errorf("npm argv = %q, want --ignore-scripts — prewarm would run the tree's lifecycle scripts at boot", args)
+	}
+	if slices.Contains(args, "-g") || slices.Contains(args, "--global") {
+		t.Errorf("npm argv = %q, want no global flag — `npx -y` never reads the global tree, so it is cost with no benefit", args)
+	}
+	if len(args) == 0 || args[len(args)-1] != "@scope/pkg" {
+		t.Errorf("npm argv = %q, want the package last", args)
+	}
+	if !strings.Contains(manifest, `"private":true`) {
+		t.Errorf("working directory's package.json = %q, want the private staging manifest — without one npm resolves an ancestor's tree", manifest)
+	}
+	if _, err := os.Stat(cwd); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("staging tree %q still exists after installOne returned (stat err = %v), so every pass leaks one", cwd, err)
+	}
+	if want := []State{Installing, Done}; !slices.Equal(states, want) {
+		t.Errorf("states = %v, want %v", states, want)
+	}
+}
+
+// TestInstallOne_ReportsFailedWhenNpmFails pins the other arm: a non-zero npm is
+// reported rather than swallowed, and the staging tree still goes.
+func TestInstallOne_ReportsFailedWhenNpmFails(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "cwd")
+	npm := writeFakeNpm(t, `printf '%s\n' "$PWD" > `+shellQuote(log)+`
+exit 1
+`)
+
+	var states []State
+	p := NewRunner(t.Context(), fakeLister{})
+	p.OnStatus = func(_ string, s State) { states = append(states, s) }
+	p.reserve("bad-pkg")
+	p.installOne(t.Context(), npm, "bad-pkg")
+
+	if want := []State{Installing, Failed}; !slices.Equal(states, want) {
+		t.Fatalf("states = %v, want %v", states, want)
+	}
+	cwd, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("fake npm wrote no cwd: %v", err)
+	}
+	tree := strings.TrimSpace(string(cwd))
+	if _, err := os.Stat(tree); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("staging tree %q survived a failed install (stat err = %v)", tree, err)
+	}
+}
+
+// writeFakeNpm stages an executable stand-in for npm and returns its path. A
+// script rather than a compiled helper because installOne only ever reads argv,
+// the working directory and the exit status from it.
+func writeFakeNpm(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "npm")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o700); err != nil {
+		t.Fatalf("stage fake npm: %v", err)
+	}
+	return path
+}
+
+// shellQuote wraps s for the fake npm's single-quoted shell context. t.TempDir
+// paths carry the test name, which can hold characters a bare word would split.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

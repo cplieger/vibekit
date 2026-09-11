@@ -2,12 +2,13 @@ package git
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestScrubAuth(t *testing.T) {
+func TestRedactCredentials(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -56,11 +57,34 @@ func TestScrubAuth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := scrubAuth(tt.in)
+			got := redactCredentials(tt.in)
 			if got != tt.want {
-				t.Errorf("scrubAuth(%q)\n got: %q\nwant: %q", tt.in, got, tt.want)
+				t.Errorf("redactCredentials(%q)\n got: %q\nwant: %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestGitExec_RefusesWhenGitIsAbsent pins the half of the pin that matters: a
+// miss must REFUSE, never fall back to the bare name. A fallback at any one site
+// voids the pin everywhere, because an attacker picks the site.
+func TestGitExec_RefusesWhenGitIsAbsent(t *testing.T) {
+	prev := resolveGitBinary
+	resolveGitBinary = func() (string, bool) { return "", false }
+	t.Cleanup(func() { resolveGitBinary = prev })
+
+	cmd := gitExec(t.Context(), "/tmp", "status")
+	if cmd.Path != "/bin/false" {
+		t.Errorf("gitExec with no git resolved = %q, want the /bin/false refusal", cmd.Path)
+	}
+	if len(cmd.Args) != 1 {
+		t.Errorf("gitExec refusal argv = %v, want just the binary — an interpolatable argv is the thing to avoid", cmd.Args)
+	}
+
+	// gitCmd reports WHY, because the refusal above exits 1 in silence and a
+	// caller composing that silence renders a message naming no cause.
+	if _, err := gitCmd(t.Context(), "/tmp", "status"); !errors.Is(err, errGitUnavailable) {
+		t.Errorf("gitCmd with no git resolved = %v, want errGitUnavailable", err)
 	}
 }
 
@@ -73,9 +97,17 @@ func TestGitExec_Args(t *testing.T) {
 	if cmd.Dir != "/tmp" {
 		t.Errorf("gitExec.Dir = %q, want /tmp", cmd.Dir)
 	}
+	// argv[0] is the pin: an ABSOLUTE path ending in the binary's own name, never
+	// the bare name a PATH lookup would resolve. Asserted structurally rather than
+	// against /usr/bin/git so it states the invariant instead of the image's
+	// layout, and read off cmd rather than the resolver so this test stays
+	// parallel-safe while its sibling reassigns that seam.
+	if !filepath.IsAbs(cmd.Args[0]) || filepath.Base(cmd.Args[0]) != "git" {
+		t.Errorf("gitExec.Args[0] = %q, want an absolute path to git", cmd.Args[0])
+	}
 	// Args include the prepended -c hardening pairs, before the subcommand.
 	wantArgs := []string{
-		"git",
+		cmd.Args[0],
 		"-c", "protocol.ext.allow=never",
 		"-c", "core.fsmonitor=",
 		"-c", "core.quotePath=false",
@@ -399,7 +431,6 @@ func TestDefaultTimeouts_budgetsEachOperationClass(t *testing.T) {
 		got   time.Duration
 		want  time.Duration
 	}{
-		{field: "Plumbing", got: policy.Plumbing, want: 5 * time.Second},
 		{field: "Fetch", got: policy.Fetch, want: 5 * time.Second},
 		{field: "Push", got: policy.Push, want: 60 * time.Second},
 	}

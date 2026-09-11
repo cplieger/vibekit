@@ -42,7 +42,7 @@ func decodePostBodyOptional(w http.ResponseWriter, r *http.Request, v any) bool 
 }
 
 // writeCmdResult writes a git-command result: {jsonKeyOutput:
-// scrubAuth(out)} on success, {"error": scrubAuth(errMsg)} on
+// clientBlock(out)} on success, {"error": clientBlock(errMsg)} on
 // failure. errMsg is the subprocess combined output when non-empty;
 // otherwise err.Error().
 //
@@ -50,17 +50,19 @@ func decodePostBodyOptional(w http.ResponseWriter, r *http.Request, v any) bool 
 // cannot confuse a partial stdout stream with a successful response
 // — presence-of-field is the success signal, not string emptiness.
 //
-// scrubAuth runs on BOTH paths. Git progress output routinely
+// clientBlock runs on BOTH paths. Git progress output routinely
 // echoes the remote URL (https://user:token@host/…), so redacting
 // on success prevents credentials from leaking through a legitimate
 // clone or push whose stderr happened to include the helper-
-// rewritten URL. Matches the forges package semantics.
+// rewritten URL. Matches the forges package semantics. It carries the
+// bound and the defusal too — see the helper for why the order inside it
+// is what it is.
 func writeCmdResult(w http.ResponseWriter, out string, err error) {
 	if err != nil {
-		webhttp.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(cmdFailure(out, err))))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON(clientBlock(cmdFailure(out, err))))
 		return
 	}
-	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: scrubAuth(out)})
+	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: clientBlock(out)})
 }
 
 // cmdFailure names WHY a git subprocess failed, for a caller that composes

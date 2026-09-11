@@ -36,7 +36,7 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !isAllowedRemoteScheme(body.URL) {
-		slog.Warn("git clone: invalid scheme rejected", "url", scrubAuth(body.URL))
+		slog.Warn("git clone: invalid scheme rejected", "url", logField(body.URL))
 		httpreply.BadRequest(w, "only https:// and git@ URLs allowed")
 		return
 	}
@@ -46,7 +46,7 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 	// otherwise interpret leading dashes as flags. The explicit scheme
 	// prefix above already blocks `--flag=...`, but `--` is cheap and
 	// makes the guarantee lexical rather than prefix-based.
-	slog.Info("git clone", "url", scrubAuth(body.URL))
+	slog.Info("git clone", "url", logField(body.URL))
 	// From here the response is a PROGRESS STREAM: NDJSON progress lines
 	// while git transfers, then one final line carrying the {output}/{error}
 	// envelope writeCmdResult produces. Streaming is what lets the client
@@ -64,17 +64,17 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		lastSent = time.Now()
-		writeCloneStreamLine(w, rc, map[string]string{"progress": scrubAuth(line)})
+		writeCloneStreamLine(w, rc, map[string]string{"progress": clientBlock(line)})
 	}
 	cloneCtx, cancel := context.WithTimeoutCause(r.Context(), cloneCeiling, errCloneCeiling)
 	defer cancel()
 	out, err := h.clone(cloneCtx, body.URL, progress)
 	if err != nil {
-		slog.Error("git clone: failed", "url", scrubAuth(body.URL), "error", err, "out", scrubAuth(out))
-		writeCloneStreamLine(w, rc, map[string]string{"error": scrubAuth(cmdFailure(out, err))})
+		slog.Error("git clone: failed", "url", logField(body.URL), "error", err, "out", logField(out))
+		writeCloneStreamLine(w, rc, map[string]string{"error": clientBlock(cmdFailure(out, err))})
 		return
 	}
-	writeCloneStreamLine(w, rc, map[string]string{jsonKeyOutput: scrubAuth(out)})
+	writeCloneStreamLine(w, rc, map[string]string{jsonKeyOutput: clientBlock(out)})
 }
 
 // progressInterval throttles the progress lines the clone stream forwards.
@@ -381,7 +381,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	cmd := gitExec(r.Context(), h.workDir, "clone", "--", remote, filepath.Base(dir))
 	out, cErr := cmd.CombinedOutput()
 	if cErr != nil {
-		slog.Error("git reclone: clone failed", "repo", body.Repo, "error", cErr, "out", scrubAuth(strings.TrimSpace(string(out))))
+		slog.Error("git reclone: clone failed", "repo", body.Repo, "error", cErr, "out", logField(strings.TrimSpace(string(out))))
 	} else {
 		slog.Info("git reclone completed", "repo", body.Repo)
 	}

@@ -153,7 +153,7 @@ func (h *Handler) pullOne(ctx context.Context, e repoEntry, deadline time.Time) 
 	slog.Info("git pull-all: pulling", "repo", logsafe.Field(e.Name), "behind", behind)
 	out, perr := gitCmdWithCreds(ctx, budget, e.Dir, "", "pull", "--ff-only")
 	if perr != nil {
-		return pullResult{Repo: e.Name, Verdict: verdictFailed, Detail: scrubAuth(cmdFailure(out, perr))}
+		return pullResult{Repo: e.Name, Verdict: verdictFailed, Detail: clientBlock(cmdFailure(out, perr))}
 	}
 	return pullResult{Repo: e.Name, Verdict: verdictPulled}
 }

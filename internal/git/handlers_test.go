@@ -21,6 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp/v2"
 	"golang.org/x/sync/singleflight"
@@ -804,9 +805,9 @@ func TestGitExec_ScrubsInheritedEnv(t *testing.T) {
 	}
 }
 
-// --- scrubAuth + sanitizeRepoPaths ---
+// --- redactCredentials + sanitizeRepoPaths ---
 
-func TestScrubAuth_Idempotent(t *testing.T) {
+func TestRedactCredentials_Idempotent(t *testing.T) {
 	inputs := []string{
 		"https://user:pwd@host/path",
 		"http://a@b@c@host/",
@@ -818,10 +819,10 @@ func TestScrubAuth_Idempotent(t *testing.T) {
 		"Authorization: Bearer abc",
 	}
 	for _, in := range inputs {
-		once := scrubAuth(in)
-		twice := scrubAuth(once)
+		once := redactCredentials(in)
+		twice := redactCredentials(once)
 		if once != twice {
-			t.Errorf("scrubAuth not idempotent: f(%q)=%q, f(f(x))=%q", in, once, twice)
+			t.Errorf("redactCredentials not idempotent: f(%q)=%q, f(f(x))=%q", in, once, twice)
 		}
 	}
 }
@@ -1072,9 +1073,16 @@ func stageFakeGitExiting(t *testing.T, script string, exit int) {
 	if err := os.WriteFile(fake, []byte(content), 0o755); err != nil { // #nosec G306 -- a test-local executable needs the exec bit
 		t.Fatal(err)
 	}
-	// The fake shadows git; the rest of PATH stays, or the script's own
-	// mkdir resolves to nothing and the debris is never staged — which
-	// makes every assertion below pass vacuously.
+	// The SEAM is what stages the fake, because gitExec pins argv[0] to an
+	// absolute path from a fixed system-directory set and so cannot be shadowed
+	// by PATH. Before the seam existed these tests reached the real git and drove
+	// it against a real remote.
+	prev := resolveGitBinary
+	resolveGitBinary = func() (string, bool) { return fake, true }
+	t.Cleanup(func() { resolveGitBinary = prev })
+	// PATH still gains the fake's directory: the script's own `mkdir` and friends
+	// resolve through it, and without the rest of PATH the debris is never staged
+	// — which makes every assertion below pass vacuously.
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
@@ -2096,6 +2104,36 @@ func TestIsValidGitRef(t *testing.T) {
 		{"has\\backslash", false},
 		{"HEAD~3", false}, // ref-expression, not a plain ref
 		{"main^", false},  // ref-expression, not a plain ref
+
+		// git-check-ref-format's positional rules, all seven of which the
+		// pre-2026-09 denylist accepted while claiming to mirror them.
+		{"a..b", false},
+		{"foo.lock", false},
+		{".foo", false},
+		{"foo.", false},
+		{"foo//bar", false},
+		{"/foo", false},
+		{"foo/", false},
+		{"foo@{1}", false},
+		{"refs/heads/.hidden", false},
+		{"refs/heads/x.lock", false},
+
+		// vibekit's own screen, beyond git: git accepts every one of these in a
+		// refname, and a git-panel row and a slog attribute must not.
+		{"bidi\u202eoverride", false},
+		{"c1\u0085control", false},
+		{"line\u2028separator", false},
+		{"del\x7fbyte", false},
+
+		// The accept side that must not regress. An accented and a CJK name are
+		// what a full-match allowlist would refuse and git does not.
+		{"refs/heads/main", true},
+		{"9f2c1b4e6a8d0f3c5b7a9e1d2f4c6b8a0d2e4f60", true},
+		{"feature/café", true},
+		{"機能/ブランチ", true},
+		{"v1.2.3", true},
+		{"has.dots.inside", true},
+		{"lockfile", true}, // ".lock" is a SUFFIX rule, not a substring one
 	}
 	for _, tt := range tests {
 		t.Run(tt.ref, func(t *testing.T) {
@@ -2106,30 +2144,30 @@ func TestIsValidGitRef(t *testing.T) {
 	}
 }
 
-func TestScrubAuth_LongUserInfoChain(t *testing.T) {
-	// 16-segment chain: scrubAuth must consume every userinfo
+func TestRedactCredentials_LongUserInfoChain(t *testing.T) {
+	// 16-segment chain: redactCredentials must consume every userinfo
 	// segment in a single call (true fixed-point iteration), not
 	// bail out at 8 iterations and leak the residual head.
 	in := "http://a@b@c@d@e@f@g@h@i@j@k@l@m@n@o@p@host/path"
 	want := "http://host/path"
-	if got := scrubAuth(in); got != want {
-		t.Errorf("scrubAuth(long chain) = %q, want %q", got, want)
+	if got := redactCredentials(in); got != want {
+		t.Errorf("redactCredentials(long chain) = %q, want %q", got, want)
 	}
 	// Idempotency: a second call must not change the output.
-	if got := scrubAuth(scrubAuth(in)); got != want {
-		t.Errorf("scrubAuth idempotent = %q, want %q", got, want)
+	if got := redactCredentials(redactCredentials(in)); got != want {
+		t.Errorf("redactCredentials idempotent = %q, want %q", got, want)
 	}
 }
 
-func TestScrubAuth_DeeplyChainedUserinfo(t *testing.T) {
+func TestRedactCredentials_DeeplyChainedUserinfo(t *testing.T) {
 	// Five @ segments before the host exercise the fixpoint loop
 	// at a depth realistic adversaries might actually try. Sits
 	// between the common 1-2 pass case and the 16-segment worst
-	// case pinned by TestScrubAuth_LongUserInfoChain.
+	// case pinned by TestRedactCredentials_LongUserInfoChain.
 	in := "http://a@b@c@d@e@host/path"
 	want := "http://host/path"
-	if got := scrubAuth(in); got != want {
-		t.Errorf("scrubAuth(%q) = %q, want %q", in, got, want)
+	if got := redactCredentials(in); got != want {
+		t.Errorf("redactCredentials(%q) = %q, want %q", in, got, want)
 	}
 }
 
@@ -2454,7 +2492,7 @@ func TestPRRemoteHost_NeverContainsPathOrUserinfo(t *testing.T) {
 
 // --- fuzz targets ---
 
-func FuzzScrubAuth(f *testing.F) {
+func FuzzRedactCredentials(f *testing.F) {
 	// Seed corpus from existing test cases.
 	seeds := []string{
 		"",
@@ -2477,17 +2515,17 @@ func FuzzScrubAuth(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, data string) {
-		result := scrubAuth(data)
+		result := redactCredentials(data)
 		// Post-condition 1: no panic (implicit).
 		// Post-condition 2: idempotent.
-		if twice := scrubAuth(result); twice != result {
-			t.Errorf("scrubAuth not idempotent: f(%q)=%q, f(f(x))=%q", data, result, twice)
+		if twice := redactCredentials(result); twice != result {
+			t.Errorf("redactCredentials not idempotent: f(%q)=%q, f(f(x))=%q", data, result, twice)
 		}
 		// Post-condition 3: no userinfo between :// and the next /.
 		if _, rest, ok := strings.Cut(result, "://"); ok {
 			if hostPart, _, hasSlash := strings.Cut(rest, "/"); hasSlash {
 				if strings.Contains(hostPart, "@") {
-					t.Errorf("scrubAuth(%q) = %q: userinfo '@' remains between :// and /", data, result)
+					t.Errorf("redactCredentials(%q) = %q: userinfo '@' remains between :// and /", data, result)
 				}
 			}
 		}
@@ -2630,7 +2668,7 @@ func BenchmarkScrubAuth(b *testing.B) {
 	} {
 		b.Run(tc.name, func(b *testing.B) {
 			for b.Loop() {
-				_ = scrubAuth(tc.input)
+				_ = redactCredentials(tc.input)
 			}
 		})
 	}
@@ -2677,7 +2715,69 @@ func FuzzIsValidGitRef(f *testing.F) {
 		if data == "" {
 			t.Errorf("isValidGitRef(%q) = true, but is empty", data)
 		}
+		// The rules the three above cannot see. Until 2026-09 every one of
+		// these was reachable: the denylist screened characters and nothing
+		// positional, so the seed corpus could not fail whatever it drew.
+		if strings.Contains(data, "..") {
+			t.Errorf("isValidGitRef(%q) = true, but contains %q", data, "..")
+		}
+		if strings.Contains(data, "@{") {
+			t.Errorf("isValidGitRef(%q) = true, but contains %q", data, "@{")
+		}
+		if i := strings.IndexFunc(data, runesafe.IsUnsafeSingleLine); i != -1 {
+			t.Errorf("isValidGitRef(%q) = true, but holds an unsafe rune %q at %d", data, data[i], i)
+		}
+		for component := range strings.SplitSeq(data, "/") {
+			switch {
+			case component == "":
+				t.Errorf("isValidGitRef(%q) = true, but has an empty component", data)
+			case strings.HasPrefix(component, "."):
+				t.Errorf("isValidGitRef(%q) = true, but component %q begins with a dot", data, component)
+			case strings.HasSuffix(component, "."):
+				t.Errorf("isValidGitRef(%q) = true, but component %q ends with a dot", data, component)
+			case strings.HasSuffix(component, ".lock"):
+				t.Errorf("isValidGitRef(%q) = true, but component %q ends with .lock", data, component)
+			}
+		}
 	})
+}
+
+// TestIsValidGitRef_MatchesGitCheckRefFormat is the differential test, with the
+// real git binary as the oracle: `git check-ref-format refs/heads/<name>` is what
+// `git checkout -b` itself calls through strbuf_check_branch_ref.
+//
+// Only ONE direction is asserted table-wide — everything isValidGitRef accepts,
+// git must accept. The reverse cannot be: vibekit is deliberately stricter than
+// git on hidden Unicode, so a name git accepts may legitimately be refused here.
+// The over-tightening direction is covered by the accept cases in
+// TestIsValidGitRef instead, which is where an "HEAD is reserved" or an
+// allowlist-shaped rewrite would fail.
+func TestIsValidGitRef_MatchesGitCheckRefFormat(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git not on PATH: %v", err)
+	}
+	names := []string{
+		"HEAD", "main", "origin/main", "refs/heads/main", "release/1.2",
+		"feature/v1.2.3", "v1.2.3", "has.dots.inside", "lockfile", "CON",
+		"feature/café", "機能/ブランチ", "9f2c1b4e6a8d0f3c5b7a9e1d2f4c6b8a0d2e4f60",
+		"", "-exec", "--upload-pack=/tmp/x", "has space", "has\ttab", "has:colon",
+		"has?question", "has*asterisk", "has[bracket", "has\\backslash",
+		"HEAD~3", "main^", "a..b", "foo.lock", ".foo", "foo.", "foo//bar",
+		"/foo", "foo/", "foo@{1}", "refs/heads/.hidden", "refs/heads/x.lock",
+		"bidi\u202eoverride", "c1\u0085control", "line\u2028separator", "del\x7fbyte",
+	}
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			if !isValidGitRef(name) {
+				return
+			}
+			cmd := exec.CommandContext(t.Context(), "git", "check-ref-format", "refs/heads/"+name)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Errorf("isValidGitRef(%q) accepted a name git check-ref-format refuses: %v: %s",
+					name, err, out)
+			}
+		})
+	}
 }
 
 func FuzzSanitizeRepoPaths(f *testing.F) {

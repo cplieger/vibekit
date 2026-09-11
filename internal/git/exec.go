@@ -9,26 +9,61 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os/exec"
 	"path"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/vibekit/internal/logsafe"
+	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/vibekit/internal/systembin"
 )
 
-// plumbingTimeout bounds a single local-only git plumbing command
-// (e.g. remote get-url, symbolic-ref). 5 seconds is plenty for
-// local-only operations on a healthy filesystem and tight enough
-// that a wedged filesystem doesn't pin callers forever.
-const plumbingTimeout = 5 * time.Second
+// errGitUnavailable is gitCmd's named refusal when the git binary is absent
+// from internal/systembin's trusted directories. Distinct from a subcommand
+// refusal: that one names a caller's mistake, this one names the image.
+var errGitUnavailable = errors.New("git: not available")
+
+// resolveGitBinary is the package's one resolution of the git binary, and the
+// reassignable func-var seam its tests stage a fake git through. Production
+// never reassigns it.
+//
+// The seam is required rather than convenient: this package's clone and transfer
+// tests used to shadow git by PREPENDING a fake to PATH, and the pin above is
+// precisely what makes PATH unreachable — so without a seam those tests would
+// silently start driving the real git against a real remote. Two of them did,
+// for 25 seconds each, before this existed.
+var resolveGitBinary = func() (string, bool) { return systembin.Resolve("git") }
 
 // gitTimeouts consolidates git subprocess timeout budgets into a single
 // policy struct. Handler holds one so the budget is explicit and testable.
+//
+// There is no Plumbing budget here, and its absence is the measured state
+// rather than an omission. The field existed until 2026-09 with a
+// plumbingTimeout const behind it and ZERO readers: nothing applied it, so a
+// local-only command (`remote get-url`, `status --porcelain`, `show`) is bounded
+// by its CALLER's context. Declaring a budget nothing enforces is worse than
+// declaring none, because a reader costs a change out on the belief that raising
+// the number changes behaviour. It was deleted rather than wired: a filesystem
+// slow enough to need a bound here is one a 5s refusal turns into a git panel
+// that reports nothing, and the two operations that genuinely wait on something
+// remote have their own budgets below. Applying one is a decision with a
+// user-visible cost, not a tidy-up.
+//
+// That caller is NOT always an HTTP request, and the difference is why this
+// closes rather than merely being deferred: every path that DETACHES from the
+// request carries its own budget instead of inheriting nothing — the status scan
+// (`statusScanBudget`), pull-all (`pullAllBudget`) and the forge list cache
+// (`forges.ListTimeout`) each wrap `context.WithoutCancel` in a `WithTimeout`. So
+// there is no unbounded plumbing path to close, and a per-command budget added
+// here would be a second bound over paths that already have one.
 type gitTimeouts struct {
-	// Plumbing bounds local-only operations: branch, status, rev-parse.
-	Plumbing time.Duration
 	// Fetch bounds network read-only operations: fetch --quiet.
 	Fetch time.Duration
 	// Push bounds network write operations: push, pull.
@@ -43,9 +78,8 @@ type gitTimeouts struct {
 // defaultTimeouts returns the production timeout policy.
 func defaultTimeouts() gitTimeouts {
 	return gitTimeouts{
-		Plumbing: plumbingTimeout,
-		Fetch:    5 * time.Second,
-		Push:     60 * time.Second,
+		Fetch: 5 * time.Second,
+		Push:  60 * time.Second,
 	}
 }
 
@@ -69,12 +103,111 @@ var urlQueryTokenPattern = regexp.MustCompile(`([?&](?:token|access_token|privat
 // headers. Case-insensitive on the header name only.
 var authHeaderPattern = regexp.MustCompile(`(?i)(authorization:\s*(?:bearer|token|basic)\s+)\S+`)
 
-// scrubAuth strips credentials from a git subprocess output string.
+// --- Credential redaction, and the three destinations it composes with ---
+//
+// redactCredentials on its own is UNBOUNDED and NOT single-line, so its result
+// must never reach a sink directly. The three helpers below are the only callers,
+// and the ORDER inside each is the substance: a sanitizer that runs BEFORE the
+// redactor can defeat it, because redaction is a byte-exact pattern match and a
+// transform on either side moves the bytes. Nothing outside this file can obtain
+// redacted-but-unbounded text, which is what makes the wrong order inexpressible
+// rather than merely discouraged.
+//
+// Redaction stays at the EMIT site and is deliberately NOT pushed down into
+// gitCmd or runTransfer, even though a producer-side redaction would remove the
+// chance of forgetting one: `git remote get-url` output is PARSED
+// (commitURLPrefix, prRemoteHost) as well as displayed, and redacting at the
+// producer would corrupt the parse. So this closes the ORDER class and not the
+// OMISSION class.
+//
+// THE OMISSION CLASS IS CLOSED AS ACCEPTED, on a measurement rather than on
+// effort. The obvious answer is to make it unrepresentable — have gitCmd return a
+// type whose value cannot reach a sink without picking one of the three helpers —
+// and it fails on the shape of the population: this package has 41 producer calls
+// (36 gitCmd, 5 runTransfer) against 25 destination-helper calls, because most git
+// output here is consumed internally (a branch name compared, an ahead/behind
+// count parsed, a rev resolved) and never emitted at all. For that majority
+// redaction is WRONG, so they would each take the wrapper's raw-value escape — and
+// a type whose escape hatch is the common case constrains nothing while costing
+// every call site. A lint allowlist is refused for its own reason: it is a denylist
+// of spellings over a package whose next emit site has a spelling nobody has
+// written yet.
+//
+// What WOULD close it is a narrower producer than a wrapper: the emit population is
+// git's own FAILURE text plus `remote get-url`, so a variant returning output
+// already bound for a sink would make the choice at the few sites that need it
+// rather than at all 41. That is a shape change, not a guard, and it is not made
+// on a package with no observed omission.
+
+// maxClientOutputBytes bounds a multi-line git output block sent to a client.
+// Generous: it is a transcript a human reads, and git's own failure messages
+// carry the diagnosis in the last lines.
+const maxClientOutputBytes = 64 * 1024
+
+// maxRemoteURLBytes bounds a single-line value a human makes a decision from —
+// the remote URL in the Sources row. Short, because anything longer is not a
+// remote URL.
+const maxRemoteURLBytes = 512
+
+// clientOutputTruncated marks a client block the cap cut.
+const clientOutputTruncated = "\n[output truncated]"
+
+// logField prepares git output for a slog attribute: redact, then the app's ONE
+// slog door (internal/logsafe's single-line preset plus its byte cap).
+//
+// One redaction pass is enough here, and the asymmetry with clientBlock is the
+// point. logsafe's preset REPLACES an unsafe rune with a space, so it can only
+// ever shorten or break a match — never build a `://` that was not there.
+func logField(s string) string {
+	return logsafe.Field(redactCredentials(s))
+}
+
+// clientBlock prepares multi-line git output for a client that renders it as a
+// transcript: redact, defuse, redact AGAIN, then cap with a marker.
+//
+// The SECOND pass is required here and nowhere else. sanitize.Output DELETES
+// hidden runes rather than replacing them, so it can CONSTRUCT a match the first
+// pass could not see: `https:/<U+200B>/user:tok@host/x` carries no literal `://`
+// until the zero-width space is removed, and then it does. Do not "align" the
+// three helpers by adding or removing a pass — each one's count follows from what
+// its sanitizer does to the bytes.
+//
+// Multi-line is preserved deliberately: git output is legitimately several lines
+// and the client renders it as such, so flattening it here would damage the
+// payload rather than protect anything.
+func clientBlock(s string) string {
+	out := sanitize.Output(redactCredentials(s))
+	out = redactCredentials(out)
+	if len(out) <= maxClientOutputBytes {
+		return out
+	}
+	return runesafe.CapBytes(out, maxClientOutputBytes) + clientOutputTruncated
+}
+
+// clientLine prepares a single-line value a human makes a decision from — a
+// remote URL — for a client: redact, flatten, cap.
+//
+// One pass, for logField's reason: runesafe's single-line preset replaces rather
+// than deletes.
+func clientLine(s string) string {
+	return runesafe.SanitizeSingleLineBounded(redactCredentials(s), maxRemoteURLBytes)
+}
+
+// redactCredentials strips credentials from a git subprocess output string.
 // Idempotent: chained userinfo segments (`http://a@b@c@host`) are
 // consumed until the match set stabilises. The regex strictly shrinks
 // the string on every match (each iteration removes at least one
 // `@segment`), so the loop is bounded by input length with no DoS risk.
-func scrubAuth(s string) string {
+//
+// All three patterns are confined to a single LINE by their real producer — git
+// prints a URL on one line, and neither a '\r' nor a '\n' appears inside one — so
+// every truncation in this package must land on a line boundary or a pattern can
+// straddle the cut and the credential survives. cappedBuffer holds that invariant
+// on the transfer path; see its doc comment.
+//
+// Not called directly anywhere but the three helpers above: its result is
+// neither bounded nor single-line, and a sink needs both.
+func redactCredentials(s string) string {
 	if s == "" {
 		return ""
 	}
@@ -195,15 +328,32 @@ func firstSubcommand(args []string) string {
 // --no-textconv on the diff family). Two classes are deliberately left
 // live, and neither is closed by anything in this package:
 //
-//   - `filter.<driver>.clean` / `.smudge` CANNOT be disabled. git offers
-//     no --no-filter flag and no wildcard config form (`filter.*.clean=`
-//     is not a thing git reads), so a repo carrying both a .gitconfig
-//     entry and a .gitattributes line that selects the driver still runs
-//     that command on a checkout, a stage, or `git diff` of a filtered
-//     path. Clearing GIT_CONFIG_COUNT does not touch it — that only
-//     blocks INLINE config from a parent process, and this one is on
-//     disk. The exposure is real and stated rather than papered over:
-//     opening an untrusted repo in this app can execute code from it.
+//   - `filter.<driver>.clean` / `.smudge` CANNOT be disabled generically. A
+//     driver can be cleared BY NAME (`git -c filter.pwn.smudge=` does suppress
+//     it, measured on git 2.47.3), but there is no --no-filter flag and no
+//     wildcard form — `git -c 'filter.*.smudge='` still runs the driver, also
+//     measured — so nothing here can neutralise a name it does not know. A repo
+//     carrying both a .git/config entry and a .gitattributes line that selects
+//     the driver runs that command. Clearing GIT_CONFIG_COUNT does not touch it
+//     — that only blocks INLINE config from a parent process, and this one is on
+//     disk. The exposure is real and stated rather than papered over: opening an
+//     untrusted repo in this app can execute code from it.
+//
+//     WHICH operations trigger it, measured rather than assumed, because the
+//     answer decides whether a user action is needed: `git status` runs the
+//     clean filter on a filtered path whose stat info has changed, `git diff`
+//     runs it (twice), `git add` runs it, and a checkout runs the smudge side.
+//     `git show <rev>:<path>` does NOT — it hands back the stored blob. So the
+//     dashboard's own periodic status poll is enough; this is not gated on the
+//     user opening a diff, which is how an earlier version of this comment read.
+//
+//     A probe-and-refuse was considered and DECLINED (2026-09). It buys no
+//     boundary: the only principal that can write a workspace .git/config in
+//     this container already holds unrestricted shell execution at the same uid
+//     through `!cmd`, reached from the same caller that posts to this surface.
+//     And it costs a git panel that refuses status, diff, commit and checkout
+//     for a legitimately configured repo with no manual fallback — `git lfs
+//     install --local` writes exactly these three keys.
 //
 //   - HOOKS stay ON, deliberately. `git commit` and `git push` run
 //     pre-commit, commit-msg and pre-push, which is what makes the git
@@ -237,9 +387,7 @@ func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 		// here: gitCmd runs the same check and returns a real error, so the only
 		// callers that can reach this branch are the two that pass gitExec a
 		// literal subcommand, for which it is pure defence-in-depth.
-		cmd := exec.CommandContext(ctx, "/bin/false")
-		cmd.Dir = dir
-		return cmd
+		return refuseExec(ctx, dir)
 	}
 	// Prepend hardening -c flags. Command-line -c values take priority
 	// over any gitconfig setting, so even a user gitconfig with
@@ -269,6 +417,17 @@ func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 		// parser may drop its quote handling on the strength of this flag.
 		"-c", "core.quotePath=false",
 	}, args...)
+	// argv[0] is an absolute path from internal/systembin's fixed system-directory
+	// set, NOT the bare name: PATH[0] in this image is the toolbelt engine's link
+	// directory on the persistent volume, so a bare `git` would let a file planted
+	// there be executed by the SERVER on its own timers — outside Cedar, with no
+	// user present, surviving container recreation. A miss refuses rather than
+	// falling back, because one site's fallback voids the pin everywhere.
+	gitBin, ok := resolveGitBinary()
+	if !ok {
+		slog.Error("git binary not found in the trusted system directories; refusing to spawn")
+		return refuseExec(ctx, dir)
+	}
 	// The directive below also suppresses the unused-directive check: golangci-lint's
 	// gosec integration reports this line nondeterministically (at the pinned 2.13.1
 	// G702 appeared on 6 of 8 cold runs, and a silent run fails the build for an
@@ -276,8 +435,8 @@ func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	// is the integration's, and deleting the directive only swaps which half of the
 	// flip goes red. Never open a comment line with the token that names that check:
 	// gocritic's whyNoLint reads it as a second directive.
-	//nolint:gosec,nolintlint // G702: the subcommand is checked against allowedSubcommands above and the binary name is the literal "git"; every remaining argv element is a separate token to execve with no shell, and the ref/path-shaped ones are validated at the handler boundary (isValidGitRef, validateFilePath, resolveRepoDir)
-	cmd := exec.CommandContext(ctx, "git", hardenedArgs...)
+	//nolint:gosec,nolintlint // G702: the subcommand is checked against allowedSubcommands above and argv[0] is an absolute path from a fixed system-directory set that reads no environment; every remaining argv element is a separate token to execve with no shell, and the ref/path-shaped ones are validated at the handler boundary (isValidGitRef, validateFilePath, resolveRepoDir)
+	cmd := exec.CommandContext(ctx, gitBin, hardenedArgs...)
 	cmd.Dir = dir
 	cmd.Env = append(cmd.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
@@ -305,6 +464,21 @@ func allowedSubcommand(args []string) (string, bool) {
 	return sub, ok
 }
 
+// refuseExec builds a command that fails without launching git, shared by
+// gitExec's two refusals (a disallowed subcommand, and a git binary absent from
+// the trusted system directories). /bin/false always exits 1, and this
+// deliberately spawns no shell: giving it an argv it could interpolate would
+// hand a command-injection taint path to the boundary the refusal exists for.
+//
+// It produces no OUTPUT, which is why both refusals are ALSO reported one layer
+// up in gitCmd: a caller composing empty output into its own message rendered a
+// bare "clean:" naming no cause.
+func refuseExec(ctx context.Context, dir string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "/bin/false")
+	cmd.Dir = dir
+	return cmd
+}
+
 func gitCmd(ctx context.Context, dir string, args ...string) (string, error) {
 	// Checked here as well as in gitExec, because only this layer can return a
 	// message. gitExec's refusal is a command that exits 1 in silence, and a
@@ -314,6 +488,13 @@ func gitCmd(ctx context.Context, dir string, args ...string) (string, error) {
 	// spawned on this path at all.
 	if sub, ok := allowedSubcommand(args); !ok {
 		return "", fmt.Errorf("git: subcommand not allowed: %s", sub)
+	}
+	// Reported here for the same reason as the subcommand refusal: gitExec's own
+	// refusal is a silent exit 1, so without this a caller renders a message
+	// naming no cause. No path is echoed — an operator reads the Error line
+	// gitExec logs, and the response body says only that git is unavailable.
+	if _, ok := resolveGitBinary(); !ok {
+		return "", errGitUnavailable
 	}
 	out, err := gitExec(ctx, dir, args...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err

@@ -7,14 +7,38 @@
 // the moment first impressions are made.
 //
 // The pre-warmer resolves any enabled stdio server whose command is
-// `npx` and eagerly runs `npm install -g <identifier>` in the background
-// at container start and whenever the user toggles/adds such a server.
+// `npx` and eagerly fills the npm CACHE for its identifier in the
+// background at container start and whenever the user toggles/adds such
+// a server.
+//
+// The npm cache is the whole mechanism, and that is measured rather than
+// assumed. `npx -y <pkg>` NEVER runs an already-installed copy: --yes makes
+// npm exec install into `<cache>/_npx/<hash>` unconditionally. Proved on npm
+// 11.16 by replacing a global bin with a marker script — `npx -y cowsay` printed
+// the real cowsay's output and built a populated `_npx` tree beside it. So the
+// `npm install -g` this used to run contributed nothing to the spawn except the
+// cache it filled on the way past, and the version-addressed global tree it left
+// behind was read by nobody.
+//
+// What that changes is not just tidiness: a global install runs every lifecycle
+// script in the dependency tree, as the container user, at boot, for any package
+// name in mcp.json — unattended, with no permission request and no transcript,
+// because the SERVER spawns it. Filling the cache needs none of that capability,
+// so installOne runs --ignore-scripts into a throwaway tree it deletes. The
+// package's own scripts still run when the server actually spawns, which is where
+// they ran before prewarm existed and where a user is present.
+//
+// Measured on @modelcontextprotocol/server-everything (103 packages), spawn cost
+// of a bare `npx -y <pkg>`: 2236ms cold, 1304ms with only the cache warm, 1415ms
+// with the old global install. The cache-only warm is the whole win.
 package prewarm
 
 import (
 	"context"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -116,7 +140,16 @@ func (p *Runner) Run(ctx context.Context) {
 	if p.Disabled.Load() {
 		return
 	}
-	if _, err := exec.LookPath("npm"); err != nil {
+	// The probe's ANSWER is threaded to installOne as argv[0] instead of being
+	// discarded and the bare name re-resolved per package: one pass resolves once,
+	// and the file that was probed is the file that runs.
+	//
+	// It does NOT confine. npm is installed by the toolbelt engine into
+	// /config/tools/bin, which IS PATH[0], so an absolute pin names the same
+	// agent-writable file a PATH lookup finds. Confining it is custody on the
+	// toolbelt bin tree — toolbelt's question, not this file's.
+	npmBin, err := exec.LookPath("npm")
+	if err != nil {
 		// npm is opt-in (runtimes.node). It may be installed later in
 		// the same process lifetime via the tools UI, so DON'T latch
 		// Disabled here — just skip this run. The next Run re-probes
@@ -137,7 +170,7 @@ func (p *Runner) Run(ctx context.Context) {
 		}
 		queued++
 		slog.Debug("mcp: prewarm queued", "package", pkg, "position", queued)
-		go p.queue(ctx, pkg)
+		go p.queue(ctx, npmBin, pkg)
 	}
 	slog.Info("mcp: prewarm pass", "candidates", len(candidates), "queued", queued)
 }
@@ -153,7 +186,7 @@ func (p *Runner) Run(ctx context.Context) {
 // ctx.Done() before its fast path. A select over a slot channel could not
 // promise that — with a slot free, select picks at random among ready cases, so
 // an already-dead pass could still win the send and start an install.
-func (p *Runner) queue(ctx context.Context, pkg string) {
+func (p *Runner) queue(ctx context.Context, npmBin, pkg string) {
 	workCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(p.lifetime, cancel)
@@ -164,7 +197,7 @@ func (p *Runner) queue(ctx context.Context, pkg string) {
 		return
 	}
 	defer p.sem.Release(1)
-	p.installOne(workCtx, pkg)
+	p.installOne(workCtx, npmBin, pkg)
 }
 
 func (p *Runner) reserve(pkg string) bool {
@@ -201,10 +234,18 @@ func (r *RingBuffer) Write(p []byte) (int, error) {
 // Bytes returns the buffered content, up to Cap bytes (the most recent tail).
 func (r *RingBuffer) Bytes() []byte { return r.buf }
 
-// installOne runs the install. ctx must already carry both the pass and the
-// runner's lifetime — queue merges them, and the 5-minute budget hangs off that
-// merge, so a ctx carrying only one of the two silently loses the other signal.
-func (p *Runner) installOne(ctx context.Context, pkg string) {
+// installOne warms the npm cache for pkg. ctx must already carry both the pass
+// and the runner's lifetime — queue merges them, and the 5-minute budget hangs off
+// that merge, so a ctx carrying only one of the two silently loses the other
+// signal.
+//
+// The install goes into a THROWAWAY tree with --ignore-scripts, for the reason the
+// package comment measures: the cache it fills is the only thing the spawn reads,
+// and running the tree's lifecycle scripts at boot is a capability this needs none
+// of. A per-install tree rather than a shared one because npm runs
+// maxConcurrentInstalls at a time and two of them writing one node_modules would
+// race; the cache underneath IS shared, and cacache is built for that.
+func (p *Runner) installOne(ctx context.Context, npmBin, pkg string) {
 	defer p.release(pkg)
 
 	installCtx, installCancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -215,13 +256,7 @@ func (p *Runner) installOne(ctx context.Context, pkg string) {
 	if p.OnStatus != nil {
 		p.OnStatus(pkg, Installing)
 	}
-	cmd := exec.CommandContext(installCtx, "npm", "install", "-g", pkg)
-	ring := &RingBuffer{Cap: tailLogBytes}
-	cmd.Stdout = ring
-	cmd.Stderr = ring
-	err := cmd.Run()
-	out := ring.Bytes()
-	if err != nil {
+	fail := func(err error, out []byte) {
 		slog.Warn("mcp: prewarm failed",
 			"package", pkg,
 			"error", err,
@@ -230,12 +265,61 @@ func (p *Runner) installOne(ctx context.Context, pkg string) {
 		if p.OnStatus != nil {
 			p.OnStatus(pkg, Failed)
 		}
+	}
+
+	tree, err := stageTree()
+	if err != nil {
+		fail(err, nil)
+		return
+	}
+	defer removeTree(tree)
+
+	cmd := exec.CommandContext(installCtx, npmBin,
+		"install", "--ignore-scripts", "--no-audit", "--no-fund", pkg)
+	// The staging tree is the working directory AND carries a package.json, so npm
+	// resolves nothing from above it: --prefix alone leaves npm free to find an
+	// ancestor manifest and install against somebody else's tree.
+	cmd.Dir = tree
+	ring := &RingBuffer{Cap: tailLogBytes}
+	cmd.Stdout = ring
+	cmd.Stderr = ring
+	if err := cmd.Run(); err != nil {
+		fail(err, ring.Bytes())
 		return
 	}
 	slog.Info("mcp: prewarm done",
 		"package", pkg, "duration_ms", time.Since(start).Milliseconds())
 	if p.OnStatus != nil {
 		p.OnStatus(pkg, Done)
+	}
+}
+
+// stagingManifest is the throwaway tree's own package.json. Private and
+// unversioned, so nothing about it can be mistaken for a publishable package.
+const stagingManifest = `{"name":"vibekit-prewarm","version":"0.0.0","private":true}` + "\n"
+
+// stageTree makes one install's throwaway tree and returns its path; the caller
+// removes it. A tree that cannot be given its manifest is removed HERE rather than
+// handed back, so no caller's failure path has to clean up a partial one.
+func stageTree() (string, error) {
+	tree, err := os.MkdirTemp("", "vibekit-prewarm-")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(tree, "package.json"), []byte(stagingManifest), 0o600); err != nil {
+		removeTree(tree)
+		return "", err
+	}
+	return tree, nil
+}
+
+// removeTree drops a staging tree, reporting a failure rather than swallowing it:
+// a tree left behind is a slow leak of the container's temp space, and nothing
+// else ever revisits the path.
+func removeTree(tree string) {
+	if err := os.RemoveAll(tree); err != nil {
+		slog.Warn("mcp: prewarm could not remove its staging tree",
+			"path", tree, "error", err)
 	}
 }
 
