@@ -137,7 +137,7 @@ func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
 	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	failed := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
-	h.AbandonInFlightTurn(ctx, chatID, failed, "the pipe died")
+	h.AbandonInFlightTurn(ctx, chatID, failed, vibekit.StopReasonInterrupted, "the pipe died")
 	h.ReleaseTurn(chatID, failed)
 
 	if _, ok := pendingEpoch(h, chatID); ok {

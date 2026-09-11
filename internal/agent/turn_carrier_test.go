@@ -75,7 +75,7 @@ func TestAbandonInFlightTurn_AnInterruptedSplitTurnKeepsItsChangedFiles(t *testi
 		t.Fatal("the seal closed the turn; there is nothing left to interrupt")
 	}
 
-	h.coord.AbandonInFlightTurn(t.Context(), "c1", epoch, "the pipe died")
+	h.coord.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, "the pipe died")
 
 	divider := eventMessageOf(t, cs, "c1", vibekit.EventInterrupted)
 	if divider == nil {

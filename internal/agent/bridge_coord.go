@@ -706,7 +706,7 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID vibekit.C
 	}))
 	if err != nil {
 		slog.Error("prime failed", "chat_id", chatID, "error", err)
-		bc.AbandonInFlightTurn(ctx, chatID, epoch, "The priming prompt failed.")
+		bc.AbandonInFlightTurn(ctx, chatID, epoch, vibekit.StopReasonInterrupted, "The priming prompt failed.")
 		return
 	}
 	bc.SettleTurnOnResponse(ctx, chatID, epoch, seq, resp)
@@ -1113,8 +1113,19 @@ func assistantTurnMessage(snap *buffer.TurnContent, stats turnStats, model strin
 //
 // It waits for no read-loop position — the two failures that reach it settle locally
 // with the bridge still alive, so no bracket is coming.
-func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, reason string) {
-	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerPromptFailure, Reason: reason, Epoch: epoch})
+//
+// `stop` is the caller's CONCLUSION, and only `interrupted` or `cancelled` is legal here.
+// Anything else is NORMALIZED to `interrupted` with a Warn naming it, because
+// StopReason's zero value resolves to TurnOutcomeUnknown through ConcludeStopReason,
+// which grades `stopped` — so an unset stop would silently report a prompt failure as a
+// turn that merely stopped.
+func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, stop vibekit.StopReason, reason string) {
+	if stop != vibekit.StopReasonInterrupted && stop != vibekit.StopReasonCancelled {
+		slog.Warn("a prompt failure named a stop this close cannot conclude, so it concludes interrupted",
+			"chat_id", chatID, "epoch", epoch, "stop", stop)
+		stop = vibekit.StopReasonInterrupted
+	}
+	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerPromptFailure, Stop: stop, Reason: reason, Epoch: epoch})
 }
 
 // FinalizeLocalShellTurn closes a `!cmd` turn vibekit ran itself.

@@ -28,6 +28,17 @@ func shrinkAdmissionWait(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { command.AdmissionWait = prev })
 }
 
+// setCancelGrace writes the unresponsive-cancel budget, in both directions: SHORT so a
+// test can drive the expiry instead of sitting out the production 10s, and LONG so a test
+// can arm the grace and be sure its timer cannot fire inside the run. Not parallel-safe,
+// so no test using it may call t.Parallel.
+func setCancelGrace(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := command.CancelGrace
+	command.CancelGrace = d
+	t.Cleanup(func() { command.CancelGrace = prev })
+}
+
 func seedChat(t *testing.T, cs *fakeChatStore, id vibekit.ChatID) {
 	t.Helper()
 	if err := cs.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
@@ -244,14 +255,32 @@ func TestShellDuringABlockedSpawnIsRefusedImmediately(t *testing.T) {
 	}
 }
 
-// waitForTurnEnded polls the replay buffer until want turn_ended events exist
-// and returns their payloads. Deadline-bounded: it fails closed with the count.
+// waitForTurnEnded polls the replay buffer until EXACTLY want turn_ended events exist and
+// returns their payloads. Deadline-bounded: it fails closed with the count.
+//
+// Exact rather than at-least, because at-least is not the claim any caller wants and one
+// of them said so by hand: TurnEndedPayload carries no turn identity (no epoch, no message
+// id — the client reads `superseded`/`workflow_step` as the whole of it), so a caller
+// reading ended[0] is trusting POSITION to name the turn it drove, and only exactness makes
+// that sound. A surplus is also a defect in its own right rather than slack — a turn
+// announcing its end twice is what the four independent EventTurnEnded writers were
+// collapsed into one closer to prevent.
+//
+// BOUND, stated because it is not closed: the poll returns the instant the count reaches
+// want, so a surplus that lands LATER is not caught. What is caught is one already in the
+// ring, which is where a double broadcast for the turn under test puts it. Closing the rest
+// needs a settle window, i.e. a bare sleep, which is the thing `testing.md` names as the
+// defect — a test that waits on a clock rather than on the system.
 func waitForTurnEnded(t *testing.T, h *Runtime, want int) []vibekit.TurnEndedPayload {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		got := payloadsOfType[vibekit.TurnEndedPayload](t, bufferedSince(h, 0), vibekit.EventTurnEnded)
-		if len(got) >= want {
+		if len(got) > want {
+			t.Fatalf("turn_ended events = %d, want exactly %d: a turn announced its end "+
+				"more than once, so ended[i] no longer names the turn the test drove", len(got), want)
+		}
+		if len(got) == want {
 			return got
 		}
 		if time.Now().After(deadline) {
@@ -343,10 +372,12 @@ func TestPromptTurn_PrimeLifecycleBetweenReservationAndStartTurn(t *testing.T) {
 	}
 
 	close(gate)
-	ended := waitForTurnEnded(t, h, 1)
-	if len(ended) != 1 {
-		t.Fatalf("turn_ended events = %d, want exactly the real turn's — the prime is silent", len(ended))
-	}
+	// EXACTLY one, which is this test's second assertion rather than a bound on the wait:
+	// two prompts reach the wire below and only the real one may announce an end, because
+	// the prime is silent. waitForTurnEnded owns that check now; it used to be repeated
+	// here because the helper answered at-least. The payloads go unread — the count IS the
+	// assertion.
+	waitForTurnEnded(t, h, 1)
 	// Two session/prompt calls made it to the wire: the prime, then the prompt.
 	prompts := 0
 	for _, m := range br.callLog() {
@@ -549,4 +580,221 @@ func TestPromptTurn_CancelBetweenAckAndBeginPromptCall(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	waitForTurnEnded(t, h, 2)
+}
+
+// eventKindsIn returns every event-message kind the chat's transcript holds, in order.
+func eventKindsIn(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) []vibekit.EventKind {
+	t.Helper()
+	c, ok := cs.Get(t.Context(), chatID)
+	if !ok {
+		t.Fatalf("chat %q vanished", chatID)
+	}
+	var kinds []vibekit.EventKind
+	for i := range c.Messages {
+		if c.Messages[i].Role == vibekit.RoleEvent {
+			kinds = append(kinds, c.Messages[i].EventKind)
+		}
+	}
+	return kinds
+}
+
+// TestPromptTurn_UnackedCancelConcludesCancelled is the defect this whole path exists for
+// and the test it never had: session/cancel is a NOTIFICATION nothing acks, so when KAS
+// never answers the pending session/prompt the grace budget cancels the prompt context
+// itself. That went down the ordinary prompt-failure route and concluded `interrupted`,
+// which grades BROKEN — a red card plus an error toast for a stop the reader asked for.
+//
+// All three surfaces are asserted because they are three separate writes of one verdict,
+// and the absence of an EventInterrupted row pins closeAsInterrupted to writing ONE kind:
+// the stamped carrier is what grades this turn, but deriveTurnOutcome falls back to the
+// markers for an un-stamped one and answers `interrupted` before `cancelled`.
+func TestPromptTurn_UnackedCancelConcludesCancelled(t *testing.T) {
+	setCancelGrace(t, 20*time.Millisecond)
+	h, cs, br := newTestHub()
+	seedChat(t, cs, "c1")
+	gate := make(chan struct{})
+	defer close(gate)
+	br.blockOn = map[string]chan struct{}{vibekit.MethodPrompt: gate}
+
+	if rec := postCmd(t, h, vibekit.ClientCommand{
+		Type: "prompt", ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
+	}
+	waitForCall(t, br, vibekit.MethodPrompt)
+
+	if rec := postCmd(t, h, vibekit.ClientCommand{Type: vibekit.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
+		t.Fatalf("cancel = %d, want 200", rec.Code)
+	}
+	ended := waitForTurnEnded(t, h, 1)
+
+	carrier := carrierOf(t, cs, "c1")
+	if carrier.TurnOutcome != vibekit.TurnOutcomeCancelled {
+		t.Errorf("carrier outcome = %q, want %q: the reader pressed Stop, so nothing failed",
+			carrier.TurnOutcome, vibekit.TurnOutcomeCancelled)
+	}
+	if carrier.TurnFailureReason != "" {
+		t.Errorf("carrier failure reason = %q, want empty: a cancel has no account to give",
+			carrier.TurnFailureReason)
+	}
+	if carrier.EventKind != vibekit.EventCancelled {
+		t.Errorf("carrier event_kind = %q, want %q", carrier.EventKind, vibekit.EventCancelled)
+	}
+	if kinds := eventKindsIn(t, cs, "c1"); slices.Contains(kinds, vibekit.EventInterrupted) {
+		t.Errorf("event kinds = %v, want no interrupted row: deriveTurnOutcome answers "+
+			"interrupted before cancelled, so one would repaint the turn red", kinds)
+	}
+	if ended[0].Outcome != vibekit.TurnOutcomeCancelled {
+		t.Errorf("turn_ended outcome = %q, want %q: the live surface must agree with the "+
+			"persisted one", ended[0].Outcome, vibekit.TurnOutcomeCancelled)
+	}
+}
+
+// TestPromptTurn_ShutdownDuringTheGraceStaysInterrupted is the other direction, and it is
+// what proves the two paths were separated rather than both moved. Shutdown writes no
+// cause on the way to the turn — it stops the bridge, which unblocks the pending Call with
+// the bridge-exited sentinel, and cancels the parent with a plain WithCancel cancel — so an
+// absent sentinel keeps meaning exactly what it meant before this existed.
+//
+// The grace is genuinely ARMED and its budget outlives the run, so the two cancellers
+// contend for the one end this turn gets and shutdown reaches it first, which is the
+// ordering the sentinel's own doc rests on. Red-checked by letting the expiry win instead:
+// the turn then concludes `cancelled` and this fails.
+//
+// IT IS NOT EXPOSED TO THE OPEN SHUTDOWN-CLOSER RACE, and the reason is the waitForCall
+// below rather than luck: it puts Shutdown strictly AFTER StartTurn and after the bridge
+// is registered, which closes both sources of nondeterminism at once. The epoch is
+// non-zero, so the zero-epoch prompt exit is unreachable; and Shutdown DRAINS the bridge
+// map before stopping the bridge, so closeTurnOnBridgeDeath's removeIfBridge answers false
+// and the death closer never runs. One claimant, so no closer can lose a claim here.
+// closeAsInterrupted also announces on every branch, unlike closeWithOutcome, whose
+// carrier gate is what the open defect is about. The racy sibling is
+// TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn: it parks in the SPAWN, where the
+// bridge is inserted after the drain and dies rather than being removed, so it accepts
+// either terminal frame. Measured 200/200 clean over the whole package with no -race,
+// which is the shape that defect reproduces in.
+func TestPromptTurn_ShutdownDuringTheGraceStaysInterrupted(t *testing.T) {
+	setCancelGrace(t, time.Minute)
+	h, cs, br := newTestHub()
+	seedChat(t, cs, "c1")
+	gate := make(chan struct{})
+	defer close(gate)
+	br.blockOn = map[string]chan struct{}{vibekit.MethodPrompt: gate}
+
+	if rec := postCmd(t, h, vibekit.ClientCommand{
+		Type: "prompt", ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
+	}
+	waitForCall(t, br, vibekit.MethodPrompt)
+
+	if rec := postCmd(t, h, vibekit.ClientCommand{Type: vibekit.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
+		t.Fatalf("cancel = %d, want 200", rec.Code)
+	}
+	sb := h.bridge.mgr.get("c1")
+	if sb == nil {
+		t.Fatal("the prompt opened no bridge")
+	}
+	sb.mu.Lock()
+	armed := sb.cancelTimer != nil
+	sb.mu.Unlock()
+	if !armed {
+		t.Fatal("the cancel armed no grace, so the two cancellers were never contended")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := h.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown = %v: the in-flight prompt goroutine did not drain", err)
+	}
+
+	ended := waitForTurnEnded(t, h, 1)
+	if ended[0].Outcome != vibekit.TurnOutcomeInterrupted {
+		t.Errorf("turn_ended outcome = %q, want %q: a shutdown carries no grace sentinel, "+
+			"so it is a fault rather than a stop the reader asked for",
+			ended[0].Outcome, vibekit.TurnOutcomeInterrupted)
+	}
+}
+
+// waitForPromptCall blocks until the chat's bridge has registered an in-flight prompt
+// context. That is the state ArmCancelGrace refuses without, so a cancel posted earlier
+// arms nothing and the test would drive a different path than it claims.
+func waitForPromptCall(t *testing.T, h *Runtime, chatID vibekit.ChatID) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if sb := h.bridge.mgr.get(chatID); sb != nil {
+			sb.mu.Lock()
+			armable := sb.state == bridgePrompting && sb.promptCancel != nil
+			sb.mu.Unlock()
+			if armable {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the prompt goroutine never registered its prompt context")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestPromptTurn_CancelDuringTheMCPWaitConcludesCancelled drives the SECOND mechanism the
+// same gesture reached, the one no epoch ever covers: BeginPromptCall runs before the
+// prime and the MCP wait, so a cancel anywhere in that window arms the grace and the
+// expiry kills the context before StartTurn mints anything. StartTurn then answers 0, so
+// nothing finalizes and the carrier is written by the prompt exit itself — which used to
+// append an EventInterrupted row with no stamped outcome AND broadcast prompt_failed,
+// putting a red card and an error toast on screen for a Stop the reader pressed.
+//
+// The MCP wait is the fixture because it is the widest part of that window: 30s on a
+// first prompt after boot, against a 10s production grace.
+func TestPromptTurn_CancelDuringTheMCPWaitConcludesCancelled(t *testing.T) {
+	setCancelGrace(t, 20*time.Millisecond)
+	h, cs, _ := newTestHubUnready()
+	seedChat(t, cs, "c1")
+
+	if rec := postCmd(t, h, vibekit.ClientCommand{
+		Type: "prompt", ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
+	}
+	waitForPromptCall(t, h, "c1")
+
+	if rec := postCmd(t, h, vibekit.ClientCommand{Type: vibekit.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
+		t.Fatalf("cancel = %d, want 200", rec.Code)
+	}
+
+	// No turn was ever opened, so there is no turn_ended to wait on: the persisted row is
+	// the only signal this exit produces.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if kinds := eventKindsIn(t, cs, "c1"); len(kinds) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the cancelled prompt exit persisted no carrier at all")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	carrier := carrierOf(t, cs, "c1")
+	if carrier.EventKind != vibekit.EventCancelled {
+		t.Errorf("carrier event_kind = %q, want %q: an interrupted row here grades the turn "+
+			"broken and paints it red", carrier.EventKind, vibekit.EventCancelled)
+	}
+	if carrier.TurnOutcome != vibekit.TurnOutcomeCancelled {
+		t.Errorf("carrier outcome = %q, want %q", carrier.TurnOutcome, vibekit.TurnOutcomeCancelled)
+	}
+	if carrier.Content != "" || carrier.TurnFailureReason != "" {
+		t.Errorf("carrier content = %q, failure reason = %q, want both empty: a cancel has "+
+			"no account to give", carrier.Content, carrier.TurnFailureReason)
+	}
+	if types := extractTypes(t, bufferedSince(h, 0)); slices.Contains(types, string(vibekit.EventError)) {
+		t.Errorf("events = %v, want no error frame: prompt_failed routes to a toast, and a "+
+			"red toast for a stop the reader asked for is the same wrong signal as the red card",
+			types)
+	}
 }

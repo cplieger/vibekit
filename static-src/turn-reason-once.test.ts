@@ -77,6 +77,7 @@ interface Msg {
   content?: string;
   blocks?: unknown[];
   turn_outcome?: string;
+  turn_failure_reason?: string;
   event_kind?: string;
 }
 
@@ -117,6 +118,39 @@ function twoCleanTurns(): Msg[] {
   return brokenThenClean()
     .filter((m) => m.event_kind === undefined)
     .map((m) => (m.id === "a1" ? { ...m, turn_outcome: "completed" } : m));
+}
+
+/** The sentence a cancelled turn used to carry in its own record, and still carries
+ *  on every one persisted before `defaultFailureReason` stopped supplying it. */
+const CANCELLED_REASON = "The turn was cancelled.";
+
+/** A cancelled turn followed by a clean one, in the HISTORICAL shape: the carrier
+ *  stamped `cancelled` AND holding the dead sentence, plus the `cancelled` event row
+ *  the closer writes. The second turn exists so the first can fold, exactly as in
+ *  `brokenThenClean`. */
+function cancelledThenClean(): Msg[] {
+  return [
+    { id: BROKEN_TURN, role: "user", ts: 1, content: "run the build" },
+    {
+      id: "a1",
+      role: "assistant",
+      ts: 2,
+      content: "Building.",
+      blocks: [{ type: "text", text: "Building." }],
+      turn_outcome: "cancelled",
+      turn_failure_reason: CANCELLED_REASON,
+    },
+    { id: "e1", role: "event", ts: 3, event_kind: "cancelled" },
+    { id: "u2", role: "user", ts: 4, content: "try again" },
+    {
+      id: "a2",
+      role: "assistant",
+      ts: 5,
+      content: "Built.",
+      blocks: [{ type: "text", text: "Built." }],
+      turn_outcome: "completed",
+    },
+  ];
 }
 
 /** Paint `msgs` as `chatID` and return that chat's turn cards, in order. */
@@ -219,4 +253,49 @@ describe("a failed turn's reason", () => {
     expect(card.querySelector(":scope > .turn-notice")).toBeNull();
     expect(occurrences(card.textContent ?? "", REASON)).toBe(0);
   });
+});
+
+describe("a cancelled turn's ONE status channel", () => {
+  // The reader caused the stop, so the footer's own outcome word is the whole
+  // record and a notice beside it would render one fact twice. Asserted through the
+  // real paint because that is the only harness here that can answer what a reader
+  // actually sees, and in BOTH fold states because the notice survives a fold —
+  // which is exactly why it had to be the surface that goes.
+  //
+  // The fixture carries the HISTORICAL shape (`turn_failure_reason` still on the
+  // carrier), so these two cases fail if `turnFailureText`'s outcome gate is
+  // reverted, not merely if the default sentence comes back.
+  beforeEach(() => {
+    resetFoldState();
+  });
+
+  for (const open of [true, false]) {
+    it(`renders no notice and keeps the footer word on an ${open ? "OPEN" : "FOLDED"} card`, () => {
+      const chat = `cancelled-${open ? "open" : "folded"}`;
+      setTurnOpen(chat, BROKEN_TURN, open);
+      const [card] = mount(chat, cancelledThenClean());
+      if (card === undefined) {
+        throw new Error("no card");
+      }
+
+      // The premise, so neither case silently tests the other's fold state.
+      expect(card.hasAttribute("data-folded"), "the subject card's fold state").toBe(!open);
+
+      expect(
+        card.querySelector(":scope > .turn-notice"),
+        "a cancel mounts no notice at all",
+      ).toBeNull();
+      expect(
+        card.textContent ?? "",
+        "and the dead sentence reaches no surface of the card",
+      ).not.toContain(CANCELLED_REASON);
+
+      // THE NEGATIVE CONTROL, and it is what stops both assertions above passing for
+      // a card that renders nothing: the footer still says which way the turn ended.
+      // `Cancelled` is `OUTCOME_LEAD`'s word (fundamentals/turn-footer.ts).
+      const footer = card.querySelector<HTMLElement>(":scope > .turn-footer");
+      expect(footer, "the footer is rendered").not.toBeNull();
+      expect(footer?.textContent ?? "").toContain("Cancelled");
+    });
+  }
 });

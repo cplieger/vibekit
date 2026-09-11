@@ -121,8 +121,14 @@
       "want": "failed"
     },
     {
-      "name": "a cancel interrupts the turn",
+      "name": "a cancel marker derives cancelled, not interrupted",
       "body": [{}, { "event": "cancelled" }],
+      "is_live": false,
+      "want": "cancelled"
+    },
+    {
+      "name": "interrupted beats cancelled when a turn carries both",
+      "body": [{ "event": "cancelled" }, { "event": "interrupted" }],
       "is_live": false,
       "want": "interrupted"
     },

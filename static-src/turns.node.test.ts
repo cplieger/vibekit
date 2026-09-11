@@ -100,9 +100,19 @@ describe("projectTurns", () => {
       }
     });
 
-    it("is interrupted on a cancel", () => {
+    it("is cancelled on a cancel, not interrupted", () => {
       const turns = projectTurns(
         [user("u1", "a"), assistant("a1"), event("e1", "cancelled")],
+        false,
+      );
+      expect(turns[0]?.outcome).toBe("cancelled");
+    });
+
+    // A fault outranks a gesture: grading a turn something broke in as `cancelled`
+    // would paint it as a stop the reader asked for.
+    it("prefers interrupted over cancelled when a turn carries both", () => {
+      const turns = projectTurns(
+        [user("u1", "a"), event("e1", "cancelled"), event("e2", "interrupted")],
         false,
       );
       expect(turns[0]?.outcome).toBe("interrupted");
@@ -936,12 +946,40 @@ describe("turnFailureText", () => {
     expect(t === undefined ? "x" : turnFailureText(t)).toBe("");
   });
 
-  it("still speaks for a stopped turn, which is what the footer glyph cannot", () => {
-    // `cancelled` and `unknown` are `stopped`: not failures, but a footer glyph with
-    // no words beside it is the same silence one severity down. The notice tints
-    // itself yellow for these rather than red.
+  it("still speaks for an UNKNOWN turn, which is what the footer glyph cannot", () => {
+    // `unknown` is `stopped` and not a failure, but a footer glyph with no words
+    // beside it is the same silence one severity down: nobody read the end, so the
+    // footer's word cannot stand in for a sentence. The notice tints itself yellow
+    // for it rather than red.
+    //
+    // This is also the NEGATIVE CONTROL for the two cancelled cases below: the gate
+    // that silences a cancel is keyed on the OUTCOME precisely because keying it on
+    // the severity would silence this one too.
     expect(textOf([user("u1", "q"), assistant("a1", { turn_outcome: "unknown" })])).toBe(
       "The turn ended for a reason vibekit could not read.",
     );
+  });
+
+  it("says nothing for a CANCELLED turn — the footer's own word carries it", () => {
+    // The reader caused the stop, and the footer already reads "Cancelled" a row
+    // away, so a notice would render one fact twice.
+    expect(textOf([user("u1", "q"), assistant("a1", { turn_outcome: "cancelled" })])).toBe("");
+  });
+
+  it("silences the sentence already persisted on a historical cancelled turn", () => {
+    // THE POPULATION THE DEFAULT-REASON CHANGE CANNOT REACH: every cancelled turn
+    // written before `defaultFailureReason` stopped supplying one carries
+    // "The turn was cancelled." in its own record, so source 2 would hand it straight
+    // back. This is why the gate sits AHEAD of all three sources rather than being a
+    // change to the default alone.
+    expect(
+      textOf([
+        user("u1", "q"),
+        assistant("a1", {
+          turn_outcome: "cancelled",
+          turn_failure_reason: "The turn was cancelled.",
+        }),
+      ]),
+    ).toBe("");
   });
 });

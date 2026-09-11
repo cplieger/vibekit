@@ -199,7 +199,7 @@ func (a *scriptedAdmission) TurnOpenedAfter(vibekit.ChatID, vibekit.TurnEpoch) b
 func (a *scriptedAdmission) FinalizeLocalShellTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) {
 }
 
-func (a *scriptedAdmission) AbandonInFlightTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch, string) {
+func (a *scriptedAdmission) AbandonInFlightTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch, vibekit.StopReason, string) {
 	a.rec.add("abandon")
 }
 

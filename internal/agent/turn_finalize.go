@@ -81,7 +81,9 @@ type turnClose struct {
 	// Reason is the user-facing account of the stop. Empty leaves the outcome's
 	// default sentence to speak, rather than inventing wording.
 	Reason string
-	// Stop is the wire's own stop reason, on closerWireEnd only.
+	// Stop is the stop the close concludes: the wire's own on closerWireEnd, the command
+	// layer's decision on closerPromptFailure, where the only legal values are
+	// `interrupted` and `cancelled` — a user cancel KAS never acked is not a fault.
 	Stop vibekit.StopReason
 	// Epoch names the ONE turn an epoch-scoped closer may end. Zero only with AnyOpen.
 	Epoch vibekit.TurnEpoch
@@ -201,9 +203,9 @@ func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID vibekit.Ch
 	case closerWireEnd:
 		result = bc.closeOnWireEnd(ctx, t, tc.Stop, tc.Reason)
 	case closerPromptFailure:
-		result = bc.closeAsInterrupted(ctx, t, tc.Reason)
+		result = bc.closeAsInterrupted(ctx, t, tc.Stop, tc.Reason)
 	case closerBridgeDeath:
-		result = bc.closeAsInterrupted(ctx, t, deathInterruptCause)
+		result = bc.closeAsInterrupted(ctx, t, vibekit.StopReasonInterrupted, deathInterruptCause)
 	case closerWireDisplaced:
 		result = bc.closeWithOutcome(ctx, t, vibekit.StopReasonUnknown, closerWireDisplaced, displacedTurnCause)
 	case closerRunComplete:
@@ -285,9 +287,23 @@ func (bc *BridgeCoordinator) amendLostReason(ctx context.Context, chatID vibekit
 		ran = true
 		outcome = m.TurnOutcome
 		// THE GATE, evaluated here because this is the only place the carrier's own
-		// outcome is known. An empty DefaultFailureReason means it has nothing to say,
-		// so without this a wire end_turn's loser writes a reason onto a clean turn.
-		if vibekit.DefaultFailureReason(m.TurnOutcome) == "" {
+		// outcome is known: a turn that ANSWERED has nothing to explain, so without
+		// this a wire end_turn's loser writes a reason onto a clean turn. Keyed on the
+		// SEVERITY rather than on DefaultFailureReason, which stopped being the same
+		// question when `cancelled` lost its default sentence — a model-switch discard
+		// concludes `cancelled`, and a losing closer holding a real transport error is
+		// still the best account that turn will ever have. So a `stopped` carrier IS
+		// amendable, which is the second way prose reaches a cancelled turn (the first
+		// is closeAsInterrupted's interruptCause override): inert on screen, because
+		// turnFailureText withholds prose for that outcome, and the best thing in the
+		// log either way. The empty-outcome guard is
+		// required: SeverityOf("") answers `stopped`, so without it a carrier with no
+		// outcome at all would become amendable.
+		if m.TurnOutcome == "" {
+			return
+		}
+		switch vibekit.SeverityOf(m.TurnOutcome) {
+		case vibekit.TurnSeverityClean, vibekit.TurnSeverityRunning:
 			return
 		}
 		wrote = true
@@ -307,7 +323,7 @@ func (bc *BridgeCoordinator) amendLostReason(ctx context.Context, chatID vibekit
 		return
 	}
 	if !wrote {
-		slog.Warn("a turn closer lost its claim and the winner's outcome has nothing to say, so its reason was not used",
+		slog.Warn("a turn closer lost its claim and the winner's turn answered, so its reason was not used",
 			"chat_id", chatID, "closer", tc.Closer, "epoch", tc.Epoch,
 			"loser_had_reason", tc.Reason != "",
 			"winner_reason_supplied", carrier.ReasonSupplied, "outcome", outcome)
@@ -653,7 +669,15 @@ func carrierFor(f *turnOutcomeFacts, alreadyCarried bool) *turnOutcomeFacts {
 // claimed on the turn beats it. A PRIME persists and broadcasts nothing at all. A model
 // switch takes closeAsDiscarded instead, which resolves the partial the other way and
 // concludes a different outcome.
-func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, reason string) vibekit.TurnResult {
+//
+// `stop` is which of the two stops this close concludes, because the resolution of the
+// partial is the same for both while the VERDICT is not: a fault grades `interrupted`
+// and BROKEN, a user's unacked cancel grades `cancelled` and STOPPED. The marker's event
+// kind is DERIVED from the resulting outcome rather than passed alongside it, so the two
+// cannot disagree. deriveTurnOutcome returns on the first stamped carrier, so this close's
+// own carrier is what grades the turn; the marker decides only for a legacy or un-stamped
+// one, where `interrupted` outranks `cancelled`.
+func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, stop vibekit.StopReason, reason string) vibekit.TurnResult {
 	chatID := t.Chat
 	cause := bc.turns.interruptCause(t)
 	if cause != "" {
@@ -661,14 +685,15 @@ func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, re
 	} else {
 		cause = vibekit.InterruptCause(reason)
 	}
-	c := vibekit.ConcludeStopReason(vibekit.StopReasonInterrupted)
+	c := vibekit.ConcludeStopReason(stop)
+	markerKind := vibekit.StopMarkerKind(c.Outcome)
 	// The same prose the divider carries, ALSO stamped on the carrier: a divider is
 	// skipped whenever the turn already carried its outcome, and only the client's
 	// collapsed face reads it, so a reason living only there is unreachable from an
 	// OPEN turn's body.
 	c.Reason = reasonFor(c.Outcome, reason)
 	result := vibekit.TurnResult{
-		Stop:           vibekit.StopReasonInterrupted,
+		Stop:           stop,
 		Interrupt:      cause,
 		EmittedNothing: true,
 	}
@@ -695,7 +720,7 @@ func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, re
 		// indistinguishably from a clean short answer. No stats, for the reason the persisted
 		// partial below carries none; the changed files and the model ARE carried, because a
 		// SPLIT turn always takes this branch.
-		dividerID := bc.appendEventMessage(ctx, chatID, vibekit.EventInterrupted, reason, &turnOutcomeFacts{
+		dividerID := bc.appendEventMessage(ctx, chatID, markerKind, reason, &turnOutcomeFacts{
 			ChangedFiles: snap.ChangedFiles,
 			Conclusion:   c,
 			Model:        cmp.Or(snap.Model, t.Model),
@@ -716,7 +741,7 @@ func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, re
 
 	// The divider does NOT re-carry the outcome: the message above already did, and
 	// two carriers in one turn open a spurious segment.
-	bc.appendEventMessage(ctx, chatID, vibekit.EventInterrupted, reason, nil)
+	bc.appendEventMessage(ctx, chatID, markerKind, reason, nil)
 	bc.announceConclusion(ctx, chatID, c, t.Source)
 	return result
 }

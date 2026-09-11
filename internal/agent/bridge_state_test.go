@@ -2,9 +2,12 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/cplieger/vibekit/internal/command"
 )
 
 // The grace is armed against a specific turn generation, so these tests use a
@@ -21,8 +24,8 @@ func newPromptingBridge(t *testing.T) (*sharedBridge, context.Context, uint64) {
 	}
 	// Not t.Context(): cancel runs from t.Cleanup, by which point t.Context()
 	// is already cancelled, so the prompt context must have its own root.
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
 	gen := sb.BeginPromptCall(cancel)
 	return sb, ctx, gen
 }
@@ -85,8 +88,8 @@ func TestShouldTripCancelGrace_RefusesANewerTurn(t *testing.T) {
 	if !sb.tryAcquireForPrompt() {
 		t.Fatalf("bridge must be acquirable again after release")
 	}
-	_, nextCancel := context.WithCancel(t.Context())
-	defer nextCancel()
+	_, nextCancel := context.WithCancelCause(t.Context())
+	defer nextCancel(nil)
 	nextGen := sb.BeginPromptCall(nextCancel)
 	if nextGen == gen {
 		t.Fatalf("a new turn must get a new generation (got %d twice)", gen)
@@ -98,6 +101,43 @@ func TestShouldTripCancelGrace_RefusesANewerTurn(t *testing.T) {
 	// The budget armed for the CURRENT turn still applies.
 	if _, ok := sb.shouldTripCancelGrace(nextGen); !ok {
 		t.Errorf("turn %d's own grace must still apply", nextGen)
+	}
+}
+
+// TestArmCancelGrace_ExpiryCarriesTheGraceCause is what lets the failure site tell a
+// user's unacked cancel from every other cancellation of the prompt context: ctx.Err()
+// reads context.Canceled either way, so the sentinel on the CAUSE channel is the whole
+// discriminator behind concluding `cancelled` instead of `interrupted`.
+func TestArmCancelGrace_ExpiryCarriesTheGraceCause(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sb, ctx, gen := newPromptingBridge(t)
+		if !sb.ArmCancelGrace(gen, testGrace) {
+			t.Fatalf("arming against an in-flight prompt must succeed")
+		}
+		<-ctx.Done()
+		if !errors.Is(context.Cause(ctx), command.ErrCancelGraceExpired) {
+			t.Errorf("context.Cause = %v, want %v: without it the failure site cannot "+
+				"tell an expired grace from a shutdown", context.Cause(ctx), command.ErrCancelGraceExpired)
+		}
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			t.Errorf("ctx.Err() = %v, want context.Canceled: the cause is a SEPARATE "+
+				"channel and every errors.Is(err, context.Canceled) site must keep matching", ctx.Err())
+		}
+	})
+}
+
+// TestCancelPromptCall_CarriesNoCause is the other direction, and it is what keeps the
+// interrupted population where it was: a wire interrupt cancels with a nil cause, so the
+// cause stays context.Canceled and the turn still concludes `interrupted`.
+func TestCancelPromptCall_CarriesNoCause(t *testing.T) {
+	sb, ctx, _ := newPromptingBridge(t)
+	if !sb.cancelPromptCall() {
+		t.Fatalf("cancelling an in-flight prompt must report true")
+	}
+	<-ctx.Done()
+	if got := context.Cause(ctx); got != context.Canceled {
+		t.Errorf("context.Cause = %v, want context.Canceled: an interrupt must carry no "+
+			"sentinel, or it would conclude cancelled", got)
 	}
 }
 
