@@ -10,10 +10,17 @@ vi.mock("../api-client.js", () => ({
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
   apiGet: vi.fn(),
   apiPost: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds. The tab projection widened
-  // this graph: `apiGetTyped` is how tabs-sync reads `GET /api/tabs`, and other
-  // modules reached through it import `apiGet`. Nothing here calls either.
+  // Present-but-inert so real-ESM linking succeeds, and this pair is the record of
+  // the two times the graph reaching this factory has widened. `apiGetTyped` is how
+  // tabs-sync reads `GET /api/tabs`, and other modules reached through it import
+  // `apiGet`. `apiGetOrError` came later: `run-store.ts`, `runtime-health.ts` and
+  // `editor-openers.ts` all import it statically, so once one of them entered this
+  // graph the whole FILE stopped collecting — a partial factory links for real, and
+  // a missing name is a `SyntaxError` at import rather than a failing assertion.
+  // Nothing here calls any of them; the same key is in every sibling factory in this
+  // directory for that reason, whether or not that file's graph reaches it today.
   apiGetTyped: vi.fn(),
+  apiGetOrError: vi.fn(),
 }));
 
 vi.mock("../push-util.js", () => ({
