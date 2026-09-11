@@ -178,19 +178,16 @@ func opensHeaderlessTurn(m *vibekit.Message, prevClosed bool) bool {
 // NOTHING closed, and its predicate is "no ASSISTANT message" rather than "empty
 // body", which is what keeps a legacy transcript reading `completed`.
 func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome {
-	interrupted := false
-	cancelled := false
-	sawUnknown := false
-	sawAssistant := false
+	var w turnWalk
 	for i := range body {
 		m := &body[i]
 		if m.Role == vibekit.RoleAssistant {
-			sawAssistant = true
+			w.sawAssistant = true
 		}
 		if m.TurnOutcome == vibekit.TurnOutcomeUnknown {
 			// A fragment's non-verdict (see closesTurn), remembered as the fallback
 			// since the segment usually continues into the reply that settles it.
-			sawUnknown = true
+			w.sawUnknown = true
 			continue
 		}
 		if m.TurnOutcome != "" {
@@ -203,23 +200,39 @@ func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome 
 		case vibekit.EventCompactFailed, vibekit.EventInfraSafetyBlocked:
 			return vibekit.TurnOutcomeFailed
 		case vibekit.EventInterrupted:
-			interrupted = true
+			w.interrupted = true
 		case vibekit.EventCancelled:
-			cancelled = true
+			w.cancelled = true
 		}
 	}
-	// A fault outranks a gesture: a turn carrying both markers is one something
-	// broke, so `interrupted` is returned first.
-	if interrupted {
+	return w.outcome(isLive)
+}
+
+// turnWalk is what one pass over a turn's body saw, for a turn no message in it
+// settled outright. A struct rather than four bool parameters, so a transposition
+// at the call site cannot compile.
+type turnWalk struct {
+	interrupted  bool
+	cancelled    bool
+	sawUnknown   bool
+	sawAssistant bool
+}
+
+// outcome grades a turn the walk found nothing to settle it with.
+//
+// A fault outranks a gesture: a turn carrying both stop markers is one something
+// broke, so `interrupted` is answered first. Both outrank isLive, because a marker
+// is a statement about an end while `thinking` can still be true once the next
+// turn's stream has opened.
+func (w turnWalk) outcome(isLive bool) vibekit.TurnOutcome {
+	switch {
+	case w.interrupted:
 		return vibekit.TurnOutcomeInterrupted
-	}
-	if cancelled {
+	case w.cancelled:
 		return vibekit.TurnOutcomeCancelled
-	}
-	if isLive {
+	case isLive:
 		return vibekit.TurnOutcomeRunning
-	}
-	if sawUnknown || !sawAssistant {
+	case w.sawUnknown, !w.sawAssistant:
 		return vibekit.TurnOutcomeUnknown
 	}
 	return vibekit.TurnOutcomeCompleted
