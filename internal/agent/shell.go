@@ -66,6 +66,16 @@ func NewShellManager(_ context.Context, workDir string) *ShellManager {
 }
 
 // newHandler builds a fresh PTY handler for this manager's workDir.
+//
+// --login costs the container's PATH unless something puts it back: Debian's
+// /etc/profile ASSIGNS PATH for uid 0 rather than appending, so a login shell
+// drops the /config entries this process inherited and an engine-installed CLI
+// stops resolving by name. entrypoint.sh's /etc/profile.d/10-vibekit-path.sh
+// drop-in is what restores it, for this PTY and for every other login
+// shell in the container alike.
+// Deliberately no terminal.WithEnv: the handler inherits the correct PATH, and
+// pinning one here would only mask a broken drop-in for the PTY while every
+// other login shell in the container stayed wrong.
 func (sm *ShellManager) newHandler() *terminal.Handler {
 	return terminal.NewHandler([]string{"bash", "--login"},
 		terminal.WithWorkDir(sm.workDir),
