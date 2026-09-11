@@ -21,16 +21,20 @@ import (
 )
 
 // ghStatusAccount is one account entry in `gh auth status --json hosts`.
+// Scopes is GitHub's own answer for that account's token (gh reports
+// the X-Oauth-Scopes header its check received), so it is empty when
+// the check could not reach GitHub.
 type ghStatusAccount struct {
 	Login  string `json:"login"`
+	Scopes string `json:"scopes"`
 	Active bool   `json:"active"`
 }
 
-// ghAuthHosts returns host -> login for every account gh knows about.
-// gh exits non-zero when any host's check errors AND when no hosts
-// are configured, but still prints the JSON in the former case, so
-// stdout is decoded regardless of exit status.
-func ghAuthHosts(ctx context.Context) (map[string]string, error) {
+// ghAuthStatus decodes `gh auth status --json hosts`. gh exits non-zero
+// when any host's check errors AND when no hosts are configured, but
+// still prints the JSON in the former case, so stdout is decoded
+// regardless of exit status.
+func ghAuthStatus(ctx context.Context) (map[string][]ghStatusAccount, error) {
 	out, err := runCmd(ctx, CmdTimeout, nil, "gh", "auth", "status", "--json", "hosts")
 	if errors.Is(err, ErrNotInstalled) {
 		return nil, err
@@ -42,23 +46,58 @@ func ghAuthHosts(ctx context.Context) (map[string]string, error) {
 		if err != nil && !errors.Is(err, ErrNotLoggedIn) {
 			return nil, err
 		}
-		return map[string]string{}, nil
+		return map[string][]ghStatusAccount{}, nil
 	}
-	hosts := make(map[string]string, len(payload.Hosts))
-	for host, accounts := range payload.Hosts {
-		if len(accounts) == 0 {
+	return payload.Hosts, nil
+}
+
+// activeAccount picks the account whose credential gh actually uses:
+// the one flagged active, else the first. One selection rule so the
+// login a host reports and the scopes it reports name one account.
+func activeAccount(accounts []ghStatusAccount) (ghStatusAccount, bool) {
+	if len(accounts) == 0 {
+		return ghStatusAccount{}, false
+	}
+	for _, a := range accounts {
+		if a.Active {
+			return a, true
+		}
+	}
+	return accounts[0], true
+}
+
+// ghAuthHosts returns host -> login for every account gh knows about.
+func ghAuthHosts(ctx context.Context) (map[string]string, error) {
+	byHost, err := ghAuthStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	hosts := make(map[string]string, len(byHost))
+	for host, accounts := range byHost {
+		a, ok := activeAccount(accounts)
+		if !ok {
 			continue
 		}
-		login := accounts[0].Login
-		for _, a := range accounts {
-			if a.Active {
-				login = a.Login
-				break
-			}
-		}
-		hosts[host] = login
+		hosts[host] = a.Login
 	}
 	return hosts, nil
+}
+
+// ghGrantedScopes reports the OAuth scopes GitHub says the token gh
+// currently holds for host carries. Best-effort by design: no gh, no
+// login, or a check that could not reach GitHub all answer nil, and a
+// caller composing a scope request then falls back to its own floor
+// rather than failing the login.
+func ghGrantedScopes(ctx context.Context, host string) []string {
+	byHost, err := ghAuthStatus(ctx)
+	if err != nil {
+		return nil
+	}
+	a, ok := activeAccount(byHost[host])
+	if !ok {
+		return nil
+	}
+	return parseScopeList(a.Scopes)
 }
 
 // teaLoginInfo is one entry in `tea logins list -o json`.
