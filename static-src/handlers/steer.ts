@@ -27,7 +27,8 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
-import { recordSteerQueued, promoteSteer, dropSteers } from "../store.js";
+import { recordSteerQueued, promoteSteer, dropSteers, pendingSteerCarry } from "../store.js";
+import { noteBoundaryDrop } from "../steer-resend.js";
 import { info, success, error } from "../toast.js";
 
 onSSE("steer_queued", (chatID, p) => {
@@ -38,10 +39,12 @@ onSSE("steer_injected", (chatID, p) => {
   promoteSteer(chatID, p.steer_id, p.text, p.origin, p.ack);
 });
 
-// Named ids only. KAS clears its buffer at every turn boundary and the
-// server suppresses the empty case. An id the agent already read is
-// routine here and `dropSteers` ignores it, since it already has a note.
+// Named ids only; an id the agent already read is routine and `dropSteers`
+// ignores it. The capture runs BEFORE the drop that empties the dock it reads,
+// and only ARMS — this frame arrives while the turn is still finishing, so the
+// send waits for `turn_ended` (steer-resend.ts).
 onSSE("steer_cleared", (chatID, p) => {
+  noteBoundaryDrop(chatID, pendingSteerCarry(chatID, p.steer_ids));
   dropSteers(chatID, p.steer_ids);
 });
 

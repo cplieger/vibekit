@@ -23,7 +23,6 @@ import { effect, el, touch } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { CHAT_SKELETON_ID } from "./skeleton.js";
 import { $, forceReflow } from "./dom.js";
-import { setComposerValue } from "./composer-value.js";
 import {
   getScrollEl,
   scrollToBottom,
@@ -593,14 +592,6 @@ initBlockRenderer({
   pushBlockEffect,
   disposeBlockEffects,
   makeRow,
-  // The restore control on an UNDELIVERED steer note. The same pair
-  // `pending-steers.ts` uses for Edit — fill the box, then focus it — because it
-  // is the same gesture: put the message back where it was typed so the next
-  // Send is the retry.
-  restoreSteer: (text: string) => {
-    setComposerValue(text);
-    $.promptInput.focus();
-  },
 });
 // The refusal callout's Rewind CTA reuses the standard rewind flow (confirm →
 // branch → open the new tab). Injected — refusal.ts can't import messages.ts.
@@ -1722,7 +1713,7 @@ function buildMessage(m: Message, range: BlockRange): HTMLElement {
  *  ABSENT means not known — the whole legacy population, plus every row the
  *  session/load replay writes, since KAS's log records a steer without saying
  *  whether the model consumed it — and it reads as the NEUTRAL note. Reading it as
- *  not-delivered would offer a restore for a correction the agent may have acted on.
+ *  not-delivered would label a correction the agent may have acted on as missed.
  *  `ack` is omitted, the one fidelity loss against the live mark this supersedes. */
 function buildPersistedSteerNote(m: Message): HTMLElement {
   const dropped = m.steer_state === "dropped";
@@ -1733,17 +1724,6 @@ function buildPersistedSteerNote(m: Message): HTMLElement {
     // carried the field at all.
     origin: m.steer_origin ?? "user",
     dropped,
-    // The one control the wire can honour, and only on a message nothing read: a
-    // read steer cannot be unsent. Same pair the dock's Edit uses — fill the box,
-    // then focus it — because it is the same gesture.
-    ...(dropped
-      ? {
-          onRestore: () => {
-            setComposerValue(text);
-            $.promptInput.focus();
-          },
-        }
-      : {}),
   });
 }
 

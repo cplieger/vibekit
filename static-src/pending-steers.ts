@@ -48,16 +48,19 @@
 // gains its controls, because only then is there a server-side id a clear can
 // address.
 //
-// WHAT THE CONTROLS CAN BE, measured against KAS 2.18.0's own source rather
-// than assumed. There are exactly two steer verbs, `_session/steer` and
-// `_session/steer/clear`, and `handleSessionSteerClear` reads ONLY `sessionId`:
-// it drains the whole buffer through `clearSteeringAtTurnBoundary` and bumps the
-// steering epoch. So there is no per-steer removal and no edit verb anywhere on
-// the wire, and three rules follow:
+// WHAT THE CONTROLS CAN BE, measured against KAS's own source rather than
+// assumed (re-measured on 2.21.2). There are exactly two steer verbs,
+// `_session/steer` and `_session/steer/clear`, and `handleSessionSteerClear`
+// reads ONLY `sessionId`: it drains the whole buffer through
+// `clearSteeringAtTurnBoundary` and bumps the steering epoch. Nothing on the wire
+// injects. Four rules follow:
 //
 //   - A `pending` row carries no controls at all. Its id is derived rather than
 //     confirmed, so there is no server-side id to clear; a control there would
 //     be a button that cannot act yet.
+//   - Send now stops the TURN and sends the message as a new one, the only
+//     reading the wire can honour. It leads the column; `steer-resend.ts` owns
+//     the mechanism.
 //   - Discard appears on the confirmed rows and always drops EVERY unread
 //     message.
 //     With one unread that is unambiguous, so it acts immediately. With more it
@@ -80,11 +83,12 @@ import { attachClamp, releaseClampsIn } from "./clamp-text.js";
 import { announce } from "@cplieger/ui-primitives/announce";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
-import { activeSession, getActiveId } from "./store.js";
-import { clearSteers } from "./actions/chat.js";
+import { activeSession, getActiveId, pendingSteerCarry } from "./store.js";
+import { cancelTurn, clearSteers } from "./actions/chat.js";
+import { forgetSteerPreference, preferSteerFirst } from "./steer-resend.js";
 import { setComposerValue } from "./composer-value.js";
 import { confirm } from "./confirm.js";
-import { ICON_HOURGLASS, ICON_EDIT, ICON_TRASH } from "./icons.js";
+import { ICON_ARROW_UP, ICON_HOURGLASS, ICON_EDIT, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import type { PendingSteer } from "./types.js";
 
@@ -344,6 +348,24 @@ function fillActions(
     return;
   }
   const controls: HTMLElement[] = [];
+  // Send now LEADS, and the destructive control stays last. Only on a row the resend
+  // would carry: nothing carries an agent's own notice, so offering it there would be
+  // a button that cannot act.
+  if (steer.origin === "user") {
+    controls.push(
+      actionButton(
+        ICON_ARROW_UP,
+        "Send this message now",
+        // Names what it does AND what it costs: no wire verb injects mid-turn.
+        waiting === 1
+          ? "Stops the turn and sends this message as a new one"
+          : "Stops the turn and sends this message first, then the others",
+        () => {
+          void sendSteerNow(steer.id);
+        },
+      ),
+    );
+  }
   // Edit is discard-plus-retype, so it is only offered when discarding cannot
   // take anything else with it.
   if (waiting === 1) {
@@ -400,6 +422,36 @@ function actionButton(
     onClick();
   });
   return btn;
+}
+
+/** Stop the running turn and send this message as a new one.
+ *
+ *  THE PRESSED ROW LEADS, then every other carried row in arrival order. Sending only
+ *  the pressed one was rejected: the same cancel drains KAS's whole buffer, so the
+ *  others would be lost — the very loss the boundary resend exists to remove, on a
+ *  different button.
+ *
+ *  It records an ORDER and cancels; the boundary reads the text (`steer-resend.ts`). */
+async function sendSteerNow(steerID: string): Promise<void> {
+  const chatID = getActiveId();
+  if (chatID === "") {
+    return;
+  }
+  // Click-time read for the announcement and the no-op guard only, never the payload.
+  const carried = pendingSteerCarry(chatID);
+  if (!carried.some((e) => e.id === steerID)) {
+    return;
+  }
+  preferSteerFirst(chatID, steerID);
+  announce(
+    carried.length === 1
+      ? "Stopping the turn and sending this message"
+      : `Stopping the turn and sending ${String(carried.length)} messages`,
+  );
+  const outcome = await cancelTurn.dispatch(chatID).outcome;
+  if (outcome.status !== "success") {
+    forgetSteerPreference(chatID);
+  }
 }
 
 /** Take the only unread steer back and put its text in the composer.

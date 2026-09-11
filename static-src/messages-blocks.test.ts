@@ -3056,10 +3056,14 @@ describe("truncated-snapshot note", () => {
     expect(note).not.toBeNull();
     // First child: a preface to the body, not a footnote to whatever mounted last.
     expect(wrap.firstElementChild).toBe(note);
-    // It says what is missing AND when it arrives — a reader's next move, not a
-    // byte count they cannot act on.
-    expect(note?.textContent ?? "").toMatch(/not shown/i);
-    expect(note?.textContent ?? "").toMatch(/turn ends/i);
+    // It says WHERE the reader is (the end of the reply) and that the rest is coming —
+    // a position plus a promise, not a claim about the turn's own lifecycle. The GET now
+    // carries the whole turn, so "it arrives when the turn ends" is no longer what happens.
+    expect(note?.textContent ?? "").toMatch(/end of this reply/i);
+    expect(note?.textContent ?? "").toMatch(/still loading/i);
+    // No byte counts: the doc comment above TRUNCATION_NOTE_TEXT states the rule, and a
+    // matcher is what keeps it from drifting back in as a "helpful" diagnostic.
+    expect(note?.textContent ?? "").not.toMatch(/\d+\s*(bytes|B|KiB|MiB)/);
   });
 
   it("carries no control: the withheld bytes are not on the wire", () => {
@@ -3324,9 +3328,6 @@ describe("a delegate card's status follows its invocation CALL", () => {
         }
       },
       makeRow: () => document.createElement("div"),
-      restoreSteer: () => {
-        /* no composer here */
-      },
     });
   });
   afterEach(() => {
@@ -3341,9 +3342,6 @@ describe("a delegate card's status follows its invocation CALL", () => {
         /* until init */
       },
       makeRow: () => document.createElement("div"),
-      restoreSteer: () => {
-        /* until init */
-      },
     });
   });
 

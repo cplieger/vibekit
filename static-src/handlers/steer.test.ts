@@ -34,6 +34,21 @@ vi.mock("../toast.js", () => ({
   error: (m: string) => toastError(m),
 }));
 
+// The armed slot's own behaviour — the join, the precedence, the send — is
+// steer-resend.test.ts's. What this file owns is the WIRE half: that the clear
+// frame hands the dropped texts over BEFORE the drop empties the dock it reads
+// them from, and that it does not fire, since this frame arrives while the turn is
+// still finishing. Mocked to spies, which also keeps the transport and the actions
+// framework out of this file's graph.
+const mockNoteBoundaryDrop = vi.fn();
+const mockRunArmedResend = vi.fn();
+vi.mock("../steer-resend.js", () => ({
+  noteBoundaryDrop: mockNoteBoundaryDrop,
+  runArmedResend: mockRunArmedResend,
+  preferSteerFirst: vi.fn(),
+  forgetSteerResend: vi.fn(),
+}));
+
 import {
   setSessions,
   setActive,
@@ -80,6 +95,8 @@ beforeEach(() => {
   toastInfo.mockClear();
   toastSuccess.mockClear();
   toastError.mockClear();
+  mockNoteBoundaryDrop.mockClear();
+  mockRunArmedResend.mockClear();
 });
 
 /** Put a turn on `c1`: one assistant message with two blocks, which is what a
@@ -366,6 +383,74 @@ describe("steer_cleared", () => {
     fireSSE("steer_cleared", "c1", { steer_ids: ["steer-nope"] });
     expect(steerCount("c1")).toBe(1);
     expect(get("c1")?.steer_marks).toBeUndefined();
+  });
+
+  // THE TEXT IS HANDED OVER BEFORE THE DROP, or there is nothing left to hand:
+  // `dropSteers` is what empties the dock the capture reads from. The order is the
+  // whole of it, so the assertion is on the ARGUMENT rather than on the call.
+  it("arms the dropped texts in queue order, ahead of emptying the dock", () => {
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "first", origin: "user" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-2", text: "second", origin: "user" });
+    fireSSE("steer_cleared", "c1", { steer_ids: ["steer-1", "steer-2"] });
+    expect(mockNoteBoundaryDrop).toHaveBeenCalledWith("c1", [
+      { id: "steer-1", text: "first" },
+      { id: "steer-2", text: "second" },
+    ]);
+  });
+
+  // The frame's own id order is not the reader's typing order, and the message they
+  // get back has to read the way they wrote it.
+  it("arms in the order they were typed, not the order the frame lists them", () => {
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "first", origin: "user" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-2", text: "second", origin: "user" });
+    fireSSE("steer_cleared", "c1", { steer_ids: ["steer-2", "steer-1"] });
+    expect(mockNoteBoundaryDrop).toHaveBeenCalledWith("c1", [
+      { id: "steer-1", text: "first" },
+      { id: "steer-2", text: "second" },
+    ]);
+  });
+
+  // Only the NAMED ids, so a steer this frame did not clear is not sent as though
+  // the agent had missed it.
+  it("arms only the steers the frame named", () => {
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one", origin: "user" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-2", text: "two", origin: "user" });
+    fireSSE("steer_cleared", "c1", { steer_ids: ["steer-1"] });
+    expect(mockNoteBoundaryDrop).toHaveBeenCalledWith("c1", [{ id: "steer-1", text: "one" }]);
+  });
+
+  // The agent's own notice is dropped like any other unread steer, and carried by
+  // nothing: KAS re-wakes an undelivered one itself by starting its own turn with it.
+  it("arms nothing for the agent's own notice", () => {
+    fireSSE("steer_queued", "c1", {
+      steer_id: "steer-1",
+      text: "workflow says hi",
+      origin: "agent",
+    });
+    fireSSE("steer_cleared", "c1", { steer_ids: ["steer-1"] });
+    expect(mockNoteBoundaryDrop).toHaveBeenCalledWith("c1", []);
+  });
+
+  // IT ARMS AND DOES NOT FIRE. This frame arrives while the turn is still
+  // finishing — KAS emits it from inside `cancel()` and from the end of its prompt
+  // handler, both before the response vibekit finalizes the turn on — so a send
+  // here would take a 409 and submit.ts would convert it back into a steer, putting
+  // it straight into the buffer the boundary just drained.
+  it("sends nothing itself, leaving the fire to the settled turn frame", () => {
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one", origin: "user" });
+    fireSSE("steer_cleared", "c1", { steer_ids: ["steer-1"] });
+    expect(mockRunArmedResend).not.toHaveBeenCalled();
+  });
+
+  // A steer the agent READ is not one to send again: it left the dock at
+  // `steer_injected`, so the capture finds nothing for it.
+  it("arms nothing for an id the agent already read", () => {
+    turnOnC1();
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one", origin: "user" });
+    fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "one", origin: "user" });
+    mockNoteBoundaryDrop.mockClear();
+    fireSSE("steer_cleared", "c1", { steer_ids: ["steer-1"] });
+    expect(mockNoteBoundaryDrop).toHaveBeenCalledWith("c1", []);
   });
 });
 

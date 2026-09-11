@@ -58,7 +58,7 @@ vi.mock("./icons.js", () => ({
   ICON_MODEL: "",
   ICON_MODEL_UI: "",
   ICON_ALERT: "",
-  ICON_GIT_UP_ARROW: "",
+  ICON_ARROW_UP: "",
   ICON_GIT_DOWN_ARROW: "",
   ICON_REFRESH: "",
   ICON_FILTER: "",

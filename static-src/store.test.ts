@@ -22,6 +22,7 @@ import {
   dropSteers,
   dropConfirmedSteers,
   restoreSteers,
+  pendingSteerCarry,
   forgetSteers,
   steerCount,
   steerMarks,
@@ -849,6 +850,90 @@ describe("Store steer projection", () => {
     expect(get("chat-1")?.steers).toBeUndefined();
     restoreSteers("chat-1", removed);
     expect(get("chat-1")?.steers?.map((e) => e.id)).toEqual(["steer-1", "steer-2"]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // `pendingSteerCarry` — what the boundary resend carries into the next turn.
+  // ---------------------------------------------------------------------------
+
+  // ARRIVAL ORDER, always: the reader gets their own messages back reading the way
+  // they wrote them, so neither the caller nor the frame decides the order.
+  it("reads the waiting entries in arrival order", () => {
+    resetStore("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "first", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "second", origin: "user" });
+    expect(pendingSteerCarry("chat-1").map((e) => e.text)).toEqual(["first", "second"]);
+  });
+
+  it("narrows to a named set, still in arrival order", () => {
+    resetStore("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "first", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "second", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-3", text: "third", origin: "user" });
+    // The frame lists them backwards; the answer does not.
+    expect(pendingSteerCarry("chat-1", ["steer-3", "steer-1"]).map((e) => e.text)).toEqual([
+      "first",
+      "third",
+    ]);
+  });
+
+  // THE PENDING EXCLUSION, and it is the same line `dropConfirmedSteers` draws for a
+  // sharper reason: a pending row's POST is still resolving, and submit.ts already
+  // converts a `no_turn` refusal of it into a prompt. Resending it here as well would
+  // send one message twice.
+  it("excludes a row whose own POST is still in flight", () => {
+    resetStore("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "confirmed", origin: "user" });
+    recordSteerSent("chat-1", "m-2", "still sending");
+    expect(steerCount("chat-1")).toBe(2);
+    expect(pendingSteerCarry("chat-1").map((e) => e.text)).toEqual(["confirmed"]);
+  });
+
+  // THE ORIGIN EXCLUSION, and it is a DUPLICATE-SEND guard like the one above rather
+  // than a tidiness rule: KAS re-wakes an undelivered workflow notification itself, by
+  // starting its own turn with it, so carrying one here delivers it twice. The row is
+  // still in the dock and still earns its `dropped` mark — it is only not RESENT.
+  it("excludes the agent's own notice, which KAS re-wakes itself", () => {
+    resetStore("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "mine", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "workflow says hi", origin: "agent" });
+    expect(steerCount("chat-1")).toBe(2);
+    expect(pendingSteerCarry("chat-1").map((e) => e.text)).toEqual(["mine"]);
+    // Named explicitly, so the `steer_cleared` door cannot reach it either.
+    expect(pendingSteerCarry("chat-1", ["steer-2"])).toEqual([]);
+  });
+
+  // The entries carry ids because the send-now arrow names its lead row by id; a bare
+  // text list could not express that without matching on the words themselves.
+  it("carries each row's id beside its text", () => {
+    resetStore("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    expect(pendingSteerCarry("chat-1")).toEqual([{ id: "steer-1", text: "one" }]);
+  });
+
+  // An empty list means "the whole set", matching `dropSteers`, so an absent and an
+  // empty argument cannot mean different things.
+  it("reads the whole set for an empty id list", () => {
+    resetStore("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    expect(pendingSteerCarry("chat-1", []).map((e) => e.text)).toEqual(["one"]);
+  });
+
+  it("answers empty for a chat with nothing waiting, and for a chat it does not hold", () => {
+    resetStore("chat-1");
+    expect(pendingSteerCarry("chat-1")).toEqual([]);
+    expect(pendingSteerCarry("no-such-chat")).toEqual([]);
+  });
+
+  // A steer the agent READ has left the dock, so it is not eligible by construction
+  // rather than by a filter — which is what makes "only never-read steers are
+  // resent" true without a second rule to keep in step.
+  it("answers nothing for a steer the agent has read", () => {
+    chatWithTurn("chat-1", 1);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "read one", origin: "user" });
+    promoteSteer("chat-1", "steer-1", "read one", "user");
+    expect(pendingSteerCarry("chat-1")).toEqual([]);
+    expect(pendingSteerCarry("chat-1", ["steer-1"])).toEqual([]);
   });
 
   // A transport gap means the frames that resolved these steers may be among the

@@ -4,6 +4,12 @@
 // A CARD on the tool-card box vocabulary, not a left rail: `#vibekit-ui` reserves
 // a leading rail for work this agent did not do itself. The LABEL and the GLYPH
 // are what separate the two origins — see LABELS below for why there are two.
+//
+// IT CARRIES NO CONTROL, in either state; the boundary resend replaced the
+// dropped state's "Put it back in the message box".
+//
+// THE DROPPED LABEL SAYS WHAT HAPPENED NEXT, and the origins diverge because only
+// a USER row is carried into a new turn (`vibekit-client.md`).
 
 import { el } from "@cplieger/reactive";
 import { attachClamp } from "../clamp-text.js";
@@ -19,9 +25,6 @@ export interface SteerNoteData {
   ack?: string;
   /** The agent never read it. */
   dropped: boolean;
-  /** Put the text back in the message box. Dropped state only — a read message
-   *  cannot be unsent. Injected to keep this a pure `fundamentals/` view. */
-  onRestore?: () => void;
 }
 
 /** The four labels, TOTAL over the origin so a third value cannot compile without
@@ -31,7 +34,7 @@ export interface SteerNoteData {
  *  workflow's report arrives on it beside the reader's own corrections — and with
  *  one label the report read as something they had typed. */
 const LABELS: Record<SteerOrigin, { read: string; dropped: string }> = {
-  user: { read: "Mid-turn message", dropped: "Not delivered" },
+  user: { read: "Mid-turn message", dropped: "Not read — sent as a new turn" },
   agent: { read: "Workflow result", dropped: "Workflow result not delivered" },
 };
 
@@ -83,33 +86,10 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   if (ack !== "") {
     body.appendChild(el("div", { className: "steer-note-ack" }, ack));
   }
-  if (d.dropped && d.onRestore !== undefined) {
-    body.appendChild(restoreButton(d.onRestore));
-  }
   root.appendChild(body);
 
   attachClamp(text, more, { lines: CLAMP_LINES });
   return root;
-}
-
-/** The one control the wire can honour on a dropped steer: the text back in the
- *  message box, from which it is one Send from being a prompt. */
-function restoreButton(restore: () => void): HTMLButtonElement {
-  const btn = el(
-    "button",
-    {
-      className: "steer-note-restore",
-      type: "button",
-      "data-tooltip": "The agent never read it — send it again as a message",
-    },
-    "Put it back in the message box",
-  ) as HTMLButtonElement;
-  btn.addEventListener("click", (e: Event) => {
-    // Must not also fold the turn card away (its header is a fold toggle).
-    e.stopPropagation();
-    restore();
-  });
-  return btn;
 }
 
 function accessibleName(label: string, text: string, ack: string): string {

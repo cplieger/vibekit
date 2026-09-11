@@ -116,6 +116,7 @@ export const storeMock = {
   // asserts on a steer id gets the real shape rather than a placeholder.
   steerIDFor: vi.fn((messageID: string) => `steer-${messageID}`),
   steerCount: vi.fn(() => 0),
+  pendingSteerCarry: vi.fn(() => []),
   steerMarks: vi.fn(() => []),
   recordSteerSent: vi.fn(),
   recordSteerQueued: vi.fn(),

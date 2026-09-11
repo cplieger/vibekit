@@ -16,7 +16,9 @@ import {
   outcomeLatch,
   applyLatch,
   dropSteers,
+  pendingSteerCarry,
 } from "../store.js";
+import { noteBoundaryDrop, runArmedResend } from "../steer-resend.js";
 import { notifyIfHidden, NOTIFY_TITLE } from "../notify.js";
 import { noteAgentFinished } from "../agent-finished-cue.js";
 import { pushDecision, collapseSettledDecision, dropTurnDecisions } from "../decision-dock.js";
@@ -145,11 +147,16 @@ onSSE("turn_ended", (chatID, p) => {
   void refreshTurnRail(chatID);
   clearAgentDown();
   refreshGitBadge();
-  // KAS clears its steering buffer at every turn boundary; anything still in
-  // the dock was never read. `dropSteers` promotes each as "not delivered"
-  // rather than deleting it silently.
+  // Anything still in the dock at a boundary was never read: `dropSteers` marks
+  // it and the resend carries the text into a new turn.
+  //
+  // Ordering is load-bearing — the capture reads the dock `dropSteers` empties,
+  // and the fire comes last so it sends against a settled turn. The one firing
+  // point (steer-resend.ts).
   if (settles) {
+    noteBoundaryDrop(chatID, pendingSteerCarry(chatID));
     dropSteers(chatID);
+    runArmedResend(chatID);
   }
 
   // Inside the `settles` branch, and AFTER the writes above: the cue is a statement

@@ -30,8 +30,14 @@ function textOf(root: HTMLElement, sel: string): string | null {
   return root.querySelector(sel)?.textContent ?? null;
 }
 
-function restoreButton(root: HTMLElement): HTMLButtonElement | null {
-  return root.querySelector<HTMLButtonElement>(".steer-note-restore");
+/** Any control at all. The note carries none in either state now: the boundary
+ *  resend sends an undelivered message for the reader, so the button that used to
+ *  ask them to do it by hand is gone (steer-note.ts's header records the reasoning),
+ *  and the CLAMP's opener is the one button the note may hold. */
+function controls(root: HTMLElement): HTMLButtonElement[] {
+  return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).filter(
+    (b) => !b.classList.contains("steer-note-more"),
+  );
 }
 
 describe("the read state", () => {
@@ -68,59 +74,32 @@ describe("the read state", () => {
     expect(n.getAttribute("aria-label")).toBe("Mid-turn message: one");
   });
 
-  // A message the agent has already read cannot be unsent, so there is no control
-  // — not even when the caller offers the callback.
-  it("offers no restore control, even given the callback", () => {
-    const n = note({ text: "one", onRestore: vi.fn() });
-    expect(restoreButton(n)).toBeNull();
+  it("carries no control", () => {
+    expect(controls(note({ text: "one" }))).toEqual([]);
   });
 });
 
 describe("the dropped state", () => {
-  // "I sent this and the agent never read it" is exactly the fact the transcript
-  // is for, so the row keeps the text and says plainly that it was not delivered.
-  it("says it was not delivered and keeps the text", () => {
+  // THE LABEL SAYS WHAT HAPPENED NEXT. "Not delivered" alone left the reader looking
+  // at their own words twice — once as this mark, once as the turn the resend opened
+  // under it — with nothing joining them. Both halves are stated: not read, and sent.
+  it("says it was not read and was sent as a new turn, and keeps the text", () => {
     const n = note({ text: "never read this", dropped: true });
 
     expect(n.dataset["state"]).toBe("dropped");
-    expect(textOf(n, ".steer-note-label")).toBe("Not delivered");
+    expect(textOf(n, ".steer-note-label")).toBe("Not read — sent as a new turn");
     expect(textOf(n, ".steer-note-text")).toBe("never read this");
-    expect(n.getAttribute("aria-label")).toBe("Not delivered: never read this");
+    expect(n.getAttribute("aria-label")).toBe("Not read — sent as a new turn: never read this");
   });
 
-  // One control, and it is the one that makes the message a click from being
-  // re-sent as an ordinary prompt.
-  it("offers to put the message back in the box, and calls back on the click", () => {
-    const onRestore = vi.fn();
-    const n = note({ text: "never read this", dropped: true, onRestore });
-
-    const btn = restoreButton(n);
-    expect(btn?.textContent).toBe("Put it back in the message box");
-    btn?.click();
-    expect(onRestore).toHaveBeenCalledTimes(1);
-  });
-
-  // The note sits inside the turn card, whose header band is a fold toggle.
-  // Restoring must not also fold the turn away.
-  it("keeps the click off the turn card around it", () => {
-    const onRestore = vi.fn();
-    const onCard = vi.fn();
-    const card = document.createElement("div");
-    card.addEventListener("click", onCard);
-    card.appendChild(note({ text: "never read this", dropped: true, onRestore }));
-    document.body.appendChild(card);
-
-    restoreButton(card)?.click();
-    expect(onRestore).toHaveBeenCalledTimes(1);
-    expect(onCard).not.toHaveBeenCalled();
-    card.remove();
-  });
-
-  // The control is what acts, so a note with nowhere to restore to renders none
-  // rather than a button that does nothing.
-  it("renders no control when there is nothing to restore into", () => {
+  // THE MARK IS A RECORD, NOT AN OFFER. It used to carry "Put it back in the
+  // message box", which was the reader's only route to recovering an unread
+  // message; the resend carries the text into the next turn for them now, so a
+  // button here would ask for a job already done.
+  it("carries no control, so the mark is a record rather than an offer", () => {
     const n = note({ text: "never read this", dropped: true });
-    expect(restoreButton(n)).toBeNull();
+    expect(controls(n)).toEqual([]);
+    expect(n.textContent).not.toContain("message box");
   });
 
   // An agent that never read the message cannot have said what it did about it,
@@ -128,7 +107,7 @@ describe("the dropped state", () => {
   it("renders no account line, because there is nothing it could be", () => {
     const n = note({ text: "never read this", ack: "should not appear", dropped: true });
     expect(n.querySelector(".steer-note-ack")).toBeNull();
-    expect(n.getAttribute("aria-label")).toBe("Not delivered: never read this");
+    expect(n.getAttribute("aria-label")).toBe("Not read — sent as a new turn: never read this");
   });
 });
 

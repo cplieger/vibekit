@@ -168,7 +168,12 @@ export const ICON_ALERT = svg(
   "ui",
   '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
 );
-export const ICON_GIT_UP_ARROW = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
+// Lucide `arrow-up`, a DIRECTION primitive rather than a git one: the dock's
+// send-now control reads it as "carry this message up into a new turn". It was
+// `ICON_GIT_UP_ARROW` with zero production callers, so drawing a second identical
+// glyph for that control would have put one drawing under two names. Its sibling
+// keeps its git name: `ICON_GIT_DOWN_ARROW` has one caller and a git-scoped meaning.
+export const ICON_ARROW_UP = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
 export const ICON_GIT_DOWN_ARROW = svg("ui", '<path d="M12 5v14M5 12l7 7 7-7"/>');
 export const ICON_REFRESH =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>';

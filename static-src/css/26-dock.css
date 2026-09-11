@@ -741,10 +741,11 @@
    deleted — the duration is painted unconditionally now, so the slot is simply
    present or absent. This rule is the reference for the technique.
 
-   Reserving the WIDTH is deliberately not attempted: the column holds one control
-   or two depending on how many messages are unread, so there is no single width to
-   hold open, and holding one open would spend a phone row's message space on a
-   control that is not there yet. */
+   Reserving the WIDTH is deliberately not attempted: the column holds two controls
+   or three depending on how many messages are unread (send-now and Discard always,
+   Edit only for a lone unread message), so there is no single width to hold open,
+   and holding one open would spend a phone row's message space on a control that is
+   not there yet. */
 .steer-actions {
   display: inline-flex;
   flex: none;

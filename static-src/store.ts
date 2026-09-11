@@ -881,6 +881,30 @@ export function steerCount(id: string): number {
   return get(id)?.steers?.length ?? 0;
 }
 
+/** The waiting steers a boundary must CARRY, in arrival order. Entries rather than
+ *  texts, because the arrow names its lead row by id. `steerIDs` narrows to the ids a
+ *  `steer_cleared` frame reports; the order stays the store's own.
+ *
+ *  Both filters stop the resend DUPLICATING a message: a `pending` row's POST is
+ *  unresolved and `submit.ts` already converts a refusal into a prompt, and KAS
+ *  re-wakes an undelivered workflow notification itself. An agent row still earns
+ *  its `dropped` mark. Measurements: `vibekit-client.md`. */
+export function pendingSteerCarry(
+  id: string,
+  steerIDs?: readonly string[],
+): readonly { id: string; text: string }[] {
+  const steers = get(id)?.steers;
+  if (steers === undefined) {
+    return [];
+  }
+  const named = steerIDs === undefined || steerIDs.length === 0 ? undefined : new Set(steerIDs);
+  return steers
+    .filter(
+      (e) => e.pending !== true && e.origin === "user" && (named === undefined || named.has(e.id)),
+    )
+    .map((e) => ({ id: e.id, text: e.text }));
+}
+
 /** The steers that have left the dock, each anchored where it can be DRAWN in the
  *  window that exists NOW.
  *
@@ -1062,13 +1086,13 @@ export function promoteSteer(
 }
 
 /** Drop steers at a turn boundary: out of the dock, into the transcript as UNDELIVERED.
- *  Named ids drop just those; an empty or absent list drops the chat's whole set. Each one
- *  keeps its text and earns a `dropped` mark, which the note offers to put back in the
- *  composer.
+ *  Named ids drop just those; an empty or absent list drops the chat's whole set. Each
+ *  keeps its text and earns a `dropped` mark; `steer-resend.ts` captures the text from
+ *  `pendingSteerCarry` BEFORE this runs.
  *
- *  An id already in `steer_marks` is HOUSEKEEPING and a no-op: KAS clears its buffer at
- *  every boundary, so `steer_cleared` routinely names ids the model already read, and those
- *  must keep their existing mark rather than gain one claiming they were missed. */
+ *  An id already in `steer_marks` is a no-op: `steer_cleared` routinely names ids the
+ *  model already read, and those keep their existing mark rather than gain one
+ *  claiming they were missed. */
 export function dropSteers(id: string, steerIDs?: readonly string[]): void {
   const s = get(id);
   if (s?.steers === undefined) {

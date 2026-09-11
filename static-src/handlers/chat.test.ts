@@ -52,6 +52,19 @@ const mockDropComposer = vi.fn();
 vi.mock("../composer-state.js", () => ({
   dropComposerState: mockDropComposer,
   adoptRemoteComposerState: mockAdoptComposer,
+  // Present-but-inert so real-ESM linking succeeds: steer-resend.js is in this
+  // graph now (the delete handler drops its armed slot) and imports the name.
+  restoreFailedSend: vi.fn(),
+}));
+
+// The armed slot's own behaviour is steer-resend.test.ts's; what this file owns is
+// that a deleted chat's slot is dropped, so the module is mocked to one spy.
+const mockForgetResend = vi.fn();
+vi.mock("../steer-resend.js", () => ({
+  forgetSteerResend: mockForgetResend,
+  preferSteerFirst: vi.fn(),
+  noteBoundaryDrop: vi.fn(),
+  runArmedResend: vi.fn(),
 }));
 
 // Import after mocks so chat.ts registers its handlers against the bus mock.
@@ -199,6 +212,17 @@ describe("chat_deleted", () => {
 
     fireSSE("chat_deleted", "", { id: "c1" });
     expect(hasPendingDecision("c1")).toBe(false);
+  });
+
+  // Same shape as the dock's queue and the composer's draft: the armed resend slot
+  // is keyed by chat id and outlives the session row, so a message armed for a chat
+  // that is now gone would be sent at the next boundary of a chat recreated under
+  // the same id.
+  it("drops a resend armed for the chat", () => {
+    setSessions([makeSession("c1")]);
+    mockForgetResend.mockClear();
+    fireSSE("chat_deleted", "", { id: "c1" });
+    expect(mockForgetResend).toHaveBeenCalledWith("c1");
   });
 
   // The tab close moved SERVER-side, and its absence here is load-bearing rather

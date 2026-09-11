@@ -77,9 +77,6 @@ interface BlockCbs {
   disposeBlockEffects(msgId: string, indices: Iterable<number>): void;
   /** Build an avatar row for a top-level assistant bubble. */
   makeRow(): HTMLDivElement;
-  /** Put an undelivered steer's text back in the message box. Injected, not
-   *  imported: the composer is above this module in the dependency order. */
-  restoreSteer(text: string): void;
 }
 
 let cbs: BlockCbs = {
@@ -93,9 +90,6 @@ let cbs: BlockCbs = {
     /* until init */
   },
   makeRow: () => el("div") as HTMLDivElement,
-  restoreSteer: () => {
-    /* until init */
-  },
 };
 
 export function initBlockRenderer(c: BlockCbs): void {
@@ -599,7 +593,7 @@ const CLS_TRUNCATION_NOTE = "msg-truncated-note";
 /** What the note says. The reader's question is "is this the whole reply", so the
  *  answer leads and the remedy follows; no byte counts, which are diagnostics a
  *  reader cannot act on. */
-const TRUNCATION_NOTE_TEXT = "Earlier output is not shown. It arrives when the turn ends.";
+const TRUNCATION_NOTE_TEXT = "You are seeing the end of this reply; the rest is still loading.";
 
 /** Mount or drop the withheld-output note at the TOP of a truncated message's body. A
  *  STATIC note, never a show-more: the withheld bytes are not on the wire. Idempotent,
@@ -1264,9 +1258,6 @@ function flushSteerNotes(
       origin: mark.origin,
       ...(mark.ack !== undefined ? { ack: mark.ack } : {}),
       dropped: mark.dropped === true,
-      onRestore: () => {
-        cbs.restoreSteer(mark.text);
-      },
     });
     appendBlock(st, st.blocksEl, note);
     st.steerNotes.set(mark.id, { index: at, el: note });

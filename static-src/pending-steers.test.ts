@@ -32,15 +32,40 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 // top-level const would be initialized.
 const mocks = vi.hoisted(() => ({
   clearDispatch: vi.fn(() => Promise.resolve(true)),
+  cancelDispatch: vi.fn(() => ({
+    outcome: Promise.resolve<{ status: string }>({ status: "success" }),
+  })),
   confirmMock: vi.fn((_message: string) => Promise.resolve(true)),
   setComposerValueMock: vi.fn(),
+  preferMock: vi.fn(),
+  forgetPrefMock: vi.fn(),
 }));
 
-vi.mock("./actions/chat.js", () => ({ clearSteers: { dispatch: mocks.clearDispatch } }));
+vi.mock("./actions/chat.js", () => ({
+  clearSteers: { dispatch: mocks.clearDispatch },
+  cancelTurn: { dispatch: mocks.cancelDispatch },
+}));
 vi.mock("./confirm.js", () => ({ confirm: mocks.confirmMock }));
 vi.mock("./composer-value.js", () => ({ setComposerValue: mocks.setComposerValueMock }));
+// The send-now arrow records WHICH ROW leads and dispatches the cancel; the boundary
+// that cancel produces is what reads the messages. So what this file owns is the
+// gesture — the id named, the cancel, the guard — and the payload and its order are
+// steer-resend.test.ts's.
+vi.mock("./steer-resend.js", () => ({
+  preferSteerFirst: mocks.preferMock,
+  forgetSteerPreference: mocks.forgetPrefMock,
+  noteBoundaryDrop: vi.fn(),
+  runArmedResend: vi.fn(),
+}));
 
-const { clearDispatch, confirmMock, setComposerValueMock } = mocks;
+const {
+  clearDispatch,
+  cancelDispatch,
+  confirmMock,
+  setComposerValueMock,
+  preferMock,
+  forgetPrefMock,
+} = mocks;
 
 import {
   setSessions,
@@ -141,8 +166,12 @@ describe("the steer stack", () => {
     setActive("chat-1");
     expect(rows()).toHaveLength(0);
     clearDispatch.mockClear();
+    cancelDispatch.mockClear();
+    cancelDispatch.mockReturnValue({ outcome: Promise.resolve({ status: "success" }) });
     confirmMock.mockClear();
     setComposerValueMock.mockClear();
+    preferMock.mockClear();
+    forgetPrefMock.mockClear();
   });
 
   // --- Placement and stacking ---------------------------------------------
@@ -260,7 +289,11 @@ describe("the steer stack", () => {
 
     recordSteerQueued("chat-1", { id: "steer-m-1", text: "one", origin: "user" });
     expect(firstRow().querySelector(".steer-state-label")?.textContent).toBe("Sent");
-    expect(actions(firstRow())).toEqual(["Edit this message", "Discard this message"]);
+    expect(actions(firstRow())).toEqual([
+      "Send this message now",
+      "Edit this message",
+      "Discard this message",
+    ]);
   });
 
   // --- The message gets the room -------------------------------------------
@@ -326,7 +359,11 @@ describe("the steer stack", () => {
 
   it("offers Edit and Discard on the only unread message", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    expect(actions(firstRow())).toEqual(["Edit this message", "Discard this message"]);
+    expect(actions(firstRow())).toEqual([
+      "Send this message now",
+      "Edit this message",
+      "Discard this message",
+    ]);
   });
 
   // Edit is discard-plus-retype, so offering it with two unread would silently
@@ -335,7 +372,7 @@ describe("the steer stack", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
     for (const row of rows()) {
-      expect(actions(row)).toEqual(["Discard all 2 unread messages"]);
+      expect(actions(row)).toEqual(["Send this message now", "Discard all 2 unread messages"]);
     }
   });
 
@@ -346,12 +383,16 @@ describe("the steer stack", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
     for (const row of rows()) {
-      expect(actions(row)).toEqual(["Discard all 2 unread messages"]);
+      expect(actions(row)).toEqual(["Send this message now", "Discard all 2 unread messages"]);
     }
 
     promoteSteer("chat-1", "steer-1", "one", "user");
     expect(rows()).toHaveLength(1);
-    expect(actions(firstRow())).toEqual(["Edit this message", "Discard this message"]);
+    expect(actions(firstRow())).toEqual([
+      "Send this message now",
+      "Edit this message",
+      "Discard this message",
+    ]);
   });
 
   // A row still sending is not one a clear can address, so it does not count
@@ -362,10 +403,89 @@ describe("the steer stack", () => {
     recordSteerSent("chat-1", "m-2", "still sending");
     const [confirmed, sending] = rows();
     expect(actions(confirmed as HTMLElement)).toEqual([
+      "Send this message now",
       "Edit this message",
       "Discard this message",
     ]);
     expect(actions(sending as HTMLElement)).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // SEND NOW. The wire has no force-inject and no flush — `_session/steer` and
+  // `_session/steer/clear` are the whole steer surface, and neither makes the
+  // running agent read a message — so the only reading this button can honour is
+  // stop-the-turn-and-send-it-as-a-new-one. It arms the shared slot and dispatches
+  // the cancel; the send happens at the boundary that cancel produces.
+  // ---------------------------------------------------------------------------
+
+  it("names its row and stops the turn when send-now is pressed", async () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main", origin: "user" });
+    clickAction(firstRow(), "Send this message now");
+
+    await vi.waitFor(() => {
+      expect(cancelDispatch).toHaveBeenCalledWith("chat-1");
+    });
+    expect(preferMock).toHaveBeenCalledWith("chat-1", "steer-1");
+    // It does not send here, and it does not discard: the buffer is drained by the
+    // cancel KAS handles, and the send waits for the settled turn frame.
+    expect(clearDispatch).not.toHaveBeenCalled();
+    expect(setComposerValueMock).not.toHaveBeenCalled();
+  });
+
+  // AN ID, NEVER A TEXT SNAPSHOT. A snapshot taken here would miss a row confirmed
+  // between the click and the boundary; the boundary reads for itself, so the gesture
+  // only has to say which row leads.
+  it("names the pressed row when several are waiting", async () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "first", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "second", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-3", text: "third", origin: "user" });
+
+    const second = rows()[1];
+    if (second === undefined) {
+      throw new Error("no second row");
+    }
+    clickAction(second, "Send this message now");
+
+    await vi.waitFor(() => {
+      expect(preferMock).toHaveBeenCalled();
+    });
+    expect(preferMock).toHaveBeenCalledWith("chat-1", "steer-2");
+  });
+
+  // A row still sending has no server-side id, so it has no control at all.
+  it("offers no send-now control on a message that is still sending", () => {
+    recordSteerSent("chat-1", "m-1", "still sending");
+    expect(actions(firstRow())).toEqual([]);
+  });
+
+  // A control that cannot act must not be drawn. Nothing carries an agent's own
+  // notice — KAS re-wakes an undelivered one itself — so that row offers no arrow.
+  it("offers no send-now control on the agent's own notice", () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "workflow says hi", origin: "agent" });
+    expect(actions(firstRow())).not.toContain("Send this message now");
+  });
+
+  // A cancel that never lands leaves no boundary to order, so the preference has to go
+  // or an unrelated later turn end would apply an order the reader gave up on.
+  it("forgets the preference when the cancel does not land", async () => {
+    cancelDispatch.mockReturnValue({ outcome: Promise.resolve({ status: "error" }) });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    clickAction(firstRow(), "Send this message now");
+
+    await vi.waitFor(() => {
+      expect(forgetPrefMock).toHaveBeenCalledWith("chat-1");
+    });
+    expect(preferMock).toHaveBeenCalledWith("chat-1", "steer-1");
+  });
+
+  // The tooltip is where the COST is stated, because the label cannot carry it: the
+  // reader is being told the turn stops, not that the agent will read this next.
+  it("says the turn stops, rather than implying the agent will read it", () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    const btn = Array.from(firstRow().querySelectorAll<HTMLButtonElement>(".steer-act")).find(
+      (b) => (b.getAttribute("aria-label") ?? "") === "Send this message now",
+    );
+    expect(btn?.dataset["tooltip"]).toContain("Stops the turn");
   });
 
   it("fills the composer and clears the buffer when a message is edited", async () => {
@@ -520,7 +640,11 @@ describe("the row across its own confirmation", () => {
 
     expect(firstRow(), "the node is updated in place, not rebuilt").toBe(sending);
     expect(sending.dataset["state"]).toBe("sent");
-    expect(actions(sending)).toEqual(["Edit this message", "Discard this message"]);
+    expect(actions(sending)).toEqual([
+      "Send this message now",
+      "Edit this message",
+      "Discard this message",
+    ]);
   });
 
   it("does not fade a second time when the confirmation lands", async () => {
@@ -575,7 +699,7 @@ describe("the row across its own confirmation", () => {
       recordSteerQueued("chat-1", { id: "steer-m-1", text: "use tabs instead", origin: "user" });
       await settles();
 
-      expect(actions(row), "the controls did arrive").toHaveLength(2);
+      expect(actions(row), "the controls did arrive").toHaveLength(3);
       expect(
         row.getBoundingClientRect().height,
         "and the row did not grow under the reader",
@@ -709,11 +833,11 @@ describe("the row's clamp", () => {
   // keeps the actions on the row: an `auto` middle track sizes to the text and
   // pushes them off. Opening the clamp grows the row's HEIGHT, so the controls
   // have to still be in their own column afterwards.
-  it("keeps Edit and Discard on the row at the expanded height", async () => {
+  it("keeps every control on the row at the expanded height", async () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: LONG, origin: "user" });
     const row = firstRow();
     await settles(row, false, "offered");
-    expect(actions(row).length, "one unread message, so Edit is offered too").toBe(2);
+    expect(actions(row).length, "one unread message, so Edit is offered too").toBe(3);
 
     const before = row.getBoundingClientRect().height;
     moreEl(row).click();
