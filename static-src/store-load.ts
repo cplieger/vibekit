@@ -18,6 +18,7 @@ import {
   setChunkWatermark,
   noteLiveTurnMessage,
   noteTruncatedSnapshot,
+  clearTruncatedSnapshot,
   upsertMessage,
   relatchTurnVerdict,
   latchFieldsFor,
@@ -137,6 +138,15 @@ function adoptLiveTurn(chatID: string, live: LiveTurnPage): void {
   noteLiveTurnMessage(chatID, live.message.id);
   if (live.truncated) {
     noteTruncatedSnapshot(chatID, live.message.id);
+  } else {
+    // RETRACT a marker the other channel set for this same message. The two channels
+    // disagree BY DESIGN: a connect frame's `turn_state` is capped at 52 KiB and truncates
+    // routinely, while this GET carries the whole turn, so its `false` is a statement about
+    // the same reply rather than a missing field. The GET is the fresher answer, so it wins
+    // — and without this the note stays on screen claiming output is still coming for a
+    // message the reader is already holding whole. Keyed on the message id, so a marker
+    // held for a DIFFERENT message is untouched.
+    clearTruncatedSnapshot(chatID, live.message.id);
   }
   upsertMessage(chatID, live.message);
 }

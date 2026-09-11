@@ -91,13 +91,29 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	if beforeID != "" {
 		end = indexOfMessage(msgs, beforeID)
 	}
-	// Rendered BEFORE the window and CHARGED against its byte budget: the live turn rides
-	// the same response, so the caller's ?max_bytes= has to bound both or a page can
-	// overrun it by the whole snapshot cap.
+	// TWO INDEPENDENT BOUNDS ON ONE RESPONSE, and that is the contract rather than a
+	// simplification. `?max_bytes=` bounds the WINDOW; the live turn is bounded by its own
+	// caps (internal/agent's liveTurnGETCaps, whose own ceiling is stated there). The live
+	// turn is NOT charged against the caller's budget, because the newest turn is served
+	// whole unconditionally and charging it would let the in-flight turn's size decide how
+	// much history a reader gets — a page that silently shortened as the reply grew.
+	// Rendered BEFORE the window only so the field is in hand when the page is assembled.
+	//
+	// SO THIS RESPONSE IS NOT BOUNDED BY THE PARAMETER THE CALLER PASSED, and this is the
+	// one place that composes both halves, so the total is stated here. Arithmetic ceiling,
+	// summing the two bounds: ~10.1 MiB of live-turn text (liveTurnGETCaps.MaxTextBytes()
+	// = 10,616,832) plus its envelope of ~2.4 MiB (8192 blocks and 4096 tool calls at their
+	// own per-element cost), plus maxWholeTurnBytes (16 MiB) for the window — about 28.5 MiB
+	// — PLUS the newest single MESSAGE's own size, which the runaway stop deliberately does
+	// not bound (see the `len(window) > 0` gate in messageWindow) and which is bounded only
+	// by the per-chat-file cap. At the client's own query (limit=50&max_bytes=1048576) the
+	// measured worst case is ~10.2 MiB; at the largest legal caller query it is ~17.2 MiB.
+	// Peak memory is about twice the body, because the window is held as []json.RawMessage
+	// and webhttp.WriteJSON copies those bytes into its own buffer. A caller sizing a read
+	// buffer, or an operator setting a proxy body limit, wants those numbers and can derive
+	// them from neither bound alone.
 	liveTurn := rt.liveTurnField(vibekit.ChatID(id), beforeID == "")
-	budget := parseWindowBudget(r)
-	budget.Bytes = max(1, budget.Bytes-len(liveTurn))
-	window, start := messageWindow(msgs[:end], budget)
+	window, start := messageWindow(msgs[:end], parseWindowBudget(r))
 	// `start` indexes `msgs` directly: `msgs[:end]` is a PREFIX, so an index into it
 	// is the same index into the whole array and no re-basing is needed.
 	turnOffset, segmentClosed := turnWindowBase(msgs, start)
@@ -132,8 +148,9 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 // before_id fetch is a scroll-up and asserts nothing about the live edge, so re-delivering
 // the in-flight turn on every page a reader scrolls back through would be pure cost.
 //
-// Returns the marshalled bytes rather than the value, so the caller can charge the page
-// budget for exactly what goes on the wire instead of estimating it.
+// Returns the marshalled bytes rather than the value so the field is embedded verbatim
+// with no second marshal. It is NOT charged against the caller's page budget — see
+// serveChatMessages for why the two bounds are independent.
 func (rt *Router) liveTurnField(chatID vibekit.ChatID, newestPage bool) json.RawMessage {
 	if !newestPage {
 		return nil
@@ -158,7 +175,8 @@ func (rt *Router) liveTurnField(chatID vibekit.ChatID, newestPage bool) json.Raw
 type windowBudget struct {
 	// Messages caps the page's LENGTH, a bound on shape rather than size.
 	Messages int
-	// Bytes is the hostile-input bound: what the wire may carry.
+	// Bytes is the hostile-input bound: what the WINDOW may carry. Not what the
+	// RESPONSE may carry — the live turn rides beside the window under its own caps.
 	Bytes int
 	// Blocks and ToolCalls are the client's residency budgets; planResidency stops
 	// on whichever runs out first.
@@ -166,6 +184,12 @@ type windowBudget struct {
 	ToolCalls int
 	// Turns is the FLOOR: a ceiling bounds the window's SIZE, this bounds its SHAPE,
 	// so a ceiling may only cut once the window opens on a turn holding this many.
+	//
+	// The precedence, precisely. The floor outranks every SIZE ceiling — `?max_bytes=`,
+	// `?blocks=`, `?tool_calls=` — including the caller's own value of the first, and is
+	// itself bounded only by maxWholeTurnBytes. It does NOT outrank Messages, which is the
+	// caller's statement about page LENGTH rather than about size; see the break in
+	// messageWindow for the production caller that depends on that.
 	Turns int
 }
 
@@ -198,6 +222,16 @@ func messageWindow(msgs []vibekit.Message, budget windowBudget) (window []json.R
 	var spent messageCost
 	start = len(msgs)
 	for i := range slices.Backward(msgs) {
+		// UNCONDITIONAL, and the one caller ceiling the turn floor does not outrank.
+		// `?limit=` is the caller's statement about page LENGTH rather than about size, and
+		// a production caller depends on it being a hard cut: store-load.ts's
+		// confirmChatExists sends `?limit=1` as the cheapest page the endpoint will serve,
+		// decoding only `chat`. Subordinating this to the floor would hand that probe a
+		// whole turn. The real transcript path sends limit=50, so it gets the floor for any
+		// newest turn of at most 50 persisted messages — which is every turn this app
+		// produces (a prompt, one flushed assistant message, a plan row and a few event
+		// rows), but it is a bound on the TURN and not a property of the cut: a longer turn
+		// is cut here like any other page.
 		if len(window) == budget.Messages {
 			break
 		}
@@ -210,8 +244,11 @@ func messageWindow(msgs []vibekit.Message, budget windowBudget) (window []json.R
 			break
 		}
 		cost := costOfMessage(&msgs[i])
-		// The floor may not carry a page past the largest one a caller may ask for.
-		if len(window) > 0 && spentBytes+len(raw) > maxMaxBytes {
+		// The RUNAWAY stop: the one bound the turn floor may not override. Deliberately
+		// NOT maxMaxBytes, which is the CALLER's ceiling and which the floor now outranks;
+		// budget.Bytes is already clamped to it by parseMaxBytesParam, so breachedBy covers
+		// that case inside the floorMet gate and a second term here would be redundant.
+		if len(window) > 0 && spentBytes+len(raw) > maxWholeTurnBytes {
 			break
 		}
 		// A cut is admissible only where the window already holds whole turns, so a
@@ -372,17 +409,34 @@ func parseLimitParam(r *http.Request) int {
 	return clampedQueryInt(r, "limit", 50, 1, 500)
 }
 
-// Byte budget bounds for the transcript window. Neither is a limit on the chat:
-// has_more plus before_id is how the rest is reached.
+// Byte budget bounds for the transcript WINDOW. None is a limit on the chat:
+// has_more plus before_id is how the rest is reached, and none bounds the live turn,
+// which rides beside the window under internal/agent's liveTurnGETCaps.
 const (
 	defaultMaxBytes = 1 << 20 // 1 MiB
-	maxMaxBytes     = 8 << 20 // 8 MiB
+	// maxMaxBytes is the top of the ?max_bytes= range — the largest WINDOW a caller may
+	// ask for. It is no longer the turn floor's overrun stop: the newest turn is served
+	// whole past every caller ceiling, so the floor outranks this.
+	maxMaxBytes = 8 << 20 // 8 MiB
+	// maxWholeTurnBytes is the stop the turn floor may NOT override, at 3.5x the measured
+	// maximum total bytes per turn (4,784,437). One must exist, because an unconditional
+	// guarantee is an unbounded response and one transcript shape reaches it easily: where
+	// nothing ever settles a turn, `closesTurn` is false for every message so
+	// opensHeaderlessTurn never fires again and the WHOLE chat is one headerless turn (the
+	// shape TestHandleOne_APromptlessTranscriptIsCutByTheBytes exercises). So it is sized
+	// ABOVE the measured maximum rather than below it: past it the newest turn is cut
+	// mid-turn, which is a state the wire already represents — has_more plus a turn_offset
+	// naming a turn the window holds partially.
+	maxWholeTurnBytes = 16 << 20 // 16 MiB
 )
 
-// parseMaxBytesParam returns the validated ?max_bytes= budget, defaulting to
-// defaultMaxBytes over the inclusive 1 KiB..maxMaxBytes range. The floor is 1 KiB
+// parseMaxBytesParam returns the validated ?max_bytes= budget for the WINDOW, defaulting
+// to defaultMaxBytes over the inclusive 1 KiB..maxMaxBytes range. The floor is 1 KiB
 // because anything under one message's envelope selects exactly one message
 // however small it is set, so it only hides a client bug.
+//
+// It bounds the window and not the response: the live turn is not charged against it, and
+// the turn floor may carry the window past it (up to maxWholeTurnBytes).
 func parseMaxBytesParam(r *http.Request) int {
 	return clampedQueryInt(r, "max_bytes", defaultMaxBytes, 1<<10, maxMaxBytes)
 }
@@ -419,7 +473,8 @@ func parseTurnsParam(r *http.Request) int {
 	return clampedQueryInt(r, "turns", defaultWindowTurns, 1, 50)
 }
 
-// parseWindowBudget reads the five page budgets off the query.
+// parseWindowBudget reads the five WINDOW budgets off the query. None of them describes
+// the whole response: the live turn rides beside the window under its own caps.
 func parseWindowBudget(r *http.Request) windowBudget {
 	return windowBudget{
 		Messages:  parseLimitParam(r),

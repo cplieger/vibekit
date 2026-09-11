@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -704,13 +705,17 @@ func TestHandleOne_TheFloorIsBoundedByTheTurnsTheChatOffers(t *testing.T) {
 	}
 }
 
-// The stop the floor may not override. The floor outranks the caller's own ceilings,
-// so this is what keeps a page of very large turns inside the largest page a caller
-// is allowed to ask for. It may cut mid-turn, and a bounded response outranks a
-// perfect left edge.
+// The RUNAWAY stop the floor may not override. The floor outranks every caller ceiling
+// including ?max_bytes=, so maxWholeTurnBytes is the one bound left that keeps an
+// unconditional whole-turn guarantee from being an unbounded response. It may cut
+// mid-turn, and a bounded response outranks a perfect left edge.
+//
+// Derived from maxWholeTurnBytes rather than maxMaxBytes: the latter is the CALLER's
+// ceiling, which the guarantee now beats, so deriving from it would assert the contract
+// this change reverses.
 func TestHandleOne_TheHardByteStopBoundsEveryFloor(t *testing.T) {
-	// Two of these fit under the stop and three do not, whatever maxMaxBytes is.
-	fat := maxMaxBytes/3 + 1<<20
+	// Two of these fit under the stop and three do not, whatever maxWholeTurnBytes is.
+	fat := maxWholeTurnBytes/3 + 1<<20
 
 	t.Run("the floor cannot carry a page past the stop", func(t *testing.T) {
 		msgs := []vibekit.Message{
@@ -730,13 +735,13 @@ func TestHandleOne_TheHardByteStopBoundsEveryFloor(t *testing.T) {
 		if !page.HasMore {
 			t.Error("has_more = false, want true: the oldest turn was not served")
 		}
-		if bodyLen > maxMaxBytes {
-			t.Errorf("body = %d bytes, want at most maxMaxBytes = %d", bodyLen, maxMaxBytes)
+		if bodyLen > maxWholeTurnBytes {
+			t.Errorf("body = %d bytes, want at most maxWholeTurnBytes = %d", bodyLen, maxWholeTurnBytes)
 		}
 	})
 
 	t.Run("one oversize newest message still goes through whole", func(t *testing.T) {
-		big := maxMaxBytes + 1<<20
+		big := maxWholeTurnBytes + 1<<20
 		msgs := []vibekit.Message{
 			user("ua", "a", 100), wordyMessage("a", 64),
 			user("ub", "b", 100), wordyMessage("big", big),
@@ -989,4 +994,111 @@ func TestParseMaxBytesParam_HonoursTheInclusiveRange(t *testing.T) {
 			}
 		})
 	}
+}
+
+// THE GUARANTEE, at the precedence it was built for: the newest turn is served WHOLE past
+// every SIZE ceiling the caller can name, all three at once and all set to their floors.
+// Before the guarantee only ?max_bytes= was overridden by the floor and the residency pair
+// could still cut mid-turn, so a client asking for a narrow paint budget got a fragment of
+// the reply it was about to render.
+func TestHandleOne_TheNewestTurnIsServedWholePastEveryCallerCeiling(t *testing.T) {
+	// One turn of five messages: a prompt, prose, a block-heavy row and two tool-heavy
+	// ones, so each ceiling below has something of its own kind to refuse.
+	msgs := []vibekit.Message{
+		user("uold", "old", 100), fatMessage("old", 4096),
+		user("unew", "new", 100),
+		wordyMessage("n1", 8192),
+		blockyMessage("n2", 64),
+		toolyMessage("n3", 32),
+		fatMessage("n4", 8192),
+	}
+
+	// Every size ceiling at or near its floor at once. turns=1 asks for the minimum the
+	// floor can be, so nothing here is the floor being generous.
+	page, ids, _ := serveOnePage(t, msgs, "?max_bytes=1024&blocks=1&tool_calls=0&turns=1")
+
+	want := []string{"unew", "n1", "n2", "n3", "n4"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("ids = %v, want %v: the newest turn is served whole past ?max_bytes=, ?blocks= "+
+			"and ?tool_calls= alike, so a reader never sees a fragment of the reply they are "+
+			"looking at", ids, want)
+	}
+	if !page.HasMore {
+		t.Error("has_more = false, want true: the older turn was not served, and the client's " +
+			"only route to it is has_more plus before_id")
+	}
+	if page.TurnOffset != 1 {
+		t.Errorf("turn_offset = %d, want 1: one turn precedes the window, and it opens on a "+
+			"boundary so the ordinal names a turn the window holds WHOLE", page.TurnOffset)
+	}
+}
+
+// The case that NAMES the decision: the guarantee beats maxMaxBytes, the top of the
+// ?max_bytes= range, because that is the CALLER's ceiling and the newest turn outranks it.
+// Only maxWholeTurnBytes stops the floor, and this turn sits between the two.
+func TestHandleOne_ANewestTurnOverTheCallerCeilingIsServedWhole(t *testing.T) {
+	// Three messages of 3 MiB each: 9 MiB, over maxMaxBytes (8) and under
+	// maxWholeTurnBytes (16), so the answer differs depending on which one stops the floor.
+	const each = 3 << 20
+	msgs := []vibekit.Message{
+		user("uold", "old", 100), wordyMessage("old", 4096),
+		user("unew", "new", 100),
+		wordyMessage("n1", each), wordyMessage("n2", each), wordyMessage("n3", each),
+	}
+
+	// max_bytes at its own maximum, so the caller has asked for the largest window the
+	// endpoint will serve and the turn still does not fit inside it.
+	page, ids, bodyLen := servePage(t, newCappedTestStore(t, 0), msgs,
+		"?max_bytes="+strconv.Itoa(maxMaxBytes)+"&turns=1")
+
+	want := []string{"unew", "n1", "n2", "n3"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("ids = %v, want %v: a turn over maxMaxBytes (%d) but under maxWholeTurnBytes "+
+			"(%d) is served whole — the caller's ceiling is not the guarantee's ceiling",
+			ids, want, maxMaxBytes, maxWholeTurnBytes)
+	}
+	if bodyLen <= maxMaxBytes {
+		t.Errorf("body = %d bytes, want more than maxMaxBytes = %d: a body inside the caller's "+
+			"ceiling means the turn was cut and this fixture proves nothing", bodyLen, maxMaxBytes)
+	}
+	if bodyLen > maxWholeTurnBytes {
+		t.Errorf("body = %d bytes, want at most maxWholeTurnBytes = %d: the runaway stop still "+
+			"bounds the response", bodyLen, maxWholeTurnBytes)
+	}
+	if !page.HasMore {
+		t.Error("has_more = false, want true: the older turn was not served")
+	}
+}
+
+// THE ONE RESIDUAL, pinned rather than left latent: ?limit= is the caller's statement about
+// page LENGTH, and the turn floor does not outrank it. A production caller depends on that
+// — store-load.ts's confirmChatExists sends `?limit=1` as the cheapest page the endpoint
+// will serve, for a deep link to a chat the store holds no row for, and decodes only
+// `chat`. Subordinating the message cap to the floor would hand that probe a whole turn.
+func TestHandleOne_TheMessageCapStaysAHardCut(t *testing.T) {
+	// The cut lands MID-TURN: the newest turn holds three messages and only its last is
+	// served, so this is the floor being overridden rather than a turn that happened to fit.
+	msgs := []vibekit.Message{
+		user("uold", "old", 100), fatMessage("old", 4096),
+		user("unew", "new", 100), fatMessage("n1", 4096), fatMessage("n2", 4096),
+	}
+
+	page, ids, _ := serveOnePage(t, msgs, "?limit=1")
+
+	if want := []string{"n2"}; !slices.Equal(ids, want) {
+		t.Fatalf("ids = %v, want %v: ?limit= is a hard cut, so the header probe stays the "+
+			"cheapest page the endpoint serves", ids, want)
+	}
+	if !page.HasMore {
+		t.Error("has_more = false, want true: everything older than the one served message is " +
+			"unserved, mid-turn included")
+	}
+}
+
+// serveOnePage is serveOne's sibling for a case that reads the window's left-edge fields as
+// well as its ids. serveOne discards the page, so a case needing turn_offset cannot use it.
+func serveOnePage(t *testing.T, msgs []vibekit.Message, query string) (windowPage, []string, int) {
+	t.Helper()
+	s, _ := newTestStore(t)
+	return servePage(t, s, msgs, query)
 }

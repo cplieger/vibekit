@@ -518,3 +518,119 @@ func TestSnapshotCaps_MaxTextBytesMatchesTheWorstCasePayload(t *testing.T) {
 			len(raw), limit, caps.MaxTextBytes(), envelopeAllowance)
 	}
 }
+
+// toolOutputLen is the dimension ToolOutputTotalBytes bounds: Output summed over every
+// carried call, which is the product the per-call cap alone cannot bound.
+func toolOutputLen(calls []vibekit.ToolCall) int {
+	n := 0
+	for _, c := range calls {
+		n += len(c.Output)
+	}
+	return n
+}
+
+// TestSnapshotCaps_ToolOutputTotalBytes pins the aggregate dimension. It exists because a
+// per-call cap times a call count is an arithmetic ceiling nobody would accept as a bound
+// (64 KiB x 4096 = 268 MiB), so a caller that wants the terminal ring buffer's own 64 KiB
+// per-call tail AND a statable total needs this field to be the thing that states it.
+func TestSnapshotCaps_ToolOutputTotalBytes(t *testing.T) {
+	t.Run("the aggregate cuts newest-first with the boundary call tail-capped", func(t *testing.T) {
+		fx := newCapFixture(t)
+		// 300 KiB over 128 KiB calls: two survive whole, the third keeps a 44 KiB tail,
+		// everything older is dropped. Every OTHER dimension is left unbounded so a
+		// failure here can only be this one.
+		const total = 300 << 10
+		msg, _, truncated, ok := fx.buf.SnapshotCapped(SnapshotCaps{ToolOutputTotalBytes: total})
+		if !ok {
+			t.Fatal("snapshot reported no content")
+		}
+		if !truncated {
+			t.Error("truncated = false, want true: the aggregate dropped calls, and a client " +
+				"reading a bounded payload as a complete one is what the flag exists to prevent")
+		}
+		if got := toolOutputLen(msg.ToolCalls); got > total {
+			t.Errorf("carried output = %d bytes, want <= %d", got, total)
+		}
+		if got, want := len(msg.ToolCalls), 3; got != want {
+			t.Fatalf("carried %d tool calls, want %d (two whole plus the tail-capped boundary)", got, want)
+		}
+		// NEWEST kept: the fixture numbers its calls in order, so the survivors are the
+		// last three. A drop from the wrong end would carry tool-0 instead.
+		wantIDs := []string{"tool-17", "tool-18", "tool-19"}
+		for i, want := range wantIDs {
+			if got := msg.ToolCalls[i].ID; got != want {
+				t.Errorf("tool call %d = %q, want %q: the aggregate must keep the NEWEST", i, got, want)
+			}
+		}
+		// The boundary call is the OLDEST survivor, cut to the remainder; the two after
+		// it are whole.
+		if got, want := len(msg.ToolCalls[0].Output), total-2*fx.toolOutputEach; got != want {
+			t.Errorf("boundary call output = %d bytes, want %d (the remaining budget)", got, want)
+		}
+		for _, c := range msg.ToolCalls[1:] {
+			if got := len(c.Output); got != fx.toolOutputEach {
+				t.Errorf("%s output = %d bytes, want the full %d", c.ID, got, fx.toolOutputEach)
+			}
+		}
+	})
+
+	t.Run("an aggregate the sum fits under cuts nothing", func(t *testing.T) {
+		fx := newCapFixture(t)
+		msg, _, truncated, ok := fx.buf.SnapshotCapped(SnapshotCaps{ToolOutputTotalBytes: 4 << 20})
+		if !ok {
+			t.Fatal("snapshot reported no content")
+		}
+		if truncated {
+			t.Error("truncated = true, want false: the whole payload fit, so nothing was withheld")
+		}
+		if got, want := len(msg.ToolCalls), fx.toolCalls; got != want {
+			t.Errorf("carried %d tool calls, want all %d", got, want)
+		}
+		if got, want := toolOutputLen(msg.ToolCalls), fx.toolCalls*fx.toolOutputEach; got != want {
+			t.Errorf("carried output = %d bytes, want the full %d", got, want)
+		}
+	})
+
+	t.Run("a zero aggregate is UNBOUNDED, not cut-everything", func(t *testing.T) {
+		// The trap this pins: every other dimension in SnapshotCaps reads zero as
+		// unbounded, so an aggregate that read it as a zero BUDGET would silently drop
+		// every tool call for connectSnapshotCaps and for SnapshotCaps{} alike.
+		fx := newCapFixture(t)
+		msg, _, truncated, ok := fx.buf.SnapshotCapped(SnapshotCaps{})
+		if !ok {
+			t.Fatal("snapshot reported no content")
+		}
+		if truncated {
+			t.Error("truncated = true, want false: SnapshotCaps{} is the unbounded snapshot")
+		}
+		if got, want := len(msg.ToolCalls), fx.toolCalls; got != want {
+			t.Errorf("carried %d tool calls, want all %d: a zero aggregate must not cut", got, want)
+		}
+	})
+
+	t.Run("MaxTextBytes takes the min of the product and the aggregate", func(t *testing.T) {
+		base := SnapshotCaps{
+			ReasoningBytes:  1000,
+			ContentBytes:    2000,
+			BlockTextBytes:  3000,
+			ToolCalls:       10,
+			ToolOutputBytes: 500,
+			Blocks:          8,
+		}
+		// Product is 10 x 500 = 5000; the flat share is 6000.
+		if got, want := base.MaxTextBytes(), 11000; got != want {
+			t.Fatalf("MaxTextBytes() with no aggregate = %d, want %d (the product)", got, want)
+		}
+		tighter := base
+		tighter.ToolOutputTotalBytes = 1500
+		if got, want := tighter.MaxTextBytes(), 7500; got != want {
+			t.Errorf("MaxTextBytes() with a smaller aggregate = %d, want %d: the aggregate is what "+
+				"the payload can actually reach, so the product would overstate the ceiling", got, want)
+		}
+		looser := base
+		looser.ToolOutputTotalBytes = 99000
+		if got, want := looser.MaxTextBytes(), 11000; got != want {
+			t.Errorf("MaxTextBytes() with a larger aggregate = %d, want %d: the product still binds", got, want)
+		}
+	})
+}

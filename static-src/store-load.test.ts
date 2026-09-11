@@ -30,6 +30,7 @@ const {
   mockSetWatermark,
   mockNoteLiveTurn,
   mockNoteTruncated,
+  mockClearTruncated,
   epoch,
   ledger,
 } = vi.hoisted(() => ({
@@ -74,6 +75,7 @@ const {
   mockSetWatermark: vi.fn(),
   mockNoteLiveTurn: vi.fn(),
   mockNoteTruncated: vi.fn(),
+  mockClearTruncated: vi.fn(),
   // The store's transport sync epoch, controllable so a case can land a "gap"
   // at an exact point in the fetch lifecycle.
   epoch: { n: 0 },
@@ -146,6 +148,7 @@ vi.mock("./store.js", async (importOriginal) => {
     setChunkWatermark: mockSetWatermark,
     noteLiveTurnMessage: mockNoteLiveTurn,
     noteTruncatedSnapshot: mockNoteTruncated,
+    clearTruncatedSnapshot: mockClearTruncated,
     upsertMessage: mockUpsertMessage,
     // Present-but-inert so real-ESM linking succeeds: the tab projection widened
     // this graph and these names are imported somewhere in it. No case here calls
@@ -2036,6 +2039,47 @@ describe("loadMessages live turn", () => {
     // A reader shown the tail with nothing saying so reads a bounded payload as the whole
     // reply, which is what makes the cap admissible in the first place.
     expect(mockNoteTruncated).toHaveBeenCalledWith("c1", "streaming");
+  });
+
+  // THE TWO CHANNELS DISAGREE BY DESIGN. A connect frame's `turn_state` is capped at 52 KiB
+  // and truncates routinely; this GET carries the whole turn, so its `truncated: false` is a
+  // statement about the SAME message rather than an absent field — and the GET is the fresher
+  // answer. Without the retraction the note stays on screen telling a reader that output is
+  // still coming for a reply they are already holding whole.
+  it("clears a marker the other channel set for the same message", async () => {
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [userRow("u1", 1)],
+      has_more: false,
+      turn_open: true,
+      live_turn: liveTurn("streaming", 4),
+    });
+
+    await loadMessages("c1");
+
+    expect(mockClearTruncated).toHaveBeenCalledWith("c1", "streaming");
+    expect(mockNoteTruncated).not.toHaveBeenCalled();
+  });
+
+  // The negative control, and it is an EXACT-CALLS assertion rather than a `not.toHaveBeenCalledWith`
+  // on some id nothing produces: that shape passes just as well when the retraction is absent
+  // entirely, so it could never fail. The retraction is keyed on the message this answer
+  // describes, so an earlier turn that really was capped keeps its note — anything wider (a
+  // second id, or a whole-chat clear) shows up as an extra call here.
+  it("clears the answered message and nothing else", async () => {
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [userRow("u1", 1)],
+      has_more: false,
+      turn_open: true,
+      live_turn: liveTurn("streaming", 4),
+    });
+
+    await loadMessages("c1");
+
+    expect(mockClearTruncated.mock.calls).toEqual([["c1", "streaming"]]);
   });
 
   // THE STALE-ANSWER GATE. The response is a point-in-time read, and `mergeMessage`
