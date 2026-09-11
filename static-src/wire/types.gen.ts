@@ -392,8 +392,52 @@ export interface ConnectedPayload {
  * /api/file* surface is container-ABSOLUTE, and opening a changed file rejoins them.
  */
   workspace?: string;
+  /**
+ * BusyChats is every chat with a turn in flight of its OWN at connect — an open
+ * turn that is neither a prime nor a workflow step, or an admitted prompt whose
+ * Turn is not minted yet — and it is a NEGATIVE statement about every chat it does
+ * not name, the half no other frame carries: a chat whose turn died with the
+ * previous process gets no turn_state, and nothing else ever tells this client to
+ * stop believing its own `thinking`.
+ * //
+ * The reservation term is what makes the negative statement COMPLETE for the
+ * admission window; see busyChatIDs, which walks the lifecycle rather than the open
+ * turns for exactly that reason.
+ * //
+ * CAPPED at maxBusyChats, with the overflow reported through BusyStated rather than
+ * as a truncated list: a partial list read as complete would clear a live turn.
+ */
+  busy_chats?: string[];
+  /**
+ * LiveRuns is every run vibekit's lease registry says is in flight, the same
+ * projection GET /api/runs/live serves. Here because every connect wants it and the
+ * client's own fetch was three serialized round trips behind whoami; costs no KAS
+ * call, because the projection is a lease-store read.
+ * //
+ * Emitted for a topic-filtered connect too: the inventory is workspace-global, so
+ * there is nothing to scope. CAPPED at maxConnectLiveRuns — see LiveRunsStated.
+ */
+  live_runs?: LiveRun[];
   floor: number;
   head: number;
+  /**
+ * BusyStated says whether BusyChats is the COMPLETE set, and it is the ONE flag two
+ * conditions clear: a topic-filtered connect (the list is scoped) and an over-cap
+ * workspace (the list is withheld). No omitempty, so wiregen emits a REQUIRED field
+ * and an absent marker can never read as "stated" — the discipline
+ * TurnStatePayload.Truncated already follows.
+ */
+  busy_stated: boolean;
+  /**
+ * LiveRunsStated says whether LiveRuns is the COMPLETE inventory. False only when
+ * the lease store holds more than maxConnectLiveRuns rows, in which case the list
+ * is WITHHELD and the client falls back to its own GET /api/runs/live.
+ * //
+ * It exists because the client CLEARS its inventory before repopulating it, so a
+ * truncated list would silently drop runs — and an empty LiveRuns is otherwise
+ * indistinguishable from "no runs are live". No omitempty, for BusyStated's reason.
+ */
+  live_runs_stated: boolean;
 }
 
 /**
@@ -1399,6 +1443,27 @@ export interface RunLaunchedResponse {
 }
 
 /**
+ * RunOpenAsk is one unanswered ask of a run, as GET /api/runs/{id} reports it under
+ * `open_asks`. It exists so an agent handed a deferral can READ the question it is
+ * being asked to answer: the ask id is on no other endpoint, and it is far too long
+ * to embed in the chat message that hands the work over.
+ * //
+ * Question carries no omitempty deliberately: a reconciled ask legitimately has "",
+ * because the registry is in memory and a restart loses the text while the run stays
+ * parked — and an ABSENT field would read as "complete" where an empty one reads as
+ * "the text is gone". No node PATH is exposed because none exists to expose:
+ * RunInputNeededPayload carries none and the ask registry holds none, so node_id is
+ * the whole of a step's address here.
+ */
+export interface RunOpenAsk {
+  ask_id: string;
+  question: string;
+  node_id?: string;
+  agent_name?: string;
+  asked_at?: string;
+}
+
+/**
  * RunProgressPayload is the payload for type="run_progress": an INVALIDATION
  * signal, deliberately too thin to reconstruct a run from. `run_start` re-fires on
  * every resume and `node_complete` carries neither iteration nor branchId, so an
@@ -2273,6 +2338,27 @@ export interface TurnEndedPayload {
   elapsed_ms?: number;
   /** Truncated means the model stopped at a bound: completed, answer cut off. */
   truncated?: boolean;
+  /**
+ * Superseded means this turn was DISPLACED by a replacement starting on the same
+ * chat, so its end says nothing about whether the chat is idle. Only
+ * closerWireDisplaced sets it; a client reads it as "report, do not settle".
+ * //
+ * A CLOSER-derived fact rather than a registry read: displaceEngineTurn closes the
+ * old turn immediately BEFORE opening its replacement, so a post-hoc hasOpenTurn
+ * answers false for both producers and discriminates nothing.
+ */
+  superseded?: boolean;
+  /**
+ * WorkflowStep means the ending turn was opened only because a workflow STEP's
+ * frames folded onto this chat (TurnSourceWorkflowStep), so it was never this
+ * chat's own conversational turn: the reader's own turn may be live right now, and
+ * every chat-scoped teardown would tear down THAT turn's state.
+ * //
+ * Same word TurnStatePayload already uses for the same fact, so a client learns one
+ * name for it. Absent means "this chat's own turn", which is what an older server's
+ * frame must keep meaning.
+ */
+  workflow_step?: boolean;
 }
 
 /**

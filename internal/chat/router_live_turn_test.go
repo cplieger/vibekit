@@ -48,13 +48,19 @@ func liveTurnFixture(textBytes int) vibekit.LiveTurn {
 	}
 }
 
-// seedTranscript writes n persisted assistant rows plus the prompt that opened them, so
-// the window has something to be cut short OF.
+// seedTranscript writes n persisted turns, each a prompt and the reply it opened, so the
+// window has a turn boundary to be cut short AT: the page's turn floor admits past every
+// ceiling until the window opens on a prompt, so a single-turn chat is never cut.
 func seedTranscript(t *testing.T, s *Store, id vibekit.ChatID, n, bytesEach int) {
 	t.Helper()
-	msgs := []vibekit.Message{{ID: "u1", Role: vibekit.RoleUser, Content: "do the thing", Ts: 1}}
+	var msgs []vibekit.Message
 	for i := range n {
-		msgs = append(msgs, fatMessage("a"+strconv.Itoa(i), bytesEach))
+		msgs = append(msgs,
+			vibekit.Message{
+				ID: "u" + strconv.Itoa(i), Role: vibekit.RoleUser,
+				Content: "do the thing", Ts: 1,
+			},
+			fatMessage("a"+strconv.Itoa(i), bytesEach))
 	}
 	if err := s.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = string(id)
@@ -167,7 +173,10 @@ func TestChatGet_ChargesTheLiveTurnAgainstThePageBudget(t *testing.T) {
 		budget     = 32 << 10
 		liveBytes  = 16 << 10
 	)
-	query := "?max_bytes=" + strconv.Itoa(budget)
+	// turns=1 leaves the byte ceiling as the thing that cuts: the floor overrides every
+	// ceiling until the window opens on a prompt, so the default floor of 3 would carry
+	// three whole turns past this budget and neither page would be cut at all.
+	query := "?max_bytes=" + strconv.Itoa(budget) + "&turns=1"
 
 	bare, err := NewStore(t.TempDir())
 	if err != nil {

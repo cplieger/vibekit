@@ -17,6 +17,8 @@ import {
   tabStatusFor,
   isTruncatedSnapshot,
   clearTruncatedSnapshots,
+  setThinking,
+  relatchTurnVerdict,
 } from "../store.js";
 import type { Session, Message } from "../types.js";
 
@@ -98,6 +100,43 @@ describe("message_appended", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The persisted PROMPT row is the one frame that means "the server accepted a
+// prompt", and it is the only liveness signal a client that did NOT send it gets
+// for the gap before the first chunk. `thinking` is written by the sender's own
+// dispatch, and `turn_state` is connect-time synthesis, so a second tab, a phone
+// or a background chat had nothing between this row landing and the reply
+// starting — and derived a terminal outcome for the whole window.
+// ---------------------------------------------------------------------------
+
+describe("message_appended latches liveness from a prompt row", () => {
+  it("latches thinking for a user PROMPT row", () => {
+    fireSSE("message_appended", "chat-1", { id: "u1", role: "user", ts: 1, content: "go" });
+    expect(get("chat-1")?.thinking).toBe(true);
+  });
+
+  it("does not latch for a STEER row", () => {
+    // A steer joins the turn already running, so it asserts nothing new about
+    // liveness — and on the sending device it arrives while `thinking` is already
+    // set, where a latch would re-clear the previous turn's verdicts.
+    fireSSE("message_appended", "chat-1", {
+      id: "s1",
+      role: "user",
+      ts: 1,
+      content: "also this",
+      user_kind: "steer",
+    });
+    expect(get("chat-1")?.thinking).toBe(false);
+  });
+
+  it("does not latch for an assistant row", () => {
+    // The persist echo of a reply, which is the END of a turn's content rather
+    // than the start of one.
+    fireSSE("message_appended", "chat-1", { id: "a1", role: "assistant", ts: 1, content: "hi" });
+    expect(get("chat-1")?.thinking).toBe(false);
+  });
+});
+
 describe("message_chunk", () => {
   it("accumulates a content delta onto the streaming message", () => {
     fireSSE("message_chunk", "chat-1", { message_id: "m1", delta: "hello", block_index: 0 });
@@ -135,6 +174,55 @@ describe("streaming evidence marks the turn live", () => {
   it("a chunk with no subtask id flips thinking on a chat at rest", () => {
     fireSSE("message_chunk", "chat-1", { message_id: "m1", delta: "hi", block_index: 0 });
     expect(get("chat-1")?.thinking).toBe(true);
+  });
+
+  // The RECOVERY BOUND on both retraction doors, and it is the reason a wrong
+  // retraction is survivable rather than permanent. `retractStaleThinking` and the
+  // connect replay's busy-set sweep both clear `thinking` on a chat whose turn may
+  // genuinely still be streaming — the busy set deliberately excludes a workflow-step
+  // turn — so the cost of being wrong is bounded by whatever brings it back. This
+  // door is that bound: the next chunk of the running turn re-latches it.
+  //
+  // The bound is the length of a TOOL CALL, not one chunk: `markTurnLive` fires only
+  // from here and from `message_appended`'s opensTurn arm, so a retraction landing
+  // mid-tool-call holds until that call produces text.
+  it("re-latches a retracted chat on the next chunk of the turn still running", () => {
+    fireSSE("message_chunk", "chat-1", { message_id: "m1", delta: "hi", block_index: 0 });
+    setThinking("chat-1", false); // the retraction
+    expect(get("chat-1")?.thinking, "retracted").toBe(false);
+
+    fireSSE("message_chunk", "chat-1", { message_id: "m1", delta: " there", block_index: 0 });
+
+    expect(get("chat-1")?.thinking, "re-latched").toBe(true);
+  });
+
+  // The other half of that bound, and the one the reader actually sees: the retraction
+  // door is `setThinking(false)` plus `relatchTurnVerdict`, so on a chat whose resident
+  // transcript carries an outcome it LATCHES that outcome — and `tabStatusFor` ranks
+  // `turn_failed` above `thinking`, which paints a solid failed dot over a reply that is
+  // still arriving. Recovering therefore has to drop the verdict as well as re-latch, and
+  // that is the reason `markTurnLive` gates on the false→true TRANSITION: `setThinking`
+  // clears both latches only on the way up, so a write on every chunk would be a
+  // per-chunk verdict wipe rather than a recovery.
+  it("drops the verdict the retraction latched, not just the flag", () => {
+    setSessions([
+      makeSession("chat-1", {
+        thinking: true,
+        messages: [
+          { id: "m1", role: "assistant", ts: 1, content: "half a repl", turn_outcome: "failed" },
+        ],
+        message_count: 1,
+      }),
+    ]);
+    // The narrow retraction, spelled the way `retractStaleThinking` spells it.
+    setThinking("chat-1", false);
+    relatchTurnVerdict("chat-1");
+    expect(tabStatusFor(get("chat-1")), "the verdict painted over the live reply").toBe("failed");
+
+    fireSSE("message_chunk", "chat-1", { message_id: "m1", delta: " more", block_index: 0 });
+
+    expect(get("chat-1")?.turn_failed, "the stale verdict is gone").toBeUndefined();
+    expect(tabStatusFor(get("chat-1"))).toBe("working");
   });
 
   it("a SUBAGENT's chunk flips it too: a delegate halts the main agent", () => {

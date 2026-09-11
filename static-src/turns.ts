@@ -129,6 +129,9 @@ export function projectTurns(
   const turns: Turn[] = [];
   let closed = base.closed;
   for (const m of messages) {
+    if (carriesNothing(m)) {
+      continue;
+    }
     const open = turns[turns.length - 1];
     // A prompt opens a turn; a steer joins the one already running.
     const opens = isPrompt(m) || opensHeaderlessTurn(m, closed);
@@ -195,6 +198,25 @@ function isStepMessage(m: Message): boolean {
     return false;
   }
   return blocks.every((b) => parseStepSubtask(b.agent_subtask_id ?? "") !== null);
+}
+
+/** Whether nothing about this assistant message reaches the transcript yet. Such a
+ *  message neither opens a turn nor JOINS one: joining would set `deriveOutcome`'s
+ *  `sawAssistant` and flip a carrier-less turn from `unknown` to `completed`.
+ *  Assistant-only, because an `event` row renders a badge and may carry the turn's
+ *  outcome, and a `user` row is a trigger. */
+function carriesNothing(m: Message): boolean {
+  return (
+    m.role === "assistant" &&
+    (m.content ?? "") === "" &&
+    (m.reasoning ?? "") === "" &&
+    (m.blocks ?? []).length === 0 &&
+    (m.tool_calls ?? []).length === 0 &&
+    (m.plan ?? []).length === 0 &&
+    m.refusal === undefined &&
+    m.turn_outcome === undefined &&
+    m.event_kind === undefined
+  );
 }
 
 /** Is this the first persisted message of a turn with NO user trigger? All three clauses

@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { attachClamp, releaseClamp, releaseClampsIn, clampObservationCount } from "./clamp-text.js";
 import clampSource from "./clamp-text.ts?raw";
+import messagesCSS from "./css/13-messages.css?raw";
 import type { Message, Session } from "./types.js";
 
 // The transcript's own fixture, for the `disposeChatView` case below. Built at
@@ -96,12 +97,18 @@ async function settles(p: Pair, hidden: boolean, why: string): Promise<void> {
 
 /** Give the observer its chance, for a verdict that must NOT change. A resize
  *  callback is delivered after the frame's layout and a rAF callback runs before
- *  it, so two frames span one full delivery. */
+ *  it, so two frames span one full delivery — and the module DEFERS the verdict it
+ *  reaches there one further frame, so three span a delivery plus its write. The
+ *  third is load-bearing rather than slack: the deferred write is registered during
+ *  the delivery, so it is queued BEHIND this helper's own second frame, and a
+ *  microtask checkpoint runs between two animation-frame callbacks. */
 async function observerRuns(): Promise<void> {
   await new Promise<void>((resolve) => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        resolve();
+        requestAnimationFrame(() => {
+          resolve();
+        });
       });
     });
   });
@@ -323,10 +330,17 @@ describe("releasing", () => {
     expect(clampObservationCount() - before).toBe(0);
   });
 
-  it("releases a mounted chat view's header clamps when the view is disposed", async () => {
+  it("releases a mounted chat view's clamps when the view is disposed", async () => {
     // The owner that matters: `disposeChatView` is the single per-view dispose
     // chat close, chat delete, LRU eviction and `teardownAll` all run, so one
-    // sweep there covers every turn header of a whole chat.
+    // sweep there covers every clamp of a whole chat.
+    //
+    // Driven through STEER NOTES rather than turn headers. The header's clamp is
+    // CSS-only and fold-conditional now, so a chat of user turns produces zero
+    // clamps and the count below would be 0 both before and after the sweep — a
+    // case that cannot fail. `fundamentals/steer-note.ts` clamps at 4 lines inside
+    // the turn BODY, which is the live transcript consumer the sweep exists for;
+    // the SUBJECT is unchanged, only the producer.
     const before = clampObservationCount();
     mountChatView();
     const chat = "c-clamp-dispose";
@@ -336,12 +350,21 @@ describe("releasing", () => {
         id: `t${String(t)}`,
         role: "user",
         ts: 1,
-        content: `a request long enough to be worth clamping, number ${String(t)}`,
+        content: `a request, number ${String(t)}`,
       } as Message);
+      // A steer JOINS the turn its prompt opened, so it renders as body content.
+      messages.push({
+        id: `t${String(t)}-s`,
+        role: "user",
+        ts: 2,
+        content: `a correction long enough to be worth clamping, number ${String(t)}`,
+        user_kind: "steer",
+        steer_state: "read",
+      } as unknown as Message);
       messages.push({
         id: `t${String(t)}-a`,
         role: "assistant",
-        ts: 2,
+        ts: 3,
         content: "",
         blocks: [{ type: "text", text: "reply" }],
       } as unknown as Message);
@@ -359,8 +382,8 @@ describe("releasing", () => {
     ] as unknown as Session[]);
     setActive(chat);
     bumpMessages(chat);
-    // One clamp per turn header, or the assertion below cannot fail.
-    expect(clampObservationCount() - before, "one per turn header").toBe(4);
+    // One clamp per steer note, or the assertion below cannot fail.
+    expect(clampObservationCount() - before, "one per steer note").toBe(4);
 
     disposeChatView(chat);
     expect(clampObservationCount() - before).toBe(0);
@@ -376,5 +399,107 @@ describe("releasing", () => {
       clampSource.includes("export function releaseClampsIn("),
       clampSource.includes("!entry.target.isConnected"),
     ]).toEqual([true, true, true]);
+  });
+});
+
+describe("inside the transcript's own observer set", () => {
+  it("re-decides on a width change with no observation left undelivered", async () => {
+    // The reported Safari failure, and the WIDTH change is the shape that produces it
+    // rather than the first paint: the note is repainted while ATTACHED in the same
+    // pass that mounts it, so `clamp.sync()` corrects the detached guess outside any
+    // delivery. A later width change has no such second chance — the box the observer
+    // measured is the box that just moved.
+    //
+    // `more.hidden` is `display: none`, so the verdict changes the enclosing `.turn`
+    // card's height, and `scroll.ts` observes every card of the active view at a
+    // SHALLOWER depth than the text. Both are gathered into ONE broadcast, so a verdict
+    // written inside that delivery re-activates an observation at the broadcast's own
+    // shallowest depth and the engine has to defer it. Measured in Chromium 152 on this
+    // fixture: 1 loop error per width change with the write inside the delivery, 0 with
+    // it deferred a frame.
+    //
+    // Driven through a STEER NOTE. The turn header's clamp is CSS-only and
+    // fold-conditional now, so it attaches no observation and could not flip a
+    // verdict at all; a steer note is the live transcript consumer, and its own
+    // opener changes the same card's height at the same relative depth.
+    //
+    // The real clamp rule, from the shipped stylesheet rather than a copy: with no
+    // `-webkit-line-clamp` in force nothing ever overflows, so the verdict cannot flip
+    // and the case would pass against the defect.
+    //
+    // Errors are collected locally as well as by `ro-loop-gate.ts`, so a failure names
+    // this case rather than arriving from an `afterEach` that cannot say which test
+    // produced it.
+    const loops: string[] = [];
+    const onError = (e: ErrorEvent): void => {
+      if (e.message.includes("ResizeObserver loop")) {
+        loops.push(e.message);
+      }
+    };
+    window.addEventListener("error", onError);
+    const noteStyle = document.createElement("style");
+    noteStyle.textContent = messagesCSS;
+    document.head.appendChild(noteStyle);
+    const chat = "c-clamp-ro-loop";
+    try {
+      mountChatView();
+      // Over four lines at 320px and inside four at 1000px, so the verdict flips in
+      // both directions.
+      const body = "the quick brown fox jumps over the lazy dog while ".repeat(5);
+      setSessions([
+        {
+          id: chat,
+          name: "c",
+          messages: [
+            { id: "u1", role: "user", ts: 1, content: "a request" },
+            {
+              id: "s1",
+              role: "user",
+              ts: 2,
+              content: body,
+              user_kind: "steer",
+              steer_state: "read",
+            },
+            {
+              id: "a1",
+              role: "assistant",
+              ts: 3,
+              content: "",
+              blocks: [{ type: "text", text: "reply" }],
+            },
+          ],
+          message_count: 3,
+          has_more: false,
+          thinking: false,
+          working_label: "",
+        },
+      ] as unknown as Session[]);
+      setActive(chat);
+      bumpMessages(chat);
+
+      const text = document.querySelector<HTMLElement>(".steer-note-text");
+      const more = document.querySelector<HTMLButtonElement>(".steer-note-more");
+      expect(text, "the steer note painted").not.toBeNull();
+      expect(more, "with its opener").not.toBeNull();
+      if (text === null || more === null) {
+        return;
+      }
+
+      scrollerEl.style.inlineSize = "320px";
+      await settles({ text, more }, false, "offered once the steer no longer fits");
+      expect(text.scrollHeight, "and the measurement is what said so").toBeGreaterThan(
+        text.clientHeight,
+      );
+      expect(loops, "narrowing left nothing undelivered").toEqual([]);
+
+      scrollerEl.style.inlineSize = "1000px";
+      await settles({ text, more }, true, "withdrawn again once it fits");
+      expect(loops, "and neither did widening").toEqual([]);
+    } finally {
+      window.removeEventListener("error", onError);
+      scrollerEl.style.inlineSize = "";
+      noteStyle.remove();
+      disposeChatView(chat);
+    }
   });
 });

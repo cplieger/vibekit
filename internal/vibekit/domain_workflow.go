@@ -187,6 +187,25 @@ type RunInputSettledPayload struct {
 	SettledBy  SettledBy `json:"settled_by"`
 }
 
+// RunOpenAsk is one unanswered ask of a run, as GET /api/runs/{id} reports it under
+// `open_asks`. It exists so an agent handed a deferral can READ the question it is
+// being asked to answer: the ask id is on no other endpoint, and it is far too long
+// to embed in the chat message that hands the work over.
+//
+// Question carries no omitempty deliberately: a reconciled ask legitimately has "",
+// because the registry is in memory and a restart loses the text while the run stays
+// parked — and an ABSENT field would read as "complete" where an empty one reads as
+// "the text is gone". No node PATH is exposed because none exists to expose:
+// RunInputNeededPayload carries none and the ask registry holds none, so node_id is
+// the whole of a step's address here.
+type RunOpenAsk struct {
+	AskID     string `json:"ask_id"`
+	Question  string `json:"question"`
+	NodeID    string `json:"node_id,omitempty"`
+	AgentName string `json:"agent_name,omitempty"`
+	AskedAt   string `json:"asked_at,omitempty"`
+}
+
 // RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step.
 //
 // Empty Text is a 400 rather than a waive. Continuing without an answer is a

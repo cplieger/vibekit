@@ -140,6 +140,9 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.RunStepPayload](),
 	wiregen.TypeRef[vibekit.RunInputNeededPayload](),
 	wiregen.TypeRef[vibekit.RunInputSettledPayload](),
+	// GET /api/runs/{id}'s `open_asks`. No `Payload` suffix, so the SSE-binding test
+	// exempts it: it is a read reply rather than an event payload.
+	wiregen.TypeRef[vibekit.RunOpenAsk](),
 	// GET /api/runs/{id}/steps/{path...}. No field carries omitempty, so `state` is
 	// a REQUIRED TypeScript field and a reader cannot invent "assume ready".
 	wiregen.TypeRef[vibekit.RunStepTranscript](),

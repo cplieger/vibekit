@@ -209,18 +209,24 @@ describe("the Aa match-case toggle", () => {
   });
 });
 
-describe("the close × is a real element, not a character", () => {
+describe("a search bar's ARROWS are real elements, not characters", () => {
   // The DOM half of this contract — that `searchIconButton` produces an <svg> and
   // no text node — is in search-shell.test.ts. This file's half is the source
   // scan below, read through Vite `?raw` imports rather than `node:fs`.
-  it("is never a bare × character anywhere in a search bar's builder", () => {
+  //
+  // THE CLOSE MARK LEFT THIS SCAN and is owned by close-mark.test.ts, over every
+  // builder in the app rather than these five. It was scoped here because a search
+  // bar was where the defect was found, and holding five files to a rule the other
+  // seven were not is what let four sites keep drawing a `×` as text. The arrows stay:
+  // no surface outside a search bar has them, so this is their whole population.
+  it("is never a bare ↑ or ↓ character anywhere in a search bar's builder", () => {
     // A grep-shaped guard, because the failure mode is a NEW button rather than an
-    // edit to an existing one: the three builders are the population, and a `×`,
-    // `↑` or `↓` in any of them is the bug coming back.
+    // edit to an existing one: these builders are the population, and an arrow
+    // character in any of them is the bug coming back.
     for (const [file, src] of Object.entries(searchBuilderSources)) {
       // Comments explain the glyphs, so they are stripped before the scan.
       const code = src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
-      for (const glyph of ["\\u00d7", "\\u2191", "\\u2193"]) {
+      for (const glyph of ["\\u2191", "\\u2193"]) {
         expect(
           code,
           `${file} must not carry a bare ${glyph} glyph: a text node's LINE BOX is what ` +

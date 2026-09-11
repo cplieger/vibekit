@@ -651,6 +651,13 @@ DOT_HELD = ["resting", "hover"]
 #   shape    circle | diamond | square
 #   band     the ring's width in px, or "" for a state with no ring to measure
 #
+# `shape: circle` below is true of a CHAT row's dot and false of a RUN row's: a run
+# sub-tab's own activity dot takes the workflow mark's rounded square, because the
+# silhouette names the subject rather than one element (12-tabs.css). It is the same
+# state vocabulary either way, so every state's shape moves together and no
+# separation WITHIN this table changes — and it adds no pairwise population, for the
+# two reasons at the workflow mark's own section below.
+#
 # Transcribed rather than parsed, so it is a claim this script CHECKS rather
 # than derives: the pairwise test below fails if any two states that can appear
 # in the same strip are distinguishable by hue alone (WCAG 1.4.1), and it runs
@@ -759,6 +766,13 @@ DOT_STATES: list[tuple[str, str, dict[str, str]]] = [
 # marks are ADJACENT and permanently co-present, so a pair drawn from one element
 # each is exactly as confusable as a pair drawn from one element's own states.
 # Both populations therefore go through one pairwise pass.
+#
+# A run's OWN tab row carries this silhouette on its activity dot instead, and it
+# adds NOTHING to that pass. Two reasons: such a row has no `.tab-run-dot` at all
+# (tabs.ts appends one for the chat kind only), so the mark and that dot are never
+# co-present in one cluster; and a population reusing the dot's rows above would
+# make the same-name pairs collide trivially, since they would literally be the
+# same rules. Its own separations are the `dot:` rows already in the table.
 #
 # A ring in every state, so `fill` is spent before it starts and `band` is the
 # axis it separates its own states on. Its SILHOUETTE is a rounded square, which
@@ -1538,6 +1552,7 @@ def main() -> int:
 
     ramp = [
         "--c-bg-primary",
+        "--c-turn-body",
         "--c-bg-secondary",
         "--c-bg-tertiary",
         "--c-bg-elevated",
@@ -1547,6 +1562,9 @@ def main() -> int:
 
     if cmd in ("ramp", "all"):
         print("SURFACE RAMP")
+        print("  page -> card -> box -> band, monotonically away from the page in")
+        print("  BOTH themes. --c-turn-body is the transcript's card rung, a half-step")
+        print("  between the first two rungs and exempt from the >= 1.25:1 floor.")
         show_ramp(themes, ramp)
 
     if cmd in ("pairs", "all"):

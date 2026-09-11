@@ -19,13 +19,23 @@
 //
 //   tier              real card   a skipped card was   drift was   now
 //   fine, collapsed   79px        66px                 -2,327px    0px
-//   coarse, collapsed 87px        66px                 -3,696px    0px
+//   coarse, collapsed 107px       66px                 -3,696px    0px
 //   fine, one step    129px       66px                -11,277px   -9,100px
-//   coarse, one step  145px       66px                -13,904px  -10,498px
+//   coarse, one step  165px       66px                -13,904px  -10,498px
+//
+// THE TWO COARSE HEIGHTS MOVED, and the drift columns beside them did not. They read
+// 87px and 145px until `.run-open` stopped declaring its own `1.5rem` and took the
+// app-wide hit floor (2026-09-11, item 6): a coarse foot went 33px to 53px, so the
+// reserve under-stated a coarse card by 20px until `--run-card-content`'s foot term
+// read `var(--hit-floor)` too. That is what these two cases caught, and it is why
+// the estimate is an expression over the same tokens the card's own rules read. The
+// drift and residual figures are the ORIGINAL measurement against `auto 4rem`, taken
+// when a coarse collapsed card was 87px; the assertions are derived from the rendered
+// height, so they moved with the card while those historical numbers did not.
 //
 // The two coarse rows cover BOTH coarse cases -- narrow (768px) and wide (1024px)
-// read identically, because nothing on this card keys on width; only `--btn-h`
-// moves, and it moves on the pointer tier.
+// read identically, because nothing on this card keys on width; only `--btn-h` and
+// `--hit-floor` move, and both move on the pointer tier.
 //
 // TWO ARMS, because a run card has two disclosure states and ONE estimate cannot be
 // exact for both: a collapsed card is head + foot, an open one adds its step rows.

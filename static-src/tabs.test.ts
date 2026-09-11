@@ -121,7 +121,14 @@ vi.mock("./dom.js", () => ({
     return el;
   },
 }));
-vi.mock("./tabs-drag.js", () => ({
+// Type-only, for the `importOriginal` below.
+import type * as TabsDrag from "./tabs-drag.js";
+// The three FUNCTIONS are stubbed and nothing else is: spreading the original keeps
+// `DRAG_THRESHOLD_PX` real, so the tap-vs-drag cases below measure against the slop
+// production uses rather than against a number restated here — a restated one
+// drifts silently while the boundary cases keep passing.
+vi.mock("./tabs-drag.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof TabsDrag>()),
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
@@ -187,12 +194,18 @@ import {
   setTabPinned,
   showFilesView,
   toggleFilesView,
+  refreshActiveView,
+  subscribeTabCues,
   _resetForTest,
 } from "./tabs.js";
+// The REAL freshness leaf: `viewStale` is what the dispatcher spends, so a case
+// that wants a FRESH view records a load the way `loadMessages` does rather than
+// faking the verdict. `chat` is the one kind whose ledger can answer "fresh" at all.
+import { noteLoaded, syncEpoch, _resetForTest as _resetFreshnessForTest } from "./tab-freshness.js";
 import { closeTabCommand } from "./actions/tabs.js";
 import { restoreFailedSend, retargetComposer } from "./composer-state.js";
 import { info as toastInfo, error as toastErrorFn } from "./toast.js";
-import { attachDrag, setReorderCallback } from "./tabs-drag.js";
+import { attachDrag, DRAG_THRESHOLD_PX, setReorderCallback } from "./tabs-drag.js";
 import { $ } from "./dom.js";
 import type { OpenTabOutcome } from "./tabs.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
@@ -228,11 +241,15 @@ const commitDrop = vi.mocked(setReorderCallback).mock.calls[0]?.[0];
 
 interface Openers {
   chatShow: Mock<TabOpeners["chat"]["show"]>;
+  chatRefresh: Mock<TabOpeners["chat"]["refresh"]>;
   chatClose: Mock<TabOpeners["chat"]["close"]>;
   editorShow: Mock<TabOpeners["editor"]["show"]>;
+  editorRefresh: Mock<TabOpeners["editor"]["refresh"]>;
   editorClose: Mock<TabOpeners["editor"]["close"]>;
   runShow: Mock<TabOpeners["run"]["show"]>;
+  runRefresh: Mock<TabOpeners["run"]["refresh"]>;
   subagentShow: Mock<TabOpeners["subagent"]["show"]>;
+  subagentRefresh: Mock<TabOpeners["subagent"]["refresh"]>;
 }
 
 let openers: Openers;
@@ -240,17 +257,30 @@ let openers: Openers;
 function registerOpeners(): void {
   openers = {
     chatShow: vi.fn<TabOpeners["chat"]["show"]>(),
+    chatRefresh: vi.fn<TabOpeners["chat"]["refresh"]>(),
     chatClose: vi.fn<TabOpeners["chat"]["close"]>(),
     editorShow: vi.fn<TabOpeners["editor"]["show"]>(),
+    editorRefresh: vi.fn<TabOpeners["editor"]["refresh"]>(),
     editorClose: vi.fn<TabOpeners["editor"]["close"]>(),
     runShow: vi.fn<TabOpeners["run"]["show"]>(),
+    runRefresh: vi.fn<TabOpeners["run"]["refresh"]>(),
     subagentShow: vi.fn<TabOpeners["subagent"]["show"]>(),
+    subagentRefresh: vi.fn<TabOpeners["subagent"]["refresh"]>(),
   };
   registerTabOpeners({
-    chat: { show: openers.chatShow, close: openers.chatClose, dot: () => "" },
-    editor: { show: openers.editorShow, close: openers.editorClose },
-    run: { show: openers.runShow },
-    subagent: { show: openers.subagentShow },
+    chat: {
+      show: openers.chatShow,
+      refresh: openers.chatRefresh,
+      close: openers.chatClose,
+      dot: () => "",
+    },
+    editor: {
+      show: openers.editorShow,
+      refresh: openers.editorRefresh,
+      close: openers.editorClose,
+    },
+    run: { show: openers.runShow, refresh: openers.runRefresh },
+    subagent: { show: openers.subagentShow, refresh: openers.subagentRefresh },
   });
 }
 
@@ -314,6 +344,7 @@ beforeEach(() => {
   registerOpeners();
   resetActionFramework();
   _resetForTest();
+  _resetFreshnessForTest();
   // Provide minimal DOM for renderDOM subscriber (tab-list element).
   document.body.innerHTML = '<div id="tab-list"></div>';
 });
@@ -1376,6 +1407,116 @@ describe("keyboard navigation (real tabs.ts handler via rendered tab nodes)", ()
   });
 });
 
+// `#tab-list` is a scroll container, so a finger on a row is as often a scroll as a
+// tap — and activation is a `pointerup` handler, so a gesture that panned the strip
+// and lifted activated whatever sat under its FIRST contact point. A native pan
+// cancels the pointer and suppresses the release for free; a drag along an axis
+// with nothing left to scroll produces no cancel, which is the reported case, so
+// the guard is the travelled distance.
+//
+// Dispatched as POINTER events because that is the vocabulary these handlers listen
+// in: a touch reaches them as `pointerType: "touch"`, with implicit capture keeping
+// every move and the release on the element that took the `pointerdown`. `isPrimary`
+// has to be stated — the constructor defaults it to false, and every handler here
+// requires it.
+describe("a drag on the strip scrolls it and never activates a row", () => {
+  const ORIGIN_X = 40;
+  const ORIGIN_Y = 100;
+
+  function ptr(
+    type: "pointerdown" | "pointermove" | "pointerup",
+    x: number,
+    y: number,
+    pointerType: string,
+  ): PointerEvent {
+    return new PointerEvent(type, {
+      pointerId: 1,
+      pointerType,
+      isPrimary: true,
+      clientX: x,
+      clientY: y,
+      bubbles: true,
+      cancelable: true,
+    });
+  }
+
+  /** One whole gesture on `target`: press at the origin, travel by `(dx, dy)`,
+   *  release there. A zero travel sends no move at all, which is what a stationary
+   *  tap looks like on the wire. */
+  function gesture(target: HTMLElement, dx: number, dy: number, pointerType = "touch"): void {
+    target.dispatchEvent(ptr("pointerdown", ORIGIN_X, ORIGIN_Y, pointerType));
+    if (dx !== 0 || dy !== 0) {
+      target.dispatchEvent(ptr("pointermove", ORIGIN_X + dx, ORIGIN_Y + dy, pointerType));
+    }
+    target.dispatchEvent(ptr("pointerup", ORIGIN_X + dx, ORIGIN_Y + dy, pointerType));
+  }
+
+  /** Two chats, painted. `b` is the active one, so an activation of `a` is visible
+   *  and a suppressed one leaves `b` where it was. */
+  async function renderTabs(): Promise<HTMLElement[]> {
+    await openChats("a", "b");
+    await paint();
+    return rows();
+  }
+
+  const past = DRAG_THRESHOLD_PX + 1;
+
+  it.each([
+    { desc: "sideways", dx: past, dy: 0 },
+    { desc: "vertically", dx: 0, dy: past },
+    { desc: "diagonally", dx: past, dy: past },
+  ])("leaves the active tab alone when the finger travels $desc", async ({ dx, dy }) => {
+    expect.assertions(1);
+    const nodes = await renderTabs();
+    gesture(nodes[0] as HTMLElement, dx, dy);
+    expect(getActiveTabId()).toBe(chatID("b"));
+  });
+
+  it("activates the row a stationary tap released on", async () => {
+    expect.assertions(1);
+    const nodes = await renderTabs();
+    gesture(nodes[0] as HTMLElement, 0, 0);
+    expect(getActiveTabId()).toBe(chatID("a"));
+  });
+
+  // The slop is inclusive: a finger never holds perfectly still, and travel AT the
+  // threshold is still the tap the reader meant.
+  it("activates the row a tap that wobbled inside the slop released on", async () => {
+    expect.assertions(1);
+    const nodes = await renderTabs();
+    gesture(nodes[0] as HTMLElement, DRAG_THRESHOLD_PX, DRAG_THRESHOLD_PX);
+    expect(getActiveTabId()).toBe(chatID("a"));
+  });
+
+  it("activates the row a mouse clicked", async () => {
+    expect.assertions(1);
+    const nodes = await renderTabs();
+    gesture(nodes[0] as HTMLElement, 0, 0, "mouse");
+    expect(getActiveTabId()).toBe(chatID("a"));
+  });
+
+  // The × is the strip's one destructive control and it shares the row's gesture:
+  // a scroll that happened to start on it used to close a tab nobody aimed at.
+  // Read through the PROJECTION rather than the strip, because an optimistic close
+  // leaves the departing row in the DOM until its exit animation ends.
+  it("keeps the tab a drag started on the × released over", async () => {
+    expect.assertions(2);
+    const nodes = await renderTabs();
+    gesture(nodes[0]?.querySelector<HTMLElement>(".tab-close") as HTMLElement, past, 0);
+    await settleTabs();
+    expect(hasTab("chat", "a")).toBe(true);
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(0);
+  });
+
+  it("closes the tab a stationary tap on the × released on", async () => {
+    expect.assertions(1);
+    const nodes = await renderTabs();
+    gesture(nodes[0]?.querySelector<HTMLElement>(".tab-close") as HTMLElement, 0, 0);
+    await settleTabs();
+    expect(hasTab("chat", "a")).toBe(false);
+  });
+});
+
 describe("setTabDirty (editor unsaved indicator)", () => {
   it("shows a steady dirty dot when dirty and clears it when clean", async () => {
     expect.assertions(4);
@@ -1410,6 +1551,148 @@ describe("setTabDirty (editor unsaved indicator)", () => {
     expect(() => {
       setTabDirty("tb_missing", true);
     }).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The dot's AGE, on its tooltip and its announced phrase.
+//
+// `setTabStatus` gained a third argument and `TabRow` a sibling `dotSince`, and
+// the whole surface arrived with no test of its own — items 21 and 22 own the
+// tests, so this is where the writer's four rules are pinned.
+//
+// The age is deliberately absent from the row's visible text: it reaches a reader
+// only through the tooltip and the screen-reader span, which is why every case
+// below reads those two rather than the strip.
+// ---------------------------------------------------------------------------
+
+describe("the dot's age", () => {
+  /** Five minutes ago, so `relativeTime` answers a stable `5m ago` rather than
+   *  the `just now` a sub-minute value would give — a case that would also pass
+   *  with the argument dropped, since "just now" is what a missing age looks like
+   *  to nobody. */
+  const FIVE_MIN_AGO = Date.now() - 5 * 60 * 1000;
+
+  /** The tooltip and the announced word, which `paintDot` writes from ONE string.
+   *  Read together so a case cannot pass on the surface a pointer reveals while
+   *  the screen-reader channel says something else. */
+  function dotText(id: string): { tooltip: string; announced: string } {
+    const row = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
+    const dot = row?.querySelector<HTMLElement>(".tab-status-dot");
+    const sr = row?.querySelector<HTMLElement>(".tab-status-sr");
+    return { tooltip: dot?.dataset["tooltip"] ?? "", announced: sr?.textContent ?? "" };
+  }
+
+  it("appends an age to the two OUTCOMES and to no other state", async () => {
+    expect.assertions(7);
+    const { setTabStatus } = await import("./tabs.js");
+    await openChat("a");
+    await paint();
+    const id = chatID("a");
+
+    setTabStatus(id, "done", FIVE_MIN_AGO);
+    expect(dotText(id).tooltip, "done").toBe("turn finished · 5m ago");
+    setTabStatus(id, "failed", FIVE_MIN_AGO);
+    expect(dotText(id).tooltip, "failed").toBe("turn failed · 5m ago");
+
+    // The other five describe NOW, so an age there would date a state that is
+    // still true. `withAge` is reached only from the two arms above, which is what
+    // keeps `NEUTRAL_PHRASE` total by type with no age term in it.
+    for (const status of ["working", "waiting", "input", "idle", "dirty"] as const) {
+      setTabStatus(id, status, FIVE_MIN_AGO);
+      expect(dotText(id).tooltip, status).not.toMatch(/5m ago/u);
+    }
+  });
+
+  it("says exactly what it said before the argument existed when no since is supplied", async () => {
+    expect.assertions(2);
+    const { setTabStatus } = await import("./tabs.js");
+    await openChat("a");
+    await paint();
+    const id = chatID("a");
+
+    // The four production callers that pass nothing (`run-dots`, `turn-teardown`,
+    // `subagent-dots`, `setTabDirty`) have to keep their old output byte for byte,
+    // or the feature is a change to every dot rather than an addition to two.
+    setTabStatus(id, "done");
+    expect(dotText(id).tooltip).toBe("turn finished");
+    expect(dotText(id).announced).toBe(", turn finished");
+  });
+
+  it("recovers the age when the element is rebuilt", async () => {
+    expect.assertions(2);
+    const { setTabStatus } = await import("./tabs.js");
+    await openChat("a");
+    await paint();
+    const id = chatID("a");
+    setTabStatus(id, "done", FIVE_MIN_AGO);
+    expect(dotText(id).tooltip, "before the rebuild").toBe("turn finished · 5m ago");
+
+    // Drop the node and force a render: `renderDOM` finds nothing to reuse, so
+    // `createTabEl` builds a fresh row element and has to read the age back off
+    // the ROW. Without `row.dotSince` the rebuilt row would sit ageless until the
+    // chat next churned, which for a finished chat is never.
+    document.getElementById("tab-list")?.replaceChildren();
+    await openChat("b");
+    await paint();
+
+    expect(dotText(id).tooltip, "after the rebuild").toBe("turn finished · 5m ago");
+  });
+
+  it("does not move the attention surfaces for a since-only change", async () => {
+    expect.assertions(2);
+    const { setTabStatus } = await import("./tabs.js");
+    await openChat("a");
+    await paint();
+    const id = chatID("a");
+    setTabStatus(id, "done", FIVE_MIN_AGO);
+
+    let runs = 0;
+    const stop = subscribeTabCues(() => {
+      runs++;
+    });
+    expect(runs, "the effect's own first run").toBe(1);
+
+    // Same STATE, newer age. The out-of-page fold reads the dot's state and knows
+    // nothing about its age, so waking it here would re-run the favicon and title
+    // derivation for every open chat on a value it does not read — which is what
+    // the guard in `recordDotStatus` compares `dotStatus` alone for.
+    setTabStatus(id, "done", Date.now() - 60 * 60 * 1000);
+    stop();
+    expect(runs, "after a since-only write").toBe(1);
+  });
+
+  // BOTH omitted-`since` rows, and each alone passes under one of the two wrong
+  // readings: delete-always shows no age after a same-status repaint, and
+  // preserve-always shows the previous turn's age after a state change.
+  it("shows no age when a done repaint with no since follows a DIFFERENT state", async () => {
+    expect.assertions(1);
+    const { setTabStatus } = await import("./tabs.js");
+    await openChat("a");
+    await paint();
+    const id = chatID("a");
+
+    setTabStatus(id, "done", FIVE_MIN_AGO);
+    setTabStatus(id, "working");
+    setTabStatus(id, "done");
+
+    // The age belongs to the STATE, so the previous turn's is not this turn's.
+    expect(dotText(id).tooltip).toBe("turn finished");
+  });
+
+  it("preserves the age when a repaint with no since keeps the SAME state", async () => {
+    expect.assertions(1);
+    const { setTabStatus } = await import("./tabs.js");
+    await openChat("a");
+    await paint();
+    const id = chatID("a");
+
+    setTabStatus(id, "done", FIVE_MIN_AGO);
+    // `turn-teardown.ts` repaints `done` with no `since` and the chat row effect
+    // resupplies it a microtask later, so blanking here is half a visible blink.
+    setTabStatus(id, "done");
+
+    expect(dotText(id).tooltip).toBe("turn finished · 5m ago");
   });
 });
 
@@ -2548,5 +2831,91 @@ describe("optimistic close: the last tab and the empty-state surface", () => {
     row?.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
     const input = document.getElementById("prompt-input");
     expect(document.activeElement).toBe(input);
+  });
+});
+
+// --- The freshness dispatcher ---
+//
+// `refreshRow` is private, so every case here drives it through the two doors that
+// spend it: an activation, and `refreshActiveView`. The verdict comes from the REAL
+// leaf — `editor` is never event-covered so it is always stale, and a `chat` with a
+// ledger record at the current epoch is the only way to spell "fresh".
+describe("the freshness dispatcher", () => {
+  it("refreshes the row an activation activated, after its onShow", async () => {
+    await openEditorView("/w/a.ts");
+    expect(openers.editorRefresh).toHaveBeenCalledWith("/w/a.ts");
+    // The kind's VIEW activation first, then the data half: a refresh that ran
+    // ahead of the show would fetch into a surface pointing at another subject.
+    expect(openers.editorShow.mock.invocationCallOrder[0]).toBeLessThan(
+      openers.editorRefresh.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("refreshes nothing when the view is already fresh", async () => {
+    noteLoaded("chat", "a", syncEpoch());
+    await openChat("a");
+    expect(openers.chatShow).toHaveBeenCalledWith("a");
+    expect(openers.chatRefresh).not.toHaveBeenCalled();
+  });
+
+  it("the already-active early return runs neither half", async () => {
+    await openEditorView("/w/a.ts");
+    openers.editorShow.mockClear();
+    openers.editorRefresh.mockClear();
+    activateTab(tabIdFor("editor", "/w/a.ts"));
+    expect(openers.editorShow).not.toHaveBeenCalled();
+    expect(openers.editorRefresh).not.toHaveBeenCalled();
+  });
+
+  it("refreshActiveView refreshes the active row and no other", async () => {
+    await openEditorView("/w/a.ts");
+    await openEditorView("/w/b.ts");
+    openers.editorRefresh.mockClear();
+    refreshActiveView();
+    expect(openers.editorRefresh.mock.calls).toEqual([["/w/b.ts"]]);
+  });
+
+  // It is not a mutation: it writes no projection state, so nothing re-renders and
+  // no route is pushed. `pushRoute` is the router mock, which is the one channel a
+  // URL could move through from here.
+  it("refreshActiveView emits nothing and pushes no route", async () => {
+    await openEditorView("/w/a.ts");
+    await paint();
+    const version = tabSetVersion();
+    const painted = $.tabList.innerHTML;
+    const { pushRoute } = await import("./router.js");
+    vi.mocked(pushRoute).mockClear();
+
+    refreshActiveView();
+    await paint();
+
+    expect(tabSetVersion()).toBe(version);
+    expect($.tabList.innerHTML).toBe(painted);
+    expect(vi.mocked(pushRoute)).not.toHaveBeenCalled();
+  });
+
+  // `activateSuccessor` leaves `state.active` empty on an empty strip, and a gap
+  // arriving in that window has no view to refresh. Ruled rather than guarded:
+  // reaching for the row unchecked would throw here.
+  it("refreshActiveView is a no-op on an empty strip", () => {
+    expect(() => {
+      refreshActiveView();
+    }).not.toThrow();
+    expect(openers.chatRefresh).not.toHaveBeenCalled();
+  });
+
+  // `forgetRow` deliberately does NOT drop the ledger record: closing a tab does not
+  // destroy its subject, so a reopened chat keeps its loaded window and costs zero
+  // message fetches. Adding a `forgetView` call there turns this red.
+  it("a closed chat tab reopens without refetching", async () => {
+    noteLoaded("chat", "a", syncEpoch());
+    await openChat("a");
+    await closeTab(chatID("a"));
+    openers.chatRefresh.mockClear();
+
+    await openChat("a");
+
+    expect(openers.chatShow).toHaveBeenCalledWith("a");
+    expect(openers.chatRefresh).not.toHaveBeenCalled();
   });
 });

@@ -52,12 +52,12 @@ function mountDot(doc: Document, outcome: TurnOutcome): HTMLElement {
   header.className = "turn-header";
   header.dataset["outcome"] = outcome;
   header.dataset["severity"] = severityOf(outcome);
-  const row = doc.createElement("div");
-  row.className = "turn-head-row";
+  const badge = doc.createElement("span");
+  badge.className = "turn-badge";
   const dot = doc.createElement("span");
   dot.className = "turn-dot";
-  row.appendChild(dot);
-  header.appendChild(row);
+  badge.appendChild(dot);
+  header.appendChild(badge);
   doc.body.replaceChildren(header);
   return dot;
 }

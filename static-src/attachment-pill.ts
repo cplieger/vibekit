@@ -19,6 +19,8 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { ICON_CLOSE } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { badgeForExt, extOf } from "./file-extensions.js";
 
 /** The two fields a pill draws.
@@ -80,10 +82,10 @@ export function buildAttachmentPill(
       "button",
       {
         type: "button",
-        className: "attachment-close",
+        className: "icon-btn attachment-close",
         "aria-label": `Remove ${att.name}`,
       },
-      "×",
+      iconEl(ICON_CLOSE),
     );
     close.addEventListener("click", () => {
       onRemove(att.path);

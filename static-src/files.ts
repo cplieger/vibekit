@@ -53,6 +53,8 @@ import {
   FB_CHECK,
   FB_META,
 } from "./files-shared.js";
+import { fileRowsSkeleton, paintPlaceholder } from "./skeleton.js";
+import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { setOnUploadComplete } from "./files-picker.js";
 import {
   createFile,
@@ -272,7 +274,19 @@ function watchGitStatus(): void {
 
 function loadDir(): void {
   watchGitStatus();
+  // Only where there is nothing of this directory's own on screen AND the route has
+  // not answered: a listing is refetched on every open and after every write, so an
+  // arm gated on the container alone would clear rows the reader is working in, and a
+  // directory that really is empty is an answer rather than an absence.
+  const skeleton =
+    state.entries.length === 0 && !state.answered
+      ? skeletonTiming(() => paintPlaceholder($.fbList, fileRowsSkeleton))
+      : null;
   void fetchDir(state.currentPath, browserFetchHolder).then((d) => {
+    // Read BEFORE the cancel: the placeholder shares this container with the rows, so
+    // it is content on screen, and the fade is what keeps the rows from cutting over it.
+    const onScreen = $.fbList.childElementCount > 0;
+    skeleton?.cancel();
     if (d.error !== undefined) {
       if (d.error === "stale") {
         return;
@@ -297,6 +311,7 @@ function loadDir(): void {
     }
     pendingRestore = false;
     state.entries = d.files;
+    state.answered = true;
     state.entryMap.clear();
     for (const e of state.entries) {
       state.entryMap.set(e.name, e);
@@ -306,7 +321,7 @@ function loadDir(): void {
     // view-open fade is usually still running, and a list fade would cancel
     // it (one-slot replacement) to animate rows the CSS stagger already
     // animates. Navigation between populated dirs keeps its fade.
-    renderList({ transition: $.fbList.childElementCount > 0 });
+    renderList({ transition: onScreen });
   });
 }
 
@@ -316,6 +331,7 @@ function loadDirAsync(): Promise<void> {
       return;
     }
     state.entries = d.files;
+    state.answered = true;
     state.entryMap.clear();
     for (const e of state.entries) {
       state.entryMap.set(e.name, e);

@@ -205,9 +205,22 @@ func (rt *Runtime) hasOpenTab(chatID vibekit.ChatID) bool {
 // raised: a connect that exceeds one is the defect, never the constant.
 const (
 	// maxColdConnectBytes bounds the whole payload one cold connect writes: 1 KiB
-	// handshake + 16 KiB of bare busy signals + 16 KiB of waiting statuses + 64 KiB
-	// of permission asks + 16 KiB of run asks + the snapshot budget + headroom.
+	// handshake + 10 KiB of busy chat ids + 13 KiB of live-run rows + 16 KiB of bare
+	// busy signals + 16 KiB of waiting statuses + 64 KiB of permission asks + 16 KiB of
+	// run asks + the snapshot budget + headroom.
 	maxColdConnectBytes = 512 << 10
+	// maxBusyChats bounds the busy-chat list the handshake carries. A chat id is 34
+	// characters, so one JSON array element is 37 bytes with its quotes and comma:
+	// 256 × 37 ≈ 9.5 KiB, about 7% of maxConnectFrameBytes. Deliberately far past every
+	// other bound in the system — one bridge per chat at ~300 MB of process tree — so it
+	// is a ceiling on the BYTES rather than a limit anyone reaches.
+	maxBusyChats = 256
+	// maxConnectLiveRuns bounds the live-run inventory the handshake carries. A row is
+	// a wf_<16 hex> id, a c-<32 hex> chat id and a bool, so ~100 bytes of JSON:
+	// 128 × 100 ≈ 12.8 KiB, 10% of maxConnectFrameBytes. The single-run rule bounds
+	// concurrent runs to a handful in practice, but that is a PRODUCT rule and not a
+	// bound on this array — a stale-lease accumulation is exactly what inflates it.
+	maxConnectLiveRuns = 128
 	// maxConnectFrameBytes bounds ONE frame, at 2x the per-snapshot text cap. WebKit
 	// buffers a whole SSE frame before dispatching it, so one huge frame is a
 	// peak-memory cost the total cannot express.
@@ -258,10 +271,32 @@ func (rt *Runtime) streamInitialState(
 	declared map[vibekit.ChatID]struct{},
 	stated bool,
 ) error {
+	busy := rt.coord.turns.busyChatIDs()
+	// A scoped list states nothing about the chats it omits, and an over-cap one is
+	// withheld rather than truncated: on either the client retracts nothing.
+	busyStated := chatFilter == "" && len(busy) <= maxBusyChats
+	if !busyStated {
+		if len(busy) > maxBusyChats {
+			slog.Warn("connect busy-chat list withheld: over cap",
+				"cap", maxBusyChats, "count", len(busy))
+		}
+		busy = nil
+	}
+	liveRuns := rt.runs.liveRunRows()
+	liveRunsStated := len(liveRuns) <= maxConnectLiveRuns
+	if !liveRunsStated {
+		slog.Warn("connect live-run inventory withheld: over cap",
+			"cap", maxConnectLiveRuns, "count", len(liveRuns))
+		liveRuns = nil
+	}
 	connectedEvt := vibekit.NewEvent(vibekit.EventConnected, "", vibekit.ConnectedPayload{
-		Workspace: rt.lifecycle.workDir,
-		Floor:     floor,
-		Head:      head,
+		Workspace:      rt.lifecycle.workDir,
+		BusyChats:      busy,
+		LiveRuns:       liveRuns,
+		Floor:          floor,
+		Head:           head,
+		BusyStated:     busyStated,
+		LiveRunsStated: liveRunsStated,
 	})
 	connectedData, err := json.Marshal(connectedEvt)
 	if err != nil {

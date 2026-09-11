@@ -25,6 +25,8 @@ import { activeSession } from "./store.js";
 import { LS_DISMISSED_BANNERS_KEY } from "./ls-keys.js";
 import { readPerChat, writePerChat } from "./per-chat-store.js";
 import { isSafeURL } from "./url-safety.js";
+import { ICON_CLOSE } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { el, createCollection, bindList, computed } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import type { BannerLevel } from "./types.js";
@@ -170,10 +172,20 @@ function clearDismiss(chatID: string, code: string): void {
 
 /** Build the banner's affordance: a button for an in-app jump, an anchor for a
  *  safe external URL, or null when neither is available (an unsafe href is
- *  dropped rather than rendered inert). */
+ *  dropped rather than rendered inert).
+ *
+ *  BOTH FLAVOURS CARRY `btn-small`, THE APP'S SHARED BUTTON, and `.banner-link` is
+ *  layout only. That is what every other banner already does — `.git-status-banner`'s
+ *  CTA is `btn-small git-status-banner-cta`, both `.inline-install-banner` producers
+ *  are `btn-small`, and `elicitation.ts`'s external-URL card is the precedent for
+ *  the ANCHOR flavour (`<a class="elicitation-url btn-small …">`). It is also what
+ *  the class was missing: this rule skinned an underlined text link, so when the
+ *  `onClick` branch was added it emitted a `<button>` nothing reset, and all three
+ *  of its live producers rendered native UA chrome with `padding: 0` (02-reset.css's
+ *  universal `*` rule beating the UA sheet's own button padding). */
 function buildBannerLink(link: BannerLink): HTMLElement | null {
   if (link.onClick !== undefined) {
-    const btn = el("button", { type: "button", className: "banner-link" }, link.label);
+    const btn = el("button", { type: "button", className: "btn-small banner-link" }, link.label);
     btn.addEventListener("click", link.onClick);
     return btn;
   }
@@ -183,7 +195,7 @@ function buildBannerLink(link: BannerLink): HTMLElement | null {
   return el(
     "a",
     {
-      className: "banner-link",
+      className: "btn-small banner-link",
       href: link.href,
       target: "_blank",
       rel: "noopener noreferrer",
@@ -294,10 +306,19 @@ export function showBanner(
     }
   }
   if (dismissible) {
+    // `icon-btn` plus the registry's own close mark, which between them leave NOTHING
+    // for a local rule: 13-messages.css carries no `.banner-dismiss` skin at all. The
+    // mark is an SVG rather than a `\u00d7` character because a text node's LINE BOX is
+    // what `align-items` centres, so the ink lands off-centre by a font-dependent
+    // amount and every character site then re-adds its own `font-size`/`line-height`
+    // to compensate (search-shell.ts states the same rule; close-mark.test.ts guards
+    // it). The CLASS survives with no rule behind it because two readers address it:
+    // `updateBannerLink` inserts the affordance before it, and banner-stack.test.ts
+    // clicks it.
     const btn = el(
       "button",
-      { type: "button", className: "banner-dismiss", "aria-label": "Dismiss" },
-      "\u00d7",
+      { type: "button", className: "icon-btn banner-dismiss", "aria-label": "Dismiss" },
+      iconEl(ICON_CLOSE),
     );
     btn.addEventListener("click", () => {
       removeBanner(chatID, code);

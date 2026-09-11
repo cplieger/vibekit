@@ -53,7 +53,6 @@
   font-size: var(--fs-base);
   overflow: hidden;
   flex-shrink: 0;
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
   content-visibility: auto;
   contain-intrinsic-size: auto var(--btn-h);
 }
@@ -138,7 +137,6 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   overflow: hidden;
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 }
 
 /* Cards live in the body region (a uip-disclosure-region: the primitive
@@ -236,9 +234,17 @@
   border-top: 0;
 }
 
-.tool-group-header:hover {
-  color: var(--c-text-primary);
-  background: var(--c-bg-tertiary);
+/* One hover recipe for every box header in a transcript: the interaction ladder's
+   wash (01-tokens.css), never a jump to a ramp rung. Gated on `any-hover` (never
+   `hover`, see web.md) because the header is a disclosure trigger, so the finger is
+   still on it when the tap ends and `:hover` latches; touch takes the press from
+   03-base.css. The ink lift is this header's own — its resting ink is secondary
+   where a card's title is the accent. */
+@media (any-hover: hover) {
+  .tool-group-header:hover {
+    color: var(--c-text-primary);
+    background: var(--c-hover);
+  }
 }
 
 /* Open: the chevron turns down. Stated as the OPEN case rather than the
@@ -302,8 +308,11 @@
   user-select: none;
 }
 
-.tool-summary.has-disclosure:hover {
-  background: var(--c-hover);
+/* The shared recipe; gated for `.tool-group-header`'s reason. */
+@media (any-hover: hover) {
+  .tool-summary.has-disclosure:hover {
+    background: var(--c-hover);
+  }
 }
 
 /* THE CHEVRON'S COLUMN, HELD OPEN ON EVERY CARD RATHER THAN ONLY THE DISCLOSABLE
@@ -659,6 +668,11 @@
   padding: var(--sp-2) var(--sp-3);
   max-height: 18.75rem;
   overflow-y: auto;
+
+  /* The machine-text surface, the wash prose code already takes (13-messages.css).
+     Off the INK rather than a ramp rung, so it holds at whatever depth the card
+     sits at and in both themes with no per-theme value. */
+  background: var(--c-code-bg);
   transition:
     height var(--dur-standard) var(--ease-standard),
     opacity var(--dur-standard) var(--ease-standard);
@@ -864,7 +878,6 @@
   font-size: var(--fs-base);
   overflow: hidden;
   flex-shrink: 0;
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 
   /* Containment: see `.tool-call` for the mechanism. What is specific here is which
      regions a skipped box is made of: the RESTING shape both kinds share, which is
@@ -943,9 +956,19 @@ a.subagent-header {
   user-select: none;
 }
 
-.subagent-container.has-disclosure > .subagent-header:hover,
-a.subagent-header:hover {
-  background: color-mix(in srgb, var(--c-accent) 8%, transparent);
+/* The shared box-header recipe, not an accent tint: a delegate's identity is its
+   accent border and glyph, and hover is an interaction channel. `a.subagent-header`
+   is a LINK rather than a `[role="button"]`, so 03-base.css's universal press does
+   not reach it — hence the `:active` below. */
+@media (any-hover: hover) {
+  .subagent-container.has-disclosure > .subagent-header:hover,
+  a.subagent-header:hover {
+    background: var(--c-hover);
+  }
+}
+
+a.subagent-header:active {
+  background: var(--c-press);
 }
 
 /* The reset layer gives `a` the link colour and the UA underlines `a[href]`; this
@@ -1260,7 +1283,6 @@ a.subagent-header {
   border-radius: var(--r);
   padding: var(--sp-2) var(--sp-3);
   flex-shrink: 0;
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 }
 
 .todo-header {
@@ -1327,7 +1349,7 @@ a.subagent-header {
 /* Subagent full-output modal */
 .subagent-modal-card {
   width: min(56.25rem, 90vw);
-  max-height: 80vh;
+  max-height: 80dvh;
   display: flex;
   flex-direction: column;
 }
@@ -1356,7 +1378,6 @@ a.subagent-header {
   padding: var(--sp-3) var(--sp-4);
   font-size: var(--fs-base);
   flex-shrink: 0;
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 
   /* Containment: see `.tool-call` for the mechanism. The fallback is the CONTENT
      height alone — the header line box, its `margin-block-end`, and one entry row,
@@ -1539,6 +1560,26 @@ a.subagent-header {
 .btn-small {
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
+}
+
+/* An action INSIDE a dense list row takes the dense tier, because `--btn-h` makes
+   it the tallest thing in the row and so the row's own height: measured on the Add
+   tool modal's Install button, a 36px button in a row whose floor is `--ctl-h-sm`
+   rendered a 44px row — the coarse tier's number on a fine-pointer desktop, which
+   is what it was reported as. `padding-block: 0` is what lets the floor bind (the
+   base's `--sp-2` plus a label's line box is 33px on its own), and the same pair
+   for the same reason is at `.mcp-install-btn` (60-mcp.css). SCOPED, because a
+   `.btn-small` standing alone in a modal's action bar is a full-size button.
+
+   `max()` AND NOT A BARE TOKEN, because the universal hit-target floor scores
+   zero (`:where(button, …)` in 61-mcp-tools.css) and so LOSES to this rule:
+   `--ctl-h-dense` is 2.5rem on a coarse pointer, which would have taken this
+   button to 40px beside the 44px `.list-row-btn` in its own row. Measured, the two
+   dense-tier sites that predate this (`.mcp-install-btn`, the PRs tab's
+   Merge/Close) do sit at 40px on a finger for exactly that reason. */
+.list-row .btn-small {
+  min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
+  padding-block: 0;
 }
 
 /* Primary variant for .btn-small: used by the editor's Accept button

@@ -19,7 +19,7 @@ import type { GovernanceStatePayload } from "./types.js";
 import { onModalClose, openModal } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { showToast } from "./toast.js";
-import { ICON_EDIT_14, ICON_TRASH_14, ICON_PLUS_16, ICON_REFRESH, ICON_SPINNER } from "./icons.js";
+import { ICON_EDIT_UI, ICON_TRASH_UI, ICON_PLUS_UI, ICON_REFRESH, ICON_SPINNER } from "./icons.js";
 import {
   type Server,
   type RuntimeStatus,
@@ -97,7 +97,7 @@ function buildSectionScaffold(): void {
     "data-tooltip": "Connect integration",
     "aria-label": "Connect integration",
   }) as HTMLButtonElement;
-  btn.innerHTML = ICON_PLUS_16;
+  btn.innerHTML = ICON_PLUS_UI;
   btn.addEventListener("click", () => {
     openAddModal();
   });
@@ -628,7 +628,7 @@ function renderEditBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement {
     "data-tooltip": "Edit",
     "aria-label": `Edit ${s.name}`,
   }) as HTMLButtonElement;
-  btn.innerHTML = ICON_EDIT_14;
+  btn.innerHTML = ICON_EDIT_UI;
   btn.addEventListener("click", () => {
     void openEditModal(s.id);
   });
@@ -643,7 +643,7 @@ function renderDeleteBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement
     "data-tooltip": "Remove",
     "aria-label": `Remove ${s.name}`,
   }) as HTMLButtonElement;
-  btn.innerHTML = ICON_TRASH_14;
+  btn.innerHTML = ICON_TRASH_UI;
   cleanups.push(bindLoadingState("mcp.delete_server", btn));
   btn.addEventListener("click", () => {
     void (async () => {

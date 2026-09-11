@@ -375,6 +375,9 @@ interface FixtureMessage {
   /** One subtask id per block; absent means the message carries no blocks at all,
    *  which is what every row predating the step rule needs. */
   blocks?: string[];
+  /** Suppresses the content every other row carries, which is what stages a message
+   *  carrying nothing. */
+  empty?: boolean;
 }
 
 interface OutcomeFixture {
@@ -445,32 +448,7 @@ describe("the turn-segmentation contract shared with the Go implementation", () 
   });
 
   it.each(fx.segmentation.map((c) => [c.name, c] as const))("%s", (_name, c) => {
-    const msgs: Message[] = c.messages.map((fm) => {
-      const extra: Partial<Message> = {};
-      if (fm.outcome !== undefined) {
-        extra.turn_outcome = fm.outcome as NonNullable<Message["turn_outcome"]>;
-      }
-      if (fm.refusal === true) {
-        (extra as { refusal?: unknown }).refusal = {};
-      }
-      if (fm.user_kind !== undefined) {
-        extra.user_kind = fm.user_kind as NonNullable<Message["user_kind"]>;
-      }
-      if (fm.blocks !== undefined) {
-        (extra as { blocks?: unknown }).blocks = fm.blocks.map((agentSubtaskID) => ({
-          type: "text",
-          agent_subtask_id: agentSubtaskID,
-        }));
-      }
-      if (fm.role === "user") {
-        return { ...user(fm.id ?? "", "req"), ...extra } as Message;
-      }
-      if (fm.role === "event") {
-        return { ...event(fm.id ?? "", fm.event ?? ""), ...extra } as Message;
-      }
-      return assistant(fm.id ?? "", extra);
-    });
-    const turns = projectTurns(msgs, false);
+    const turns = projectTurns(fixtureMessages(c.messages), false);
     expect(turns.map((t) => t.id)).toEqual(c.want.map((w) => w.id));
     expect(turns.map((t) => t.trigger === undefined)).toEqual(c.want.map((w) => w.agent_initiated));
     expect(turns.map((t) => t.outcome)).toEqual(c.want.map((w) => w.outcome));
@@ -502,11 +480,14 @@ interface WindowFixture {
 
 const WINDOW_FIXTURE_PATH = "../internal/chat/testdata/turn_windows.json";
 
-/** Build the fixture's message array. Shares the segmentation table's row shape,
- *  so a row means the same thing in both contracts. */
+/** Build the fixture's message array. The ONE reader for both tables, so a row
+ *  means the same thing in the segmentation contract and the window one. */
 function fixtureMessages(rows: FixtureMessage[]): Message[] {
   return rows.map((fm) => {
     const extra: Partial<Message> = {};
+    if (fm.empty === true) {
+      extra.content = "";
+    }
     if (fm.outcome !== undefined) {
       extra.turn_outcome = fm.outcome as NonNullable<Message["turn_outcome"]>;
     }
@@ -735,6 +716,27 @@ describe("turnFoldHides", () => {
   it("a bodyless turn hides nothing", () => {
     const t = first([user("u1", "q")]);
     expect(turnFoldHides(t)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The CONTROL for the spurious "unknown outcome" notice, not its regression
+// test. `projectTurns` is honest whenever it is told the truth, so this passes
+// before the fix as well as after it; what fails before the fix is
+// store.test.ts's provisional-row case, because the defect is that `turnLive`
+// answers `false` for a row holding no liveness statement. Keeping the control
+// here says which half of the pair is which.
+// ---------------------------------------------------------------------------
+
+describe("a reloading client's newest turn", () => {
+  it("is running, and states no failure, while the chat is live", () => {
+    // The window a crash mid-turn leaves behind: the prompt row survived and the
+    // reply has not been persisted, so the turn carries no assistant message and
+    // no settled outcome.
+    const turns = projectTurns([user("u1", "do a thing")], true);
+    const t = turns[turns.length - 1];
+    expect(t?.outcome).toBe("running");
+    expect(t === undefined ? "" : turnFailureText(t)).toBe("");
   });
 });
 

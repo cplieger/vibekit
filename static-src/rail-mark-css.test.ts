@@ -4,15 +4,14 @@
 // attributes: `data-current` is the scroll-derived turn, `data-selected` is the turn
 // the reader picked. They stay separate attributes because they answer different
 // questions — where the scroll puts you, versus which turn you chose — and exactly
-// one is written per render (`turn-rail.ts` `rowNode`), which is what stops the rail
-// painting two filled markers.
+// one is written per render (`turn-rail.ts` `markerNode`), which is what stops the
+// rail painting two filled markers.
 //
-// So they are ONE treatment addressed two ways, and the review finding this file
-// answers is what happens when that is written twice: the stylesheet carried two
-// rules with four identical declarations each, whose own comment already claimed
-// they shared a rule. Two copies of one treatment can drift, and the drift is
-// silent — each marker still looks marked, and only a reader seeing both in one
-// session would notice they no longer match.
+// So they are ONE treatment addressed two ways, and this file pins what happens when
+// that is written twice: two rules with four identical declarations each, whose own
+// comment already claimed they shared a rule. Two copies of one treatment drift, and
+// the drift is silent — each marker still looks marked, and only a reader seeing both
+// in one session would notice they no longer match.
 //
 // BOTH KINDS OF CLAIM, and neither is sufficient alone. The SOURCE fact (one rule
 // lists both selectors) is what makes re-duplication fail; a computed check alone
@@ -54,20 +53,23 @@ afterAll(() => {
 function railWithMarks(): { current: HTMLElement; selected: HTMLElement; plain: HTMLElement } {
   const rail = document.createElement("nav");
   rail.className = "turn-rail";
-  const marker = (attr: string | null, text: string): HTMLElement => {
+  // `--rail-at` the way `render()` writes it: a marker is absolutely positioned off
+  // that fraction, so three markers without one stack on top of each other.
+  const marker = (attr: string | null, text: string, at: number): HTMLElement => {
     const btn = document.createElement("button");
     btn.className = "rail-marker";
     btn.type = "button";
     btn.textContent = text;
+    btn.style.setProperty("--rail-at", String(at));
     if (attr !== null) {
       btn.setAttribute(attr, "");
     }
     rail.appendChild(btn);
     return btn;
   };
-  const current = marker("data-current", "2");
-  const selected = marker("data-selected", "3");
-  const plain = marker(null, "4");
+  const current = marker("data-current", "2", 0);
+  const selected = marker("data-selected", "3", 0.5);
+  const plain = marker(null, "4", 1);
   host.replaceChildren(rail);
   return { current, selected, plain };
 }
@@ -173,10 +175,14 @@ function buildRail(chatWidth: number): RailFixture {
 
   const rail = document.createElement("nav");
   rail.className = "turn-rail";
+  // Both carry a `--rail-at`, because a marker is absolutely positioned off it: with
+  // neither set the two land on the same line and a real hover reaches whichever
+  // paints last rather than the one under test.
   const marker = document.createElement("button");
   marker.className = "rail-marker";
   marker.type = "button";
   marker.textContent = "7";
+  marker.style.setProperty("--rail-at", "0");
   const slot = document.createElement("time");
   slot.className = "rail-marker-time";
   slot.dateTime = "PT1M32S";
@@ -186,6 +192,7 @@ function buildRail(chatWidth: number): RailFixture {
   bare.className = "rail-marker";
   bare.type = "button";
   bare.textContent = "8";
+  bare.style.setProperty("--rail-at", "1");
   rail.append(marker, bare);
   outer.appendChild(rail);
 

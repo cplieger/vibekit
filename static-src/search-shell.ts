@@ -6,7 +6,7 @@
 
 import { el } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
-import { ICON_X } from "./icons.js";
+import { ICON_CLOSE_UI } from "./icons.js";
 
 /** The default typing pause. Overridable per box: the cross-chat search reads up
  *  to 500 files per query, so its pause is longer. */
@@ -268,7 +268,7 @@ export function createSearchShell<R>(spec: SearchShellSpec<R>): SearchShell {
           spec.buttonClass,
           `Close ${spec.closeNoun ?? "find"}`,
           "Close (Esc)",
-          ICON_X,
+          ICON_CLOSE_UI,
           dismiss,
         )
       : null;

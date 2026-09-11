@@ -1,22 +1,18 @@
-// The turn's time slot: revealed on hover, in a box that is RESERVED at rest.
+// The turn's time slot: quiet at rest on EVERY device, revealed by hover or focus,
+// in a box that is RESERVED at rest.
 //
-// Two kinds of claim, which is why this file needs both halves of the css-rules
-// helper (the shape `turn-dot-visibility-css.test.ts` states).
+// COMPUTED, against the real assembled cascade: invisible at rest under the bundle
+// as shipped AND under one with the hover query stripped, which is what a device
+// answering `any-hover: none` computes; the box still occupies space; and revealing
+// it moves NOTHING. That last one is the design constraint and cannot be reasoned
+// about — a geometric expansion changes the card's height, which changes
+// `#messages`' `scrollHeight`, which feeds `scrollableBy()`, the timeline rail's own
+// navigability gate at MIN_SCROLL_PX.
 //
-// COMPUTED, against the real assembled cascade: that the slot is invisible at rest,
-// that its box still occupies space, and that revealing it moves NOTHING. The last
-// one is the whole design constraint and it cannot be reasoned about — a geometric
-// expansion would change the card's height, which changes `#messages`'
-// `scrollHeight`, which feeds `scrollableBy()`, which is the timeline rail's own
-// navigability gate at MIN_SCROLL_PX. On a short chat sitting near that threshold,
-// hovering a turn could flip the rail on and off.
-//
-// SOURCE, because computed style cannot answer it: that the gate is `any-hover` and
-// not `hover` (a synthetic hover drives no style recalc, and `CSS.forcePseudoState`
-// is a devtools protocol call a test page cannot make, so which QUERY the rule sits
-// in is only readable as text), and that the rest state and the transition name no
-// layout property.
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+// SOURCE, because computed style cannot answer it: which QUERY each of the three
+// rules sits in. A synthetic hover drives no style recalc and `CSS.forcePseudoState`
+// is a devtools protocol call a test page cannot make.
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 
@@ -83,12 +79,92 @@ function mountCard(opts: { elapsed: string; rewind?: boolean } = { elapsed: "1m 
   return { card, footer, slot };
 }
 
+/** A delegate's footer: the same builder's output, reused inside `.subagent-foot`
+ *  where there is no `.turn` ancestor to reveal from. */
+function mountDelegate(): { card: HTMLElement; slot: HTMLElement } {
+  const card = document.createElement("div");
+  card.className = "subagent-block";
+  const foot = document.createElement("div");
+  foot.className = "subagent-foot";
+  const footer = document.createElement("div");
+  footer.className = "turn-footer";
+  const slot = document.createElement("time");
+  slot.className = "turn-elapsed";
+  slot.textContent = "12.0s";
+  footer.appendChild(slot);
+  foot.appendChild(footer);
+  card.appendChild(foot);
+  host.replaceChildren(card);
+  return { card, slot };
+}
+
+/** The bundle a device with no hover computes: every `@media (any-hover: hover)`
+ *  block dropped, nested ones included. Comments go first, so a rule's own prose
+ *  naming the query cannot be mistaken for the query. */
+function withoutHoverBlocks(css: string): string {
+  const marker = `@media (${REVEAL_QUERY})`;
+  let out = css.replace(/\/\*[\s\S]*?\*\//gu, " ");
+  for (;;) {
+    const at = out.indexOf(marker);
+    if (at < 0) {
+      return out;
+    }
+    const open = out.indexOf("{", at);
+    let depth = 0;
+    let end = out.length - 1;
+    for (let i = open; i < out.length; i++) {
+      if (out[i] === "{") {
+        depth++;
+      } else if (out[i] === "}") {
+        depth--;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    out = out.slice(0, at) + out.slice(end + 1);
+  }
+}
+
+/** Run one case against that bundle instead of the shipped one. */
+async function withNoHoverCSS(fn: () => Promise<void> | void): Promise<void> {
+  const stripped = document.createElement("style");
+  stripped.textContent = withoutHoverBlocks(style.textContent ?? "");
+  style.remove();
+  document.head.appendChild(stripped);
+  try {
+    await fn();
+  } finally {
+    stripped.remove();
+    document.head.appendChild(style);
+  }
+}
+
+/** The reveal is a 0.2s opacity transition, so the value one tick after focus is
+ *  still the resting one. Poll for the settled end rather than the first frame. */
+async function expectRevealed(slot: HTMLElement): Promise<void> {
+  await vi.waitFor(() => {
+    expect(getComputedStyle(slot).opacity).toBe("1");
+  });
+}
+
 describe("the reveal gate is live in this browser", () => {
   it("matches any-hover, so every computed case below is measuring the gated rule", () => {
     // The premise. Without it a `(any-hover: none)` runtime would report `opacity: 1`
     // at rest and the rest-state case would pass for the wrong reason — reading as
     // "the reveal is broken" rather than "this browser has no hover".
     expect(window.matchMedia(`(${REVEAL_QUERY})`).matches).toBe(true);
+  });
+
+  it("and the emulated bundle really drops that query", () => {
+    // The other premise: without it the no-hover cases measure the shipped cascade
+    // twice and prove nothing about a device that matches no hover query.
+    const shipped = style.textContent ?? "";
+    const stripped = withoutHoverBlocks(shipped);
+    expect(shipped).toContain(`@media (${REVEAL_QUERY})`);
+    expect(stripped).not.toContain(`@media (${REVEAL_QUERY})`);
+    expect(stripped.length).toBeLessThan(shipped.length);
   });
 });
 
@@ -113,6 +189,35 @@ describe("the time slot at rest", () => {
     const cs = getComputedStyle(slot);
     expect(cs.display).not.toBe("none");
     expect(cs.visibility).toBe("visible");
+  });
+
+  it("is invisible on a device with no hover at all", async () => {
+    // The rest state sits outside every media query, so a device that matches none
+    // of them still paints nothing — which is the whole of the defect: with the rest
+    // state inside the hover query, a phone showed every turn's duration at rest.
+    await withNoHoverCSS(() => {
+      const { slot } = mountCard();
+      expect(getComputedStyle(slot).opacity).toBe("0");
+    });
+  });
+});
+
+describe("the keyboard path", () => {
+  it("lifts the slot when focus enters the card", async () => {
+    const { footer, slot } = mountCard();
+    footer.querySelector<HTMLButtonElement>(".turn-ledger-summary")?.focus();
+    await expectRevealed(slot);
+  });
+
+  it("still lifts it on a device with no hover at all", async () => {
+    // The reason the focus reveal is ungated: a keyboard exists where a pointer does
+    // not, and inside the hover query this path would be withdrawn on exactly the
+    // devices where the ledger disclosure is the only other one.
+    await withNoHoverCSS(async () => {
+      const { footer, slot } = mountCard();
+      footer.querySelector<HTMLButtonElement>(".turn-ledger-summary")?.focus();
+      await expectRevealed(slot);
+    });
   });
 });
 
@@ -201,27 +306,38 @@ describe("the readout ends on the card's own gutter", () => {
 });
 
 describe("the reveal, read as source", () => {
-  it("is gated on any-hover, never on hover", () => {
+  it("declares the rest state outside every media query", () => {
+    // Unscoped and ungated, so no device and no footer inherits a duration painted
+    // at rest. `"top"` demands exactly one match outside every at-rule.
+    const rest = ruleContaining(turns, ".turn-footer > .turn-elapsed", "top");
+    expect(rest.body).toMatch(/opacity:\s*0/u);
+  });
+
+  it("gates only the hover reveal on any-hover", () => {
     // `hover` and `pointer` report only the PRIMARY input, and iPadOS answers
     // `hover: none` with a trackpad attached — so a `hover: hover` gate silently
-    // drops the rule on every touch-primary device. Both directions are asserted:
-    // the rule is in the right query AND `29-turns.css` grew no `(hover: hover)`
-    // block for it.
-    const rest = ruleContaining(turns, ".turn > .turn-footer > .turn-elapsed", REVEAL_QUERY);
-    expect(rest.body).toMatch(/opacity:\s*0/u);
+    // drops the rule on every touch-primary device.
+    const shown = ruleContaining(turns, ".turn:hover > .turn-footer > .turn-elapsed", REVEAL_QUERY);
+    expect(shown.body).toMatch(/opacity:\s*1/u);
     expect(turns).not.toContain("@media (hover: hover)");
   });
 
+  it("declares the focus reveal outside every media query", () => {
+    const focus = ruleContaining(turns, ".turn:focus-within > .turn-footer > .turn-elapsed", "top");
+    expect(focus.body).toMatch(/opacity:\s*1/u);
+  });
+
   it("reveals on focus-within as well as hover", () => {
-    // Not decoration: a keyboard user tabbing into the ledger button or a file row
-    // must see the time, and hover alone would hide it from them permanently.
-    const shown = ruleContaining(turns, ".turn:hover > .turn-footer > .turn-elapsed", REVEAL_QUERY);
-    expect(shown.selector).toContain(".turn:focus-within > .turn-footer > .turn-elapsed");
-    expect(shown.body).toMatch(/opacity:\s*1/u);
+    // The pair, and both halves name BOTH footers: `turn-footer.ts` is reused inside
+    // `.subagent-foot`, whose copy has no `.turn` ancestor to reveal from.
+    const hover = ruleContaining(turns, ".turn:hover > .turn-footer > .turn-elapsed", REVEAL_QUERY);
+    expect(hover.selector).toContain(".subagent-block:hover .turn-footer > .turn-elapsed");
+    const focus = ruleContaining(turns, ".turn:focus-within > .turn-footer > .turn-elapsed", "top");
+    expect(focus.selector).toContain(".subagent-block:focus-within .turn-footer > .turn-elapsed");
   });
 
   it("names no layout property in the rest state or the transition", () => {
-    const rest = ruleContaining(turns, ".turn > .turn-footer > .turn-elapsed", REVEAL_QUERY);
+    const rest = ruleContaining(turns, ".turn-footer > .turn-elapsed", "top");
     expect(rest.body).not.toMatch(/display:/u);
     expect(rest.body).not.toMatch(/visibility:/u);
     // The transition is the other half: a `block-size` or `width` here would make
@@ -260,24 +376,28 @@ describe("the reveal, read as source", () => {
       /grid-column:\s*4/u,
     );
   });
+});
 
-  it("leaves the DELEGATE footer's copy of the slot always visible", () => {
-    // `turn-footer.ts` is reused inside `.subagent-foot` (14-tools.css). The reveal
-    // is scoped to `.turn > .turn-footer`, so a delegate's duration stays on screen
-    // — it only exists once its card is expanded, and hiding it behind a second
-    // hover would take away a value that is visible today.
-    const rest = ruleContaining(turns, ".turn > .turn-footer > .turn-elapsed", REVEAL_QUERY);
-    expect(rest.selector).not.toContain(".subagent");
-    const delegate = document.createElement("div");
-    delegate.className = "subagent-foot";
-    const footer = document.createElement("div");
-    footer.className = "turn-footer subagent-footer";
-    const slot = document.createElement("time");
-    slot.className = "turn-elapsed";
-    slot.textContent = "12.0s";
-    footer.appendChild(slot);
-    delegate.appendChild(footer);
-    host.replaceChildren(delegate);
-    expect(getComputedStyle(slot).opacity).toBe("1");
+describe("the delegate footer's copy", () => {
+  it("hides at rest and reveals on the delegate card's hover", () => {
+    // The rest state is unscoped, so the copy `turn-footer.ts` builds inside
+    // `.subagent-foot` is quiet too. The gesture that lifts it is the delegate
+    // CARD's own hover.
+    const { slot } = mountDelegate();
+    expect(getComputedStyle(slot).opacity).toBe("0");
+    const hover = ruleContaining(
+      turns,
+      ".subagent-block:hover .turn-footer > .turn-elapsed",
+      REVEAL_QUERY,
+    );
+    expect(hover.body).toMatch(/opacity:\s*1/u);
+  });
+
+  it("and the TURN footer's copy still reveals, which is that case's control", async () => {
+    // Paired deliberately: a rule that hid BOTH copies would satisfy the case above
+    // on its own. Focus is the half a test page can drive.
+    const { footer, slot } = mountCard();
+    footer.querySelector<HTMLButtonElement>(".turn-ledger-summary")?.focus();
+    await expectRevealed(slot);
   });
 });

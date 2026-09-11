@@ -57,6 +57,7 @@ export function tabsMock(): Record<string, unknown> {
     adoptSubject: vi.fn(),
     activateTab: vi.fn(),
     activateRestoredTab: vi.fn(),
+    refreshActiveView: vi.fn(),
     paintProvisionalTabs: vi.fn(),
     renameTab: vi.fn(),
     setTabStatus: vi.fn(),
@@ -93,6 +94,10 @@ export function tabsMock(): Record<string, unknown> {
     subscribeTabCues: vi.fn(() => () => {}),
     setOnTabClosed: vi.fn(),
     setOnEmpty: vi.fn(),
+    // Left UNREGISTERED, which is the never-suppress answer: an unwired probe is
+    // exactly the behaviour before it existed, so a test that has not stated a
+    // chat's settle state cannot have a cue silently blanked under it.
+    setChatSettledProbe: vi.fn(),
 
     _resetForTest: vi.fn(),
   };

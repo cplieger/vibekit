@@ -1,6 +1,10 @@
-// The turn card's header band: the trigger, its meta row, and the three-line
-// clamp the folded-row navigation model depends on.
-import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
+// The turn card's header band: the trigger, and the out-of-flow badge that lets
+// the request text be the only thing in it with a height.
+//
+// The CLAMP is not here any more: it is CSS-only and FOLD-conditional, so there
+// is nothing in this module to drive and nothing a detached element can measure.
+// `disclosure-row-css.test.ts` owns it, against real layout.
+import { describe, it, expect, vi } from "vitest";
 import {
   buildTurnHeader,
   updateTurnHeader,
@@ -8,8 +12,6 @@ import {
   type TurnHeaderData,
 } from "./turn-header.js";
 import { initAttachmentPillCallbacks } from "../attachment-pill.js";
-import { mountAppCSS } from "../__test-helpers__/css-rules.js";
-import { FRAME_BUDGET_MS, testTimeoutFor } from "../__test-helpers__/frame-budget.js";
 
 function data(over: Partial<TurnHeaderData> = {}): TurnHeaderData {
   return {
@@ -44,14 +46,6 @@ function text(h: HTMLElement): HTMLElement {
   return t;
 }
 
-function more(h: HTMLElement): HTMLButtonElement {
-  const b = h.querySelector<HTMLButtonElement>(".turn-req-more");
-  if (b === null) {
-    throw new Error("no .turn-req-more");
-  }
-  return b;
-}
-
 const LONG = "x".repeat(400);
 
 describe("buildTurnHeader", () => {
@@ -81,7 +75,6 @@ describe("buildTurnHeader", () => {
     const h = buildTurnHeader(data({ request: undefined }));
     expect(h.dataset["trigger"]).toBe("system");
     expect(text(h).textContent).toBe("Agent-initiated turn");
-    expect(more(h).hidden).toBe(true);
   });
 
   it("treats a whitespace-only request as no request", () => {
@@ -90,192 +83,38 @@ describe("buildTurnHeader", () => {
     // defined value, so the trim has to happen where the text is written.
     expect(text(h).textContent).toBe("");
   });
-});
 
-describe("the three-line clamp", () => {
-  // Load-bearing rather than cosmetic: the folded rows are the session's
-  // navigation surface, so one pasted stack trace in a prompt would push every
-  // neighbouring row off-screen without this.
-  it("clamps the request text by default", () => {
-    const h = buildTurnHeader(data());
-    expect(text(h).hasAttribute("data-clamped")).toBe(true);
+  it("puts the number, the dot, the time and the hit count in one out-of-flow badge", () => {
+    // ONE box for every readout, so the first line's indent reserves one column
+    // rather than four, and every one of them is reachable at a stable depth.
+    const h = buildTurnHeader(data({ n: 14, ts: 1_700_000_000_000 }));
+    for (const sel of [".turn-n", ".turn-dot", ".turn-ts", ".turn-hit-count"]) {
+      expect(h.querySelector(`:scope > .turn-badge > ${sel}`), sel).not.toBeNull();
+    }
+    // And the toggle is the band's own child, which is what `wireRowToggle` and
+    // `setCardFolded` (messages.ts) reach at `:scope > .turn-fold-toggle`.
+    expect(h.querySelector(":scope > .turn-fold-toggle")).not.toBeNull();
   });
 
-  it("offers a show-more only when the text overflows", () => {
-    expect(more(buildTurnHeader(data({ request: "one line" }))).hidden).toBe(true);
-    expect(more(buildTurnHeader(data({ request: LONG }))).hidden).toBe(false);
+  it("keeps the badge out of the request's text", () => {
+    // MEASURED trap: an inline badge as the text's first child contaminates
+    // `textContent`, which is exactly what the copy button reads, so every copied
+    // prompt would begin `#14 10:42 ` — and `linkifyPaths` rewrites text nodes in
+    // there too.
+    const h = buildTurnHeader(data({ n: 14, ts: 1_700_000_000_000, request: "  fix the test  " }));
+    expect(h.querySelector(".turn-ts")?.textContent, "the time really is stamped").not.toBe("");
+    expect(text(h).textContent).toBe("fix the test");
+    expect(text(h).querySelector(".turn-badge")).toBeNull();
+    expect(text(h).contains(h.querySelector(".turn-badge"))).toBe(false);
   });
 
-  it("counts newlines, not just length, when deciding overflow", () => {
-    const fourShortLines = "a\nb\nc\nd";
-    expect(more(buildTurnHeader(data({ request: fourShortLines }))).hidden).toBe(false);
-    expect(more(buildTurnHeader(data({ request: "a\nb" }))).hidden).toBe(true);
-  });
-
-  it("releases the clamp on show-more and restores it on show-less", () => {
+  it("offers no show-more", () => {
+    // The clamp is CSS-only and fold-conditional, so the control and its
+    // measurement machinery are gone; this is the guard that stops them creeping
+    // back in unnoticed.
     const h = buildTurnHeader(data({ request: LONG }));
-    const btn = more(h);
-    expect(btn.textContent).toBe("Show more");
-
-    btn.click();
+    expect(h.querySelector(".turn-req-more")).toBeNull();
     expect(text(h).hasAttribute("data-clamped")).toBe(false);
-    expect(h.dataset["expanded"]).toBe("");
-    expect(btn.textContent).toBe("Show less");
-    expect(btn.getAttribute("aria-expanded")).toBe("true");
-
-    btn.click();
-    expect(text(h).hasAttribute("data-clamped")).toBe(true);
-    expect(h.dataset["expanded"]).toBeUndefined();
-    expect(btn.textContent).toBe("Show more");
-    expect(btn.getAttribute("aria-expanded")).toBe("false");
-  });
-
-  // A repaint must not fold a prompt the reader deliberately opened.
-  it("survives a same-content update while expanded", () => {
-    const h = buildTurnHeader(data({ request: LONG }));
-    more(h).click();
-    updateTurnHeader(h, data({ request: LONG, outcome: "interrupted" }));
-    expect(text(h).hasAttribute("data-clamped")).toBe(false);
-    expect(more(h).hidden).toBe(false);
-    expect(h.dataset["outcome"]).toBe("interrupted");
-  });
-
-  // ...but new content is a new request, and its expansion belonged to the old.
-  it("re-clamps when the request text changes", () => {
-    const h = buildTurnHeader(data({ request: LONG }));
-    more(h).click();
-    updateTurnHeader(h, data({ request: LONG + "tail" }));
-    expect(text(h).hasAttribute("data-clamped")).toBe(true);
-  });
-});
-
-// The clamp against REAL layout, which is the only thing that can answer
-// "does this overflow three lines". Everything above builds a detached header,
-// where both `scrollHeight` and `clientHeight` read 0 and the verdict can only
-// be the character guess; these mount the card under the shipped stylesheet and
-// pin what the measurement then says.
-describe("the clamp measured on the page", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
-  let styleEl: HTMLStyleElement;
-  let host: HTMLElement;
-
-  beforeAll(() => {
-    styleEl = mountAppCSS();
-    host = document.createElement("div");
-    document.body.appendChild(host);
-  });
-
-  afterAll(() => {
-    styleEl.remove();
-    host.remove();
-  });
-
-  afterEach(() => {
-    host.replaceChildren();
-  });
-
-  /** Mount a header at a stated width. */
-  function mount(d: TurnHeaderData, width: number): HTMLElement {
-    host.style.inlineSize = `${String(width)}px`;
-    const h = buildTurnHeader(d);
-    host.replaceChildren(h);
-    return h;
-  }
-
-  /** Wait for the show-more to reach `hidden`. Only for a verdict that must
-   *  CHANGE: a poll whose condition already holds returns before the observer
-   *  has run, which is how a test of an unchanged verdict passes vacuously. */
-  async function settles(h: HTMLElement, hidden: boolean, why: string): Promise<void> {
-    await vi.waitFor(
-      () => {
-        expect(more(h).hidden, why).toBe(hidden);
-      },
-      { timeout: FRAME_BUDGET_MS },
-    );
-  }
-
-  /** Give the observer its chance, for a verdict that must NOT change. A resize
-   *  callback is delivered after the frame's layout, and a rAF callback runs
-   *  before it, so two frames span one full delivery. */
-  async function observerRuns(): Promise<void> {
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          resolve();
-        });
-      });
-    });
-  }
-
-  /** Prose long enough to trip the 220-character guess, short enough to sit
-   *  well inside three lines of a wide card — the reported shape. */
-  const FITS_THREE_LINES =
-    "in vibekit when submitting a new message i see a show more button even though the " +
-    "whole message i typed is already visible on the page, and it goes away again once " +
-    "the agent starts replying, but it comes back on a finished turn after a restart.";
-
-  const OVERFLOWS = `${FITS_THREE_LINES} `.repeat(8);
-
-  it("offers no show-more for a request that fits, however long the guess thought it was", async () => {
-    // The reported defect. `buildTurnHeader` returns a detached element, so the
-    // character guess offered a show-more here; nothing re-measured after the
-    // card was inserted, and a finished turn gets no further repaint, so the
-    // guess stood for the rest of the session.
-    expect(FITS_THREE_LINES.length, "long enough to trip the character guess").toBeGreaterThan(220);
-
-    const h = buildTurnHeader(data({ request: FITS_THREE_LINES }));
-    expect(more(h).hidden, "the guess, on a detached card").toBe(false);
-
-    host.style.inlineSize = "1100px";
-    host.replaceChildren(h);
-    await settles(h, true, "corrected once the card is laid out");
-    expect(text(h).scrollHeight - text(h).clientHeight, "and it really does fit").toBeLessThan(2);
-  });
-
-  it("keeps the show-more for a request that really overflows", async () => {
-    const h = mount(data({ request: OVERFLOWS }), 1100);
-    await observerRuns();
-    expect(more(h).hidden).toBe(false);
-    expect(text(h).scrollHeight).toBeGreaterThan(text(h).clientHeight);
-  });
-
-  it("re-decides at every width, so narrowing does not hide text with no way to open it", async () => {
-    // The other half of measuring once: three lines of a wide card become five
-    // of a narrow one, and the clamp was cutting the difference away silently.
-    const h = mount(data({ request: FITS_THREE_LINES }), 1100);
-    await settles(h, true, "fits wide");
-
-    host.style.inlineSize = "220px";
-    await settles(h, false, "offered once it no longer fits");
-
-    host.style.inlineSize = "1100px";
-    await settles(h, true, "withdrawn again when it fits");
-  });
-
-  it("does not fold a prompt the reader opened", async () => {
-    const h = mount(data({ request: OVERFLOWS }), 1100);
-    await observerRuns();
-    more(h).click();
-    expect(text(h).hasAttribute("data-clamped")).toBe(false);
-
-    // Expanding changes the text's own box, so the observer fires on the
-    // reader's own gesture. It must leave the expansion alone.
-    host.style.inlineSize = "900px";
-    await observerRuns();
-    expect(text(h).hasAttribute("data-clamped"), "still open").toBe(false);
-    expect(more(h).textContent).toBe("Show less");
-    expect(more(h).hidden).toBe(false);
-  });
-
-  it("leaves a turn the user did not ask for unclamped", async () => {
-    // Its text is a typed trigger line, not a request, so it carries no clamp
-    // and has nothing to offer a show-more for.
-    const h = mount(data({ request: undefined }), 1100);
-    await observerRuns();
-    host.style.inlineSize = "60px";
-    await observerRuns();
-    expect(text(h).scrollHeight, "narrow enough that a clamp would bite").toBeGreaterThan(63);
-    expect(text(h).hasAttribute("data-clamped")).toBe(false);
-    expect(more(h).hidden).toBe(true);
   });
 });
 
@@ -288,15 +127,15 @@ function copyBtn(h: HTMLElement): HTMLButtonElement {
 }
 
 describe("copying the sent prompt", () => {
-  it("lives in the META row, where the clamp cannot reach it", () => {
+  it("lives outside the request text, where the clamp cannot reach it", () => {
     // The clamp is scoped to `.turn-req-text`; a control inside it would be
-    // hidden by a long prompt folding to three lines.
+    // hidden by a folded turn's four-line clamp.
     const h = buildTurnHeader(data());
-    expect(h.querySelector(".turn-head-row > .turn-copy-req")).not.toBeNull();
+    expect(h.querySelector(":scope > .turn-copy-req")).not.toBeNull();
     expect(text(h).querySelector(".turn-copy-req")).toBeNull();
   });
 
-  it("copies the whole request, not the three lines the clamp shows", () => {
+  it("copies the whole request, not the four lines a folded turn shows", () => {
     const copy = vi.fn();
     initTurnHeaderCallbacks({ copy });
     const h = buildTurnHeader(data({ request: LONG }));
@@ -391,13 +230,12 @@ describe("the request's attachments", () => {
   });
 
   // The clamp is scoped to `.turn-req-text`. A pill inside it would vanish
-  // whenever a long prompt folded to three lines — and the attachments are part
-  // of how a reader identifies which request this was.
+  // whenever a folded turn's prompt clipped to four lines — and the attachments
+  // are part of how a reader identifies which request this was.
   it("sits inside .turn-req but OUTSIDE the clamped text", () => {
     const h = buildTurnHeader(data({ request: LONG, attachments: [shot] }));
     expect(h.querySelector(".turn-req > .turn-req-attachments")).not.toBeNull();
     expect(text(h).querySelector(".attachment-pill")).toBeNull();
-    expect(text(h).hasAttribute("data-clamped")).toBe(true);
     expect(attachmentPaths(h)).toEqual(["out/shot.png"]);
   });
 

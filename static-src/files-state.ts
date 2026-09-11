@@ -12,12 +12,17 @@ export class FileBrowserState {
   selected = new Set<string>();
   lastClickedName = "";
   entries: FileEntry[] = [];
+  /** Whether the browse route has ANSWERED for this directory. `entries` initialises
+   *  to `[]`, so an empty directory and one this client has never read are otherwise
+   *  the same state, and the rows placeholder must arm only for the second. */
+  answered = false;
   entryMap = new Map<string, FileEntry>();
   dirWritable = true;
   sortedNames: string[] = [];
 
   navigate(path: string): void {
     this.currentPath = path;
+    this.answered = false;
     this.selected.clear();
     this.lastClickedName = "";
     this.history.length = this.historyIdx + 1;
@@ -55,6 +60,7 @@ export class FileBrowserState {
     this.selected.clear();
     this.lastClickedName = "";
     this.entries = [];
+    this.answered = false;
     this.entryMap.clear();
     this.dirWritable = true;
     this.sortedNames = [];

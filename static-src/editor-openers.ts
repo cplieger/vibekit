@@ -8,7 +8,10 @@ import { openEditorView, tabIdFor, setTabDirty, getActiveTabId } from "./tabs.js
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
 import { abortSuggestion, clearSuggestionState } from "./editor-conflict.js";
-import { apiGet } from "./api-client.js";
+import { apiGet, apiGetOrError } from "./api-client.js";
+import { editorDocSkeleton, paintPlaceholder } from "./skeleton.js";
+import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
+import type { SkeletonTimingController } from "@cplieger/ui-primitives/skeleton";
 import { loadDiff as loadDiffAction } from "./actions/editor.js";
 import type { FileMode, FileState } from "./editor-types.js";
 import {
@@ -17,6 +20,7 @@ import {
   setActiveFilePath,
   routeForPath,
   freshState,
+  unsavedDiffSource,
 } from "./editor-types.js";
 import { isViewableImage } from "./file-extensions.js";
 import {
@@ -25,6 +29,7 @@ import {
   fetchAgentLines,
   pendingLines,
   clearAgentLineCache,
+  renderEditModeUI,
 } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
 import { registerCleanup } from "./actions/index.js";
@@ -345,16 +350,28 @@ function failBufferLoad(state: FileState, message: string): void {
 async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
   // The placeholder is for a pane with nothing of its own to show. Writing it over
   // a self-contained diff is the read taking the pane down with it.
+  let skeleton: SkeletonTimingController | null = null;
   if (!paintsWithoutBuffer(state)) {
-    $.editorCode.textContent = "Loading...";
+    // The pane still holds the OUTGOING file's bytes: this buffer has never
+    // loaded (the one caller is `activateFile`'s `!state.loaded` branch), so
+    // nothing here belongs to the file being opened and the clear leads. It is
+    // also what makes the pane empty for the door below — measured on the live
+    // app, a known extension leaves 157 `span.hl-*` children and an unknown one
+    // leaves a bare text node, so no child selector can tell one file's content
+    // from another's.
+    $.editorCode.replaceChildren();
     showReadMode();
     $.editorEditBtn.disabled = true;
+    skeleton = skeletonTiming(() => paintPlaceholder($.editorCode, editorDocSkeleton), {
+      ...(signal !== undefined ? { signal } : {}),
+    });
   }
 
   const d = await apiGet<{ content?: string; content_hash?: string; error?: string }>(
     routeForPath(state.path).readURL,
     signal,
   );
+  skeleton?.cancel();
   if (signal?.aborted === true) {
     return;
   }
@@ -366,17 +383,137 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
     failBufferLoad(state, d.error);
     return;
   }
-  state.original.value = d.content ?? "";
-  state.current.value = state.original.value;
-  state.loadedHash = d.content_hash ?? "";
+  adoptDiskBytes(state, d.content ?? "", d.content_hash ?? "");
   state.loaded = true;
-  state.error.value = "";
-  const parsed = parseConflicts(state.current.value);
-  if (parsed.hunks.length > 0 && state.mode.value.kind === "edit") {
-    state.mode.value = { kind: "conflict", conflict: parsed, editing: true };
-  }
   restoreUI(state);
   applyPendingLine(state.path);
+}
+
+/** Take the bytes on disk as this buffer's clean state, and let them decide the
+ *  mode. TWO callers, `loadFile`'s tail and `refreshFile`'s clean-and-moved arm: a
+ *  second copy of the conflict rule is a second thing that can disagree about what
+ *  mode a buffer is in. The demotion arm is `editor-conflict.ts`'s, so a conflict
+ *  resolved ON DISK is answered the same way as one resolved in the buffer. */
+function adoptDiskBytes(state: FileState, content: string, hash: string): void {
+  state.original.value = content;
+  state.current.value = content;
+  state.loadedHash = hash;
+  state.error.value = "";
+  const parsed = parseConflicts(content);
+  const mode = state.mode.value.kind;
+  if (parsed.hunks.length > 0 && (mode === "edit" || mode === "conflict")) {
+    state.mode.value = { kind: "conflict", conflict: parsed, editing: true };
+  } else if (parsed.hunks.length === 0 && mode === "conflict") {
+    state.mode.value = { kind: "edit", editing: false };
+  }
+}
+
+// --- Refresh: re-read a buffer that already holds bytes ---
+
+/** Supersedes an older refresh for one path, and nothing else in this file can:
+ *  `activeLoadController` is aborted only by `activateFile`, so two refreshes for one
+ *  path otherwise run to completion side by side with nothing saying which is newer. */
+let refreshGen = 0;
+
+/** Re-read this file's bytes and adopt them if they moved. An editor tab's `refresh`,
+ *  and the one door that may overwrite a buffer — a DIRTY buffer is the only copy of
+ *  the reader's text and keeps it. */
+export function refreshFile(path: string): void {
+  const state = fileStates.get(path);
+  // The OPEN path owns the never-loaded read: `activateFile`'s `!state.loaded` branch
+  // has one in flight through the controller this function would otherwise reuse, and
+  // both readings of sharing it are bad — aborting kills that read, reusing puts two
+  // concurrent reads on one buffer.
+  if (state?.loaded !== true) {
+    return;
+  }
+  const m = state.mode.value;
+  if (m.kind === "image") {
+    return; // the surface paints from the path; there is no buffer to be stale
+  }
+  if (m.kind === "diff" && m.diffSource.fromGit) {
+    // Both sides come from git, so the buffer read says nothing about this pane.
+    // `oldLabel` IS the ref (`gitDiffSource`), and the repo rides the state.
+    void fetchGitDiffSources(state, state.repo, m.diffSource.oldLabel);
+    return;
+  }
+  const gen = ++refreshGen;
+  void apiGetOrError<FileRead>(routeForPath(path).readURL, activeLoadController?.signal).then(
+    (r) => {
+      // Guards EVERY write below, `renderEditModeUI` and the `$.editorError` sentence
+      // included.
+      if (gen !== refreshGen) {
+        return;
+      }
+      applyRefreshedRead(state, r);
+    },
+  );
+}
+
+interface FileRead {
+  content?: string;
+  content_hash?: string;
+  error?: string;
+}
+
+function applyRefreshedRead(
+  state: FileState,
+  r: { ok: boolean; status: number; data: FileRead | null },
+): void {
+  if (!r.ok || r.data === null) {
+    // The reader's move, so it goes to the pane's own failure channel and the buffer
+    // is KEPT in `current` — it may be the only copy. Every other status is a
+    // background read failing over valid content, which must say nothing.
+    const gone = readGoneSentence(r.status);
+    if (gone !== null) {
+      state.error.value = gone;
+      restoreUI(state);
+    }
+    return;
+  }
+  const d = r.data;
+  if (d.error !== undefined) {
+    state.error.value = d.error;
+    restoreUI(state);
+    return;
+  }
+  const content = d.content ?? "";
+  const hash = d.content_hash ?? "";
+  // An absent hash on either side compares "" === "" and reads as UNCHANGED, so a
+  // refresh never replaces a buffer it cannot prove moved.
+  if (hash === state.loadedHash) {
+    return;
+  }
+  if (!state.dirty.value) {
+    adoptDiskBytes(state, content, hash);
+    restoreUI(state);
+    return;
+  }
+  state.original.value = content;
+  state.loadedHash = hash;
+  if (state.mode.value.kind === "edit") {
+    state.mode.value = {
+      kind: "diff",
+      diffSource: unsavedDiffSource(content, state.current.value),
+    };
+  }
+  // `state.mode` has no painting subscriber, so the repaint is explicit; and
+  // `restoreUI` reads a non-empty `state.error.value` as a failed PANE and would blank
+  // the very diff this arm exists to show, so the sentence goes to `$.editorError`.
+  renderEditModeUI(state);
+  $.editorError.textContent = "This file changed on disk. Your unsaved edits are kept.";
+  $.editorError.classList.remove("hidden");
+}
+
+/** The two read statuses that are an ANSWER about the file rather than a failed read. */
+function readGoneSentence(status: number): string | null {
+  if (status === 404) {
+    return "This file is no longer on disk.";
+  }
+  if (status === 415) {
+    return "This file is no longer text.";
+  }
+  return null;
 }
 
 // persistOpenFiles is GONE, and so is `ui-state.editor_files`. An editor tab's

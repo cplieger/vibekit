@@ -25,7 +25,7 @@ import { withAsyncFeedback } from "./async-button.js";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
-import { ICON_GIT_BRANCH, ICON_SEND_14, ICON_SPARKLE, findGlyph } from "./icons.js";
+import { ICON_GIT_BRANCH, ICON_SEND, ICON_SPARKLE, findGlyph } from "./icons.js";
 import { createPopover, type PopoverController } from "@cplieger/ui-primitives/popover";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
 
@@ -160,7 +160,7 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
       "data-tooltip": "Create and check out this branch",
       "aria-label": "Create branch",
     },
-    iconEl(ICON_SEND_14),
+    iconEl(ICON_SEND),
   ) as HTMLButtonElement;
   const createForm = el(
     "form",

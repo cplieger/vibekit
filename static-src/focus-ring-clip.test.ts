@@ -595,9 +595,6 @@ function modelCard(): { clipper: HTMLElement; item: HTMLElement; tier: HTMLEleme
   caption.appendChild(span("effort-value", "high"));
   row.appendChild(caption);
   const track = node("div", "effort-track", { "data-tiers": "3" });
-  for (const level of ["low", "medium", "high"]) {
-    track.appendChild(node("span", "effort-tick", { "data-level": level }));
-  }
   // The knob is the section's only tab stop, so it is the control this card's
   // clipper has to clear.
   const tier = node("div", "effort-knob", {
@@ -964,11 +961,11 @@ describe("the exclusions: a focusable whose clipper clears the reach", () => {
     expect(inset(item, clipper).top).toBe(8);
     expectClears("model row", item, clipper);
     await focusByTab(tier);
-    // 8, the row's own --sp-2, with nothing between: the knob is centred in a rail
-    // LINE reserved at exactly its own height, and that line carries no border — the
-    // hairline that used to sit between them moved onto the thin rail inside it, and
-    // read 9 here while it was the track's.
-    expect(inset(tier, clipper).bottom).toBe(8);
+    // 12: the row's own --sp-2 plus the --effort-knob-inset the knob sits in from the
+    // bar's edge. The knob is a handle INSIDE the bar now rather than a box the size
+    // of the line, so its clearance is the row's padding plus that inset; it read 8
+    // while the knob filled the line, and neither box carries a border.
+    expect(inset(tier, clipper).bottom).toBe(8 + 4);
     expectClears("effort tier", tier, clipper);
   });
 

@@ -1,8 +1,41 @@
 import { el } from "@cplieger/reactive";
 
+import { KEY_ATTR } from "./reconcile.js";
+
 // ---------------------------------------------------------------------------
 // Skeleton loading placeholders for perceived performance.
 // ---------------------------------------------------------------------------
+
+/** Mount a placeholder into `host`, or refuse. THE ONE DOOR every container
+ *  placeholder mounts through, so a surface whose own arm is wrong shows no
+ *  placeholder rather than stacking one under the content.
+ *
+ *  `content` names what counts as content IN THIS HOST — the surfaces disagree.
+ *  `mount: "replace"` also clears what the guard cannot see (an error row, a
+ *  banner). Returns the teardown, or a no-op on a refusal, so a caller hands it
+ *  to `skeletonTiming` either way. */
+export function paintPlaceholder(
+  host: Element | null,
+  build: () => Element,
+  opts?: { readonly content?: string; readonly mount?: "replace" | "append" },
+): () => void {
+  // Both refusals in one test: an absent host answers `undefined` and a populated
+  // one answers an Element, so only an empty host reaches the paint.
+  if (host?.querySelector(opts?.content ?? `[${KEY_ATTR}]`) !== null) {
+    return () => {
+      /* no host, or one already holding content */
+    };
+  }
+  const node = build();
+  if ((opts?.mount ?? "replace") === "append") {
+    host.appendChild(node);
+  } else {
+    host.replaceChildren(node);
+  }
+  return () => {
+    node.remove();
+  };
+}
 
 /** The transcript placeholder's element id. The renderer drops it by this id
  *  when real turns land, so the placeholder and the conversation can never share
@@ -121,6 +154,63 @@ export function gitRepoSkeleton(opts: { readonly label?: string; readonly widths
     wrap.appendChild(section);
   }
   return { wrap, label };
+}
+
+/** Placeholder for the editor's document pane: the file's opening declaration
+ *  line, a blank line, then body lines.
+ *
+ *  Every bar occupies exactly ONE of the pane's line boxes, so N bars stand on the
+ *  first N real lines and the file landing moves nothing. The geometry is the
+ *  pane's own (`.editor-skeleton` in 30-utilities.css measures in `em`, and the
+ *  mount sits inside `#editor-code`, which inherits the mono metrics), so a change
+ *  to that font-size carries the placeholder with it. */
+export function editorDocSkeleton(): HTMLDivElement {
+  const wrap = el("div", {
+    className: "editor-skeleton",
+    "aria-hidden": "true",
+  }) as HTMLDivElement;
+  wrap.appendChild(skelBar("editor-skel-title", "38%"));
+  // Widths only: a source file's shape is what makes this read as a document
+  // rather than a block, and an empty string is the blank line between the
+  // declaration and the body.
+  for (const width of ["", "72%", "54%", "83%", "41%", "", "66%", "78%", "49%", "60%"]) {
+    const line = el("div", { className: "editor-skel-line" });
+    if (width !== "") {
+      line.classList.add("skeleton");
+      line.style.width = width;
+    }
+    wrap.appendChild(line);
+  }
+  return wrap;
+}
+
+/** Placeholder rows for the file browser's listing: a name plus the size and date
+ *  the meta column carries, one row per entry.
+ *
+ *  The row wears `.fb-row` itself, so its height, padding, gap and bottom rule are
+ *  a real row's rather than a copy of them, and adopting the listing moves nothing.
+ *  The `.fb-check` column is RESERVED without a bar: a placeholder checkbox says
+ *  nothing, and dropping the column instead would step the icon and every name
+ *  left by 1.5rem the moment the listing lands. */
+export function fileRowsSkeleton(): HTMLDivElement {
+  const wrap = el("div", {
+    className: "fb-skeleton",
+    "aria-hidden": "true",
+  }) as HTMLDivElement;
+  for (const width of ["62%", "38%", "71%", "45%", "56%", "33%", "68%", "49%"]) {
+    const row = el("div", { className: "fb-row fb-row-skel" });
+    const name = el("div", { className: "fb-skel-name" });
+    name.appendChild(skelBar("skeleton-line", width));
+    row.append(
+      el("div", { className: "fb-skel-check" }),
+      skelBar("fb-skel-icon", "1.25rem"),
+      name,
+      skelBar("skeleton-line fb-skel-meta", "3rem"),
+      skelBar("skeleton-line fb-skel-meta", "9rem"),
+    );
+    wrap.appendChild(row);
+  }
+  return wrap;
 }
 
 function skelBar(className: string, width: string): HTMLElement {

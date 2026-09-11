@@ -211,8 +211,8 @@ describe("the mark sits on the header's own centre line", () => {
   // was a fixed 0.875rem holding an `--icon-ui` glyph, and a grid slot smaller than
   // its content does not centre that content in the BLOCK axis — the implicit row is
   // `auto`, so it sizes to the item and starts at the slot's top, which puts the whole
-  // overflow at the bottom. Measured 1px low on a fine pointer and 2px low on a coarse
-  // one, where the token is 1.125rem. The inline axis WAS symmetric, because that
+  // overflow at the bottom. Measured 1px low on a fine pointer and 3px low on a coarse
+  // one, where the token is 1.25rem. The inline axis WAS symmetric, because that
   // track is constrained by the slot's definite inline size, which is why it read as
   // a droop rather than a break.
   const centreY = (el: Element): number => {

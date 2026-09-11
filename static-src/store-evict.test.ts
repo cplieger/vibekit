@@ -43,6 +43,12 @@ import {
   toolCallSigs,
   toolCallSigKey,
 } from "./store-signals.js";
+import {
+  _resetForTest as resetFreshness,
+  noteLoaded,
+  syncEpoch,
+  viewStale,
+} from "./tab-freshness.js";
 import type { Message, Session, ToolCall } from "./types.js";
 
 function session(id: string, over: Partial<Session> = {}): Session {
@@ -402,5 +408,40 @@ describe("the signal leak", () => {
     expect(blockTextSigs.get(blockKey("m1", 0))).toBeUndefined();
     expect(blockTextSigs.get(blockKey("m-other", 0))).toBeDefined();
     blockTextSigs.clear(blockKey("m-other", 0));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The freshness ledger's WINDOW-death door.
+//
+// A ledger record describes the message window, so the window's death drops it —
+// and that is what makes the dispatcher's `viewStale`-only gate equivalent to
+// `transcriptStale` for every residency state the app can reach. Without the drop,
+// an evicted chat whose record still matched the epoch would be SKIPPED on its next
+// activation and never refetch.
+// ---------------------------------------------------------------------------
+
+describe("the ledger record eviction drops", () => {
+  beforeEach(() => {
+    resetFreshness();
+  });
+
+  it("evictChatMessages drops the record, so a re-activation refetches", () => {
+    setSessions([session("c1", { messages: [msg("m1")], message_count: 1 })]);
+    noteLoaded("chat", "c1", syncEpoch());
+    expect(viewStale("chat", "c1")).toBe(false);
+
+    evictChatMessages("c1");
+
+    expect(viewStale("chat", "c1")).toBe(true);
+  });
+
+  it("removeChat drops it too — the subject is gone, not just its window", () => {
+    setSessions([session("c1", { messages: [msg("m1")], message_count: 1 })]);
+    noteLoaded("chat", "c1", syncEpoch());
+
+    removeChat("c1");
+
+    expect(viewStale("chat", "c1")).toBe(true);
   });
 });

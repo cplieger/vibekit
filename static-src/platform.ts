@@ -48,13 +48,19 @@ export function guardDuplicateActivation(
 }
 
 // ---------------------------------------------------------------------------
-// fixIOSViewport — keeps a focused input visible when the iOS virtual
-// keyboard resizes the visual viewport.  Debounced so it fires once after
-// the keyboard animation settles, and never blurs the input.
+// fixIOSViewport — keeps a focused input visible when the iOS virtual keyboard
+// raises and the VISUAL VIEWPORT shrinks under it. Debounced so it fires once
+// after the keyboard animation settles, and never blurs the input.
+//
+// The subject is that shrink, and it happens IDENTICALLY in a Safari tab and in
+// an installed PWA — the keyboard is the OS's, not the app shell's. So the only
+// gate is whether the platform exposes the API to observe it at all. A tab is
+// also the MAJORITY case, because a shared URL opens one: gating this on
+// standalone withheld the fix from nearly every reader who hit the defect.
 // ---------------------------------------------------------------------------
 
 export function fixIOSViewport(input: HTMLElement): (() => void) | undefined {
-  if (window.visualViewport == null || !isStandalone) {
+  if (window.visualViewport == null) {
     return undefined;
   }
   let timer = 0;

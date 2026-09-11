@@ -27,11 +27,23 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { attachClamp } from "./clamp-text.js";
 import { RUN_INPUT_FALLBACK } from "./decision-dock.js";
 import type { RunInputNeededPayload } from "./types.js";
 
 /** `null` is "continue without answering"; a string is the answer. */
 type SubmitFn = (text: string | null) => void;
+
+/** Hand the question to the agent that launched this run. Rejects when the
+ *  hand-off did not go out, which is what re-enables the button. */
+type DeferFn = () => void | Promise<void>;
+
+/** Lines the question shows before its opener. FOUR, the count `.steer-text`
+ *  already uses one region down the same bar and for the same reason: the bar
+ *  grows UPWARD into the transcript, so a question the agent wrote at length
+ *  costs the reader the conversation it is about. The stylesheet clamps to this
+ *  same count (`clamp-line-count.test.ts` holds the two together). */
+const CLAMP_LINES = 4;
 
 /** Build the dock card for one parked workflow step.
  *
@@ -46,17 +58,32 @@ type SubmitFn = (text: string | null) => void;
  *  `held` is the text a previous send is still holding for this ask, or "": the dock
  *  splices the card before the answer goes out, so a retryable refusal re-offers the
  *  question and this is what stops the box coming back empty. Seeded rather than
- *  restored, because the card is a fresh element each time. */
+ *  restored, because the card is a fresh element each time.
+ *
+ *  `onDefer`'s PRESENCE is the chat-parented discriminator at this boundary: the
+ *  card never learns a chat id, and a deferral never routes through `onSubmit`,
+ *  because the two verbs disagree — skip lets the step proceed with no answer,
+ *  while a deferral leaves the ask open and asks somebody else. */
 export function buildRunInputCard(
   payload: RunInputNeededPayload,
   held: string,
   onSubmit: SubmitFn,
+  onDefer?: DeferFn,
 ): HTMLElement {
   // An EMPTY question is the post-restart case rather than a malformed frame, so
   // it gets a sentence of its own instead of a blank heading. Shared with the
   // dock's own one-line label so the card and the run card's alert agree.
   const question = payload.question === "" ? RUN_INPUT_FALLBACK : payload.question;
-  const body = el("div", { className: "run-input-body" }, el("strong", null, question));
+  const text = el("strong", { className: "run-input-question" }, question);
+  // A SIBLING of the clamped element, or the clamp would hide its own opener.
+  // `attachClamp` hides it until measurement says the text overflows, and the
+  // dock releases it when the card leaves (`releaseClampsIn` in `swap`).
+  const more = el("button", {
+    className: "run-input-more",
+    type: "button",
+  }) as HTMLButtonElement;
+  const body = el("div", { className: "run-input-body" }, text, more);
+  attachClamp(text, more, { lines: CLAMP_LINES });
 
   const who = stepLabel(payload);
   if (who !== "") {
@@ -113,13 +140,15 @@ export function buildRunInputCard(
 
   const actions = el("div", { className: "run-input-actions" }, send);
 
-  // WITHHELD on an ask with no node id, because the verb behind it cannot be
-  // addressed: `set_step_status` takes a node and refuses 400 without one, so the
-  // button could only ever produce an error toast — with the card already spliced
-  // by the dock's settle, which leaves the reader worse off than not offering it.
-  // Such an ask is still ANSWERABLE (the answer is addressed by session, not by
-  // node), so Send stays and only the waive is gone.
-  if (payload.node_id !== "") {
+  if (onDefer !== undefined) {
+    actions.appendChild(deferButton(onDefer));
+  } else if (payload.node_id !== "") {
+    // WITHHELD on an ask with no node id, because the verb behind it cannot be
+    // addressed: `set_step_status` takes a node and refuses 400 without one, so the
+    // button could only ever produce an error toast — with the card already spliced
+    // by the dock's settle, which leaves the reader worse off than not offering it.
+    // Such an ask is still ANSWERABLE (the answer is addressed by session, not by
+    // node), so Send stays and only the waive is gone.
     const skip = el(
       "button",
       { type: "button", className: "btn-small" },
@@ -142,6 +171,47 @@ export function buildRunInputCard(
     el("div", { className: "run-input-editor" }, input),
     actions,
   );
+}
+
+/** Ask the launching agent instead, on a CHAT-PARENTED ask. The node-id gate
+ *  above is Continue's alone — a deferral is addressed by CHAT, so an ask carrying
+ *  no node id still gets one.
+ *
+ *  Hand-rolled rather than `withAsyncFeedback`, which restores the label after
+ *  ~1200ms: this is a durable hand-off state that has to last the card's life,
+ *  because the ask stays open and a reader who comes back needs to see that the
+ *  agent was already asked. No CSS either — `css/40-a11y.css` floors `:disabled`,
+ *  and a disabled button still receives hover, so the tooltip keeps working. */
+function deferButton(onDefer: DeferFn): HTMLButtonElement {
+  const b = el(
+    "button",
+    { type: "button", className: "btn-small" },
+    "Defer to parent agent",
+  ) as HTMLButtonElement;
+  b.setAttribute(
+    "data-tooltip",
+    "The agent that launched this run is asked to answer instead. The question stays open, " +
+      "so you can still answer it yourself.",
+  );
+  b.addEventListener("click", () => {
+    // The re-entrancy guard, and it is FIRST: the label only changes once the
+    // hand-off resolves, so without it a second click posts a second prompt.
+    b.disabled = true;
+    void Promise.resolve(onDefer()).then(
+      () => {
+        b.textContent = "Asked the agent";
+        b.setAttribute(
+          "data-tooltip",
+          "The agent that launched this run has been asked to answer. The question is still " +
+            "open, so you can still answer it yourself.",
+        );
+      },
+      () => {
+        b.disabled = false;
+      },
+    );
+  });
+  return b;
 }
 
 /** Which step is asking, as one line, or "" when the frame could not name one.

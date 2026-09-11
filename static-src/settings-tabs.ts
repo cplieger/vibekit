@@ -25,7 +25,7 @@ import { $ } from "./dom.js";
 import { swapViews } from "./view-swap.js";
 import type { SettingsTab } from "./router.js";
 import { pushRoute } from "./router.js";
-import { setSettingsTab as setTabRoute } from "./tabs.js";
+import { getActiveTabRoute, setSettingsTab as setTabRoute } from "./tabs.js";
 import { fitTabBar } from "./tab-bar-fit.js";
 import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
 import { setPageSubtitle } from "./page-title.js";
@@ -71,28 +71,27 @@ function setSettingsTab(tab: SettingsTab): void {
   activeTab.value = tab;
 }
 
-// --- Per-tab lazy data loaders (B9) ---
+// --- Per-tab data loaders ---
 //
-// Panel data loads are keyed to tab ACTIVATION, not to how Settings was
-// opened. Each registered loader fires once, on the first activation of its
-// tab — pill click, mobile select, deep link via forceSettingsTab, or a
-// route-driven openTab in app.ts (which calls loadSettingsTabData directly).
-// Previously loads were keyed off route-driven opens plus the gear button's
-// hardcoded loadToolsList (which fetched Tools data while opening the General
-// panel), and a pill click inside Settings loaded nothing at all.
+// Two doors reach a loader: the tab's own ACTIVATION, through `refreshSettingsPanel`,
+// and a sub-tab SWITCH, through the subscriber below. Both are gated there rather
+// than latched here, because a panel loads once per activation and once per switch
+// rather than once per page.
 const tabLoaders = new Map<SettingsTab, () => void>();
-const loadedTabs = new Set<SettingsTab>();
 
 /** Whether the subscribe-time paint has run. See the `painted` gate below. */
 let painted = false;
 
-/** Run the tab's registered lazy loader on its first use. Idempotent. */
+/** Run the tab's registered loader. `?.` is defensive rather than a tolerance for a
+ *  missing loader: `initSettingsTabs` populates the map at boot. */
 export function loadSettingsTabData(tab: SettingsTab): void {
-  if (loadedTabs.has(tab)) {
-    return;
-  }
-  loadedTabs.add(tab);
   tabLoaders.get(tab)?.();
+}
+
+/** Reload the panel the reader is looking at. A settings tab's `refresh`, and it lives
+ *  here because this module owns the private `activeTab` and exports no getter. */
+export function refreshSettingsPanel(): void {
+  loadSettingsTabData(activeTab.peek());
 }
 
 // --- DOM wiring ---
@@ -161,13 +160,13 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
     // segmented control names it too, so 12-chat.css suppresses this while that
     // control shows its labels and reveals it when tab-bar-fit.ts drops them.
     setPageSubtitle("settings", TAB_LABELS[tab]);
-    // Lazy panel data, on a tab SWITCH. NOT on the first call, which is
-    // `subscribe` painting the default panel at boot with Settings off screen — a
-    // loader there is what put General's three `kiro-cli settings` spawns on the
-    // boot path. Not the only door either, and not the DEFAULT tab's: `activeTab`
-    // is deduped, so re-selecting "general" notifies nobody, and what loads it is
-    // the tab factory's `onShow` calling `loadSettingsTabData` (tab-materialize.ts).
-    if (painted) {
+    // TWO gates, and neither subsumes the other. `painted` refuses the SUBSCRIBE-TIME
+    // fire whatever is on screen — that is `initSettingsTabs` painting the default
+    // panel at boot, and a loader there is what put General's `kiro-cli settings`
+    // spawns on the boot path. The visibility term refuses a LATER fire while the
+    // panel is off screen, which is a panel the ACTIVATION is about to load: without
+    // it, `applyRoute`'s `forceSettingsTab`-then-`openTab` order loads it twice.
+    if (painted && getActiveTabRoute()?.kind === "settings") {
       loadSettingsTabData(tab);
     }
     painted = true;

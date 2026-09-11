@@ -11,6 +11,14 @@
    @starting-style needed since the element never enters/leaves the layout
    (this also makes the first restoreShell() open animate consistently). */
 .shell-panel {
+  /* HOW FAR THE RESIZE BAR'S TARGET REACHES, declared ONCE here because both
+     halves of the arithmetic are this element's children: `.shell-resize` grows
+     its target by this much and `.shell-header` pays for it out of its own top
+     padding AND its height. The term is the tier's floor minus the 3px the bar
+     already paints, so the whole target is exactly --hit-floor with no second
+     declaration to keep in step. */
+  --shell-resize-reach: calc(var(--hit-floor) - 0.1875rem);
+
   border-block-start: 1px solid var(--c-border);
   flex-shrink: 0;
   display: flex;
@@ -77,16 +85,24 @@
   min-height: 0;
 }
 
-/* The hit target, grown by an expander so the visual bar stays 3px. It reaches UP
-   into the transcript's dead space and only 4px DOWN, deliberately asymmetric:
-   downward is the header's own 44px buttons, and every pixel the handle takes
-   there is a pixel that resizes the panel when the reader meant to press a
-   button. `--hit-floor` drives it, so the target follows the pointer tier with no
-   second declaration. */
+/* The hit target, grown by an expander so the visual bar stays 3px. IT REACHES
+   DOWNWARD, and the reversal is the whole point: the bar sits at `top: 0` of a
+   panel that declares `overflow: hidden` (above), so everything the old upward
+   expander reached into the transcript's dead space was CLIPPED. Hit-tested on the
+   real target before the reversal: 6px against the 24/44 the declaration claimed —
+   a 3px bar plus the 4px it also reached down, minus overlap.
+
+   Down is where the header's buttons are, so the header PAYS for the reach out of
+   its own `padding-block-start` and its own `height` (below): the padding keeps
+   every button's whole box below the expander, and the height grows by the same
+   term because `box-sizing: border-box` is global (02-reset.css) — padding alone
+   would eat the header's declared height and crush its buttons. Resulting real
+   target: 3px bar + 21px (fine) / 41px (coarse) = 24 / 44, which is --hit-floor at
+   both tiers with no per-tier literal anywhere. */
 .shell-resize::before {
   content: "";
   position: absolute;
-  inset: calc(-1 * (var(--hit-floor) - 0.1875rem - 0.25rem)) 0 -0.25rem;
+  inset: 0 0 calc(-1 * var(--shell-resize-reach)) 0;
 }
 
 .shell-resize:hover,
@@ -94,12 +110,27 @@
   background: var(--c-accent);
 }
 
+/* The header pays for the resize bar's downward reach, and BOTH declarations are
+   needed: the top padding is what keeps its buttons' whole boxes out of the
+   expander, and the height grows by the same term because `box-sizing: border-box`
+   is global (02-reset.css), so padding alone would take the room out of the
+   content box and crush the buttons instead of moving them. The content band is
+   therefore still 2rem.
+
+   THE TERM IS THE REACH PLUS THE PAINTED BAR IT HANGS BELOW, which is the whole
+   target: this header's top edge is the panel's top edge, so clearing the reach
+   alone leaves the bar's own 3px over the buttons. Measured with the reach alone
+   on a coarse pointer: the target ran 0..44 while the button's box started at
+   44.5 - 3 = 41.5, so its top 2.5px resized the panel instead of pressing Close.
+   The sum is --hit-floor by construction; it is spelled as the reach plus the bar
+   rather than as the token, so the one place the term is declared stays the one
+   place it is derived. */
 .shell-header {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 0 var(--sp-3);
-  height: 2rem;
+  padding: calc(var(--shell-resize-reach) + 0.1875rem) var(--sp-3) 0;
+  height: calc(2rem + var(--shell-resize-reach) + 0.1875rem);
   border-block-end: 1px solid var(--c-border);
   flex-shrink: 0;
 }
@@ -148,9 +179,20 @@
    The two gates therefore differ by design after the rekey below — the library
    asks the media query, this panel asks the observed tier. It resolves the safe
    way round: a device the query calls coarse but the pointer calls fine gets no
-   trigger, so the library's toolbar is never toggled into view, and touching the
-   screen flips the attribute and brings the trigger back. A trigger for a grid
-   that cannot render would be the broken direction, and it is unreachable.
+   trigger, so the library's toolbar is never toggled into view. A trigger for a
+   grid that cannot render would be the broken direction, and it is unreachable.
+
+   RECOVERY IS A CHOICE OR THE NEXT LOAD, NOT A TOUCH. `applyTier` runs ONCE
+   (pointer-tier.ts:96) and the pointer observer after it only writes storage for
+   the next load, so touching the screen mid-session flips nothing and brings this
+   trigger back at no point in that session. The two ways back are the sidebar's
+   pointer-mode toggle (pointer-mode.ts), which writes the choice and applies it,
+   and reloading after a touch has been observed.
+
+   AND `data-touched` IS NOT A THIRD WAY BACK. That attribute (01-tokens.css) is a
+   third tier state written from the same persisted touch flag, but it moves
+   `--hit-floor` and nothing else — it does not gate this trigger, because the key
+   grid it toggles renders only under the library's own coarse media query.
 
    An id addressed as an attribute selector ties with .shell-header-btn's
    `display: flex`, so both halves sit after it and source order decides. */
@@ -279,7 +321,10 @@
    what it scored inside the media query and no rule newly outranks another. */
 :where([data-pointer="coarse"]) {
   .shell-header {
-    height: calc(2.75rem + 1px);
+    /* Plus the resize bar's whole target, for the base rule's reason: the top
+       padding this arm inherits is inside the border box, so the height has to
+       carry it or the 44px buttons below lose exactly that much room. */
+    height: calc(2.75rem + 1px + var(--shell-resize-reach) + 0.1875rem);
   }
 
   .shell-header-btn {

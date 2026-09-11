@@ -27,6 +27,9 @@ func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnS
 	closed := false
 	for i := range msgs {
 		m := &msgs[i]
+		if carriesNothing(m) {
+			continue
+		}
 		// A prompt opens a turn; a steer joins the one already running.
 		if opensTurn(m, len(out) == 0, closed) {
 			var body []vibekit.Message
@@ -81,12 +84,21 @@ func turnWindowBase(msgs []vibekit.Message, start int) (offset int, segmentClose
 	closed := false
 	for i := range min(start, len(msgs)) {
 		m := &msgs[i]
+		if carriesNothing(m) {
+			continue
+		}
 		if opensTurn(m, count == 0, closed) {
 			count++
 			closed = closesTurn(m.TurnOutcome)
 			continue
 		}
 		closed = closed || closesTurn(m.TurnOutcome)
+	}
+	// A skipped message is in no turn, so the boundary question below is asked of the
+	// first message the window actually renders. Skipping changes no carried state:
+	// such a message carries no outcome.
+	for start < len(msgs) && carriesNothing(&msgs[start]) {
+		start++
 	}
 	if start >= len(msgs) {
 		return count, closed
@@ -95,9 +107,9 @@ func turnWindowBase(msgs []vibekit.Message, start int) (offset int, segmentClose
 		return count, closed
 	}
 	// msgs[start] continues the turn before it, so the window's FIRST turn is that
-	// turn and one fewer turn precedes it. Reachable only with start > 0, where the
-	// scan above has already counted at least one turn (its first message always
-	// opens one), so the subtraction cannot go negative.
+	// turn and one fewer turn precedes it. Reached only with count > 0, because
+	// opensTurn answers true through its `first` clause otherwise, so the
+	// subtraction cannot go negative.
 	return count - 1, closed
 }
 
@@ -128,6 +140,23 @@ func isStepMessage(m *vibekit.Message) bool {
 		}
 	}
 	return true
+}
+
+// carriesNothing reports whether nothing about this assistant message reaches the
+// transcript yet. Such a message neither opens a turn nor JOINS one: joining would
+// set deriveTurnOutcome's sawAssistant and flip a carrier-less turn from "unknown"
+// to "completed". Assistant-only, because an event row renders a badge and may
+// carry the turn's outcome, and a user row is a trigger.
+func carriesNothing(m *vibekit.Message) bool {
+	return m.Role == vibekit.RoleAssistant &&
+		m.Content == "" &&
+		m.Reasoning == "" &&
+		len(m.Blocks) == 0 &&
+		len(m.ToolCalls) == 0 &&
+		len(m.Plan) == 0 &&
+		m.Refusal == nil &&
+		m.TurnOutcome == "" &&
+		m.EventKind == ""
 }
 
 // opensHeaderlessTurn reports whether m is the first persisted message of a turn

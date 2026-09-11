@@ -69,7 +69,11 @@ function recorder(name: string): { dispatch: (args: unknown) => Promise<unknown>
   };
 }
 
-vi.mock("./api-client.js", () => ({ apiGet, apiPost: vi.fn() }));
+vi.mock("./api-client.js", () => ({
+  apiGet,
+  apiPost: vi.fn(),
+  apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
+}));
 vi.mock("./bus.js", () => ({ onSSE: vi.fn() }));
 vi.mock("./confirm.js", () => ({ confirm: confirmDialog }));
 vi.mock("./navigate.js", () => ({ openChange }));
@@ -1020,5 +1024,23 @@ describe("the loading placeholder", () => {
       "status-all is polled, so a skeleton over populated rows would flash several times a minute",
     ).toBeNull();
     expect(mountEl().querySelector("[data-reconcile-key]")).not.toBeNull();
+  });
+
+  it("arms nothing on a CLEAN worktree once status-all has answered", async () => {
+    // The container cannot tell a clean worktree from one nobody has read: the
+    // empty-state row it paints is unkeyed, so the ARM has to key on ANSWERED. A gap
+    // and a resume both reach a refresh with no tab switch behind them, so without
+    // this a clean worktree flashes a shimmer over a view the reader is looking at.
+    const { refreshChanges } = await load();
+    const first = refreshChanges();
+    settle?.({ repos: [] });
+    await first;
+
+    const second = refreshChanges();
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(mountEl().querySelector(".git-repo-skeleton")).toBeNull();
+    settle?.({ repos: [] });
+    await second;
   });
 });

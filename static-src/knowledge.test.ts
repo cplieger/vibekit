@@ -11,8 +11,8 @@ import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 vi.mock("./toast.js", () => ({ showToast: vi.fn() }));
 vi.mock("./confirm.js", () => ({ confirm: vi.fn() }));
 vi.mock("./icons.js", () => ({
-  ICON_PLUS_16: "<svg data-plus></svg>",
-  ICON_TRASH_14: "<svg data-trash></svg>",
+  ICON_PLUS_UI: "<svg data-plus></svg>",
+  ICON_TRASH_UI: "<svg data-trash></svg>",
 }));
 vi.mock("./bus.js", () => ({ onSSE: vi.fn(() => () => undefined) }));
 vi.mock("./actions/index.js", () => ({

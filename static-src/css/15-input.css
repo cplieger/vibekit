@@ -64,6 +64,43 @@
      than 5px past it. A custom property inherits down, so .prompt-box and every
      rule inside it read the same one declaration. */
   --pill-inset: var(--sp-1);
+
+  /* ONE CONTROL HEIGHT FOR THIS BOX: the pill row's controls and the textarea's
+     resting band below both read it, so the box's two rows cannot disagree. They
+     did — two literals (2rem here, 2.5rem there) that agree only on the fine
+     tier, so a coarse pointer rendered a 40px textarea over a 52px pill row.
+     Same reasoning as `.list-row-btn` (14-tools.css).
+
+     IT IS TIER-INDEPENDENT ON PURPOSE, and that is the change: the PAINTED box is
+     32 under a finger as well as under a mouse, and the TARGET is grown back to
+     --hit-floor by the expander below. It was
+     `max(var(--ctl-h-dense), var(--hit-floor))`, which put the floor in the box —
+     44px of painted button around a 20px glyph, 19.8% ink coverage, which is the
+     "grown buttons look empty" report. 32 is a rung of Apple's own control ladder
+     (28/32/44/52/64) and R1a explicitly permits a target larger than its control,
+     which is what four other sites in this app already do (`.status-dot`,
+     `.fb-git-letter`, `.tool-file-link`, the native checkboxes).
+     Measured at 390 coarse: coverage 19.8-27.6% -> 27.2-38.5%, the row 53 -> 45px,
+     and the 12px Send gives back is enough for the model and mode labels to stop
+     being truncated (they were "Sonnet ⋯" and "Def⋯"). */
+  --composer-ctl-h: 2rem;
+
+  /* THE ROW'S OWN PADDING PAYS FOR THE EXPANDER'S BLOCK REACH, which is what keeps
+     a pill's target from overhanging into `#prompt-input`'s box — the D4 geometry
+     class (a target reaching into its neighbour's) on the axis the ratified
+     arithmetic did not cover. The expander reaches (--hit-floor - box) / 2 = 6px
+     above the painted box on a coarse pointer against the row's 4px inset;
+     measured without this term, `elementFromPoint` gives a pill 1.75px of the
+     textarea's own box. Floored at --pill-inset, so the fine tier (where the box
+     already clears the floor) keeps the uniform 4px chrome inset and this term
+     changes nothing there.
+     It is the ROW's padding and NOT --pill-inset itself, deliberately: raising the
+     inset raises the GAP with it, and measured that costs exactly the label width
+     the smaller box just bought back (at 320 the model name disappears entirely).
+     So the row's inset is 6px on a finger while the gap between controls stays 4 —
+     the one place this box's "one inset" rule is broken, because the two numbers
+     now answer different questions. */
+  --composer-pill-pad: max(var(--pill-inset), calc((var(--hit-floor) - var(--composer-ctl-h)) / 2));
 }
 
 .prompt-box {
@@ -96,8 +133,17 @@
      Rule: Cloud Four, "The Math Behind Nesting Rounded Corners"
      (https://cloudfour.com/thinks/the-math-behind-nesting-rounded-corners/),
      which omits the border term; the `gap = border-width + padding` form is the
-     correct one. Restated in vibekit-ui.md "Design". */
-  --pill-radius: calc(var(--r-lg) - 1px - var(--pill-inset));
+     correct one. Restated in vibekit-ui.md "Design".
+
+     THE `gap` TERM IS THE ROW'S PADDING, NOT --pill-inset, since the pill row pays
+     for its controls' target expander out of its own inset: 12 - 1 - 6 = 5px on a
+     coarse pointer and 12 - 1 - 4 = 7px on a fine one. Reading --pill-inset here
+     would keep declaring 7 while the pill actually sits 6px in, which is the
+     non-concentric corner this derivation exists to prevent. Compared as rendered
+     at 390 coarse: 5px reads as a 32px control's corner where the inherited 7px
+     reads soft on a box that is no longer 44 tall. No new token and no ladder rung
+     — it is the same derivation reading the term that moved. */
+  --pill-radius: calc(var(--r-lg) - 1px - var(--composer-pill-pad));
 
   transition:
     border-color var(--dur-micro),
@@ -158,12 +204,36 @@
      lines the slack is gone and the ratio is 12.00 against 3.99, which is the
      reported defect: the second line sits on the divider.
      `min-height` is now what the padding is derived FROM rather than a floor
-     fighting it, so the natural single-line height IS 2.5rem and the resting
-     box did not change size. */
-  --composer-rest-h: 2.5rem;
+     fighting it, so the natural single-line height IS the pill row's band and the
+     resting box did not change size.
+
+     DERIVED from the pill row rather than declared, so this row and the one under
+     it are the same band on every pointer tier: the row is one control plus its
+     two --pill-inset edges. Its 1px divider is deliberately NOT in the sum — the
+     hairline is the boundary between the two bands, so counting it here would
+     make this row 1px taller than the pill band and put the box 0.5px out of
+     vertical symmetry about it. */
+  /* The pill ROW's band, restated: its controls plus the padding that row actually
+     carries. `--pill-inset` was the term until the row's inset became the
+     expander's, and reading the old one here left the textarea 44px over a 45px
+     pill row on a finger — the same class of disagreement between this box's two
+     rows that `--composer-ctl-h` exists to close. */
+  --composer-rest-h: calc(var(--composer-ctl-h) + 2 * var(--composer-pill-pad));
 
   padding: calc((var(--composer-rest-h) - 1lh) / 2) var(--sp-4);
-  font-size: var(--fs-field);
+
+  /* THE TRANSCRIPT'S OWN RUNG on a fine pointer, and 16px on a coarse one — this
+     declaration is the first half and does not decide the second. A composer
+     reads at the size of the conversation it produces (`.message` is --fs-md
+     too), so the two agree rather than the box being the largest text on screen.
+     It was `var(--fs-field)`, a token raised to 1rem on the coarse tier as an iOS
+     floor; the token is gone and the floor is back at the app level instead
+     (61-mcp-tools.css), where it beats this rule's (0,1,0) on the coarse tier.
+     That is deliberate: this element carries `autofocus`, iOS zooms the page for
+     a focused control under 16px, and the viewport meta clause that used to
+     suppress that zoom was deleted for WCAG 1.4.4. So the two rungs disagree on a
+     finger BY DESIGN, and 61-mcp-tools.css carries the whole record. */
+  font-size: var(--fs-md);
   line-height: 1.4;
   font-family: var(--font-sans);
   resize: none;
@@ -253,32 +323,43 @@
   white-space: nowrap;
 }
 
+/* DENSITY AND THE RECEDE. The skin is `icon-btn` (10-shell-app.css), from
+ * attachment-pill.ts; the fifteen declarations this replaced were a hand-rolled copy
+ * of it, four of them there only because the mark was a `×` CHARACTER (the `font-size`,
+ * the `line-height: 1` against `icon-btn`'s SVG-authored `line-height: 0`, and the 1rem
+ * box that clamped it). The mark is `ICON_CLOSE` now.
+ *
+ * `padding: 0` IS a real override rather than leftover skin: this button sits inside a
+ * pill whose own padding is 0.15rem/0.5rem around `--fs-xs` text, and `icon-btn`'s
+ * standalone `--sp-2` would take the pill from the hit floor's 24px to 28px and grow
+ * the composer's whole attachment row with it. `.mcp-pair-del` (60-mcp.css) makes the
+ * same override for the same reason, so a dense host repadding a shared icon button is
+ * the established shape. The hit floor still owns the TARGET (61-mcp-tools.css), so the
+ * box is 24px on a mouse and 44px under a finger either way.
+ *
+ * THE RECEDE STAYS AND IS NOT THE ANTI-PATTERN `.banner-dismiss` rejected. That one was
+ * an `opacity` on a control whose ink had no other channel; this is progressive
+ * disclosure — the × is quiet until the pointer is on its pill, which is what
+ * `.attachment-pill:hover` below is for. MEASURED at rest against `--c-bg-secondary`:
+ * 4.818:1 dark and 3.233:1 light, both clearing the 3:1 a graphical object needs, so it
+ * costs no contrast rule. `icon-btn` sets no opacity in any state, so the two compose. */
 .attachment-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1rem;
-  height: 1rem;
-  margin-left: 0.15rem;
   padding: 0;
-  border: 0;
-  background: transparent;
+
+  /* The ladder's rung for the box the padding leaves, exactly as
+   * `.native-rule-remove` (17-settings.css) pairs the two: `padding: 0` keeps this at
+   * the hit floor's 24px, `--r-sm` is reserved for a 16-24px box, and `icon-btn`
+   * declares `--r` for its own 28px. Dropping it with the rest of the hand-rolled skin
+   * left a 24px box wearing a 28px box's 6px corner. `radius-nesting.test.ts` lists
+   * this class for that reason. */
   border-radius: var(--r-sm);
-  font-size: 0.85em;
-  line-height: 1;
-  color: inherit;
   opacity: 0.5;
-  cursor: pointer;
   transition:
     opacity var(--dur-micro) var(--ease-standard),
     background var(--dur-micro) var(--ease-standard);
 }
 
-.attachment-close:hover {
-  opacity: 1;
-  background: var(--c-hover);
-}
-
+.attachment-close:hover,
 .attachment-pill:hover .attachment-close {
   opacity: 1;
 }
@@ -289,7 +370,10 @@
   display: flex;
   align-items: center;
   gap: var(--pill-inset);
-  padding: var(--pill-inset);
+
+  /* The inset is the EXPANDER's term, not the chrome's: see --composer-pill-pad on
+     `#prompt-form`. Equal on all four edges, which the concentric corner requires. */
+  padding: var(--composer-pill-pad);
   border-block-start: 1px solid color-mix(in srgb, var(--c-border) 50%, transparent);
   container-type: inline-size;
   container-name: pill-row;
@@ -309,10 +393,22 @@
   justify-content: center;
   gap: 0.25rem;
   padding: 0 var(--sp-2);
-  /* Matches .send-btn height so the prompt-pills row reads as one
-   * uniform line of controls. */
-  height: 2rem;
+  /* The box's one control height, shared with .send-btn and with the textarea's
+   * resting band, so the prompt-pills row reads as one uniform line of controls
+   * and the row above it matches. Derivation: --composer-ctl-h on #prompt-form. */
+  height: var(--composer-ctl-h);
   border: 1px solid var(--c-border);
+
+  /* THE PAINTED BOX IS 32; THE TARGET IS --hit-floor, and these three declarations
+   * plus the `::after` below are how. The app-wide floor (61-mcp-tools.css) sets
+   * PHYSICAL `min-width`/`min-height`, and a logical property is a different one
+   * resolved by source order — that file sorts later — so the opt-out has to be
+   * physical too. `position: relative` is the expander's containing block.
+   * Copied from `.status-dot` (10-shell-app.css) and `.tool-file-link`
+   * (14-tools.css), which is the idiom rather than a new mechanism. */
+  min-width: 0;
+  min-height: 0;
+  position: relative;
 
   /* The CONCENTRIC radius, not height/2 and not the ladder's --r-md. A stadium
      reads as a tag — something labelled — where this is something pressed, and
@@ -359,6 +455,22 @@
 
   & svg {
     flex-shrink: 0;
+  }
+
+  /* THE TARGET. Sized by `inset` off --hit-floor so it follows the tier with no
+   * second declaration, and `min(0px, …)` per axis so it only ever grows: three of
+   * this row's five controls are already WIDER than the floor, where the term goes
+   * positive and would inset the pseudo INSIDE the box. That costs nothing (the
+   * control's own box is still its target) but a bare `inset` would read as a rule
+   * that shrinks a target, which is the opposite of what it does.
+   * The block reach is paid for by `.prompt-pills`' own padding, so no target
+   * overhangs into `#prompt-input`'s box — measured 0px by `elementFromPoint`,
+   * against 1.75px without that padding. */
+  &::after {
+    content: "";
+    position: absolute;
+    inset-block: min(0px, calc((100% - var(--hit-floor)) / 2));
+    inset-inline: min(0px, calc((100% - var(--hit-floor)) / 2));
   }
 }
 
@@ -489,7 +601,7 @@
 
   & [id="context-label"] {
     font-family: var(--font-mono);
-    font-size: 0.625rem;
+    font-size: var(--fs-xs);
     font-weight: var(--fw-semibold);
     font-variant-numeric: tabular-nums;
 
@@ -582,7 +694,7 @@
 
 /* Task list pill */
 .pill-badge {
-  font-size: 0.5rem;
+  font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
   background: var(--c-accent);
   color: var(--c-on-accent);
@@ -1018,41 +1130,30 @@
  * padding moved to the scroller — so the rule above it reads as a section edge
  * rather than an inset line, and the block padding is symmetric.
  *
- * TWO LINES, caption then rail, and the caption is what makes the rest of this
- * work: it names the dimension AND the live tier ("Effort: High"), so the knob
- * carries no text, so the rail can be thin. A knob sized to its widest foreign
- * label measured 61px on the fine tier and 65px on the coarse one against a
- * 26.53px tick spacing, which is why it covered the ticks either side of it. */
+ * TWO LINES, caption then bar: the caption names the dimension and the live tier,
+ * so the knob carries no text and the bar can contain it. */
 .effort-row {
-  /* The knob's size on both axes, and the ONE number the geometry below is
-     arithmetic over. Not measured any more: with no label there is nothing to fit,
-     and 61-mcp-tools.css's universal floor already declares
-     `min-width`/`min-height: var(--hit-floor)` on every `[tabindex]` element, so a
-     knob asking for less would be overridden. Declared rather than left implicit
-     because the tick offsets and the track's own floor read it. */
-  --effort-knob-w: var(--hit-floor);
+  /* The bar's height, and the one number the geometry below is arithmetic over.
+     `--ctl-h-sm` follows the pointer tier, so nothing here declares a second one. */
+  --effort-bar-h: var(--ctl-h-sm);
 
-  /* The rail's thickness. The knob stands proud of it — 24px over 8px on the fine
-     tier, 44px over 8px on the coarse one — which is what makes the handle read as
-     a handle rather than as a filled segment of the track. */
-  --effort-rail-h: 0.5rem;
+  /* The knob's clearance inside the bar, on both axes, so it is also the term its
+     travel is inset by. */
+  --effort-knob-inset: var(--sp-1);
 
-  /* The intensity ramp's two ends, mixed over the track's own base so the faint
-     end is one step off the colour the full-height track carried.
+  /* DERIVED, so the knob cannot outgrow the box around it: 16px fine, 28px coarse. */
+  --effort-knob-w: calc(var(--effort-bar-h) - 2 * var(--effort-knob-inset));
 
-     THE TOP END IS BOUNDED BY THE TICK INK rather than picked: `--c-text-primary`
-     on this fill measures 4.130:1 dark / 5.158:1 light at 60% accent and
-     3.278:1 / 4.066:1 at 75%, so 60% clears WCAG 1.4.11's 3:1 floor for a
-     graphical object with margin at every step in both themes. FULL accent is
-     2.272:1 / 2.616:1 even against the primary ink, so it is not available at any
-     ink in this palette: the fill closes on the ink's own lightness as the accent
-     rises, in dark and in light alike.
-
-     Colours rather than percentages, so the gradient below interpolates between
-     two resolved ends and the per-step figures above are the fill each tick
-     actually sits on. */
-  --effort-fill-low: color-mix(in oklch, var(--c-accent) 22%, var(--c-bg-tertiary));
-  --effort-fill-high: color-mix(in oklch, var(--c-accent) 60%, var(--c-bg-tertiary));
+  /* The bar's accent strength at the two ends of the knob's travel: the whole bar
+     takes one strength and it rises with the tier, so the box gains intensity.
+     70% is a CEILING — the handle sits on this fill, and WCAG 1.4.11 wants 3:1
+     against it, which `--c-text-primary` holds to 70% and `--c-accent` only to 26%
+     (`effort-slider.test.ts` measures both). Widening it hides the handle at max.
+     Only these two literals may live here: an unregistered custom property
+     substitutes its `var()`s where it is DECLARED, so a composed `--effort-fill`
+     would resolve `--effort-frac` against this element and flatten the ramp. */
+  --effort-fill-min: 6%;
+  --effort-fill-max: 70%;
 
   display: flex;
   flex-shrink: 0;
@@ -1091,128 +1192,102 @@
   color: var(--c-text-secondary);
 }
 
-/* The rail LINE. `container-type: inline-size` is what makes the geometry below
-   pure CSS: `100cqi` is this element's CONTENT inline size, so a card that grows
-   after the row was appended needs no JS at all and this control carries no
-   ResizeObserver.
-
-   IT RESERVES THE KNOB'S FULL HEIGHT while the rail inside it is thin, because
-   `.pill-model-list` declares `overflow: hidden`: a line sized to the rail would
-   clip the knob standing proud of it, top and bottom.
-
-   NO border and NO padding, so `100cqi`, `clientWidth` and the border box that
-   `effort-slider.ts` `indexAt` reads all agree — the two-hairline correction this
-   floor used to carry went with the border, which moved to the rail below. */
+/* The bar's LINE, and the whole tap target. `container-type: inline-size` makes
+   `100cqi` the width every position below is arithmetic over, so a card that grows
+   after this row was appended needs no ResizeObserver. FLOORED at the hit target,
+   because the knob is deliberately under it and this element carries the one
+   pointerdown handler; `max()` so retuning either token cannot leave it short. No
+   border and no padding, or `100cqi` and the border box `fracAt` reads diverge. */
 .effort-track {
   position: relative;
   container-type: inline-size;
-  block-size: var(--effort-knob-w);
+  block-size: max(var(--hit-floor), var(--effort-bar-h));
 
-  /* The knob has to fit: below this `100cqi - 100%` is negative and the travel
-     inverts. */
-  min-inline-size: var(--effort-knob-w);
+  /* The knob plus its inset on both edges has to fit: below this the travel
+     `100cqi - 2 * inset - 100%` is negative and inverts. */
+  min-inline-size: calc(var(--effort-knob-w) + 2 * var(--effort-knob-inset));
 
-  /* The gesture is a drag, so neither a scroll nor a selection may claim it. This
-     is also why `effort-slider.ts` cancels no pointerdown default: Firefox ties
-     `:active` to the mousedown default action, so cancelling it would silently
-     kill the knob's press rule (70-selection.css) there. */
+  /* The gesture is a drag, so neither a scroll nor a selection may claim it — which
+     is also why `effort-slider.ts` cancels no pointerdown default. */
   touch-action: none;
   user-select: none;
 }
 
-/* The rail itself, centred in the line's reserved band.
-
-   The gradient's two stops sit half a knob in from each end, which is exactly the
-   band the ticks are placed in — so the fill under tick `i` of `n` is the ramp at
-   `i / (n - 1)` and the ratios stated above are per-step figures rather than
-   endpoint ones. Position, not a layout property: `web.md` bans moving something
-   by layout, and `translateY(-50%)` against `inset-block-start: 50%` is the pair
-   that centres a box of unknown height.
-
-   NO border. `--c-border` measures 1.154:1 dark / 1.155:1 light against the card,
-   so it drew no edge worth 2 of the rail's 8px; the fill reads 1.905:1 / 1.593:1
-   there, better than the 1.325:1 / 1.210:1 the full-height track measured and
-   bounded by the surface ramp rather than by the accent. */
+/* THE BAR: the box the knob travels inside, centred in the line by the
+   `inset-block-start: 50%` / `translateY(-50%)` pair. No border — `--c-border` is
+   1.154:1 against the card and draws none, so the fill is the bar's edge. */
 .effort-track::before {
   content: "";
   position: absolute;
   inset-inline: 0;
   inset-block-start: 50%;
-  block-size: var(--effort-rail-h);
+  block-size: var(--effort-bar-h);
   border-radius: var(--r-pill);
-  background: linear-gradient(
-    to right,
-    var(--effort-fill-low) calc(var(--effort-knob-w) / 2),
-    var(--effort-fill-high) calc(100% - var(--effort-knob-w) / 2)
+
+  /* Spelled here, not as a token on the row: this is the first place both terms are
+     in scope, and the row states why a composed token cannot work. */
+  background: color-mix(
+    in oklch,
+    var(--c-accent)
+      calc(
+        var(--effort-fill-min) + var(--effort-frac, 0) *
+          (var(--effort-fill-max) - var(--effort-fill-min))
+      ),
+    var(--c-bg-tertiary)
   );
   transform: translateY(-50%);
+
+  /* The knob's own curve, so the snap moves handle and intensity together. */
+  transition: background var(--dur-standard) var(--ease-standard);
 }
 
-/* Ticks are hit-testable through the track's one pointerdown handler and are not
-   focusable: the knob is the single tab stop, and per-tick clicking needs no
-   second one. Centred on the tier's own knob position — which is why the offset
-   arithmetic is the knob's travel inset by half a knob — and on the rail, so each
-   one sits entirely on the fill it is measured against.
-
-   `--c-text-primary`, not the hint ink: the fill's lightness sweeps toward the
-   accent, so an ink lying BETWEEN the ramp's two ends crosses it. Measured on this
-   ramp, `--c-text-tertiary` is already at 2.778:1 (dark) by 16% accent and
-   `--c-text-secondary` at 3.134:1 by 40%, while the primary ink is the only one
-   that stays on the same side of the fill in both themes — so its worst step is
-   the ramp's top end and one bound covers every tier count. */
-.effort-tick {
-  position: absolute;
-  inset-block-start: 50%;
-  inline-size: 2px;
-  block-size: var(--effort-rail-h);
-  inset-inline-start: calc(
-    var(--effort-knob-w) / 2 + var(--tick-frac, 0) * (100cqi - var(--effort-knob-w))
-  );
-  border-radius: 1px;
-  background: var(--c-text-primary);
-  transform: translate(-50%, -50%);
-}
-
-/* The knob. Square at `--effort-knob-w` and round, so it is a handle rather than a
-   labelled box: the tier's word lives in the caption above the rail.
-
-   `inset-inline-start` is DECLARED rather than left to `auto`, because an absolute
-   box with both inline offsets auto falls back to its STATIC position, which an
-   ancestor `text-align` moves (web.md).
-
-   Movement is ONE transform on both axes. `100%` inside `translate()` resolves
-   against the knob's OWN border box (web.md) while `100cqi` is the track's content
-   box, so `100cqi - 100%` IS the usable travel and the knob sits fully inside the
-   rail's span at both extremes by construction; the block half is the static
-   centring pair described at the rail.
-
-   NO background, colour or border-colour here: the knob is unconditionally the
-   selected surface, so those come from 70-selection.css. */
+/* THE KNOB, a round handle inside the bar. `inset-inline-start` is declared rather
+   than left `auto`, because an absolute box with both inline offsets auto falls back
+   to its static position (web.md); `effort-slider.ts` reads it back as `offsetLeft`.
+   `100%` in `translate()` is the knob's border box against `100cqi`'s content box,
+   so the travel term holds it inside the bar at both extremes. `min-*` are PHYSICAL,
+   because 61-mcp-tools.css's `[tabindex]` floor is and this file precedes it. The
+   handle is the TEXT ink, the one ink the bar's ramp does not sweep past
+   (`--effort-fill-max`), which is the ordinary coloured-track slider idiom. */
 .effort-knob {
   position: absolute;
   inset-block-start: 50%;
-  inset-inline-start: 0;
+  inset-inline-start: var(--effort-knob-inset);
   inline-size: var(--effort-knob-w);
   block-size: var(--effort-knob-w);
-  border: 1px solid transparent;
+  min-width: 0;
+  min-height: 0;
   border-radius: var(--r-pill);
+  background: var(--c-text-primary);
   cursor: grab;
-  transform: translate(calc(var(--effort-frac, 0) * (100cqi - 100%)), -50%);
+  transform: translate(
+    calc(var(--effort-frac, 0) * (100cqi - 2 * var(--effort-knob-inset) - 100%)),
+    -50%
+  );
   transition:
     transform var(--dur-standard) var(--ease-standard),
-    background var(--dur-micro),
-    border-color var(--dur-micro);
+    scale var(--dur-micro) var(--ease-standard);
 }
 
-/* ONE TIER IS NOT A CHOICE, so there is no travel to draw: the line shrinks to the
-   knob and the section renders as a single handle under the caption that names it.
-   The knob keeps its own size — filling the track was right while it was a labelled
-   box and reads as a progress bar on a thin rail, which claims a range the
-   vocabulary does not offer. Travel is `100cqi - 100%` = 0 by construction here, so
-   the knob cannot drift off the one tick. */
+/* SIZE, NOT COLOUR: a knob tinted toward the accent reads 2.94:1 against the hottest
+   fill, so a colour rung would break the 3:1 floor at the top tier. `scale` is its
+   own property, so it composes with the position transform. `any-hover`, not
+   `hover`, which reports the primary input only (web.md). */
+@media (any-hover: hover) {
+  .effort-knob:hover {
+    scale: 1.12;
+  }
+}
+
+.effort-knob:active {
+  scale: 0.94;
+}
+
+/* ONE TIER IS NOT A CHOICE: the bar shrinks to the knob plus its inset, so the
+   travel is 0 by construction and nothing draws a range the vocabulary lacks. */
 .effort-track[data-tiers="1"] {
   align-self: start;
-  inline-size: var(--effort-knob-w);
+  inline-size: calc(var(--effort-knob-w) + 2 * var(--effort-knob-inset));
 }
 
 /* A transition makes the knob lag the finger. Nothing is said about
@@ -1221,6 +1296,12 @@
 .effort-track[data-dragging] .effort-knob {
   transition: none;
   cursor: grabbing;
+}
+
+/* And the fill, for the same reason: eased, each move would restart a 0.2s colour
+   interpolation and the bar would lag the handle it reports. */
+.effort-track[data-dragging]::before {
+  transition: none;
 }
 
 /* Status dot expand: the dot lives in the sidebar footer at the very
@@ -1531,8 +1612,8 @@
   --send-hue: var(--c-accent);
   --send-depth: 38%;
 
-  /* The edge, at the hue's full strength. border-box is global, so adding it
-     kept the 2rem height that matches `.pill` beside it. */
+  /* The edge, at the hue's full strength. border-box is global, so adding it kept
+     the declared height that matches `.pill` beside it. */
   border: 1px solid var(--send-hue);
 
   /* Same value as .pill: the send button is the last control in that row, and
@@ -1541,9 +1622,29 @@
   background: color-mix(in oklch, var(--send-hue) var(--send-depth), var(--c-bg-primary));
   color: var(--c-text-primary);
   cursor: pointer;
-  padding: 0 var(--sp-3);
-  min-width: 2.25rem;
-  height: 2rem;
+
+  /* SQUARE AT EVERY TIER AND EVERY WIDTH, structurally: both axes read the ONE
+     term `.pill` reads (--composer-ctl-h on #prompt-form), and `aspect-ratio`
+     states the invariant so an edit that drops one of them still yields a square
+     rather than silently un-squaring the control.
+     It was 42x32 on a fine pointer and 44x44 on a coarse one — two independent
+     measures that happened to agree on one tier: `padding: 0 var(--sp-3)` plus the
+     glyph decided the width, `height` decided the block axis, and the coarse
+     square was the app-wide hit floor's `min-width` landing on the same 44 by
+     coincidence rather than a rule. `padding: 0` is what lets the box BE its
+     declared size; the glyph centres in it through the flex alignment above.
+     `min-width: 0`, PHYSICAL, is the opt-out from that floor's own `min-width`
+     (61-mcp-tools.css) — a logical property is a different one resolved by source
+     order, and that file sorts later. The painted box is 32 at every tier, BELOW
+     the floor, so the TARGET is held at --hit-floor by the `::after` expander in
+     this rule (the `.status-dot` / `.tool-file-link` idiom) rather than by a wider
+     box — which is also why opting out of the floor here is safe. */
+  aspect-ratio: 1;
+  inline-size: var(--composer-ctl-h);
+  block-size: var(--composer-ctl-h);
+  padding: 0;
+  min-width: 0;
+  min-height: 0;
   flex-shrink: 0;
 
   /* `background` and `border-color` are both named: the face is a fill AND an
@@ -1553,11 +1654,34 @@
     border-color var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
 
+  /* THE GLYPH READS THE TOKEN, so this control cannot lag the row it sits in.
+     It was a hard `1rem` at (0,1,0), which beats `.ic-ui`'s zero-specificity
+     `--icon-ui` rule (03-base.css) — so when the coarse tier's icon scale moved
+     18 -> 20 every sibling in the pill row followed and Send stayed at 16, which
+     is the mismatched-sibling problem the row's one control height exists to
+     remove (measured ink coverage 13.2% against 19.8% for `#chat-options-btn`).
+     The declaration stays rather than being deleted, because it is what keeps the
+     `flex-shrink` and the `transition` on the same rule; referencing the token is
+     what stops a second literal drifting from the first. */
   & svg {
-    width: 1rem;
-    height: 1rem;
+    width: var(--icon-ui);
+    height: var(--icon-ui);
     flex-shrink: 0;
     transition: transform var(--dur-micro) var(--ease-standard);
+  }
+
+  /* THE TARGET, the same expander `.pill` carries and for the same reason: the
+     painted box is 32 at every tier and this is what holds the hit region at
+     --hit-floor on a coarse pointer. Send is the one control in the row NARROWER
+     than the floor, so this is the one place the inline term is negative and the
+     target genuinely grows sideways — into the row's spacer, which is why the
+     seam to `#chat-options-btn` measures 2.64px of clearance at 390 rather than
+     overlapping it. */
+  &::after {
+    content: "";
+    position: absolute;
+    inset-block: min(0px, calc((100% - var(--hit-floor)) / 2));
+    inset-inline: min(0px, calc((100% - var(--hit-floor)) / 2));
   }
 
   &:hover {
@@ -1578,10 +1702,10 @@
 
   /* THE BREATH — a slow swell of the hue while a turn runs, so a working agent
      reads off the composer without the glyph. Opacity on a pre-painted overlay
-     whose amplitude is read off the DOCUMENT CLOCK (03-base.css): nothing is
-     animated here, so it beats in step with the tab dot of the chat it belongs
-     to, and reduced motion stops that one clock (--vk-beat rests at 0, leaving
-     this face identical to a still one). 8% of the hue is ~5 points of depth
+     carrying the shared `vk-dot-beat` (03-base.css) at its own peak, so it beats
+     in step with the tab dot of the chat it belongs to — the delay comes off one
+     global origin. Reduced motion runs it once and it rests at the `opacity: 0`
+     declared here, leaving this face identical to a still one. 8% of the hue is ~5 points of depth
      wherever the ladder sits — 38 -> 43 resting, 46 -> 50 hovered, half the
      rest-to-hover step. Radius 7 - 1 = 6px, concentric with the ring above. */
   &:where(.streaming)::before {
@@ -1591,7 +1715,11 @@
     inset: 0;
     border-radius: calc(var(--pill-radius) - 1px);
     background: var(--send-hue);
-    opacity: calc(var(--vk-beat) * 0.08);
+    opacity: 0;
+
+    --beat-peak: 0.08;
+
+    animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
   }
 
   /* Something failed, and the control is still CLICKABLE — the tooltip names the
@@ -1628,18 +1756,48 @@
     font-size: var(--fs-sm);
   }
 
-  .send-btn {
-    min-width: var(--btn-h);
+  /* NO `.send-btn { min-width: var(--btn-h) }` here any more, and it must not come
+     back on a width query. It existed to make Send 44 wide on a phone, which the
+     app-wide floor already did on the POINTER tier — and it broke squareness in
+     the one case a width query cannot see: a NARROW window with a mouse, where
+     the block axis is 32 and this rule declared the inline axis 44. The base rule
+     derives both axes from one term instead (see `.send-btn` above). */
+
+  /* THE HOME-INDICATOR INSET IS THIS ROW'S OWN BOTTOM INSET, which is what puts
+     Apple's 34pt band inside the composer's material instead of under it as empty
+     page. `50-mobile.css`'s `[id="prompt-form"].bottom-bar` carries the other half
+     and the measurements; the arithmetic is the bar's house gap plus the box's 1px
+     border subtracted from the inset, so the last pill lands exactly on the
+     boundary (12 + 1 + 21 = 34 at the 390x844 preset). Floored at `--pill-inset`,
+     so an inset-less device keeps the uniform 4px inset and never sees a negative
+     term.
+
+     The pills' bottom corners stop being concentric with the box's here, and that
+     is not the radius's problem to solve: the inset is anisotropic by the DEVICE's
+     doing, and 21px up from the box's corner a pill is no longer corner-adjacent,
+     so the nesting rule does not bind (same carve-out `.tab-close` records). */
+  .prompt-pills {
+    padding-block-end: max(
+      var(--composer-pill-pad),
+      calc(env(safe-area-inset-bottom, 0) - var(--sp-3) - 1px)
+    );
   }
 
-  /* Match the textarea's WHOLE resting band to the pill row's WHOLE first
-     line. A control alone is --btn-h, but the row is that control plus its two
-     --pill-inset edges and the 1px divider. Setting only --btn-h produced a
-     44px textarea over a 53px button row — exactly the reported mismatch. The
-     padding derives from this variable, so the text stays vertically centred. */
-  [id="prompt-input"] {
-    --composer-rest-h: calc(var(--btn-h) + 2 * var(--pill-inset) + 1px);
+  /* With the shell panel open the composer is no longer the bottom-most surface,
+     so there is no home indicator under it and nothing to clear. 19-files.css
+     already makes that call for the BAR's padding at (0,4,0); the inset moved into
+     this row, so the reset has to follow it here or a phone with the terminal open
+     carries 21px of dead inset inside the card. */
+  [id="app"]:has(.shell-panel:not(.shell-closed)) .prompt-pills {
+    padding-block-end: var(--composer-pill-pad);
   }
+
+  /* No --composer-rest-h override here any more, and it must not come back on a
+     WIDTH query. It used to carry the match between the textarea's band and the
+     pill row's, keyed on width, so a touch DESKTOP — wide, coarse — kept a 40px
+     textarea over a 52px pill row, which is the same defect one tier up. THE TIER
+     IS THE POINTER, NOT THE WIDTH (01-tokens.css): the base derivation reads
+     --composer-ctl-h, so both rows follow whichever tier is in force. */
 
   /* A popup card must fit the screen it is on. The width cap keeps an anchored
      card from running off the right edge; the height cap trades the shared

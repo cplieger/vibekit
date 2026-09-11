@@ -154,7 +154,21 @@
     overflow: hidden;
     font-optical-sizing: auto;
     scrollbar-gutter: stable;
-    touch-action: pan-x pan-y;
+
+    /* PINCH TO ZOOM IS ON, and `pinch-zoom` is the term that turns it on. This
+       list used to be `pan-x pan-y`, which excludes the pinch gesture, so
+       deleting `maximum-scale=1.0, user-scalable=no` from the viewport meta
+       (static/index.html) achieved nothing on its own — one clause suppressed the
+       gesture and the other still forbade it. WCAG 1.4.4 is the whole purpose of
+       that meta change, so the two land together or neither does.
+       It does NOT reintroduce the 300ms double-tap delay: that is what
+       `touch-action: manipulation` on `:where(button)` below removes, and the two
+       values are independent — `manipulation` is `pan-x pan-y pinch-zoom` minus
+       double-tap-zoom, so a button keeps its own answer either way.
+       OVERRIDES A PRIOR USER RULING (touch-policy.test.ts, "pinch to zoom is off
+       on purpose"), ratified 2026-09-10; reverting is this one declaration plus
+       that test's own case. */
+    touch-action: pan-x pan-y pinch-zoom;
     /* The web-terminal-ui bundle (in the lowest `web-terminal-ui` layer) sets
        `body { color-scheme: dark }` for its standalone full-page terminal.
        vibekit drives color-scheme from :root per theme, so inherit it here to
@@ -176,6 +190,21 @@
      specificity, so a control that asks for --font-mono keeps it. */
   :where(button, input, select, textarea) {
     font-family: inherit;
+  }
+
+  /* And the SIZE, for text-entry controls only. The family rule above leaves the
+     UA's 13.3333px in force, which is not a rung of this app's scale at all: 18
+     of the 50 controls the shipped page renders had no font-size from any
+     component class and sat at that fractional default. It was invisible while a
+     coarse-tier floor rewrote every control to 16px (61-mcp-tools.css records why
+     that floor went); with the floor gone these fall back to the type scale
+     instead. --fs-md is the field rung the composer reads.
+     `button` is deliberately NOT in this selector, for the reason the family rule
+     states one line up: several icon buttons are sized against the UA font-size
+     and a size here would move them. Zero specificity, so this only ever reaches
+     a control nothing else has sized. */
+  :where(input, textarea, select) {
+    font-size: var(--fs-md);
   }
 
   [id="app"] {

@@ -8,6 +8,9 @@ import type { Mock } from "vitest";
 import type { TabKind, TabSubject } from "./types.js";
 import type { Route } from "./router.js";
 import type { TabDotStatus, TabViewSpec } from "./tab-view.js";
+// The mocked module's own type, for the partial factory below. A top-level
+// `import type` rather than an inline `import()` annotation, which the lint forbids.
+import type * as StoreModule from "./store.js";
 import { TAB_ICONS } from "./tab-view.js";
 import {
   materializeTab,
@@ -17,7 +20,14 @@ import {
   type TabOpeners,
 } from "./tab-materialize.js";
 
-vi.mock("./store.js", () => ({ get: vi.fn(() => undefined) }));
+// PARTIAL, so `subagentStatusFor` is the real mapper. Faking it would put a second
+// copy of the ToolStatus-to-dot mapping in this file and the assertion would be about
+// that copy; what the factory owns is routing the invocation's status THROUGH the
+// mapper, so only the store READ is replaced.
+vi.mock("./store.js", async (orig) => ({
+  ...(await orig<typeof StoreModule>()),
+  get: vi.fn(() => undefined),
+}));
 vi.mock("./run-store.js", () => ({
   // The run's label, resolved by the STORE: which of `runLabel` and `workflowName`
   // wins is a precedence over cached run state, so it lives there and is pinned in
@@ -31,6 +41,7 @@ vi.mock("./run-store.js", () => ({
 // never calls a toggle-style opener" is an assertion rather than a claim.
 vi.mock("./settings-tabs.js", () => ({
   loadSettingsTabData: vi.fn(),
+  refreshSettingsPanel: vi.fn(),
   forceSettingsTab: vi.fn(),
   // Present-but-inert so real-ESM linking succeeds: the tab projection widened
   // this graph and these names are imported somewhere in it. No case here calls
@@ -39,27 +50,30 @@ vi.mock("./settings-tabs.js", () => ({
   getSessions: vi.fn(() => []),
   tabStatusFor: vi.fn(() => ""),
 }));
-vi.mock("./git.js", () => ({ loadGitRepos: vi.fn() }));
+vi.mock("./git.js", () => ({ loadGitRepos: vi.fn(), refreshGitView: vi.fn() }));
 vi.mock("./files.js", () => ({
   loadFileBrowser: vi.fn(),
   resetFileBrowser: vi.fn(),
 }));
 vi.mock("./history.js", () => ({
   loadHistoryView: vi.fn(),
+  refreshHistoryView: vi.fn(),
   teardownHistoryView: vi.fn(),
 }));
 vi.mock("./docs.js", () => ({
-  loadDocsView: vi.fn(),
+  showDocsTab: vi.fn(),
+  refreshDocsView: vi.fn(),
+  forceDocsTab: vi.fn(),
   showDocsView: vi.fn(),
 }));
 
 import { get } from "./store.js";
 import { runLabelOf } from "./run-store.js";
-import { loadDocsView, showDocsView } from "./docs.js";
+import { showDocsTab, refreshDocsView, forceDocsTab, showDocsView } from "./docs.js";
 import { loadFileBrowser, resetFileBrowser } from "./files.js";
-import { loadGitRepos } from "./git.js";
-import { loadHistoryView, teardownHistoryView } from "./history.js";
-import { loadSettingsTabData } from "./settings-tabs.js";
+import { loadGitRepos, refreshGitView } from "./git.js";
+import { loadHistoryView, refreshHistoryView, teardownHistoryView } from "./history.js";
+import { loadSettingsTabData, refreshSettingsPanel } from "./settings-tabs.js";
 
 // --- Fixtures ---
 
@@ -76,12 +90,16 @@ function subject(over: Partial<TabSubject> & { kind: TabKind }): TabSubject {
 
 interface Spies {
   chatShow: Mock<TabOpeners["chat"]["show"]>;
+  chatRefresh: Mock<TabOpeners["chat"]["refresh"]>;
   chatClose: Mock<TabOpeners["chat"]["close"]>;
   chatDot: Mock<TabOpeners["chat"]["dot"]>;
   editorShow: Mock<TabOpeners["editor"]["show"]>;
+  editorRefresh: Mock<TabOpeners["editor"]["refresh"]>;
   editorClose: Mock<TabOpeners["editor"]["close"]>;
   runShow: Mock<TabOpeners["run"]["show"]>;
+  runRefresh: Mock<TabOpeners["run"]["refresh"]>;
   subagentShow: Mock<TabOpeners["subagent"]["show"]>;
+  subagentRefresh: Mock<TabOpeners["subagent"]["refresh"]>;
 }
 
 let spies: Spies;
@@ -89,18 +107,27 @@ let spies: Spies;
 function register(dot: TabDotStatus | "" = ""): void {
   spies = {
     chatShow: vi.fn<TabOpeners["chat"]["show"]>(),
+    chatRefresh: vi.fn<TabOpeners["chat"]["refresh"]>(),
     chatClose: vi.fn<TabOpeners["chat"]["close"]>(),
     chatDot: vi.fn<TabOpeners["chat"]["dot"]>(() => dot),
     editorShow: vi.fn<TabOpeners["editor"]["show"]>(),
+    editorRefresh: vi.fn<TabOpeners["editor"]["refresh"]>(),
     editorClose: vi.fn<TabOpeners["editor"]["close"]>(),
     runShow: vi.fn<TabOpeners["run"]["show"]>(),
+    runRefresh: vi.fn<TabOpeners["run"]["refresh"]>(),
     subagentShow: vi.fn<TabOpeners["subagent"]["show"]>(),
+    subagentRefresh: vi.fn<TabOpeners["subagent"]["refresh"]>(),
   };
   const openers: TabOpeners = {
-    chat: { show: spies.chatShow, close: spies.chatClose, dot: spies.chatDot },
-    editor: { show: spies.editorShow, close: spies.editorClose },
-    run: { show: spies.runShow },
-    subagent: { show: spies.subagentShow },
+    chat: {
+      show: spies.chatShow,
+      refresh: spies.chatRefresh,
+      close: spies.chatClose,
+      dot: spies.chatDot,
+    },
+    editor: { show: spies.editorShow, refresh: spies.editorRefresh, close: spies.editorClose },
+    run: { show: spies.runShow, refresh: spies.runRefresh },
+    subagent: { show: spies.subagentShow, refresh: spies.subagentRefresh },
   };
   registerTabOpeners(openers);
 }
@@ -179,6 +206,14 @@ describe("materializeTab is total over the eight kinds", () => {
   it.each(CASES)("$kind names the tab", ({ kind, ref }) => {
     register();
     expect(materializeTab(subject({ kind, ref })).name).not.toBe("");
+  });
+
+  // `refresh` is REQUIRED, so a case that omitted it would already fail typecheck.
+  // What this reaches that the compiler cannot: a case satisfying the type with a
+  // field that is not callable.
+  it.each(CASES)("$kind carries a refresh", ({ kind, ref }) => {
+    register();
+    expect(typeof materializeTab(subject({ kind, ref })).refresh).toBe("function");
   });
 });
 
@@ -295,6 +330,38 @@ describe("the injected behaviours receive the subject's ref", () => {
     expect(spies.editorShow).toHaveBeenCalledWith("/w/x.ts");
     expect(spies.editorClose).toHaveBeenCalledWith("/w/x.ts");
   });
+
+  // The DATA half of each injected kind, and it must reach its own opener rather
+  // than the show beside it: a refresh that activated would push a route from the
+  // dispatcher, and a show that fetched would double every activation.
+  it("chat refresh", () => {
+    register();
+    materializeTab(subject({ kind: "chat", ref: "c-9" })).refresh();
+    expect(spies.chatRefresh).toHaveBeenCalledWith("c-9");
+    expect(spies.chatShow).not.toHaveBeenCalled();
+  });
+
+  it("editor refresh", () => {
+    register();
+    materializeTab(subject({ kind: "editor", ref: "/w/x.ts" })).refresh();
+    expect(spies.editorRefresh).toHaveBeenCalledWith("/w/x.ts");
+    expect(spies.editorShow).not.toHaveBeenCalled();
+  });
+
+  it("run refresh", () => {
+    register();
+    materializeTab(subject({ kind: "run", ref: "wf-7" })).refresh();
+    expect(spies.runRefresh).toHaveBeenCalledWith("wf-7");
+    expect(spies.runShow).not.toHaveBeenCalled();
+  });
+
+  // Both halves of the composite ref, split by the factory's own codec.
+  it("subagent refresh", () => {
+    register();
+    materializeTab(subject({ kind: "subagent", ref: "c-3/task-8" })).refresh();
+    expect(spies.subagentRefresh).toHaveBeenCalledWith("c-3", "task-8");
+    expect(spies.subagentShow).not.toHaveBeenCalled();
+  });
 });
 
 // --- The dot ---
@@ -315,6 +382,69 @@ describe("the chat dot", () => {
     register("working");
     materializeTab(subject({ kind: "docs" }));
     expect(spies.chatDot).not.toHaveBeenCalled();
+  });
+});
+
+// --- The subagent dot ---
+
+// Seeded from the SAME invocation the row's name comes from, which is the whole point:
+// a row cannot read `wf-workflow-creator` beside an empty dot slot. `subagent-dots.ts`
+// keeps it live afterwards, but on the door that matters — a transcript link, where the
+// invocation is already resident — the effect is a frame late, and 12-tabs.css no
+// longer reserves a slot for this kind to cover that frame.
+describe("the subagent dot", () => {
+  /** A chat row holding one delegate invocation, stamped with the subtask the refs
+   *  below name. `findSubagentInvocation` matches on that id AND on the title, so both
+   *  have to be real or the factory correctly finds nothing. */
+  function withDelegate(status: string): void {
+    vi.mocked(get).mockReturnValue({
+      messages: [
+        {
+          tool_calls: [
+            {
+              id: "invoke_subagent_x",
+              title: "Sub-agent: wf-workflow-creator",
+              status,
+              agent_subtask_id: "sub-1",
+            },
+          ],
+        },
+      ],
+    } as never);
+  }
+
+  it("rides the spec, off the same invocation as the name", () => {
+    register();
+    withDelegate("completed");
+    const spec = materializeTab(subject({ kind: "subagent", ref: "c-1/sub-1" }));
+    expect(spec.dotStatus).toBe("done");
+    expect(spec.name).toBe("wf-workflow-creator");
+  });
+
+  it("carries a running delegate's own state", () => {
+    register();
+    withDelegate("in_progress");
+    expect(materializeTab(subject({ kind: "subagent", ref: "c-1/sub-1" })).dotStatus).toBe(
+      "working",
+    );
+  });
+
+  // The case the report was about: the launching chat holds no invocation for this
+  // delegate, so there is no status to seed and none is invented. The row then carries
+  // no dot AND no reserved slot, rather than a hole that never fills.
+  it("is ABSENT when the launching chat holds no invocation for it", () => {
+    register();
+    const spec = materializeTab(subject({ kind: "subagent", ref: "c-1/sub-gone" }));
+    expect("dotStatus" in spec).toBe(false);
+    expect(spec.name).toBe("Subagent");
+  });
+
+  it("is ABSENT for a malformed ref, which never resolves a chat to read", () => {
+    register();
+    withDelegate("completed");
+    expect("dotStatus" in materializeTab(subject({ kind: "subagent", ref: "no-slash" }))).toBe(
+      false,
+    );
   });
 });
 
@@ -431,19 +561,29 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
   // showDocsView is that hazard concretely: it delegates straight to tabs.ts's
   // toggleDocsView, and docs.js exports it beside the plain loader, which is what
   // makes this assertable rather than merely stated.
+  //
+  // `forceDocsTab` is the SECOND thing this pins: the activation must not force the
+  // canonical sub-tab, which is what discarded the reader's own on every switch back.
   it("docs", async () => {
     register();
     materializeTab(subject({ kind: "docs" })).onShow?.();
     await settle();
-    expect(loadDocsView).toHaveBeenCalledWith("steering");
+    expect(showDocsTab).toHaveBeenCalled();
+    expect(forceDocsTab).not.toHaveBeenCalled();
     expect(showDocsView).not.toHaveBeenCalled();
   });
 
-  it("settings", async () => {
+  // Settings and files have NO activation half left: each one's whole `onShow` was
+  // the data half, so the field is dropped rather than emptied — an `onShow` that
+  // did nothing would read as a door somebody forgot to wire.
+  it("settings has no onShow at all", () => {
     register();
-    materializeTab(subject({ kind: "settings" })).onShow?.();
-    await settle();
-    expect(loadSettingsTabData).toHaveBeenCalledWith("general");
+    expect(materializeTab(subject({ kind: "settings" })).onShow).toBeUndefined();
+  });
+
+  it("files has no onShow at all", () => {
+    register();
+    expect(materializeTab(subject({ kind: "files" })).onShow).toBeUndefined();
   });
 
   it("git", async () => {
@@ -453,13 +593,9 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
     expect(loadGitRepos).toHaveBeenCalled();
   });
 
-  it("files, both directions", async () => {
+  it("files closes through its own reset", async () => {
     register();
-    const spec = materializeTab(subject({ kind: "files" }));
-    spec.onShow?.();
-    await settle();
-    expect(loadFileBrowser).toHaveBeenCalled();
-    spec.onClose?.();
+    materializeTab(subject({ kind: "files" })).onClose?.();
     await settle();
     expect(resetFileBrowser).toHaveBeenCalled();
   });
@@ -473,6 +609,51 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
     spec.onClose?.();
     await settle();
     expect(teardownHistoryView).toHaveBeenCalled();
+  });
+
+  // The five singletons' DATA half, each reaching its own module's refresh and not
+  // the loader beside it.
+  it("settings refresh loads the active panel", async () => {
+    register();
+    materializeTab(subject({ kind: "settings" })).refresh();
+    await settle();
+    expect(refreshSettingsPanel).toHaveBeenCalled();
+    expect(loadSettingsTabData).not.toHaveBeenCalled();
+  });
+
+  it("git refresh dispatches the active sub-tab", async () => {
+    register();
+    materializeTab(subject({ kind: "git" })).refresh();
+    await settle();
+    expect(refreshGitView).toHaveBeenCalled();
+  });
+
+  // The files kind's refresh IS `loadFileBrowser`: there is no third name for
+  // `loadDir`, so this pins the alias rather than a second export.
+  it("files refresh reads the directory", async () => {
+    register();
+    materializeTab(subject({ kind: "files" })).refresh();
+    await settle();
+    expect(loadFileBrowser).toHaveBeenCalled();
+  });
+
+  it("history refresh refetches the list", async () => {
+    register();
+    materializeTab(subject({ kind: "history" })).refresh();
+    await settle();
+    expect(refreshHistoryView).toHaveBeenCalled();
+    expect(loadHistoryView).not.toHaveBeenCalled();
+  });
+
+  // Forces no sub-tab, for the activation's reason: a refresh that forced the
+  // canonical panel would discard the reader's own on every gap.
+  it("docs refresh refetches the inventory", async () => {
+    register();
+    materializeTab(subject({ kind: "docs" })).refresh();
+    await settle();
+    expect(refreshDocsView).toHaveBeenCalled();
+    expect(forceDocsTab).not.toHaveBeenCalled();
+    expect(showDocsTab).not.toHaveBeenCalled();
   });
 
   // Docs is the one singleton with no teardown: it holds no dispatch, no

@@ -10,12 +10,18 @@
     interpolate-size: allow-keywords;
 
     /* ---- SEEDS: the surface ramp ----------------------------------------- *
-     * Floors: adjacent steps >= 1.25:1, end to end >= 2.3:1. Re-measure with
-     * `python3 scripts/css-contrast.py ramp` before nudging one. */
+     * Floors: adjacent steps >= 1.25:1, end to end >= 2.3:1, over the FOUR rungs
+     * below; `--c-turn-body` is a half-step between the first two and is exempt.
+     * Re-measure with `python3 scripts/css-contrast.py ramp` before nudging one. */
     --c-bg-primary: oklch(15% 0.022 283.9deg);
     --c-bg-secondary: oklch(27.5% 0.03 284.1deg);
-    /* The turn's prose plane; header and footer stay tertiary and bracket it. */
-    --c-turn-body: var(--c-bg-secondary);
+
+    /* The transcript's card rung: page -> card -> box -> band, monotonically away
+     * from the page, so both themes run one ladder in opposite directions. A SEED
+     * in each, at the same fraction of the page->box gap (30.8%); an alias of
+     * another rung collapses the card and every box inside it onto one colour.
+     * Ladder, numbers and the hover recipe: vibekit-ui.md "Color system". */
+    --c-turn-body: oklch(19% 0.0245 284deg);
     --c-bg-tertiary: oklch(35.5% 0.038 283.7deg);
     --c-bg-elevated: oklch(42.5% 0.044 283.6deg);
 
@@ -260,12 +266,13 @@
     --sp-4: 1rem;
     --sp-5: 1.25rem;
     --sidebar-w: 16.25rem;
+    /* THE measure, for every full-page surface. The transcript, the composer, the
+       dock, the run page and a delegate's page all end on this column, so a reader
+       crossing between them learns one pair of edges (user ruling, 2026-09-10).
+       `--run-page-max-w: 68rem` sat here for the exec pages and is DELETED with
+       that divergence; 18-pages.css `[id="run-body"]` records why the
+       machine-output argument behind it was withdrawn rather than retuned. */
     --content-max-w: 50rem;
-
-    /* The measure for a page whose content is MACHINE OUTPUT rather than prose.
-       Bounded rather than removed because a step row puts its duration at
-       `margin-inline-start: auto`. */
-    --run-page-max-w: 68rem;
     /* ---- Control heights ------------------------------------------------- *
      * --ctl-h stands alone in its row or beside a full-size button, --ctl-h-dense
      * is a labelled field or an action in a dense row (vibekit-ui.md "One control
@@ -276,13 +283,6 @@
     --ctl-h-sm: 1.5rem;
     --hit-floor: 1.5rem;
     --btn-h: var(--ctl-h);
-    /* ---- The TEXT-ENTRY floor -------------------------------------------- *
-     * iOS zooms the page when a text control under 16px takes focus, and the app
-     * carries `autofocus` on the composer, so a fresh load on a finger zooms
-     * before anything is typed. 16px is the threshold, so this is a PLATFORM
-     * fact on the pointer tier rather than a rung of the --fs-* scale: --fs-lg is
-     * 1rem today and a retune of it would silently move the threshold. */
-    --fs-field: var(--fs-md);
   }
 
   /* A finger or a pen: 44px is Apple's HIG figure and WCAG 2.5.5 (AAA), against
@@ -292,7 +292,22 @@
     --ctl-h-dense: 2.5rem;
     --ctl-h-sm: 2.25rem;
     --hit-floor: 2.75rem;
-    --fs-field: 1rem;
+  }
+
+  /* THE THIRD TIER STATE, and it moves --hit-floor ALONE. `data-touched` is
+   * written once per load by pointer-tier.ts (from the PERSISTED touch flag, and
+   * only while no tier is pinned), so a hybrid device driven by its mouse keeps
+   * the dense layout — every --ctl-h and both popup scale blocks above are
+   * deliberately absent here — while a finger still lands a 44px target, grown
+   * through the floor's zero-specificity `min-*` rules in 61-mcp-tools.css. So no
+   * painted box and no glyph moves except where a class declares its own height.
+   *
+   * (0,2,0) beats the base `:root`, and it TIES with the coarse arm above and the
+   * no-JS arm below, both of which declare the same value — so there is nothing
+   * for source order to resolve. One attribute selector keeps
+   * selector-max-attribute clear. */
+  :root[data-touched] {
+    --hit-floor: 2.75rem;
   }
 
   /* NO-JS FALLBACK. A capability query cannot decide this tier: Chromium reports
@@ -305,7 +320,6 @@
       --ctl-h-dense: 2.5rem;
       --ctl-h-sm: 2.25rem;
       --hit-floor: 2.75rem;
-      --fs-field: 1rem;
     }
   }
 
@@ -325,11 +339,13 @@
     --icon-lg: 1.5rem;
     --icon-hero: 3rem;
     /* ---- Status dots ------------------------------------------------------ *
-     * ONE size and ONE period, so up to 48 dots on one strip beat in phase. Slow
-     * on purpose: a dot is ambient and stays on screen for as long as the work
-     * runs. */
+     * ONE size, ONE period and ONE square radius, so up to 48 dots on one strip
+     * beat in phase and the two marks that report a workflow run cannot drift
+     * apart in silhouette. Slow on purpose: a dot is ambient and stays on screen
+     * for as long as the work runs. */
     --dot-size: 0.5rem;
     --dot-size-sm: 0.375rem;
+    --dot-radius-square: calc(var(--dot-size) / 4);
     --dot-beat-dur: 2.4s;
     /* ---- Spinners -------------------------------------------------------- *
      * ONE period for every rotating ring — a literal here let two rings of one
@@ -343,12 +359,12 @@
   }
 
   :root[data-pointer="coarse"] {
-    --icon-ui: 1.125rem;
+    --icon-ui: 1.25rem;
   }
 
   @media (width <= 48rem) {
     :root:not([data-pointer="fine"]) {
-      --icon-ui: 1.125rem;
+      --icon-ui: 1.25rem;
     }
   }
 

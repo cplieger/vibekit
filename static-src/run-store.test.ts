@@ -9,7 +9,7 @@
 // be wrong, so they are tested as arithmetic over a tree.
 // ---------------------------------------------------------------------------
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { RunNode, RunState } from "./run-store.js";
 import type { RunControlsResponse } from "./wire/types.gen.js";
 
@@ -28,19 +28,33 @@ let responses: (
   | undefined
 )[] = [];
 let resolvers: (() => void)[] = [];
+// The HTTP status each FAILED read answers with, in order. 502 by default — a read that
+// never reached the engine, which is what every case predating the status means by an
+// absent response, and the arm that keeps the retry ladder.
+let failStatuses: number[] = [];
 let liveRunsReply: {
   runs: { workflow_id: string; chat_id: string; executing: boolean }[];
 } | null = null;
 let controlsReplies: RunControlsResponse[] = [];
 
 vi.mock("./api-client.js", () => ({
-  apiGet: vi.fn(async (path: string) => {
+  // The OrError variant, because the store reads a failed read's STATUS: the collapsing
+  // `apiGet` answers null for a settled 404 and a dead network alike.
+  apiGetOrError: vi.fn(async (path: string) => {
     fetches.push(path);
     // A deferred resolve, so a test can invalidate again WHILE one is in flight —
     // which is the whole case the coalescing exists for.
     await new Promise<void>((r) => resolvers.push(r));
     const state = responses.shift();
-    return state === undefined ? null : { workflowId: state.workflowId, state };
+    if (state === undefined) {
+      return { ok: false, status: failStatuses.shift() ?? 502, data: null, error: "" };
+    }
+    return {
+      ok: true,
+      status: 200,
+      data: { workflowId: state.workflowId, state },
+      error: "",
+    };
   }),
   // The live-runs rebuild and the affordance both go through the typed GET; the
   // decoder is the generated one and is not under test here, so the mock answers
@@ -79,6 +93,7 @@ beforeEach(() => {
   fetches.length = 0;
   responses = [];
   resolvers = [];
+  failStatuses = [];
   liveRunsReply = null;
   controlsReplies = [];
   for (const id of ["r1", "r2", "r3", "r4"]) {
@@ -773,6 +788,44 @@ describe("the live-runs inventory", () => {
     store.noteRunSettled("wf-parentless");
   });
 
+  // The ROW reader C2's floor is built on. `foldRuns` iterates rows and takes the
+  // inventory's `executing` where the state cell is absent, so it needs the whole
+  // row AND the workflow id — and the id is the map's KEY rather than a field, so a
+  // reader handed the row alone cannot name the run it describes.
+  it("answers a row per matching run, carrying the id the map holds it under", () => {
+    store.noteRunLive("wf-a", "chat-x", true);
+    store.noteRunLive("wf-b", "chat-x", false);
+    store.noteRunLive("wf-c", "chat-y", true);
+
+    const rows = store.liveRunsForChat("chat-x");
+
+    // Sorted, because the answer's ORDER is the map's insertion order and no
+    // consumer depends on it — asserting it would pin a fact nothing reads.
+    expect([...rows].sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: "wf-a", chat: "chat-x", executing: true },
+      { id: "wf-b", chat: "chat-x", executing: false },
+    ]);
+    expect(store.liveRunsForChat("chat-y"), "the other chat's own row").toEqual([
+      { id: "wf-c", chat: "chat-y", executing: true },
+    ]);
+    expect(store.liveRunsForChat("chat-none"), "a chat with no run").toEqual([]);
+    expect(store.liveRunsForChat(""), "the empty chat is never a subject").toEqual([]);
+  });
+
+  it("answers the same ids through the ids-only wrapper", () => {
+    // Three callers ask only how many or which (`run-bar.ts` twice,
+    // `chat-settled.ts`'s `.length`), and the wrapper exists so they do not each
+    // map the rows themselves. It reads THROUGH the row reader, so the two cannot
+    // disagree about which runs belong to a chat.
+    store.noteRunLive("wf-a", "chat-x", true);
+    store.noteRunLive("wf-b", "chat-x", false);
+    store.noteRunLive("wf-c", "chat-y", true);
+
+    expect([...store.liveRunIDsForChat("chat-x")].sort()).toEqual(["wf-a", "wf-b"]);
+    expect(store.liveRunIDsForChat("chat-y")).toEqual(["wf-c"]);
+    expect(store.liveRunIDsForChat("chat-none")).toEqual([]);
+  });
+
   it("survives the render cache dropping the run's card (forgetRun)", () => {
     // The disposed-run-card case: forgetRun is the CACHE's bound (last card
     // unmounted), and a run does not stop being live because nothing renders
@@ -1245,5 +1298,258 @@ describe("invalidateCachedRuns is the gap-recovery half of the push contract", (
     expect(fetches).toHaveLength(2);
     expect(fetches.some((p) => p.includes("r1"))).toBe(true);
     expect(fetches.some((p) => p.includes("r2"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The retry ladder behind a read that produced nothing.
+//
+// The window it covers is the one nothing else revisits: a `run_progress` frame is
+// answered by ONE read, so a read that came back empty leaves the card sitting on
+// whatever it last showed until the next frame — and a paused run emits none at all.
+// Bounded because a failed read is not always transient: the run endpoint answers 503
+// for an engine with no workflow support, which no number of attempts can move.
+//
+// SKIPPED outright for one status. `handleRun` grades a failed inspect three ways, and a
+// 404 is the narrow arm where the engine answered ABOUT this run and refused — so the
+// answer is the same however often it is asked, and a run the server has forgotten costs
+// one read per event instead of four.
+//
+// Fake timers are installed per case; the module is shared with the rest of this file,
+// so the ladder is dropped by `beforeEach`'s `forgetRun`.
+// ---------------------------------------------------------------------------
+
+describe("the retry ladder behind a run read that produced nothing", () => {
+  afterEach(async () => {
+    // Drain anything still in flight before handing the clock back: `forgetRun` does not
+    // clear the in-flight guard, so a straggling read would decide the next case rather
+    // than this one.
+    await settle();
+    vi.useRealTimers();
+  });
+
+  it("climbs three rungs at a doubling delay, then stops and says so", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    responses = [undefined, undefined, undefined, undefined];
+
+    store.invalidateRun("r1");
+    await settle();
+    expect(fetches).toHaveLength(1);
+
+    // Each rung is bracketed, because a flat delay produces the same COUNTS: what
+    // separates the two is that nothing is due one millisecond before the doubled delay.
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetches).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetches).toHaveLength(2);
+    await settle();
+
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(fetches).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetches).toHaveLength(3);
+    await settle();
+
+    await vi.advanceTimersByTimeAsync(3999);
+    expect(fetches).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetches).toHaveLength(4);
+    await settle();
+
+    // Bounded: a run the server will never describe stops being asked about rather than
+    // being polled for the life of the document.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetches).toHaveLength(4);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("arms NOTHING and says nothing for a run the server has settled", async () => {
+    // The whole point of reading the status: before it, a run the server had permanently
+    // forgotten cost three retries and a warn per transport gap — four reads for an
+    // answer that cannot change.
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    responses = [undefined];
+    failStatuses = [404];
+
+    store.invalidateRun("r1");
+    await settle();
+    expect(fetches).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetches).toHaveLength(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("still climbs for a 503, and the line it gives up on names that status", async () => {
+    // The skip is narrow to ONE status rather than to any failure carrying one: a 503 is
+    // an engine with no workflow verbs, which says nothing about whether this run exists,
+    // so it keeps the bounded ladder it is the reason for.
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    responses = [undefined, undefined, undefined, undefined];
+    failStatuses = [503, 503, 503, 503];
+
+    store.invalidateRun("r1");
+    await settle();
+    await vi.advanceTimersByTimeAsync(1000);
+    await settle();
+    await vi.advanceTimersByTimeAsync(2000);
+    await settle();
+    await vi.advanceTimersByTimeAsync(4000);
+    await settle();
+    expect(fetches).toHaveLength(4);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain("503");
+  });
+
+  it("drops a rung a transient left ARMED once the server settles", async () => {
+    // The coalescing pair, the first half failing transiently and the trailing one
+    // settling: read 1's rung is armed while read 2 runs, so the skip has to CANCEL it
+    // rather than merely decline to arm — otherwise the rung fires and fetches an answer
+    // this read already has.
+    vi.useFakeTimers();
+    responses = [undefined, undefined];
+    failStatuses = [502, 404];
+
+    store.invalidateRun("r1");
+    store.invalidateRun("r1");
+    await settle();
+    await settle();
+    expect(fetches).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetches).toHaveLength(2);
+  });
+
+  it("re-enters under the read's OWN cause, so the gap's other reader is not charged again", async () => {
+    // `""` would fetch too, and it is the wrong token: the cause the failed read dropped
+    // is what the rung answers for, so the gap's second reader — a round trip behind the
+    // first — finds the question already asked. With `""` the rung would claim nothing and
+    // that reader would issue a third request for one event.
+    vi.useFakeTimers();
+    responses = [undefined, { workflowId: "r1", status: "running" }];
+
+    store.invalidateRun("r1", "gap:1");
+    await settle();
+    await vi.advanceTimersByTimeAsync(1000);
+    await settle();
+    expect(fetches).toHaveLength(2);
+    expect(store.runState("r1")?.status).toBe("running");
+
+    store.invalidateRun("r1", "gap:1");
+    await settle();
+    expect(fetches).toHaveLength(2);
+  });
+
+  it("is answered by a read that lands anywhere, not only by its own rung", async () => {
+    // The next SSE frame normally beats the ladder to it, and a read that ANSWERED leaves
+    // nothing to retry.
+    vi.useFakeTimers();
+    responses = [undefined, { workflowId: "r1", status: "running" }];
+
+    store.invalidateRun("r1");
+    await settle();
+    store.invalidateRun("r1");
+    await settle();
+    expect(fetches).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetches).toHaveLength(2);
+  });
+
+  it("lets a trailing read REPLACE the armed rung rather than leaving one beside it", async () => {
+    // The coalescing pair, both halves failing: the first read arms a rung and the
+    // trailing one then fails too. The newest failure owns the rung, and it inherits the
+    // count — two armed timers would fetch twice per rung and widen the ladder.
+    vi.useFakeTimers();
+    responses = [undefined, undefined, undefined];
+
+    store.invalidateRun("r1");
+    store.invalidateRun("r1");
+    await settle();
+    await settle();
+    expect(fetches).toHaveLength(2);
+
+    // The first read's own rung was due here, and went with it.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetches).toHaveLength(2);
+    // The replacement's, at the second rung's delay because the count carried over.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetches).toHaveLength(3);
+  });
+
+  it("is dropped with the run, so a rung cannot fetch for a card nothing renders", async () => {
+    vi.useFakeTimers();
+    responses = [undefined];
+
+    store.invalidateRun("r2");
+    await settle();
+    expect(fetches).toHaveLength(1);
+
+    store.forgetRun("r2");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetches).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The cache's bound is a REGISTERED DEMAND, and that is the shape rather than a
+// detail: `forgetRun` is reached from ONE call site that cannot enumerate this
+// store's readers, and the enumeration it used to carry went stale the moment a
+// reader was added for the case that guard let it through.
+// ---------------------------------------------------------------------------
+
+describe("forgetRun asks the registered demands before it drops anything", () => {
+  const unregisters: (() => void)[] = [];
+
+  function demand(fn: (workflowID: string) => boolean): void {
+    unregisters.push(store.registerRunStateDemand(fn));
+  }
+
+  afterEach(() => {
+    for (const un of unregisters.splice(0)) {
+      un();
+    }
+    store.forgetRun("r1");
+    store.forgetRun("r2");
+  });
+
+  it("keeps the cell a demand claims, and asks it about the RUN", async () => {
+    await seedRun("r1", { workflowId: "r1", status: "running" });
+    const claim = vi.fn(() => true);
+    demand(claim);
+
+    store.forgetRun("r1");
+
+    expect(store.peekRunState("r1")?.status).toBe("running");
+    expect(claim).toHaveBeenCalledWith("r1");
+  });
+
+  it("still drops a run no demand claims, so the bound is per RUN", async () => {
+    await seedRun("r1", { workflowId: "r1", status: "running" });
+    await seedRun("r2", { workflowId: "r2", status: "running" });
+    demand((id) => id === "r1");
+
+    store.forgetRun("r1");
+    store.forgetRun("r2");
+
+    expect(store.peekRunState("r1")?.status, "claimed").toBe("running");
+    expect(store.peekRunState("r2"), "unclaimed, so the cache is still bounded").toBeUndefined();
+  });
+
+  it("drops the run once its demand unregisters", async () => {
+    await seedRun("r1", { workflowId: "r1", status: "running" });
+    const un = store.registerRunStateDemand(() => true);
+
+    store.forgetRun("r1");
+    expect(store.peekRunState("r1")?.status).toBe("running");
+
+    un();
+    store.forgetRun("r1");
+
+    expect(store.peekRunState("r1")).toBeUndefined();
   });
 });

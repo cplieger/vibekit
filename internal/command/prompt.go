@@ -129,6 +129,25 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 	retryEmptyTurnPrompt(ctx, bridges, chats, bus, outcome, chatID, p, params)
 }
 
+// appendInterruptedCarrier records a turn's stop on the chat, for the prompt exits
+// that finalize no turn and so persist no carrier of their own.
+//
+// `appendUserMessage` runs before admission deliberately, so the user row is already
+// on disk when these exits are reached — and a turn holding a trigger and nothing
+// else is read by both transcript projections as "nothing closed this turn", which
+// renders as an end vibekit could not read. This divider makes the turn `interrupted`
+// with the real reason instead. `durable.Context` because every one of these paths
+// runs on a context that may already be cancelled.
+func appendInterruptedCarrier(ctx context.Context, chats ChatStore, chatID vibekit.ChatID, reason string) {
+	evt := vibekit.Message{
+		ID: ids.NewMessageID(), Role: vibekit.RoleEvent, Ts: time.Now().UnixMilli(),
+		EventKind: vibekit.EventInterrupted, Content: reason,
+	}
+	if err := chats.AppendMessage(durable.Context(ctx), chatID, &evt); err != nil {
+		slog.Error("prompt: append interrupted carrier", "chat_id", chatID, keyError, err)
+	}
+}
+
 // refreshRetrySession abandons the session that answered nothing: close
 // its bridge, detach the chat from it, and record why on the transcript.
 func refreshRetrySession(ctx context.Context, bridges BridgeAccess, chats ChatStore, chatID vibekit.ChatID) {
@@ -210,6 +229,11 @@ func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, chats ChatS
 	if retryEpoch == 0 {
 		// Dead ctx: shutdown, or the turn context died. No ACP call made.
 		slog.Warn("empty turn: the retry turn could not start", "chat_id", chatID)
+		// This exit broadcasts nothing, so the divider is the whole of what a reader
+		// ever learns about it — and it also corrects the "Session refreshed, retrying"
+		// row `refreshRetrySession` has already written onto this turn.
+		appendInterruptedCarrier(ctx, chats, chatID,
+			"The retry was cancelled before the agent answered.")
 		return
 	}
 	defer outcome.ReleaseTurn(chatID, retryEpoch)
@@ -392,7 +416,9 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 	sb, err := roles.bridges.OpenBridge(ctx, chatID, p.Model)
 	if err != nil {
 		roles.turnOutcome.ReleaseTurnReservation(chatID)
-		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeBridgeStartFailed, Message: rpcerr.Text(err)}))
+		reason := rpcerr.Text(err)
+		appendInterruptedCarrier(ctx, roles.chats, chatID, reason)
+		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeBridgeStartFailed, Message: reason}))
 		return
 	}
 	// The reservation already excludes every prompt and shell, so a held
@@ -400,7 +426,9 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 	if !sb.TryAcquireForPrompt() {
 		roles.turnOutcome.ReleaseTurnReservation(chatID)
 		slog.Error("prompt: bridge slot held despite an owned admission reservation", "chat_id", chatID)
-		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{Code: vibekit.ErrCodePromptFailed, Message: "The prompt could not start. Send it again."}))
+		const reason = "The prompt could not start. Send it again."
+		appendInterruptedCarrier(ctx, roles.chats, chatID, reason)
+		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{Code: vibekit.ErrCodePromptFailed, Message: reason}))
 		return
 	}
 	promptAdmittedTurn(ctx, roles, sb, chatID, p)
@@ -443,8 +471,10 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 		// window. With no epoch nothing would finalize, so no ACP call.
 		sb.ReleaseAfterPrompt()
 		roles.turnOutcome.ReleaseTurnReservation(chatID)
+		const reason = "The turn was cancelled before the agent answered."
+		appendInterruptedCarrier(ctx, roles.chats, chatID, reason)
 		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
-			Code: vibekit.ErrCodePromptFailed, Message: "The turn was cancelled before the agent answered.",
+			Code: vibekit.ErrCodePromptFailed, Message: reason,
 		}))
 		return
 	}

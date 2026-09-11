@@ -466,10 +466,17 @@ describe(
       // the scroll-derived mark happens to agree with the pick.
       const chat = nextChat();
       await mount(chat, pairs(4, 6), true);
+      // The window's LEFT EDGE, which the server supplies and which the rail's merge
+      // keys on: without it the resident turns number themselves 1..3 and collide
+      // with the index's own 1..3, so `markerFor(3)` would name a RESIDENT turn and
+      // the paged path this case exists for would never run.
+      requireSession(chat).turn_offset = 3;
       served.turns = [1, 2, 3, 4, 5, 6].map(summary);
       await rail.loadTurnRail(chat);
       await until(() => markers().length === 6, "the rail's own index to render its markers");
       vi.mocked(loadMessages).mockImplementation((chatID: string) => {
+        // Before the prepend, so no paint sees the old edge against the new window.
+        requireSession(chatID).turn_offset = 0;
         prepend(chatID, pairs(1, 3));
         return Promise.resolve(true);
       });
@@ -483,9 +490,9 @@ describe(
         "the paged jump to resolve",
       );
       // AFTER the jump's own scroll has settled, which is the second half of what
-      // "survives the jump" means: the write is `scrollIntoView`'s, and the event it
-      // produces arrives a frame later — so a pick revoked by an unrecorded landing
-      // (`jumpTo`'s own marker) is revoked after the jump has otherwise resolved.
+      // "survives the jump" means: the landing's own scroll event arrives a frame
+      // later, so a pick a gesture would revoke is revoked after the jump has
+      // otherwise resolved.
       await quiet();
 
       expect(vi.mocked(loadMessages)).toHaveBeenCalledTimes(1);
@@ -494,6 +501,49 @@ describe(
       );
       expect(marked.map((m) => m.textContent)).toEqual(["3"]);
       expect(markerFor(3).getAttribute("aria-current")).toBe("true");
+    });
+
+    it("leaves the clicked turn's top on the reading line once the landing settles", async () => {
+      // The other half of "the click took me there": the turn is MARKED above, and
+      // here it is where the reader reads. A page of history landing in front of the
+      // target moves it after the scroll was aimed, so the position the reader is
+      // left at is the correction loop's answer rather than the first scroll's.
+      //
+      // The reading line is the scroller's own (`clientHeight / 3`), never a number
+      // this file picks: it is the same line activation reads, so a landing measured
+      // against anything else would agree with no other consumer.
+      const chat = nextChat();
+      await mount(chat, pairs(4, 6), true);
+      requireSession(chat).turn_offset = 3;
+      served.turns = [1, 2, 3, 4, 5, 6].map(summary);
+      await rail.loadTurnRail(chat);
+      await until(() => markers().length === 6, "the rail's own index to render its markers");
+      vi.mocked(loadMessages).mockImplementation((chatID: string) => {
+        requireSession(chatID).turn_offset = 0;
+        prepend(chatID, pairs(1, 3));
+        return Promise.resolve(true);
+      });
+
+      markerFor(3).click();
+      // The correction loop's own EXIT, not a still scroller: `pending` clears in the
+      // `finally` spanning that loop, and under full-suite load the scroller sits
+      // still between the first scroll and the correction, which read as settled.
+      await until(
+        () => cardFor("u3") !== null && markers().every((m) => m.dataset["pending"] === undefined),
+        "the paged jump's correction loop to finish",
+      );
+      await quiet();
+
+      const card = cardFor("u3");
+      expect(card).not.toBeNull();
+      // Rects in the scrollport's own frame, for `scroll.ts`'s reason: a turn card's
+      // offsetParent is its own `.msg-row`, so an offset-relative read answers about
+      // a different box.
+      const fromTop = (card?.getBoundingClientRect().top ?? 0) - wrap.getBoundingClientRect().top;
+      // LANDING_TOLERANCE_PX, hardcoded: the module's own tolerance is what the
+      // correction loop stops at, and deriving it from the module would make this
+      // assertion agree with whatever the module believes.
+      expect(Math.abs(fromTop - scroll.readingLineOffset())).toBeLessThanOrEqual(8);
     });
   },
 );

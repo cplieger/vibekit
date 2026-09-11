@@ -74,6 +74,7 @@ import {
   finalizeDetachedBody,
   updateDetachedBody,
 } from "./messages-blocks.js";
+import { refreshChatView } from "./chat.js";
 import { get, isThinking, messagesVersionOf } from "./store.js";
 import { blockTextSigs, blockThinkingSigs } from "./store-signals.js";
 import { ICON_TAB_AGENT } from "./icons.js";
@@ -197,6 +198,12 @@ let inPaint = false;
 export function showSubagent(chatID: string, subtaskID: string): void {
   shown.value = { chatID, subtaskID };
   installEffects();
+}
+
+/** A subagent tab's `refresh`. The page is a projection of the launching chat's
+ *  blocks, so its window is the only thing that can make it current. */
+export function refreshSubagent(chatID: string, _subtaskID: string): void {
+  refreshChatView(chatID);
 }
 
 /** Whether an open subagent tab still names a member of `m`'s group.

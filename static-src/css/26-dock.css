@@ -177,6 +177,80 @@
   border: 1px solid var(--c-accent);
   border-radius: var(--r);
   color: var(--c-text-primary);
+
+  /* THE ANSWER CONTROLS MAY NEVER LEAVE THE VIEWPORT, whatever the agent asked.
+     An unbounded card does not make the page scroll: the bar grows to expose the
+     dock, `.bottom-bar` is `flex-shrink: 0` (19-files.css) and `#chat-area` is
+     `overflow: hidden` (12-chat.css), so the transcript's flex row collapses to
+     zero first and the bar then overflows the bottom of the view and is CLIPPED
+     there, with no scrollbar anywhere in the chain. Measured on a 390x844 phone
+     against a 2,003-character question: the message box, the card's own Send and
+     its Skip were all past the fold, so the reader could neither answer nor
+     dismiss.
+
+     The ceiling sits on the CARD rather than on `.decision-dock` because the
+     tray's `overflow: clip` is load-bearing for the height animation above —
+     `overflow-y` there would override it on that axis and flash a scrollbar over
+     content `pinAndRelease` is mid-morph, and the advancing phase's outgoing card
+     is `position: absolute` inside the tray, so it would contribute scrollable
+     overflow while it leaves.
+
+     `overflow` here is a BACKSTOP rather than the mechanism: the prose regions
+     below give up their height first, so in the ordinary case this box does not
+     scroll at all. Both axes are spelled, because a `visible` sibling axis
+     computes to `auto` and `overflow-y` alone would make every card a horizontal
+     scroller too. */
+  max-block-size: min(55dvh, 30rem);
+  overflow: hidden auto;
+}
+
+/* THE ASK'S PROSE GIVES UP HEIGHT; ITS CONTROLS NEVER DO. That split is what
+   makes the ceiling above safe rather than merely tidy: the reader can always
+   reach Send, and reaching the rest of a long question is a scroll instead of a
+   dead end. The bound mirrors `.dock-file-list` below, whose comment states the
+   same rule for a large turn's file list — the intent had been applied to one card
+   kind of four.
+
+   The block axis is what lets these SHRINK as well as what lets them scroll: a
+   flex item's automatic minimum size is its own content, EXCEPT for a scroll
+   container, whose minimum is 0. So `min-block-size: 0` is not needed beside it —
+   one was written here and measured inert. Both axes are spelled for the reason
+   `.dock-card` states above.
+
+   Shrink is proportional to content, so a card carrying a long question AND a long
+   option list squeezes the question's region hardest; nothing is lost by that,
+   because the region is a scroller and the question inside it is pinned (see
+   `.run-input-question` below). Measured with 10 options at 390px: the question's
+   region 26px scrolling over its four pinned lines, the options 212, the answer box
+   and Skip untouched. */
+.dock-card
+  > :where(
+    .approval-body,
+    .elicitation-body,
+    .run-input-body,
+    .user-input-body,
+    .user-input-options
+  ) {
+  max-block-size: 14rem;
+  overflow: hidden auto;
+}
+
+/* A CONTROL ROW MAY NOT BE WHAT GIVES, and one member needs saying: a `textarea` is
+   a scroll container, so its own automatic minimum is 0 and it would be the first
+   thing to vanish under pressure. Reachable rather than hypothetical — a phone on
+   its long edge puts the ceiling at ~214px against ~308px of content, which is the
+   one shape where these rows are asked to shrink at all. */
+.dock-card
+  > :where(
+    .approval-actions,
+    .elicitation-actions,
+    .elicitation-fields,
+    .run-input-editor,
+    .run-input-actions,
+    .user-input-freeform,
+    .user-input-actions
+  ) {
+  flex: none;
 }
 
 /* A tool permission is a yellow "your turn" ask; an approval and a question
@@ -229,6 +303,36 @@
   gap: var(--sp-1);
 }
 
+/* FOUR lines behind the attribute the opener toggles, the same count and the same
+   reason as `.steer-text` below: this is a region of the bar, and the bar grows
+   UPWARD into the transcript. Not an ellipsis that cuts — the text is clipped by
+   overflow, so the whole question stays in the DOM and `.run-input-more` is what
+   opens it. The clamp is the refinement rather than the guarantee: the card's own
+   ceiling is what keeps the answer row reachable when a reader opens this. */
+.run-input-question[data-clamped] {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* A question is machine-composed text, so it can carry a token no line break
+   fits; wrapping it beats a horizontal scroll the card's own `overflow` clips.
+
+   `flex: none` is what keeps the clamp's promise under pressure. The clamp above
+   declares `overflow: hidden`, which makes this element a scroll container, so its
+   own automatic minimum size is 0 and the squeeze lands HERE — clipping three of
+   the four lines with no scrollbar, because the element absorbed the overflow
+   instead of its region. Measured on a phone in landscape: the question rendered
+   21px, one line, and `.run-input-body` reported nothing to scroll. Pinned, the
+   region overflows and scrolls instead, which is the box that is meant to. */
+.run-input-question,
+.user-input-question {
+  flex: none;
+  overflow-wrap: anywhere;
+}
+
 .run-input-step {
   margin: 0;
   font-size: var(--fs-xs);
@@ -273,6 +377,36 @@
   justify-content: flex-end;
   gap: var(--sp-2);
 }
+
+/* ==========================================================================
+   The user-input card's question, and only that. The rest of its skin is in
+   14-tools.css, where it predates the dock — this is here because the clamp and
+   its opener are the DOCK's rule (the bar grows upward), shared with the
+   run-input card above and with the steer row below.
+   ========================================================================== */
+
+/* A column so the opener sits UNDER the question rather than trailing it inline,
+   matching `.run-input-body`. Deliberately no `align-items`: a `-webkit-box` with
+   no width constraint sizes to max-content, and a clamp with nothing to wrap
+   against clamps nothing. */
+.user-input-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.user-input-question[data-clamped] {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* An option's own description is NOT clamped, and cannot be with this mechanism:
+   `.user-input-option` IS the button, the description is inside it, and a button
+   inside a button is invalid HTML that axe reports as nested-interactive. The
+   options region scrolls instead. */
 
 /* --- Turn approval: the per-action file list --- */
 
@@ -348,10 +482,27 @@
 }
 
 /* Mobile: the dock competes with the keyboard for vertical space, so the file
-   list gives up height first. */
+   list and the ask's prose give up height first. The controls are `flex: none`
+   either way, so what a phone loses is question and option rows a scroll brings
+   back, never the box that answers them. */
 @media (width <= 40rem) {
   .dock-file-list {
     max-height: 8rem;
+  }
+
+  /* 10rem rather than the file list's 8: this cap must clear the COLLAPSED question
+     (four clamped lines, the step line and the opener measure 140px at 390px), or
+     the resting card carries a scrollbar for 11px of overflow — a scroll affordance
+     for content the clamp has already folded away. */
+  .dock-card
+    > :where(
+      .approval-body,
+      .elicitation-body,
+      .run-input-body,
+      .user-input-body,
+      .user-input-options
+    ) {
+    max-block-size: 10rem;
   }
 }
 
@@ -540,10 +691,13 @@
   overflow: hidden;
 }
 
-/* Skinned on `.turn-req-more` (29-turns.css) and `.steer-note-more`
-   (13-messages.css), because all three are one control: a text button that opens
-   a clamp. Aligned left with the message rather than stretched across the row. */
-.steer-more {
+/* Skinned on `.steer-note-more` (13-messages.css) and the exec view's
+   `.ev-in-more`/`.ev-r-more` (31-exec-view.css), because every one is the same
+   control: a text button that opens a clamp. Aligned left with the message rather than stretched across the
+   row. */
+.steer-more,
+.run-input-more,
+.user-input-more {
   align-self: flex-start;
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
@@ -555,11 +709,15 @@
   text-underline-offset: 2px;
 }
 
-.steer-more:hover {
+.steer-more:hover,
+.run-input-more:hover,
+.user-input-more:hover {
   color: var(--c-accent);
 }
 
-.steer-more:focus-visible {
+.steer-more:focus-visible,
+.run-input-more:focus-visible,
+.user-input-more:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
 }
@@ -632,19 +790,6 @@
   opacity: 1;
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
-}
-
-/* Expand the hit target to ~44px on touch without growing the glyph. Gated on the
-   observed tier rather than `@media (pointer: coarse)` for the reason
-   21-shell-panel.css states at length: the query answers for the primary input
-   only, and the size tokens already key on this attribute. `:where()` keeps the
-   gate at zero specificity. */
-:where([data-pointer="coarse"]) {
-  .steer-act::after {
-    content: "";
-    position: absolute;
-    inset: -0.6rem;
-  }
 }
 
 /* ==========================================================================

@@ -6,7 +6,12 @@
 
 import { el } from "@cplieger/reactive";
 
-const DRAG_THRESHOLD_PX = 5;
+/** How far a primary pointer may travel before the strip reads a DRAG rather than
+ *  a tap. One number for the whole strip: it arms the mouse reorder drag here, and
+ *  `tabs.ts` reads it to decide whether a release still activates the row it
+ *  started on. Two thresholds could disagree, and a gesture that is a drag to one
+ *  and a tap to the other both reorders and activates. */
+export const DRAG_THRESHOLD_PX = 5;
 const DRAG_HOLD_MS = 300;
 
 class TabDragController {

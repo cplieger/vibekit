@@ -27,7 +27,7 @@ import (
 // handleRun: GET /api/runs/{workflowId} → one run's full state. Two things happen besides
 // the passthrough: the step sessions in the returned tree are RECORDED, the only recovery
 // path for step-frame attribution after a restart empties that registry mid-run; and a
-// missing VERB is distinguished from a missing RUN.
+// failed read is graded three ways, because 404 is the one the client reads as final.
 func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -47,6 +47,18 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 				map[string]string{"error": "the workflow engine is not available on this kiro-cli build"})
 			return
 		}
+		// A 404 here is a SETTLED answer about the run, and the client spends it as one:
+		// it stops re-reading. So a read that never REACHED the engine may not land in
+		// that arm, and only an *vibekit.RPCError is the engine answering — a bridge that
+		// would not start, a deadline and a dead read loop each say nothing about whether
+		// the run exists, so each is worth another read.
+		if _, answered := errors.AsType[*vibekit.RPCError](err); !answered {
+			slog.Warn("workflow inspect did not reach the engine", "workflow_id", logsafe.Field(id),
+				"error", err, "detail", rpcerr.Details(err))
+			webhttp.WriteJSONStatus(w, http.StatusBadGateway,
+				map[string]string{"error": "the workflow run could not be read"})
+			return
+		}
 		slog.Warn("workflow inspect failed", "workflow_id", logsafe.Field(id),
 			"error", err, "detail", rpcerr.Details(err))
 		httpreply.NotFound(w, "workflow run not found")
@@ -57,7 +69,40 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	// state — the container-restart path, since the ask registry is in memory. The response
 	// stays VERBATIM: the synthesised ask travels on the `run_input_needed` SSE instead.
 	rr.runs.reconcileNeedInput(r.Context(), id, raw)
-	httpreply.WriteRawJSON(w, raw)
+	// AFTER the reconcile, which is what mints a restart-recovered ask: a snapshot taken
+	// first reports none on exactly the run whose question needs finding.
+	out, err := withOpenAsks(raw, rr.runs.asks.SnapshotRun(id))
+	if err != nil {
+		slog.Warn("workflow inspect: the reply could not carry the run's open asks",
+			"workflow_id", logsafe.Field(id), "error", err)
+		httpreply.WriteRawJSON(w, raw)
+		return
+	}
+	httpreply.WriteRawJSON(w, out)
+}
+
+// withOpenAsks splices one top-level `open_asks` key into KAS's own reply. The decode is
+// a map of RAW values, which is what keeps the passthrough forward-tolerant: a top-level
+// key KAS adds later survives, and every nested value stays byte-identical. A nil slice
+// is substituted so the key serialises as [] and never null — an agent reading `null`
+// cannot tell "no open ask" from "this build does not report them".
+func withOpenAsks(raw json.RawMessage, asks []vibekit.RunOpenAsk) (json.RawMessage, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, err
+	}
+	if asks == nil {
+		asks = []vibekit.RunOpenAsk{}
+	}
+	encoded, err := json.Marshal(asks)
+	if err != nil {
+		return nil, err
+	}
+	if obj == nil {
+		obj = make(map[string]json.RawMessage, 1)
+	}
+	obj["open_asks"] = encoded
+	return json.Marshal(obj)
 }
 
 // handleStepTranscript: GET /api/runs/{id}/steps/{path...} → one step's transcript. The
@@ -105,16 +150,24 @@ func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	held := rr.runs.leaseStore().List()
-	out := vibekit.LiveRunsResponse{Runs: make([]vibekit.LiveRun, 0, len(held))}
+	webhttp.WriteJSON(w, vibekit.LiveRunsResponse{Runs: rr.runs.liveRunRows()})
+}
+
+// liveRunRows projects every held lease. ONE projection with TWO doors — this route and
+// the SSE connect handshake — enforced by a shared function rather than a shared type, so
+// the two answers cannot disagree about what a live run IS. Cannot fail: Store.List
+// returns a clone under its own lock.
+func (rs *Runs) liveRunRows() []vibekit.LiveRun {
+	held := rs.leaseStore().List()
+	out := make([]vibekit.LiveRun, 0, len(held))
 	for i := range held {
-		out.Runs = append(out.Runs, vibekit.LiveRun{
+		out = append(out, vibekit.LiveRun{
 			WorkflowID: held[i].WorkflowID,
 			ChatID:     held[i].ChatID,
 			Executing:  held[i].Bounded(),
 		})
 	}
-	webhttp.WriteJSON(w, out)
+	return out
 }
 
 // status reads one run's current status, or "" when the run is unknown, which the caller

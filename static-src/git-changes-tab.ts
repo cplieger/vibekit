@@ -17,7 +17,7 @@ import {
   ICON_REPO_EMPTY,
   ICON_FILTER,
   ICON_GIT_DOWN_ARROW,
-  ICON_WARN_12,
+  ICON_WARN,
 } from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
@@ -34,7 +34,7 @@ import {
 } from "./actions/git-changes.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
-import { gitRepoSkeleton } from "./skeleton.js";
+import { gitRepoSkeleton, paintPlaceholder } from "./skeleton.js";
 import { reconcile } from "./reconcile.js";
 import { openChange } from "./navigate.js";
 import { el } from "@cplieger/reactive";
@@ -89,6 +89,10 @@ interface StatusAllResponse {
 
 let inited = false;
 let lastStatusAll: RepoStatus[] = [];
+/** Whether `status-all` has ANSWERED. `lastStatusAll` initialises to `[]` and the
+ *  empty-state row it paints is unkeyed, so nothing else distinguishes a clean
+ *  worktree from one this client has never read. */
+let statusAnswered = false;
 let filterText = "";
 let refreshGeneration = 0;
 let refreshAbort: AbortController | null = null;
@@ -235,11 +239,6 @@ export function initChangesTab(): void {
   };
   onSSE("turn_ended", debouncedRefresh);
   onSSE("forges_changed", debouncedRefresh);
-
-  // No initial refresh here (EX-1): initGitPanel's onGitTabChange
-  // subscription fires immediately with the current tab, so opening
-  // /git already triggers exactly one refreshChanges(true). A second
-  // call here would only abort that first request's server scan.
 }
 
 /** Force a full /api/git/status-all refresh and repaint. Concurrent
@@ -259,19 +258,10 @@ export async function refreshChanges(doFetch = false): Promise<void> {
   const signal = AbortSignal.any([ctrl.signal, AbortSignal.timeout(15_000)]);
   const url = doFetch ? "/api/git/status-all?fetch=1" : "/api/git/status-all";
 
-  // The mount starts empty and paint() runs only once the request has landed, so
-  // a first load showed nothing at all for its whole duration — and with
-  // `?fetch=1` that is one server-side `git fetch` per repository, which is the
-  // slowest path the tab has. The 150ms show delay keeps a warm refresh from
-  // flashing placeholders, and the signal drops the skeleton for a superseded one.
-  //
-  // THE ARM IS GATED ON THE MOUNT BEING EMPTY, not on a request being in flight,
-  // which matters more here than on the PRs tab: `status-all` is POLLED (SSE
-  // debounce, post-action refreshes, tab activation), so an ungated skeleton would
-  // paint over real content several times a minute. That is `vibekit-ui.md`'s rule
-  // — a skeleton may only paint over an empty container — and `gitChangesSkeleton`
-  // enforces it by reading the mount rather than trusting the caller.
-  const skeleton = skeletonTiming(() => gitChangesSkeleton(), { signal });
+  // Gated on NOT-YET-ANSWERED, not on the container being empty: `status-all` is
+  // polled, so an ungated skeleton would paint over real content several times a
+  // minute, and a CLEAN worktree is an answer rather than an absence.
+  const skeleton = statusAnswered ? null : skeletonTiming(() => gitChangesSkeleton(), { signal });
 
   try {
     const data = await apiGet<StatusAllResponse>(url, signal);
@@ -285,31 +275,22 @@ export async function refreshChanges(doFetch = false): Promise<void> {
       return;
     }
     lastStatusAll = data.repos;
+    statusAnswered = true;
     paint();
   } finally {
-    skeleton.cancel();
+    skeleton?.cancel();
   }
 }
 
-/** Placeholder sections while `status-all` is in flight. Skipped when the mount
- *  already holds keyed rows, so a poll or a manual refresh never flashes
- *  placeholders over real data. Returns the teardown `skeletonTiming` calls. */
+/** Placeholder sections while `status-all` is in flight. Returns the teardown
+ *  `skeletonTiming` calls. */
 function gitChangesSkeleton(): () => void {
-  const root = document.getElementById("git-changes-mount");
-  // Both bail cases in one test: an absent mount answers `undefined` and a
-  // populated one answers an Element, so only an empty mount reaches the paint.
-  if (root?.querySelector("[data-reconcile-key]") !== null) {
-    return () => {
-      /* no mount, or already populated */
-    };
-  }
   // No `label`: this tab issues ONE request, so there is no fan-out count to
   // report and a static line would be chrome that says nothing.
-  const { wrap } = gitRepoSkeleton({ widths: ["38%", "52%", "30%"] });
-  root.replaceChildren(wrap);
-  return () => {
-    wrap.remove();
-  };
+  return paintPlaceholder(document.getElementById("git-changes-mount"), () => {
+    const { wrap } = gitRepoSkeleton({ widths: ["38%", "52%", "30%"] });
+    return wrap;
+  });
 }
 
 /** Pull every repo a fast-forward is safe for, and mark the ones it is not.
@@ -674,7 +655,7 @@ function renderHeaderHTML(r: RepoStatus): string {
     const tipAttr = tip === "" ? "" : ` data-tooltip="${escapeHTML(tip)}"`;
     held =
       ` <span class="git-repo-pull-flag" data-verdict="${escapeHTML(flag.verdict)}"${tipAttr}>` +
-      `${ICON_WARN_12}${escapeHTML(pullHeldWord(flag))}</span>`;
+      `${ICON_WARN}${escapeHTML(pullHeldWord(flag))}</span>`;
   }
   const branch = escapeHTML(r.branch || "(detached)");
   // The branch chip is a span (not a nested button — buttons can't
@@ -700,7 +681,7 @@ function renderHeaderHTML(r: RepoStatus): string {
 function renderPullFlag(f: GitPullResult): HTMLElement {
   const box = el("div", { className: "git-pull-flag-note", "data-verdict": f.verdict });
   const icon = el("span", { className: "git-pull-flag-icon", "aria-hidden": "true" });
-  icon.innerHTML = ICON_WARN_12;
+  icon.innerHTML = ICON_WARN;
   const lead = f.verdict === "failed" ? "Pull failed." : "Not pulled.";
   const detail = f.detail ?? "";
   box.append(

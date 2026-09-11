@@ -304,3 +304,117 @@ func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) 
 			"published somewhere else", state, cur)
 	}
 }
+
+// busyChatIDs is the CHAT's-own-turn population, which is a different set from
+// hasOpenTurn's: it excludes a workflow STEP turn on purpose, because a step's own frames
+// latch nothing on any client, so the launching chat must be in the RETRACTED set.
+func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
+	busySet := func(t *testing.T, r *turnRegistry) map[vibekit.ChatID]bool {
+		t.Helper()
+		out := map[vibekit.ChatID]bool{}
+		for _, id := range r.busyChatIDs() {
+			out[id] = true
+		}
+		return out
+	}
+
+	t.Run("a prompt turn is busy", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+		t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
+		if !busySet(t, h.coord.turns)["c1"] {
+			t.Error("a chat running its own prompt turn is absent from busy_chats, so a " +
+				"reconnect would retract `thinking` under a live turn")
+		}
+	})
+
+	t.Run("a prime turn is NOT busy", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrime)
+		t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
+		if busySet(t, h.coord.turns)["c1"] {
+			t.Error("a prime turn names its chat busy; its frames are vibekit's own " +
+				"transcript replay and latch nothing on any client")
+		}
+	})
+
+	t.Run("a workflow STEP turn is NOT busy", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceWorkflowStep)
+		t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
+		if busySet(t, h.coord.turns)["c1"] {
+			t.Error("a workflow step names its launching chat busy, so the retraction is " +
+				"withheld from exactly the population it was designed to reach")
+		}
+	})
+
+	t.Run("a prompt-class reservation with no Turn minted is busy", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrompt) {
+			t.Fatal("a fresh chat refused a prompt reservation")
+		}
+		t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+		if !busySet(t, h.coord.turns)["c1"] {
+			t.Error("a chat whose prompt is admitted but whose Turn is not minted is absent " +
+				"from busy_chats: the negative statement is incomplete for the admission window")
+		}
+	})
+
+	t.Run("a PRIME reservation is NOT busy", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrime) {
+			t.Fatal("a fresh chat refused a prime reservation")
+		}
+		t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+		if busySet(t, h.coord.turns)["c1"] {
+			t.Error("a prime reservation names its chat busy")
+		}
+	})
+
+	// THE COLD-SPAWN SHAPE, asserted from this door as well as from hasOpenTurn's: the
+	// open turn is the prime and the reservation beside it is the prompt's.
+	t.Run("an open prime with a prompt reservation beside it is busy", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrompt) {
+			t.Fatal("a fresh chat refused a prompt reservation")
+		}
+		t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+		epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrime)
+		t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
+		if !busySet(t, h.coord.turns)["c1"] {
+			t.Error("a prime running over an admitted prompt is absent from busy_chats")
+		}
+	})
+
+	// A SETTLED chat is the whole point of the negative statement: it is what the client
+	// retracts against. ReleaseTurn drops the completion handle and leaves the turn open,
+	// so the turn has to be finalized for the chat to be idle.
+	t.Run("a settled chat is not busy", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+		turn, won := h.coord.turns.claimOpen(t.Context(), "c1")
+		if !won {
+			t.Fatal("claimOpen lost the claim on a freshly opened turn")
+		}
+		h.coord.turns.finish(turn, vibekit.TurnResult{})
+		if busySet(t, h.coord.turns)["c1"] {
+			t.Error("a settled chat is still named busy, so the client never retracts")
+		}
+	})
+}
+
+// A shell reservation reaches this door too, from the one predicate both doors read.
+func TestBusyChatIDs_NamesAnAdmittedShellCommand(t *testing.T) {
+	h, _, _ := newTestHub()
+	if !h.coord.TryReserveTurn("c1", vibekit.TurnSourceLocalShell) {
+		t.Fatal("a fresh chat refused a shell reservation")
+	}
+	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+
+	for _, id := range h.coord.turns.busyChatIDs() {
+		if id == "c1" {
+			return
+		}
+	}
+	t.Error("a chat holding a shell reservation is absent from busy_chats")
+}

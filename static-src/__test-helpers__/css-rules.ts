@@ -45,12 +45,11 @@ export function loadCSS(name: string): string {
   return hit;
 }
 
-/** The shipped stylesheet, assembled from `css/MANIFEST` in declared order the
- *  way `cmd/bundle` concatenates it — which is the cascade, since equal-
- *  specificity ties in this app are decided by that order rather than by the
- *  selectors. Reading the built `static/style.css` instead would test a
- *  gitignored artifact that need not exist. */
-function appCSS(): string {
+/** Every stylesheet `css/MANIFEST` declares, in declared order, each with its text.
+ *  The manifest is READ rather than restated, so a sheet added to the bundle joins
+ *  a sweep with no test edit — which is what a closed-list guard needs, and the
+ *  reason this is exported beside the concatenated form below. */
+export function manifestSheets(): { name: string; css: string }[] {
   const names = manifest
     .split("\n")
     .map((l) => l.trim())
@@ -62,7 +61,18 @@ function appCSS(): string {
 
   const missing = names.filter((n) => text(n) === undefined);
   expect(missing, "every MANIFEST entry resolves to a stylesheet").toEqual([]);
-  return names.map((n) => text(n)).join("\n");
+  return names.map((n) => ({ name: n, css: text(n) ?? "" }));
+}
+
+/** The shipped stylesheet, assembled from `css/MANIFEST` in declared order the
+ *  way `cmd/bundle` concatenates it — which is the cascade, since equal-
+ *  specificity ties in this app are decided by that order rather than by the
+ *  selectors. Reading the built `static/style.css` instead would test a
+ *  gitignored artifact that need not exist. */
+function appCSS(): string {
+  return manifestSheets()
+    .map((s) => s.css)
+    .join("\n");
 }
 
 /** Install the shipped stylesheet into the test page, for a suite that measures

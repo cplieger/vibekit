@@ -24,7 +24,19 @@ vi.mock("../run-store.js", () => ({
   noteRunLive: vi.fn(),
   noteRunSettled: vi.fn(),
   hasLiveRunForChat: vi.fn(() => false),
+  // The chat-parented discriminator, and the handler's ONLY input for it: a
+  // non-empty answer both says the run was launched from a conversation and names
+  // it. `""` is the parentless population.
+  runChatID: vi.fn(() => "c1"),
 }));
+// The single owner of what Send means. Mocked because the deferral's own contract
+// is which CHAT the prompt reaches and what it says, not how a prompt becomes a
+// turn; `vi.hoisted` because the factory is lifted above these consts and this
+// file imports the value back to assert on it.
+const { mockSubmitPrompt } = vi.hoisted(() => ({
+  mockSubmitPrompt: vi.fn(async (): Promise<"sent" | "steered" | "failed"> => "sent"),
+}));
+vi.mock("../submit.js", () => ({ submitPrompt: mockSubmitPrompt }));
 // The launching chat's own liveness, for the orphan sweep's two gates. Mocked
 // because what this suite pins is WHEN the sweep fires, not how a chat comes to
 // be thinking.
@@ -64,6 +76,7 @@ import {
   noteRunLive,
   noteRunSettled,
   hasLiveRunForChat,
+  runChatID,
 } from "../run-store.js";
 import { isThinking } from "../store.js";
 import { trackRun } from "../run-dots.js";
@@ -95,6 +108,7 @@ const dropAsks = vi.mocked(dropRunAsks);
 const sweepOrphans = vi.mocked(dropTurnDecisions);
 const chatThinking = vi.mocked(isThinking);
 const siblingRunLive = vi.mocked(hasLiveRunForChat);
+const launchingChat = vi.mocked(runChatID);
 const answer = vi.mocked(answerRunInput.dispatch);
 const waive = vi.mocked(continueRunStep.dispatch);
 const notify = vi.mocked(notifyIfHidden);
@@ -132,6 +146,10 @@ beforeEach(() => {
   chatThinking.mockReturnValue(false);
   siblingRunLive.mockReset();
   siblingRunLive.mockReturnValue(false);
+  launchingChat.mockReset();
+  launchingChat.mockReturnValue("c1");
+  mockSubmitPrompt.mockClear();
+  mockSubmitPrompt.mockResolvedValue("sent");
   answer.mockClear();
   waive.mockClear();
   notify.mockClear();
@@ -308,6 +326,20 @@ describe("run SSE handlers", () => {
     send("run_finished", { workflow_id: "wf_pause", status: "paused" });
     expect(noteSettled).not.toHaveBeenCalled();
     expect(noteLive).toHaveBeenCalledWith("wf_pause", "c1", false);
+  });
+
+  // The PARK's own read, counted rather than timed. A chat row's workflow mark paints
+  // from `row.executing` while the cell is absent, so an EXECUTING run costs ZERO
+  // responses before its square appears (`chat-run-dots.test.ts` pins that half). A
+  // park has no floor — the flag is the very thing that just went false — so the only
+  // thing that can say `waiting` rather than nothing is this frame's own re-read, and
+  // that is ONE request. The two cases above cover a run that ENDED; this is the arm
+  // that stays live, and moving the read into the terminal branch would leave a parked
+  // run's mark withheld until some other reader happened to fetch it.
+  it("still issues the one read a PARKED run's mark waits on", () => {
+    send("run_finished", { workflow_id: "wf_pause", status: "paused" });
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith("wf_pause");
   });
 
   // The dock's queue is the third thing a terminal finish has to release. A run's
@@ -545,6 +577,7 @@ describe("a step's question", () => {
     runID?: string;
     askID: string;
     submit: (text: string | null) => void;
+    defer?: () => void | Promise<void>;
   }
 
   function ask(over: Record<string, unknown> = {}, chatID = "c1"): AskDecision {
@@ -604,6 +637,23 @@ describe("a step's question", () => {
     expect(noteChat).toHaveBeenCalledWith("wf_1", "run:wf_1");
   });
 
+  // The ask is also the moment a client that missed every lifecycle frame learns the
+  // run exists, so the inventory has to hear about it — PARKED, because a run waiting
+  // on a person writes nothing and `hasExecutingRunForChat` is an eviction exemption.
+  it("notes the run live and PARKED, so the eviction exemption keeps answering no", () => {
+    ask();
+    expect(noteLive).toHaveBeenCalledWith("wf_1", "c1", false);
+    expect(noteSettled).not.toHaveBeenCalled();
+  });
+
+  it("notes a parentless run's ask against no chat at all, not the synthetic key", () => {
+    // The row still belongs in the inventory (its own tab dot reads it), and
+    // `runChatID` is what keeps `run:<workflowId>` out of the chat field.
+    launchingChat.mockReturnValue("");
+    ask({}, "run:wf_1");
+    expect(noteLive).toHaveBeenCalledWith("wf_1", "", false);
+  });
+
   it("pushes a notification, because this ask blocks a run indefinitely", () => {
     ask();
     expect(notify).toHaveBeenCalledWith("Vibekit", "A workflow step is waiting for your answer");
@@ -632,6 +682,58 @@ describe("a step's question", () => {
     ask().submit(null);
     expect(waive).toHaveBeenCalledWith({ workflowID: "wf_1", nodeID: "review" });
     expect(answer).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Deferring the question to the agent that launched the run. The prompt has to
+  // reach the LAUNCHING CHAT — the run id addresses the run, not a conversation —
+  // and it carries the two routes rather than the question, because the reader
+  // deferred precisely so as not to read it.
+  // -------------------------------------------------------------------------
+  describe("deferring to the launching agent", () => {
+    it("prompts the LAUNCHING chat and names the run, not the question", async () => {
+      const d = ask();
+      await d.defer?.();
+
+      expect(mockSubmitPrompt).toHaveBeenCalledTimes(1);
+      const [chat, text] = mockSubmitPrompt.mock.calls[0] as unknown as [string, string];
+      // The run id would address the run to nobody: a prompt is delivered to a chat.
+      expect(chat).toBe("c1");
+      expect(text).toContain("wf_1");
+      // Neither the ask id (opaque, and long) nor the question, which is the thing
+      // the reader handed over rather than read.
+      expect(text).not.toContain("notify:7");
+      expect(text).not.toContain("Ship it?");
+      // The two routes, so the agent can act on it without being told how.
+      expect(text).toContain("GET /api/runs/wf_1");
+      expect(text).toContain("POST /api/runs/wf_1/answer");
+      // And the body's two field NAMES, quoted as they appear in the JSON, because
+      // they are unguessable: an agent reaching for `answer` instead of `text` spends
+      // a 400 on a hand-off someone is waiting on. Quoted rather than bare, or the
+      // word "text" alone would pass on prose that never names the field.
+      expect(text).toContain('"ask_id"');
+      expect(text).toContain('"text"');
+    });
+
+    it("carries NO deferral for a parentless run, which has no agent to ask", () => {
+      // `runChatID` answering "" is the whole discriminator: noteRunChat refuses the
+      // synthetic `run:` key, so a run nothing launched from a conversation has no
+      // chat to prompt and the card must not offer the button at all.
+      launchingChat.mockReturnValue("");
+      const d = ask({}, "run:wf_1");
+      expect(d.defer).toBeUndefined();
+      // The property is ABSENT rather than undefined, which is what the card reads.
+      expect("defer" in d).toBe(false);
+    });
+
+    it("throws on a refusal, so the card hands its button back", () => {
+      // submit.ts returns "failed" rather than throwing and reports the refusal
+      // through send-state, so the throw is what the card's failure arm needs and no
+      // toast is owed here.
+      mockSubmitPrompt.mockResolvedValue("failed");
+      const d = ask();
+      return expect(d.defer?.()).rejects.toThrow(/wf_1/);
+    });
   });
 
   it("retires the card on the settle frame", () => {

@@ -7,7 +7,7 @@
 // which runs it shows (the scope decision), what state it claims for each, where a
 // click goes, and that it advances its clock without refetching.
 //
-// The store is REAL. `apiGet` is stubbed per run id so `invalidateRun` resolves
+// The store is REAL. The run read is stubbed per run id so `invalidateRun` resolves
 // into the cells the bar reads, which is the same edge the transcript's own suites
 // mock. `run-view.js` is replaced so the click's destination is assertable without
 // dragging the exec page into the graph.
@@ -45,24 +45,34 @@ vi.mock("./run-view.js", () => ({
 const announce = vi.hoisted(() => vi.fn());
 vi.mock("@cplieger/ui-primitives/announce", () => ({ announce }));
 
-/** Per-run inspect answers, consulted by the stubbed `apiGet`. A run absent from
- *  this map answers null, which is the honest "nothing fetched yet" case. */
+/** Per-run inspect answers, consulted by the stubbed run read. A run absent from
+ *  this map answers a failed read, which is the honest "nothing fetched yet" case. */
 const inspect = new Map<string, unknown>();
 vi.mock("./api-client.js", async () => ({
   ...(await vi.importActual<Record<string, unknown>>("./api-client.js")),
-  apiGet: vi.fn((path: string) => {
+  // The OrError variant: the store spends a failed read's STATUS, so a run this map
+  // does not name answers 0 — no request — rather than the settled 404 that would
+  // skip its retry ladder.
+  apiGetOrError: vi.fn((path: string) => {
     const hit = /^\/api\/runs\/([^/?]+)$/.exec(path);
     if (hit !== null) {
       const id = decodeURIComponent(hit[1] ?? "");
       const state = inspect.get(id);
-      // CLONED per call, because the real `apiGet` parses fresh JSON: handing the
-      // same object back twice makes the run cell's signal dedupe by identity, and
-      // the refetch cases below would then pass with no re-render to protect.
+      // CLONED per call, because the real read parses fresh JSON: handing the same
+      // object back twice makes the run cell's signal dedupe by identity, and the
+      // refetch cases below would then pass with no re-render to protect.
       return Promise.resolve(
-        state === undefined ? null : { workflowId: id, state: structuredClone(state) },
+        state === undefined
+          ? { ok: false, status: 0, data: null, error: "" }
+          : {
+              ok: true,
+              status: 200,
+              data: { workflowId: id, state: structuredClone(state) },
+              error: "",
+            },
       );
     }
-    return Promise.resolve(null);
+    return Promise.resolve({ ok: false, status: 0, data: null, error: "" });
   }),
 }));
 
@@ -70,7 +80,7 @@ const { initRunBar, _resetRunBarForTest } = await import("./run-bar.js");
 const { noteRunLive, noteRunSettled } = await import("./run-store.js");
 const { setSessions, setActive } = await import("./store.js");
 const { pushDecision, dropDecisions } = await import("./decision-dock.js");
-const { apiGet } = await import("./api-client.js");
+const { apiGetOrError } = await import("./api-client.js");
 
 const bar = document.getElementById("run-bar") as HTMLUListElement;
 
@@ -149,7 +159,7 @@ beforeEach(() => {
   inspect.clear();
   openRunView.mockClear();
   announce.mockClear();
-  vi.mocked(apiGet).mockClear();
+  vi.mocked(apiGetOrError).mockClear();
   initRunBar();
 });
 
@@ -399,14 +409,14 @@ describe("the run bar", () => {
       await activate(c);
       const before = rowText(".run-bar-clock")[0];
       expect(before).not.toBe("");
-      const fetches = vi.mocked(apiGet).mock.calls.length;
+      const fetches = vi.mocked(apiGetOrError).mock.calls.length;
 
       // The 1s interval is `messages-blocks.ts`'s, shared with the transcript's
       // cards; the bar joins it as a holder rather than starting one of its own.
       vi.advanceTimersByTime(2000);
 
       expect(rowText(".run-bar-clock")[0]).not.toBe(before);
-      expect(vi.mocked(apiGet).mock.calls.length).toBe(fetches);
+      expect(vi.mocked(apiGetOrError).mock.calls.length).toBe(fetches);
     } finally {
       vi.useRealTimers();
     }

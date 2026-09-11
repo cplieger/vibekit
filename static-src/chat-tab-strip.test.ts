@@ -13,6 +13,9 @@
 // ---------------------------------------------------------------------------
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// Type-only, for the `importOriginal` below.
+import type * as Skeleton from "./skeleton.js";
+
 const h = vi.hoisted(() => ({
   renameTab: vi.fn(),
   setTabStatus: vi.fn(),
@@ -71,7 +74,10 @@ vi.mock("./store-load.js", () => ({
 }));
 vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
 vi.mock("./submit.js", () => ({ submitPrompt: vi.fn() }));
-vi.mock("./skeleton.js", () => ({ chatSkeleton: vi.fn(() => document.createElement("div")) }));
+vi.mock("./skeleton.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Skeleton>()),
+  chatSkeleton: vi.fn(() => document.createElement("div")),
+}));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({
   skeletonTiming: vi.fn(() => ({ commit: vi.fn(), cancel: vi.fn() })),
 }));
@@ -115,10 +121,15 @@ import { installStoreSubscribers } from "./chat.js";
 import { setSessions, setActive, setThinking, setName, setTurnDone } from "./store.js";
 import type { Session } from "./types.js";
 
+/** The fixture's `ChatHeader.updated_at`, which the row effect forwards to
+ *  `setTabStatus` as the age its outcome phrase renders. */
+const UPDATED_AT = 1_700_000_000_000;
+
 function session(id: string, over: Partial<Session> = {}): Session {
   return {
     id,
     name: `Chat ${id}`,
+    updated_at: UPDATED_AT,
     model: "auto",
     acp_session_id: "",
     current_mode_id: "",
@@ -172,7 +183,7 @@ describe("per-row effects write only their own row", () => {
 
     setThinking("a", true);
 
-    expect(h.setTabStatus.mock.calls).toEqual([["tb_a", "working"]]);
+    expect(h.setTabStatus.mock.calls).toEqual([["tb_a", "working", UPDATED_AT]]);
     expect(h.renameTab.mock.calls).toEqual([["tb_a", "Chat a"]]);
     expect(h.setTabTooltip.mock.calls).toEqual([["tb_a", ""]]);
   });
@@ -203,8 +214,8 @@ describe("per-row effects write only their own row", () => {
 
     // The dock's version signal is global, so BOTH row effects re-run — but the
     // pending ask lands on a's dot only, and b repaints its unchanged state.
-    expect(h.setTabStatus).toHaveBeenCalledWith("tb_a", "input");
-    expect(h.setTabStatus).not.toHaveBeenCalledWith("tb_b", "input");
+    expect(h.setTabStatus).toHaveBeenCalledWith("tb_a", "input", UPDATED_AT);
+    expect(h.setTabStatus).not.toHaveBeenCalledWith("tb_b", "input", UPDATED_AT);
   });
 
   // The other direction, and the one a mapping test structurally cannot see: the
@@ -226,8 +237,8 @@ describe("per-row effects write only their own row", () => {
     h.dockVersion.value = h.dockVersion.value + 1;
 
     expect(h.setTabStatus.mock.calls).toEqual([
-      ["tb_a", "done"],
-      ["tb_b", "idle"],
+      ["tb_a", "done", UPDATED_AT],
+      ["tb_b", "idle", UPDATED_AT],
     ]);
   });
 });
@@ -242,7 +253,7 @@ describe("row-effect lifecycle follows the tab projection", () => {
     h.openRefs.value = ["a"];
 
     expect(h.renameTab.mock.calls).toEqual([["tb_a", "Chat a"]]);
-    expect(h.setTabStatus.mock.calls).toEqual([["tb_a", "working"]]);
+    expect(h.setTabStatus.mock.calls).toEqual([["tb_a", "working", UPDATED_AT]]);
     expect(h.setTabTooltip.mock.calls).toEqual([["tb_a", ""]]);
   });
 
@@ -269,7 +280,7 @@ describe("row-effect lifecycle follows the tab projection", () => {
 
     setSessions([session("a")]);
 
-    expect(h.setTabStatus.mock.calls).toEqual([["tb_a", "idle"]]);
+    expect(h.setTabStatus.mock.calls).toEqual([["tb_a", "idle", UPDATED_AT]]);
   });
 
   it("a second install replaces the first: one flip still writes once", () => {
@@ -281,7 +292,7 @@ describe("row-effect lifecycle follows the tab projection", () => {
 
     setThinking("a", true);
 
-    expect(h.setTabStatus.mock.calls).toEqual([["tb_a", "working"]]);
+    expect(h.setTabStatus.mock.calls).toEqual([["tb_a", "working", UPDATED_AT]]);
   });
 });
 

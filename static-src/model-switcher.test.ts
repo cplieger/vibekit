@@ -143,13 +143,28 @@ function model(id: string, dflt?: string): ModelInfo {
   };
 }
 
-/** Open the card and return the tier ids it rendered, in order. The ticks ARE the
- *  rendered vocabulary — one per tier the session offers. */
-function openCard(): string[] {
+/** Open the card. Nothing draws the tiers, so the vocabulary reaches the DOM as the
+ *  slider's ARIA range plus the tier the knob names; hence the two readers below. */
+function openCard(): void {
   onExpand.fn?.();
-  return [...document.querySelectorAll<HTMLElement>(".effort-tick")].map(
-    (t) => t.dataset["level"] ?? "",
-  );
+}
+
+/** How many tiers the card rendered, off the ARIA range. */
+function tierCount(): number {
+  openCard();
+  return Number(knob().getAttribute("aria-valuemax")) + 1;
+}
+
+/** The tier ids at the two ends of the range — a count cannot say WHICH four. The
+ *  walk dispatches and leaves the knob at the top tier, so callers re-open the card
+ *  afterwards through `markedTier` rather than relying on order. */
+async function tierEnds(): Promise<readonly [string, string]> {
+  openCard();
+  knob().focus();
+  await userEvent.keyboard("{Home}");
+  const low = knob().dataset["level"] ?? "";
+  await userEvent.keyboard("{End}");
+  return [low, knob().dataset["level"] ?? ""] as const;
 }
 
 /** The slider, after opening the card. One tab stop, so one `role="slider"`. */
@@ -163,16 +178,17 @@ function knob(): HTMLElement {
  *  announces on: one function writes the position, `aria-valuenow` and
  *  `aria-valuetext` together, so a disagreement here is that rule breaking. */
 function markedTier(): string {
-  const tiers = openCard();
+  openCard();
   const k = knob();
-  const id = k.dataset["level"] ?? "";
-  expect(k.getAttribute("aria-valuenow")).toBe(String(tiers.indexOf(id)));
+  const now = Number(k.getAttribute("aria-valuenow"));
+  const max = Number(k.getAttribute("aria-valuemax"));
   expect(k.getAttribute("aria-valuemin")).toBe("0");
-  expect(k.getAttribute("aria-valuemax")).toBe(String(Math.max(0, tiers.length - 1)));
+  expect(now, "the reported index is inside the reported range").toBeGreaterThanOrEqual(0);
+  expect(now).toBeLessThanOrEqual(max);
   expect(k.getAttribute("aria-valuetext"), "the announced tier is the word the caption names").toBe(
     document.querySelector(".effort-value")?.textContent ?? "",
   );
-  return id;
+  return k.dataset["level"] ?? "";
 }
 
 /** Open the card, focus the knob, then send `keys` in order. A sequence has to run
@@ -242,7 +258,7 @@ describe("the effort section", () => {
     expect(markedTier()).toBe("low");
   });
 
-  it("renders the tiers the session offers, not a fixed five", () => {
+  it("renders the tiers the session offers, not a fixed five", async () => {
     cachedModels = [model("sonnet-5")];
     setSession({
       id: "c1",
@@ -254,11 +270,12 @@ describe("the effort section", () => {
       effort_levels: [{ id: "low" }, { id: "medium" }, { id: "high" }, { id: "max" }],
     });
 
-    expect(openCard()).toEqual(["low", "medium", "high", "max"]);
+    expect(tierCount()).toBe(4);
+    await expect(tierEnds()).resolves.toEqual(["low", "max"]);
     expect(markedTier()).toBe("medium");
   });
 
-  it("rebuilds the tiers when the session's vocabulary changes", () => {
+  it("rebuilds the tiers when the session's vocabulary changes", async () => {
     cachedModels = [model("opus-4.7"), model("sonnet-5")];
     setSession({
       id: "c1",
@@ -267,7 +284,7 @@ describe("the effort section", () => {
       effort_active: "xhigh",
       effort_levels: fiveTiers(),
     });
-    expect(openCard()).toHaveLength(5);
+    expect(tierCount()).toBe(5);
 
     setSession({
       id: "c1",
@@ -277,11 +294,12 @@ describe("the effort section", () => {
       effort_levels: [{ id: "low" }, { id: "medium" }, { id: "high" }, { id: "max" }],
     });
 
-    expect(openCard()).toEqual(["low", "medium", "high", "max"]);
+    expect(tierCount()).toBe(4);
+    await expect(tierEnds()).resolves.toEqual(["low", "max"]);
     expect(markedTier()).toBe("medium");
   });
 
-  it("uses the pre-session catalog and the model default when no session catalog exists", () => {
+  it("uses the pre-session catalog and the model default when no session catalog exists", async () => {
     // A chat with no bridge: its header carries no tiers, so the template's
     // vocabulary is the only one available, and the model's own default is the
     // only evidence of a level.
@@ -289,17 +307,18 @@ describe("the effort section", () => {
     cachedModels = [model("opus-4.7", "high")];
     setSession({ id: "c1", model: "opus-4.7", effort: "" });
 
-    expect(openCard()).toEqual(["low", "high"]);
+    expect(tierCount()).toBe(2);
+    await expect(tierEnds()).resolves.toEqual(["low", "high"]);
     // The MODEL's default beats the template's currentValue: the template's is
     // the default model's level, and this chat is on another model.
     expect(markedTier()).toBe("high");
   });
 
-  it("falls back to the canonical five when nothing has landed yet", () => {
+  it("falls back to the canonical five when nothing has landed yet", async () => {
     cachedModels = [model("older")];
     setSession({ id: "c1", model: "older", effort: "" });
 
-    expect(openCard()).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(tierCount()).toBe(5);
     // The RESOLUTION still answers "" here — no level was advertised by any
     // source, and `effort.test.ts` is where that is pinned. A slider is always
     // somewhere, so the DOM cannot express it: the knob sits on the lowest tier,
@@ -307,6 +326,9 @@ describe("the effort section", () => {
     // consequence is recorded rather than hidden — in this one state
     // `#ctx-effort-pill` withholds itself while the knob names tier 0.
     expect(markedTier()).toBe("low");
+    // Last, because the walk leaves the knob at the top tier and this is the one case
+    // where re-opening cannot rewind it: no source advertised a level to re-apply.
+    await expect(tierEnds()).resolves.toEqual(["low", "max"]);
   });
 
   it("labels a tier by the catalog's name, else the house table", async () => {
@@ -319,7 +341,8 @@ describe("the effort section", () => {
       effort_levels: [{ id: "low", name: "Low effort" }, { id: "xhigh" }],
     });
 
-    expect(openCard()).toEqual(["low", "xhigh"]);
+    expect(tierCount()).toBe(2);
+    openCard();
     // The house table's rung, on the tier in force.
     expect(knob().getAttribute("aria-valuetext")).toBe("x-high");
     // The catalog's own name, on the other one.

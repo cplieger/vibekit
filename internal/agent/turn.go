@@ -461,8 +461,22 @@ func (r *turnRegistry) hasOpenTurn(chatID vibekit.ChatID) bool {
 	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	facts, open := lc.openFactsLocked()
-	return open && facts.Source != vibekit.TurnSourcePrime
+	// An open turn that is not a PRIME is the plain answer.
+	if facts, open := lc.openFactsLocked(); open && facts.Source != vibekit.TurnSourcePrime {
+		return true
+	}
+	// A prompt the server has ADMITTED but not yet minted a Turn for is a turn in
+	// flight from every client's point of view: the user row is already persisted and
+	// broadcast, `thinking` is already latched, and StartTurn is one bridge-spawn away.
+	// Answering false here made `turn_open: false` mean two different things and forced
+	// the client to guess between them.
+	//
+	// Read SECOND rather than first, which is not a style choice: during the prime
+	// window the OPEN turn is the prime and the reservation beside it is the prompt's
+	// (holderSourceLocked says so), so returning from the branch above whenever any turn
+	// is open would answer false for the whole cold-spawn window — the longest part of
+	// the very window this exists to close. An open prompt turn still short-circuits.
+	return lc.reserved && lc.reservedSource.ClientVisibleTurn()
 }
 
 // openTurnFacts is what a chat's open turn IS, taken in ONE acquisition: two reads
@@ -520,6 +534,46 @@ func (r *turnRegistry) openTurns() map[vibekit.ChatID]openTurnFacts {
 		lc.mu.Unlock()
 		if open {
 			out[id] = facts
+		}
+	}
+	return out
+}
+
+// busyChatIDs is every chat with a turn in flight that is the CHAT's OWN, which is the
+// only population a client's stale-`thinking` retraction may be withheld from.
+//
+// Its own walk rather than a filter over openTurns, for three reasons and the third is
+// why it cannot be a filter at all. A PRIME turn is vibekit's transcript replay —
+// replayTurnState and hasOpenTurn exclude it for the same reason. A WORKFLOW-STEP turn is
+// the run's work: the client skips a `wf:` subtask id, so a step's own frames latch
+// nothing, and naming its launching chat busy would withhold the retraction from exactly
+// the population the stuck-purple defect lives in — such a chat is therefore in the
+// retracted set, which is correct, because whatever set `thinking` there was not the step
+// and a live subagent re-latches on its next chunk. And a held prompt-class RESERVATION
+// has no Turn record, so an open-turn read cannot see it — the same window hasOpenTurn
+// counts a reservation for. Answering false there would make this list an incomplete
+// negative statement while the connect frame promises a complete one.
+//
+// Lock order is registry.mu -> lifecycle.mu, matching openTurns.
+//
+// One consequence stated: this is a DIFFERENT set from turn_open's, which counts a step
+// turn. The two do not feed one client field.
+func (r *turnRegistry) busyChatIDs() []vibekit.ChatID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]vibekit.ChatID, 0, len(r.chats))
+	for id, lc := range r.chats {
+		lc.mu.Lock()
+		facts, open := lc.openFactsLocked()
+		// PROMPT-CLASS only, matching hasOpenTurn: a prime's reservation is vibekit's
+		// own replay and latches nothing on any client.
+		reserved := lc.reserved && lc.reservedSource.ClientVisibleTurn()
+		lc.mu.Unlock()
+		ownTurn := open &&
+			facts.Source != vibekit.TurnSourcePrime &&
+			facts.Source != vibekit.TurnSourceWorkflowStep
+		if reserved || ownTurn {
+			out = append(out, id)
 		}
 	}
 	return out

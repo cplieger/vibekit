@@ -17,6 +17,15 @@ import {
 
 const ATTR = "data-pointer";
 
+/** The THIRD tier state, a second attribute beside `data-pointer` on <html>. It
+ *  means "this screen has been touched at least once and the reader has not
+ *  pinned a tier", and 01-tokens.css spends it on `--hit-floor` ALONE — targets
+ *  grow through the floor's zero-specificity `min-*` rules, so no painted box or
+ *  glyph moves. It exists because the tier is a single choice made once per load
+ *  and a hybrid device is genuinely both: a Windows touchscreen laptop driven by
+ *  its mouse wants the dense layout AND a finger-sized target. */
+const ATTR_TOUCHED = "data-touched";
+
 /** A pen is COARSE: a stylus on a touchscreen has no hover and its target wants
  *  finger-sized affordances, whatever its pixel precision. */
 function tierFor(pointerType: string): PointerTier {
@@ -65,6 +74,20 @@ function applyTier(tier: PointerTier): void {
   document.documentElement.setAttribute(ATTR, tier);
 }
 
+/** Write or clear the third-tier flag. Guarded for `applyTier`'s reason: an
+ *  attribute write on <html> forces a style recalc, a compare does not. */
+function applyTouched(on: boolean): void {
+  const has = document.documentElement.hasAttribute(ATTR_TOUCHED);
+  if (has === on) {
+    return;
+  }
+  if (on) {
+    document.documentElement.setAttribute(ATTR_TOUCHED, "");
+  } else {
+    document.documentElement.removeAttribute(ATTR_TOUCHED);
+  }
+}
+
 /** Kept so a repeat init detaches its listener rather than stacking a second. */
 let observer: ((e: PointerEvent) => void) | null = null;
 /** The last tier WRITTEN, so a steady mouse costs a compare, not a storage write. */
@@ -105,6 +128,17 @@ export function initPointerTier(opts: InitOptions = {}): void {
   }
   coarseAnnounced = seen;
   recorded = cachedPointerTier();
+
+  // THE FLAG IS WRITTEN HERE AND NOWHERE ELSE, which is what preserves the
+  // freeze: `seen` is a fact from a PREVIOUS load, so nothing re-lays-out under
+  // the reader mid-session. The `observe` callback below must never touch it.
+  //
+  // A STATED CHOICE OUTRANKS EVERY OBSERVATION, so a reader who touched once and
+  // then PINNED a tier via the sidebar toggle gets no floor from this: rung 1 of
+  // `resolveTier` is a preference, and raising the floor to 44px anyway would
+  // overturn the dense layout they asked for. A `coarse` choice needs no flag
+  // either — that arm already declares the same floor.
+  applyTouched(seen && pointerModeChoice() === null);
 
   const observe = (e: PointerEvent): void => {
     const tier = tierFor(e.pointerType);

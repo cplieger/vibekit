@@ -27,7 +27,7 @@ import { apiGetTyped, CancellableSlot, type Decoder } from "./api-client.js";
 import { decodeEffectiveSettings } from "./wire/decoders.gen.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { addKnowledge, removeKnowledge } from "./actions/knowledge.js";
-import { ICON_PLUS_16, ICON_TRASH_14 } from "./icons.js";
+import { ICON_PLUS_UI, ICON_TRASH_UI } from "./icons.js";
 import { asObject, decodeArray, optBool, optStr, reqNum, reqStr } from "./validators.js";
 
 // --- Wire type + decoder (matches internal/hub/knowledge.go knowledgeContext) ---
@@ -337,7 +337,7 @@ function removeBtn(name: string): HTMLElement {
     "data-tooltip": "Remove",
     "aria-label": `Remove knowledge base ${name}`,
   }) as HTMLButtonElement;
-  btn.innerHTML = ICON_TRASH_14;
+  btn.innerHTML = ICON_TRASH_UI;
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     void onRemove(name);
@@ -440,7 +440,7 @@ function hideAddForm(): void {
 
 export function initKnowledge(): void {
   const addBtn = byId<HTMLButtonElement>("knowledge-add-btn");
-  addBtn.innerHTML = ICON_PLUS_16;
+  addBtn.innerHTML = ICON_PLUS_UI;
 
   const form = buildAddForm();
   byId<HTMLDivElement>("knowledge-list").before(form);

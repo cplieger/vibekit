@@ -98,3 +98,79 @@ func TestHasOpenTurn_FalseForAPrimeTurn(t *testing.T) {
 			"carrier, so nothing is pending for the reader to wait on")
 	}
 }
+
+// An ADMITTED prompt is a turn in flight from every client's point of view: the user row
+// is persisted and broadcast and `thinking` is latched, so answering false made
+// `turn_open: false` mean two different things.
+func TestHasOpenTurn_TrueForAnAdmittedPromptWithNoTurnMinted(t *testing.T) {
+	h, _, _ := newTestHub()
+	if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrompt) {
+		t.Fatal("a fresh chat refused a prompt reservation")
+	}
+	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+
+	if !h.HasOpenTurn("c1") {
+		t.Error("a chat whose prompt is admitted but whose Turn is not minted reports no " +
+			"turn open, so the client's heal clears `thinking` under a live prompt")
+	}
+}
+
+// A shell reservation is held across appendShellUserMessage's chat-file write, so the
+// `!cmd` user row is persisted and broadcast before StartTurn mints anything. A `!cmd`
+// turn emits no chunks either, so the client's one-chunk recovery cannot reach it.
+func TestHasOpenTurn_TrueForAnAdmittedShellCommand(t *testing.T) {
+	h, _, _ := newTestHub()
+	if !h.coord.TryReserveTurn("c1", vibekit.TurnSourceLocalShell) {
+		t.Fatal("a fresh chat refused a shell reservation")
+	}
+	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+
+	if !h.HasOpenTurn("c1") {
+		t.Error("a chat holding a shell reservation reports no turn open")
+	}
+}
+
+// A PRIME's own reservation is vibekit's transcript replay, so no client latched anything
+// for it — the same exclusion the open-turn branch above already makes.
+func TestHasOpenTurn_FalseForAPrimeReservation(t *testing.T) {
+	h, _, _ := newTestHub()
+	if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrime) {
+		t.Fatal("a fresh chat refused a prime reservation")
+	}
+	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+
+	if h.HasOpenTurn("c1") {
+		t.Error("a prime reservation reports the record provisional")
+	}
+}
+
+// THE COLD-SPAWN CASE, and the one the branch ORDER exists for: during the prime window
+// the open turn is the PRIME while the reservation beside it is the PROMPT's. Returning
+// from the open-turn branch whenever any turn is open would answer false here, which is
+// the longest part of the very window the reservation term exists to close.
+func TestHasOpenTurn_TrueForAnOpenPrimeWithAPromptReservationBesideIt(t *testing.T) {
+	h, _, _ := newTestHub()
+	if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrompt) {
+		t.Fatal("a fresh chat refused a prompt reservation")
+	}
+	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrime)
+	t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
+
+	if !h.HasOpenTurn("c1") {
+		t.Error("a prime running over an admitted prompt reports no turn open: the " +
+			"open-turn branch answered for the prime and never read the reservation")
+	}
+}
+
+// An open PROMPT turn short-circuits on its own, with no reservation involved: the
+// reservation term widens the answer and must not be the only thing producing it.
+func TestHasOpenTurn_TrueForAnOpenPromptTurnWithNoReservation(t *testing.T) {
+	h, _, _ := newTestHub()
+	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
+
+	if !h.HasOpenTurn("c1") {
+		t.Error("an open prompt turn with no reservation reports no turn open")
+	}
+}

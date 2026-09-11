@@ -126,12 +126,10 @@ describe("hand-authored glyphs in static/index.html", () => {
     expect(inner(ICON_TOOL_TERMINAL), "the tool glyph stays bare").not.toContain("<rect");
   });
 
-  // …and the reason it was reported as blurry, which is arithmetic rather than
-  // taste: `--icon-ui` is 16px here, so one viewBox unit is 2/3 of a CSS pixel and
-  // a 1px stroke is crispest when its centre lands halfway between two pixel
-  // boundaries. Unit 3 resolves to exactly 2.0 — the worst case, straddling two
-  // columns evenly — which is what the old rect at x=3 did.
-  it("puts the shell box's strokes on the pixel grid at 16px", () => {
+  // Every coordinate on the 3-unit grid. `icon-crisp.ts` owns the pixel PHASE at
+  // runtime, so the artwork's job is only to keep its structural strokes in ONE phase
+  // class, and multiples of 3 are that class for this set.
+  it("keeps the shell box's strokes on the 3-unit grid", () => {
     const rect = /<rect\b[^>]*>/.exec(glyphOf('id="shell-btn"'))?.[0] ?? "";
     const num = (attr: string): number =>
       Number.parseFloat(new RegExp(`${attr}="([\\d.]+)"`).exec(rect)?.[1] ?? "NaN");
@@ -139,14 +137,13 @@ describe("hand-authored glyphs in static/index.html", () => {
     const x = num("x");
     const y = num("y");
     for (const [name, edge] of [
-      ["x", x],
-      ["y", y],
+      ["left", x],
       ["right", x + num("width")],
+      ["top", y],
       ["bottom", y + num("height")],
     ] as const) {
-      // Distance from the nearest pixel boundary, in CSS px. 0.5 is dead centre.
-      const offBoundary = Math.abs(((edge * 2) / 3) % 1);
-      expect(offBoundary, `${name} edge of the shell box`).toBeCloseTo(0.5, 2);
+      expect(edge % 3, `${name} edge of the shell box`).toBe(0);
     }
+    expect(num("width"), "the shell box is square").toBe(num("height"));
   });
 });

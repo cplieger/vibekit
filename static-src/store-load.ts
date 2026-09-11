@@ -5,7 +5,6 @@ import { apiGetTyped, apiGetTypedOrError } from "./api-client.js";
 import { asObject, decodeArray, optBool, optNum, reqBool, type Decoder } from "./validators.js";
 import { decodeChatHeader, decodeMessage } from "./wire/decoders.gen.js";
 import { registerCleanup } from "./actions/index.js";
-import { RESIDENT_BLOCKS, RESIDENT_TOOL_CALLS } from "./block-window.js";
 import {
   setSessions,
   derivedHasMore,
@@ -22,9 +21,11 @@ import {
   upsertMessage,
   relatchTurnVerdict,
   latchFieldsFor,
-  syncEpoch,
   upsertHeader,
+  republishWindowToolCalls,
 } from "./store.js";
+import { healSettledChat } from "./turn-teardown.js";
+import { noteLoaded, syncEpoch } from "./tab-freshness.js";
 
 // --- Inline decoders ---
 const decodeChatListResponseLocal: Decoder<{ chats?: ChatHeader[] }> = (v) => {
@@ -67,7 +68,7 @@ const decodeChatGetResponseLocal: Decoder<{
   messages: Message[];
   has_more: boolean;
   draft: string;
-  turn_open: boolean;
+  turn_open: boolean | undefined;
   turn_offset: number | undefined;
   turn_segment_closed: boolean | undefined;
   live_turn: LiveTurnPage | undefined;
@@ -82,8 +83,11 @@ const decodeChatGetResponseLocal: Decoder<{
     live_turn: decodeLiveTurn(o["live_turn"]),
     // Every field below is optional-tolerant: an older server, or a proxy that strips
     // one, must not fail the whole chat load. `store.ts` turnLive is turn_open's one
-    // reader; `turnBaseOf` is the window base's.
-    turn_open: o["turn_open"] === true,
+    // reader; `turnBaseOf` is the window base's. UNDEFINED rather than false when absent,
+    // for the base's reason below AND because the newest-page door's teardown arm turns on
+    // the server having STATED the turn closed — a collapse to false hands it that
+    // statement for a chat the answer said nothing about.
+    turn_open: optBool(o, "turn_open", "$.chat_get"),
     // The window base is UNDEFINED rather than 0/false when absent, so the session
     // records "the server said nothing" instead of "the window starts the session" —
     // the same distinction `has_more`'s guess-versus-answer split turns on.
@@ -111,18 +115,14 @@ function adoptTurnBase(
   session.turn_segment_closed = closed;
 }
 
-/** Adopt the fetched in-flight turn, or refuse it as stale.
+/** Adopt the fetched in-flight turn, or refuse it as stale. The four calls are the ones the
+ *  `turn_state` handler makes (`handlers/messages.ts`): the same content through a second
+ *  channel has to land in the same four places, or the two channels leave the store in
+ *  different shapes.
  *
- *  The four calls are the ones the `turn_state` handler makes (`handlers/messages.ts`), for
- *  the same reason: this is the same content arriving through a second channel, so it has to
- *  land in the same four places or the two channels leave the store in different shapes.
- *
- *  THE GATE is the whole guard against a stale answer. The response is a point-in-time read,
- *  so live chunks can have landed after the server rendered it — and `mergeMessage` replaces
- *  content and blocks with the incoming's whenever they are non-empty, so adopting an older
- *  copy would REPLACE a fuller local accumulation with a shorter one. When it refuses, drop
- *  the field and change nothing: the live stream is already ahead, so there is nothing to
- *  recover. An absent local mark passes — this client has folded nothing to lose. */
+ *  THE GATE is the whole guard against a stale answer — the response is a point-in-time read,
+ *  and `store.ts` chunkWatermarks states what adopting an older copy costs. A refusal changes
+ *  nothing: the live stream is already ahead. An absent local mark passes. */
 function adoptLiveTurn(chatID: string, live: LiveTurnPage): void {
   if (live.message.id === "") {
     return;
@@ -160,27 +160,13 @@ function reorderKept(kept: Message[], liveID: string | undefined): Message[] {
 }
 
 /**
- * The BYTE bound on one transcript page: what the wire may carry however the
- * content is shaped, and what a reader is waiting on.
- *
- * 256 KiB, down from the megabyte it arrived at: a megabyte of transcript JSON is
- * several times the resident block budget, so the remainder was fetched, decoded
- * and then stubbed on arrival. Nothing becomes unreachable — the server returns
- * the newest message WHOLE however big it is (with its tool calls windowed behind
- * their own resource), and `has_more` plus `before_id` reach everything older,
- * which is the same path the reader's scroll already walks.
+ * The BYTE bound on one transcript page: the hostile-input ceiling on what the wire
+ * may carry, matching the server's own default. It is not a proxy for what one paint
+ * can mount, which `block-window.ts` bounds itself, per turn, on arrival. Nothing
+ * becomes unreachable: the server returns the newest turn whole however big it is,
+ * and `has_more` plus `before_id` reach everything older.
  */
-const PAGE_BUDGET_BYTES = 1 << 18;
-
-/**
- * The RESIDENCY bounds on one transcript page: the same ORDER as the window, in two
- * UNITS. This pair bounds what the server SENDS, message-granular over `tool_calls`
- * entries; the window bounds what one paint MOUNTS, ordinal-granular over `tool_use`
- * blocks, and an entry can carry no block of its own. A cut on bytes alone holds a
- * chat-dependent number of both, and the server cuts at a message boundary regardless.
- */
-const PAGE_BUDGET_BLOCKS = RESIDENT_BLOCKS;
-const PAGE_BUDGET_TOOL_CALLS = RESIDENT_TOOL_CALLS;
+const PAGE_BUDGET_BYTES = 1 << 20;
 
 /**
  * The server's cap on messages per page, and NOT this client's budget — it is a
@@ -202,6 +188,73 @@ let listLoaded = false;
 type ListReach = "unknown" | "reachable" | "unreachable";
 let listReach: ListReach = "unknown";
 
+/** The ladder behind a list load that reached the network and failed: three attempts,
+ *  1s doubling. Bounded because the next SSE `connected` refetches the list anyway, so
+ *  what this covers is the window in between — a stream that stayed up while the list
+ *  request died, which no other trigger revisits. */
+const LIST_RETRY_LIMIT = 3;
+const LIST_RETRY_BASE_MS = 1000;
+
+let listRetryTimer: ReturnType<typeof setTimeout> | undefined;
+let listRetryAttempts = 0;
+
+/** Forget a ladder in flight, rungs and all: a successful `loadList` has nothing left to
+ *  retry, and a new gap arms one of its own rather than stacking beside this. */
+function cancelListRetry(): void {
+  if (listRetryTimer !== undefined) {
+    clearTimeout(listRetryTimer);
+    listRetryTimer = undefined;
+  }
+  listRetryAttempts = 0;
+}
+
+/** Arm the next rung, or report the ladder exhausted. Private because it is the
+ *  CONTINUATION: it keeps the attempt count that `scheduleListRetry` resets. */
+function armListRetry(): void {
+  if (listRetryAttempts >= LIST_RETRY_LIMIT) {
+    console.warn(
+      `[list] gave up after ${String(LIST_RETRY_LIMIT)} retries; the chat list stays as it is until the next reconnect`,
+    );
+    listRetryAttempts = 0;
+    return;
+  }
+  if (listRetryTimer !== undefined) {
+    // A fresh gap's own `loadList` can fail while a rung is already armed: `scheduleListRetry`
+    // arms one, and the ABORTED load a rung is waiting on then settles false with no reach
+    // verdict written, so its continuation reads the previous `unreachable` and arms again.
+    // The newest failure owns the rung — without this the orphaned timer also fires and the
+    // ladder fetches twice per rung instead of staying inside its three.
+    clearTimeout(listRetryTimer);
+  }
+  const delay = LIST_RETRY_BASE_MS * 2 ** listRetryAttempts;
+  listRetryAttempts++;
+  listRetryTimer = setTimeout(() => {
+    listRetryTimer = undefined;
+    void loadList().then((ok) => {
+      // The door's own gate, for the door's own reason: an ABORT also answers false and
+      // writes no reach verdict, so it must not extend a ladder.
+      if (!ok && listReach === "unreachable") {
+        armListRetry();
+      }
+    });
+  }, delay);
+}
+
+/** Retry a `loadList` that failed, bounded.
+ *
+ *  THE REACH GATE LIVES HERE rather than at the call site: `!ok` alone is not evidence
+ *  about the server, because an aborted load returns it too and deliberately records no
+ *  verdict, so a ladder armed on `!ok` would chase a load a newer one superseded.
+ *  `serverMayAnswer` cannot stand in for the read — it folds `listLoaded` in, so it
+ *  answers a different question. */
+export function scheduleListRetry(): void {
+  if (listReach !== "unreachable") {
+    return;
+  }
+  cancelListRetry();
+  armListRetry();
+}
+
 /** What the SERVER says about a chat id. `gone` is the only value that licenses a terminal
  *  claim; `unresolved` means nobody answered and the caller holds whatever it has. */
 export type ChatVerdict = "exists" | "gone" | "unresolved";
@@ -215,68 +268,42 @@ const decodeChatConfirmResponseLocal: Decoder<{ chat: ChatHeader }> = (v) => {
   return { chat: decodeChatHeader(o["chat"]) };
 };
 
-/** Whether an id is SHAPED like a chat id, which is the only 400 this client can
- *  explain to itself.
+/** Is this id SHAPED like a chat id? The only 400 this client can explain to itself.
  *
- *  It mirrors the server's own gate (`ids.ValidChatID`: non-empty, at most 128
- *  bytes, and nothing outside `[A-Za-z0-9_-]`), and the mirror is deliberate rather
- *  than duplicated knowledge escaping: the question being asked is not "is this id
- *  valid" — the server answers that — but "could the 400 I just received have come
- *  from an id gate at all". Only a rule this client holds can answer that.
- *
- *  THE DRIFT DIRECTION IS THE WHOLE SAFETY ARGUMENT, so keep this predicate at
- *  least as PERMISSIVE as the server's. Accepting an id the server would refuse
- *  costs an `unresolved` — a held URL and a retry, non-terminal. Refusing one the
- *  server would ACCEPT is what re-opens the false-terminal claim, because a
- *  request-level 400 from some later middleware would then be read as "no such
- *  chat". A server that loosens its charset must be followed here; a server that
- *  tightens it needs no change.
- *
- *  Length in UTF-16 code units rather than bytes is exact for the accepting set:
- *  every character it admits is ASCII, and a non-ASCII id fails the charset test
- *  first. */
+ *  It mirrors the server's `ids.ValidChatID` deliberately: the question is not whether the id
+ *  is valid — the server answers that — but whether the 400 could have come from an id gate
+ *  at all. KEEP IT AT LEAST AS PERMISSIVE as the server's, because accepting an id the server
+ *  would refuse costs one non-terminal `unresolved`, while refusing one it would ACCEPT reads
+ *  a request-level 400 as "no such chat". Length in UTF-16 units is exact here: every
+ *  character this admits is ASCII, so a non-ASCII id fails the charset test first. */
 function chatIDShaped(id: string): boolean {
   return id !== "" && id.length <= 128 && /^[A-Za-z0-9_-]+$/.test(id);
 }
 
+/** Does this status settle the question ABOUT THIS CHAT, rather than about the request?
+ *  404 is the server reading its own store. A 400 counts only for an id this client can see
+ *  is not a chat id, because a request-level 400 — a stale CSRF header, a host check, a body
+ *  limit — is not evidence about a conversation, and reading one as "no such chat" is the
+ *  false-terminal claim this whole path exists to remove. Measured against the route as it
+ *  stands (`chatIDPattern`, `canonicalAPIPath`) every 400 source IS id-shaped, so the
+ *  narrowing changes no verdict today; what it stops is a middleware added later making one. */
+function saysTheChatIsGone(status: number, chatID: string): boolean {
+  return status === 404 || (status === 400 && !chatIDShaped(chatID));
+}
+
 /** Ask the SERVER whether a chat exists, for an id the store holds no row for.
  *
- *  `chatListLoaded` below answers "has this client ever read a list", which is not
- *  the claim a reader needs before saying a conversation is gone: a list that
- *  landed cleanly goes STALE, so a chat created on another device — or during an
- *  SSE outage, or while this client's stream lagged — is missing from a store that
- *  is otherwise entitled to speak. Reading that absence as proof is the same
- *  false-terminal-claim class one population narrower.
- *
- *  So the server decides, and the mapping is what makes the verdict honest:
- *
- *   - 2xx: the chat EXISTS, and the header is adopted through `upsertHeader` — the
- *     same door the `chat_created` frame this client missed would have used, so no
- *     second Session-construction rule is introduced. The deep link then opens
- *     rather than dead-ending, which is the whole point of asking.
- *   - 404: the server read its own store and there is no such chat. Terminal.
- *   - 400 FOR AN ID THIS CLIENT CAN SEE IS NOT A CHAT ID: the server refused the
- *     id itself, and no retry makes a malformed id a chat. Terminal. Narrowed to
- *     the id-shape case on purpose — measured against the route as it stands the
- *     only 400 sources ARE id-shaped (`chatIDPattern`, and `canonicalAPIPath`,
- *     which a well-shaped id cannot trip because `encodeURIComponent` is the
- *     identity over that charset), so this changes no verdict today. What it stops
- *     is a MIDDLEWARE answering 400 for a request-level reason later — a stale
- *     CSRF header, a host check, a body limit — being read as a terminal claim
- *     about the conversation. That is the exact class this whole path exists to
- *     eliminate, and a status is not evidence about a chat unless something ties
- *     it to the chat.
- *   - anything else (5xx, a 400 for a well-shaped id, a dead network, a timeout,
- *     an abort, an undecodable body — every one of which `@cplieger/fetch` reports
- *     with a status the tests above do not match): NOBODY ANSWERED about this
- *     chat. `unresolved`, and the caller holds what it has.
- *
- *  No abort controller, deliberately: two confirmations for one id are an
- *  idempotent read plus an idempotent upsert, and the caller — not this module —
- *  owns whether a late answer is still relevant to the location on screen. */
+ *  The store's own absence is not proof: a list that landed cleanly goes STALE, so a chat
+ *  created on another device — or during an SSE outage — is missing from a store otherwise
+ *  entitled to speak, and reading that as gone is the false-terminal claim. So the server
+ *  decides: a 2xx adopts the header through `upsertHeader`, the same door the missed
+ *  `chat_created` frame would have used, so no second Session-construction rule appears and
+ *  the deep link opens. Everything `saysTheChatIsGone` does not settle is `unresolved`. */
 export async function confirmChatExists(chatID: string): Promise<ChatVerdict> {
-  // `limit=1` is the cheapest page the endpoint will serve (it clamps 0 and below
-  // back to its 50 default), and the transcript is not what is being asked about.
+  // `limit=1` is the cheapest page the endpoint will serve (it clamps 0 and below back to
+  // its 50 default), and the transcript is not what is being asked about. No abort
+  // controller: two confirmations for one id are an idempotent read plus an idempotent
+  // upsert, and the CALLER owns whether a late answer still matters to what is on screen.
   const r = await apiGetTypedOrError(
     `/api/chats/${encodeURIComponent(chatID)}?limit=1`,
     decodeChatConfirmResponseLocal,
@@ -285,73 +312,41 @@ export async function confirmChatExists(chatID: string): Promise<ChatVerdict> {
     upsertHeader(r.data.chat);
     return "exists";
   }
-  if (r.status === 404 || (r.status === 400 && !chatIDShaped(chatID))) {
+  if (saysTheChatIsGone(r.status, chatID)) {
     return "gone";
   }
   console.warn("chat confirm: no answer", chatID, r.status, r.error);
   return "unresolved";
 }
 
-/** Whether the chat list has been read successfully at least once.
- *
- *  An empty store has two meanings and they want opposite answers: the server said
- *  there are no such chats, or the server could not be reached. `app.ts` handles a
- *  failed boot fetch by toasting and creating a fresh chat, then applies the URL's
- *  route anyway — so without this predicate a reload of any `/chat/<id>` against a
- *  restarting server rewrote the URL and claimed the conversation no longer exists,
- *  seconds after saying the chats could not be loaded. That is the same defect the
- *  `turn_open` field removes one surface over: a terminal verdict derived from
- *  absent data.
- *
- *  Latched rather than a snapshot of the last attempt: once a list has landed the
- *  store holds a row per chat, and a LATER failed refetch does not un-know them.
- *  It also self-heals — `loadList` runs on every SSE `connected`, so a client whose
- *  boot fetch failed starts answering true at its first successful reconnect.
- *
- *  What it is NOT is a licence to make the terminal claim: it says a list landed
- *  ONCE, and that claim weakens with every second the store goes stale. The claim
- *  itself now comes from `confirmChatExists` above, so this predicate survives as
- *  the cheap short-circuit for the case whose answer is already known — a client
- *  whose list never loaded has been told the server is unreachable, and boot's own
- *  Reload action is that reader's retry, so spending a round trip to be told the
- *  same thing buys nothing. */
+/** Whether the chat list has been read successfully at least once. An empty store has two
+ *  meanings that want opposite answers: the server said there are no such chats, or the
+ *  server could not be reached. Without this, a reload of any `/chat/<id>` against a
+ *  restarting server rewrote the URL and claimed the conversation no longer exists, seconds
+ *  after toasting that the chats could not be loaded — a terminal verdict derived from absent
+ *  data. LATCHED rather than a snapshot of the last attempt: a later failed refetch does not
+ *  un-know rows the store already holds, and `loadList` runs on every SSE `connected`, so a
+ *  client whose boot fetch failed self-heals at its first reconnect. */
 export function chatListLoaded(): boolean {
   return listLoaded;
 }
 
-/** Whether asking the server about ONE chat id can plausibly be answered.
- *
- *  This is the gate on the confirmation round trip, and it replaced
- *  `chatListLoaded()` in that role because that predicate answers a different
- *  question and the difference cost a population. The short-circuit's argument was
- *  that a client whose list never loaded would be told `unresolved` one request
- *  later, so the trip buys nothing — TRUE when the server is down, and FALSE when
- *  the boot load was ABORTED, which `loadList`'s own first line makes routine. In
- *  that population the chat exists, the server would answer 200, and the deep link
- *  dead-ended anyway.
- *
- *  So the question is narrowed to the only thing that makes asking pointless:
- *  EVIDENCE the server cannot answer. A list that landed, a list that was aborted,
- *  and a page that has not tried yet all answer true; only a load that reached the
- *  network and failed answers false.
- *
- *  `listLoaded` is read as well as `listReach`, and it is not redundant — it is
- *  LATCHED where the reach is not. A boot that loaded fine followed by a refetch
- *  against a server that has since gone down leaves rows in the store and a reader
- *  who has been told nothing (only boot toasts), so a deep link there is worth one
- *  request and a retry affordance rather than silence.
- *
- *  ONE case is folded conservatively and it is worth stating: `apiGetTyped` collapses
- *  an undecodable body and a dead network to the same null, so a list whose BODY
- *  failed to decode is recorded `unreachable` even though the server answered. That
- *  fold keeps round 3's behaviour for the population it was written for, and it
- *  costs nothing a reader can act on — a client that cannot decode the chat list
- *  cannot render a chat either, and boot has already toasted. */
+/** Can asking the server about ONE chat id plausibly be answered? The gate on the
+ *  confirmation round trip, narrowed to the only thing that makes asking pointless:
+ *  EVIDENCE the server cannot answer. A list that landed, a list that was ABORTED (routine —
+ *  see `loadList`'s first line) and a page that has not tried yet all answer true; only a
+ *  load that reached the network and failed answers false. `listLoaded` is read too and is
+ *  not redundant: it is LATCHED where the reach is not, so rows in the store outlive a server
+ *  that has since gone down. One fold is conservative — `apiGetTyped` collapses an
+ *  undecodable BODY onto a dead network, so such a list reads unreachable. */
 export function serverMayAnswer(): boolean {
   return listLoaded || listReach !== "unreachable";
 }
 
-registerCleanup(() => listController?.abort());
+registerCleanup(() => {
+  listController?.abort();
+  cancelListRetry();
+});
 registerCleanup(() => {
   for (const c of msgControllers.values()) {
     c.abort();
@@ -408,14 +403,11 @@ export async function loadList(): Promise<boolean> {
       usage: h.usage,
       message_count: h.message_count,
       messages: existing?.messages ?? [],
-      // A header carries no window, so this is the DERIVATION and never an answer —
-      // one rule, `store.ts` `derivedHasMore`, over the count the server just sent
-      // and whatever window is carried over above.
-      //
-      // The `existing.has_more ||` this replaces made the value STICKY, and a sticky
-      // true can only ever be wrong in the direction of a button with nothing behind
-      // it: once set, no later reconnect could return it to false, and this runs on
-      // boot, on login and on every `connected` handshake.
+      // A header carries no window, so this is the DERIVATION and never an answer — one
+      // rule, `store.ts` `derivedHasMore`, over the count the server just sent and whatever
+      // window is carried over above. Never OR'd with the previous value: a sticky true can
+      // only be wrong in the direction of a Load-older button with nothing behind it, and
+      // this runs on boot, on login and on every `connected` handshake.
       has_more: derivedHasMore(h.message_count, existing?.messages.length ?? 0),
       thinking: existing?.thinking ?? false,
       working_label: existing?.working_label ?? "Thinking",
@@ -427,9 +419,9 @@ export async function loadList(): Promise<boolean> {
       ...(existing?.steer_marks !== undefined && { steer_marks: existing.steer_marks }),
       // The two outcome latches are SERVER-SUPPLIED, with the local one carried over on
       // top: `last_turn_outcome` rides the header, so a chat this client has never seen
-      // live gets a real verdict instead of the hollow `idle` ring. A live `turn_ended`
-      // on this page is newer than any header read, and a live turn seeds nothing;
-      // `latchFieldsFor` owns all three rules.
+      // live gets a real verdict instead of the hollow `idle` ring. A moved header wins, a
+      // live `turn_ended` on this page is newer than one that has not moved, and a live
+      // turn seeds nothing; `latchFieldsFor` owns all four rules.
       ...latchFieldsFor(existing, h),
       // Every OTHER client-only projection is a pure carry-over: the server sends none of
       // them, so rebuilding a Session from a header alone silently resets them — and
@@ -443,10 +435,8 @@ export async function loadList(): Promise<boolean> {
       }),
       // Residency describes the carried-over `messages` window, so it travels
       // with it: dropping it here would make every reconnect read a loaded
-      // chat as never-loaded (or an evicted one as fresh). `loadedEpoch` is the
-      // other half of the same claim and travels for the same reason.
+      // chat as never-loaded (or an evicted one as fresh).
       ...(existing?.residency !== undefined && { residency: existing.residency }),
-      ...(existing?.loadedEpoch !== undefined && { loadedEpoch: existing.loadedEpoch }),
       // The window BASE describes that same window, and it travels TOGETHER or not
       // at all, matching `adoptTurnBase`'s half-present rule. A reconnect does not
       // bump `syncEpoch`, so nothing refetches to replace a dropped base and the
@@ -457,6 +447,12 @@ export async function loadList(): Promise<boolean> {
           turn_segment_closed: existing.turn_segment_closed,
         }),
       ...(h.compaction_watermark !== undefined && { compaction_watermark: h.compaction_watermark }),
+      // The two SERVER facts the row used to drop on the floor. The row is rebuilt from the
+      // header rather than spread from `existing`, so a conditional spread IS a replace here:
+      // nothing carries over because nothing is there. `updated_at` needs no guard — it is
+      // required on the wire.
+      ...(h.last_turn_outcome !== undefined && { last_turn_outcome: h.last_turn_outcome }),
+      updated_at: h.updated_at,
     };
     next.push(session);
   }
@@ -483,6 +479,8 @@ export async function loadList(): Promise<boolean> {
   // Not latched, unlike the line above: this one describes the LAST attempt, so a
   // later failure is entitled to overwrite it.
   listReach = "reachable";
+  // The list landed, so any ladder still climbing toward it is answered.
+  cancelListRetry();
   return true;
 }
 
@@ -493,8 +491,6 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
   const params = new URLSearchParams({
     limit: String(PAGE_MESSAGE_CAP),
     max_bytes: String(PAGE_BUDGET_BYTES),
-    blocks: String(PAGE_BUDGET_BLOCKS),
-    tool_calls: String(PAGE_BUDGET_TOOL_CALLS),
   });
   if (beforeID !== undefined) {
     params.set("before_id", beforeID);
@@ -547,45 +543,23 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
     // Normalize replayed messages so legacy transcripts (persisted before the
     // blocks field) get synthesized blocks — the renderer is block-only.
     const fetched = d.messages.map(normalizeMessage);
-    // Then re-adopt what this page CANNOT know about. A blind whole-array
-    // replace deleted the reply the reader was watching on every mid-turn
-    // refetch: a tab switch, the boot activation after a refresh, and the gap
-    // handler's own heal.
-    //
-    // Exactly two things qualify, and neither is decided by position:
-    //
-    //  - The in-flight turn. The server accumulates it in an in-memory buffer
-    //    and appends it to the chat file once, at turn_ended, so the page cannot
-    //    carry it and the store's own marker is what names it. The rule this
-    //    replaces kept "everything after the newest id the page carries", and
-    //    that boundary is wrong because the agent persists messages DURING a
-    //    turn — every plan update, a compaction or safety event, the cancel
-    //    badge — each landing after the streaming reply locally while sitting
-    //    inside the page. One plan update stepped the boundary past the reply,
-    //    and the replace deleted it; the reader saw their own prompt with an
-    //    empty turn body until a reload, by which time the buffer had flushed.
-    //
-    //  - A message that arrived while the request was in flight, which is newer
-    //    than the answer being applied.
-    //
-    // Both go at the END, which is where the server puts the finished turn too:
-    // persistTurn appends it after anything persisted during it.
+    // Then re-adopt what this page CANNOT know about, and NEVER by position: the agent
+    // persists messages DURING a turn — a plan update, a compaction or safety event, the
+    // cancel badge — each landing after the streaming reply locally while sitting inside
+    // the page, so a boundary derived from the page's newest id steps past the reply and
+    // the replace deletes it. Exactly two things qualify: the in-flight turn, which the
+    // server holds in an in-memory buffer until turn_ended so only the store's own marker
+    // names it, and a message that arrived while the request was in flight. Both go at the
+    // END, where the server puts the finished turn too.
     const fetchedIDs = new Set(fetched.map((m) => m.id));
     const liveID = liveTurnMessage(chatID);
-    // And the RESIDENT OLDER PAGES go back in front. The old rule said
-    // "everything else the page omits is the page's own business", which was true
-    // while `limit = 50` messages returned every real conversation whole — the
-    // page WAS the chat. Under the byte budget the newest page is frequently one
-    // message, so a no-cursor reload of a paged-up transcript threw the reader's
-    // history away and their scroll position with it: `fillViewport` pages it
-    // back over a fresh chain of round trips, but the position is gone. The
-    // reachable path is the gap heal, which calls this with no cursor.
-    //
-    // The page is a CONTIGUOUS newest window, so the held messages BEFORE its
-    // oldest one are pages this client already fetched and the answer says nothing
-    // about. Anchored on that oldest id rather than on a count or a timestamp: no
-    // overlap means the window moved out from under what is held, and then the
-    // page replaces, which is the honest answer.
+    // And the RESIDENT OLDER PAGES go back in front. The page is a CONTIGUOUS newest
+    // window, so held messages older than its oldest one are pages this client already
+    // fetched that the answer says nothing about; dropping them threw a paged-up reader's
+    // history away — and their scroll position with it — on every no-cursor reload, which
+    // is what the gap heal is. Anchored on that oldest id rather than on a count or a
+    // timestamp: no overlap means the window moved out from under what is held, and then
+    // the page replaces, which is the honest answer.
     const oldest = fetched[0]?.id;
     const anchor = oldest === undefined ? -1 : session.messages.findIndex((m) => m.id === oldest);
     const older =
@@ -594,6 +568,13 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
       .slice(anchor > 0 ? anchor : 0)
       .filter((m) => !fetchedIDs.has(m.id) && (m.id === liveID || !knownBefore.has(m.id)));
     session.messages = [...older, ...fetched, ...reorderKept(kept, liveID)];
+    // A card already on screen does not read the array this line just replaced: its DOM
+    // has one refresh channel, the per-call signal, and the repaint below writes none. So
+    // the page's own calls go through that channel — which is what makes a card built from
+    // the boot snapshot's truncated copy show the server's output rather than keeping the
+    // hint for the life of the document. Only the FETCHED rows: a prepended older page
+    // mounts its cards fresh, and the live turn's calls arrive on their own signal.
+    republishWindowToolCalls(chatID, fetched);
     // The answer describes what is older than the PAGE, which is only the same
     // question the session's flag and base answer when nothing older sits in front
     // of it.
@@ -605,12 +586,11 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
     session.has_more = d.has_more;
     adoptTurnBase(session, d.turn_offset, d.turn_segment_closed);
   } else {
-    // The page said nothing about this window's left edge, so `has_more` falls back
-    // to the derivation. What this replaces PRESERVED the previous value, which is
-    // only right when that value was an answer — for a header-built row it is the
-    // guess, and preserving it left a button on a chat holding every message it has.
-    // The base is left alone for the mirror reason: the edge did not move, so
-    // whatever was recorded for it still describes it.
+    // The page said nothing about this window's left edge, so `has_more` falls back to the
+    // derivation rather than preserving the previous value: preserving is only right when
+    // that value was an ANSWER, and for a header-built row it is the guess, which left a
+    // button on a chat holding every message it has. The base IS left alone, for the mirror
+    // reason — the edge did not move, so whatever was recorded still describes it.
     session.has_more = derivedHasMore(session.message_count, session.messages.length);
   }
   rebuildMsgIndex(chatID, session.messages);
@@ -622,11 +602,19 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
   if (beforeID === undefined) {
     session.draft = d.draft;
     // The server's liveness statement, newest page ONLY, for the draft's reason: an
-    // older-page fetch is a scroll-up and asserts nothing about whether a turn is
-    // running now. Written on the session object directly rather than through
-    // `setTurnOpen`, because this whole block is mutating the session in place and
-    // `bumpMessages` below is the one repaint.
-    session.turn_open = d.turn_open;
+    // older-page fetch is a scroll-up and asserts nothing about liveness. Written on the
+    // session directly, because this block mutates it in place and `bumpMessages` below is
+    // the one repaint. RECORDED in both directions, and FORGOTTEN when the answer carries no
+    // statement — the window base's rule above, because a `true` left standing would keep
+    // `turnLive` answering live off an answer nothing restates. The false is unambiguous:
+    // `hasOpenTurn` counts an ADMITTED prompt as well as a minted turn record, so it no
+    // longer reads false for the bridge-ready window between the two, which is what makes
+    // the heal below admissible — no turn and no admitted prompt.
+    if (d.turn_open === undefined) {
+      delete session.turn_open;
+    } else {
+      session.turn_open = d.turn_open;
+    }
     // The CONTENT behind that liveness statement. Newest page only, like the two above,
     // and AFTER the splice so the upsert sees the merged window. No duplicate is possible
     // either way: the merge is keyed by message id and the live turn is not in `messages`.
@@ -639,7 +627,7 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
     // epoch stamped is the one captured before the request, so a load that
     // raced a gap records a claim that already reads stale.
     session.residency = "loaded";
-    session.loadedEpoch = epochAtStart;
+    noteLoaded("chat", chatID, epochAtStart);
   }
   // `load`, not `shape`: both branches above REPLACED or EXTENDED the window
   // with the server's own answer, so its rows are a replay and the paint must
@@ -649,11 +637,19 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
   // recorded no tail to append past.
   bumpMessages(chatID, "load");
   if (beforeID === undefined) {
-    // The page carries the last turn's PERSISTED outcome, so the outcome
-    // latches — client memory the gap door just dropped, or a fresh page
-    // never had — are re-derived from it. After bumpMessages, so the repaint
-    // and the dot read one settled window.
-    relatchTurnVerdict(chatID);
+    // The page carries the last turn's PERSISTED outcome, so the outcome latches — client
+    // memory the gap door just dropped, or a fresh page never had — are re-derived from it.
+    // Both arms sit after `bumpMessages`, so the repaint and the dot read one settled window.
+    //
+    // A stated `turn_open === false` covers the chat's WHOLE liveness, so it also retracts a
+    // `thinking` this client is holding for a turn that is over — the one door licensed to
+    // run the full teardown. Anything else only re-derives, because the page has asserted
+    // nothing about liveness that would let it drop a live turn's markers.
+    if (d.turn_open === false) {
+      healSettledChat(chatID);
+    } else {
+      relatchTurnVerdict(chatID);
+    }
   }
   return true;
 }

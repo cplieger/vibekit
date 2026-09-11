@@ -24,13 +24,32 @@ import {
   upsertHeader,
   noteTruncatedSnapshot,
   isTruncatedSnapshot,
+  noteLiveTurnMessage,
+  liveTurnMessage,
+  setTurnFailed,
 } from "../store.js";
+import { noteRunLive, noteRunSettled } from "../run-store.js";
 import type { ChatHeader, Session } from "../types.js";
 import type { TurnOutcome } from "../wire/types.gen.js";
 import { severityOf } from "../turn-severity.js";
 import type * as TurnRail from "../turn-rail.js";
+import type * as ApiClient from "../api-client.js";
 
 type TurnRailModule = typeof TurnRail;
+
+// The single-chat GET, so the run arm's refusal can be asserted where it MATTERS: the
+// live-turn marker only earns its keep at the next newest-page load, which is where
+// dropping it deletes the reply still streaming. Spread the real surface and replace one
+// fetcher, so every other consumer in this graph keeps the module it had.
+//
+// Through `vi.hoisted` because `run-store.js` is statically imported below and imports
+// api-client, so the mocker resolves this factory during linking — above this file's own
+// top-level initializers, where a plain `const` is still in its temporal dead zone.
+const { mockApiGetTyped } = vi.hoisted(() => ({ mockApiGetTyped: vi.fn() }));
+vi.mock("../api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiClient>()),
+  apiGetTyped: mockApiGetTyped,
+}));
 
 // scroll.ts touches DOM elements at import; use the shared mock.
 vi.mock(
@@ -134,6 +153,14 @@ import { refreshTurnRail } from "../turn-rail.js";
 
 // Import after mocks so turn.ts registers its handlers against the bus mock.
 const { ERROR_ROUTES } = await import("./turn.js");
+// After the mocks for the same reason: this pulls api-client into the graph, and the
+// window merge under test is the REAL one — mocking the loader would leave the run arm's
+// refusal asserted against a fake that re-implements the very merge it protects.
+const { loadMessages } = await import("../store-load.js");
+// After the mocks for the same reason turn.ts is: the cue module imports ../notify.js,
+// so a STATIC import here links it against the real module before the mocker is ready
+// and the whole file dies in module linking.
+const { forgetDeferredCue, hasDeferredCue } = await import("../agent-finished-cue.js");
 
 function makeSession(id: string, over: Partial<Session> = {}): Session {
   return {
@@ -161,6 +188,9 @@ function makeSession(id: string, over: Partial<Session> = {}): Session {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `mockReset` is on, so an implementation set at construction is gone by now. A null
+  // answer is what a 404 gives, which is what every case that does not stub a window wants.
+  mockApiGetTyped.mockResolvedValue(null);
   setSessions([]);
   // A messages container with one assistant message — the turn_ended handler
   // appends the turn-summary as a sibling of the last assistant message.
@@ -499,18 +529,6 @@ describe("turn_ended side effects", () => {
     expect(tabStatusFor(get("chat-1"))).toBe("failed");
   });
 
-  it("latches DONE, not failed, for an outcome nothing could read", () => {
-    // `unknown` is a turn whose end vibekit had to infer, so a RED dot would
-    // invent a failure the wire never reported — that half of the old reasoning
-    // stands and is what this case pins. What changed is the other half: it can no
-    // longer fall to `idle` either, because the chat did run a turn.
-    setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
-    setActive("chat-2");
-
-    fireSSE("turn_ended", "chat-1", { stop_reason: "who_knows", outcome: "unknown" });
-    expect(tabStatusFor(get("chat-1"))).toBe("done");
-  });
-
   it("still prefers the agent's own verdict where it lands", () => {
     setSessions([makeSession("chat-1"), makeSession("chat-2")]);
     setActive("chat-2");
@@ -546,6 +564,267 @@ describe("turn_ended side effects", () => {
     fireSSE("turn_ended", "chat-1", { stop_reason: "interrupted", outcome: "interrupted" });
     expect(tabStatusFor(get("chat-1"))).toBe("failed");
   });
+
+  it("clears no verdict for a turn it cannot grade", () => {
+    // The handler routes through `applyLatch(outcomeLatch(p.outcome))`, and the empty
+    // answer that table returns writes NEITHER field — so a frame the wire could not
+    // grade leaves the verdict the previous turn latched standing. A local mapping is
+    // free to blank one instead, which is the direction that loses a failure the reader
+    // has not seen yet: `setThinking(false)` clears no latch either, so this handler is
+    // the only thing on the path that could.
+    setSessions([makeSession("chat-1"), makeSession("chat-2")]);
+    setActive("chat-2");
+    setTurnFailed("chat-1");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(tabStatusFor(get("chat-1"))).toBe("failed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A frame reporting ANOTHER turn's end, keyed on the frame's own two markers.
+//
+// `TurnEndedPayload` carries no turn identity, so `superseded` and `workflow_step`
+// ARE the identity: applying the chat-scoped effects to either retracted the
+// liveness of a prompt that had just landed, which is what painted the
+// unreadable-end notice over it seconds before the real reply.
+//
+// The outcome is deliberately `completed` in every case here, and that is the whole
+// inversion: the gate used to key on `outcome === "unknown"`, which both misses a
+// displaced turn that ended cleanly and settles nothing for a `closerWireEnd` whose
+// stop reason was merely unmeasured. `unknown` is now an ordinary settled outcome
+// and is pinned as one in the table below.
+// ---------------------------------------------------------------------------
+
+describe("turn_ended reporting another turn's end", () => {
+  /** A chat whose own prompt is in flight: both liveness inputs set, one assistant
+   *  message for the summary to land on. */
+  function seedLive(): void {
+    setSessions([
+      makeSession("chat-1", {
+        thinking: true,
+        turn_open: true,
+        messages: [{ id: "a1", role: "assistant", ts: 1, content: "hi" }],
+        message_count: 1,
+      }),
+    ]);
+    setActive("chat-1");
+  }
+
+  it("retracts neither liveness input for a displaced turn", () => {
+    seedLive();
+    fireSSE("turn_ended", "chat-1", {
+      stop_reason: "end_turn",
+      outcome: "completed",
+      superseded: true,
+    });
+    expect(get("chat-1")?.thinking).toBe(true);
+    expect(get("chat-1")?.turn_open).toBe(true);
+  });
+
+  it("latches no verdict for the tab dot on a displaced turn", () => {
+    // `outcomeLatch("completed")` maps to "done", so an ungated latch turns a chat
+    // whose replacement turn is running green.
+    seedLive();
+    fireSSE("turn_ended", "chat-1", {
+      stop_reason: "end_turn",
+      outcome: "completed",
+      superseded: true,
+    });
+    expect(get("chat-1")?.turn_done).toBeUndefined();
+    expect(tabStatusFor(get("chat-1"))).toBe("working");
+  });
+
+  it("does not promote an unread steer as undelivered", () => {
+    seedLive();
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    fireSSE("turn_ended", "chat-1", {
+      stop_reason: "end_turn",
+      outcome: "completed",
+      superseded: true,
+    });
+    expect(steerCount("chat-1")).toBe(1);
+    expect(steerMarks("chat-1")).toEqual([]);
+  });
+
+  it("retires no pending ask", () => {
+    // The sweep keeps only RUN-scoped asks, so ungated it retires the asks of a turn
+    // that is still running — a step turn closing on a launching chat that holds its
+    // own live turn, which is the case `handlers/run.ts` guards its copy against.
+    seedLive();
+    fireSSE("turn_ended", "chat-1", {
+      stop_reason: "end_turn",
+      outcome: "completed",
+      workflow_step: true,
+    });
+    expect(mockDropTurnDecisions).not.toHaveBeenCalled();
+  });
+
+  it("stamps no summary onto the newest assistant message", () => {
+    seedLive();
+    fireSSE("turn_ended", "chat-1", {
+      stop_reason: "end_turn",
+      outcome: "completed",
+      workflow_step: true,
+      credits_delta: 1.5,
+      elapsed_ms: 2000,
+      changed_files: { "a.ts": { lines_added: 5, lines_removed: 2 } },
+    });
+    const m = get("chat-1")?.messages[0];
+    expect(m?.turn_credits).toBeUndefined();
+    expect(m?.turn_elapsed_ms).toBeUndefined();
+    expect(m?.changed_files).toBeUndefined();
+  });
+
+  it("keeps the live-turn window open on a run frame while retracting thinking", () => {
+    // The run arm's ONE effect and the four it refuses: `turn_open` is the newest-page
+    // window's own statement and has one writer, and the live-turn message marker is what
+    // stops the next `loadMessages` deleting the reply still streaming.
+    seedLive();
+    fireSSE("turn_ended", "chat-1", {
+      stop_reason: "end_turn",
+      outcome: "completed",
+      workflow_step: true,
+    });
+    expect(get("chat-1")?.thinking).toBe(false);
+    expect(get("chat-1")?.turn_open).toBe(true);
+  });
+
+  it("re-derives the dot from the resident transcript with no step carrier resident", () => {
+    // What the arm refuses is `applyLatch(outcomeLatch(p.outcome))`: the frame reports a
+    // FAILED step, and with no carrier of its own resident the retained `completed` is the
+    // source of the verdict. Where a step DID persist a carrier the re-derivation may land
+    // the step's verdict, which is the answer a reload gives too.
+    setSessions([
+      makeSession("chat-1", {
+        thinking: true,
+        messages: [{ id: "m1", role: "assistant", ts: 1, turn_outcome: "completed" } as never],
+        message_count: 1,
+      }),
+      makeSession("chat-2"),
+    ]);
+    setActive("chat-2");
+    fireSSE("turn_ended", "chat-1", {
+      stop_reason: "error",
+      outcome: "failed",
+      workflow_step: true,
+    });
+    expect(tabStatusFor(get("chat-1"))).toBe("done");
+  });
+
+  it("leaves an unread steer waiting on a run frame", () => {
+    // The fourth gated write the run arm refuses, beside the three above. `dropSteers`
+    // promotes each unread steer as "not delivered", and KAS clears its steering buffer
+    // at the CHAT's turn boundary — so a run's turn ending says nothing about it, and
+    // promoting here reports a steer as dropped while the agent can still read it.
+    seedLive();
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    fireSSE("turn_ended", "chat-1", {
+      stop_reason: "end_turn",
+      outcome: "completed",
+      workflow_step: true,
+    });
+    expect(steerCount("chat-1")).toBe(1);
+    expect(steerMarks("chat-1")).toEqual([]);
+  });
+
+  it("reads BOTH markers as displaced, so the run arm's retraction does not run", () => {
+    // `scopeOf` keys on `superseded` FIRST, and that order is the safe one: a replacement
+    // turn is running right now, so the run arm's `retractStaleThinking` would clear the
+    // `thinking` that turn just set. A step turn a prompt displaced reports both.
+    seedLive();
+    fireSSE("turn_ended", "chat-1", {
+      stop_reason: "end_turn",
+      outcome: "completed",
+      superseded: true,
+      workflow_step: true,
+    });
+    expect(get("chat-1")?.thinking, "the run arm would have cleared this").toBe(true);
+    expect(get("chat-1")?.turn_open).toBe(true);
+  });
+
+  it("still runs the effects that are OUTSIDE the gate", () => {
+    // The gate covers seven effects, not the handler: this chat's turn index changed
+    // whoever the turn belonged to, and a frame arriving at all proves an agent is behind
+    // the chat. Without this row every case above passes just as well for a handler that
+    // returns early on either marker.
+    seedLive();
+    fireSSE("turn_ended", "chat-1", {
+      stop_reason: "end_turn",
+      outcome: "completed",
+      superseded: true,
+    });
+    expect(refreshTurnRail).toHaveBeenCalledWith("chat-1");
+    expect(mockClearAgentDown).toHaveBeenCalled();
+  });
+
+  it("leaves a concurrent turn's unpersisted reply alive across the next window load", async () => {
+    // The run arm's refusal asserted where it COSTS something. `clearLiveTurnMessage` is
+    // harmless at the frame itself; what it breaks is the next newest-page load, which
+    // reads that marker to keep the one message the server's answer structurally cannot
+    // carry (the buffer is unflushed until the chat's own turn_ended). So the damage lands
+    // on a fetch, seconds later, as the streaming reply disappearing.
+    setSessions([
+      makeSession("chat-1", {
+        thinking: true,
+        turn_open: true,
+        messages: [
+          { id: "u1", role: "user", ts: 1, content: "go" },
+          { id: "live-1", role: "assistant", ts: 2, content: "half a repl" },
+        ],
+        message_count: 1,
+      }),
+    ]);
+    setActive("chat-1");
+    noteLiveTurnMessage("chat-1", "live-1");
+
+    fireSSE("turn_ended", "chat-1", {
+      stop_reason: "end_turn",
+      outcome: "completed",
+      workflow_step: true,
+    });
+    expect(liveTurnMessage("chat-1"), "the marker survives the run frame").toBe("live-1");
+
+    // The page the server can actually serve: the chat file holds the prompt and nothing
+    // else. `turn_open: true` keeps this off the heal arm, which is a different door and
+    // is licensed to drop the marker.
+    mockApiGetTyped.mockResolvedValue({
+      chat: { id: "chat-1", name: "seeded", message_count: 1 },
+      messages: [{ id: "u1", role: "user", ts: 1, content: "go" }],
+      has_more: false,
+      draft: "",
+      turn_open: true,
+      turn_offset: undefined,
+      turn_segment_closed: undefined,
+      live_turn: undefined,
+    });
+    await loadMessages("chat-1");
+
+    expect(get("chat-1")?.messages.map((m) => m.id)).toEqual(["u1", "live-1"]);
+  });
+
+  // The NEGATIVE CONTROL for all of them: without it each passes just as well when the
+  // handler stops applying these effects for every frame.
+  it("applies every one of them for a frame carrying neither marker", () => {
+    seedLive();
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    fireSSE("turn_ended", "chat-1", {
+      stop_reason: "end_turn",
+      outcome: "completed",
+      credits_delta: 1.5,
+      elapsed_ms: 2000,
+      changed_files: { "a.ts": { lines_added: 5, lines_removed: 2 } },
+    });
+    expect(get("chat-1")?.thinking).toBe(false);
+    expect(get("chat-1")?.turn_open).toBe(false);
+    expect(tabStatusFor(get("chat-1"))).toBe("done");
+    expect(mockDropTurnDecisions).toHaveBeenCalledWith("chat-1");
+    expect(steerCount("chat-1")).toBe(0);
+    const m = get("chat-1")?.messages[0];
+    expect(m?.turn_credits).toBe(1.5);
+    expect(m?.turn_elapsed_ms).toBe(2000);
+    expect(Object.keys(m?.changed_files ?? {})).toEqual(["a.ts"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -574,6 +853,10 @@ describe("the three turn-verdict producers agree", () => {
     ["refused", "failed"],
     ["interrupted", "failed"],
     ["cancelled", "done"],
+    // `unknown` is IN this table now, and its row is the inversion: the live door used
+    // to decline it, because the gate keyed on the outcome rather than on the frame's
+    // markers. All three doors grade it `done` — never `failed`, which would invent a
+    // failure the wire never reported.
     ["unknown", "done"],
     // `running` is the one outcome that latches nothing, and it is also the one
     // that cannot reach a turn_ended in practice — the server stamps it only on
@@ -994,6 +1277,139 @@ describe("the agent-finished notification reads the severity", () => {
     fireSSE("turn_ended", "dedup", { stop_reason: "end_turn", outcome: "failed" });
     fireSSE("turn_ended", "dedup", { stop_reason: "end_turn", outcome: "failed" });
     expect(mockNotifyIfHidden).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE REPORTED DEFECT: a chat that launched a workflow raised the cue at its own
+// turn's end, which is when `run_workflow` returned rather than when the work was
+// done — so an off-screen reader was told the agent had finished up to forty
+// minutes early. `handlers/turn.ts` hands ONE fact to `agent-finished-cue.ts` now
+// (the turn ended, and this is what a cue for it would say) and makes no decision
+// about whether to raise it.
+//
+// `../run-store.js` is NOT mocked in this file, so the live-run inventory is the
+// real one and the cases drive it directly. A distinct chat id per case for the
+// same reason the block above uses one: the dedup window is per chat.
+// ---------------------------------------------------------------------------
+
+describe("the notification waits for the work, not just the turn", () => {
+  beforeEach(() => {
+    notifyGate.agentFinished = true;
+  });
+  afterEach(() => {
+    notifyGate.agentFinished = false;
+    for (const id of liveRunsSeeded) {
+      noteRunSettled(id);
+    }
+    liveRunsSeeded.length = 0;
+  });
+
+  const liveRunsSeeded: string[] = [];
+  function seedLiveRun(workflowID: string, chatID: string, executing = true): void {
+    liveRunsSeeded.push(workflowID);
+    noteRunLive(workflowID, chatID, executing);
+  }
+
+  it("says nothing when a run this chat launched is still live", () => {
+    setSessions([makeSession("defer-clean")]);
+    seedLiveRun("wf-defer-clean", "defer-clean");
+
+    fireSSE("turn_ended", "defer-clean", { stop_reason: "end_turn", outcome: "completed" });
+
+    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
+  });
+
+  // The withhold is about the reader's attention rather than the turn's verdict, so a
+  // broken turn that launched a still-running run makes the same false claim.
+  it("says nothing for a BROKEN turn while a run is live", () => {
+    setSessions([makeSession("defer-broken")]);
+    seedLiveRun("wf-defer-broken", "defer-broken");
+
+    fireSSE("turn_ended", "defer-broken", { stop_reason: "end_turn", outcome: "failed" });
+
+    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
+  });
+
+  // A run stopped on a person is exactly what a "finished" notification must not
+  // claim is over, and it is the case the narrow store-eviction predicate answers
+  // the wrong way.
+  it("says nothing while the run is merely PAUSED", () => {
+    setSessions([makeSession("defer-parked")]);
+    seedLiveRun("wf-defer-parked", "defer-parked", false);
+
+    fireSSE("turn_ended", "defer-parked", { stop_reason: "end_turn", outcome: "completed" });
+
+    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
+  });
+
+  it("notifies immediately when nothing is outstanding", () => {
+    setSessions([makeSession("defer-none")]);
+
+    fireSSE("turn_ended", "defer-none", { stop_reason: "end_turn", outcome: "completed" });
+
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "seeded: Agent finished");
+  });
+
+  // One busy conversation must not mute the rest of the workspace.
+  it("notifies when the live run belongs to another chat", () => {
+    setSessions([makeSession("defer-other")]);
+    seedLiveRun("wf-defer-other", "some-other-chat");
+
+    fireSSE("turn_ended", "defer-other", { stop_reason: "end_turn", outcome: "completed" });
+
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "seeded: Agent finished");
+  });
+
+  // A manual or scheduled launch is parentless, so its lease names no chat and its
+  // outcome travels on its own push rather than on a chat's.
+  it("notifies when the live run is PARENTLESS", () => {
+    setSessions([makeSession("defer-parentless")]);
+    seedLiveRun("wf-defer-parentless", "");
+
+    fireSSE("turn_ended", "defer-parentless", { stop_reason: "end_turn", outcome: "completed" });
+
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "seeded: Agent finished");
+  });
+
+  // The switch decides WHETHER the reader is told; the deferral decides WHEN. A cue
+  // must not be parked for a channel that is off, or switching it back on would
+  // deliver a notification about work that finished while it was off.
+  it("parks nothing at all when the master switch is off", () => {
+    notifyGate.agentFinished = false;
+    setSessions([makeSession("defer-gate-off")]);
+    seedLiveRun("wf-defer-gate-off", "defer-gate-off");
+
+    fireSSE("turn_ended", "defer-gate-off", { stop_reason: "end_turn", outcome: "completed" });
+
+    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
+    expect(hasDeferredCue("defer-gate-off")).toBe(false);
+  });
+
+  // The two silences are different states and only one of them is a deferral: a turn
+  // that says nothing has nothing to park, so it must leave no cue behind that a
+  // later settle could fire.
+  it("parks nothing for a turn that says nothing", () => {
+    setSessions([makeSession("defer-cancelled")]);
+    seedLiveRun("wf-defer-cancelled", "defer-cancelled");
+
+    fireSSE("turn_ended", "defer-cancelled", { stop_reason: "end_turn", outcome: "cancelled" });
+
+    expect(mockNotifyIfHidden).not.toHaveBeenCalled();
+    expect(hasDeferredCue("defer-cancelled")).toBe(false);
+  });
+
+  // The positive half of the withhold: a cue IS parked, so the release effect the
+  // composition root installs has something to fire. Without this the two silent
+  // cases above pass equally for a handler that dropped the notification entirely.
+  it("parks the cue rather than dropping it", () => {
+    setSessions([makeSession("defer-parked-cue")]);
+    seedLiveRun("wf-defer-parked-cue", "defer-parked-cue");
+
+    fireSSE("turn_ended", "defer-parked-cue", { stop_reason: "end_turn", outcome: "completed" });
+
+    expect(hasDeferredCue("defer-parked-cue")).toBe(true);
+    forgetDeferredCue("defer-parked-cue");
   });
 });
 

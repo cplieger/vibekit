@@ -2,7 +2,7 @@ package vibekit
 
 import "testing"
 
-// TestTurnSourcePredicates decides all four predicates for every member of the
+// TestTurnSourcePredicates decides all five predicates for every member of the
 // enum. The count is DERIVED from turnSourceCount rather than written twice, so a
 // member added to the const block fails here instead of silently answering false
 // for a predicate nobody decided about it — the mutation that measured this gap
@@ -10,16 +10,16 @@ import "testing"
 // green.
 func TestTurnSourcePredicates(t *testing.T) {
 	rows := []struct {
-		name                                                     string
-		src                                                      TurnOpenSource
-		promptClass, userAnswered, acknowledgeable, engineOpened bool
+		name                                                                        string
+		src                                                                         TurnOpenSource
+		promptClass, userAnswered, acknowledgeable, engineOpened, clientVisibleTurn bool
 	}{
-		{"prompt", TurnSourcePrompt, true, true, true, false},
-		{"localShell", TurnSourceLocalShell, false, false, false, false},
-		{"wireTurnStart", TurnSourceWireTurnStart, false, false, false, true},
-		{"prime", TurnSourcePrime, false, false, true, false},
-		{"emptyRetry", TurnSourceEmptyRetry, true, true, true, false},
-		{"workflowStep", TurnSourceWorkflowStep, false, false, false, true},
+		{"prompt", TurnSourcePrompt, true, true, true, false, true},
+		{"localShell", TurnSourceLocalShell, false, false, false, false, true},
+		{"wireTurnStart", TurnSourceWireTurnStart, false, false, false, true, false},
+		{"prime", TurnSourcePrime, false, false, true, false, false},
+		{"emptyRetry", TurnSourceEmptyRetry, true, true, true, false, true},
+		{"workflowStep", TurnSourceWorkflowStep, false, false, false, true, false},
 	}
 	if len(rows) != int(turnSourceCount) {
 		t.Fatalf("the table covers %d sources, the enum has %d: decide every predicate for the new member",
@@ -47,6 +47,9 @@ func TestTurnSourcePredicates(t *testing.T) {
 			}
 			if got := row.src.EngineOpened(); got != row.engineOpened {
 				t.Errorf("EngineOpened() = %v, want %v", got, row.engineOpened)
+			}
+			if got := row.src.ClientVisibleTurn(); got != row.clientVisibleTurn {
+				t.Errorf("ClientVisibleTurn() = %v, want %v", got, row.clientVisibleTurn)
 			}
 		})
 	}

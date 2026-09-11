@@ -18,9 +18,10 @@ import { describe, it, expect } from "vitest";
 
 import { loadCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 import execPageSrc from "./exec-view/page.ts?raw";
-import turnHeaderSrc from "./fundamentals/turn-header.ts?raw";
 import steerNoteSrc from "./fundamentals/steer-note.ts?raw";
 import pendingSteersSrc from "./pending-steers.ts?raw";
+import runInputSrc from "./run-input.ts?raw";
+import userInputSrc from "./user-input.ts?raw";
 
 /** Every shipped stylesheet, for the exhaustiveness sweep. `css-rules.ts` exports
  *  no sheet map, so the sweep needs its own eager glob — the pattern
@@ -47,6 +48,14 @@ interface ClampPair {
 // No per-pair PROPERTY name: the CSS reader is mechanism-agnostic, mirroring
 // `attachClamp` itself, which decides by measurement and never reads the
 // declaration.
+//
+// THE TURN HEADER'S REQUEST IS DELIBERATELY ABSENT. Its clamp is CSS-only and
+// FOLD-conditional (`.turn[data-folded] .turn-req-text`, 29-turns.css), so there
+// is no constant to pair it against and no `[data-clamped]` rule for the sweep
+// below to find — the contract this file states cannot express a one-language
+// clamp, and widening `ClampPair` to make one representable would give the sweep
+// a row it can never check. The count is asserted where it can be, against real
+// layout, in `disclosure-row-css.test.ts`.
 const PAIRS: readonly ClampPair[] = [
   {
     what: "the run page's instructions",
@@ -65,14 +74,6 @@ const PAIRS: readonly ClampPair[] = [
     selector: ".ev-r-text[data-clamped]",
   },
   {
-    what: "a turn header's request",
-    tsFile: "fundamentals/turn-header.ts",
-    tsSrc: turnHeaderSrc,
-    constant: "CLAMP",
-    sheet: "29-turns.css",
-    selector: ".turn-req-text[data-clamped]",
-  },
-  {
     what: "a steer note in the transcript",
     tsFile: "fundamentals/steer-note.ts",
     tsSrc: steerNoteSrc,
@@ -87,6 +88,22 @@ const PAIRS: readonly ClampPair[] = [
     constant: "DOCK_CLAMP_LINES",
     sheet: "26-dock.css",
     selector: ".steer-text[data-clamped]",
+  },
+  {
+    what: "a parked workflow step's question",
+    tsFile: "run-input.ts",
+    tsSrc: runInputSrc,
+    constant: "CLAMP_LINES",
+    sheet: "26-dock.css",
+    selector: ".run-input-question[data-clamped]",
+  },
+  {
+    what: "the agent's own question",
+    tsFile: "user-input.ts",
+    tsSrc: userInputSrc,
+    constant: "CLAMP_LINES",
+    sheet: "26-dock.css",
+    selector: ".user-input-question[data-clamped]",
   },
 ];
 
@@ -166,8 +183,8 @@ describe("a clamp's line count is one fact in two languages", () => {
     }
   });
 
-  // What makes the table above collectively exhaustive: a sixth clamp site added
-  // with no row fails here instead of shipping unpinned.
+  // What makes the table above collectively exhaustive: a clamp site added with
+  // no row fails here instead of shipping unpinned.
   it("covers every clamp rule in the shipped stylesheets", () => {
     const declared = new Set<string>();
     for (const css of Object.values(sheets)) {

@@ -26,6 +26,7 @@ import {
   isKindEnabled,
   setKindEnabled,
   setNotifyUICallback,
+  spendNotifyAsk,
   KEYED_PUSH_KINDS,
 } from "./notify.js";
 import { patchSettings } from "./persist.js";
@@ -145,6 +146,10 @@ export function initNotificationToggles(): void {
         return;
       }
       setNotificationsEnabled(false);
+      // A refusal, and the only place the client can tell one from "never opted in":
+      // both reach it as `notifications_enabled: false`. Spending the ask is what
+      // stops a later automatic grant reversing this switch — see `notify-ask.ts`.
+      spendNotifyAsk();
       unregisterPush();
       updateSub();
     });
@@ -248,6 +253,7 @@ async function applyKindChange(
   setKindEnabled(changed.kind, changed.input.checked);
   if (allOff) {
     setNotificationsEnabled(false);
+    spendNotifyAsk(); // switching every channel off is the same refusal as the master
     unregisterPush();
     updateSub();
   }

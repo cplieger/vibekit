@@ -164,10 +164,21 @@ type windowBudget struct {
 	// on whichever runs out first.
 	Blocks    int
 	ToolCalls int
+	// Turns is the FLOOR: a ceiling bounds the window's SIZE, this bounds its SHAPE,
+	// so a ceiling may only cut once the window opens on a turn holding this many.
+	Turns int
 }
 
-// messageWindow returns the newest messages of msgs that fit EVERY budget, plus
-// the index the window starts at, so a caller can answer has_more honestly.
+// breachedBy reports whether admitting one more message of msgBytes and cost
+// would take the window past any of its three ceilings.
+func (b windowBudget) breachedBy(spentBytes, msgBytes int, spent, cost messageCost) bool {
+	return spentBytes+msgBytes > b.Bytes ||
+		spent.Blocks+cost.Blocks > b.Blocks ||
+		spent.ToolCalls+cost.ToolCalls > b.ToolCalls
+}
+
+// messageWindow returns the newest messages of msgs that meet the turn floor and
+// fit every ceiling, plus the index the window starts at, so has_more is honest.
 //
 // Bytes bound what the WIRE carries, the residency pair what the CLIENT can hold.
 // Messages are marshalled HERE and returned as raw JSON, because the cut has to be
@@ -178,7 +189,12 @@ func messageWindow(msgs []vibekit.Message, budget windowBudget) (window []json.R
 	// Non-nil: a nil slice marshals as `null` and the generated decoder rejects
 	// `null` for an array.
 	window = make([]json.RawMessage, 0, min(budget.Messages, len(msgs)))
+	openers := findTurnOpeners(msgs)
+	// The floor is a floor on what is ACHIEVABLE: a transcript offering fewer turns
+	// than asked for must still be able to satisfy it, or no ceiling ever fires.
+	floor := min(budget.Turns, openers.total)
 	spentBytes := 0
+	turns := 0
 	var spent messageCost
 	start = len(msgs)
 	for i := range slices.Backward(msgs) {
@@ -194,19 +210,78 @@ func messageWindow(msgs []vibekit.Message, budget windowBudget) (window []json.R
 			break
 		}
 		cost := costOfMessage(&msgs[i])
-		if len(window) > 0 && (spentBytes+len(raw) > budget.Bytes ||
-			spent.Blocks+cost.Blocks > budget.Blocks ||
-			spent.ToolCalls+cost.ToolCalls > budget.ToolCalls) {
+		// The floor may not carry a page past the largest one a caller may ask for.
+		if len(window) > 0 && spentBytes+len(raw) > maxMaxBytes {
+			break
+		}
+		// A cut is admissible only where the window already holds whole turns, so a
+		// ceiling can never end it mid-turn.
+		floorMet := len(window) > 0 && turns >= floor && openers.admitCutAt(msgs, start)
+		if floorMet && budget.breachedBy(spentBytes, len(raw), spent, cost) {
 			break
 		}
 		spentBytes += len(raw)
 		spent.Blocks += cost.Blocks
 		spent.ToolCalls += cost.ToolCalls
+		if openers.opens[i] {
+			turns++
+		}
 		window = append(window, raw)
 		start = i
 	}
 	slices.Reverse(window)
 	return window, start
+}
+
+// turnOpeners is which indices of a message slice OPEN a turn, plus the first
+// such index and how many there are.
+type turnOpeners struct {
+	opens []bool
+	// first is len(msgs) for a slice that opens no turn at all.
+	first int
+	total int
+}
+
+// findTurnOpeners derives the opener set for msgs with opensTurn, the predicate
+// turnWindowBase resolves the turn_offset from, so a window's left edge and the
+// ordinal published beside it are a boundary in the same unit.
+//
+// One forward pass, because opensTurn is stateful: it reads the scan's position
+// and the segmentation state as of the message before it.
+func findTurnOpeners(msgs []vibekit.Message) turnOpeners {
+	o := turnOpeners{opens: make([]bool, len(msgs)), first: len(msgs)}
+	closed := false
+	for i := range msgs {
+		m := &msgs[i]
+		if carriesNothing(m) {
+			continue
+		}
+		if opensTurn(m, o.total == 0, closed) {
+			o.opens[i] = true
+			o.first = min(o.first, i)
+			o.total++
+			closed = closesTurn(m.TurnOutcome)
+			continue
+		}
+		closed = closed || closesTurn(m.TurnOutcome)
+	}
+	return o
+}
+
+// admitCutAt reports whether a window opening at start opens on a turn boundary.
+// The question is asked of the first message that RENDERS, because turnWindowBase
+// skips the others when it resolves the base.
+//
+// A start with no opener at or before it is admissible too: no further walking
+// could ever produce a boundary.
+func (o turnOpeners) admitCutAt(msgs []vibekit.Message, start int) bool {
+	if start < o.first {
+		return true
+	}
+	for start < len(msgs) && carriesNothing(&msgs[start]) {
+		start++
+	}
+	return start < len(msgs) && o.opens[start]
 }
 
 // messageCost is what one message costs the client's two residency budgets.
@@ -335,13 +410,23 @@ func parseToolCallsParam(r *http.Request) int {
 	return clampedQueryInt(r, "tool_calls", defaultMaxBlocks, 0, maxMaxBlocks)
 }
 
-// parseWindowBudget reads the four page budgets off the query.
+const defaultWindowTurns = 3
+
+// parseTurnsParam returns the validated ?turns= floor, defaulting to
+// defaultWindowTurns over the inclusive 1..50 range. The floor is 1 rather than 0
+// because a window ending mid-turn opens on a turn it can only continue.
+func parseTurnsParam(r *http.Request) int {
+	return clampedQueryInt(r, "turns", defaultWindowTurns, 1, 50)
+}
+
+// parseWindowBudget reads the five page budgets off the query.
 func parseWindowBudget(r *http.Request) windowBudget {
 	return windowBudget{
 		Messages:  parseLimitParam(r),
 		Bytes:     parseMaxBytesParam(r),
 		Blocks:    parseBlocksParam(r),
 		ToolCalls: parseToolCallsParam(r),
+		Turns:     parseTurnsParam(r),
 	}
 }
 

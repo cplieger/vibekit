@@ -22,6 +22,19 @@
   gap: var(--sp-3);
 }
 
+/* THE TITLE BAR ABOVE THIS HEADER ALREADY PAID THE TOP INSET, so paying it again
+   here is the "inset as container padding" defect one level in. This header is a
+   sticky row inside a SCROLLER whose top edge is `.chat-toolbar`'s bottom
+   (12-chat.css: `min-block-size: calc(var(--titlebar-h) + env(safe-area-inset-top))`),
+   so `top: 0` already sits clear of the status bar and there is nothing left to
+   clear. It used to declare
+   `padding-block: calc(0.3125rem + env(safe-area-inset-top, 0)) var(--sp-2)`.
+   Measured at 390x844 with the iPhone values substituted (top 47px): the tab bar's
+   top sat 68px below the title bar's bottom, 47 of which were this term, against
+   21px with it gone — reported as a weird gap above the multi-select menu on the
+   settings, docs and git pages, all three of which use this header. Invisible in
+   Chromium, which reports every `env(safe-area-inset-*)` as 0, so the gap only
+   appears on a device with a real inset. */
 .settings-header {
   display: flex;
   flex-direction: column;
@@ -30,7 +43,7 @@
   top: 0;
   z-index: 1;
   background: var(--c-bg-primary);
-  padding-block: calc(0.3125rem + env(safe-area-inset-top, 0)) var(--sp-2);
+  padding-block: 0.3125rem var(--sp-2);
 }
 
 /* A setting's title with its own save indicator beside it. Every user setting has
@@ -816,7 +829,7 @@
   width: 22px;
   height: 22px;
   border-radius: var(--r-sm);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   font-family: var(--font-mono);
   background: var(--c-bg-primary);
@@ -1125,7 +1138,7 @@
   background: var(--c-bg-primary);
   color: var(--c-text-primary);
   width: min(640px, 90vw);
-  max-height: 90vh;
+  max-height: 90dvh;
   flex-direction: column;
 }
 
@@ -1398,14 +1411,6 @@
   flex-shrink: 0;
 }
 
-.git-status-banner-dismiss {
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  font-size: var(--fs-md);
-  line-height: 1;
-}
-
 /* --- Git empty state --- */
 
 /* Fills the available vertical space below the page title + banner so
@@ -1653,27 +1658,38 @@ select.native-rule-effect:focus-visible {
   font-size: var(--fs-xs);
 }
 
+/* LAYOUT AND THE RECEDE. The skin is `icon-btn` (10-shell-app.css), from
+ * permissions-ui.ts; the fourteen declarations this replaced were a hand-rolled copy
+ * of it. Four of them existed only because the mark was a `×` CHARACTER — the
+ * `font-size`, the `line-height: 1` against `icon-btn`'s SVG-authored `line-height:
+ * 0`, and the 1.5rem box that clamped it — and the mark is `ICON_CLOSE` now, so they
+ * have nothing left to correct. The `--r-sm` note went with them: its premise was a
+ * 24px box, and `icon-btn`'s own padding around a 12px glyph is 28px, which is `--r`'s
+ * rung.
+ *
+ * THE RECEDE IS NOT DRIFT, it is this app's per-row remove affordance: `.chip-remove`
+ * (18-pages.css) and `.mcp-pair-del` (60-mcp.css) both sit at `--c-text-tertiary` and
+ * lift on hover, so a rule list of twenty rows does not read as twenty delete buttons.
+ * Only the INK is stated here; `icon-btn` owns the hover FILL, where the copy this
+ * replaced spelled its own `--c-hover` beside the shared class's `--c-bg-tertiary`.
+ *
+ * THE DENSITY AND THE RUNG ARE A PAIR, and `radius-nesting.test.ts` is what says so:
+ * this class is in its 24px population beside `.tab-close`, `.shell-header-btn` and
+ * `.turn-action-btn`, and the ladder reserves `--r-sm` for a 16-24px box while
+ * `icon-btn` declares `--r` for its own 28px. So the padding keeps the box at the
+ * floor's 24px in a list of twenty rows and the radius follows from that size — drop
+ * either and the pair is wrong, which is what that test caught. `--sp-1` rather than
+ * the sibling's hard `1.5rem`: a fixed box cannot follow the pointer tier, and the
+ * floor still takes this to 44px under a finger. */
 .native-rule-remove {
-  flex: none;
   margin-inline-start: auto;
-  inline-size: 1.5rem;
-  block-size: 1.5rem;
-  padding: 0;
-  border: none;
-  /* --r-sm is the ladder's rung for a 16-24px box; this is 24px. */
+  padding: var(--sp-1);
   border-radius: var(--r-sm);
-  background: transparent;
   color: var(--c-text-tertiary);
-  font-size: var(--fs-md);
-  line-height: 1;
-  cursor: pointer;
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
-}
-.native-rule-remove:hover {
-  color: var(--c-text-primary);
-  background: var(--c-hover);
+
+  &:hover {
+    color: var(--c-text-primary);
+  }
 }
 
 /* --- Permissions rule forms (.rule-form) --------------------------------
@@ -1758,10 +1774,20 @@ select.native-rule-effect:focus-visible {
 }
 
 /* Labeled submit button, not an icon pill. Takes the dense tier its fields
- * take, overriding .btn's --btn-h min-height. */
+ * take, overriding .btn's --btn-h min-height.
+ *
+ * The dense-tier button pattern, copied whole from `.list-row .btn-small`
+ * (14-tools.css), including the `padding-block: 0` — the base's own padding plus
+ * the label's line box is 33px on its own, so the padding is what holds the fine
+ * tier on 32 rather than letting the label push it a pixel over. `max()` AND NOT
+ * A BARE TOKEN, because the universal hit-target floor scores zero
+ * (61-mcp-tools.css) and so loses to this rule, and `--ctl-h-dense` is 2.5rem on
+ * a coarse pointer — 40px beside the 44px controls in the same form. `block-size`
+ * is DROPPED: a declared height clips the label at a larger user font, and the
+ * floor can only lift a `min-*`. */
 .rule-form .rf-submit {
-  block-size: var(--ctl-h-dense);
-  min-height: var(--ctl-h-dense);
+  min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
+  padding-block: 0;
 }
 
 /* Tablet: two columns; the grow field + submit take full rows.
@@ -1782,9 +1808,10 @@ select.native-rule-effect:focus-visible {
   }
 }
 
-/* Phone: single column. The heights need no answer here — the token drops the
-   dense tier to --btn-h at 48rem, so these controls already carry the touch
-   floor by the time this breakpoint is reached. */
+/* Phone: single column. The heights need no answer here — the controls carry the
+   touch floor through `max(var(--ctl-h-dense), var(--hit-floor))` above, which
+   follows the POINTER tier rather than a width, so this breakpoint owns layout
+   only. */
 @media (width <= 40rem) {
   .rule-form[data-rule-form] {
     grid-template-columns: 1fr;

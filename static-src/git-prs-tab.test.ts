@@ -160,6 +160,56 @@ describe("PRs tab loading state", () => {
     expect(mount().querySelector("[data-reconcile-key]")).not.toBeNull();
   });
 
+  it("arms nothing for a repo set with NO open PRs once the fan-out has answered", async () => {
+    // No open PRs anywhere is an ANSWER, and the container cannot tell it from a set
+    // this client has never read. A gap reaches this refresh with no tab switch behind
+    // it, so without the answered flag it would shimmer over a settled pane.
+    routeAPI();
+    const { refreshPRs } = await load();
+    const first = refreshPRs();
+    // The repo leg has to settle before the per-repo resolvers exist to answer.
+    await vi.advanceTimersByTimeAsync(150);
+    for (const resolve of prResolvers.splice(0)) {
+      resolve({ prs: [] });
+    }
+    await first;
+    expect(mount().querySelector("[data-reconcile-key]")).toBeNull();
+
+    const second = refreshPRs();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(mount().querySelector(".git-repo-skeleton")).toBeNull();
+    for (const resolve of prResolvers.splice(0)) {
+      resolve({ prs: [] });
+    }
+    await second;
+  });
+
+  it("hands the fan-out its label while the placeholder stands, and detaches it after", async () => {
+    // The build CLOSURE is what gives the caller the element `paintPlaceholder`'s
+    // `() => Element` signature cannot return, and the whole reason for it is that the
+    // count has to keep moving into a node built 150ms into the flight.
+    routeAPI();
+    const { refreshPRs } = await load();
+    const done = refreshPRs();
+    await vi.advanceTimersByTimeAsync(150);
+    const label = mount().querySelector(".git-repo-skel-label");
+    expect(label?.textContent).toContain("0 of 3 repositories");
+
+    prResolvers[0]?.({ prs: [] });
+    await vi.advanceTimersByTimeAsync(0);
+    // The pointer is live: a repo landing moves the count in the element the closure
+    // captured, which is what separates a slow refresh from a wedged one.
+    expect(label?.textContent).toContain("1 of 3 repositories");
+
+    for (const resolve of prResolvers.slice(1)) {
+      resolve({ prs: [] });
+    }
+    await done;
+
+    expect(mount().querySelector(".git-repo-skeleton")).toBeNull();
+    expect(label?.isConnected).toBe(false);
+  });
+
   it("paints an error into the mount when the forge list cannot be read", async () => {
     routeAPI({ forgesNull: true });
     const { refreshPRs } = await load();
@@ -226,13 +276,25 @@ describe("PRs tab row identity across paints", () => {
 
     // merge_blocked is per-fetch: the forge answers `unknown` while it is still
     // computing mergeability and "" once the PR is mergeable.
+    // The selector locates Merge WITHOUT depending on the accent: item 17 took
+    // `btn-primary` off this per-row button (the accent marks the one thing to do
+    // on a surface, and a per-row count scales with the number of open PRs), so
+    // `.git-pr-row .btn-primary` matched nothing. `:not(.btn-danger)` excludes
+    // Close, and Merge is the first button appended to the actions row, so
+    // `querySelector` answers it ahead of the conditional Merge-when-green and
+    // Re-run siblings. Both `disabled` assertions are unchanged — the subject here
+    // is still that a surviving row repaints from the newer fetch.
     await paintOnce(refreshPRs, [onePR({ merge_blocked: "unknown" })]);
-    const blocked = mount().querySelector<HTMLButtonElement>(".git-pr-row .btn-primary");
+    const blocked = mount().querySelector<HTMLButtonElement>(
+      ".git-pr-row-actions .btn-small:not(.btn-danger)",
+    );
     expect(blocked?.disabled).toBe(true);
 
     await paintOnce(refreshPRs, [onePR({ merge_blocked: "" })]);
     expect(mount().querySelectorAll(".git-pr-row")).toHaveLength(1);
-    const live = mount().querySelector<HTMLButtonElement>(".git-pr-row .btn-primary");
+    const live = mount().querySelector<HTMLButtonElement>(
+      ".git-pr-row-actions .btn-small:not(.btn-danger)",
+    );
     expect(live?.disabled).toBe(false);
   });
 });

@@ -8,7 +8,7 @@
 import type { ServerEvent, ConnectedPayload, ConnectionStatus, TabKind } from "./types.js";
 import { setSSEStatus } from "./send-state.js";
 import { reportFailure } from "./failure-notice.js";
-import { emitBus, BUS_TRANSPORT_GAP, lookupSSEDecoder } from "./bus.js";
+import { emitBus, BUS_PAGE_RESUMED, BUS_TRANSPORT_GAP, lookupSSEDecoder } from "./bus.js";
 import {
   registerCleanup,
   hasErrorString,
@@ -16,6 +16,7 @@ import {
   IDEMPOTENCY_COMMAND_FIELD,
 } from "./actions/index.js";
 import { computeBackoff } from "./lib/backoff.js";
+import { bumpSyncEpoch } from "./tab-freshness.js";
 
 type MsgHandler = (evt: ServerEvent) => void;
 type StatusHandler = (s: ConnectionStatus) => void;
@@ -550,15 +551,23 @@ class TransportController {
     const frozen = this.wasFrozen;
     this.wasFrozen = false;
     if (this.sseIsDead()) {
-      this.scheduleReconnect({ delay: 0 });
+      this.resumeNow();
       return;
     }
     if (now - this.lastFrameAt < RESUME_LIVENESS_MS) {
       return;
     }
     if (force || frozen || this.frozenGapMs(now) >= RESUME_SUSPECT_FROZEN_MS) {
-      this.scheduleReconnect({ delay: 0 });
+      this.resumeNow();
     }
+  }
+
+  /** Announce the resume and reconnect. ONE helper for both delay-0 branches: a
+   *  resume that finds the stream definitively gone is the strongest case for the
+   *  nudge, and the first branch RETURNS before the second's condition is read. */
+  private resumeNow(): void {
+    emitBus(BUS_PAGE_RESUMED);
+    this.scheduleReconnect({ delay: 0 });
   }
 
   /** Whether the stream is definitively gone — ONE input to the resume decision,
@@ -679,6 +688,14 @@ class TransportController {
         } catch (decodeErr) {
           const msg = decodeErr instanceof Error ? decodeErr.message : String(decodeErr);
           console.error(`sse: decoder rejected ${evt.type}:`, msg);
+          // This frame has no other recovery: the cursor already advanced, so no
+          // reconnect replays it, and nothing downstream can notice a state change it
+          // never saw — an older bundle against a newer server drops every
+          // `tool_call_update` carrying a status it does not know, and each one is a
+          // card left mid-flight for the life of the document. So the claim every
+          // loaded view makes goes with it, which converts a permanent hole into one
+          // refetch per view the reader actually visits.
+          bumpSyncEpoch();
           return;
         }
       }

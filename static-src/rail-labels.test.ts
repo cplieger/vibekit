@@ -1,19 +1,14 @@
-// What a rail row says, pinned string by string.
-//
-// The module is pure, so this needs no DOM and no fixture — which is exactly why
-// it is NOT a `*.node.test.ts`: that suffix selects the node project and is for a
-// test needing genuine Node capabilities (a filesystem or process read), not for a
-// subject that happens not to want a browser. `turn-severity.node.test.ts` earns
-// its suffix by reading the shared cross-language fixture off disk; there is
-// nothing here to read.
+// What a rail row says, pinned string by string. NOT a `*.node.test.ts`: that suffix
+// is for a test needing genuine Node capabilities, not for a pure subject that
+// happens not to want a browser.
 //
 // EXPECTATIONS ARE HARDCODED, including a second copy of every clause the module
-// composes. Deriving them from `turn-severity.ts`'s tables would make the assertion
-// `f(x) === f(x)`: the outcome sentence would agree with itself whatever it said,
+// composes. Deriving them from the module's own tables would make the assertion
+// `f(x) === f(x)` — the outcome sentence would agree with itself whatever it said,
 // and a table edit would pass silently. The copies below are the assertion.
 import { describe, it, expect } from "vitest";
 
-import { clusterLabel, markerLabel, zoomOutLabel, type MarkerSubject } from "./rail-labels.js";
+import { markerLabel, railLabel, seamLabel, type MarkerSubject } from "./rail-labels.js";
 import type { TurnOutcome } from "./turns.js";
 
 /** Every member of the wire union, so the sweeps below are a partition rather
@@ -273,68 +268,69 @@ describe("the marker vocabulary is total over TurnOutcome", () => {
   });
 });
 
-describe("a cluster's labels", () => {
-  const range = { from: 30, to: 38, count: 9 };
-
-  it("names its range and its size", () => {
-    expect(clusterLabel({ ...range, outcome: "completed" }, { containsCurrent: false })).toEqual({
-      tooltip: "Turns 30\u201338 \u00b7 9 turns",
-      ariaLabel: "Zoom to turns 30 to 38",
-    });
+describe("a seam's label", () => {
+  it("names the pause and the two turns it separates", () => {
+    expect(seamLabel("2h", 12, 13)).toBe("2h pause between turn 12 and turn 13");
   });
 
-  it("names the worst outcome inside it, which the rail carries as ink alone", () => {
-    expect(clusterLabel({ ...range, outcome: "failed" }, { containsCurrent: false })).toEqual({
-      tooltip: "Turns 30\u201338 \u00b7 9 turns \u00b7 Worst outcome: Failed",
-      ariaLabel: "Zoom to turns 30 to 38, worst outcome failed",
-    });
-  });
-
-  it("says when it holds the reader's current turn", () => {
-    // Past capacity every turn is inside a cluster, so this is the only statement
-    // of position a long session's rail can make.
-    expect(clusterLabel({ ...range, outcome: "completed" }, { containsCurrent: true })).toEqual({
-      tooltip: "Turns 30\u201338 \u00b7 9 turns \u00b7 Contains the current turn",
-      ariaLabel: "Zoom to turns 30 to 38, contains the current turn",
-    });
-  });
-
-  it("says nothing about a clean range's outcome", () => {
-    // Same rule as the marker's: the absence of a state clause IS the clean case,
-    // and `running` is not clean — a range still working is worth knowing about.
-    const clean = clusterLabel({ ...range, outcome: "completed" }, { containsCurrent: false });
-    expect(clean.tooltip).not.toContain("Worst outcome");
-    const live = clusterLabel({ ...range, outcome: "running" }, { containsCurrent: false });
-    expect(live.tooltip).toContain("Worst outcome: Running");
-  });
-
-  it("counts a one-turn range in the singular", () => {
-    expect(
-      clusterLabel({ from: 7, to: 7, count: 1, outcome: "completed" }, { containsCurrent: false })
-        .tooltip,
-    ).toBe("Turns 7\u20137 \u00b7 1 turn");
+  it("takes the gap already worded, so the coarse vocabulary has one owner", () => {
+    // The renderer words `ms` into `2h` / `3d` / `40m` and hands the string over. A
+    // second formatter here could disagree with the seam band's own reading of the
+    // same pause, which is the divergence this signature makes unrepresentable.
+    expect(seamLabel("3d", 4, 5)).toBe("3d pause between turn 4 and turn 5");
+    expect(seamLabel("40m", 4, 5)).toBe("40m pause between turn 4 and turn 5");
   });
 });
 
-describe("the zoom-out row's labels", () => {
-  it("puts the action in the NAME and the range in the description", () => {
-    // The tooltip controller publishes its text as the anchor's `aria-describedby`
-    // on show, so the two channels must not be one sentence twice: a keyboard user
-    // would hear the name read again as its own description. The name carries what
-    // the row's three characters cannot say; the tooltip carries the range, which
-    // the name deliberately leaves out.
-    expect(zoomOutLabel({ from: 30, to: 38 })).toEqual({
-      tooltip: "Showing turns 30\u201338",
-      ariaLabel: "Show the whole session",
-    });
+describe("the pause a marker follows", () => {
+  const s = subject({ outcome: "completed", first_line: "pick this up again" });
+
+  it("says what the seam's band cannot, because the band paints no text", () => {
+    expect(markerLabel(s, { pending: false, hit: false, gapBefore: "2h" }).tooltip).toBe(
+      "pick this up again \u00b7 2h pause before this turn",
+    );
   });
 
-  it("never repeats itself across the two channels", () => {
-    // The property behind the case above, over a range whose numbers cannot make the
-    // two agree by accident.
-    const label = zoomOutLabel({ from: 1, to: 9 });
-    expect(label.tooltip).not.toBe(label.ariaLabel);
-    expect(label.tooltip).toContain("1\u20139");
-    expect(label.ariaLabel).not.toContain("1");
+  it("sits after the turn's own duration and ahead of the transient facts", () => {
+    expect(
+      markerLabel(s, { pending: true, hit: true, elapsedMs: 90_000, gapBefore: "1d" }).tooltip,
+    ).toBe(
+      "pick this up again \u00b7 1m 30s \u00b7 1d pause before this turn \u00b7 " +
+        "Loading this turn\u2026 \u00b7 Contains a search match",
+    );
+  });
+
+  it("stays out of the accessible NAME, like the duration beside it", () => {
+    // The name is read on every focus, and a pause is a fact about the SEAM above
+    // this turn rather than about the turn — the same reason the duration is
+    // description-only.
+    expect(markerLabel(s, { pending: false, hit: false, gapBefore: "2h" }).ariaLabel).toBe(
+      "Go to turn 14",
+    );
+  });
+
+  it("says nothing at all for a marker no seam sits above", () => {
+    expect(markerLabel(s, { pending: false, hit: false }).tooltip).toBe("pick this up again");
+    expect(markerLabel(s, { pending: false, hit: false, gapBefore: "" }).tooltip).toBe(
+      "pick this up again",
+    );
+  });
+});
+
+describe("the rail's own accessible name", () => {
+  it("states the dropped count once the set is smaller than the session", () => {
+    expect(railLabel(27, 412)).toBe("Turn timeline, showing 27 of 412 turns");
+  });
+
+  it("says nothing about a set it shows whole", () => {
+    // Promising a row per turn is the claim to avoid, in both directions: a rail
+    // showing every turn has nothing to disclose, and one that somehow reports MORE
+    // shown than the session holds must not state a count either.
+    expect(railLabel(6, 6)).toBe("Turn timeline");
+    expect(railLabel(7, 6)).toBe("Turn timeline");
+  });
+
+  it("says nothing for a session with no turns", () => {
+    expect(railLabel(0, 0)).toBe("Turn timeline");
   });
 });

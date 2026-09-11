@@ -837,7 +837,7 @@ describe("expanding a stub", () => {
     const id = chatID();
     activate(id, [...toolTurns(1), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
     const header = card("u1").querySelector<HTMLElement>(":scope > .turn-header");
-    const toggle = header?.querySelector(":scope > .turn-head-row > .turn-fold-toggle");
+    const toggle = header?.querySelector(":scope > .turn-fold-toggle");
     expect(toggle?.getAttribute("aria-expanded")).toBe("false");
     // The state lives on the BUTTON. `.turn-header` is a plain div, and
     // `aria-expanded` on one is an ARIA violation rather than a redundancy.
@@ -1192,13 +1192,20 @@ describe("navigation onto a stub", () => {
     const marker = document.querySelector<HTMLButtonElement>(".turn-rail .rail-marker");
     expect(marker?.textContent).toBe("1");
     marker?.click();
+    // BOTH ends of the jump: the body is built BEFORE anything scrolls, so waiting
+    // on the body alone would assert the scroll a frame before it happens.
     await vi.waitFor(() => {
       expect(hasBody("u1")).toBe(true);
     });
     // A jump navigates; it does not open. The turn lands exactly as a resident
     // folded turn does.
     expect(isFolded("u1")).toBe(true);
-    expect(scrollMock.jumpTo).toHaveBeenCalled();
+    // The scroll needs its own wait, because the body is built BEFORE anything
+    // scrolls: that build's completion applies a scroller write, and taking it
+    // mid-animation is what the ordering exists to prevent.
+    await vi.waitFor(() => {
+      expect(scrollMock.scrollToOffset).toHaveBeenCalled();
+    });
   });
 
   it("keeps the jumped-to turn resident across the next paint", async () => {

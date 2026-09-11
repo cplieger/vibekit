@@ -25,6 +25,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { confirmChatExists } from "./store-load.js";
 // The store's shape, for the `importOriginal` call in its mock factory below.
 import type * as Store from "./store.js";
+import type * as ActionsIndex from "./actions/index.js";
 
 const { mockUpsertHeader } = vi.hoisted(() => ({ mockUpsertHeader: vi.fn() }));
 
@@ -61,9 +62,19 @@ vi.mock("./store.js", async (importOriginal) => ({
   liveTurnMessage: () => undefined,
   relatchTurnVerdict: vi.fn(),
   latchFieldsFor: () => ({}),
+}));
+vi.mock("./tab-freshness.js", async () => ({
+  ...(await import("./__test-helpers__/tab-freshness-mock.js")).tabFreshnessMock,
   syncEpoch: () => 0,
 }));
-vi.mock("./actions/index.js", () => ({ registerCleanup: vi.fn() }));
+// `importOriginal` rather than a name list: Browser Mode links a factory mock for
+// real, so every name ANY module in this graph reaches has to exist on it —
+// `transport.js` alone imports three. Spreading the real module keeps that
+// complete by construction and mocks only the one call this suite must not make.
+vi.mock("./actions/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ActionsIndex>()),
+  registerCleanup: vi.fn(),
+}));
 
 /** Every URL the stub was asked for, so a case can assert the request as well as
  *  the verdict. */

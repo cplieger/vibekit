@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Vibekit">
@@ -79,7 +79,7 @@
             <svg class="pointer-icon-coarse hidden ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M22 14a8 8 0 0 1-8 8"/><path d="M18 11v-1a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1"/><path d="M10 9.5V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v10"/><path d="M18 11a2 2 0 1 1 4 0v3a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>
           </button>
           <button type="button" id="sidebar-close" class="icon-btn sidebar-close-only" data-tooltip="Close menu" aria-label="Close menu">
-            <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>
         </div>
       </div>
@@ -156,7 +156,7 @@
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg>
         </button>
         <button type="button" id="files-btn" class="icon-btn" data-tooltip="File browser" aria-label="File browser">
-          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.5h4l3 5h4a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H6.5a3 3 0 0 1-3-3v-11a3 3 0 0 1 3-3z"/></svg>
+          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h3l3 3h6a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z"/></svg>
         </button>
         <button type="button" id="git-btn" class="icon-btn" data-tooltip="Toggle git" aria-label="Toggle git">
           <svg class="git-btn-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>
@@ -170,15 +170,26 @@
                is pinned by menu-icons.test.ts so a one-glyph-per-concept sweep
                cannot quietly undo it again.
 
-               The coordinates are three-quarter units because `--icon-ui` is 16px
-               here: one unit is 0.667 CSS px, so unit 3 lands on exactly 2.0 and a
-               1px stroke straddles two pixel columns — maximally blurred, which is
-               what a reader sees. 3.75 and 20.25 land on 2.5 and 13.5, a half pixel
-               off the boundary, which is the crispest a 1px stroke gets. -->
-          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3.75" y="3.75" width="16.5" height="16.5" rx="3"/><path d="M8.25 9.75l2.25 2.25-2.25 2.25"/><path d="M12.75 15.75h4.5"/></svg>
+               EVERY COORDINATE IS A MULTIPLE OF 3, which is this row's crisp grid
+               and NOT the obvious one. `--icon-ui` is 16px against a 24 viewBox, so
+               one unit is 0.667 CSS px and a 1px stroke is crisp only when its
+               centre lands on a half pixel. That depends on the BOX's own pixel
+               phase as well as the coordinate, and measured 2026-09-10 this button's
+               svg sits at a half-pixel y offset (8 of the 9 toolbar buttons do, the
+               36px row height and the flex centring being what puts it there). With
+               that phase a multiple of 3 lands on x.5 and is crisp, while the 0.75
+               grid this icon used to use lands on x.0 and straddles two columns.
+               So the previous coordinates (3.75/20.25) were the blurriest available
+               rather than the crispest, and the comment that chose them reasoned
+               about the coordinate while ignoring the offset. Re-measure the offset
+               before moving any of these; `new-chat` is the one button at phase 0,
+               where the 0.75 grid IS correct. Snapping to 3..21 also took the ink
+               from 17.5 to 19 units, which is the toolbar's own median extent, so
+               this glyph stopped reading small against its neighbours. -->
+          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 9l3 3-3 3"/><path d="M13.5 15h4.5"/></svg>
         </button>
         <button type="button" id="docs-btn" class="icon-btn" data-tooltip="Kiro docs" aria-label="Kiro docs">
-          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7.5 8.25 4.5H4.5A2.5 2.5 0 0 0 2 7v10a2.5 2.5 0 0 0 2.5 2.5h15a2.5 2.5 0 0 0 2.5-2.5V7a2.5 2.5 0 0 0-2.5-2.5h-3.75z"/><path d="M12 7.5v12"/></svg>
+          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6 3 3v15l9 3 9-3V3z"/><path d="M12 6v15"/></svg>
         </button>
         <button type="button" id="history-btn" class="icon-btn" data-tooltip="History" aria-label="History">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
@@ -191,7 +202,7 @@
              its click, tabs.ts puts it in ACTIVE_BTN, app.ts clicks it from the
              keyboard shortcut, and 61-mcp-tools.css rotates its glyph on `.active`. -->
         <button type="button" id="settings-btn" class="icon-btn" data-tooltip="Settings" aria-label="Settings">
-          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.5"/><path d="M14.07 19.73L14.85 22.63A11 11 0 0 1 9.15 22.63L9.93 19.73A8 8 0 0 1 6.34 17.66L4.22 19.78A11 11 0 0 1 1.37 14.85L4.27 14.07A8 8 0 0 1 4.27 9.93L1.37 9.15A11 11 0 0 1 4.22 4.22L6.34 6.34A8 8 0 0 1 9.93 4.27L9.15 1.37A11 11 0 0 1 14.85 1.37L14.07 4.27A8 8 0 0 1 17.66 6.34L19.78 4.22A11 11 0 0 1 22.63 9.15L19.73 9.93A8 8 0 0 1 19.73 14.07L22.63 14.85A11 11 0 0 1 19.78 19.78L17.66 17.66A8 8 0 0 1 14.07 19.73Z"/></svg>
+          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><g transform="translate(12 12) scale(0.818) translate(-12 -12)"><circle cx="12" cy="12" r="3.5"/><path d="M14.07 19.73L14.85 22.63A11 11 0 0 1 9.15 22.63L9.93 19.73A8 8 0 0 1 6.34 17.66L4.22 19.78A11 11 0 0 1 1.37 14.85L4.27 14.07A8 8 0 0 1 4.27 9.93L1.37 9.15A11 11 0 0 1 4.22 4.22L6.34 6.34A8 8 0 0 1 9.93 4.27L9.15 1.37A11 11 0 0 1 14.85 1.37L14.07 4.27A8 8 0 0 1 17.66 6.34L19.78 4.22A11 11 0 0 1 22.63 9.15L19.73 9.93A8 8 0 0 1 19.73 14.07L22.63 14.85A11 11 0 0 1 19.78 19.78L17.66 17.66A8 8 0 0 1 14.07 19.73Z"/></g></svg>
         </button>
         <button type="button" id="menu-toggle" class="icon-btn mobile-only" data-tooltip="Menu" aria-label="Menu">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h18M3 12h18M3 20h18"/></svg>
@@ -632,7 +643,7 @@
                     <span>Update all</span>
                   </button>
                   <button type="button" id="tool-add-btn" class="action-pill" aria-label="Add tool">
-                    <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                    <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
                     <span>Add tool</span>
                   </button>
                   <button type="button" id="tool-catalog-refresh-btn" class="action-pill" aria-label="Refresh the tool catalog">
@@ -640,7 +651,7 @@
                     <span>Refresh catalog</span>
                   </button>
                   <button type="button" id="tool-cancel-btn" class="action-pill hidden" aria-label="Cancel the running tool job">
-                    <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
                     <span>Cancel</span>
                   </button>
                 </div>
@@ -908,7 +919,7 @@
         <header class="pr-dialog-header">
           <h3 class="pr-dialog-title">New pull request</h3>
           <button type="button" class="icon-btn" data-pr-close aria-label="Close">
-            <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>
         </header>
         <div class="pr-dialog-body">
@@ -949,7 +960,7 @@
         <header class="pr-dialog-header">
           <h3 class="pr-dialog-title" id="pr-merge-title">Merge pull request</h3>
           <button type="button" class="icon-btn" data-pr-merge-close aria-label="Close">
-            <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>
         </header>
         <div class="pr-dialog-body">
@@ -1004,13 +1015,13 @@
                   <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 00-2 2v14a2 2 0 002 2h4M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M12 4v16"/></svg>
                 </button>
                 <button type="button" id="editor-edit-btn" class="icon-btn" data-tooltip="Edit" aria-label="Edit">
-                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
                 </button>
                 <button type="button" id="editor-save-btn" class="icon-btn hidden" data-tooltip="Save" aria-label="Save" disabled>
                   <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
                 </button>
                 <button type="button" id="editor-cancel-btn" class="icon-btn hidden" data-tooltip="Stop editing" aria-label="Stop editing">
-                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
                 </button>
               </div>
             </div>
@@ -1069,7 +1080,7 @@
                   <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></svg>
                 </button>
                 <button type="button" id="fb-delete" class="icon-btn danger" data-tooltip="Delete" aria-label="Delete" disabled>
-                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
                 </button>
               </div>
             </div>
@@ -1145,7 +1156,7 @@
             <svg class="ic-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
           </button>
           <button type="button" id="shell-toggle-btn" class="shell-header-btn" data-tooltip="Close shell" aria-label="Close shell">
-            <svg class="ic-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            <svg class="ic-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>
         </div>
         <!-- @cplieger/web-terminal-ui createTerminal() builds the terminal
@@ -1181,7 +1192,7 @@
     <div class="modal-header-row">
       <span id="tool-modal-title" class="modal-title">Add tool</span>
       <button type="button" id="tool-modal-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
-        <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
     </div>
     <div class="tool-form">
@@ -1215,7 +1226,7 @@
     <div class="modal-header-row">
       <span id="mcp-modal-title" class="modal-title">Connect integration</span>
       <button type="button" id="mcp-modal-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
-        <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
     </div>
     <nav id="mcp-modal-tabs" class="mcp-modal-tabs" role="tablist" aria-label="Add integration method">
@@ -1274,7 +1285,7 @@
         <div class="mcp-form-section-head">
           <span class="tool-form-label-text">Headers</span>
           <button type="button" id="mcp-remote-add-header" class="action-pill" data-tooltip="Add header" aria-label="Add header">
-            <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
           </button>
         </div>
         <div id="mcp-remote-headers" class="mcp-pair-list"></div>
@@ -1310,7 +1321,7 @@
         <div class="mcp-form-section-head">
           <span class="tool-form-label-text">Environment variables</span>
           <button type="button" id="mcp-npm-add-env" class="action-pill" data-tooltip="Add variable" aria-label="Add variable">
-            <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
           </button>
         </div>
         <div id="mcp-npm-env" class="mcp-pair-list"></div>
@@ -1344,7 +1355,7 @@
       <div class="chip-adder">
         <input id="mcp-disabled-input" class="chip-input" type="text" autocomplete="off" placeholder="e.g. create_issue" aria-label="Add disabled tool">
         <button id="mcp-disabled-add" class="action-pill" type="button" data-tooltip="Block tool" aria-label="Block tool">
-          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
         </button>
       </div>
     </div>
@@ -1355,7 +1366,7 @@
     <div class="modal-header-row">
       <span id="git-output-modal-title" class="modal-title">Command output</span>
       <button type="button" id="git-output-modal-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
-        <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
     </div>
     <pre id="git-output-modal-body" class="subagent-modal-body"></pre>
@@ -1366,7 +1377,7 @@
     <div class="modal-header-row">
       <span id="filepicker-modal-title" class="modal-title">Choose upload folder</span>
       <button type="button" id="filepicker-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
-        <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
     </div>
     <div id="filepicker-list" class="filepicker-list"></div>
@@ -1386,7 +1397,7 @@
     <div class="modal-header-row">
       <span id="shortcuts-modal-title" class="modal-title">Keyboard shortcuts</span>
       <button type="button" id="shortcuts-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
-        <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
     </div>
     <p class="shortcuts-note">Cmd works wherever Ctrl is shown.</p>

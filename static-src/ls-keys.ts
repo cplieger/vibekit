@@ -34,6 +34,20 @@ export const LS_TURN_FOLDS_KEY = "vibekit.turn-folds";
  *  must not silence the desktop. It used to be `ui-state.dismissed_banners`. */
 export const LS_DISMISSED_BANNERS_KEY = "vibekit.dismissed-banners";
 
+/** Whether THIS DEVICE has already had its notification-permission ask.
+ *
+ *  Per-device because browser permission is per-origin-per-device: a grant on the
+ *  desktop says nothing about the phone, so a server-side flag would answer for the
+ *  wrong machine. It is written by every door the question can be answered through —
+ *  the automatic ask raising the prompt, the Settings toggle going on (which raises
+ *  it too), and the Settings toggle going OFF, which is a refusal.
+ *
+ *  That last writer is what the marker exists for. `notifications_enabled` reaches
+ *  the client as a resolved boolean, so "never opted in" and "switched off on
+ *  purpose" are one value there, and without the marker a later grant would quietly
+ *  reverse the refusal. See `notify-ask.ts`. */
+export const LS_NOTIFY_ASK_KEY = "vibekit.notify-ask";
+
 /** Every key above, so a sign-out can drop them without naming them one by one.
  *
  *  Here rather than at the three owning modules because this file is by
@@ -42,7 +56,12 @@ export const LS_DISMISSED_BANNERS_KEY = "vibekit.dismissed-banners";
  *  in-MEMORY halves are not this file's — `fold-state.ts` caches its document and is
  *  reset beside this call (`boot.ts` `forgetDeviceState`). */
 export function clearDeviceKeys(): void {
-  for (const key of [LS_UI_STATE_KEY, LS_TURN_FOLDS_KEY, LS_DISMISSED_BANNERS_KEY]) {
+  for (const key of [
+    LS_UI_STATE_KEY,
+    LS_TURN_FOLDS_KEY,
+    LS_DISMISSED_BANNERS_KEY,
+    LS_NOTIFY_ASK_KEY,
+  ]) {
     try {
       localStorage.removeItem(key);
     } catch {

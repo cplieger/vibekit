@@ -16,7 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as transport from "./transport.js";
-import { onBus, BUS_TRANSPORT_GAP } from "./bus.js";
+import { onBus, BUS_PAGE_RESUMED, BUS_TRANSPORT_GAP } from "./bus.js";
 
 /** An EventSource whose readyState the test drives. */
 class FakeEventSource {
@@ -365,5 +365,117 @@ describe("the resume kick", () => {
     vi.advanceTimersByTime(0);
 
     expect(FakeEventSource.opened).toHaveLength(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The resume ANNOUNCEMENT.
+//
+// A resume says real time passed unobserved, which undermines every kind whose
+// data has no invalidation channel — so the active view gets a nudge. It does NOT
+// bump the sync epoch: that is a statement about dropped FRAMES, which only a gap
+// can make.
+// ---------------------------------------------------------------------------
+
+describe("BUS_PAGE_RESUMED", () => {
+  const OriginalES2 = globalThis.EventSource;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    FakeEventSource.opened = [];
+    (globalThis as { EventSource: unknown }).EventSource = FakeEventSource;
+    transport._resetForTest();
+  });
+
+  afterEach(() => {
+    transport._resetForTest();
+    (globalThis as { EventSource: unknown }).EventSource = OriginalES2;
+    vi.useRealTimers();
+  });
+
+  function boot(): FakeEventSource {
+    transport.init(
+      () => {
+        /* frames unobserved */
+      },
+      () => {
+        /* status unobserved */
+      },
+    );
+    const source = FakeEventSource.opened.at(-1);
+    if (source === undefined) {
+      throw new Error("init must open a stream");
+    }
+    return source;
+  }
+
+  const FRAME = JSON.stringify({ type: "chat_updated", chat_id: "c1" });
+
+  /** Count the resumes announced while `body` runs. */
+  function resumes(body: () => void): number {
+    const seen = vi.fn();
+    const unsub = onBus(BUS_PAGE_RESUMED, seen);
+    try {
+      body();
+    } finally {
+      unsub();
+    }
+    return seen.mock.calls.length;
+  }
+
+  it("fires on a DEAD stream, which is the branch the helper exists for", () => {
+    // This branch RETURNS before the second's condition is read, so emitting from
+    // one site only would leave it silent.
+    const count = resumes(() => {
+      const source = boot();
+      source.open();
+      source.readyState = FakeEventSource.CLOSED;
+      document.dispatchEvent(new Event("visibilitychange"));
+      vi.advanceTimersByTime(0);
+    });
+
+    expect(count).toBe(1);
+  });
+
+  it("fires on a FROZEN-gap resume of a stream that still reports OPEN", () => {
+    const count = resumes(() => {
+      const source = boot();
+      source.open();
+      source.deliver("5", FRAME);
+      vi.setSystemTime(Date.now() + 600_000);
+      expect(source.readyState).toBe(FakeEventSource.OPEN);
+      document.dispatchEvent(new Event("visibilitychange"));
+      vi.advanceTimersByTime(0);
+    });
+
+    expect(count).toBe(1);
+  });
+
+  it("fires NEITHER for a quick alt-tab", () => {
+    const count = resumes(() => {
+      const source = boot();
+      source.open();
+      // A frame inside RESUME_LIVENESS_MS: the pipe is carrying bytes right now.
+      source.deliver("5", FRAME);
+      document.dispatchEvent(new Event("visibilitychange"));
+      vi.advanceTimersByTime(0);
+    });
+
+    expect(count).toBe(0);
+  });
+
+  it("fires ZERO on a cold load", () => {
+    // TWO properties make this true and neither is visible at the call site.
+    // `init()` calls `connectSSE()` BEFORE it installs any of the five lifecycle
+    // listeners, and `connect()` sets `phase: "connecting"` synchronously with a
+    // CONNECTING EventSource, which `sseIsDead()` reads as ALIVE. `lastFrameAt` is
+    // seeded at construction, which catches whatever gets past that.
+    const count = resumes(() => {
+      boot();
+      window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: false }));
+      vi.advanceTimersByTime(0);
+    });
+
+    expect(count).toBe(0);
   });
 });

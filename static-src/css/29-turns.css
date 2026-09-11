@@ -65,22 +65,47 @@
   transition: outline-color var(--dur-standard) var(--ease-standard);
 }
 
-/* Entry animation moved from `.msg-wrap` to the card: a turn arrives as one
- * unit, so the header, body and footer must enter together. */
-.turn[data-chat-entry] {
-  animation: vk-slide-up-pronounced var(--dur-enter) var(--ease-enter) backwards;
-  animation-delay: calc(var(--stagger-index, 0) * 30ms);
-}
+/* The turn card carries NO entry animation: it is the tallest box in the app
+ * (3,203 CSS px measured), so animating it allocated a layer of 3.4 phone screens
+ * per mount. `vibekit-ui.md` "Entry motion is a GPU budget". */
 
 /* --------------------------------------------------------------------------
    Header — the trigger
    -------------------------------------------------------------------------- */
 
 .turn-header {
+  /* THE FIRST LINE'S INDENT. Every control and readout in this band lives inside
+     it, out of flow, so the request TEXT is the only thing that decides how tall
+     the band is: --sp-1 x2 + one 21px line + the card's 1px rule = 30px.
+
+     --turn-req-line MIRRORS `.turn-req-text`'s own font-size/line-height pair
+     below and must move with them; it is what centres the two out-of-flow boxes
+     on line 1 instead of on the whole band, which for an open long prompt is
+     many lines tall.
+
+     The reserve is a literal because a resize-driven write to this box is the
+     ResizeObserver loop class (vibekit-client.md, "The turn card"). Two members
+     are STATE-conditional and carry their own additive term rather than being
+     summed into four combinations: the dot renders only below 48rem, the hit
+     count only while a search runs. */
+  --turn-chev-box: 1.5rem;
+  --turn-req-line: calc(var(--fs-md) * 1.5);
+  --turn-badge-w: 4.5rem; /* #9999 (mono, 11px) + --sp-2 + 10:42 (tabular) */
+  --turn-dot-reserve: 0rem; /* 0.5rem + --sp-2, below 48rem only */
+  --turn-hits-reserve: 0rem; /* the badge's min box + its padding, plus --sp-2 */
+  --turn-indent: calc(
+    var(--turn-chev-box) + var(--sp-2) + var(--turn-badge-w) + var(--turn-dot-reserve) +
+      var(--turn-hits-reserve) + var(--sp-2)
+  );
+
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
-  padding: var(--sp-2) var(--sp-3);
+  /* --sp-1, matching the FOOTER of this same card: the band's own controls are
+     out of flow, so --sp-2 was 8px paid for nothing and an asymmetry between two
+     bands of one card. */
+  padding: var(--sp-1) var(--sp-3);
 
   /* The tint is a ramp rung, not its own token. `--c-user-bubble` was the
      character-identical oklch triple to the old --c-border in both themes, so
@@ -107,32 +132,45 @@
   cursor: pointer;
 }
 
-.turn:not([data-running], [data-no-fold]) > .turn-header:hover {
-  /* As a LAYER, per the interaction-ladder contract (01-tokens.css): written
-     into `background` the wash would REPLACE this band's tertiary tint with a
-     15% film over the card, so the header would lose its tint on hover. */
-  background-image: var(--layer-hover);
+/* Gated for the reason 14-tools.css `.tool-group-header` states. */
+@media (any-hover: hover) {
+  .turn:not([data-running], [data-no-fold]) > .turn-header:hover {
+    /* As a LAYER, per the interaction-ladder contract (01-tokens.css): written
+       into `background` the wash would REPLACE this band's tertiary tint with a
+       15% film over the card, so the header would lose its tint on hover. The only
+       box header in a transcript with a fill to preserve. */
+    background-image: var(--layer-hover);
+  }
 }
 
-/* Meta row: number, outcome dot, time, then the action slot pushed right. */
-.turn-head-row {
+/* The readouts — number, outcome dot, time, hit count — in the first line's
+   indent, after the chevron. Out of flow, so they contribute no height. */
+.turn-badge {
+  position: absolute;
+  inset-block-start: var(--sp-1);
+  /* `inset-inline-start` is measured from the containing block's PADDING box
+     (the `.tool-disclosure` comment in 14-tools.css states it), which is why
+     --sp-3 appears here: the band's own gutter, then the chevron's column. */
+  inset-inline-start: calc(var(--sp-3) + var(--turn-chev-box) + var(--sp-2));
+  block-size: var(--turn-req-line);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+  /* Absolute plus shrink-wrap: at 390px this would wrap. */
+  white-space: nowrap;
   font-size: var(--fs-xs);
   /* SECONDARY, not the hint ink: `.turn-header` above fills with
      `--c-bg-tertiary`, and hint ink measures 3.601:1 dark / 3.900:1 light on
-     that rung — under the 4.5:1 this row's 11px timestamp needs. The two-rung
+     that rung — under the 4.5:1 an 11px timestamp needs. The two-rung
      contract on `--c-text-tertiary` (01-tokens.css) is exactly this case, and it
      was missed because the fill and the ink sit in two different blocks, which is
      the shape the stylesheet gate cannot decide. `.turn-n` beside it is already
      secondary and stays distinct on weight and the mono face. */
   color: var(--c-text-secondary);
 
-  /* The header FOLDS THE TURN, so this row inherits its pointer. `user-select:
-     none` is scoped to this row on purpose: `.turn-req` below holds the user's
-     own prompt and stays selectable (a drag there keeps its selection — the
-     header's click forwarder skips a click that ends one). */
+  /* Scoped here on purpose: `.turn-req` below holds the user's own prompt and
+     stays selectable (a drag there keeps its selection — the header's click
+     forwarder skips a click that ends one). */
   user-select: none;
 }
 
@@ -161,7 +199,7 @@
  * strip is off-canvas and the transcript is all there is.
  *
  * `display: none`, not `visibility: hidden` and not an unstyled span: this is a
- * flex item in `.turn-head-row`, which has a `gap`, so an item that is merely
+ * flex item in `.turn-badge`, which has a `gap`, so an item that is merely
  * invisible still spends 8px of it. Same treatment, same reason, as the ledger
  * caret further down this file. */
 .turn-dot {
@@ -174,7 +212,7 @@
 }
 
 /* HUE COMES OFF THE SEVERITY, NOT THE OUTCOME, on all four mark surfaces in this
- * file (this dot, the footer wash, the footer glyph, the rail marker and cluster).
+ * file (this dot, the footer wash, the footer glyph and the rail marker).
  * Each one used to carry its own per-outcome colour table, so a severity ruling had
  * to be re-applied by hand in four places — and `interrupted` was measured painting
  * YELLOW here while the card's own `.turn-notice`, the one surface that already read
@@ -211,7 +249,10 @@
  * relying on hue, the same WCAG 1.4.1 posture 12-tabs.css states for the strip. */
 .turn-header[data-severity="running"] .turn-dot {
   background: var(--c-dot-working);
-  opacity: calc(1 - var(--vk-beat) * 0.6);
+
+  --beat-peak: 0.4;
+
+  animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
 }
 
 /* A cancel is a stop the USER asked for and an unreadable end is a stop nobody
@@ -268,19 +309,71 @@
   .turn-dot {
     display: block;
   }
+
+  /* The dot's own 0.5rem plus the badge's own --sp-2, paid only at the widths
+     where the dot renders. */
+  .turn-header {
+    --turn-dot-reserve: 1rem;
+  }
 }
 
 .turn-ts {
   font-variant-numeric: tabular-nums;
 }
 
-/* Copy the sent prompt. Pushed to the far end of the meta row, so the header
-   band's action sits where the footer band's ledger does and the two line up.
-   In the META row rather than inside `.turn-req`, which is what puts it outside
-   the three-line clamp by construction. */
-.turn-copy-req {
-  margin-inline-start: auto;
-  flex-shrink: 0;
+/* OUTSIDE `any-hover` THIS CONTROL IS HIDDEN, NOT SHOWN, and that is a stated
+   exception to vibekit-ui.md's hover-reveal rule rather than an oversight. That
+   rule is about a READOUT (the footer's `.turn-elapsed`), where hiding loses
+   information; this is a CONTROL, and the space was ratified over keeping it on
+   touch. The prompt is still copyable by selecting it.
+
+   `.turn-header >` is load-bearing: `.turn-action-btn` declares
+   `display: inline-flex` in 61-mcp-tools.css, which is LATER in the MANIFEST, so
+   a single-class hide here would tie and lose on order. */
+.turn-header > .turn-copy-req {
+  display: none;
+}
+
+@media (any-hover: hover) {
+  .turn-header > .turn-copy-req {
+    position: absolute;
+    inset-block-start: var(--sp-1);
+    inset-inline-end: var(--sp-3);
+    display: inline-flex;
+
+    /* OPTS OUT OF THE COARSE HIT FLOOR, for the reason `.turn-fold-toggle` does
+       and with a second one of its own: a control gated on `(any-hover: hover)`
+       is reached by a pointer, so 24px is the floor that applies to it (WCAG
+       2.5.8, Level AA). Left to the floor (61-mcp-tools.css) this box is 44px on
+       the coarse tier — and `data-pointer` is JS-driven from real pointer events
+       while this query is a capability, so coarse-AND-hover is a device that
+       exists (a touchscreen laptop with a mouse). Measured there at 390px: a
+       44px box on a 30px header hangs 18px BELOW it, and once revealed
+       `elementFromPoint` 6px under the header answers `.turn-copy-req`, so a
+       click on the reply's first line copies the prompt. That is the same defect
+       the fold toggle's own comment refuses an `::after` expander for. */
+    min-width: 0;
+    min-height: 0;
+
+    /* An opacity change in a box that was always there — never a geometric
+       expansion. Out of flow it contributes no height either way, so the
+       no-layout-shift property holds by construction; `display: none` here would
+       break it and is what the rest state may not use. */
+    opacity: 0;
+    /* `opacity: 0` still hit-tests, and this box sits OVER the prompt's first
+       line: at rest it would swallow the band's own fold click and copy on a
+       click meant to fold. */
+    pointer-events: none;
+    transition: opacity var(--dur-standard) var(--ease-standard);
+  }
+
+  /* `:focus-within` is not decoration: without it a keyboard user can never see
+     the control they have tabbed onto. */
+  .turn:hover > .turn-header > .turn-copy-req,
+  .turn:focus-within > .turn-header > .turn-copy-req {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 /* REWIND: glyph plus word on desktop, glyph alone on a narrow row. It keeps its
@@ -364,36 +457,35 @@
    * of a 652px column showed less of the request than three lines of the 774px
    * the band actually has. Removing the cap shows more of it in the same three
    * lines, which is what the clamp is for. */
+
+  /* Line 1 only, which is what holds the chevron and the badge; lines 2+ run the
+     full width. A FLOATED badge inside a clamped box was measured not to shorten
+     line 1 at all, and an INLINE one contaminates `textContent`, which is exactly
+     what the copy button reads. The arithmetic is on `.turn-header` above. */
+  text-indent: var(--turn-indent);
+
+  /* The badge and the chevron are out of flow, so an EMPTY request would leave
+     them outside a band with no line box at all. */
+  min-block-size: var(--turn-req-line);
 }
 
-/* THE CLAMP. Three lines, then a show-more.
+/* THE CLAMP IS FOLD-CONDITIONAL, and CSS-only, so `-webkit-line-clamp` renders
+ * its own ellipsis and no TypeScript constant stands behind the count.
  *
- * Load-bearing, not cosmetic: once old turns fold to their header, the folded
- * rows are the session's navigation surface, and one pasted stack trace in a
- * prompt would render hundreds of lines as a "collapsed" turn and push every
- * neighbouring row off-screen. Scoped to the TEXT element, so the action row
- * and any future attachment/reference chips are unclamped by construction —
+ * An OPEN turn's prompt is not clamped: full text, however long (user ruling).
+ * A FOLDED turn's clamps to four lines, for the reason the three-line clamp
+ * always had — folded rows are the session's navigation surface, and one pasted
+ * stack trace would render hundreds of lines as a "collapsed" turn and push
+ * every neighbouring row off screen. Four rather than three because the band
+ * now has the room: 4 + 84 + 4 + 1 = 93px against 176px before.
+ *
+ * Scoped to the TEXT, so the attachment chips are unclamped by construction —
  * they are how a reader identifies which request this was. */
-.turn-req-text[data-clamped] {
+.turn[data-folded] .turn-req-text {
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-
-.turn-req-more {
-  font-size: var(--fs-xs);
-  color: var(--c-text-secondary);
-  background: none;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.turn-req-more:hover {
-  color: var(--c-accent);
 }
 
 /* The request's attachment pills. The pill itself is the composer's component
@@ -404,11 +496,6 @@
 .turn-req-attachments {
   padding: 0;
   margin: 0;
-}
-
-.turn-req-more:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-offset);
 }
 
 /* A turn the user did not ask for: a typed trigger line rather than a
@@ -503,6 +590,17 @@
   border-top: 0;
 }
 
+/* A BREAK THAT ENDS THE BODY NEEDS NO TRAILING MARGIN. `.boundary`'s `--sp-4` is
+   the air BETWEEN rows, and there is no row after this one, so the body's own
+   padding is the air — the same trailing-edge trim the footer's readout takes.
+   Measured on an interrupted turn: it put the "Turn interrupted" divider 36.5px
+   above the reason framed below it (16px of margin, 12px of body padding, 8px of
+   the notice's own inset) against the 12px every other pair of rows in that body
+   sits at, which is the reported "large gap". */
+.turn-body > .boundary:last-child {
+  margin-block-end: 0;
+}
+
 /* --------------------------------------------------------------------------
    Footer — the outcome ledger
    -------------------------------------------------------------------------- */
@@ -544,6 +642,26 @@
   border-top: 1px solid var(--c-border);
   border-end-start-radius: calc(var(--r) - 1px);
   border-end-end-radius: calc(var(--r) - 1px);
+}
+
+/* THE TRAILING RUNG IS THE TRAILING CONTROL'S OWN INSET, not the ink gutter, and
+   this is `.tab`'s rule (10-shell-app.css) applied to the other row in the app
+   whose last child is a box rather than text. `--sp-3` is authored for INK, and it
+   is still right at the leading edge where the ledger's words are; at the trailing
+   edge the child is `.turn-actions-more`'s `…` trigger or `.turn-rewind`, each
+   floored to `--hit-floor` and painting a real box on hover and on press, so its
+   distance from the card's edge is a visible relationship. Measured at 390x844 on
+   the coarse tier: the 44x44 `…` box sat 4px from the footer's top edge, 4px from
+   its bottom and 12px from its trailing edge — reported as more padding on the
+   right than on the top and bottom. `--sp-1` is the footer's own `padding-block`,
+   so the box is inset equally on all four sides.
+
+   Keyed on the row ENDING in such a control rather than applied unconditionally: a
+   footer with no actions and no Rewind ends in `.turn-elapsed`, which is TEXT and
+   keeps the ink gutter (`vibekit-ui.md`: a right-aligned readout ends on its
+   container's own gutter). */
+.turn-footer:has(> .turn-actions-buttons, > .turn-rewind) {
+  padding-inline-end: var(--sp-1);
 }
 
 .turn-footer > .turn-ledger-summary {
@@ -589,39 +707,35 @@
   grid-row: 1;
   justify-self: end;
   margin-inline-start: var(--sp-2);
+  /* The rest state sits HERE, outside every media query and unscoped, so no
+     device and no footer inherits a duration painted at rest. The reveals below
+     are the only thing that lifts it, and the transition rides this rule so it is
+     declared once. */
+  opacity: 0;
   color: var(--c-text-tertiary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  transition: opacity var(--dur-standard) var(--ease-standard);
 }
 
-/* The reveal. Gated on `any-hover`, NEVER on `hover`: those queries report only
-   the PRIMARY input, and iPadOS answers `hover: none` with a trackpad attached, so
-   a `hover: hover` gate silently drops the rule on every touch-primary device.
-   Outside this query the time is simply always visible, because a touch device has
-   no hover to reveal it with — which is the right default rather than a fallback.
+/* The FOCUS reveal is UNGATED, because a keyboard exists on a device with no
+   hover: inside the hover query below it would withdraw the keyboard path on
+   exactly the devices where the ledger disclosure is the only other one. Both
+   footers are named, `turn-footer.ts` being reused inside `.subagent-foot`
+   (14-tools.css) — a delegate is reached by DESCENDANT rather than by that slot's
+   own child chain to stay inside this sheet's specificity ceiling, and
+   `.turn-elapsed` exists nowhere but a `.turn-footer`. */
+.turn:focus-within > .turn-footer > .turn-elapsed,
+.subagent-block:focus-within .turn-footer > .turn-elapsed {
+  opacity: 1;
+}
 
-   `:focus-within` is not decoration: a keyboard user tabbing into the ledger button
-   or a file row must see the time, and hover alone would hide it from them
-   permanently.
-
-   Reduced motion is covered by 40-a11y.css's global sweep, which zeroes the
-   transition duration — so the time appears instantly rather than not at all. A
-   second rule here would be redundant. */
-/* Scoped to a TURN CARD's own footer (`> .turn-footer` is a direct child of
-   `.turn`), which is what leaves the DELEGATE footer's copy alone. That footer is
-   `turn-footer.ts` reused inside `.subagent-foot` (14-tools.css), it only exists
-   once its card is expanded, and a delegate box is itself a disclosure — so hiding
-   its duration behind a second hover would take away a value that is visible today
-   and give nothing back. The layout rules above stay unscoped for the same reason:
-   both footers want the slot in column 2. */
+/* The HOVER reveal is gated, because only a hover-capable device has the gesture.
+   `any-hover`, NEVER `hover`: those report the PRIMARY input alone, and iPadOS
+   answers `hover: none` with a trackpad attached. */
 @media (any-hover: hover) {
-  .turn > .turn-footer > .turn-elapsed {
-    opacity: 0;
-    transition: opacity var(--dur-standard) var(--ease-standard);
-  }
-
   .turn:hover > .turn-footer > .turn-elapsed,
-  .turn:focus-within > .turn-footer > .turn-elapsed {
+  .subagent-block:hover .turn-footer > .turn-elapsed {
     opacity: 1;
   }
 }
@@ -696,14 +810,32 @@
    the population this exists for; `stopped` takes the same yellow its footer glyph
    takes, because a cancel the user asked for and a stop reason vibekit could not
    read are not failures. Colour is never the only channel: the footer glyph, the
-   rail marker and the tab dot all carry the same fact by shape. */
+   rail marker and the tab dot all carry the same fact by shape.
+
+   THE COMPACTION BREAK'S FRAME, because without one this was a line of red prose
+   floating between the body and the ledger rather than a banner — reported as the
+   error sitting "with 0 padding vs the footing", and the instruction was to copy
+   what the compaction break does. Its TRAILING rule is the footer's own
+   `border-top`, or the card's border on a footerless turn, so declaring a second
+   one here would double a line this file already takes care not to double (see
+   `.turn-body:empty + .turn-footer`). No glyph either: the divider directly above
+   carries the ⚠, and the footer's own mark carries the shape channel, so a third
+   copy of one fact is what a break with an icon would be here. */
 .turn-notice {
+  border-block-start: 1px dashed var(--c-border);
   padding-block: var(--sp-2);
   padding-inline: var(--sp-3);
   color: var(--c-red);
   font-size: var(--fs-sm);
   white-space: pre-wrap;
   background: var(--c-turn-body);
+}
+
+/* A card with no body and no face at all (a tier-3 stub whose turn produced no
+   prose) puts the notice straight under the header, whose own `border-bottom` is
+   already a rule — and two rules 1px apart is the doubling above. */
+.turn-header + .turn-notice {
+  border-block-start: 0;
 }
 
 .turn-notice[data-severity="stopped"] {
@@ -941,6 +1073,30 @@
   margin: 0;
 }
 
+/* The TIMINGS row: the durable channel for the turn's duration and for the gap
+   before it, so it is a readout and takes none of the file rows' affordance — no
+   hit-target floor, no hover, no cursor. Both inks stay at `--c-text-secondary`
+   because this sits on the footer's tinted band, where hint ink falls under WCAG
+   1.4.3's 4.5:1; the label separates by WEIGHT instead of by a quieter colour. */
+.turn-ledger-timings {
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-1);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+}
+
+.turn-timings-label {
+  font-weight: var(--fw-medium);
+}
+
+.turn-timings-value {
+  display: flex;
+  flex-direction: column;
+  padding-inline-start: var(--sp-2);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Every row is a click target into that file's diff. Full-width so the hit
  * area is the row rather than the text — a path is a small target and WCAG
  * 2.5.8 wants 24px, which the padding below supplies. */
@@ -1016,10 +1172,10 @@
    mounts in #messages-wrap-outer (the positioned wrapper) rather than in the
    scroller, so it stays put instead of scrolling away with the content.
 
-   It must NOT become a scrolling widget of its own: when the turns stop fitting
-   they cluster into ranges and a click zooms the rail to a range. That is why
-   there is no overflow-y here — an `auto` would silently turn the compression
-   rule off and give the rail a second scrollbar competing with the transcript's.
+   It must NOT become a scrolling widget of its own: a track that cannot hold
+   every turn at the pointer tier's hit-target separation shows a downsampled
+   SET, so an `overflow-y` here would give the rail a second scrollbar competing
+   with the transcript's instead.
    ========================================================================== */
 
 .turn-rail {
@@ -1031,8 +1187,14 @@
    * was a floating pill at z-index 10 anchored to this same corner, which put the
    * first two markers underneath it — measured at 1440 wide, marker #1 (y 12..36)
    * inside the bar's 12..54 band, invisible and unclickable. The bar is in flow
-   * now, so that clearance became 60px of dead offset. */
-  inset-block: var(--sp-3);
+   * now, so that clearance became 60px of dead offset.
+   *
+   * THE FOOT IS OUT OF THE TRACK, not padding inside it: `clientHeight` is the
+   * span every marker's `top` is a fraction of, and padding is part of it, so a
+   * reserved foot spelled as padding would place the last marker inside the
+   * reservation. `--rail-foot` (13-messages.css) already carries the leading
+   * `--sp-3`, which is why only the START inset spells it separately. */
+  inset-block: var(--sp-3) var(--rail-foot);
 
   /* STUCK TO THE TURN CARDS' EDGE, not to the window's. The column's width and
    * inset live on `#messages-wrap-outer` (13-messages.css), because the resume
@@ -1057,14 +1219,6 @@
    * hiding it. */
   inset-inline-end: var(--rail-inset-end);
   z-index: 4;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-
-  /* The markers' gap is also the axis's only visible stretch, so it is charged
-   * against capacity in turn-rail.ts (`ROW_PITCH_PX`) rather than being free. */
-  gap: var(--sp-1);
   width: var(--rail-w);
   pointer-events: none;
 }
@@ -1078,12 +1232,10 @@
  * drawn only across the markers would be entirely hidden behind them, which is
  * every case where the reader most needs to see what the column IS.
  *
- * `z-index: -1` puts it behind the rows: markers are `position: relative` (for
- * the search-hit dot) while clusters and gap rows are static, so paint order
- * alone would have the line strike through some rows and not others. The rail
- * paints no background of its own, so behind the rows is still in front of the
- * page. Each row then carries an opaque background, which is what turns the line
- * into a sequence of nodes instead of a rule drawn across a column of digits. */
+ * `z-index: -1` puts it behind the markers. The rail paints no background of its
+ * own, so behind them is still in front of the page, and each marker carries an
+ * opaque background — which is what turns the line into a sequence of nodes
+ * instead of a rule drawn across a column of digits. */
 .turn-rail::before {
   content: "";
   position: absolute;
@@ -1099,22 +1251,30 @@
 }
 
 /* One node per turn: its number, in its outcome's colour, sitting ON the axis.
- * WCAG 2.5.8 wants a 24px target, and that number plus this row's share of the
- * gap is what the capacity arithmetic in turn-rail.ts clusters against — keep
- * them in step if this changes.
  *
  * The background is OPAQUE rather than `none`: it is what interrupts the axis at
  * each node, so the line reads as passing between the numbers instead of through
  * them. It matches the page rather than a raised surface because the rail hangs
  * in the gutter beside the cards, over nothing else. */
-.rail-marker,
-.rail-cluster,
-.rail-zoom-out {
+.rail-marker {
+  /* POSITION IS THE TURN'S OWN NUMBER, published per marker as the `--rail-at`
+   * fraction (`rail-select.ts` `railAt`) and turned into a `top` here, by the one
+   * rule that consumes it. The travel span is the track minus one marker box, so
+   * the first and last markers sit fully inside the track rather than half out of
+   * it — the same expression `markerPosition` computes, which is what keeps the
+   * arithmetic the separation pass reasons about and the rendered box in step.
+   *
+   * `translate` rather than a width: the box shrink-wraps its digits above the
+   * tier's floor, so an inline-start of 50% plus a half-box translate centres it
+   * on the axis at any digit count. It is a separate property from `transform`,
+   * so the app's universal press scale still applies. */
+  position: absolute;
+  inset-inline-start: 50%;
+  translate: -50%;
+  top: calc(var(--rail-at) * (100% - var(--hit-floor)));
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 1.5rem;
-  min-height: 1.5rem;
   padding: 0 2px;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
@@ -1125,9 +1285,8 @@
   font-variant-numeric: tabular-nums;
   line-height: 1;
 
-  /* A row is ONE line. `--rail-w` is sized for the widest range the code can
-     produce, so this only bites past four digits a side, where overflowing the
-     column by a hair beats stacking a range onto two lines in a 24px box. */
+  /* A marker is ONE line, so a five-digit turn number overflows the column by a
+     hair rather than stacking onto two lines in a 24px box. */
   white-space: nowrap;
   cursor: pointer;
   transition:
@@ -1136,16 +1295,21 @@
     border-color var(--dur-micro) var(--ease-standard);
 }
 
-.rail-marker:hover,
-.rail-cluster:hover,
-.rail-zoom-out:hover {
+/* A marker is a hit target, so its box is the pointer TIER's own floor and not a
+ * literal: WCAG 2.5.8 asks for 24px on a fine pointer and 44 on a coarse one, and
+ * `--rail-w` is already 2.75rem, so the column holds a conforming marker at
+ * either tier. turn-rail.ts reads the same token for its marker pitch. */
+.rail-marker {
+  min-width: var(--hit-floor);
+  min-height: var(--hit-floor);
+}
+
+.rail-marker:hover {
   background: var(--c-bg-tertiary);
   color: var(--c-text-primary);
 }
 
-.rail-marker:focus-visible,
-.rail-cluster:focus-visible,
-.rail-zoom-out:focus-visible {
+.rail-marker:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
 }
@@ -1160,21 +1324,12 @@
   color: var(--c-dot-working);
 }
 
-.rail-marker[data-severity="stopped"],
-.rail-cluster[data-severity="stopped"] {
+.rail-marker[data-severity="stopped"] {
   color: var(--c-yellow);
 }
 
-/* RED, `interrupted` included by ruling — see the header dot's broken arm. It used
- * to be grouped INTO `cancelled`'s rule here, which is how one edit to a severity
- * ruling had to be remembered in four places in this file.
- *
- * A CLUSTER reads this too, so `turn-rail.ts`'s own SEVERITY rank table has to agree
- * with the partition: it ranks a cluster's worst member, and with `interrupted`
- * ranked below `unknown` a range holding both painted neutral while the interrupted
- * turn's own marker painted red. That table says so at its declaration. */
-.rail-marker[data-severity="broken"],
-.rail-cluster[data-severity="broken"] {
+/* RED, `interrupted` included by ruling — see the header dot's broken arm. */
+.rail-marker[data-severity="broken"] {
   color: var(--c-red);
 }
 
@@ -1189,8 +1344,7 @@
  * BEFORE the `[data-current]` / `[data-selected]` fill below, not after it: those
  * selectors are also (0,2,0), so an override placed later would beat the selection
  * fill and the rail would stop marking the reader's position on an unknown turn. */
-.rail-marker[data-outcome="unknown"],
-.rail-cluster[data-outcome="unknown"] {
+.rail-marker[data-outcome="unknown"] {
   color: var(--c-text-tertiary);
 }
 
@@ -1205,7 +1359,7 @@
  * prove a click registered. Two copies of the four declarations is what this
  * replaced, and the comment there already claimed they shared a rule.
  *
- * Only ONE of the two is ever written per render (`turn-rail.ts` `rowNode`), which
+ * Only ONE of the two is ever written per render (`turn-rail.ts` `markerNode`), which
  * is what keeps the rail from painting two filled markers and claiming two
  * positions. Doing that split in the renderer rather than in the cascade is also
  * what keeps this selector at (0,2,0): the version that demoted the loser in CSS
@@ -1229,34 +1383,6 @@
   font-weight: var(--fw-semibold);
 }
 
-/* A cluster containing the current turn, marked as a SUBDUED variant of the
- * marker's fill rather than the fill itself. Past capacity every turn is inside a
- * cluster, so without this a long session's rail showed no position at all — but a
- * cluster is a RANGE, and claiming the reader is "at" nine turns with the same
- * emphasis a single turn gets overstates it. A tinted wash plus the accent border,
- * keeping the ink readable, is the honest middle. */
-/* The tint is DERIVED rather than a token, so it re-resolves per theme by
- * construction: both inputs are already themed, which is the same reason
- * `--c-tab-active-bg` is written this way. No phantom `--c-accent-subtle` — that
- * token no longer exists, and a `var()` with nothing behind it resolves to the
- * property's initial value, which here would be a transparent background.
- *
- * MEASURED, both themes, with `scripts/css-contrast.py pair` (the same
- * implementation the ratios above were measured with, so a derived colour is
- * resolved rather than estimated): `--c-text-primary` on this background is
- * 14.545:1 dark / 12.415:1 light, and the accent border reads 6.401:1 / 4.746:1
- * against the fill and 8.666:1 / 6.628:1 against the page. The label is 9px, the
- * smallest text in the app, so the 4.5:1 floor is the one that applies and both
- * themes clear it by a wide margin. The fill's own separation from the page is only
- * 1.354:1 / 1.397:1 — deliberately, since a range is not a turn — which is why the
- * accent BORDER carries the boundary and why the mark also travels in words
- * (`rail-labels.ts` puts "Contains the current turn" in the label). */
-.rail-cluster[data-current] {
-  background: color-mix(in oklch, var(--c-accent) 22%, var(--c-bg-primary));
-  border-color: var(--c-accent);
-  color: var(--c-text-primary);
-}
-
 /* A turn the user did not trigger reads as a non-user marker rather than
  * implying they asked for it. */
 .rail-marker[data-trigger="system"] {
@@ -1268,50 +1394,63 @@
 /* Waiting on a fetch: the target turn is not resident, so the jump has to page
  * history in first. Saying so beats appearing to do nothing. */
 .rail-marker[data-pending] {
-  opacity: calc(1 - var(--vk-beat) * 0.6);
+  --beat-peak: 0.4;
+
+  animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
 }
 
-.rail-cluster {
-  font-size: 0.5625rem;
-  letter-spacing: -0.02em;
-}
-
-.rail-zoom-out {
-  color: var(--c-accent);
-  border-color: var(--c-border);
-  font-size: 0.5625rem;
-}
-
-/* Time as space: a pause between turns takes a row, so an overnight break is
- * visible on the rail instead of being invisible in a flat message list. On the
- * axis it reads as a labelled BREAK — the row's opaque background is what cuts
- * the line, which is the seam, and the tick below marks it. */
-.rail-gap {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 1rem;
-  background: var(--c-bg-primary);
-  color: var(--c-text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 0.5625rem;
-  /* NO `opacity`. It was 0.65, which took hint ink to 2.983:1 dark / 2.785:1
-     light at 9px — the smallest text in the app and the lowest contrast in it.
-     The rail sits on `--c-bg-primary`, which is the one rung the hint ink IS
-     sized for (6.321:1 dark), so the token alone is the right dimness and the
-     multiplier was undoing the measurement. */
-}
-
-/* A dashed tick above the label. Anchored to the gap row itself (hence the
- * position: relative above) — anchoring it to the rail would stack every gap's
- * tick at one spot. */
-.rail-gap::before {
-  content: "";
+/* THE READER'S POSITION, an accent caret on the axis rather than a second marker:
+ * it carries no attribute and no accessible name, so the one-position invariant
+ * still has `markerNode` as its single writer. Its subject is the marked turn, so it
+ * reads off the same `--rail-at` the marker does, and the extra half-box term is
+ * what centres an 8px caret inside the 24px or 44px box that turn's marker occupies.
+ *
+ * `--dot-size` is the app's status-mark diameter, so the caret reads as a tab dot's
+ * class of mark; `rail-select.ts` `HERE_PX` is the same number, and it is the value
+ * the pure arithmetic centres against. It is `aria-hidden` and is not a hit target,
+ * which is why it is under no pitch obligation and takes no `--hit-floor`. */
+.rail-here {
   position: absolute;
-  inset-block-start: 0;
-  inset-inline: 25%;
-  border-top: 1px dashed var(--c-border);
+  inset-inline-start: 50%;
+  translate: -50%;
+  top: calc(var(--rail-at) * (100% - var(--hit-floor)) + (var(--hit-floor) - var(--dot-size)) / 2);
+  inline-size: var(--dot-size);
+  block-size: var(--dot-size);
+  border-radius: 50%;
+  background: var(--c-accent);
+  pointer-events: none;
+}
+
+/* Time as space: a pause over `GAP_THRESHOLD_MS` is a dashed band BETWEEN two
+ * markers rather than a row of its own, which is what lets it charge nothing
+ * against the marker count. It spans from the earlier marker's bottom to the
+ * later's top — the separation pass keeps those tops at least one pitch apart, so
+ * the band is never shorter than the clear between two hit targets.
+ *
+ * It paints NO TEXT: the elapsed time reaches the reader through the band's
+ * accessible name (`rail-labels.ts` `seamLabel`) and nowhere else. */
+.rail-seam {
+  position: absolute;
+  inset-inline-start: calc(50% - 1.5px);
+  inline-size: 3px;
+  top: calc(var(--rail-from) * (100% - var(--hit-floor)) + var(--hit-floor));
+  block-size: calc(
+    (var(--rail-to) - var(--rail-from)) * (100% - var(--hit-floor)) - var(--hit-floor)
+  );
+
+  /* The page colour CUTS the solid axis and the dash is drawn back over it in a
+   * 1px strip: painting the dash alone would leave the solid line showing through
+   * every gap, which is a solid axis with a texture rather than a seam. */
+  background-color: var(--c-bg-primary);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--c-border) 0 3px,
+    transparent 3px 6px
+  );
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 1px 100%;
+  pointer-events: none;
 }
 
 /* Shown only when the chat area is wide enough to hold the rail BESIDE the
@@ -1378,15 +1517,29 @@
    (chevron.ts), which replaced a chevron drawn from two rotated borders. The
    rotation is on the glyph rather than the button, so the focus ring below stays
    axis-aligned. */
-/* 1.5rem, matching `.turn-action-btn` at the row's other end, so the row's two
-   buttons are one size and the band's height is unchanged (the copy button
-   already set it). It was 1rem — a 16x16 target, under the 24px desktop floor,
-   and the measurement behind this whole change. The glyph stays 0.75rem below;
-   the extra 8px is hit area, not ink. */
+/* In the first line's indent, centred on that line rather than on the band —
+   which for an open long prompt is many lines tall. The arithmetic the reserve
+   is built from lives on `.turn-header`. */
 .turn-fold-toggle {
-  width: 1.5rem;
-  height: 1.5rem;
-  flex-shrink: 0;
+  position: absolute;
+  inset-block-start: calc(var(--sp-1) + (var(--turn-req-line) - var(--turn-chev-box)) / 2);
+  inset-inline-start: var(--sp-3);
+
+  /* OPTS OUT OF THE COARSE HIT FLOOR, because the target already exists somewhere
+     bigger: `messages.ts` calls `wireRowToggle(header, btn)` unconditionally, so
+     the whole band activates it — ~366x29 on a 390px phone, well past WCAG 2.5.8.
+     The box then stays 24x24 at BOTH tiers, which is what makes the indent's
+     arithmetic true at both. `.tool-disclosure` (14-tools.css) is the same
+     conversion, and its comment carries the trap: a literal reserve was right on
+     the fine tier and 20px short on the coarse one.
+
+     DO NOT add an `::after` hit expander. A 44px expander on a 21px row reaches
+     ~11px past each edge and into the turn body below, where it would steal taps
+     from the reply's first line. */
+  min-width: 0;
+  min-height: 0;
+  width: var(--turn-chev-box);
+  height: var(--turn-chev-box);
   display: grid;
   place-items: center;
   padding: 0;
@@ -1443,6 +1596,14 @@
   display: none;
 }
 
+/* The one badge member that is search-only, so it widens the first line's
+   reserve only while a search is running. `data-hits` is written by
+   `setHitCount` (messages.ts) rather than matched with `:has()`, for the reason
+   `.is-bodyless` is renderer-set. */
+.turn-header[data-hits] {
+  --turn-hits-reserve: 2.75rem; /* the badge's min 1rem + its padding, plus --sp-2 */
+}
+
 .turn-hit-count:not(:empty) {
   display: inline-flex;
   align-items: center;
@@ -1469,10 +1630,6 @@
   height: 0.3125rem;
   border-radius: 50%;
   background: var(--c-yellow);
-}
-
-.rail-marker {
-  position: relative;
 }
 
 /* THE TURN'S OWN DURATION, revealed to the RIGHT of the marker on hover.

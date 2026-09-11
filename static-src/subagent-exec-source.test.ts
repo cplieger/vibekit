@@ -246,6 +246,24 @@ describe("the single-delegate shape", () => {
     const run = exec([msg([])], "sub_gone");
     expect(run.nodes).toHaveLength(1);
     expect(run.label).toBe("Subagent");
+  });
+
+  // The VALUE, in its own case: `pending` is worded "not started" by
+  // `exec-view/status.ts`, which is a positive claim about a delegate this adapter
+  // has no status for — and the case that produces it most often is a delegate that
+  // ran to completion in a turn the agent process died holding, so the page told the
+  // reader the work never began. Reported from the live instance, on a page whose
+  // header read "Subagent / not started" over a delegate that had finished.
+  it("reads an absent invocation as unknown, never as not-started", () => {
+    const run = exec([msg([], [["sub_gone", "it did run"]])], "sub_gone");
+    expect(run.nodes[0]?.state).toBe("unknown");
+    expect(run.state).toBe("unknown");
+  });
+
+  // The one status that still means not-started, so the arm above cannot be read as
+  // "this adapter never says pending".
+  it("keeps pending for an invocation that really has not started", () => {
+    const run = exec([msg([invocation("tooluse_1", "sub_1", { status: "pending" })])], "sub_1");
     expect(run.nodes[0]?.state).toBe("pending");
   });
 });
@@ -303,6 +321,22 @@ describe("the pipeline shape", () => {
       ]),
     ];
     expect(exec(failed, "sub_a").nodes[0]?.state).toBe("fail");
+  });
+
+  // A driver that is not resident is the OTHER absence, and it used to read `running`
+  // — a claim of progress with nothing behind it, and the second of two different
+  // answers this file gave for "no tool call". `toolState` owns both now, so it reads
+  // `unknown`. Two stages, because one renders no root row at all.
+  it("reads an absent driver as unknown rather than running", () => {
+    const noDriver = [
+      msg([
+        invocation("invoke_subagent_orc_1_stage_a", "sub_a", { status: "pending" }),
+        invocation("invoke_subagent_orc_1_stage_b", "sub_b", { status: "pending" }),
+      ]),
+    ];
+    const run = exec(noDriver, "sub_a");
+    expect(run.nodes[0]?.children).toHaveLength(2);
+    expect(run.nodes[0]?.state).toBe("unknown");
   });
 
   // The driver declares its stage list up front, so a pipeline can say "two stages, one

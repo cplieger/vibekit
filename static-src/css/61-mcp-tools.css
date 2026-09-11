@@ -159,6 +159,17 @@
     color var(--dur-micro) var(--ease-standard);
 }
 
+/* REQUIRED, not defensive, and the same trap 31-exec-view.css records at
+   `.ev-inputs[hidden]`: there is no author `[hidden]` rule for this class, so the
+   UA sheet's `[hidden] { display: none }` loses the specificity tie to the bare
+   class above and a hidden button renders. `turn-header.ts` sets `hidden` on the
+   copy button for an agent-initiated turn, where clicking it copied the literal
+   string "Agent-initiated turn". (0,2,0) here, so it also beats the hover reveal
+   in 29-turns.css: `hidden` wins over the revealed state. */
+.turn-action-btn[hidden] {
+  display: none;
+}
+
 .turn-action-btn:hover {
   background: var(--c-hover);
   color: var(--c-text-primary);
@@ -270,7 +281,7 @@
   position: fixed !important;
   inset: 0 !important;
   z-index: 9999;
-  height: 100vh !important;
+  height: 100dvh !important;
   max-height: none !important;
   border-radius: 0;
 
@@ -318,10 +329,9 @@
    .uip-tooltip / .uip-ask skins in css/04-uip-skin.css (structure + motion
    from the vendored base stylesheet). */
 
-/* Editor gutter: agent-modified line indicator */
-.gutter-line {
-  line-height: 1.5;
-}
+/* Editor gutter: agent-modified line indicator. No `line-height` here — a row
+   and the code line it numbers are one grid, owned by `.editor-gutter`
+   (20-editor.css). A second value drifts every number off its own line. */
 
 .gutter-agent-modified {
   position: relative;
@@ -388,10 +398,30 @@
  * undersize the desktop audit still reported after this rule landed. A control
  * built that way needs an expander, not a list entry.
  *
+ * A LINK IS A TARGET, so `a[href]` is IN, and the ruling is recorded here the way
+ * the focus ring records its own (40-a11y.css:45 includes `a[href]`) and the press
+ * floor records the opposite one (03-base.css:41-45 excludes it, because a wash
+ * across a word is not a press). WCAG 2.5.8 is about the TARGET a pointer has to
+ * hit, and an anchor styled as a row or a button is exactly that; the standard's
+ * own INLINE exception is what carves prose back out, and that exemption is stated
+ * once below (`:where(p, li, td, dd, …) :where(a[href])`). Two prose exemptions
+ * that were inert until this line landed therefore become LIVE: that rule, and
+ * `.tool-file-link` (14-tools.css:751-753), which already declares a physical
+ * `min-height: 0` and says why. `a.subagent-header` declares its own
+ * `min-height: var(--btn-h)` and so needs nothing.
+ *
+ * ONE ANCHOR TAKES THE EXEMPTION AND THEN DECLINES IT, and it is the shape to
+ * expect again: `.code-refs-link` (13-messages.css) is a licence-attribution link
+ * inside an `<li>`, so the exemption reaches it and zeroes the floor — but it owns
+ * its row rather than sitting in a sentence, so the line-height argument the
+ * exception rests on does not describe it. It restates `min-height: var(--hit-floor)`
+ * at (0,1,0), which is the only way past a zero-specificity rule that a
+ * zero-specificity rule has already answered.
+ *
  * Split into three rules with identical declarations only to stay under
  * stylelint's `selector-max-attribute` of 2. They are one rule conceptually;
  * edit all three together. */
-:where(button, select, summary) {
+:where(a[href], button, select, summary) {
   min-width: var(--hit-floor);
   min-height: var(--hit-floor);
 }
@@ -447,48 +477,43 @@ input[type="radio"] {
   min-height: 0;
 }
 
-/* THE TEXT-ENTRY FLOOR, the hit floor's twin: no focusable text control renders
- * under 16px on a coarse pointer, because iOS zooms the page when one takes
- * focus. Raising the composer alone closed the composer's own seven focus sites
- * and nothing else; the app focuses around eighteen OTHER text controls
- * programmatically, several declaring --fs-sm or --fs-xs, so this is a mechanical
- * floor rather than a per-control sweep — the same correction the hit floor's own
- * history records, where the hand-kept allow-list WAS the defect.
+/* THE TEXT-ENTRY FLOOR, and it is 16px because iOS says so rather than because
+ * this app's type scale has a rung there. iOS Safari ZOOMS THE PAGE when a text
+ * control whose computed size is under 16px takes focus, and `#prompt-input`
+ * carries `autofocus` — so on a phone the app loads already zoomed, with every
+ * fixed bar mispositioned and no gesture that reliably restores the layout.
  *
- * IT CANNOT BE A ZERO-SPECIFICITY `:where()` FLOOR THE WAY THE HIT FLOOR IS, and
- * that asymmetry is the thing to understand before editing it. The hit floor sets
- * `min-width`/`min-height`, properties NO component declares, so it wins at zero
- * specificity by being the only writer. `font-size` is declared by component
- * classes all over this app, so a zero-specificity floor would lose to every one
- * of them. (0,2,1) beats a single class and ties with two, which source order
- * then decides in this file's favour.
+ * IT WAS DELETED AND IS RESTORED, and the premise is what moved. The deletion
+ * argued the floor "defended against behaviour the document cannot exhibit",
+ * because `static/index.html` shipped `maximum-scale=1.0`, which iOS honours for
+ * the auto-zoom. That clause is GONE (WCAG 1.4.4 wants the page resizable, and
+ * `02-reset.css` now allows `pinch-zoom` to match), so the suppression the
+ * deletion rested on no longer exists and the zoom is live again. The deletion's
+ * own closing sentence asked for exactly this: restore the floor in the same
+ * change as the viewport meta.
  *
- * THIS RULE OWNS THE FONT-SIZE OF EVERY TEXT CONTROL ON A COARSE POINTER, up as
- * well as down. Inside a `font-size` declaration `1em` resolves against the
- * PARENT's computed size, so the term preserves inheritance from a larger
- * ANCESTOR and CANNOT preserve a control's own larger declared size. A control
- * that wants more than the floor needs its own carve-out selector;
- * `text-field-floor-css.test.ts` asserts no coarse-tier control computes above
- * the threshold, so the day one appears it says so.
+ * THE COST IS REAL AND IS PAID DELIBERATELY: on a coarse pointer every field in
+ * the app reads 16px against 11-14px around it, the composer included, which is
+ * how the floor was reported the first time. It is the price of not loading
+ * zoomed; the alternative is a per-control audit against a real device this
+ * container cannot make. `max(…, 1em)` so a control that INHERITS something
+ * larger keeps it rather than being clamped down to the floor.
  *
- * NO EXCLUSION FOR THE BOX CONTROLS, and that is measured rather than assumed. A
- * native checkbox and radio paint at a font-relative size, so a floor would grow
- * them — but in this app both carry an explicit `width`/`height` of `1rem`
- * (02-reset.css and the rule below), so the type scale cannot reach them, and
- * `type="range"` has no instance anywhere in the client. A `:not()` chain over the
- * three would also put this selector over four of the repo's stylelint ceilings.
- *
- * Two arms, the tier idiom 01-tokens.css uses for --fs-field itself: the pointer
- * tier, and the no-JS width fallback for the window before `pointer-tier.ts` has
- * a real PointerEvent to classify. The token alone is not enough — it is 1rem in
- * both arms, but a rule has to APPLY for the control to read it. */
+ * Real specificity, not `:where()`, and that is the whole mechanism: a component
+ * class has to LOSE to this, or the one control that matters most
+ * (`#prompt-input`, at (0,1,0)) keeps its 14px and the page still zooms. The
+ * no-JS twin is the same rule at the width fallback the tier tokens use
+ * (01-tokens.css), so a phone that has not resolved a pointer tier is floored
+ * too. A reader who has PINNED `fine` loses the floor, deliberately: that is a
+ * stated preference, and the pin is only reachable from a device that offered the
+ * toggle. */
 :root[data-pointer="coarse"] :is(input, textarea, select) {
-  font-size: max(var(--fs-field), 1em);
+  font-size: max(1rem, 1em);
 }
 
 @media (width <= 48rem) {
   :root:not([data-pointer="fine"]) :is(input, textarea, select) {
-    font-size: max(var(--fs-field), 1em);
+    font-size: max(1rem, 1em);
   }
 }
 
@@ -553,13 +578,15 @@ input[type="radio"] {
 
 /* --- Specificity-sensitive overrides (must come after base declarations) --- */
 
-[id="settings-btn"] svg {
-  transition: transform var(--dur-standard) var(--ease-standard);
-}
-
-[id="settings-btn"].active svg {
-  transform: rotate(45deg);
-}
+/* THE SETTINGS COG DOES NOT SPIN, and the rule is the absence rather than an
+   override to find and delete later. It used to take `transform: rotate(45deg)`
+   on `.active` over a `--dur-standard` transition, which is the one nav button in
+   this row that moved when selected: its six neighbours mark the active view with
+   ink and fill alone (`70-selection.css`), so the spin claimed a second meaning
+   for a state the row already states, and a gear turning toward its own teeth
+   reads as machinery rather than as selection. Removed on a user ruling
+   (2026-09-10). Do not reintroduce a transform here without moving the other six
+   with it, or the row disagrees with itself again. */
 
 /* THERE IS NO HIDDEN-TAB ANIMATION OVERRIDE, and it was deleted on evidence
    rather than tidied. Six selectors here carried `animation: none !important`

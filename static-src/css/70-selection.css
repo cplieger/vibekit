@@ -73,9 +73,6 @@
 .pill-role-item.active,
 .popup-item.active,
 .picker-btn.active,
-/* The effort slider's knob, and it carries no state class: the knob IS the tier
-   in force, so it is unconditionally the selected surface. */
-.effort-knob,
 .fb-row.fb-row-selected,
 .repo-picker-chip-active,
 .repo-picker-row-selected,
@@ -137,7 +134,6 @@
   .pill-role-item.active:hover,
   .popup-item.active:hover,
   .picker-btn.active:hover,
-  .effort-knob:hover,
   .fb-row.fb-row-selected:hover,
   .repo-picker-chip-active:hover,
   .repo-picker-row-selected:hover,
@@ -178,7 +174,6 @@
 .pill-role-item.active:active,
 .popup-item.active:active,
 .picker-btn.active:active,
-.effort-knob:active,
 .repo-picker-chip-active:active,
 .repo-picker-row-selected:active,
 .git-branch-popover-row.current:active,
@@ -192,6 +187,14 @@
 .turn-action-btn[aria-pressed="true"]:active,
 .chat-find-case[aria-pressed="true"]:active,
 .fb-search-case[aria-pressed="true"]:active,
+/* The two exec-view rows, matching the hover list above. They were in that list and
+   not this one, so a selected row pressed OUTSIDE the selected vocabulary: the
+   timeline lane is a `role="button"`, so 03-base.css's wash reached it and added the
+   second step on a different ramp that the opt-out below exists to prevent, and the
+   tree row is a `treeitem`, so nothing reached it and a selected row could not be
+   pressed at all. */
+.ev-row.ev-selected > .ev-row-main:active,
+.ev-tl-lane.ev-selected:active,
 .editor-find-case[aria-pressed="true"]:active,
 .tab.active:active {
   background: var(--c-selected-bg-press);
@@ -360,23 +363,6 @@
    likewise has no rule here: it reads the same --dot-color and the same
    --c-dot-* family, so a selected row inherits both marks unchanged. */
 
-/* The effort knob's own boundary, and the ONE surface in this file that overrides
-   the shared selected border. Placed last so it wins the (0,1,0) tie against the
-   resting rule above by source order, which is the same MANIFEST-order tiebreak
-   the rest of this file relies on.
-
-   Forced by a measurement rather than taste. The knob left the full-height track
-   and became a round handle standing proud of a thin rail, so its edge stopped
-   sitting on the track fill and started sitting on the CARD. Against the card
-   `--c-selected-border` reads 2.955:1 dark and 2.427:1 light from painted pixels
-   (3.236 / 2.645 for the pure token) — the move improved that adjacency 2.3x/1.9x
-   over the 1.300 / 1.266 it read on the track, and still misses WCAG 1.4.11's 3:1
-   for a graphical object in light. `--c-accent` reads 6.541:1 dark and 5.456:1
-   light, so one declaration clears both themes.
-
-   Scoped to this one selector deliberately: the shared border is the app-wide
-   selected vocabulary across 20+ surfaces, and every other one of them still
-   paints against a row or a chip rather than a card. */
-.effort-knob {
-  border-color: var(--c-accent);
-}
+/* `.effort-knob` is deliberately absent: it is a handle on a track, painted in
+   15-input.css. Adding it here wins on MANIFEST order and costs the handle the 3:1
+   it needs against the bar it sits on. */

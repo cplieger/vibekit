@@ -7,6 +7,9 @@
 import { isIOS, isStandalone } from "./platform.js";
 import { registerPush, unsubscribePush } from "./actions/notify.js";
 import { registerCleanup } from "./actions/index.js";
+import { createNotifyAsk, type NotifyAsk } from "./notify-ask.js";
+import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
+import { patchSettings } from "./persist.js";
 import type { EffectiveSettings } from "./wire/types.gen.js";
 
 // ---------------------------------------------------------------------------
@@ -146,7 +149,160 @@ export function restoreNotifications(s: EffectiveSettings): void {
   notifyUICallback?.();
 }
 
+// ---------------------------------------------------------------------------
+// The permission ask: two doors onto one prompt.
+//
+// `requestPermission` below is the SETTINGS door — the user asked for
+// notifications, so the prompt is raised inside their own click. The arm/gesture
+// pair is the AUTOMATIC door: a cue that wanted to fire and could not arms the ask,
+// and the reader's next click spends it. Both live here so they cannot disagree
+// about what a grant leads to, and the model itself is DOM-free in `notify-ask.ts`.
+// ---------------------------------------------------------------------------
+
+let ask: NotifyAsk | null = null;
+
+/** The Notification constructor, or undefined where it is not one.
+ *
+ *  Read through `unknown` and tested for a FUNCTION rather than with the
+ *  `"Notification" in window` idiom the rest of this module uses, which is the shape
+ *  `@cplieger/web-terminal-ui`'s own binding takes: `in` answers true for a global
+ *  that exists and is not a constructor, and reading `.permission` off that throws
+ *  out of the arm — which would take a whole cue down for a capability check. The
+ *  fleet's own rule (`typescript.md`, "Read the capability off the object, never test
+ *  for the object") says the same thing from the other side. */
+function notificationCtor(): { permission?: unknown; requestPermission?: unknown } | undefined {
+  const value: unknown = (globalThis as { Notification?: unknown }).Notification;
+  return typeof value === "function"
+    ? (value as { permission?: unknown; requestPermission?: unknown })
+    : undefined;
+}
+
+/** Built on first use, never at module load: every member below reads a global, and
+ *  this module is imported by handlers long before any of them is asked a question. */
+function notifyAsk(): NotifyAsk {
+  ask ??= createNotifyAsk({
+    supported: (): boolean => notificationCtor() !== undefined,
+    permission: (): string => {
+      const value = notificationCtor()?.permission;
+      // Anything unrecognised degrades to the value that asks for nothing.
+      return typeof value === "string" ? value : "denied";
+    },
+    request: async (): Promise<string> => {
+      const api = notificationCtor();
+      const fn = api?.requestPermission;
+      if (typeof fn !== "function") {
+        return "denied";
+      }
+      // Both shapes tolerated: modern browsers return a promise, older Safari takes
+      // a callback and returns undefined, in which case the answer is already on
+      // `permission` by the time the await resolves.
+      const answer: unknown = await (fn as () => unknown).call(api);
+      if (typeof answer === "string") {
+        return answer;
+      }
+      const settled = notificationCtor()?.permission;
+      return typeof settled === "string" ? settled : "denied";
+    },
+    // A browser blocking site data throws on ACCESS, and both directions of that
+    // failure are chosen deliberately: an unreadable marker reads as NOT spent, so
+    // the feature still works, degrading to the reference's own once-per-page nag
+    // because the module-level flag is then the only bound.
+    spent: (): boolean => {
+      try {
+        return localStorage.getItem(LS_NOTIFY_ASK_KEY) === "1";
+      } catch {
+        return false;
+      }
+    },
+    markSpent: (): void => {
+      try {
+        localStorage.setItem(LS_NOTIFY_ASK_KEY, "1");
+      } catch {
+        /* nothing to remember it with */
+      }
+    },
+    granted: (): void => {
+      void adoptGrant();
+    },
+  });
+  return ask;
+}
+
+/** Drop the ask's per-page flags. Exported for test isolation only — the browser
+ *  module registry is URL-keyed, so a suite cannot re-evaluate this module. */
+export function _resetNotifyAskForTest(): void {
+  ask = null;
+}
+
+/** Note that the app wanted to notify and could not, so the next gesture may ask.
+ *
+ *  Module-private on purpose: `notifyIfHidden` is the one funnel every cue passes
+ *  through, so there is no second site that should be able to arm the ask. */
+function armNotifyAsk(): void {
+  notifyAsk().arm();
+}
+
+/** Note a user gesture. Raises the prompt if one is armed and still worth raising.
+ *  Private for the same reason — the listener below is the only caller. */
+function noteNotifyGesture(): void {
+  notifyAsk().gesture();
+}
+
+/** Record that this device's ask is answered without raising anything — the door for
+ *  the Settings toggle, in BOTH directions. */
+export function spendNotifyAsk(): void {
+  notifyAsk().spend();
+}
+
+/** Wire the gesture. ONE delegated `click` listener rather than a handler per
+ *  control: a click is what carries user activation to a keyboard user too (Enter on
+ *  a button synthesizes one), and it is a discrete deliberate act — `keydown` would
+ *  raise the prompt over someone mid-sentence in the composer. Capture phase, so a
+ *  `stopPropagation` in app code cannot hide the gesture. */
+export function installNotifyAskGesture(): () => void {
+  const ac = new AbortController();
+  document.addEventListener(
+    "click",
+    () => {
+      noteNotifyGesture();
+    },
+    { capture: true, passive: true, signal: ac.signal },
+  );
+  return () => {
+    ac.abort();
+  };
+}
+
+/** The browser granted permission through the automatic door, so turn the switch on:
+ *  a prompt the reader answered has to leave Settings agreeing with the answer, or the
+ *  next cue is refused by a switch they never chose and the app looks broken.
+ *
+ *  Only the MASTER key is patched. The per-kind switches are their own choices and
+ *  default on, so a cue that armed the ask has its own kind on by construction; a
+ *  grant must not silently re-enable a channel the reader turned off. (The Settings
+ *  toggle enables all of them, because there the user is answering about the whole
+ *  feature rather than about the one cue that fired.)
+ *
+ *  Push is subscribed only after the server confirms: a subscription under a master
+ *  switch the server never accepted would deliver notifications the settings page
+ *  shows as off. `notifyUICallback` is what makes the toggle follow — the same seam
+ *  `restoreNotifications` uses, so this needs no reach into the settings DOM. */
+async function adoptGrant(): Promise<void> {
+  if (!enabled) {
+    const saved = await patchSettings({ notifications_enabled: true });
+    if (saved === null) {
+      return;
+    }
+    enabled = true;
+    notifyUICallback?.();
+  }
+  await registerPushViaAction();
+}
+
 export function requestPermission(): string | null {
+  // The Settings door raises the prompt itself, so the automatic one has nothing
+  // left to do on this device whichever way the answer goes.
+  spendNotifyAsk();
   if (!("Notification" in window)) {
     if (isIOS && !isStandalone) {
       return "Add this app to your Home Screen first, then enable notifications.";
@@ -201,6 +357,11 @@ export function unregisterPush(): void {
 }
 
 export function notifyIfHidden(title: string, body: string): boolean {
+  // The arm LEADS every gate below, because each of them is a way this call can want
+  // to notify and not be able to — the switch off, the page in front of the reader,
+  // the permission unanswered. This is the one funnel every cue passes through, which
+  // is what keeps a new notify site from having to remember to arm.
+  armNotifyAsk();
   if (!enabled) {
     return false;
   }

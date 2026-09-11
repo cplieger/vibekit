@@ -15,7 +15,7 @@
 //
 // The skip assertions are spy deltas on the real seams paint drives —
 // projectTurns (projection), reconcile (mount/update), isTurnOpen (fold pass),
-// observeTurns (rail) and the messages-blocks entry points (per-turn updates) —
+// setResidentTurns (rail) and the messages-blocks entry points (per-turn updates) —
 // plus element-identity checks over `#messages`' children, because a reconcile
 // that rebuilt a card would mint new nodes even if it produced equal markup.
 // Everything below drives the REAL store: sessions land through setSessions /
@@ -128,7 +128,7 @@ function seamCounts(): Record<string, number> {
     projectTurns: vi.mocked(turnsMod.projectTurns).mock.calls.length,
     reconcile: vi.mocked(reconcileMod.reconcile).mock.calls.length,
     isTurnOpen: vi.mocked(foldMod.isTurnOpen).mock.calls.length,
-    observeTurns: vi.mocked(railMod.observeTurns).mock.calls.length,
+    setResidentTurns: vi.mocked(railMod.setResidentTurns).mock.calls.length,
     buildAssistantBody: vi.mocked(blocksMod.buildAssistantBody).mock.calls.length,
     updateAssistantBody: vi.mocked(blocksMod.updateAssistantBody).mock.calls.length,
   };

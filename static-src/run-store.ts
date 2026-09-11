@@ -4,9 +4,9 @@
 // why the run events cannot reconstruct a run: vibekit-acp.md.
 
 import { signal, touch, type Signal } from "@cplieger/reactive";
-import { apiGet, apiGetTyped } from "./api-client.js";
+import { apiGetOrError, apiGetTyped } from "./api-client.js";
 import { decodeLiveRunsResponse, decodeRunControlsResponse } from "./wire/decoders.gen.js";
-import type { RunControlsResponse } from "./wire/types.gen.js";
+import type { ConnectedPayload, LiveRun, RunControlsResponse } from "./wire/types.gen.js";
 import {
   classifyRunNodeStatus,
   classifyRunStatus,
@@ -130,6 +130,33 @@ const stale = new Map<string, string>();
  *  the cause. A failed read records NOTHING, so a repeat retries rather than inheriting
  *  a claim nothing answered. Dropped by `forgetRun`. */
 const answeredCause = new Map<string, string>();
+
+/** The ladder behind a run read that produced nothing: three attempts at 1s doubling,
+ *  one per workflow id.
+ *
+ *  Bounded because a failed read is not always transient — `handleRun` answers 503 for
+ *  `workflow.ErrUnknownMethod`, an engine with no workflow support at all, which no
+ *  number of attempts can talk into describing a run. Dropped by a read that ANSWERED,
+ *  by a read the server SETTLED, and by `forgetRun`. */
+const RUN_RETRY_LIMIT = 3;
+const RUN_RETRY_BASE_MS = 1000;
+
+/** The status a read gets for a run the server can describe no further, and the one
+ *  failure the ladder is skipped for outright.
+ *
+ *  `handleRun` grades a failed inspect three ways and this is the narrow arm: the engine
+ *  answered ABOUT this run and refused, so the answer is the same however often it is
+ *  asked. Its two siblings — 503 for an engine with no workflow verbs, 502 for a read
+ *  that never reached one — say nothing about the run, so both keep the ladder, and 503
+ *  is why the ladder is bounded rather than infinite. */
+const RUN_GONE_STATUS = 404;
+
+interface RunRetry {
+  timer: ReturnType<typeof setTimeout> | undefined;
+  attempts: number;
+}
+
+const runRetries = new Map<string, RunRetry>();
 
 /** Per-run node plans, beside the signal rather than inside it.
  *
@@ -358,8 +385,15 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
     answeredCause.set(workflowID, cause);
   }
   let answered = false;
+  // The status of a read that produced nothing, which is what tells a SETTLED answer from
+  // the absence of one: `handleRun` answers 404 only where the engine described this run
+  // and refused, so no number of retries can change it. 0 (no request) and every other
+  // status are worth re-asking. The OrError variant is here for exactly this — the
+  // collapsing `apiGet` answers null for a 404, a 502 and a dead network alike.
+  let failed = 0;
   try {
-    const d = await apiGet<RawRunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
+    const r = await apiGetOrError<RawRunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
+    const d = r.data;
     if (d?.state !== undefined) {
       // The plan BEFORE the state, because the state assignment is what wakes
       // every reader: a subscriber that re-rendered between the two would draw a
@@ -371,13 +405,26 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
       }
       cell(workflowID).value = classifyRunState(d.state);
       answered = true;
+    } else {
+      failed = r.status;
     }
   } finally {
     inFlight.delete(workflowID);
-    if (!answered && cause !== "") {
-      // The read produced nothing, so it claims nothing: a cause standing over an
-      // answer nobody got would turn the gap's own recovery into a no-op.
-      answeredCause.delete(workflowID);
+    if (answered) {
+      cancelRunRetry(workflowID);
+    } else {
+      if (cause !== "") {
+        // The read produced nothing, so it claims nothing: a cause standing over an
+        // answer nobody got would turn the gap's own recovery into a no-op.
+        answeredCause.delete(workflowID);
+      }
+      if (failed === RUN_GONE_STATUS) {
+        // CANCELLED rather than merely not armed: a rung an earlier transient armed is
+        // still due, and the answer it would collect is this one.
+        cancelRunRetry(workflowID);
+      } else {
+        scheduleRunRetry(workflowID, cause, failed);
+      }
     }
   }
   const next = stale.get(workflowID);
@@ -387,13 +434,88 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
   }
 }
 
-/** Forget a run's cached state — the cache's ONLY bound, so it must be called by
- *  a reader that knows it was the last one (`messages-blocks.ts`). Which condition
- *  qualifies and why: vibekit-client.md "The run store". */
+/** Re-ask for a run whose read produced nothing, bounded.
+ *
+ *  It re-enters through `invalidateRun` under the ORIGINAL cause rather than `""`, so the
+ *  coalescing and the cause discipline are the ones every other reader gets: the `finally`
+ *  above has already dropped `answeredCause`, so a cause cannot be swallowed by its own
+ *  failed attempt, while `""` would be unswallowable by anything — wrong for the gap,
+ *  where one token is shared by two readers a round trip apart.
+ *
+ *  `status` is the newest failure's, carried for the exhaustion line alone: reading the run
+ *  through the OrError variant is what makes a settled answer visible at the decision above,
+ *  and it logs nothing, so without this the one line the ladder does write would not say
+ *  which failure it gave up on. */
+function scheduleRunRetry(workflowID: string, cause: string, status: number): void {
+  // The CONTINUATION as well as the door: its one caller is that `finally`, reached by the
+  // first failed read and by every rung's, so the count is KEPT rather than reset, or the
+  // ladder would have no end.
+  const ladder = runRetries.get(workflowID) ?? { timer: undefined, attempts: 0 };
+  if (ladder.attempts >= RUN_RETRY_LIMIT) {
+    // No toast: a background chat's run is invisible either way, so a failure to re-read
+    // it earns a log line rather than an overlay over whatever the reader is doing.
+    console.warn(
+      `[run] gave up re-reading ${workflowID} after ${String(RUN_RETRY_LIMIT)} retries (last status ${String(status)}); its card keeps what it last showed`,
+    );
+    runRetries.delete(workflowID);
+    return;
+  }
+  if (ladder.timer !== undefined) {
+    // A trailing fetch can fail while a rung is already armed. The newest failure owns the
+    // rung, and the count it inherits is what keeps the pair inside the same three.
+    clearTimeout(ladder.timer);
+  }
+  const delay = RUN_RETRY_BASE_MS * 2 ** ladder.attempts;
+  ladder.attempts++;
+  ladder.timer = setTimeout(() => {
+    ladder.timer = undefined;
+    invalidateRun(workflowID, cause);
+  }, delay);
+  runRetries.set(workflowID, ladder);
+}
+
+/** Forget a run's ladder, rungs and all: a read that ANSWERED has nothing left to retry, a
+ *  read the server SETTLED has nothing left to learn, and a forgotten run has nothing left
+ *  to read. */
+function cancelRunRetry(workflowID: string): void {
+  const timer = runRetries.get(workflowID)?.timer;
+  if (timer !== undefined) {
+    clearTimeout(timer);
+  }
+  runRetries.delete(workflowID);
+}
+
+/** Externally-owned reasons a run's state cell must be KEPT, registered by the
+ *  composition root so this module stays a leaf — importing `tabs.ts` here would invert
+ *  the dependency direction, which is why `store.ts`'s eviction exemptions take the same
+ *  shape. Nothing registered means nothing demands a cell. */
+const stateDemands: ((workflowID: string) => boolean)[] = [];
+
+/** Register one demand predicate. Returns its unregister. */
+export function registerRunStateDemand(fn: (workflowID: string) => boolean): () => void {
+  stateDemands.push(fn);
+  return () => {
+    const i = stateDemands.indexOf(fn);
+    if (i >= 0) {
+      stateDemands.splice(i, 1);
+    }
+  };
+}
+
+/** Forget a run's cached state — the cache's ONLY bound, held back by a REGISTERED
+ *  DEMAND: any predicate answering true keeps everything below, because no call site can
+ *  enumerate this store's readers. A refused forget is NOT retried, so a demanded cell
+ *  lives as long as the page — which is why a predicate asks about state that is still
+ *  live rather than about a surface that once existed. vibekit-client.md, "The run
+ *  store". */
 export function forgetRun(workflowID: string): void {
+  if (stateDemands.some((fn) => fn(workflowID))) {
+    return;
+  }
   cells.delete(workflowID);
   stale.delete(workflowID);
   answeredCause.delete(workflowID);
+  cancelRunRetry(workflowID);
   plans.delete(workflowID);
   controlCells.delete(workflowID);
   controlsInFlight.delete(workflowID);
@@ -531,9 +653,16 @@ export function runChatID(workflowID: string): string {
 /** One live run: the chat that launched it ("" for a parentless run), and whether
  *  it is still EXECUTING as opposed to parked. `executing` is
  *  `hasExecutingRunForChat`'s alone; every other reader takes the whole row. */
-interface LiveRunRow {
+export interface LiveRunRow {
   readonly chat: string;
   readonly executing: boolean;
+}
+
+/** A row handed OUT, carrying the workflow id the map holds it under. The id is the
+ *  map's KEY rather than a field of the row, so a reader given the row alone cannot
+ *  name the run it describes. */
+export interface LiveRunEntry extends LiveRunRow {
+  readonly id: string;
 }
 
 /** workflow id → its live row. Distinct from `launchedBy`, whose entries
@@ -558,7 +687,7 @@ function bumpLiveRuns(): void {
  *  inventory, which is what the dot painter reads.
  *
  *  `executing` is the CALLER's statement rather than a default — why, and what each
- *  of the four callers knows: vibekit-client.md "The run store". */
+ *  of the five callers knows: vibekit-client.md "The run store". */
 export function noteRunLive(workflowID: string, chatID: string, executing: boolean): void {
   if (workflowID === "") {
     return;
@@ -594,19 +723,35 @@ export function hasLiveRunForChat(chatID: string): boolean {
  *  tab dot already surfacing them (`run-dots.ts`).
  *
  *  The one TRACKED read of the inventory here, because this caller is a reactive
- *  effect where the two booleans' are not: vibekit-client.md "The run store". */
-export function liveRunIDsForChat(chatID: string): string[] {
+ *  effect where the two booleans' are not: vibekit-client.md "The run store". A
+ *  reader takes the whole row, `executing` included: the fetched cell can be absent
+ *  for a run this client saw no frames for, and the row is then the only thing that
+ *  says anything about it. */
+export function liveRunsForChat(chatID: string): LiveRunEntry[] {
   touch(liveRunsVersion);
   if (chatID === "") {
     return [];
   }
-  const out: string[] = [];
+  const out: LiveRunEntry[] = [];
   for (const [id, r] of liveRunChats) {
     if (r.chat === chatID) {
-      out.push(id);
+      out.push({ id, ...r });
     }
   }
   return out;
+}
+
+/** This run's live row WITHOUT subscribing, or `undefined` when nothing holds it live.
+ *  `peekRunState`'s twin, and for its reason: a `forgetRun` demand predicate runs outside
+ *  any effect of its own — sometimes inside another module's — so a tracked read there
+ *  would hand that effect a dependency on the whole inventory. */
+export function peekLiveRun(workflowID: string): LiveRunRow | undefined {
+  return liveRunChats.get(workflowID);
+}
+
+/** The ids alone, for a caller that asks only how many or which. */
+export function liveRunIDsForChat(chatID: string): string[] {
+  return liveRunsForChat(chatID).map((r) => r.id);
 }
 
 /** The scan both readers share. Not an index: the single-run rule bounds live runs
@@ -644,19 +789,48 @@ export async function rebuildLiveRuns(cause = ""): Promise<void> {
   if (d === null) {
     return;
   }
+  adoptLiveRuns(d.runs, cause);
+}
+
+/** Adopt an inventory somebody else already read.
+ *
+ *  The three seeds per row are what a reload would otherwise lose — vibekit-client.md
+ *  "The run store". The per-row `invalidateRun` is the one thing a caller opts into, by
+ *  PASSING a cause rather than by passing a non-empty one: a gap threads `""`-or-token
+ *  through legitimately and `invalidateRun(id, "")` is legal, so gating on `!== ""`
+ *  would silently stop the gap door invalidating.
+ *
+ *  The clear and the repopulation are ONE synchronous pass under ONE bump, which is what
+ *  keeps this from being a transient-empty fold for `chat-run-dots.ts`. */
+export function adoptLiveRuns(rows: readonly LiveRun[], cause?: string): void {
   liveRunChats.clear();
-  for (const r of d.runs) {
+  for (const r of rows) {
     if (r.workflow_id !== "") {
-      // Three seeds per row, and the two beyond the inventory are what a reload
-      // would otherwise lose — vibekit-client.md "The run store".
       liveRunChats.set(r.workflow_id, { chat: r.chat_id, executing: r.executing });
       noteRunChat(r.workflow_id, r.chat_id);
       noteRunKnown?.(r.workflow_id);
-      invalidateRun(r.workflow_id, cause);
+      if (cause !== undefined) {
+        invalidateRun(r.workflow_id, cause);
+      }
     }
   }
-  // ONE bump for the whole rebuild rather than one per row.
+  // ONE bump for the whole adoption rather than one per row.
   bumpLiveRuns();
+}
+
+/** Take the inventory off the connect handshake, and fall back to the fetch when the
+ *  frame does not state one.
+ *
+ *  No per-run invalidation, which is the point: C2's floor paints the square from THIS
+ *  frame for an executing run, so the `inspect` is a refinement rather than a
+ *  precondition. `live_runs_stated === false` means the list was WITHHELD rather than
+ *  empty, and an empty list is otherwise indistinguishable from "no runs are live". */
+export function adoptConnectRuns(p: ConnectedPayload): void {
+  if (!p.live_runs_stated) {
+    void rebuildLiveRuns("connect");
+    return;
+  }
+  adoptLiveRuns(p.live_runs ?? []);
 }
 
 // Derived reads: functions over the cached value, never stored beside it — a second

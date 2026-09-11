@@ -85,7 +85,7 @@ import { wireRowToggle } from "./disclosure-row.js";
 import { initSearchRevealBuilder, searchHitCount } from "./chat-search.js";
 import {
   mountTurnRail,
-  observeTurns,
+  setResidentTurns,
   resetTurnRail,
   loadTurnRail,
   pointTurnRail,
@@ -1197,7 +1197,7 @@ function paint(): void {
   const cards = turnCards(root);
   // Tell the rail which cards exist so it can track the turn in view. Re-run per
   // full pass because the set changes as pages load and turns arrive.
-  observeTurns(cards);
+  setResidentTurns(cards);
   applyFoldPass(session.id, turns, cards, false);
   // After the fold pass: a card that unmounted here is not owed a build, and a
   // card the pass folded is one the remaining slices land under invisibly.
@@ -2047,9 +2047,7 @@ initTurnActionsBodyProbe(bodyHoldsWholeTurn);
 /** Wire the header's fold toggle. The click RECORDS the reader's choice, which outranks
  *  the two-newest rule and persists per chat, so the next paint cannot undo it. */
 function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void {
-  const btn = header.querySelector<HTMLButtonElement>(
-    ":scope > .turn-head-row > .turn-fold-toggle",
-  );
+  const btn = header.querySelector<HTMLButtonElement>(":scope > .turn-fold-toggle");
   if (btn === null || btn.dataset["bound"] === "") {
     return;
   }
@@ -2102,13 +2100,26 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
 /** Show how many search hits a turn holds, so scanning the folded list tells the
  *  reader which turns are worth opening before they open any. */
 function setHitCount(card: HTMLElement, n: number): void {
-  const badge = card.querySelector<HTMLElement>(
-    ":scope > .turn-header > .turn-head-row > .turn-hit-count",
-  );
+  const header = card.querySelector<HTMLElement>(":scope > .turn-header");
+  if (header === null) {
+    return;
+  }
+  const badge = header.querySelector<HTMLElement>(":scope > .turn-badge > .turn-hit-count");
   if (badge === null) {
     return;
   }
   badge.textContent = n > 0 ? String(n) : "";
+  // The badge sits out of flow inside a FIXED first-line reserve, and the count
+  // is the one member that renders only while a search runs — so without
+  // widening that reserve it would paint over the prompt's first line. Written
+  // by the renderer rather than matched with `:has()`, for the reason
+  // `.is-bodyless` is: a streaming card mutates every frame and `:has()`
+  // charges each recalc for relational matching.
+  if (n > 0) {
+    header.dataset["hits"] = "";
+  } else {
+    delete header.dataset["hits"];
+  }
 }
 
 function setCardFolded(card: HTMLElement, folded: boolean): void {
@@ -2129,7 +2140,7 @@ function setCardFolded(card: HTMLElement, folded: boolean): void {
   // button is the disclosure control the keyboard reaches anyway — the band
   // only forwards its click.
   header
-    ?.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
+    ?.querySelector<HTMLButtonElement>(":scope > .turn-fold-toggle")
     ?.setAttribute("aria-expanded", folded ? "false" : "true");
 }
 
@@ -2846,6 +2857,19 @@ function mountRewind(card: HTMLElement, t: Turn): void {
   );
 }
 
+/** How long after the previous turn's start this one began, from the projection the
+ *  current paint is reconciling.
+ *
+ *  UNDEFINED when this window holds no predecessor, which is a different fact from a
+ *  gap of zero and must not be folded into it: the rail draws its seam from the same
+ *  pair, and a turn opening a paged window genuinely has no measurable gap. Clamped
+ *  at zero because a clock that ran backwards is not a negative pause. */
+function gapBefore(t: Turn): number | undefined {
+  const i = lastTurns.findIndex((x) => x.id === t.id);
+  const prev = i > 0 ? lastTurns[i - 1] : undefined;
+  return prev === undefined ? undefined : Math.max(0, t.ts - prev.ts);
+}
+
 /** Mount / refresh the turn's outcome ledger as the card's last child.
  *
  *  Turn-scoped rather than message-scoped: a turn can hold more than one
@@ -2853,6 +2877,7 @@ function mountRewind(card: HTMLElement, t: Turn): void {
  *  describes the TURN, so it sums across them and renders once. */
 function mountTurnFooter(card: HTMLElement, t: Turn): void {
   const led = turnLedger(t);
+  const since = gapBefore(t);
   const data: TurnSummaryData = {
     credits: led.credits,
     elapsedMs: led.elapsedMs,
@@ -2861,6 +2886,9 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
     reads: led.reads,
     models: led.models,
     outcome: t.outcome,
+    // Spread rather than assigned, because `exactOptionalPropertyTypes` separates an
+    // absent field from one holding `undefined` — which is the distinction above.
+    ...(since === undefined ? {} : { sinceMs: since }),
   };
   const existing = card.querySelector<HTMLDivElement>(":scope > .turn-footer");
   // The footer also carries the turn ACTIONS and Rewind, so it stays whenever there is

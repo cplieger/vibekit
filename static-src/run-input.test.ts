@@ -8,6 +8,11 @@
 // second exists for the post-restart case, where the ask registry is in memory so
 // the question text is gone while the run is still parked.
 //
+// A CHAT-PARENTED ask offers a THIRD thing in the second button's place — Defer to
+// parent agent, which answers nothing and asks the agent that launched the run
+// instead. Presence of the callback is the whole discriminator here, so these cases
+// pin which button each population gets and what the pressed one settles into.
+//
 // Supersede and settle-once are the QUEUE's properties, not this card's, so they
 // live in decision-dock.test.ts.
 // ---------------------------------------------------------------------------
@@ -34,10 +39,17 @@ function mount(
   p: RunInputNeededPayload,
   onSubmit: (text: string | null) => void = () => undefined,
   held = "",
+  onDefer?: () => void | Promise<void>,
 ): HTMLElement {
-  const card = buildRunInputCard(p, held, onSubmit);
+  const card = buildRunInputCard(p, held, onSubmit, onDefer);
   document.body.replaceChildren(card);
   return card;
+}
+
+/** The answer row's buttons, in order. Scoped to `.run-input-actions` because the
+ *  question's own clamp opener is a button too and belongs to the body. */
+function actionLabels(card: HTMLElement): (string | null)[] {
+  return [...card.querySelectorAll(".run-input-actions button")].map((b) => b.textContent);
 }
 
 function button(card: HTMLElement, label: string): HTMLButtonElement {
@@ -137,7 +149,12 @@ describe("buildRunInputCard", () => {
     // button could only produce an error toast — with the card already spliced by the
     // dock's settle, which leaves the reader worse off than never being offered it.
     const card = mount(payload({ node_id: "" }));
-    expect([...card.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Send answer"]);
+    // Scoped to the ANSWER ROW, which is the subject: the question's own clamp
+    // opener is a button too, and it belongs to the body rather than to the ways
+    // this ask can be answered.
+    expect(
+      [...card.querySelectorAll(".run-input-actions button")].map((b) => b.textContent),
+    ).toEqual(["Send answer"]);
   });
 
   it("still lets such an ask be ANSWERED, since the answer is addressed by session", () => {
@@ -147,6 +164,97 @@ describe("buildRunInputCard", () => {
     box.value = "the release branch";
     button(card, "Send answer").click();
     expect(onSubmit).toHaveBeenCalledWith("the release branch");
+  });
+
+  describe("a CHAT-PARENTED ask", () => {
+    /** Resolves once the hand-off has settled: the click's own promise chain runs on
+     *  microtasks, so nothing is observable in the same task. */
+    const defer = (): Promise<void> => Promise.resolve();
+
+    it("offers the launching agent in place of the waive", () => {
+      const card = mount(payload(), () => undefined, "", defer);
+      expect(actionLabels(card)).toEqual(["Send answer", "Defer to parent agent"]);
+    });
+
+    it("leaves a PARENTLESS ask exactly as it was", () => {
+      // The population that has nobody to defer to: no callback, so the card is
+      // today's card and the waive is still the second button.
+      const card = mount(payload());
+      expect(actionLabels(card)).toEqual(["Send answer", "Continue without answering"]);
+    });
+
+    it("still offers a deferral when the ask names no node", () => {
+      // The node-id gate belongs to Continue alone, whose verb is addressed by node.
+      // A deferral is addressed by CHAT, so it is available either way.
+      const card = mount(payload({ node_id: "" }), () => undefined, "", defer);
+      expect(actionLabels(card)).toEqual(["Send answer", "Defer to parent agent"]);
+    });
+
+    it("asks once and never routes the deferral through the answer verb", () => {
+      const onSubmit = vi.fn();
+      const onDefer = vi.fn(defer);
+      const card = mount(payload(), onSubmit, "", onDefer);
+      const b = button(card, "Defer to parent agent");
+      b.click();
+      // Twice, because the guard is the disable and it has to land on the FIRST
+      // click: a second prompt into the launching chat is a second turn.
+      b.click();
+      expect(onDefer).toHaveBeenCalledTimes(1);
+      // A deferral answers nothing, so it must not reach `onSubmit` in either of
+      // that callback's meanings — the reader's words, or the waive.
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("settles into a persistent asked state once the hand-off lands", async () => {
+      const card = mount(payload(), () => undefined, "", defer);
+      button(card, "Defer to parent agent").click();
+      await vi.waitFor(() => {
+        const b = button(card, "Asked the agent");
+        // Disabled for the card's life rather than for a moment: the agent has been
+        // asked, and asking it again would spend another turn on the same question.
+        expect(b.disabled).toBe(true);
+        expect(b.getAttribute("data-tooltip")).toContain("has been asked to answer");
+      });
+    });
+
+    it("keeps the question answerable after a deferral", async () => {
+      // The ask is still OPEN — that is the whole difference from the waive — so the
+      // textarea and Send stay live and the reader can still answer themselves.
+      const onSubmit = vi.fn();
+      const card = mount(payload(), onSubmit, "", defer);
+      button(card, "Defer to parent agent").click();
+      await vi.waitFor(() => {
+        expect(button(card, "Asked the agent").disabled).toBe(true);
+      });
+
+      const box = card.querySelector("textarea") as HTMLTextAreaElement;
+      box.value = "the release branch";
+      button(card, "Send answer").click();
+      expect(onSubmit).toHaveBeenCalledWith("the release branch");
+    });
+
+    it("hands the button back when the hand-off was refused", async () => {
+      // `submit.ts` already reports the refusal through send-state, so the card owes
+      // the reader nothing but a button they can press again — and the label must not
+      // claim an agent was asked.
+      const card = mount(
+        payload(),
+        () => undefined,
+        "",
+        () => Promise.reject(new Error("no")),
+      );
+      button(card, "Defer to parent agent").click();
+      await vi.waitFor(() => {
+        expect(button(card, "Defer to parent agent").disabled).toBe(false);
+      });
+    });
+
+    it("says what the button does, since the label cannot", () => {
+      const card = mount(payload(), () => undefined, "", defer);
+      expect(button(card, "Defer to parent agent").getAttribute("data-tooltip")).toContain(
+        "is asked to answer instead",
+      );
+    });
   });
 
   it("submits on Cmd/Ctrl+Enter and not on a bare Enter", () => {

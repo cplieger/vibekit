@@ -723,6 +723,35 @@ describe("initExperimentalToggles", () => {
     expect(box("flag-telemetry").checked).toBe(false);
     expect(box("flag-disable-inherit-resources").checked).toBe(true);
   });
+
+  it("discards a superseded read rather than painting it over a newer one", async () => {
+    // The panel's loader is reached on EVERY settings activation once the
+    // once-per-page latch is gone, and the read behind it is a `kiro-cli settings`
+    // spawn with no signal, no dedupe and no coalescing of its own.
+    const { apiGet } = await import("./api-client.js");
+    let releaseFirst = (): void => {
+      /* replaced below */
+    };
+    const first = new Promise<unknown>((resolve) => {
+      releaseFirst = () => {
+        resolve({ settings: { "telemetry.enabled": "false" } });
+      };
+    });
+    vi.mocked(apiGet).mockReturnValueOnce(first as Promise<never>);
+    vi.mocked(apiGet).mockResolvedValueOnce({ settings: { "telemetry.enabled": "true" } });
+
+    initExperimentalToggles();
+    initExperimentalToggles();
+    await vi.waitFor(() => {
+      expect(box("flag-telemetry").checked).toBe(true);
+    });
+
+    releaseFirst();
+    await first;
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(box("flag-telemetry").checked).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

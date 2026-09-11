@@ -8,7 +8,7 @@
 import { el } from "@cplieger/reactive";
 import { attachClamp } from "../clamp-text.js";
 import { iconEl } from "../icon-el.js";
-import { ICON_SEND_14, ICON_TAB_RUN } from "../icons.js";
+import { ICON_SEND, ICON_TAB_RUN } from "../icons.js";
 import type { SteerOrigin } from "../types.js";
 
 export interface SteerNoteData {
@@ -38,7 +38,7 @@ const LABELS: Record<SteerOrigin, { read: string; dropped: string }> = {
 /** The second channel, never a hue (WCAG 1.4.1 would forbid one as the only
  *  channel anyway): the composer's send arrow, or the run tab's own glyph. */
 const GLYPHS: Record<SteerOrigin, string> = {
-  user: ICON_SEND_14,
+  user: ICON_SEND,
   agent: ICON_TAB_RUN,
 };
 

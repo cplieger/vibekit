@@ -20,6 +20,7 @@ import { iconEl } from "./icon-el.js";
 let bootSeq = 0;
 
 const dispatch = vi.fn();
+const skeletonTimingMock = vi.fn(() => ({ cancel: vi.fn() }));
 const cancelSessions = vi.fn();
 // Resolves with an OUTCOME: openRow branches on "gone" (the retention-off 404)
 // to refresh the list, so the mock answers the ordinary arm by default.
@@ -76,7 +77,9 @@ const toggleHistoryView = vi.fn(() => Promise.resolve());
 const hasTab = vi.fn((_kind: string, _ref?: string) => false);
 vi.mock("./tabs.js", () => ({ toggleHistoryView, hasTab }));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({
-  skeletonTiming: () => ({ cancel: vi.fn() }),
+  // A spy rather than a bare arrow: whether the ARM fires at all is the observable
+  // the settled-empty case pins, and the painter's own refusal is skeleton.test.ts's.
+  skeletonTiming: skeletonTimingMock,
 }));
 // The row's outcome glyph comes from tool-card.ts (the one writer of that
 // vocabulary), which reaches the editor and scroll subgraphs. Stub the four
@@ -134,13 +137,13 @@ const openName = (row: Element): string | null =>
 async function render(payload: unknown): Promise<HTMLElement> {
   document.body.innerHTML = `<div id="history-table"></div>`;
   dispatch.mockResolvedValue(payload);
-  // `loadHistoryView` rather than `showHistoryView`: the latter toggles the TAB,
-  // which is a round trip that paints nothing here, while the page's own loader is
-  // what every door reaches through the tab factory's lazy import.
-  const { loadHistoryView } = (await import(
+  // The pair `activateTabQuietly` runs. Not `showHistoryView`: that one toggles the
+  // TAB, which is a round trip that paints nothing here.
+  const { loadHistoryView, refreshHistoryView } = (await import(
     /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
   )) as typeof ModHistory;
   loadHistoryView();
+  refreshHistoryView();
   await vi.waitFor(() => {
     if (document.querySelectorAll("#history-table [data-key]").length === 0) {
       throw new Error("not rendered");
@@ -242,10 +245,11 @@ describe("history: previous chats and runs", () => {
   it("offers a Retry on load failure instead of an empty state", async () => {
     document.body.innerHTML = `<div id="history-table"></div>`;
     dispatch.mockResolvedValue(null);
-    const { loadHistoryView } = (await import(
+    const { loadHistoryView, refreshHistoryView } = (await import(
       /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
     )) as typeof ModHistory;
     loadHistoryView();
+    refreshHistoryView();
     await vi.waitFor(() => {
       if (document.querySelector(".history-error") === null) {
         throw new Error("no error state");
@@ -265,10 +269,11 @@ describe("history: previous chats and runs", () => {
   it("says so when the workspace has nothing", async () => {
     document.body.innerHTML = `<div id="history-table"></div>`;
     dispatch.mockResolvedValue({ sessions: [], runs: [] });
-    const { loadHistoryView } = (await import(
+    const { loadHistoryView, refreshHistoryView } = (await import(
       /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
     )) as typeof ModHistory;
     loadHistoryView();
+    refreshHistoryView();
     await vi.waitFor(() => {
       const t = document.getElementById("history-table")?.textContent ?? "";
       if (!t.includes("No previous sessions")) {
@@ -303,10 +308,11 @@ describe("history: which empty state it is", () => {
   async function emptyText(payload: unknown): Promise<string> {
     document.body.innerHTML = `<div id="history-table"></div>`;
     dispatch.mockResolvedValue(payload);
-    const { loadHistoryView } = (await import(
+    const { loadHistoryView, refreshHistoryView } = (await import(
       /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
     )) as typeof ModHistory;
     loadHistoryView();
+    refreshHistoryView();
     await vi.waitFor(() => {
       if (document.querySelector("#history-table .list-empty") === null) {
         throw new Error("no empty state");
@@ -653,10 +659,11 @@ describe("history: the tab-restore loader", () => {
   async function restore(): Promise<HTMLElement> {
     document.body.innerHTML = `<div id="history-table"></div>`;
     dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
-    const { loadHistoryView } = (await import(
+    const { loadHistoryView, refreshHistoryView } = (await import(
       /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
     )) as typeof ModHistory;
     loadHistoryView();
+    refreshHistoryView();
     await vi.waitFor(() => {
       if (document.querySelectorAll("#history-table [data-key]").length === 0) {
         throw new Error("not rendered");
@@ -674,10 +681,11 @@ describe("history: the tab-restore loader", () => {
 
   it("is a reload when fired again, never a close", async () => {
     const c = await restore();
-    const { loadHistoryView } = (await import(
+    const { loadHistoryView, refreshHistoryView } = (await import(
       /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
     )) as typeof ModHistory;
     loadHistoryView();
+    refreshHistoryView();
     await vi.waitFor(() => {
       if (dispatch.mock.calls.length < 2) {
         throw new Error("not reloaded");
@@ -685,6 +693,71 @@ describe("history: the tab-restore loader", () => {
     });
     expect(toggleHistoryView).not.toHaveBeenCalled();
     expect(c.querySelectorAll("[data-key]")).toHaveLength(1);
+  });
+
+  it("registers the find and fetches NOTHING", async () => {
+    // `mount()` was one `void this.refresh()` call and `registerFind` was one level
+    // up, so there was no split to decline: the activation registers, the dispatcher's
+    // refresh fetches, and the first activation issues ONE `/api/sessions` instead of
+    // two with the second aborting the first.
+    document.body.innerHTML = `<div id="history-table"></div>`;
+    dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
+    const { loadHistoryView } = (await import(
+      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
+    )) as typeof ModHistory;
+
+    loadHistoryView();
+
+    const { pageFind } = await import("./find-registry.js");
+    expect(pageFind("history")).not.toBeUndefined();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("refreshHistoryView issues exactly one read", async () => {
+    document.body.innerHTML = `<div id="history-table"></div>`;
+    dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
+    const { loadHistoryView, refreshHistoryView } = (await import(
+      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
+    )) as typeof ModHistory;
+    loadHistoryView();
+
+    refreshHistoryView();
+    await vi.waitFor(() => {
+      if (document.querySelectorAll("#history-table [data-key]").length === 0) {
+        throw new Error("not rendered");
+      }
+    });
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("arms no placeholder for an EMPTY list once /api/sessions has answered", async () => {
+    // No chats and no runs is an ANSWER, and the empty-state row it paints carries no
+    // `data-key`, so nothing but the flag separates it from a list nobody has read.
+    document.body.innerHTML = `<div id="history-table"></div>`;
+    dispatch.mockResolvedValue({ sessions: [], runs: [] });
+    const { loadHistoryView, refreshHistoryView } = (await import(
+      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
+    )) as typeof ModHistory;
+    loadHistoryView();
+
+    refreshHistoryView();
+    await vi.waitFor(() => {
+      if (document.querySelector("#history-table .list-empty") === null) {
+        throw new Error("empty state not painted");
+      }
+    });
+    // The FIRST read had nothing to go on, so it arms.
+    expect(skeletonTimingMock).toHaveBeenCalledTimes(1);
+
+    refreshHistoryView();
+    await vi.waitFor(() => {
+      if (dispatch.mock.calls.length < 2) {
+        throw new Error("not re-read");
+      }
+    });
+
+    expect(skeletonTimingMock).toHaveBeenCalledTimes(1);
   });
 
   it("tears the page's in-flight work down on close", async () => {

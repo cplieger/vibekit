@@ -154,13 +154,15 @@ func TestCloseOnWireEnd_AnEmptyCompletedPromptedTurnPersistsItsMarkerToo(t *test
 	}
 }
 
-// TestCloseOnWireEnd_AnEmptyCompletedAgentTurnStillPersistsItsMarker: a KAS
-// auto-wake that emits nothing and ends `end_turn` is a real turn — announced live,
-// holding a slot in the session's numbering — and with no user or assistant message
-// the marker is the only thing that can persist it. Skipping it left the turn
-// absent from the transcript and the rail while the live client had been told it
-// ended.
-func TestCloseOnWireEnd_AnEmptyCompletedAgentTurnStillPersistsItsMarker(t *testing.T) {
+// TestCloseOnWireEnd_AnEmptyEngineTurnPersistsNoMarkerButStillAnnounces pins the SPLIT,
+// which is why it asserts a suppression and an emission together. No marker: an
+// engine-opened turn has no trigger row, so the marker would be the whole turn and it
+// opens a headerless card that renders nothing. Still announced: this turn is the chat's
+// own and it really ended, and the client latches busy from server truth — replayTurnState
+// sets thinking at connect, GET /api/chats/{id} reports turn_open — with only a settled
+// turn_ended or a transport gap able to retract them, so suppressing the frame leaves the
+// chat reading `running` with Cancel showing and Send meaning steer, indefinitely.
+func TestCloseOnWireEnd_AnEmptyEngineTurnPersistsNoMarkerButStillAnnounces(t *testing.T) {
 	h, cs, _ := newTestHub()
 	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
@@ -175,18 +177,12 @@ func TestCloseOnWireEnd_AnEmptyCompletedAgentTurnStillPersistsItsMarker(t *testi
 	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn, "")
 
 	c, _ := cs.Get(t.Context(), "c1")
-	var marker *vibekit.Message
-	for i := range c.Messages {
-		if c.Messages[i].EventKind == vibekit.EventTurnOutcome {
-			marker = &c.Messages[i]
-		}
+	if len(c.Messages) != 0 {
+		t.Errorf("an empty engine-opened turn persisted %d messages, so a headerless card opens "+
+			"for a turn holding nothing: %+v", len(c.Messages), c.Messages)
 	}
-	if marker == nil {
-		t.Fatalf("an empty completed agent-initiated turn persisted nothing, so it does "+
-			"not exist after a reload. messages=%d", len(c.Messages))
-	}
-	if marker.Role != vibekit.RoleEvent || marker.TurnOutcome != vibekit.TurnOutcomeCompleted {
-		t.Errorf("marker = %+v, want a RoleEvent carrying completed", marker)
+	if got := turnEndedOutcomes(t, h); len(got) != 1 || got[0] != vibekit.TurnOutcomeCompleted {
+		t.Errorf("turn_ended outcomes = %v, want exactly [%s]", got, vibekit.TurnOutcomeCompleted)
 	}
 }
 

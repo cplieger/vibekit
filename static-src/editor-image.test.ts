@@ -59,7 +59,10 @@ vi.mock("./highlight.js", () => ({
 vi.mock("./store.js", () => ({ getActiveId: () => "", get: vi.fn(() => undefined) }));
 // The read route. Nothing in this file may reach it — the assertion is that it
 // stays uncalled for an image.
-vi.mock("./api-client.js", () => ({ apiGet }));
+vi.mock("./api-client.js", () => ({
+  apiGet,
+  apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
+}));
 vi.mock("./actions/editor.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading

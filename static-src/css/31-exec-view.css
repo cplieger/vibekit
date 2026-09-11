@@ -214,7 +214,7 @@
   overflow: hidden;
 }
 
-/* `.turn-req-more`'s skin: a text control, not a button-shaped one. ONE owner for
+/* `.steer-note-more`'s skin: a text control, not a button-shaped one. ONE owner for
    both of this page's clamp openers — the header's instructions and a result box's
    report — rather than a copy in the Results section that can drift. */
 .ev-in-more,
@@ -322,10 +322,15 @@
   cursor: pointer;
   transition: background var(--dur-micro) var(--ease-standard);
 
-  /* Interactions increase contrast (vibekit-ui.md), and selection outranks hover
-     so a pointer passing over the strip cannot mask which lane is chosen. */
-  &:hover {
-    background: var(--c-bg-tertiary);
+  /* The app's one hover recipe (01-tokens.css interaction ladder), and selection
+     outranks it so a pointer crossing the strip cannot mask which lane is chosen.
+     Gated for the reason 14-tools.css `.tool-group-header` states, and because
+     70-selection.css already gates this same element's SELECTED hover — one
+     element cannot answer a tap two ways depending on its state. */
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-hover);
+    }
   }
 
   &:focus-visible {
@@ -543,11 +548,14 @@
   border-radius: 0;
 }
 
-/* Hovering a coloured fill MIXES TOWARD THE INK (vibekit-ui.md, the tab-close
-   pattern): the plain `:hover` rule sets `--c-bg-tertiary`, which is a no-op on a
-   head already filled with it. */
-.ev-row.ev-group > .ev-row-main:hover {
-  background: color-mix(in srgb, var(--c-text-primary) 8%, var(--c-bg-tertiary));
+/* A group head is the one row on this page with a fill of its own, so it takes the
+   wash as a LAYER — the `.turn-header` case, and the only spelling that keeps the
+   tertiary tint instead of replacing it with a film over the box. The plain rule
+   above would be a no-op here anyway, since the head is already that rung. */
+@media (any-hover: hover) {
+  .ev-row.ev-group > .ev-row-main:hover {
+    background-image: var(--layer-hover);
+  }
 }
 
 /* The NESTING MARKER for a sub-sub-item, `ICON_TAB_SUBTAB` — the same glyph and the
@@ -603,8 +611,18 @@
     background var(--dur-micro) var(--ease-standard),
     box-shadow var(--dur-micro) var(--ease-standard);
 
-  &:hover {
-    background: var(--c-bg-tertiary);
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-hover);
+    }
+  }
+
+  /* The app-wide press, spelled here because 03-base.css cannot reach it: that rule
+     is `:where(button, summary, [role="button"])` and this row is a `treeitem`. The
+     `box-shadow` already in the transition above was reserved for it. A SELECTED row
+     presses in the selected vocabulary instead (70-selection.css). */
+  &:active {
+    box-shadow: inset 0 0 0 100vmax var(--c-press);
   }
 
   &:focus-visible {
@@ -847,6 +865,21 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A GROUP HEAD IS THE TERTIARY RUNG, WHERE HINT INK IS NOT VALID, and this is the
+   rule the chat's own tinted band already carries: `.turn-badge` (29-turns.css)
+   steps its 11px timestamp up to secondary for exactly this reason, and the two-rung
+   contract on `--c-text-tertiary` (01-tokens.css) is the general statement. Measured
+   on the head's fill: hint 3.601:1 dark / 3.900:1 light against secondary's 6.085:1
+   / 6.025:1, so the duration was under AA at REST, before any hover.
+
+   `:where()` so this scores (0,2,0) and LOSES to 70-selection.css's (0,3,0) muted-ink
+   rule: a selected head keeps `--c-selected-muted-fg`, and this may not outrank the
+   selected vocabulary. Descendant rather than child for that file's own reason — a
+   row holds no nested row, its children live in `.ev-kids`, a sibling. */
+.ev-group > .ev-row-main :where(.ev-dur) {
+  color: var(--c-text-secondary);
+}
+
 /* --------------------------------------------------------------------------
    Detail — one node, at full width
    -------------------------------------------------------------------------- */
@@ -1036,9 +1069,12 @@
 
 /* The link, copied from `.run-open` / `.run-open:hover` / `.run-open-icon`
    (css/27-run-card.css) into the `ev-` vocabulary. Copied rather than shared
-   because that file is scoped under `.run-card` on purpose; the `min-height` plus
-   `padding-inline` are what supply the 24px hit target on a small-type row
-   (web.md hit targets). */
+   because that file is scoped under `.run-card` on purpose. The hit target is the
+   APP-WIDE FLOOR's (61-mcp-tools.css) — 24px on a fine pointer and 44px on a
+   coarse one, following the tier rather than a literal — so this rule declares no
+   `min-height` of its own; the one it carried was a (0,1,0) `1.5rem` that beat
+   that zero-specificity floor and held the link at 24px under a finger. The
+   `padding-inline` is the hover wash's inset, not the target. */
 .ev-d-link {
   display: inline-flex;
   align-items: center;
@@ -1047,7 +1083,6 @@
   color: var(--c-text-secondary);
   text-decoration: none;
   font-size: var(--fs-sm);
-  min-height: 1.5rem;
   padding-inline: var(--sp-1);
   border-radius: var(--r-sm);
   transition:
@@ -1055,9 +1090,14 @@
     background var(--dur-micro) var(--ease-standard);
 }
 
-.ev-d-link:hover {
-  color: var(--c-text-primary);
-  background: color-mix(in srgb, var(--c-text-primary) 8%, transparent);
+/* The shared wash, not a hand-rolled ink mix. The ink move to `--c-text-primary` is
+   the button idiom (vibekit-ui.md): accent ink on hover would read as a link, which
+   the two `-more` controls above are and this door is not. */
+@media (any-hover: hover) {
+  .ev-d-link:hover {
+    color: var(--c-text-primary);
+    background: var(--c-hover);
+  }
 }
 
 .ev-d-link-icon {

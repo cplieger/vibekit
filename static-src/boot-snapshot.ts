@@ -8,12 +8,12 @@
 
 import { effect } from "@cplieger/reactive";
 
-import { RESIDENT_TOOL_CALLS } from "./block-window.js";
 import {
   derivedHasMore,
   get,
   getActiveId,
   getSessions,
+  latchFromOutcome,
   messagesVersionOf,
   normalizeMessage,
   setSessions,
@@ -21,10 +21,12 @@ import {
   watchActiveId,
 } from "./store.js";
 import { openTabSubjects, paintProvisionalTabs, tabSetVersion } from "./tabs.js";
+import { TURN_OUTCOME_VALUES } from "./turn-severity.js";
 import { projectTurns, type Turn, type TurnWindowBase } from "./turns.js";
 import type { Message, Session, TabSubject, ToolCall, Usage } from "./types.js";
 import { asObject, decodeArray, reqBool, reqNum, reqStr } from "./validators.js";
 import { decodeMessage, decodeTabSubject, decodeUsage } from "./wire/decoders.gen.js";
+import type { TurnOutcome } from "./wire/types.gen.js";
 
 /** How many of the active chat's newest TURNS are carried. Turns because half a
  *  turn renders as a card with no header. */
@@ -69,13 +71,6 @@ const SNAPSHOT_MAX_BYTES = 96 * 1024;
 const SNAPSHOT_MAX_TOOL_OUTPUT = 256;
 const SNAPSHOT_MAX_TOOL_INPUT = 256;
 
-/** No more tool calls than a PAINT can mount, newest-first, because carrying more than
- *  that is carrying rows no first frame can show — `block-window.ts` owns the number and
- *  this reads it rather than restating it. It is what keeps a long agent turn PAINTING
- *  its answer: without it a turn of 200 trimmed calls still overruns the byte budget, and
- *  the record falls back to the user's prompt with nothing under it. */
-const SNAPSHOT_MAX_TOOL_CALLS = RESIDENT_TOOL_CALLS;
-
 /** How long the projection must sit still before it is written. Every write is a
  *  whole-record replace, so a streaming turn would otherwise write per frame. */
 const SNAPSHOT_DEBOUNCE_MS = 1_000;
@@ -97,6 +92,13 @@ interface SnapshotChat {
   readonly current_mode_id: string;
   readonly message_count: number;
   readonly usage: Usage;
+  /** How this chat's newest finished turn ended, and when the chat last moved —
+   *  what a resumed row paints its tab dot and that dot's age from. OPTIONAL on
+   *  purpose: a record written before these fields existed still paints, because a
+   *  hint that rejects itself over a field the strip can do without is worse than a
+   *  row with no dot. */
+  readonly last_turn_outcome?: TurnOutcome;
+  readonly updated_at?: number;
 }
 
 /** The transcript window a resume paints, and the segmentation state it is numbered
@@ -197,6 +199,15 @@ function toProvisionalSession(c: SnapshotChat, win: SnapshotWindow | undefined):
     thinking: false,
     working_label: "Thinking",
     provisional: true,
+    // CONDITIONAL, both of them: under `exactOptionalPropertyTypes` an explicit
+    // `undefined` is a value rather than an omission, and `latchFieldsFor`'s rule 2
+    // reads a stored outcome to decide whether a latch is fresh.
+    ...(c.last_turn_outcome !== undefined && { last_turn_outcome: c.last_turn_outcome }),
+    ...(c.updated_at !== undefined && { updated_at: c.updated_at }),
+    // The dot the finished turn earned, from the same table every other producer
+    // reads, so a resumed row paints what the strip painted before the reload rather
+    // than the hollow ring that means nothing has happened here.
+    ...latchFromOutcome(c.last_turn_outcome),
   };
 }
 
@@ -271,6 +282,8 @@ function projectChat(s: Session): SnapshotChat {
     current_mode_id: s.current_mode_id,
     message_count: s.message_count,
     usage: s.usage,
+    ...(s.last_turn_outcome !== undefined && { last_turn_outcome: s.last_turn_outcome }),
+    ...(s.updated_at !== undefined && { updated_at: s.updated_at }),
   };
 }
 
@@ -369,17 +382,35 @@ function admitTail(trigger: Message | undefined, body: readonly Message[]): Mess
   return [...head, ...tail];
 }
 
-/** One message with the fields a first frame does not paint cut down to size.
+/** One message with the fields a first frame does not paint cut down to size. Every tool
+ *  call it holds is carried, trimmed rather than dropped.
  *
  *  Returns the message ITSELF when it carries no tool calls, so the ordinary prose row
  *  allocates nothing — and the tool calls are where the bytes measurably are (686,630
- *  of one message's 1,006,210). */
+ *  of one message's 1,006,210).
+ *
+ *  Nothing here shortens the call ARRAY, so a message is carried whole or it is not
+ *  carried: both admission paths price this lightened copy through `sizeOf` and refuse it
+ *  against the record's own budgets, which is the only thing that can turn one away. A
+ *  turn whose calls do not fit therefore paints its trigger alone, or nothing, and that is
+ *  the intended answer rather than a shortfall — the block INDEX is a contract with the
+ *  render layer, and a record holding a message's blocks without the calls they name is a
+ *  record of something that did not happen. A message's mounted state is keyed on that
+ *  index (`MsgRender`'s `window`, `blockEls` and `blockText`, and the `data-block-index` a
+ *  search hit resolves through); `renderRange` widens that window over the whole range it
+ *  walked whether or not a card mounted; and the state SURVIVES the activation's own window
+ *  replacement, because `messages.ts` `bodyRowSpec` keys a body row on the message id, so
+ *  the fetched message is UPDATED rather than rebuilt — `rebuildMessageBody`'s one caller
+ *  is unparking a message that was streaming at park. So a first frame that is silently
+ *  wrong and never self-heals is worse than no first frame, and no first frame is a shape
+ *  this app already ships: `boot.ts` gates the pre-network paint on the boot mode, so a
+ *  REDUCED boot draws none and the tab set's own activation fetches the window instead. */
 function lighten(m: Message): Message {
   const calls = m.tool_calls;
   if (calls === undefined || calls.length === 0) {
     return m;
   }
-  return { ...m, tool_calls: calls.slice(-SNAPSHOT_MAX_TOOL_CALLS).map(lightenCall) };
+  return { ...m, tool_calls: calls.map(lightenCall) };
 }
 
 function lightenCall(c: ToolCall): ToolCall {
@@ -454,8 +485,42 @@ function decodeSnapshotWindow(v: unknown): SnapshotWindow {
   };
 }
 
+/** The optional twin of `validators.ts` `reqOneOf`, mirroring that file's own
+ *  `req*`/`opt*` pairing — anything the vocabulary does not name, a wrong type
+ *  included, reads as ABSENT rather than throwing, so a member the union gains later
+ *  costs this record nothing.
+ *
+ *  It lives HERE rather than beside `reqOneOf` because `validators.ts` is
+ *  library-owned generated output: `go run ./cmd/wire-codegen` rewrites the whole
+ *  file on every run, so an addition there is deleted by the next generator run. */
+function optOneOf<T extends string>(
+  o: Record<string, unknown>,
+  key: string,
+  vals: readonly T[],
+): T | undefined {
+  const v = o[key];
+  return typeof v === "string" && (vals as readonly string[]).includes(v) ? (v as T) : undefined;
+}
+
+/** The same tolerance for the timestamp beside it: anything that is not a finite
+ *  number reads as ABSENT rather than throwing.
+ *
+ *  Its twin is `validators.ts` `optNum`, which REFUSES a wrong type and takes the
+ *  whole record with it — right for a wire payload, wrong for this one. Both fields
+ *  of this pair are declared optional on the same ground (a paint-time hint that
+ *  rejects itself over a field the strip can do without is worse than a row with no
+ *  dot), so one of them being strict was an asymmetry rather than a decision. The
+ *  value is spent as epoch millis by `relativeTime`, so the failure it prevents is
+ *  an age of NaN on the dot's tooltip. */
+function optFiniteNum(o: Record<string, unknown>, key: string): number | undefined {
+  const v = o[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
 function decodeSnapshotChat(v: unknown): SnapshotChat {
   const o = asObject(v, "$.boot_snapshot.chat");
+  const outcome = optOneOf(o, "last_turn_outcome", TURN_OUTCOME_VALUES);
+  const updatedAt = optFiniteNum(o, "updated_at");
   return {
     id: reqStr(o, "id", "$.boot_snapshot.chat"),
     name: reqStr(o, "name", "$.boot_snapshot.chat"),
@@ -463,6 +528,8 @@ function decodeSnapshotChat(v: unknown): SnapshotChat {
     current_mode_id: reqStr(o, "current_mode_id", "$.boot_snapshot.chat"),
     message_count: reqNum(o, "message_count", "$.boot_snapshot.chat"),
     usage: decodeUsage(o["usage"]),
+    ...(outcome !== undefined && { last_turn_outcome: outcome }),
+    ...(updatedAt !== undefined && { updated_at: updatedAt }),
   };
 }
 

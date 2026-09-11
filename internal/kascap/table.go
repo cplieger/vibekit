@@ -443,6 +443,21 @@ update_session_information tool usually carries a description or status
 too, but the tool's fields are all optional, so filtering on title-only
 would drop a genuine agent rename to protect a truncation.
 
+THAT PARAGRAPH USED TO STOP AT "not prompt-shaped, so it lands on
+Chat.Name", as though passing titleIsPromptDerived were the wanted outcome.
+It is not sufficient: an unfiltered pass also admits a model reply that is
+not a title at all. Measured on the live volume — first prompt "test", so
+KAS asked its fast model to title a one-word conversation and the model
+correctly answered by asking for the message; the reply arrived here 1.4s
+after the derivation and vibekit stored it as the chat's name, where it
+stayed, because the name only moves UP the precedence. So this row now
+depends on translate.TitleRefusal, the rule at the adoption door, and
+turning it on without that door reopens the same hole. Its
+residual is the same one recorded on the predicate: a refusal short enough
+and single-clause enough to look like a sentence-case title still passes,
+and the escalation for one is withholding THIS ROW rather than guessing at
+the text.
+
 MUST be the connection door, and MUST NOT carry the schema's leading
 underscore. KAS installs the bridge that makes this key readable inside
 initialize, from clientCapabilities._meta.kiro.settings, so a session-door

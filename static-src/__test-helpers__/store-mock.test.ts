@@ -76,6 +76,9 @@ describe("the mock's re-derived rules agree with the real ones", () => {
       session({ thinking: false }),
       session({ thinking: true }),
       session({ thinking: false, turn_open: true }),
+      // The boot snapshot's row, which states neither input. Without it this guard
+      // cannot see a drift in the third term.
+      session({ thinking: false, provisional: true }),
     ]) {
       expect(storeMock.turnLive(s)).toBe(store.turnLive(s));
     }

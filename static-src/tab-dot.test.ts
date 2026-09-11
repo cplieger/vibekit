@@ -42,6 +42,7 @@ import {
   setThinking,
   setTurnDone,
   clearTurnDone,
+  applyLatch,
   outcomeLatch,
   relatchTurnVerdict,
   get,
@@ -149,7 +150,13 @@ vi.mock("./router.js", () => ({
   buildPath: vi.fn(() => "/"),
   parseRoute: vi.fn(),
 }));
-vi.mock("./tabs-drag.js", () => ({
+// Type-only, for the `importOriginal` below.
+import type * as TabsDrag from "./tabs-drag.js";
+// The three FUNCTIONS are stubbed and nothing else is: `DRAG_THRESHOLD_PX` is the
+// strip's drag slop and `tabs.ts` reads it, so a partial factory would fail this
+// whole file at link time.
+vi.mock("./tabs-drag.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof TabsDrag>()),
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
@@ -239,8 +246,11 @@ vi.mock("./dom.js", () => {
     // Present because the mock must carry every name anything in this test's
     // import graph reaches — Browser Mode links ESM for real, so a missing
     // export fails the whole file at link time rather than at the call.
-    // `decision-dock.ts` (reached via the ask readers) imports it.
+    // `decision-dock.ts` (reached via the ask readers) imports the first;
+    // `model-switcher.ts`, now in this graph through the shared turn teardown,
+    // imports the second.
     forceReflow: vi.fn(() => 0),
+    setBusy: vi.fn(),
   };
 });
 
@@ -320,12 +330,13 @@ async function resetProjection(): Promise<void> {
   registerTabOpeners({
     chat: {
       show: vi.fn(),
+      refresh: vi.fn(),
       close: vi.fn(),
       dot: (chatID: string) => seededDots.get(chatID) ?? "",
     },
-    editor: { show: vi.fn(), close: vi.fn() },
-    run: { show: vi.fn() },
-    subagent: { show: vi.fn() },
+    editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
+    run: { show: vi.fn(), refresh: vi.fn() },
+    subagent: { show: vi.fn(), refresh: vi.fn() },
   });
   resetActionFramework();
   _resetForTest();
@@ -689,15 +700,15 @@ describe("prefers-reduced-motion stops the dot's animation", () => {
   const tabs = loadCSS("12-tabs.css");
   const dot = '.tab-status-dot[data-status="working"]';
 
-  it("declares no animation of its own, on the disc or on its overlay", () => {
-    // The beat is an inherited value read off the document clock (03-base.css),
-    // not an animation created on this element. That is the synchronisation: an
-    // animation would be created when `data-status` becomes `working`, so N
-    // working chats would hold N arbitrary phases.
+  it("carries the beat on its overlay and not on the disc", () => {
+    // The beat is the overlay's OWN animation, created only while `data-status` is
+    // working, so an idle strip runs none — the shared `:root` clock it replaced
+    // cost a whole-document style invalidation every frame forever. Phase still
+    // agrees across dots because the delay comes off one origin (`beat-phase.ts`).
     expect(/animation:/.test(ruleContaining(tabs, dot, "top").body)).toBe(false);
     const glow = ruleContaining(tabs, `${dot}::before`, "top");
-    expect(/animation:/.test(glow.body)).toBe(false);
-    expect(glow.body).toContain("var(--vk-beat)");
+    expect(glow.body).toContain("vk-dot-beat");
+    expect(glow.body).toContain("var(--beat-phase, 0ms)");
   });
 
   it("removes the beat overlay entirely under reduced motion", () => {
@@ -1031,18 +1042,19 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
     expect(/box-shadow/.test(working)).toBe(false);
     expect(
       ruleContaining(tabs, '.tab-run-dot[data-status="working"]::before', "top").body,
-    ).toContain("var(--vk-beat)");
+    ).toContain("vk-dot-beat");
   });
 
-  it("declares no animation of its own, on the ring or on its overlay", () => {
-    // The beat is an inherited value read off the document clock (03-base.css). An
-    // animation created here would hold its own phase, which is exactly what the
-    // per-dot version cost the strip.
+  it("beats on the overlay and not on the ring", () => {
+    // The ring is the shape; only the overlay moves. Its animation is scoped to the
+    // working state, so a settled run-dot carries none at all — which matters more
+    // than it reads: an animation OUTRANKS a normal declaration, so a settled state
+    // could not answer a base-rule beat by resetting opacity.
     const ring = ruleContaining(tabs, '.tab-run-dot[data-status="working"]', "top");
     const glow = ruleContaining(tabs, '.tab-run-dot[data-status="working"]::before', "top");
     expect(/animation:/.test(ring.body)).toBe(false);
-    expect(/animation:/.test(glow.body)).toBe(false);
-    expect(glow.body).toContain("opacity: calc(var(--vk-beat) * 0.55)");
+    expect(glow.body).toContain("vk-dot-beat");
+    expect(glow.body).toContain("--beat-peak: 0.55");
   });
 
   it("keeps the beat off the ring's hole, so a peak is not a disc", () => {
@@ -1104,16 +1116,25 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
     // which closes the hole at this diameter. Neither exists, so the shape does the
     // work and the bands are free to separate the mark's own three states.
     expect(ruleContaining(tabs, ".tab-run-dot", "top").body).toContain(
-      "border-radius: calc(var(--dot-size) / 4)",
+      "border-radius: var(--dot-radius-square)",
     );
     // The dot is the circle, in every state it paints one — which is what the
     // square is being told apart FROM.
     expect(ruleContaining(tabs, ".tab-status-dot", "top").body).toContain("border-radius: 50%");
+    // ONE owner for the proportion, and a run SUB-TAB's dot reads that same token:
+    // two marks report one workflow run, so two spellings of the divisor would be
+    // two things that can drift — at render time (4e measures that) and in source.
+    expect(
+      ruleContaining(
+        tabs,
+        '.tab-child[data-kind="run"] .tab-status-dot:not([data-status="failed"])',
+      ).body,
+    ).toContain("border-radius: var(--dot-radius-square)");
     // A quarter of the diameter, so the flat sides are half of it: enough silhouette
     // to read at 8px, and bounded well under the half that would make it a circle
     // again.
-    const radius = /border-radius: calc\(var\(--dot-size\) \/ (\d+)\)/.exec(
-      ruleContaining(tabs, ".tab-run-dot", "top").body,
+    const radius = /--dot-radius-square:\s*calc\(var\(--dot-size\) \/ (\d+)\)/.exec(
+      loadCSS("01-tokens.css"),
     );
     expect(Number(radius?.[1])).toBeGreaterThan(2);
     // The dot's own donut band is still what the mark's is measured against, and the
@@ -1253,6 +1274,204 @@ describe("the ring is painted at the size of the disc beside it", () => {
     // Flat sides at least a third of the mark's width on all four edges, which is
     // the ink a reader compares against a curve at 8px.
     expect(size - 2 * radius).toBeGreaterThanOrEqual(size / 3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4e. The same silhouette on a RUN SUB-TAB's own activity dot.
+//
+// A run's row carries NO `.tab-run-dot` — `createTabEl` appends one for the chat
+// kind only — so the square that means "a workflow run" had to reach the one mark
+// such a row does carry, its activity dot. That makes the geometry a CASCADE
+// question rather than a rule read, twice over: the kind-scoped rule (0,4,0)
+// contests the base `border-radius: 50%` AND outranks the `failed` diamond's own
+// corner, and both silhouettes resolve one shared token. So it is measured off
+// real boxes with the bundle mounted, the way 4d measures the mark's.
+// ---------------------------------------------------------------------------
+
+describe("a run sub-tab's dot takes the workflow mark's square", () => {
+  let sheet: HTMLStyleElement;
+
+  beforeAll(() => {
+    sheet = mountAppCSS();
+  });
+
+  afterAll(() => {
+    sheet.remove();
+  });
+
+  beforeEach(async () => {
+    await resetProjection();
+  });
+
+  /** Chromium reports a PERCENTAGE radius as the percentage and a `calc` as a used
+   *  length, so the two spellings have to be normalised against the element's own
+   *  box before they can be compared: the dot's circle is 50%, the square is px. */
+  function cornerPx(node: HTMLElement): number {
+    const v = getComputedStyle(node).borderTopLeftRadius;
+    const box = node.getBoundingClientRect().width;
+    return v.endsWith("%") ? (box * Number.parseFloat(v)) / 100 : Number.parseFloat(v);
+  }
+
+  function dotOf(row: HTMLElement): HTMLElement {
+    const dot = row.querySelector<HTMLElement>(".tab-status-dot");
+    if (dot === null) {
+      throw new Error("no dot element");
+    }
+    return dot;
+  }
+
+  function rowOf(id: string): HTMLElement {
+    const row = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
+    if (row === null) {
+      throw new Error("the row did not render");
+    }
+    return row;
+  }
+
+  /** A run sub-tab of the chat that launched it, opened exactly as `openRunView`
+   *  opens one, with its parent's id beside it. */
+  async function runSubTab(ref = "wf_1"): Promise<{ id: string; parent: string }> {
+    const { openTab, tabIdFor } = await import("./tabs.js");
+    const parent = await openSubject("chat", "c1");
+    await openTab({ kind: "run", ref, parent, owns: false });
+    await paint();
+    return { id: tabIdFor("run", ref), parent };
+  }
+
+  it("paints a rounded square where a chat's dot paints a circle", async () => {
+    const { setTabStatus } = await import("./tabs.js");
+    const { id, parent } = await runSubTab();
+    // A STATE first: the dot is revealed by `[data-status]`, and a run row's
+    // reserved slot is `visibility: hidden` until one lands.
+    setTabStatus(id, "working");
+    setTabStatus(parent, "working");
+    const dot = dotOf(rowOf(id));
+    const size = dot.getBoundingClientRect().width;
+    expect(size).toBeGreaterThan(0);
+
+    // Still square, so the radius is the only thing that moved.
+    expect(dot.getBoundingClientRect().height).toBeCloseTo(size, 2);
+    const radius = cornerPx(dot);
+    expect(radius).toBeGreaterThan(0);
+    expect(radius).toBeLessThan(size / 2);
+    // Flat sides at least a third of the width on all four edges, the bound the
+    // mark's own geometry case uses: the ink a reader compares against a curve.
+    expect(size - 2 * radius).toBeGreaterThanOrEqual(size / 3);
+
+    // The launching CHAT's dot is untouched, and half the box IS the circle — the
+    // state the square is being told apart from.
+    const chatDot = dotOf(rowOf(parent));
+    expect(cornerPx(chatDot)).toBeCloseTo(chatDot.getBoundingClientRect().width / 2, 1);
+  });
+
+  it("resolves the same radius as the workflow mark on its parent's row", async () => {
+    // The consistency claim the change is about, measured rather than transcribed:
+    // one token, two elements, so a retune moves both or fails here.
+    const { setTabStatus, setTabRunStatus } = await import("./tabs.js");
+    const { id, parent } = await runSubTab();
+    setTabStatus(id, "working");
+    // The mark takes no box without a state of its own.
+    setTabRunStatus(parent, "working", { total: 1, working: 1, waiting: 0, input: 0 });
+    const mark = rowOf(parent).querySelector<HTMLElement>(".tab-run-dot");
+    expect(mark, "a chat row carries the workflow mark").not.toBeNull();
+
+    expect(Math.abs(cornerPx(dotOf(rowOf(id))) - cornerPx(mark as HTMLElement))).toBeLessThan(0.5);
+  });
+
+  it("leaves a subagent sub-tab's dot a full disc", async () => {
+    // The untouched-kind control. Both kinds nest under a chat and both write
+    // through the same reserved slot, so the KIND is the whole of what separates
+    // them — a rule keyed on anything else would take this row with it.
+    const { openTab, tabIdFor, setTabStatus } = await import("./tabs.js");
+    const { subagentRef } = await import("./tab-materialize.js");
+    const parent = await openSubject("chat", "c1");
+    const ref = subagentRef("c1", "task-1");
+    await openTab({ kind: "subagent", ref, parent, owns: false });
+    await paint();
+    setTabStatus(tabIdFor("subagent", ref), "working");
+
+    const dot = dotOf(rowOf(tabIdFor("subagent", ref)));
+    const size = dot.getBoundingClientRect().width;
+    expect(size).toBeGreaterThan(0);
+    expect(cornerPx(dot)).toBeCloseTo(size / 2, 1);
+  });
+
+  it("keeps failed's own rotated square rather than re-rounding it", async () => {
+    // The exclusion, and it is what keeps `done` and `failed` separable by SHAPE on
+    // a run row (WCAG 1.4.1): the diamond is a smaller box with its own corner and
+    // a rotation, and the square rule outranks it on specificity.
+    const { setTabStatus } = await import("./tabs.js");
+    const { id } = await runSubTab();
+    setTabStatus(id, "working");
+    const dot = dotOf(rowOf(id));
+    const size = dot.getBoundingClientRect().width;
+    const square = cornerPx(dot);
+
+    setTabStatus(id, "failed");
+    // The LAYOUT box, not the client rect: a rotated square's rect is its DIAGONAL
+    // (8.49px for a 6px mark), which is the whole reason the diamond is sized off
+    // --dot-size-sm and would read here as the mark having grown.
+    expect(dot.offsetWidth).toBeLessThan(size);
+    expect(getComputedStyle(dot).transform).not.toBe("none");
+    expect(cornerPx(dot)).toBeLessThan(square);
+  });
+
+  it("keeps the row's geometry across every state a run tab can take", async () => {
+    // ONE run of the state vocabulary, TWO measurements, because one fact governs
+    // both: the radius rule is state-INDEPENDENT apart from the `failed` exclusion,
+    // and the reserved slot plus the diamond's margin correction hold under it — a
+    // row whose label stepped sideways when its run failed would jump at the one
+    // moment the reader is watching it. `runStatusFor` (store.ts) answers
+    // "" | working | waiting | input | done | failed and never `idle`, so this is the
+    // whole vocabulary; `""` is measurable because a sub-tab's dot RESERVES its slot
+    // with no state written, so it keeps its box.
+    const { setTabStatus } = await import("./tabs.js");
+    const { id } = await runSubTab();
+    const row = rowOf(id);
+    const dot = dotOf(row);
+    const name = row.querySelector<HTMLElement>(".tab-name");
+    if (name === null) {
+      throw new Error("no name element");
+    }
+    const offset = (): number =>
+      name.getBoundingClientRect().left - row.getBoundingClientRect().left;
+
+    setTabStatus(id, "");
+    const blank = offset();
+    let square = 0;
+
+    for (const state of ["", "working", "waiting", "input", "done"] as const) {
+      setTabStatus(id, state);
+      const size = dot.getBoundingClientRect().width;
+      square = cornerPx(dot);
+      expect(Math.abs(offset() - blank), `${state} moved the name`).toBeLessThan(0.5);
+      expect(square, `${state} lost the square`).toBeLessThan(size / 2);
+      expect(size - 2 * square, `${state} has no flat side`).toBeGreaterThanOrEqual(size / 3);
+    }
+
+    // The other side of the boundary, from the same run of states: the diamond keeps
+    // its own smaller corner rather than the token this rule resolves, and the margin
+    // correction keeps the name where the disc left it.
+    setTabStatus(id, "failed");
+    expect(Math.abs(offset() - blank), "failed moved the name").toBeLessThan(0.5);
+    expect(cornerPx(dot)).toBeLessThan(square);
+  });
+
+  it("leaves a TOP-LEVEL run tab's dot a circle", async () => {
+    // The scope decision, pinned so widening it later is a deliberate edit: a
+    // parentless run (manual or scheduled) opens a top-level row, and the rule is
+    // keyed on `.tab-child`, so that row keeps the circle. By subject it should be a
+    // square too — Q1 in the plan, raised rather than taken here.
+    const { setTabStatus } = await import("./tabs.js");
+    const id = await openSubject("run", "wf_2");
+    await paint();
+    setTabStatus(id, "working");
+
+    const dot = dotOf(rowOf(id));
+    const size = dot.getBoundingClientRect().width;
+    expect(size).toBeGreaterThan(0);
+    expect(cornerPx(dot)).toBeCloseTo(size / 2, 1);
   });
 });
 
@@ -1435,6 +1654,43 @@ describe("every turn outcome reaches the tab dot", () => {
     expect(outcomeLatch("unknown")).toBe("done");
   });
 
+  it("paints the header's own verdict for a chat whose window was never fetched", () => {
+    // The relatch's FALLBACK, at the dot. No resident message carries an outcome,
+    // which is the ordinary state of a chat nobody has opened — and exactly the
+    // population the connect retraction reaches. Without the fallback that chat
+    // re-derives nothing and paints the hollow ring that means it has never
+    // initiated.
+    setSessions([session({ id: "c1", last_turn_outcome: "failed" })]);
+    relatchTurnVerdict("c1");
+    expect(tabStatusFor(get("c1"))).toBe("failed");
+  });
+
+  it("refuses to paint a failure over a turn that is still streaming", () => {
+    // The relatch's REFUSAL, and `failed` is the outcome that makes it visible:
+    // `tabStatusFor` ranks `turn_failed` ABOVE `thinking`, so a relatch that ran
+    // here would paint the red diamond over a reply arriving on screen. Every
+    // caller clears `thinking` first, so the refusal costs those doors nothing.
+    setSessions([
+      session({
+        id: "c1",
+        messages: [{ id: "m1", role: "assistant", ts: 1, turn_outcome: "failed" } as never],
+      }),
+    ]);
+    setThinking("c1", true);
+    relatchTurnVerdict("c1");
+    expect(tabStatusFor(get("c1"))).toBe("working");
+  });
+
+  it("latches nothing for the answer that decides nothing", () => {
+    // `applyLatch`'s third case, which a persisted `running` outcome and an absent
+    // one both reach. Writing either latch here would report a turn still in
+    // flight as settled; the two arms that DO write are driven through this same
+    // function by the table above.
+    setSessions([session({ id: "c1" })]);
+    applyLatch("c1", "");
+    expect(tabStatusFor(get("c1"))).toBe("idle");
+  });
+
   it("paints a failure as the red lozenge and never as the idle ring", () => {
     // The observable the user described. `failed` is a filled, rotated square with
     // a small radius; `idle` is a transparent disc with a hairline ring. A source
@@ -1574,6 +1830,59 @@ describe("a reconnect does not erase what only the client knows", () => {
 
     await loadList();
     expect(tabStatusFor(get("c1"))).toBe("failed");
+  });
+
+  it("takes another device's finished turn over the verdict this page holds", async () => {
+    // RULE 1 at the dot, and the case it exists for: the row stores the outcome the
+    // page last saw, so a header reporting a DIFFERENT one is news from another
+    // device and outranks the local latch. Ahead of the carry, or a chat that
+    // already holds a latch would never see a moved header at all.
+    const { loadList } = await import("./store-load.js");
+    setSessions([session({ id: "c1", turn_done: true, last_turn_outcome: "completed" })]);
+    mockApiGetTyped.mockResolvedValue({ chats: [outcomeHeader("c1", "failed")] });
+
+    await loadList();
+    expect(tabStatusFor(get("c1"))).toBe("failed");
+  });
+
+  it("keeps the verdict when the header's outcome moves to a LIVE turn", async () => {
+    // Rule 1 may not CLEAR. A `running`-severity outcome latches nothing, and that
+    // means "a turn is in flight" rather than "the last one un-finished" — so the
+    // empty answer falls through to the carry and the dot keeps saying the previous
+    // turn finished, instead of falling to the ring that means this chat has never
+    // initiated.
+    const { loadList } = await import("./store-load.js");
+    setSessions([session({ id: "c1", turn_done: true, last_turn_outcome: "completed" })]);
+    mockApiGetTyped.mockResolvedValue({ chats: [outcomeHeader("c1", "running")] });
+
+    await loadList();
+    expect(tabStatusFor(get("c1"))).toBe("done");
+  });
+
+  it("keeps the verdict when the header stops reporting an outcome at all", async () => {
+    // The same term over the other empty answer, and the shape a real header
+    // produces: `last_turn_outcome` is omitempty on the wire, so a stored outcome
+    // going away is a MOVEMENT — and it still may not blank the dot.
+    const { loadList } = await import("./store-load.js");
+    setSessions([session({ id: "c1", turn_done: true, last_turn_outcome: "completed" })]);
+    mockApiGetTyped.mockResolvedValue({ chats: [header("c1")] });
+
+    await loadList();
+    expect(tabStatusFor(get("c1"))).toBe("done");
+  });
+
+  it("keeps a mid-turn reload working even when the header's outcome MOVED", async () => {
+    // The `thinking` term of rule 1, which the case below cannot reach: that one
+    // stores no outcome, so the baseline term blocks the seed before `thinking` is
+    // consulted. Here the header really has moved, and taking it would paint the
+    // failure diamond over a streaming reply — `turn_failed` outranks `thinking`.
+    const { loadList } = await import("./store-load.js");
+    setSessions([session({ id: "c1", thinking: true, last_turn_outcome: "completed" })]);
+    mockApiGetTyped.mockResolvedValue({ chats: [outcomeHeader("c1", "failed")] });
+
+    await loadList();
+    expect(tabStatusFor(get("c1"))).toBe("working");
+    expect(get("c1")?.turn_failed, "no verdict was seeded at all").toBeUndefined();
   });
 
   it("keeps a mid-turn reload WORKING rather than seeding the previous turn's verdict", async () => {
@@ -2207,8 +2516,8 @@ describe("the leading dot slot is one width for every state", () => {
   it("derives both slot margins from the tokens they measure, never a literal", () => {
     // Two derivations per rule and neither may be a number. The SLOT is the kind
     // glyph's, so it reads --icon-ui: that token is 1rem on a fine pointer and
-    // 1.125rem on a coarse one, and the 0.875rem this used to spell was 2px short of
-    // the glyph on every desktop and 4px on every touch device — a shared text
+    // 1.25rem on a coarse one, and the 0.875rem this used to spell was 2px short of
+    // the glyph on every desktop and 6px on every touch device — a shared text
     // origin the rule claimed and did not have. The MARK is whichever dot token that
     // state paints, so the smaller diamond does not reserve less than every other
     // state, which would move a chat's name at the exact moment its status flipped
@@ -2542,21 +2851,23 @@ describe("the dot's motion uses the app's own easing vocabulary", () => {
   const tabs = loadCSS("12-tabs.css");
   const dot = '.tab-status-dot[data-status="working"]';
 
-  it("beats on the standard curve, which now lives on the clock", () => {
-    // The easing moved WITH the animation: the dot reads `--vk-beat` as a plain
-    // 0..1 amplitude, so the shape is shared by every dot in the app instead of
-    // being restated per keyframe set at four different durations.
+  it("beats on the standard curve, at the one shared period", () => {
+    // Every dot names the same keyframes, duration and easing, so the SHAPE is
+    // shared without a shared clock; only the peak differs per dot. There is
+    // deliberately no `:root` animation left to read the curve off.
     const base = loadCSS("03-base.css");
-    const clock = ruleContaining(base, ":root", "top");
-    expect(clock.body).toContain("animation: vk-beat var(--dot-beat-dur) var(--ease-standard)");
-    expect(clock.body).not.toContain("ease-in-out");
+    expect(base).toContain("@keyframes vk-dot-beat");
+    expect(base).not.toMatch(/animation:\s*vk-beat/u);
+    const glow = ruleContaining(tabs, `${dot}::before`, "top");
+    expect(glow.body).toContain("var(--dot-beat-dur) var(--ease-standard)");
+    expect(glow.body).not.toContain("ease-in-out");
   });
 
   it("scales the beat down rather than flashing to full opacity", () => {
     // Every dot beating in unison at full amplitude trades a noisy strip for a
     // throbbing one, which is not what "less visually present" asked for.
     const glow = ruleContaining(tabs, `${dot}::before`, "top");
-    expect(glow.body).toMatch(/opacity:\s*calc\(var\(--vk-beat\) \* 0\.55\)/u);
+    expect(glow.body).toContain("--beat-peak: 0.55");
   });
 
   it("resolves the token it names", () => {

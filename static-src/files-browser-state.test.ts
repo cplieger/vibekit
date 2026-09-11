@@ -55,7 +55,14 @@ vi.mock("./files-browser-drop.js", () => ({ initBrowserDragDrop: vi.fn() }));
 // behaviour is files-search.test.ts's.
 vi.mock("./files-search.js", () => ({ initFilesSearch: vi.fn(), resetFilesSearch: vi.fn() }));
 vi.mock("./files-picker.js", () => ({ setOnUploadComplete: vi.fn() }));
-vi.mock("./api-client.js", () => ({ apiPost: vi.fn(), apiGet: vi.fn() }));
+vi.mock("./api-client.js", () => ({
+  apiPost: vi.fn(),
+  apiGet: vi.fn(),
+  apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
+}));
+vi.mock("@cplieger/ui-primitives/skeleton", () => ({
+  skeletonTiming: () => armSkeleton(),
+}));
 vi.mock("./scroll.js", () => ({
   scroll: vi.fn(),
   setUserScrolledUp: vi.fn(),
@@ -85,8 +92,23 @@ vi.mock("./store.js", () => ({
   tabStatusFor: vi.fn(() => ""),
 }));
 
-import { FileBrowserState, restoreFileBrowser, loadFileBrowser } from "./files.js";
+import {
+  FileBrowserState,
+  restoreFileBrowser,
+  loadFileBrowser,
+  resetFileBrowser,
+} from "./files.js";
 import { apiGet } from "./api-client.js";
+
+/** The rows placeholder's ARM. The mock never runs the paint closure, and this
+ *  suite's `$` hands out a fresh element per access, so the arm is the observable
+ *  here rather than the painted DOM. */
+const armSkeleton = vi.fn(() => ({
+  commit: (render: () => void) => {
+    render();
+  },
+  cancel: vi.fn(),
+}));
 
 describe("FileBrowserState", () => {
   describe("navigate", () => {
@@ -305,5 +327,44 @@ describe("restoreFileBrowser normalises what it is handed", () => {
     restoreFileBrowser("");
     loadFileBrowser();
     expect(vi.mocked(apiGet).mock.calls[0]?.[0]).toBe("/api/files?path=%2F");
+  });
+});
+
+describe("the rows placeholder's arm", () => {
+  beforeEach(() => {
+    armSkeleton.mockClear();
+    vi.mocked(apiGet).mockReset();
+    vi.mocked(apiGet).mockResolvedValue({ files: [], writable: true });
+    resetFileBrowser();
+  });
+
+  it("arms one for a directory this client has never read", () => {
+    loadFileBrowser();
+    expect(armSkeleton).toHaveBeenCalledTimes(1);
+  });
+
+  it("arms nothing for an EMPTY directory the route has already answered", async () => {
+    loadFileBrowser();
+    expect(armSkeleton).toHaveBeenCalledTimes(1);
+    // A macrotask, so the answer has provably landed rather than merely not having
+    // been scheduled yet.
+    await new Promise((r) => setTimeout(r, 0));
+
+    loadFileBrowser();
+    expect(armSkeleton).toHaveBeenCalledTimes(1);
+  });
+
+  it("a navigation returns the state to no-record, so the next directory can arm one", () => {
+    const s = new FileBrowserState();
+    s.answered = true;
+    s.navigate("src");
+    expect(s.answered).toBe(false);
+  });
+
+  it("a reset returns it too", () => {
+    const s = new FileBrowserState();
+    s.answered = true;
+    s.reset();
+    expect(s.answered).toBe(false);
   });
 });

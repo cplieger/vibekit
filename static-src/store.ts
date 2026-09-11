@@ -38,11 +38,13 @@ import {
   SignalMap,
   type Signal,
 } from "@cplieger/reactive";
+import { forgetView, viewStale } from "./tab-freshness.js";
 import {
   blockTextSigs,
   blockThinkingSigs,
   blockKey,
   clearBlockSigsFor,
+  peekToolCallSig,
   toolCallSigs,
   toolCallSigKey,
 } from "./store-signals.js";
@@ -406,6 +408,9 @@ export function evictChatMessages(chatID: string): void {
   pendingCause.delete(chatID);
   flushedCause.delete(chatID);
   messagesVersionSigs.clear(chatID);
+  // The ledger record describes the WINDOW, and the window just went. This is what
+  // makes the dispatcher's `viewStale`-only gate equivalent to `transcriptStale`.
+  forgetView("chat", chatID);
 }
 
 /** Background ingest on an evicted chat leaves it PARTIAL, so only a successful
@@ -417,28 +422,16 @@ function noteResidentMutation(s: Session): void {
   }
 }
 
-// --- Sync epoch: which loads survived the last transport gap ---
-
-/** Counts transport replay gaps. Plain module state rather than a signal: consulted at
- *  activation and fetch time, never rendered. */
-let syncEpochCount = 0;
-
-export function syncEpoch(): number {
-  return syncEpochCount;
-}
-
-/** Every window loaded under the old epoch is a claim this client can no longer support.
- *  Bumped BEFORE any heal starts: a fetch in flight captured the old number and stays
- *  stale, because its answer may predate events the gap dropped. */
-export function bumpSyncEpoch(): void {
-  syncEpochCount++;
-}
-
-/** The activation refetch gate: a window is trustworthy only if a newest-page load
- *  succeeded and no transport gap has intervened since its request went out. An absent
- *  `loadedEpoch` never equals the counter, so a never-loaded chat is stale by construction. */
+/** The chat kind's refetch gate: a window is trustworthy only if a newest-page load
+ *  succeeded and no transport gap has intervened since its request went out.
+ *
+ *  The residency term is REDUNDANT-BUT-HARMLESS, because `evictChatMessages` drops the
+ *  ledger record: every reachable non-`loaded` state therefore implies no record. It
+ *  stays because `residency` is a real fact about the WINDOW that `store-load.ts` reads
+ *  beside the load that may claim `loaded`, and a predicate reading it is easier to
+ *  verify than one relying on the implication. */
 export function transcriptStale(s: Session): boolean {
-  return s.residency !== "loaded" || s.loadedEpoch !== syncEpochCount;
+  return s.residency !== "loaded" || viewStale("chat", s.id);
 }
 
 export function isThinking(id: string): boolean {
@@ -498,16 +491,24 @@ export function setTurnOpen(id: string, open: boolean): void {
   scheduleMessages(id, "fact");
 }
 
+/** Does this row's own state say NOTHING about liveness? A boot-snapshot hint carries
+ *  neither input, so its `turn_open: false` is a guess rather than a statement. `loadList`'s
+ *  row rebuild is what drops the term (types.ts `Session.provisional`), so a boot whose
+ *  chat-list GET fails keeps it and that turn reads `running` until the next list. */
+function statesNoLiveness(s: Session): boolean {
+  return s.provisional === true;
+}
+
 /** Is a turn RUNNING on this chat, as far as anything here can know?
  *
- *  THE ONE READER of `turn_open`, and the projection's liveness input. Neither input alone
- *  is the answer: `thinking` is this client's own memory of a stream it has watched (false
- *  through every reload), and `turn_open` is the server's last statement (a fact when it
- *  arrives, stale afterwards). Without both, the window between the chat GET painting and
- *  the HELD `turn_state` frame releasing derives a TERMINAL verdict it provably cannot
- *  know, and mounts a footer glyph over a turn that is still running. */
+ *  THE ONE READER of `turn_open`, and the projection's liveness input. No input alone is the
+ *  answer: `thinking` is this client's own memory of a stream it watched (false through every
+ *  reload) and `turn_open` is the server's last statement (stale once it arrives), so a row
+ *  that states neither is read as LIVE — guessing the other way derives a TERMINAL verdict
+ *  over a turn the server is still streaming. Not widened to an absent `turn_open`: a header
+ *  row states nothing either, and its frames latch it. */
 export function turnLive(s: Session): boolean {
-  return s.thinking || s.turn_open === true;
+  return s.thinking || s.turn_open === true || statesNoLiveness(s);
 }
 
 /** The segmentation state at this session's resident window's LEFT EDGE, for
@@ -605,18 +606,83 @@ export function outcomeLatch(outcome: TurnOutcome | undefined): "done" | "failed
   }
 }
 
+/** Apply an outcome-derived latch to a chat. The ONE writer of the pair, so a fourth
+ *  producer cannot spell the mapping a fourth way. Exported because `handlers/turn.ts` is
+ *  the other producer. */
+export function applyLatch(id: string, latch: "done" | "failed" | ""): void {
+  if (latch === "done") {
+    setTurnDone(id);
+  } else if (latch === "failed") {
+    setTurnFailed(id);
+  }
+}
+
+/** The same mapping expressed as the FIELDS a row being rebuilt spreads, for the two
+ *  callers that write a literal rather than a chat: `latchFieldsFor` and the boot
+ *  snapshot's provisional row. `outcomeLatch` stays the one table underneath. */
+export function latchFromOutcome(outcome: TurnOutcome | undefined): {
+  turn_done?: true;
+  turn_failed?: true;
+} {
+  switch (outcomeLatch(outcome)) {
+    case "done":
+      return { turn_done: true };
+    case "failed":
+      return { turn_failed: true };
+    default:
+      return {};
+  }
+}
+
 /** The latch fields to spread into a `Session` being rebuilt from a `ChatHeader`. What makes
- *  a chat tab's dot survive a reconnect, since both latches are CLIENT memory. Three rules,
- *  in order: an existing latch is carried over unchanged (a live `turn_ended` on this page
- *  is newer than any header read, so this can only add a latch, never clear one); a live
- *  turn seeds nothing, because the header's outcome describes the turn before the one now
- *  running; otherwise the header's outcome decides, through `outcomeLatch`. Built
- *  conditionally because under `exactOptionalPropertyTypes` an explicit `undefined` spread
- *  over an existing session would DELETE the latch rule 1 exists to keep. */
+ *  a chat tab's dot survive a reconnect, since both latches are CLIENT memory. Four rules,
+ *  in order: a header that MOVED and carries a verdict of its own wins, because another
+ *  device's finished turn is newer than anything this page remembers; then an existing latch
+ *  is carried over; then a live turn seeds nothing; otherwise the header's outcome decides.
+ *  Built conditionally because under `exactOptionalPropertyTypes` an explicit `undefined`
+ *  spread over an existing session would DELETE the latch rule 2 exists to keep. */
 export function latchFieldsFor(
   existing: Session | undefined,
   h: ChatHeader,
 ): { turn_done?: true; turn_failed?: true } {
+  const incoming = h.last_turn_outcome;
+  // RULE 1: the header MOVED, so it is newer than any latch this page holds — but ONLY
+  // once this page's own turn has ended, ONLY when there is a stored baseline to have
+  // moved FROM, and ONLY when the moved header carries a verdict of its own.
+  //
+  // `thinking` here is a live turn whose `turn_ended` is newer than any header, and
+  // seeding under it would paint a `failed` latch over a streaming reply, because
+  // `tabStatusFor` ranks `turn_failed` ABOVE `thinking`.
+  //
+  // The BASELINE term is what stops an absent stored outcome reading as movement: with
+  // nothing stored, `incoming !== existing.last_turn_outcome` is true for every header,
+  // so a first read could replace a latch a `turn_ended` on this page just took. The
+  // intended case — another device ran a turn — always has a stored baseline, so the term
+  // costs nothing.
+  //
+  // The VERDICT term is the other half, and without it this rule CLEARS a latch that
+  // rule 2 exists to keep: `latchFromOutcome` answers {} for a `running`-severity outcome
+  // and for an ABSENT one, and both of those mean "a turn is in flight" rather than "the
+  // last one un-finished". So an empty answer falls through to the carry.
+  //
+  // Ahead of the carry because rule 2 returns for a chat that already holds a latch, so a
+  // moved header could never be seen behind it. The comparison requires the PRE-UPDATE
+  // session: `upsertHeader` passes `s` (the stored row) rather than `next`, so writing the
+  // new outcome onto `next` before this call is what keeps the rule alive.
+  if (
+    existing !== undefined &&
+    !existing.thinking &&
+    existing.last_turn_outcome !== undefined &&
+    incoming !== existing.last_turn_outcome
+  ) {
+    const moved = latchFromOutcome(incoming);
+    if (moved.turn_done === true || moved.turn_failed === true) {
+      return moved;
+    }
+  }
+  // RULE 2: a live `turn_ended` on this page is newer than a header that has not moved, so
+  // the latch it took is carried. This can ADD a latch or let rule 1 REPLACE one verdict
+  // with another, but nothing here blanks one.
   if (existing?.turn_failed === true || existing?.turn_done === true) {
     const carried: { turn_done?: true; turn_failed?: true } = {};
     if (existing.turn_failed === true) {
@@ -627,17 +693,13 @@ export function latchFieldsFor(
     }
     return carried;
   }
+  // RULE 3: a live turn seeds nothing, because the header's outcome describes the turn
+  // before the one now running. Not narrowed by the retraction doors — every one of them
+  // clears `thinking` before anything asks this function again.
   if (existing?.thinking === true) {
     return {};
   }
-  switch (outcomeLatch(h.last_turn_outcome)) {
-    case "done":
-      return { turn_done: true };
-    case "failed":
-      return { turn_failed: true };
-    default:
-      return {};
-  }
+  return latchFromOutcome(incoming);
 }
 
 /** Re-derive the outcome latches from the PERSISTED record: the newest message carrying a
@@ -645,8 +707,10 @@ export function latchFieldsFor(
  *
  *  The latches are client memory, so every page load and every transport gap dropped them,
  *  while the outcome itself is durable. Called after every newest-page message load, which
- *  is the gap door's own heal path. Refuses to overwrite a live turn (`thinking`) or a
- *  latch already set, which is newer than anything the page carries. */
+ *  is the gap door's own heal path, and by both retraction doors in `turn-teardown.ts`.
+ *  Refuses to overwrite a live turn (`thinking`) or a latch already set, which is newer than
+ *  anything the page carries — every caller clears `thinking` first, so on those doors the
+ *  refusal costs nothing. */
 export function relatchTurnVerdict(id: string): void {
   const s = get(id);
   if (s === undefined || s.thinking || s.turn_done === true || s.turn_failed === true) {
@@ -657,14 +721,13 @@ export function relatchTurnVerdict(id: string): void {
     if (outcome === undefined) {
       continue;
     }
-    const latch = outcomeLatch(outcome);
-    if (latch === "done") {
-      setTurnDone(id);
-    } else if (latch === "failed") {
-      setTurnFailed(id);
-    }
+    applyLatch(id, outcomeLatch(outcome));
     return;
   }
+  // No resident message carries an outcome, which is the ordinary state of a chat whose
+  // window was never fetched — exactly the population the connect retraction reaches. The
+  // header's own statement is the fallback rather than nothing.
+  applyLatch(id, outcomeLatch(s.last_turn_outcome));
 }
 
 /** Derive the chat tab's activity-dot state. ONE rule, shared by the store effect and the
@@ -1180,7 +1243,22 @@ export function upsertHeader(h: ChatHeader): void {
       } else {
         delete next.compaction_watermark;
       }
+      // A header read is the AUTHORITY for both fields, so an absent outcome is a CLEAR and
+      // not "no news" — the OPPOSITE of `model` and `effort_levels` in the same literal,
+      // which deliberately fall back to `s`. Hence the explicit delete (`compaction_watermark`'s
+      // own shape above): an `exactOptionalPropertyTypes` spread of `undefined` is a type
+      // error, and a conditional spread would carry the stale value forward, which is what
+      // would stop `latchFieldsFor`'s freshness rule observing an outcome that went away.
+      if (h.last_turn_outcome !== undefined) {
+        next.last_turn_outcome = h.last_turn_outcome;
+      } else {
+        delete next.last_turn_outcome;
+      }
+      next.updated_at = h.updated_at;
       // AFTER the spread of `s`, so an already-set latch survives: the helper can only add.
+      // It reads `s` rather than `next`, which is what lets its freshness rule compare the
+      // incoming outcome against the PREVIOUSLY stored one — so neither field above may be
+      // written onto `s`.
       Object.assign(next, latchFieldsFor(s, h));
       return next;
     });
@@ -1206,6 +1284,10 @@ export function upsertHeader(h: ChatHeader): void {
     // A chat this client has never seen live: the header's outcome is the ONLY thing that can
     // tell its dot from a chat that has never run a turn.
     ...latchFieldsFor(undefined, h),
+    // The row is REBUILT from the header rather than spread from `s`, so a conditional spread
+    // IS a replace here: nothing carries over because nothing is there.
+    ...(h.last_turn_outcome !== undefined && { last_turn_outcome: h.last_turn_outcome }),
+    updated_at: h.updated_at,
   };
   if (h.compaction_watermark !== undefined) {
     s.compaction_watermark = h.compaction_watermark;
@@ -1246,6 +1328,7 @@ export function removeChat(id: string): void {
     pendingCause.delete(id);
     flushedCause.delete(id);
     messagesVersionSigs.clear(id);
+    forgetView("chat", id);
     if (wasActive) {
       const remaining = order.filter((x) => x !== id);
       activeId.value = remaining[0] ?? "";
@@ -1537,13 +1620,10 @@ export function indexOfSession(id: string): number {
  *  assistant message: a chunk at or below it is already in the message and must be dropped
  *  rather than re-appended. One in-flight turn per chat, so the map is keyed by chat id.
  *
- *  TWO writers, and the second is what makes it a WATERMARK rather than one snapshot's seq.
- *  A server-sent point-in-time copy of the turn records the seq IT folded in — the connect
- *  replay's `turn_state`, or the transcript GET's `live_turn` — and `appendChunk` raises the
- *  mark as live chunks land. Without that second writer the mark only ever describes the
- *  last copy the server sent, so a copy fetched LATER cannot be compared against what this
- *  client already holds: `mergeMessage` replaces content and blocks with the incoming's
- *  whenever they are non-empty, so a stale copy would shrink a fuller local accumulation. */
+ *  TWO writers: `setChunkWatermark` below, for a server-sent copy, and `appendChunk`, which
+ *  raises it as live chunks land and is what makes this a WATERMARK rather than one
+ *  snapshot's seq — so a server copy fetched LATER can be compared against what this client
+ *  holds, where `mergeMessage` would let a stale copy shrink a fuller local message. */
 const chunkWatermarks = new Map<string, { messageID: string; seq: number }>();
 
 /** Record the chunk seq a server-sent copy of the in-flight turn folded in. Unconditional:
@@ -2005,6 +2085,101 @@ export function foldToolCallDelta(prev: ToolCall, d: ToolCallUpdatePayload): Too
     ...(d.disclosed !== undefined && { disclosed: d.disclosed }),
     ...(d.denial !== undefined && { denial: d.denial }),
   };
+}
+
+/** Publish a FETCHED window's tool calls at the cards already mounted for them.
+ *
+ *  A mounted tool card has exactly one refresh channel — the per-call signal effect
+ *  `messages-tools.ts` installs at mount — and until this existed the SSE path was its
+ *  only writer, so a wholesale window replacement (`store-load.ts` `loadMessages`) left
+ *  every mounted card showing whatever it was built from. That is what made the boot
+ *  snapshot's deliberately-truncated output permanent: the record is a paint-time hint
+ *  the server's answer is meant to supersede, and the answer reached the store while the
+ *  cards kept the hint.
+ *
+ *  Through `republishToolCall` rather than `ensureToolCallSig` on purpose: that is already
+ *  the one place a call is published to a card, it picks the repaint cause, and its
+ *  `get`-not-`ensure` shape means it mints no signal for a card nobody mounted —
+ *  `ensureToolCallSig` would also IGNORE its `initial` argument for an existing signal,
+ *  which is the trap that makes creation the wrong verb here.
+ *
+ *  A call the card is ALREADY showing is skipped, and that guard is load-bearing rather
+ *  than a saving: the card's own effect guards on OBJECT IDENTITY
+ *  (`messages-tools.ts` `mountToolCallCard`), and this publishes the freshly decoded
+ *  object, which is never the one the card mounted with. So without it every mounted card
+ *  repaints on every load — and `applyOutputUpdate` re-windows the output and removes and
+ *  re-creates `.tool-output-reveal`, so a reader who expanded a long output with
+ *  "Show N more lines" would lose that expansion, and any selection inside the `<pre>`
+ *  with it, on every later `loadMessages`. On the boot path, where the card really is
+ *  showing the snapshot's truncated copy, the compare misses and nothing changes. */
+export function republishWindowToolCalls(chatID: string, messages: readonly Message[]): void {
+  for (const m of messages) {
+    for (const call of m.tool_calls ?? []) {
+      const shown = peekToolCallSig(chatID, call.id);
+      if (shown !== undefined && paintsTheSame(shown, call)) {
+        continue;
+      }
+      republishToolCall(chatID, m.id, call);
+    }
+  }
+}
+
+/** Whether a mounted card built from `shown` would paint `next` identically: the fields
+ *  `applyToolCallUpdate` READS, which is a narrower set than a `ToolCall`'s own — the
+ *  title, the output and the spans that style it, the diffs, the status with its duration,
+ *  and the terminal id `linkTerminal` claims. A field it never reads (`kind`, `locations`,
+ *  `checkpoint`, the subtask and workflow ids) cannot move the card, so a difference there
+ *  is not a reason to repaint one. */
+function paintsTheSame(shown: ToolCall, next: ToolCall): boolean {
+  return (
+    shown.title === next.title &&
+    shown.status === next.status &&
+    shown.duration_ms === next.duration_ms &&
+    shown.output === next.output &&
+    shown.terminal_id === next.terminal_id &&
+    sameSpans(shown.output_spans, next.output_spans) &&
+    sameDiffs(shown.diffs, next.diffs)
+  );
+}
+
+/** Element-wise equality for two style-span lists. Both sides are freshly decoded
+ *  objects on the fetch path, so identity answers nothing and the fields are the
+ *  comparison. */
+function sameSpans(a: ToolCall["output_spans"], b: ToolCall["output_spans"]): boolean {
+  const x = a ?? [];
+  const y = b ?? [];
+  return (
+    x.length === y.length &&
+    x.every((s, i) => {
+      const t = y[i];
+      if (t === undefined) {
+        return false;
+      }
+      return (
+        s.start === t.start &&
+        s.end === t.end &&
+        s.fg === t.fg &&
+        s.bg === t.bg &&
+        s.attrs === t.attrs
+      );
+    })
+  );
+}
+
+/** Element-wise equality for two diff lists. */
+function sameDiffs(a: ToolCall["diffs"], b: ToolCall["diffs"]): boolean {
+  const x = a ?? [];
+  const y = b ?? [];
+  return (
+    x.length === y.length &&
+    x.every((d, i) => {
+      const e = y[i];
+      if (e === undefined) {
+        return false;
+      }
+      return d.path === e.path && d.old_text === e.old_text && d.new_text === e.new_text;
+    })
+  );
 }
 
 /** Push a tool call's new value at whatever is rendering it, and schedule the

@@ -108,9 +108,18 @@ const m = vi.hoisted(() => ({
 // answered paints 2..N with the previous test's state — which also meant a case
 // could pass on a stale fixture. Each test now genuinely fetches.
 vi.mock("./api-client.js", () => ({
+  // Present-but-inert so real-ESM linking succeeds: other modules in this graph read it.
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(),
+  // The run READ goes through the OrError variant, because the store spends a failed
+  // read's STATUS: a 404 is the server's settled answer about the run and skips its
+  // retry ladder, where a 0 (no request) keeps it.
+  apiGetOrError: vi.fn(),
 }));
+
+// `refreshRun` reaches the launching chat's window through a lazy import, so the
+// graph resolves at runtime and stops here.
+vi.mock("./chat.js", () => ({ refreshChatView: vi.fn() }));
 
 vi.mock("./tabs.js", () => ({
   // The spec is the FACTORY's now, so there is no onShow and no onClose to
@@ -168,6 +177,10 @@ vi.mock("./run-store.js", async (importOriginal) => {
   const actual = await importOriginal<RunStoreModule>();
   return {
     ...actual,
+    // Spied so the split can be pinned by CALL rather than by request count, and
+    // delegating so every case above keeps the real store's behaviour.
+    invalidateRun: vi.fn(actual.invalidateRun),
+    invalidateRunControls: vi.fn(actual.invalidateRunControls),
     runChatID: vi.fn(() => m.runChat.current),
     noteRunChat: vi.fn((_workflowID: string, chatID: string) => {
       if (chatID !== "") {
@@ -263,15 +276,16 @@ vi.mock("./run-step-transcript.js", async () => {
 // `showRun` is what the tab FACTORY calls as the run tab's activation hook
 // (registered by the composition root), so it is the seam this suite paints
 // through — a door no longer carries an `onShow` of its own.
-import { openRunView, runTabProjectsChat, showRun } from "./run-view.js";
-import { apiGet, apiGetTyped } from "./api-client.js";
+import { openRunView, refreshRun, runTabProjectsChat, showRun } from "./run-view.js";
+import { refreshChatView } from "./chat.js";
+import { apiGetOrError, apiGetTyped } from "./api-client.js";
 // The MOCK's signal, which is the one the view effect subscribes to. Imported so a
 // case can drive the "a read resolved" half of `fetchStep`'s `finally` directly.
 import { stepTranscriptVersion } from "./run-step-transcript.js";
 // The REAL invalidation (the run-store mock overrides only its launching-chat
 // memory), so a case can drive a second fetch of the SAME run: that is how a step
 // settling under the reader's cursor reaches the page in production.
-import { invalidateRun } from "./run-store.js";
+import { invalidateRun, invalidateRunControls } from "./run-store.js";
 import { appendChunk, setSessions } from "./store.js";
 import { clearAllBlockSigs, ensureBlockTextSig } from "./store-signals.js";
 // The REAL router: a zero-import leaf, so no mock, and taking the node from the
@@ -359,6 +373,9 @@ async function paint(
   // it used to take a `parentless` flag the caller derived from an event-fed cache,
   // and the run's own `parentSessionId` answers it now.
   showRun(tab.id);
+  // The pair `activateTabQuietly` runs: the activation points the view, the refresh
+  // fetches. `showRun` issues nothing of its own.
+  refreshRun(tab.id);
   // Two fetches settle before the row is right — the state and the affordance — so
   // drain enough microtasks for both promise chains without reaching for fake timers.
   for (let i = 0; i < 12; i++) {
@@ -461,7 +478,13 @@ beforeEach(() => {
   setSessions([]);
   clearAllBlockSigs();
   m.controls.current = undefined;
-  vi.mocked(apiGet).mockImplementation(() => Promise.resolve(m.reply.current));
+  vi.mocked(apiGetOrError).mockImplementation(() =>
+    Promise.resolve(
+      m.reply.current === undefined
+        ? { ok: false, status: 0, data: null, error: "" }
+        : { ok: true, status: 200, data: m.reply.current, error: "" },
+    ),
+  );
   // The affordance endpoint, the only typed GET this graph makes. Decoded FOR REAL
   // by the caller's own generated decoder, so a fixture with the wrong shape fails
   // here rather than reaching the row. `null` is what a failed fetch produces.
@@ -1004,6 +1027,7 @@ describe("run view instructions", () => {
       state: { workflowId: "wf_1", status: "running", inputs, root: capturing(capture) },
     } satisfies RunInspectReply;
     showRun(tabID);
+    refreshRun(tabID);
     for (let i = 0; i < 10; i++) {
       await Promise.resolve();
     }
@@ -2145,6 +2169,7 @@ describe("run view empty step action", () => {
     const before = body.querySelector(".ev-d-link");
     expect(before).not.toBeNull();
     showRun(tab.id);
+    refreshRun(tab.id);
     for (let i = 0; i < 10; i++) {
       await Promise.resolve();
     }
@@ -2208,5 +2233,52 @@ describe("run tab eviction exemption", () => {
     ]);
     m.tabsOpen.add("run:wf_1");
     expect(runTabProjectsChat("c-1")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The activation half and the fetch half. Leaving the two `invalidate*` calls in
+// `showRun` would double-fetch on every run activation, since the dispatcher now
+// calls `refresh` immediately after `onShow`.
+// ---------------------------------------------------------------------------
+
+describe("showRun and refreshRun", () => {
+  it("showRun fetches nothing", () => {
+    showRun("wf_show");
+
+    expect(invalidateRun).not.toHaveBeenCalled();
+    expect(invalidateRunControls).not.toHaveBeenCalled();
+  });
+
+  it("refreshRun invalidates the run and then its controls", () => {
+    refreshRun("wf_refresh");
+
+    expect(invalidateRun).toHaveBeenCalledWith("wf_refresh");
+    expect(invalidateRunControls).toHaveBeenCalledWith("wf_refresh");
+    const runOrder = vi.mocked(invalidateRun).mock.invocationCallOrder[0] ?? 0;
+    const controlsOrder = vi.mocked(invalidateRunControls).mock.invocationCallOrder[0] ?? 0;
+    expect(runOrder).toBeLessThan(controlsOrder);
+  });
+
+  it("refreshes the launching chat's window, which is where a step transcript comes from", async () => {
+    m.runChat.current = "c-launcher";
+
+    refreshRun("wf_parented");
+    // The delegation is behind a dynamic import, which settles over several
+    // microtasks rather than one.
+    await vi.waitFor(() => {
+      expect(refreshChatView).toHaveBeenCalledWith("c-launcher");
+    });
+  });
+
+  it("refreshes no chat for a parentless run", async () => {
+    m.runChat.current = "";
+
+    refreshRun("wf_parentless");
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+
+    expect(refreshChatView).not.toHaveBeenCalled();
   });
 });

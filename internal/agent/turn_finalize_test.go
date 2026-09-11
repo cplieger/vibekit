@@ -85,6 +85,17 @@ func startedTurnOn(t *testing.T, h *Runtime, cs *fakeChatStore, chatID vibekit.C
 	buf.Content.WriteString(text)
 }
 
+// startedEngineTurnOn is startedTurnOn's engine-opened twin: nothing prompts, so the
+// wire's own first frame opens the turn and no trigger row stands for it.
+func startedEngineTurnOn(t *testing.T, h *Runtime, cs *fakeChatStore, chatID vibekit.ChatID, text string) {
+	t.Helper()
+	seedChat(t, cs, chatID)
+	buf := h.stageTurnBuffer(t, chatID)
+	buf.Started = true
+	buf.MessageID = newMessageID()
+	buf.Content.WriteString(text)
+}
+
 // TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn is the third actor. A prompt whose
 // bridge dies has a settle that may never arrive, so nothing else is going to
 // close the turn: the partial would stay in the buffer, the next turn's
@@ -139,6 +150,59 @@ func TestCloseTurnOnBridgeDeath_IgnoresAChatWithNoOpenTurn(t *testing.T) {
 	}
 	if c, _ := cs.Get(t.Context(), "c1"); len(c.Messages) != 0 {
 		t.Errorf("messages = %+v, want none", c.Messages)
+	}
+}
+
+// TestCloseTurnOnBridgeDeath_AnEmptyEngineTurnPersistsNoRowButStillAnnounces is the split at
+// the SECOND empty-turn site. No divider: with no trigger row that row IS the whole turn, so
+// it renders as a headerless card marked BROKEN. Still announced: the turn is the chat's own
+// and the client's thinking and turn_open latches have no other retraction, so withholding
+// the frame leaves a dead chat reading `running` with Cancel showing.
+func TestCloseTurnOnBridgeDeath_AnEmptyEngineTurnPersistsNoRowButStillAnnounces(t *testing.T) {
+	h, cs, _ := newTestHub()
+	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+		t.Fatalf("seed chat: %v", err)
+	}
+	h.stageTurnBuffer(t, "c1")
+
+	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1")
+
+	if c, _ := cs.Get(t.Context(), "c1"); len(c.Messages) != 0 {
+		t.Errorf("messages = %+v, want none: a divider with no trigger row is a headerless card", c.Messages)
+	}
+	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(vibekit.StopReasonInterrupted)}) {
+		t.Errorf("turn_ended stops = %v, want exactly one interrupted", got)
+	}
+}
+
+// TestCloseTurnOnBridgeDeath_ASplitEngineTurnKeepsItsDivider is the sibling above's
+// exception, and why the suppression reads the SNAPSHOT as well as the source: a turn split
+// at a compaction point has a sealed row already, so the divider opens no headerless card —
+// it is the only thing that can say the turn broke rather than ended, and the only carrier
+// of its cumulative changed files.
+func TestCloseTurnOnBridgeDeath_ASplitEngineTurnKeepsItsDivider(t *testing.T) {
+	h, cs, _ := newTestHub()
+	startedEngineTurnOn(t, h, cs, "c1", "everything before the compaction")
+	diffs := []vibekit.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}
+	h.liveTurnBuffer("c1").TrackFileChanges(diffs, false)
+	if !h.coord.SealTurnSegment(t.Context(), "c1") {
+		t.Fatal("the fixture could not seal a segment")
+	}
+
+	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1")
+
+	divider := eventMessageOf(t, cs, "c1", vibekit.EventInterrupted)
+	if divider == nil {
+		t.Fatal("a split engine turn persisted no divider, so its card derives `completed` for a turn its bridge killed")
+	}
+	if divider.TurnOutcome != vibekit.TurnOutcomeInterrupted {
+		t.Errorf("divider TurnOutcome = %q, want interrupted", divider.TurnOutcome)
+	}
+	if divider.ChangedFiles["a.go"] == nil {
+		t.Errorf("divider ChangedFiles = %v, want the turn's cumulative map", divider.ChangedFiles)
+	}
+	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(vibekit.StopReasonInterrupted)}) {
+		t.Errorf("turn_ended stops = %v, want exactly one interrupted", got)
 	}
 }
 
@@ -813,5 +877,165 @@ func TestFinalizeTurn_DoesNotDetachThePositionWait(t *testing.T) {
 	}
 	if c, _ := cs.Get(t.Context(), chatID); len(c.Messages) != 0 {
 		t.Errorf("an abandoned settle persisted %+v, want nothing", c.Messages)
+	}
+}
+
+// turnEndedScopes returns the population every turn_ended frame names, in order. The two
+// booleans are what let a client tell this chat's own turn ending from a turn a
+// replacement displaced and from a workflow STEP's turn that was never this chat's — and
+// the client runs a DIFFERENT effect set per population, so a wrong stamp tears down the
+// wrong turn's state.
+func turnEndedScopes(t *testing.T, h *Runtime) []vibekit.TurnEndedPayload {
+	t.Helper()
+	var out []vibekit.TurnEndedPayload
+	for _, e := range bufferedSince(h, 0) {
+		var msg struct {
+			Type    vibekit.EventType        `json:"type"`
+			Payload vibekit.TurnEndedPayload `json:"payload"`
+		}
+		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
+			t.Fatalf("unmarshal event: %v", err)
+		}
+		if msg.Type == vibekit.EventTurnEnded {
+			out = append(out, msg.Payload)
+		}
+	}
+	return out
+}
+
+// The ordinary case, and the one every OTHER closer must also produce: absent-both is
+// `chat` scope, which is what an older server's frame keeps meaning.
+func TestTurnEnded_AnOrdinaryPromptTurnClaimsNeitherPopulation(t *testing.T) {
+	h, cs, _ := newTestHub()
+	startedTurnOn(t, h, cs, "c1", "a reply")
+
+	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1")
+
+	frames := turnEndedScopes(t, h)
+	if len(frames) != 1 {
+		t.Fatalf("got %d turn_ended frames, want 1", len(frames))
+	}
+	if frames[0].Superseded || frames[0].WorkflowStep {
+		t.Errorf("a prompt turn's end claims superseded=%v workflow_step=%v, want both false: "+
+			"a client reads either as a reason NOT to settle, so the chat stays `working` forever",
+			frames[0].Superseded, frames[0].WorkflowStep)
+	}
+}
+
+// closerWireDisplaced is the ONE producer of `superseded`. A replacement turn is live, so
+// the displaced turn's end says nothing about whether the chat is idle.
+func TestTurnEnded_ADisplacedTurnIsSupersededAndNotAStep(t *testing.T) {
+	h, cs, _ := newTestHub()
+	startedEngineTurnOn(t, h, cs, "c1", "the engine was mid-reply")
+
+	// A prompt meeting a live engine turn displaces it: closed immediately BEFORE the
+	// replacement opens, which is why the fact is closer-derived and not a registry read.
+	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
+
+	frames := turnEndedScopes(t, h)
+	if len(frames) != 1 {
+		t.Fatalf("got %d turn_ended frames, want 1 for the displaced turn", len(frames))
+	}
+	if !frames[0].Superseded {
+		t.Error("a displaced turn's end is not marked superseded, so the client settles the " +
+			"chat and tears down the REPLACEMENT turn's state")
+	}
+	if frames[0].WorkflowStep {
+		t.Error("a displaced prompt turn claims to be a workflow step")
+	}
+}
+
+// A step turn closed at its RUN's terminal transition is the reported defect's population:
+// it was never this chat's own turn, and every chat-scoped teardown would tear down
+// whatever turn is genuinely still streaming here.
+func TestTurnEnded_AStepTurnClosedByItsRunIsAWorkflowStep(t *testing.T) {
+	h, cs, _ := newTestHub()
+	seedChat(t, cs, "c1")
+	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceWorkflowStep)
+	buf := h.stageTurnBuffer(t, "c1")
+	buf.Started = true
+	buf.MessageID = newMessageID()
+	buf.Content.WriteString("what the step produced")
+
+	h.coord.CloseStepTurn(t.Context(), "c1")
+
+	frames := turnEndedScopes(t, h)
+	if len(frames) != 1 {
+		t.Fatalf("got %d turn_ended frames, want 1", len(frames))
+	}
+	if !frames[0].WorkflowStep {
+		t.Error("a workflow step's turn ends claiming to be this chat's own, so the client " +
+			"drops this chat's decisions, steers and turn summary for a turn it never ran")
+	}
+	if frames[0].Superseded {
+		t.Error("a run-completed step turn claims to be superseded")
+	}
+}
+
+// announceConclusion is the other broadcast site, and closeAsInterrupted IS reachable for
+// a step turn: a bridge death over a live step turn must not arrive as this chat's own
+// turn ending. This is the case a `workflow_step: false` literal there would lose.
+func TestTurnEnded_AnInterruptedStepTurnIsStillAWorkflowStep(t *testing.T) {
+	h, cs, _ := newTestHub()
+	seedChat(t, cs, "c1")
+	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceWorkflowStep)
+	buf := h.stageTurnBuffer(t, "c1")
+	buf.Started = true
+	buf.MessageID = newMessageID()
+	buf.Content.WriteString("the step got this far before the pipe died")
+
+	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1")
+
+	frames := turnEndedScopes(t, h)
+	if len(frames) != 1 {
+		t.Fatalf("got %d turn_ended frames, want 1", len(frames))
+	}
+	if !frames[0].WorkflowStep {
+		t.Error("a bridge death over a live STEP turn announces this chat's own turn ending, " +
+			"so every chat-scoped teardown runs on a chat whose own turn may be live")
+	}
+	if frames[0].Superseded {
+		t.Error("an interrupted turn claims to be superseded; no interrupt closer displaces")
+	}
+}
+
+// closeOnLocalShell is the third broadcast site. A `!cmd` turn is TurnSourceLocalShell, so
+// its false is honest rather than defaulted.
+func TestTurnEnded_ALocalShellTurnClaimsNeitherPopulation(t *testing.T) {
+	h, cs, _ := newTestHub()
+	seedChat(t, cs, "c1")
+	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceLocalShell)
+
+	h.coord.FinalizeLocalShellTurn(t.Context(), "c1", epoch)
+
+	frames := turnEndedScopes(t, h)
+	if len(frames) != 1 {
+		t.Fatalf("got %d turn_ended frames, want 1", len(frames))
+	}
+	if frames[0].Superseded || frames[0].WorkflowStep {
+		t.Errorf("a `!cmd` turn's end claims superseded=%v workflow_step=%v, want both false",
+			frames[0].Superseded, frames[0].WorkflowStep)
+	}
+}
+
+// THE WITHHOLDING GATE, asserted so a later reader holding the new WorkflowStep bool does
+// not "fix" announcesEmptyEnd. An empty step turn persists no carrier AND announces
+// nothing, which is correct rather than a gap: it emitted no chunk, so markTurnLive never
+// fired and no client latched `thinking` for it — there is nothing to heal. Widening the
+// gate would hand an OLDER bundle a frame it reads as `chat` scope, which is precisely the
+// regression the gate was introduced to prevent.
+func TestTurnEnded_AnEmptyWorkflowStepTurnBroadcastsNothing(t *testing.T) {
+	h, cs, _ := newTestHub()
+	seedChat(t, cs, "c1")
+	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceWorkflowStep)
+	// No buffer content: the step carried nothing at all.
+
+	h.coord.CloseStepTurn(t.Context(), "c1")
+
+	if frames := turnEndedScopes(t, h); len(frames) != 0 {
+		t.Errorf("an EMPTY workflow-step turn broadcast %d turn_ended frames, want 0: "+
+			"announcesEmptyEnd withholds it deliberately, and a pre-upgrade bundle reads "+
+			"one as this chat's own turn ending", len(frames))
 	}
 }

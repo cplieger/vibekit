@@ -61,7 +61,7 @@ vi.mock("./scroll.js", () => ({
 }));
 vi.mock("./tool-group.js", () => ({ trackInProgress: noop }));
 
-import { loadHistoryView } from "./history.js";
+import { loadHistoryView, refreshHistoryView } from "./history.js";
 
 describe("a11y: History row accessible names", () => {
   // A history row's OPEN control is a real button whose name says what a click
@@ -77,6 +77,7 @@ describe("a11y: History row accessible names", () => {
     document.body.appendChild(host);
 
     loadHistoryView();
+    refreshHistoryView();
     await vi.waitFor(() => {
       if (host.querySelector("[data-key]") === null) {
         throw new Error("not rendered");

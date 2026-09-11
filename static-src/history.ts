@@ -24,6 +24,7 @@ import { onBus, BUS_RUNS_CHANGED } from "./bus.js";
 import { el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
+import { paintPlaceholder } from "./skeleton.js";
 import { loadSessions } from "./actions/chat.js";
 import { registerCleanup } from "./actions/index.js";
 import { openPreviousSession, openChatTab } from "./chat.js";
@@ -345,13 +346,6 @@ class HistoryController {
   });
   private query = "";
 
-  /** Load, the body every path that opens this page shares. Separate from
-   *  showView() because the tab-restore path already has the tab and must not
-   *  toggle it. */
-  mount(): void {
-    void this.refresh();
-  }
-
   showView(): void {
     // No callbacks: `mount` and `teardown` are what the tab factory reaches
     // through this module's own lazy-imported `loadHistoryView` /
@@ -373,7 +367,7 @@ class HistoryController {
   }
 
   /** Route to the list or to search, depending on the box. */
-  private async refresh(): Promise<void> {
+  async refresh(): Promise<void> {
     if (this.query === "") {
       this.setNote("");
       await this.load();
@@ -445,6 +439,10 @@ class HistoryController {
     );
   }
 
+  /** Whether `/api/sessions` has ANSWERED. No chats and no runs is an answer, and the
+   *  container cannot tell it from a list this client has never read. */
+  private answered = false;
+
   async load(): Promise<void> {
     const container = document.getElementById("history-table");
     if (container === null) {
@@ -455,9 +453,9 @@ class HistoryController {
     this.abort = new AbortController();
     const { signal } = this.abort;
 
-    const skeleton = skeletonTiming(() => showSkeleton(container));
+    const skeleton = this.answered ? null : skeletonTiming(() => showSkeleton(container));
     const d = await loadSessions.dispatch(undefined);
-    skeleton.cancel();
+    skeleton?.cancel();
     if (signal.aborted) {
       return;
     }
@@ -466,6 +464,7 @@ class HistoryController {
       container.replaceChildren(this.buildError());
       return;
     }
+    this.answered = true;
 
     const rows = toRows(d.sessions, d.runs);
     // Drop any non-keyed sibling (skeleton / empty / error) before reconcile.
@@ -785,28 +784,29 @@ function buildMatchRow(m: ChatSearchMatch): HTMLElement {
   );
 }
 
-/** Skeleton rows while the fetch is in flight; skipped when already populated
- *  so a re-open doesn't flash placeholders. */
+/** Skeleton rows while the fetch is in flight.
+ *
+ *  `[data-key]` rather than the reconciler's attribute: this page writes its own key
+ *  beside it, and that divergence is one ARGUMENT here rather than a second copy of
+ *  the empty-container rule. */
 function showSkeleton(container: HTMLElement): () => void {
-  if (container.querySelector("[data-key]") !== null) {
-    return () => {
-      /* already populated */
-    };
-  }
-  const wrap = el("div", { className: "history-skeleton", "aria-hidden": "true" });
-  for (let i = 0; i < 4; i++) {
-    const rowEl = el("div", { className: "list-row history-table-row history-skel-row" });
-    const title = el("div", { className: "list-row-title" });
-    title.appendChild(skelBar("history-skel-name", "55%"));
-    title.appendChild(skelBar("history-skel-summary", "38%"));
-    rowEl.appendChild(title);
-    rowEl.appendChild(skelBar("history-skel-date", "8rem"));
-    wrap.appendChild(rowEl);
-  }
-  container.replaceChildren(wrap);
-  return () => {
-    wrap.remove();
-  };
+  return paintPlaceholder(
+    container,
+    () => {
+      const wrap = el("div", { className: "history-skeleton", "aria-hidden": "true" });
+      for (let i = 0; i < 4; i++) {
+        const rowEl = el("div", { className: "list-row history-table-row history-skel-row" });
+        const title = el("div", { className: "list-row-title" });
+        title.appendChild(skelBar("history-skel-name", "55%"));
+        title.appendChild(skelBar("history-skel-summary", "38%"));
+        rowEl.appendChild(title);
+        rowEl.appendChild(skelBar("history-skel-date", "8rem"));
+        wrap.appendChild(rowEl);
+      }
+      return wrap;
+    },
+    { content: "[data-key]" },
+  );
 }
 
 function skelBar(className: string, width: string): HTMLElement {
@@ -835,14 +835,18 @@ export function showHistoryView(): void {
   historyCtrl.showView();
 }
 
-/** Load (or reload) the page's data without touching the tab.
+/** The history tab's ACTIVATION: register the page's find, and nothing else.
  *
- *  The tab-restore path needs this and cannot use showHistoryView(): that one
- *  toggles, so firing it from the `onShow` of an already-open, already-active
- *  tab would hit `hasTab && active` and CLOSE the tab it was meant to fill. */
+ *  It cannot use showHistoryView(): that one toggles, so firing it from the `onShow`
+ *  of an already-open, already-active tab would CLOSE the tab it was meant to fill.
+ *  No fetch here — `tabs.ts` `refreshRow` calls `refreshHistoryView` right after. */
 export function loadHistoryView(): void {
   registerFind("history", historyFind);
-  historyCtrl.mount();
+}
+
+/** A history tab's `refresh`. */
+export function refreshHistoryView(): void {
+  void historyCtrl.refresh();
 }
 
 /** Cancel the page's in-flight work. The restore path passes this as its tab's

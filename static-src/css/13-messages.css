@@ -12,11 +12,18 @@
    * resume control docked at its foot. `--rail-inset-end` is the distance from
    * this box's inline-END to the column; `--rail-inset-start` is the same column
    * from the other side, so a control pinned there grows RIGHT into the gutter
-   * instead of back over the cards. The width is the rail's WIDEST row, which is a
-   * cluster RANGE and not a marker, and it also sets the axis. */
+   * instead of back over the cards. The width also sets the axis, and 2.75rem is
+   * kept because narrowing it moves both insets, the resume control's dock and
+   * both measured container thresholds. */
   --rail-w: 2.75rem;
   --rail-inset-end: calc(50% - var(--content-max-w) / 2 - var(--rail-w) - var(--sp-2));
   --rail-inset-start: calc(100% - var(--rail-inset-end) - var(--rail-w));
+
+  /* The track's reserved FOOT, read by the rail and by the control that docks in
+   * it. The control sits at `--sp-3` and is `--hit-floor` tall, so without this
+   * the last marker lands under it; reserved UNCONDITIONALLY, because the control
+   * appears only once the reader has scrolled up and a marker may not move then. */
+  --rail-foot: calc(var(--sp-3) + var(--hit-floor) + var(--sp-2));
 }
 
 /* THE HELPER OWNS EVERY MUTATION. Native scroll anchoring is off deliberately,
@@ -44,7 +51,14 @@
    * the two by making both narrower. `stable` makes the subtraction unconditional,
    * so the column neither widens nor jumps when the transcript starts to scroll;
    * `--scrollbar-w` is measured off this element by scroll.ts. */
-  padding-inline: var(--sp-4) max(0px, calc(var(--sp-4) - var(--scrollbar-w, 0px)));
+  /* THE SAFE-AREA INLINE INSETS FOLD IN AS ONE MORE TERM OF THE SAME `max()`,
+   * which is what keeps the scrollbar arithmetic above intact: the trailing side
+   * still subtracts `--scrollbar-w`, still clamps at 0px, and now also refuses to
+   * go under the device's own inset. Landscape is the orientation that matters —
+   * the notch lands on an inline edge there — and both terms are inert on a device
+   * that reports no inset, so a desktop's measure does not move. */
+  padding-inline: max(var(--sp-4), env(safe-area-inset-left, 0))
+    max(0px, calc(var(--sp-4) - var(--scrollbar-w, 0px)), env(safe-area-inset-right, 0));
   scrollbar-gutter: stable;
 
   /* Smooth for user-initiated scrolls only. Streaming auto-scroll calls scrollTo
@@ -281,12 +295,8 @@
   min-width: 0;
 }
 
-@keyframes vk-slide-up-pronounced {
-  from {
-    opacity: 0;
-    transform: translateY(16px);
-  }
-}
+/* `vk-slide-up-pronounced` is deleted with its only consumer, the turn card's
+ * entry animation — `vibekit-ui.md` "Entry motion is a GPU budget". */
 
 .message {
   /* No max-width on the SHARED rule: it capped assistant turns too. The prose
@@ -660,7 +670,6 @@
   align-self: center;
   flex-shrink: 0;
   padding: var(--sp-1) var(--sp-3);
-  min-height: 1.75rem;
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   background: var(--c-bg-secondary);
@@ -871,6 +880,21 @@
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
+
+  /* THE FLOOR IS RESTATED HERE, at (0,1,0), because the app-wide one cannot reach
+     this anchor: code-refs.ts builds each reference as an `<li class="code-refs-item">`,
+     so 61-mcp-tools.css's WCAG 2.5.8 inline exception
+     (`:where(p, li, td, dd, …) :where(a[href])`) zeroes the floor for it, and both
+     rules score zero — the exception is later in the bundle, so it wins. Item 9
+     deleted a width-keyed `@media (width <= 40rem)` block that spelled 44px here,
+     on the premise that the `<summary>` above keeps the floor and this link is
+     prose. Both halves are true and together they were the defect: nothing
+     replaced the literal and the link measured 20px at every width on BOTH tiers.
+     The exception describes a citation constrained by the line around it, and this
+     link is not one — it owns its row in a list, so growing it breaks no leading.
+     `min-height` alone: the box is ~115px wide, so the floor's `min-width` was
+     never what carried it. */
+  min-height: var(--hit-floor);
   color: var(--c-accent);
   text-decoration: none;
   touch-action: manipulation;
@@ -890,14 +914,6 @@
 
 .code-refs-link svg {
   flex-shrink: 0;
-}
-
-/* Comfortable touch targets on mobile (vibekit-ui: 44px min). */
-@media (width <= 40rem) {
-  .code-refs-summary,
-  .code-refs-link {
-    min-height: 44px;
-  }
 }
 
 /* Boundary divider for `compressed` / `model_switched` (a new ACP session) and
@@ -1176,55 +1192,49 @@
   text-overflow: ellipsis;
 }
 
-/* THE RECEDE IS A HOVER WASH, NOT A RESTING OPACITY. At `opacity: 0.6` the ×
- * measured 3.574:1 against the 4.5 a 20px glyph needs, and 2.992:1 once the fill
- * became opaque — under the 3:1 a graphical object gets. Interactions INCREASE
- * contrast (vibekit-ui.md); this is the wash `.tab-close` already uses. */
-.banner-dismiss {
-  background: none;
-  border: none;
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  color: inherit;
-  font-size: 1.25rem;
-  line-height: 1;
-  padding: 0 var(--sp-1);
-  transition: background var(--dur-micro) var(--ease-standard);
-
-  @media (any-hover: hover) {
-    &:hover {
-      background: color-mix(in srgb, currentcolor 14%, transparent);
-    }
-  }
-}
-
-/* Clickable affordance inside a banner (e.g. open_external_url's
- * "Open sign-in page →"). Inherits the banner level colour; keyboard
- * users get a focus ring. */
+/* LAYOUT ONLY. THE SKIN IS `btn-small` (14-tools.css), THE APP'S SHARED BUTTON,
+ * carried by both flavours from banner-stack.ts — which is what every other banner
+ * in this app already does: `.git-status-banner-cta` is `btn-small` plus one
+ * `flex-shrink`, both `.inline-install-banner` producers are `btn-small`, and
+ * `.elicitation-url` is the ANCHOR precedent, `btn-small` plus `align-self` and
+ * `text-decoration: none`. So this rule is those two declarations and nothing else;
+ * a local skin here was the drift, not a missing feature.
+ *
+ * WHAT IT REPLACED, and the shape was the defect rather than the values: an
+ * underlined-text skin authored when `buildBannerLink` only ever emitted an `<a>`.
+ * The `onClick` branch came later and emits a `<button>` under the same class, and
+ * this rule reset none of a button's UA chrome — so all three of its live producers
+ * (boot.ts "Start in full mode", runtime-health.ts "Sign in" and "Run diagnostics")
+ * rendered a native grey box with a 2px white `outset` border and `padding: 0`,
+ * which is 02-reset.css's universal `*` rule winning against the UA sheet's own
+ * `padding-block: 1px; padding-inline: 6px`. Measured in Chromium 153: background
+ * `#6b6b6b`, all four paddings 0, so the label sat against the border.
+ *
+ * THREE THINGS THE SHARED CLASS ANSWERS THAT A LOCAL SKIN HAD TO RE-DERIVE. Its
+ * `--btn-h` is pointer-tiered (01-tokens.css), so the hit target follows the tier
+ * for the ANCHOR too, and the `width <= 40rem` block this rule used to carry was
+ * answering a POINTER question with a WIDTH. 61-mcp-tools.css's floor now matches
+ * `a[href]` as well, so the two agree rather than one of them carrying the anchor
+ * alone: `--btn-h` is the taller of the pair on a fine pointer (36 against 24) and
+ * they are equal on a coarse one, so this button's height is still this class's. Its hover steps `--c-bg-secondary` to `--c-bg-tertiary` with the ink
+ * to `--c-text-primary`, so contrast INCREASES by construction (label 8.06:1 dark /
+ * 7.29:1 light at rest, 11.2 / 11.8 on hover) — where a severity-tinted skin cannot,
+ * because ink and wash share a hue and every alpha closes the gap. And its 36px
+ * takes the row from 52px to 54px, past the `--chat-toolbar-h` floor by the
+ * banner's own two border edges — which is what a `min-` floor is for, and is
+ * byte-identical to what `.git-status-banner-row` already renders with the same
+ * button in it, so the two banner rows agree rather than the toolbar and this one.
+ *
+ * IT GIVES UP THE SEVERITY INK, deliberately: the banner states its level three ways
+ * already (glyph, ink, wash) and the sibling banners all put neutral chrome in this
+ * slot. The chip's boundary against the wash is then the app's ordinary border
+ * contrast rather than a louder one — fill step 1.06-1.20:1, border 1.23-1.39:1,
+ * against `--c-border` on the canvas at 1.53:1 dark / 1.40:1 light — so it is in
+ * family with every other button, which a `currentcolor 80%` edge at 3.49-5.26:1
+ * was not. */
 .banner-link {
-  color: inherit;
-  font-weight: 600;
-  white-space: nowrap;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  border-radius: var(--r-sm);
-  transition: opacity var(--dur-micro) var(--ease-standard);
-
-  &:hover {
-    opacity: 0.85;
-  }
-  &:focus-visible {
-    outline: 2px solid currentcolor;
-    outline-offset: 2px;
-  }
-}
-
-@media (width <= 40rem) {
-  .banner-link {
-    display: inline-flex;
-    align-items: center;
-    min-height: 44px;
-  }
+  flex-shrink: 0;
+  text-decoration: none;
 }
 
 /* ONE box, and the WRAPPER draws it: the border, the radius and the clip. The
@@ -1254,6 +1264,14 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-2);
+
+  /* A PLAIN CONTAINER <div> (code-blocks.ts:107 — no role, no tabindex, no
+     listener; it also carries the chrome marker), so it is NOT A TARGET and the
+     hit floor is not its measure. It briefly read `var(--hit-floor)`, which took
+     this bar to 49px on a finger — the floor plus this rule's own padding, border
+     and line box — for a box nothing taps; the ruling (2026-09-10) is that the
+     floor does not apply to a non-interactive container and there was nothing to
+     fix here. The copy and wrap buttons inside it carry their own floor. */
   min-height: 1.75rem;
   padding: 0.125rem var(--sp-2);
   background: var(--c-bg-tertiary);
@@ -1290,7 +1308,10 @@
   margin-inline-start: var(--sp-1);
   border-radius: 50%;
   background: var(--c-accent);
-  opacity: calc(1 - var(--vk-beat) * 0.6);
+
+  --beat-peak: 0.4;
+
+  animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
   vertical-align: 1px;
 }
 
@@ -1646,7 +1667,7 @@
   overflow: hidden;
 }
 
-/* Skinned on `.turn-req-more` (29-turns.css): it is the same control, a text
+/* Skinned on `.steer-note-more` (13-messages.css): it is the same control, a text
  * button that opens a clamp. */
 .steer-note-more {
   font-size: var(--fs-xs);
