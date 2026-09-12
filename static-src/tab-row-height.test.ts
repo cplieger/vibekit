@@ -132,9 +132,9 @@ describe("a chat tab against the New chat button", () => {
   });
 
   it("measures the same WIDTH, on the same left and right edges", () => {
-    // `#tab-list`'s inline padding carries `.sidebar-actions`' margin PLUS that
-    // row's own border and inset, which is the arithmetic the flat `var(--sp-1)`
-    // it replaced was missing.
+    // `#tab-list`'s inline padding and `.sidebar-actions`' margin are the SAME value
+    // (`--sp-2`), which is what makes these two boxes one box rather than a button
+    // lined up inside a wrapper that overhangs it.
     const { btn, tab } = mountSidebar();
     const b = btn.getBoundingClientRect();
     const t = tab.getBoundingClientRect();
@@ -144,6 +144,30 @@ describe("a chat tab against the New chat button", () => {
     );
     expect(t.left).toBeCloseTo(b.left, 0);
     expect(t.right).toBeCloseTo(b.right, 0);
+  });
+
+  it("puts the VISIBLE BORDER on the button, so it lines up with a tab's too", () => {
+    // THE DEFECT THIS PINS, and the one the width case above could not see: the border
+    // a reader sees used to belong to `.sidebar-actions`, a wrapper 6px wider than the
+    // button inside it, so the two boxes agreed on their edges while the bordered box
+    // overhung every tab by 3px a side. Reported as the New chat button being wider
+    // than the tabs under it. So the assertion is that the WRAPPER paints nothing and
+    // the BUTTON carries the border — a bordered wrapper of any width fails here.
+    const { btn } = mountSidebar();
+    const wrap = btn.parentElement as HTMLElement;
+    const w = getComputedStyle(wrap);
+    expect(wrap.className, "the wrapper is `.sidebar-actions`").toContain("sidebar-actions");
+    expect(parseFloat(w.borderTopWidth), "the wrapper carries no border").toBe(0);
+    expect(parseFloat(w.paddingLeft), "and no inset for the button to sit inside").toBe(0);
+    expect(
+      parseFloat(getComputedStyle(btn).borderTopWidth),
+      "the button carries the border",
+    ).toBeGreaterThan(0);
+    // Which makes the visible box the same box, so the wrapper's rect is the button's.
+    const wr = wrap.getBoundingClientRect();
+    const br = btn.getBoundingClientRect();
+    expect(wr.left).toBeCloseTo(br.left, 0);
+    expect(wr.right).toBeCloseTo(br.right, 0);
   });
 });
 

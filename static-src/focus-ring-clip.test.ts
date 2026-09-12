@@ -986,11 +986,12 @@ describe("the exclusions: a focusable whose clipper clears the reach", () => {
     expect(inset(item, clipper).top).toBe(8);
     expectClears("model row", item, clipper);
     await focusByTab(tier);
-    // 12: the row's own --sp-2 plus the --effort-knob-inset the knob sits in from the
-    // bar's edge. The knob is a handle INSIDE the bar now rather than a box the size
-    // of the line, so its clearance is the row's padding plus that inset; it read 8
-    // while the knob filled the line, and neither box carries a border.
-    expect(inset(tier, clipper).bottom).toBe(8 + 4);
+    // 10: the row's own --sp-2 plus the --effort-knob-inset the knob sits in from the
+    // bar's edge. The knob is a handle INSIDE the bar rather than a box the size of the
+    // line, so its clearance is the row's padding plus that inset; it read 8 while the
+    // knob filled the line, and 12 while the inset was --sp-1's 4px, which was halved
+    // to 2px when the handle grew (15-input.css records why). Neither box has a border.
+    expect(inset(tier, clipper).bottom).toBe(8 + 2);
     expectClears("effort tier", tier, clipper);
   });
 

@@ -69,7 +69,7 @@ function buildCallout(m: Message): HTMLElement {
     "button",
     {
       type: "button",
-      className: "refusal-btn",
+      className: "btn-small refusal-btn",
       "data-tooltip": "Branch a new chat from before this point and try a different approach",
     },
     "Rewind",
@@ -85,7 +85,7 @@ function buildCallout(m: Message): HTMLElement {
       "button",
       {
         type: "button",
-        className: "refusal-btn",
+        className: "btn-small refusal-btn",
         "data-tooltip": `Switch this chat to ${rec} and retry`,
       },
       `Switch to ${rec}`,

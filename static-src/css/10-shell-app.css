@@ -80,27 +80,24 @@
 
 /* settings-btn svg rules moved to end of file (specificity ordering) */
 
+/* A PURE LAYOUT ROW: the CHROME lives on the button, so the bordered box a reader
+ * sees IS the button and its border box is a tab's border box exactly.
+ *
+ * It used to carry a border plus a 2px inset of its own, with the button inside it
+ * borderless — so the visible box was 6px wider than a tab (3px overhanging each
+ * edge) and `#tab-list` carried a compensating `1px + 0.125rem` on top of this
+ * row's margin to line the BUTTON up instead. Reported as the New chat button being
+ * wider than the tabs under it. The wrapper's border and inset existed for a second
+ * button that was removed, along with the ::before divider between the two.
+ *
+ * The inset is now ONE value, `--sp-2`, read here and by `#tab-list` below: a
+ * sidebar row sits that far in from the sidebar's edges, and the two cannot disagree
+ * without the arithmetic being visible in one place. */
 .sidebar-actions {
   display: flex;
   gap: var(--sp-1);
-
-  /* This row's OUTER edges line up with #tab-list's own box; what has to line up
-   with a TAB is the BUTTON inside it, and #tab-list's inline padding carries the
-   difference (this row's border plus its inset). The two values are only coupled
-   by this comment and the one below; change one and change the other. The
-   vertical margin is free — it is the gap to the header above and to the first
-   tab below. */
-  margin: var(--sp-2) var(--sp-1);
-  padding: 0.125rem;
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
+  margin: var(--sp-2);
   flex-shrink: 0;
-
-  /* Separator between build and plan: a vertical line positioned in the
-   gap via ::before on the second child. Pixel-perfect because it's
-   straight 1px, not the border of a rounded button. */
-  position: relative;
 }
 
 .sidebar-action-btn {
@@ -111,12 +108,12 @@
   gap: var(--sp-2);
   justify-content: center;
   padding: var(--sp-2) var(--sp-3);
-  /* CONCENTRIC with .sidebar-actions: inner = outer − border − inset. This was
-     `calc(var(--r) - 0.125rem)`, which subtracted the 2px padding and forgot
-     the 1px border, so the button sat at 4px where 3px shares the row's corner
-     centre. Rule and sources: web.md "A nested rounded corner". */
-  border-radius: calc(var(--r) - 1px - 0.125rem);
-  border: none;
+  /* THE OUTER BOX, so it takes `.tab`'s own radius and its own border rather than a
+     radius nested inside a wrapper's. `.tab` reserves a transparent 1px border on
+     every row, so the two border boxes coincide edge for edge and the corners share
+     a centre by being the same corner. */
+  border-radius: var(--r);
+  border: 1px solid var(--c-border);
   /* A standing fill separates the primary creation action from the sidebar
      plane before hover. It uses the next surface rung rather than an accent
      wash, so it stays subtle in both themes and still leaves a hover rung. */
@@ -152,31 +149,23 @@
   }
 }
 
-.sidebar-action-btn + .sidebar-action-btn::before {
-  content: "";
-  position: absolute;
-  inset-block: 0.25rem;
-  inset-inline-start: calc(var(--sp-1) / -2);
-  width: 1px;
-  background: var(--c-border);
-  pointer-events: none;
-}
+/* No divider rule here: there is one `.sidebar-action-btn`, so the
+   `+ .sidebar-action-btn::before` line between two of them had no second child to
+   match and was deleted with the wrapper's chrome above. */
 
 [id="tab-list"] {
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
 
-  /* THE INLINE VALUE IS .sidebar-actions' MARGIN PLUS ITS OWN CHROME, so the New
-   chat BUTTON and a tab share one left and right edge. It used to be a flat
-   `var(--sp-1)`, matching that row's margin and forgetting that the row is a
-   bordered group with a `0.125rem` inset — so the button measured 375px at 390px
-   of viewport against every tab's 381px, 3px in on each side, which is the
-   "two left edges" the comment up there was already worried about. Same class of
-   arithmetic slip as .sidebar-action-btn's radius records below (it subtracted the
-   inset and forgot the border). Measured at 390x844 after: both 375px, both
-   starting at x=7. */
-  padding: var(--sp-1) calc(var(--sp-1) + 1px + 0.125rem);
+  /* THE SAME INSET `.sidebar-actions` TAKES, so a tab's border box and the New chat
+   button's are the same box. `--sp-2` is the whole value now: the wrapper carries no
+   border and no inset of its own, so there is nothing left for this to compensate
+   for and no second expression to keep in step. Two earlier spellings both had one
+   edge wrong — a flat `var(--sp-1)` put the tabs flush with the wrapper's border and
+   the button 3px inside them, and `calc(var(--sp-1) + 1px + 0.125rem)` lined the
+   BUTTON up and left the wrapper's border overhanging by the same 3px. */
+  padding: var(--sp-1) var(--sp-2);
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -838,23 +827,34 @@
   overflow: hidden;
 }
 
+/* THE SLIDE RIDES `transform`, NEVER `translate`, and that is a hard constraint
+ * rather than a preference: `icon-crisp.ts` owns the `translate` PROPERTY on every
+ * `.ic-*` glyph in the app, writing an inline sub-pixel offset onto it. Declaring a
+ * `transition` for `translate` here therefore animated every one of those writes
+ * over 0.35s, and the crisp pass re-measures 250ms after a write that MOVED
+ * something — so it read the interpolated box mid-flight, computed a different
+ * offset from it, wrote again, and re-armed itself. That is a self-sustaining
+ * oscillation with no gesture behind it, and it is what the user reported as these
+ * two buttons wiggling (left-right in mouse mode, up in touch mode — whichever axis
+ * the snap was correcting). The two properties compose additively, so `transform`
+ * carries the slide and `translate` stays the snap's alone. */
 :is([id="theme-btn"], [id="pointer-mode-btn"]) svg {
   display: inline-block;
   transition:
-    translate 0.35s var(--ease-enter),
+    transform 0.35s var(--ease-enter),
     opacity 0.25s var(--ease-enter);
 }
 
 :is([id="theme-btn"], [id="pointer-mode-btn"]) svg.icon-setting {
-  translate: 0 2rem;
+  transform: translateY(2rem);
   opacity: 0;
   transition:
-    translate 0.25s var(--ease-exit),
+    transform 0.25s var(--ease-exit),
     opacity 0.2s var(--ease-exit);
 }
 
 :is([id="theme-btn"], [id="pointer-mode-btn"]) svg.icon-rising {
-  translate: 0 -2rem;
+  transform: translateY(-2rem);
   opacity: 0;
 }
 

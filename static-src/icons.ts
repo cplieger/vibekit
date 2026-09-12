@@ -478,27 +478,36 @@ export const ICON_TAB_AUTONOMOUS = svg(
   "ui",
   '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
 );
-/* SIX teeth, because the count is a 16px budget: one unit is 0.667 CSS px at
- * `--icon-ui` against a flat 1 CSS px stroke, and a 30-degree tooth on a
- * 30-degree gap is what holds adjacent strokes 2.76 CSS px apart. A finer gear
- * merges into a grey disc at that size. */
-/** The settings gear. Its teeth are authored out to radius 11 of the 24 grid, which
- *  is 2 units further than any other glyph in this tier reaches, so at `--icon-ui`
- *  it rendered 22.3x23.0 units of ink against a toolbar median of 19 and read as a
- *  bigger, slightly taller mark than the six buttons beside it (measured 2026-09-10:
- *  fill 0.959, the maximum over all 133 visible `ic-ui` icons, against a 0.792
- *  median). The SCALE is the correction and it is deliberately a `<g transform>`
- *  rather than re-authored coordinates: one reviewable number, the drawing itself
- *  untouched, and the same shape `favicon.svg` uses to carry its own optical
- *  centring (`vibekit-ui.md` "The mark is translated by (2, 0.75)").
+/** The settings gear: Lucide `settings` verbatim, six lobes around an r=3 core.
  *
- *  0.818 is 9/11, so the tooth tips land at radius 9 — ink 19.0 units, the median
- *  exactly — and the extremes fall on 3 and 21, which are multiples of 3 and so on
- *  this row's crisp pixel grid (see the shell button in static/index.html for why
- *  that grid and not the 0.75 one). `stroke-width` is unaffected: the tier declares
- *  `vector-effect: non-scaling-stroke` on the child shapes, so the stroke stays 1
- *  CSS px through any transform and only the geometry shrinks. */
-export const ICON_TAB_SETTINGS = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><g transform="translate(12 12) scale(0.818) translate(-12 -12)"><circle cx="12" cy="12" r="3.5"/><path d="M14.07 19.73L14.85 22.63A11 11 0 0 1 9.15 22.63L9.93 19.73A8 8 0 0 1 6.34 17.66L4.22 19.78A11 11 0 0 1 1.37 14.85L4.27 14.07A8 8 0 0 1 4.27 9.93L1.37 9.15A11 11 0 0 1 4.22 4.22L6.34 6.34A8 8 0 0 1 9.93 4.27L9.15 1.37A11 11 0 0 1 14.85 1.37L14.07 4.27A8 8 0 0 1 17.66 6.34L19.78 4.22A11 11 0 0 1 22.63 9.15L19.73 9.93A8 8 0 0 1 19.73 14.07L22.63 14.85A11 11 0 0 1 19.78 19.78L17.66 17.66A8 8 0 0 1 14.07 19.73Z"/></g></svg>`;
+ *  THE VALLEY DEPTH IS THE BUDGET, NOT THE TOOTH COUNT, and getting that wrong is
+ *  what made this the one glyph in the toolbar a reader called thicker than its
+ *  neighbours. Every `.ic-*` glyph strokes at exactly 1 CSS px — `03-base.css` sets
+ *  `stroke-width` from the tier token and pairs it with
+ *  `vector-effect: non-scaling-stroke`, so no transform and no per-icon override can
+ *  change it, and the reported "thicker border" is not one. What differs is INK
+ *  DENSITY. The drawing this replaces also had six lobes, and its own comment costed
+ *  the TANGENTIAL gap (2.76 CSS px between adjacent tooth strokes, which is fine)
+ *  while never costing the RADIAL one: measured by sampling its outline's distance
+ *  from the centre, it ran from radius 6.55 to 9.00 after its `scale(0.818)`, so each
+ *  valley was 2.46 units = 1.64 CSS px deep with a 1 px stroke bounding it on both
+ *  sides — 0.64 px of background left in the gap, under one device pixel, so the
+ *  valleys aliased shut and the tooth ring painted as a continuous band. Lucide's own
+ *  drawing runs 6.98 to 9.98, a 3.00-unit valley = 2.00 CSS px, leaving a FULL pixel.
+ *  Verified in a real 16px raster beside the other four toolbar glyphs before
+ *  choosing it.
+ *
+ *  THE `scale(0.818)` WRAPPER IS GONE, and its premise went with the drawing rather
+ *  than being overruled: it existed to correct EXTENT, because the old teeth were
+ *  authored out to radius 11 and rendered 22.3x23.0 units of ink against a toolbar
+ *  median of 19 (fill 0.959, the maximum over all 133 visible `ic-ui` icons, against a
+ *  0.792 median). Lucide's reaches radius 9.98 on its own, 19.5x21.0 of ink, so there
+ *  is nothing left for a wrapper to correct and a scale would only give back the
+ *  valley depth this change bought. The crisp-grid claim that wrapper also carried
+ *  (extremes landing on 3 and 21) does not transfer either and was never load-bearing
+ *  here: that grid aligns straight STROKE RUNS, and a gear outline is all arcs, whose
+ *  extreme is one tangent point. */
+export const ICON_TAB_SETTINGS = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>`;
 // The git-branch glyph (Lucide "git-branch"), under two names for its two jobs: the
 // git TAB's icon and the leading glyph of the branch popover's create field. One path,
 // so they cannot drift. Centred on (12,12) like Lucide's own, because an ink box of
@@ -547,22 +556,31 @@ export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path 
  *  measured on a 16px raster that column pair painted 55% alpha each against every
  *  other stroke's 33%, so the centre read as a double spine.
  *
- *  The pages SAG at the gutter at both ends. It was a rounded box with a 3-unit
- *  notch in its top and no bottom sag at all, which reads as two panels rather than
- *  a book and was reported as such. Every vertex is a multiple of 3 — this row's
- *  crisp pixel grid, whose reasoning is on the shell button in static/index.html —
- *  and the ink is 18x18 on 3..21, the toolbar's own median extent, against the 20
- *  the old glyph ran. That grid is also why it is the crispest book in the set:
- *  measured at 16px under the production translate, 63% of its ink lands on whole
- *  pixels against 44% for the glyph it replaces, 45% for `ICON_TOOL_READ` and 39%
- *  for `ICON_SUBAGENT_INTROSPECT`, which sit on 2, 7 and 22.
+ *  EVERY CORNER IS AN ARC AND BOTH PAGE EDGES ARE CURVES. It was four mitred
+ *  vertices and four straight diagonals meeting in a point at each end of the spine,
+ *  which the user reported as too sharp and too simple. The cover corners are now
+ *  1.5-unit quadratics and each page edge is one cubic bowing away from the book's
+ *  centre, so the pages read as leaves rather than as folded card. Rendered and
+ *  compared against five alternatives at the shipped 16px before choosing this one;
+ *  a CLOSED book was the other candidate the user offered and is declined below, and
+ *  an added page line per side was legible enlarged and muddied the middle at 16px.
  *
- *  A THIRD book drawing, deliberately: those two are Lucide's two book-opens and
- *  `ICON_REPO` is its closed book, so reusing one here would give a drawing two
- *  meanings — the defect `vibekit-ui.md` records at the two wrenches. Their
- *  silhouette is a flat top over a spine dipping below the page bottoms; this one
- *  is diagonal page edges over a shallow V at each end. */
-export const ICON_TAB_DOCS = svg("ui", '<path d="M12 6 3 3v15l9 3 9-3V3z"/><path d="M12 6v15"/>');
+ *  The straight strokes still sit on the 3-unit grid — x=3, x=12 and x=21, this row's
+ *  crisp pixel grid, whose reasoning is on the shell button in static/index.html —
+ *  and the ink is still 18x18 on 3..21, the toolbar's own median extent. Only the
+ *  corner arcs use half units (4.5/16.5), which are arc endpoints rather than
+ *  structural strokes, so nothing the grid governs moved.
+ *
+ *  A THIRD book drawing, deliberately, and this is why it stays OPEN: the other two
+ *  are Lucide's two book-opens and `ICON_REPO` is its closed book, so drawing a
+ *  closed one here would give that silhouette two meanings — the defect
+ *  `vibekit-ui.md` records at the two wrenches. Their silhouette is a flat top over a
+ *  spine dipping below the page bottoms; this one is bowed page edges over a rounded
+ *  cover at each end. */
+export const ICON_TAB_DOCS = svg(
+  "ui",
+  '<path d="M12 6C9 4 6 3 4.5 3Q3 3 3 4.5V16.5Q3 18 4.5 18C6 18 9 19 12 21C15 19 18 18 19.5 18Q21 18 21 16.5V4.5Q21 3 19.5 3C18 3 15 4 12 6Z"/><path d="M12 6v15"/>',
+);
 /** Workflow run: three nodes joined top-to-bottom, the shape of a run's node
  *  plan. Distinct from the chat and subagent glyphs so a run tab is never
  *  mistaken for a conversation. */

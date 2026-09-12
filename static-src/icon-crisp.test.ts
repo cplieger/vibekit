@@ -105,6 +105,30 @@ describe("snapIcons", () => {
     expect(svg.style.translate).toBe("");
   });
 
+  it("declines an icon an ancestor is mid-SCALE on, rather than snapping a doomed reading", () => {
+    // THE DEFECT: `.pill-expand-content` opens on `scale(0.4) -> scale(1)`, and a pass
+    // taken during that flight measures the SCALED box — so both the phase it reads and
+    // the target `targetPhase` derives from its scale describe geometry that is about
+    // to change, and the settle pass then moves every icon at once. Reported as the
+    // role menu's icons jumping right every time it opened. The layout size cannot be
+    // scaled by an ancestor, so disagreeing with the painted size IS the signal.
+    const svg = place(null);
+    const host = svg.closest("div");
+    expect(host).not.toBeNull();
+    if (host instanceof HTMLElement) {
+      host.style.transform = "scale(0.4)";
+    }
+    expect(snapIcons(), "nothing is written while the ancestor scales").toBe(0);
+    expect(svg.style.translate).toBe("");
+
+    // And the reading it declined is taken as soon as that transform lands.
+    if (host instanceof HTMLElement) {
+      host.style.transform = "";
+    }
+    snapIcons();
+    expect(offTarget(svg)).toBeLessThan(0.02);
+  });
+
   it("converges rather than chasing its own offset when a snapped icon moves", () => {
     // The offset in force is a SCREEN delta while the value written is a LOCAL one; reading
     // the box back means subtracting the screen one, or every later pass compounds the error.

@@ -60,8 +60,18 @@ function toLocal(
   return [q(a * dx + b * dy), q(c * dx + d * dy)];
 }
 
-/** Returns how many boxes moved. */
+/** Set by `snapIcons` when it declined an icon an ancestor was mid-transform on, so
+ *  the caller re-asks once that transform settles. A NON-AXIS-ALIGNED rotation is a
+ *  PERMANENT decline and deliberately does not set it: re-arming on one would poll
+ *  every 250ms for the life of the page. */
+let deferred = false;
+
+/** Returns how many boxes moved. Also republishes `deferred` for this pass, which is
+ *  why the reset lives HERE rather than at the caller: assigning it beside the call
+ *  narrows it to `false` for the read that follows, and the caller cannot see that
+ *  this function writes it. */
 export function snapIcons(root: ParentNode = document): number {
+  deferred = false;
   // Every rect read before any style write: interleaving forces a layout per icon.
   const work: { el: SVGSVGElement; sx: number; sy: number; tx: number; ty: number }[] = [];
   for (const el of root.querySelectorAll<SVGSVGElement>(TIERS)) {
@@ -71,6 +81,20 @@ export function snapIcons(root: ParentNode = document): number {
       continue;
     }
     const scale = rect.width / side;
+    // AN ANCESTOR MID-SCALE IS A WRONG READING, NOT A DIFFERENT ONE, so it is declined
+    // and re-asked rather than answered. `.pill-expand-content` opens on
+    // `scale(0.4) -> scale(1)` (15-input.css), and every icon inside it was snapped
+    // during that flight: the rect is the SCALED box, so both the measured phase and
+    // `targetPhase`'s own scale-dependent target come out of a geometry that is about
+    // to change, and the settle pass then corrects the whole set at once — which is
+    // what the user reported as the role menu's icons jumping right every time it
+    // opened. The layout size is unaffected by any transform, so disagreeing with the
+    // painted size is exactly "something is scaling me".
+    const layout = parseFloat(getComputedStyle(el).inlineSize);
+    if (Math.abs(rect.width - layout) > 0.02) {
+      deferred = true;
+      continue;
+    }
     const target = targetPhase(scale);
     // `rect` includes the offset already applied, so measure the original box. The offset is
     // subtracted in SCREEN space, which is the space the rect is in.
@@ -117,7 +141,12 @@ function scheduleFull(): void {
     // A pass that MOVED something has itself changed the layout, so re-check once it settles.
     // Self-terminating: an icon already on target computes the same offset and reports no
     // change, so a converged document arms nothing.
-    if (snapIcons() > 0) {
+    //
+    // A DEFERRED icon re-arms it for the other reason: its ancestor is mid-scale, so the
+    // reading it declined becomes available as soon as that transform lands. Also
+    // self-terminating, because a settled ancestor stops deferring.
+    const moved = snapIcons();
+    if (moved > 0 || deferred) {
       scheduleSettle();
     }
   });

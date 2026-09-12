@@ -1571,28 +1571,21 @@
   margin-top: var(--sp-2);
 }
 
-.refusal-btn {
-  padding: var(--sp-1) var(--sp-2);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: var(--c-bg-primary);
-  color: var(--c-text-secondary);
-  font-size: var(--fs-xs);
-  cursor: pointer;
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    border-color var(--dur-micro) var(--ease-standard);
-}
-
-.refusal-btn:hover:not(:disabled) {
-  color: var(--c-text-primary);
-  border-color: color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
-}
-
-.refusal-btn:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-offset);
-}
+/* NO SKIN HERE: `.refusal-btn` carries `btn-small` from refusal.ts, the same pair
+ * `.banner-link` above carries and for the same reason — this callout's recovery
+ * actions are the app's neutral ghost button, and every declaration a local rule
+ * would hold is already in that one (14-tools.css). The class survives as a query
+ * hook and a place for a future variant; nothing about the box is stated twice.
+ *
+ * Three local declarations went rather than moving, each a divergence rather than
+ * a need. The `--c-bg-primary` fill was the PAGE rung under a control sitting
+ * inside a turn card, so the shared `--c-bg-secondary` puts it back on the box rung
+ * the depth ladder gives it (vibekit-ui.md "Color system"); `--fs-xs` was a size
+ * below the callout's own `--fs-sm`; and the hover moved the BORDER toward the
+ * accent where every other button in this app moves its background, which is the
+ * text-control idiom on a button-shaped control. `:focus-visible` went too: it
+ * restated `40-a11y.css`'s zero-specificity ring value for value, and that file
+ * names this class of hand-rolled ring as what it replaced. */
 
 /* THE MID-TURN STEER NOTE — a message delivered into a running turn. It waits in
  * the bottom dock until the agent reads it, then appears HERE, between the blocks

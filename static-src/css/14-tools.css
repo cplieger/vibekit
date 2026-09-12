@@ -1479,11 +1479,26 @@ a.subagent-header {
   padding-block-end: var(--sp-1);
 }
 
-/* Shared button base for action-pill, btn, btn-save, btn-small */
+/* THE NEUTRAL GHOST BUTTON, and the ONE place its box is declared.
+ *
+ * `.uip-ask-ok`/`.uip-ask-cancel` are in the list because `@cplieger/ui-primitives`
+ * builds those two and vibekit cannot put a class on them in markup — 04-uip-skin.css
+ * carried a hand copy of this rule for them instead, with a comment saying so, which
+ * meant a declaration added here reached every other button in the app and not the
+ * confirm dialog's. Naming them here is the same merge from the other side, and it
+ * wins over that file by coming later in `css/MANIFEST`.
+ *
+ * `.uip-toast-retry` is deliberately NOT in the list, and that is a decision rather
+ * than an omission: a toast's action sits on a SATURATED level fill, so it derives its
+ * border and its ink from `currentcolor` (04-uip-skin.css carries the measured alpha
+ * and the ratios), where this rule's `--c-bg-secondary` fill and `--c-accent` ink are
+ * for a button on a neutral card. Aligning it would be a contrast regression. */
 .action-pill,
 .btn,
 .btn-save,
-.btn-small {
+.btn-small,
+.uip-ask-ok,
+.uip-ask-cancel {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1557,7 +1572,9 @@ a.subagent-header {
 
 .btn,
 .btn-save,
-.btn-small {
+.btn-small,
+.uip-ask-ok,
+.uip-ask-cancel {
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
 }

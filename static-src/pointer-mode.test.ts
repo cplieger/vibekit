@@ -18,7 +18,13 @@ import indexHtml from "../static/index.html?raw";
 import { initPointerModeToggle, revealPointerModeToggle } from "./pointer-mode.js";
 import { initPointerTier, currentTier } from "./pointer-tier.js";
 import { markCoarseSeen, pointerModeChoice, setPointerModeChoice } from "./device-view.js";
-import { allRules, loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
+import {
+  allRules,
+  loadCSS,
+  mountAppCSS,
+  ruleBody,
+  ruleContaining,
+} from "./__test-helpers__/css-rules.js";
 
 /** The real button, lifted out of the page by id. */
 function markupFor(anchor: string): string {
@@ -163,6 +169,32 @@ describe("the toggle's click", () => {
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(hiddenGlyphs(btn)).toEqual(["coarse"]);
     expect(btn.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("rides `transform`, leaving the `translate` property to icon-crisp", () => {
+    // THE DEFECT, and it is a cross-module one no rendering test would name: this slide
+    // and `icon-crisp.ts` were both writing the `translate` property on the same
+    // element. The crisp pass writes an inline sub-pixel offset onto every `.ic-*`
+    // glyph, so declaring a `transition` for `translate` here animated each of those
+    // writes over 0.35s — and that pass re-measures 250ms after a write that MOVED
+    // something, so it read the interpolated box mid-flight, computed a different offset
+    // from it, wrote again, and re-armed itself. A self-sustaining oscillation with no
+    // gesture behind it, reported as these two buttons wiggling (left-right in mouse
+    // mode, up in touch mode — whichever axis the snap was correcting). The two
+    // properties compose additively, so the slide takes `transform` and `translate`
+    // stays the snap's alone.
+    const sheet = loadCSS("10-shell-app.css");
+    const SLIDE = ':is([id="theme-btn"], [id="pointer-mode-btn"]) svg';
+    const base = ruleBody(sheet, SLIDE);
+    expect(base, "the slide transitions `transform`").toMatch(/transition:[^;]*\btransform\b/);
+    expect(base, "and NOT `translate`, which icon-crisp owns").not.toMatch(
+      /transition:[^;]*\btranslate\b/,
+    );
+    for (const state of ["icon-setting", "icon-rising"]) {
+      const body = ruleBody(sheet, `${SLIDE}.${state}`);
+      expect(body, `${state} offsets with transform`).toMatch(/transform:\s*translateY\(/);
+      expect(body, `${state} sets no \`translate\` property`).not.toMatch(/(^|[;\s])translate:/);
+    }
   });
 
   it("flips aria-pressed and the tooltip while the accessible name stays put", () => {

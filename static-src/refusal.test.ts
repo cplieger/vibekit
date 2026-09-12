@@ -79,6 +79,20 @@ describe("syncRefusal", () => {
     expect(wrap.querySelectorAll(".refusal-callout").length).toBe(1);
   });
 
+  // Both CTAs are the app's SHARED small button, so the class pair is the whole
+  // skin: `.refusal-btn` declares nothing of its own (13-messages.css carries the
+  // reasoning), and dropping `btn-small` here would leave two unstyled buttons in
+  // the callout with no rule anywhere to notice.
+  it("gives every CTA the shared btn-small skin", () => {
+    const wrap = document.createElement("div");
+    syncRefusal(wrap, refusedMsg({ recommended_model: "model-x" }));
+    const buttons = [...wrap.querySelectorAll<HTMLButtonElement>(".refusal-btn")];
+    expect(buttons.length).toBe(2);
+    for (const b of buttons) {
+      expect(b.classList.contains("btn-small"), b.textContent ?? "").toBe(true);
+    }
+  });
+
   it("rewind CTA routes through the injected handler with the message", () => {
     const wrap = document.createElement("div");
     const m = refusedMsg({});

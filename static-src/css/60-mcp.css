@@ -435,23 +435,40 @@
   font-size: var(--fs-sm);
 }
 
-.conflict-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px var(--sp-2);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-sm);
-  background: var(--c-bg-secondary);
-  color: var(--c-text-primary);
-  cursor: pointer;
-  font-size: var(--fs-sm);
+/* NO BOX HERE: every `.conflict-btn` carries `btn-small` from editor-conflict.ts,
+ * so the border, fill, radius, cursor and hover are the app's one neutral ghost
+ * button (14-tools.css). What this rule held was a near-copy of it — the same
+ * `--c-bg-secondary` fill and the same `--c-bg-tertiary` hover, differing only in
+ * padding, `--r-sm` for `--r`, primary ink for secondary, and `inline-flex` for
+ * `flex` — which is drift rather than a variant. The class stays on all four buttons
+ * with nothing selecting it: it is the family's grep handle, and `40-a11y.css` names
+ * it as the busy-face example, so deleting it would leave that comment unresolvable.
+ *
+ * THE DENSE TIER IS THE ONE THING THAT STAYS LOCAL, and it is the pattern copied
+ * whole from `.list-row .btn-small` (14-tools.css), `padding-block: 0` included:
+ * a hunk row is four actions beside a mono title in a strip padded `--sp-1`, so
+ * `--btn-h` would make the buttons the tallest thing in it and therefore the row's
+ * own height. `max()` and not a bare token, because the universal hit-target floor
+ * scores zero (61-mcp-tools.css) and so loses to this rule, and `--ctl-h-dense` is
+ * 2.5rem on a coarse pointer — 40px beside a 44px neighbour. Measured: 32px on a
+ * fine pointer against `--btn-h`'s 36, and 44px on a coarse one either way, which
+ * is what the floor was already giving these buttons before the conversion.
+ *
+ * `> .btn-small` and not `.conflict-btn`, because the tier is a property of the ROW
+ * rather than of these buttons: a `.btn-small` added to a hunk row later wants it too,
+ * and the row holds no other button (its siblings are the title and the pill spans). */
+.conflict-hunk-row > .btn-small {
+  min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
+  padding-block: 0;
 }
 
-.conflict-btn:hover {
-  background: var(--c-bg-tertiary);
-}
-
+/* The AI-merge action's accent variant — the one thing `.btn-small` has no opinion
+ * about, exactly as `.confirm-allow`'s green does for the ask dialog's OK. It marks
+ * the one button in the row that proposes rather than applies.
+ *
+ * The hover re-states `color` because it has to: `.btn-small`'s own hover moves ink
+ * to `--c-text-primary` and ties this rule's specificity, so without it the accent
+ * identity would drop the moment a pointer arrived. */
 .conflict-btn-suggest {
   border-color: var(--c-accent);
   color: var(--c-accent);
@@ -459,6 +476,7 @@
 
 .conflict-btn-suggest:hover {
   background: color-mix(in oklch, var(--c-accent) 10%, transparent);
+  color: var(--c-accent);
 }
 
 .conflict-suggest-pill {
@@ -749,22 +767,11 @@
   color: var(--c-green);
 }
 
-.mcp-drift-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-3);
-  background: color-mix(in srgb, var(--c-yellow) 15%, transparent);
-  border: 1px solid color-mix(in srgb, var(--c-yellow) 35%, transparent);
-  border-radius: var(--r);
-  font-size: var(--fs-sm);
-  color: var(--c-text-primary);
-}
-
-.mcp-drift-msg {
-  flex: 1;
-}
+/* No `.mcp-drift-banner` here. It was a yellow strip with a message slot and no
+   action, and nothing in `static-src/` ever built one — zero producers for both its
+   classes, so it was a fifth banner shape in the audit with no way to see it. Deleted
+   2026-09 rather than given a producer: the drift it was for is reported by the row's
+   own state. */
 
 /* ---------- Add / edit modal ---------- */
 

@@ -317,30 +317,14 @@
   justify-content: flex-end;
 }
 
-/* Confirm buttons reproduce .btn-small (neutral ghost). */
-.uip-ask-ok,
-.uip-ask-cancel {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--sp-2);
-  min-height: var(--btn-h);
-  padding: var(--sp-2) var(--sp-3);
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  color: var(--c-text-secondary);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-  transition:
-    background var(--dur-micro),
-    color var(--dur-micro) var(--ease-standard);
-
-  &:hover {
-    background: var(--c-bg-tertiary);
-    color: var(--c-text-primary);
-  }
-}
+/* NO SKIN HERE: these two JOIN `.btn-small`'s own rule lists in 14-tools.css instead.
+   They used to carry a hand-written copy of it whose comment admitted as much
+   ("Confirm buttons reproduce .btn-small"), which is drift written down rather than
+   fixed — a declaration added to `.btn-small` reached every other neutral ghost button
+   in the app and not these. The library builds them, so they cannot be given the class
+   in markup; 14-tools.css names them in the selector list, which is the same merge from
+   the other side. The colour arms below stay: those are what makes an OK green and a
+   destructive one red, and `.btn-small` has no opinion about either. */
 
 /* Non-destructive OK = .confirm-allow (green outline). */
 .uip-ask-ok:not(.is-destructive) {
