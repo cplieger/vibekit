@@ -16,8 +16,8 @@ github.com/cplieger/keyenc v1.0.7 h1:WlTRDm84eHjWqhiNVlT7mmVcNLIehMAzFFHSU05zz1w
 github.com/cplieger/keyenc v1.0.7/go.mod h1:7T7DG6yK2b+DJWmQxXfbMADV5h3fWLFTnbXpAWVaKa4=
 github.com/cplieger/pathinside/v2 v2.0.1 h1:tsCGs+7/U1v/c2q7lcHK9UYUbiyYrvjUxL2h46awO2A=
 github.com/cplieger/pathinside/v2 v2.0.1/go.mod h1:M+uGHbsTS0Zb1hqRMbkoMI/3RkryUZRnJ+P0gxhBjyE=
-github.com/cplieger/pinstall/v3 v3.0.2 h1:cCjMFzGdP1eZgUPR/Ms5WDUIvslYQ0jXKm67Rz3pfzs=
-github.com/cplieger/pinstall/v3 v3.0.2/go.mod h1:DlWa6qcT8zhqx48U29PwpXjzkz7i/ZZQ0s44A32aTzI=
+github.com/cplieger/pinstall/v3 v3.0.3 h1:qkx5HsrqpEZAiinonuZK/JKasHKXC5YdFGwSOkL7LpM=
+github.com/cplieger/pinstall/v3 v3.0.3/go.mod h1:DlWa6qcT8zhqx48U29PwpXjzkz7i/ZZQ0s44A32aTzI=
 github.com/cplieger/runesafe/v2 v2.1.0 h1:MTFMH5VDk9+bhbUces9LweBAO9Bsayy/hKLFBOqewj8=
 github.com/cplieger/runesafe/v2 v2.1.0/go.mod h1:cB0JYmCjfU+VzKAFWnhYfJL8OK0+d196ZSwh+Ohr+0k=
 github.com/cplieger/scheduler/v4 v4.2.0 h1:eSi4KUkKJChczPF0vyNAtujep4/to96wqW+gNwZ8TEM=
