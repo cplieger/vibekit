@@ -231,8 +231,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	chat.WithOpenTab(h.Membership().HasOpenTab)(chatStore)
 	// Not a retention predicate: the chat store's HTTP surface reads it, and without it
 	// that surface's silence about a buffered turn reads as "nothing closed this turn".
-	// Injected post-construction for WithLive's reason — the store cannot import the agent.
-	chat.WithTurnOpen(h.HasOpenTurn)(chatStore)
+	// It states WHOSE turn as well, so a run's step turn does not read as the launching
+	// chat's own. Injected post-construction for WithLive's reason.
+	chat.WithTurnOpen(h.TurnOpenState)(chatStore)
 	// The CONTENT half of the line above, and the second channel for an in-flight turn:
 	// the SSE connect replay is gated on a declaration the client makes before it knows
 	// which chat it will show, so without this a boot on a URL naming no chat renders the

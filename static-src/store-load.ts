@@ -70,6 +70,7 @@ const decodeChatGetResponseLocal: Decoder<{
   has_more: boolean;
   draft: string;
   turn_open: boolean | undefined;
+  turn_workflow_step: boolean | undefined;
   turn_offset: number | undefined;
   turn_segment_closed: boolean | undefined;
   live_turn: LiveTurnPage | undefined;
@@ -89,6 +90,9 @@ const decodeChatGetResponseLocal: Decoder<{
     // the server having STATED the turn closed — a collapse to false hands it that
     // statement for a chat the answer said nothing about.
     turn_open: optBool(o, "turn_open", "$.chat_get"),
+    // WHOSE turn `turn_open` is about. Absent means this chat's OWN, matching `turn_ended`
+    // and `turn_state`, so a server predating the field reads as it did before.
+    turn_workflow_step: optBool(o, "turn_workflow_step", "$.chat_get"),
     // The window base is UNDEFINED rather than 0/false when absent, so the session
     // records "the server said nothing" instead of "the window starts the session" —
     // the same distinction `has_more`'s guess-versus-answer split turns on.
@@ -612,18 +616,17 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
   if (beforeID === undefined) {
     session.draft = d.draft;
     // The server's liveness statement, newest page ONLY, for the draft's reason: an
-    // older-page fetch is a scroll-up and asserts nothing about liveness. Written on the
-    // session directly, because this block mutates it in place and `bumpMessages` below is
-    // the one repaint. RECORDED in both directions, and FORGOTTEN when the answer carries no
-    // statement — the window base's rule above, because a `true` left standing would keep
-    // `turnLive` answering live off an answer nothing restates. The false is unambiguous:
-    // `hasOpenTurn` counts an ADMITTED prompt as well as a minted turn record, so it no
-    // longer reads false for the bridge-ready window between the two, which is what makes
-    // the heal below admissible — no turn and no admitted prompt.
+    // older-page fetch is a scroll-up and asserts nothing about liveness. RECORDED in both
+    // directions, and FORGOTTEN when the answer carries no statement, because a `true` left
+    // standing would keep `turnLive` answering live off an answer nothing restates.
+    //
+    // FOLDED here, the one door where the two facts arrive apart: the wire's `turn_open`
+    // says SOME turn is open, `turn_workflow_step` says it is a run's, and
+    // `Session.turn_open` means the chat's OWN — the same thing `turn_ended` writes.
     if (d.turn_open === undefined) {
       delete session.turn_open;
     } else {
-      session.turn_open = d.turn_open;
+      session.turn_open = d.turn_open && d.turn_workflow_step !== true;
     }
     // The CONTENT behind that liveness statement. Newest page only, like the two above,
     // and AFTER the splice so the upsert sees the merged window. No duplicate is possible
@@ -654,7 +657,9 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
     // A stated `turn_open === false` covers the chat's WHOLE liveness, so it also retracts a
     // `thinking` this client is holding for a turn that is over — the one door licensed to
     // run the full teardown. Anything else only re-derives, because the page has asserted
-    // nothing about liveness that would let it drop a live turn's markers.
+    // nothing about liveness that would let it drop a live turn's markers. The RAW field,
+    // unfolded: this arm's licence is "no turn at all", and the folded value reads false for
+    // a run's step turn, whose content the teardown would free the next fetch to delete.
     if (d.turn_open === false) {
       healSettledChat(chatID);
     } else {

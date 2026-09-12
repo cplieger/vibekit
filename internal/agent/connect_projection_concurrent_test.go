@@ -3,7 +3,7 @@ package agent
 // The connect handshake's two projections are READ while the state under them is
 // WRITTEN: busyChatIDs takes every lifecycle's mutex under the registry's, and
 // liveRunRows projects the lease store while runs are granted and released.
-// hasOpenTurn joins them because its two reads must share ONE hold. None of the three
+// openTurnState joins them because its two reads must share ONE hold. None of the three
 // is reached from another concurrent test in this package, so without this one the
 // detector has nothing to exercise at any of them and a read moved outside its lock
 // would ship green.
@@ -122,7 +122,7 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 					}
 				}
 				for _, id := range chatIDs {
-					_ = rt.coord.turns.hasOpenTurn(id)
+					_ = rt.coord.turns.openTurnState(id)
 				}
 			}
 		})

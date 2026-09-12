@@ -448,29 +448,36 @@ func (r *turnRegistry) currentEpoch(chatID vibekit.ChatID) (vibekit.TurnEpoch, b
 	return facts.Epoch, open
 }
 
-// hasOpenTurn reports whether this chat has a turn the RECORD does not yet describe.
-// The in-flight reply lives in an in-memory buffer appended to the chat file once at
-// turn end, so `GET /api/chats/{id}` carries no carrier for it and a reader would
-// answer `unknown` for a running turn.
+// openTurnState reports whether this chat has a turn the RECORD does not yet describe,
+// and whose that turn is. The in-flight reply lives in an in-memory buffer appended to
+// the chat file once at turn end, so `GET /api/chats/{id}` carries no carrier for it and
+// a reader would answer `unknown` for a running turn.
 //
 // turnFinalizing counts as OPEN, exactly the state this exists for. The read goes
 // through `lookup`: this one is an HTTP read path.
-func (r *turnRegistry) hasOpenTurn(chatID vibekit.ChatID) bool {
+func (r *turnRegistry) openTurnState(chatID vibekit.ChatID) vibekit.TurnOpenState {
 	lc, ok := r.lookup(chatID)
 	if !ok {
-		return false
+		return vibekit.TurnOpenState{}
 	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	if _, open := lc.openFactsLocked(); open {
-		return true
-	}
-	// A prompt the server has ADMITTED but not yet minted a Turn for is a turn in
-	// flight from every client's point of view: the user row is already persisted and
-	// broadcast, `thinking` is already latched, and StartTurn is one bridge-spawn away.
-	// Answering false here made `turn_open: false` mean two different things and forced
-	// the client to guess between them.
-	return lc.reserved && lc.reservedSource.ClientVisibleTurn()
+	return lc.turnOpenStateLocked()
+}
+
+// turnOpenStateLocked is the openness-and-owner pair for one chat, taken under one hold.
+// Caller holds mu. ONE function rather than a predicate per reader, because the busy set IS
+// this predicate and two spellings is how the handshake and the transcript GET disagree.
+// BOTH inputs are always read, which closes the cold-spawn window: during it a step's turn
+// is open while the reservation beside it is the reader's own prompt.
+func (lc *chatLifecycle) turnOpenStateLocked() vibekit.TurnOpenState {
+	facts, open := lc.openFactsLocked()
+	reserved := lc.reserved && lc.reservedSource.ClientVisibleTurn()
+	// Prompt-class reservations only, so a workflow step's reservation is excluded like a
+	// step turn — which is why a reserved chat is never disowned here.
+	own := reserved || (open && facts.Source != vibekit.TurnSourceWorkflowStep)
+	inFlight := open || reserved
+	return vibekit.TurnOpenState{Open: inFlight, WorkflowStep: inFlight && !own}
 }
 
 // openTurnFacts is what a chat's open turn IS, taken in ONE acquisition: two reads
@@ -536,21 +543,17 @@ func (r *turnRegistry) openTurns() map[vibekit.ChatID]openTurnFacts {
 // cannot see it. Answering false there would make this list an incomplete negative
 // statement while the connect frame promises a complete one.
 //
-// Lock order is registry.mu -> lifecycle.mu, matching openTurns.
-//
-// One consequence stated: this is a DIFFERENT set from turn_open's, which counts a step
-// turn. The two do not feed one client field.
+// Lock order is registry.mu -> lifecycle.mu, matching openTurns. The predicate is
+// turnOpenStateLocked's, spelled once.
 func (r *turnRegistry) busyChatIDs() []vibekit.ChatID {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]vibekit.ChatID, 0, len(r.chats))
 	for id, lc := range r.chats {
 		lc.mu.Lock()
-		facts, open := lc.openFactsLocked()
-		reserved := lc.reserved && lc.reservedSource.ClientVisibleTurn()
+		st := lc.turnOpenStateLocked()
 		lc.mu.Unlock()
-		ownTurn := open && facts.Source != vibekit.TurnSourceWorkflowStep
-		if reserved || ownTurn {
+		if st.OwnTurn() {
 			out = append(out, id)
 		}
 	}

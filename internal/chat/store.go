@@ -63,7 +63,7 @@ type Store struct {
 	onPurge     func(chatID vibekit.ChatID, sessionChain []string)
 	isLive      func(chatID vibekit.ChatID) bool
 	hasOpenTab  func(chatID vibekit.ChatID) bool
-	turnOpen    func(chatID vibekit.ChatID) bool
+	turnOpen    func(chatID vibekit.ChatID) vibekit.TurnOpenState
 	liveTurn    func(chatID vibekit.ChatID) (vibekit.LiveTurn, bool)
 	tombstone   map[vibekit.ChatID]time.Time
 	archive     *archive.Service
@@ -139,22 +139,22 @@ func WithOpenTab(fn func(chatID vibekit.ChatID) bool) StoreOption {
 }
 
 // WithTurnOpen registers the runtime's turn-in-flight predicate, so this package's
-// HTTP surface can STATE whether a chat has a turn open instead of leaving a reader
-// to infer it from an absent carrier. Injected post-construction because the agent
-// runtime needs the store, so the store cannot import it.
-func WithTurnOpen(fn func(chatID vibekit.ChatID) bool) StoreOption {
+// HTTP surface can STATE whether a chat has a turn open — and whose it is — instead of
+// leaving a reader to infer either from an absent carrier. Injected post-construction
+// because the agent runtime needs the store, so the store cannot import it.
+func WithTurnOpen(fn func(chatID vibekit.ChatID) vibekit.TurnOpenState) StoreOption {
 	return func(s *Store) { s.turnOpen = fn }
 }
 
-// TurnOpen reports whether chatID has a turn in flight, or false when no predicate
-// was injected.
+// TurnOpen reports whether chatID has a turn in flight and whose it is, or the zero
+// state when no predicate was injected.
 //
 // NIL-TOLERANT so an unwired Store reads as it did before the predicate existed:
 // the record is taken as final. That is the safe direction — a client told "no turn
 // is open" derives the outcome the record supports rather than inventing one.
-func (s *Store) TurnOpen(chatID vibekit.ChatID) bool {
+func (s *Store) TurnOpen(chatID vibekit.ChatID) vibekit.TurnOpenState {
 	if s.turnOpen == nil {
-		return false
+		return vibekit.TurnOpenState{}
 	}
 	return s.turnOpen(chatID)
 }

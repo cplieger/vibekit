@@ -58,7 +58,7 @@ func newReplayGapRuntime(t *testing.T) (*Runtime, *chat.Store, *http.ServeMux) {
 	}
 	var rt *Runtime
 	cs, err := chat.NewStore(t.TempDir(),
-		chat.WithTurnOpen(func(id vibekit.ChatID) bool { return rt.HasOpenTurn(id) }),
+		chat.WithTurnOpen(func(id vibekit.ChatID) vibekit.TurnOpenState { return rt.TurnOpenState(id) }),
 		chat.WithLiveTurn(func(id vibekit.ChatID) (vibekit.LiveTurn, bool) { return rt.LiveTurn(id) }),
 	)
 	if err != nil {
@@ -204,7 +204,7 @@ func TestLiveTurn_WithholdsATurnThatHasProducedNothing(t *testing.T) {
 	const quiet vibekit.ChatID = "c-quiet"
 	openTurnFrom(t, rt, quiet, vibekit.TurnSourcePrompt)
 
-	if !rt.HasOpenTurn(quiet) {
+	if !rt.TurnOpenState(quiet).Open {
 		t.Fatalf("the fixture's turn is not open, so nothing below measures the empty case")
 	}
 	if live, ok := rt.LiveTurn(quiet); ok {

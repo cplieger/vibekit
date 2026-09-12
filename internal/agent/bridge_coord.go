@@ -444,11 +444,11 @@ func (rt *Runtime) HasLiveBridge(chatID vibekit.ChatID) bool {
 	return rt.bridge.mgr.get(chatID) != nil
 }
 
-// HasOpenTurn reports whether a chat has a turn in flight. Composition injects it
-// into the chat store (chat.WithTurnOpen) so `GET /api/chats/{id}` can state the fact
-// instead of leaving the client to guess it from an absent carrier.
-func (rt *Runtime) HasOpenTurn(chatID vibekit.ChatID) bool {
-	return rt.coord.turns.hasOpenTurn(chatID)
+// TurnOpenState reports whether a chat has a turn in flight and whose it is. Composition
+// injects it into the chat store (chat.WithTurnOpen) so `GET /api/chats/{id}` can state
+// both facts rather than leave the client to guess them from an absent carrier.
+func (rt *Runtime) TurnOpenState(chatID vibekit.ChatID) vibekit.TurnOpenState {
+	return rt.coord.turns.openTurnState(chatID)
 }
 
 // LiveTurn returns the in-flight turn's accumulated assistant message for chatID, or

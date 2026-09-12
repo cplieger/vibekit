@@ -124,14 +124,22 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	// and renders the prompt over an empty body. `has_more`, `turn_offset` and
 	// `turn_segment_closed` all describe the window's LEFT EDGE, which the client's
 	// projection cannot know: its own scan starts at the window.
+	turn := rt.store.TurnOpen(vibekit.ChatID(id))
 	page := map[string]any{
 		"chat":                c.Header(),
 		"messages":            window,
 		"has_more":            start > 0,
 		"draft":               c.Draft,
-		"turn_open":           rt.store.TurnOpen(vibekit.ChatID(id)),
+		"turn_open":           turn.Open,
 		"turn_offset":         turnOffset,
 		"turn_segment_closed": segmentClosed,
+	}
+	// WHOSE turn that is, ABSENT for this chat's own, matching `turn_ended` and
+	// `turn_state`. It RIDES `turn_open` rather than narrowing it, because that field is
+	// what tells a reader its per-turn markers are still live — folding them would let a
+	// run's step retract the marker stopping the next fetch deleting the step's content.
+	if turn.WorkflowStep {
+		page["turn_workflow_step"] = true
 	}
 	// ABSENT rather than null when there is no turn to describe: an older client ignores
 	// an unknown field, and a present-but-empty one would name a message id the client
@@ -374,9 +382,12 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID vib
 		httpreply.NotFound(w, errMsgChatNotFound)
 		return
 	}
-	// Liveness is injected: the persisted record cannot see a bridge mid-turn.
+	// Liveness is injected: the persisted record cannot see a bridge mid-turn. The
+	// CHAT'S OWN turn, so a run's step turn does not mark the chat's last finished turn
+	// as running — the rail projects the persisted messages, and a step's content is not
+	// among them until the run settles.
 	webhttp.WriteJSON(w, map[string]any{
-		"turns": projectTurnSummaries(c.Messages, rt.store.TurnOpen(chatID)),
+		"turns": projectTurnSummaries(c.Messages, rt.store.TurnOpen(chatID).OwnTurn()),
 	})
 }
 

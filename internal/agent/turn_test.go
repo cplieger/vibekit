@@ -306,9 +306,9 @@ func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) 
 	}
 }
 
-// busyChatIDs is the CHAT's-own-turn population, which is a different set from
-// hasOpenTurn's: it excludes a workflow STEP turn on purpose, because a step's own frames
-// latch nothing on any client, so the launching chat must be in the RETRACTED set.
+// busyChatIDs is the CHAT's-own-turn population, narrower than openTurnState's `Open`: it
+// excludes a workflow STEP turn, because a step's own frames latch nothing on any client,
+// so the launching chat must be in the RETRACTED set. turn_open_test.go pins the pair.
 func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 	busySet := func(t *testing.T, r *turnRegistry) map[vibekit.ChatID]bool {
 		t.Helper()
