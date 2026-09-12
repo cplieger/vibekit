@@ -1,6 +1,9 @@
 // Where a marker sits on the rail, and which turns get one. Position is a continuous
-// function of the turn's own NUMBER rather than a slot in a fixed-capacity list, so a
-// marker does not move when a page loads.
+// function of the turn's own NUMBER and of how many turns the session has, rather than
+// a slot in a fixed-capacity list, so a marker does not move when a page loads.
+//
+// TWO REGIMES, and `railSpan` is the crossover: a session that fits at the relaxed
+// pitch is spread from the top at it, and one that does not takes the whole track.
 
 import type { TurnSummary } from "./rail-merge.js";
 import { severityOf } from "./turn-severity.js";
@@ -51,21 +54,59 @@ function floorPx(track: HTMLElement): number | null {
   return Number.isFinite(px) && px > 0 ? px : null;
 }
 
-/** A turn's position on the axis, 0 at the first turn and 1 at the Nth. Published as
- *  `--rail-at`, so the arithmetic below and the rendered `top` cannot disagree. */
-export function railAt(n: number, total: number): number {
-  return (n - 1) / Math.max(1, total - 1);
+/** THE PITCH A YOUNG RAIL SPACES ITS MARKERS AT: one marker box of clear, against
+ *  `MARKER_CLEAR_PX`'s 4px floor a full track compresses to.
+ *
+ *  A session shorter than the track is spread from the TOP at this pitch rather than
+ *  across the whole track, which is what puts turn 2 one gap under turn 1 instead of
+ *  at the foot of the column beside the resume control. The gaps then tighten as
+ *  turns accumulate and reach the floor as the track fills, so the compression is
+ *  continuous and the downsample below takes over from it rather than from a jump.
+ *
+ *  Two marker boxes is also the smallest pitch that leaves a SEAM a whole box tall:
+ *  `.rail-seam` spans the gap between the markers it separates minus one box, so at
+ *  the 4px floor a band is 4px and at this pitch it is a marker. */
+export function relaxedPitch(markerPx: number): number {
+  return markerPx * 2;
+}
+
+/** How much of the track's travel the whole marker set occupies, 0..1: the relaxed
+ *  pitch while every turn fits at it, all of it once they do not.
+ *
+ *  This is the one value that makes a marker's position a function of the SESSION's
+ *  size as well as of the turn's own number, so every `railAt` one render publishes
+ *  has to carry the same one. `1` for a track with no travel, because a fraction of
+ *  nothing is unused rather than wrong. */
+export function railSpan(total: number, trackPx: number, markerPx: number): number {
+  const travel = Math.max(0, trackPx - markerPx);
+  if (travel === 0) {
+    return 1;
+  }
+  return Math.min(1, (Math.max(0, total - 1) * relaxedPitch(markerPx)) / travel);
+}
+
+/** A turn's position on the axis: 0 at the first turn, `span` at the Nth, as a
+ *  fraction of the track's travel. Published as `--rail-at`, so the arithmetic below
+ *  and the rendered `top` cannot disagree.
+ *
+ *  `span` is REQUIRED rather than defaulted to 1, because 1 is the stretched layout
+ *  this argument exists to stop: a caller that forgot it would put the last turn at
+ *  the foot of the track and nothing would say so. */
+export function railAt(n: number, total: number, span: number): number {
+  return ((n - 1) / Math.max(1, total - 1)) * span;
 }
 
 /** A marker's own top. The travel span is the track minus one marker box, so both
- *  ends sit fully inside it. */
+ *  ends sit fully inside it. It resolves the session's own span, so the separation
+ *  pass below reasons about the positions the render produces. */
 export function markerPosition(
   n: number,
   total: number,
   trackPx: number,
   markerPx: number,
 ): number {
-  return railAt(n, total) * Math.max(0, trackPx - markerPx);
+  const travel = Math.max(0, trackPx - markerPx);
+  return railAt(n, total, railSpan(total, trackPx, markerPx)) * travel;
 }
 
 /** How many markers a track of this height holds at the tier's separation. */

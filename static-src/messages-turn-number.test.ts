@@ -156,7 +156,7 @@ function hitBadges(): Record<string, string> {
     const key = c.getAttribute("data-reconcile-key");
     if (key !== null) {
       out[key] =
-        c.querySelector<HTMLElement>(":scope > .turn-header > .turn-badge > .turn-hit-count")
+        c.querySelector<HTMLElement>(":scope > .turn-header > .turn-head-row > .turn-hit-count")
           ?.textContent ?? "MISSING";
     }
   }

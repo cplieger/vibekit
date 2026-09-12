@@ -13,7 +13,15 @@ import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 
 import type { TurnSummary } from "./rail-merge.js";
-import { HERE_PX, markerPosition, maxMarkers, railAt, selectMarkers } from "./rail-select.js";
+import {
+  HERE_PX,
+  markerPosition,
+  maxMarkers,
+  railAt,
+  railSpan,
+  relaxedPitch,
+  selectMarkers,
+} from "./rail-select.js";
 import type { TurnOutcome } from "./turns.js";
 
 /** The two tier pitches, from `--hit-floor` plus the 4px clear. */
@@ -42,14 +50,17 @@ function markerOf(pitchPx: number): number {
 
 describe("position is a function of the turn's own number", () => {
   it("puts the first turn at the top and the Nth at the foot of the travel", () => {
-    expect(railAt(1, 400)).toBe(0);
-    expect(railAt(400, 400)).toBe(1);
+    // 400 turns want far more than an 800px track can give them, so the span is 1
+    // and the set occupies the whole travel.
+    expect(railSpan(400, 800, 24)).toBe(1);
+    expect(railAt(1, 400, 1)).toBe(0);
+    expect(railAt(400, 400, 1)).toBe(1);
     expect(markerPosition(1, 400, 800, 24)).toBe(0);
     expect(markerPosition(400, 400, 800, 24)).toBe(776);
   });
 
   it("puts a one-turn session at the top rather than dividing by zero", () => {
-    expect(railAt(1, 1)).toBe(0);
+    expect(railAt(1, 1, railSpan(1, 800, 24))).toBe(0);
     expect(markerPosition(1, 1, 800, 24)).toBe(0);
   });
 
@@ -59,6 +70,120 @@ describe("position is a function of the turn's own number", () => {
     expect((44 - HERE_PX) / 2).toBe(18);
     expect((24 - HERE_PX) / 2).toBe(8);
   });
+});
+
+// A SESSION SHORTER THAN THE TRACK is spread from the top at the relaxed pitch, and
+// only a session that cannot fit at it takes the whole travel. Before the span the
+// set always took the whole travel, so the second of two turns sat at the foot of the
+// column beside the resume control with the entire axis empty between them.
+describe("the set is spread from the top until it no longer fits", () => {
+  /** Float dust between the two regimes' ONE expression. A position is published as a
+   *  FRACTION and multiplied back by the travel, so the relaxed regime's
+   *  `(n - 1) * pitch` is reached as `(n - 1) / (total - 1) * span * travel` and lands
+   *  a part in 1e14 either side of it. Five orders of magnitude under a sub-pixel, so
+   *  it cannot absorb a real change — and the alternative is a second expression for
+   *  one quantity, which is what keeps the separation pass and the render in step. */
+  const DUST = 1e-9;
+
+  /** The gap between two adjacent turns of a `total`-turn session. */
+  function gap(total: number, trackPx = TRACK, markerPx = 24): number {
+    return (
+      markerPosition(2, total, trackPx, markerPx) - markerPosition(1, total, trackPx, markerPx)
+    );
+  }
+
+  it("puts turn 2 one relaxed pitch under turn 1, not at the foot of the track", () => {
+    expect(relaxedPitch(24)).toBe(48);
+    expect(markerPosition(1, 2, TRACK, 24)).toBe(0);
+    expect(markerPosition(2, 2, TRACK, 24)).toBe(48);
+    // The travel it would have taken with the span pinned at 1, which is where the
+    // marker used to land: the whole column below the first turn.
+    expect(TRACK - 24).toBe(776);
+  });
+
+  it("holds that pitch for every turn of a session that fits", () => {
+    const tops = [1, 2, 3, 4, 5].map((n) => markerPosition(n, 5, TRACK, 24));
+    expect(tops).toEqual([0, 48, 96, 144, 192]);
+  });
+
+  it("tightens the gap once the turns no longer fit, and never past the travel", () => {
+    // 17 turns still fit at 48px on a 776px travel; 18 do not, so the set takes the
+    // whole travel and the gap goes under the relaxed pitch for the first time.
+    expect(gap(17)).toBe(48);
+    expect(gap(18)).toBeLessThan(48);
+    expect(gap(30)).toBeLessThan(gap(18));
+    expect(markerPosition(30, 30, TRACK, 24)).toBe(776);
+  });
+
+  it("puts a one-turn session at the top with nothing spread at all", () => {
+    expect(railSpan(1, TRACK, 24)).toBe(0);
+    expect(markerPosition(1, 1, TRACK, 24)).toBe(0);
+  });
+
+  it("answers a track with no travel without dividing by zero", () => {
+    // A pre-layout or hidden rail. The fraction is unused there, so it may not be
+    // NaN: `calc(NaN * …)` is an invalid declaration the browser drops.
+    expect(railSpan(4, 24, 24)).toBe(1);
+    expect(markerPosition(4, 4, 24, 24)).toBe(0);
+  });
+
+  for (const tier of [
+    { name: "fine", pitchPx: FINE },
+    { name: "coarse", pitchPx: COARSE },
+  ] as const) {
+    it(`clears the ${tier.name} tier's own separation floor while relaxed`, () => {
+      // The relaxed pitch is the WIDER of the two, so spreading a young session can
+      // never put two hit targets closer than WCAG 2.5.8 allows.
+      expect(relaxedPitch(markerOf(tier.pitchPx))).toBeGreaterThanOrEqual(tier.pitchPx);
+    });
+
+    it(`never opens a gap wider than the relaxed pitch on a ${tier.name} pointer`, () => {
+      const markerPx = markerOf(tier.pitchPx);
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 2, max: 500 }),
+          fc.integer({ min: 200, max: 1200 }),
+          (count, trackPx) => {
+            expect(gap(count, trackPx, markerPx)).toBeLessThanOrEqual(
+              relaxedPitch(markerPx) + DUST,
+            );
+          },
+        ),
+      );
+    });
+
+    it(`never widens a gap as turns arrive on a ${tier.name} pointer`, () => {
+      // The reader's own requirement: the gaps tighten as the session grows, so a
+      // marker never travels back down the track.
+      const markerPx = markerOf(tier.pitchPx);
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 2, max: 400 }),
+          fc.integer({ min: 200, max: 1200 }),
+          (count, trackPx) => {
+            expect(gap(count + 1, trackPx, markerPx)).toBeLessThanOrEqual(
+              gap(count, trackPx, markerPx) + DUST,
+            );
+          },
+        ),
+      );
+    });
+
+    it(`keeps the last turn inside the travel on a ${tier.name} pointer`, () => {
+      const markerPx = markerOf(tier.pitchPx);
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 1, max: 500 }),
+          fc.integer({ min: 200, max: 1200 }),
+          (count, trackPx) => {
+            expect(markerPosition(count, count, trackPx, markerPx)).toBeLessThanOrEqual(
+              trackPx - markerPx,
+            );
+          },
+        ),
+      );
+    });
+  }
 });
 
 describe("the first and last turn always have a marker", () => {

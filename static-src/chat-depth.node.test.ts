@@ -255,7 +255,7 @@ describe("one hover recipe for every box header in a transcript", () => {
 describe("hint ink stays off the tinted band, on every surface that has one", () => {
   it("measures why: the band is the rung where the two-rung contract runs out", () => {
     // `--c-text-tertiary` is valid on the page and box rungs only (01-tokens.css).
-    // The chat's band states this at `.turn-badge`; the run page's group head is
+    // The chat's band states this at `.turn-head-row`; the run page's group head is
     // the same rung, and its duration was reading hint ink there.
     const hint = pair("var(--c-text-tertiary)", "var(--c-bg-tertiary)");
     const secondary = pair("var(--c-text-secondary)", "var(--c-bg-tertiary)");

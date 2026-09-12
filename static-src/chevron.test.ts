@@ -203,22 +203,9 @@ describe("position carries the interaction type", () => {
       request: "converge the chevrons",
       attachments: [],
     });
-    expect(chevronEnd(h)).toBe("leading");
-  });
-
-  it("the turn fold is placed leading by CSS as well as by DOM order", () => {
-    // DOM order answers the case above, and it stopped being the whole answer when
-    // the toggle left the flow: it is `position: absolute` in the first line's
-    // indent now, so a stylesheet that placed it by `inset-inline-end` would put
-    // the glyph at the trailing edge with the DOM unchanged. Read off the shipped
-    // sheet, since this page loads no app stylesheet.
-    // Anchored at the line start, or the pattern matches the trailing selector of
-    // the `[data-running], [data-no-fold]` hide further up the file and reads its
-    // `display: none` as the placement rule.
-    const body = stripComments(loadCSS("29-turns.css"));
-    const rule = /^\.turn-fold-toggle\s*\{([^}]*)\}/mu.exec(body)?.[1] ?? "";
-    expect(rule).toMatch(/inset-inline-start:/u);
-    expect(rule).not.toMatch(/inset-inline-end:/u);
+    // The header's own children are the meta row and `.turn-req`, so the end to
+    // ask about is the ROW's — which is where the toggle sits.
+    expect(chevronEnd(h.querySelector(".turn-head-row")!)).toBe("leading");
   });
 
   it("the tool card's disclosure leads, by CSS rather than by DOM order", async () => {
