@@ -1,7 +1,8 @@
 // The transcript's turn rail: one marker per turn on a vertical axis in the chat
-// gutter. Position is a function of the turn's own NUMBER and the active turn is a
-// function of scroll offset — `rail-select.ts` and `rail-activation.ts` own both
-// arithmetics. This module is the DOM, the click flow and the caches around them.
+// gutter. Position is a function of the turn's own NUMBER and of the session's size,
+// and the active turn is a function of scroll offset — `rail-select.ts` and
+// `rail-activation.ts` own both arithmetics. This module is the DOM, the click flow
+// and the caches around them.
 
 import { el } from "@cplieger/reactive";
 import { apiGet } from "./api-client.js";
@@ -27,7 +28,7 @@ import { get, turnBaseOf, turnLive } from "./store.js";
 import { syncEpoch } from "./tab-freshness.js";
 import { mergeTurnSets, validateTurnIndex } from "./rail-merge.js";
 import type { TurnSummary } from "./rail-merge.js";
-import { railAt, railMetrics, selectMarkers } from "./rail-select.js";
+import { railAt, railMetrics, railSpan, selectMarkers } from "./rail-select.js";
 import { activeTurnAt, buildOffsets } from "./rail-activation.js";
 import type { CardTop, TurnOffsets } from "./rail-activation.js";
 
@@ -452,8 +453,11 @@ function render(): void {
     root.replaceChildren();
     return;
   }
-  const { pitchPx } = railMetrics(root);
+  const { markerPx, pitchPx } = railMetrics(root);
   const shown = selectMarkers(summaries, root.clientHeight, pitchPx, searchHitTurns());
+  // ONE span for the whole render, so a marker, a seam and the caret cannot disagree
+  // about how far down the track the session reaches.
+  const span = railSpan(total, root.clientHeight, markerPx);
   // Once per render, not once per marker: the walk is over the whole resident window.
   const elapsed = residentElapsed();
   const nodes: HTMLElement[] = [];
@@ -462,12 +466,12 @@ function render(): void {
   const gaps = new Map<number, string>();
   for (const seam of railSeams(summaries, shown)) {
     gaps.set(seam.toN, formatGap(seam.ms));
-    nodes.push(seamNode(seam));
+    nodes.push(seamNode(seam, span));
   }
   for (const s of shown) {
-    nodes.push(markerNode(s, elapsed, gaps));
+    nodes.push(markerNode(s, elapsed, gaps, span));
   }
-  const here = hereNode(shown.length);
+  const here = hereNode(shown.length, span);
   if (here !== undefined) {
     nodes.push(here);
   }
@@ -483,6 +487,7 @@ function markerNode(
   s: TurnSummary,
   elapsed: Map<string, number>,
   gaps: Map<number, string>,
+  span: number,
 ): HTMLElement {
   const hit = searchHitTurns().has(s.n);
   const isPending = pending.has(s.id);
@@ -505,7 +510,7 @@ function markerNode(
     },
     String(s.n),
   );
-  btn.style.setProperty("--rail-at", String(railAt(s.n, total)));
+  btn.style.setProperty("--rail-at", String(railAt(s.n, total, span)));
   btn.dataset["outcome"] = s.outcome;
   btn.dataset["severity"] = severityOf(s.outcome);
   if (selectedID === undefined) {
@@ -559,7 +564,7 @@ function markerNode(
  *  `markedID()`'s turn, the same value `markerNode` compares against, so the caret
  *  and the filled marker cannot claim two positions. It is `aria-hidden`, is not a
  *  button and is not a hit target, so it competes for no slot. */
-function hereNode(shown: number): HTMLElement | undefined {
+function hereNode(shown: number, span: number): HTMLElement | undefined {
   if (shown >= total) {
     return undefined;
   }
@@ -568,20 +573,20 @@ function hereNode(shown: number): HTMLElement | undefined {
     return undefined;
   }
   const node = el("div", { className: "rail-here", "aria-hidden": "true" });
-  node.style.setProperty("--rail-at", String(railAt(n, total)));
+  node.style.setProperty("--rail-at", String(railAt(n, total, span)));
   return node;
 }
 
 /** A seam's band, sized from the same `railAt` values the markers use. It paints no
  *  text at rest, so the elapsed time reaches the reader through the label alone. */
-function seamNode(seam: RailSeam): HTMLElement {
+function seamNode(seam: RailSeam, span: number): HTMLElement {
   const node = el("div", {
     className: "rail-seam",
     role: "separator",
     "aria-label": seamLabel(formatGap(seam.ms), seam.fromN, seam.toN),
   });
-  node.style.setProperty("--rail-from", String(railAt(seam.fromN, total)));
-  node.style.setProperty("--rail-to", String(railAt(seam.toN, total)));
+  node.style.setProperty("--rail-from", String(railAt(seam.fromN, total, span)));
+  node.style.setProperty("--rail-to", String(railAt(seam.toN, total, span)));
   return node;
 }
 

@@ -570,12 +570,12 @@ describe("turn card header affordance", () => {
     }
   });
 
-  it("the prompt stays selectable; the badge does not", async () => {
+  it("the prompt stays selectable; the meta row does not", async () => {
     // The band is a target WITHOUT eating text selection: a drag over the
     // request keeps its selection (disclosure-row.ts skips a click that ends
-    // one), so `user-select: none` stops at the badge.
+    // one), so `user-select: none` stops at the meta row.
     const card = await turn("open");
-    expect(css(card.querySelector(".turn-badge")!, "user-select")).toBe("none");
+    expect(css(card.querySelector(".turn-head-row")!, "user-select")).toBe("none");
     expect(css(card.querySelector(".turn-req-text")!, "user-select")).not.toBe("none");
   });
 
@@ -612,11 +612,11 @@ describe("turn card header affordance", () => {
     }
   });
 
-  it("the badge paints no fill of its own — the band paints once", async () => {
+  it("the meta row paints no fill of its own — the band paints once", async () => {
     // Two translucent overlays would make that part of the band darker than
     // the rest under a hover.
     for (const state of ["open", "folded"] as const) {
-      const row = (await turn(state)).querySelector(".turn-badge")!;
+      const row = (await turn(state)).querySelector(".turn-head-row")!;
       expect(backgroundWriters(row), state).toEqual([]);
       expect(propertyWriters(row, ["background-image"]), state).toEqual([]);
     }
@@ -630,6 +630,17 @@ describe("turn card header affordance", () => {
     const r = btn.getBoundingClientRect();
     expect(r.width).toBeGreaterThanOrEqual(24);
     expect(r.height).toBeGreaterThanOrEqual(24);
+  });
+
+  it("the fold toggle matches the copy button at the row's other end", async () => {
+    // One row, two buttons, one size — and the copy button already sets the
+    // row's height, so the chevron's box costs no vertical space.
+    const card = await turn("open");
+    const fold = card.querySelector<HTMLElement>(".turn-fold-toggle")!;
+    const copy = card.querySelector<HTMLElement>(".turn-copy-req")!;
+    copy.hidden = false;
+    expect(fold.getBoundingClientRect().height).toBe(copy.getBoundingClientRect().height);
+    expect(fold.getBoundingClientRect().width).toBe(copy.getBoundingClientRect().width);
   });
 
   it("the glyph did not grow with its hit target", async () => {
@@ -659,189 +670,41 @@ describe("turn card header affordance", () => {
     expect(css(glyph, "--chev-size").trim()).toBe(base);
   });
 
-  // --- The first line's indent, measured -------------------------------------
-  //
-  // The band's height is the request TEXT's alone, and that only holds while the
-  // chevron and the badge stay OUT OF FLOW inside line 1's indent. These are the
-  // durable half of the sidecar measurement: a literal reserve that is 20px short
-  // on one pointer tier is exactly the defect `.tool-disclosure` records, and
-  // nothing but a real line box can report it.
-
-  /** One rect per LINE BOX of an element's own text, in order, each covering that
-   *  line's full extent.
-   *
-   *  `Range.getClientRects()` is the only thing that can say where line 2 starts,
-   *  but it returns a rect per RUN rather than per line — a trailing space at a
-   *  wrap point gets its own 4px box past the line's own end (measured), so the
-   *  raw list reports a "line" starting at x=400 in a 420px card. Rects sharing a
-   *  `top` are one line, and the line's start is the leftmost of them. */
-  function lineRects(el: Element): { top: number; left: number; right: number; height: number }[] {
-    const r = document.createRange();
-    r.selectNodeContents(el);
-    const byTop = new Map<number, { top: number; left: number; right: number; height: number }>();
-    for (const rect of r.getClientRects()) {
-      const line = byTop.get(rect.top);
-      if (line === undefined) {
-        byTop.set(rect.top, {
-          top: rect.top,
-          left: rect.left,
-          right: rect.right,
-          height: rect.height,
-        });
-        continue;
-      }
-      line.left = Math.min(line.left, rect.left);
-      line.right = Math.max(line.right, rect.right);
-      line.height = Math.max(line.height, rect.height);
-    }
-    return [...byTop.values()].sort((a, b) => a.top - b.top);
-  }
-
-  /** The left edge of the first GLYPH, which is what may not sit under the badge.
-   *  A box read rather than a text read, so it is font-independent. */
-  function firstGlyphLeft(el: Element): number {
-    const node = el.firstChild;
-    if (node === null) {
-      throw new Error("no text node to measure");
-    }
-    const r = document.createRange();
-    r.setStart(node, 0);
-    r.setEnd(node, 1);
-    const rect = r.getClientRects()[0];
-    if (rect === undefined) {
-      throw new Error("the first character has no box");
-    }
-    return rect.left;
-  }
-
-  function contentLeft(el: HTMLElement): number {
-    return el.getBoundingClientRect().x + Number.parseFloat(css(el, "padding-left"));
-  }
-
-  for (const tier of ["fine", "coarse"] as const) {
-    it(`the reserve holds the worst-case badge on the ${tier} tier`, async () => {
-      // Worst case in one card: the widest turn number, a stamped time, the dot
-      // and a three-digit hit count.
-      //
-      // The dot renders only below 48rem and this viewport is fixed at 1280, so
-      // BOTH halves of that media block are forced by hand — its `display: block`
-      // and its `--turn-dot-reserve` term. Forcing the display alone would be
-      // measuring content against a reserve production never pairs it with; the two
-      // travel together because they are declared in one block, and
-      // `turn-dot-visibility-css.test.ts` is what holds that query's number.
-      document.documentElement.setAttribute("data-pointer", tier);
-      try {
-        const card = await turn("open", { n: 9999, ts: 1_700_000_000_000 });
-        const header = card.querySelector<HTMLElement>(".turn-header")!;
-        header.dataset["hits"] = "";
-        header.querySelector<HTMLElement>(".turn-hit-count")!.textContent = "128";
-        header.querySelector<HTMLElement>(".turn-dot")!.style.display = "block";
-        header.style.setProperty("--turn-dot-reserve", "1rem");
-
-        const badge = header.querySelector<HTMLElement>(".turn-badge")!;
-        const text = header.querySelector<HTMLElement>(".turn-req-text")!;
-        expect(
-          badge.getBoundingClientRect().right,
-          "no glyph runs under the badge",
-        ).toBeLessThanOrEqual(firstGlyphLeft(text));
-        // And the chevron's own box is pinned, which is what makes the arithmetic
-        // true at both tiers: left to the hit floor it is 44px on coarse.
-        expect(
-          card.querySelector<HTMLElement>(".turn-fold-toggle")!.getBoundingClientRect().width,
-        ).toBeCloseTo(24, 1);
-      } finally {
-        document.documentElement.removeAttribute("data-pointer");
-      }
-    });
-  }
-
-  it("indents line 1 and starts lines 2+ at the margin", async () => {
-    // A FLOATED badge was measured not to shorten line 1 at all, so the indent is
-    // the mechanism and this is what proves it applies to line 1 only.
-    const card = await turn("open", {
-      request:
-        "fix the flaky test in auth_test.go, it fails on CI about one run in five " +
-        "and I cannot reproduce it locally no matter how many times I loop it",
-    });
-    card.style.inlineSize = "420px";
-    const text = card.querySelector<HTMLElement>(".turn-req-text")!;
-    const rects = lineRects(text);
-    expect(rects.length, "wraps to more than one line").toBeGreaterThan(2);
-
-    const left = contentLeft(text);
-    const indent = Number.parseFloat(css(text, "text-indent"));
-    expect(indent).toBeGreaterThan(0);
-    expect(rects[0]!.left, "line 1 is indented").toBeCloseTo(left + indent, 1);
-    for (const [i, rect] of rects.slice(1).entries()) {
-      expect(rect.left, `line ${String(i + 2)} is flush`).toBeCloseTo(left, 1);
-    }
-    // EVERY LINE IS ONE LINE BOX TALL AND NO LINE IS TALLER THAN ANOTHER — an
-    // out-of-flow control that slipped back into the flow would show up here as a
-    // taller line 1 and a taller band.
-    //
-    // The PITCH between consecutive lines is what carries the line-height claim: a
-    // range's rects report the text's own ink box (17px for this face at 14px),
-    // never the line box, so their height is a font fact and their spacing is the
-    // layout one.
-    const lineHeight = Number.parseFloat(css(text, "line-height"));
-    expect(lineHeight).toBe(21);
-    for (const [i, rect] of rects.entries()) {
-      expect(rect.height, `line ${String(i + 1)} against line 1`).toBe(rects[0]!.height);
-      if (i > 0) {
-        expect(rect.top - rects[i - 1]!.top, `line ${String(i + 1)}'s pitch`).toBeCloseTo(
-          lineHeight,
-          1,
-        );
-      }
-    }
-    // And the block is exactly its lines.
-    expect(text.getBoundingClientRect().height).toBeCloseTo(rects.length * lineHeight, 1);
-  });
-
-  it("spends its height on the request text and nothing else", async () => {
-    // THE WHOLE POINT OF THE CHANGE, and the only assertion that fails when a
-    // control slips back into the flow: the band is its padding, its text and the
-    // card's rule, so a short prompt costs 4 + 21 + 4 + 1 = 30px at BOTH pointer
-    // tiers — where the meta row's two floored buttons cost 24px on a mouse and
-    // 44px on a finger.
+  it("gives the meta row a line box of its own", async () => {
+    // THE BAND IS TWO ROWS, and this is the assertion that fails if a control or a
+    // readout leaves the flow: the header's height is its padding, the row, the gap
+    // between the two rows, the request text and the card's rule. Read the gap from
+    // the computed `row-gap` rather than from a literal, so the case is
+    // token-independent.
     for (const tier of ["fine", "coarse"] as const) {
       document.documentElement.setAttribute("data-pointer", tier);
       try {
         const card = await turn("open", { request: "short request" });
         const header = card.querySelector<HTMLElement>(".turn-header")!;
+        const row = card.querySelector<HTMLElement>(".turn-head-row")!;
         const text = card.querySelector<HTMLElement>(".turn-req-text")!;
-        // Every out-of-flow member is really present, or this measures nothing.
-        for (const sel of [".turn-fold-toggle", ".turn-badge", ".turn-copy-req"]) {
-          expect(header.querySelector(sel), `${tier}: ${sel}`).not.toBeNull();
+        // Every member is really in the row, or this measures nothing.
+        for (const sel of [".turn-fold-toggle", ".turn-n", ".turn-ts", ".turn-copy-req"]) {
+          expect(row.querySelector(sel), `${tier}: ${sel}`).not.toBeNull();
         }
+        expect(row.getBoundingClientRect().height, `${tier}: the row has a height`).toBeGreaterThan(
+          0,
+        );
         const pad = Number.parseFloat(css(header, "padding-top"));
+        const gap = Number.parseFloat(css(header, "row-gap"));
         const border = Number.parseFloat(css(header, "border-bottom-width"));
         expect(header.getBoundingClientRect().height, tier).toBeCloseTo(
-          pad * 2 + text.getBoundingClientRect().height + border,
+          pad * 2 +
+            row.getBoundingClientRect().height +
+            gap +
+            text.getBoundingClientRect().height +
+            border,
           1,
         );
-        expect(header.getBoundingClientRect().height, `${tier}: 30px`).toBeCloseTo(30, 1);
       } finally {
         document.documentElement.removeAttribute("data-pointer");
       }
     }
-  });
-
-  it("--turn-req-line matches the request text's own line box", async () => {
-    // The mirrored pair: the token centres the two out-of-flow boxes on line 1,
-    // so it has to move with the text's font-size/line-height pair.
-    //
-    // Read off the BADGE's resolved `block-size` rather than off the custom
-    // property, which is unregistered: `getComputedStyle` hands back the token
-    // stream (`calc(0.875rem * 1.5)`, measured) and a parse of that is NaN, which
-    // `toBeCloseTo` would compare against itself.
-    const card = await turn("open");
-    const badge = card.querySelector<HTMLElement>(".turn-badge")!;
-    const text = card.querySelector<HTMLElement>(".turn-req-text")!;
-    expect(Number.parseFloat(css(badge, "block-size"))).toBeCloseTo(
-      Number.parseFloat(css(text, "line-height")),
-      1,
-    );
   });
 
   it("clamps a folded prompt to four lines and an open one not at all", async () => {
@@ -864,12 +727,6 @@ describe("turn card header affordance", () => {
 
   // --- The copy button -------------------------------------------------------
 
-  it("matches any-hover, so the copy-button cases below measure the gated rule", () => {
-    // The premise. Without it a `(any-hover: none)` runtime reports the hidden
-    // rest state and the two cases below pass for the wrong reason.
-    expect(window.matchMedia("(any-hover: hover)").matches).toBe(true);
-  });
-
   it("computes display:none for a hidden copy button", async () => {
     // The `hidden` PROPERTY assertion in turn-header.test.ts never caught this:
     // `.turn-action-btn` declares `display: inline-flex` at author origin, which
@@ -881,22 +738,19 @@ describe("turn card header affordance", () => {
     expect(css(copy, "display")).toBe("none");
   });
 
-  it("rests transparent, boxed and click-through", async () => {
+  it("is visible with no hover and no focus", async () => {
+    // The control is in flow and always painted: a reader copies the prompt
+    // without first having to find out that the band reveals something.
     const card = await turn("open");
     const copy = card.querySelector<HTMLButtonElement>(".turn-copy-req")!;
     copy.hidden = false;
-    expect(css(copy, "opacity")).toBe("0");
+    // No hover is simulated and nothing inside the card holds focus.
+    expect(card.matches(":hover"), "nothing is hovered").toBe(false);
+    expect(card.contains(document.activeElement), "nothing inside has focus").toBe(false);
+    expect(css(copy, "opacity")).toBe("1");
     expect(css(copy, "display")).not.toBe("none");
-    // `opacity: 0` still hit-tests, and this box sits over the prompt's first
-    // line, so at rest it would swallow the band's own fold click.
-    expect(css(copy, "pointer-events")).toBe("none");
-    // The reserved-box claim: out of flow, so the reveal moves no height.
-    const hiddenHeight = (() => {
-      copy.hidden = true;
-      return card.getBoundingClientRect().height;
-    })();
-    copy.hidden = false;
-    expect(card.getBoundingClientRect().height).toBe(hiddenHeight);
+    expect(css(copy, "pointer-events")).not.toBe("none");
+    expect(copy.getBoundingClientRect().width, "and it has a box").toBeGreaterThan(0);
   });
 });
 

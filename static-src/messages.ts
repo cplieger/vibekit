@@ -2027,7 +2027,9 @@ initTurnActionsBodyProbe(bodyHoldsWholeTurn);
 /** Wire the header's fold toggle. The click RECORDS the reader's choice, which outranks
  *  the two-newest rule and persists per chat, so the next paint cannot undo it. */
 function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void {
-  const btn = header.querySelector<HTMLButtonElement>(":scope > .turn-fold-toggle");
+  const btn = header.querySelector<HTMLButtonElement>(
+    ":scope > .turn-head-row > .turn-fold-toggle",
+  );
   if (btn === null || btn.dataset["bound"] === "") {
     return;
   }
@@ -2080,26 +2082,13 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
 /** Show how many search hits a turn holds, so scanning the folded list tells the
  *  reader which turns are worth opening before they open any. */
 function setHitCount(card: HTMLElement, n: number): void {
-  const header = card.querySelector<HTMLElement>(":scope > .turn-header");
-  if (header === null) {
-    return;
-  }
-  const badge = header.querySelector<HTMLElement>(":scope > .turn-badge > .turn-hit-count");
+  const badge = card.querySelector<HTMLElement>(
+    ":scope > .turn-header > .turn-head-row > .turn-hit-count",
+  );
   if (badge === null) {
     return;
   }
   badge.textContent = n > 0 ? String(n) : "";
-  // The badge sits out of flow inside a FIXED first-line reserve, and the count
-  // is the one member that renders only while a search runs — so without
-  // widening that reserve it would paint over the prompt's first line. Written
-  // by the renderer rather than matched with `:has()`, for the reason
-  // `.is-bodyless` is: a streaming card mutates every frame and `:has()`
-  // charges each recalc for relational matching.
-  if (n > 0) {
-    header.dataset["hits"] = "";
-  } else {
-    delete header.dataset["hits"];
-  }
 }
 
 function setCardFolded(card: HTMLElement, folded: boolean): void {
@@ -2120,7 +2109,7 @@ function setCardFolded(card: HTMLElement, folded: boolean): void {
   // button is the disclosure control the keyboard reaches anyway — the band
   // only forwards its click.
   header
-    ?.querySelector<HTMLButtonElement>(":scope > .turn-fold-toggle")
+    ?.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
     ?.setAttribute("aria-expanded", folded ? "false" : "true");
 }
 

@@ -866,7 +866,7 @@
 }
 
 /* A GROUP HEAD IS THE TERTIARY RUNG, WHERE HINT INK IS NOT VALID, and this is the
-   rule the chat's own tinted band already carries: `.turn-badge` (29-turns.css)
+   rule the chat's own tinted band already carries: `.turn-head-row` (29-turns.css)
    steps its 11px timestamp up to secondary for exactly this reason, and the two-rung
    contract on `--c-text-tertiary` (01-tokens.css) is the general statement. Measured
    on the head's fill: hint 3.601:1 dark / 3.900:1 light against secondary's 6.085:1

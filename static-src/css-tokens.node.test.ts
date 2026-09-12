@@ -180,11 +180,17 @@ describe("design tokens are declared before they are read", () => {
     // able from the finished one, which is exactly the state a reviewer had to
     // catch by hand.
     //
-    // Scoped to `--c-*` and `--shadow-*`: a colour or an elevation is chosen
-    // FOR a surface, so one with no surface is dead. Geometry and motion tokens
-    // are deliberately NOT in scope — a spacing or duration token is a
+    // Scoped to `--c-*`, `--shadow-*` and `--elev-*`: a colour or an elevation is
+    // chosen FOR a surface, so one with no surface is dead. Geometry and motion
+    // tokens are deliberately NOT in scope — a spacing or duration token is a
     // vocabulary the next rule picks from, and demanding a current consumer for
     // each would argue against having a scale at all.
+    //
+    // `--elev-*` was missing from that list while this test's own title named
+    // elevation, so a four-rung `--elev-1..4` scale sat in 01-tokens.css with zero
+    // readers and every gate stayed green — the exact half-finished state the
+    // check exists to catch, walking straight through the check that names it.
+    // The scale is deleted; the prefix stays so the next one cannot repeat it.
     //
     // The `--c-term-*` exemption used to cover the whole family on that same
     // vocabulary ground, and it was hiding a real gap: 15-ansi.css hardcoded 32
@@ -201,7 +207,7 @@ describe("design tokens are declared before they are read", () => {
     // left declared rather than deleted because that is a decision about the live
     // terminal's theming surface, not about contrast; flag them if they are still
     // unwired next time this file is edited.
-    const scoped = /^--(c|shadow)-/;
+    const scoped = /^--(c|shadow|elev)-/;
     const vocabulary = /^--c-term-(cursor|cursor-accent|selection|selection-inactive)$/;
 
     const declared = new Map<string, string>();

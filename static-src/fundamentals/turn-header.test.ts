@@ -1,8 +1,8 @@
-// The turn card's header band: the trigger, and the out-of-flow badge that lets
-// the request text be the only thing in it with a height.
+// The turn card's header band: the trigger, and the meta row of readouts and
+// controls above it.
 //
-// The CLAMP is not here any more: it is CSS-only and FOLD-conditional, so there
-// is nothing in this module to drive and nothing a detached element can measure.
+// The CLAMP is not here: it is CSS-only and FOLD-conditional, so there is nothing
+// in this module to drive and nothing a detached element can measure.
 // `disclosure-row-css.test.ts` owns it, against real layout.
 import { describe, it, expect, vi } from "vitest";
 import {
@@ -84,28 +84,32 @@ describe("buildTurnHeader", () => {
     expect(text(h).textContent).toBe("");
   });
 
-  it("puts the number, the dot, the time and the hit count in one out-of-flow badge", () => {
-    // ONE box for every readout, so the first line's indent reserves one column
-    // rather than four, and every one of them is reachable at a stable depth.
+  it("puts the fold toggle and every readout in the meta row", () => {
+    // Every one of them is a child of the row rather than of the band, which is
+    // the depth `setHitCount`, `wireRowToggle` and `setCardFolded` (messages.ts)
+    // reach them at.
     const h = buildTurnHeader(data({ n: 14, ts: 1_700_000_000_000 }));
-    for (const sel of [".turn-n", ".turn-dot", ".turn-ts", ".turn-hit-count"]) {
-      expect(h.querySelector(`:scope > .turn-badge > ${sel}`), sel).not.toBeNull();
+    for (const sel of [
+      ".turn-fold-toggle",
+      ".turn-n",
+      ".turn-dot",
+      ".turn-ts",
+      ".turn-hit-count",
+    ]) {
+      expect(h.querySelector(`:scope > .turn-head-row > ${sel}`), sel).not.toBeNull();
     }
-    // And the toggle is the band's own child, which is what `wireRowToggle` and
-    // `setCardFolded` (messages.ts) reach at `:scope > .turn-fold-toggle`.
-    expect(h.querySelector(":scope > .turn-fold-toggle")).not.toBeNull();
   });
 
-  it("keeps the badge out of the request's text", () => {
-    // MEASURED trap: an inline badge as the text's first child contaminates
+  it("keeps the meta row out of the request's text", () => {
+    // MEASURED trap: an inline readout as the text's first child contaminates
     // `textContent`, which is exactly what the copy button reads, so every copied
     // prompt would begin `#14 10:42 ` — and `linkifyPaths` rewrites text nodes in
     // there too.
     const h = buildTurnHeader(data({ n: 14, ts: 1_700_000_000_000, request: "  fix the test  " }));
     expect(h.querySelector(".turn-ts")?.textContent, "the time really is stamped").not.toBe("");
     expect(text(h).textContent).toBe("fix the test");
-    expect(text(h).querySelector(".turn-badge")).toBeNull();
-    expect(text(h).contains(h.querySelector(".turn-badge"))).toBe(false);
+    expect(text(h).querySelector(".turn-head-row")).toBeNull();
+    expect(text(h).contains(h.querySelector(".turn-head-row"))).toBe(false);
   });
 
   it("offers no show-more", () => {
@@ -131,7 +135,7 @@ describe("copying the sent prompt", () => {
     // The clamp is scoped to `.turn-req-text`; a control inside it would be
     // hidden by a folded turn's four-line clamp.
     const h = buildTurnHeader(data());
-    expect(h.querySelector(":scope > .turn-copy-req")).not.toBeNull();
+    expect(h.querySelector(":scope > .turn-head-row > .turn-copy-req")).not.toBeNull();
     expect(text(h).querySelector(".turn-copy-req")).toBeNull();
   });
 

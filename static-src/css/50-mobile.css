@@ -87,13 +87,48 @@
     display: flex;
   }
 
-  /* Scroll-to-bottom: right-anchored square icon, text hidden. */
+  /* Scroll-to-bottom: right-anchored square icon, text hidden.
+
+     BOTH INSETS ARE `--sp-4`, and the base rule's `--sp-3` is wrong here on two
+     counts. The transcript column and the composer both end `--sp-4` from the
+     screen edge (`#messages-wrap`, `.bottom-bar`), so at `--sp-3` this box
+     overhung the column it floats over by 4px — measured at 390: right edge 378
+     against 374. And the two insets have to match each other, or a box docked in
+     a corner reads as off-square; the base value serves the label form, which is
+     centred and has no corner to sit in. */
   [id="scroll-bottom"] {
     left: auto;
-    right: var(--sp-3);
+    right: var(--sp-4);
+    bottom: var(--sp-4);
     transform: none;
-    width: var(--btn-h);
-    padding: 0;
+
+    /* THE PAINTED BOX IS THE GLYPH PLUS `--sp-2` PLUS ITS OWN BORDER, which is how
+       `.icon-btn` sizes itself (10-shell-app.css) plus the border this control
+       keeps: measured 38px on a finger and 34px on a mouse, against a TARGET of
+       `--hit-floor` grown by the `::after` rather than by the box (44px coarse; on
+       a fine pointer the clamp yields 0 and the 34px box already clears that
+       tier's 24px floor). At `--btn-h` it painted 44px square, the largest painted
+       control on the screen against the composer's 32px row 16px under it, which is
+       what was left of reading as a card once the shadow went. Nothing declares a
+       size: the svg is `--icon-ui` on both axes (03-base.css) and the label is
+       hidden below, so the box is square by construction and follows the tier. */
+    padding: var(--sp-2);
+
+    /* The app-wide floor (61-mcp-tools.css) sets PHYSICAL `min-width`/`min-height`,
+       so the opt-out is physical too; `min-height` also overrides the base rule's
+       own `--btn-h`. Expander idiom copied from `.pill` (15-input.css) and
+       `.status-dot` (10-shell-app.css), `min(0px, …)` so a box already past the
+       floor is never shrunk. The button is `position: absolute`, so it is the
+       expander's containing block with nothing further to declare. */
+    min-width: 0;
+    min-height: 0;
+
+    &::after {
+      content: "";
+      position: absolute;
+      inset-block: min(0px, calc((100% - var(--hit-floor)) / 2));
+      inset-inline: min(0px, calc((100% - var(--hit-floor)) / 2));
+    }
   }
 
   [id="scroll-bottom"] > span {

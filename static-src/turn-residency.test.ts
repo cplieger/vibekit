@@ -837,7 +837,7 @@ describe("expanding a stub", () => {
     const id = chatID();
     activate(id, [...toolTurns(1), ...heavyTurn("big", RESIDENT_BLOCKS + 64)]);
     const header = card("u1").querySelector<HTMLElement>(":scope > .turn-header");
-    const toggle = header?.querySelector(":scope > .turn-fold-toggle");
+    const toggle = header?.querySelector(":scope > .turn-head-row > .turn-fold-toggle");
     expect(toggle?.getAttribute("aria-expanded")).toBe("false");
     // The state lives on the BUTTON. `.turn-header` is a plain div, and
     // `aria-expanded` on one is an ARIA violation rather than a redundancy.

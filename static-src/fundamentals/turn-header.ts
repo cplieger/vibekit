@@ -5,14 +5,12 @@
 // (the request text) or the system did (a typed trigger line) — everything
 // else (number, outcome, timestamp, permalink) is identical across both.
 //
-// The band's height is the request TEXT's alone: every control and readout in
-// it is out of flow, inside the first line's indent. So the fold toggle, the
-// badge (number, outcome, time, hit count) and the copy button are siblings of
-// `.turn-req` rather than members of a row, and none of them contributes a
-// line box.
+// Two rows: a meta row carrying the fold toggle, the turn number, the outcome
+// dot, the timestamp, the search-hit count and Copy, then the request itself
+// under it.
 //
 // An OPEN turn's request is not clamped: full text, however long. A FOLDED
-// turn's clamps to four lines, in CSS, for the reason a clamp was ever here —
+// turn's clamps to four lines, in CSS, for the reason a clamp is here at all —
 // folded rows are the session's navigation surface, and one pasted stack trace
 // would render hundreds of lines as a "collapsed" turn and push every
 // neighbouring row off screen. The clamp is on the TEXT only, so the
@@ -60,9 +58,10 @@ export function initTurnHeaderCallbacks(cbs: {
 export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   const header = el("div", { className: "turn-header" });
 
-  // The fold toggle leads the band, so the affordance sits where the eye starts
+  const row = el("div", { className: "turn-head-row" });
+  // The fold toggle leads the row, so the affordance sits where the eye starts
   // and is in the same place whether the turn is open or folded.
-  header.appendChild(
+  row.appendChild(
     el(
       "button",
       {
@@ -76,23 +75,15 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
       chevronEl(),
     ),
   );
-  // One span for every readout, so the first line's indent reserves ONE box
-  // rather than four, and none of them can contaminate the request's text node
-  // (`textContent` is exactly what the copy button reads).
-  header.appendChild(
-    el(
-      "span",
-      { className: "turn-badge" },
-      el("span", { className: "turn-n" }, `#${String(d.n)}`),
-      el("span", { className: "turn-dot", role: "img" }),
-      el("time", { className: "turn-ts" }),
-      // Filled while a search is active.
-      el("span", { className: "turn-hit-count" }),
-    ),
-  );
+  row.appendChild(el("span", { className: "turn-n" }, `#${String(d.n)}`));
+  row.appendChild(el("span", { className: "turn-dot", role: "img" }));
+  row.appendChild(el("time", { className: "turn-ts" }));
+  // Filled while a search is active.
+  row.appendChild(el("span", { className: "turn-hit-count" }));
   // Rewind lives in the footer instead. Reads text from the DOM at click
   // time, not closure-captured, so a repaint mid-flight can't copy stale text.
-  header.appendChild(buildCopyButton(header));
+  row.appendChild(buildCopyButton(header));
+  header.appendChild(row);
 
   const req = el("div", { className: "turn-req" });
   req.appendChild(el("div", { className: "turn-req-text" }));
@@ -131,18 +122,18 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   // the one stated exception. See turn-footer.ts's own write for the split.
   header.dataset["severity"] = severityOf(d.outcome);
 
-  const num = header.querySelector<HTMLElement>(":scope > .turn-badge > .turn-n");
+  const num = header.querySelector<HTMLElement>(":scope > .turn-head-row > .turn-n");
   if (num !== null) {
     num.textContent = `#${String(d.n)}`;
   }
 
-  const dot = header.querySelector<HTMLElement>(":scope > .turn-badge > .turn-dot");
+  const dot = header.querySelector<HTMLElement>(":scope > .turn-head-row > .turn-dot");
   if (dot !== null) {
     dot.setAttribute("aria-label", OUTCOME_LABEL[d.outcome]);
     dot.setAttribute("data-tooltip", OUTCOME_TOOLTIP[d.outcome]);
   }
 
-  const time = header.querySelector<HTMLTimeElement>(":scope > .turn-badge > .turn-ts");
+  const time = header.querySelector<HTMLTimeElement>(":scope > .turn-head-row > .turn-ts");
   if (time !== null && d.ts > 0) {
     const when = new Date(d.ts);
     time.dateTime = when.toISOString();
@@ -152,7 +143,7 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
     });
   }
 
-  const copy = header.querySelector<HTMLButtonElement>(":scope > .turn-copy-req");
+  const copy = header.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-copy-req");
   if (copy !== null) {
     copy.hidden = d.request === undefined;
   }

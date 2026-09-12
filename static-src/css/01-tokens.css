@@ -179,17 +179,9 @@
 
     /* ---- Elevation ------------------------------------------------------- *
      * A FIRST layer under every floating surface's shadow, not a replacement: a
-     * black shadow can only darken, and against the near-black base all 14
-     * authored layers measure 1.007-1.033:1. */
+     * black shadow can only darken, and against the near-black base every authored
+     * layer measures 1.007-1.033:1. */
     --shadow-ambient: 0 0 0 1px var(--c-border);
-
-    /* ---- The elevation scale --------------------------------------------- *
-     * 1 a resting card · 2 a popover or menu · 3 a dialog · 4 a dragged element.
-     * Each level already carries the ambient ring, so a site writes one token. */
-    --elev-1: var(--shadow-ambient), 0 0.125rem 0.25rem oklch(0% 0 none / 12%);
-    --elev-2: var(--shadow-ambient), 0 0.25rem 0.75rem oklch(0% 0 none / 22%);
-    --elev-3: var(--shadow-ambient), 0 0.5rem 1.5rem oklch(0% 0 none / 32%);
-    --elev-4: var(--shadow-ambient), 0 0.75rem 2rem oklch(0% 0 none / 42%);
 
     /* ---- The interaction ladder ------------------------------------------ *
      * Hover and press are two DEPTHS OF ONE WASH. Apply them as

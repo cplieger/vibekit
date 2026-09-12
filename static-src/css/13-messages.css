@@ -1393,9 +1393,13 @@
   align-items: center;
   gap: var(--sp-1);
   justify-content: center;
-  box-shadow:
-    var(--shadow-ambient),
-    0 0.125rem 0.375rem oklch(0% 0 none / 18%);
+
+  /* NO DROP SHADOW, and the border below is the whole edge. It carried
+   * `--shadow-ambient` (a 1px ring in `--c-border`) on top of that border, so the
+   * edge painted 2px in one colour. Every other drop shadow in the app sits on a
+   * transient overlay or a dragged element, the one exception being the effort
+   * slider's knob, so a persistent control with a raised layer was this one alone.
+   * The opaque fill is what separates it from the text it sits over. */
   z-index: 10;
   opacity: 1;
   transition:
@@ -1447,7 +1451,6 @@
     gap: 0;
     padding: 0;
     border-radius: var(--r-sm);
-    box-shadow: none;
     overflow: hidden;
   }
 

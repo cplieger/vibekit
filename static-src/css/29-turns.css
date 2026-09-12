@@ -74,42 +74,10 @@
    -------------------------------------------------------------------------- */
 
 .turn-header {
-  /* THE FIRST LINE'S INDENT. Every control and readout in this band lives inside
-     it, out of flow, so the request TEXT is the only thing that decides how tall
-     the band is: --sp-1 x2 + one 21px line + the card's 1px rule = 30px.
-
-     --turn-req-line MIRRORS `.turn-req-text`'s own font-size/line-height pair
-     below and must move with them; it is what centres the two out-of-flow boxes
-     on line 1 instead of on the whole band, which for an open long prompt is
-     many lines tall.
-
-     The reserve is a literal because a resize-driven write to this box is the
-     ResizeObserver loop class (vibekit-client.md, "The turn card"). Two members
-     are STATE-conditional and carry their own additive term rather than being
-     summed into four combinations: the dot renders only below 48rem, the hit
-     count only while a search runs. */
-  --turn-chev-box: 1.5rem;
-  --turn-req-line: calc(var(--fs-md) * 1.5);
-  /* #9999 (mono, 11px) + --sp-2 + the stamp (tabular): 33.13 + 8 + 51.33 = 92.46px
-     measured under DejaVu Sans. `turn-header.ts` builds the stamp with
-     `toLocaleTimeString`, so a 12-hour locale renders `11:13 PM`, eight characters.
-     A 24-hour locale over-reserves here, which costs indent and never a collision. */
-  --turn-badge-w: 6rem;
-  --turn-dot-reserve: 0rem; /* 0.5rem + --sp-2, below 48rem only */
-  --turn-hits-reserve: 0rem; /* the badge's min box + its padding, plus --sp-2 */
-  --turn-indent: calc(
-    var(--turn-chev-box) + var(--sp-2) + var(--turn-badge-w) + var(--turn-dot-reserve) +
-      var(--turn-hits-reserve) + var(--sp-2)
-  );
-
-  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
-  /* --sp-1, matching the FOOTER of this same card: the band's own controls are
-     out of flow, so --sp-2 was 8px paid for nothing and an asymmetry between two
-     bands of one card. */
-  padding: var(--sp-1) var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
 
   /* The tint is a ramp rung, not its own token. `--c-user-bubble` was the
      character-identical oklch triple to the old --c-border in both themes, so
@@ -147,34 +115,26 @@
   }
 }
 
-/* The readouts — number, outcome dot, time, hit count — in the first line's
-   indent, after the chevron. Out of flow, so they contribute no height. */
-.turn-badge {
-  position: absolute;
-  inset-block-start: var(--sp-1);
-  /* `inset-inline-start` is measured from the containing block's PADDING box
-     (the `.tool-disclosure` comment in 14-tools.css states it), which is why
-     --sp-3 appears here: the band's own gutter, then the chevron's column. */
-  inset-inline-start: calc(var(--sp-3) + var(--turn-chev-box) + var(--sp-2));
-  block-size: var(--turn-req-line);
+/* Meta row: the fold toggle, number, outcome dot, time, hit count, then the
+   action slot pushed right. */
+.turn-head-row {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  /* Absolute plus shrink-wrap: at 390px this would wrap. */
-  white-space: nowrap;
   font-size: var(--fs-xs);
   /* SECONDARY, not the hint ink: `.turn-header` above fills with
      `--c-bg-tertiary`, and hint ink measures 3.601:1 dark / 3.900:1 light on
-     that rung — under the 4.5:1 an 11px timestamp needs. The two-rung
+     that rung — under the 4.5:1 this row's 11px timestamp needs. The two-rung
      contract on `--c-text-tertiary` (01-tokens.css) is exactly this case, and it
      was missed because the fill and the ink sit in two different blocks, which is
      the shape the stylesheet gate cannot decide. `.turn-n` beside it is already
      secondary and stays distinct on weight and the mono face. */
   color: var(--c-text-secondary);
 
-  /* Scoped here on purpose: `.turn-req` below holds the user's own prompt and
-     stays selectable (a drag there keeps its selection — the header's click
-     forwarder skips a click that ends one). */
+  /* The header FOLDS THE TURN, so this row inherits its pointer. `user-select:
+     none` is scoped to this row on purpose: `.turn-req` below holds the user's
+     own prompt and stays selectable (a drag there keeps its selection — the
+     header's click forwarder skips a click that ends one). */
   user-select: none;
 }
 
@@ -203,7 +163,7 @@
  * strip is off-canvas and the transcript is all there is.
  *
  * `display: none`, not `visibility: hidden` and not an unstyled span: this is a
- * flex item in `.turn-badge`, which has a `gap`, so an item that is merely
+ * flex item in `.turn-head-row`, which has a `gap`, so an item that is merely
  * invisible still spends 8px of it. Same treatment, same reason, as the ledger
  * caret further down this file. */
 .turn-dot {
@@ -313,71 +273,23 @@
   .turn-dot {
     display: block;
   }
-
-  /* The dot's own 0.5rem plus the badge's own --sp-2, paid only at the widths
-     where the dot renders. */
-  .turn-header {
-    --turn-dot-reserve: 1rem;
-  }
 }
 
 .turn-ts {
   font-variant-numeric: tabular-nums;
 }
 
-/* OUTSIDE `any-hover` THIS CONTROL IS HIDDEN, NOT SHOWN, and that is a stated
-   exception to vibekit-ui.md's hover-reveal rule rather than an oversight. That
-   rule is about a READOUT (the footer's `.turn-elapsed`), where hiding loses
-   information; this is a CONTROL, and the space was ratified over keeping it on
-   touch. The prompt is still copyable by selecting it.
+/* Copy the sent prompt. Pushed to the far end of the meta row, so the header
+   band's action sits where the footer band's ledger does and the two line up.
+   In the META row rather than inside `.turn-req`, which is what keeps it outside
+   a folded turn's four-line clamp by construction.
 
-   `.turn-header >` is load-bearing: `.turn-action-btn` declares
-   `display: inline-flex` in 61-mcp-tools.css, which is LATER in the MANIFEST, so
-   a single-class hide here would tie and lose on order. */
-.turn-header > .turn-copy-req {
-  display: none;
-}
-
-@media (any-hover: hover) {
-  .turn-header > .turn-copy-req {
-    position: absolute;
-    inset-block-start: var(--sp-1);
-    inset-inline-end: var(--sp-3);
-    display: inline-flex;
-
-    /* OPTS OUT OF THE COARSE HIT FLOOR, for the reason `.turn-fold-toggle` does
-       and with a second one of its own: a control gated on `(any-hover: hover)`
-       is reached by a pointer, so 24px is the floor that applies to it (WCAG
-       2.5.8, Level AA). Left to the floor (61-mcp-tools.css) this box is 44px on
-       the coarse tier — and `data-pointer` is JS-driven from real pointer events
-       while this query is a capability, so coarse-AND-hover is a device that
-       exists (a touchscreen laptop with a mouse). Measured there at 390px: a
-       44px box on a 30px header hangs 18px BELOW it, and once revealed
-       `elementFromPoint` 6px under the header answers `.turn-copy-req`, so a
-       click on the reply's first line copies the prompt. That is the same defect
-       the fold toggle's own comment refuses an `::after` expander for. */
-    min-width: 0;
-    min-height: 0;
-
-    /* An opacity change in a box that was always there — never a geometric
-       expansion. Out of flow it contributes no height either way, so the
-       no-layout-shift property holds by construction; `display: none` here would
-       break it and is what the rest state may not use. */
-    opacity: 0;
-    /* `opacity: 0` still hit-tests, and this box sits OVER the prompt's first
-       line: at rest it would swallow the band's own fold click and copy on a
-       click meant to fold. */
-    pointer-events: none;
-    transition: opacity var(--dur-standard) var(--ease-standard);
-  }
-
-  /* `:focus-within` is not decoration: without it a keyboard user can never see
-     the control they have tabbed onto. */
-  .turn:hover > .turn-header > .turn-copy-req,
-  .turn:focus-within > .turn-header > .turn-copy-req {
-    opacity: 1;
-    pointer-events: auto;
-  }
+   The box comes from `.turn-action-btn` plus the universal hit floor, and the
+   hidden state from `.turn-action-btn[hidden]` at (0,2,0) — both in
+   61-mcp-tools.css, so only the row placement is this rule's. */
+.turn-copy-req {
+  margin-inline-start: auto;
+  flex-shrink: 0;
 }
 
 /* REWIND: glyph plus word on desktop, glyph alone on a narrow row. It keeps its
@@ -457,31 +369,22 @@
    * since the reply no longer wraps early, a request that still did would leave
    * the card ragged on one row and flush on the next.
    *
-   * It also fought the clamp below: narrower text wraps sooner, so three lines
-   * of a 652px column showed less of the request than three lines of the 774px
-   * the band actually has. Removing the cap shows more of it in the same three
+   * It also fought the clamp below: narrower text wraps sooner, so four lines
+   * of a 652px column show less of the request than four lines of the 774px the
+   * band actually has. Removing the cap shows more of it in the same four
    * lines, which is what the clamp is for. */
-
-  /* Line 1 only, which is what holds the chevron and the badge; lines 2+ run the
-     full width. A FLOATED badge inside a clamped box was measured not to shorten
-     line 1 at all, and an INLINE one contaminates `textContent`, which is exactly
-     what the copy button reads. The arithmetic is on `.turn-header` above. */
-  text-indent: var(--turn-indent);
-
-  /* The badge and the chevron are out of flow, so an EMPTY request would leave
-     them outside a band with no line box at all. */
-  min-block-size: var(--turn-req-line);
 }
 
 /* THE CLAMP IS FOLD-CONDITIONAL, and CSS-only, so `-webkit-line-clamp` renders
  * its own ellipsis and no TypeScript constant stands behind the count.
  *
  * An OPEN turn's prompt is not clamped: full text, however long (user ruling).
- * A FOLDED turn's clamps to four lines, for the reason the three-line clamp
- * always had — folded rows are the session's navigation surface, and one pasted
- * stack trace would render hundreds of lines as a "collapsed" turn and push
- * every neighbouring row off screen. Four rather than three because the band
- * now has the room: 4 + 84 + 4 + 1 = 93px against 176px before.
+ * A FOLDED turn's clamps to four lines, because folded rows are the session's
+ * navigation surface: one pasted stack trace would otherwise render hundreds of
+ * lines as a "collapsed" turn and push every neighbouring row off screen. Four
+ * lines is 84px of prompt in a 128px folded band on a mouse and 148px on a
+ * finger, measured at 390px — the two differ because the meta row's buttons take
+ * `--hit-floor`, so no single figure holds for both pointer tiers.
  *
  * Scoped to the TEXT, so the attachment chips are unclamped by construction —
  * they are how a reader identifies which request this was. */
@@ -1297,6 +1200,13 @@
  * drawn only across the markers would be entirely hidden behind them, which is
  * every case where the reader most needs to see what the column IS.
  *
+ * SO THE TAIL BELOW THE LAST MARKER IS DELIBERATE, and more so since the markers
+ * stopped reaching the foot of the track (`.rail-marker`'s `top` below): the line is
+ * the reserved TRACK rather than the session's own extent. Ending it at the last
+ * marker was built and measured against this — it reads better from two turns up and
+ * leaves a one-turn rail as a bare digit with no axis at all, which is the case this
+ * paragraph is about, so it stays a proposal rather than a fix.
+ *
  * `z-index: -1` puts it behind the markers. The rail paints no background of its
  * own, so behind them is still in front of the page, and each marker carries an
  * opaque background — which is what turns the line into a sequence of nodes
@@ -1322,12 +1232,19 @@
  * them. It matches the page rather than a raised surface because the rail hangs
  * in the gutter beside the cards, over nothing else. */
 .rail-marker {
-  /* POSITION IS THE TURN'S OWN NUMBER, published per marker as the `--rail-at`
-   * fraction (`rail-select.ts` `railAt`) and turned into a `top` here, by the one
-   * rule that consumes it. The travel span is the track minus one marker box, so
-   * the first and last markers sit fully inside the track rather than half out of
-   * it — the same expression `markerPosition` computes, which is what keeps the
-   * arithmetic the separation pass reasons about and the rendered box in step.
+  /* POSITION IS THE TURN'S OWN NUMBER over the SESSION'S SPAN, published per marker
+   * as the `--rail-at` fraction (`rail-select.ts` `railAt`) and turned into a `top`
+   * here, by the one rule that consumes it. The travel is the track minus one marker
+   * box, so the first and last markers sit fully inside the track rather than half
+   * out of it — the same expression `markerPosition` computes, which is what keeps
+   * the arithmetic the separation pass reasons about and the rendered box in step.
+   *
+   * THE FRACTION REACHES 1 ONLY ON A SESSION THAT FILLS THE TRACK, so a last marker
+   * short of the foot is not a defect: a session that fits at the relaxed pitch is
+   * spread from the TOP at it (`rail-select.ts` `railSpan`), which is what puts turn
+   * 2 of two one gap under turn 1 instead of at the bottom of the column beside the
+   * resume control. The gaps tighten as turns arrive, and the set takes the whole
+   * travel once they no longer fit at that pitch.
    *
    * `translate` rather than a width: the box shrink-wraps its digits above the
    * tier's floor, so an inline-start of 50% plus a half-box translate centres it
@@ -1582,29 +1499,15 @@
    (chevron.ts), which replaced a chevron drawn from two rotated borders. The
    rotation is on the glyph rather than the button, so the focus ring below stays
    axis-aligned. */
-/* In the first line's indent, centred on that line rather than on the band —
-   which for an open long prompt is many lines tall. The arithmetic the reserve
-   is built from lives on `.turn-header`. */
+/* 1.5rem, matching `.turn-action-btn` at the meta row's other end, so the row's
+   two buttons are one size. The glyph inside stays `--chev-size`; the rest of the
+   box is hit area, not ink — and on a coarse pointer the universal hit floor
+   (61-mcp-tools.css) lifts both buttons to `--hit-floor`, which is what makes the
+   row taller on a finger than on a mouse. */
 .turn-fold-toggle {
-  position: absolute;
-  inset-block-start: calc(var(--sp-1) + (var(--turn-req-line) - var(--turn-chev-box)) / 2);
-  inset-inline-start: var(--sp-3);
-
-  /* OPTS OUT OF THE COARSE HIT FLOOR, because the target already exists somewhere
-     bigger: `messages.ts` calls `wireRowToggle(header, btn)` unconditionally, so
-     the whole band activates it — ~366x29 on a 390px phone, well past WCAG 2.5.8.
-     The box then stays 24x24 at BOTH tiers, which is what makes the indent's
-     arithmetic true at both. `.tool-disclosure` (14-tools.css) is the same
-     conversion, and its comment carries the trap: a literal reserve was right on
-     the fine tier and 20px short on the coarse one.
-
-     DO NOT add an `::after` hit expander. A 44px expander on a 21px row reaches
-     ~11px past each edge and into the turn body below, where it would steal taps
-     from the reply's first line. */
-  min-width: 0;
-  min-height: 0;
-  width: var(--turn-chev-box);
-  height: var(--turn-chev-box);
+  width: 1.5rem;
+  height: 1.5rem;
+  flex-shrink: 0;
   display: grid;
   place-items: center;
   padding: 0;
@@ -1659,14 +1562,6 @@
    acceptable instead of a place things go missing. */
 .turn-hit-count {
   display: none;
-}
-
-/* The one badge member that is search-only, so it widens the first line's
-   reserve only while a search is running. `data-hits` is written by
-   `setHitCount` (messages.ts) rather than matched with `:has()`, for the reason
-   `.is-bodyless` is renderer-set. */
-.turn-header[data-hits] {
-  --turn-hits-reserve: 2.75rem; /* the badge's min 1rem + its padding, plus --sp-2 */
 }
 
 .turn-hit-count:not(:empty) {

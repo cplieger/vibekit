@@ -6,9 +6,11 @@
 // reproduces it — a percentage inside `calc()`, a registered custom property and a
 // half-box centring term are all things a DOM emulator reports as 0.
 //
-// FOUR CLAIMS, and each of the last three has a control that makes it falsifiable:
+// FIVE CLAIMS, and each of the last four has a control that makes it falsifiable:
 //
 //  - `--rail-at` lands a marker where `markerPosition` says, both ends inside.
+//  - a session shorter than the track is spread from the TOP at the relaxed pitch,
+//    and only one that cannot fit at it reaches the foot of the travel.
 //  - the track's reserved foot clears the resume control by `--sp-2`, at both
 //    pointer tiers, and the control is `--hit-floor` tall rather than `--btn-h`.
 //  - two markers stay `pitchPx` apart at both tiers, the pitch read off the tier.
@@ -28,6 +30,8 @@ import {
   MARKER_FALLBACK_PX,
   railAt,
   railMetrics,
+  railSpan,
+  relaxedPitch,
   markerPosition,
   selectMarkers,
 } from "./rail-select.js";
@@ -149,15 +153,45 @@ afterEach(() => {
   delete document.documentElement.dataset["pointer"];
 });
 
-/** One marker, positioned the way `render()` positions it. */
+/** One marker, positioned the way `render()` positions it: the turn's own fraction of
+ *  the span the session's size resolves to, never a bare 0..1 ramp. */
 function marker(r: Rail, n: number, total: number): HTMLElement {
   const btn = document.createElement("button");
   btn.className = "rail-marker";
   btn.type = "button";
   btn.textContent = String(n);
-  btn.style.setProperty("--rail-at", String(railAt(n, total)));
+  btn.style.setProperty("--rail-at", String(railAt(n, total, spanFor(r, total))));
   r.rail.appendChild(btn);
   return btn;
+}
+
+/** The track's height, measured through a temporary marker when the rail is still
+ *  empty: `.turn-rail:empty` hides the element, so a height read before its first
+ *  marker is 0 — and a span resolved against 0 is the stretched one, which is the
+ *  layout these cases exist to tell apart. */
+function trackOf(r: Rail): number {
+  if (r.rail.childElementCount > 0) {
+    return r.track();
+  }
+  const probe = document.createElement("button");
+  probe.className = "rail-marker";
+  r.rail.appendChild(probe);
+  const px = r.track();
+  probe.remove();
+  return px;
+}
+
+/** The span `render()` would resolve for a session of `total` turns on this track. */
+function spanFor(r: Rail, total: number): number {
+  return railSpan(total, trackOf(r), r.markerPx);
+}
+
+/** A turn count too large to fit at the relaxed pitch, so the set takes the whole
+ *  travel. DERIVED from the real track, because the crossover moves with the tier and
+ *  with the reserved foot, and a hard-coded count would sit on the wrong side of it
+ *  after a retune of either. */
+function stretchedTotal(r: Rail): number {
+  return Math.ceil(trackOf(r) / relaxedPitch(r.markerPx)) + 2;
 }
 
 /** A marker's rendered top, in the track's own frame. */
@@ -211,15 +245,34 @@ describe("a marker's position is its turn's own number", () => {
     });
   });
 
-  it("keeps both ends fully inside the track", () => {
+  it("keeps both ends fully inside the track once the set takes the whole travel", () => {
     // The travel span is the track minus one marker box, which is what stops the
     // last marker hanging half out of the column.
     const r = buildRail("fine");
-    const first = marker(r, 1, 12);
-    const last = marker(r, 12, 12);
+    const total = stretchedTotal(r);
+    // The premise: this many turns cannot fit at the relaxed pitch, so the last
+    // marker really is meant to reach the foot of the track.
+    expect(spanFor(r, total)).toBe(1);
+    const first = marker(r, 1, total);
+    const last = marker(r, total, total);
 
     near(topIn(r, first), 0, "first marker's top");
     near(topIn(r, last) + last.getBoundingClientRect().height, r.track(), "last marker's bottom");
+  });
+
+  it("spreads a young session from the top at the relaxed pitch instead", () => {
+    // THE REGRESSION, over real layout: the second of two turns used to render at the
+    // foot of the track, one marker box above the resume control, with the whole axis
+    // empty between the two markers.
+    const r = buildRail("fine");
+    const first = marker(r, 1, 2);
+    const second = marker(r, 2, 2);
+
+    near(topIn(r, first), 0, "first marker's top");
+    near(topIn(r, second), relaxedPitch(r.markerPx), "second marker's top");
+    // Stated as a relation rather than a number so the case survives a taller track:
+    // what it denies is the marker reaching the end of the travel.
+    expect(topIn(r, second)).toBeLessThan(r.track() / 2);
   });
 });
 
@@ -300,8 +353,8 @@ describe("a seam is a band between two markers", () => {
     const seam = document.createElement("div");
     seam.className = "rail-seam";
     seam.setAttribute("role", "separator");
-    seam.style.setProperty("--rail-from", String(railAt(1, 8)));
-    seam.style.setProperty("--rail-to", String(railAt(8, 8)));
+    seam.style.setProperty("--rail-from", String(railAt(1, 8, spanFor(r, 8))));
+    seam.style.setProperty("--rail-to", String(railAt(8, 8, spanFor(r, 8))));
     r.rail.appendChild(seam);
 
     const band = seam.getBoundingClientRect();
@@ -317,7 +370,7 @@ describe("the reader's caret sits on the marked turn's own line", () => {
     const node = document.createElement("div");
     node.className = "rail-here";
     node.setAttribute("aria-hidden", "true");
-    node.style.setProperty("--rail-at", String(railAt(n, total)));
+    node.style.setProperty("--rail-at", String(railAt(n, total, spanFor(r, total))));
     r.rail.appendChild(node);
     return node;
   }
