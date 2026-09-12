@@ -160,6 +160,12 @@ func writeToolCallMarkdown(b *strings.Builder, tc *vibekit.ToolCall) {
 	if status == "" {
 		status = "unknown"
 	}
+	// A DECLINED call ran correctly and refused, so the export says so rather than
+	// printing the bare `completed` its status carries — the same reason the card
+	// paints a fifth outcome instead of a green check.
+	if tc.Declined {
+		status = "declined"
+	}
 	fmt.Fprintf(b, "<details>\n<summary>Tool: %s — %s</summary>\n\n", title, status)
 	if tc.DurationMs > 0 {
 		fmt.Fprintf(b, "Duration: %dms\n\n", tc.DurationMs)

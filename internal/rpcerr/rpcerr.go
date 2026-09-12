@@ -140,10 +140,29 @@ func Text(err error) string {
 	if text == "" {
 		text = err.Error()
 	}
+	return Sanitize(text, maxTextBytes)
+}
+
+// Sanitize is the treatment Text applies, without the compose: one upstream
+// string made safe for a user surface and bounded to maxBytes.
+//
+// It is exported for the caller that must NOT compose — a MAPPED backend error,
+// whose `data` is the machine triplet rather than the text, so Details falls
+// through to its raw-JSON fallback and Text is the wrong function. That caller
+// still owes the sanitize and the cap, and this is the one place the rule lives:
+// a second runesafe call in a consumer is a second cap constant to keep in step.
+//
+// maxBytes is a parameter rather than maxTextBytes because such a caller
+// composes its own remedy text around the result and needs the room; a bound
+// applied to the whole composition is what cuts the actionable half off.
+func Sanitize(s string, maxBytes int) string {
+	if s == "" {
+		return ""
+	}
 	// SanitizeSingleLineCapped, not SanitizeSingleLineBounded: Bounded puts its
 	// elision marker OUTSIDE the cap, so a truncated value runs to n+3 bytes and
 	// every caller with a real budget subtracts the marker width by hand. Capped
 	// bounds the TOTAL, which is what a cap is for.
-	capped, _ := runesafe.SanitizeSingleLineCapped(text, maxTextBytes, "...")
+	capped, _ := runesafe.SanitizeSingleLineCapped(s, maxBytes, "...")
 	return capped
 }

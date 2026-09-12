@@ -69,7 +69,14 @@ type fakeBridge struct {
 	// setModelFailures fails the next N SetModel calls, the only route to the
 	// switch-by-restart fallback.
 	setModelFailures int
-	stopped          bool
+	// supervisedApplied is what SupervisedApplied answers: whether the SESSION took
+	// `autopilot: off`. Start sets it from opts.Supervised, mirroring the real bridge,
+	// where applySupervised records the accepted assert.
+	supervisedApplied bool
+	// supervisedAssertFails makes Start model a session that REFUSES the assert — the
+	// one route to the fail-open this fake exists to let a test observe.
+	supervisedAssertFails bool
+	stopped               bool
 	// streamClosed guards the channel close separately from stopped, so endStream can
 	// end the frame stream WITHOUT claiming the bridge was torn down.
 	streamClosed bool
@@ -106,6 +113,10 @@ func (b *fakeBridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 	if opts.SessionID != "" {
 		b.sessionID = opts.SessionID
 	}
+	// Mirrors applySupervised: the real bridge asserts `autopilot: off` inside Start
+	// and records the ACCEPTED outcome. A fake that left this false would make every
+	// supervised chat look refused.
+	b.supervisedApplied = opts.Supervised && !b.supervisedAssertFails
 	notifs := b.notifsOnStart
 	b.mu.Unlock()
 
@@ -350,6 +361,16 @@ func (b *fakeBridge) SessionID() vibekit.SessionID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return vibekit.SessionID(b.sessionID)
+}
+
+// SupervisedApplied mirrors the real bridge: it reports whether the SESSION accepted
+// `autopilot: off`, not whether the chat asked. Defaults FALSE, which is the honest
+// zero value — a fake whose Start does not perform the assert has not had it accepted —
+// so a test asserting the refusal report sets supervisedApplied itself.
+func (b *fakeBridge) SupervisedApplied() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.supervisedApplied
 }
 
 func (b *fakeBridge) ModelID() vibekit.ModelID {

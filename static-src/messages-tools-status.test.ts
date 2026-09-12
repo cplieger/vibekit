@@ -223,3 +223,80 @@ describe("a group whose members ran LIVE and then settled", () => {
     group.remove();
   });
 });
+// ---------------------------------------------------------------------------
+// A REFUSAL is a fifth outcome, and it arrives on a `completed` frame.
+//
+// A workflow update the run rejected reports `completed` with the refusal in its
+// own output, so `completed` alone paints a green check over it and `failed` would
+// send the reader to debug a tool that behaved correctly. `declined` is carried on
+// the DELTA as a one-way latch (`omitempty`, only ever `true`), stamped on the
+// dataset ahead of the status, and read back from there by `applyOutcome` — which
+// is the half only a real card can assert.
+// ---------------------------------------------------------------------------
+
+describe("a frame carrying a refusal", () => {
+  it("takes the refusal as its outcome, not the completed it rides on", () => {
+    const card = liveCard("st-dec-mark");
+    updateToolCall(
+      card,
+      frame("st-dec-mark", { status: "completed", declined: true, output: "plan rejected\n" }),
+      "c1",
+    );
+    expect(card.dataset["declined"]).toBe("1");
+    expect(card.dataset["outcome"]).toBe("declined");
+    expect(card.querySelector(".tool-icon.is-declined")).not.toBeNull();
+    card.remove();
+  });
+
+  it("opens the region without a click, because the reason IS the output", () => {
+    const card = liveCard("st-dec-open");
+    updateToolCall(
+      card,
+      frame("st-dec-open", { status: "completed", declined: true, output: "plan rejected\n" }),
+      "c1",
+    );
+    expect(card.querySelector(".tool-disclosure")?.getAttribute("aria-expanded")).toBe("true");
+    card.remove();
+  });
+
+  it("offers no Explain this error", () => {
+    // The obvious implementation of the auto-expand above is to widen the failure
+    // branch (`status === "failed" || declined`), which would also offer this button.
+    // Nothing broke, so there is no error to explain and the button would send the
+    // reader to debug a tool that did exactly what it was asked.
+    const card = liveCard("st-dec-explain");
+    updateToolCall(
+      card,
+      frame("st-dec-explain", { status: "completed", declined: true, output: "plan rejected\n" }),
+      "c1",
+    );
+    expect(card.querySelector(".tool-explain-btn")).toBeNull();
+    card.remove();
+  });
+
+  it("is not force-opened when the region is bare", () => {
+    // One enforcement point: `expandToolDetails` refuses a card the refresh left
+    // with no chevron, whatever the caller, so the refusal path needs no gate of
+    // its own — and a region opened with nothing in it has no control to close it.
+    const card = liveCard("st-dec-bare");
+    updateToolCall(card, frame("st-dec-bare", { status: "completed", declined: true }), "c1");
+    expect(card.querySelector(".tool-details")?.getAttribute("aria-hidden")).toBe("true");
+    card.remove();
+  });
+
+  it("keeps the mark when a later frame carries no refusal", () => {
+    // The wire field is `omitempty` on a bool that is only ever sent true, so an
+    // absent one means UNCHANGED. A frame that cleared the stamp would repaint the
+    // card as a plain success once the run's next status update landed.
+    const card = liveCard("st-dec-latch");
+    updateToolCall(
+      card,
+      frame("st-dec-latch", { status: "completed", declined: true, output: "plan rejected\n" }),
+      "c1",
+    );
+    updateToolCall(card, frame("st-dec-latch", { status: "completed" }), "c1");
+    expect(card.dataset["declined"]).toBe("1");
+    expect(card.dataset["outcome"]).toBe("declined");
+    card.remove();
+  });
+});

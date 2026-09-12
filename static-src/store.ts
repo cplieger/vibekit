@@ -2109,6 +2109,9 @@ export function foldToolCallDelta(prev: ToolCall, d: ToolCallUpdatePayload): Too
     ...(d.checkpoint !== undefined && { checkpoint: d.checkpoint }),
     ...(d.disclosed !== undefined && { disclosed: d.disclosed }),
     ...(d.denial !== undefined && { denial: d.denial }),
+    // ONE-WAY: the wire only ever sends `true`, so an absent field means unchanged
+    // rather than false and the mark is never cleared by a later frame.
+    ...(d.declined === true && { declined: true }),
   };
 }
 

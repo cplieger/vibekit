@@ -255,7 +255,7 @@ describe("summarize", () => {
 /** A settled card, as the group's DOM sees it. */
 function card(
   kind: string,
-  outcome: "ok" | "fail" | "warn" | "running",
+  outcome: "ok" | "fail" | "warn" | "declined" | "running",
   filename = "",
 ): HTMLElement {
   const c = document.createElement("div");
@@ -349,6 +349,56 @@ describe("grouping amendments", () => {
     const text = g.querySelector(".tool-group-count")?.textContent ?? "";
     expect(text).toContain("1 failed");
     expect(text).toContain("1 aborted");
+  });
+
+  it("paints a group of refused members declined and names the refusal", () => {
+    // A tool that RAN and answered no. Green would claim the work landed; the row's
+    // own word is "declined", and the group has to use the same one.
+    const g = groupWith(card("execute", "declined"), card("execute", "declined"));
+    const icon = g.querySelector(".tool-group-icon");
+    expect(icon?.classList.contains("is-declined")).toBe(true);
+    expect(icon?.classList.contains("is-ok")).toBe(false);
+    expect(icon?.querySelector("svg")?.outerHTML).toBe(
+      (iconEl(outcomeIcon("declined")) as HTMLElement).outerHTML,
+    );
+    expect(g.dataset["outcome"]).toBe("declined");
+    expect(g.querySelector(".tool-group-count")?.textContent ?? "").toContain("2 declined");
+  });
+
+  it("a refusal outranks a stop, and the summary still names both", () => {
+    // One mark for a mixed group, so the two amber states need an order: a refusal
+    // is something the WORK did and a stop is something the READER did, so the one
+    // they did not cause is the one to surface. Folding the other away would be a
+    // loss, which is why both clauses stay.
+    const g = groupWith(card("execute", "declined"), card("execute", "warn"));
+    const icon = g.querySelector(".tool-group-icon");
+    expect(icon?.classList.contains("is-declined")).toBe(true);
+    expect(icon?.classList.contains("is-warn")).toBe(false);
+    expect(g.dataset["outcome"]).toBe("declined");
+    const text = g.querySelector(".tool-group-count")?.textContent ?? "";
+    expect(text).toContain("1 declined");
+    expect(text).toContain("1 aborted");
+  });
+
+  it("a failure outranks a refusal, and a running member does too", () => {
+    const failed = groupWith(card("execute", "fail"), card("execute", "declined"));
+    expect(failed.dataset["outcome"]).toBe("fail");
+    const text = failed.querySelector(".tool-group-count")?.textContent ?? "";
+    expect(text).toContain("1 failed");
+    expect(text).toContain("1 declined");
+
+    // Not knowing yet outranks a settled refusal: the group's verdict is not in.
+    const running = groupWith(card("execute", "declined"), card("execute", "running"));
+    expect(running.dataset["outcome"]).toBe("running");
+    expect(running.querySelector(".tool-group-icon svg")).toBeNull();
+  });
+
+  it("DOES collapse a superseded group holding a refusal", () => {
+    // A refusal is a SETTLE, like a stop: it neither blocks the fold nor auto-opens
+    // the body. Only the failure count does either.
+    const g = groupWith(card("read", "ok"), card("read", "declined"));
+    autoCollapseGroup(g);
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
   });
 
   it("never auto-collapses a group holding a failure", () => {

@@ -240,35 +240,49 @@ export function refreshGroupHeader(group: HTMLElement): void {
   paintGroupOutcome(group, calls, counts);
 }
 
-/** How many settled members of a group failed, and how many were stopped. ONE
- *  walk, because the roll-up needs both and the FOLD needs only `failures` — a
- *  stopped member must keep folding, which is the ruling the delegate card
- *  already carries. */
+/** How many settled members of a group failed, how many refused, and how many
+ *  were stopped. ONE walk, because the roll-up needs all three and the FOLD needs
+ *  only `failures` — a stopped OR refused member must keep folding, since both
+ *  are settles, which is the ruling the delegate card already carries.
+ *
+ *  `denied` is deliberately in none of them, and the asymmetry with `declined` is
+ *  the reason rather than an omission: a policy refusal means the command never
+ *  RAN, so it contributes nothing to what this group did, while a declined call
+ *  ran and answered. */
 interface GroupCounts {
   readonly failures: number;
+  readonly declined: number;
   readonly aborted: number;
 }
 
 function countOutcomes(calls: HTMLElement[]): GroupCounts {
   let failures = 0;
+  let declined = 0;
   let aborted = 0;
   for (const c of calls) {
     const outcome = c.dataset["outcome"];
     if (outcome === "fail") {
       failures++;
+    } else if (outcome === "declined") {
+      declined++;
     } else if (outcome === "warn") {
       aborted++;
     }
   }
-  return { failures, aborted };
+  return { failures, declined, aborted };
 }
 
-/** `aborted` is the word a tool ROW announces for this state (`tool-card.ts`
- *  `outcomeWord("warn")`), so the group and its members agree. */
-function namedCounts({ failures, aborted }: GroupCounts): string {
+/** Every word here is the one a tool ROW announces for that state (`tool-card.ts`
+ *  `outcomeWord`), so the group and its members agree. Ordered worst-first, which
+ *  is also `paintGroupOutcome`'s order, so on the ordinary group — one non-clean
+ *  population — the mark and its own clause name the same thing. */
+function namedCounts({ failures, declined, aborted }: GroupCounts): string {
   const parts: string[] = [];
   if (failures > 0) {
     parts.push(`${String(failures)} failed`);
+  }
+  if (declined > 0) {
+    parts.push(`${String(declined)} declined`);
   }
   if (aborted > 0) {
     parts.push(`${String(aborted)} aborted`);
@@ -281,6 +295,12 @@ function namedCounts({ failures, aborted }: GroupCounts): string {
  *  the state. `denied` folds onto `ok` deliberately: the summary has no word for a
  *  policy refusal that is not this app's word for a stop.
  *
+ *  ONE mark for a MIXED group, so the two amber states need an order: `declined`
+ *  outranks `warn` because a refusal is something the WORK did and a stop is
+ *  something the READER did, so the one they did not cause is the one to surface.
+ *  The summary names both populations either way, which is what keeps the fold of
+ *  the other one from being a loss.
+ *
  *  The mark is `icons.ts` `outcomeIcon` rather than `applyOutcome`: this slot has no
  *  identity glyph to keep for a success. `running` writes no node — its mark is the
  *  hollow ring `14-tools.css` draws on the slot. */
@@ -291,9 +311,17 @@ function paintGroupOutcome(group: HTMLElement, calls: HTMLElement[], counts: Gro
   }
   const running = calls.some((c) => c.dataset["outcome"] === "running");
   const state =
-    counts.failures > 0 ? "fail" : running ? "running" : counts.aborted > 0 ? "warn" : "ok";
+    counts.failures > 0
+      ? "fail"
+      : running
+        ? "running"
+        : counts.declined > 0
+          ? "declined"
+          : counts.aborted > 0
+            ? "warn"
+            : "ok";
   group.dataset["outcome"] = state;
-  icon.classList.remove("is-ok", "is-fail", "is-warn", "is-running");
+  icon.classList.remove("is-ok", "is-fail", "is-warn", "is-declined", "is-running");
   icon.classList.add(`is-${state}`);
   if (state === "running") {
     icon.replaceChildren();

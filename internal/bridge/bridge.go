@@ -165,6 +165,12 @@ type Bridge struct {
 	// session creation and freezes them, so both doors must describe one spawn.
 	toolSearch bool
 	knowledge  bool
+	// supervised records that this session ACCEPTED `autopilot: off`, never that the
+	// chat asked for it — the request lives on the chat record, and conflating the two
+	// is what let a refused assert read as satisfied. False therefore covers both "the
+	// assert was refused" and "nobody asked", which is why the coordinator only reads it
+	// alongside the chat's own request.
+	supervised bool
 	// memory gates the `userMemoryOptIn` row's VALUE (never its presence) and contributes
 	// KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED to the child environment. Immutable after
 	// Start, and the environment is fixed when the subprocess starts anyway.
@@ -232,6 +238,18 @@ func (b *Bridge) CurrentMode() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.currentMode
+}
+
+// SupervisedApplied reports whether this bridge's session ACCEPTED `autopilot: off`.
+//
+// It says nothing about whether the chat ASKED for supervised mode: that request lives
+// on the chat record, and a caller must read both, or "false" cannot be told apart from
+// "nobody wanted it". The pair is what makes a refused assert reportable rather than
+// silent — see BridgeCoordinator.reportSupervisedNotApplied.
+func (b *Bridge) SupervisedApplied() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.supervised
 }
 
 // SessionTitle returns KAS's own title for the live session, from the session result's

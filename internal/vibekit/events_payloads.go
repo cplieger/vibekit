@@ -289,6 +289,16 @@ const (
 	// ErrCodeModeNotApplied means session/set_mode was refused at spawn. The chat's record
 	// holds the ACTUAL mode, so this event is the only thing that names the request.
 	ErrCodeModeNotApplied ErrorCode = "mode_not_applied"
+	// ErrCodeSupervisedNotApplied means the session refused `autopilot: off` at spawn, so
+	// the chat is running unsupervised and will NOT ask before writing.
+	//
+	// It DIVERGES from mode_not_applied in what the record then holds, and the divergence
+	// is deliberate: the mode path resets the record to the session's actual mode, while
+	// here the record keeps the REQUEST — supervised is the safer intent to remember, and
+	// keeping it is what makes the next spawn re-assert. So this event is the only thing
+	// that names the session's refusal, and without it a chat opened unsupervised behind
+	// a checkbox that said otherwise.
+	ErrCodeSupervisedNotApplied ErrorCode = "supervised_not_applied"
 	// ErrCodeModelNotServed means an explicitly-picked model is absent from the set this
 	// account's session advertises, so it was refused before the wire rather than rejected
 	// mid-prompt on every later turn.
@@ -477,10 +487,15 @@ type ToolCallUpdatePayload struct {
 	DiffsAppended []ToolDiff `json:"diffs_appended,omitempty"`
 	// Locations are REPLACED wholesale when present.
 	Locations []ToolLocation `json:"locations,omitempty"`
-	// The two non-pointer scalars last, so the GC scan region stops above them (govet
+	// The three non-pointer scalars last, so the GC scan region stops above them (govet
 	// fieldalignment). OutputReplace's meaning is on OutputDelta.
 	DurationMs    int  `json:"duration_ms,omitempty"`
 	OutputReplace bool `json:"output_replace,omitempty"`
+	// Declined is a ONE-WAY latch, so absent means unchanged rather than false: the
+	// mark is set on the terminal frame that reports the refusal and no later frame
+	// carries a verdict. That is what makes `omitempty` on a bool correct here — the
+	// only value it ever sends is true.
+	Declined bool `json:"declined,omitempty"`
 }
 
 // TerminalOutputPayload is the payload for type="terminal_output". Data is PLAIN text with

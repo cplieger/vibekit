@@ -390,18 +390,19 @@
   color: var(--c-accent);
 }
 
-/* A policy refusal is amber, not red: the tool did not break, it was not run.
-   Amber is shared with a stop, so the SHAPE separates them: a horizontal bar
-   knocked out of the disc for a stop, a diagonal one for a policy refusal
-   (WCAG 1.4.1 — tint alone would be one channel). */
+/* THREE AMBER STATES, ONE DECLARATION, and the BAR'S ANGLE is what separates
+   them. All three mean "this did not complete and nothing broke", so red would
+   send the reader to debug a tool that behaved and green would claim a result
+   nobody got: `is-warn` is stopped rather than finished (a cancelled turn, an
+   aborted run), `is-declined` is a tool that ran and refused, `is-denied` is a
+   command policy never ran at all. Tint alone would be one channel over three
+   states (WCAG 1.4.1), so the silhouettes carry it — horizontal, vertical and 45
+   degrees, one bar length at one inset from the rim, in `icons.ts`
+   ICON_OUTCOME_*. One rule rather than three, because a per-state copy of one
+   colour is where the family drifts apart. */
+.tool-icon.is-warn,
+.tool-icon.is-declined,
 .tool-icon.is-denied {
-  color: var(--c-yellow);
-}
-
-/* Stopped rather than finished (a cancelled or aborted workflow run). Amber for
-   the same reason a refusal is: the work did not fail, it did not complete. Same
-   shape rule as above — the bar's angle is what tells the two apart. */
-.tool-icon.is-warn {
   color: var(--c-yellow);
 }
 
@@ -505,7 +506,7 @@
 
 /* THE GROUP HEADER CARRIES A VERDICT RATHER THAN A KIND, and it shares
    `.tool-icon` for the tint classes (`is-ok` / `is-fail` / `is-warn` /
-   `is-running`).
+   `is-declined` / `is-running`).
    `tool-group.ts` paintGroupOutcome writes an `outcomeIcon` node here — the same
    shared silhouette set every other outcome surface reads — so a collapsed group
    of twelve searches shows a verdict and not a magnifier; the KIND is named in

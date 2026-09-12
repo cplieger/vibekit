@@ -48,6 +48,7 @@ const {
   dropTail,
   initBlockRenderer,
   setSupersededMessages,
+  setRunCardOwners,
 } = await import("./messages-blocks.js");
 const {
   blockKey,
@@ -467,6 +468,121 @@ describe("one run card per run, in the message that launched it", () => {
 
     disposeAssistantBody(b.id);
     expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE CALL THAT STARTED THE RUN HOSTS ITS CARD; EVERY LATER MENTION IS A ROW.
+//
+// `run_workflow` and `inspect_workflow` are indistinguishable to the client: both
+// carry a `workflow_id` decoded off a `{workflowId, status}` rawOutput (MEASURED
+// identical on the 2.21.4 bundle), the ACP frame carries no action type, and the
+// title is model-composed. So the branch cannot be keyed on the call's kind, and
+// before the owner map an `inspect_workflow` in the same message took the launch's
+// branch: `bindRunCard` seated its block on the launch's card and `setLaunch` wrote
+// the INSPECT's status and output over the launch's.
+//
+// The owner is derived per pass over the resident window (`block-window.ts`
+// `runCardOwners`) and installed by the paint, so these cases install it by hand.
+// An ABSENT owner is a real state — a surface reaching the dispatcher directly —
+// and fails toward the pre-owner behaviour rather than toward no card at all.
+// ---------------------------------------------------------------------------
+
+describe("only the call that started a run hosts its card", () => {
+  beforeEach(() => {
+    resetBlockRenders();
+    // Installed by the paint per pass; cleared so no case inherits another's.
+    setRunCardOwners(new Map());
+  });
+
+  /** A call naming a run. `Inspect Workflow` and `Run Workflow` differ in the title
+   *  alone, which is exactly why the title cannot be the discriminator. */
+  const mention = (id: string, wf: string, title: string): ToolCall =>
+    ({
+      id,
+      title,
+      kind: "other",
+      status: "completed",
+      workflow_id: wf,
+    }) as unknown as ToolCall;
+
+  function renderOwned(
+    blocks: Record<string, unknown>[],
+    toolCalls: ToolCall[],
+  ): { wrap: HTMLElement; id: string } {
+    const wrap = document.createElement("div");
+    const id = `m-own-${String(Math.random())}`;
+    buildAssistantBody(
+      wrap,
+      { id, role: "assistant", content: "", blocks, tool_calls: toolCalls } as unknown as Message,
+      CHAT_ID,
+      false,
+    );
+    return { wrap, id };
+  }
+
+  it("gives a later mention of the run a tool card, not the run's box", () => {
+    setRunCardOwners(new Map([["wf_own", "t-launch"]]));
+    const a = renderOwned(
+      [toolUse("t-launch"), toolUse("t-inspect")],
+      [
+        mention("t-launch", "wf_own", "Run Workflow"),
+        mention("t-inspect", "wf_own", "Inspect Workflow"),
+      ],
+    );
+
+    expect(shape(a.wrap)).toEqual(["run(wf_own)", "group(1)"]);
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+    // And the later mention's own block resolves to its ROW, not to the card — the
+    // stamp is what a search hit lands on.
+    const card = a.wrap.querySelector(".run-card");
+    expect(blockElement(a.id, 0)).toBe(card);
+    expect(blockElement(a.id, 1)).not.toBe(card);
+  });
+
+  it("leaves a mention a tool card when the owner is in ANOTHER message", () => {
+    // The launch has paged out or sits in an earlier turn. The card lives where the
+    // launch is; this message contributes a row and no box.
+    setRunCardOwners(new Map([["wf_far", "t-elsewhere"]]));
+    const a = renderOwned([toolUse("t-only")], [mention("t-only", "wf_far", "Inspect Workflow")]);
+
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(0);
+    expect(shape(a.wrap)).toEqual(["group(1)"]);
+  });
+
+  it("falls toward the pre-owner behaviour when NO owner is named", () => {
+    // Empty map: every mention takes the launch branch, which is one card per run per
+    // render, so the reader still gets the box. Failing the other way would leave a
+    // dispatcher-driven surface with no run card at all.
+    const a = renderOwned(
+      [toolUse("t-l2"), toolUse("t-i2")],
+      [mention("t-l2", "wf_none", "Run Workflow"), mention("t-i2", "wf_none", "Inspect Workflow")],
+    );
+
+    expect(shape(a.wrap)).toEqual(["run(wf_none)"]);
+  });
+
+  it("exempts a DETACHED render, whose lane the transcript's owner does not describe", () => {
+    // The subagent page renders one delegate's blocks and may not hold the launch at
+    // all, so an owner naming a call it does not have must not cost it the card.
+    setRunCardOwners(new Map([["wf_det2", "t-not-here"]]));
+    const detached = document.createElement("div");
+    buildDetachedBody(
+      detached,
+      {
+        id: "m-own-det",
+        role: "assistant",
+        content: "",
+        blocks: [toolUse("t-det2")],
+        tool_calls: [mention("t-det2", "wf_det2", "Inspect Workflow")],
+      } as unknown as Message,
+      CHAT_ID,
+      "sub-own",
+      false,
+      [blockKey("m-own-det", 0)],
+    );
+
+    expect(detached.querySelectorAll(".run-card")).toHaveLength(1);
   });
 });
 
@@ -1996,8 +2112,9 @@ describe("thinking blocks mount open per LANE and seal on the next sibling", () 
 describe("a body mounts a block RANGE, and the grouping is derived", () => {
   beforeEach(() => {
     resetBlockRenders();
-    // The paint installs this per pass; cleared here so no case inherits another's.
+    // The paint installs both per pass; cleared here so no case inherits another's.
     setSupersededMessages(new Set());
+    setRunCardOwners(new Map());
   });
 
   const cmd = (id: string): ToolCall => call(id, "Run Command");

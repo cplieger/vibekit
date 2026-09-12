@@ -849,27 +849,82 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 			}
 
 			var reported bool
-			for _, e := range bufferedSince(h, since) {
-				var msg vibekit.ServerEvent
-				if json.Unmarshal(e.Event.Data, &msg) != nil || msg.Type != vibekit.EventError {
+			for _, p := range errorPayloadsSince(t, h, since) {
+				if p.Code != vibekit.ErrCodeModeNotApplied {
 					continue
 				}
-				// ServerEvent.Payload is an `any`, so round-trip it to read the
-				// typed payload back out.
-				raw, mErr := json.Marshal(msg.Payload)
-				if mErr != nil {
-					continue
-				}
-				var p vibekit.ErrorPayload
-				if json.Unmarshal(raw, &p) == nil && p.Code == vibekit.ErrCodeModeNotApplied {
-					reported = true
-					if !strings.Contains(p.Message, tc.requested) {
-						t.Errorf("message %q does not name the requested mode %q", p.Message, tc.requested)
-					}
+				reported = true
+				if !strings.Contains(p.Message, tc.requested) {
+					t.Errorf("message %q does not name the requested mode %q", p.Message, tc.requested)
 				}
 			}
 			if reported != tc.wantReport {
 				t.Errorf("mode_not_applied reported = %v, want %v", reported, tc.wantReport)
+			}
+		})
+	}
+}
+
+// TestSpawnBridge_ReportsSupervisedThatWasNotApplied pins the session door's half of the
+// supervised fail-open. applySupervised is best-effort inside Start — it logs at ERROR and
+// continues — so a session that refuses `autopilot: off` used to open the chat UNSUPERVISED
+// while the record, ChatHeader.supervised_mode and every client's checkbox still said
+// supervised. The mode path already reported its own divergence; this one reached the user
+// nowhere, on the one setting whose whole job is to stop a write landing unreviewed.
+//
+// The third case is why the report cannot key on the bridge's flag alone: false also means
+// nobody asked, so a chat in autopilot would report a refusal on every spawn.
+func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
+	cases := []struct {
+		name        string
+		supervised  bool
+		assertFails bool
+		wantReport  bool
+	}{
+		{"a refused assert is reported", true, true, true},
+		{"an accepted assert is not reported", true, false, false},
+		{"a chat that asked for nothing is not reported", false, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := newFakeChatStore()
+			br := newFakeBridge()
+			br.mu.Lock()
+			br.supervisedAssertFails = tc.assertFails
+			br.mu.Unlock()
+			h := New(t.Context(), "/tmp/work", func() ACPBridge { return br }, cs)
+			cs.Bus = h
+			h.mcpRegistry.SignalReady()
+			_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+				c.Name = "A"
+				c.SupervisedMode = tc.supervised
+				return true
+			})
+
+			_, since := h.bus.fanout.Bounds()
+			if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+				t.Fatalf("OpenBridge: %v", err)
+			}
+
+			// The chat keeps the REQUEST, unlike the mode path, which resets the record
+			// to what the session took: supervised is the safer intent to remember, so
+			// the next spawn re-asserts and this event is a report rather than the only
+			// chance to act.
+			c, _ := cs.Get(t.Context(), "c1")
+			if c.SupervisedMode != tc.supervised {
+				t.Errorf("chat.SupervisedMode = %v, want the request %v kept for the next spawn",
+					c.SupervisedMode, tc.supervised)
+			}
+
+			var reported bool
+			for _, p := range errorPayloadsSince(t, h, since) {
+				if p.Code == vibekit.ErrCodeSupervisedNotApplied {
+					reported = true
+				}
+			}
+			if reported != tc.wantReport {
+				t.Errorf("supervised_not_applied reported = %v, want %v; a silent refusal leaves the "+
+					"chat writing unreviewed with the checkbox still ticked", reported, tc.wantReport)
 			}
 		})
 	}

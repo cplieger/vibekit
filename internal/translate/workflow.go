@@ -21,13 +21,11 @@ const runOriginAgent = "agent"
 
 // kasRunStart mirrors _kiro/workflow/run_start. `nodeTree` and `inputs` are not decoded: the
 // client refetches `inspect`, whose `state.root` carries the same tree with execution facts,
-// so the launch-time copy would only ever be staler. `parentSessionId` IS decoded, as the
-// only origin signal on this wire — vibekit's own launch path sends none, so a frame carrying
-// one is a run started from inside a session.
+// so the launch-time copy would only ever be staler. `parentSessionId` is NOT decoded — see
+// logAgentRun for what replaced it as the origin signal.
 type kasRunStart struct {
-	WorkflowID      string `json:"workflowId"`
-	WorkflowName    string `json:"workflowName"`
-	ParentSessionID string `json:"parentSessionId"`
+	WorkflowID   string `json:"workflowId"`
+	WorkflowName string `json:"workflowName"`
 }
 
 // kasRunNode is the shape shared by the seven progress frames. Every field is optional across
@@ -46,15 +44,13 @@ type kasRunNode struct {
 // kasRunComplete mirrors _kiro/workflow/run_complete. `finalState` is not adopted as client
 // state — the client refetches rather than rendering a snapshot from an event — but
 // `workflowName` is read out of it for the log line, because this is the one lifecycle
-// notification with no top-level name. `parentSessionId` is read top level FIRST, which is
-// upstream's primary source, with the copy inside the state as its back-compat fallback.
+// notification with no top-level name. Neither copy of `parentSessionId` is decoded; see
+// logAgentRun.
 type kasRunComplete struct {
-	WorkflowID      string `json:"workflowId"`
-	Status          string `json:"status"`
-	ParentSessionID string `json:"parentSessionId"`
-	FinalState      struct {
-		WorkflowName    string `json:"workflowName"`
-		ParentSessionID string `json:"parentSessionId"`
+	WorkflowID string `json:"workflowId"`
+	Status     string `json:"status"`
+	FinalState struct {
+		WorkflowName string `json:"workflowName"`
 	} `json:"finalState"`
 }
 
@@ -62,10 +58,24 @@ type kasRunComplete struct {
 // append-only lines correlated by workflow_id, because such a run has no record, no supervisor
 // and no host-lost detection, so otherwise the only evidence it existed is a chat transcript
 // somebody has to open. It holds no state, so it cannot see a run whose host died between the
-// two lines. Silent for a parentless run, which was launched by a person already holding its
-// run id, so logging it would dilute the class this line exists to make greppable.
-func logAgentRun(msg, workflowID, recipe, parentSessionID string, extra ...any) {
-	if parentSessionID == "" {
+// two lines. Silent for a run VIBEKIT launched, which a person or a schedule already holds a
+// run id and a lease for, so logging it would dilute the class this line exists to make
+// greppable.
+//
+// The discriminator is the frame's DELIVERY ADDRESS, not `parentSessionId`. It used to be that
+// payload field, on the premise that vibekit's own launch path sent none — a premise
+// `_kiro/workflow/new` retired in 0.63.3 by REQUIRING one, so every manual and scheduled run
+// would now log as origin=agent and the class would be worthless. The address is a fact
+// vibekit owns rather than one upstream owns: (*Runtime).dispatch hands a run-bridge lifecycle
+// frame an EMPTY chat id, while a chat bridge's Forward stamps that chat's real id. So a
+// non-empty chat id IS "launched from inside a chat session", and HandleRunStart already rests
+// on the same property one line below for the Scheduled flag.
+//
+// Not the lease, and the ordering is why: observeComplete calls forgetBounds — which releases
+// the lease — BEFORE HandleRunComplete, so a lease-existence predicate reads false for every
+// terminal run vibekit launched, mis-classifying exactly the frame it has to get right.
+func logAgentRun(msg string, chatID vibekit.ChatID, workflowID, recipe string, extra ...any) {
+	if chatID == "" {
 		return
 	}
 	slog.Info(msg,
@@ -84,7 +94,7 @@ func (t *Translator) HandleRunStart(ctx context.Context, chatID vibekit.ChatID, 
 	if !ok || p.WorkflowID == "" {
 		return
 	}
-	logAgentRun("agent-launched workflow run started", p.WorkflowID, p.WorkflowName, p.ParentSessionID)
+	logAgentRun("agent-launched workflow run started", chatID, p.WorkflowID, p.WorkflowName)
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunStarted, chatID, vibekit.RunStartedPayload{
 		WorkflowID: p.WorkflowID,
 		Name:       p.WorkflowName,
@@ -106,8 +116,8 @@ func (t *Translator) HandleRunComplete(ctx context.Context, chatID vibekit.ChatI
 	if !ok || p.WorkflowID == "" {
 		return
 	}
-	logAgentRun("agent-launched workflow run finished", p.WorkflowID, p.FinalState.WorkflowName,
-		cmp.Or(p.ParentSessionID, p.FinalState.ParentSessionID), "status", p.Status)
+	logAgentRun("agent-launched workflow run finished", chatID, p.WorkflowID,
+		p.FinalState.WorkflowName, "status", p.Status)
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunFinished, chatID, vibekit.RunFinishedPayload{
 		WorkflowID: p.WorkflowID,
 		Status:     p.Status,

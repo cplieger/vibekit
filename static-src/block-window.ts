@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import { parseStepSubtask } from "./step-subtask.js";
-import { isSubagentInvocation } from "./tool-schema.js";
+import { isInternalToolTitle, isSubagentInvocation } from "./tool-schema.js";
 import type { Block, Message, ToolCall } from "./types.js";
 import type { Turn } from "./turns.js";
 
@@ -135,6 +135,55 @@ export function supersededMessages(turns: readonly Turn[]): ReadonlySet<string> 
         out.add(m.id);
       }
       laterContent = laterContent || messageRendersContent(m);
+    }
+  }
+  return out;
+}
+
+/** run id → the id of the tool call that HOSTS that run's card: the FIRST call in turn
+ *  order naming each run, every later one rendering as an ordinary tool card.
+ *
+ *  Derived here for `supersededMessages`' reason — a `MsgRender` is per message and
+ *  cannot see its neighbours, so it cannot tell the launch from a later mention — and
+ *  as a per-pass MAP rather than a live registry, because the dispatcher's two gates
+ *  run in different passes over the same message: a registry written by the paint
+ *  answers "no host yet, I host" to both calls in ONE message, which is the double
+ *  bind this exists to prevent.
+ *
+ *  It mirrors `placeBlock`'s own conditions rather than scanning `tool_calls`, so an
+ *  owner is always a call that branch would build a card for: a `tool_use` BLOCK, in
+ *  the parent lane (a step's or a delegate's is dropped), whose call is not internal
+ *  bookkeeping. Block order, because that is the order the transcript renders in.
+ *
+ *  Scope is the RESIDENT window, so a run whose launch is paged out has no card at
+ *  all — the ratified reading, with `run-bar.ts` carrying a live run and `/history` a
+ *  finished one. */
+export function runCardOwners(turns: readonly Turn[]): ReadonlyMap<string, string> {
+  const out = new Map<string, string>();
+  for (const t of turns) {
+    for (const m of t.body) {
+      // Only the calls that NAME a run, which is 0 or 1 of them on almost every
+      // message, so the block walk below costs one lookup per block.
+      const runByCall = new Map<string, string>();
+      for (const c of m.tool_calls ?? []) {
+        const runID = c.workflow_id ?? "";
+        if (runID !== "" && !isInternalToolTitle(c.title)) {
+          runByCall.set(c.id, runID);
+        }
+      }
+      if (runByCall.size === 0) {
+        continue;
+      }
+      for (const b of m.blocks ?? []) {
+        if (b.type !== "tool_use" || (b.agent_subtask_id ?? "") !== "") {
+          continue;
+        }
+        const callID = b.tool_call_id ?? "";
+        const runID = runByCall.get(callID);
+        if (runID !== undefined && !out.has(runID)) {
+          out.set(runID, callID);
+        }
+      }
     }
   }
   return out;

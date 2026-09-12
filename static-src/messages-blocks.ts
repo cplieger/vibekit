@@ -155,6 +155,36 @@ export function setSupersededMessages(ids: ReadonlySet<string>): void {
   supersededMsgs = ids;
 }
 
+// run id → the tool call that hosts that run's card. The other fact a per-message render
+// cannot derive (`block-window.ts` `runCardOwners`), installed on the same pass and for
+// the same reason, and read by `ownsRunCard` alone.
+//
+// A per-pass MAP rather than a live registry, because the two gates that read it run in
+// different passes over one message: a registry the paint writes answers "no host yet, I
+// host" to both an `inspect_workflow` call and the launch beside it, which posts the box
+// twice and calls `bindRunCard` twice on one store cell. A derived map cannot race.
+//
+// An ABSENT run therefore fails toward the pre-owner behaviour — every mention builds the
+// card — which is what keeps a render the paint never installed a map for (a test, a
+// surface reaching the dispatcher directly) rendering rather than silently cardless.
+
+let runCardOwnerCalls: ReadonlyMap<string, string> = new Map();
+
+export function setRunCardOwners(owners: ReadonlyMap<string, string>): void {
+  runCardOwnerCalls = owners;
+}
+
+/** Whether THIS tool call is the one that hosts `runID`'s card. A DETACHED render is
+ *  exempt: the subagent page is its own surface with its own lane, and the transcript's
+ *  owner names a call that page may not even hold. */
+function ownsRunCard(st: MsgRender, runID: string, toolCallID: string): boolean {
+  if (st.detached) {
+    return true;
+  }
+  const owner = runCardOwnerCalls.get(runID);
+  return owner === undefined || owner === toolCallID;
+}
+
 // Which collapsible containers are open, so a re-mount restores what the reader chose.
 // A DELEGATE has no key, because its card is not a disclosure. Detached renders register
 // nothing: a disclosure the reader set is a property of the transcript.
@@ -1484,17 +1514,16 @@ function runCardFor(st: MsgRender, workflowID: string, name: string, owner = fal
     return existing;
   }
   // The launch call is the card's only witness for its label and for a launch that
-  // FAILED, and a card created from a step whose launch block is out of window has
-  // to find it here — otherwise the card keeps the placeholder name and sits at
-  // "starting" forever.
+  // FAILED. `st.tools` order is the message's own, so on the ordinary message this
+  // is the owner itself; it differs only where the owner is a LATER mention, whose
+  // label is the placeholder either way.
   const launch = st.tools.find((tc) => workflowInvocation(tc) === workflowID);
   if (!st.detached) {
-    // ONE box per run per TRANSCRIPT, not per message. The server folds a run's
-    // later frames into a NEW assistant message per turn-segment, so a
-    // per-message key rebuilt the card in every segment — two boxes in the
-    // launching turn, two more each later turn, all reading one store cell.
-    // A later message routes into the first message's card instead; step rows
-    // are keyed by node path, so cross-message routing lands in the right row.
+    // ONE box per run per TRANSCRIPT, not per message. Still live under the owner
+    // rule, because ownership is derived over the RESIDENT window: loading an older
+    // page can put an earlier mention of the same run ahead of the current owner, so
+    // the card re-homes into that message rather than being rebuilt beside itself.
+    // Step rows are keyed by node path, so the move lands in the right row.
     const host = runCardHosts.get(st.chatID)?.get(workflowID);
     const hosted = host?.runs.get(workflowID);
     if (hosted !== undefined && host !== undefined) {
@@ -1774,10 +1803,12 @@ function placeBlock(
         return;
       }
       // A WORKFLOW LAUNCH becomes the run's card, not a tool row. The call has no
-      // subtask of its own, so this branch is ahead of the subtask checks. A card a
-      // step's earlier frame already built is FOUND here rather than replaced.
+      // subtask of its own, so this branch is ahead of the subtask checks. Only the
+      // run's OWNER takes it: a later mention — an `inspect_workflow` on the same run —
+      // renders as an ordinary tool card, because taking this branch would seat its
+      // block on the card's element and clobber the launch's state with the inspect's.
       const runID = workflowInvocation(tc);
-      if (subtask === "" && runID !== "") {
+      if (subtask === "" && runID !== "" && ownsRunCard(st, runID, tc.id)) {
         // Stamped like every other kind, so a search hit on the launch call
         // resolves to the card it opened rather than to the whole message.
         stampBlock(st, bindRunCard(st, runID, tc), m.id, i);
@@ -2497,10 +2528,10 @@ function indexGroups(
           break; // mounts nothing, so it posts nothing
         }
         const runID = workflowInvocation(tc);
-        if (runID !== "") {
-          // UNCONDITIONAL: the launch is the card's only creator, and `bindRunCard`
-          // re-homes it into the render holding the LAUNCH, so this block always
-          // mounts one here.
+        if (runID !== "" && ownsRunCard(st, runID, tc.id)) {
+          // Gated on the OWNER, exactly as `placeBlock` is: a later mention of the same
+          // run mounts a tool ROW, so pricing a box for it would post a break at an
+          // index that holds no box and split the tool run around nothing.
           openBox(`run:${runID}`, "", i);
         } else if (isPipelineInvocation(tc)) {
           // Priced at the DRIVER's block, where the box stands: `driverNeedsBox`

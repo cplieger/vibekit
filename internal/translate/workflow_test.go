@@ -200,11 +200,12 @@ func TestRunStart_CarriesTheName(t *testing.T) {
 	}
 }
 
-// TestRunStart_CarriesTheScheduledMark pins a flag no client can derive: both
-// scheduled and manual launches are parentless, and `parentSessionId` is empty
-// for both, so only the launch path knows.
+// TestRunStart_CarriesTheScheduledMark pins a flag no client can derive: a scheduled
+// and a manual launch are indistinguishable on this frame, so only the launch path
+// knows which is which.
 //
-// The lookup must key on the WORKFLOW id — chatID is "" for exactly these runs.
+// The lookup must key on the WORKFLOW id — chatID is "" for exactly these runs, which
+// is also the property logAgentRun's origin gate rests on.
 func TestRunStart_CarriesTheScheduledMark(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -720,13 +721,16 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 		startMsg = "agent-launched workflow run started"
 		endMsg   = "agent-launched workflow run finished"
 	)
+	// The gate is the DELIVERY ADDRESS, so the case axis is the chat id: a chat
+	// bridge's Forward stamps that chat's real id, and (*Runtime).dispatch hands a
+	// run bridge's lifecycle frames an empty one.
 	cases := []struct {
 		name       string
-		parent     string
+		chatID     vibekit.ChatID
 		wantLogged bool
 	}{
-		{"agent-launched run is recorded", testParent, true},
-		{"manual run is not", "", false},
+		{"a run launched from inside a chat is recorded", testChat, true},
+		{"a run vibekit launched is not", "", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -735,18 +739,21 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 			tr := New(rolesOf(capturing(&events)))
 			ctx := t.Context()
 
-			start := map[string]any{"workflowId": "wf_7", "workflowName": "publish-pr"}
+			// Both frames carry a parentSessionId in BOTH cases, because since 0.63.3
+			// every run has one — vibekit's own launch sends the run bridge's session.
+			// So a payload field cannot separate these two runs and the address must.
+			start := map[string]any{
+				"workflowId": "wf_7", "workflowName": "publish-pr", "parentSessionId": testParent,
+			}
 			done := map[string]any{
 				"workflowId": "wf_7",
 				"status":     "completed",
-				"finalState": map[string]any{"workflowName": "publish-pr"},
+				"finalState": map[string]any{
+					"workflowName": "publish-pr", "parentSessionId": testParent,
+				},
 			}
-			if c.parent != "" {
-				start["parentSessionId"] = c.parent
-				done["finalState"].(map[string]any)["parentSessionId"] = c.parent
-			}
-			tr.HandleRunStart(ctx, testChat, notif("_kiro/workflow/run_start", start))
-			tr.HandleRunComplete(ctx, testChat, notif("_kiro/workflow/run_complete", done))
+			tr.HandleRunStart(ctx, c.chatID, notif("_kiro/workflow/run_start", start))
+			tr.HandleRunComplete(ctx, c.chatID, notif("_kiro/workflow/run_complete", done))
 
 			// The events are unconditional; only the log line is gated. Asserting
 			// this keeps the origin gate from being "reads run_start" by accident.
@@ -755,7 +762,7 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 			}
 			if !c.wantLogged {
 				if n := rec.Count("agent-launched"); n != 0 {
-					t.Errorf("a parentless run produced %d agent-origin log line(s), want 0", n)
+					t.Errorf("a run vibekit launched produced %d agent-origin log line(s), want 0", n)
 				}
 				return
 			}
@@ -784,32 +791,43 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 	}
 }
 
-// TestRunComplete_ReadsTopLevelParentSessionID sends ONLY the top-level field,
-// which the case above cannot distinguish because it sends both. Without that
-// decode the terminal line disappears silently while the launch line prints.
+// TestAgentLaunchedRun_IgnoresTheParentSessionField is the regression guard for the
+// origin class, and it replaces a test whose whole subject this change deleted (which
+// top-level-vs-finalState copy of `parentSessionId` the terminal frame decodes).
+//
+// Since 0.63.3 `_kiro/workflow/new` REQUIRES a parent, so vibekit's own manual and
+// scheduled launches send the run bridge's session and every lifecycle frame carries
+// one. A gate keyed on that field would therefore log every one of them as
+// origin=agent and make the greppable class worthless — which is the whole population
+// it exists to isolate: no lease, no record, no supervisor.
 //
 // slog's default logger is process-global, so no t.Parallel here.
-func TestRunComplete_ReadsTopLevelParentSessionID(t *testing.T) {
-	const endMsg = "agent-launched workflow run finished"
+func TestAgentLaunchedRun_IgnoresTheParentSessionField(t *testing.T) {
 	rec := capture.Default(t)
 	var events []vibekit.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
+	ctx := t.Context()
 
-	tr.HandleRunComplete(t.Context(), testChat, notif("_kiro/workflow/run_complete", map[string]any{
+	// The exact shape a run VIBEKIT launched now produces: a populated parent in both
+	// positions, delivered on an empty chat id because it came off a run bridge.
+	tr.HandleRunStart(ctx, "", notif("_kiro/workflow/run_start", map[string]any{
+		"workflowId": "wf_9", "workflowName": "nightly", "parentSessionId": testParent,
+	}))
+	tr.HandleRunComplete(ctx, "", notif("_kiro/workflow/run_complete", map[string]any{
 		"workflowId":      "wf_9",
 		"status":          "completed",
 		"parentSessionId": testParent,
-		// finalState deliberately carries NO parentSessionId: only workflowName,
-		// which genuinely has no top-level counterpart on this frame.
-		"finalState": map[string]any{"workflowName": "publish-pr"},
+		"finalState": map[string]any{
+			"workflowName": "nightly", "parentSessionId": testParent,
+		},
 	}))
 
-	if rec.CountExact(endMsg) != 1 {
-		t.Fatalf("got %d %q lines, want 1; a top-level parentSessionId is the primary origin signal",
-			rec.CountExact(endMsg), endMsg)
+	if n := rec.Count("agent-launched"); n != 0 {
+		t.Errorf("a run vibekit launched produced %d agent-origin log line(s), want 0; "+
+			"the gate is reading parentSessionId, which every run now carries", n)
 	}
-	if !rec.HasAttr(endMsg, "recipe", "publish-pr") {
-		got, _ := rec.AttrValue(endMsg, "recipe")
-		t.Errorf("%q: recipe = %q, want %q (still the one field only finalState carries)", endMsg, got, "publish-pr")
+	// The SSE events are what the client needs and they are never gated.
+	if len(events) != 2 {
+		t.Fatalf("got %d SSE events, want 2 (started + finished)", len(events))
 	}
 }

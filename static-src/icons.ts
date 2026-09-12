@@ -367,6 +367,17 @@ const ICON_OUTCOME_WARN = svg(
   `<path d="${OUTCOME_DISC}M8.1 10.75h7.8v2.5h-7.8z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
 );
 
+/** The SAME bar VERTICAL, for a tool that ran and refused. Bar angle is the whole
+ *  family: horizontal is stopped, vertical is declined, 45 degrees is blocked by
+ *  policy — one length, one inset from the rim, three angles, so a reader learns
+ *  one shape and reads the difference off its rotation. It is its own silhouette
+ *  rather than a re-tint of the stop above, because hue would then be the only
+ *  channel separating two states that mean different things (WCAG 1.4.1). */
+const ICON_OUTCOME_DECLINED = svg(
+  "ui",
+  `<path d="${OUTCOME_DISC}M10.75 8.1h2.5v7.8h-2.5z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
+);
+
 /** The SAME bar at 45 degrees, so the ANGLE is the whole difference between a
  *  policy refusal and a stop; its four corners sit 4.1 from the centre, inside the
  *  rim like the one above. The pair used to differ in LENGTH as well (16 against
@@ -379,12 +390,13 @@ const ICON_OUTCOME_DENIED = svg(
 /** The states the glyph set covers. `ok` is here for the surfaces with no
  *  identity glyph of their own to tint (a group header, an exec-tree row); a
  *  tool card keeps its own glyph for `ok` and never asks. */
-type OutcomeGlyph = "ok" | "fail" | "warn" | "denied";
+type OutcomeGlyph = "ok" | "fail" | "warn" | "declined" | "denied";
 
 const ICON_BY_OUTCOME: Readonly<Record<OutcomeGlyph, string>> = {
   ok: ICON_OUTCOME_OK,
   fail: ICON_OUTCOME_FAIL,
   warn: ICON_OUTCOME_WARN,
+  declined: ICON_OUTCOME_DECLINED,
   denied: ICON_OUTCOME_DENIED,
 };
 

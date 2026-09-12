@@ -117,6 +117,31 @@ func extractTypes(t *testing.T, events []sse.ReplayEvent) []string {
 	return out
 }
 
+// errorPayloadsSince returns the ErrorPayload of every `error` event buffered after
+// sinceID. It exists because ServerEvent.Payload is an `any`, so reading a typed
+// payload back off the wire is a two-step round-trip every caller otherwise writes out
+// again; a non-error event and an undecodable payload are SKIPPED rather than fatal,
+// since the buffer legitimately carries unrelated frames.
+func errorPayloadsSince(t *testing.T, h *Runtime, sinceID uint64) []vibekit.ErrorPayload {
+	t.Helper()
+	var out []vibekit.ErrorPayload
+	for _, e := range bufferedSince(h, sinceID) {
+		var msg vibekit.ServerEvent
+		if json.Unmarshal(e.Event.Data, &msg) != nil || msg.Type != vibekit.EventError {
+			continue
+		}
+		raw, err := json.Marshal(msg.Payload)
+		if err != nil {
+			continue
+		}
+		var p vibekit.ErrorPayload
+		if json.Unmarshal(raw, &p) == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // missingEvents ignores order within `got`: it backs did-these-fire assertions, which
 // stay at the call site so a failure names the case rather than a shared helper.
 func missingEvents(got []string, want ...string) []string {

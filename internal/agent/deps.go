@@ -191,6 +191,11 @@ type ACPBridge interface {
 	// arrived at, the position forward must have folded up to. Zero on a
 	// session/new, and zero is also legal, so pair it with the load returning.
 	SessionLoadSeq() uint64
+	// SupervisedApplied reports whether this session ACCEPTED `autopilot: off`.
+	// It says nothing about whether the chat asked for it — that request is on the
+	// chat record — so read both, or a chat that never wanted supervised mode is
+	// indistinguishable from one whose assert was refused.
+	SupervisedApplied() bool
 }
 
 // ACPBridgeFactory creates new ACPBridge instances, once per chat and once for

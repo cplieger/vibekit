@@ -9,6 +9,7 @@
 import { describe, it, expect } from "vitest";
 import {
   planResidency,
+  runCardOwners,
   sliceTurn,
   supersededMessages,
   turnCost,
@@ -385,5 +386,119 @@ describe("supersededMessages", () => {
     // own fold (`fold-state.ts`), not this one.
     const ids = supersededMessages([turn("t1", [msg("a", 2)]), turn("t2", [msg("b", 2)])]);
     expect([...ids]).toEqual([]);
+  });
+});
+
+describe("runCardOwners", () => {
+  interface RunCall {
+    readonly id: string;
+    readonly run: string;
+    /** Non-empty makes the block a STEP's or a delegate's, which `placeBlock` drops. */
+    readonly subtask?: string;
+    readonly title?: string;
+  }
+
+  /** One assistant message whose blocks are tool cards, each naming a run. The BLOCK
+   *  is what the dispatcher gates on, so a fixture for this has to carry both halves. */
+  function runMsg(id: string, calls: readonly RunCall[]): Message {
+    return {
+      id,
+      role: "assistant",
+      ts: 2,
+      blocks: calls.map((c) => ({
+        type: "tool_use",
+        tool_call_id: c.id,
+        ...(c.subtask === undefined ? {} : { agent_subtask_id: c.subtask }),
+      })),
+      tool_calls: calls.map((c) => ({
+        id: c.id,
+        title: c.title ?? "Run Workflow",
+        kind: "other",
+        status: "completed",
+        workflow_id: c.run,
+      })),
+    } as unknown as Message;
+  }
+
+  it("names the FIRST call of a run and no other", () => {
+    // The defect this closes: `inspect_workflow` echoes the same `workflow_id`, and
+    // before the owner rule BOTH calls took the run-card branch — the inspect's block
+    // was seated on the card's element and its status clobbered the launch's.
+    const owners = runCardOwners([
+      turn("t1", [runMsg("m1", [{ id: "launch", run: "wf_1" }])]),
+      turn("t2", [runMsg("m2", [{ id: "inspect", run: "wf_1", title: "Inspect Workflow" }])]),
+    ]);
+    expect(owners.get("wf_1")).toBe("launch");
+  });
+
+  it("resolves both calls of ONE message, in block order", () => {
+    // The case a live registry cannot answer: `indexGroups` and `placeBlock` are two
+    // passes over this message, so a registry written by the paint answers "no host
+    // yet, I host" to both and posts the box twice.
+    const owners = runCardOwners([
+      turn("t1", [
+        runMsg("m1", [
+          { id: "launch", run: "wf_1" },
+          { id: "inspect", run: "wf_1", title: "Inspect Workflow" },
+        ]),
+      ]),
+    ]);
+    expect(owners.get("wf_1")).toBe("launch");
+  });
+
+  it("names one owner per run", () => {
+    const owners = runCardOwners([
+      turn("t1", [
+        runMsg("m1", [
+          { id: "a", run: "wf_1" },
+          { id: "b", run: "wf_2" },
+        ]),
+      ]),
+    ]);
+    expect([...owners]).toEqual([
+      ["wf_1", "a"],
+      ["wf_2", "b"],
+    ]);
+  });
+
+  it("skips a block the dispatcher drops, so no owner names an unrenderable call", () => {
+    // `placeBlock`'s run branch requires an EMPTY subtask, so a nested run launched by
+    // a workflow step is dropped there. An owner naming it would leave the run with a
+    // designated host that builds nothing and every later mention a plain tool row.
+    const owners = runCardOwners([
+      turn("t1", [
+        runMsg("m1", [
+          { id: "nested", run: "wf_1", subtask: "wf:wf_0:seq/step" },
+          { id: "launch", run: "wf_1" },
+        ]),
+      ]),
+    ]);
+    expect(owners.get("wf_1")).toBe("launch");
+  });
+
+  it("skips an internal-titled call, matching the dispatcher's own early return", () => {
+    const owners = runCardOwners([
+      turn("t1", [
+        runMsg("m1", [
+          { id: "internal", run: "wf_1", title: "Fetching your cloud config" },
+          { id: "launch", run: "wf_1" },
+        ]),
+      ]),
+    ]);
+    expect(owners.get("wf_1")).toBe("launch");
+  });
+
+  it("names nothing for a message whose calls carry no run", () => {
+    expect([...runCardOwners([turn("t1", [msg("a", 3, 2)])])]).toEqual([]);
+  });
+
+  it("ignores a call with no block of its own", () => {
+    // A tool call the window holds without its block is not a mention the transcript
+    // renders, so it cannot be the host.
+    const m = runMsg("m1", [{ id: "launch", run: "wf_1" }]) as unknown as {
+      blocks: unknown[];
+    };
+    m.blocks = [];
+    expect([...runCardOwners([turn("t1", [m as unknown as Message])])]).toEqual([]);
   });
 });

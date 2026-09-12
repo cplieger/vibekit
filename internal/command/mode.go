@@ -77,13 +77,19 @@ func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus 
 }
 
 // applySessionConfig sends one live session-config change for chat and grades the
-// outcome, so both config commands answer a cold spawn the same way. A nil error means
-// the caller may persist: either the change landed on a session, or there is no
-// session yet to land it on.
+// outcome, so all THREE config commands — set_mode, set_effort and
+// set_supervised_mode — answer a cold spawn the same way. A nil error means the
+// caller may persist: either the change landed on a session, or there is no session
+// yet to land it on.
+//
+// Named rather than left at "both", or the supervised caller reads as a stray. It was
+// the last path with its own bespoke block, and that block FAILED OPEN: it discarded
+// the outcome and answered 200 whatever the session said.
 //
 // A bridge that EXISTS but has not STARTED is that second case, not a failure. The
-// manager registers the record before Start so concurrent opens coalesce, so a mode or
-// effort click during a cold spawn — which unpacks a ~240 MB KAS runtime — holds a
+// manager registers the record before Start so concurrent opens coalesce, so a mode,
+// effort or supervised click during a cold spawn — which unpacks a ~240 MB KAS
+// runtime — holds a
 // bridge whose write refuses with vibekit.ErrBridgeNotStarted, and so does one whose
 // Start FAILED (spawnBridge's setup error removes the record and then releases the
 // starting state, so a holder that raced the removal keeps an idle bridge with no

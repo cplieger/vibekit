@@ -197,6 +197,11 @@ func deltaAttachments(d *vibekit.ToolCallUpdatePayload, before, after *vibekit.T
 	if before.Denial == nil && after.Denial != nil {
 		d.Denial = after.Denial
 	}
+	// One-way, like the three blocks above it: the fold never clears the mark, so the
+	// frame that SETS it is the only one that carries it.
+	if after.Declined && !before.Declined {
+		d.Declined = true
+	}
 }
 
 // outputDelta describes the change from one accumulated output to the next: the
@@ -320,23 +325,65 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID vibekit.Cha
 			tc.AgentSubtaskID = tu.Meta.Kiro.AgentSubtaskID
 		}
 	}
+	// AFTER the two folds above, and the order is load-bearing: applyToolCallStatus
+	// has set `completed` and applyToolCallOutput has written the sentence, so this
+	// only ever grades a settled call and never competes for the output.
+	applyUpdateRefusal(tc, tu.RawOutput)
 	// Adopted once and never overwritten: KAS reports the run on the terminal
 	// update, and a later frame for the same call cannot name a different one.
-	if tc.WorkflowID == "" {
+	//
+	// An UPDATE call is EXCLUDED, and that exclusion is what stops the transcript
+	// reading it as the call that STARTED a run: `update_workflow` echoes the same
+	// `workflowId` while starting nothing, so without it a refused plan update
+	// inherits the run's card and its own refusal renders nowhere at all. The launch's
+	// own rawOutput carries no `updated`, so the launch is untouched. KAS puts no tool
+	// NAME on an ordinary tool call — `_meta.kiro.toolId` is set for
+	// `disclose_context` alone — so the payload's own shape is the only discriminator
+	// available here.
+	if _, isUpdate := rawOutputUpdate(tu.RawOutput); tc.WorkflowID == "" && !isUpdate {
 		tc.WorkflowID = rawOutputWorkflowID(tu.RawOutput)
 	}
 	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)
 	mergeToolMeta(tc, tu)
 }
 
+// applyUpdateRefusal folds a workflow-update tool's own verdict onto the card.
+//
+// ONE-WAY and narrow, by four mechanical conditions rather than by a promise: the key
+// is the FIELD and not a tool name or title (rawOutputUpdate reports present=false
+// for every other tool), absent means taken, it only ever marks a call the status
+// already settled as `completed`, and it never clears the mark. THIS IS THE STATED
+// EXCEPTION to vibekit-acp.md's rule that outcome comes from the tool_call status and
+// never from a payload: the general test is that a field RESTATING the outcome
+// (`success`, which is `legacySuccess ?? isSuccess(actionState)`) is never read, while
+// a domain fact carried on no other channel is a different question.
+func applyUpdateRefusal(tc *vibekit.ToolCall, raw json.RawMessage) {
+	if tc.Status != vibekit.ToolCompleted {
+		return
+	}
+	if updated, present := rawOutputUpdate(raw); present && !updated {
+		tc.Declined = true
+	}
+}
+
+func toolCallContentOutput(tu *ACPToolCallUpdateWire, content toolUpdateContent) string {
+	if content.output == "" {
+		return ""
+	}
+	if message := stringifiedRawOutputMessage(tu.RawOutput, content.output); message != "" {
+		return sanitize.Output(message) + "\n"
+	}
+	return content.output
+}
+
 // applyToolCallOutput folds an update's output text onto the card.
 //
-// Content wins whenever present. A bare rawOutput string is the fallback when KAS
-// suppresses an edit's diff block; object error/message fields remain failure-only.
+// Content wins whenever present unless it is the stringified copy identified by
+// stringifiedRawOutputMessage. A bare rawOutput string is the fallback when KAS
+// suppresses an edit's diff block; object error/message fields otherwise remain
+// failure-only.
 func applyToolCallOutput(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
-	if content.output != "" {
-		tc.Output += content.output
-	}
+	tc.Output += toolCallContentOutput(tu, content)
 	if tc.Output != "" {
 		return
 	}

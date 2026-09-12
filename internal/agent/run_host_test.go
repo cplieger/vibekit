@@ -973,3 +973,74 @@ func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 		})
 	}
 }
+
+// TestLaunchRun_SendsTheRunBridgesOwnSessionAsParent is the live-break guard.
+// `@kiro/agent` 0.63.3 (kiro-cli 2.21.4, the pinned version) made
+// `parentSessionId` REQUIRED on `_kiro/workflow/new` and removed 0.60.10's
+// `workspacePaths` escape, so a launch omitting it fails outright — every manual
+// and every scheduled run.
+//
+// The value must be the RUN BRIDGE'S OWN session, because upstream routes all nine
+// lifecycle notifications through the parent's outbound connection: naming a chat's
+// session or the utility session would send run_start / node_* / run_complete to a
+// connection the executing process does not hold, so no deadline would arm, no
+// bridge would close on completion, and no run_started SSE would reach the client —
+// with no error anywhere.
+func TestLaunchRun_SendsTheRunBridgesOwnSessionAsParent(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
+		methodKiroWorkflowList:        json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowNew:         json.RawMessage(`{"workflowId":"wf_9"}`),
+		methodKiroWorkflowInvoke:      json.RawMessage(`{}`),
+	}
+
+	if _, _, err := h.runs.Launch(t.Context(), "bundled://publish", nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	params := br.lastParamsFor(methodKiroWorkflowNew)
+	if params == nil {
+		t.Fatal("no _kiro/workflow/new call was recorded")
+	}
+	got, ok := params["parentSessionId"].(string)
+	if !ok || got == "" {
+		t.Fatalf("parentSessionId = %#v, want the run bridge's own session id; "+
+			"0.63.3 throws without it and the launch fails", params["parentSessionId"])
+	}
+	if want := string(br.SessionID()); got != want {
+		t.Errorf("parentSessionId = %q, want %q (the bridge the call travels on)", got, want)
+	}
+	// workspacePaths STAYS: 0.63.3 only shape-validates it, but a pre-0.63.3 engine
+	// reads it for the roots and both resolve to the same [workDir].
+	if _, ok := params[keyWorkspacePaths]; !ok {
+		t.Error("workspacePaths was dropped; a pre-0.63.3 engine reads it for the run's roots")
+	}
+}
+
+// TestLaunchRun_RefusesABridgeWithNoSession: a started bridge with no ACP session is
+// a broken handshake, so the launch refuses BEFORE the RPC. Sending an empty value
+// would buy KAS's own param complaint at the cost of a round trip and an error naming
+// the wrong layer.
+func TestLaunchRun_RefusesABridgeWithNoSession(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
+		methodKiroWorkflowList:        json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowNew:         json.RawMessage(`{"workflowId":"wf_9"}`),
+	}
+	br.mu.Lock()
+	br.sessionID = ""
+	br.mu.Unlock()
+
+	_, _, err := h.runs.Launch(t.Context(), "bundled://publish", nil)
+	if err == nil {
+		t.Fatal("Launch succeeded on a bridge with no session; want a refusal")
+	}
+	if br.called(methodKiroWorkflowNew) {
+		t.Error("the RPC went out anyway; the refusal must precede it")
+	}
+	if !br.isStopped() {
+		t.Error("the started bridge was left running after the refusal")
+	}
+}

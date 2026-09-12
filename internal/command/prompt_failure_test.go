@@ -531,3 +531,89 @@ func TestContextWindowExceededIsPermanentAndNamesRecovery(t *testing.T) {
 		}
 	}
 }
+
+// TestPromptFailureReason_SanitizesUpstreamText: a MAPPED error's reason is
+// composed from `message`, `errorType` and `requestId`, all upstream text, and
+// this error class interpolates an agent id and a declared model read from a
+// user-authored .kiro/agents/*.md. It lands on the PERSISTED turn reason and on
+// the SSE error frame, so a Bidi override there reorders the sentence a reader
+// sees on both surfaces.
+func TestPromptFailureReason_SanitizesUpstreamText(t *testing.T) {
+	// U+202E RIGHT-TO-LEFT OVERRIDE reverses the run after it; U+0085 is a C1
+	// control that a JSON log handler passes through raw.
+	const bidi = "\u202e"
+	const c1 = "\u0085"
+
+	err := rpcErr(t, vibekit.RPCCodeBridgeExited, "Agent 'a"+bidi+"b' pins model 'm"+c1+"n'.", mappedErrorData{
+		ErrorType:      "AgentModelPinUnservableError",
+		RetryErrorType: "CLIENT_ERROR",
+		RequestID:      "req" + bidi + "-3",
+	})
+	got := promptFailureReason(err, false)
+
+	for _, unsafe := range []string{bidi, c1} {
+		if strings.Contains(got, unsafe) {
+			t.Errorf("reason %q carries the unsanitized rune %q", got, unsafe)
+		}
+	}
+	// The message must still be RECOGNIZABLE: sanitizing replaces the unsafe
+	// runes with spaces rather than discarding the sentence.
+	if !strings.Contains(got, "pins model") {
+		t.Errorf("reason %q lost KAS's own user-facing text", got)
+	}
+
+	// The same holds when `message` is empty and errorType is what surfaces.
+	blank := rpcErr(t, vibekit.RPCCodeBridgeExited, "", mappedErrorData{
+		ErrorType:      "Bad" + bidi + "Error",
+		RetryErrorType: "CLIENT_ERROR",
+	})
+	if reason := promptFailureReason(blank, false); strings.Contains(reason, bidi) {
+		t.Errorf("errorType reached the reader unsanitized: %q", reason)
+	}
+
+	// And on the ModelRegistryUnavailableError branch, which composes its own
+	// remedy around the same raw message.
+	login := rpcErr(t, vibekit.RPCCodeBridgeExited, "Kiro could not"+bidi+" load models.", mappedErrorData{
+		ErrorType: "ModelRegistryUnavailableError",
+	})
+	reason := promptFailureReason(login, false)
+	if strings.Contains(reason, bidi) {
+		t.Errorf("the login-remedy branch passed its message through raw: %q", reason)
+	}
+	if !strings.Contains(reason, "kiro-cli login") {
+		t.Errorf("the login-remedy branch lost its remedy: %q", reason)
+	}
+}
+
+// TestPromptFailureReason_BoundsUpstreamProseAndKeepsTheRemedy: the reason is
+// bounded per FIELD rather than over the composition, because this error's own
+// message joins every served model id into one line. A single bound applied at
+// the end would spend the whole budget on that list and cut off the two halves
+// a reader can act on — the remedy sentence and the request id.
+func TestPromptFailureReason_BoundsUpstreamProseAndKeepsTheRemedy(t *testing.T) {
+	huge := strings.Repeat("model-id-that-is-not-served, ", 4000)
+	err := rpcErr(t, vibekit.RPCCodeBridgeExited, huge, mappedErrorData{
+		ErrorType:      "AgentModelPinUnservableError",
+		RetryErrorType: "THROTTLING",
+		RequestID:      "req-42",
+	})
+	got := promptFailureReason(err, false)
+
+	if len(got) > mappedProseCap+mappedRequestIDCap+512 {
+		t.Errorf("reason is %d bytes, want the per-field bounds to hold it near %d", len(got), mappedProseCap)
+	}
+	for _, want := range []string{"already retried", "req-42"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("reason %q dropped %q; the bound cut off the actionable half", got, want)
+		}
+	}
+
+	// A request id longer than an id can be is truncated rather than trusted.
+	long := rpcErr(t, vibekit.RPCCodeBridgeExited, "refused", mappedErrorData{
+		ErrorType: "AgentModelPinUnservableError",
+		RequestID: strings.Repeat("z", 5000),
+	})
+	if reason := promptFailureReason(long, false); len(reason) > mappedRequestIDCap+512 {
+		t.Errorf("an oversized request id was not bounded: %d bytes", len(reason))
+	}
+}

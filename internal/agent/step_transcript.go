@@ -152,17 +152,25 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]vibe
 		return nil, vibekit.RunStepTranscriptUnavailable
 	}
 
-	return assistantRows(rs.stepReplays.take(sessionID)), vibekit.RunStepTranscriptReady
+	return stepTranscriptRows(rs.stepReplays.take(sessionID)), vibekit.RunStepTranscriptReady
 }
 
-// assistantRows keeps the ASSISTANT rows of a projected transcript. A step's own prompt is
-// already on screen as the pane's Instruction row, and the stream this feeds renders ONE
-// assistant transcript; event rows are dropped because a step has no turn card to badge.
-func assistantRows(msgs []vibekit.Message) []vibekit.Message {
+// stepTranscriptRows drops the first user row because KAS persists a step's
+// instruction first and the pane already renders it. Later user rows are human
+// interventions; this is positional because KAS exposes no durable discriminator.
+// Event rows stay out because a step has no turn card to badge.
+func stepTranscriptRows(msgs []vibekit.Message) []vibekit.Message {
 	out := make([]vibekit.Message, 0, len(msgs))
+	instructionSeen := false
 	for i := range msgs {
-		if msgs[i].Role == vibekit.RoleAssistant {
+		switch msgs[i].Role {
+		case vibekit.RoleAssistant:
 			out = append(out, msgs[i])
+		case vibekit.RoleUser:
+			if instructionSeen {
+				out = append(out, msgs[i])
+			}
+			instructionSeen = true
 		}
 	}
 	return out

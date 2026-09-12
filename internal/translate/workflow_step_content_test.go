@@ -154,6 +154,47 @@ func TestHandleRunStepFrame_FoldsAToolUpdate(t *testing.T) {
 	}
 }
 
+func TestHandleRunStepFrame_FoldsStringifiedObjectToItsMessage(t *testing.T) {
+	t.Parallel()
+	const message = "Workflow: release\nStatus: running"
+	output := map[string]any{
+		"message": message,
+		"state":   "running",
+	}
+	var events []vibekit.ServerEvent
+	tr := New(rolesOf(capturing(&events)))
+
+	tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call", "wf_1",
+		[]string{"seq", "coder"}, map[string]any{
+			"toolCallId": "t1",
+			"title":      "Inspect workflow",
+			"kind":       "read",
+			"status":     "in_progress",
+		}))
+	tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call_update", "wf_1",
+		[]string{"seq", "coder"}, map[string]any{
+			"toolCallId": "t1",
+			"status":     "completed",
+			"rawOutput":  output,
+			"content": []any{map[string]any{
+				"type":    "content",
+				"content": map[string]any{"type": "text", "text": string(mustJSON(t, output))},
+			}},
+		}))
+
+	got := runSteps(t, events)
+	if len(got) != 2 {
+		t.Fatalf("got %d run_step events, want 2 (a create and a folded update)", len(got))
+	}
+	final := got[1].ToolCall
+	if final == nil {
+		t.Fatal("the update carried no tool call")
+	}
+	if final.Output != message+"\n" {
+		t.Errorf("output from a stringified object = %q, want %q", final.Output, message+"\n")
+	}
+}
+
 // TestHandleRunStepFrame_ReportsRunProgress pins the progress signal for the population
 // that has no other one: a manual or scheduled run's frames never reach the chat path's
 // countStepTurn site, so without this an unattended run's only signal is `node_complete`
@@ -293,6 +334,62 @@ func TestApplyRunToolUpdate_FailedTakesReason(t *testing.T) {
 	}
 	if final.Output != "lock is held by another process" {
 		t.Errorf("output = %q, want the failure reason off rawOutput", final.Output)
+	}
+}
+
+// TestApplyRunToolUpdate_RefusedUpdateReadsAsDeclined pins that the run path answers a
+// refusal the same way the chat path does. Both folds call ONE helper, and this is what
+// keeps them from being two hand-written copies that can disagree about one refusal — a
+// step's own `update_workflow` is exactly the call a nested run makes.
+func TestApplyRunToolUpdate_RefusedUpdateReadsAsDeclined(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		raw          any
+		wantDeclined bool
+	}{
+		{"a refused update", map[string]any{"updated": false, "message": "refused"}, true},
+		{"an applied update", map[string]any{"updated": true, "message": "Plan updated."}, false},
+		{"an absent verdict", map[string]any{"workflowId": "wf_1"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			var events []vibekit.ServerEvent
+			tr := New(rolesOf(capturing(&events)))
+
+			tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call", "wf_1",
+				[]string{"seq", "coder"}, map[string]any{
+					"toolCallId": "t1",
+					"title":      "Update Workflow",
+					"kind":       "other",
+					"status":     "in_progress",
+				}))
+			tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call_update", "wf_1",
+				[]string{"seq", "coder"}, map[string]any{
+					"toolCallId": "t1",
+					"status":     "completed",
+					"rawOutput":  c.raw,
+				}))
+
+			got := runSteps(t, events)
+			if len(got) != 2 {
+				t.Fatalf("got %d run_step events, want 2 (a create and a folded update)", len(got))
+			}
+			final := got[1].ToolCall
+			if final == nil {
+				t.Fatal("the update carried no tool call")
+			}
+			if final.Declined != c.wantDeclined {
+				t.Errorf("ToolCall.Declined from rawOutput %v = %v, want %v",
+					c.raw, final.Declined, c.wantDeclined)
+			}
+			if final.Status != vibekit.ToolCompleted {
+				t.Errorf("status = %q, want %q (a refusal is still a completion)",
+					final.Status, vibekit.ToolCompleted)
+			}
+		})
 	}
 }
 

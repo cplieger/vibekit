@@ -577,6 +577,13 @@ function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: string): 
   if (tc.title !== undefined) {
     applyTitleUpdate(el, tc.title);
   }
+  // AHEAD OF THE STATUS, because `applyOutcome` reads this fact off the dataset
+  // and a refusal arrives on the same frame as the `completed` it qualifies. Only
+  // ever set: the wire field is `omitempty`, so an absent one means unchanged
+  // rather than false, and a refusal is terminal anyway.
+  if (tc.declined === true) {
+    el.dataset["declined"] = "1";
+  }
   // STATUS IS APPLIED LAST: two consumers inside `applyStatusUpdate` read
   // `.tool-output` back out of the DOM — the "Explain this error" gate and the
   // bare-disclosure predicate — and a terminal frame commonly carries the status
@@ -639,6 +646,13 @@ function applyStatusUpdate(
     if (group !== null) {
       _refreshGroupHeader(group as HTMLElement);
     }
+  }
+  if (card.dataset["declined"] === "1") {
+    // A REFUSAL'S REASON IS ITS OUTPUT, so the region opens without a click — the
+    // same courtesy a failure gets, for the same reason. It gets no "Explain this
+    // error" button: nothing broke, so there is no error to explain, and offering
+    // one would send the reader to debug a tool that behaved correctly.
+    expandToolDetails(card);
   }
   if (status === "failed") {
     // Failed tools open their details so the error output is visible without

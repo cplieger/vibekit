@@ -7,7 +7,7 @@ const ALWAYS_ALLOW_BLOCKS = ["unparseable"] as const;
 const CATALOG_REASONS = ["rpc", "decode"] as const;
 const CATALOG_STATES = ["ready", "empty", "unavailable"] as const;
 const DECISION_KINDS = ["permission", "elicitation", "user_input"] as const;
-const ERROR_CODES = ["recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "model_not_served", "auth_token_unavailable"] as const;
+const ERROR_CODES = ["recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "model_not_served", "auth_token_unavailable"] as const;
 const EVENT_KINDS = ["interrupted", "cancelled", "model_switched", "compacted", "compaction_failed", "infra_safety_blocked", "turn_outcome", "step_notice"] as const;
 const FORGE_KINDS = ["github", "gitlab", "gitea", "codeberg"] as const;
 const PLAN_STATUSS = ["pending", "in_progress", "completed"] as const;
@@ -1371,6 +1371,8 @@ export const decodeToolCall: Decoder<ToolCall> = (v) => {
   if (diffCount !== undefined) out.diff_count = diffCount;
   const hasFull = o["has_full"] === null ? undefined : optBool(o, "has_full", "$.tool_call");
   if (hasFull !== undefined) out.has_full = hasFull;
+  const declined = o["declined"] === null ? undefined : optBool(o, "declined", "$.tool_call");
+  if (declined !== undefined) out.declined = declined;
   return out;
 };
 
@@ -1427,6 +1429,8 @@ export const decodeToolCallUpdatePayload: Decoder<ToolCallUpdatePayload> = (v) =
   if (durationMs !== undefined) out.duration_ms = durationMs;
   const outputReplace = o["output_replace"] === null ? undefined : optBool(o, "output_replace", "$.tool_call_update_payload");
   if (outputReplace !== undefined) out.output_replace = outputReplace;
+  const declined = o["declined"] === null ? undefined : optBool(o, "declined", "$.tool_call_update_payload");
+  if (declined !== undefined) out.declined = declined;
   return out;
 };
 
