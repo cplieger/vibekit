@@ -169,6 +169,13 @@ func (h *Handler) Run(ctx context.Context) {
 
 // readIdentity runs `kiro-cli whoami --format json` and maps the outcome onto one
 // of the three arms. Never returns an error: every failure IS an arm.
+//
+// The PAYLOAD decides the arm whenever it parses, because the exit status cannot:
+// kiro-cli exits 1 with `{"account":null}` on stdout when nobody is signed in
+// (measured on 2.21.2 and 2.21.4), so an exit-status-first read answered
+// `unavailable` for the state every fresh container is in and never reached the
+// signed_out arm at all. The error classifies only a read that produced nothing
+// readable — a timeout, a missing binary, garbage.
 func (h *Handler) readIdentity(ctx context.Context) WhoamiResponse {
 	// h.cliPath resolves the install manager's active version, never user input.
 	cmd := exec.CommandContext(ctx, h.cliPath(), "whoami", "--format", "json") //nolint:gosec // G204: binary path from config
@@ -177,13 +184,13 @@ func (h *Handler) readIdentity(ctx context.Context) WhoamiResponse {
 	stdout := procout.NewBuffer(whoamiMaxOutput)
 	cmd.Stderr = stderr
 	cmd.Stdout = stdout
-	err := cmd.Run()
+	runErr := cmd.Run()
 	out := stdout.Bytes()
-	if err != nil {
-		return h.identityReadFailure(ctx, err, stderr, len(out))
-	}
 	info, err := whoamiInfo(out)
 	if err != nil {
+		if runErr != nil {
+			return h.identityReadFailure(ctx, runErr, stderr, len(out))
+		}
 		slog.Warn("whoami: cli output not parseable as json",
 			"error", err, "stdout_bytes", len(out))
 		return unavailableIdentity(reasonUnreadable)
