@@ -329,3 +329,27 @@ func waitForIdle(t *testing.T, c *identityCache) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+// TestReadIdentity_SignedOutIsTheArmForAFailedExitWithAPayload pins which of the
+// two inputs decides the arm. kiro-cli reports "nobody is signed in" as a
+// null-account payload on stdout AND a non-zero exit, so a read that classifies by
+// the exit status first answers `unavailable` for the state every fresh container
+// is in, and the signed_out arm is unreachable for the one case it exists for.
+//
+// The other direction — an exit status with nothing readable behind it — is
+// TestReadIdentity_CLIFailureIsUnavailable's, which is also what fails if the
+// error stops classifying at all.
+func TestReadIdentity_SignedOutIsTheArmForAFailedExitWithAPayload(t *testing.T) {
+	skipIfNotUnix(t)
+	h := NewHandler(fixedPath(writeFakeCLI(t, `{"account":null}`, 1)))
+
+	got := h.readIdentity(t.Context())
+
+	if got.State != WhoamiSignedOut {
+		t.Errorf("State = %q, want %q for a null-account payload on exit 1",
+			got.State, WhoamiSignedOut)
+	}
+	if got.Reason != "" {
+		t.Errorf("Reason = %q, want empty: signed_out carries no reason", got.Reason)
+	}
+}

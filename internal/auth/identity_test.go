@@ -135,7 +135,7 @@ func TestIdentityFingerprint_UsesOnlyNamedStableFields(t *testing.T) {
 }
 
 // readIdentity is the ONE seam that feeds the registrar, because handleWhoami answers
-// from identityCache and forks nothing. So the two tests below are what pin the
+// from identityCache and forks nothing. So the tests below are what pin the
 // asymmetry the two mechanisms exist under: an identity that PARSED is observed, and
 // one that could not be READ is withheld — a kiro-cli that timed out must not read as
 // an account change and retire every live bridge.
@@ -168,5 +168,25 @@ func TestReadIdentity_WithholdsAnUnreadableIdentity(t *testing.T) {
 	}
 	if retired != 0 {
 		t.Errorf("readIdentity retired %d times on an unreadable answer, want 0", retired)
+	}
+}
+
+// TestReadIdentity_ObservesASignOutTheCLIReports is the registrar reaching the
+// case identityTTL's own doc names: `kiro-cli logout` run in a terminal. kiro-cli
+// reports that with a non-zero exit, so a read that classified by the exit status
+// withheld it as unreadable and every live bridge kept the retired account.
+func TestReadIdentity_ObservesASignOutTheCLIReports(t *testing.T) {
+	skipIfNotUnix(t)
+	retired := 0
+	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) { return "", nil })
+	id.Observe(identityFingerprint(&WhoamiResponse{Email: "first@example.com", AccountType: "BuilderId"}))
+	cli := writeFakeCLI(t, `{"account":null}`, 1)
+	h := NewHandler(fixedPath(cli), WithIdentity(id))
+
+	if got := h.readIdentity(t.Context()); got.State != WhoamiSignedOut {
+		t.Fatalf("readIdentity state = %q, want %q", got.State, WhoamiSignedOut)
+	}
+	if retired != 1 {
+		t.Errorf("readIdentity retired %d times on a reported sign-out, want 1", retired)
 	}
 }
