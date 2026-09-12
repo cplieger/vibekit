@@ -68,6 +68,9 @@ func applyDelta(before vibekit.ToolCall, d *vibekit.ToolCallUpdatePayload) vibek
 	if d.Denial != nil {
 		out.Denial = d.Denial
 	}
+	if d.Declined {
+		out.Declined = true
+	}
 	return out
 }
 
@@ -104,7 +107,7 @@ func TestToolCallDelta_RoundTripsOverAFoldSequence(t *testing.T) {
 
 // foldStep applies one of the mutations the server's fold performs.
 func foldStep(rt *rapid.T, tc *vibekit.ToolCall) {
-	switch rapid.IntRange(0, 8).Draw(rt, "step") {
+	switch rapid.IntRange(0, 9).Draw(rt, "step") {
 	case 0:
 		// The commonest frame by far: a status transition and nothing else.
 		tc.Status = rapid.SampledFrom([]vibekit.ToolStatus{
@@ -165,6 +168,10 @@ func foldStep(rt *rapid.T, tc *vibekit.ToolCall) {
 		if tc.DurationMs == 0 {
 			tc.DurationMs = rapid.IntRange(1, 100_000).Draw(rt, "durationMs")
 		}
+	case 9:
+		// One-way, like the attachments above: a step finding it already set changes
+		// nothing, which is the case that proves the fold never carries a clear.
+		tc.Declined = true
 	}
 }
 

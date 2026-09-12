@@ -231,6 +231,47 @@
         "output": "same",
         "ts": 1
       }
+    },
+    {
+      "name": "a refusal marks the card on the frame that settles it",
+      "before": { "id": "c1", "title": "Update Workflow", "kind": "other", "status": "in_progress", "ts": 1 },
+      "delta": {
+        "message_id": "m1",
+        "tool_call_id": "c1",
+        "status": "completed",
+        "output_delta": "Cannot update a completed workflow.\n",
+        "declined": true
+      },
+      "after": {
+        "id": "c1",
+        "title": "Update Workflow",
+        "kind": "other",
+        "status": "completed",
+        "output": "Cannot update a completed workflow.\n",
+        "ts": 1,
+        "declined": true
+      }
+    },
+    {
+      "name": "a later verdict-free frame leaves the mark standing",
+      "before": {
+        "id": "c1",
+        "title": "Update Workflow",
+        "kind": "other",
+        "status": "completed",
+        "ts": 1,
+        "declined": true
+      },
+      "delta": { "message_id": "m1", "tool_call_id": "c1", "duration_ms": 12 },
+      "after": {
+        "id": "c1",
+        "title": "Update Workflow",
+        "kind": "other",
+        "status": "completed",
+        "ts": 1,
+        "duration_ms": 12,
+        "declined": true
+      }
     }
   ]
 }

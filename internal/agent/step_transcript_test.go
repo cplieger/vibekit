@@ -351,25 +351,32 @@ func TestStepTranscript_ARefusedLoadLeavesNoReplayOpen(t *testing.T) {
 	}
 }
 
-// TestStepTranscript_OnlyAssistantRowsTravel: a step's own prompt is already the
-// pane's Instruction row, and the stream this feeds renders ONE assistant
-// transcript, so a user row would be the same text twice.
-func TestStepTranscript_OnlyAssistantRowsTravel(t *testing.T) {
+// TestStepTranscript_IncludesReaderInterventions pins the row filter over a
+// complete step exchange: the pane owns the instruction, the transcript owns a
+// later human answer, and event rows have no turn card to render on.
+func TestStepTranscript_IncludesReaderInterventions(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
-	// The replay's own user row, in the shape KAS sends it — the frame kind the
-	// projection turns into a RoleUser message.
-	user, _ := json.Marshal(map[string]any{
-		"sessionId": "sess_pass0",
-		"update": json.RawMessage(`{"sessionUpdate":"user_message_chunk",` +
-			`"content":{"type":"text","text":"the step's own instruction"}}`),
-	})
+	replay := func(update string) *vibekit.RPCResponse {
+		params, _ := json.Marshal(map[string]any{
+			"sessionId": "sess_pass0",
+			"update":    json.RawMessage(update),
+		})
+		return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
+	}
 	br.mu.Lock()
 	br.notifsOnCall = map[string][]*vibekit.RPCResponse{
 		vibekit.MethodSessionLoad: {
-			{Method: vibekit.MethodSessionUpdate, Params: user},
-			newSessionChunkMsg("sess_pass0", "the answer"),
+			replay(`{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"the step's own instruction"},"_meta":{"kiro":{"messageId":"instruction"}}}`),
+			replay(`{"sessionUpdate":"session_info_update","_meta":{"kiro":{"kind":"turn_start","turnStart":true}}}`),
+			replay(`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Which target?"},"_meta":{"kiro":{"messageId":"question"}}}`),
+			replay(`{"sessionUpdate":"session_info_update","_meta":{"kiro":{"kind":"turn_end"}}}`),
+			replay(`{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"main"},"_meta":{"kiro":{"messageId":"reader-answer"}}}`),
+			replay(`{"sessionUpdate":"session_info_update","_meta":{"kiro":{"kind":"turn_start","turnStart":true}}}`),
+			replay(`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Using main."},"_meta":{"kiro":{"messageId":"result"}}}`),
+			replay(`{"sessionUpdate":"session_info_update","_meta":{"kiro":{"kind":"turn_end"}}}`),
+			replay(`{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"step notice"},"_meta":{"kiro":{"messageId":"notify-1","notification":{"kind":"system-notification"}}}}`),
 		},
 	}
 	br.mu.Unlock()
@@ -378,16 +385,25 @@ func TestStepTranscript_OnlyAssistantRowsTravel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StepTranscript: %v", err)
 	}
-	for _, m := range got.Messages {
-		if m.Role != vibekit.RoleAssistant {
-			t.Errorf("a %s row travelled: %q", m.Role, m.Content)
-		}
-		if strings.Contains(m.Content, "own instruction") {
-			t.Errorf("the step's prompt reached the transcript: %q", m.Content)
+	if len(got.Messages) != 3 {
+		t.Fatalf("StepTranscript messages = %d, want 3: %+v", len(got.Messages), got.Messages)
+	}
+	want := []struct {
+		role    vibekit.Role
+		content string
+	}{
+		{role: vibekit.RoleAssistant, content: "Which target?"},
+		{role: vibekit.RoleUser, content: "main"},
+		{role: vibekit.RoleAssistant, content: "Using main."},
+	}
+	for i := range want {
+		if got.Messages[i].Role != want[i].role || got.Messages[i].Content != want[i].content {
+			t.Errorf("StepTranscript message %d = {%s %q}, want {%s %q}",
+				i, got.Messages[i].Role, got.Messages[i].Content, want[i].role, want[i].content)
 		}
 	}
-	if len(got.Messages) != 1 || got.Messages[0].Content != "the answer" {
-		t.Errorf("projected %+v, want one assistant message %q", got.Messages, "the answer")
+	if got.Messages[1].UserKind != "" {
+		t.Errorf("reader answer user_kind = %q, want empty ordinary user row", got.Messages[1].UserKind)
 	}
 }
 

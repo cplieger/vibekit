@@ -687,6 +687,19 @@ const (
 	contextWindowExceededError = "ContextWindowExceededError"
 )
 
+// The per-field budgets promptFailureReason bounds a MAPPED error's upstream
+// text with. Two rather than one because that function composes vibekit's own
+// remedy sentence and the request id AFTER the prose: one bound over the whole
+// result would spend it on the prose and cut the actionable half off.
+//
+// The prose cap is half rpcerr's own maxTextBytes, which is already far more
+// than any real cause needs; the id is an opaque token, so anything longer is
+// not one and truncating it loses nothing a reader could have used.
+const (
+	mappedProseCap     = 1024
+	mappedRequestIDCap = 128
+)
+
 // classifyPromptFailure maps a prompt error onto its class.
 func classifyPromptFailure(err error) promptFailureClass {
 	if err == nil {
@@ -863,16 +876,22 @@ func promptFailureReason(err error, inlinedImage bool) string {
 		return "This chat exceeds the model's context limit. Type `/compact` or start a new chat, then send the prompt again."
 	}
 	if re.Code == vibekit.RPCCodeBridgeExited && d.ErrorType == "ModelRegistryUnavailableError" {
-		return re.Message + " Run `kiro-cli login`, then send the prompt again."
+		return rpcerr.Sanitize(re.Message, mappedProseCap) + " Run `kiro-cli login`, then send the prompt again."
 	}
 	// A mapped error's `data` is the machine triplet, not the text; the
 	// prose is KAS's own userFacingSessionErrorMessage in `message`.
-	msg := re.Message
+	//
+	// Sanitize rather than Text: Text COMPOSES message with `data`, and on a
+	// mapped error that data parses as neither of RPCDetails' two shapes and
+	// would fall through to its raw-JSON fallback. Declining the compose is
+	// what the earlier reading of this got right; declining the sanitize and
+	// the cap with it is what it got wrong. Every field below is upstream text
+	// interpolating a user-authored agent id and model, and it lands on the
+	// PERSISTED turn reason and the SSE error frame, so an unbounded value has
+	// no ceiling on either surface and a Bidi override reorders the sentence.
+	msg := strings.TrimSpace(rpcerr.Sanitize(re.Message, mappedProseCap))
 	if msg == "" {
-		// Not RPCErrorText here: on a mapped error `data` parses as
-		// neither of RPCDetails' two shapes and would fall through to
-		// its raw-JSON fallback.
-		msg = d.ErrorType
+		msg = strings.TrimSpace(rpcerr.Sanitize(d.ErrorType, mappedProseCap))
 		if msg == "" {
 			msg = "the model backend refused the request"
 		}
@@ -880,8 +899,11 @@ func promptFailureReason(err error, inlinedImage bool) string {
 	if d.RetryErrorType == kasRetryThrottling {
 		msg += " kiro-cli already retried; waiting a moment before resending is the only thing that helps."
 	}
-	if d.RequestID != "" {
-		msg += " (request " + d.RequestID + ")"
+	// Bounded on its own budget rather than by capping the composition, or a
+	// long upstream message would cut off the remedy sentence above and this id
+	// — the two halves a reader can act on.
+	if id := strings.TrimSpace(rpcerr.Sanitize(d.RequestID, mappedRequestIDCap)); id != "" {
+		msg += " (request " + id + ")"
 	}
 	return msg
 }

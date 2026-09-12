@@ -37,7 +37,7 @@ func TestTemplateToResponse(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &tpl); err != nil {
 		t.Fatalf("unmarshal fixture: %v", err)
 	}
-	got := templateToResponse(&tpl)
+	got := withCatalogVerdict(templateToResponse(&tpl))
 
 	if got.DefaultModel != "m-default" {
 		t.Errorf("default model: %q", got.DefaultModel)
@@ -81,7 +81,7 @@ func TestTemplateToResponse_DistinguishesAnAbsentModelOptionFromAPopulatedOne(t 
 		if err := json.Unmarshal([]byte(raw), &tpl); err != nil {
 			t.Fatalf("unmarshal fixture: %v", err)
 		}
-		return templateToResponse(&tpl).Catalog
+		return withCatalogVerdict(templateToResponse(&tpl)).Catalog
 	}
 
 	if got := verdict(present); got != vibekit.CatalogReady {
@@ -107,7 +107,7 @@ func TestTemplateToResponse_APresentOptionWhoseEntriesAllFilterOutIsStillReady(t
 	if err := json.Unmarshal([]byte(raw), &tpl); err != nil {
 		t.Fatalf("unmarshal fixture: %v", err)
 	}
-	got := templateToResponse(&tpl)
+	got := withCatalogVerdict(templateToResponse(&tpl))
 	if len(got.Models) != 0 {
 		t.Fatalf("models = %+v, want the deprecated entry filtered out", got.Models)
 	}
@@ -117,7 +117,7 @@ func TestTemplateToResponse_APresentOptionWhoseEntriesAllFilterOutIsStillReady(t
 }
 
 func TestTemplateToResponseEmpty(t *testing.T) {
-	got := templateToResponse(&kasConfigTemplate{})
+	got := withCatalogVerdict(templateToResponse(&kasConfigTemplate{}))
 	if got.DefaultModel != "" || len(got.Modes) != 0 || len(got.Models) != 0 {
 		t.Errorf("empty template must yield empty catalog: %+v", got)
 	}
@@ -272,6 +272,10 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 		}
 		if len(got.Models) != 1 || got.Models[0].ID != "m-live" {
 			t.Errorf("models = %+v, want the live catalog's entry", got.Models)
+		}
+		if got.Catalog != vibekit.CatalogReady || got.CatalogReason != vibekit.CatalogReasonRPC {
+			t.Errorf("handleConfigTemplate catalog = %q/%q, want %q/%q with live models",
+				got.Catalog, got.CatalogReason, vibekit.CatalogReady, vibekit.CatalogReasonRPC)
 		}
 	})
 }

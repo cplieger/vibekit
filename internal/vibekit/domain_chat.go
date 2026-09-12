@@ -224,6 +224,17 @@ type ToolCall struct {
 	// the record kept is at GET /api/chats/{id}/tools/{id}. Set by the transcript
 	// read path alone, because only a page load or scroll-up reads a preview.
 	HasFull bool `json:"has_full,omitempty"`
+	// Declined says the tool RAN CORRECTLY AND REFUSED — a fifth card outcome, and a
+	// distinct fact from Status. `failed` overstates it (nothing broke, so the card
+	// must not offer "Explain this error") and `completed` mislabels it outright,
+	// which is what a refused `update_workflow` reads as today.
+	//
+	// A field rather than a sixth ToolStatus member, following Denial's precedent for
+	// the same reason: a status member lands wrong at eleven predicates that ask only
+	// whether a call is over (`isToolDone`, buffer.ToolsSettled, the ToolFailed reason
+	// gates), and a refusal IS over. The REASON is not duplicated here — it is the
+	// tool's own output and already on Output, which a declined card auto-expands.
+	Declined bool `json:"declined,omitempty"`
 }
 
 // ToolTruncation is what the store DROPPED to bound what one tool call costs the

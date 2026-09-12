@@ -63,6 +63,13 @@ export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   // The chat is running, just not in the mode that was asked for, and the fix is
   // one click on the mode pill, so this reports without blocking the composer.
   mode_not_applied: { surface: "toast" },
+  // The chat is running, it just will not ask before writing, and the fix is one
+  // click on the supervised switch — so this reports without blocking the composer,
+  // exactly like its mode sibling above. An entry is REQUIRED rather than optional
+  // even though reportFailure is the fallthrough: the generated ERROR_CODES array
+  // validates the frame, and an unmapped code reaching a generic failure surface
+  // would claim the turn failed when the turn is fine.
+  supervised_not_applied: { surface: "toast" },
   // kiro-cli could not vend a KAS access token, so the agent runtime is running
   // unauthenticated: the session opened and every service-backed surface behind
   // it will fail. Sticky, because nothing else on screen says the runtime is

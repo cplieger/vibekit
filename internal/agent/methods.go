@@ -119,7 +119,18 @@ const (
 //
 //   - listRecipes: `source` is the launch key, `bundled://<name>` or an absolute
 //     *.workflow.json path.
-//   - new: writes nothing on failure; NO parentSessionId makes a run parentless.
+//   - new: writes nothing on failure, and REQUIRES `parentSessionId` since
+//     `@kiro/agent` 0.63.3 (kiro-cli 2.21.4) — the engine throws
+//     "requires 'parentSessionId': the ACP session the workflow is launched from"
+//     with no substitute. 0.60.10 accepted `workspacePaths` instead and that
+//     escape is gone, so a launch omitting it fails outright. vibekit sends the
+//     RUN BRIDGE'S OWN session, which is the session the call travels on, and
+//     that parent now supplies four things: the notification route (all nine
+//     lifecycle frames go to the parent's outbound rather than being broadcast),
+//     the workspace roots (resolved from the parent's persisted `workspacePaths`,
+//     so the param is only shape-validated now), and the last-resort model and
+//     effort fallbacks for every step. The run bridge sits on `auto` with no mode,
+//     so step resolution and the roots are unchanged from the parentless era.
 //   - invoke is fire-and-forget; cancel and resume are node-boundary verbs.
 const (
 	methodKiroWorkflowListRecipes = "_kiro/workflow/listRecipes"

@@ -303,10 +303,18 @@ type ACPToolCallUpdateWire struct {
 // `rawOutput`, which KAS types as `unknown` and fills with whatever the tool returned.
 //
 // `run_workflow` is the reason for WorkflowID: the field on its terminal update is
-// the only structural link from the invocation to the run it started. Error and
-// Message are failure fallbacks only. Object decoding stays narrow so a structured
-// success payload cannot become a general output channel.
+// the only structural link from the invocation to the run it started. Error is a
+// failure fallback. Message is also a failure fallback, except when a content block
+// is provably a stringified copy of the same object. Object decoding stays narrow so
+// a structured success payload cannot become a general output channel.
+//
+// Updated is a fourth purpose-named field rather than a widening of that rule: it is
+// `update_workflow`'s own verdict, a fact about the world that no status can carry,
+// where the banned `success` merely restates actionState. A POINTER because absent
+// means the tool made no claim, which reads as TAKEN — the same rule
+// internal/agent/run_host.go `stepStatusRefusal` applies to the sibling RPC channel.
 type ACPRawOutput struct {
+	Updated    *bool  `json:"updated"`
 	WorkflowID string `json:"workflowId"`
 	Error      string `json:"error"`
 	Message    string `json:"message"`
@@ -326,6 +334,27 @@ func rawOutputWorkflowID(raw json.RawMessage) string {
 	return out.WorkflowID
 }
 
+// rawOutputUpdate reports a workflow-update tool's own verdict: whether the update
+// was taken, and whether the tool stated a verdict at all.
+//
+// `present` is false for an absent, non-object or malformed rawOutput AND for one
+// carrying no `updated` key, so no other tool can be touched — measured, `updated`
+// inside a rawOutput OBJECT occurs on exactly one tool's output in the whole bundle
+// (the task tool's `updated` is text inside a `message` string, which decodes to nil
+// here). Absent therefore means TAKEN, matching internal/agent/run_host.go
+// `stepStatusRefusal` on the RPC channel: an unstated field making a working verb
+// report a refusal is the worse direction.
+func rawOutputUpdate(raw json.RawMessage) (updated, present bool) {
+	if len(raw) == 0 {
+		return false, false
+	}
+	var out ACPRawOutput
+	if json.Unmarshal(raw, &out) != nil || out.Updated == nil {
+		return false, false
+	}
+	return *out.Updated, true
+}
+
 // rawOutputString extracts rawOutput only when it is a bare JSON string. KAS uses
 // that shape when an edit's diff content block is suppressed, so it is the one
 // non-content output channel that is safe on any status.
@@ -338,6 +367,24 @@ func rawOutputString(raw json.RawMessage) string {
 		return ""
 	}
 	return strings.TrimSpace(text)
+}
+
+// stringifiedRawOutputMessage returns message only when content encodes the same
+// multi-field object as rawOutput; a different content block remains canonical.
+func stringifiedRawOutputMessage(raw json.RawMessage, content string) string {
+	var out ACPRawOutput
+	var rawObject map[string]any
+	var contentObject map[string]any
+	if json.Unmarshal(raw, &out) != nil || json.Unmarshal(raw, &rawObject) != nil || len(rawObject) < 2 {
+		return ""
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(content)), &contentObject) != nil {
+		return ""
+	}
+	if !reflect.DeepEqual(rawObject, contentObject) {
+		return ""
+	}
+	return strings.TrimSpace(out.Message)
 }
 
 // rawOutputFailureText extracts the reason a failed tool call reports, or "" when

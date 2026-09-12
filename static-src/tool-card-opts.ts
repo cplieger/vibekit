@@ -42,6 +42,11 @@ export interface BuildToolCardOpts {
   disclosed?: ToolDisclosed | undefined;
   /** KAS's `_meta.kiro.policyDenial`: the rule that refused this call. */
   denial?: ToolDenial | undefined;
+  /** The tool RAN CORRECTLY AND REFUSED — the fifth card outcome, and a different
+   *  fact from `status`, which stays `completed` because the call is over. The
+   *  REASON is not here: it is the tool's own `output`, which a declined card
+   *  opens without a click. */
+  declined?: boolean;
   /** `input`, `output` and `diffs` above are a windowed PREVIEW and the whole of
    *  them is at `GET /api/chats/{id}/tools/{id}`. Set only by the transcript read
    *  path — a card built from the stream holds every byte already. */
@@ -107,6 +112,9 @@ export function toolCardOptsFor(tc: ToolCall, live: boolean, chatID = ""): Build
   }
   if (tc.denial !== undefined) {
     opts.denial = tc.denial;
+  }
+  if (tc.declined === true) {
+    opts.declined = true;
   }
   return opts;
 }

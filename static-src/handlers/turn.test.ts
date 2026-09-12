@@ -299,6 +299,11 @@ describe("ERROR_ROUTES", () => {
     // The chat runs, just not in the requested mode, and one click on the mode
     // pill fixes it — so it reports without touching the send button.
     ["mode_not_applied", { surface: "toast" }],
+    // The chat runs, it just will not ask before writing, and one click on the
+    // supervised switch fixes it — the same shape as its mode sibling. Mapped
+    // rather than left to the fallthrough: the generic failure surface would claim
+    // the turn failed when the turn is fine.
+    ["supervised_not_applied", { surface: "toast" }],
   ];
 
   it.each(expectedRoutes)("routes %s to the expected surface and action", (code, expected) => {

@@ -90,13 +90,13 @@ describe("the outcome mark and the tab dot are one vocabulary", () => {
     );
   });
 
-  it("gives the stop and the refusal one bar at two angles, both inside the rim", () => {
+  it("gives the three amber states one bar at three angles, all inside the rim", () => {
     const r = units(DOT_REM) / 2;
+    const centre: [number, number] = [UNITS / 2, UNITS / 2];
 
     // `warn` writes an axis-aligned bar as absolute-move then h/v.
-    const stop = /^M([\d.]+) ([\d.]+)h([\d.]+)v([\d.]+)h-([\d.]+)$/.exec(
-      barSubpath(outcomeIcon("warn")),
-    );
+    const HV = /^M([\d.]+) ([\d.]+)h([\d.]+)v([\d.]+)h-([\d.]+)$/;
+    const stop = HV.exec(barSubpath(outcomeIcon("warn")));
     expect(stop, "the stop's bar is one h/v rectangle").not.toBeNull();
     const length = Number(stop?.[3]);
     const thickness = Number(stop?.[4]);
@@ -105,6 +105,31 @@ describe("the outcome mark and the tab dot are one vocabulary", () => {
     // Inside the rim: the disc's half-chord at the bar's edge clears its half-length.
     const halfChord = Math.sqrt(r ** 2 - (thickness / 2) ** 2);
     expect(halfChord, "the stop's bar leaves the outline unbroken").toBeGreaterThan(length / 2);
+
+    // `declined` is the SAME rectangle VERTICAL — a tool that ran and refused —
+    // so the h/v pair is the stop's TRANSPOSED and the same regex reads its 3rd
+    // and 4th groups back swapped. Length and thickness are the whole assertion:
+    // a bar drawn to its own numbers would make the angle the weaker of two
+    // channels, which is the defect the 45-degree one below already carries.
+    const refusal = HV.exec(barSubpath(outcomeIcon("declined")));
+    expect(refusal, "the refusal's bar is one h/v rectangle").not.toBeNull();
+    expect(Number(refusal?.[3]), "vertical: the h leg is the thickness").toBeCloseTo(thickness, 6);
+    expect(Number(refusal?.[4]), "vertical: the v leg is the length").toBeCloseTo(length, 6);
+    expect(Number(refusal?.[5]), "the bar closes on itself").toBeCloseTo(thickness, 6);
+
+    // And its four corners clear the rim. The transposition alone does not say
+    // that: an h/v bar carries its own origin, so one placed off-centre measures
+    // the same sides and still breaks the outline.
+    const rx = Number(refusal?.[1]);
+    const ry = Number(refusal?.[2]);
+    for (const c of [
+      [rx, ry],
+      [rx + thickness, ry],
+      [rx + thickness, ry + length],
+      [rx, ry + length],
+    ] as [number, number][]) {
+      expect(dist(c, centre), "the refusal's bar leaves the outline unbroken").toBeLessThan(r);
+    }
 
     // `denied` is the SAME rectangle at 45 degrees, so its sides measure the same
     // and only its angle differs. The pair used to differ in length as well, which
@@ -117,9 +142,8 @@ describe("the outcome mark and the tab dot are one vocabulary", () => {
     expect(sides[2]).toBeCloseTo(thickness, 2);
     expect(sides[3]).toBeCloseTo(length, 2);
 
-    const centre: [number, number] = [UNITS / 2, UNITS / 2];
     for (const c of corners) {
-      expect(dist(c, centre), "the refusal's bar leaves the outline unbroken").toBeLessThan(r);
+      expect(dist(c, centre), "the policy block's bar leaves the outline unbroken").toBeLessThan(r);
     }
   });
 });
@@ -156,6 +180,7 @@ describe("the mark reads one ink and one size wherever it renders", () => {
     expect(inkOf(tools, ".tool-icon.is-ok")).toBe("--c-green");
     expect(inkOf(tools, ".tool-icon.is-fail")).toBe("--c-red");
     expect(inkOf(tools, ".tool-icon.is-warn")).toBe("--c-yellow");
+    expect(inkOf(tools, ".tool-icon.is-declined")).toBe("--c-yellow");
     expect(inkOf(tools, ".tool-icon.is-denied")).toBe("--c-yellow");
 
     expect(inkOf(exec, evState("ok"))).toBe("--c-green");
@@ -167,6 +192,17 @@ describe("the mark reads one ink and one size wherever it renders", () => {
     // its state is unfetched or live), so an unanswered ask is the one state there
     // that carries an ink at all, and a settled trio would be unreachable CSS.
     expect(inkOf(dock, '.run-bar-row[data-state="input"] .run-bar-glyph')).toBe("--c-yellow");
+  });
+
+  it("keeps the three amber states on ONE declaration", () => {
+    // The three read the same token because they SHARE a rule. A per-state copy is
+    // where a family drifts apart, and three separate reads of one token cannot
+    // tell a shared rule from three that happen to agree today — so the assertion
+    // is the selector list, which `inkOf` above has already read a colour from.
+    const amber = ruleContaining(tools, ".tool-icon.is-declined", "top");
+    for (const member of [".tool-icon.is-warn", ".tool-icon.is-declined", ".tool-icon.is-denied"]) {
+      expect(amber.selector, "one rule tints every amber state").toContain(member);
+    }
   });
 
   it("keeps the destructive-action palette out of the exec view entirely", () => {

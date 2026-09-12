@@ -154,9 +154,7 @@ func applyRunToolUpdate(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content
 	if tu.Status != "" {
 		tc.Status = tu.Status
 	}
-	if content.output != "" {
-		tc.Output += content.output
-	}
+	tc.Output += toolCallContentOutput(tu, content)
 	if tc.Status == vibekit.ToolFailed && tc.Output == "" {
 		if reason := rawOutputFailureText(tu.RawOutput); reason != "" {
 			tc.Output = sanitize.Output(reason)
@@ -168,6 +166,10 @@ func applyRunToolUpdate(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content
 	if len(content.diffs) > 0 {
 		tc.Diffs = append(tc.Diffs, content.diffs...)
 	}
+	// The SAME helper the chat fold calls, after this path's own status and output
+	// folds. Sharing it is what keeps the two surfaces from answering one refusal
+	// differently — the exact failure mode of two hand-written folds.
+	applyUpdateRefusal(tc, tu.RawOutput)
 	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)
 	mergeToolMeta(tc, tu)
 }

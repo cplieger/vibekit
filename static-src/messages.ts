@@ -69,6 +69,7 @@ import { buildAssistantBubble } from "./fundamentals/text-bubble.js";
 import { isTurnOpen, isTurnRevealed, setTurnOpen } from "./fold-state.js";
 import {
   planResidency,
+  runCardOwners,
   sliceTurn,
   supersededMessages,
   turnCost,
@@ -108,6 +109,7 @@ import {
   dropHead,
   dropTail,
   geometrySkipped,
+  setRunCardOwners,
   setSupersededMessages,
 } from "./messages-blocks.js";
 import { explainError as explainErrorAction } from "./actions/messages.js";
@@ -790,9 +792,10 @@ function computeFoldPlan(
   foldPlan.clear();
   turnByID.clear();
   wantedWindow.clear();
-  // The block dispatcher's turn-scope input, installed with the rest of this pass's
+  // The block dispatcher's turn-scope inputs, installed with the rest of this pass's
   // projection: a `MsgRender` is per message and cannot see its own neighbours.
   setSupersededMessages(supersededMessages(turns));
+  setRunCardOwners(runCardOwners(turns));
   const window = planResidency(openable, anchor);
   for (const [i, t] of turns.entries()) {
     turnByID.set(t.id, t);

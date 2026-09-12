@@ -106,7 +106,16 @@ func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]str
 		return "", "", fmt.Errorf("run bridge start: %w", sErr)
 	}
 
-	wfID, err := rs.workflowNew(cctx, bridge, recipe.Source, inputs)
+	// Refuse BEFORE the RPC rather than sending an empty value: a started bridge with
+	// no session is a broken handshake, and letting KAS answer buys its param complaint
+	// at the cost of a round trip and an error naming the wrong layer.
+	parent := bridge.SessionID()
+	if parent == "" {
+		bridge.Stop()
+		return "", "", errors.New("run bridge started with no ACP session; cannot launch a workflow")
+	}
+
+	wfID, err := rs.workflowNew(cctx, bridge, recipe.Source, inputs, parent)
 	if err != nil {
 		bridge.Stop()
 		return "", "", err
@@ -1291,7 +1300,15 @@ func (rs *Runs) listRecipes(ctx context.Context) ([]vibekit.Recipe, error) {
 }
 
 // workflowNew creates the run on the given bridge and returns its id.
-func (rs *Runs) workflowNew(ctx context.Context, bridge acpCaller, source string, inputs map[string]string) (string, error) {
+//
+// parent is the ACP session the run is launched from, required by the engine since
+// 0.63.3 (see methodKiroWorkflowNew). The caller passes the RUN BRIDGE'S own
+// session, so the run's frames route back to the process executing it.
+//
+// workspacePaths STAYS: 0.63.3 resolves the roots from the parent session and only
+// shape-validates the param, but a pre-0.63.3 engine reads it, and the value it
+// yields either way is the same [workDir].
+func (rs *Runs) workflowNew(ctx context.Context, bridge acpCaller, source string, inputs map[string]string, parent vibekit.SessionID) (string, error) {
 	// Always a map, never nil: KAS answers "inputs is not iterable" without it.
 	in := map[string]any{}
 	for k, v := range inputs {
@@ -1301,6 +1318,7 @@ func (rs *Runs) workflowNew(ctx context.Context, bridge acpCaller, source string
 		"workflowPath":    source,
 		keyWorkspacePaths: []string{rs.lifecycle.workDir},
 		"inputs":          in,
+		"parentSessionId": string(parent),
 	})
 	if cErr := runCallErr(resp, err); cErr != nil {
 		return "", fmt.Errorf("workflow new: %w", cErr)

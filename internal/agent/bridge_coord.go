@@ -260,9 +260,37 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
+	// The session door's half of the supervised fail-open: the assert is best-effort
+	// inside Start, so a refusal used to open the chat unsupervised with the record and
+	// every client's checkbox still saying supervised.
+	bc.reportSupervisedNotApplied(ctx, chatID, chat.SupervisedMode, sb.bridge.SupervisedApplied())
 	sb.setState(bridgeIdle)
 
 	return sb, nil
+}
+
+// reportSupervisedNotApplied tells the user when the session refused `autopilot: off`,
+// so the chat is running unsupervised and will not ask before writing. A no-op unless
+// the chat asked for supervised mode AND the session did not take it — the bridge's own
+// flag cannot answer that alone, because false also means nobody asked.
+//
+// Modelled on reportModeNotApplied, including its no-automatic-retry reasoning, and it
+// DIVERGES from it in one way worth stating: the mode path resets the record to the
+// session's actual mode, so its request is gone and the next spawn has nothing to
+// re-ask. Here the record keeps the REQUEST, because supervised is the safer intent to
+// remember — so the next spawn WILL re-assert, and this event is a report rather than
+// the only chance to act.
+func (bc *BridgeCoordinator) reportSupervisedNotApplied(ctx context.Context, chatID vibekit.ChatID, requested, applied bool) {
+	if !requested || applied {
+		return
+	}
+	slog.Error("supervised mode not applied at the session door; this chat will NOT ask before writing",
+		"chat_id", chatID)
+	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+		Code: vibekit.ErrCodeSupervisedNotApplied,
+		Message: "This chat asked to review writes before they land, but the session refused. " +
+			"It is running unsupervised. Toggle supervised mode again to retry.",
+	}))
 }
 
 // tryLoadSession attempts session/load against the stored ACP session id.

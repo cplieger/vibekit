@@ -70,6 +70,13 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     // Read back by applyOutcome on the update path, which only has the DOM.
     node.dataset["denied"] = "1";
   }
+  if (opts.declined === true) {
+    // The DOM is this fact's ONE source: `applyOutcome` reads it from the dataset
+    // on both paths, so the stamp has to land before the call below. Only ever
+    // set, never cleared — a refusal is terminal, and the wire field is
+    // `omitempty`, so a later frame carrying no `declined` means unchanged.
+    node.dataset["declined"] = "1";
+  }
   if (info.mcp !== null) {
     node.dataset["mcpServer"] = info.mcp.server;
   }
@@ -322,7 +329,7 @@ type OutcomeStatus = ToolStatus;
 
 /** The verdicts the vocabulary paints. Not the wire enums: `pending` and
  *  `in_progress` are one thing to a reader, and a refusal is its own state. */
-type OutcomeState = "ok" | "fail" | "warn" | "denied" | "running";
+type OutcomeState = "ok" | "fail" | "warn" | "declined" | "denied" | "running";
 
 /** What a `.tool-icon` slot holds: the glyph it was BUILT with, and the state
  *  currently painted into it. Keyed on the element so `applyOutcome` needs no
@@ -338,12 +345,12 @@ const iconMarks = new WeakMap<HTMLElement, IconMark>();
  *  ONE MARK PER ROW, and its SHAPE is what changes for a non-success state.
  *  `ok` and `running` keep the row's own identity glyph (per-kind for a tool
  *  card, `ICON_TAB_RUN` for a History row) and only its tint moves; `fail`,
- *  `warn` and `denied` REPLACE that glyph with a general road-sign silhouette
- *  from `icons.ts` (`outcomeIcon`), red for a failure and yellow for the two
- *  stops, each a distinct shape. So hue stays a channel and is never the only
- *  one, and WCAG 1.4.1 is satisfied by the shape swap rather than by the second
- *  mark this replaced (a 7px character badge composited on the glyph's corner,
- *  which said the same thing twice). The status word is still not visible text:
+ *  `warn`, `declined` and `denied` REPLACE that glyph with a general road-sign
+ *  silhouette from `icons.ts` (`outcomeIcon`), red for a failure and yellow for
+ *  the three stops, each a distinct shape. So hue stays a channel and is never
+ *  the only one, and WCAG 1.4.1 is satisfied by the shape swap rather than by the
+ *  second mark this replaced (a 7px character badge composited on the glyph's
+ *  corner, which said the same thing twice). The status word is still not visible text:
  *  the accessible name carries it ("Edited auth.go, succeeded").
  *
  *  THE IDENTITY GLYPH IS CAPTURED, NOT RECOMPUTED. Callers mount it before the
@@ -388,18 +395,28 @@ export function applyOutcome(
   // what they need is the rule. Read from the dataset as well as the info so the
   // update path (which only has the DOM) reaches the same verdict.
   const denied = info.denial !== null || node.dataset["denied"] === "1";
+  // A DECLINED call ran correctly and refused, which is neither a success nor a
+  // failure: `completed` would paint a green check over a plan update the workflow
+  // rejected, and `failed` would send the reader to debug a tool that behaved.
+  // Read from the DATASET alone, unlike `denied`: nothing else needs the fact, so
+  // the DOM is its one source and `ToolRenderInfo` gains no field. Below `denied`
+  // because a policy refusal outranks the tool's own verdict — the command never ran
+  // at all, so the rule is what the reader needs.
+  const declined = node.dataset["declined"] === "1";
   const state: OutcomeState = denied
     ? "denied"
-    : status === "aborted"
-      ? "warn"
-      : isToolDone(status)
-        ? status === "failed"
-          ? "fail"
-          : "ok"
-        : "running";
+    : declined
+      ? "declined"
+      : status === "aborted"
+        ? "warn"
+        : isToolDone(status)
+          ? status === "failed"
+            ? "fail"
+            : "ok"
+          : "running";
   node.dataset["outcome"] = state;
   if (icon !== null) {
-    icon.classList.remove("is-ok", "is-fail", "is-warn", "is-running", "is-denied");
+    icon.classList.remove("is-ok", "is-fail", "is-warn", "is-running", "is-declined", "is-denied");
     icon.classList.add(`is-${state}`);
     icon.setAttribute("aria-hidden", "true");
     let mark = iconMarks.get(icon);
@@ -448,6 +465,8 @@ function outcomeWord(state: OutcomeState): string {
       return "failed";
     case "warn":
       return "aborted";
+    case "declined":
+      return "declined";
     case "denied":
       return "blocked by security policy";
     default:

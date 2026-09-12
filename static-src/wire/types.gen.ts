@@ -8,7 +8,7 @@ export type CatalogState = "ready" | "empty" | "unavailable";
 
 export type DecisionKind = "permission" | "elicitation" | "user_input";
 
-export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "model_not_served" | "auth_token_unavailable";
+export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable";
 
 export type EventKind = "interrupted" | "cancelled" | "model_switched" | "compacted" | "compaction_failed" | "infra_safety_blocked" | "turn_outcome" | "step_notice";
 
@@ -2073,6 +2073,19 @@ export interface ToolCall {
  * read path alone, because only a page load or scroll-up reads a preview.
  */
   has_full?: boolean;
+  /**
+ * Declined says the tool RAN CORRECTLY AND REFUSED — a fifth card outcome, and a
+ * distinct fact from Status. `failed` overstates it (nothing broke, so the card
+ * must not offer "Explain this error") and `completed` mislabels it outright,
+ * which is what a refused `update_workflow` reads as today.
+ * //
+ * A field rather than a sixth ToolStatus member, following Denial's precedent for
+ * the same reason: a status member lands wrong at eleven predicates that ask only
+ * whether a call is over (`isToolDone`, buffer.ToolsSettled, the ToolFailed reason
+ * gates), and a refusal IS over. The REASON is not duplicated here — it is the
+ * tool's own output and already on Output, which a declined card auto-expands.
+ */
+  declined?: boolean;
 }
 
 /**
@@ -2144,11 +2157,18 @@ export interface ToolCallUpdatePayload {
   /** Locations are REPLACED wholesale when present. */
   locations?: ToolLocation[];
   /**
- * The two non-pointer scalars last, so the GC scan region stops above them (govet
+ * The three non-pointer scalars last, so the GC scan region stops above them (govet
  * fieldalignment). OutputReplace's meaning is on OutputDelta.
  */
   duration_ms?: number;
   output_replace?: boolean;
+  /**
+ * Declined is a ONE-WAY latch, so absent means unchanged rather than false: the
+ * mark is set on the terminal frame that reports the refusal and no later frame
+ * carries a verdict. That is what makes `omitempty` on a bool correct here — the
+ * only value it ever sends is true.
+ */
+  declined?: boolean;
 }
 
 /**

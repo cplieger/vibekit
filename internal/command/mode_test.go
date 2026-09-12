@@ -141,6 +141,28 @@ func TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot(t *testing.T) 
 					t.Errorf("effort persisted = %v, want %v", got, test.wantApplied)
 				}
 			})
+
+			// The third config command, and the one that used to answer this state
+			// differently: it persisted FIRST, called the bridge best-effort, discarded
+			// the outcome and answered 200 whatever the session said — so a refused
+			// toggle left the record, ChatHeader.supervised_mode and every client's
+			// checkbox claiming supervised over a session in autopilot, with the
+			// client's own optimistic rollback unreachable because a 200 is not an
+			// error. It seeds the chat because set_supervised_mode does NOT auto-create
+			// one, unlike its two siblings.
+			t.Run("set_supervised_mode", func(t *testing.T) {
+				store := testsupport.NewInMemoryChatStore()
+				seedEmptyChat(t, store, "c1")
+				host := newBridgeHost(store, &recordingBridge{callErr: test.callErr})
+
+				_, err := CmdSetSupervisedMode(t.Context(), host, host, supervisedReq(t, "c1", true))
+
+				assertConfigOutcome(t, err, test.wantStatus)
+				c, ok := store.Get(t.Context(), "c1")
+				if got := ok && c.SupervisedMode; got != test.wantApplied {
+					t.Errorf("supervised persisted = %v, want %v", got, test.wantApplied)
+				}
+			})
 		})
 	}
 }

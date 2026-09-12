@@ -202,6 +202,9 @@ func applyToolCallDelta(tc *vibekit.ToolCall, d vibekit.ToolCallUpdatePayload) {
 	if d.Denial != nil {
 		tc.Denial = d.Denial
 	}
+	if d.Declined {
+		tc.Declined = true
+	}
 }
 
 func hasWorkingLabel(events *[]vibekit.ServerEvent) bool {
@@ -986,6 +989,158 @@ func TestToolCallUpdate_WorkflowIDIsAdoptedOnce(t *testing.T) {
 	}
 }
 
+// TestToolCallUpdate_RefusedWorkflowUpdateReadsAsDeclined pins the fifth card outcome.
+// `update_workflow` concludes Success while its own payload reports the refusal, so the
+// status alone reads the refusal as a clean completion — the one field that carries the
+// fact is `updated`, and this is the stated exception to reading outcome from a status.
+func TestToolCallUpdate_RefusedWorkflowUpdateReadsAsDeclined(t *testing.T) {
+	t.Parallel()
+
+	const reason = "Cannot update a completed workflow."
+	cases := []struct {
+		name         string
+		raw          any
+		wantDeclined bool
+	}{
+		{"a refused update", map[string]any{"updated": false, "message": reason}, true},
+		// The applied case is what makes the field a verdict rather than a marker: it
+		// travels on every update_workflow reply, so reading its PRESENCE would mark
+		// every successful plan edit as a refusal.
+		{"an applied update", map[string]any{"updated": true, "message": "Plan updated."}, false},
+		// A queued update is TAKEN — its signal lands at the current turn's end — so it
+		// is not a refusal either.
+		{"a queued update", map[string]any{"updated": true, "queued": true}, false},
+		// Absent means the tool made no claim, which reads as taken. This is the arm
+		// that keeps every OTHER tool untouched: none of them carries the key.
+		{"an absent verdict", map[string]any{"workflowId": "wf_9", "status": "running"}, false},
+		{"a bare string, which most tools send", "some output", false},
+		{"null", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			tr, _, deps, events, chatID := primeToolCall(t)
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+				"toolCallId": "tc-1",
+				"status":     "completed",
+				"rawOutput":  c.raw,
+			}), FrameAttribution{})
+
+			got, ok := lastToolCallUpdate(t, deps, events)
+			if !ok {
+				t.Fatal("no tool_call_update event emitted")
+			}
+			if got.Declined != c.wantDeclined {
+				t.Errorf("ToolCall.Declined from rawOutput %v = %v, want %v", c.raw, got.Declined, c.wantDeclined)
+			}
+			// The mark is a SECOND axis, never a status: `failed` would offer the reader
+			// an "Explain this error" button over a tool that ran correctly.
+			if got.Status != vibekit.ToolCompleted {
+				t.Errorf("ToolCall.Status = %q, want %q (a refusal is still a completion)", got.Status, vibekit.ToolCompleted)
+			}
+		})
+	}
+}
+
+// TestToolCallUpdate_DeclinedOnlyGradesASettledCall pins the status gate. A refusal is
+// something the tool REPORTED, so an in-flight frame carrying the field has not reported
+// anything yet, and marking one would put the refusal outcome on a running card.
+func TestToolCallUpdate_DeclinedOnlyGradesASettledCall(t *testing.T) {
+	t.Parallel()
+	tr, _, deps, events, chatID := primeToolCall(t)
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"status":     "in_progress",
+		"rawOutput":  map[string]any{"updated": false, "message": "not yet"},
+	}), FrameAttribution{})
+
+	got, ok := lastToolCallUpdate(t, deps, events)
+	if !ok {
+		t.Fatal("no tool_call_update event emitted")
+	}
+	if got.Declined {
+		t.Error("ToolCall.Declined on an in_progress frame = true, want false")
+	}
+}
+
+// TestToolCallUpdate_DeclinedIsNeverCleared pins the one-way rule. A later frame for the
+// same call carries no verdict, and reading its absence as "taken" would erase the
+// refusal the terminal frame reported.
+func TestToolCallUpdate_DeclinedIsNeverCleared(t *testing.T) {
+	t.Parallel()
+	tr, _, deps, events, chatID := primeToolCall(t)
+	for _, raw := range []any{
+		map[string]any{"updated": false, "message": "refused"},
+		map[string]any{"workflowId": "wf_9"},
+	} {
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"status":     "completed",
+			"rawOutput":  raw,
+		}), FrameAttribution{})
+	}
+
+	got, ok := lastToolCallUpdate(t, deps, events)
+	if !ok {
+		t.Fatal("no tool_call_update event emitted")
+	}
+	if !got.Declined {
+		t.Error("ToolCall.Declined after a verdict-free frame followed the refusal = false, want true")
+	}
+}
+
+// TestToolCallUpdate_AnUpdateCallDoesNotAdoptTheWorkflowID is the D1 server half.
+// `update_workflow` echoes the run's own `workflowId` while starting nothing, so
+// adopting it makes the transcript read that call as the one that STARTED the run: its
+// block is seated on the run's card and its refusal renders nowhere at all. The `updated`
+// key is the only thing on the wire that tells the two calls apart.
+func TestToolCallUpdate_AnUpdateCallDoesNotAdoptTheWorkflowID(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		raw  map[string]any
+		want string
+	}{
+		{
+			"a refused update echoing the run id",
+			map[string]any{"workflowId": "wf_9", "updated": false, "message": "refused"},
+			"",
+		},
+		{
+			"an applied update echoing the run id",
+			map[string]any{"workflowId": "wf_9", "updated": true, "message": "Plan updated."},
+			"",
+		},
+		{
+			// The launch's own rawOutput carries no `updated`, so the one call that
+			// SHOULD own the card is untouched by the exclusion.
+			"the launch, whose payload carries no verdict",
+			map[string]any{"workflowId": "wf_9", "status": "running"},
+			"wf_9",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			tr, _, deps, events, chatID := primeToolCall(t)
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+				"toolCallId": "tc-1",
+				"status":     "completed",
+				"rawOutput":  c.raw,
+			}), FrameAttribution{})
+
+			got, ok := lastToolCallUpdate(t, deps, events)
+			if !ok {
+				t.Fatal("no tool_call_update event emitted")
+			}
+			if got.WorkflowID != c.want {
+				t.Errorf("ToolCall.WorkflowID from rawOutput %v = %q, want %q", c.raw, got.WorkflowID, c.want)
+			}
+		})
+	}
+}
+
 // The message KAS's write tool throws when a remote-$schema JSON write is refused
 // outside Autopilot. Verbatim from the 2.20.1 bundle, because the reason reaching
 // the card unaltered is the property under test.
@@ -1049,56 +1204,9 @@ func TestHandleToolCallUpdate_FailedKeepsExistingOutput(t *testing.T) {
 	}
 }
 
-// TestHandleToolCallUpdate_CompletedTakesStringRawOutput drives the reachable
-// edit-tool shape: KAS suppresses a large diff content block but still sends the
-// tool's text as a bare rawOutput string.
-func TestHandleToolCallUpdate_CompletedTakesStringRawOutput(t *testing.T) {
-	tr, _, deps, events, chatID := primeToolCall(t)
-	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
-		"toolCallId": "tc-1",
-		"status":     "completed",
-		"rawOutput":  "wrote 3 lines",
-	}), FrameAttribution{})
-
-	got, ok := lastToolCallUpdate(t, deps, events)
-	if !ok {
-		t.Fatal("no tool_call_update event emitted")
-	}
-	if got.Output != "wrote 3 lines" {
-		t.Errorf("ToolCall.Output on a completed edit with no content block = %q, want %q", got.Output, "wrote 3 lines")
-	}
-}
-
-// TestHandleToolCallUpdate_CompletedStillIgnoresObjectRawOutput keeps
-// run_workflow's structured success payload out of the card. Its message is run
-// narration, not tool output; the workflow id has its own narrow reader.
-func TestHandleToolCallUpdate_CompletedStillIgnoresObjectRawOutput(t *testing.T) {
-	tr, _, deps, events, chatID := primeToolCall(t)
-	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
-		"toolCallId": "tc-1",
-		"status":     "completed",
-		"rawOutput": map[string]any{
-			"message":    "Workflow 'wf_9' started successfully. Status: running.",
-			"workflowId": "wf_9",
-			"status":     "running",
-		},
-	}), FrameAttribution{})
-
-	got, ok := lastToolCallUpdate(t, deps, events)
-	if !ok {
-		t.Fatal("no tool_call_update event emitted")
-	}
-	if got.Output != "" {
-		t.Errorf("ToolCall.Output from run_workflow's completed object = %q, want empty", got.Output)
-	}
-	if strings.Contains(got.Output, "workflowId") {
-		t.Errorf("ToolCall.Output = %q, want no run_workflow payload in it", got.Output)
-	}
-}
-
-// TestHandleToolCallUpdate_ContentWinsOverRawOutput pins KAS's normal doubled
-// shape: content and rawOutput carry the same text, and the card renders it once.
-func TestHandleToolCallUpdate_ContentWinsOverRawOutput(t *testing.T) {
+// Whether migrated tools still emit a bare string in rawOutput is unmeasured.
+// When a content block accompanies one, the content copy remains canonical.
+func TestHandleToolCallUpdate_CompletedStringRawOutputKeepsContent(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
@@ -1114,7 +1222,56 @@ func TestHandleToolCallUpdate_ContentWinsOverRawOutput(t *testing.T) {
 		t.Fatal("no tool_call_update event emitted")
 	}
 	if got.Output != "wrote 3 lines\n" {
-		t.Errorf("ToolCall.Output with content and rawOutput = %q, want one content copy", got.Output)
+		t.Errorf("ToolCall.Output with string rawOutput and content = %q, want one content copy", got.Output)
+	}
+}
+
+func TestHandleToolCallUpdate_CompletedTakesMessageFromStringifiedObjectOutput(t *testing.T) {
+	const message = "Workflow 'wf_9' started successfully. Status: running."
+	output := map[string]any{
+		"message":    message,
+		"workflowId": "wf_9",
+		"status":     "running",
+	}
+	tr, _, deps, events, chatID := primeToolCall(t)
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"status":     "completed",
+		"rawOutput":  output,
+		"content": []map[string]any{
+			{"type": "content", "content": map[string]any{"type": "text", "text": string(mustJSON(t, output))}},
+		},
+	}), FrameAttribution{})
+
+	got, ok := lastToolCallUpdate(t, deps, events)
+	if !ok {
+		t.Fatal("no tool_call_update event emitted")
+	}
+	if got.Output != message+"\n" {
+		t.Errorf("ToolCall.Output from a stringified object = %q, want %q", got.Output, message+"\n")
+	}
+}
+
+func TestHandleToolCallUpdate_CompletedKeepsDifferentContentOverObjectMessage(t *testing.T) {
+	tr, _, deps, events, chatID := primeToolCall(t)
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"status":     "completed",
+		"rawOutput": map[string]any{
+			"message": "internal summary",
+			"result":  42,
+		},
+		"content": []map[string]any{
+			{"type": "content", "content": map[string]any{"type": "text", "text": "ordinary tool output"}},
+		},
+	}), FrameAttribution{})
+
+	got, ok := lastToolCallUpdate(t, deps, events)
+	if !ok {
+		t.Fatal("no tool_call_update event emitted")
+	}
+	if got.Output != "ordinary tool output\n" {
+		t.Errorf("ToolCall.Output with distinct content and object rawOutput = %q, want the content block", got.Output)
 	}
 }
 

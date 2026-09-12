@@ -2683,6 +2683,82 @@ shape with -32602 and leaves the session in autopilot. Captured:
 	}
 }
 
+// autopilotScript is sessionDoorScript with one arm added: with AUTOPILOT_REFUSE set it
+// answers the autopilot set_config_option with -32602, which is what KAS really does for
+// every value shape it does not accept. One script rather than two so the accepted and
+// refused arms differ only in the environment.
+const autopilotScript = `#!/bin/sh
+while IFS= read -r line; do
+  id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  case "$method" in
+    initialize)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
+      ;;
+    session/new|session/load)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess_doortest"}}\n' "$id"
+      ;;
+    *)
+      if [ -n "$id" ]; then
+        if [ -n "$AUTOPILOT_REFUSE" ] && echo "$line" | grep -q '"configId":"autopilot"'; then
+          printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32602,"message":"Invalid params"}}\n' "$id"
+        else
+          printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
+        fi
+      fi
+      ;;
+  esac
+done
+`
+
+// TestApplySupervised_RecordsWhetherTheSessionTookIt pins the OUTCOME half of the assert,
+// which is the input the coordinator's refusal report reads. applySupervised is
+// best-effort by decision — a declined config option must not refuse to open a usable
+// chat — so before the flag existed a refusal left only a log line, and the record plus
+// every client's checkbox went on claiming supervised over a session in autopilot.
+//
+// The third case is the flag's honest zero: false also means nobody asked, which is why
+// the report cannot key on it alone.
+func TestApplySupervised_RecordsWhetherTheSessionTookIt(t *testing.T) {
+	cases := []struct {
+		name       string
+		supervised bool
+		refuse     bool
+		want       bool
+	}{
+		{name: "an accepted assert is recorded", supervised: true, want: true},
+		{name: "a refused assert is not recorded", supervised: true, refuse: true},
+		{name: "a chat that asked for nothing records nothing", supervised: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			scriptPath := filepath.Join(dir, "fake-kiro-cli")
+			if err := os.WriteFile(scriptPath, []byte(autopilotScript), 0o755); err != nil {
+				t.Fatalf("write fake script: %v", err)
+			}
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv(envAgentWorkflows, "")
+			if tc.refuse {
+				t.Setenv("AUTOPILOT_REFUSE", "1")
+			}
+
+			b := New(scriptPath, dir)
+			if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Supervised: tc.supervised}); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			defer b.Stop()
+
+			// A refused option never fails the session: the chat is usable, it just
+			// will not ask before writing, which is what the report exists to say.
+			if got := b.SupervisedApplied(); got != tc.want {
+				t.Errorf("SupervisedApplied() = %v, want %v; the coordinator reads this to decide "+
+					"whether to tell the user the chat is running unsupervised", got, tc.want)
+			}
+		})
+	}
+}
+
 // --- _meta.title: the wire shape KAS actually sends ---
 
 // TestApplySessionResult_TakesFlatMetaTitle pins that the session title is read from a FLAT

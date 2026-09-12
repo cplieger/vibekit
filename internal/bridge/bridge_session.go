@@ -205,9 +205,24 @@ func (b *Bridge) applySupervised(ctx context.Context, sessionID string, supervis
 		keyConfigID:          vibekit.ConfigOptionAutopilot,
 		keyConfigValue:       vibekit.ConfigValueAutopilotOff,
 	}); err != nil {
+		// The log line is the diagnostic and stays. What changes is that the OUTCOME is
+		// now readable, so the coordinator can report the divergence to the client the
+		// way it already does for a refused mode — before this, a chat opened
+		// unsupervised while its record and every checkbox said supervised, with this
+		// line as the only trace.
 		slog.Error("supervised mode not applied; this session will NOT ask before writing",
 			"session_id", sessionID, "error", err)
+		return
 	}
+	// Recorded like applyInitialMode's currentMode: the session accepted it.
+	//
+	// session/new is deliberately NOT failed on a refusal here. Refusing to open a chat
+	// because one config option was declined is a different decision, and the
+	// investigator flagged it as one: the chat is usable, it just will not ask before
+	// writing, which is what the report exists to say.
+	b.mu.Lock()
+	b.supervised = true
+	b.mu.Unlock()
 }
 
 // applyInitialMode switches a freshly-created session to wantMode when it differs
