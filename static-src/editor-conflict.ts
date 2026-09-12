@@ -178,7 +178,7 @@ export function renderConflictOverlay(state: FileState): void {
     const suggestBtn = el(
       "button",
       {
-        className: "conflict-btn conflict-btn-suggest",
+        className: "btn-small conflict-btn conflict-btn-suggest",
         "data-tooltip": "Propose a merged version using the utility AI bridge",
         "aria-label": `Suggest a merged resolution for the conflict at line ${lineNo}`,
         disabled: suggestion?.loading === true,
@@ -203,7 +203,7 @@ export function renderConflictOverlay(state: FileState): void {
 }
 
 function resolveBtn(label: string, onClick: () => void, ariaLabel?: string): HTMLElement {
-  const b = el("button", { className: "conflict-btn" }, label);
+  const b = el("button", { className: "btn-small conflict-btn" }, label);
   if (ariaLabel !== undefined) {
     b.setAttribute("aria-label", ariaLabel);
   }

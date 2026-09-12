@@ -366,3 +366,36 @@ describe("banner-stack: severity carries a shape, not colour alone", () => {
     expect(container.querySelector(".banner-msg")?.textContent).toBe("still boom");
   });
 });
+
+describe("banner-stack: the CTA is the app's shared button, not a text-link skin", () => {
+  // THE DEFECT, and it is the one nothing pinned: `buildBannerLink` was written when it
+  // only ever emitted an `<a>`, so `.banner-link` was authored as an underlined text
+  // link. The `onClick` branch added later emits a `<button>` under the same class, and
+  // that skin resets none of a button's UA chrome — so `02-reset.css`'s `* { padding: 0 }`
+  // (author origin, which beats the UA sheet) gave it ZERO padding on all three of its
+  // live producers, the kiro-cli install banner's "Run diagnostics" among them. Reported
+  // as the install banner's button having no padding. `.btn-small` carries the padding
+  // now, and `.banner-link` is layout only — but no test named either half, so a later
+  // edit could take the class off again and the whole suite would stay green.
+  //
+  // Both element kinds, because the class is what carries the skin and only one of them
+  // was broken: an `<a>` with no padding looked deliberate.
+  for (const [kind, link] of [
+    ["button", { label: "Run diagnostics", onClick: () => undefined }],
+    ["anchor", { label: "Open docs", href: "https://example.invalid/" }],
+  ] as const) {
+    it(`gives the ${kind} CTA the btn-small class`, async () => {
+      const { container, mod } = await setup();
+
+      activeSig.value = { id: "A" };
+      mod.ensureBound();
+      mod.showBanner("A", "runtime", "installing", "info", false, link);
+
+      const cta = container.querySelector(".banner-link");
+      expect(cta, "the banner rendered its CTA").not.toBeNull();
+      expect([...(cta?.classList ?? [])], `the ${kind} CTA carries the shared skin`).toContain(
+        "btn-small",
+      );
+    });
+  }
+});

@@ -20,7 +20,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import { userEvent } from "vitest/browser";
 import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
 
-import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import { buildEffortSlider, type EffortSliderHandle } from "./effort-slider.js";
 import type { SessionEffortLevel } from "./types.js";
 
@@ -41,12 +41,12 @@ const FIVE: SessionEffortLevel[] = [
 
 /** The geometry per pointer tier, all of it derived in 15-input.css from two
  *  tokens: the BAR is `--ctl-h-sm` (01-tokens.css, 1.5rem fine / 2.25rem coarse),
- *  the INSET is `--sp-1`, the KNOB is the bar minus the inset on both edges, and the
+ *  the INSET is `0.125rem`, the KNOB is the bar minus the inset on both edges, and the
  *  LINE the bar sits in is floored at `--hit-floor` because the whole track answers
  *  a tap while the knob is deliberately under that floor. */
 const TIER = {
-  fine: { line: 24, bar: 24, knob: 16, inset: 4 },
-  coarse: { line: 44, bar: 36, knob: 28, inset: 4 },
+  fine: { line: 24, bar: 24, knob: 20, inset: 2 },
+  coarse: { line: 44, bar: 36, knob: 32, inset: 2 },
 } as const;
 
 let style: HTMLStyleElement;
@@ -344,54 +344,87 @@ describe("the knob's size", () => {
     ).toBeCloseTo(TIER.fine.inset, 1);
   });
 
-  it("GAINS INTENSITY as the knob moves right, bounded by the handle's contrast", () => {
+  it("FILLS to the knob and gains intensity, bounded by the handle's contrast", () => {
     mount(FIVE, "low");
-    const root = getComputedStyle(document.documentElement);
-    const accent = rgbOf(root.getPropertyValue("--c-accent"));
     const handle = rgbOf(getComputedStyle(knob()).backgroundColor);
-    // The fill is EASED and a pseudo-element takes no inline style, so the read runs
-    // under `data-dragging` — the production rule that suppresses that transition.
-    // Without it `getComputedStyle` answers the value it is animating FROM, and every
-    // tier reads as the one below it.
-    track().dataset["dragging"] = "";
-    const fills = FIVE.map((level) => {
-      slider.setActive(level.id);
-      return rgbOf(getComputedStyle(track(), "::before").backgroundColor);
-    });
-    delete track().dataset["dragging"];
+    const accent = rgbOf(getComputedStyle(document.documentElement).getPropertyValue("--c-accent"));
 
-    // Each step is strictly nearer the accent than the one below it.
-    const gaps = fills.map((f) => distance(f, accent));
-    for (const [i, gap] of gaps.entries()) {
-      if (i === 0) {
-        continue;
-      }
-      expect(gap, `tier ${String(i)} is more accent than tier ${String(i - 1)}`).toBeLessThan(
-        gaps[i - 1] as number,
-      );
-    }
-    // A ramp a reader SEES: the 6%-to-26% an accent handle allows moves this by ~26.
-    expect((gaps[0] as number) - (gaps[4] as number)).toBeGreaterThan(90);
+    // THE RAMP IS THREE DECLARED COLOURS, so the read is of the mix each one names
+    // rather than of one flat `background-color` that no longer exists. Resolved
+    // through a probe element because a gradient's own stops are not separately
+    // readable off `getComputedStyle`.
+    const mix = (pct: number): readonly [number, number, number] => {
+      const probe = document.createElement("div");
+      probe.style.backgroundColor = `color-mix(in oklch, var(--c-accent) ${String(pct)}%, var(--c-bg-tertiary))`;
+      host.appendChild(probe);
+      const out = rgbOf(getComputedStyle(probe).backgroundColor);
+      probe.remove();
+      return out;
+    };
+    const idle = mix(6);
+    const warm = mix(22);
+    const hot = mix(70);
 
-    // THE BOUND, and the assertion that stops the ramp being widened until the handle
-    // disappears at the top tier: WCAG 1.4.11 wants 3:1 against what it sits on.
-    for (const [i, fill] of fills.entries()) {
-      expect(contrast(handle, fill), `the handle clears 3:1 on tier ${String(i)}`).toBeGreaterThan(
-        3,
-      );
+    // The ramp runs one way: idle track, warmer at the bar's left edge, hottest under
+    // the knob. A reader SEES it — the two ends are far apart in sRGB.
+    expect(distance(warm, accent), "warm is nearer the accent than the idle track").toBeLessThan(
+      distance(idle, accent),
+    );
+    expect(distance(hot, accent), "the hot spot is the nearest of the three").toBeLessThan(
+      distance(warm, accent),
+    );
+    expect(distance(idle, hot), "the two ends are visibly different").toBeGreaterThan(90);
+
+    // THE BOUND, and the reason it is stated over the whole 6..70 range rather than
+    // over five tiers: every pixel of the bar is one of these mixes, so clearing 3:1
+    // across the range clears WCAG 1.4.11 at every position the handle can sit.
+    // Widening `--effort-fill-max` past 70% is the one edit that has to re-run this.
+    for (let pct = 6; pct <= 70; pct += 8) {
+      expect(
+        contrast(handle, mix(pct)),
+        `the handle clears 3:1 on a ${String(pct)}% fill`,
+      ).toBeGreaterThan(3);
     }
     // NOT the accent: the fill closes on the accent's own lightness as it rises.
     expect(distance(handle, accent), "the handle is not accent-coloured").toBeGreaterThan(40);
+
+    // AND THE FILL MOVES: the boundary is `--effort-frac`, so each tier paints a
+    // different gradient. A flat fill would answer with five identical strings.
+    track().dataset["dragging"] = "";
+    const images = FIVE.map((level) => {
+      slider.setActive(level.id);
+      return getComputedStyle(track(), "::before").backgroundImage;
+    });
+    delete track().dataset["dragging"];
+    expect(new Set(images).size, "one gradient per tier").toBe(FIVE.length);
   });
 
-  it("draws no per-tier mark at all", () => {
-    // DELETED, not hidden: an element painting nothing is still in the box the tap
-    // resolves over. The caption names the tier at every step instead.
+  it("marks each tier where the knob actually lands", () => {
+    // OVERTURNED (user call): this used to assert the bar carried NO per-tier mark, on
+    // the ground that a continuous drag should not draw a grid. The RELEASE snaps to a
+    // tier, so the marks are where the gesture ends. What keeps them honest is that
+    // they take the knob's own travel arithmetic, so a dot cannot sit where the handle
+    // would not — which is what this measures rather than the count alone.
     mount(FIVE, "low");
-    expect(slider.el.querySelectorAll(".effort-tick")).toHaveLength(0);
-    expect([...track().children], "the knob is the track's only child").toEqual([knob()]);
-    // The bar is one flat fill rather than a ramp under those marks.
-    expect(getComputedStyle(track(), "::before").backgroundImage).toBe("none");
+    const dots = [...slider.el.querySelectorAll<HTMLElement>(".effort-stop")];
+    expect(dots).toHaveLength(FIVE.length);
+    const dotCentres = dots.map((d) => {
+      const r = d.getBoundingClientRect();
+      return (r.left + r.right) / 2;
+    });
+    for (const [i, centre] of tierCentres(FIVE).entries()) {
+      expect(dotCentres[i], `the mark for tier ${String(i)} is on the knob's centre`).toBeCloseTo(
+        centre,
+        1,
+      );
+    }
+    // They never take the gesture: the track is the one pointerdown target.
+    expect(getComputedStyle(dots[0] as HTMLElement).pointerEvents).toBe("none");
+  });
+
+  it("draws no marks for a vocabulary with nothing to choose between", () => {
+    mount([{ id: "high", name: "High" }], "high");
+    expect(slider.el.querySelectorAll(".effort-stop")).toHaveLength(0);
   });
 
   it("leaves a foreign tier name to the caption, which WRAPS rather than widening the card", () => {
@@ -647,10 +680,26 @@ describe("the pointer", () => {
     const rest = getComputedStyle(k);
     expect(rest.transitionProperty, "a settled knob eases to its tier").toContain("transform");
     expect(parseFloat(rest.transitionDuration)).toBeGreaterThan(0);
-    // The states are SIZE, so `scale` is separate from the position transform and has
-    // to be in the transition list or the grow applies in one frame.
-    expect(rest.transitionProperty).toContain("scale");
-    expect(rest.scale, "the resting handle is unscaled").toBe("none");
+    // THE PRESS SCALE IS A FUNCTION IN THE `transform` LIST, NOT THE `scale` PROPERTY,
+    // and the difference is the mouse jitter's root cause: the individual properties
+    // compose as `translate . rotate . scale . transform`, so the `scale` property
+    // MULTIPLIES this element's own translate and a hover displaced the knob by 12% of
+    // its travel — out from under the pointer that caused it, which then un-hovered it
+    // back. Inside the list, `translate()` is applied last and its distance is
+    // unscaled. So `scale` must stay `none` in every state and carry no transition.
+    expect(rest.scale, "the resting handle sets no `scale` property").toBe("none");
+    expect(rest.transitionProperty, "and has nothing to transition on it").not.toContain("scale");
+    const sheet = loadCSS("15-input.css");
+    for (const [state, scope] of [
+      ["hover", "any-hover"],
+      ["active", "top"],
+    ] as const) {
+      const body = ruleContaining(sheet, `.effort-knob:${state}`, scope).body;
+      expect(body, `the ${state} state sets no \`scale\` property`).not.toMatch(/(^|[;\s])scale:/);
+      expect(body, `the ${state} state scales inside \`transform\``).toMatch(
+        /transform:\s*translate\([^;]*\)\s*scale\(/,
+      );
+    }
 
     t.dataset["dragging"] = "";
     // A transition makes the knob lag the finger.

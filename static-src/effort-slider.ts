@@ -45,7 +45,11 @@ export function buildEffortSlider(opts: { onPick: (level: string) => void }): Ef
     "aria-valuenow": "0",
     "aria-valuetext": "",
   }) as HTMLDivElement;
-  const track = el("div", { className: "effort-track" }, knob) as HTMLDivElement;
+  /** The tier marks, one dot per level, in a layer under the knob. Its own box spans
+   *  the track, so each dot inside it takes the knob's positioning and travel
+   *  arithmetic verbatim and their centres coincide with where the knob lands. */
+  const stops = el("div", { className: "effort-stops", "aria-hidden": "true" }) as HTMLDivElement;
+  const track = el("div", { className: "effort-track" }, stops, knob) as HTMLDivElement;
   const row = el(
     "div",
     { className: "effort-row" },
@@ -89,18 +93,25 @@ export function buildEffortSlider(opts: { onPick: (level: string) => void }): Ef
     }
   }
 
-  /** Where along its travel `clientX` puts the knob, 0..1, continuous. Both rects
-   *  come from one call, so the arithmetic survives the card's enter scale, and the
-   *  inset is read as `offsetLeft` rather than copied out of CSS. */
+  /** Where along its travel `clientX` puts the knob, 0..1, continuous.
+   *
+   *  THE KNOB'S OWN SIZE IS READ FROM LAYOUT, NEVER FROM ITS RECT, and that is what
+   *  keeps the mapping still while the pointer is over it: the knob scales on hover
+   *  and on press (15-input.css), `getBoundingClientRect` reports the SCALED box, so
+   *  both the travel denominator and the centring term used to move with the pointer's
+   *  own hit state — a stationary cursor produced a different `frac` on every frame for
+   *  as long as that scale was in flight. `offsetLeft` and `offsetWidth` are
+   *  pre-transform, so the inset is still read rather than copied out of CSS and the
+   *  arithmetic no longer depends on what the pointer is doing to the handle. */
   function fracAt(clientX: number): number {
     const t = track.getBoundingClientRect();
-    const k = knob.getBoundingClientRect();
     const pad = knob.offsetLeft;
-    const travel = t.width - 2 * pad - k.width;
+    const kw = knob.offsetWidth;
+    const travel = t.width - 2 * pad - kw;
     if (travel <= 0) {
       return 0;
     }
-    return Math.min(1, Math.max(0, (clientX - t.left - pad - k.width / 2) / travel));
+    return Math.min(1, Math.max(0, (clientX - t.left - pad - kw / 2) / travel));
   }
 
   function dragging(): boolean {
@@ -186,8 +197,26 @@ export function buildEffortSlider(opts: { onPick: (level: string) => void }): Ef
     levels = [...next];
     track.dataset["tiers"] = String(levels.length);
     knob.setAttribute("aria-valuemax", String(Math.max(0, levels.length - 1)));
-    // No per-tier element: the drag is continuous, so a mark per tier would draw a
-    // grid the gesture does not follow. `data-tiers` is read by one rule.
+    // ONE DOT PER TIER, on the positions the knob actually lands on.
+    //
+    // OVERTURNED (user call, 2026-09): this used to read "no per-tier element: the
+    // drag is continuous, so a mark per tier would draw a grid the gesture does not
+    // follow." The premise held and the conclusion did not — the gesture is still
+    // continuous and the knob still tracks the finger unsnapped, but the RELEASE snaps
+    // to a tier, so the stops are where the gesture ends rather than a grid it has to
+    // obey. Without them the bar states how many tiers exist nowhere at all: the
+    // caption names the one in force and `data-tiers` reached exactly one CSS rule.
+    // Each dot carries only its own fraction and takes its geometry from the same
+    // formula as the knob, so a mark cannot land where the handle would not.
+    stops.replaceChildren(
+      ...(levels.length <= 1
+        ? []
+        : levels.map((_, i) => {
+            const dot = el("div", { className: "effort-stop" }) as HTMLDivElement;
+            dot.style.setProperty("--effort-stop-frac", String(i / (levels.length - 1)));
+            return dot;
+          })),
+    );
   }
 
   function setActive(id: string): void {

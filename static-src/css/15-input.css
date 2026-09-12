@@ -1138,8 +1138,12 @@
   --effort-bar-h: var(--ctl-h-sm);
 
   /* The knob's clearance inside the bar, on both axes, so it is also the term its
-     travel is inset by. */
-  --effort-knob-inset: var(--sp-1);
+     travel is inset by. 2px rather than `--sp-1`'s 4px: at 4px the handle read as a
+     small dot floating in a wide groove instead of as the thing filling it, which is
+     what the user reported as too much padding between the handle and the sliding
+     area. It is DERIVED FROM by `--effort-knob-w`, so halving it grows the handle
+     (20px fine, 32px coarse) rather than moving it. */
+  --effort-knob-inset: 0.125rem;
 
   /* DERIVED, so the knob cannot outgrow the box around it: 16px fine, 28px coarse. */
   --effort-knob-w: calc(var(--effort-bar-h) - 2 * var(--effort-knob-inset));
@@ -1215,7 +1219,22 @@
 
 /* THE BAR: the box the knob travels inside, centred in the line by the
    `inset-block-start: 50%` / `translateY(-50%)` pair. No border — `--c-border` is
-   1.154:1 against the card and draws none, so the fill is the bar's edge. */
+   1.154:1 against the card and draws none, so the GROOVE is the bar's edge: two inset
+   shadows, dark at the top lip and light at the bottom, which is the one depth cue
+   that reads in both themes without a token that has to be right in each.
+
+   THE FILL IS A GRADIENT WHOSE BOUNDARY IS THE KNOB'S OWN POSITION, so the bar states
+   how far along the range the reader is instead of only how hot it is. It replaced a
+   single flat `color-mix` over the whole bar whose only variable was intensity — a bar
+   that changed colour and never showed a fill.
+
+   THE CONTRAST BOUND SURVIVES BY CONSTRUCTION rather than by another measurement:
+   every colour in the ramp is `--c-accent` mixed over `--c-bg-tertiary` at a fraction
+   between `--effort-fill-min` and `--effort-fill-max`, and the handle already clears
+   WCAG 1.4.11's 3:1 against the 70% end (`effort-slider.test.ts` measures both ends
+   and the middle). So no position on the bar can be hotter than the ceiling the handle
+   was measured against, and widening the ceiling is still the one edit that needs the
+   measurement re-run. */
 .effort-track::before {
   content: "";
   position: absolute;
@@ -1224,21 +1243,79 @@
   block-size: var(--effort-bar-h);
   border-radius: var(--r-pill);
 
-  /* Spelled here, not as a token on the row: this is the first place both terms are
-     in scope, and the row states why a composed token cannot work. */
-  background: color-mix(
+  /* Spelled here, not as tokens on the row: this is the first place every term is in
+     scope, and the row states why a composed token reading `--effort-frac` cannot
+     work. `--effort-pos` is the knob's centre as a percentage of the bar, which is the
+     coordinate a gradient stop speaks. */
+  --effort-pos: calc(var(--effort-frac, 0) * 100%);
+  --effort-fill-idle: color-mix(
     in oklch,
-    var(--c-accent)
-      calc(
-        var(--effort-fill-min) + var(--effort-frac, 0) *
-          (var(--effort-fill-max) - var(--effort-fill-min))
-      ),
+    var(--c-accent) var(--effort-fill-min),
     var(--c-bg-tertiary)
   );
+  --effort-fill-warm: color-mix(in oklch, var(--c-accent) 22%, var(--c-bg-tertiary));
+  --effort-fill-hot: color-mix(
+    in oklch,
+    var(--c-accent) var(--effort-fill-max),
+    var(--c-bg-tertiary)
+  );
+
+  /* The colour an engine that drops the gradient falls back to, and the colour behind
+     the unfilled end. */
+  background-color: var(--effort-fill-idle);
+
+  /* Warm at the left edge, hottest under the knob, then a short shoulder back to the
+     idle track. The shoulder runs PAST 100% at the top tier, which a gradient resolves
+     without clamping, so no `min()` is needed. At the bottom tier the first two stops
+     coincide at 0% and the hot spot sits under the knob where it started. */
+  background-image: linear-gradient(
+    to right,
+    var(--effort-fill-warm) 0%,
+    var(--effort-fill-hot) var(--effort-pos),
+    var(--effort-fill-idle) calc(var(--effort-pos) + 8%),
+    var(--effort-fill-idle) 100%
+  );
+  box-shadow:
+    inset 0 1px 2px oklch(0% 0 none / 22%),
+    inset 0 -1px 0 oklch(100% 0 none / 7%);
   transform: translateY(-50%);
 
-  /* The knob's own curve, so the snap moves handle and intensity together. */
+  /* The knob's own curve, so the snap moves handle and fill together. */
   transition: background var(--dur-standard) var(--ease-standard);
+}
+
+/* THE TIER MARKS. One layer spanning the bar, so each dot inside it inherits the
+   knob's containing block and can reuse its travel arithmetic unchanged — a mark can
+   therefore only sit where the handle lands. `pointer-events: none` so the track keeps
+   being the one pointerdown target; the layer is `aria-hidden` because the caption
+   already names the tier and the knob already carries the range. */
+.effort-stops {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.effort-stop {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: var(--effort-knob-inset);
+  inline-size: var(--effort-knob-w);
+  block-size: var(--effort-knob-w);
+
+  /* A disc drawn in the box's centre rather than a smaller sized box, so the dot's
+     centre is the box's centre and the box can stay the knob's size — which is what
+     makes `100%` in the travel term below mean the same thing for both. */
+  --effort-stop-r: calc(var(--effort-knob-w) / 10);
+
+  background: radial-gradient(
+    circle at center,
+    color-mix(in oklch, var(--c-text-primary) 34%, transparent) 0 var(--effort-stop-r),
+    transparent var(--effort-stop-r)
+  );
+  transform: translate(
+    calc(var(--effort-stop-frac, 0) * (100cqi - 2 * var(--effort-knob-inset) - 100%)),
+    -50%
+  );
 }
 
 /* THE KNOB, a round handle inside the bar. `inset-inline-start` is declared rather
@@ -1260,27 +1337,45 @@
   border-radius: var(--r-pill);
   background: var(--c-text-primary);
   cursor: grab;
-  transform: translate(
-    calc(var(--effort-frac, 0) * (100cqi - 2 * var(--effort-knob-inset) - 100%)),
-    -50%
-  );
-  transition:
-    transform var(--dur-standard) var(--ease-standard),
-    scale var(--dur-micro) var(--ease-standard);
+
+  /* Its own edge and its own lift, so the handle reads as sitting ON the groove rather
+     than as a hole punched in it. The border mixes toward the PAGE colour, which is
+     darker than the handle in dark mode and lighter in light mode, so one declaration
+     separates it from the fill in both. */
+  border: 1px solid color-mix(in oklch, var(--c-bg-primary) 45%, transparent);
+  box-shadow:
+    0 1px 2px oklch(0% 0 none / 32%),
+    0 2px 6px oklch(0% 0 none / 18%);
+
+  /* THE POSITION, factored out so every state below restates it verbatim. */
+  --effort-knob-x: calc(var(--effort-frac, 0) * (100cqi - 2 * var(--effort-knob-inset) - 100%));
+
+  transform: translate(var(--effort-knob-x), -50%);
+  transition: transform var(--dur-standard) var(--ease-standard);
 }
 
 /* SIZE, NOT COLOUR: a knob tinted toward the accent reads 2.94:1 against the hottest
-   fill, so a colour rung would break the 3:1 floor at the top tier. `scale` is its
-   own property, so it composes with the position transform. `any-hover`, not
-   `hover`, which reports the primary input only (web.md). */
+   fill, so a colour rung would break the 3:1 floor at the top tier.
+   `any-hover`, not `hover`, which reports the primary input only (web.md).
+
+   THE SCALE IS A FUNCTION IN THE `transform` LIST, NOT THE `scale` PROPERTY, and that
+   is the mouse jitter's root cause rather than a style preference. Per CSS Transforms
+   Level 2 the individual properties compose as `translate . rotate . scale .
+   transform`, so `scale` is applied to the point BEFORE the `transform` list and its
+   factor therefore MULTIPLIES this element's own translate. At the top tier a 1.12
+   hover scale displaced the knob by 12% of its travel — about 22px on a 184px range,
+   more than the handle's own width — so the pointer fell off it, the hover dropped,
+   the knob moved back under the cursor, and it re-hovered: a positive-feedback
+   oscillation with nothing driving it but the hit test. Inside the list, `translate()`
+   is applied last and its distance is unscaled, so the handle grows in place. */
 @media (any-hover: hover) {
   .effort-knob:hover {
-    scale: 1.12;
+    transform: translate(var(--effort-knob-x), -50%) scale(1.12);
   }
 }
 
 .effort-knob:active {
-  scale: 0.94;
+  transform: translate(var(--effort-knob-x), -50%) scale(0.94);
 }
 
 /* ONE TIER IS NOT A CHOICE: the bar shrinks to the knob plus its inset, so the
