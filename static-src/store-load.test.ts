@@ -922,6 +922,25 @@ describe("loadMessages outcome relatch", () => {
     expect(mockRelatch, "the narrow re-derivation").toHaveBeenCalledExactlyOnceWith("c1");
   });
 
+  // The gate reads the RAW field, and this is the case that separates the two: the fold
+  // answers false for a step turn, so a gate reading it would run the teardown, whose
+  // `clearLiveTurnMessage` frees the next window replacement to delete the step's content.
+  it("does not run the full teardown for a RUN's step turn", async () => {
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [msg("m1", 1)],
+      has_more: false,
+      turn_open: true,
+      turn_workflow_step: true,
+    });
+
+    await loadMessages("c1");
+
+    expect(mockHealSettled, "the full teardown").not.toHaveBeenCalled();
+    expect(mockRelatch, "the narrow re-derivation").toHaveBeenCalledExactlyOnceWith("c1");
+  });
+
   // The full teardown DROPS the in-flight marker, and that marker is the only thing
   // stopping the window replacement above from deleting an unpersisted reply — which
   // is why the retraction a run-scoped turn end runs leaves it standing. So the
@@ -1236,6 +1255,46 @@ describe("loadMessages turn_open", () => {
 
     await loadMessages("c1");
     expect(sessions.get("c1")?.thinking).toBe(true);
+  });
+
+  // The owner marker, folded here because this is the one door where the two facts arrive
+  // apart. A run executes on the launching chat's session and its launching turn ended the
+  // moment the run was created, so without the fold that chat renders its own newest turn
+  // as running for the whole run.
+  it("folds a run's step turn to NOT this chat's own", async () => {
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [userRow("u1", 1)],
+      has_more: false,
+      turn_open: true,
+      turn_workflow_step: true,
+    });
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.turn_open).toBe(false);
+  });
+
+  it("adopts the step's in-flight content even though the chat reads idle", async () => {
+    // Why the marker is ADDITIVE rather than a narrowing: the snapshot is the only copy
+    // of a live step's transcript, so the fold must not cost the content it describes.
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [userRow("u1", 1)],
+      has_more: false,
+      turn_open: true,
+      turn_workflow_step: true,
+      live_turn: liveTurn("stepping", 4),
+    });
+
+    await loadMessages("c1");
+
+    expect(sessions.get("c1")?.turn_open, "the chat's own liveness").toBe(false);
+    expect(mockNoteLiveTurn, "the step's unpersisted marker").toHaveBeenCalledWith(
+      "c1",
+      "stepping",
+    );
   });
 
   // Through the REAL decoder, which every other case here bypasses, because what an

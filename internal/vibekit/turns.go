@@ -229,3 +229,22 @@ type LiveTurn struct {
 	// not be readable as "complete", which is what makes a capped payload admissible.
 	Truncated bool `json:"truncated"`
 }
+
+// TurnOpenState is the `turn_open` / `turn_workflow_step` pair on the single-chat GET:
+// whether a turn is open at all, and WHOSE it is. One value because the two must be read
+// under a single acquisition (openTurnFacts records that hazard) and because two adjacent
+// bools transpose silently. Zero value: no turn, nothing to own.
+type TurnOpenState struct {
+	// Open counts a workflow STEP's turn and a prompt-class admission reservation with
+	// no Turn minted yet. Openness alone, so its true licenses a reader to keep its
+	// per-turn markers rather than to render the chat as busy.
+	Open bool
+	// WorkflowStep means a run's step opened it, not the reader, so the chat's own agent
+	// is idle. Absent-means-this-chat's-own, matching TurnEndedPayload.WorkflowStep.
+	// Meaningless unless Open — "no turn" and "a run's turn" are not one axis.
+	WorkflowStep bool
+}
+
+// OwnTurn reports whether a turn of the CHAT'S OWN is in flight — the one spelling the
+// connect handshake's busy set also answers, so the two channels cannot disagree.
+func (t TurnOpenState) OwnTurn() bool { return t.Open && !t.WorkflowStep }

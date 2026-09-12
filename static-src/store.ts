@@ -478,9 +478,10 @@ export function setThinking(id: string, v: boolean): void {
   scheduleMessages(id, "fact");
 }
 
-/** Record the server's statement about whether this chat has a turn open. Written from
- *  `GET /api/chats/{id}`'s `turn_open` (newest page only — an older-page fetch is a
- *  scroll-up and asserts nothing about liveness) and by the `turn_ended` handler. */
+/** Record the server's statement about whether this chat has a turn of its OWN open.
+ *  Written from `GET /api/chats/{id}`'s `turn_open` folded with its `turn_workflow_step`
+ *  owner marker (newest page only) and by the `turn_ended` handler, which settles only on
+ *  a chat-scoped frame; see `types.ts` `Session.turn_open`. */
 export function setTurnOpen(id: string, open: boolean): void {
   const s = get(id);
   if (s === undefined || s.turn_open === open) {

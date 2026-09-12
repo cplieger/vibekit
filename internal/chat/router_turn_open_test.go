@@ -69,7 +69,9 @@ func TestChatGet_ReportsTurnOpenFromTheInjectedPredicate(t *testing.T) {
 	// BOTH directions: the key must be on the wire under the spelling the client reads,
 	// carrying the predicate's answer rather than a constant.
 	for _, open := range []bool{true, false} {
-		s, err := NewStore(t.TempDir(), WithTurnOpen(func(vibekit.ChatID) bool { return open }))
+		s, err := NewStore(t.TempDir(), WithTurnOpen(func(vibekit.ChatID) vibekit.TurnOpenState {
+			return vibekit.TurnOpenState{Open: open}
+		}))
 		if err != nil {
 			t.Fatalf("NewStore: %v", err)
 		}
@@ -80,6 +82,48 @@ func TestChatGet_ReportsTurnOpenFromTheInjectedPredicate(t *testing.T) {
 			t.Errorf("turn_open = %v, want %v; the transcript response is the only place "+
 				"the client can learn this without a second round trip", got["turn_open"], open)
 		}
+	}
+}
+
+// WHOSE turn is open, which is what stops a run's step turn reading as the launching
+// chat's own. `turn_open` stays TRUE for a step — it licenses the client to keep the
+// per-turn markers a step's unpersisted content depends on.
+func TestChatGet_MarksAWorkflowStepTurnAsTheRunsRatherThanTheChats(t *testing.T) {
+	s, err := NewStore(t.TempDir(), WithTurnOpen(func(vibekit.ChatID) vibekit.TurnOpenState {
+		return vibekit.TurnOpenState{Open: true, WorkflowStep: true}
+	}))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	seedMidTurn(t, s, "c1")
+
+	got := getChat(t, s, "c1")
+	if got["turn_open"] != true {
+		t.Errorf("turn_open = %v, want true for a step turn; a false retracts the live-turn "+
+			"marker, and the next newest-page fetch then deletes the step's in-flight content",
+			got["turn_open"])
+	}
+	if got["turn_workflow_step"] != true {
+		t.Errorf("turn_workflow_step = %v, want true; without it the launching chat renders "+
+			"its own newest turn as running for the whole run", got["turn_workflow_step"])
+	}
+}
+
+// The other direction, and what keeps the marker additive: absent means this chat's own
+// turn, so a client predating the field keeps reading every open turn as the chat's own.
+func TestChatGet_OmitsTheOwnerMarkerForTheChatsOwnTurn(t *testing.T) {
+	s, err := NewStore(t.TempDir(), WithTurnOpen(func(vibekit.ChatID) vibekit.TurnOpenState {
+		return vibekit.TurnOpenState{Open: true}
+	}))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	seedMidTurn(t, s, "c1")
+
+	got := getChat(t, s, "c1")
+	if _, ok := got["turn_workflow_step"]; ok {
+		t.Errorf("turn_workflow_step is on the wire for the chat's own turn (%v); a present "+
+			"false is a claim where absence is the contract", got["turn_workflow_step"])
 	}
 }
 
@@ -101,7 +145,9 @@ func TestChatGet_ReportsTurnClosedWithNoPredicateInjected(t *testing.T) {
 // The turn index is the third surface: with a literal for its liveness input it can only
 // ever report a carrier-less newest turn as `unknown`.
 func TestTurnsIndex_MarksTheNewestTurnRunningWhileOpen(t *testing.T) {
-	s, err := NewStore(t.TempDir(), WithTurnOpen(func(vibekit.ChatID) bool { return true }))
+	s, err := NewStore(t.TempDir(), WithTurnOpen(func(vibekit.ChatID) vibekit.TurnOpenState {
+		return vibekit.TurnOpenState{Open: true}
+	}))
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -117,7 +163,9 @@ func TestTurnsIndex_MarksTheNewestTurnRunningWhileOpen(t *testing.T) {
 // The other direction, which keeps the liveness fix from erasing this one: after a restart
 // mid-turn no turn is open, so the newest turn is genuinely one nothing closed.
 func TestTurnsIndex_MarksTheNewestTurnUnknownWhenNoTurnIsOpen(t *testing.T) {
-	s, err := NewStore(t.TempDir(), WithTurnOpen(func(vibekit.ChatID) bool { return false }))
+	s, err := NewStore(t.TempDir(), WithTurnOpen(func(vibekit.ChatID) vibekit.TurnOpenState {
+		return vibekit.TurnOpenState{Open: false}
+	}))
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -126,6 +174,24 @@ func TestTurnsIndex_MarksTheNewestTurnUnknownWhenNoTurnIsOpen(t *testing.T) {
 	if got := getTurns(t, s, "c1")["outcome"]; got != string(vibekit.TurnOutcomeUnknown) {
 		t.Errorf("newest turn outcome = %v, want %q; a turn nothing closed must keep its "+
 			"neutral mark rather than being hidden by the liveness fix",
+			got, vibekit.TurnOutcomeUnknown)
+	}
+}
+
+// The rail's own half of the same defect: it projects PERSISTED messages, so the newest
+// row is the chat's last FINISHED turn and a step's turn would mark it running.
+func TestTurnsIndex_DoesNotMarkTheNewestTurnRunningForAWorkflowStepTurn(t *testing.T) {
+	s, err := NewStore(t.TempDir(), WithTurnOpen(func(vibekit.ChatID) vibekit.TurnOpenState {
+		return vibekit.TurnOpenState{Open: true, WorkflowStep: true}
+	}))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	seedMidTurn(t, s, "c1")
+
+	if got := getTurns(t, s, "c1")["outcome"]; got != string(vibekit.TurnOutcomeUnknown) {
+		t.Errorf("newest turn outcome = %v, want %q; a run's step turn is not this chat's "+
+			"liveness, so the rail must not paint its last finished turn as running",
 			got, vibekit.TurnOutcomeUnknown)
 	}
 }

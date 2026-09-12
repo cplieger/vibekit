@@ -25,7 +25,7 @@ type TurnEndedPayload struct {
 	// closerWireDisplaced sets it; a client reads it as "report, do not settle".
 	//
 	// A CLOSER-derived fact rather than a registry read: displaceEngineTurn closes the
-	// old turn immediately BEFORE opening its replacement, so a post-hoc hasOpenTurn
+	// old turn immediately BEFORE opening its replacement, so a post-hoc open-turn read
 	// answers false for both producers and discriminates nothing.
 	Superseded bool `json:"superseded,omitempty"`
 	// WorkflowStep means the ending turn was opened only because a workflow STEP's

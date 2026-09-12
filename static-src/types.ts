@@ -327,19 +327,18 @@ export interface Session {
   message_count: number;
   has_more: boolean;
   thinking: boolean;
-  /** The SERVER'S LAST STATEMENT about whether this chat has a turn open, from
-   *  `GET /api/chats/{id}`'s `turn_open`. NOT live state and deliberately not a
-   *  second `thinking`: `thinking` is this client's own memory of a stream it has
-   *  seen, and it starts false, so on a mid-turn reload the transcript paints
-   *  before any frame arrives and the newest turn's absent carrier reads as
-   *  `unknown` — a terminal verdict for a turn the server knows is running.
-   *
-   *  Optional-tolerant because it is: a server that predates the field, or a
-   *  proxy that strips it, decodes as absent and behaves exactly as this client
-   *  did before the field existed. Client and server ship in one image, so that
-   *  is a guard rather than a path.
-   *
-   *  Three writers and one deliberate non-writer; the table is on `turnLive` in
+  /** The SERVER'S LAST STATEMENT about whether this chat has a turn of its OWN
+   *  open, from `GET /api/chats/{id}`'s `turn_open` folded with its
+   *  `turn_workflow_step` owner marker — so a workflow step's turn, which folds
+   *  onto the launching chat's session while that chat's own agent is idle, reads
+   *  FALSE here. The wire's own `turn_open` is wider (any open turn) and is read
+   *  RAW at exactly one place, `store-load.ts`'s teardown arm. NOT live state and
+   *  deliberately not a second `thinking`: `thinking` is this client's own memory
+   *  of a stream it has seen, and it starts false, so on a mid-turn reload the
+   *  newest turn's absent carrier reads as `unknown` — a terminal verdict for a
+   *  running turn. Optional-tolerant because it is: a server predating the field
+   *  decodes as absent and behaves as this client did before it existed. Three
+   *  writers and one deliberate non-writer; the table is on `turnLive` in
    *  store.ts, which is the ONE reader. */
   turn_open?: boolean;
   /** The server's statement about the OLDEST MESSAGE HELD — `has_more`'s own
