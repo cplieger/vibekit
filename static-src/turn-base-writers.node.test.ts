@@ -32,13 +32,22 @@ import ts from "typescript";
 const here = dirname(fileURLToPath(import.meta.url));
 
 /** Every production TypeScript module under `static-src`. Tests are excluded: they
- *  build sessions as fixtures, which is not a rebuild path the app takes. */
+ *  build sessions as fixtures, which is not a rebuild path the app takes.
+ *
+ *  `.stryker-tmp` is excluded because `inPlace: true` mutates the real tree and
+ *  parks a pristine copy of every file it touches under `.stryker-tmp/backup-*`,
+ *  inside this directory. Those copies are the same three rebuild sites again, so
+ *  the population assertion below counts six and fails under Stryker only. */
 function productionSources(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === "node_modules" || entry.name === "__test-helpers__") {
+      if (
+        entry.name === "node_modules" ||
+        entry.name === "__test-helpers__" ||
+        entry.name === ".stryker-tmp"
+      ) {
         continue;
       }
       out.push(...productionSources(path));
