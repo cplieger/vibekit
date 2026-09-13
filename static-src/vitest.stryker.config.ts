@@ -13,10 +13,36 @@
 // plain objects for this shape.
 import base from "./vitest.config.js";
 
+// A suite whose SUBJECT is production source TEXT rather than its behaviour.
+// `inPlace: true` rewrites every mutate target on disk, wrapping each mutant in
+// a `stryMutAct_*` conditional, so such a suite parses the INSTRUMENTED copy of
+// the file it means to guard: measured 2026-09-13, this one reported an
+// offending rebuild site at `store.ts:2608` against a file 2244 lines long.
+// Excluding costs no efficacy, because it imports no production module and can
+// therefore kill no mutant; it still runs in `ci / web / validate` and locally,
+// which is where a source guard is meant to bite.
+const SOURCE_TEXT_SUITES = ["**/turn-base-writers.node.test.ts"];
+
+// Added per PROJECT, never at the root: a project's `exclude` REPLACES the root
+// one rather than adding to it (vitest.config.ts states this at `sharedExclude`),
+// so a root-level entry here would be silently inert.
+const projects = base.test?.projects?.map((project) =>
+  typeof project === "object" && "test" in project
+    ? {
+        ...project,
+        test: {
+          ...project.test,
+          exclude: [...(project.test?.exclude ?? []), ...SOURCE_TEXT_SUITES],
+        },
+      }
+    : project,
+);
+
 export default {
   ...base,
   test: {
     ...base.test,
+    ...(projects ? { projects } : {}),
     // 90s: the Hirschberg large-input properties (2001x2001-line diffs,
     // 3 fast-check runs) tipped over the previous 30s cap once diff.ts +
     // the instrumentation overhead grew (weekly-stryker 2026-07-18 dry-run
