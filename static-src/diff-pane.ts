@@ -347,11 +347,32 @@ function wireHorizontalScroll(
     const span = Math.max(left.scrollWidth, right.scrollWidth);
     const range = span - left.clientWidth;
     // A track with no thumb is a control that does nothing.
-    bar.classList.toggle("is-idle", range <= 1);
+    const idle = range <= 1;
+    bar.classList.toggle("is-idle", idle);
     // The bar spans BOTH columns while the range is one column's, so the spacer
     // buys it that RANGE rather than that width.
     spacer.style.inlineSize = `${String(bar.clientWidth + Math.max(0, range))}px`;
-    viewport.style.setProperty("--diff-hspan", `${String(span)}px`);
+    // PUBLISHED ONLY WHERE THERE IS A RANGE TO SHARE, and CLEARED otherwise, which
+    // is one branch rather than two readings of it: the span equalises the columns'
+    // scroll range, and `scrollWidth` is floored at `clientWidth` while
+    // `.diff-col-old` spends 1px of its content box on the divider's `border-right`
+    // and `.diff-col-new` does not — so the max over the two is structurally 1px
+    // past this column's own box, and publishing it on a diff that FITS put every
+    // row 1px past the column holding it. That is a phantom overscroll on the
+    // ordinary case, and it is the 1px the pane's own max-content track used to
+    // ratchet on (60-mcp.css `.editor-diff-pane`). The clear is what carries the
+    // other direction, a pane that overflowed and now fits after a resize.
+    //
+    // Re-reading a published span needs no clear first: `scrollWidth` is floored at
+    // `clientWidth` either way, so for unchanged content the value is a FIXED POINT
+    // rather than a corruption. It could only grow wrongly if content narrowed under
+    // the same viewport, and nothing does — the whitespace re-diff swaps the
+    // viewport out and takes the inline value with it.
+    if (idle) {
+      viewport.style.removeProperty("--diff-hspan");
+    } else {
+      viewport.style.setProperty("--diff-hspan", `${String(span)}px`);
+    }
   };
   // Deferred one animation frame, behind a single slot: `--diff-hspan` is written on
   // the VIEWPORT, an ANCESTOR of the observed column, and a custom property there

@@ -467,6 +467,50 @@ describe("the diff pane's scrollers", () => {
     expect(getComputedStyle(bar).display).toBe("none");
   });
 
+  it("leaves a diff that fits with nothing to scroll", async () => {
+    // The span equalises the columns' scroll RANGE, so a pane with no range must
+    // not carry one: `scrollWidth` is floored at `clientWidth` and `.diff-col-old`
+    // spends 1px of its content box on the divider's border, so publishing the max
+    // over the two columns puts every row 1px past the column holding it — a
+    // phantom overscroll on the ordinary case, and the 1px the pane's own
+    // max-content track used to ratchet on.
+    const pane = widePane(false);
+    const bar = pane.querySelector<HTMLElement>(".diff-pane-hbar")!;
+    const viewport = pane.querySelector<HTMLElement>(".diff-pane-viewport")!;
+    await settles(() => {
+      expect(bar.classList.contains("is-idle")).toBe(true);
+    });
+    for (const sel of [".diff-col-old", ".diff-col-new"]) {
+      const col = pane.querySelector<HTMLElement>(sel)!;
+      expect(col.scrollWidth - col.clientWidth, `${sel} has nothing to scroll`).toBe(0);
+    }
+    expect(viewport.style.getPropertyValue("--diff-hspan")).toBe("");
+  });
+
+  it("gives back the range when a pane that overflowed comes to fit", async () => {
+    // The other direction, reachable by widening the window: the span is published
+    // while the diff overflows, and a stale one left behind keeps every row wider
+    // than the column that now holds it.
+    const pane = widePane(true);
+    const bar = pane.querySelector<HTMLElement>(".diff-pane-hbar")!;
+    const viewport = pane.querySelector<HTMLElement>(".diff-pane-viewport")!;
+    await settles(() => {
+      expect(viewport.style.getPropertyValue("--diff-hspan")).not.toBe("");
+      expect(bar.classList.contains("is-idle")).toBe(false);
+    });
+    // Widen past the content, which resizes the observed column and re-measures.
+    host.style.inlineSize = "6000px";
+    await settles(() => {
+      expect(bar.classList.contains("is-idle")).toBe(true);
+      expect(viewport.style.getPropertyValue("--diff-hspan")).toBe("");
+    });
+    for (const sel of [".diff-col-old", ".diff-col-new"]) {
+      const col = pane.querySelector<HTMLElement>(sel)!;
+      expect(col.scrollWidth - col.clientWidth, `${sel} has nothing to scroll`).toBe(0);
+    }
+    host.style.removeProperty("inline-size");
+  });
+
   it("keeps it out of the accessibility tree and out of the tab order", () => {
     const bar = widePane(true).querySelector<HTMLElement>(".diff-pane-hbar")!;
     // A pointer duplicate of scrolling the focusable columns already provide.
