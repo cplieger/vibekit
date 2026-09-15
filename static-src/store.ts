@@ -466,7 +466,6 @@ export function setThinking(id: string, v: boolean): void {
     // reason, so they clear in one place.
     if (v) {
       delete next.agent_status;
-      delete next.agent_status_text;
       delete next.turn_failed;
       delete next.turn_done;
       // The server's last liveness statement joins them: it described the PREVIOUS turn. Left
@@ -829,14 +828,14 @@ export function subagentStatusFor(status: ToolStatus | undefined): TabDotState {
   }
 }
 
-/** Record the agent-declared activity status/description for a chat (chat_status SSE, from
- *  the KAS focus_update channel). Empty strings clear the respective field. */
-export function setAgentStatus(id: string, status: string, text: string): void {
+/** Record the agent-declared activity status for a chat (chat_status SSE, from the KAS
+ *  focus_update channel). An empty string clears the field. */
+export function setAgentStatus(id: string, status: string): void {
   const s = get(id);
   if (s === undefined) {
     return;
   }
-  if ((s.agent_status ?? "") === status && (s.agent_status_text ?? "") === text) {
+  if ((s.agent_status ?? "") === status) {
     return; // no-op: don't churn the session signal
   }
   sessions.update(id, (prev) => {
@@ -845,11 +844,6 @@ export function setAgentStatus(id: string, status: string, text: string): void {
       delete next.agent_status;
     } else {
       next.agent_status = status;
-    }
-    if (text === "") {
-      delete next.agent_status_text;
-    } else {
-      next.agent_status_text = text;
     }
     return next;
   });

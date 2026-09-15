@@ -188,7 +188,6 @@ import {
   closeTab,
   activateTab,
   renameTab,
-  setTabTooltip,
   hasTab,
   tabIdFor,
   tabIdForRoute,
@@ -1224,33 +1223,67 @@ describe("renameTab and the name a row renders", () => {
   });
 });
 
-describe("setTabTooltip and the tooltip a row carries", () => {
-  it("sets and clears the row's tooltip", async () => {
+describe("the tooltip a row carries", () => {
+  /** A title far longer than any strip is wide, so the case cannot pass by the
+   *  label happening to fit. */
+  const LONG = "Rewrite the streaming parser so a delta extends its own subtask's block";
+
+  it("carries the row's FULL title, past the width the label renders", async () => {
     expect.assertions(3);
     await openChat("a");
+    renameTab(chatID("a"), LONG);
     await paint();
-    setTabTooltip(chatID("a"), "Code · reading files");
-    expect(rows()[0]?.dataset["tooltip"]).toBe("Code · reading files");
-    // The clear has to reach the attribute the write set, or the row keeps the
-    // agent's last description forever.
-    setTabTooltip(chatID("a"), "");
-    expect(rows()[0]?.hasAttribute("data-tooltip")).toBe(false);
+    expect(rows()[0]?.dataset["tooltip"]).toBe(LONG);
+    // The label is the same string, and the truncation is CSS's; a stylesheet is
+    // not loaded here, so the clip itself is 10-shell-app.css's own assertion.
+    expect(rows()[0]?.querySelector(".tab-name")?.textContent).toBe(LONG);
+    // data-tooltip is the app's tooltip system (tooltip.ts). Nothing gains a
+    // native one.
     expect(rows()[0]?.hasAttribute("title")).toBe(false);
   });
 
-  // The tooltip is parked on the row like the dot: the per-row store effect
-  // rewrites it only when that chat's own inputs churn, so a rebuild that
-  // dropped it would leave the row tooltipless until then — hours, for an
-  // idle chat.
+  it("repaints on a rename, so the hover cannot name the previous title", async () => {
+    expect.assertions(1);
+    await openChat("a");
+    await paint();
+    renameTab(chatID("a"), LONG);
+    await paint();
+    expect(rows()[0]?.dataset["tooltip"]).toBe(LONG);
+  });
+
+  // Every kind, not just chat: an editor tab renders a basename and a files tab a
+  // folder, and both truncate through the same rule.
+  it("carries a NON-chat row's title too", async () => {
+    expect.assertions(2);
+    await openEditorView("/workspace/vibekit/static-src/messages-blocks.ts");
+    await paint();
+    const label = rows()[0]?.querySelector(".tab-name")?.textContent ?? "";
+    expect(label).not.toBe("");
+    expect(rows()[0]?.dataset["tooltip"]).toBe(label);
+  });
+
   it("survives a re-list, which rebuilds every row", async () => {
     expect.assertions(1);
     await openChat("a");
-    setTabTooltip(chatID("a"), "Code · reading files");
+    renameTab(chatID("a"), LONG);
     // A version two past local: the sync layer stops applying and re-lists.
     tabServer.emitRaw({ version: tabServer.version() + 2 });
     await settleTabs();
     await paint();
-    expect(rows()[0]?.dataset["tooltip"]).toBe("Code · reading files");
+    expect(rows()[0]?.dataset["tooltip"]).toBe(LONG);
+  });
+
+  it("carries no attribute at all for a row with an empty name", async () => {
+    expect.assertions(2);
+    await openChat("a");
+    renameTab(chatID("a"), LONG);
+    await paint();
+    renameTab(chatID("a"), "");
+    await paint();
+    // Empty and present would leave `[data-tooltip]` — the selector tooltip.ts
+    // resolves a trigger with — standing over nothing to show.
+    expect(rows()[0]?.hasAttribute("data-tooltip")).toBe(false);
+    expect(rows()[0]?.hasAttribute("title")).toBe(false);
   });
 });
 

@@ -2022,62 +2022,46 @@ describe("Store applyLatch", () => {
 // ---------------------------------------------------------------------------
 // setAgentStatus: the agent's own words about what it is doing.
 //
-// Two fields, one frame, and an empty string is a CLEAR rather than a value —
-// the fields are deleted so a cleared session compares equal to one that never
-// had a status, which is what keeps the tab strip from repainting on every
-// turn boundary.
+// An empty string is a CLEAR rather than a value — the field is deleted so a
+// cleared session compares equal to one that never had a status, which is what
+// keeps the tab strip from repainting on every turn boundary.
 // ---------------------------------------------------------------------------
 
 describe("Store agent status", () => {
-  it("records the status and its description", () => {
+  it("records the status", () => {
     resetStore("as-1");
-    setAgentStatus("as-1", "waiting_on_user", "which file did you mean?");
+    setAgentStatus("as-1", "waiting_on_user");
     expect(get("as-1")?.agent_status).toBe("waiting_on_user");
-    expect(get("as-1")?.agent_status_text).toBe("which file did you mean?");
   });
 
   it("does not churn the session on a repeated frame", () => {
     resetStore("as-2");
-    setAgentStatus("as-2", "in_progress", "reading the parser");
+    setAgentStatus("as-2", "in_progress");
     const settled = get("as-2");
-    setAgentStatus("as-2", "in_progress", "reading the parser");
+    setAgentStatus("as-2", "in_progress");
     expect(get("as-2")).toBe(settled);
   });
 
-  it("takes a new description under an unchanged status", () => {
-    resetStore("as-3");
-    setAgentStatus("as-3", "in_progress", "reading the parser");
-    setAgentStatus("as-3", "in_progress", "writing the patch");
-    expect(get("as-3")?.agent_status_text).toBe("writing the patch");
-  });
-
-  it("takes a new status under an unchanged description", () => {
+  it("takes a new status", () => {
     resetStore("as-4");
-    setAgentStatus("as-4", "in_progress", "reading the parser");
-    setAgentStatus("as-4", "completed", "reading the parser");
+    setAgentStatus("as-4", "in_progress");
+    setAgentStatus("as-4", "completed");
     expect(get("as-4")?.agent_status).toBe("completed");
   });
 
   it("reads an empty status as a clear, and deletes the field", () => {
     resetStore("as-5");
-    setAgentStatus("as-5", "completed", "all done");
-    setAgentStatus("as-5", "", "all done");
+    setAgentStatus("as-5", "completed");
+    setAgentStatus("as-5", "");
     expect(get("as-5")?.agent_status).toBeUndefined();
   });
 
-  it("reads an empty description as a clear, and deletes the field", () => {
-    resetStore("as-6");
-    setAgentStatus("as-6", "completed", "all done");
-    setAgentStatus("as-6", "completed", "");
-    expect(get("as-6")?.agent_status_text).toBeUndefined();
-  });
-
-  it("does not churn a chat that never had one when both fields arrive empty", () => {
-    // The `?? ""` on both reads is what makes this a no-op: an absent field and a
+  it("does not churn a chat that never had one when an empty status arrives", () => {
+    // The `?? ""` on the read is what makes this a no-op: an absent field and a
     // cleared one are the same state, so the clearing frame says nothing new.
     resetStore("as-7");
     const before = get("as-7");
-    setAgentStatus("as-7", "", "");
+    setAgentStatus("as-7", "");
     expect(get("as-7")).toBe(before);
   });
 });

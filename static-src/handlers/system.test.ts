@@ -847,17 +847,15 @@ describe("status_snapshot handler", () => {
       rows: [{ chat_id: "a", status: "waiting_on_user", description: "needs a key" }],
     });
     expect(get("a")?.agent_status).toBe("waiting_on_user");
-    expect(get("a")?.agent_status_text).toBe("needs a key");
   });
 
   it("clears the status of every chat no row names", () => {
     setSessions([
-      makeSession("a", { agent_status: "waiting_on_user", agent_status_text: "old" }),
-      makeSession("b", { agent_status: "in_progress", agent_status_text: "working" }),
+      makeSession("a", { agent_status: "waiting_on_user" }),
+      makeSession("b", { agent_status: "in_progress" }),
     ]);
     fireSSE("status_snapshot", "", { rows: [] });
     expect(get("a")?.agent_status ?? "").toBe("");
-    expect(get("a")?.agent_status_text ?? "").toBe("");
     expect(get("b")?.agent_status ?? "").toBe("");
   });
 

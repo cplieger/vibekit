@@ -127,14 +127,16 @@ export type { TabDotStatus };
  *  `parentId`) is immutable after open, which is exactly why `pinned` is not
  *  among them and is read from the subject instead.
  *
- *  `name`, `dotStatus`, `tooltip` and `runDot` are the four mutable local fields, and
+ *  `name`, `dotStatus` and `runDot` are the three mutable local fields, and
  *  each has a reason. A name because six run sites and two chat sites
  *  legitimately know a better label than a subject can carry (see
- *  tab-materialize.ts's header). A dot and a tooltip because both are LIVE
- *  state derived from a chat's or a run's current condition, which no
- *  persisted record may claim — parked on the row so a rebuild repaints them
- *  (the per-row store effect rewrites only on its own inputs, and a DOM
- *  rebuild is not one of them). */
+ *  tab-materialize.ts's header). A dot because it is LIVE state derived from a
+ *  chat's or a run's current condition, which no persisted record may claim —
+ *  parked on the row so a rebuild repaints it (the per-row store effect
+ *  rewrites only on its own inputs, and a DOM rebuild is not one of them).
+ *
+ *  The hover tooltip carries no field of its own: it IS `name`, so a row that
+ *  can render its title can also state it in full (`paintTooltip`). */
 interface TabRow {
   subject: TabSubject;
   spec: TabViewSpec;
@@ -146,10 +148,9 @@ interface TabRow {
    *  the state before against the state after, and an object comparison would
    *  differ on every write. */
   dotSince?: number | undefined;
-  tooltip?: string | undefined;
   /** The WORKFLOW mark's state and the breakdown its phrase needs, parked as ONE
    *  field so a rebuilt row cannot repaint the state without the count that
-   *  qualifies it. A fourth mutable local field, live like the dot beside it. */
+   *  qualifies it. A third mutable local field, live like the dot beside it. */
   runDot?: { status: TabRunDotStatus; tally: TabRunTally } | undefined;
 }
 
@@ -1245,6 +1246,19 @@ function elementOf(id: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`);
 }
 
+/** Paint one row's hover tooltip: its full title. Guarded because renderDOM calls
+ *  this per row per emit; an empty name REMOVES the attribute rather than leaving
+ *  `[data-tooltip]` with nothing behind it. */
+function paintTooltip(node: HTMLElement, name: string): void {
+  if (name === "") {
+    node.removeAttribute("data-tooltip");
+    return;
+  }
+  if (node.dataset["tooltip"] !== name) {
+    node.dataset["tooltip"] = name;
+  }
+}
+
 /** Paint one tab's dot: the attribute CSS keys off, the tooltip a pointer
  *  reveals, and the word a screen reader hears.
  *
@@ -1429,32 +1443,6 @@ function recordDotStatus(row: TabRow, status: TabDotStatus | "", since?: number)
   // rebuilt since the last write.
   if (before !== row.dotStatus) {
     dotVersion.value = dotVersion.peek() + 1;
-  }
-}
-
-/** Set (or clear, with "") a tab's hover tooltip. Used for the agent's
- *  self-declared "what I'm working on" description on chat tabs. Recorded on
- *  the row like the dot, and for the dot's reason: the per-row store effect
- *  rewrites only when its own inputs change, so a rebuilt element would
- *  otherwise sit tooltipless until that chat next churns — createTabEl
- *  repaints from the row instead. */
-export function setTabTooltip(id: string, text: string): void {
-  const row = rowOfID(id);
-  if (row !== undefined) {
-    if (text === "") {
-      delete row.tooltip;
-    } else {
-      row.tooltip = text;
-    }
-  }
-  const node = elementOf(id);
-  if (node === null) {
-    return;
-  }
-  if (text === "") {
-    node.removeAttribute("data-tooltip");
-  } else {
-    node.dataset["tooltip"] = text;
   }
 }
 
@@ -2022,6 +2010,9 @@ function renderDOM(): void {
       if (nameEl !== null && nameEl.textContent !== row.name) {
         nameEl.textContent = row.name;
       }
+      // Beside the label it restates, so a rename cannot move one and leave the
+      // other: renameTab writes the row and emit()s rather than touching the DOM.
+      paintTooltip(node, row.name);
       let expectedNext: ChildNode | null = prev !== null ? prev.nextSibling : list.firstChild;
       while (
         expectedNext !== null &&
@@ -2193,12 +2184,7 @@ function createTabEl(row: TabRow): HTMLElement {
   // attachTabInteraction wires click/keyboard AND drag, so the flag rides along.
   attachTabInteraction(node, id, row.subject.parent === "");
 
-  // The parked tooltip, repainted like the dot: the store effect will not
-  // rewrite it until this chat's own inputs churn, and a rebuilt row must not
-  // sit tooltipless until then.
-  if (row.tooltip !== undefined) {
-    node.dataset["tooltip"] = row.tooltip;
-  }
+  paintTooltip(node, row.name);
 
   // Right-click context menu for chat tabs: pin/unpin, then export (md/json).
   // Non-chat tabs keep the native browser menu.

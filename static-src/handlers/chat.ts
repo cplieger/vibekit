@@ -61,7 +61,7 @@ onSSE("chat_status", (chatID, p) => {
   if (chatID === "" || p === undefined) {
     return;
   }
-  setAgentStatus(chatID, p.status ?? "", p.description ?? "");
+  setAgentStatus(chatID, p.status ?? "");
 });
 
 onSSE("chat_deleted", (_chatID, p) => {

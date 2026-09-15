@@ -17,7 +17,7 @@ import {
 } from "./store.js";
 import { loadList, loadMessages, confirmChatExists } from "./store-load.js";
 import { effect, el } from "@cplieger/reactive";
-import type { ChatHeader, Session } from "./types.js";
+import type { ChatHeader } from "./types.js";
 import { ensureBound } from "./banner-stack.js";
 import {
   openTab,
@@ -27,7 +27,6 @@ import {
   getActiveTabId,
   renameTab,
   setTabStatus,
-  setTabTooltip,
   openChatRefs,
   type OpenTabOutcome,
   type TabDotStatus,
@@ -58,7 +57,6 @@ import {
   dropComposerState,
 } from "./composer-state.js";
 import { setCurrentModel, getLastModel } from "./session-context.js";
-import { labelForMode } from "./roles.js";
 import { refreshContextUI } from "./context-ui.js";
 import { $ } from "./dom.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
@@ -588,18 +586,6 @@ export async function createPlannerSession(): Promise<void> {
   void setMode.dispatch({ chatID: id, modeID: "plan" });
 }
 
-/** A chat tab's hover tooltip: its mode, then what the agent says it is doing. Either
- *  half can be missing — a chat with no session has no mode, and the agent declares a
- *  description only while working — so the separator is emitted only when both are. */
-function tabTooltipFor(s: Session): string {
-  const mode = s.current_mode_id === "" ? "" : labelForMode(s.current_mode_id);
-  const doing = s.agent_status_text ?? "";
-  if (mode === "" || doing === "") {
-    return mode === "" ? doing : mode;
-  }
-  return `${mode} · ${doing}`;
-}
-
 /** One open chat tab's row effect. Tracks THIS chat's per-entity signal (plus the
  *  session set's structure, so a row landing after its tab still paints) and the
  *  decision dock, and writes only its own row. The dock read doubles as the
@@ -611,7 +597,7 @@ function chatRowEffect(chatID: string): () => void {
     if (s === undefined) {
       return;
     }
-    // ONE lookup, reused by all three writers below; a chat id is not the row's id.
+    // ONE lookup, reused by both writers below; a chat id is not the row's id.
     const tabID = tabIdFor("chat", chatID);
     if (tabID === "") {
       return;
@@ -622,10 +608,6 @@ function chatRowEffect(chatID: string): () => void {
     // `updated_at` is LAST ACTIVITY rather than "finished at", which is what the dot's
     // outcome phrase renders an age from. The only caller that supplies one.
     setTabStatus(tabID, tabStatusFor(s, pendingAsk), s.updated_at);
-    // The mode half is here because the dot took the slot the per-mode role glyph held,
-    // and for a BACKGROUND chat that was the only place a role read out at all — the
-    // mode pill and its picker are active-chat only. Pointer-only.
-    setTabTooltip(tabID, tabTooltipFor(s));
   });
 }
 
