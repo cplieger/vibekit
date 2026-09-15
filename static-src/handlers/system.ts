@@ -218,9 +218,9 @@ onSSE("status_snapshot", (_chatID, p) => {
   for (const s of getSessions()) {
     const row = rows.get(s.id);
     if (row === undefined) {
-      setAgentStatus(s.id, "", "");
+      setAgentStatus(s.id, "");
     } else {
-      setAgentStatus(s.id, row.status, row.description ?? "");
+      setAgentStatus(s.id, row.status);
     }
   }
 });

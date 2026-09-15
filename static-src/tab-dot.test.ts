@@ -2053,14 +2053,13 @@ describe("a reconnect does not erase what only the client knows", () => {
     const { loadList } = await import("./store-load.js");
     setSessions([
       session({ id: "c1", turn_done: true }),
-      session({ id: "c2", agent_status: "waiting_on_user", agent_status_text: "reading main.go" }),
+      session({ id: "c2", agent_status: "waiting_on_user" }),
     ]);
     mockApiGetTyped.mockResolvedValue({ chats: [header("c1"), header("c2")] });
 
     await loadList();
     expect(tabStatusFor(get("c1"))).toBe("done");
     expect(tabStatusFor(get("c2"))).toBe("waiting");
-    expect(get("c2")?.agent_status_text).toBe("reading main.go");
   });
 
   it("carries nothing over for a chat it has not seen before", async () => {

@@ -680,7 +680,7 @@ describe("turn_ended side effects", () => {
   it("still prefers the agent's own verdict where it lands", () => {
     setSessions([makeSession("chat-1"), makeSession("chat-2")]);
     setActive("chat-2");
-    setAgentStatus("chat-1", "waiting_on_user", "over to you");
+    setAgentStatus("chat-1", "waiting_on_user");
 
     // A finished turn that left a question behind is a chat that WANTS something,
     // not a chat that is done, and the agent is the only thing that knows which.

@@ -495,9 +495,6 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
       // declared status. The reconcile that IS entitled to drop them is `transport:gap`,
       // which clears them explicitly and runs first.
       ...(existing?.agent_status !== undefined && { agent_status: existing.agent_status }),
-      ...(existing?.agent_status_text !== undefined && {
-        agent_status_text: existing.agent_status_text,
-      }),
       // Residency describes the carried-over `messages` window, so it travels
       // with it: dropping it here would make every reconnect read a loaded
       // chat as never-loaded (or an evicted one as fresh).

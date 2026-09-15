@@ -65,7 +65,6 @@ export function tabsMock(): Record<string, unknown> {
     setTabStatus: vi.fn(),
     setTabRunStatus: vi.fn(),
     setTabDirty: vi.fn(),
-    setTabTooltip: vi.fn(),
     setSettingsTab: vi.fn(),
     setGitTab: vi.fn(),
     setDocsTab: vi.fn(),

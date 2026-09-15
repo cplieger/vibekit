@@ -364,9 +364,6 @@ export interface Session {
    *  "idle". Client-only and ephemeral — cleared on the next prompt send
    *  and on a transport gap, never persisted. */
   agent_status?: string;
-  /** Agent-declared one-line description of what it is working on
-   *  (chat_status SSE). Shown as the chat tab's tooltip. */
-  agent_status_text?: string;
   /** This chat's last TURN failed — `turn_ended` carrying outcome `failed` or
    *  `refused`. Client-only and latched, for the same reason `agent_status` is:
    *  the failure is a settled fact until the next turn, and a background chat's

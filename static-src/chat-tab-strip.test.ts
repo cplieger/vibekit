@@ -5,8 +5,8 @@
 // One effect per OPEN chat tab, registry synced on the tab projection's emit;
 // the context bar on its own active-session effect. These tests drive the REAL
 // store (an in-process collaborator we own) and assert through the tab-write
-// seam (renameTab / setTabStatus / setTabTooltip) — a command boundary to a
-// separate DOM subsystem. The registry seam (openChatRefs) and the decision
+// seam (renameTab / setTabStatus) — a command boundary to a separate DOM
+// subsystem. The registry seam (openChatRefs) and the decision
 // dock are signal-backed fakes, so the real reactive graph decides what
 // re-runs: what these tests pin is the SUBSCRIPTION TOPOLOGY, not the writers'
 // rendering.
@@ -19,7 +19,6 @@ import type * as Skeleton from "./skeleton.js";
 const h = vi.hoisted(() => ({
   renameTab: vi.fn(),
   setTabStatus: vi.fn(),
-  setTabTooltip: vi.fn(),
   tabIdFor: vi.fn((_kind: string, ref = "") => (ref === "" ? "" : `tb_${ref}`)),
   refreshContextUI: vi.fn(),
   // Placeholders, replaced with REAL signals by the async mock factories below
@@ -42,7 +41,6 @@ vi.mock("./tabs.js", async () => {
     tabIdFor: h.tabIdFor,
     renameTab: h.renameTab,
     setTabStatus: h.setTabStatus,
-    setTabTooltip: h.setTabTooltip,
   };
 });
 
@@ -101,10 +99,7 @@ vi.mock("./composer-state.js", () => ({
   dropComposerState: vi.fn(),
 }));
 vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel: () => "auto" }));
-vi.mock("./roles.js", () => ({
-  iconForMode: vi.fn(() => ""),
-  labelForMode: vi.fn((id: string) => (id === "plan" ? "Plan" : id)),
-}));
+vi.mock("./roles.js", () => ({ iconForMode: vi.fn(() => "") }));
 vi.mock("./dom.js", () => ({
   $: { messages: document.createElement("div"), promptInput: { focus: () => undefined } },
 }));
@@ -151,15 +146,14 @@ function session(id: string, over: Partial<Session> = {}): Session {
 }
 
 /** Every strip writer's calls, one list, so "nothing was written" is one
- *  assertion instead of three that can drift apart. */
+ *  assertion instead of two that can drift apart. */
 function stripWrites(): unknown[][] {
-  return [...h.renameTab.mock.calls, ...h.setTabStatus.mock.calls, ...h.setTabTooltip.mock.calls];
+  return [...h.renameTab.mock.calls, ...h.setTabStatus.mock.calls];
 }
 
 function clearStripSpies(): void {
   h.renameTab.mockClear();
   h.setTabStatus.mockClear();
-  h.setTabTooltip.mockClear();
   h.refreshContextUI.mockClear();
 }
 
@@ -185,7 +179,6 @@ describe("per-row effects write only their own row", () => {
 
     expect(h.setTabStatus.mock.calls).toEqual([["tb_a", "working", UPDATED_AT]]);
     expect(h.renameTab.mock.calls).toEqual([["tb_a", "Chat a"]]);
-    expect(h.setTabTooltip.mock.calls).toEqual([["tb_a", ""]]);
   });
 
   it("triggers nothing for a closed-history session (no open tab)", () => {
@@ -254,7 +247,6 @@ describe("row-effect lifecycle follows the tab projection", () => {
 
     expect(h.renameTab.mock.calls).toEqual([["tb_a", "Chat a"]]);
     expect(h.setTabStatus.mock.calls).toEqual([["tb_a", "working", UPDATED_AT]]);
-    expect(h.setTabTooltip.mock.calls).toEqual([["tb_a", ""]]);
   });
 
   it("disposes a closed tab's effect: no writes on later store churn", () => {

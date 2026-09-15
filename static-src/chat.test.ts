@@ -132,12 +132,11 @@ vi.mock("./tabs.js", () => ({
   // "" means no tab is open for that chat.
   tabIdFor: vi.fn(() => ""),
   // The registry seam: which chat refs hold an open tab. Empty means the strip
-  // wires no row effects; the tooltip suite below aims it at one chat.
+  // wires no row effects; the row-effect suite below aims it at one chat.
   openChatRefs: vi.fn(() => [] as string[]),
   getActiveTabId: vi.fn(() => ""),
   renameTab: vi.fn(),
   setTabStatus: vi.fn(),
-  setTabTooltip: vi.fn(),
 }));
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 // The chat tab's activity dot asks the dock whether this chat holds an
@@ -188,10 +187,7 @@ vi.mock("./composer-state.js", () => ({
 vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel: () => "auto" }));
 vi.mock("./model-switcher.js", () => ({ applyLocalModel: vi.fn() }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
-vi.mock("./roles.js", () => ({
-  iconForMode: vi.fn(() => ""),
-  labelForMode: vi.fn((id: string) => (id === "plan" ? "Plan" : id)),
-}));
+vi.mock("./roles.js", () => ({ iconForMode: vi.fn(() => "") }));
 vi.mock("./submit.js", () => ({ submitPrompt: submitPromptMock }));
 // $.messages is a real element so a listener registered on it could be driven.
 // Nothing in chat.ts registers one any more — see "no transcript context menu"
@@ -233,7 +229,8 @@ import {
   activateTab,
   tabIdFor,
   getActiveTabId,
-  setTabTooltip,
+  renameTab,
+  setTabStatus,
   openChatRefs,
 } from "./tabs.js";
 import { addAttachment } from "./attachments.js";
@@ -875,12 +872,7 @@ describe("no transcript context menu", () => {
   });
 });
 
-// The activity dot took the slot the per-mode role glyph used to hold, and for a
-// BACKGROUND chat that glyph was the only place a role read out at all — the mode
-// pill and its picker are active-chat only. The tooltip is where the role went:
-// no element, no width, no second visual vocabulary in the 9px column. It is
-// pointer-only, so it is a convenience rather than a full restoration.
-describe("the chat tab's tooltip carries the mode as well as the activity", () => {
+describe("the chat tab's row effect supplies the title, and no second string", () => {
   /** The opaque id the projection minted for chat `c1`. Every writer in the row
    *  effect is id-keyed because the DOM row is, and a chat id is no longer that
    *  id — so ONE `tabIdFor` lookup per row is what the effect reuses. */
@@ -895,27 +887,24 @@ describe("the chat tab's tooltip carries the mode as well as the activity", () =
     installStoreSubscribers();
   }
 
-  it("composes the mode and what the agent says it is doing", () => {
-    driveEffect({ current_mode_id: "plan", agent_status_text: "reading the parser" });
-    expect(setTabTooltip).toHaveBeenCalledWith(TAB_ID, "Plan · reading the parser");
-  });
-
-  it("gives the mode alone when the agent has declared nothing", () => {
-    // The separator is emitted only when both halves exist, so a quiet chat's
-    // tooltip is a mode rather than a mode with a dangling middot.
+  it("reconciles the row's name from the session", () => {
     driveEffect({ current_mode_id: "plan" });
-    expect(setTabTooltip).toHaveBeenCalledWith(TAB_ID, "Plan");
+    expect(renameTab).toHaveBeenCalledWith(TAB_ID, "Fix the parser");
   });
 
-  it("gives the activity alone before the chat has a session", () => {
-    // A chat with no bridge yet has no mode id, which is every brand-new chat.
-    driveEffect({ current_mode_id: "", agent_status_text: "reading the parser" });
-    expect(setTabTooltip).toHaveBeenCalledWith(TAB_ID, "reading the parser");
-  });
-
-  it("clears the tooltip when there is neither", () => {
-    driveEffect({ current_mode_id: "" });
-    expect(setTabTooltip).toHaveBeenCalledWith(TAB_ID, "");
+  it("hands the mode to no strip writer", () => {
+    driveEffect({ current_mode_id: "plan" });
+    const written = [...vi.mocked(renameTab).mock.calls, ...vi.mocked(setTabStatus).mock.calls];
+    // The loop is the assertion, so an effect that wrote nothing would leave it
+    // with no subject. `requireAssertions` fails that too; this names it.
+    expect(written.length).toBeGreaterThan(0);
+    for (const call of written) {
+      for (const arg of call) {
+        // Case-insensitive: the realistic regression folds in the RAW mode id
+        // (`plan`), and nothing in the SUT can produce `labelForMode`'s output.
+        expect(String(arg)).not.toMatch(/plan/iu);
+      }
+    }
   });
 });
 
