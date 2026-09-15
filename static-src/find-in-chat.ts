@@ -1652,12 +1652,12 @@ export function openChatFindAt(query: string, hit: Hit): void {
   openFindInChat();
 }
 
-/** Close the transcript search, running the full teardown.
+/** Close the transcript search, running the full teardown: hiding the box instead
+ *  would leave the observer, the marks and the folds behind. Idempotent, so a
+ *  close that re-enters through the popup's onClose is a no-op.
  *
- *  Exported because the close is no longer only this module's business: the tab
- *  store's switch and the app's Escape coordinator both need it, and a caller
- *  that hid the box instead would leave the observer, the marks and the folds
- *  behind. Idempotent — the popup's hide() is a no-op when already closed. */
+ *  @internal Test seam.
+ *  @knipignore The test loads this module through a cache-busting dynamic specifier. */
 export function closeChatFind(): void {
   popup?.hide();
 }
@@ -1723,7 +1723,9 @@ export function handleFindHotkey(e: KeyboardEvent): void {
   openFindInChat();
 }
 
-/** @internal Test seam: whether the transcript search is open. */
+/** @internal Test seam: whether the transcript search is open.
+ *
+ *  @knipignore The test loads this module through a cache-busting dynamic specifier. */
 export function _isChatFindOpen(): boolean {
   return isOpen();
 }

@@ -152,7 +152,7 @@ function chatIDOf(cmd: TypedCommand | Command): string {
 }
 
 /** Generate a client-side request id (also used as a message id). */
-export function newRequestID(): string {
+function newRequestID(): string {
   const arr = new Uint8Array(10);
   crypto.getRandomValues(arr);
   let out = "r-" + Date.now().toString(36) + "-";

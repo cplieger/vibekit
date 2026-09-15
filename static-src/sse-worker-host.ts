@@ -76,7 +76,7 @@ export async function profileRevalidate(
  *  replay is gap-free); one that started or un-hid the stream adds nothing. Decided
  *  here, not by the joining tab: the record names no tab, so a tab cannot tell its own
  *  attach from another's, and N tabs each asking would open N connections. */
-export function reconnectForAttach(ev: LifecycleEvent, stream: Stream): void {
+function reconnectForAttach(ev: LifecycleEvent, stream: Stream): void {
   if (ev.kind === "tab_attached" && ev.state === "open") {
     stream.reconnect();
   }
