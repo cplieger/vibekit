@@ -200,9 +200,9 @@ ARG MONASPACE_BOLDITALIC_SHA256=5dffc9465be18eb63263671f1f3ba266ede49043cb6b3edc
 # covers, because two differently-licensed families share this directory and a
 # bare LICENSE beside five woff2 files names neither.
 # renovate: datasource=github-releases depName=cplieger/web-terminal-glyphs
-ARG WEB_TERMINAL_GLYPHS_VERSION=v1.0.0
+ARG WEB_TERMINAL_GLYPHS_VERSION=v1.1.0
 # repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/WebTerminalGlyphs.woff2
-ARG WEB_TERMINAL_GLYPHS_SHA256=96985da8241efdad06fc3d9e95030bb3c3e0fe93733f2885e81e538f7865dc9c
+ARG WEB_TERMINAL_GLYPHS_SHA256=cc0c05ae1e83ba573d150c372e401c239f92486237a47eee69e7e08b90eebddf
 # repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/LICENSE dest=WebTerminalGlyphs-LICENSE
 ARG WEB_TERMINAL_GLYPHS_LICENSE_SHA256=c95bae1d1ce0235ecccd3560b772ec1efb97f348a79f0fbe0a634f0c2ccefe2c
 # repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/NOTICE dest=WebTerminalGlyphs-NOTICE
