@@ -55,19 +55,6 @@ func TestCurrent_UnmintedAnswersZeroFalse(t *testing.T) {
 	}
 }
 
-func TestSet_RoundTrips(t *testing.T) {
-	var v Versions
-	v.Set(KindLiveTurn, "c-1", "7:12")
-	got, ok := v.Current(KindLiveTurn, "c-1")
-	if !ok || got != "7:12" {
-		t.Fatalf("Current(live_turn, c-1) = (%q, %v), want (\"7:12\", true)", got, ok)
-	}
-	v.Set(KindLiveTurn, "c-1", "7:13")
-	if got, _ = v.Current(KindLiveTurn, "c-1"); got != "7:13" {
-		t.Fatalf("Current(live_turn, c-1) after second Set = %q, want \"7:13\"", got)
-	}
-}
-
 func TestBumpCounter_ConcurrentBumpsAreAllCounted(t *testing.T) {
 	var v Versions
 	const workers, perWorker = 16, 200

@@ -67,7 +67,7 @@ func connectedOf(t *testing.T, frames []vibekit.ServerEvent) vibekit.ConnectedPa
 }
 
 // reencode moves a decoded `any` payload into its typed shape.
-func reencode(from any, into any) error {
+func reencode(from, into any) error {
 	data, err := json.Marshal(from)
 	if err != nil {
 		return err

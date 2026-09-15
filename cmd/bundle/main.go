@@ -27,6 +27,8 @@ import (
 const (
 	srcDir = "static-src"
 	outDir = "static"
+	// jsExt is the extension every bundled module and chunk lands under.
+	jsExt = ".js"
 )
 
 func main() {
@@ -108,7 +110,7 @@ func precacheAssets() ([]string, error) {
 		return nil, fmt.Errorf("precache chunks: %w", err)
 	}
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".js" {
+		if e.IsDir() || filepath.Ext(e.Name()) != jsExt {
 			continue
 		}
 		assets = append(assets, "chunks/"+e.Name())
@@ -140,7 +142,7 @@ func cleanOutputs() error {
 // take a hand-authored asset. Kept in step with .gitignore's static/ block.
 func bundleOwns(name string) bool {
 	switch filepath.Ext(name) {
-	case ".js", ".map", ".gz":
+	case jsExt, ".map", ".gz":
 		return true
 	}
 	// Named rather than matched by ".json": static/manifest.json is hand-authored.
@@ -280,7 +282,7 @@ func emittedEntry(metafile string) (string, error) {
 	}
 	var entries []string
 	for out, info := range meta.Outputs {
-		if info.EntryPoint == "" || filepath.Ext(out) != ".js" {
+		if info.EntryPoint == "" || filepath.Ext(out) != jsExt {
 			continue
 		}
 		rel, err := filepath.Rel(outDir, out)

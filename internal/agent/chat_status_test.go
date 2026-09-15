@@ -8,6 +8,20 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
+// Merge is MergeStamped without the stamp, for a test that seeds the cache and
+// reads no version.
+func (c *chatStatusCache) Merge(chatID vibekit.ChatID, p vibekit.ChatStatusPayload) vibekit.ChatStatusPayload {
+	merged, _ := c.MergeStamped(chatID, p)
+	return merged
+}
+
+// Get returns a chat's last status; production reads the whole set through Snapshot.
+func (c *chatStatusCache) Get(chatID vibekit.ChatID) vibekit.ChatStatusPayload {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.byChat[chatID]
+}
+
 // TestChatStatusCache covers the one status_snapshot input the assistant buffer
 // cannot supply. chat_status arrives on KAS's focus_update channel, so it lives
 // on no message and in no replay — deleting the turn mirror without this would

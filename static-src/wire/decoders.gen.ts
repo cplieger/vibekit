@@ -266,12 +266,12 @@ export const decodeConnectedPayload: Decoder<ConnectedPayload> = (v) => {
   };
   const workspace = o["workspace"] === null ? undefined : optStr(o, "workspace", "$.connected_payload");
   if (workspace !== undefined) out.workspace = workspace;
-  if (o["busy_chats"] !== undefined && o["busy_chats"] !== null) out.busy_chats = decodeArray(o["busy_chats"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.connected_payload.busy_chats");
-  if (o["live_runs"] !== undefined && o["live_runs"] !== null) out.live_runs = decodeArray(o["live_runs"], decodeLiveRun, "$.connected_payload.live_runs");
   const floor = o["floor"] === null ? undefined : optNum(o, "floor", "$.connected_payload");
   if (floor !== undefined) out.floor = floor;
   const head = o["head"] === null ? undefined : optNum(o, "head", "$.connected_payload");
   if (head !== undefined) out.head = head;
+  if (o["busy_chats"] !== undefined && o["busy_chats"] !== null) out.busy_chats = decodeArray(o["busy_chats"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.connected_payload.busy_chats");
+  if (o["live_runs"] !== undefined && o["live_runs"] !== null) out.live_runs = decodeArray(o["live_runs"], decodeLiveRun, "$.connected_payload.live_runs");
   return out;
 };
 

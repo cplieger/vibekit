@@ -37,26 +37,6 @@ type SnapshotCaps struct {
 	Blocks int
 }
 
-// MaxTextBytes is the worst-case TEXT the caps admit: the two flat fields, the block
-// array's share, and every carried tool call's output, so a budget and the tests read one
-// arithmetic. Zero means UNBOUNDED, reported whenever any contributing dimension is
-// itself unbounded — a partial sum would read as a real ceiling and understate the payload.
-//
-// The unbounded guard covers the five ORIGINAL dimensions only, deliberately.
-// ToolOutputTotalBytes is an OPTIONAL tightening rather than a sixth requirement: a zero
-// there means the tool-output share is the product, so a caps value that leaves it unset
-// keeps the MaxTextBytes it had before the field existed.
-func (c SnapshotCaps) MaxTextBytes() int {
-	if c.ReasoningBytes <= 0 || c.ContentBytes <= 0 || c.BlockTextBytes <= 0 || c.ToolCalls <= 0 || c.ToolOutputBytes <= 0 {
-		return 0
-	}
-	tools := c.ToolCalls * c.ToolOutputBytes
-	if c.ToolOutputTotalBytes > 0 {
-		tools = min(tools, c.ToolOutputTotalBytes)
-	}
-	return c.ReasoningBytes + c.ContentBytes + c.BlockTextBytes + tools
-}
-
 // tailBytes keeps the last n bytes of s, advancing the cut forward to the next rune
 // boundary, and reports whether anything was dropped. A non-positive n is unbounded.
 //

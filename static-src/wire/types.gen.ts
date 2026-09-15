@@ -412,6 +412,13 @@ export interface ConnectedPayload {
  */
   workspace?: string;
   /**
+ * Floor and Head are the replay ring's bounds, present ONLY on a legacy connect
+ * (a client that sent no SSE-Wire header): the v2 bundle reads them as numbers
+ * to detect a gap, and a v3 client gets the same facts from the library's hello.
+ */
+  floor?: number;
+  head?: number;
+  /**
  * BusyChats is every chat with a turn in flight of its OWN at connect: an open
  * turn that is not a workflow step, or an admitted prompt whose Turn is not
  * minted yet — and it is a NEGATIVE statement about every chat it does
@@ -437,13 +444,6 @@ export interface ConnectedPayload {
  * there is nothing to scope. CAPPED at maxConnectLiveRuns — see LiveRunsStated.
  */
   live_runs?: LiveRun[];
-  /**
- * Floor and Head are the replay ring's bounds, present ONLY on a legacy connect
- * (a client that sent no SSE-Wire header): the v2 bundle reads them as numbers
- * to detect a gap, and a v3 client gets the same facts from the library's hello.
- */
-  floor?: number;
-  head?: number;
   /**
  * BusyStated says whether BusyChats is the COMPLETE set, and it is the ONE flag two
  * conditions clear: a topic-filtered connect (the list is scoped) and an over-cap

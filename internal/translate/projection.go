@@ -145,17 +145,17 @@ type Projection struct {
 	// Watermark is the id of the compaction event this replay produced, for the caller
 	// to stamp on Chat.CompactionWatermark. Empty when the session was never compacted.
 	Watermark string
-
-	messages []vibekit.Message
-
-	userTs    int64
-	turnStart int64
 	// toolStarts holds the create-frame timestamp of each tool call in the open turn, and
 	// ONLY where that frame carried one. deriveDuration cannot read the call's own Ts for
 	// this: frameTS falls back to turnStart, and turnStart is itself adopted from the first
 	// in-turn frame, so a timestamp-bearing first create and a timestamp-less later one are
 	// indistinguishable there.
 	toolStarts map[string]int64
+
+	messages []vibekit.Message
+
+	userTs    int64
+	turnStart int64
 	// compactAt is the index in messages where a summarization_separator landed, or -1.
 	// The summary_message that follows collapses onto it.
 	compactAt int

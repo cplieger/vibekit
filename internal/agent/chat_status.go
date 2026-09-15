@@ -8,7 +8,7 @@ package agent
 // appears in no message and in no replay.
 //
 // Deliberately ephemeral and tiny: one entry per chat, MERGED on each event
-// (Merge owns why), dropped when the turn ends. Never persisted, matching the
+// (MergeStamped owns why), dropped when the turn ends. Never persisted, matching the
 // live event's contract — cleared client-side on the next prompt and on
 // transport:gap, so a bare replay cannot resurrect a stale "in_progress".
 
@@ -37,24 +37,17 @@ func newChatStatusCache() *chatStatusCache {
 	return &chatStatusCache{byChat: make(map[vibekit.ChatID]vibekit.ChatStatusPayload)}
 }
 
-// Merge records a chat's latest self-declared status against what the chat already holds and
-// returns the effective payload, which is what the caller publishes. KAS's focus channel is
+// MergeStamped records a chat's latest self-declared status against what the chat already
+// holds and returns the effective payload, which is what the caller publishes, with the
+// `status` mint the published frame carries; both come out of one critical section, which
+// is why it is the one helper bus.emit is allowed to stamp from. KAS's focus channel is
 // omit-if-unchanged on every field, so an EMPTY field means ABSENT and never a clear;
 // replacing the payload destroyed a retained waiting_on_user on the next description-only
 // declaration. A both-empty payload IS a clear and is tested BEFORE the merge, or it would
 // merge to whatever the entry held and re-publish it. A status can precede the turn's first
 // content chunk (the agent declares intent before producing output), which is why this is
-// keyed on the chat rather than hung off a turn.
-func (c *chatStatusCache) Merge(chatID vibekit.ChatID, p vibekit.ChatStatusPayload) vibekit.ChatStatusPayload {
-	merged, _ := c.MergeStamped(chatID, p)
-	return merged
-}
-
-// MergeStamped is Merge plus the `status` mint, both under c.mu, returning the
-// stamp the published frame carries. The one helper bus.emit is allowed to stamp
-// from: the version and the payload it certifies come out of one critical section.
-// A chat-less declaration merges against nothing and mints nothing; its stamp is
-// the current version, read in the same section.
+// keyed on the chat rather than hung off a turn. A chat-less declaration merges against
+// nothing and mints nothing; its stamp is the current version, read in the same section.
 func (c *chatStatusCache) MergeStamped(chatID vibekit.ChatID, p vibekit.ChatStatusPayload) (vibekit.ChatStatusPayload, *vibekit.SubjectStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -121,13 +114,6 @@ func (c *chatStatusCache) SnapshotStamped(busy map[vibekit.ChatID]openTurnFacts)
 	version, _ := c.registry().Current(subject.KindStatus, "")
 	rows := c.waitingRowsLocked(busy)
 	return vibekit.StatusSnapshotPayload{Rows: rows}, statusStamp(version)
-}
-
-// Get returns a chat's last status.
-func (c *chatStatusCache) Get(chatID vibekit.ChatID) vibekit.ChatStatusPayload {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.byChat[chatID]
 }
 
 // Snapshot copies every retained status, for the connect-time replay.

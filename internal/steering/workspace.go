@@ -429,23 +429,35 @@ func readFirstLine(path string) string {
 			para, clean = nil, true
 			continue
 		}
-		line = strings.TrimSpace(strings.TrimPrefix(line, ">"))
-		line = strings.Map(func(r rune) rune {
-			switch r {
-			case '\n', '\r', '\t':
-				return ' '
-			}
-			return r
-		}, line)
-		line = sanitize.Unicode(line)
-		if strings.ContainsAny(line, "[]<`") ||
-			strings.Contains(line, "http://") ||
-			strings.Contains(line, "https://") {
+		line = descriptionLine(line)
+		if carriesMarkup(line) {
 			clean = false
 		}
 		para = append(para, line)
 	}
 	return flush()
+}
+
+// descriptionLine normalises one README paragraph line: the blockquote marker
+// stripped, line breaks and tabs folded to spaces, hidden runes removed.
+func descriptionLine(line string) string {
+	line = strings.TrimSpace(strings.TrimPrefix(line, ">"))
+	line = strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t':
+			return ' '
+		}
+		return r
+	}, line)
+	return sanitize.Unicode(line)
+}
+
+// carriesMarkup reports whether a line holds link syntax, an HTML tag, a backtick
+// or a bare URL, any of which disqualifies its whole paragraph as a description.
+func carriesMarkup(line string) bool {
+	return strings.ContainsAny(line, "[]<`") ||
+		strings.Contains(line, "http://") ||
+		strings.Contains(line, "https://")
 }
 
 func capDescription(s string) string {

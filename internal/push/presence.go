@@ -55,7 +55,7 @@ func NewPresence() *Presence {
 // ended the socket: closed, dead, evicted, shutdown and hook_failed each follow
 // exactly one connected, so the count balances only if all of them decrement.
 // An event with no tag belongs to a client that presented none and is dropped.
-func (p *Presence) Observe(ev sse.PresenceEvent) {
+func (p *Presence) Observe(ev *sse.PresenceEvent) {
 	if ev.Tag == "" {
 		return
 	}

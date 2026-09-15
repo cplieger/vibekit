@@ -290,9 +290,11 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 	// Sections in the order the doc is meant to read: what the container IS,
 	// then what is connected, then what the agent can do with it.
 	last := -1
-	for _, h := range []string{"## Installed tools", "## Container runtime", "## Tools engine",
+	for _, h := range []string{
+		"## Installed tools", "## Container runtime", "## Tools engine",
 		"## Connected integrations", "## Workspace", "## Git panel", "## UI guide",
-		"## Images and attachments", "## Limitations", "## Capabilities"} {
+		"## Images and attachments", "## Limitations", "## Capabilities",
+	} {
 		i := strings.Index(got, h)
 		if i < 0 {
 			t.Fatalf("heading %q is absent, so its order cannot be checked", h)

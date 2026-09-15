@@ -11,7 +11,7 @@ import (
 // connect/disconnect events and the client's keepalive acknowledgements.
 // *push.Presence satisfies it.
 type presenceTable interface {
-	Observe(ev sse.PresenceEvent)
+	Observe(ev *sse.PresenceEvent)
 	Alive(tag string)
 }
 
@@ -20,8 +20,10 @@ type presenceTable interface {
 const aliveInvalidCode webhttp.ErrorCode = "alive_invalid"
 
 // forwardPresence is the hub's presence hook: it hands every event to the table
-// WithPresence wired, or drops it when none was.
-func (b *bus) forwardPresence(ev sse.PresenceEvent) {
+// WithPresence wired, or drops it when none was. The hub delivers the event by
+// value (sse.WithPresence's signature); everything past this point takes it by
+// pointer.
+func (b *bus) forwardPresence(ev *sse.PresenceEvent) {
 	if b.presence != nil {
 		b.presence.Observe(ev)
 	}

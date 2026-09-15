@@ -315,57 +315,91 @@ func mergeProjection(existing, projected []vibekit.Message) (merged []vibekit.Me
 	if len(projected) == 0 {
 		return existing, false, mergeStats{}
 	}
+	facts := summarizeReplay(projected)
+	idx := indexRecord(existing)
+	out, consumed, changed := pairRows(existing, projected, idx, &stats)
+	out = appendPreserved(out, existing, consumed, facts, &stats)
 
-	newest := int64(0)
-	projectedIDs := make(map[string]struct{}, len(projected))
-	projectedCompaction := false
+	// Stable, so at the same instant a projected row stays ADJACENT-ahead of a preserved
+	// one. It says nothing about which copy is more complete: that is only true of a PAIRED
+	// row, whose two accounts the union has already merged.
+	slices.SortStableFunc(out, func(a, b vibekit.Message) int {
+		return cmp.Compare(a.Ts, b.Ts)
+	})
+	return out, changed || !sameMessageIDs(existing, out), stats
+}
+
+// replayFacts is what the preserve decision reads off the whole projection: the ids it
+// holds, its newest timestamp, and whether it produced a compaction of its own.
+type replayFacts struct {
+	ids        map[string]struct{}
+	newest     int64
+	compaction bool
+}
+
+func summarizeReplay(projected []vibekit.Message) replayFacts {
+	facts := replayFacts{ids: make(map[string]struct{}, len(projected))}
 	for i := range projected {
-		projectedIDs[projected[i].ID] = struct{}{}
-		if projected[i].Ts > newest {
-			newest = projected[i].Ts
-		}
+		facts.ids[projected[i].ID] = struct{}{}
+		facts.newest = max(facts.newest, projected[i].Ts)
 		if projected[i].EventKind == vibekit.EventCompacted {
-			projectedCompaction = true
+			facts.compaction = true
 		}
 	}
+	return facts
+}
 
-	// firstByKey and byID answer different questions — which record row supplies the stamps,
-	// and which record row a projected id is taking over — so the ID-dup arm's comparison
-	// names the row it is really replacing. keyToIndices holds ALL of a key's rows so a
-	// pairing marks them consumed without an O(n) rescan. FIRST wins in both: nothing here
-	// produces two record rows under one key, so a duplicate is a defect elsewhere and the
-	// merge must answer the same way whichever one produced it.
-	firstByKey := make(map[string]int, len(existing))
-	keyToIndices := make(map[string][]int, len(existing))
-	byID := make(map[string]int, len(existing))
+// recordIndex answers two different questions about the record — which row supplies the
+// stamps for a pair key (firstByKey), and which row a projected id is taking over (byID) —
+// so the ID-dup arm's comparison names the row it is really replacing. keyToIndices holds
+// ALL of a key's rows so a pairing marks them consumed without an O(n) rescan. FIRST wins
+// in both: nothing here produces two record rows under one key, so a duplicate is a defect
+// elsewhere and the merge must answer the same way whichever one produced it.
+type recordIndex struct {
+	firstByKey   map[string]int
+	keyToIndices map[string][]int
+	byID         map[string]int
+}
+
+func indexRecord(existing []vibekit.Message) recordIndex {
+	idx := recordIndex{
+		firstByKey:   make(map[string]int, len(existing)),
+		keyToIndices: make(map[string][]int, len(existing)),
+		byID:         make(map[string]int, len(existing)),
+	}
 	for i := range existing {
 		if key := existing[i].AgentSideID(); key != "" {
-			if _, seen := firstByKey[key]; !seen {
-				firstByKey[key] = i
+			if _, seen := idx.firstByKey[key]; !seen {
+				idx.firstByKey[key] = i
 			}
-			keyToIndices[key] = append(keyToIndices[key], i)
+			idx.keyToIndices[key] = append(idx.keyToIndices[key], i)
 		}
-		if _, seen := byID[existing[i].ID]; !seen {
-			byID[existing[i].ID] = i
+		if _, seen := idx.byID[existing[i].ID]; !seen {
+			idx.byID[existing[i].ID] = i
 		}
 	}
+	return idx
+}
 
-	out := make([]vibekit.Message, 0, len(projected)+len(existing))
+// pairRows walks the projected rows, unioning each with its record twin and counting the
+// rest. consumed marks every record row a pairing covers.
+func pairRows(existing, projected []vibekit.Message, idx recordIndex, stats *mergeStats) (out []vibekit.Message, consumed map[int]bool, changed bool) {
+	out = make([]vibekit.Message, 0, len(projected)+len(existing))
 	out = append(out, projected...)
 	claimed := make(map[string]bool, len(projected))
-	consumed := make(map[int]bool, len(existing))
-	for j := range out {
-		key := out[j].ID
-		i, byKey := firstByKey[key]
-		d, byDupID := byID[key]
+	consumed = make(map[int]bool, len(existing))
+	for j := range projected {
+		key := projected[j].ID
+		i, byKey := idx.firstByKey[key]
+		d, byDupID := idx.byID[key]
 		// A SWITCH rather than an if/else-if chain: a second projected row under one key
 		// also satisfies the ID-dup test, so a chain counted it nowhere while every other
 		// account of this merge called it an addition.
 		switch {
-		case byKey && !claimed[key] && existing[i].Role == out[j].Role:
+		case byKey && !claimed[key] && existing[i].Role == projected[j].Role:
 			claimed[key] = true
 			out[j] = union(&existing[i], &projected[j])
-			for _, k := range keyToIndices[key] {
+			for _, k := range idx.keyToIndices[key] {
 				consumed[k] = true
 			}
 			stats.Paired++
@@ -375,14 +409,18 @@ func mergeProjection(existing, projected []vibekit.Message) (merged []vibekit.Me
 			// the output now holds it twice, which sameMessageIDs reports structurally.
 			stats.Added++
 		case byDupID:
-			changed = changed || !reflect.DeepEqual(existing[d], out[j])
+			changed = changed || !reflect.DeepEqual(existing[d], projected[j])
 			stats.Replaced++
 		default:
 			stats.Added++
 		}
 	}
+	return out, consumed, changed
+}
 
-	// Indexed, not ranged by value: vibekit.Message is 216 bytes (gocritic rangeValCopy).
+// appendPreserved decides each unpaired record row: kept, or counted as dropped.
+// Indexed, not ranged by value: vibekit.Message is 216 bytes (gocritic rangeValCopy).
+func appendPreserved(out, existing []vibekit.Message, consumed map[int]bool, facts replayFacts, stats *mergeStats) []vibekit.Message {
 	for i := range existing {
 		// A CONSUMED row goes regardless of preserveExisting: pairing is positive evidence
 		// the replay covers it, strictly stronger than the Ts heuristic — and a paired live
@@ -391,23 +429,16 @@ func mergeProjection(existing, projected []vibekit.Message) (merged []vibekit.Me
 		if consumed[i] {
 			continue
 		}
-		if _, dup := projectedIDs[existing[i].ID]; dup {
+		if _, dup := facts.ids[existing[i].ID]; dup {
 			continue
 		}
-		if preserveExisting(&existing[i], newest, projectedCompaction) {
+		if preserveExisting(&existing[i], facts.newest, facts.compaction) {
 			out = append(out, existing[i])
 			continue
 		}
 		stats.Dropped++
 	}
-
-	// Stable, so at the same instant a projected row stays ADJACENT-ahead of a preserved
-	// one. It says nothing about which copy is more complete: that is only true of a PAIRED
-	// row, whose two accounts the union has already merged.
-	slices.SortStableFunc(out, func(a, b vibekit.Message) int {
-		return cmp.Compare(a.Ts, b.Ts)
-	})
-	return out, changed || !sameMessageIDs(existing, out), stats
+	return out
 }
 
 // union merges one record row with the replayed twin the pair key matched.

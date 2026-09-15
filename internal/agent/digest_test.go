@@ -18,7 +18,7 @@ import (
 )
 
 func held(kind subject.Kind, ref string) sse.Held {
-	return sse.Held{Subject: sse.Subject{Kind: string(kind), Ref: ref}}
+	return sse.Held{Kind: string(kind), Ref: ref}
 }
 
 // stateFor picks the answer for (kind, ref) out of a resolution, whatever its order.
@@ -139,7 +139,7 @@ func TestResolveDigest_TabsIsTheStoresCollectionVersion(t *testing.T) {
 
 func TestResolveDigest_UnknownKindIsGone(t *testing.T) {
 	h, _, _ := newTestHub()
-	states, err := h.resolveDigest(t.Context(), []sse.Held{{Subject: sse.Subject{Kind: "weather", Ref: "x"}}})
+	states, err := h.resolveDigest(t.Context(), []sse.Held{{Kind: "weather", Ref: "x"}})
 	if err != nil {
 		t.Fatalf("resolveDigest: %v", err)
 	}

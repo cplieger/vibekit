@@ -121,7 +121,8 @@ func (s *Service) releaseHeld() {
 		s.deferred.timer = time.AfterFunc(deferPoll, s.releaseHeld)
 	}
 	s.deferred.mu.Unlock()
-	for _, d := range due {
+	for i := range due {
+		d := &due[i]
 		slog.Debug("push: held delivery released, profile gone", "kind", string(d.key.kind), "tag", d.key.tag)
 		s.fanOut(s.lifetime, []vibekit.PushSubscription{d.h.sub}, d.h.payload, d.key.kind)
 	}

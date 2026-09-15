@@ -20,10 +20,10 @@ type recordingPresence struct {
 	alive  []string
 }
 
-func (p *recordingPresence) Observe(ev sse.PresenceEvent) {
+func (p *recordingPresence) Observe(ev *sse.PresenceEvent) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.events = append(p.events, ev)
+	p.events = append(p.events, *ev)
 }
 
 func (p *recordingPresence) Alive(tag string) {

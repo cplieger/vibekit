@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/subject"
@@ -19,9 +20,9 @@ func newVersionedTestStore(t *testing.T) (*Store, *fakeBroadcaster, *subject.Ver
 func lastEvent(t *testing.T, b *fakeBroadcaster, typ vibekit.EventType) vibekit.ServerEvent {
 	t.Helper()
 	evts := b.snapshot()
-	for i := len(evts) - 1; i >= 0; i-- {
-		if evts[i].Type == typ {
-			return evts[i]
+	for _, evt := range slices.Backward(evts) {
+		if evt.Type == typ {
+			return evt
 		}
 	}
 	t.Fatalf("no %s frame among %d broadcasts", typ, len(evts))

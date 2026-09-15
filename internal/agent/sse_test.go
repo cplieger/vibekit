@@ -203,7 +203,7 @@ func TestHandleSSE_KeepaliveIsANamedIDLessFrameOutsideTheRing(t *testing.T) {
 
 	body := rec.Body.String()
 	var beats []string
-	for _, frame := range strings.Split(body, "\n\n") {
+	for frame := range strings.SplitSeq(body, "\n\n") {
 		if strings.Contains(frame, "event: heartbeat") {
 			beats = append(beats, frame)
 		}
@@ -213,7 +213,7 @@ func TestHandleSSE_KeepaliveIsANamedIDLessFrameOutsideTheRing(t *testing.T) {
 	}
 	for _, frame := range beats {
 		hasData := false
-		for _, line := range strings.Split(frame, "\n") {
+		for line := range strings.SplitSeq(frame, "\n") {
 			if strings.HasPrefix(line, "id:") {
 				t.Errorf("handleSSE keepalive frame %q carries an id: line, want none", frame)
 			}

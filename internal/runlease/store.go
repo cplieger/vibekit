@@ -102,7 +102,7 @@ func (s *Store) List() []Lease {
 // ListStamped is List plus the collection version the set is at, read in the same
 // critical section so the two cannot disagree. The version is decimal, starting at
 // "0" for a store nothing has mutated this process.
-func (s *Store) ListStamped() ([]Lease, string) {
+func (s *Store) ListStamped() (leases []Lease, version string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.sortedLocked(), strconv.FormatUint(s.version, 10)
